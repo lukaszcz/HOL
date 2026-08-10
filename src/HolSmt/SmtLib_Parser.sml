@@ -5426,6 +5426,12 @@ local
       fun cvc5_bag_surface surface =
         #solver (context "bag declaration") = SOME "cvc5" andalso
         is_bag_surface surface
+      fun reject_nested_cvc5_collection command sort surface =
+        if #solver (context command) = SOME "cvc5" andalso
+           nested_collection_surface surface then
+          type_error "parse_commands" (context command) (loc_of sort)
+            NONE NONE "nested cvc5 Set/Bag sorts are unsupported"
+        else ()
       fun parsedicts_for logic =
         parsedicts_for_solver (dictionary_logic logic)
       fun add_finite_definition name command_state =
@@ -5529,6 +5535,8 @@ local
               (loc_of name) name_text [] range sigdict
             val range_surface =
               surface_sort_of_ast (context "declare-const") tydict sort
+            val _ = reject_nested_cvc5_collection "declare-const" sort
+              range_surface
             val (set_tm, tmdict, sigdict) =
               add_value_signature_with_surface name_text [] [] range
                 range_surface (tmdict, sigdict)
@@ -5557,6 +5565,11 @@ local
               surface_sort_of_ast (context "declare-fun") tydict range
             val range_ty =
               typecheck_sort (context "declare-fun") tydict range
+            val _ = List.app (fn (sort, surface) =>
+              reject_nested_cvc5_collection "declare-fun" sort surface)
+              (ListPair.zip (domain, domain_surface))
+            val _ = reject_nested_cvc5_collection "declare-fun" range
+              range_surface
             val name_text = located_string_node name
             val _ = reject_duplicate_signature (context "declare-fun")
               (loc_of name) name_text domain range_ty sigdict
