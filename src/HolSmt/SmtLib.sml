@@ -4307,7 +4307,9 @@ local
               positions function arguments (index + 1)
         fun application_positions subterm =
           let val (function, arguments) = boolSyntax.strip_comb subterm in
-            if Term.is_var function then positions function arguments 0 else []
+            if Term.is_var function orelse Term.is_const function then
+              positions function arguments 0
+            else []
           end
         val applications = List.concat (List.map application_positions subterms)
       in
