@@ -181,8 +181,14 @@ struct
       in if Term.aconv l r then Thm.REFL l else raise ERR "trivial_prove" ""
       end
 
+  fun beta_prove t =
+    Tactical.TAC_PROOF (([], t),
+      bossLib.SIMP_TAC boolSimps.bool_ss [])
+
   fun array_prove t =
     trivial_prove t
+    handle Feedback.HOL_ERR _ =>
+    beta_prove t
     handle Feedback.HOL_ERR _ =>
     if is_array_goal t orelse has_set_term t orelse has_set_variable t then
       Z3_ProformaThms.prove Z3_ProformaThms.array_thms t
