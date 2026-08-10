@@ -4230,6 +4230,27 @@ local
       collect_native_set_terms term acc) [] (t :: original_ts)
     val bag_terms = List.foldl (fn (term, acc) =>
       collect_native_bag_terms term acc) [] (t :: original_ts)
+    (* A native collection cannot be used as an argument to an arbitrary HOL
+       function: its symbol declaration has one fixed SMT domain sort, while
+       the same HOL predicate may also be applied as an ordinary array.
+       Refuse this ambiguous embedding rather than letting traversal order
+       choose an ill-typed declaration. *)
+    fun native_collection_function_argument collection_terms =
+      List.exists (fn subterm =>
+        case Lib.total Term.dest_comb subterm of
+          SOME (function, argument) =>
+            Term.is_var function andalso mem_aconv argument collection_terms
+        | NONE => false)
+        (List.concat (List.map Library.subterms (t :: original_ts)))
+    val _ =
+      case target of
+        SOME {solver = "cvc5", ...} =>
+          if native_collection_function_argument set_terms orelse
+             native_collection_function_argument bag_terms then
+            raise ERR "goal_to_SmtLib_aux_inner"
+              "native collection passed to an arbitrary HOL function"
+          else ()
+      | _ => ()
     val backend = backend_for_target target goal set_terms
     val bag_backend = bag_backend_for_target target goal bag_terms
     val _ =
