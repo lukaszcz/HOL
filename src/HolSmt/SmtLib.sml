@@ -4248,28 +4248,37 @@ local
        ordinary array argument. *)
     val subterms = List.concat (List.map Library.subterms (t :: original_ts))
     fun has_mixed_collection_argument collection_terms =
-      List.exists (fn subterm =>
-        case Lib.total Term.dest_comb subterm of
-          SOME (function, argument) =>
-            Term.is_var function andalso mem_aconv argument collection_terms
-            andalso List.exists (fn other =>
-              case Lib.total Term.dest_comb other of
-                SOME (other_function, other_argument) =>
-                  Term.aconv function other_function andalso
-                  not (mem_aconv other_argument collection_terms)
-              | NONE => false) subterms
-        | NONE => false) subterms
+      let
+        fun positions function [] _ = []
+          | positions function (argument :: arguments) index =
+              (function, index, argument) ::
+              positions function arguments (index + 1)
+        fun application_positions subterm =
+          let val (function, arguments) = boolSyntax.strip_comb subterm in
+            if Term.is_var function then positions function arguments 0 else []
+          end
+        val applications = List.concat (List.map application_positions subterms)
+      in
+        List.exists (fn (function, index, argument) =>
+          mem_aconv argument collection_terms andalso
+          List.exists (fn (other_function, other_index, other_argument) =>
+            Term.aconv function other_function andalso index = other_index andalso
+            not (mem_aconv other_argument collection_terms)) applications)
+          applications
+      end
+    val backend = backend_for_target target goal set_terms
+    val bag_backend = bag_backend_for_target target goal bag_terms
     val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
-          if has_mixed_collection_argument set_terms orelse
-             has_mixed_collection_argument bag_terms then
+          if (backend <> CVC5ArraySet andalso
+              has_mixed_collection_argument set_terms) orelse
+             (bag_backend = CVC5NativeBag andalso
+              has_mixed_collection_argument bag_terms) then
             raise ERR "goal_to_SmtLib_aux_inner"
               "native collection passed to an ambiguously typed HOL function"
           else ()
       | _ => ()
-    val backend = backend_for_target target goal set_terms
-    val bag_backend = bag_backend_for_target target goal bag_terms
     val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
