@@ -1266,7 +1266,9 @@ in
       extension_entry "cvc5" name attrs decl parse
 
     fun mk_set_filter (p, s) =
-      let val x = Term.mk_var ("set_filter_x", pred_setSyntax.eltype s)
+      let
+        val x = Term.variant (Term.all_varsl [p, s])
+          (Term.mk_var ("set_filter_x", pred_setSyntax.eltype s))
       in
         pred_setSyntax.prim_mk_set_spec
           (x, Term.list_mk_comb (boolSyntax.conjunction,
@@ -1274,14 +1276,18 @@ in
       end
 
     fun mk_set_all (p, s) =
-      let val x = Term.mk_var ("set_all_x", pred_setSyntax.eltype s)
+      let
+        val x = Term.variant (Term.all_varsl [p, s])
+          (Term.mk_var ("set_all_x", pred_setSyntax.eltype s))
       in
         boolSyntax.mk_forall (x, boolSyntax.mk_imp
           (pred_setSyntax.mk_in (x, s), Term.mk_comb (p, x)))
       end
 
     fun mk_set_some (p, s) =
-      let val x = Term.mk_var ("set_some_x", pred_setSyntax.eltype s)
+      let
+        val x = Term.variant (Term.all_varsl [p, s])
+          (Term.mk_var ("set_some_x", pred_setSyntax.eltype s))
       in
         boolSyntax.mk_exists (x, boolSyntax.mk_conj
           (pred_setSyntax.mk_in (x, s), Term.mk_comb (p, x)))
@@ -1314,8 +1320,8 @@ in
                (predicate_vars, value_vars) then ()
           else raise ERR "<set.comprehension>"
             "predicate and value must bind the same variables"
-        val result_var =
-          Term.mk_var ("set_comprehension_x", Term.type_of value_body)
+        val result_var = Term.variant (Term.all_varsl [predicate, value])
+          (Term.mk_var ("set_comprehension_x", Term.type_of value_body))
         val body = boolSyntax.list_mk_exists (predicate_vars,
           boolSyntax.mk_conj (predicate_body,
             boolSyntax.mk_eq (result_var, value_body)))
@@ -1462,7 +1468,8 @@ in
 
     fun mk_bag_literal (x, n) =
       let
-        val z = Term.mk_var ("bag_literal_x", Term.type_of x)
+        val z = Term.variant (Term.all_varsl [x, n])
+          (Term.mk_var ("bag_literal_x", Term.type_of x))
         val count = boolSyntax.mk_cond
           (intSyntax.mk_leq (intSyntax.zero_tm, n), intSyntax.mk_Num n,
            numSyntax.zero_tm)
