@@ -48,6 +48,14 @@ New features
     cvc5 and a sound lambda-as-array lowering for Z3.  Both solver paths
     reconstruct checked HOL proofs without oracle tags.
 
+-   `HolSmt` now translates native HOL lists, predicates, and bags to and
+    from SMT Seq, Set, and Bag terms with checked replay.  Z3 uses its
+    array-based Set dialect and an Array-Int `(_ map ...)` Bag encoding;
+    cvc5 uses native finite `set.*`/`bag.*` operations when finiteness is
+    established, otherwise a quantified array fallback.  The complete
+    per-operator solver/version matrix records the non-standard dialect
+    availability and all checked paths reject oracle-tagged theorems.
+
 -   `Theory` syntax now supports disabling the generation of documentation in `<thyname>Theory.sig` by following the theory name with the `[no_sig_docs]` annotation.
     Files that use this feature do not need to mention `Feedback.set_trace "TheoryPP.include_docs" 0` anymore.
     (Indeed, see below, that trace doesn’t exist with that name anymore.)
@@ -228,6 +236,9 @@ Incompatibilities
 
 -   The cvc5 Alethe checked-replay path and `HOL4_CVC_PROOF_FORMAT` selector
     have been removed. `CVC_TAC` uses native CPC proof replay exclusively.
+
+-   Native-by-default Seq/Set/Bag emission changes no previously observed
+    `Z3_TAC` goal encoding: the Phase-6 conformance evidence found none.
 
 -   The return types of `parse_term.mk_prec_matrix`, `type_grammar.parse_map`, `type_grammar.privileged_abbrevs`
     have been changed to return maps of type HOLdict instead of Binarymap.

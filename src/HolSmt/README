@@ -90,6 +90,14 @@ tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The passing
 five-version report is `/tmp/holsmt-z3-4.14-support-matrix/report.json`
 (2026-07-16).
 
+Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
+theories.  The generated operator matrix at
+`.agent-files/reports/seq_set_bag_operator_matrix.md` records every supported
+operator, solver, and version: Z3 4.11.2--4.15.x has array-based Sets and
+Z3-only sequence higher-order operators; cvc5 1.3.4 has native finite
+`set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
+`seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4.
+
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
 `AUFBVDT`.  For every discovered 4.14.* patch version, HolSmt therefore widens
@@ -152,7 +160,12 @@ SMT-LIB support matrix:
   HO-Core function sorts       yes    yes        dual dialect   Z3/cvc5 paths
   Lambda/application surface   yes    yes        dual dialect   Z3/cvc5 paths
   Partial application          yes    yes        dual dialect   Z3/cvc5 paths
-  Z3 Seq/Set/Bag extensions    yes    yes        no             no
+  Sequences (Seq) yes yes native HOL lists; Z3/cvc5 checked
+                         Z3 HO only; `seq.fold_left` needs Z3 >= 4.12.4
+  Sets (Set)      yes yes native predicates; Z3 Array dialect
+                         cvc5 finite `set.*` guard; checked
+  Bags (Bag)      yes yes native HOL bags; Z3 Array Int + `(_ map ...)`
+                         cvc5 finite `bag.*` guard; checked
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the

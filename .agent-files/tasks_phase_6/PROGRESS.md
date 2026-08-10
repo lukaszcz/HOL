@@ -25,12 +25,12 @@
 - TASK_20 — done (verified against TASK_20 acceptance criteria)
 - TASK_21 — done (re-verified against TASK_21, CPC_ProofReplay.sml, and SmtSeqProve.sml; CPC gate 17/17, 0 resource-gated)
 - TASK_22 — done (verified: checked Seq/Set/Bag replay ungated; G1 green; conformance clean at the 4.11.2 anchor)
-- TASK_23 — done (ledger/coverage regenerated; Phase-6 audit slice clean)
-- TASK_24 — unblocked
+- TASK_23 — done (verified against TASK_23 and current sources; Phase-6 audit slice clean)
+- TASK_24 — done (docs, audit, and closure gates recorded)
 
 ## 2. Next unblocked task
 
-.agent-files/tasks_phase_6/TASK_24_closure.md
+None: Phase 6 is closed; see `reports/phase6_exit_audit.md`.
 
 ## 3. Completion log (one line per task as each task lands)
 
@@ -56,4 +56,6 @@
 - TASK_20 — re-verified against TASK_20 and source: Z3-only MAP/FOLDL emission selects and records the HO regime at all supported anchors, emits seq.map/seq.foldl only, rejects cvc5 structurally, and records checked-replay D2 dispositions without oracle tags.
 - TASK_21 — done (re-verified against TASK_21/current sources: fresh Holmake and cvc5 1.3.4 CPC gate pass 17/17, including seq.update/seq.rev; registered Seq routes, loud unknown-rule failure, and no oracle/resource gates).
 - TASK_22 — done (verified against TASK_22/current sources): retired placeholder-prefix gate is absent; replay metadata and checked Seq/Set/Bag smoke rows are present; recorded G1/conformance runs had zero unexpected regressions.
-- TASK_23 — done: regenerated ledger/coverage; validation audit commit `995d838` recognizes the shared and cvc5-only dictionaries, yielding zero Phase-6 audit findings.  Coverage audit reports 109 rows, 219 manifest entries, and zero missing obligations; `upto-parallel` build passed.
+- TASK_23 — verified complete against current sources/artifacts: 14 D2-only gates, 109 coverage rows/219 entries with zero missing obligations, and recorded conformance/build gates green.
+- TASK_24 — docs and release notes updated; exit audit records all six criteria,
+  D11's no-bridge outcome, risk dispositions, and closure-gate evidence.

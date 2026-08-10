@@ -62,3 +62,19 @@ Replay uses the certifying `binary_ieeeLib`/Arbrat evaluation path.
 `native_ieeeLib`, `fp64_machineLib`, and hardware evaluation are never
 enabled in replay because they produce oracle-tagged theorems.  Every
 accepted Z3 or cvc5 theorem is checked for unexpected oracle tags.
+
+## Seq/Set/Bag boundary
+
+Native Seq, Set, and Bag translation adds no trusted axiom or oracle path.
+The HOL models are respectively lists, predicates, and bags; their operators
+are stock HOL definitions or proved transfer lemmas.  Z3 bags are emitted as
+an `Array a Int` encoding, with `(_ map ...)` used for pointwise bag
+operations.  That encoding is a definitional translation choice, not an
+assumed bag theory: array/count correspondence and arithmetic side conditions
+are reconstructed in HOL by the checked replay path.
+
+The cvc5 native Set/Bag dialect is finite.  The finiteness guard is likewise
+not trusted evidence: inbound `FINITE`/`FINITE_BAG` facts and outbound native
+emission conditions are hypotheses in the generated HOL goal.  When
+finiteness is not entailed, HolSmt uses the quantified plain-array fallback.
+Both paths replay the solver proof and reject unexpected oracle tags.
