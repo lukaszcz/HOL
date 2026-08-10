@@ -1405,10 +1405,15 @@ local
         | SOME {Thy = "rich_list", ...} =>
             named "rich_list" rich_list_heads tm
         | _ => true
+      fun native_sequence_parts tm =
+        List.all (fn sub =>
+          not (listSyntax.is_list_type (Term.type_of sub)) orelse
+          is_native_sequence_type (Term.type_of sub)) (Library.subterms tm)
       fun selects_seq tm =
-        named "list" direct_list_heads tm orelse
-        named "rich_list" rich_list_heads tm orelse
-        named "HolSmt" holsmt_heads tm orelse
+        ((named "list" direct_list_heads tm orelse
+          named "rich_list" rich_list_heads tm orelse
+          named "HolSmt" holsmt_heads tm) andalso
+         native_sequence_parts tm) orelse
         List.exists (fn whole => Term.aconv tm whole) totalized
     in
       List.all supported subterms andalso List.exists selects_seq subterms
@@ -2905,6 +2910,9 @@ local
         acc set args body
     fun native_sequence_symbol rator rands =
       !current_native_sequence_emission andalso
+      List.all (fn part =>
+        not (listSyntax.is_list_type (Term.type_of part)) orelse
+        is_native_sequence_type (Term.type_of part)) (tm :: rands) andalso
       (listSyntax.is_nil tm orelse
       ((same_const rator intSyntax.int_injection orelse
         same_const rator int_of_num_tm) andalso
