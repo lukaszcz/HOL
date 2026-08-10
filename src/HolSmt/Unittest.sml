@@ -4681,8 +4681,6 @@ let
   val filter_x = Term.mk_var ("set_filter_x", intSyntax.int_ty)
   val all_x = Term.mk_var ("set_all_x", intSyntax.int_ty)
   val some_x = Term.mk_var ("set_some_x", intSyntax.int_ty)
-  val comprehension_x =
-    Term.mk_var ("set_comprehension_x", intSyntax.int_ty)
   val set_spec = pred_setSyntax.prim_mk_set_spec
   val cvc5_script =
     "(set-logic ALL)\n" ^
@@ -4772,14 +4770,12 @@ in
     (boolSyntax.mk_eq (s, empty));
   assert_builder "cvc5 set.is_singleton" cvc5_options "(set.is_singleton s)"
     (pred_setSyntax.mk_sing s);
-  assert_builder "cvc5 set.comprehension" cvc5_options
-    "(= (set.comprehension ((z Int)) (> z 0) z) s)"
-    (boolSyntax.mk_eq
-      (set_spec (comprehension_x, boolSyntax.mk_exists
-        (Term.mk_var ("z", intSyntax.int_ty), boolSyntax.mk_conj
-          (intSyntax.mk_greater (Term.mk_var ("z", intSyntax.int_ty), zero),
-           boolSyntax.mk_eq (comprehension_x,
-             Term.mk_var ("z", intSyntax.int_ty)))), [comprehension_x]), s));
+  ignore (assertion cvc5_options
+    "(= (set.comprehension ((z Bool)) z z) bs)");
+  reject cvc5_options "cvc5 infinite set.comprehension"
+    "(set-logic ALL)\n\
+     \(assert (= (set.comprehension ((z Int)) true z)\n\
+     \           (set.comprehension ((z Int)) true z)))\n";
   assert_builder "cvc5 set.empty" cvc5_options
     "(= (as set.empty (Set Int)) (as set.empty (Set Int)))"
     (boolSyntax.mk_eq (empty, empty));

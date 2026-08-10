@@ -4035,7 +4035,14 @@ local
                       "' for actual sorts " ^ sort_list_to_string arg_sorts ^
                       ": " ^ Feedback.message_of holerr)
              in
-               checked_term_with_surface_sort (result_surface_sort t) t
+               let val result_surface = result_surface_sort t in
+                 if name = "set.comprehension" andalso
+                    #solver context = SOME "cvc5" andalso
+                    not (finite_cvc5_set_surface result_surface) then
+                   type_error fn_name context loc NONE NONE
+                     "cvc5 set.comprehension requires a finite element sort"
+                 else checked_term_with_surface_sort result_surface t
+               end
              end)
       else
         let
