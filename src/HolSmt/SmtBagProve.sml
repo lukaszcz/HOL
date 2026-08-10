@@ -83,15 +83,15 @@ struct
       unsupported t
     else
       simp_prove t
-      handle Feedback.HOL_ERR _ =>
-      pointwise_prove t
-      handle Feedback.HOL_ERR _ =>
-      arith_prove t
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else
-          unsupported t
+      handle holerr as Feedback.HOL_ERR _ =>
+        if SmtResource.is_resource_gate holerr then raise holerr
+        else pointwise_prove t
+      handle holerr as Feedback.HOL_ERR _ =>
+        if SmtResource.is_resource_gate holerr then raise holerr
+        else arith_prove t
+      handle holerr as Feedback.HOL_ERR _ =>
+        if SmtResource.is_resource_gate holerr then raise holerr
+        else unsupported t
 
   fun bag_prove t = bag_prove_with_arith intLib.ARITH_PROVE t
 
