@@ -1104,6 +1104,8 @@ local
       fun empty set = pred_setSyntax.mk_empty (pred_setSyntax.eltype set)
       fun singleton element = pred_setSyntax.mk_insert
         (element, pred_setSyntax.mk_empty (Term.type_of element))
+      fun card set = Term.mk_comb
+        (intSyntax.int_injection, pred_setSyntax.mk_card set)
       fun prove target =
         if SmtArrayProve.has_set_term target then
           SmtArrayProve.array_prove target
@@ -1114,15 +1116,33 @@ local
       fun omitted_target () =
         case (name, args) of
           ("sets-card-singleton", [element]) =>
+            boolSyntax.mk_eq (card (singleton element),
+              intSyntax.term_of_int (Arbint.fromInt 1))
+        | ("sets-card-union", [left, right]) =>
             boolSyntax.mk_eq
-              (Term.mk_comb (intSyntax.int_injection,
-                 pred_setSyntax.mk_card (singleton element)),
-               intSyntax.term_of_int (Arbint.fromInt 1))
+              (card (pred_setSyntax.mk_union (left, right)),
+               intSyntax.mk_minus
+                 (intSyntax.mk_add (card left, card right),
+                  card (pred_setSyntax.mk_inter (left, right))))
+        | ("sets-card-minus", [left, right]) =>
+            boolSyntax.mk_eq
+              (card (pred_setSyntax.mk_diff (left, right)),
+               intSyntax.mk_minus (card left,
+                 card (pred_setSyntax.mk_inter (left, right))))
         | ("sets-choose-singleton", [element]) =>
             boolSyntax.mk_eq (pred_setSyntax.mk_choice (singleton element),
               element)
         | ("sets-eval-op", [target]) => target
         | ("sets-insert-elim", [target]) => target
+        | ("sets-inter-comm", [left, right]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_inter (left, right),
+              pred_setSyntax.mk_inter (right, left))
+        | ("sets-inter-member", [element, left, right]) =>
+            boolSyntax.mk_eq
+              (pred_setSyntax.mk_in
+                 (element, pred_setSyntax.mk_inter (left, right)),
+               boolSyntax.mk_conj (pred_setSyntax.mk_in (element, left),
+                 pred_setSyntax.mk_in (element, right)))
         | ("sets-is-empty-elim", [set, _]) =>
             let val is_empty = boolSyntax.mk_eq (set, empty set)
             in boolSyntax.mk_eq (is_empty, is_empty) end
