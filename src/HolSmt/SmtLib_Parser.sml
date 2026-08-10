@@ -3408,7 +3408,7 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
-        finite_sets = typecheck_frame_finite_sets frame,
+        finite_sets = active_typechecked_finite_sets state,
         assertions = [],
         named_assertions = [],
         local_definitions = []
@@ -5325,6 +5325,21 @@ local
         is_bag_surface surface
       fun parsedicts_for logic =
         parsedicts_for_solver (dictionary_logic logic)
+      fun add_finite_definition name command_state =
+        let
+          val (_, _, sigdict) = current_typecheck_dicts command_state
+          val signature =
+            case peek_signatures (sigdict, name) of
+              SOME (signature :: _) => signature
+            | _ => raise ERR "add_finite_definition" "missing definition"
+          val {tm, domain, range_surface, ...} = signature
+        in
+          if cvc5_set_surface range_surface then
+            add_typechecked_finite_set tm domain command_state
+          else if cvc5_bag_surface range_surface then
+            add_typechecked_finite_bag tm domain command_state
+          else command_state
+        end
       fun typecheck_define_fun_command command_name name vars range body state =
         let
           val command_state = dest_typecheck_state command_name state
@@ -5335,8 +5350,9 @@ local
               name vars range body (tydict, tmdict, sigdict)
           val command_state = update_current_typecheck_dicts
             (tydict, tmdict, sigdict) command_state
+          val command_state = add_typechecked_definition def command_state
         in
-          finish (add_typechecked_definition def command_state)
+          finish (add_finite_definition (located_string_node name) command_state)
         end
       fun add_definitions definitions command_state =
         List.foldl
@@ -5468,7 +5484,8 @@ local
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
           in
-            finish (add_typechecked_definition def command_state)
+            finish (add_finite_definition (located_string_node name)
+              (add_typechecked_definition def command_state))
           end
       | CmdDefineFun (name, vars, range, body) =>
           typecheck_define_fun_command "define-fun" name vars range body state
@@ -5484,7 +5501,8 @@ local
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
           in
-            finish (add_typechecked_definition def command_state)
+            finish (add_finite_definition (located_string_node name)
+              (add_typechecked_definition def command_state))
           end
       | CmdDefineFunsRec (sigs, bodies) =>
           let
@@ -5498,7 +5516,12 @@ local
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
           in
-            finish (add_definitions definitions command_state)
+            finish (List.foldl
+              (fn (sig_ast, state) =>
+                case node_of sig_ast of
+                  FunctionSignature (name, _, _) =>
+                    add_finite_definition (located_string_node name) state)
+              (add_definitions definitions command_state) sigs)
           end
       | CmdDeclareDatatype (name, decl) =>
           let
