@@ -91,12 +91,13 @@ fun clear_operator_availabilities () = operator_availabilities := []
 fun term_heads tm =
   let
     fun walk tm acc =
-      let val (head, args) = boolSyntax.strip_comb tm in
-        List.foldl (fn (arg, acc) => walk arg acc) (head :: acc) args
-      end
-      handle Feedback.HOL_ERR _ =>
-        (let val (_, body) = Term.dest_abs tm in walk body acc end
-         handle Feedback.HOL_ERR _ => acc)
+      if Term.is_abs tm then
+        walk (Lib.snd (Term.dest_abs tm)) acc
+      else if Term.is_comb tm then
+        let val (rator, rand) = Term.dest_comb tm in
+          walk rand (walk rator acc)
+        end
+      else tm :: acc
   in
     walk tm []
   end
