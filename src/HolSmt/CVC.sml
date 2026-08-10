@@ -164,12 +164,12 @@ structure CVC = struct
              "command=", executable_string (), cmd_stem, "<input-file>\n"]
         in () end
 
-  fun mk_CVC_CPC_fun name pre cmd_stem post goal =
+  fun mk_CVC_CPC_fun name pre cmd_stem command_stem post goal =
     case configured_executable () of
       SOME file =>
-        SolverSpec.make_solver_with_capture
+        SolverSpec.make_solver_with_capture_and_command
           (SOME (cpc_capture cmd_stem)) pre
-          (file ^ with_timeout_option cmd_stem) post goal
+          (fn data => file ^ with_timeout_option (command_stem data)) post goal
     | NONE =>
       raise Feedback.mk_HOL_ERR "CVC" name error_msg
 
@@ -291,10 +291,16 @@ structure CVC = struct
   (* CPC is the sole checked cvc5 proof format. *)
   val cpc_proof_cmd =
     " --produce-proofs --dump-proofs --proof-format-mode=cpc " ^
-    "--proof-granularity=dsl-rewrite --fp-exp --arrays-exp --lang smt "
+    "--proof-granularity=dsl-rewrite --fp-exp --lang smt "
+
+  fun cpc_command (_, strings) =
+    if List.exists (String.isSubstring "(as const (Array") strings then
+      cpc_proof_cmd ^ "--arrays-exp "
+    else
+      cpc_proof_cmd
 
   val CVC_SMT_CPC_Prover =
-    mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_proof_cmd
+    mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_proof_cmd cpc_command
       (checked_post "CVC_SMT_CPC_Prover" cpc_proof_cmd
         (fn dicts => CPC_ProofParser.parse_stream_with_version dicts
           (version_string ()))

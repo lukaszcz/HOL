@@ -64,15 +64,16 @@ structure SolverSpec = struct
   (* `capture` is an optional observation hook.  It receives a stable query
      key, then `input` before solver invocation and `output` afterwards, while
      both temporary files still exist.  It must not alter solver semantics. *)
-  fun make_solver_with_capture
+  fun make_solver_with_capture_and_command
       (capture : (string -> string -> string -> unit) option)
       (pre : Abbrev.goal -> 'a * string list)
-      (cmd_stem : string)
+      (command_stem : 'a -> string)
       (post : 'a -> string -> result) : Abbrev.goal -> result =
   fn goal =>
   let
     (* call 'pre goal' to generate SMT solver input *)
     val (x, inputs) = pre goal
+    val cmd_stem = command_stem x
     val infile = FileSys.tmpName ()
     val outfile = FileSys.tmpName ()
     fun work() = let
@@ -136,6 +137,9 @@ structure SolverSpec = struct
   in
     Portable.finally finish work ()
   end
+
+  fun make_solver_with_capture capture pre cmd_stem post =
+    make_solver_with_capture_and_command capture pre (Lib.K cmd_stem) post
 
   fun make_solver pre cmd_stem post =
     make_solver_with_capture NONE pre cmd_stem post
