@@ -164,6 +164,7 @@ struct
   val prefix_suffix_contains_rewrites = list_rewrites @ [
     listTheory.isPREFIX_THM,
     rich_listTheory.IS_SUBLIST,
+    rich_listTheory.IS_SUBLIST_APPEND,
     rich_listTheory.IS_SUFFIX,
     rich_listTheory.IS_SUFFIX_APPEND,
     rich_listTheory.IS_PREFIX_IS_SUBLIST,
