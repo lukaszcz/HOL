@@ -1125,6 +1125,8 @@ in
     end
 
   val set_dialect_logics = ["ALL", "HO_ALL"]
+  val seq_dialect_logics =
+    ["QF_S", "QF_SLIA", "QF_SNIA", "ALL", "HO_ALL"]
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
@@ -1134,12 +1136,12 @@ in
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
       solver = "Z3", logic = logic,
-      dictionaries = (Z3_Seq.tydict, Z3_Seq.tmdict)}) set_dialect_logics
+      dictionaries = (Z3_Seq.tydict, Z3_Seq.tmdict)}) seq_dialect_logics
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
       solver = "cvc5", logic = logic,
-      dictionaries = (CVC5_Seq.tydict, CVC5_Seq.tmdict)}) set_dialect_logics
+      dictionaries = (CVC5_Seq.tydict, CVC5_Seq.tmdict)}) seq_dialect_logics
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
