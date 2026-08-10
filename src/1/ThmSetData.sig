@@ -5,10 +5,6 @@ sig
   type thm = Thm.thm
   type thname = KernelSig.kernelname
   val toKName : string -> thname
-  (* The table-key spelling of a name: [KernelSig.name_toString] of
-     [toKName], except that a name already in that form, or one that
-     [toKName] rejects, comes back unchanged. *)
-  val toKString : string -> string
   datatype setdelta = ADD of thname * thm | REMOVE of string
   type exportfns =
        { add : {thy : string, named_thm : thname * thm} -> unit,

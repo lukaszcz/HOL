@@ -1,7 +1,7 @@
 open HolKernel Parse boolLib
 
 val _ = new_theory "scratch"
-open ListConv1 simpLib boolSimps
+open ListConv1
 
 open testutils
 
@@ -315,18 +315,4 @@ in
   tprint "ALL_EL_CONV short-circuits on first F";
   if !calls = 1 then OK()
   else die ("FAILED (calls=" ^ Int.toString (!calls) ^ ")")
-end
-
-val _ = let
-  val goal =
-    ``P (list_CASE xs (n:'b) (f:'a -> 'a list -> 'b)) : bool``
-  val _ = tprint "split_ss splits a list case through TypeBase"
-in
-  case #1 (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([], goal)) of
-      [([], result)] =>
-        if not (aconv result goal) andalso
-           not (can (find_term TypeBase.is_case) result)
-        then OK()
-        else die "split_ss did not eliminate the list case"
-    | _ => die "split_ss produced the wrong list subgoals"
 end

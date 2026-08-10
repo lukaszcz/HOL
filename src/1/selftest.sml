@@ -1509,27 +1509,6 @@ in
   if ok then OK() else die "side condition leaked a captured bound variable"
 end
 
-(* [ThmSetData.toKString] is the one normalisation of a REMOVE delta's
-   name to a theorem-set table's key, shared by every such table.  A name
-   that already spells a key, and a name that can spell no key at all,
-   must both come back unchanged rather than being re-qualified or
-   raising. *)
-val _ =
-  let
-    val thy = current_theory()
-    fun check (input, expected) =
-      (tprint ("ThmSetData.toKString " ^ Lib.quote input);
-       require_msg (check_result (equal expected)) Lib.quote
-                   ThmSetData.toKString input)
-  in
-    List.app check
-      [("thm", thy ^ "$thm"),
-       ("bool.T", "bool$T"),
-       ("bool$T", "bool$T"),
-       ("a$b$c", "a$b$c"),
-       ("a.b.c", "a.b.c")]
-  end
-
 (* Regression test for #1870 and analogous cross-theory redefinition
    attacks (see also the paste attached to #2027).  The old exploits
    passed a target thyname directly to prim_specification /

@@ -433,12 +433,13 @@ fun arith_split_thms () = table_thms arith_split_data
 (* The key the retraction denotes, computed here because here is where
    the theory it was written in is the current one, and here is where
    the user is present to be told that it denotes nothing.  The spelling
-   is ThmSetData's, shared with every other theorem-set table; it leaves
-   a name that can spell no key at all alone, and such a name is exactly
-   one without the kernel separator, so that is what we reject. *)
+   is shared with every other theorem-set table via clasetLib's
+   normalisation; it leaves a name that can spell no key at all alone,
+   and such a name is exactly one without the kernel separator, so that
+   is what we reject. *)
 fun removal_key function name =
   let
-    val key = ThmSetData.toKString name
+    val key = clasetLib.normalise_rule_name name
   in
     if String.isSubstring "$" key then key
     else raise ERR function ("Malformed name: " ^ name)

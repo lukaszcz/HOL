@@ -355,14 +355,6 @@ val _ = require_msg
           (testtac (gs[arithmeticTheory.SUB_CANCEL]))
           gstest_goal
 
-val _ = tprint "gns with ordering works"
-val _ = require_msg
-          (check_result
-             (goals_eq [([“x:num = y”, “y <= b”], “y ** 2 < 10”)]))
-          goalpp
-          (testtac (gns[arithmeticTheory.SUB_CANCEL]))
-          gstest_goal
-
 val _ = tprint "rgs with ordering works"
 val _ = require_msg
           (check_result

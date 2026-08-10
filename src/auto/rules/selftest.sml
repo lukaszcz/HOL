@@ -1921,6 +1921,26 @@ val state_spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
 fun persistent_rule_name name =
   KernelSig.name_toString (ThmSetData.toKName name)
 
+(* [normalise_rule_name] is the one normalisation of a user-written name
+   to a theorem-set table's key, shared with linarithData's tables.  A
+   name that already spells a key, and a name that can spell no key at
+   all, must both come back unchanged rather than being re-qualified or
+   raising. *)
+val _ =
+  let
+    val thy = Theory.current_theory ()
+    fun check (input, expected) =
+      test ("normalise_rule_name " ^ Lib.quote input,
+            fn () => normalise_rule_name input = expected)
+  in
+    List.app check
+      [("thm", thy ^ "$thm"),
+       ("bool.T", "bool$T"),
+       ("bool$T", "bool$T"),
+       ("a$b$c", "a$b$c"),
+       ("a.b.c", "a.b.c")]
+  end
+
 val _ =
   test
     ("claset replays temporary updates in order at first demand",
