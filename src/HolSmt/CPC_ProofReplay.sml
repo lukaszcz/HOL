@@ -1470,6 +1470,8 @@ local
     in
       profile "CPC(rung:word/aci_norm)" wordsLib.WORD_ARITH_PROVE target
       handle Feedback.HOL_ERR _ =>
+        profile "CPC(rung:seq/aci_norm)" SmtSeqProve.seq_prove target
+      handle Feedback.HOL_ERR _ =>
         profile "CPC(rung:word/aci_norm_tautology)"
           (tautology "aci_norm") target
     end
