@@ -2513,7 +2513,11 @@ local
           else continuation ()
       fun set_context () = SmtArrayProve.has_set_term target
       fun bag_context () = SmtBagProve.has_native_bag_encoding target
-      fun fp_context () = SmtFpProve.has_fp_theory_term target
+      fun fp_context () =
+        SmtFpProve.has_fp_theory_term target orelse
+        Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
+          (#asserted_hyps state)) orelse
+        List.exists SmtFpProve.has_fp_theory_term (#scope_hyps state)
     in
       (* Native Seq, Set, and Bag trusts have no unchecked fallback.  Bag's
          second rung is the checked contextual simplifier used by its shared
