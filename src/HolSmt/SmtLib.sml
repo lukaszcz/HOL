@@ -1286,6 +1286,8 @@ local
   let val finite_terms = List.mapPartial finite_bag_hypothesis (Lib.fst goal)
   in
     not (List.null bag_terms) andalso
+    not (List.exists (fn bag =>
+      bagSyntax.is_bag_ty (bag_element_type bag)) bag_terms) andalso
     List.all (fn bag => native_bag_term bag andalso
       finite_bag_term finite_terms bag) bag_terms
   end
