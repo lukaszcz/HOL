@@ -385,12 +385,18 @@ local
         if token = "Bool" andalso List.null indices andalso List.null args then
           boolSyntax.T
         else raise ERR "bool_sort_marker" "expected the Bool sort marker"
+      fun bag_sort_marker token indices args =
+        case (token, indices, args) of
+          ("Bag", [], [element]) => Term.mk_var ("@cpc.Bag",
+            Type.--> (Term.type_of element, numSyntax.num))
+        | _ => raise ERR "bag_sort_marker" "expected a Bag sort marker"
       (* The source translation dictionary is deliberately as narrow as its
          declared logic.  CPC arithmetic lemmas may nevertheless contain
          rationals and their Real coercions, so add the mixed arithmetic
          overloads only while reading the proof. *)
       val tmdict = Library.extend_dict (("Bool", bool_sort_marker),
-        Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict)
+        Library.extend_dict (("Bag", bag_sort_marker),
+          Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict))
       fun cpc_quantifiers_skolemize_parsefn token indices args =
         case args of
           [quantified, index] =>
