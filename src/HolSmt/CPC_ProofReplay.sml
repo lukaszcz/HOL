@@ -2500,21 +2500,9 @@ local
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else continuation ()
-      fun set_context () =
-        SmtArrayProve.has_set_term target orelse
-        Option.isSome (HOLset.find SmtArrayProve.has_set_term
-          (#asserted_hyps state)) orelse
-        List.exists SmtArrayProve.has_set_term (#scope_hyps state)
-      fun bag_context () =
-        SmtBagProve.has_native_bag_encoding target orelse
-        Option.isSome (HOLset.find SmtBagProve.has_native_bag_encoding
-          (#asserted_hyps state)) orelse
-        List.exists SmtBagProve.has_native_bag_encoding (#scope_hyps state)
-      fun fp_context () =
-        SmtFpProve.has_fp_theory_term target orelse
-        Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
-          (#asserted_hyps state)) orelse
-        List.exists SmtFpProve.has_fp_theory_term (#scope_hyps state)
+      fun set_context () = SmtArrayProve.has_set_term target
+      fun bag_context () = SmtBagProve.has_native_bag_encoding target
+      fun fp_context () = SmtFpProve.has_fp_theory_term target
     in
       (* Native Seq, Set, and Bag trusts have no unchecked fallback.  Bag's
          second rung is the checked contextual simplifier used by its shared
