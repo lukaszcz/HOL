@@ -4360,8 +4360,12 @@ local
                     Term.aconv (checked_term payload) boolSyntax.T then
               pred_setSyntax.mk_univ domain
             else
-              Term.mk_abs (Term.mk_var ("array_const_x", domain),
-                checked_term payload)
+              let
+                val x = Term.variant (Term.all_varsl [checked_term payload])
+                  (Term.mk_var ("array_const_x", domain))
+              in
+                Term.mk_abs (x, checked_term payload)
+              end
         in
           checked_term_with_surface_sort expected_surface result
         end
