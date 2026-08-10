@@ -251,11 +251,13 @@ structure CVC = struct
       val (translation, strings) =
         goal_to_SmtLib_with_get_proof_translation goal
     in
-      (((original_goal, goal, validation), translation), strings)
+      (((original_goal, goal, validation),
+        (translation, List.exists (String.isSubstring "(as const (Array") strings)),
+       strings))
     end
 
   fun checked_post proof_name cmd_stem parse replay
-      ((original_goal, goal, validation), translation) outfile =
+      ((original_goal, goal, validation), (translation, _)) outfile =
     let
       val instream = TextIO.openIn outfile
       val (result, proof_start) = is_sat_stream_with_consumed instream
@@ -293,8 +295,8 @@ structure CVC = struct
     " --produce-proofs --dump-proofs --proof-format-mode=cpc " ^
     "--proof-granularity=dsl-rewrite --fp-exp --lang smt "
 
-  fun cpc_command (_, strings) =
-    if List.exists (String.isSubstring "(as const (Array") strings then
+  fun cpc_command (_, (_, arrays_exp)) =
+    if arrays_exp then
       cpc_proof_cmd ^ "--arrays-exp "
     else
       cpc_proof_cmd
