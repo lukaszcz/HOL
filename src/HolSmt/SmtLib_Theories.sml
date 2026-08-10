@@ -1479,14 +1479,18 @@ in
       end
 
     fun mk_bag_difference_remove (b, c) =
-      let val x = Term.mk_var ("bag_difference_remove_x", bagSyntax.base_type b)
+      let
+        val x = Term.variant (Term.all_varsl [b, c])
+          (Term.mk_var ("bag_difference_remove_x", bagSyntax.base_type b))
       in
         mk_bag_filter
           (Term.mk_abs (x, boolSyntax.mk_neg (mk_bag_in (x, c))), b)
       end
 
     fun mk_bag_some (p, b) =
-      let val x = Term.mk_var ("bag_some_x", bagSyntax.base_type b)
+      let
+        val x = Term.variant (Term.all_varsl [p, b])
+          (Term.mk_var ("bag_some_x", bagSyntax.base_type b))
       in
         boolSyntax.mk_exists (x, boolSyntax.mk_conj
           (mk_bag_in (x, b), Term.mk_comb (p, x)))
@@ -1497,7 +1501,8 @@ in
 
     fun mk_bag_partition (relation, b) =
       let
-        val x = Term.mk_var ("bag_partition_x", bagSyntax.base_type b)
+        val x = Term.variant (Term.all_varsl [relation, b])
+          (Term.mk_var ("bag_partition_x", bagSyntax.base_type b))
         val group = mk_bag_filter (Term.mk_comb (relation, x), b)
         val groups = pred_setSyntax.mk_image
           (Term.mk_abs (x, group), mk_set_of_bag b)
