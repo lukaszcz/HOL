@@ -62,13 +62,14 @@ struct
       bag_rewrites t
 
   fun pointwise_prove t =
-    Tactical.prove (t,
-      Tactical.THEN (bossLib.RW_TAC
-        (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)) bag_rewrites,
-        Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
-          bossLib.RW_TAC
-            (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
-            bag_rewrites)))
+    SmtResource.with_bitblast_step_time "bag-condition-splitting"
+      (fn t => Tactical.prove (t,
+        Tactical.THEN (bossLib.RW_TAC
+          (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)) bag_rewrites,
+          Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
+            bossLib.RW_TAC
+              (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
+              bag_rewrites)))) t
 
   fun unsupported t =
     raise ERR "bag_prove"
