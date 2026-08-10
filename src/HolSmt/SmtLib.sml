@@ -4358,8 +4358,43 @@ local
             not (mem_aconv other_argument collection_terms)) applications)
           applications
       end
-    val backend = backend_for_target target goal set_terms
-    val bag_backend = bag_backend_for_target target goal bag_terms
+    (* A bound predicate/count function applied to a native collection needs a
+       collection domain in its binder declaration.  Bound-variable names are
+       not globally unique, so the term dictionary cannot safely give it that
+       declaration.  Use the array representation for this scoped shape. *)
+    fun bound_collection_application collection_terms =
+      let
+        fun visit bound tm =
+          if Term.is_abs tm then
+            let val (var, body) = Term.dest_abs tm in visit (var :: bound) body end
+          else
+            let
+              val (function, arguments) = boolSyntax.strip_comb tm
+              val applies_bound =
+                List.exists (fn var => Term.aconv function var) bound
+              val has_collection_argument =
+                List.exists (fn argument => mem_aconv argument collection_terms)
+                  arguments
+              val (_, rands) = boolSyntax.strip_comb tm
+            in
+              (applies_bound andalso has_collection_argument) orelse
+              List.exists (visit bound) rands
+            end
+      in
+        List.exists (visit []) (t :: original_ts)
+      end
+    val backend =
+      case target of
+        SOME {solver = "cvc5", ...} =>
+          if bound_collection_application set_terms then CVC5ArraySet
+          else backend_for_target target goal set_terms
+      | _ => backend_for_target target goal set_terms
+    val bag_backend =
+      case target of
+        SOME {solver = "cvc5", ...} =>
+          if bound_collection_application bag_terms then CVC5ArrayBag
+          else bag_backend_for_target target goal bag_terms
+      | _ => bag_backend_for_target target goal bag_terms
     val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
