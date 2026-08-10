@@ -673,8 +673,12 @@ in
      encoded elements, but do not classify the wrapper list itself.  Likewise,
      the payload of SmtStr is the private representation of SMT String, not a
      user-visible SMT datatype. *)
-  fun assertion_mentions_datatype_sort tm =
+  fun assertion_mentions_datatype_sort ignore_native_sequences tm =
     let
+      fun type_is_visible_datatype_sort ty =
+        type_is_datatype_sort ty andalso
+        not (ignore_native_sequences andalso
+             Lib.can listSyntax.dest_list_type ty)
       fun is_smtstr_value tm =
         case boolSyntax.strip_comb tm of
           (rator, [_]) =>
@@ -694,7 +698,7 @@ in
             List.exists walk elements
           end
         else
-          term_mentions_datatype_sort tm orelse
+          term_type_contains type_is_visible_datatype_sort tm orelse
           (let val (rator, rand) = Term.dest_comb tm
            in walk rator orelse walk rand end
            handle Feedback.HOL_ERR _ =>
@@ -802,8 +806,12 @@ in
       val has_real = some_subterm (term_type_contains type_contains_real)
       val has_word = some_subterm (term_type_contains type_contains_word)
       val has_string = some_subterm (term_type_contains type_contains_string)
+      (* HOL lists represent both Seq and datatypes.  In a sequence logic,
+         accept the native sequence representation rather than rejecting it
+         as a datatype. *)
       val has_datatype =
-        List.exists assertion_mentions_datatype_sort assertions
+        List.exists (assertion_mentions_datatype_sort (#strings fragment))
+          assertions
       fun qf_violation () =
         not (#quantifiers fragment) andalso List.exists has_quantifier assertions
       fun nonlinear_violation () =
