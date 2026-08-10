@@ -355,7 +355,8 @@ local
   fun z3_seq_sort_marker element =
     listSyntax.mk_nil (Term.type_of element)
 
-  fun z3_seq_type_marker element = listSyntax.mk_nil element
+  fun z3_seq_type_marker element =
+    Term.mk_var ("z3_seq_type_marker", element)
 
   fun z3_seq_empty marker =
     case Lib.total listSyntax.dest_list_type (Term.type_of marker) of
