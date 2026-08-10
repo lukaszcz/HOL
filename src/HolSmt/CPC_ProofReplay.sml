@@ -1061,7 +1061,7 @@ local
       {Thy = "smtstring", Tyop = "smtstr", Args = []}) = EQUAL
 
   fun replay_string_at_elim sequence index =
-    Thm.SPECL [sequence, index] smtstringTheory.smtstr_at_def
+    Drule.SPECL [sequence, index] smtstringTheory.smtstr_at_def
 
   fun replay_seq_at_elim conclusion args =
     case (conclusion, args) of
