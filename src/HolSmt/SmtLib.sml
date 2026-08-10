@@ -1411,8 +1411,28 @@ local
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
   val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
   val num_of_int_tm = Term.prim_mk_const {Thy="integer", Name="Num"}
+  (* NUM_TO_INT_TAC embeds an Int-valued bag count as [\x. Num (c x)]. *)
+  fun dest_int_count_bag tm =
+    let
+      val (x, body) = Term.dest_abs tm
+      val (head, args) = boolSyntax.strip_comb body
+    in
+      if same_const head num_of_int_tm then
+        case args of [count] => SOME (x, count) | _ => NONE
+      else NONE
+    end
+    handle Feedback.HOL_ERR _ => NONE
   val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
+
+  fun int_count_function tm =
+    case dest_int_count_bag tm of
+      SOME (x, count) =>
+        (case boolSyntax.strip_comb count of
+           (function, [argument]) =>
+             if Term.aconv x argument then SOME function else NONE
+         | _ => NONE)
+    | NONE => NONE
 
   fun is_int_arith_const tm =
     List.exists (fn c => same_const c tm) [
@@ -3168,24 +3188,10 @@ local
          | _ => raise ERR "native_bag_builtin" "wrong card arity")
       else
       let
-        (* NUM_TO_INT_TAC represents a free HOL bag as [\x. Num (c x)].
-           Discard that carrier embedding here: [c] is the Int-array count
-           function, while its proved non-negativity remains a hypothesis. *)
-        fun int_count_bag tm =
-          let
-            val (x, body) = Term.dest_abs tm
-            val (head, args) = boolSyntax.strip_comb body
-          in
-            if same_const head num_of_int_tm then
-              case args of [count] => SOME (Term.mk_abs (x, count))
-              | _ => NONE
-            else NONE
-          end
-          handle Feedback.HOL_ERR _ => NONE
         fun translate_bag_arg (a, t) =
-          case int_count_bag t of
-            SOME counts =>
-              translate_term regime apply_operator (a, (bounds, counts))
+          case int_count_function t of
+            SOME function =>
+              translate_term regime apply_operator (a, (bounds, function))
           | NONE => translate_term regime apply_operator (a, (bounds, t))
         val (acc, declnames) = Lib.foldl_map translate_bag_arg (acc, rands)
         val (declss, names) = Lib.split declnames
@@ -3868,6 +3874,13 @@ local
 
       let
         val (function, argument) = Term.dest_comb tm
+        (* NUM_TO_INT_TAC's count embedding is an eta-expanded array
+           function.  In the FO cvc5 fallback emit its count function,
+           rather than treating the generated lambda as a HO rator. *)
+        val function =
+          case int_count_function function of
+            SOME count_function => count_function
+          | NONE => function
         val _ = Type.dom_rng (Term.type_of function)
         val semantically_ranked_partial =
           Term.is_const rator andalso
@@ -4146,7 +4159,9 @@ local
                        first_reason (scan inherited) operands
                    | NONE =>
                      if Term.is_abs tm then
-                       SOME "automatic:surviving-abstraction"
+                       (case int_count_function tm of
+                          SOME function => scan inherited function
+                        | NONE => SOME "automatic:surviving-abstraction")
                      else
                        case Lib.total boolSyntax.strip_comb tm of
                          SOME (rator, rands) =>
