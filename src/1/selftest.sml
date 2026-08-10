@@ -1546,6 +1546,38 @@ in
   } "%0$0@"
 end
 
+(* DB.lookup_name is the exact-name counterpart of the name-fragment
+   search: it must answer with exactly the bindings that filtering
+   DB.find_all for an equal name answers with, in the same order, private
+   bindings included.  src/postkernel has no selftest of its own, and this
+   is the first directory whose selftest sees a populated database. *)
+val _ = let
+  val _ = tprint "DB.lookup_name agrees with filtered DB.find_all"
+  fun info p = {private = p, loc = DB.Unknown, class = DB.Thm}
+  val th = ASSUME (mk_var("lookup_name_selftest_p", bool))
+  val nm = "lookup_name_selftest"
+  val _ = DB.bindl "lookup_name_selftest_thyA" [(nm, th, info false)]
+  val _ = DB.bindl "lookup_name_selftest_thyB"
+                   [(nm, th, info false), (nm ^ "_extra", th, info false)]
+  val _ = DB.bindl "lookup_name_selftest_thyC" [(nm, th, info true)]
+  fun keys ds = map (fn ((thy,n),_) => thy ^ "$" ^ n) ds
+  fun filtered s = List.filter (fn ((_,n),_) => n = s) (DB.find_all s)
+  fun agree s = keys (DB.lookup_name s) = keys (filtered s)
+  val absent = "lookup_name_selftest_nosuchname"
+  val uppercased = String.map Char.toUpper nm
+in
+  if not (agree nm) then die "name bound in several theories disagrees"
+  (* thyA, thyB and thyC, the last of them private *)
+  else if length (DB.lookup_name nm) <> 3 then
+    die "private binding of the name was dropped"
+  else if not (agree absent) orelse not (null (DB.lookup_name absent)) then
+    die "absent name disagrees"
+  else if not (agree uppercased) orelse
+          not (null (DB.lookup_name uppercased))
+  then die "name in the wrong case disagrees"
+  else OK()
+end
+
 (* Restarting a segment fires Parse.clear_consts_from_grammar, which must
    drop the zapped segment's constants from the overload map even when the
    map holds a pattern overload.  Must stay last in the file: it retires

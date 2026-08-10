@@ -101,8 +101,7 @@ datatype trav_state =
 fun initial_context {rewriters:reducer list,
                      dprocs:reducer list,
                      travrules=TRAVRULES tsdata,
-                     relation, limit, subgoaler, solvers,
-                     cond_depth, term_ord} =
+                     relation, limit} =
   TSTATE{contexts1=map (#initial o reducer_data) rewriters,
          contexts2=map (#initial o reducer_data) dprocs,
          context_thms=[],
@@ -266,21 +265,32 @@ type traverse_data = {limit : int option,
                       rewriters: reducer list,
                       dprocs: reducer list,
                       travrules: Travrules.travrules,
-                      relation: term,
-                      subgoaler: subgoaler option,
-                      solvers: ssolver list,
-                      cond_depth: int option,
-                      term_ord: (term * term -> order) option};
+                      relation: term};
+
+type traverse_config = {subgoaler: subgoaler option,
+                        solvers: ssolver list,
+                        cond_depth: int option,
+                        term_ord: (term * term -> order) option};
+
+type xtraverse_data = traverse_data * traverse_config
+
+val default_config : traverse_config =
+  {subgoaler=NONE, solvers=[], cond_depth=NONE, term_ord=NONE};
 
 fun TRAVERSE_IN_CONTEXT root_only
-      ({limit,rewriters,dprocs,travrules,relation=rel,subgoaler,solvers,
-        cond_depth,term_ord} : traverse_data) stack ctxt tm = let
+      (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
+        {subgoaler,solvers,cond_depth,term_ord} : traverse_config))
+      stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val add_context' = add_context rewriters dprocs
   val get_relation' = get_relation travrules
   val lim_r = Uref.new limit
-  val cond_depth = Option.getOpt (cond_depth, !Cond_rewr.stack_limit)
+  (* An unconfigured depth follows the user-level default, and is read
+     afresh at every reducer application as it was when the depth was
+     read inside Cond_rewr.COND_REWR_CONV itself. *)
+  fun current_cond_depth () =
+      Option.getOpt (cond_depth, !Cond_rewr.stack_limit)
   val term_ord = Option.getOpt (term_ord, Cond_rewr.ac_term_ord)
   fun check r = case !r of NONE => ()
     | SOME n => if n <= 0 then
@@ -368,7 +378,7 @@ fun TRAVERSE_IN_CONTEXT root_only
                           conv=ctxt_conv,
                           context=context,
                           stack=stack,
-                          cond_depth=cond_depth,
+                          cond_depth=current_cond_depth (),
                           term_ord=term_ord,
                           relation=(relname, mkrefl)}
                          tm before
@@ -419,7 +429,7 @@ end
  * ---------------------------------------------------------------------*)
 (* Reducer contexts contain mutable rewrite controls, so rebuild the context
    for every application of a reusable conversion. *)
-fun GEN_TRAVERSE_WITH_CONTEXT root_only (data : traverse_data)
+fun GEN_TRAVERSE_WITH_CONTEXT root_only (xdata as (data,_) : xtraverse_data)
       {reducer_context,solver_context} tm =
    let
      val {dprocs,rewriters,...} = data
@@ -428,19 +438,20 @@ fun GEN_TRAVERSE_WITH_CONTEXT root_only (data : traverse_data)
          (add_context rewriters dprocs
             (initial_context data,reducer_context),
           solver_context)
-     fun traverse tm =
-       TRAVERSE_IN_CONTEXT root_only data [] context' tm
    in
-     traverse tm
+     TRAVERSE_IN_CONTEXT root_only xdata [] context' tm
    end;
 
-fun GEN_TRAVERSE root_only data thms =
-  GEN_TRAVERSE_WITH_CONTEXT root_only data
+fun GEN_TRAVERSE root_only xdata thms =
+  GEN_TRAVERSE_WITH_CONTEXT root_only xdata
     {reducer_context=thms,solver_context=[]}
 
-val TRAVERSE = GEN_TRAVERSE false
+val XTRAVERSE = GEN_TRAVERSE false
 val ROOT_REWRITE = GEN_TRAVERSE true
 val TRAVERSE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT false
 val ROOT_REWRITE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT true
+
+(* The unextended entry point runs at the unconfigured settings. *)
+fun TRAVERSE (data : traverse_data) = XTRAVERSE (data, default_config)
 
 end (* struct *)

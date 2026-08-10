@@ -67,7 +67,7 @@ val _ =
     ("clasimpset fixes conditional-rewrite depth at forty",
      fn () =>
        #cond_depth
-         (simpLib.traversedata_for_ss (clasimpLib.clasimp_ss ())) =
+         (simpLib.traverseconfig_for_ss (clasimpLib.clasimp_ss ())) =
        SOME 40)
 
 val _ =
@@ -780,13 +780,33 @@ val _ = List.app wrapper_rung wrapper_rungs
 val wrapper_control_name =
   {Thy = "clasimpSelftest", Name = "wrapper_control"}
 
+val wrapper_spare_name =
+  {Thy = "clasimpSelftest", Name = "wrapper_spare"}
+
+(* An atom the empty claset has no rule for, so that only its own rewrite
+   can turn it into T. *)
+val wrapper_spare_goal : Abbrev.goal =
+  ([], ``EMPTY SUBSET (clasimp_wrapper_set : 'a set)``)
+
 val wrapper_control_ss =
   simpLib.++
     (simpLib.clear_rules (clasimpLib.clasimp_ss ()),
      simpLib.named_rewrites_with_names "clasimp-wrapper-control"
        [(wrapper_control_name,
-         CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES))])
+         CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)),
+        (wrapper_spare_name, pred_setTheory.EMPTY_SUBSET)])
 
+(* [clasimpSelftest] names no loaded theory, and that is the point: a
+   rewrite is excludable by the qualified name it was installed under
+   whether or not that theory part is an ancestor of the one being built.
+
+   Failing to close the goal is how the search reports both a control that
+   took effect and a control the simp step refused -- [NTactical.LIFT]
+   turns the refusal into the same "no result" -- so neither direction is
+   asserted on its own.  Each name is excluded in turn, and each run must
+   still close the other name's goal: a control that raised, or that never
+   reached the embedded simp step, could not close one goal while losing
+   the other. *)
 val _ =
   check
     ("add_simp_wrapper passes controls to its embedded simp step",
@@ -797,11 +817,17 @@ val _ =
              (classicalLib.CS_FAST_TAC
                 (clasimpLib.add_simp_wrapper wrapper_control_ss controls
                    clasetLib.empty_cs))
+         val without_control =
+           [markerLib.Excl "clasimpSelftest.wrapper_control"]
+         val without_spare =
+           [markerLib.Excl "clasimpSelftest.wrapper_spare"]
        in
          valid_closes (fast []) wrapper_goal andalso
-         tactic_fails
-           (fast [markerLib.Excl "clasimpSelftest.wrapper_control"])
-           wrapper_goal
+         valid_closes (fast []) wrapper_spare_goal andalso
+         valid_closes (fast without_control) wrapper_spare_goal andalso
+         tactic_fails (fast without_control) wrapper_goal andalso
+         valid_closes (fast without_spare) wrapper_goal andalso
+         tactic_fails (fast without_spare) wrapper_spare_goal
        end)
 
 val _ =

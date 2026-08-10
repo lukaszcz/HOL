@@ -42,9 +42,9 @@ loop which may solve or split goals.
 :   (From `simpLib`.)
     A composable collection of user-provided data which is pushed into a
     *simpset*.  It can contain rewrites, conversions, theorem congruences,
-    procedural congruences, AC rewrites, decision procedures,
-    relation-simplification data, loopers, safe and unsafe solvers, and an
-    optional `filter` which adjusts the simpset's `mk_rewrs` function.
+    AC rewrites, decision procedures, relation-simplification data,
+    loopers, safe and unsafe solvers, and an optional `filter` which
+    adjusts the simpset's `mk_rewrs` function.
 
     The optional subgoaler, conditional depth and term order are whole-
     simpset strategy choices rather than fragment data.
@@ -181,24 +181,28 @@ propagate.  Traversal-limit state is restored when this pipeline fails.
 With no subgoaler and no solver records, a compatibility fast path performs
 the original operation, `EQT_ELIM` after recursive traversal.
 
-`traversedata_for_ss` always supplies the simpset's *unsafe* solver list to
-this pipeline.  This is true even when the surrounding tactic is in safe
+`traverseconfig_for_ss` always supplies the simpset's *unsafe* solver list
+to this pipeline.  This is true even when the surrounding tactic is in safe
 mode.
 
 ## Traversal Engine Settings
 
 A simpset can configure conditional-rewrite depth and term ordering with
-`set_cond_depth` and `set_term_ord`.  The corresponding fields in
-`Traverse.traverse_data` are options.  At traversal entry, an unconfigured
-depth resolves to the user-level default `Cond_rewr.stack_limit`, while an
-unconfigured order resolves to `Cond_rewr.ac_term_ord`.
+`set_cond_depth` and `set_term_ord`.  The corresponding fields live in
+`Traverse.traverse_config`, the companion record of `traverse_data`, and
+are options.  At traversal entry, an unconfigured depth resolves to the
+user-level default `Cond_rewr.stack_limit`, while an unconfigured order
+resolves to `Cond_rewr.ac_term_ord`.  `TRAVERSE`, which takes a
+`traverse_data` alone, runs at `Traverse.default_config`, in which both
+are unconfigured.
 
 The resolved values travel explicitly in every reducer's `apply` record and
-are passed directly to `COND_REWR_CONV`.  There is no dynamically scoped
-engine state.  Consequently, a nested traversal resolves its own options and
-cannot inherit an enclosing simpset's settings.  Changing
-`Cond_rewr.stack_limit` still affects every unconfigured traversal, including
-one nested inside a traversal that has its own configured depth.
+are passed directly to `COND_REWR_CONV_WITH_CONTEXT`.  There is no
+dynamically scoped engine state.  Consequently, a nested traversal
+resolves its own options and cannot inherit an enclosing simpset's
+settings.  Changing `Cond_rewr.stack_limit` still affects every
+unconfigured traversal, including one nested inside a traversal that has
+its own configured depth.
 
 The depth setting bounds nested conditional-rewrite attempts.  The term
 order controls the orientation guard for unbounded permutative rewrites;

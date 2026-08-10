@@ -793,10 +793,6 @@ fun swapped_builtin_action pos store =
   NORMALIZED_SWAPPED_BUILTIN_TAC store pos
 fun move_assumption_to_back_action pos _ =
   MOVE_ASSUMPTION_TO_BACK_TAC pos
-fun same_goal ((left_asl, left_w), (right_asl, right_w)) =
-  aconv left_w right_w andalso
-  ListPair.allEq (fn (left, right) => aconv left right)
-    (left_asl, right_asl)
 
 (* Opaque wrapper results mention the marked frees visible when the wrapper
    ran.  Replay may have grounded only some of them, so apply every binding
@@ -844,7 +840,7 @@ fun grounded_fixed_action (goals, validation) store _ =
   end
 
 fun fixed_action_on recorded result store current =
-  if same_goal (recorded, current) then result
+  if boolSyntax.goal_eq recorded current then result
   else grounded_fixed_action result store current
 
 (* Compatibility for callers that did not record the wrapper's input.  A

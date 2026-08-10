@@ -76,10 +76,17 @@ fun split_thm_name th =
       | local_location (_ :: rest) = local_location rest
     val locations = DB.revlookup th
   in
-    case local_location locations of
+    (* A stored name belongs to the theorem and reads the same in every
+       theory that sees it, while [DB.Local] is only the current theory's
+       name for a theorem it has not exported -- so a local alias of a
+       stored theorem is the name no caller writes.  The name goes into
+       the looper display [del_split] and an [Excl] marker match, so
+       taking the alias would answer a retraction written against the
+       stored name with no match at all. *)
+    case stored locations of
         SOME name => name
       | NONE =>
-          (case stored locations of
+          (case local_location locations of
                SOME name => name
              | NONE =>
                  raise ERR "split_thm_name"
@@ -248,31 +255,80 @@ fun applied_arities tms =
     List.foldl visit (Binarymap.mkDict String.compare) tms
   end
 
+(* The registered case constants, indexed by name.  [order] is the
+   constant's position in [TypeBase.elts], retained so that the groups
+   below can be handed back in the order a walk over the TypeBase leaves
+   them in. *)
+type case_const = {order : int, ty : hol_type, arity : int}
+
+(* Rebuilt whenever the TypeBase value changes, which is the pointer test
+   [type_splits_of] makes against the tyinfo it derived from, applied to
+   the table those tyinfos live in.  A datatype whose case constant
+   cannot be analysed is left out, which is the skip the group builder
+   below used to make for it on every call. *)
+val case_const_index =
+  Sref.new (NONE : (TypeBasePure.typeBase *
+                    case_const list Symtab.table) option)
+
+fun build_case_const_index typebase =
+  let
+    fun add (tyinfo,(order,index)) =
+      let
+        val head = TypeBasePure.case_const_of tyinfo
+        val entry =
+          {order=order, ty=TypeBasePure.ty_of tyinfo,
+           arity=length (#1 (strip_fun (type_of head)))}
+      in
+        (order + 1, Symtab.cons_list (const_key head, entry) index)
+      end handle HOL_ERR _ => (order + 1, index)
+  in
+    #2 (List.foldl add (0,Symtab.empty) (TypeBasePure.listItems typebase))
+  end
+
+fun case_const_index_of () =
+  let
+    val typebase = TypeBase.theTypeBase ()
+    fun rebuild () =
+      let val index = build_case_const_index typebase
+      in
+        Sref.update case_const_index (K (SOME (typebase,index)));
+        index
+      end
+  in
+    case Sref.value case_const_index of
+        SOME (cached,index) =>
+          if Portable.pointer_eq (cached,typebase) then index else rebuild ()
+      | NONE => rebuild ()
+  end
+
 (* This deliberately does not use [TypeBase.is_case].  That predicate
    delegates to Pmatch's stricter and substantially more expensive case
    recognition.  Splitting only needs a saturated application of the
    registered case constant, which the maximum-arity table identifies in
-   one walk over the goal and assumptions.  The derived rules themselves
-   use [type_split_cache], so this is the sole datatype-split cache. *)
+   one walk over the goal and assumptions.  The looper is offered a goal
+   on every simplification round, so the constants the goal does contain
+   are looked up in the index rather than the whole TypeBase walked.  The
+   derived rules themselves use [type_split_cache], so with
+   [case_const_index] these are the only datatype-split caches. *)
 fun goal_split_rule_groups terms =
   let
     val arities = applied_arities terms
-    fun add (tyinfo,result) =
+    val index = case_const_index_of ()
+    fun saturated (key,n,found) =
       let
-        val head = TypeBasePure.case_const_of tyinfo
-        val key = const_key head
-        val arity = length (#1 (strip_fun (type_of head)))
+        fun keep (entry : case_const, found) =
+          if n >= #arity entry then (#order entry, #ty entry) :: found
+          else found
       in
-        case Binarymap.peek (arities,key) of
-            SOME n =>
-              if n >= arity then
-                (TypeBasePure.ty_of tyinfo,
-                 type_split_rules (TypeBasePure.ty_of tyinfo)) :: result
-              else result
-          | NONE => result
-      end handle HOL_ERR _ => result
+        List.foldl keep found (Symtab.lookup_list index key)
+      end
+    val matched = Binarymap.foldl saturated [] arities
+    fun earlier (i1,_) (i2,_) = (i1 : int) <= i2
+    fun group ((_,ty),result) =
+      (ty, type_split_rules ty) :: result
+      handle HOL_ERR _ => result
   in
-    List.foldl add [] (TypeBase.elts ())
+    List.foldl group [] (sort earlier matched)
   end
 
 fun goal_split_rules terms =

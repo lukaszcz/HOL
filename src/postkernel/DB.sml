@@ -538,6 +538,20 @@ fun fetch s1 s2 = #1 (thm_class "fetch" s1 s2);
 fun fetch_knm{Thy,Name} = fetch Thy Name
 fun lookup {Thy,Name} = Lib.total (thm_class "lookup" Thy) Name
 
+(* every binding whose name is exactly this one, in whatever theory.  The
+   name-fragment searches (find, find_all) have to run their regexp over
+   every key in the database; an exact name is one submap lookup per
+   theory.  Private bindings are included, as they are by lookup. *)
+fun lookup_name name =
+    let
+      val db = namemap (CT())
+      val key = toLower name
+      fun fold (_, m) acc =
+          List.filter (dataNameEq name) (Symtab.lookup_list m key) @ acc
+    in
+      Symtab.fold_rev fold db []
+    end
+
 (* Register bool constants in the kernel on theory load.
    During the initial build, boolScript.sml calls Thm.register_* directly.
    This hook ensures the constants are also registered when boolTheory is

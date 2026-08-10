@@ -31,7 +31,7 @@ val _ =
     ("aesop simpset fixes conditional-rewrite depth at forty",
      fn () =>
        #cond_depth
-         (simpLib.traversedata_for_ss (aesopData.aesop_ss ())) =
+         (simpLib.traverseconfig_for_ss (aesopData.aesop_ss ())) =
        SOME 40)
 
 val _ =
@@ -3410,7 +3410,7 @@ val _ =
 (* The aesop simpset is derived from srw_ss, so an unsafe solver
    installed into the shared base -- an augment_srw_ss of a solver_ss
    fragment -- would be carried along by the derivation, and reach the
-   normalisation phase ahead of linarith: traversedata_for_ss hands the
+   normalisation phase ahead of linarith: traverseconfig_for_ss hands the
    unsafe solvers to every traversal as its side-condition solvers, and
    Traverse tries them in order.  The sentinel below records that it was
    asked and then declines, so that the goal is still discharged by the
@@ -3430,7 +3430,7 @@ val aesop_sentinel_solver : Traverse.ssolver =
 
 fun unsafe_solver_names simpset =
   map (fn ({name, ...} : Traverse.ssolver) => name)
-    (#solvers (simpLib.traversedata_for_ss simpset))
+    (#solvers (simpLib.traverseconfig_for_ss simpset))
 
 val aesop_sentinel_names_before =
   unsafe_solver_names (aesopData.aesop_ss ())

@@ -89,7 +89,7 @@ in
                             lhs (#2 (strip_imp (concl th)))),
               trace = 100, (* no need to provide extra tracing here;
                               COND_REWR_CONV provides enough tracing itself *)
-              conv  = appconv (COND_REWR_CONV (nm,th), tag)}
+              conv  = appconv (COND_REWR_CONV_WITH_CONTEXT (nm,th), tag)}
        } before
   trace(2, LZ_TEXT(fn () => "New rewrite: " ^ thm_to_string th))
   handle HOL_ERR _ =>
@@ -114,6 +114,14 @@ type net = net_conv_info Ho_Net.net
 type weakener_data =
   Travrules.preorder list * thm list * Traverse.reducer
 
+(* One resolved rule exclusion.  [pattern] is what [name_match] tests the
+   net's entries against; [original] is the spelling a decision procedure
+   is registered under, and the two are not interchangeable.  A rule
+   exclusion is recorded in the simpset's history and replayed from there,
+   so it carries the pattern it was resolved with rather than being parsed
+   a second time: replay must not get to re-decide what a name meant. *)
+type rule_exclusion = {original : string, pattern : string option * string}
+
 datatype looper_kind = OrdinaryLooper | SplitLooper of bool
 and looper_entry = LooperEntry of
   {kind : looper_kind, name : string, apply : simpset -> tactic}
@@ -128,12 +136,10 @@ and ssfrag = SSFRAG_CON of {
     relsimps       : relsimpdata list,
     loopers        : looper_entry list,
     unsafe_solvers : Traverse.ssolver list,
-    safe_solvers   : Traverse.ssolver list,
-    congprocs      : {name : string, relation : term,
-                      proc : Opening.congproc} list
+    safe_solvers   : Traverse.ssolver list
 }
 and history_item = ADDFRAG of ssfrag
-                 | DELETE_EVENT of string list
+                 | DELETE_EVENT of rule_exclusion list
                  | ADDWEAKENER of weakener_data
                  | STRATEGY_EVENT of strategy_event
                  | SET_MK_REWRS of
@@ -183,26 +189,25 @@ fun ordinary_looper (name,apply) =
 fun updfrag z =
   let
     fun from name convs rewrs ac filter dprocs congs relsimps loopers
-             unsafe_solvers safe_solvers congprocs =
+             unsafe_solvers safe_solvers =
       {name=name, convs=convs, rewrs=rewrs, ac=ac, filter=filter,
        dprocs=dprocs, congs=congs, relsimps=relsimps, loopers=loopers,
-       unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers,
-       congprocs=congprocs}
-    fun from' congprocs safe_solvers unsafe_solvers loopers relsimps congs
+       unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers}
+    fun from' safe_solvers unsafe_solvers loopers relsimps congs
               dprocs filter ac rewrs convs name =
       from name convs rewrs ac filter dprocs congs relsimps loopers
-        unsafe_solvers safe_solvers congprocs
+        unsafe_solvers safe_solvers
     fun to f {name,convs,rewrs,ac,filter,dprocs,congs,relsimps,loopers,
-              unsafe_solvers,safe_solvers,congprocs} =
+              unsafe_solvers,safe_solvers} =
       f name convs rewrs ac filter dprocs congs relsimps loopers
-        unsafe_solvers safe_solvers congprocs
+        unsafe_solvers safe_solvers
   in
-    FunctionalRecordUpdate.makeUpdate12 (from,from',to)
+    FunctionalRecordUpdate.makeUpdate11 (from,from',to)
   end z
 
 val empty_frag_data =
   {name=NONE, convs=[], rewrs=[], ac=[], filter=NONE, dprocs=[], congs=[],
-   relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+   relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[]}
 val empty_ssfrag = SSFRAG_CON empty_frag_data
 
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
@@ -284,9 +289,6 @@ fun solver_ss solver =
 fun safe_solver_ss solver =
   SSFRAG_CON (updfrag empty_frag_data (Fld #safe_solvers [solver]) $$)
 
-fun congproc_ss congproc =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #congprocs [congproc]) $$)
-
 fun D (SSFRAG_CON s) = s;
 fun frag_rewrites ssf = map #2 (#rewrs (D ssf))
 
@@ -318,8 +320,7 @@ fun merge_ss (s:ssfrag list) =
       relsimps = flatten (map (#relsimps o D) s),
       loopers  = flatten (map (#loopers o D) s),
       unsafe_solvers = flatten (map (#unsafe_solvers o D) s),
-      safe_solvers = flatten (map (#safe_solvers o D) s),
-      congprocs = flatten (map (#congprocs o D) s)
+      safe_solvers = flatten (map (#safe_solvers o D) s)
     }
 
 fun named_rewrites name = (name_ss name) o rewrites;
@@ -417,82 +418,165 @@ fun name_match ({thypart,ci}:net_conv_info) (* thing in simpset's net *) pats =
       List.exists check1 pats
     end
 
-fun munge_simpset_name p =
-  case String.fields (equal #".") p of
-      [_] => (NONE,p)
-    | [s1,s2] =>
-        if CharVector.all Char.isDigit s2 then (NONE,p)
-        else if mem s1 (ancestry "-") then (SOME s1,s2)
-        else raise ERR ("-*", "bad theory name: " ^ s1)
-    | [s1,s2,s3] => (SOME s1,s2 ^ "." ^ s3)
-    | _ => raise ERR ("-*", "User key has too many dots")
+(* A user key names a theorem in the kernel [Thy$Name] spelling, in the
+   [Thy.Name] spelling, or with no theory part at all.  A dot is not
+   decisive on its own: a theorem name can carry a numeric suffix, and can
+   itself contain a dot.  [unknown_thy] decides what a theory part that is
+   not an ancestor of the current theory means; that single question is
+   the only one the two readings below differ on. *)
+fun parse_simpset_name {unknown_thy} p =
+  let
+    fun known_thy (thy,name) =
+      if mem thy (ancestry "-") then (SOME thy,name)
+      else unknown_thy (thy,name)
+    fun dotted () =
+      case String.fields (equal #".") p of
+          [_] => (NONE,p)
+        | [s1,s2] =>
+            if CharVector.all Char.isDigit s2 then (NONE,p)
+            else known_thy (s1,s2)
+        | [s1,s2,s3] => (SOME s1,s2 ^ "." ^ s3)
+        | _ => raise ERR ("-*", "User key has too many dots")
+  in
+    case String.fields (equal #"$") p of
+        [thy,name] =>
+          if thy = "" orelse name = "" then dotted ()
+          else known_thy (thy,name)
+      | _ => dotted ()
+  end
 
-fun filter_net_by_names nms net =
+(* [-*] is published with the strict reading and keeps it: a theory part
+   that is not an ancestor is a mistake it refuses to guess at. *)
+fun munge_simpset_name p =
+  parse_simpset_name
+    {unknown_thy = fn (thy,_) => raise ERR ("-*", "bad theory name: " ^ thy)}
+    p
+
+(* [Excl] has to be able to name what is installed.  A net entry records
+   whatever theory its rewrite was named with, and nothing requires that
+   theory to be an ancestor of the theory being built: a fragment carrying
+   names from an unloaded theory sits in the net all the same, and its
+   qualified spelling is what a user writes to exclude it.  So for
+   exclusion a theory part whose only fault is not being an ancestor is
+   read positionally and matched against the entries.  Nothing else is
+   relaxed: a key too many dots deep is still rejected, and a key that no
+   entry and no theorem answers to is still the diagnosed typo it was. *)
+fun excl_simpset_name p =
+  parse_simpset_name {unknown_thy = fn (thy,name) => (SOME thy,name)} p
+
+fun filter_net_by_exclusions (excls : rule_exclusion list) net =
     let
-      val munged_pats = map munge_simpset_name nms
+      val pats = map #pattern excls
     in
-      Ho_Net.vfilter (fn nd => not (name_match nd munged_pats)) net
+      Ho_Net.vfilter (fn nd => not (name_match nd pats)) net
     end
 
+(* [Ho_Net.fold'] visits every entry; an exclusion only needs to know
+   whether one of them matches, so a local exception stops the traversal at
+   the first hit. *)
+local exception FoundEntry
+in
+fun net_exists P net =
+  (Ho_Net.fold' (fn entry => fn () => if P entry then raise FoundEntry
+                                      else ())
+                net ();
+   false)
+  handle FoundEntry => true
+end
+
+(* Only exclusion resolution asks these questions, so they use the reading
+   [Excl] answers to rather than the stricter one [-*] parses with. *)
 fun net_has_name name net =
-  case Lib.total munge_simpset_name name of
+  case Lib.total excl_simpset_name name of
       NONE => false
-    | SOME pattern =>
-        Ho_Net.fold'
-          (fn entry => fn found =>
-            found orelse name_match entry [pattern]) net false
+    | SOME pattern => net_exists (fn nd => name_match nd [pattern]) net
 
 fun simpset_has_rule name (SS s) = net_has_name name (#initial_net s)
 
 fun simpset_has_dproc name (SS s) =
   List.exists
-    (fn reducer => #name (Traverse.dest_reducer reducer) = SOME name)
+    (fn reducer => #name (Traverse.reducer_data reducer) = SOME name)
     (#dprocs s)
 
 (* The historical rewrite exclusion operation also removes decision
    procedures by name.  Treat the two stores as one target here so a rewrite
    and a dproc sharing a name are excluded together, as [ss -* names] has
-   always specified. *)
-fun simpset_has_rule_target name ss =
-  simpset_has_rule name ss orelse simpset_has_dproc name ss
+   always specified.  [pending] holds the rule exclusions that
+   [apply_exclusions] has resolved but not yet applied to the net; masking
+   them here is what makes deferring the filter invisible. *)
+fun simpset_has_rule_target {pending : rule_exclusion list} name
+                            (ss as SS s) =
+  case pending of
+      [] => simpset_has_rule name ss orelse simpset_has_dproc name ss
+    | _ =>
+      let
+        val gone = map #pattern pending
+        fun still_there nd = not (name_match nd gone)
+      in
+        (case Lib.total excl_simpset_name name of
+             NONE => false
+           | SOME pattern =>
+               net_exists (fn nd => name_match nd [pattern] andalso
+                                    still_there nd)
+                          (#initial_net s))
+        orelse
+        (not (List.exists (fn e : rule_exclusion => #original e = name)
+                          pending) andalso
+         simpset_has_dproc name ss)
+      end
 
 (* A valid theorem name need not currently be installed in the simpset:
    theory scripts use Excl defensively around a theorem they have just put
    on the goal.  Accept an exact database binding as a rule target, while a
    spelling that denotes neither a binding nor installed strategy remains a
-   diagnosed typo. *)
+   diagnosed typo.  A name that carries its theory -- in either spelling --
+   is one exact lookup; a bare name is sought database-wide, but by the
+   exact-name entry point, which is a lookup per theory rather than a
+   regexp run over every binding in the database. *)
 fun theorem_name_exists original =
   let
-    val wanted = String.fields (equal #".") original
-    fun matches ((thy,name),_) =
-      case wanted of
-          [wanted_name] => name = wanted_name
-        | [wanted_thy,wanted_name] =>
-            thy = wanted_thy andalso name = wanted_name
-        | _ => false
-    val query =
-      case List.rev wanted of
-          name :: _ => name
-        | [] => original
+    fun bound thy name =
+      thy <> "-" andalso isSome (DB.lookup {Thy=thy,Name=name})
+    fun anywhere name = not (null (DB.lookup_name name))
   in
-    List.exists matches (DB.find_all query)
+    case String.fields (equal #"$") original of
+        [thy,name] => bound thy name
+      | _ =>
+        case String.fields (equal #".") original of
+            [name] => anywhere name
+          | [thy,name] => bound thy name
+          | _ => false
   end
   handle HOL_ERR _ => false
 
 fun dphas_name_from nms reducer =
-  case #name (Traverse.dest_reducer reducer) of
+  case #name (Traverse.reducer_data reducer) of
       SOME name => Lib.mem name nms
     | NONE => false
 fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 
-fun (ss as SS s) -* nms =
-    if null nms then ss
+(* The one place a rule exclusion is applied.  Its callers -- [-*], which
+   parses its own names, the [Excl] resolution, which has already parsed
+   them, and history replay, which must not parse them at all -- all
+   arrive with the pattern settled, and the recorded [DELETE_EVENT] keeps
+   it.  Rebuilding a simpset therefore reruns the very same exclusions,
+   rather than re-asking what their names mean in whatever theory context
+   the rebuild happens in. *)
+fun delete_exclusions (excls : rule_exclusion list) (ss as SS s) =
+    if null excls then ss
     else
       SS (updSS s
-            (Fld #initial_net (filter_net_by_names nms (#initial_net s)))
-            (Fld #history (DELETE_EVENT nms :: #history s))
-            (Fld #dprocs (filter_dprocs_by_names nms (#dprocs s)))
+            (Fld #initial_net
+               (filter_net_by_exclusions excls (#initial_net s)))
+            (Fld #history (DELETE_EVENT excls :: #history s))
+            (Fld #dprocs
+               (filter_dprocs_by_names (map #original excls) (#dprocs s)))
             $$)
+
+fun exclusion_of_name p : rule_exclusion =
+  {original = p, pattern = munge_simpset_name p}
+
+fun ss -* nms = delete_exclusions (map exclusion_of_name nms) ss
 fun remove_simps nms ss = ss -* nms
 
 
@@ -787,7 +871,7 @@ val split_ss =
     [looper_ss ("splitter", splitter_looper), rewrites [cases_simp]]
 
 datatype exclusion_target =
-    ExcludeRule of string
+    ExcludeRule of rule_exclusion
   | ExcludeLooper of looper_kind * string
   | ExcludeSolver of string
   | ExcludeSplits of string list
@@ -801,102 +885,134 @@ fun strip_namespace prefix name =
 fun ordinary_looper_exists name ss =
   has_looper_id (OrdinaryLooper,name) ss
 
-fun split_displays ss =
+(* Membership in the split and case display spaces, rather than the lists
+   themselves: every Excl asks these questions, and enumerating the case
+   displays means walking all of [TypeBase.elts()].  The display prefix
+   settles almost every name before either store is touched. *)
+fun split_display_exists ss display =
+  (String.isPrefix "split " display orelse
+   String.isPrefix "split_asm " display) andalso
   let
-    val local_entries =
-      List.mapPartial
-        (fn entry as LooperEntry {kind=SplitLooper _,...} =>
-              SOME (looper_display entry)
-          | _ => NONE)
-        (#loopers (strategy_of ss))
-    val persistent =
-      map (fn (name,th) => split_looper_display name th)
-        (splitLib.named_split_thms ())
+    fun is_local (entry as LooperEntry {kind=SplitLooper _,...}) =
+          looper_display entry = display
+      | is_local _ = false
+    fun is_persistent (name,th) = split_looper_display name th = display
   in
-    Lib.mk_set (local_entries @ persistent)
+    List.exists is_local (#loopers (strategy_of ss)) orelse
+    List.exists is_persistent (splitLib.named_split_thms ())
   end
 
-fun case_displays () =
+val case_prefix = "split.case "
+
+fun case_display_exists display =
+  String.isPrefix case_prefix display andalso
   let
+    val wanted = String.extract (display,size case_prefix,NONE)
     fun names tyinfo =
-      let
-        val (thy,tyop) = TypeBasePure.ty_name_of tyinfo
-        val full = KernelSig.name_toString {Thy=thy,Name=tyop}
+      let val (thy,tyop) = TypeBasePure.ty_name_of tyinfo
       in
-        ["split.case " ^ full,"split.case " ^ tyop]
+        wanted = tyop orelse
+        wanted = KernelSig.name_toString {Thy=thy,Name=tyop}
       end
   in
-    Lib.mk_set (List.concat (map names (TypeBase.elts ())))
+    List.exists names (TypeBase.elts ())
   end
 
-fun only_target original [] =
-      raise ERR ("process_tags", "Excl did not match " ^ original)
-  | only_target _ [target] = target
-  | only_target original _ =
-      raise ERR
-        ("process_tags",
-         "Excl name " ^ original ^
-         " is ambiguous; qualify it with rule:, looper:, solver:, " ^
-         "split:, or case:")
+(* A namespaced Excl says which kind of target is meant, so matching
+   nothing there is a diagnosed typo -- [no_target].  An unqualified one is
+   written defensively often enough -- around a theorem that may not be
+   installed, or naming a conversion or decision procedure that was never a
+   simpset entry at all -- that matching nothing is reported and ignored
+   instead of aborting the tactic.  A name that matches several kinds stays
+   an error either way: there is no way to guess which was meant. *)
+fun no_target original =
+  raise ERR ("process_tags", "Excl did not match " ^ original)
 
-fun resolve_exclusion ss original =
+fun ambiguous_target original =
+  raise ERR
+    ("process_tags",
+     "Excl name " ^ original ^
+     " is ambiguous; qualify it with rule:, looper:, solver:, " ^
+     "split:, or case:")
+
+fun optional_target {report} original [] =
+      (if report then
+         HOL_WARNING "simpLib" "process_tags"
+                     ("Ignoring Excl that matched nothing: " ^ original)
+       else ();
+       NONE)
+  | optional_target _ _ [target] = SOME target
+  | optional_target _ original _ = ambiguous_target original
+
+(* A rule name is parsed once, here, and the pattern travels with the
+   target: neither [apply_exclusion] nor the history replay that follows
+   it gets to parse the name a second time. *)
+fun resolve_exclusion {report,pending} ss original =
+  let
+    fun rule_target name =
+      case Lib.total excl_simpset_name name of
+          NONE => NONE
+        | SOME pattern =>
+            if simpset_has_rule_target {pending=pending} name ss orelse
+               theorem_name_exists name
+            then SOME {original = name, pattern = pattern}
+            else NONE
+  in
   case strip_namespace "rule:" original of
       SOME name =>
-        if simpset_has_rule_target name ss orelse theorem_name_exists name
-        then ExcludeRule name
-        else only_target original []
+        (case rule_target name of
+             SOME excl => SOME (ExcludeRule excl)
+           | NONE => no_target original)
     | NONE =>
       case strip_namespace "looper:" original of
           SOME name =>
             if ordinary_looper_exists name ss
-            then ExcludeLooper (OrdinaryLooper,name)
-            else only_target original []
+            then SOME (ExcludeLooper (OrdinaryLooper,name))
+            else no_target original
         | NONE =>
           case strip_namespace "solver:" original of
               SOME name =>
-                if has_solver name ss then ExcludeSolver name
-                else only_target original []
+                if has_solver name ss then SOME (ExcludeSolver name)
+                else no_target original
             | NONE =>
               case strip_namespace "split:" original of
                   SOME name =>
                     let
                       val candidates = ["split " ^ name,"split_asm " ^ name]
-                      val installed = split_displays ss
                       val matches =
-                        List.filter (fn n => Lib.mem n installed) candidates
+                        List.filter (split_display_exists ss) candidates
                     in
-                      if null matches then only_target original []
-                      else ExcludeSplits matches
+                      if null matches then no_target original
+                      else SOME (ExcludeSplits matches)
                     end
                 | NONE =>
                   case strip_namespace "case:" original of
                       SOME name =>
-                        let val display = "split.case " ^ name
+                        let val display = case_prefix ^ name
                         in
-                          if Lib.mem display (case_displays ())
-                          then ExcludeCase display
-                          else only_target original []
+                          if case_display_exists display
+                          then SOME (ExcludeCase display)
+                          else no_target original
                         end
                     | NONE =>
                       let
-                        val splits = split_displays ss
-                        val cases = case_displays ()
                         val targets =
-                          (if simpset_has_rule_target original ss orelse
-                              theorem_name_exists original
-                           then [ExcludeRule original] else []) @
+                          (case rule_target original of
+                               SOME excl => [ExcludeRule excl]
+                             | NONE => []) @
                           (if ordinary_looper_exists original ss
                            then [ExcludeLooper (OrdinaryLooper,original)]
                            else []) @
                           (if has_solver original ss
                            then [ExcludeSolver original] else []) @
-                          (if Lib.mem original splits
+                          (if split_display_exists ss original
                            then [ExcludeSplits [original]] else []) @
-                          (if Lib.mem original cases
+                          (if case_display_exists original
                            then [ExcludeCase original] else [])
                       in
-                        only_target original targets
+                        optional_target {report=report} original targets
                       end
+  end
 
 fun exclude_split_display (display,ss) =
   let
@@ -915,9 +1031,9 @@ fun exclude_split_display (display,ss) =
       without_local
   end
 
-fun apply_exclusion (name,ss) =
-  case resolve_exclusion ss name of
-      ExcludeRule rule => ss -* [rule]
+fun apply_exclusion (target,ss) =
+  case target of
+      ExcludeRule excl => delete_exclusions [excl] ss
     | ExcludeLooper id => del_looper_id_quiet id ss
     | ExcludeSolver solver => remove_solver solver ss
     | ExcludeSplits displays => List.foldl exclude_split_display ss displays
@@ -925,6 +1041,27 @@ fun apply_exclusion (name,ss) =
         map_strategy
           (upd_excl_loopers
              (fn excluded => Binaryset.add (excluded,display))) ss
+
+(* Each rule exclusion filters the whole rewrite net, so the resolved
+   exclusions are collected and handed to [delete_exclusions] once.  They
+   carry their patterns, so the batch is applied without any name being
+   parsed twice.  The exclusions collected so far go back into
+   [resolve_exclusion], which is what makes the deferral invisible: a later
+   name still resolves against the simpset it would have seen had each
+   exclusion been applied where it was written.  The other kinds touch
+   disjoint parts of the simpset, so their order relative to the deferred
+   filter -- in the simpset and in its history -- does not matter. *)
+fun apply_exclusions {report} ss names =
+  let
+    fun step (name,(ss,pending)) =
+      case resolve_exclusion {report=report,pending=pending} ss name of
+          NONE => (ss,pending)
+        | SOME (ExcludeRule excl) => (ss,excl::pending)
+        | SOME target => (apply_exclusion (target,ss),pending)
+    val (excluded,pending) = List.foldl step (ss,[]) names
+  in
+    delete_exclusions (List.rev pending) excluded
+  end
 
 fun mk_tactic_solver (name,tac) =
   let
@@ -1167,19 +1304,6 @@ fun mk_tactic_solver (name,tac) =
          SOME n => Binaryset.member(excluded, n)
        | NONE => false
 
- fun keyed_congproc {relation,proc,...} current_relation =
-   if Opening.samerel relation current_relation orelse
-      same_const relation current_relation
-   then proc current_relation
-   else failwith "not applicable"
-
- fun add_congprocs congprocs
-       (TRAVRULES {relations,congprocs=existing,weakenprocs}) =
-   TRAVRULES
-     {relations=relations,
-      congprocs=map keyed_congproc congprocs @ existing,
-      weakenprocs=weakenprocs}
-
  fun op++(ss as SS sset, f as SSFRAG_CON ssf) =
    if is_excluded ss f then ss
    else let
@@ -1188,7 +1312,7 @@ fun mk_tactic_solver (name,tac) =
    val travrules = #travrules sset
    val initial_net = #initial_net sset
    val dprocs' = #dprocs sset
-   val {convs,rewrs,filter,ac,dprocs,congs,relsimps,congprocs,...} = ssf
+   val {convs,rewrs,filter,ac,dprocs,congs,relsimps,...} = ssf
    val mk_rewrs = case filter of
                     SOME f => f oo mk_rewrs'
                   | _ => mk_rewrs'
@@ -1224,9 +1348,7 @@ fun mk_tactic_solver (name,tac) =
          (Fld #dprocs new_dprocs)
          (Fld #travrules
             (merge_travrules
-               (travrules::
-                add_congprocs congprocs
-                  (mk_travrules relations congs)::reltravs)))
+               (travrules::mk_travrules relations congs::reltravs)))
          (Fld #strategy strategy)
          $$)
  end
@@ -1241,7 +1363,7 @@ fun build_from_history h0 =
       fun foldthis (hi, ss) =
           case hi of
               ADDFRAG sf => ss ++ sf
-            | DELETE_EVENT sl => ss -* sl
+            | DELETE_EVENT excls => delete_exclusions excls ss
             | ADDWEAKENER wd => add_weakener wd ss
             | STRATEGY_EVENT event => strategy_op event ss
             | SET_MK_REWRS mk_rewrs =>
@@ -1385,9 +1507,9 @@ fun clear_rules (SS s) =
    end;
 
  fun traversedata_for_ss_prepared
-       (ss as (SS ssdata)) (prepared : prepared_rewrites) =
+       (ss as (SS ssdata)) (prepared : prepared_rewrites)
+       : Traverse.traverse_data =
    let
-     val strategy = #strategy ssdata
      val dprocs =
        if null prepared then #dprocs ssdata
        else
@@ -1397,19 +1519,32 @@ fun clear_rules (SS s) =
        dprocs=dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
-       limit = #limit ssdata,
-       subgoaler= #subgoaler strategy,
+       limit = #limit ssdata}
+   end;
+
+ (* The traversal-strategy settings that traverse_data does not carry.
+    They are kept apart so that traversedata_for_ss can stay the record
+    the published signature promises. *)
+ fun traverseconfig_for_ss (SS ssdata) : Traverse.traverse_config =
+   let
+     val strategy = #strategy ssdata
+   in
+      {subgoaler= #subgoaler strategy,
        solvers= #unsafe_solvers strategy,
        cond_depth= #cond_depth strategy,
        term_ord= #term_ord strategy}
    end;
 
+ fun xtraversedata_for_ss_prepared ss prepared : Traverse.xtraverse_data =
+   (traversedata_for_ss_prepared ss prepared, traverseconfig_for_ss ss);
+
  fun traversedata_for_ss ss = traversedata_for_ss_prepared ss [];
+ fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ss [];
 
  fun SIMP_QCONV_WITH_PREPARED_CONTEXT
        ss prepared reducer_context solver_context =
    Traverse.TRAVERSE_WITH_CONTEXT
-     (traversedata_for_ss_prepared ss prepared)
+     (xtraversedata_for_ss_prepared ss prepared)
      {reducer_context=reducer_context,solver_context=solver_context};
 
  fun SIMP_QCONV ss thms =
@@ -1492,6 +1627,11 @@ fun process_tags0 {report} ss thl =
       val (excludes, exclfrags, rst) = extract_excls ([],[],[]) rst
       val (frags, rst) = extract_frags ([],[]) rst
     in
+      (* When no marker matched, the argument simpset is returned as it
+         stands rather than rebuilt.  [GEN_GLOBAL_SIMP_TAC]'s traversal
+         cache tests its key with [Portable.pointer_eq], so physical
+         identity here -- not merely an equal simpset -- is what keeps
+         that tactic's assumption scan linear. *)
       if null Congs andalso null Splits andalso null ACs andalso
          null excludes andalso null frags andalso null exclfrags
       then (ss,thl)
@@ -1513,7 +1653,8 @@ fun process_tags0 {report} ss thl =
           val withSplits =
             List.foldl (fn (th,ss) => add_split_marker report th ss)
                        withFrags Splits
-          val invocation = List.foldl apply_exclusion withSplits excludes
+          val invocation =
+            apply_exclusions {report=report} withSplits excludes
         in
           (invocation, rst)
         end
@@ -1898,14 +2039,21 @@ fun GEN_GLOBAL_SIMP_TAC mode
                   always present the same simpset and get the same state
                   back; the state is a function of that simpset and of the
                   prepared rules alone, so one built for an earlier suffix
-                  serves a later one and the scan stays linear. *)
+                  serves a later one and the scan stays linear.
+
+                  The key test is [Portable.pointer_eq], so the hits
+                  depend on [process_tags0] handing back its argument
+                  simpset itself on the marker-free path.  A version that
+                  rebuilt the simpset unconditionally would turn every hit
+                  into a miss and make this scan quadratic, with no test
+                  failing. *)
                val traversal_cache = ref NONE
                fun traversal_state invocation_ss =
                  let
                    fun build () =
                      let
                        val data =
-                         traversedata_for_ss_prepared invocation_ss prepared
+                         xtraversedata_for_ss_prepared invocation_ss prepared
                      in
                        traversal_cache := SOME (invocation_ss,data);
                        data
@@ -2062,7 +2210,7 @@ fun type_ssfrag ty =
 val CONSISTENT   = Portable.CONSISTENT
 val INCONSISTENT = Portable.INCONSISTENT;
 
-val dest_reducer = Traverse.dest_reducer
+val reducer_data = Traverse.reducer_data
 
 fun merge_names list =
   itlist (fn (SOME x) =>
@@ -2084,7 +2232,7 @@ fun pp_ssfrag (SSFRAG_CON {name,convs,rewrs,ac,dprocs,congs,...}) =
  let open Portable smpp
      val name = (case name of SOME s => s | NONE => "<anonymous>")
      val convs = map dest_convdata convs
-     val dps = case merge_names (map (#name o dest_reducer) dprocs)
+     val dps = case merge_names (map (#name o reducer_data) dprocs)
                 of NONE => []
                  | SOME n => [n]
      val pp_term = lift (Parse.term_pp_with_delimiters Hol_pp.pp_term)

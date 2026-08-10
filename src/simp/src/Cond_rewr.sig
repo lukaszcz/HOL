@@ -40,6 +40,15 @@ sig
   val mk_cond_rewrs  : controlled_thm -> controlled_thm list
   val IMP_EQ_CANON   : controlled_thm -> controlled_thm list
   val COND_REWR_CONV : string * thm -> bool ->
+                       (term list -> term -> thm) -> term list -> conv
+
+  (* As COND_REWR_CONV, but with the side-condition depth and the
+     permutative term order supplied by the caller rather than taken from
+     the user-level defaults.  This is the form a Traverse.CONTEXT_REDUCER
+     can hand its traversal's own settings to; COND_REWR_CONV is this one
+     at cond_depth = !stack_limit and term_ord = ac_term_ord. *)
+  val COND_REWR_CONV_WITH_CONTEXT :
+                       string * thm -> bool ->
                        {solver : term list -> term -> thm,
                         stack : term list,
                         cond_depth : int,

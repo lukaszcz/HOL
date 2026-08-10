@@ -87,12 +87,6 @@ fun position_map f values =
     recurse 1 values
   end
 
-fun goal_equal ((asl1, w1), (asl2, w2)) =
-  boolSyntax.goal_eq (asl1, w1) (asl2, w2)
-
-fun goals_equal (left, right) =
-  ListPair.allEq goal_equal (left, right)
-
 fun new_free_names_by_goal (asl, w) goals =
   let
     val old_frees = free_varsl (w :: asl)
@@ -1786,7 +1780,8 @@ fun selected_direct goals validation available =
   of
       NONE => NONE
     | SOME (_, direct) =>
-        if goals_equal (#1 (direct_result direct), goals) then SOME direct
+        if boolSyntax.goals_eq (#1 (direct_result direct)) goals then
+          SOME direct
         else NONE
 
 fun make_record target validation direct =
@@ -1906,7 +1901,7 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
           end
 
         fun base goal =
-          if goal_equal (goal, rendered) then
+          if boolSyntax.goal_eq goal rendered then
             seq.map remember (cascade cs (node, pos))
           else
             let

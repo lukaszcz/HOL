@@ -489,13 +489,10 @@ struct
       occ 0
     end
 
+  (* The Skolem case polls once per dependency argument, in occ_vars. *)
   fun varOccurMeasured checkpoint v =
     let
-      fun occs _ [] = false
-        | occs level (term :: terms) =
-            (checkpoint ();
-             occ level term orelse occs level terms)
-      and occ level term =
+      fun occ level term =
         (checkpoint ();
          case term of
              Var w =>
@@ -518,43 +515,35 @@ struct
 
   exception UNIFY
 
-  fun clearTo (State {ntrail, trail}) mark =
-    while !ntrail <> mark do
-      case !trail of
-          [] => raise Fail "blastTerm.clearTo: invalid trail mark"
-        | v :: vs =>
-            (v := NONE;
-             trail := vs;
-             ntrail := !ntrail - 1)
+  fun noHook () = ()
 
-  fun clearToWith note (State {ntrail, trail}) mark =
+  (* [poll] runs before each trail item is inspected, [note] after its
+     assignment has been restored. *)
+  fun clearTrail (poll, note, message) (State {ntrail, trail}) mark =
     while !ntrail <> mark do
-      case !trail of
-          [] => raise Fail "blastTerm.clearToWith: invalid trail mark"
-        | v :: vs =>
-            (v := NONE;
-             trail := vs;
-             ntrail := !ntrail - 1;
-             note ())
+      (poll ();
+       case !trail of
+           [] => raise Fail message
+         | v :: vs =>
+             (v := NONE;
+              trail := vs;
+              ntrail := !ntrail - 1;
+              note ()))
 
-  fun clearToMeasuredWith cleanup checkpoint
-        (state as State {ntrail, trail, ...}) mark =
-    let
-      fun clear () =
-        if !ntrail = mark then ()
-        else
-          (checkpoint ();
-           case !trail of
-               [] => raise Fail "blastTerm.clearToMeasured: invalid trail mark"
-             | v :: vs =>
-                 (v := NONE;
-                  trail := vs;
-                  ntrail := !ntrail - 1;
-                  clear ()))
-    in
-      clear ()
-      handle exn => (cleanup exn state mark; raise exn)
-    end
+  fun clearTo state mark =
+    clearTrail (noHook, noHook, "blastTerm.clearTo: invalid trail mark")
+      state mark
+
+  fun clearToWith note state mark =
+    clearTrail (noHook, note, "blastTerm.clearToWith: invalid trail mark")
+      state mark
+
+  fun clearToMeasuredWith cleanup checkpoint state mark =
+    (clearTrail
+       (checkpoint, noHook,
+        "blastTerm.clearToMeasured: invalid trail mark")
+       state mark
+     handle exn => (cleanup exn state mark; raise exn))
 
   fun clearToMeasured checkpoint state mark =
     clearToMeasuredWith
@@ -608,39 +597,10 @@ struct
 
       val weak = wkNormMeasured checkpoint
 
-      fun member_var _ [] = false
-        | member_var v (w :: ws) =
-            (checkpoint (); v = w orelse member_var v ws)
+      fun member_var value =
+        existsMeasured checkpoint (fn other => value = other)
 
-      fun occurs variable =
-        let
-          fun occs _ [] = false
-            | occs level (item :: items) =
-                (checkpoint ();
-                 occ level item orelse occs level items)
-          and occ level item =
-            (checkpoint ();
-             case item of
-                 Var other =>
-                   variable = other orelse
-                   (case !other of
-                        NONE => false
-                      | SOME body => occ level body)
-               | Skolem (_, args) =>
-                   let
-                     fun terms [] = []
-                       | terms (v :: vs) =
-                           (checkpoint (); Var v :: terms vs)
-                   in
-                     occs level (terms args)
-                   end
-               | Bound i => level <= i
-               | Abs (_, body) => occ (level + 1) body
-               | f $ x => occ level x orelse occ level f
-               | _ => false)
-        in
-          occ 0
-        end
+      val occurs = varOccurMeasured checkpoint
 
       fun update (term as Var v, other) =
             (checkpoint ();

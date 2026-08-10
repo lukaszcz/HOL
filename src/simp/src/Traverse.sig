@@ -87,6 +87,12 @@ sig
                  relation : (term * (term -> thm))} -> conv
        }
 
+  (* dest_reducer is the pre-CONTEXT_REDUCER interface, and has nowhere to
+     put the traversal's own settings: a context reducer seen through it
+     runs at the default side-condition depth (!Cond_rewr.stack_limit) and
+     the default term order (Cond_rewr.ac_term_ord).  reducer_data is the
+     accessor that preserves them. *)
+
   val dest_reducer : reducer ->
         {name : string option,
          initial: context,
@@ -95,6 +101,18 @@ sig
                  conv: term list -> term -> thm,
                  context: context,
                  stack:term list,
+                 relation : (term * (term -> thm))} -> conv}
+
+  val reducer_data : reducer ->
+        {name : string option,
+         initial: context,
+         addcontext : context * thm list -> context,
+         apply: {solver:term list -> term -> thm,
+                 conv: term list -> term -> thm,
+                 context: context,
+                 stack:term list,
+                 cond_depth:int,
+                 term_ord:term * term -> order,
                  relation : (term * (term -> thm))} -> conv}
 
   val addctxt : thm list -> reducer -> reducer
@@ -112,11 +130,7 @@ sig
                  dprocs: reducer list,
                  travrules: travrules,
                  relation: term,
-                 limit : int option,
-                 subgoaler : subgoaler option,
-                 solvers : ssolver list,
-                 cond_depth : int option,
-                 term_ord : (term * term -> order) option}
+                 limit : int option}
                 -> thm list -> conv
 
      Implements a procedure which tries to prove a term is related
@@ -151,26 +165,40 @@ sig
                          limit : int option,
                          dprocs: reducer list,
                          travrules: Travrules.travrules,
-                         relation: term,
-                         subgoaler: subgoaler option,
-                         solvers: ssolver list,
-                         cond_depth: int option,
-                         term_ord: (term * term -> order) option};
+                         relation: term};
 
    val TRAVERSE : traverse_data -> thm list -> conv
 
-   (* As TRAVERSE, but keep initial reducer additions separate from theorems
-      which extend generic solver and binder-capture contexts only. *)
+   (* The traversal-strategy settings that traverse_data does not carry.
+      An unset field takes the value TRAVERSE runs at: no subgoaler, no
+      extra solvers, !Cond_rewr.stack_limit as the side-condition depth
+      and Cond_rewr.ac_term_ord as the permutative term order.  The
+      unconfigured settings are default_config, so that
+        XTRAVERSE (data, default_config) = TRAVERSE data. *)
+   type traverse_config = {subgoaler: subgoaler option,
+                           solvers: ssolver list,
+                           cond_depth: int option,
+                           term_ord: (term * term -> order) option};
+
+   type xtraverse_data = traverse_data * traverse_config
+
+   val default_config : traverse_config
+
+   val XTRAVERSE : xtraverse_data -> thm list -> conv
+
+   (* As XTRAVERSE, but keep initial reducer additions separate from
+      theorems which extend generic solver and binder-capture contexts
+      only. *)
    val TRAVERSE_WITH_CONTEXT :
-       traverse_data ->
+       xtraverse_data ->
        {reducer_context : thm list, solver_context : thm list} -> conv
 
    (* Apply one reducer at the root, without descending.  Recursive
       side-condition proving still uses the full traversal. *)
-   val ROOT_REWRITE : traverse_data -> thm list -> conv
+   val ROOT_REWRITE : xtraverse_data -> thm list -> conv
 
    val ROOT_REWRITE_WITH_CONTEXT :
-       traverse_data ->
+       xtraverse_data ->
        {reducer_context : thm list, solver_context : thm list} -> conv
 
 end (* sig *)

@@ -11,10 +11,10 @@ Creates a simpset fragment containing one unsafe solver.
 
 `solver_ss solver` is an anonymous fragment with `solver` in its unsafe
 solver list and no rewrites, conversions, congruences, decision
-procedures, loopers, safe solvers, or procedural congruences. Adding the
-fragment to a simpset with `++` appends the solver unless that simpset's
-unsafe list already contains the same name. No duplicate active entry is
-created, and registration order is preserved.
+procedures, loopers, or safe solvers. Adding the fragment to a simpset
+with `++` appends the solver unless that simpset's unsafe list already
+contains the same name. No duplicate active entry is created, and
+registration order is preserved.
 
 Once merged into a simpset, the solver is available for simplifier
 side conditions and for unsafe-mode final solving. See

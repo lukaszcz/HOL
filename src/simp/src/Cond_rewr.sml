@@ -139,7 +139,7 @@ fun ac_term_ord(tm1,tm2) =
        vperm(tm1,tm2) andalso
        HOLset.equal(FVL [tm1] empty_tmset, FVL [tm2] empty_tmset)
 
-   fun COND_REWR_CONV (nm,th) bounded =
+   fun COND_REWR_CONV_WITH_CONTEXT (nm,th) bounded =
       let val eqn = snd (strip_imp (concl th))
           val isperm = is_var_perm (dest_eq eqn)
           val instth = HO_PART_MATCH (lhs o snd o strip_imp) th
@@ -195,6 +195,17 @@ fun ac_term_ord(tm1,tm2) =
         handle e => WRAP_ERR("COND_REWR_CONV (application)",e))
       end
       handle e  => WRAP_ERR("COND_REWR_CONV (construction) ",e);
+
+   (* The user-level defaults are read where they were read before the
+      settings were per-traversal: the depth at each application of the
+      conversion, the order once and for all. *)
+   fun COND_REWR_CONV nmth bounded =
+      let val conv = COND_REWR_CONV_WITH_CONTEXT nmth bounded
+      in
+        fn solver => fn stack => fn tm =>
+           conv {solver=solver, stack=stack, cond_depth= !stack_limit,
+                 term_ord=ac_term_ord} tm
+      end;
 
 
 val BOUNDED_t = mk_thy_const {Thy = "bool", Name = "BOUNDED",

@@ -329,6 +329,7 @@ in
   List.app (ignore o test) [
     (mktag "bool_ss -* COND_CLAUSES (1)", ["COND_CLAUSES"], T_t, T_t),
     (mktag "bool_ss -* COND_CLAUSES (2)", ["COND_CLAUSES"], F_t, F_t),
+    (mktag "bool_ss -* bool$COND_CLAUSES", ["bool$COND_CLAUSES"], T_t, T_t),
     (mktag "bool_ss -* COND_CLAUSES.1", ["COND_CLAUSES.1"], T_t, T_t),
     (mktag "bool_ss -* COND_CLAUSES.2", ["COND_CLAUSES.2"], T_t, “p:'b”),
     (mktag "bool_ss -* BETA_CONV", ["BETA_CONV"], beta_t, beta_t),
@@ -346,6 +347,9 @@ in
   ];
   List.app (ignore o excltest) [
     (mkex_tag "bool_ss & \"COND_CLAUSES.1\"", ["COND_CLAUSES.1"],
+     T_t, T_t),
+    (* the kernel Thy$Name spelling names the same rewrite as Thy.Name *)
+    (mkex_tag "bool_ss & \"bool$COND_CLAUSES\"", ["bool$COND_CLAUSES"],
      T_t, T_t),
     (mkex_tag "bool_ss & \"BETA_CONV\"", ["BETA_CONV"], beta_t, beta_t)
   ];
@@ -612,7 +616,7 @@ in
   val toy_solver =
     {name="excluded middle", solve=excluded_middle_solver}
   val solver_rewr =
-    Cond_rewr.COND_REWR_CONV ("solver_rwt",solver_rwt) false
+    Cond_rewr.COND_REWR_CONV_WITH_CONTEXT ("solver_rwt",solver_rwt) false
   val solver_reducer =
     Traverse.CONTEXT_REDUCER
       {name=SOME "solver test reducer",
@@ -623,12 +627,23 @@ in
            {solver=solver, stack=stack, cond_depth=cond_depth,
             term_ord=term_ord}}
   val pure_data = traversedata_for_ss pureSimps.pure_ss
+
+  (* The entry points that take traversal-strategy settings take them
+     alongside the traverse_data, so the tests below pair the two. *)
+  fun with_reducers (data : Traverse.traverse_data) rewriters dprocs limit
+      : Traverse.traverse_data =
+    {rewriters=rewriters, dprocs=dprocs, limit=limit,
+     relation= #relation data, travrules= #travrules data}
+  fun configure_data (data : Traverse.traverse_data)
+                     subgoaler solvers cond_depth term_ord
+      : Traverse.xtraverse_data =
+    (data, {subgoaler=subgoaler, solvers=solvers,
+            cond_depth=cond_depth, term_ord=term_ord})
+
   val solver_data =
-    {rewriters=[solver_reducer], dprocs=[],
-     relation= #relation pure_data, travrules= #travrules pure_data,
-     limit=NONE, subgoaler=NONE, solvers=[toy_solver],
-     cond_depth=NONE, term_ord=NONE}
-  val solver_conv = Traverse.TRAVERSE solver_data []
+    configure_data (with_reducers pure_data [solver_reducer] [] NONE)
+                   NONE [toy_solver] NONE NONE
+  val solver_conv = Traverse.XTRAVERSE solver_data []
 
   val _ = convtest
     ("solver pipeline: unsafe solver proves residual condition",
@@ -637,7 +652,7 @@ in
   val context_rwt =
     ASSUME ``context_p ==> ((context_f : 'a -> 'b) context_x = context_y)``
   val context_rewr =
-    Cond_rewr.COND_REWR_CONV ("context_rwt",context_rwt) false
+    Cond_rewr.COND_REWR_CONV_WITH_CONTEXT ("context_rwt",context_rwt) false
   val context_reducer =
     Traverse.CONTEXT_REDUCER
       {name=SOME "context test reducer",
@@ -653,12 +668,10 @@ in
         SOME th => th
       | NONE => raise prover_error "Condition absent from context"
   val context_data =
-    {rewriters=[context_reducer], dprocs=[],
-     relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=NONE, subgoaler=NONE,
-     solvers=[{name="context lookup",solve=context_solver}],
-     cond_depth=NONE, term_ord=NONE}
-  val context_conv = Traverse.TRAVERSE context_data []
+    configure_data (with_reducers bool_data [context_reducer] [] NONE)
+                   NONE [{name="context lookup",solve=context_solver}]
+                   NONE NONE
+  val context_conv = Traverse.XTRAVERSE context_data []
 
   val _ = convtest
     ("solver pipeline: congruence context theorem is visible",
@@ -669,12 +682,11 @@ in
   fun failing_solver _ _ =
     raise prover_error "Deliberate solver failure"
   val limited_data =
-    {rewriters= #rewriters bool_data, dprocs= #dprocs bool_data,
-     relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=SOME 1, subgoaler=NONE,
-     solvers=[{name="always fails",solve=failing_solver}],
-     cond_depth=NONE, term_ord=NONE}
-  val solver_failure_conv = Traverse.TRAVERSE limited_data [failed_rwt]
+    configure_data
+      (with_reducers bool_data (#rewriters bool_data) (#dprocs bool_data)
+                     (SOME 1))
+      NONE [{name="always fails",solve=failing_solver}] NONE NONE
+  val solver_failure_conv = Traverse.XTRAVERSE limited_data [failed_rwt]
 
   val _ = convtest
     ("solver pipeline: solver failure restores traversal limit",
@@ -696,12 +708,12 @@ in
       solved
     end
   val repeated_recurse_data =
-    {rewriters= #rewriters bool_data, dprocs= #dprocs bool_data,
-     relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=SOME 2, subgoaler=SOME repeated_recurse_subgoaler, solvers=[],
-     cond_depth=NONE, term_ord=NONE}
+    configure_data
+      (with_reducers bool_data (#rewriters bool_data) (#dprocs bool_data)
+                     (SOME 2))
+      (SOME repeated_recurse_subgoaler) [] NONE NONE
   val repeated_recurse_conv =
-    Traverse.TRAVERSE repeated_recurse_data [repeated_recurse_rwt]
+    Traverse.XTRAVERSE repeated_recurse_data [repeated_recurse_rwt]
 
   val _ = convtest
     ("solver pipeline: each recurse call restores its own limit snapshot",
@@ -726,12 +738,11 @@ in
        apply=passthrough_apply}
   fun raising_solver _ _ = raise Fail "non-HOL solver exception"
   val exception_data =
-    {rewriters=[passthrough_reducer], dprocs=[],
-     relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=NONE, subgoaler=SOME (fn _ => REFL),
-     solvers=[{name="raises Fail",solve=raising_solver}],
-     cond_depth=SOME 31, term_ord=SOME (fn _ => GREATER)}
-  val exception_conv = Traverse.TRAVERSE exception_data []
+    configure_data (with_reducers bool_data [passthrough_reducer] [] NONE)
+                   (SOME (fn _ => REFL))
+                   [{name="raises Fail",solve=raising_solver}]
+                   (SOME 31) (SOME (fn _ => GREATER))
+  val exception_conv = Traverse.XTRAVERSE exception_data []
 
   val _ = shouldfail
     {testfn=exception_conv,
@@ -745,13 +756,6 @@ in
     if !exception_controls_seen andalso !Cond_rewr.stack_limit = 4
     then OK()
     else die "configured traversal controls were not passed to the reducer"
-
-  fun configure_data (data : Traverse.traverse_data)
-                     subgoaler solvers cond_depth term_ord =
-    {rewriters= #rewriters data, dprocs= #dprocs data,
-     relation= #relation data, travrules= #travrules data,
-     limit= #limit data, subgoaler=subgoaler, solvers=solvers,
-     cond_depth=cond_depth, term_ord=term_ord}
 
   fun mk_depth_condition i =
     mk_eq (mk_var ("depth_l" ^ Int.toString i, Type.alpha),
@@ -773,8 +777,8 @@ in
   val depth40_data =
     configure_data pure_data NONE [] (SOME 40) NONE
   val depth_default_conv =
-    Traverse.TRAVERSE depth_default_data depth10_rwts
-  val depth40_conv = Traverse.TRAVERSE depth40_data depth10_rwts
+    Traverse.XTRAVERSE depth_default_data depth10_rwts
+  val depth40_conv = Traverse.XTRAVERSE depth40_data depth10_rwts
   val depth10_lhs = ``(depth10_f : 'a -> 'b) depth10_x``
   val depth10_rhs = ``depth10_y : 'b``
 
@@ -808,9 +812,9 @@ in
   val reverse_order_data =
     configure_data pure_data NONE [] NONE (SOME reverse_order)
   val reverse_order_conv =
-    Traverse.TRAVERSE reverse_order_data [boolTheory.EQ_SYM_EQ]
+    Traverse.XTRAVERSE reverse_order_data [boolTheory.EQ_SYM_EQ]
   val default_order_conv =
-    Traverse.TRAVERSE depth_default_data [boolTheory.EQ_SYM_EQ]
+    Traverse.XTRAVERSE depth_default_data [boolTheory.EQ_SYM_EQ]
 
   val _ = convtest
     ("term_ord: default order chooses the ascending equality",
@@ -825,7 +829,7 @@ in
   val once_order_data =
     configure_data pure_data NONE [] NONE (SOME (fn _ => LESS))
   val once_order_conv =
-    Traverse.TRAVERSE once_order_data [Once boolTheory.EQ_SYM_EQ]
+    Traverse.XTRAVERSE once_order_data [Once boolTheory.EQ_SYM_EQ]
 
   val _ = convtest
     ("term_ord: Once bypasses a custom rejecting order",
@@ -861,11 +865,9 @@ in
       {name=SOME "nested traversal control probe", initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt, apply=leak_controls_apply}
   val leak_controls_data =
-    {rewriters=[leak_controls_reducer], dprocs=[],
-     relation= #relation pure_data, travrules= #travrules pure_data,
-     limit=NONE, subgoaler=NONE, solvers=[],
-     cond_depth=NONE, term_ord=NONE}
-  val leak_controls_conv = Traverse.TRAVERSE leak_controls_data []
+    configure_data (with_reducers pure_data [leak_controls_reducer] [] NONE)
+                   NONE [] NONE NONE
+  val leak_controls_conv = Traverse.XTRAVERSE leak_controls_data []
 
   fun leak_outer_apply _ tm =
     if not (aconv tm leak_outer_lhs) then NO_CONV tm
@@ -881,11 +883,9 @@ in
       {name=SOME "cond_depth/term_ord leak probe", initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt, apply=leak_outer_apply}
   val leak_outer_data =
-    {rewriters=[leak_outer_reducer], dprocs=[],
-     relation= #relation pure_data, travrules= #travrules pure_data,
-     limit=NONE, subgoaler=NONE, solvers=[],
-     cond_depth=SOME 40, term_ord=SOME reverse_order}
-  val leak_outer_conv = Traverse.TRAVERSE leak_outer_data []
+    configure_data (with_reducers pure_data [leak_outer_reducer] [] NONE)
+                   NONE [] (SOME 40) (SOME reverse_order)
+  val leak_outer_conv = Traverse.XTRAVERSE leak_outer_data []
 
   val _ = convtest
     ("nested traversal probe runs under cond_depth forty",
@@ -964,12 +964,11 @@ in
       nested_inner_condition
     end
   val nested_inner_data =
-    {rewriters=[nested_inner_reducer], dprocs=[],
-     relation= #relation pure_data, travrules= #travrules pure_data,
-     limit=NONE, subgoaler=SOME (fn _ => REFL),
-     solvers=[{name="nested inner",solve=nested_inner_solver}],
-     cond_depth=SOME 23, term_ord=SOME Cond_rewr.ac_term_ord}
-  val nested_inner_conv = Traverse.TRAVERSE nested_inner_data []
+    configure_data (with_reducers pure_data [nested_inner_reducer] [] NONE)
+                   (SOME (fn _ => REFL))
+                   [{name="nested inner",solve=nested_inner_solver}]
+                   (SOME 23) (SOME Cond_rewr.ac_term_ord)
+  val nested_inner_conv = Traverse.XTRAVERSE nested_inner_data []
   val nested_outer_lhs =
     ``(nested_outer_f : bool -> bool) nested_outer_x``
   val nested_outer_rhs = ``nested_outer_y:bool``
@@ -997,11 +996,9 @@ in
       {name=SOME "nested outer rewrite", initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt, apply=nested_outer_apply}
   val nested_outer_data =
-    {rewriters=[nested_outer_reducer], dprocs=[],
-     relation= #relation pure_data, travrules= #travrules pure_data,
-     limit=NONE, subgoaler=NONE, solvers=[],
-     cond_depth=SOME 17, term_ord=SOME reverse_order}
-  val nested_outer_conv = Traverse.TRAVERSE nested_outer_data []
+    configure_data (with_reducers pure_data [nested_outer_reducer] [] NONE)
+                   NONE [] (SOME 17) (SOME reverse_order)
+  val nested_outer_conv = Traverse.XTRAVERSE nested_outer_data []
 
   val _ = convtest
     ("nested TRAVERSE calls keep independent traversal controls",
@@ -1163,11 +1160,11 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
 
   val solver_merge_ss =
     empty_ss ++ solver_ss unsafe_one ++ solver_ss unsafe_duplicate
-  val solver_merge_data = traversedata_for_ss solver_merge_ss
+  val solver_merge_config = traverseconfig_for_ss solver_merge_ss
 
   val _ = check "solver fragments append and deduplicate by name"
     (fn () =>
-       case #solvers solver_merge_data of
+       case #solvers solver_merge_config of
            [{name,...}] => name = "surface unsafe one"
          | _ => false)
 
@@ -1189,11 +1186,11 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
     |> add_unsafe_solver fragment_unsafe
     |> add_safe_solver fragment_safe
     |> remove_ssfrags ["surface strategy fragment"]
-  val replayed_duplicate_data = traversedata_for_ss replayed_duplicate
+  val replayed_duplicate_config = traverseconfig_for_ss replayed_duplicate
 
   val _ = check "history replay retains later duplicate solver additions"
     (fn () =>
-       length (#solvers replayed_duplicate_data) = 1 andalso
+       length (#solvers replayed_duplicate_config) = 1 andalso
        occurrences "surface fragment safe" (pp replayed_duplicate) = 1)
 
   val _ = check "history rebuild removes fragment strategy payloads"
@@ -1244,7 +1241,7 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
     |> set_cond_depth 37
     |> set_term_ord reverse_order
   val rebuilt = remove_ssfrags ["surface disposable"] configured
-  val rebuilt_data = traversedata_for_ss rebuilt
+  val rebuilt_config = traverseconfig_for_ss rebuilt
   val rebuilt_pp = pp rebuilt
   val order_probe = (``surface_order_x:'a``, ``surface_order_y:'a``)
   val subgoal_probe = ``surface_subgoal_x:'a``
@@ -1255,33 +1252,33 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
     (fn () =>
        occurrences "surface rebuilt looper" rebuilt_pp = 1 andalso
        occurrences "surface safe one" rebuilt_pp = 1 andalso
-       (case #solvers rebuilt_data of
+       (case #solvers rebuilt_config of
             [{name,...}] => name = "surface unsafe one"
           | _ => false) andalso
-       #cond_depth rebuilt_data = SOME 37 andalso
-       (case #term_ord rebuilt_data of
+       #cond_depth rebuilt_config = SOME 37 andalso
+       (case #term_ord rebuilt_config of
             SOME ord => ord order_probe = reverse_order order_probe
           | NONE => false) andalso
-       (case #subgoaler rebuilt_data of
+       (case #subgoaler rebuilt_config of
             SOME sg =>
               aconv (concl (sg prover_ctxt subgoal_probe))
                     (mk_eq(subgoal_probe,subgoal_probe))
           | NONE => false))
 
   val cleared = clear_rules configured
-  val cleared_data = traversedata_for_ss cleared
+  val cleared_config = traverseconfig_for_ss cleared
   val cleared_pp = pp cleared
 
   val _ = check "clear_rules drops loopers but keeps strategy and solvers"
     (fn () =>
        occurrences "surface rebuilt looper" cleared_pp = 0 andalso
        occurrences "surface safe one" cleared_pp = 1 andalso
-       (case #solvers cleared_data of
+       (case #solvers cleared_config of
             [{name,...}] => name = "surface unsafe one"
           | _ => false) andalso
-       #cond_depth cleared_data = SOME 37 andalso
-       Option.isSome (#subgoaler cleared_data) andalso
-       Option.isSome (#term_ord cleared_data))
+       #cond_depth cleared_config = SOME 37 andalso
+       Option.isSome (#subgoaler cleared_config) andalso
+       Option.isSome (#term_ord cleared_config))
 
   val _ = convtest
     ("clear_rules removes ordinary rewrite rules",
@@ -1320,7 +1317,8 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
          (SPEC ``surface_solver_x:bool`` boolTheory.EXCLUDED_MIDDLE))
   exception SURFACE_SOLVER_CONTEXT
   val tactic_rewr =
-    Cond_rewr.COND_REWR_CONV ("surface tactic rewrite",tactic_rwt) false
+    Cond_rewr.COND_REWR_CONV_WITH_CONTEXT
+      ("surface tactic rewrite",tactic_rwt) false
   val tactic_reducer =
     Traverse.CONTEXT_REDUCER
       {name=SOME "surface tactic reducer", initial=SURFACE_SOLVER_CONTEXT,
@@ -1388,70 +1386,28 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      ``surface_order_y:'a = surface_order_x``)
 
 (* ---------------------------------------------------------------------- *)
-(* Procedural congruences in simpset fragments.                            *)
+(* Congruence theorems in simpset fragments.                               *)
 (* ---------------------------------------------------------------------- *)
 
 local
-  val cond_cong =
-    REWRITE_RULE [GSYM boolTheory.AND_IMP_INTRO] boolTheory.COND_CONG
-  fun equality_refl {arg,...} = REFL arg
-  val cond_proc = Opening.CONGPROC equality_refl cond_cong
   val cond_base = pureSimps.pure_ss ++ boolSimps.BOOL_ss
   val cond_tm =
-    ``if congproc_p then
-        (congproc_f : bool -> 'a) congproc_p
-      else congproc_g congproc_p``
+    ``if surface_cong_p then
+        (surface_cong_f : bool -> 'a) surface_cong_p
+      else surface_cong_g surface_cong_p``
   val cond_result =
-    ``if congproc_p then
-        (congproc_f : bool -> 'a) T
-      else congproc_g F``
+    ``if surface_cong_p then
+        (surface_cong_f : bool -> 'a) T
+      else surface_cong_g F``
   val theorem_ss =
     cond_base ++
     SSFRAG
       {name=NONE, convs=[], rewrs=[], ac=[], filter=NONE, dprocs=[],
        congs=[boolTheory.COND_CONG]}
-  val proc_frag =
-    congproc_ss
-      {name="selftest COND procedure", relation=boolSyntax.equality,
-       proc=cond_proc}
-  val named_proc_frag =
-    name_ss "selftest procedural COND fragment" proc_frag
-  val procedural_ss = cond_base ++ named_proc_frag
-  val disposable =
-    name_ss "selftest congproc disposable" empty_ssfrag
-  val rebuild_seed = cond_base ++ disposable ++ named_proc_frag
-  val removed_rebuild =
-    remove_ssfrags ["selftest congproc disposable"] rebuild_seed
-  val excluded_rebuild =
-    exclude_ssfrags ["selftest congproc disposable"] rebuild_seed
-  val wrong_key_calls = ref 0
-  fun counted_proc relation args =
-    (wrong_key_calls := !wrong_key_calls + 1; cond_proc relation args)
-  val wrong_key_ss =
-    cond_base ++
-    congproc_ss
-      {name="selftest wrongly keyed COND procedure",
-       relation=boolSyntax.implication, proc=counted_proc}
 in
   val _ = convtest
-    ("theorem COND congruence reference behavior",
+    ("SSFRAG congs installs a COND congruence theorem",
      QCONV (SIMP_CONV theorem_ss []), cond_tm, cond_result)
-  val _ = convtest
-    ("congproc_ss merges a procedural congruence across ++",
-     QCONV (SIMP_CONV procedural_ss []), cond_tm, cond_result)
-  val _ = convtest
-    ("remove_ssfrags rebuild replays a congproc fragment",
-     QCONV (SIMP_CONV removed_rebuild []), cond_tm, cond_result)
-  val _ = convtest
-    ("exclude_ssfrags rebuild replays a congproc fragment",
-     QCONV (SIMP_CONV excluded_rebuild []), cond_tm, cond_result)
-  val _ = convtest
-    ("congproc_ss keys procedures by relation",
-     QCONV (SIMP_CONV wrong_key_ss []), cond_tm, cond_tm)
-  val _ =
-    (tprint "wrong-relation congproc remains dormant";
-     if !wrong_key_calls = 0 then OK()
-     else die "wrong-relation congproc was invoked")
 end
 
 (* ---------------------------------------------------------------------- *)
@@ -1676,15 +1632,127 @@ local
      printarg=term_to_string,
      checkexn=fn UNCHANGED => true | _ => false}
     ``selftest_catalogue_p:bool``
+  (* An unqualified Excl that matches nothing is reported and ignored:
+     names such as NORMEQ_CONV denote conversions that were never simpset
+     entries under that name, and theory scripts write them defensively
+     beside a temp_delsimps of the same name.  A namespaced Excl states
+     which kind of target is meant, so there matching nothing still
+     aborts. *)
+  val excl_true_t = ``T /\ (selftest_catalogue_p:bool)``
+  val excl_warnings = ref ([] : string list)
+  val excl_outstream = !Feedback.WARNING_outstream
+  val _ = Feedback.WARNING_outstream :=
+            (fn s => excl_warnings := s :: !excl_warnings)
+  val _ = convtest
+    ("unmatched unqualified Excl leaves the simpset alone",
+     SIMP_CONV bool_ss [Excl "definitely_not_a_theorem"],
+     excl_true_t, ``selftest_catalogue_p:bool``)
+  val unmatched_warned =
+    List.exists (String.isSubstring "definitely_not_a_theorem")
+                (!excl_warnings)
+  val _ = excl_warnings := []
+  val _ = convtest
+    ("Excl takes the kernel Thy$Name spelling",
+     SIMP_CONV bool_ss [Excl "bool$CONJ_COMM"],
+     excl_true_t, ``selftest_catalogue_p:bool``)
+  val kernel_name_matched = null (!excl_warnings)
+  val _ = Feedback.WARNING_outstream := excl_outstream
+
+  val _ = tprint "unmatched unqualified Excl is reported"
+  val _ =
+    if unmatched_warned then OK()
+    else die "unmatched unqualified Excl was ignored silently"
+
+  val _ = tprint "a kernel-spelled Excl resolves to its theorem"
+  val _ =
+    if kernel_name_matched then OK()
+    else die "Thy$Name Excl was treated as matching nothing"
+
   val _ = shouldfail
     {testfn=fn () =>
-       SIMP_CONV empty_ss [Excl "definitely_not_a_theorem"]
+       SIMP_CONV empty_ss [Excl "rule:definitely_not_a_theorem"]
          ``selftest_catalogue_p:bool``,
      printresult=thm_to_string,
-     printarg=K "unknown theorem exclusion",
+     printarg=K "unknown namespaced theorem exclusion",
      checkexn=fn HOL_ERR error =>
        String.isSubstring "did not match" (Feedback.message_of error)
        | _ => false} ()
+
+  (* A simpset entry keeps whatever theory its rewrite was named with, and
+     nothing requires that theory to be an ancestor of the one being
+     built.  Excl reaches such an entry by its qualified name in either
+     spelling: the stricter reading, which rejects the theory part
+     outright, would leave an installed rewrite with no name that excludes
+     it. *)
+  val unloaded_thy = "no_such_ancestor_selftest"
+  val unloaded_rwt =
+    ASSUME ``(unloaded_rule_left:'a) = unloaded_rule_right``
+  val unloaded_lhs = ``unloaded_rule_left:'a``
+  val unloaded_rhs = ``unloaded_rule_right:'a``
+  val unloaded_ss =
+    empty_ss ++ rewrites_with_names
+      [({Thy=unloaded_thy,Name="unloaded_identity"},unloaded_rwt)]
+  val _ = convtest
+    ("a rewrite named in an unloaded theory is installed",
+     SIMP_CONV unloaded_ss [], unloaded_lhs, unloaded_rhs)
+  fun unloaded_excluded (description,name) =
+    shouldfail
+      {testfn=SIMP_CONV unloaded_ss [Excl name],
+       printresult=thm_to_string,
+       printarg=K description,
+       checkexn=fn UNCHANGED => true | _ => false}
+      unloaded_lhs
+  val _ =
+    unloaded_excluded
+      ("Thy.Name Excl of a rewrite from an unloaded theory",
+       unloaded_thy ^ ".unloaded_identity")
+  val _ =
+    unloaded_excluded
+      ("Thy$Name Excl of a rewrite from an unloaded theory",
+       unloaded_thy ^ "$unloaded_identity")
+
+  (* [-*] is published with the stricter reading and keeps it. *)
+  val _ = shouldfail
+    {testfn=fn () => empty_ss -* [unloaded_thy ^ ".unloaded_identity"],
+     printresult=K "unexpected success",
+     printarg=K "-* on a name from an unloaded theory",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "bad theory name" (Feedback.message_of error)
+       | _ => false} ()
+
+  (* The exclusion is recorded in the simpset's history, and rebuilding a
+     simpset replays that record.  The replay has to reach the same
+     simpset, so it reapplies the exclusion as resolved rather than asking
+     again what the recorded name means. *)
+  val unloaded_after_excl =
+    unloaded_ss && [Excl (unloaded_thy ^ ".unloaded_identity")]
+  val unloaded_replayed =
+    exclude_ssfrags ["no_such_fragment_selftest"] unloaded_after_excl
+  val _ = shouldfail
+    {testfn=SIMP_CONV unloaded_replayed [],
+     printresult=thm_to_string,
+     printarg=K "simpset rebuilt over a recorded qualified exclusion",
+     checkexn=fn UNCHANGED => true | _ => false}
+    unloaded_lhs
+
+  (* A qualified name that neither an entry nor a theorem answers to stays
+     the diagnosed typo it was: reported, and removing nothing. *)
+  val unloaded_warnings = ref ([] : string list)
+  val unloaded_outstream = !Feedback.WARNING_outstream
+  val _ = Feedback.WARNING_outstream :=
+            (fn s => unloaded_warnings := s :: !unloaded_warnings)
+  val _ = convtest
+    ("unmatched qualified Excl leaves the simpset alone",
+     SIMP_CONV unloaded_ss [Excl (unloaded_thy ^ ".definitely_not_a_rule")],
+     unloaded_lhs, unloaded_rhs)
+  val unloaded_typo_warned =
+    List.exists (String.isSubstring "definitely_not_a_rule")
+                (!unloaded_warnings)
+  val _ = Feedback.WARNING_outstream := unloaded_outstream
+  val _ = tprint "unmatched qualified Excl is reported"
+  val _ =
+    if unloaded_typo_warned then OK()
+    else die "unmatched qualified Excl was ignored silently"
 
   val bounded_calls = ref 0
   fun bounded_conjunction_looper _ g =
@@ -2091,11 +2159,31 @@ val _ = let
           else die "split.case exclusion left the TypeBase split active"
       | _ => die "TypeBase split exclusion produced the wrong subgoals"
 
+  (* An unqualified name that matches nothing is reported and ignored, so
+     the TypeBase splits stay in force; the case: namespace still aborts. *)
+  val unmatched_case_run =
+    Feedback.quiet_warnings
+      (Lib.total
+         (fn () =>
+            #1 (VALID (SIMP_TAC (bool_ss ++ split_ss)
+                        [Excl "split.case definitely_not_a_type"])
+                      split_goal)))
+  val _ = tprint "unmatched split.case Excl leaves TypeBase splits alone"
+  val _ =
+    case unmatched_case_run () of
+        NONE => die "unmatched split.case exclusion aborted SIMP_TAC"
+      | SOME [([], result)] =>
+          if not (aconv result (#2 split_goal)) andalso
+             not (can (find_term is_cond) result)
+          then OK()
+          else die "unmatched split.case exclusion suppressed the split"
+      | SOME _ => die "unmatched split.case exclusion changed the subgoals"
+
   val _ = shouldfail
     {testfn=fn () =>
        VALID
          (SIMP_TAC (bool_ss ++ split_ss)
-           [Excl "split.case definitely_not_a_type"]) split_goal,
+           [Excl "case:definitely_not_a_type"]) split_goal,
      printresult=K "unexpected success",
      printarg=K "nonexistent split.case exclusion",
      checkexn=fn HOL_ERR error =>
@@ -2538,7 +2626,7 @@ val _ = let
     pureSimps.pure_ss ++ rewrites [boolTheory.AND_CLAUSES,root_rule]
   val _ = convtest
     ("root rewriting fully simplifies conditional-rule side conditions",
-     Traverse.ROOT_REWRITE (traversedata_for_ss root_ss) [root_context],
+     Traverse.ROOT_REWRITE (xtraversedata_for_ss root_ss) [root_context],
      root_target,root_result)
 
   val imp_goal = ([``imp_p:bool``],``imp_q:bool``)

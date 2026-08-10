@@ -105,8 +105,6 @@ sig
   val looper_ss      : string * (simpset -> tactic) -> ssfrag
   val solver_ss      : Traverse.ssolver -> ssfrag
   val safe_solver_ss : Traverse.ssolver -> ssfrag
-  val congproc_ss    : {name : string, relation : term,
-                        proc : Opening.congproc} -> ssfrag
   val std_conv_ss    : stdconvdata -> ssfrag
   val merge_ss       : ssfrag list -> ssfrag
   val name_ss        : string -> ssfrag -> ssfrag
@@ -176,6 +174,13 @@ sig
   val add_relsimp  : relsimpdata -> simpset -> simpset
 
   val traversedata_for_ss: simpset -> Traverse.traverse_data
+
+  (* The traversal-strategy settings that traverse_data does not carry;
+     xtraversedata_for_ss is the pair the extended Traverse entry points
+     take.  traversedata_for_ss alone therefore describes a traversal at
+     the default settings, not at the simpset's own. *)
+  val traverseconfig_for_ss: simpset -> Traverse.traverse_config
+  val xtraversedata_for_ss: simpset -> Traverse.xtraverse_data
 
 
    (* ---------------------------------------------------------------------

@@ -51,7 +51,7 @@ type cached_simpset = {generation : int, simpset : simpLib.simpset}
    it may discharge only goals justified without witness instantiation or
    unsafe search.  clasimp's safe solver is exactly that stack, so it is
    shared rather than restated here.  The unsafe solvers are not shared:
-   traversedata_for_ss hands them to every traversal whatever the safe
+   traverseconfig_for_ss hands them to every traversal whatever the safe
    solvers are, so one installed here runs inside the normalisation phase
    and has to be this module's choice rather than whatever clasimp's list
    happens to hold.  The list is set rather than appended to, so that a

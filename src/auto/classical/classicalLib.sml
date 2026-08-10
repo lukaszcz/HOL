@@ -16,10 +16,6 @@ fun rendered_goals node =
     render 1 (clasetGoal.goals node)
   end
 
-fun goal_lists_equal (left, right) =
-  ListPair.allEq (fn (goal1, goal2) =>
-    boolSyntax.goal_eq goal1 goal2) (left, right)
-
 fun initial_validation [theorem] = theorem
   | initial_validation _ =
       raise mk_HOL_ERR "classicalLib" "initial_validation"
@@ -62,7 +58,7 @@ fun safe_saturate cs goal =
     val final = List.foldl accept_safe_transition initial transitions
     val goals = rendered_goals (#node final)
   in
-    if goal_lists_equal (goals, [goal]) then seq.empty
+    if boolSyntax.goals_eq goals [goal] then seq.empty
     else seq.result (goals, #validation final)
   end
 
