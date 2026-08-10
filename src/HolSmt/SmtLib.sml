@@ -988,10 +988,9 @@ local
 
   fun is_set_type tm =
     let
-      val (element_ty, result_ty) = Type.dom_rng (Term.type_of tm)
+      val (_, result_ty) = Type.dom_rng (Term.type_of tm)
     in
-      Type.compare (result_ty, Type.bool) = EQUAL andalso
-      not (Lib.can Type.dom_rng element_ty)
+      Type.compare (result_ty, Type.bool) = EQUAL
     end
     handle Feedback.HOL_ERR _ => false
 
