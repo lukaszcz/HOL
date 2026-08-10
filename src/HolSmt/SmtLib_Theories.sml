@@ -1509,7 +1509,10 @@ in
       let
         val x = Term.variant (Term.all_varsl [relation, b])
           (Term.mk_var ("bag_partition_x", bagSyntax.base_type b))
-        val group = mk_bag_filter (Term.mk_comb (relation, x), b)
+        (* cvc5 forms each class around its representative, even when the
+           relation does not relate that element to itself. *)
+        val group = bagSyntax.mk_insert
+          (x, mk_bag_filter (Term.mk_comb (relation, x), b))
         val groups = pred_setSyntax.mk_image
           (Term.mk_abs (x, group), mk_set_of_bag b)
       in
