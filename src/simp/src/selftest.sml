@@ -2116,6 +2116,48 @@ in
   ()
 end
 
+(* RW_TAC's final IF_CASES_TAC phase solves all of these, so they mark a
+   conditional-splitting strength floor for the opt-in splitter.  The
+   expectations are fixed here rather than compared against RW_TAC live
+   because RW_TAC lives far downstream of this directory. *)
+val _ = let
+  fun solves goal =
+    null (#1 (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([],goal)))
+  fun check (name,goal) =
+    (tprint ("split_ss strength: " ^ name);
+     if solves goal then OK()
+     else die "goal was not solved by bool_ss ++ split_ss")
+in
+  List.app check
+    [("conditional chooses one branch",
+      ``(if b then x:'a else y) = x \/ (if b then x else y) = y``),
+     ("boolean conditional implication",
+      ``(if b then p else q) ==> p \/ q``),
+     ("conditional occurs in opposite equality sides",
+      ``(if b then x:'a else y) = x \/ y = (if b then x else y)``),
+     ("nested conditional condition",
+      ``(if (if b then c else d) then x:'a else y) = x \/
+        (if (if b then c else d) then x else y) = y``),
+     ("conditional under an application",
+      ``f (if b then x:'a else y) = f x \/
+        f (if b then x else y) = f y``)]
+end
+
+(* The gs family downstream differs only in this configuration record;
+   strip=false (bossLib's gns) must return assumptions whole rather than
+   stripped. *)
+val _ = let
+  val cfg = {elimvars=false,strip=false,droptrues=true,oldestfirst=true}
+  val goal = ([``p /\ q``], ``r:bool``)
+  val _ = tprint "global_simp_tac strip=false keeps assumptions whole"
+in
+  case #1 (VALID (global_simp_tac cfg bool_ss []) goal) of
+      [([asm], w)] =>
+        if aconv asm ``p /\ q`` andalso aconv w ``r:bool`` then OK()
+        else die "strip=false changed the goal"
+    | _ => die "strip=false produced the wrong subgoals"
+end
+
 (* ---------------------------------------------------------------------- *)
 (* Mutual global simplification and extended fixpoint controls.            *)
 

@@ -1,6 +1,7 @@
 Theory splitIntegration[bare]
 Libs
   HolKernel Parse boolLib Tactic Datatype simpLib splitLib boolSimps
+  optionTheory
 
 open HolKernel simpLib splitLib boolSimps
 
@@ -35,6 +36,14 @@ val local_goal =
 
 val _ = check_typebase_split "locally defined datatype" local_goal
 val _ = check_typebase_split "cached locally defined datatype" local_goal
+
+(* A datatype registered by an ancestor theory rather than defined here:
+   its TypeBase entry predates both the simpset and this theory, which is
+   the shape every pre-existing HOL datatype presents. *)
+val imported_goal =
+  ``P (option_CASE opt (n:'b) (f:'a -> 'b)) : bool``
+
+val _ = check_typebase_split "imported ancestor datatype" imported_goal
 
 val local_split_1 = type_split_of ``:split_local``
 val local_split_2 = type_split_of ``:split_local``
