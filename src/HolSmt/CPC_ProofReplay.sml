@@ -3648,7 +3648,17 @@ local
     let
       fun inferred_target () =
         case (name, args) of
-          (_, [target]) =>
+          ("str-len-concat-rec", [left, right, empty]) =>
+            if listSyntax.is_nil empty then
+              let
+                fun length sequence = Term.mk_comb
+                  (intSyntax.int_injection, listSyntax.mk_length sequence)
+              in
+                boolSyntax.mk_eq (length (listSyntax.mk_append (left, right)),
+                  intSyntax.mk_plus (length left, length right))
+              end
+            else raise ERR "string" "expected an empty sequence argument"
+        | (_, [target]) =>
             if Type.compare (Term.type_of target, Type.bool) = EQUAL then
               target
             else raise ERR "string"
