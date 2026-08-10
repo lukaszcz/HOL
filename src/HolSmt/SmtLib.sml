@@ -592,6 +592,9 @@ local
       else
         raise ERR "<builtin_symbols.x:int>" "not a numeral (negated?)")),
     (intSyntax.negate_tm, apfst_K "-"),
+    (* HOL Num is integer absolute value; both its source and result are
+       represented by SMT Int. *)
+    (intSyntax.Num_tm, apfst_K "abs"),
     (intSyntax.minus_tm, apfst_K "-"),
     (intSyntax.plus_tm, apfst_K "+"),
     (intSyntax.mult_tm, apfst_K "*"),
