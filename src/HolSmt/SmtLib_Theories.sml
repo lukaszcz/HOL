@@ -1098,7 +1098,7 @@ in
   (* The shared first-order sequence surface is solver-neutral.  Z3-only
      HO operations and cvc5-only operations live in their dialect packets
      below, so solver-targeted parsing rejects the other dialect. *)
-  structure Z3_Extensions =
+  structure Seq_Extensions =
   struct
 
     fun shared_term name attrs decl parse =
@@ -1145,9 +1145,7 @@ in
 
     val tyentries = [
       extension_entry "shared" "Seq" (parametric_attributes ["Element"])
-        ["(Seq Element)"] (K_zero_one sequence_ty),
-      extension_entry "Z3" "Set" (parametric_attributes ["Element"])
-        ["(Set Element)"] (K_zero_one set_ty)
+        ["(Seq Element)"] (K_zero_one sequence_ty)
     ]
 
     val tmentries = [
@@ -1190,9 +1188,22 @@ in
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
     val metadata =
-      metadata_of_entries "Z3_Extensions" "sort" tyentries @
-      metadata_of_entries "Z3_Extensions" "term" tmentries
+      metadata_of_entries "Seq_Extensions" "sort" tyentries @
+      metadata_of_entries "Seq_Extensions" "term" tmentries
 
+  end
+
+  structure Z3_Extensions =
+  struct
+    val tyentries = [
+      extension_entry "Z3" "Set" (parametric_attributes ["Element"])
+        ["(Set Element)"] (K_zero_one set_ty)
+    ]
+    val tydict = dictionary_of_entries tyentries
+    val tmdict :
+      (string, (string -> Term.term list -> Term.term list -> Term.term) list)
+        Redblackmap.dict = Redblackmap.mkDict String.compare
+    val metadata = metadata_of_entries "Z3_Extensions" "sort" tyentries
   end
 
   structure CVC5_Seq =

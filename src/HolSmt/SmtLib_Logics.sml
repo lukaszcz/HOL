@@ -87,15 +87,17 @@ local
     val tydict = union_dicts [Core.tydict, Ints.tydict, Reals.tydict,
       Reals_Ints.tydict, HO_Core.tydict, ArraysEx.tydict,
       Fixed_Size_BitVectors.tydict, FloatingPoint.tydict,
-      UnicodeStrings.tydict, Z3_Extensions.tydict]
+      UnicodeStrings.tydict, Seq_Extensions.tydict, Z3_Extensions.tydict]
     val tmdict = union_dicts [Core.tmdict, Ints.tmdict, Reals.tmdict,
       Reals_Ints.tmdict, HO_Core.tmdict, ArraysEx.tmdict,
       Fixed_Size_BitVectors.tmdict, FloatingPoint.tmdict,
-      UnicodeStrings.tmdict, Z3_Extensions.tmdict, BV_extension_tmdict]
+      UnicodeStrings.tmdict, Seq_Extensions.tmdict, Z3_Extensions.tmdict,
+      BV_extension_tmdict]
     val metadata = union_metadata [Core.metadata, Ints.metadata,
       Reals.metadata, Reals_Ints.metadata, HO_Core.metadata, ArraysEx.metadata,
       Fixed_Size_BitVectors.metadata, FloatingPoint.metadata,
-      UnicodeStrings.metadata, Z3_Extensions.metadata, BV_extension_metadata]
+      UnicodeStrings.metadata, Seq_Extensions.metadata,
+      Z3_Extensions.metadata, BV_extension_metadata]
   end
 
 in
@@ -1134,8 +1136,8 @@ in
 
   val set_dialect_logics = ["ALL", "HO_ALL"]
   val seq_dialect_logics =
-    ["QF_S", "QF_SLIA", "QF_SNIA", "ALL", "HO_ALL",
-     "HO_S", "HO_SLIA", "HO_SNIA"]
+    ["QF_S", "S", "QF_SLIA", "SLIA", "QF_SNIA", "SNIA", "ALL",
+     "HO_ALL", "HO_S", "HO_SLIA", "HO_SNIA"]
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
@@ -1145,7 +1147,19 @@ in
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
       solver = "Z3", logic = logic,
+      dictionaries = (Seq_Extensions.tydict, Seq_Extensions.tmdict)})
+    seq_dialect_logics
+
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
+      solver = "Z3", logic = logic,
       dictionaries = (Z3_Seq.tydict, Z3_Seq.tmdict)}) seq_dialect_logics
+
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
+      solver = "cvc5", logic = logic,
+      dictionaries = (Seq_Extensions.tydict, Seq_Extensions.tmdict)})
+    seq_dialect_logics
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {

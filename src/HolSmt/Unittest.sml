@@ -4062,7 +4062,7 @@ let
     "re.diff", "re.comp", "re.*", "re.+", "re.opt", "re.range",
     "re.^", "re.loop"
   ]
-  val seq_sort = find_symbol_metadata "Z3_Extensions" "sort" "Seq"
+  val seq_sort = find_symbol_metadata "Seq_Extensions" "sort" "Seq"
     all_metadata
   val set_member = find_symbol_metadata "CVC5_Set" "term" "set.member"
     SmtLib_Theories.CVC5_Set.metadata
