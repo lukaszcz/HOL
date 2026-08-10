@@ -3940,6 +3940,11 @@ local
                  surface_sort_compatible element actual_element then ()
               else type_error fn_name context loc NONE NONE
                 "ArraysEx store surface sort mismatch"
+          | ("store", [set_surface, _, _]) =>
+              if is_set_surface set_surface andalso #solver context = SOME "cvc5"
+              then type_error fn_name context loc NONE NONE
+                "Z3 Set store is unavailable in the cvc5 dialect"
+              else ()
           | ("ite", _ :: then_sort :: else_sort :: _) =>
               if surface_sorts_equivalent then_sort else_sort then ()
               else type_error fn_name context loc NONE NONE

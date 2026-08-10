@@ -4832,6 +4832,9 @@ in
   reject cvc5_options "cvc5 Z3 const"
     ("(set-logic ALL)\n(assert (= ((as const (Set Int)) false)\n" ^
      "((as const (Set Int)) false)))\n");
+  reject cvc5_options "cvc5 Z3 Set store"
+    ("(set-logic ALL)\n(declare-const s (Set Int))\n" ^
+     "(assert (= (store s 0 true) s))\n");
   reject cvc5_options "cvc5 infinite set.universe"
     ("(set-logic ALL)\n(assert (= (as set.universe (Set Int))\n" ^
      "  (as set.universe (Set Int))))\n");
