@@ -132,6 +132,9 @@ struct
       handle Feedback.HOL_ERR _ =>
         let
           val normalized = simpLib.SIMP_CONV seq_ss list_rewrites t
+            handle Conv.UNCHANGED =>
+              raise ERR "nth_decomposition_prove"
+                "normalization did not change the conclusion"
           val target = boolSyntax.rhs (Thm.concl normalized)
           val thm = with_metis_limit (fn () => metisLib.METIS_PROVE
             [head_tail_thm, head_tail_zero_thm, head_tail_zero_add_thm,
