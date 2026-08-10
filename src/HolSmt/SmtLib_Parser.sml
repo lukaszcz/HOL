@@ -2907,6 +2907,23 @@ local
     | _ => false
 
   (* The HOL Set bridge represents cvc5 sets by finite HOL predicates. *)
+  fun nested_collection_surface surface =
+    let
+      fun contains surface =
+        is_set_surface surface orelse is_bag_surface surface orelse
+        (case surface of
+           ConstructorSort (_, args) => List.exists contains args
+         | ArraySort (index, element) => contains index orelse contains element
+         | MapSort (domain, range) => contains domain orelse contains range
+         | _ => false)
+    in
+      case surface of
+        ConstructorSort (_, args) => List.exists contains args
+      | ArraySort (index, element) => contains index orelse contains element
+      | MapSort (domain, range) => contains domain orelse contains range
+      | _ => false
+    end
+
   fun finite_cvc5_set_element_type ty =
     Type.compare (ty, Type.bool) = EQUAL orelse
     (Lib.can wordsSyntax.dest_word_type ty andalso
@@ -3652,6 +3669,12 @@ local
       val surface_sort =
         case node_of sorted_var of
           SortedVar (_, sort) => surface_sort_of_ast context tydict sort
+      val _ =
+        if #solver context = SOME "cvc5" andalso
+           nested_collection_surface surface_sort then
+          type_error "checked_sorted_var" context (loc_of sorted_var)
+            NONE NONE "nested cvc5 Set/Bag sorts are unsupported"
+        else ()
     in
       (name, Term.mk_var (name, ty), surface_sort)
     end
