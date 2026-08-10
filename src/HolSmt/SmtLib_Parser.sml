@@ -1744,13 +1744,20 @@ local
     else if name = "seq.empty" then
       let
         val sequence_ty = parse_type get_token tydict
-        val element_ty = listSyntax.dest_list_type sequence_ty
-          handle Feedback.HOL_ERR _ =>
+        val smtstr_ty = Type.mk_thy_type {
+          Thy = "smtstring", Tyop = "smtstr", Args = []
+        }
+        val empty =
+          if listSyntax.is_list_type sequence_ty then
+            listSyntax.mk_nil (listSyntax.dest_list_type sequence_ty)
+          else if Type.compare (sequence_ty, smtstr_ty) = EQUAL then
+            SmtLib_String_Literal.mk_string_term ""
+          else
             raise ERR "parse_ascribed_term"
               "seq.empty expects a Seq sort"
         val _ = Library.expect_token ")" (get_token ())
       in
-        listSyntax.mk_nil element_ty
+        empty
       end
     else if name = "union" then
       let
@@ -3912,6 +3919,11 @@ local
                 else_surface
               else then_surface
             end
+        | (_, [arg]) =>
+            (case surface_component_of_type (Term.type_of t)
+                (checked_surface_sort arg) of
+               SOME surface_sort => surface_sort
+             | NONE => RigidSort (Term.type_of t))
         | _ =>
             (case Lib.get_first
                 (fn arg =>
