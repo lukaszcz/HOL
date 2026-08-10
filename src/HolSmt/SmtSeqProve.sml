@@ -51,6 +51,9 @@ struct
       visit t
     end
 
+  val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
+  fun with_metis_limit f = Lib.with_flag (metisTools.limit, metis_limit) f
+
   val list_rewrites = [
     listTheory.APPEND,
     listTheory.APPEND_ASSOC,
@@ -123,16 +126,16 @@ struct
 
   fun nth_decomposition_prove t =
     if mentions is_access t then
-      metisLib.METIS_PROVE
+      with_metis_limit (fn () => metisLib.METIS_PROVE
         [head_tail_thm, head_tail_zero_thm, head_tail_zero_add_thm,
-         nth_of_unit_thm] t
+         nth_of_unit_thm] t) ()
       handle Feedback.HOL_ERR _ =>
         let
           val normalized = simpLib.SIMP_CONV seq_ss list_rewrites t
           val target = boolSyntax.rhs (Thm.concl normalized)
-          val thm = metisLib.METIS_PROVE
+          val thm = with_metis_limit (fn () => metisLib.METIS_PROVE
             [head_tail_thm, head_tail_zero_thm, head_tail_zero_add_thm,
-             nth_of_unit_thm] target
+             nth_of_unit_thm] target) ()
         in
           Thm.EQ_MP (Thm.SYM normalized) thm
         end
