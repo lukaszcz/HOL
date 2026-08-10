@@ -392,7 +392,10 @@ local
         | _ => raise ERR "bag_sort_marker" "expected a Bag sort marker"
       fun as_sort_marker token indices args =
         case (token, indices, args) of
-          ("as", [], [term, _]) => term
+          ("as", [], [term, sort]) =>
+            if Type.compare (Term.type_of term, Term.type_of sort) = EQUAL
+            then term
+            else raise ERR "as_sort_marker" "qualification sort mismatch"
         | _ => raise ERR "as_sort_marker" "expected a qualified term"
       (* The source translation dictionary is deliberately as narrow as its
          declared logic.  CPC arithmetic lemmas may nevertheless contain
