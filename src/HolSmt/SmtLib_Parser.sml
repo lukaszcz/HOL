@@ -3244,17 +3244,30 @@ local
     {logic = logic, frames = frames, queries = query :: queries,
      surface_flags = surface_flags}
 
-  (* A cvc5 declaration returning a Set promises a finite result at every
-     argument tuple, not only when it happens to be a nullary declaration. *)
-  fun add_typechecked_finite_set set_tm domain state =
+  fun finite_bag_term bag_tm =
+    Term.mk_comb
+      (Term.mk_thy_const {Thy = "bag", Name = "FINITE_BAG",
+        Ty = Type.--> (Term.type_of bag_tm, Type.bool)}, bag_tm)
+
+  (* A cvc5 collection result is finite only for finite collection arguments.
+     The native Set/Bag sorts otherwise collapse HOL's arbitrary predicates
+     and multiplicity functions to a stronger problem. *)
+  fun add_typechecked_finite_set set_tm domain domain_surface state =
     let
       fun mk_vars _ [] = []
         | mk_vars index (ty :: tys) =
             Term.mk_var ("finite_set_arg" ^ Int.toString index, ty) ::
             mk_vars (index + 1) tys
       val vars = mk_vars 0 domain
+      fun guard (var, surface) =
+        if is_set_surface surface then SOME (pred_setSyntax.mk_finite var)
+        else if is_bag_surface surface then SOME (finite_bag_term var)
+        else NONE
+      val guards = List.mapPartial guard (ListPair.zip (vars, domain_surface))
+      val result = pred_setSyntax.mk_finite (Term.list_mk_comb (set_tm, vars))
       val finite = boolSyntax.list_mk_forall
-        (vars, pred_setSyntax.mk_finite (Term.list_mk_comb (set_tm, vars)))
+        (vars, case guards of [] => result
+         | _ => boolSyntax.mk_imp (boolSyntax.list_mk_conj guards, result))
     in
       update_current_typecheck_frame
         (fn frame => {
@@ -3268,22 +3281,22 @@ local
         }) state
     end
 
-  fun finite_bag_term bag_tm =
-    Term.mk_comb
-      (Term.mk_thy_const {Thy = "bag", Name = "FINITE_BAG",
-        Ty = Type.--> (Term.type_of bag_tm, Type.bool)}, bag_tm)
-
-  (* A cvc5 declaration returning a Bag promises a finite result at every
-     argument tuple, not only when it happens to be a nullary declaration. *)
-  fun add_typechecked_finite_bag bag_tm domain state =
+  fun add_typechecked_finite_bag bag_tm domain domain_surface state =
     let
       fun mk_vars _ [] = []
         | mk_vars index (ty :: tys) =
             Term.mk_var ("finite_bag_arg" ^ Int.toString index, ty) ::
             mk_vars (index + 1) tys
       val vars = mk_vars 0 domain
+      fun guard (var, surface) =
+        if is_set_surface surface then SOME (pred_setSyntax.mk_finite var)
+        else if is_bag_surface surface then SOME (finite_bag_term var)
+        else NONE
+      val guards = List.mapPartial guard (ListPair.zip (vars, domain_surface))
+      val result = finite_bag_term (Term.list_mk_comb (bag_tm, vars))
       val finite = boolSyntax.list_mk_forall
-        (vars, finite_bag_term (Term.list_mk_comb (bag_tm, vars)))
+        (vars, case guards of [] => result
+         | _ => boolSyntax.mk_imp (boolSyntax.list_mk_conj guards, result))
     in
       update_current_typecheck_frame
         (fn frame => {
@@ -5342,12 +5355,12 @@ local
             case peek_signatures (sigdict, name) of
               SOME (entry :: _) => entry
             | _ => raise ERR "add_finite_definition" "missing definition"
-          val {tm, domain, range_surface, ...} = sig_entry
+          val {tm, domain, domain_surface, range_surface, ...} = sig_entry
         in
           if cvc5_set_surface range_surface then
-            add_typechecked_finite_set tm domain command_state
+            add_typechecked_finite_set tm domain domain_surface command_state
           else if cvc5_bag_surface range_surface then
-            add_typechecked_finite_bag tm domain command_state
+            add_typechecked_finite_bag tm domain domain_surface command_state
           else command_state
         end
       fun typecheck_define_fun_command command_name name vars range body state =
@@ -5443,9 +5456,9 @@ local
               (tydict, tmdict, sigdict) command_state
             val command_state =
               if cvc5_set_surface range_surface then
-                add_typechecked_finite_set set_tm [] command_state
+                add_typechecked_finite_set set_tm [] [] command_state
               else if cvc5_bag_surface range_surface then
-                add_typechecked_finite_bag set_tm [] command_state
+                add_typechecked_finite_bag set_tm [] [] command_state
               else command_state
           in
             finish command_state
@@ -5474,9 +5487,11 @@ local
               (tydict, tmdict, sigdict) command_state
             val command_state =
               if cvc5_set_surface range_surface then
-                add_typechecked_finite_set set_tm domain command_state
+                add_typechecked_finite_set set_tm domain domain_surface
+                  command_state
               else if cvc5_bag_surface range_surface then
-                add_typechecked_finite_bag set_tm domain command_state
+                add_typechecked_finite_bag set_tm domain domain_surface
+                  command_state
               else command_state
           in
             finish command_state
