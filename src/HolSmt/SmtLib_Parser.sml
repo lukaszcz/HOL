@@ -5566,6 +5566,7 @@ local
               dest_typecheck_state "declare-fun" state
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
+            val domain_asts = domain
             val domain_surface = List.map
               (surface_sort_of_ast (context "declare-fun") tydict) domain
             val domain = List.map
@@ -5576,7 +5577,7 @@ local
               typecheck_sort (context "declare-fun") tydict range
             val _ = List.app (fn (sort, surface) =>
               reject_nested_cvc5_collection "declare-fun" sort surface)
-              (ListPair.zip (domain, domain_surface))
+              (ListPair.zip (domain_asts, domain_surface))
             val _ = reject_nested_cvc5_collection "declare-fun" range
               range_surface
             val name_text = located_string_node name
