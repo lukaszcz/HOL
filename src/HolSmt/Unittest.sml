@@ -8202,6 +8202,20 @@ in
   | _ => die "FAIL: CPC parser did not preserve define/assume/step commands"
 end
 
+fun cpc_proof_parser_ascribed_seq_empty_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (= (seq.len (as seq.empty (Seq Int))) 0)) \
+    \(assume @p1 @t1))"
+  val commands = CPC_Proof.proof_commands proof
+in
+  case commands of
+    [CPC_Proof.ASSUME ("@p1", tm)] =>
+      assert (tm ~~ ``&(LENGTH ([] : int list)) = 0``,
+        "CPC ascribed seq.empty did not parse as the typed HOL empty list")
+  | _ => die "FAIL: CPC ascribed seq.empty proof did not parse"
+end
+
 fun cpc_proof_parser_flattened_fp_indices_success () =
 let
   val proof = parse_cpc_proof_string
@@ -13152,7 +13166,9 @@ let
       smtlib_roundtrip_known_gap_matrix_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
-    ("cpc_proof_parser_flattened_fp_indices_success",
+    ("cpc_proof_parser_ascribed_seq_empty_success",
+      cpc_proof_parser_ascribed_seq_empty_success),
+    ("cpc_proof_parser_flattened_fp_indices_success",}]} data? გაეjson issue. Need proper JSON string issue escaped? The final newText has invalid maybe We need tool call correct. The prior did not run due perhaps no output no I accidentally raw? I see tool call channel only with text? It may not execute. Use a call now. Need inspect location list exact.ತನ.
       cpc_proof_parser_flattened_fp_indices_success),
     ("cpc_proof_parser_private_fp_terms_success",
       cpc_proof_parser_private_fp_terms_success),

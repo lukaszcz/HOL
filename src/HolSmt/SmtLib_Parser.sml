@@ -1741,6 +1741,17 @@ local
       in
         Term.mk_abs (payload, Term.mk_abs (index, payload))
       end
+    else if name = "seq.empty" then
+      let
+        val sequence_ty = parse_type get_token tydict
+        val element_ty = listSyntax.dest_list_type sequence_ty
+          handle Feedback.HOL_ERR _ =>
+            raise ERR "parse_ascribed_term"
+              "seq.empty expects a Seq sort"
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        listSyntax.mk_nil element_ty
+      end
     else if name = "union" then
       let
         val array_ty = parse_type get_token tydict
