@@ -1183,7 +1183,8 @@ in
         (K_zero_two listSyntax.mk_isprefix),
       shared_term "seq.suffixof" no_attributes
         ["(seq.suffixof (Seq A) (Seq A) Bool)"]
-        (K_zero_two (fn (s, t) => rich_list_app "IS_SUFFIX" [s, t]))
+        (K_zero_two (fn (suffix, sequence) =>
+          rich_list_app "IS_SUFFIX" [sequence, suffix]))
     ]
 
     val tydict = dictionary_of_entries tyentries

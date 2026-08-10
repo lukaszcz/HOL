@@ -4538,9 +4538,13 @@ local
       | TermForall (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
             term_ast vars body boolSyntax.list_mk_forall
+            (fn (guards, body) =>
+              boolSyntax.mk_imp (boolSyntax.list_mk_conj guards, body))
       | TermExists (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
             term_ast vars body boolSyntax.list_mk_exists
+            (fn (guards, body) =>
+              boolSyntax.mk_conj (boolSyntax.list_mk_conj guards, body))
       | TermLambda (vars, body) =>
           let
             val _ = note_surface_event context LambdaUsed
@@ -4553,7 +4557,7 @@ local
     end
 
   and typecheck_binder_with_options elaborate_datatypes context
-      (tydict, tmdict, sigdict) term_ast vars body mk_binder =
+      (tydict, tmdict, sigdict) term_ast vars body mk_binder relativize =
     let
       val vars = List.map (checked_sorted_var context tydict) vars
       val (tmdict, sigdict) =
@@ -4567,9 +4571,22 @@ local
           (tydict, tmdict, sigdict) body
       val body = expect_checked_sort "typecheck_binder" context (loc_of body)
         Type.bool body_checked
+      val bound_vars = List.map (fn (_, var, _) => var) vars
+      val guards =
+        if #solver context = SOME "cvc5" then
+          List.mapPartial
+            (fn var =>
+              if pred_setSyntax.is_set_type (Term.type_of var) then
+                SOME (pred_setSyntax.mk_finite var)
+              else if bagSyntax.is_bag_ty (Term.type_of var) then
+                SOME (finite_bag_term var)
+              else NONE)
+            bound_vars
+        else []
+      val body = if List.null guards then body else relativize (guards, body)
     in
       checked_term_of
-        (mk_binder (List.map (fn (_, var, _) => var) vars, body))
+        (mk_binder (bound_vars, body))
     end
 
   and typecheck_lambda_with_options elaborate_datatypes context

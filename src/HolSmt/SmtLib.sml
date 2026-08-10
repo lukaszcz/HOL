@@ -111,7 +111,17 @@ fun check_goal_operator_availability {solver, version} (assumptions, conclusion)
       solver = registered_solver andalso
       (case version of NONE => true
        | SOME target_version =>
-           List.exists (fn registered => registered = target_version) versions)
+           let
+             val resolved =
+               if solver = "Z3" then
+                 Library.resolve_solver_version {
+                   solver = solver, supported = versions,
+                   version = target_version
+                 }
+               else target_version
+           in
+             List.exists (fn registered => registered = resolved) versions
+           end)
     fun check ({hol_head, operator, ...} : operator_availability) =
       if occurs hol_head andalso
          not (List.exists available (List.filter
@@ -2773,29 +2783,105 @@ local
       in
         (tydict, (decls, text))
       end
+    fun bag_sort tydict bag =
+      let
+        val element_ty = bag_element_type bag
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+      in
+        (tydict, (decls, "(Bag " ^ element_sort ^ ")"))
+      end
+    fun bag_array_sort tydict bag =
+      let
+        val element_ty = bag_element_type bag
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+      in
+        (tydict, (decls, "(Array " ^ element_sort ^ " Int)"))
+      end
+    fun selected_bag_sort tydict bag =
+      case !current_bag_backend of
+        CVC5NativeBag => bag_sort tydict bag
+      | _ => bag_array_sort tydict bag
+    fun bound_variable_sort tydict var =
+      if !current_set_backend <> CVC5ArraySet andalso
+         is_marked_set_term var then
+        set_sort tydict var
+      else if is_marked_bag_term var then
+        selected_bag_sort tydict var
+      else
+        translate_type regime (tydict, Term.type_of var)
+    fun fallback_dependencies expression =
+      let
+        val free_vars = Term.free_vars expression
+      in
+        List.filter
+          (fn (var, _) => List.exists (Term.aconv var) free_vars)
+          (Redblackmap.listItems bounds)
+      end
+    fun fallback_application name dependencies =
+      sexpr name (List.map Lib.snd dependencies)
+    fun fallback_array_definition prefix range_sort element_type
+        acc expression args body =
+      let
+        val dependencies = fallback_dependencies expression
+      in
+        case Redblackmap.peek (Lib.snd acc, (expression, 0)) of
+          SOME name =>
+            (acc, ([], fallback_application name dependencies))
+        | NONE =>
+          let
+            val (tydict, (typedecls, element_sort)) =
+              translate_type regime (Lib.fst acc, element_type)
+            val tmdict = Lib.snd acc
+            val name = prefix ^ Int.toString (Redblackmap.numItems tmdict)
+            val tmdict = Redblackmap.insert (tmdict, (expression, 0), name)
+            val binder = prefix ^ "_x" ^
+              Int.toString (Redblackmap.numItems tmdict)
+            val (tydict, dependency_declsorts) =
+              Lib.foldl_map
+                (fn (dict, (var, dependency_name)) =>
+                  let
+                    val (dict, (decls, sort)) =
+                      bound_variable_sort dict var
+                  in
+                    (dict, ((decls, "(" ^ dependency_name ^ " " ^
+                      sort ^ ")"), sort))
+                  end)
+                (tydict, dependencies)
+            val (dependency_data, dependency_sorts) =
+              Lib.split dependency_declsorts
+            val (dependency_typedecls, dependency_decls) =
+              Lib.split dependency_data
+            val array_sort = "(Array " ^ element_sort ^ " " ^
+              range_sort ^ ")"
+            val declaration =
+              if List.null dependency_sorts then
+                "(declare-const " ^ name ^ " " ^ array_sort ^ ")\n"
+              else
+                "(declare-fun " ^ name ^ " (" ^
+                String.concatWith " " dependency_sorts ^ ") " ^
+                array_sort ^ ")\n"
+            val application = fallback_application name dependencies
+            val quantified_decls = dependency_decls @
+              ["(" ^ binder ^ " " ^ element_sort ^ ")"]
+            val definition = "(assert (forall (" ^
+              String.concatWith " " quantified_decls ^ ") (= (select " ^
+              application ^ " " ^ binder ^ ") " ^
+              body binder args ^ ")))\n"
+          in
+            ((tydict, tmdict),
+             (typedecls @ List.concat dependency_typedecls @
+                [declaration, definition],
+              application))
+          end
+      end
     (* cvc5's non-finite bridge deliberately stays in the ordinary array
        model.  Pointwise set operations are named arrays constrained by a
        quantified definition, rather than cvc5's finite set operators. *)
     fun fallback_set_definition acc set args body =
-      case Redblackmap.peek (Lib.snd acc, (set, 0)) of
-        SOME name => (acc, ([], name))
-      | NONE =>
-        let
-          val element_ty = set_element_type set
-          val (tydict, (typedecls, element_sort)) =
-            translate_type regime (Lib.fst acc, element_ty)
-          val tmdict = Lib.snd acc
-          val name = "set" ^ Int.toString (Redblackmap.numItems tmdict)
-          val tmdict = Redblackmap.insert (tmdict, (set, 0), name)
-          val binder = "set_x" ^ Int.toString (Redblackmap.numItems tmdict)
-          val declaration = "(declare-const " ^ name ^ " (Array " ^
-            element_sort ^ " Bool))\n"
-          val definition = "(assert (forall ((" ^ binder ^ " " ^
-            element_sort ^ ")) (= (select " ^ name ^ " " ^ binder ^ ") " ^
-            body binder args ^ ")))\n"
-        in
-          ((tydict, tmdict), (typedecls @ [declaration, definition], name))
-        end
+      fallback_array_definition "set" "Bool" (set_element_type set)
+        acc set args body
     fun native_sequence_symbol rator rands =
       !current_native_sequence_emission andalso
       (listSyntax.is_nil tm orelse
@@ -2862,7 +2948,11 @@ local
              else if same_const rator seq_prefix_tm then
                emit "seq.prefixof" rands
              else if same_const rator seq_suffix_tm then
-               emit "seq.suffixof" rands
+               (case rands of
+                  [sequence, suffix] =>
+                    emit "seq.suffixof" [suffix, sequence]
+                | _ => raise ERR "native_sequence_builtin"
+                    "wrong suffix arity")
              else if same_const rator seq_lupdate_tm then
                (case rands of [element, index, sequence] =>
                   emit "seq.update"
@@ -3026,26 +3116,6 @@ local
         else
           raise ERR "native_set_builtin" "unsupported native set term"
       end
-    fun bag_sort tydict bag =
-      let
-        val element_ty = bag_element_type bag
-        val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
-      in
-        (tydict, (decls, "(Bag " ^ element_sort ^ ")"))
-      end
-    fun bag_array_sort tydict bag =
-      let
-        val element_ty = bag_element_type bag
-        val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
-      in
-        (tydict, (decls, "(Array " ^ element_sort ^ " Int)"))
-      end
-    fun selected_bag_sort tydict bag =
-      case !current_bag_backend of
-        CVC5NativeBag => bag_sort tydict bag
-      | _ => bag_array_sort tydict bag
     fun bag_constant tydict bag =
       let
         val element_ty = bag_element_type bag
@@ -3059,25 +3129,8 @@ local
         (tydict, (decls, text))
       end
     fun fallback_bag_definition acc bag args body =
-      case Redblackmap.peek (Lib.snd acc, (bag, 0)) of
-        SOME name => (acc, ([], name))
-      | NONE =>
-        let
-          val element_ty = bag_element_type bag
-          val (tydict, (typedecls, element_sort)) =
-            translate_type regime (Lib.fst acc, element_ty)
-          val tmdict = Lib.snd acc
-          val name = "bag" ^ Int.toString (Redblackmap.numItems tmdict)
-          val tmdict = Redblackmap.insert (tmdict, (bag, 0), name)
-          val binder = "bag_x" ^ Int.toString (Redblackmap.numItems tmdict)
-          val declaration = "(declare-const " ^ name ^ " (Array " ^
-            element_sort ^ " Int))\n"
-          val definition = "(assert (forall ((" ^ binder ^ " " ^
-            element_sort ^ ")) (= (select " ^ name ^ " " ^ binder ^ ") " ^
-            body binder args ^ ")))\n"
-        in
-          ((tydict, tmdict), (typedecls @ [declaration, definition], name))
-        end
+      fallback_array_definition "bag" "Int" (bag_element_type bag)
+        acc bag args body
     fun z3_bag_helper name definition =
       if List.exists (fn known => known = name) (!current_bag_helpers) then []
       else
@@ -3625,13 +3678,7 @@ local
           raise ERR "translate_term" "not a binder"
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
       fun variable_type (tydict, var) =
-        if !current_set_backend <> CVC5ArraySet andalso
-           is_marked_set_term var then
-          set_sort tydict var
-        else if is_marked_bag_term var then
-          selected_bag_sort tydict var
-        else
-          translate_type regime (tydict, Term.type_of var)
+        bound_variable_sort tydict var
       val (tydict, vardecltys) =
         Lib.foldl_map variable_type (tydict, vars)
       val (vardeclss, vartys) = Lib.split vardecltys
@@ -4786,7 +4833,7 @@ in
     in
       Lib.apsnd (fn xs => xs @ tail)
         (goal_to_SmtLib_aux request apply_operator policy target
-           (not get_proof) goal)
+           true goal)
     end
 
   fun goal_to_SmtLib_gen opts goal =

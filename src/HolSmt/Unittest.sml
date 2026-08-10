@@ -4568,7 +4568,7 @@ in
   assert_builder "shared seq.prefixof" z3_options "(seq.prefixof xs ys)"
     (listSyntax.mk_isprefix (xs, ys));
   assert_builder "shared seq.suffixof" cvc5_options "(seq.suffixof xs ys)"
-    (rich_list_app "IS_SUFFIX" [xs, ys]);
+    (rich_list_app "IS_SUFFIX" [ys, xs]);
   assert_builder "cvc5 seq.update" cvc5_options
     "(= (seq.update xs x zs) ys)"
     (boolSyntax.mk_eq (holsmt_app "smt_seq_update" [xs, x, zs], ys));
@@ -4705,6 +4705,11 @@ let
     (intSyntax.int_ty, int_set_ty))
   val finite_function = boolSyntax.mk_forall (finite_set_arg,
     pred_setSyntax.mk_finite (Term.mk_comb (sf, finite_set_arg)))
+  val quantified_set = Term.mk_var ("u", int_set_ty)
+  val quantified_member = pred_setSyntax.mk_in (zero, quantified_set)
+  val quantified_card = boolSyntax.mk_eq
+    (Term.mk_comb (intSyntax.int_injection,
+       pred_setSyntax.mk_card quantified_set), zero)
 in
   assert_builder "cvc5 set.member" cvc5_options "(set.member x s)"
     (pred_setSyntax.mk_in (x, s));
@@ -4764,6 +4769,14 @@ in
   assert_builder "cvc5 set.universe" cvc5_options
     "(= (as set.universe (Set Int)) (as set.universe (Set Int)))"
     (boolSyntax.mk_eq (univ, univ));
+  assert_builder "cvc5 forall Set binder" cvc5_options
+    "(forall ((u (Set Int))) (= (set.card u) 0))"
+    (boolSyntax.mk_forall (quantified_set, boolSyntax.mk_imp
+      (pred_setSyntax.mk_finite quantified_set, quantified_card)));
+  assert_builder "cvc5 exists Set binder" cvc5_options
+    "(exists ((u (Set Int))) (set.member 0 u))"
+    (boolSyntax.mk_exists (quantified_set, boolSyntax.mk_conj
+      (pred_setSyntax.mk_finite quantified_set, quantified_member)));
   assert_builder "Z3 select[Set]" z3_options "(select s x)"
     (pred_setSyntax.mk_in (x, s));
   assert_builder "Z3 store[Set] true" z3_options "(= (store s x true) t)"
@@ -4780,6 +4793,9 @@ in
     (boolSyntax.mk_eq (pred_setSyntax.mk_compl s, s));
   assert_builder "Z3 subset" z3_options "(subset s t)"
     (pred_setSyntax.mk_subset (s, t));
+  assert_builder "Z3 forall Set binder" z3_options
+    "(forall ((u (Set Int))) (select u 0))"
+    (boolSyntax.mk_forall (quantified_set, quantified_member));
   assert_builder "Z3 const false" z3_options
     "(= ((as const (Set Int)) false) ((as const (Set Int)) false))"
     (boolSyntax.mk_eq (empty, empty));
@@ -4998,6 +5014,11 @@ let
     | _ => die "cvc5 bag-alias test did not produce one check-sat query"
   val inferred_empty = assertion cvc5_options "(= (bag.card bag.empty) 0)"
   val bool_empty = bagSyntax.mk_bag ([], Type.bool)
+  val quantified_bag = Term.mk_var ("u", bag_ty)
+  val quantified_bag_member = bag_in (zero, quantified_bag)
+  val quantified_bag_card = boolSyntax.mk_eq
+    (Term.mk_comb (intSyntax.int_injection,
+       bagSyntax.mk_card quantified_bag), zero)
 in
   assert_builder "cvc5 bag literal" "(= (bag x 2) b)"
     (boolSyntax.mk_eq (literal, b));
@@ -5070,6 +5091,14 @@ in
   assert_builder "cvc5 bag.partition"
     "(= (bag.partition relation b) (bag.partition relation b))"
     (boolSyntax.mk_eq (partition, partition));
+  assert_builder "cvc5 forall Bag binder"
+    "(forall ((u (Bag Int))) (= (bag.card u) 0))"
+    (boolSyntax.mk_forall (quantified_bag, boolSyntax.mk_imp
+      (finite_bag quantified_bag, quantified_bag_card)));
+  assert_builder "cvc5 exists Bag binder"
+    "(exists ((u (Bag Int))) (bag.member 0 u))"
+    (boolSyntax.mk_exists (quantified_bag, boolSyntax.mk_conj
+      (finite_bag quantified_bag, quantified_bag_member)));
   assert (List.exists (Term.aconv (finite_bag b)) transfer_hypotheses,
     "cvc5 Bag declaration did not attach a FINITE_BAG hypothesis");
   assert (List.exists (Term.aconv bagfun_finite) bagfun_transfer_hypotheses,
@@ -5981,6 +6010,8 @@ let
      ``(x:int) IN ((s:int set) UNION (t:int set))``)
   val cvc_fallback_text = cvc
     ([], ``(x:int) IN ((s:int set) UNION (t:int set))``)
+  val cvc_quantified_fallback_text = cvc
+    ([], ``!s t:int set. (x:int) IN (s UNION t)``)
   val cvc_surface_text = cvc
     ([``FINITE (s:int set)``, ``FINITE (t:int set)``],
      boolSyntax.list_mk_conj native_surface_atoms)
@@ -6019,6 +6050,16 @@ in
       contains "(forall ((set_x" cvc_fallback_text,
     "non-finite cvc5 set translation did not use quantified arrays:\n" ^
     cvc_fallback_text);
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_quantified_fallback_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("quantified cvc5 set fallback is not closed SMT-LIB: " ^
+       Feedback.message_of holerr));
+  assert (contains "(declare-fun set" cvc_quantified_fallback_text,
+    "quantified cvc5 set fallback did not abstract its binders:\n" ^
+    cvc_quantified_fallback_text);
   assert (List.all (fn symbol => contains symbol cvc_surface_text)
       ["set.insert", "set.minus", "set.inter", "set.subset",
        "set.singleton", "set.empty"],
@@ -6073,6 +6114,9 @@ let
     ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``],
      bag_in union)
   val cvc_fallback_text = cvc ([], bag_in union)
+  val quantified_union = boolSyntax.mk_forall (b,
+    boolSyntax.mk_forall (c, bag_in union))
+  val cvc_quantified_fallback_text = cvc ([], quantified_union)
   val cvc_surface_text = cvc
     ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``],
      boolSyntax.list_mk_conj [bag_in insert, bag_in union, bag_in diff,
@@ -6116,6 +6160,16 @@ in
       contains "(forall ((bag_x" cvc_fallback_text,
     "non-finite cvc5 bag translation did not use quantified arrays:\n" ^
     cvc_fallback_text);
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_quantified_fallback_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("quantified cvc5 bag fallback is not closed SMT-LIB: " ^
+       Feedback.message_of holerr));
+  assert (contains "(declare-fun bag" cvc_quantified_fallback_text,
+    "quantified cvc5 bag fallback did not abstract its binders:\n" ^
+    cvc_quantified_fallback_text);
   assert (List.all (fn symbol => contains symbol cvc_surface_text)
       ["bag.union_disjoint", "bag.difference_subtract", "bag.union_max",
        "bag.inter_min", "bag.subbag"],
@@ -6137,6 +6191,11 @@ let
   fun z3 goal = text_of
     (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal)
   fun cvc goal = text_of (CVC.goal_to_SmtLib_translation goal)
+  fun z3_proof goal = text_of
+    (Z3.goal_to_SmtLib_with_get_proof_translation_for_version
+      (SOME "4.15.3") goal)
+  fun cvc_proof goal = text_of
+    (CVC.goal_to_SmtLib_with_get_proof_translation goal)
   fun holsmt_app name args =
     let
       val const = Term.prim_mk_const {Thy = "HolSmt", Name = name}
@@ -6195,6 +6254,8 @@ let
     boolSyntax.mk_eq (holsmt_app "smt_seq_replace" [xs, ys, zs], xs)])
   val shared_z3 = z3 shared_goal
   val shared_cvc = cvc shared_goal
+  val checked_z3 = z3_proof shared_goal
+  val checked_cvc = cvc_proof shared_goal
   val cvc_only_goal = ([], boolSyntax.list_mk_conj [
     boolSyntax.mk_eq (holsmt_app "smt_seq_update" [xs, x, zs], ys),
     boolSyntax.mk_eq (listSyntax.mk_reverse xs, ys)])
@@ -6220,10 +6281,18 @@ in
     "shared native sequence surface was not emitted to both solvers:\n" ^
     shared_z3 ^ "\n" ^ shared_cvc);
   assert (contains "(seq.prefixof v0 v1)" shared_z3 andalso
-      contains "(seq.suffixof v0 v1)" shared_z3 andalso
+      contains "(seq.suffixof v1 v0)" shared_z3 andalso
       contains "(seq.prefixof v0 v1)" shared_cvc andalso
-      contains "(seq.suffixof v0 v1)" shared_cvc,
+      contains "(seq.suffixof v1 v0)" shared_cvc,
     "prefix/suffix argument order changed:\n" ^ shared_z3);
+  assert (contains "(Seq Int)" checked_z3 andalso
+      contains "(seq.suffixof v1 v0)" checked_z3 andalso
+      contains "(get-proof)" checked_z3 andalso
+      contains "(Seq Int)" checked_cvc andalso
+      contains "(seq.suffixof v1 v0)" checked_cvc andalso
+      contains "(get-proof)" checked_cvc,
+    "checked solver translation did not retain native Seq emission:\n" ^
+    checked_z3 ^ "\n" ^ checked_cvc);
   assert (contains "(as seq.empty (Seq Int))" shared_z3,
     "native NIL did not emit a typed seq.empty:\n" ^ shared_z3);
   assert (contains "seq.update" cvc_only andalso contains "seq.rev" cvc_only,
@@ -6309,7 +6378,8 @@ in
     "the version-gated seq.fold_left alias was emitted:\n" ^
     map_text ^ "\n" ^ fold_text);
   assert (List.all emitted_at_all_versions
-      ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"],
+      ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3",
+       "4.15.4", "4.16.0"],
     "Z3 HO Seq combinator emission was not uniform across supported versions");
   assert (map_cvc_error =
       "SMT-LIB operator 'seq.map' is unavailable for solver 'cvc5' at " ^

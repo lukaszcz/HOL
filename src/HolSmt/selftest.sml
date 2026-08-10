@@ -257,6 +257,12 @@ in
         MAP (\x. x + 1) xs``, [thm_Z3p_v4]),
     (``(x : bool) IN (s UNION t) <=> x IN (t UNION s)``,
       [thm_Z3p_v4, thm_CVCp]),
+    (* The infinite element type selects cvc5's plain-array fallback; the
+       oracle smoke test makes the solver parse and discharge its abstracted
+       quantified definition. *)
+    (``!s t : int set.
+        (x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
+      [thm_CVC]),
     (``BAG_UNION (b : bool -> num) c = BAG_UNION b c``,
       [thm_Z3p_v4, thm_CVCp]),
 
