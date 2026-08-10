@@ -87,8 +87,9 @@ Supported Z3 proof dialect and tested anchors:
 
 The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
 replay diagnostics include the discovered Z3 version and command stem.
-The checked-in proof corpus, local contract, and version verifier use the exact
-tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The verifier writes its five-version report to
+The checked-in proof corpus, local contract, and version verifier use the
+exact tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The
+verifier writes its five-version report to
 `.holsmt-z3-version-matrix/report.json` in the validation checkout.
 
 Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
