@@ -38,7 +38,8 @@ big problems, should be much better).
 
 The library currently provides five tactics to invoke different SMT
 solvers, namely `CVC_ORACLE_TAC`, `CVC_TAC`, `YICES_TAC`,
-`Z3_ORACLE_TAC`, and `Z3_TAC`.  These tactics are defined in the `HolSmtLib` structure,
+`Z3_ORACLE_TAC`, and `Z3_TAC`.  These tactics are defined in the
+`HolSmtLib` structure,
 which is the library's main entry point.  Given a goal $(\Gamma,
 \varphi)$ (where $\Gamma$ is a list of assumptions, and $\varphi$
 is the goal's conclusion), each tactic returns (i) an empty list of
@@ -57,7 +58,8 @@ of type `goal -> thm`.
 For each tactic, the `HolSmtLib` structure additionally provides a
 corresponding function of type `term -> thm`.  These functions are
 called `CVC_ORACLE_PROVE`, `CVC_PROVE`, `YICES_PROVE`,
-`Z3_ORACLE_PROVE`, and `Z3_PROVE`, respectively.  Applied to a formula $\varphi$, they
+`Z3_ORACLE_PROVE`, and `Z3_PROVE`, respectively.  Applied to a
+formula $\varphi$, they
 return the theorem $\emptyset \vdash \varphi$ (or fail).
 
 Furthermore, the `HolSmtLib` structure provides four more tactics,
@@ -189,10 +191,12 @@ one of three ways:
 #### Support for the SMT-LIB 2 file format
 
 SMT-LIB (see <https://smtlib.cs.uiowa.edu/>) is the standard input
-format for SMT solvers.  `HolSmtLib` supports SMT-LIB 2.7, together with selected solver
-extensions.  A translation of HOL terms into SMT-LIB 2
-format is available in `SmtLib.sml`, and a parser for SMT-LIB 2
-files (translating them into HOL types, terms, and formulas) can
+format for SMT solvers.  `HolSmtLib` supports the documented subset
+of SMT-LIB 2.7, together with selected solver extensions.  See
+`src/HolSmt/README` for its coverage matrix.  A translation of HOL
+terms into SMT-LIB 2 format is available in `SmtLib.sml`, and a
+parser for SMT-LIB 2 files (translating them into HOL types, terms,
+and formulas) can
 be found in `SmtLib_Parser.sml`, with auxiliary functions in
 `SmtLib_{Logics,Theories}.sml`.
 
@@ -200,8 +204,8 @@ The SMT-LIB 2 translation supports types `bool`, `num`, `int` and
 `real`, fixed-width word types, and the following terms: equality,
 Boolean connectives, quantifiers, numeric literals, arithmetic
 operators, comparison operators, function application, and various
-word operations.  Support for data types, records, and higher-order formulas depends on the
-selected solver and translation regime.  See the files
+word operations.  Support for data types, records, and higher-order
+formulas depends on the selected solver and translation regime.  See the files
 mentioned above and the examples in `selftest.sml` for further
 details.
 
