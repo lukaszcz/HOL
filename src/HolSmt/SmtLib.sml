@@ -3903,7 +3903,19 @@ local
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
         (acc, (functiondecls @ argumentdecls,
-          explicit_apply functionname argumentname))
+          case !current_set_backend of
+            CVC5NativeSet =>
+              if is_marked_set_term function then
+                sexpr "set.member" [argumentname, functionname]
+              else if !current_bag_backend = CVC5NativeBag andalso
+                      is_marked_bag_term function then
+                sexpr "bag.count" [argumentname, functionname]
+              else explicit_apply functionname argumentname
+          | _ =>
+              if !current_bag_backend = CVC5NativeBag andalso
+                 is_marked_bag_term function then
+                sexpr "bag.count" [argumentname, functionname]
+              else explicit_apply functionname argumentname))
       end
     handle Feedback.HOL_ERR _ =>
 
