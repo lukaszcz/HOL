@@ -123,8 +123,8 @@ fun cvc_cpc_run path expected_logic =
            OS.Process.exit OS.Process.success
         end
     | SolverSpec.SAT _ =>
-        (cvc_cpc_emit "CVC_CPC_TAC_PASS" (fields @ ["result=sat"]);
-         OS.Process.exit OS.Process.success)
+        cvc_cpc_die "CVC_CPC_TAC_FAIL"
+          (fields @ ["result=sat", "diagnostic=expected unsat"])
     | SolverSpec.UNKNOWN message =>
         cvc_cpc_die "CVC_CPC_TAC_UNSUPPORTED"
           (fields @ ["result=unknown", "diagnostic=" ^
