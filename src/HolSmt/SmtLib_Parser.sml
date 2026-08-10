@@ -4342,24 +4342,17 @@ local
               type_error "typecheck_term" context (loc_of term_ast)
                 NONE (SOME expected) "Z3 const result must have Array or Set sort"
           val _ =
-            if range = Type.bool then ()
+            if checked_sort payload = range then ()
             else type_error "typecheck_term" context (loc_of term_ast)
-              (SOME Type.bool) (SOME range)
-              "Z3 Bool-array const payload must have Bool range"
-          val _ =
-            if checked_sort payload = Type.bool then ()
-            else type_error "typecheck_term" context (loc_of term_ast)
-              (SOME Type.bool) (SOME (checked_sort payload))
-              "Z3 Array/Set const payload must be Boolean"
+              (SOME range) (SOME (checked_sort payload))
+              "constant array payload has the wrong range sort"
           val result =
-            if is_set_surface expected_surface then
-              if Term.aconv (checked_term payload) boolSyntax.F then
-                pred_setSyntax.mk_empty domain
-              else if Term.aconv (checked_term payload) boolSyntax.T then
-                pred_setSyntax.mk_univ domain
-              else type_error "typecheck_term" context (loc_of term_ast)
-                (SOME Type.bool) (SOME (checked_sort payload))
-                "Z3 Set const payload must be true or false"
+            if is_set_surface expected_surface andalso
+               Term.aconv (checked_term payload) boolSyntax.F then
+              pred_setSyntax.mk_empty domain
+            else if is_set_surface expected_surface andalso
+                    Term.aconv (checked_term payload) boolSyntax.T then
+              pred_setSyntax.mk_univ domain
             else
               Term.mk_abs (Term.mk_var ("array_const_x", domain),
                 checked_term payload)
@@ -4461,7 +4454,9 @@ local
       | TermApply
           (Located {node = TermAscribed
              (Located {node = TermIdentifier "const", ...}, sort), ...}, [payload]) =>
-          if z3_or_neutral () then
+          if z3_or_neutral () orelse
+             not (is_set_surface
+               (surface_sort_of_ast context tydict sort)) then
             as_const_array_or_set sort payload
           else type_error "typecheck_term" context (loc_of term_ast) NONE NONE
             "Z3 const Set syntax is unavailable in the cvc5 dialect"
