@@ -16,6 +16,11 @@ fun cvc_cpc_args () =
 
 val _ = SmtLib_Datatypes.empty_name_map
 
+val _ =
+  case Thm.getCT () of
+    NONE => Theory.new_theory "HolSmtDriver"
+  | SOME _ => ()
+
 fun cvc_cpc_conjunction [] = boolSyntax.T
   | cvc_cpc_conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
