@@ -4758,6 +4758,8 @@ in
       (set_spec (filter_x, boolSyntax.mk_conj
         (pred_setSyntax.mk_in (filter_x, s), Term.mk_comb (p, filter_x)),
         [filter_x]), s));
+  ignore (assertion cvc5_options
+    "(= (ite true (set.filter p s) s) s)");
   assert_builder "cvc5 set.all" cvc5_options "(set.all p s)"
     (boolSyntax.mk_forall (all_x, boolSyntax.mk_imp
       (pred_setSyntax.mk_in (all_x, s), Term.mk_comb (p, all_x))));

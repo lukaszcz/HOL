@@ -3936,9 +3936,22 @@ local
                   "cvc5 set.complement requires a finite element sort"
               else ()
           | _ => ()
+      fun collection_result_surface t =
+        if pred_setSyntax.is_set_type (Term.type_of t) then
+          let val element = pred_setSyntax.dest_set_type (Term.type_of t) in
+            ConstructorSort (Term.type_of t, [RigidSort element])
+          end
+        else if bagSyntax.is_bag_ty (Term.type_of t) then
+          let val element = bagSyntax.base_type
+            (Term.mk_var ("collection_result", Term.type_of t)) in
+            ConstructorSort (Term.type_of t, [RigidSort element])
+          end
+        else RigidSort (Term.type_of t)
       fun result_surface_sort t =
         case (name, args) of
-          ("select", array :: _) =>
+          ("set.filter", _ :: set :: _) => checked_surface_sort set
+        | ("set.comprehension", _) => collection_result_surface t
+        | ("select", array :: _) =>
             (case checked_surface_sort array of
                ArraySort (_, element) => element
              | _ => RigidSort (Term.type_of t))
@@ -3967,16 +3980,7 @@ local
                     else NONE
                   end) args of
                SOME surface_sort => surface_sort
-             | NONE =>
-                 if pred_setSyntax.is_set_type (Term.type_of t) then
-                   let val element =
-                     pred_setSyntax.dest_set_type (Term.type_of t)
-                   in ConstructorSort (Term.type_of t, [RigidSort element]) end
-                 else if bagSyntax.is_bag_ty (Term.type_of t) then
-                   let val element = bagSyntax.base_type
-                     (Term.mk_var ("collection_result", Term.type_of t))
-                   in ConstructorSort (Term.type_of t, [RigidSort element]) end
-                 else RigidSort (Term.type_of t))
+             | NONE => collection_result_surface t)
     in
       if List.null indices andalso name = "@bbterm" then
         let
