@@ -1351,8 +1351,9 @@ in
        term-shaped Seq annotations.  Give each declared proof sort a local
        marker so [(as seq.empty (Seq t0))] does not try to read [t0] as a
        numeral. *)
-    val sort_markers = Library.dict_from_list
-      (List.mapPartial (fn (name, parsefns) =>
+    val sort_markers : Term.term SmtLib_Parser.dict = Library.dict_from_list
+      (List.mapPartial (fn (name,
+          parsefns : Type.hol_type SmtLib_Parser.parse_fn list) =>
         case List.mapPartial (fn parsefn =>
           Lib.total (fn () => parsefn name [] []) ()) parsefns of
           ty :: _ => SOME (name, SmtLib_Theories.K_zero_zero
