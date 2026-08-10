@@ -18,7 +18,7 @@ struct
     named "bag"
       ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
        "BAG_INTER", "SUB_BAG", "EMPTY_BAG", "BAG_CARD", "BAG_FILTER",
-       "BAG_CHOICE", "BAG_IMAGE", "BAG_EVERY", "SET_OF_BAG",
+       "BAG_CHOICE", "BAG_IMAGE", "BAG_EVERY", "ITBAG", "SET_OF_BAG",
        "BAG_OF_SET"] tm
 
   (* The proof parser turns Z3's [(_ map +) a b] into
