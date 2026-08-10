@@ -4609,8 +4609,10 @@ let
     elaborate_datatypes = false
   }
   val int_set_ty = Type.--> (intSyntax.int_ty, Type.bool)
+  val bool_set_ty = Type.--> (Type.bool, Type.bool)
   val s = Term.mk_var ("s", int_set_ty)
   val t = Term.mk_var ("t", int_set_ty)
+  val bs = Term.mk_var ("bs", bool_set_ty)
   val x = Term.mk_var ("x", intSyntax.int_ty)
   val y = Term.mk_var ("y", intSyntax.int_ty)
   val p = Term.mk_var ("p", Type.--> (intSyntax.int_ty, Type.bool))
@@ -4619,7 +4621,7 @@ let
     (intSyntax.int_ty, Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
   val zero = intSyntax.zero_tm
   val empty = pred_setSyntax.mk_empty intSyntax.int_ty
-  val univ = pred_setSyntax.mk_univ intSyntax.int_ty
+  val bool_univ = pred_setSyntax.mk_univ Type.bool
   fun mk_set_fold (f, b, s) =
     let
       val accumulator_ty = Term.type_of b
@@ -4643,6 +4645,7 @@ let
         ("(set-logic ALL)\n" ^
          "(declare-const s (Set Int))\n" ^
          "(declare-const t (Set Int))\n" ^
+         "(declare-const bs (Set Bool))\n" ^
          "(declare-const x Int)\n" ^
          "(declare-const y Int)\n" ^
          "(declare-const p (-> Int Bool))\n" ^
@@ -4729,8 +4732,8 @@ in
   assert_builder "cvc5 set.subset" cvc5_options "(set.subset s t)"
     (pred_setSyntax.mk_subset (s, t));
   assert_builder "cvc5 set.complement" cvc5_options
-    "(= (set.complement s) s)"
-    (boolSyntax.mk_eq (pred_setSyntax.mk_compl s, s));
+    "(= (set.complement bs) bs)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_compl bs, bs));
   assert_builder "cvc5 set.choose" cvc5_options "(= (set.choose s) x)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_choice s, x));
   assert_builder "cvc5 set.card" cvc5_options "(= (set.card s) 0)"
@@ -4767,8 +4770,8 @@ in
     "(= (as set.empty (Set Int)) (as set.empty (Set Int)))"
     (boolSyntax.mk_eq (empty, empty));
   assert_builder "cvc5 set.universe" cvc5_options
-    "(= (as set.universe (Set Int)) (as set.universe (Set Int)))"
-    (boolSyntax.mk_eq (univ, univ));
+    "(= (as set.universe (Set Bool)) (as set.universe (Set Bool)))"
+    (boolSyntax.mk_eq (bool_univ, bool_univ));
   assert_builder "cvc5 forall Set binder" cvc5_options
     "(forall ((u (Set Int))) (= (set.card u) 0))"
     (boolSyntax.mk_forall (quantified_set, boolSyntax.mk_imp
@@ -4818,7 +4821,13 @@ in
      "(as set.empty (Set Int))))\n");
   reject cvc5_options "cvc5 Z3 const"
     ("(set-logic ALL)\n(assert (= ((as const (Set Int)) false)\n" ^
-     "((as const (Set Int)) false)))\n")
+     "((as const (Set Int)) false)))\n");
+  reject cvc5_options "cvc5 infinite set.universe"
+    "(set-logic ALL)\n(assert (= (as set.universe (Set Int))\n" ^
+    "  (as set.universe (Set Int))))\n";
+  reject cvc5_options "cvc5 infinite set.complement"
+    "(set-logic ALL)\n(declare-const s (Set Int))\n" ^
+    "(assert (= (set.complement s) s))\n"
 end
 
 fun smtlib_bag_dialect_builders_success () =

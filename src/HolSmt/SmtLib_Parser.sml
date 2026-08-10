@@ -2899,6 +2899,22 @@ local
     | RigidSort ty => bagSyntax.is_bag_ty ty
     | _ => false
 
+  (* The HOL Set bridge represents cvc5 sets by finite HOL predicates. *)
+  fun finite_cvc5_set_element_type ty =
+    Type.compare (ty, Type.bool) = EQUAL orelse
+    (Lib.can wordsSyntax.dest_word_type ty andalso
+     Lib.can fcpSyntax.dest_numeric_type (wordsSyntax.dest_word_type ty))
+
+  fun finite_cvc5_set_surface surface =
+    case surface of
+      ConstructorSort (ty, _) =>
+        pred_setSyntax.is_set_type ty andalso
+        finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)
+    | RigidSort ty =>
+        pred_setSyntax.is_set_type ty andalso
+        finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)
+    | _ => false
+
   type function_signature = {
     tm: Term.term,
     domain: Type.hol_type list,
@@ -3873,6 +3889,12 @@ local
               if surface_sorts_equivalent then_sort else_sort then ()
               else type_error fn_name context loc NONE NONE
                 "ite branch surface sort mismatch"
+          | ("set.complement", [set_surface]) =>
+              if #solver context = SOME "cvc5" andalso
+                 not (finite_cvc5_set_surface set_surface) then
+                type_error fn_name context loc NONE NONE
+                  "cvc5 set.complement requires a finite element sort"
+              else ()
           | _ => ()
       fun result_surface_sort t =
         case (name, args) of
@@ -4403,6 +4425,13 @@ local
               NONE (SOME expected)
               (name ^ " result must have Set sort")
           val element = pred_setSyntax.dest_set_type expected
+          val _ =
+            if name = "set.universe" andalso #solver context = SOME "cvc5" andalso
+               not (finite_cvc5_set_element_type element) then
+              type_error "typecheck_term" context (loc_of term_ast) NONE
+                (SOME expected)
+                "cvc5 set.universe requires a finite element sort"
+            else ()
           val set_tm =
             if name = "set.empty" then pred_setSyntax.mk_empty element
             else pred_setSyntax.mk_univ element
