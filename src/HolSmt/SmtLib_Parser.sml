@@ -3957,7 +3957,16 @@ local
                     else NONE
                   end) args of
                SOME surface_sort => surface_sort
-             | NONE => RigidSort (Term.type_of t))
+             | NONE =>
+                 if pred_setSyntax.is_set_type (Term.type_of t) then
+                   let val element =
+                     pred_setSyntax.dest_set_type (Term.type_of t)
+                   in ConstructorSort (Term.type_of t, [RigidSort element]) end
+                 else if bagSyntax.is_bag_ty (Term.type_of t) then
+                   let val element = bagSyntax.base_type
+                     (Term.mk_var ("collection_result", Term.type_of t))
+                   in ConstructorSort (Term.type_of t, [RigidSort element]) end
+                 else RigidSort (Term.type_of t))
     in
       if List.null indices andalso name = "@bbterm" then
         let
