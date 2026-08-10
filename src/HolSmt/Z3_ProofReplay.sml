@@ -20,9 +20,10 @@ local
   val ERR = Feedback.mk_HOL_ERR "Z3_ProofReplay"
   val WARNING = Feedback.HOL_WARNING "Z3_ProofReplay"
 
-  (* An FP rewrite failure must cross the generic rewrite handlers without
-     being mistaken for an invitation to try arithmetic or unification. *)
+  (* Dedicated-theory failures must cross the generic rewrite handlers
+     without inviting arithmetic or unification fallbacks. *)
   exception FP_REWRITE_ERROR of exn
+  exception BAG_REWRITE_ERROR of exn
 
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
   val ALL_DISTINCT_CONS = HolSmtTheory.ALL_DISTINCT_CONS
@@ -1682,7 +1683,10 @@ local
        in
          (state_cache_thm state thm, thm)
        end
-       handle Feedback.HOL_ERR _ =>
+       handle Feedback.HOL_ERR holerr =>
+         if SmtResource.is_resource_gate holerr then
+           raise BAG_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+         else
          (let
             val thm = profile "rewrite(01)(seq)" SmtSeqProve.seq_prove t
           in
@@ -1924,6 +1928,7 @@ local
     end
   end
   handle FP_REWRITE_ERROR error => raise error
+       | BAG_REWRITE_ERROR error => raise error
 
   (* |- ~(!x. P x y) <=> ~(P (sk y) y)
      |- (?x. P x y) <=> P (sk y) y *)
