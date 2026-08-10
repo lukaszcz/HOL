@@ -3168,11 +3168,13 @@ local
     metadata_has_term context (fn attributes => #indexed attributes) name
 
   fun apply_operator_available
-      ({metadata_index, ...}: typecheck_context) operator =
-    case Redblackmap.peek (metadata_index, operator) of
-      NONE => false
-    | SOME entries =>
-        List.exists (fn {theory, ...} => theory = "HO-Core") entries
+      ({solver, metadata_index, ...}: typecheck_context) operator =
+    if operator = "@" andalso solver = SOME "Z3" then false
+    else
+      case Redblackmap.peek (metadata_index, operator) of
+        NONE => false
+      | SOME entries =>
+          List.exists (fn {theory, ...} => theory = "HO-Core") entries
 
   (* Each surface flag is a monotone (false -> true) marker.  OR the current
      value with whether this event targets the flag, so the record is rebuilt
