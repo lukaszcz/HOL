@@ -1352,10 +1352,12 @@ in
        marker so [(as seq.empty (Seq t0))] does not try to read [t0] as a
        numeral. *)
     val sort_markers = Library.dict_from_list
-      (List.map (fn (name, parsefns) =>
-        (name, SmtLib_Theories.K_zero_zero
-          (z3_seq_sort_marker (Lib.hd parsefns name [] []))))
-        (Redblackmap.listItems tydict))
+      (List.mapPartial (fn (name, parsefns) =>
+        case List.mapPartial (fn parsefn =>
+          Lib.total (fn () => parsefn name [] []) ()) parsefns of
+          ty :: _ => SOME (name, SmtLib_Theories.K_zero_zero
+            (z3_seq_sort_marker ty))
+        | [] => NONE) (Redblackmap.listItems tydict))
     val tmdict = Library.union_dict tmdict sort_markers
     val tmdict = Library.union_dict tmdict
       (z3_string_tmdict z3_version)

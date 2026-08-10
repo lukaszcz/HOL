@@ -37,8 +37,8 @@ big problems, should be much better).
 ### Interface
 
 The library currently provides four tactics to invoke different SMT
-solvers, namely `CVC_ORACLE_TAC`, `YICES_TAC`, `Z3_ORACLE_TAC`, and
-`Z3_TAC`.  These tactics are defined in the `HolSmtLib` structure,
+solvers, namely `CVC_ORACLE_TAC`, `CVC_TAC`, `YICES_TAC`,
+`Z3_ORACLE_TAC`, and `Z3_TAC`.  These tactics are defined in the `HolSmtLib` structure,
 which is the library's main entry point.  Given a goal $(\Gamma,
 \varphi)$ (where $\Gamma$ is a list of assumptions, and $\varphi$
 is the goal's conclusion), each tactic returns (i) an empty list of
@@ -56,14 +56,14 @@ of type `goal -> thm`.
 
 For each tactic, the `HolSmtLib` structure additionally provides a
 corresponding function of type `term -> thm`.  These functions are
-called `CVC_ORACLE_PROVE`, `YICES_PROVE`, `Z3_ORACLE_PROVE`, and
-`Z3_PROVE`, respectively.  Applied to a formula $\varphi$, they
+called `CVC_ORACLE_PROVE`, `CVC_PROVE`, `YICES_PROVE`,
+`Z3_ORACLE_PROVE`, and `Z3_PROVE`, respectively.  Applied to a formula $\varphi$, they
 return the theorem $\emptyset \vdash \varphi$ (or fail).
 
 Furthermore, the `HolSmtLib` structure provides three more tactics,
-namely `cvco_tac`, `z3o_tac` and `z3_tac`.  These tactics are
-equivalent to `CVC_ORACLE_TAC`, `Z3_ORACLE_TAC` and `Z3_TAC`
-(respectively), but additionally take a list of theorems which are
+namely `cvco_tac`, `cvc_tac`, `z3o_tac` and `z3_tac`.  These tactics
+are equivalent to `CVC_ORACLE_TAC`, `CVC_TAC`, `Z3_ORACLE_TAC` and
+`Z3_TAC` (respectively), but additionally take a list of theorems which are
 used as lemmas in the proof, similarly to `METIS_TAC`.
 
 #### Oracles vs. proof reconstruction
@@ -75,9 +75,9 @@ in the SMT solver or in `HolSmtLib` could potentially lead to
 inconsistent theorems.  Accordingly, the derived theorem is tagged
 with an oracle tag.
 
-`Z3_TAC` and `z3_tac`, on the other hand, perform proof
-reconstruction.  They request a detailed proof from Z3, which is
-then checked in HOL.  One obtains a proper HOL theorem; no
+`CVC_TAC`, `cvc_tac`, `Z3_TAC` and `z3_tac`, on the other hand,
+perform proof reconstruction.  They request a detailed proof from
+cvc5 or Z3, which is then checked in HOL.  One obtains a proper HOL theorem; no
 (additional) oracle tags are introduced.  However, Z3's proofs do
 not always contain enough information to allow efficient checking
 in HOL; therefore, proof reconstruction may be slow or fail.
@@ -225,7 +225,7 @@ may delete temporary files automatically, e.g., when HOL exits).
 
 ### Installing SMT solvers
 
-`HolSmtLib` has been tested with cvc5 1.3.0 and Yices 1.0.40.
+`HolSmtLib` has been tested with cvc5 1.3.4 and Yices 1.0.40.
 For checked Z3 proof reconstruction, HolSmt supports the Z3 4.x proof
 dialect.  The exact tested anchors are Z3 4.11.2, 4.12.4, 4.13.0,
 4.14.1, and 4.15.3; legacy Z3 2.x proof support has been removed.
@@ -235,8 +235,8 @@ that compatibility policy.  Other Z3 versions may or may not work.
 (Yices 2 is not supported.)
 To use `HolSmtLib`, you need to install at least one of these SMT
 solvers on your machine.  As mentioned before, Yices supports a
-larger fragment of higher-order logic than Z3, but proof
-reconstruction has been implemented only for Z3.  Some nonlinear
+larger fragment of higher-order logic than Z3.  Checked proof
+reconstruction is available for Z3 and cvc5.  Some nonlinear
 real-arithmetic replay paths also require CSDP to be installed.
 
 cvc5 is available for various platforms from
