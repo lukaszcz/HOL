@@ -1137,7 +1137,8 @@ in
   val set_dialect_logics = ["ALL", "HO_ALL"]
   val seq_dialect_logics =
     ["QF_S", "S", "QF_SLIA", "SLIA", "QF_SNIA", "SNIA", "ALL",
-     "HO_ALL", "HO_S", "HO_SLIA", "HO_SNIA"]
+     "HO_ALL", "HO_QF_S", "HO_S", "HO_QF_SLIA", "HO_SLIA",
+     "HO_QF_SNIA", "HO_SNIA"]
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
