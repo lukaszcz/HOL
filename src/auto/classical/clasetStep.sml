@@ -468,6 +468,45 @@ fun ground_created store
     List.foldl ground_term typed_store terms
   end
 
+(* The backward and the forward rule paths finish an application the same
+   way: refuse a safe step that left premise variables unfixed, ground what
+   the match created, instantiate the rule and discharge the hypotheses it
+   carries against the goal's assumptions.  Keeping it here is what stops
+   the two grounding policies from drifting apart.  [note_skip] is their
+   only difference -- only the backward path traces the refusal. *)
+fun settle_rule mode (core : thm) metas asl note_skip residual_terms store =
+  let
+    val _ =
+      case mode of
+          clasetUnify.Match =>
+            if unresolved_in_premises store metas residual_terms
+            then (note_skip (); raise Match)
+            else ()
+        | clasetUnify.Unify => ()
+    val final_store =
+      case mode of
+          clasetUnify.Match => ground_created store metas
+        | clasetUnify.Unify => store
+    val (type_substitution, term_substitution) =
+      clasetMeta.collapse final_store
+    val instantiated =
+      Drule.INST_TY_TERM (term_substitution, type_substitution) core
+    val normalized_rule0 = normalize_rule_thm instantiated
+
+    fun align_hypothesis (hypothesis, current) =
+      case List.find
+        (fn assumption =>
+          closing_equal final_store hypothesis assumption) asl
+      of
+          NONE => raise Match
+        | SOME assumption =>
+            Drule.PROVE_HYP
+              (assumption_thm assumption hypothesis) current
+  in
+    (final_store,
+     List.foldl align_hypothesis normalized_rule0 (hyp normalized_rule0))
+  end
+
 fun cgoal_render store ({asl, w, ...} : clasetGoal.cgoal) =
   (map (normalize_term store) asl, normalize_term store w)
 
@@ -609,39 +648,11 @@ fun try_rule policy mode cs duplicated node pos
         end
       else (NONE, [], #premises fresh, store1)
     val residual_terms = remaining @ hyp (#core fresh)
-    val _ =
-      case mode of
-          clasetUnify.Match =>
-            if unresolved_in_premises store2 (#metas fresh) residual_terms
-            then
-              (trace 1 "skipping safe rule with unfixed premise variables";
-               raise Match)
-            else ()
-        | clasetUnify.Unify => ()
-    val final_store =
-      case mode of
-          clasetUnify.Match => ground_created store2 (#metas fresh)
-        | clasetUnify.Unify => store2
-    val (type_substitution, term_substitution) =
-      clasetMeta.collapse final_store
-    val instantiated =
-      Drule.INST_TY_TERM
-        (term_substitution, type_substitution) (#core fresh)
-    val normalized_rule0 = normalize_rule_thm instantiated
-
-    fun align_hypothesis (hypothesis, current) =
-      case List.find
-        (fn assumption =>
-          closing_equal final_store hypothesis assumption) asl
-      of
-          NONE => raise Match
-        | SOME assumption =>
-            Drule.PROVE_HYP
-              (assumption_thm assumption hypothesis) current
-
-    val normalized_rule =
-      List.foldl align_hypothesis normalized_rule0
-        (hyp normalized_rule0)
+    fun note_skip () =
+      trace 1 "skipping safe rule with unfixed premise variables"
+    val (final_store, normalized_rule) =
+      settle_rule mode (#core fresh) (#metas fresh) asl note_skip
+        residual_terms store2
     val (all_premises, _) =
       split_imp_prefix "try_rule" (length (#premises fresh))
         (concl normalized_rule)
@@ -807,39 +818,9 @@ fun try_forward mode {source, form} immediate node pos
 
     fun build (positions, matched_store) =
       let
-        val _ =
-          case mode of
-              clasetUnify.Match =>
-                if unresolved_in_premises matched_store (#metas fresh)
-                     residual_terms
-                then raise Match
-                else ()
-            | clasetUnify.Unify => ()
-        val final_store =
-          case mode of
-              clasetUnify.Match =>
-                ground_created matched_store (#metas fresh)
-            | clasetUnify.Unify => matched_store
-        val (type_substitution, term_substitution) =
-          clasetMeta.collapse final_store
-        val instantiated =
-          Drule.INST_TY_TERM
-            (term_substitution, type_substitution) (#core fresh)
-        val normalized_rule0 = normalize_rule_thm instantiated
-
-        fun align_hypothesis (hypothesis, current) =
-          case List.find
-            (fn assumption =>
-              closing_equal final_store hypothesis assumption) asl
-          of
-              NONE => raise Match
-            | SOME assumption =>
-                Drule.PROVE_HYP
-                  (assumption_thm assumption hypothesis) current
-
-        val normalized_rule =
-          List.foldl align_hypothesis normalized_rule0
-            (hyp normalized_rule0)
+        val (final_store, normalized_rule) =
+          settle_rule mode (#core fresh) (#metas fresh) asl (fn () => ())
+            residual_terms matched_store
         val (normalized_premises, _) =
           strip_imp_only (concl normalized_rule)
         val supplied =

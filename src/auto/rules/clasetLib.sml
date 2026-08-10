@@ -893,21 +893,11 @@ fun typebase_update tyi =
 
 val _ = TypeBase.register_update_fn typebase_update
 
-fun fresh_outer_vars th vars =
-  let
-    fun freshen avoids [] = []
-      | freshen avoids (v :: vs) =
-          let val v' = variant avoids v
-          in v' :: freshen (v' :: avoids) vs end
-  in
-    freshen (free_varsl (hyp th)) vars
-  end
-
 fun distinct_elim_rule th =
   let
     val th' = canonical_rule th
     val (vars, _) = strip_forall (concl th')
-    val vars' = fresh_outer_vars th' vars
+    val vars' = fresh_forall_vars th' vars
     val core = Drule.SPECL vars' th'
     val eq = dest_neg (concl core)
     val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
@@ -920,7 +910,7 @@ fun distinct_elim_rule th =
 fun iff_rules name theorem =
   let
     val (outer_vars, _) = strip_forall (concl theorem)
-    val outer_vars' = fresh_outer_vars theorem outer_vars
+    val outer_vars' = fresh_forall_vars theorem outer_vars
     val th = Drule.SPECL outer_vars' theorem
     val (prems, final) = boolSyntax.strip_imp_only (concl th)
     val safe = null prems

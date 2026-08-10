@@ -34,7 +34,9 @@ sig
      terms therefore reads a single metavariable as two, so any set or
      lookup keyed on metavariable identity must use this order. *)
   val meta_compare : meta * meta -> order
+  val same_meta : meta -> meta -> bool
   val is_tymeta : hol_type -> bool
+  val same_tymeta : tymeta -> tymeta -> bool
   val is_eigen : store -> term -> bool
   val ground : store -> store
 

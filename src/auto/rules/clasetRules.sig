@@ -21,6 +21,11 @@ sig
   type canonical =
     {thm : thm, patvars : term HOLset.set, prems : term list, concl : term}
 
+  (* Rename [vars] apart from the free variables of the theorem's
+     hypotheses, so that specializing and later generalizing with the
+     results cannot make GEN reject a free hypothesis. *)
+  val fresh_forall_vars : thm -> term list -> term list
+
   val canonical_rule : thm -> thm
   val canonical_rule_of : rulekind -> thm -> thm
   val canonical_form : thm -> canonical

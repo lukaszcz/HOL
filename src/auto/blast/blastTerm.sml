@@ -337,36 +337,7 @@ struct
 
   fun normMeasured checkpoint term =
     let
-      fun increment amount tm =
-        let
-          fun inc level item =
-            (checkpoint ();
-             case item of
-                 Bound i =>
-                   if i >= level then Bound (i + amount) else item
-               | Abs (name, body) => Abs (name, inc (level + 1) body)
-               | f $ x => inc level f $ inc level x
-               | _ => item)
-        in
-          inc 0 tm
-        end
-
-      fun substitute (argument, tm) =
-        let
-          fun subst (item, level) =
-            (checkpoint ();
-             case item of
-                 Bound i =>
-                   if i < level then item
-                   else if i = level then increment level argument
-                   else Bound (i - 1)
-               | Abs (name, body) =>
-                   Abs (name, subst (body, level + 1))
-               | f $ x => subst (f, level) $ subst (x, level)
-               | _ => item)
-        in
-          subst (tm, 0)
-        end
+      val substitute = subst_bound_measured checkpoint
 
       fun normalize item =
         (checkpoint ();
@@ -556,36 +527,8 @@ struct
       val State {ntrail, trail} = state
       val mark = !ntrail
 
-      fun increment amount tm =
-        let
-          fun inc level item =
-            (checkpoint ();
-             case item of
-                 Bound i =>
-                   if i >= level then Bound (i + amount) else item
-               | Abs (name, body) => Abs (name, inc (level + 1) body)
-               | f $ x => inc level f $ inc level x
-               | _ => item)
-        in
-          inc 0 tm
-        end
-
-      fun substitute (argument, tm) =
-        let
-          fun subst (item, level) =
-            (checkpoint ();
-             case item of
-                 Bound i =>
-                   if i < level then item
-                   else if i = level then increment level argument
-                   else Bound (i - 1)
-               | Abs (name, body) =>
-                   Abs (name, subst (body, level + 1))
-               | f $ x => subst (f, level) $ subst (x, level)
-               | _ => item)
-        in
-          subst (tm, 0)
-        end
+      val increment = incr_boundvars_measured checkpoint
+      val substitute = subst_bound_measured checkpoint
 
       fun loose tm =
         let

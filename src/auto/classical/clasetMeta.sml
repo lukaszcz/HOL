@@ -41,6 +41,20 @@ fun meta_compare (left, right) =
     | (NONE, SOME _) => GREATER
     | (NONE, NONE) => Term.compare (left, right)
 
+(* The equality [meta_compare] induces, for the list-shaped metavariable
+   collections that do not warrant a set: two spellings of one metavariable
+   are the same metavariable, and a non-metavariable is never equal to
+   anything. *)
+fun same_meta left right =
+  case (meta_name left, meta_name right) of
+      (SOME left_name, SOME right_name) => left_name = right_name
+    | _ => false
+
+fun same_tymeta left right =
+  case (tymeta_name left, tymeta_name right) of
+      (SOME left_name, SOME right_name) => left_name = right_name
+    | _ => false
+
 type store =
   {allows : (string, term list) Redblackmap.dict,
    eigens : (string, term list) Redblackmap.dict,

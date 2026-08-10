@@ -11,13 +11,8 @@ datatype mode = Match | Unify
 type rule_metas = {terms : meta list, types : tymeta list}
 type config = {mode : mode, rule_metas : rule_metas}
 
-fun same_meta left right =
-  clasetMeta.is_meta left andalso clasetMeta.is_meta right andalso
-  #1 (dest_var left) = #1 (dest_var right)
-
-fun same_tymeta left right =
-  clasetMeta.is_tymeta left andalso clasetMeta.is_tymeta right andalso
-  dest_vartype left = dest_vartype right
+val same_meta = clasetMeta.same_meta
+val same_tymeta = clasetMeta.same_tymeta
 
 fun term_is_rule ({terms, ...} : rule_metas) tm =
   List.exists (same_meta tm) terms

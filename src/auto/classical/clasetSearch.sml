@@ -87,24 +87,14 @@ fun DEPTH_FIRST satisfied expand initial =
     depth [] [seq.result initial]
   end
 
-(* Type instantiation changes the type attached to a marked free.  Its
-   reserved name, like a persistent-store key, is its stable identity. *)
-fun same_meta left right =
-  clasetMeta.is_meta left andalso clasetMeta.is_meta right andalso
-  fst (dest_var left) = fst (dest_var right)
+val same_meta = clasetMeta.same_meta
+val same_tymeta = clasetMeta.same_tymeta
 
-fun same_tymeta left right =
-  clasetMeta.is_tymeta left andalso clasetMeta.is_tymeta right andalso
-  dest_vartype left = dest_vartype right
+val member_meta = Lib.op_mem same_meta
+val member_tymeta = Lib.op_mem same_tymeta
 
-fun member_meta meta = List.exists (fn old => same_meta meta old)
-fun member_tymeta meta = List.exists (fn old => same_tymeta meta old)
-
-fun add_meta (meta, metas) =
-  if member_meta meta metas then metas else meta :: metas
-
-fun add_tymeta (meta, metas) =
-  if member_tymeta meta metas then metas else meta :: metas
+fun add_meta (meta, metas) = Lib.op_insert same_meta meta metas
+fun add_tymeta (meta, metas) = Lib.op_insert same_tymeta meta metas
 
 fun union_metas left right = List.foldl add_meta right left
 fun union_tymetas left right = List.foldl add_tymeta right left
@@ -130,8 +120,7 @@ fun add_mark
 
 val empty_mark : clasetGoal.binding_mark = {terms = [], types = []}
 
-fun replicate 0 _ = []
-  | replicate count value = value :: replicate (count - 1) value
+fun replicate count value = List.tabulate (count, fn _ => value)
 
 (* Pruned depth search expands the first open goal.  A one-child transition
    stays in the same subtree and accumulates its bindings.  Branch children
@@ -326,15 +315,7 @@ fun list_of sequence =
       NONE => []
     | SOME (value, rest) => value :: list_of rest
 
-fun split_satisfied predicate values =
-  let
-    fun split [] sats nonsats = (List.rev sats, List.rev nonsats)
-      | split (value :: rest) sats nonsats =
-          if predicate value then split rest (value :: sats) nonsats
-          else split rest sats (value :: nonsats)
-  in
-    split values [] []
-  end
+val split_satisfied = Lib.partition
 
 val check_period = 100
 
