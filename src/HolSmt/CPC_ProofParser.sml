@@ -947,6 +947,10 @@ local
                     SmtLib_Parser.parse_type
                       (Library.undo_look_ahead tokens get_token) tydict)
                 end
+              fun is_set_sort_metadata position =
+                (rule_name = "sets-is-empty-elim" andalso position = 2) orelse
+                (rule_name = "sets-member-emp" andalso position = 3) orelse
+                (rule_name = "sets-minus-self" andalso position = 2)
               fun terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
@@ -957,7 +961,8 @@ local
                            sequence of object terms (not a HOL list term).
                            Flatten them for handlers such as instantiate. *)
                         terms (List.revAppend (list_terms [], acc))
-                      else if head = "Set" then
+                      else if head = "Set" andalso
+                              is_set_sort_metadata (List.length acc + 1) then
                         let
                           val tm = sort_marker ["(", head]
                             handle Feedback.HOL_ERR holerr =>
