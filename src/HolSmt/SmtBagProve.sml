@@ -51,6 +51,7 @@ struct
     bagTheory.BAG_INTER,
     bagTheory.BAG_INSERT,
     bagTheory.BAG_IN,
+    bagTheory.BAG_INN,
     bagTheory.SUB_BAG,
     combinTheory.UPDATE_def,
     combinTheory.APPLY_UPDATE_THM,
