@@ -2825,8 +2825,12 @@ local
         acc expression args body =
       let
         val dependencies = fallback_dependencies expression
+        val dependency_vars = List.map Lib.fst dependencies
+        val cache_key =
+          (Term.list_mk_abs (dependency_vars, expression),
+           List.length dependency_vars)
       in
-        case Redblackmap.peek (Lib.snd acc, (expression, 0)) of
+        case Redblackmap.peek (Lib.snd acc, cache_key) of
           SOME name =>
             (acc, ([], fallback_application name dependencies))
         | NONE =>
@@ -2835,7 +2839,7 @@ local
               translate_type regime (Lib.fst acc, element_type)
             val tmdict = Lib.snd acc
             val name = prefix ^ Int.toString (Redblackmap.numItems tmdict)
-            val tmdict = Redblackmap.insert (tmdict, (expression, 0), name)
+            val tmdict = Redblackmap.insert (tmdict, cache_key, name)
             val binder = prefix ^ "_x" ^
               Int.toString (Redblackmap.numItems tmdict)
             val (tydict, dependency_declsorts) =
