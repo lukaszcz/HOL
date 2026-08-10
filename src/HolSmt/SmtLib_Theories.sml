@@ -1354,12 +1354,18 @@ in
 
     fun mk_set_is_singleton s = pred_setSyntax.mk_sing s
 
+    (* Match cvc5's default carrier for an unqualified polymorphic literal.
+       Explicitly ascribed set.empty literals are handled by the parser. *)
+    val unqualified_empty = pred_setSyntax.mk_empty Type.bool
+
     val tyentries = [
       extension_entry "cvc5" "Set" (parametric_attributes ["Element"])
         ["(Set Element)"] (K_zero_one set_ty)
     ]
 
     val tmentries = [
+      cvc_term "set.empty" no_attributes ["(set.empty (Set A))"]
+        (K_zero_zero unqualified_empty),
       cvc_term "set.member" no_attributes ["(set.member A (Set A) Bool)"]
         (K_zero_two pred_setSyntax.mk_in),
       cvc_term "set.insert" no_attributes ["(set.insert A ... (Set A))"]

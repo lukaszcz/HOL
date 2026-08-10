@@ -4621,6 +4621,7 @@ let
     (intSyntax.int_ty, Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
   val zero = intSyntax.zero_tm
   val empty = pred_setSyntax.mk_empty intSyntax.int_ty
+  val bool_empty = pred_setSyntax.mk_empty Type.bool
   val bool_univ = pred_setSyntax.mk_univ Type.bool
   fun mk_set_fold (f, b, s) =
     let
@@ -4744,6 +4745,11 @@ in
   assert_builder "cvc5 set.card" cvc5_options "(= (set.card s) 0)"
     (boolSyntax.mk_eq
       (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card s), zero));
+  assert_builder "cvc5 unqualified set.empty" cvc5_options
+    "(= (set.card set.empty) 0)"
+    (boolSyntax.mk_eq
+      (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card bool_empty),
+       zero));
   assert_builder "cvc5 set.map" cvc5_options "(= (set.map f s) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_image (f, s), s));
   assert_builder "cvc5 set.filter" cvc5_options "(= (set.filter p s) s)"
