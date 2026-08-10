@@ -4054,9 +4054,33 @@ local
                       domtys))
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
+                fun translate_variable_function_type (tydict, index, ty) =
+                  case Lib.total Type.dom_rng ty of
+                    SOME (domain, range) =>
+                      let
+                        val (tydict, (ddecls, dsort)) =
+                          translate_domain (tydict, (index, domain))
+                        val (tydict, (rdecls, rsort)) =
+                          translate_variable_function_type
+                            (tydict, index + 1, range)
+                      in
+                        (tydict, (ddecls @ rdecls,
+                          "(-> " ^ dsort ^ " " ^ rsort ^ ")"))
+                      end
+                  | NONE => translate_type regime (tydict, ty)
                 val (tydict, (rngdecls, rngty)) =
-                  if !current_set_backend <> CVC5ArraySet andalso
-                     declaration_arity = 0 andalso is_marked_set_term rator
+                  if declaration_arity = 0 andalso
+                     (case regime of
+                        HigherOrder Standard27 =>
+                          Term.is_var rator andalso
+                          List.exists (fn argument =>
+                            is_marked_set_term argument orelse
+                            is_marked_bag_term argument) rands
+                      | _ => false) then
+                    translate_variable_function_type
+                      (tydict, 0, Term.type_of rator)
+                  else if !current_set_backend <> CVC5ArraySet andalso
+                          declaration_arity = 0 andalso is_marked_set_term rator
                   then
                     set_sort tydict rator
                   else if declaration_arity = 0 andalso
@@ -4096,7 +4120,19 @@ local
               (acc, rands)
             val (declss, names) = Lib.split declnames
           in
-            (acc, (decls @ List.concat declss, sexpr name names))
+            (acc, (decls @ List.concat declss,
+              case regime of
+                HigherOrder Standard27 =>
+                  if Term.is_var rator andalso
+                     List.exists (fn argument =>
+                       is_marked_set_term argument orelse
+                       is_marked_bag_term argument) rands andalso
+                     not (Option.isSome
+                       (Redblackmap.peek (bounds, rator))) then
+                    List.foldl (fn (argument, function) =>
+                      explicit_apply function argument) name names
+                  else sexpr name names
+              | _ => sexpr name names))
           end
       end
     end
