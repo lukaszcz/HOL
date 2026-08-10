@@ -237,8 +237,9 @@ Incompatibilities
 -   The cvc5 Alethe checked-replay path and `HOL4_CVC_PROOF_FORMAT` selector
     have been removed. `CVC_TAC` uses native CPC proof replay exclusively.
 
--   Native-by-default Seq/Set/Bag emission changes no previously observed
-    `Z3_TAC` goal encoding: the Phase-6 conformance evidence found none.
+-   Native-by-default Seq/Set/Bag emission changes `Z3_TAC` encoding for
+    supported collection goals; lists now use native `Seq` syntax and the
+    widened `ALL` logic where required.
 
 -   The return types of `parse_term.mk_prec_matrix`, `type_grammar.parse_map`, `type_grammar.privileged_abbrevs`
     have been changed to return maps of type HOLdict instead of Binarymap.
