@@ -98,11 +98,11 @@ and `SND`, and various word operations.
 
 cvc5 and Z3 are integrated via a more restrictive translation into
 SMT-LIB 2 format, described below.  Therefore, Yices is typically
-the solver of choice at the moment (unless you need proof
-reconstruction, which is available for Z3 only).  However, there
-are a few operations (e.g., specific word operations) that are
-supported by the SMT-LIB format, but not by Yices.  See
-`selftest.sml` for further details.
+the solver of choice at the moment.  Checked proof reconstruction is
+available for both cvc5 and Z3.  However, there are a few operations
+(e.g., specific word operations) that are supported by the SMT-LIB
+format, but not by Yices.  See `src/HolSmt/README` and `selftest.sml`
+for further details.
 
 Terms of higher-order logic that are not supported by the
 respective target solver / translation are typically treated in
@@ -284,11 +284,10 @@ implementation effort.
 
 #### Support for cvc5's and Z3's SMT-LIB extensions
 
-cvc5 and Z3 support extensions of the SMT-LIB language, e.g.,
-data types, sets, multisets/bags and strings.  `HolSmtLib` does
-not utilize these extensions yet when calling these SMT solvers.
-This would require the translation for these solvers to be
-distinct from the generic SMT-LIB translation.
+`HolSmtLib` uses supported cvc5 and Z3 SMT-LIB extensions, including
+native sequences, sets, bags, and strings.  The supported operators,
+solver versions, and checked-replay coverage are maintained in
+`src/HolSmt/README`.
 
 #### SMT solvers as a web service
 
