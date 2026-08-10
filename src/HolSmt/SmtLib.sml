@@ -3001,7 +3001,7 @@ local
              else if same_const rator smt_seq_update_tm then
                emit "seq.update" rands
              else raise ERR "native_sequence_builtin"
-               "unsupported native sequence term")
+               "unsupported native sequence term"))
       end
     fun native_set_symbol rator rands =
       same_const rator pred_setSyntax.in_tm orelse
