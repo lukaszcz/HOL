@@ -263,8 +263,8 @@ in
     (``!s t : int set.
         (x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
       [thm_CVC]),
-    (``BAG_UNION (b : bool -> num) c = BAG_UNION b c``,
-      [thm_Z3p_v4, thm_CVCp]),
+    (``BAG_IN (x : bool) (BAG_UNION b c) <=>
+        BAG_IN x b \/ BAG_IN x c``, [thm_Z3p_v4]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
