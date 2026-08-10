@@ -915,11 +915,11 @@ in
     case logic of
       "ALL" =>
       (ALL.tydict, ALL.tmdict)
-    | "QF_S" =>
+    | "QF_S" | "S" =>
       (QF_S.tydict, QF_S.tmdict)
-    | "QF_SLIA" =>
+    | "QF_SLIA" | "SLIA" =>
       (QF_SLIA.tydict, QF_SLIA.tmdict)
-    | "QF_SNIA" =>
+    | "QF_SNIA" | "SNIA" =>
       (QF_SNIA.tydict, QF_SNIA.tmdict)
     | "FP" =>
       (FP.tydict, FP.tmdict)
@@ -1126,7 +1126,8 @@ in
 
   val set_dialect_logics = ["ALL", "HO_ALL"]
   val seq_dialect_logics =
-    ["QF_S", "QF_SLIA", "QF_SNIA", "ALL", "HO_ALL"]
+    ["QF_S", "QF_SLIA", "QF_SNIA", "ALL", "HO_ALL",
+     "HO_S", "HO_SLIA", "HO_SNIA"]
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
@@ -1171,9 +1172,9 @@ in
     else
     case logic of
       "ALL" => ALL.metadata
-    | "QF_S" => QF_S.metadata
-    | "QF_SLIA" => QF_SLIA.metadata
-    | "QF_SNIA" => QF_SNIA.metadata
+    | "QF_S" | "S" => QF_S.metadata
+    | "QF_SLIA" | "SLIA" => QF_SLIA.metadata
+    | "QF_SNIA" | "SNIA" => QF_SNIA.metadata
     | "FP" => FP.metadata
     | "FPLRA" => FPLRA.metadata
     | "BVFP" => BVFP.metadata
