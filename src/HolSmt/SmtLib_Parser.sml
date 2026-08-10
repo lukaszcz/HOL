@@ -1831,13 +1831,23 @@ local
               pred_setSyntax.mk_univ domain
             else Term.subst [{redex = variable, residue = payload}] body
           end
+        fun is_const_array function =
+          case Lib.total Term.dest_abs function of
+            SOME (variable, body) =>
+              (case Lib.total Term.dest_var variable of
+                 SOME (name, _) => name = "array_const_value" andalso
+                   Lib.can Term.dest_abs body
+               | NONE => false)
+          | NONE => false
         fun apply_one (argument, function) =
           case Lib.total Term.dest_abs function of
             SOME (variable, body) =>
               Term.subst [{redex = variable, residue = argument}] body
           | NONE => Term.mk_comb (function, argument)
       in
-        fn [payload] => apply_const_array payload
+        fn [payload] =>
+             if is_const_array t then apply_const_array payload
+             else apply_one (payload, t)
           | args => List.foldl apply_one t args
       end
     else
