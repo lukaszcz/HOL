@@ -244,9 +244,8 @@ reconstruction is available for Z3 and cvc5.  Some nonlinear
 real-arithmetic replay paths also require CSDP to be installed.
 
 cvc5 is available for various platforms from
-<https://cvc5.github.io/>.  After installation, you must set the
-environment variable `$HOL4_CVC_EXECUTABLE` to the pathname of the
-cvc5 executable, e.g., `/usr/bin/cvc5`, before you invoke HOL.
+<https://cvc5.github.io/>.  HolSmt uses `$HOL4_CVC_EXECUTABLE` when
+set, otherwise `$CVC5`, and otherwise `cvc5` found on `$PATH`.
 
 Yices is available for various platforms from
 <https://yices.csl.sri.com/>.  After installation, you must set
