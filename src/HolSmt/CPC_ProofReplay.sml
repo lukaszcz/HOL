@@ -1059,9 +1059,23 @@ local
   fun replay_seq_at_elim conclusion args =
     case (conclusion, args) of
       (SOME target, [_, _]) => SmtSeqProve.seq_prove target
-    | (NONE, [_, _]) =>
-        raise ERR "str-at-elim"
-          "omitted conclusion is an enumerated CPC Seq obligation"
+    | (NONE, [sequence, index]) =>
+        let
+          val sequence_ty = Term.type_of sequence
+          val at = Term.mk_thy_const {Thy = "HolSmt", Name = "smt_seq_at",
+            Ty = Type.--> (sequence_ty,
+              Type.--> (intSyntax.int_ty, sequence_ty))}
+          val extract = Term.mk_thy_const {
+            Thy = "HolSmt", Name = "smt_seq_extract",
+            Ty = Type.--> (sequence_ty, Type.--> (intSyntax.int_ty,
+              Type.--> (intSyntax.int_ty, sequence_ty)))}
+          val target = boolSyntax.mk_eq
+            (Term.list_mk_comb (at, [sequence, index]),
+             Term.list_mk_comb (extract,
+               [sequence, index, intSyntax.one_tm]))
+        in
+          SmtSeqProve.seq_prove target
+        end
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
   (* Set rewrites are deliberately driven by the certificate conclusion.
