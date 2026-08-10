@@ -2367,6 +2367,20 @@ local
         end
     | _ => raise ERR "ite-true-cond" "expected two branches"
 
+  fun replay_ite_then_true args =
+    case args of
+      [condition, else_tm] =>
+        let
+          val target = boolSyntax.mk_eq
+            (boolSyntax.mk_cond (condition, boolSyntax.T, else_tm),
+             boolSyntax.mk_disj (condition, else_tm))
+        in
+          Tactical.TAC_PROOF (([], target),
+            Tactical.THEN (Tactic.BOOL_CASES_TAC condition,
+              bossLib.ASM_SIMP_TAC boolSimps.bool_ss []))
+        end
+    | _ => raise ERR "ite-then-true" "expected condition and else branch"
+
   fun replay_ite_false_cond args =
     case args of
       [then_tm, else_tm] =>
@@ -3738,6 +3752,7 @@ local
            | "arith_abs_int_gt" => replay_arith_abs_int_gt args
            | "ite_not_cond" => replay_ite_not_cond args
            | "ite_true_cond" => replay_ite_true_cond args
+           | "ite_then_true" => replay_ite_then_true args
            | "ite_false_cond" => replay_ite_false_cond args
            | "ite_neg_branch" => replay_ite_neg_branch args prems
            | "trust" => replay_trust state args

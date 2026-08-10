@@ -234,6 +234,7 @@ struct
     mk_rule RareRewrite ("arith-min-lt2", "arith_min_lt2"),
     mk_rule RareRewrite ("ite-not-cond", "ite_not_cond"),
     mk_rule RareRewrite ("ite-true-cond", "ite_true_cond"),
+    mk_rule RareRewrite ("ite-then-true", "ite_then_true"),
     mk_rule RareRewrite ("ite-false-cond", "ite_false_cond"),
     mk_rule RareRewrite ("bv-nego-eliminate", "rewrite"),
     mk_rule RareRewrite ("bv-sdivo-eliminate", "rewrite"),
