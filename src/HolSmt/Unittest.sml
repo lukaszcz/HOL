@@ -8258,7 +8258,7 @@ end
 
 fun cpc_proof_parser_ascribed_bag_empty_success () =
 let
-  val proof = parse_cpc_proof_string
+  val proof = parse_cvc_bag_proof_string
     "((define @t1 () (= (as bag.empty (Bag Int)) \
     \(as bag.empty (Bag Int)))) (assume @p1 @t1))"
   val commands = CPC_Proof.proof_commands proof
