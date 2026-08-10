@@ -6325,6 +6325,9 @@ let
   val string_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
     ([], ``STRCAT (s:string) t = STRCAT t s``))
   val string_text = z3 string_goal
+  val word_length_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
+    ([], ``LENGTH (ws:word8 list) = 0``))
+  val word_length_text = z3 word_length_goal
 in
   assert_goal_roundtrip "native sequence totalization" ([],
     boolSyntax.list_mk_conj [boolSyntax.mk_eq (extract, ys),
@@ -6369,7 +6372,11 @@ in
     "LUPDATE availability diagnostic changed: " ^ lupdate_error);
   assert (contains "str.++" string_text andalso
       not (contains "(Seq Char)" string_text),
-    "Phase-4 String emission lost precedence over Seq Char:\n" ^ string_text)
+    "Phase-4 String emission lost precedence over Seq Char:\n" ^ string_text);
+  assert (contains "(Seq (_ BitVec 8))" word_length_text andalso
+      contains "seq.len" word_length_text,
+    "word sequence length did not transfer to integer Seq length:\n" ^
+    word_length_text)
 end
 
 fun smtlib_seq_ho_combinators_success () =

@@ -5283,15 +5283,25 @@ in
      meet -- a goal reasoning about both independently -- are unaffected, and
      their naturals still transfer. *)
   fun num_meets_word tm =
-    (term_is_num tm andalso
-     List.exists (fn sub => type_contains_word (Term.type_of sub))
-       (subterms tm))
+    let
+      (* LENGTH is transferred as an integer coercion around the whole list;
+         word elements beneath it are not word-theory operands or indices. *)
+      fun word_below_num tm =
+        let val (rator, rands) = boolSyntax.strip_comb tm in
+          if same_const rator seq_length_tm then false
+          else type_contains_word (Term.type_of tm) orelse
+            List.exists word_below_num rands
+        end
+        handle Feedback.HOL_ERR _ => type_contains_word (Term.type_of tm)
+    in
+    (term_is_num tm andalso word_below_num tm)
     orelse
     let
       val (rator, rands) = boolSyntax.strip_comb tm
     in
       type_contains_word (Term.type_of rator) andalso
       List.exists term_is_num rands
+    end
     end
 
   fun goal_entangles_num_and_word (asms, concl) =
