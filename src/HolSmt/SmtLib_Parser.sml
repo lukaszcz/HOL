@@ -2877,6 +2877,11 @@ local
       ConstructorSort (ty, _) => pred_setSyntax.is_set_type ty
     | _ => false
 
+  fun is_bag_surface surface =
+    case surface of
+      ConstructorSort (ty, _) => bagSyntax.is_bag_ty ty
+    | _ => false
+
   type function_signature = {
     tm: Term.term,
     domain: Type.hol_type list,
@@ -4366,7 +4371,7 @@ local
           val expected = typecheck_sort context tydict sort
           val expected_surface = surface_sort_of_ast context tydict sort
           val _ =
-            if pred_setSyntax.is_set_type expected then ()
+            if is_set_surface expected_surface then ()
             else type_error "typecheck_term" context (loc_of term_ast)
               NONE (SOME expected)
               (name ^ " result must have Set sort")
@@ -4575,13 +4580,13 @@ local
       val guards =
         if #solver context = SOME "cvc5" then
           List.mapPartial
-            (fn var =>
-              if pred_setSyntax.is_set_type (Term.type_of var) then
+            (fn (_, var, surface) =>
+              if is_set_surface surface then
                 SOME (pred_setSyntax.mk_finite var)
-              else if bagSyntax.is_bag_ty (Term.type_of var) then
+              else if is_bag_surface surface then
                 SOME (finite_bag_term var)
               else NONE)
-            bound_vars
+            vars
         else []
       val body = if List.null guards then body else relativize (guards, body)
     in
@@ -5317,15 +5322,12 @@ local
           command_context solver surface_flags metadata_index command
         end
       fun finish state = SOME state
-      (* Sort aliases have already been expanded when this is called.  Test
-         the resulting HOL types so a declared alias for [Set A] or [Bag A]
-         cannot lose its cvc5 finiteness invariant. *)
-      fun cvc5_set_type ty =
+      fun cvc5_set_surface surface =
         #solver (context "set declaration") = SOME "cvc5" andalso
-        pred_setSyntax.is_set_type ty
-      fun cvc5_bag_type ty =
+        is_set_surface surface
+      fun cvc5_bag_surface surface =
         #solver (context "bag declaration") = SOME "cvc5" andalso
-        bagSyntax.is_bag_ty ty
+        is_bag_surface surface
       fun parsedicts_for logic =
         parsedicts_for_solver (dictionary_logic logic)
       fun typecheck_define_fun_command command_name name vars range body state =
@@ -5411,16 +5413,17 @@ local
             val name_text = located_string_node name
             val _ = reject_duplicate_signature (context "declare-const")
               (loc_of name) name_text [] range sigdict
+            val range_surface =
+              surface_sort_of_ast (context "declare-const") tydict sort
             val (set_tm, tmdict, sigdict) =
               add_value_signature_with_surface name_text [] [] range
-                (surface_sort_of_ast (context "declare-const") tydict sort)
-                (tmdict, sigdict)
+                range_surface (tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
             val command_state =
-              if cvc5_set_type range then
+              if cvc5_set_surface range_surface then
                 add_typechecked_finite_set set_tm [] command_state
-              else if cvc5_bag_type range then
+              else if cvc5_bag_surface range_surface then
                 add_typechecked_finite_bag set_tm [] command_state
               else command_state
           in
@@ -5449,9 +5452,9 @@ local
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
             val command_state =
-              if cvc5_set_type range_ty then
+              if cvc5_set_surface range_surface then
                 add_typechecked_finite_set set_tm domain command_state
-              else if cvc5_bag_type range_ty then
+              else if cvc5_bag_surface range_surface then
                 add_typechecked_finite_bag set_tm domain command_state
               else command_state
           in
