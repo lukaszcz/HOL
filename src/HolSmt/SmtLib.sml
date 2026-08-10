@@ -2138,13 +2138,10 @@ local
         (subterm_types is_native_sequence_type orelse
          List.exists (fn tm => is_native_sequence_const
            (Lib.fst (boolSyntax.strip_comb tm))) all_subterms)
-      (* Checked preprocessing can lower native collection operations to
-         pointwise predicate/count applications.  The selected native backend
-         still emits Set/Bag sorts, so retain that theory in the logic. *)
-      val sets = (!current_set_backend = Z3Set orelse
-                  !current_set_backend = CVC5NativeSet) orelse
-        List.exists (fn tm => is_native_set_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val sets = List.exists (fn tm => is_native_set_const
+        (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      (* Checked preprocessing can lower native bag operations to count
+         applications.  The native cvc5 backend still emits Bag sorts. *)
       val bags = !current_bag_backend = CVC5NativeBag orelse
         List.exists (fn tm => is_native_bag_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
