@@ -2947,6 +2947,12 @@ local
       | _ => false
     end
 
+  fun reject_nested_cvc5_collection context _ surface =
+    if #solver context = SOME "cvc5" andalso nested_collection_surface surface
+    then raise ERR "typecheck_definition"
+      "nested cvc5 Set/Bag sorts are unsupported"
+    else ()
+
   fun finite_cvc5_set_element_type ty =
     Type.compare (ty, Type.bool) = EQUAL orelse
     (Lib.can wordsSyntax.dest_word_type ty andalso
@@ -5266,6 +5272,7 @@ local
       val _ = reject_duplicate_definition context name_loc name sigdict
       val range_type = typecheck_sort context tydict sort
       val range_surface = surface_sort_of_ast context tydict sort
+      val _ = reject_nested_cvc5_collection context (loc_of sort) range_surface
       val body_checked =
         typecheck_term_with_options elaborate_datatypes context
           (tydict, tmdict, sigdict) body
@@ -5320,6 +5327,7 @@ local
         else ()
       val range_type = typecheck_sort context tydict range
       val range_surface = surface_sort_of_ast context tydict range
+      val _ = reject_nested_cvc5_collection context (loc_of range) range_surface
       val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val body_term =
         typecheck_definition_body elaborate_datatypes context (loc_of body)
@@ -5341,6 +5349,7 @@ local
       val _ = reject_duplicate_definition context name_loc name sigdict
       val range_type = typecheck_sort context tydict range
       val range_surface = surface_sort_of_ast context tydict range
+      val _ = reject_nested_cvc5_collection context (loc_of range) range_surface
       val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val domain_types = List.map (Term.type_of o #2) vars
       val domain_surface = List.map #3 vars
@@ -5372,6 +5381,8 @@ local
               val _ = reject_duplicate_definition context name_loc name sigdict
               val range_type = typecheck_sort context tydict range
               val range_surface = surface_sort_of_ast context tydict range
+              val _ = reject_nested_cvc5_collection context (loc_of range)
+                range_surface
               val vars =
                 List.map (checked_sorted_var context tydict) sorted_vars
               val domain_types = List.map (Term.type_of o #2) vars
