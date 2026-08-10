@@ -169,6 +169,14 @@ struct
         | NONE => false)
       (boolSyntax.strip_disj t)
 
+  (* Z3's array-map captures beta-reduce to base-typed equalities, while
+     retaining their non-Boolean array variables. *)
+  fun has_array_variable t = Lib.can (HolKernel.find_term (fn tm =>
+    Term.is_var tm andalso
+    (case Lib.total Type.dom_rng (Term.type_of tm) of
+       SOME (_, range) => Type.compare (range, Type.bool) <> EQUAL
+     | NONE => false))) t
+
   (* Degenerate/trivial conclusions - e.g. the minimal th-lemma placeholders
      `false = false` / `true = true` that the replay unit tests feed through the
      array dispatch, or a reflexive `l = l` - are proved directly and cheaply.
@@ -188,9 +196,10 @@ struct
   fun array_prove t =
     trivial_prove t
     handle Feedback.HOL_ERR _ =>
-    beta_prove t
-    handle Feedback.HOL_ERR _ =>
-    if is_array_goal t orelse has_set_term t orelse has_set_variable t then
+    if is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
+       has_set_variable t then
+      beta_prove t
+      handle Feedback.HOL_ERR _ =>
       Z3_ProformaThms.prove Z3_ProformaThms.array_thms t
       handle Feedback.HOL_ERR _ =>
       Z3_ProformaThms.prove Z3_ProformaThms.set_thms t
