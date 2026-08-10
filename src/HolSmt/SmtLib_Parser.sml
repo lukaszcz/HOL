@@ -2893,17 +2893,15 @@ local
   fun is_set_surface surface =
     case surface of
       ConstructorSort (ty, _) => pred_setSyntax.is_set_type ty
-      (* A sort alias is expanded by the type dictionary before it reaches
-         the surface tree.  It has no Array/Map constructor here, so retain
-         the collection identity of an alias without conflating direct
-         Array syntax with Set. *)
-    | RigidSort ty => pred_setSyntax.is_set_type ty
+      (* A rigid type may result from either an alias or an SMT Array.  Its
+         erased HOL predicate type cannot identify it as a cvc5 Set. *)
+    | RigidSort _ => false
     | _ => false
 
   fun is_bag_surface surface =
     case surface of
       ConstructorSort (ty, _) => bagSyntax.is_bag_ty ty
-    | RigidSort ty => bagSyntax.is_bag_ty ty
+    | RigidSort _ => false
     | _ => false
 
   (* The HOL Set bridge represents cvc5 sets by finite HOL predicates. *)
@@ -2934,9 +2932,7 @@ local
       ConstructorSort (ty, _) =>
         pred_setSyntax.is_set_type ty andalso
         finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)
-    | RigidSort ty =>
-        pred_setSyntax.is_set_type ty andalso
-        finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)
+    | RigidSort _ => false
     | _ => false
 
   type function_signature = {
