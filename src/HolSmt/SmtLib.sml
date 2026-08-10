@@ -2121,7 +2121,7 @@ local
         ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
          "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
       val set_names =
-        ["INSERT", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
+        ["INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
          "EMPTY", "UNIV", "SING", "CARD"]
       val bag_names =
         ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_MERGE", "BAG_INTER",
