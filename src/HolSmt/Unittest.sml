@@ -6399,14 +6399,18 @@ let
        {solver = "cvc5", version = SOME "1.3.4"} goal;
      die "FAIL: unavailable operator was accepted")
     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
-  val _ = SmtLib.clear_operator_availabilities ()
-  val _ = SmtLib.register_operator_availability {
-    hol_head = listSyntax.length_tm, operator = "seq.len", solver = "Z3",
-    versions = ["4.15.3"]}
-  val message = unavailable_message ()
-  val _ = SmtLib.check_goal_operator_availability
-    {solver = "Z3", version = SOME "4.15.3"} goal
-  val _ = SmtLib.clear_operator_availabilities ()
+  val message = Lib.with_flag (SmtLib.operator_availabilities, [])
+    (fn () =>
+      let
+        val _ = SmtLib.register_operator_availability {
+          hol_head = listSyntax.length_tm, operator = "seq.len", solver = "Z3",
+          versions = ["4.15.3"]}
+        val message = unavailable_message ()
+        val _ = SmtLib.check_goal_operator_availability
+          {solver = "Z3", version = SOME "4.15.3"} goal
+      in
+        message
+      end) ()
 in
   assert (message =
       "SMT-LIB operator 'seq.len' is unavailable for solver 'cvc5' at " ^
