@@ -8256,6 +8256,20 @@ in
   | _ => die "FAIL: CPC ascribed seq.empty proof did not parse"
 end
 
+fun cpc_proof_parser_ascribed_bag_empty_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (= (as bag.empty (Bag Int)) \
+    \(as bag.empty (Bag Int)))) (assume @p1 @t1))"
+  val commands = CPC_Proof.proof_commands proof
+in
+  case commands of
+    [CPC_Proof.ASSUME ("@p1", tm)] =>
+      assert (Term.type_of tm = Type.bool,
+        "CPC ascribed bag.empty did not produce a Boolean equality")
+  | _ => die "FAIL: CPC ascribed bag.empty proof did not parse"
+end
+
 fun cpc_proof_parser_flattened_fp_indices_success () =
 let
   val proof = parse_cpc_proof_string
@@ -13208,6 +13222,8 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_proof_parser_ascribed_seq_empty_success",
       cpc_proof_parser_ascribed_seq_empty_success),
+    ("cpc_proof_parser_ascribed_bag_empty_success",
+      cpc_proof_parser_ascribed_bag_empty_success),
     ("cpc_proof_parser_flattened_fp_indices_success",
       cpc_proof_parser_flattened_fp_indices_success),
     ("cpc_proof_parser_private_fp_terms_success",

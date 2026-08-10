@@ -1759,6 +1759,19 @@ local
       in
         empty
       end
+    else if name = "bag.empty" then
+      let
+        val bag_ty = parse_type get_token tydict
+        val _ =
+          if bagSyntax.is_bag_ty bag_ty then ()
+          else raise ERR "parse_ascribed_term"
+            "bag.empty expects a Bag sort"
+        val (element, _) = Type.dom_rng bag_ty
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        Term.inst [{redex = Type.alpha, residue = element}]
+          bagSyntax.EMPTY_BAG_tm
+      end
     else if name = "union" then
       let
         val array_ty = parse_type get_token tydict
