@@ -250,10 +250,10 @@ structure CVC = struct
       val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
       val (translation, strings) =
         goal_to_SmtLib_with_get_proof_translation goal
+      val arrays_exp = List.exists
+        (fn text => String.isSubstring "(as const (Array" text) strings
     in
-      (((original_goal, goal, validation),
-        (translation, List.exists (String.isSubstring "(as const (Array") strings)),
-       strings))
+      (((original_goal, goal, validation), (translation, arrays_exp)), strings)
     end
 
   fun checked_post proof_name cmd_stem parse replay
