@@ -2342,6 +2342,12 @@ local
       else arith_prove target
     end
 
+  fun replay_arrays_select_const args =
+    case args of
+      [target] => Tactical.TAC_PROOF (([], target),
+        bossLib.SIMP_TAC boolSimps.bool_ss [])
+    | _ => raise ERR "arrays-select-const" "expected one equality"
+
   fun replay_ite_not_cond args =
     case args of
       [condition, then_tm, else_tm] =>
@@ -3750,6 +3756,7 @@ local
            | "arith_rel" => replay_arith_rel prems args
            | "arith_abs_eq" => replay_arith_abs_eq args
            | "arith_abs_int_gt" => replay_arith_abs_int_gt args
+           | "arrays_select_const" => replay_arrays_select_const args
            | "ite_not_cond" => replay_ite_not_cond args
            | "ite_true_cond" => replay_ite_true_cond args
            | "ite_then_true" => replay_ite_then_true args

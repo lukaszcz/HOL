@@ -291,7 +291,7 @@ structure CVC = struct
   (* CPC is the sole checked cvc5 proof format. *)
   val cpc_proof_cmd =
     " --produce-proofs --dump-proofs --proof-format-mode=cpc " ^
-    "--proof-granularity=dsl-rewrite --fp-exp --lang smt "
+    "--proof-granularity=dsl-rewrite --fp-exp --arrays-exp --lang smt "
 
   val CVC_SMT_CPC_Prover =
     mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_proof_cmd
