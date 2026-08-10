@@ -161,14 +161,14 @@ structure CVC = struct
           val _ = copy_file source target
           val _ = Library.write_strings_to_file metadata
             ["cvc5_version=", version_string (), "\n",
-             "command=", executable_string (), cmd_stem, "<input-file>\n"]
+             "command=", cmd_stem, "<input-file>\n"]
         in () end
 
-  fun mk_CVC_CPC_fun name pre cmd_stem command_stem post goal =
+  fun mk_CVC_CPC_fun name pre command_stem post goal =
     case configured_executable () of
       SOME file =>
         SolverSpec.make_solver_with_capture_and_command
-          (SOME (cpc_capture cmd_stem)) pre
+          (SOME cpc_capture) pre
           (fn data => file ^ with_timeout_option (command_stem data)) post goal
     | NONE =>
       raise Feedback.mk_HOL_ERR "CVC" name error_msg
@@ -302,7 +302,7 @@ structure CVC = struct
       cpc_proof_cmd
 
   val CVC_SMT_CPC_Prover =
-    mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_proof_cmd cpc_command
+    mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_command
       (checked_post "CVC_SMT_CPC_Prover" cpc_proof_cmd
         (fn dicts => CPC_ProofParser.parse_stream_with_version dicts
           (version_string ()))

@@ -65,7 +65,7 @@ structure SolverSpec = struct
      key, then `input` before solver invocation and `output` afterwards, while
      both temporary files still exist.  It must not alter solver semantics. *)
   fun make_solver_with_capture_and_command
-      (capture : (string -> string -> string -> unit) option)
+      (capture : (string -> string -> string -> string -> unit) option)
       (pre : Abbrev.goal -> 'a * string list)
       (command_stem : 'a -> string)
       (post : 'a -> string -> result) : Abbrev.goal -> result =
@@ -78,7 +78,8 @@ structure SolverSpec = struct
     val outfile = FileSys.tmpName ()
     fun work() = let
       val _ = Library.write_strings_to_file infile inputs
-      val _ = Option.app (fn record => record infile "input" infile) capture
+      val _ = Option.app
+        (fn record => record cmd_stem infile "input" infile) capture
       val cmd = with_wall_timeout (cmd_stem ^ infile ^ " > " ^ outfile)
       (* the actual system call to the SMT solver *)
       val _ = if !Library.trace > 1 then
@@ -86,7 +87,8 @@ structure SolverSpec = struct
                                    cmd ^ "'")
               else ()
       val _ = Systeml.system_ps cmd
-      val _ = Option.app (fn record => record infile "output" outfile) capture
+      val _ = Option.app
+        (fn record => record cmd_stem infile "output" outfile) capture
       (* call 'post' to determine the result *)
       val result = post x outfile
       val _ =
