@@ -5029,6 +5029,11 @@ in
   }
 
   val _ = register_operator_availability {
+    hol_head = smt_seq_replace_all_tm, operator = "seq.replace_all",
+    solver = "cvc5", versions = ["1.3.4"]
+  }
+
+  val _ = register_operator_availability {
     hol_head = seq_lupdate_tm, operator = "seq.update", solver = "cvc5",
     versions = ["1.3.4"]
   }
