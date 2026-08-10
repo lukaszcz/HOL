@@ -77,4 +77,6 @@ The cvc5 native Set/Bag dialect is finite.  The finiteness guard is likewise
 not trusted evidence: inbound `FINITE`/`FINITE_BAG` facts and outbound native
 emission conditions are hypotheses in the generated HOL goal.  When
 finiteness is not entailed, HolSmt uses the quantified plain-array fallback.
-Both paths replay the solver proof and reject unexpected oracle tags.
+`set.card` and `bag.card` are exceptions: they require a
+finiteness-entailing cvc5 goal and are rejected otherwise (and are unavailable
+on Z3).  Both paths replay the solver proof and reject unexpected oracle tags.

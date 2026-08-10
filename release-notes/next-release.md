@@ -52,7 +52,9 @@ New features
     from SMT Seq, Set, and Bag terms with checked replay.  Z3 uses its
     array-based Set dialect and an Array-Int `(_ map ...)` Bag encoding;
     cvc5 uses native finite `set.*`/`bag.*` operations when finiteness is
-    established, otherwise a quantified array fallback.  The complete
+    established, otherwise a quantified array fallback.  `set.card` and
+    `bag.card` require a finiteness-entailing cvc5 goal and are rejected
+    otherwise; neither cardinality operator is available on Z3.  The complete
     per-operator solver/version matrix records the non-standard dialect
     availability and all checked paths reject oracle-tagged theorems.
 
@@ -240,6 +242,11 @@ Incompatibilities
 -   Native-by-default Seq/Set/Bag emission changes `Z3_TAC` encoding for
     supported collection goals; lists now use native `Seq` syntax and the
     widened `ALL` logic where required.
+
+-   The transparent `SmtLib.logic_features` and
+    `SmtLib_Parser.typecheck_options` records have new mandatory fields, and
+    `SmtLib_Parser.QueryCheckSat` has a changed payload.  External clients
+    constructing or matching these values must be updated.
 
 -   The return types of `parse_term.mk_prec_matrix`, `type_grammar.parse_map`, `type_grammar.privileged_abbrevs`
     have been changed to return maps of type HOLdict instead of Binarymap.
