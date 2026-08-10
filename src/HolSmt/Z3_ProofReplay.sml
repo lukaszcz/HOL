@@ -1449,41 +1449,42 @@ local
      (!x. ?y. !z. P x y z) = (!a. ?b. !c. Q a b c) *)
   fun z3_quant_intro (state, thm, t) =
   let
-    (* Removes the outer quantifier and returns a function that inserts it into
-       a theorem on both sides of an quality, and the term without the
-       quantifier. *)
-    fun dest_quant term : ((thm -> thm) * term) option =
+    (* Remove an outer binder and return a function that restores it on both
+       sides of an equality.  Z3's quant-intro also introduces lambda binders
+       for higher-order sequence functions. *)
+    fun dest_binder term : ((thm -> thm) * term) option =
       if boolSyntax.is_forall term then
         SOME (Lib.apfst Drule.FORALL_EQ (boolSyntax.dest_forall term))
       else if boolSyntax.is_exists term then
         SOME (Lib.apfst Drule.EXISTS_EQ (boolSyntax.dest_exists term))
+      else if Term.is_abs term then
+        SOME (Lib.apfst Thm.ABS (Term.dest_abs term))
       else
         NONE
-    (* Removes all quantifiers and returns a list of functions that insert them
-       back into a theorem, and the term without the quantifiers *)
-    fun strip_quant term acc : (thm -> thm) list * term =
-      case dest_quant term of
+    fun strip_binders term acc : (thm -> thm) list * term =
+      case dest_binder term of
         NONE => (List.rev acc, term)
-      | SOME (f, t) => strip_quant t (f :: acc)
+      | SOME (f, body) => strip_binders body (f :: acc)
 
     val (lhs, rhs) = boolSyntax.dest_eq t
-    val (quantfs, _) = strip_quant lhs []
-    (* P may be a quantified proposition itself; only retain *new*
-       quantifiers *)
+    val (binderfs, _) = strip_binders lhs []
+    (* P may already have leading binders; retain only the newly introduced
+       ones. *)
     val (P, _) = boolSyntax.dest_eq (Thm.concl thm)
-    val quantfs = List.take (quantfs, List.length quantfs -
-      List.length (Lib.fst (strip_quant P [])))
+    val binderfs = List.take (binderfs, List.length binderfs -
+      List.length (Lib.fst (strip_binders P [])))
     (* P and Q in the conclusion may require variable renaming to match
        the premise -- we only look at P and hope Q will come out right *)
-    fun strip_some_quants 0 term = term
-      | strip_some_quants n term =
-          strip_some_quants (n - 1) (Lib.snd (Option.valOf (dest_quant term)))
-    val len = List.length quantfs
-    val (tmsubst, _) = Term.match_term P (strip_some_quants len lhs)
+    fun strip_some_binders 0 term = term
+      | strip_some_binders n term =
+          strip_some_binders (n - 1)
+            (Lib.snd (Option.valOf (dest_binder term)))
+    val len = List.length binderfs
+    val (tmsubst, _) = Term.match_term P (strip_some_binders len lhs)
     val thm = Thm.INST tmsubst thm
-    (* add quantifiers (on both sides) *)
-    val thm = List.foldr (fn (quantf, th) => quantf th)
-      thm quantfs
+    (* add binders (on both sides) *)
+    val thm = List.foldr (fn (binderf, th) => binderf th)
+      thm binderfs
     (* rename variables on rhs if necessary *)
     val (_, intermediate_rhs) = boolSyntax.dest_eq (Thm.concl thm)
     val thm = Thm.TRANS thm (Thm.ALPHA intermediate_rhs rhs)
