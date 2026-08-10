@@ -3871,6 +3871,16 @@ local
 
       let
         val (function, argument) = Term.dest_comb tm
+        (* Defer curried applications with native collection arguments to the
+           full-application path, which retains every declaration sort. *)
+        val _ =
+          if Term.is_var rator andalso List.length rands > 1 andalso
+             ((!current_set_backend = CVC5NativeSet andalso
+               List.exists is_marked_set_term rands) orelse
+              (!current_bag_backend = CVC5NativeBag andalso
+               List.exists is_marked_bag_term rands))
+          then raise ERR "translate_term" "native collection application"
+          else ()
         val _ = Type.dom_rng (Term.type_of function)
         val native_set_argument =
           !current_set_backend = CVC5NativeSet andalso
