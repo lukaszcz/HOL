@@ -592,6 +592,7 @@ local
       else
         raise ERR "<builtin_symbols.x:int>" "not a numeral (negated?)")),
     (intSyntax.negate_tm, apfst_K "-"),
+    (intSyntax.Num_tm, apfst_K "abs"),
     (intSyntax.minus_tm, apfst_K "-"),
     (intSyntax.plus_tm, apfst_K "+"),
     (intSyntax.mult_tm, apfst_K "*"),
@@ -973,6 +974,7 @@ local
 
   val current_set_backend = ref Z3Set
   val current_set_terms = ref ([] : Term.term list)
+  val current_raw_num_terms = ref ([] : Term.term list)
 
   val native_set_heads = [
     pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
@@ -2754,6 +2756,11 @@ local
       handle Feedback.HOL_ERR _ => t
     fun builtin_symbol (rator, rands) =
       let
+        val _ =
+          if same_const rator intSyntax.Num_tm andalso
+             mem_aconv tm (!current_raw_num_terms) then
+            raise ERR "builtin_symbol" "Num retains its opaque result sort"
+          else ()
         val (name, rands) = Lib.tryfind (fn parsefn => parsefn (rator, rands))
           (Net.match rator builtin_symbols)  (* may fail *)
         val (acc, declnames) = Lib.foldl_map
@@ -4254,6 +4261,38 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
+    (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
+       opaque HOL-num position it must remain an uninterpreted function. *)
+    fun raw_num_terms term =
+      let
+        fun insert tm terms =
+          if mem_aconv tm terms then terms else tm :: terms
+        fun visit expected tm acc =
+          if Term.is_abs tm then
+            let val (_, body) = Term.dest_abs tm in visit NONE body acc end
+          else if Term.is_comb tm then
+            let
+              val (rator, rand) = Term.dest_comb tm
+              val domain = Lib.fst (Type.dom_rng (Term.type_of rator))
+              val expected_arg =
+                if same_const rator intSyntax.int_injection orelse
+                   same_const rator int_of_num_tm then NONE else SOME domain
+              val acc = visit NONE rator acc
+              val acc = visit expected_arg rand acc
+            in
+              if same_const rator intSyntax.Num_tm andalso
+                 Option.isSome expected andalso
+                 Type.compare (Option.valOf expected, numSyntax.num) = EQUAL
+              then insert tm acc else acc
+            end
+          else acc
+      in
+        visit NONE term []
+      end
+    val raw_num_terms = List.foldl (fn (term, acc) =>
+      List.foldl (fn (num_tm, nums) =>
+        if mem_aconv num_tm nums then nums else num_tm :: nums)
+        acc (raw_num_terms term)) [] (t :: original_ts)
     val bag_terms = List.foldl (fn (term, acc) =>
       collect_native_bag_terms term acc) [] (t :: original_ts)
     (* A symbol has one fixed SMT domain sort.  A collection argument is
@@ -4303,6 +4342,7 @@ local
       | _ => ()
     val _ = current_set_backend := backend
     val _ = current_set_terms := set_terms
+    val _ = current_raw_num_terms := raw_num_terms
     val _ = current_bag_backend := bag_backend
     val _ = current_bag_terms := bag_terms
     val _ = current_bag_helpers := []
@@ -4387,6 +4427,7 @@ local
     val saved_sequence_emission = !current_native_sequence_emission
     val saved_backend = !current_set_backend
     val saved_set_terms = !current_set_terms
+    val saved_raw_num_terms = !current_raw_num_terms
     val saved_bag_backend = !current_bag_backend
     val saved_bag_terms = !current_bag_terms
     val saved_bag_helpers = !current_bag_helpers
@@ -4397,6 +4438,7 @@ local
       (current_native_sequence_emission := saved_sequence_emission;
        current_set_backend := saved_backend;
        current_set_terms := saved_set_terms;
+       current_raw_num_terms := saved_raw_num_terms;
        current_bag_backend := saved_bag_backend;
        current_bag_terms := saved_bag_terms;
        current_bag_helpers := saved_bag_helpers)
