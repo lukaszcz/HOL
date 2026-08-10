@@ -6,6 +6,7 @@ signature SmtBagProve =
 sig
 
   val has_bag_encoding : Term.term -> bool
+  val has_native_bag_encoding : Term.term -> bool
 
   val bag_prove_with_arith :
     (Term.term -> Thm.thm) -> Term.term -> Thm.thm

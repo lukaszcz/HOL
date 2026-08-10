@@ -355,6 +355,8 @@ local
   fun z3_seq_sort_marker element =
     listSyntax.mk_nil (Term.type_of element)
 
+  fun z3_seq_type_marker element = listSyntax.mk_nil element
+
   fun z3_seq_empty marker =
     case Lib.total listSyntax.dest_list_type (Term.type_of marker) of
       SOME element =>
@@ -1357,7 +1359,7 @@ in
         case List.mapPartial (fn parsefn =>
           Lib.total (fn () => parsefn name [] []) ()) parsefns of
           ty :: _ => SOME (name, SmtLib_Theories.K_zero_zero
-            (z3_seq_sort_marker ty))
+            (z3_seq_type_marker ty))
         | [] => NONE) (Redblackmap.listItems tydict))
     val tmdict = Library.union_dict tmdict sort_markers
     val tmdict = Library.union_dict tmdict

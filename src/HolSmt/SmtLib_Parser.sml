@@ -2875,11 +2875,17 @@ local
   fun is_set_surface surface =
     case surface of
       ConstructorSort (ty, _) => pred_setSyntax.is_set_type ty
+      (* A sort alias is expanded by the type dictionary before it reaches
+         the surface tree.  It has no Array/Map constructor here, so retain
+         the collection identity of an alias without conflating direct
+         Array syntax with Set. *)
+    | RigidSort ty => pred_setSyntax.is_set_type ty
     | _ => false
 
   fun is_bag_surface surface =
     case surface of
       ConstructorSort (ty, _) => bagSyntax.is_bag_ty ty
+    | RigidSort ty => bagSyntax.is_bag_ty ty
     | _ => false
 
   type function_signature = {

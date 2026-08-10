@@ -2009,13 +2009,13 @@ local
     boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
 
   fun z3_th_lemma_arith args =
-    if SmtBagProve.has_bag_encoding (th_lemma_target args) then
+    if SmtBagProve.has_native_bag_encoding (th_lemma_target args) then
       z3_th_lemma_bag args
     else
       z3_th_lemma_arith_generic args
 
   fun z3_th_lemma_array args =
-    if SmtBagProve.has_bag_encoding (th_lemma_target args) then
+    if SmtBagProve.has_native_bag_encoding (th_lemma_target args) then
       z3_th_lemma_bag args
     else
       z3_th_lemma_array_generic args

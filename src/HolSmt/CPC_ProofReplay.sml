@@ -2490,10 +2490,10 @@ local
           (#asserted_hyps state)) orelse
         List.exists SmtArrayProve.has_set_term (#scope_hyps state)
       fun bag_context () =
-        SmtBagProve.has_bag_encoding target orelse
-        Option.isSome (HOLset.find SmtBagProve.has_bag_encoding
+        SmtBagProve.has_native_bag_encoding target orelse
+        Option.isSome (HOLset.find SmtBagProve.has_native_bag_encoding
           (#asserted_hyps state)) orelse
-        List.exists SmtBagProve.has_bag_encoding (#scope_hyps state)
+        List.exists SmtBagProve.has_native_bag_encoding (#scope_hyps state)
       fun fp_context () =
         SmtFpProve.has_fp_theory_term target orelse
         Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
