@@ -140,8 +140,12 @@ structure SolverSpec = struct
     Portable.finally finish work ()
   end
 
+  (* Preserve the original capture hook: it observes only the stable key,
+     stage, and temporary path.  The command-aware API above is opt-in. *)
   fun make_solver_with_capture capture pre cmd_stem post =
-    make_solver_with_capture_and_command capture pre (Lib.K cmd_stem) post
+    make_solver_with_capture_and_command
+      (Option.map (fn record => fn _ => record) capture)
+      pre (Lib.K cmd_stem) post
 
   fun make_solver pre cmd_stem post =
     make_solver_with_capture NONE pre cmd_stem post
