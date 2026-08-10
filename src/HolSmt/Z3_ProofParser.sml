@@ -1347,6 +1347,16 @@ in
     val z3_version = resolve_version z3_version
     val string_witnesses = z3_string_witness_specs z3_version
     val tydict = Library.union_dict tydict z3_string_tydict
+    (* Z3 writes generated sort names (such as [t0]) in the legacy
+       term-shaped Seq annotations.  Give each declared proof sort a local
+       marker so [(as seq.empty (Seq t0))] does not try to read [t0] as a
+       numeral. *)
+    val sort_markers = Library.dict_from_list
+      (List.map (fn (name, parsefns) =>
+        (name, SmtLib_Theories.K_zero_zero
+          (z3_seq_sort_marker (Lib.hd parsefns name [] []))))
+        (Redblackmap.listItems tydict))
+    val tmdict = Library.union_dict tmdict sort_markers
     val tmdict = Library.union_dict tmdict
       (z3_string_tmdict z3_version)
     (* union of user-declared names and Z3's inference rule names *)
