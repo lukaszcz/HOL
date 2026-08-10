@@ -86,16 +86,15 @@ Supported Z3 proof dialect and tested anchors:
 The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
 replay diagnostics include the discovered Z3 version and command stem.
 The checked-in proof corpus, local contract, and version verifier use the exact
-tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The passing
-five-version report is `/tmp/holsmt-z3-4.14-support-matrix/report.json`
-(2026-07-16).
+tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The verifier writes its five-version report to
+`.holsmt-z3-version-matrix/report.json` in the validation checkout.
 
 Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
-theories.  The generated operator matrix at
-`.agent-files/reports/seq_set_bag_operator_matrix.md` records every supported
-operator, solver, and version: Z3 4.11.2--4.15.x has array-based Sets and
-Z3-only sequence higher-order operators; cvc5 1.3.4 has native finite
-`set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
+theories.  The coverage matrix at
+`$HOLSMT_VALIDATION_DIR/tools/coverage/SMTLIB_COVERAGE.md` records every
+supported operator, solver, and version: Z3 4.11.2--4.15.x has array-based
+Sets and Z3-only sequence higher-order operators; cvc5 1.3.4 has native
+finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
 `seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4.
 
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
