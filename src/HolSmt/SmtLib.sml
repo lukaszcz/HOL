@@ -5244,9 +5244,10 @@ in
       boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
     ] THEN
     Library.WORD_SIMP_TAC THEN
-    (* Preserve the native Set surface for both oracle and checked emission;
-       unsupported set forms are still expanded atom-by-atom. *)
-    NATIVE_SET_SIMP_TAC THEN
+    (* Oracle emission retains the stock surface where it is native, but
+       expands GSPEC and other unsupported forms atom-by-atom.  Checked
+       replay keeps the established predicate encoding until TASK_10/11. *)
+    (if simp_let then Library.SET_SIMP_TAC else NATIVE_SET_SIMP_TAC) THEN
     Tactic.RULE_ASSUM_TAC
       (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
