@@ -1097,6 +1097,7 @@ local
      Lib.can fcpSyntax.dest_numeric_type (wordsSyntax.dest_word_type ty))
 
   fun finite_set_term finite_terms tm =
+    finite_element_type (set_element_type tm) orelse
     mem_aconv tm finite_terms orelse
     pred_setSyntax.is_empty tm orelse
     (pred_setSyntax.is_univ tm andalso finite_element_type (set_element_type tm))
@@ -5571,6 +5572,19 @@ in
   val NATIVE_SET_SIMP_TAC =
     Tactic.CONV_TAC (Conv.TOP_DEPTH_CONV native_set_preprocess_conv)
 
+  fun CHECKED_SET_SIMP_TAC g =
+    let
+      fun has_complement tm =
+        List.exists (fn subterm =>
+          Option.isSome (Lib.total pred_setSyntax.dest_compl subterm))
+          (Library.subterms tm)
+    in
+      if List.exists has_complement (#1 g @ [#2 g]) then
+        NATIVE_SET_SIMP_TAC g
+      else
+        Library.SET_SIMP_TAC g
+    end
+
   (* Eliminates some HOL terms that are not supported by the SMT-LIB
      translation. It also adds some useful theorems to the list of assumptions
      so that SMT solvers can reason about some symbols defined in HOL4 theories. *)
@@ -5619,10 +5633,10 @@ in
       boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
     ] THEN
     Library.WORD_SIMP_TAC THEN
-    (* Retain native set operations for both oracle and checked emission;
-       SET_SIMP_TAC rewrites complement membership to NOTIN, which has no
-       native SMT Set translation.  Unsupported forms still expand locally. *)
-    NATIVE_SET_SIMP_TAC THEN
+    (* Checked set simplification normally uses the predicate encoding, but
+       must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
+       which does not have a native SMT Set translation. *)
+    (if simp_let then CHECKED_SET_SIMP_TAC else NATIVE_SET_SIMP_TAC) THEN
     Tactic.RULE_ASSUM_TAC
       (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
