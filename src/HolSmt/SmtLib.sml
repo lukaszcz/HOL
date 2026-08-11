@@ -4565,11 +4565,13 @@ local
                    reason = reason} of
         NONE => (inferred_logic, reason)
       | SOME {logic, reason} => (logic, reason)
-    val records = fn () =>
-      build_translation_records regime regime_reason terms
-        selected_logic reason features tydict tmdict
+    (* Build metadata while the collection backend selected for this query is
+       still installed.  A lazy reconstruction after goal_to_SmtLib_aux
+       restores ambient state could otherwise misreport native Set sorts. *)
+    val record_list = build_translation_records regime regime_reason terms
+      selected_logic reason features tydict tmdict
     val translation = {logic = selected_logic, regime = regime,
-      tydict = tydict, tmdict = tmdict, records = records}
+      tydict = tydict, tmdict = tmdict, records = fn () => record_list}
     (* we choose to intertwine declarations and assertions (for no
        particular reason; an alternative would be to emit all
        declarations before all assertions) *)
