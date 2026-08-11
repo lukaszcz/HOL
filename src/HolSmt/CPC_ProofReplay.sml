@@ -1118,8 +1118,7 @@ local
                 bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                   [pred_setTheory.CARD_UNION_EQN,
                    pred_setTheory.CARD_DIFF_EQN,
-                   integerTheory.INT_OF_NUM_ADD,
-                   integerTheory.INT_OF_NUM_SUB])) prems
+                   integerTheory.INT_OF_NUM_ADD])) prems
           end
         else if SmtArrayProve.has_set_term target then
           SmtArrayProve.array_prove target
