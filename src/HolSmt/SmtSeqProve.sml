@@ -265,6 +265,13 @@ struct
     else
       raise ERR "update_reverse_prove" "not an update/reverse shape"
 
+  fun seq_contextual_prove context t =
+    if has_seq_type t then
+      Tactical.TAC_PROOF ((context, t),
+        bossLib.ASM_SIMP_TAC seq_ss list_rewrites)
+    else
+      unsupported t
+
   fun seq_prove t =
     if not (has_seq_type t) then
       unsupported t

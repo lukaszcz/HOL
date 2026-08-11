@@ -2443,7 +2443,7 @@ local
      valid for smt_rdiv, so never assert it.  Return only a reflexive theorem
      for this exact shape; irrelevant congruence branches discard reflexive
      premises, while any proof that actually needs the rewrite still fails. *)
-  fun replay_trust state args =
+  fun replay_trust state prems args =
     let
       val target = expect_one_arg "trust" args
       fun prove_scoped_arithmetic () =
@@ -2523,6 +2523,16 @@ local
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else continuation ()
+      fun replay_seq () =
+        let
+          val context =
+            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+            List.map Thm.concl prems
+          val thm = SmtSeqProve.seq_contextual_prove context target
+        in
+          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+            thm prems
+        end
       fun set_context () = SmtArrayProve.has_set_term target
       fun bag_context () = SmtBagProve.has_native_bag_encoding target
       fun fp_context () =
@@ -2535,7 +2545,7 @@ local
          second rung is the checked contextual simplifier used by its shared
          D2 prover; failure records a theory-specific CPC obligation. *)
       if SmtSeqProve.has_seq_type target then
-        profile "CPC(rung:trust/seq)" SmtSeqProve.seq_prove target
+        profile "CPC(rung:trust/seq_contextual)" replay_seq ()
       else if bag_context () then
         next (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
           (fn () => profile "CPC(rung:trust/bag_context)"
@@ -3715,7 +3725,16 @@ local
          Dispatch on HOL's carrier, rather than the macro spelling, so the
          Phase-4 String route remains unchanged. *)
       if SmtSeqProve.has_seq_type target then
-        profile "CPC(rung:string/seq)" SmtSeqProve.seq_prove target
+        let
+          val context =
+            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+            List.map Thm.concl prems
+          val thm = profile "CPC(rung:string/seq_contextual)"
+            (SmtSeqProve.seq_contextual_prove context) target
+        in
+          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+            thm prems
+        end
       else
         profile "CPC(rung:string/rewrite)"
           SmtStringProve.string_rewrite_prove target
@@ -3817,7 +3836,7 @@ local
            | "ite_then_true" => replay_ite_then_true args
            | "ite_false_cond" => replay_ite_false_cond args
            | "ite_neg_branch" => replay_ite_neg_branch args prems
-           | "trust" => replay_trust state args
+           | "trust" => replay_trust state prems args
            | "ite_eq" => replay_ite_eq args
            | "ite_elim1" => replay_ite_elim1 prems
            | "ite_elim2" => replay_ite_elim2 prems
