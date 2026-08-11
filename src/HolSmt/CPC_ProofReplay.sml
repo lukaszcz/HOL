@@ -52,8 +52,8 @@ local
     cache_stats : cache_stats
   }
 
-  fun initial_state () : state = {
-    asserted_hyps = Term.empty_tmset,
+  fun initial_state asserted_hyps : state = {
+    asserted_hyps = HOLset.addList (Term.empty_tmset, asserted_hyps),
     scope_hyps = [],
     steps = Redblackmap.mkDict String.compare,
     thm_cache = Net.empty,
@@ -1137,6 +1137,8 @@ local
             boolSyntax.mk_eq (card (pred_setSyntax.mk_diff (left, right)),
               intSyntax.mk_minus (card left,
                 card (pred_setSyntax.mk_inter (left, right))))
+        | ("sets-card-emp", [set, _]) =>
+            boolSyntax.mk_eq (card set, intSyntax.zero_tm)
         | ("sets-card-singleton", [element]) =>
             boolSyntax.mk_eq (card (singleton element),
               intSyntax.term_of_int (Arbint.fromInt 1))
@@ -4032,7 +4034,7 @@ in
 
   fun check_proof_impl (asl, g, proof : proof) =
     let
-      val (state, thm) = replay_commands (initial_state ())
+      val (state, thm) = replay_commands (initial_state asl)
         (proof_commands proof)
       val _ = profile_cardinalities state
       val _ = profile "CPC(check:conclusion)"
@@ -4060,14 +4062,14 @@ in
 
   fun replay_root_for_test proof =
     let
-      val (state, thm) = replay_commands (initial_state ())
+      val (state, thm) = replay_commands (initial_state [])
         (proof_commands proof)
       val _ = profile_cardinalities state
     in thm end
 
   fun replay_root_with_cache_stats_for_test proof =
     let
-      val (state, thm) = replay_commands (initial_state ())
+      val (state, thm) = replay_commands (initial_state [])
         (proof_commands proof)
       val _ = profile_cardinalities state
     in (thm, cache_stats state) end
