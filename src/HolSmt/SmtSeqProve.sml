@@ -173,6 +173,14 @@ struct
           Tactical.THEN (Tactic.EXISTS_TAC ``ys : 'a list``,
             bossLib.RW_TAC (bossLib.srw_ss()) [listTheory.APPEND]))))
 
+  val contains_append_right_thm = Tactical.prove
+    (``IS_SUBLIST ((xs : 'a list) ++ ys) ys``,
+     Tactical.THEN
+       (bossLib.RW_TAC (bossLib.srw_ss()) [rich_listTheory.IS_SUBLIST_APPEND],
+        Tactical.THEN (Tactic.EXISTS_TAC ``xs : 'a list``,
+          Tactical.THEN (Tactic.EXISTS_TAC ``[] : 'a list``,
+            bossLib.RW_TAC (bossLib.srw_ss()) [listTheory.APPEND]))))
+
   val prefix_suffix_contains_rewrites = list_rewrites @ [
     listTheory.isPREFIX_THM,
     rich_listTheory.IS_SUBLIST,
@@ -237,7 +245,7 @@ struct
   fun prefix_suffix_contains_prove t =
     if mentions is_prefix_suffix_contains t then
       with_metis_limit (fn () => metisLib.METIS_PROVE
-        [contains_append_left_thm] t) ()
+        [contains_append_left_thm, contains_append_right_thm] t) ()
       handle Feedback.HOL_ERR _ =>
         simp_prove_with prefix_suffix_contains_rewrites t
     else
