@@ -1099,7 +1099,7 @@ local
      makes a future sets-* rule a versioned, loud registry error rather than
      a generic simplifier admission.  The actual proof is shared with the
      ArrayEx/set ladder because D13 represents a Set as [a -> bool]. *)
-  fun replay_sets name conclusion args =
+  fun replay_sets state name prems conclusion args =
     let
       fun empty set = pred_setSyntax.mk_empty (pred_setSyntax.eltype set)
       fun singleton element = pred_setSyntax.mk_insert
@@ -1107,7 +1107,19 @@ local
       fun card set = Term.mk_comb
         (intSyntax.int_injection, pred_setSyntax.mk_card set)
       fun prove target =
-        if SmtArrayProve.has_set_term target then
+        if name = "sets-card-union" orelse name = "sets-card-minus" then
+          let
+            val context =
+              HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+              List.map Thm.concl prems
+          in
+            Tactical.TAC_PROOF ((context, target),
+              ASM_SIMP_TAC (srw_ss ())
+                [CARD_UNION_EQN, CARD_DIFF_EQN,
+                 integerTheory.INT_OF_NUM_ADD,
+                 integerTheory.INT_OF_NUM_SUB])
+          end
+        else if SmtArrayProve.has_set_term target then
           SmtArrayProve.array_prove target
         else
           raise ERR name
@@ -3842,8 +3854,9 @@ local
            | "bv_poly_norm_eq" => replay_bv_poly_norm_eq args
            | "seq_rewrite" => replay_seq_rewrite (#name rule) args
            | "seq_at_elim" => replay_seq_at_elim conclusion args
-           | "sets" => replay_sets (#name rule) conclusion args
-           | "sets_rewrite" => replay_sets (#name rule) conclusion args
+           | "sets" => replay_sets state (#name rule) prems conclusion args
+           | "sets_rewrite" =>
+               replay_sets state (#name rule) prems conclusion args
            | "rewrite" => replay_rare_rewrite (#name rule) args
            | "datatype" => replay_datatype args
            | "datatype_eq" => replay_datatype_eq args
