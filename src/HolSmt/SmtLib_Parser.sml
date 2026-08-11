@@ -4848,10 +4848,11 @@ local
         List.foldl add_param (tydict, []) params
       val param_tys = List.rev param_tys
       val body_ty = typecheck_sort context temp_tydict body
+      val body_surface = surface_sort_of_ast context temp_tydict body
       val _ =
         if #solver context = SOME "cvc5" andalso
-           (pred_setSyntax.is_set_type body_ty orelse
-            bagSyntax.is_bag_ty body_ty) then
+           (is_set_surface body_surface orelse is_bag_surface body_surface orelse
+            nested_collection_surface body_surface) then
           type_error "typecheck_define_sort" context (loc_of body) NONE NONE
             "cvc5 Set/Bag sort aliases are unsupported"
         else ()
