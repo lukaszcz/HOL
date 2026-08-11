@@ -1764,6 +1764,19 @@ local
       in
         empty
       end
+    else if name = "set.empty" orelse name = "set.universe" then
+      let
+        val set_ty = parse_type get_token tydict
+        val _ =
+          if pred_setSyntax.is_set_type set_ty then ()
+          else raise ERR "parse_ascribed_term"
+            (name ^ " expects a Set sort")
+        val element = pred_setSyntax.dest_set_type set_ty
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        if name = "set.empty" then pred_setSyntax.mk_empty element
+        else pred_setSyntax.mk_univ element
+      end
     else if name = "bag.empty" then
       let
         val bag_ty = parse_type get_token tydict
