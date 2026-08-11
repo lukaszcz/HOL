@@ -5105,24 +5105,34 @@ local
         type_error "typecheck_declare_datatype" context loc NONE NONE
           "datatype elaboration requested before SmtLib_Datatypes was loaded"
 
-  fun check_elaborated_datatype_surface context decl =
+  fun check_elaborated_datatype_surface context tydict decl =
     let
       fun check_sort sort =
-        case node_of sort of
-          SortApply (head, args) =>
-            let
-              val _ =
-                if located_string_node head <> "->" then ()
-                else if List.length args >= 2 then
-                  note_arrow_sort_used context
-                else
-                  type_error "typecheck_sort" context (loc_of sort) NONE NONE
-                    ("function sort '->' expects at least one domain sort " ^
-                     "and one range sort")
-            in
-              List.app check_sort args
-            end
-        | _ => ()
+        let
+          val surface_sort = surface_sort_of_ast context tydict sort
+          val _ =
+            if #solver context = SOME "cvc5" andalso
+               nested_collection_surface surface_sort then
+              type_error "typecheck_declare_datatype" context (loc_of sort)
+                NONE NONE "cvc5 datatype Set/Bag fields are unsupported"
+            else ()
+        in
+          case node_of sort of
+            SortApply (head, args) =>
+              let
+                val _ =
+                  if located_string_node head <> "->" then ()
+                  else if List.length args >= 2 then
+                    note_arrow_sort_used context
+                  else
+                    type_error "typecheck_sort" context (loc_of sort) NONE NONE
+                      ("function sort '->' expects at least one domain sort " ^
+                       "and one range sort")
+              in
+                List.app check_sort args
+              end
+          | _ => ()
+        end
       fun check_selector selector =
         case node_of selector of DatatypeSelector (_, sort) => check_sort sort
       fun check_constructor constructor =
@@ -5144,7 +5154,7 @@ local
       val result =
         if elaborate_datatypes then
           let
-            val _ = check_elaborated_datatype_surface context decl
+            val _ = check_elaborated_datatype_surface context tydict decl
           in
             SOME (#define_datatype
               (require_datatype_elaborator context (loc_of name)) (name, decl))
@@ -5207,7 +5217,8 @@ local
     in
       if elaborate_datatypes then
         let
-          val _ = List.app (check_elaborated_datatype_surface context) decls
+          val _ = List.app
+            (check_elaborated_datatype_surface context tydict) decls
           val hooks =
             require_datatype_elaborator context
               (case bindings of b :: _ => loc_of b
