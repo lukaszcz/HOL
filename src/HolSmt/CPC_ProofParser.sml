@@ -390,6 +390,11 @@ local
           ("Bag", [], [element]) => Term.mk_var ("@cpc.Bag",
             Type.--> (Term.type_of element, numSyntax.num))
         | _ => raise ERR "bag_sort_marker" "expected a Bag sort marker"
+      fun set_sort_marker token indices args =
+        case (token, indices, args) of
+          ("Set", [], [element]) => Term.mk_var ("@cpc.Set",
+            Type.--> (Term.type_of element, Type.bool))
+        | _ => raise ERR "set_sort_marker" "expected a Set sort marker"
       fun as_sort_marker token indices args =
         case (token, indices, args) of
           ("as", [], [term, sort]) =>
@@ -403,8 +408,9 @@ local
          overloads only while reading the proof. *)
       val tmdict = Library.extend_dict (("Bool", bool_sort_marker),
         Library.extend_dict (("Bag", bag_sort_marker),
-          Library.extend_dict (("as", as_sort_marker),
-            Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict)))
+          Library.extend_dict (("Set", set_sort_marker),
+            Library.extend_dict (("as", as_sort_marker),
+              Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict))))
       fun cpc_quantifiers_skolemize_parsefn token indices args =
         case args of
           [quantified, index] =>
