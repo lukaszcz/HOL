@@ -5378,6 +5378,8 @@ in
       | SOME {Thy = "integer", Name = "int_of_num", ...} => true
       | SOME {Thy = "realax", Name = "NUM_FLOOR", ...} => true
       | SOME {Thy = "realax", Name = "NUM_CEILING", ...} => true
+      | SOME {Thy = "pred_set", Name = "CARD", ...} => true
+      | SOME {Thy = "bag", Name = "BAG_CARD", ...} => true
       | _ => false
 
   fun atom_needs_num_transfer atom =
