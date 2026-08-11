@@ -4870,7 +4870,8 @@ local
       val body_surface = surface_sort_of_ast context temp_tydict body
       val _ =
         if #solver context = SOME "cvc5" andalso
-           (is_set_surface body_surface orelse is_bag_surface body_surface orelse
+           (is_set_surface body_surface orelse
+            is_bag_surface body_surface orelse
             nested_collection_surface body_surface) then
           type_error "typecheck_define_sort" context (loc_of body) NONE NONE
             "cvc5 Set/Bag sort aliases are unsupported"

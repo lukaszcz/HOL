@@ -1043,7 +1043,11 @@ local
     fun collect_set set terms = add_set_term set terms
     val (rator, rands) = boolSyntax.strip_comb tm
     val terms =
-      (let val (_, body) = Term.dest_abs tm in collect_native_set_terms body terms end
+      (let
+         val (_, body) = Term.dest_abs tm
+       in
+         collect_native_set_terms body terms
+       end
        handle Feedback.HOL_ERR _ =>
          List.foldl (fn (arg, acc) => collect_native_set_terms arg acc)
            terms rands)
@@ -1100,8 +1104,8 @@ local
     finite_element_type (set_element_type tm) orelse
     mem_aconv tm finite_terms orelse
     pred_setSyntax.is_empty tm orelse
-    (pred_setSyntax.is_univ tm andalso finite_element_type (set_element_type tm))
-    orelse
+    (pred_setSyntax.is_univ tm andalso
+     finite_element_type (set_element_type tm)) orelse
     (case Lib.total pred_setSyntax.dest_insert tm of
        SOME (_, set) => finite_set_term finite_terms set
      | NONE =>
@@ -3263,8 +3267,10 @@ local
           case !current_bag_backend of
             CVC5NativeBag => sexpr "bag" [element_name, count_name]
           | _ =>
-              let val array_count =
-                sexpr "ite" [sexpr "<=" ["0", count_name], count_name, "0"]
+              let
+                val array_count =
+                  sexpr "ite"
+                    [sexpr "<=" ["0", count_name], count_name, "0"]
               in
                 sexpr "store"
                   ["((as const (Array " ^ element_sort ^ " Int)) 0)",

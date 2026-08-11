@@ -3123,19 +3123,21 @@ local
     fun literal_rdiv_bridge tm =
       case strip_comb tm of
         (f, [x, y]) =>
-      let
-        val i = realSyntax.dest_injected y
-        val _ = if intSyntax.is_int_literal i then () else raise ERR "" ""
-        val y_ne_zero =
-          Tactical.TAC_PROOF
-            (([], boolSyntax.mk_neg (boolSyntax.mk_eq (y, realSyntax.zero_tm))),
-             bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [realTheory.REAL_INJ])
-      in
-        if Term.same_const f smt_rdiv_const then
-          SOME (Thm.MP (Drule.SPECL [x, y] HolSmtTheory.smt_rdiv_eq_div)
-                       y_ne_zero)
-        else NONE
-      end handle _ => NONE
+          (let
+             val i = realSyntax.dest_injected y
+             val _ =
+               if intSyntax.is_int_literal i then () else raise ERR "" ""
+             val y_ne_zero =
+               Tactical.TAC_PROOF
+                 (([], boolSyntax.mk_neg
+                   (boolSyntax.mk_eq (y, realSyntax.zero_tm))),
+                  bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [realTheory.REAL_INJ])
+           in
+             if Term.same_const f smt_rdiv_const then
+               SOME (Thm.MP (Drule.SPECL [x, y] HolSmtTheory.smt_rdiv_eq_div)
+                            y_ne_zero)
+             else NONE
+           end handle _ => NONE)
       | _ => NONE
     fun literal_rdiv_bridges tm =
       List.mapPartial literal_rdiv_bridge
