@@ -3652,13 +3652,18 @@ local
         case (name, args) of
           ("str-len-concat-rec", [left, right, empty]) =>
             if listSyntax.is_nil empty orelse is_empty_string empty then
-              let
-                fun length sequence = Term.mk_comb
-                  (intSyntax.int_injection, listSyntax.mk_length sequence)
-              in
-                boolSyntax.mk_eq (length (listSyntax.mk_append (left, right)),
-                  intSyntax.mk_plus (length left, length right))
-              end
+              if is_smtstr_type (Term.type_of left) then
+                Thm.concl (Drule.SPECL [left, right]
+                  smtstringTheory.smtstr_len_concat)
+              else
+                let
+                  fun length sequence = Term.mk_comb
+                    (intSyntax.int_injection, listSyntax.mk_length sequence)
+                in
+                  boolSyntax.mk_eq
+                    (length (listSyntax.mk_append (left, right)),
+                     intSyntax.mk_plus (length left, length right))
+                end
             else raise ERR "string" "expected an empty sequence argument"
         | (_, [target]) =>
             if Type.compare (Term.type_of target, Type.bool) = EQUAL then
