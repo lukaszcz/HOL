@@ -6504,7 +6504,10 @@ let
   val z3_dicts = SmtLib_Logics.parsedicts_of_solver_logic "Z3" "QF_UF"
   val _ = assert (has_stub cvc_dicts,
     "cvc5 dialect dictionary was not selected")
-  val [stub] = Redblackmap.find (Lib.snd cvc_dicts, "dialect_stub")
+  val stub =
+    case Redblackmap.find (Lib.snd cvc_dicts, "dialect_stub") of
+      [stub] => stub
+    | _ => die "expected exactly one cvc5 dialect_stub parser"
   val parsed = stub "dialect_stub" [] []
   val _ = SmtLib_Logics.clear_dialect_dictionaries ()
 in
