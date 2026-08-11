@@ -4316,7 +4316,12 @@ local
           if mem_aconv tm terms then terms else tm :: terms
         fun visit expected tm acc =
           if Term.is_abs tm then
-            let val (_, body) = Term.dest_abs tm in visit NONE body acc end
+            let
+              val (_, body) = Term.dest_abs tm
+              val (_, range) = Type.dom_rng (Term.type_of tm)
+            in
+              visit (SOME range) body acc
+            end
           else if Term.is_comb tm then
             let
               val (rator, rand) = Term.dest_comb tm
