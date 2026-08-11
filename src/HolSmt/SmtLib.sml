@@ -1191,15 +1191,39 @@ local
   fun dest_parsed_bag_literal tm =
     let
       val (bound, body) = Term.dest_abs tm
-      val (test, count, otherwise) = boolSyntax.dest_cond body
-      val (left, element) = boolSyntax.dest_eq test
+      val (cond_head, cond_args) = boolSyntax.strip_comb body
+      val (test, count, otherwise) =
+        if same_const cond_head boolSyntax.conditional then
+          case cond_args of [test, count, otherwise] => (test, count, otherwise)
+          | _ => raise ERR "dest_parsed_bag_literal" "wrong conditional arity"
+        else
+          raise ERR "dest_parsed_bag_literal" "not a conditional"
+      val (eq_head, eq_args) = boolSyntax.strip_comb test
+      val (left, element) =
+        if same_const eq_head boolSyntax.equality then
+          case eq_args of [left, element] => (left, element)
+          | _ => raise ERR "dest_parsed_bag_literal" "wrong equality arity"
+        else
+          raise ERR "dest_parsed_bag_literal" "not an equality"
       val _ = if Term.aconv bound left then ()
               else raise ERR "dest_parsed_bag_literal" "wrong binder"
-      val (_, nat_count, zero) = boolSyntax.dest_cond count
+      val (count_head, count_args) = boolSyntax.strip_comb count
+      val (nonnegative, nat_count, zero) =
+        if same_const count_head boolSyntax.conditional then
+          case count_args of [nonnegative, nat_count, zero] =>
+            (nonnegative, nat_count, zero)
+          | _ => raise ERR "dest_parsed_bag_literal" "wrong count arity"
+        else
+          raise ERR "dest_parsed_bag_literal" "not a count"
+      val _ = if intSyntax.is_Num nat_count then ()
+              else raise ERR "dest_parsed_bag_literal" "not an integer count"
       val integer_count = intSyntax.dest_Num nat_count
-      val _ = if numSyntax.is_zero zero andalso numSyntax.is_zero otherwise
-              then ()
-              else raise ERR "dest_parsed_bag_literal" "nonzero default"
+      val (lower, upper) = intSyntax.dest_leq nonnegative
+      val _ = if Term.aconv lower intSyntax.zero_tm andalso
+                    Term.aconv upper integer_count andalso
+                    Term.aconv zero numSyntax.zero_tm andalso
+                    Term.aconv otherwise numSyntax.zero_tm then ()
+              else raise ERR "dest_parsed_bag_literal" "wrong count clamp"
     in
       (element, integer_count)
     end
