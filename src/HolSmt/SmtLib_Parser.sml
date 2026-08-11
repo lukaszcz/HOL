@@ -2916,17 +2916,11 @@ local
   fun is_set_surface surface =
     case surface of
       ConstructorSort (ty, _) => pred_setSyntax.is_set_type ty
-      (* A sort alias is expanded by the type dictionary before it reaches
-         the surface tree.  It has no Array/Map constructor here, so retain
-         the collection identity of an alias without conflating direct
-         Array syntax with Set. *)
-    | RigidSort ty => pred_setSyntax.is_set_type ty
     | _ => false
 
   fun is_bag_surface surface =
     case surface of
       ConstructorSort (ty, _) => bagSyntax.is_bag_ty ty
-    | RigidSort ty => bagSyntax.is_bag_ty ty
     | _ => false
 
   (* The HOL Set bridge represents cvc5 sets by finite HOL predicates. *)
@@ -4814,6 +4808,13 @@ local
         List.foldl add_param (tydict, []) params
       val param_tys = List.rev param_tys
       val body_ty = typecheck_sort context temp_tydict body
+      val _ =
+        if #solver context = SOME "cvc5" andalso
+           (pred_setSyntax.is_set_type body_ty orelse
+            bagSyntax.is_bag_ty body_ty) then
+          type_error "typecheck_define_sort" context (loc_of body) NONE NONE
+            "cvc5 Set/Bag sort aliases are unsupported"
+        else ()
       fun parsefn token indices args =
         if List.null indices andalso List.length args = List.length param_tys then
           let
