@@ -82,6 +82,12 @@ fun z3_tac_query_assumptions queries =
     SmtLib_Parser.QueryCheckSat {assumptions, ...} :: _ => assumptions
   | _ => []
 
+fun z3_tac_query_transfer_hypotheses queries =
+  case queries of
+    SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...} :: _ =>
+      transfer_hypotheses
+  | _ => []
+
 (* 'define-fun' bodies reach the solver through 'local_definitions' (see
    'z3_tac_query_assertions'), so the fragment gate has to see them too, or
    a quantifier or nonlinear product buried in a macro escapes the check.
@@ -120,11 +126,11 @@ fun z3_tac_hypothesis_goal_required queries =
   | _ :: rest => z3_tac_hypothesis_goal_required rest
   | [] => false
 
-fun z3_tac_goal queries assertions =
+fun z3_tac_goal queries assertions transfer_hypotheses =
   if z3_tac_hypothesis_goal_required queries then
-    (assertions, boolSyntax.F)
+    (transfer_hypotheses @ assertions, boolSyntax.F)
   else
-    ([], boolSyntax.mk_neg (z3_tac_conjunction assertions))
+    (transfer_hypotheses, boolSyntax.mk_neg (z3_tac_conjunction assertions))
 
 (* The smallest symbolic-add commutativity proof in the Phase-5 corpus is
    already over 25 MB.  Keep this pre-solver check on the shared, unit-tested
@@ -296,7 +302,9 @@ in
            "queries=" ^ Int.toString (List.length queries)]
     | NONE =>
       let
-        val goal = z3_tac_goal queries assertions
+        val transfer_hypotheses =
+          z3_tac_query_transfer_hypotheses queries
+        val goal = z3_tac_goal queries assertions transfer_hypotheses
         val result =
           (z3_tac_preflight_resource_gate assertions;
            z3_tac_checked_result goal)
