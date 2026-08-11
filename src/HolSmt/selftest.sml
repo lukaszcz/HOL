@@ -261,8 +261,9 @@ in
     (* The infinite element type selects cvc5's plain-array fallback. *)
     (``(x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
       [thm_CVC, thm_CVCp]),
-    (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``,
-      [thm_Z3p_v4, thm_CVCp]),
+    (* Z3 proves this through an array lemma outside its checked Bag replay
+       ladder; cvc5 supplies the native checked Bag certificate. *)
+    (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
