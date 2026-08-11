@@ -4566,13 +4566,32 @@ local
                    reason = reason} of
         NONE => (inferred_logic, reason)
       | SOME {logic, reason} => (logic, reason)
-    (* Build metadata while the collection backend selected for this query is
-       still installed.  A lazy reconstruction after goal_to_SmtLib_aux
-       restores ambient state could otherwise misreport native Set sorts. *)
-    val record_list = build_translation_records regime regime_reason terms
-      selected_logic reason features tydict tmdict
+    (* Metadata is public lazily, so retain the query's collection state for
+       its eventual construction instead of consulting the restored ambient
+       state. *)
+    val record_sequence_emission = !current_native_sequence_emission
+    val record_set_backend = !current_set_backend
+    val record_bag_backend = !current_bag_backend
+    fun records () =
+      let
+        val saved_sequence_emission = !current_native_sequence_emission
+        val saved_set_backend = !current_set_backend
+        val saved_bag_backend = !current_bag_backend
+        fun work () =
+          (current_native_sequence_emission := record_sequence_emission;
+           current_set_backend := record_set_backend;
+           current_bag_backend := record_bag_backend;
+           build_translation_records regime regime_reason terms
+             selected_logic reason features tydict tmdict)
+        fun restore () =
+          (current_native_sequence_emission := saved_sequence_emission;
+           current_set_backend := saved_set_backend;
+           current_bag_backend := saved_bag_backend)
+      in
+        Portable.finally restore work ()
+      end
     val translation = {logic = selected_logic, regime = regime,
-      tydict = tydict, tmdict = tmdict, records = fn () => record_list}
+      tydict = tydict, tmdict = tmdict, records = records}
     (* we choose to intertwine declarations and assertions (for no
        particular reason; an alternative would be to emit all
        declarations before all assertions) *)

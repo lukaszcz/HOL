@@ -86,10 +86,12 @@ fun cvc_cpc_run path expected_logic =
     val _ = Library.trace := 0
     val (state, scoped_parse_error) =
       (SmtLib_Parser.parse_file_state_with_options
-         {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = true} path, NONE)
+         {dict_logic = NONE, solver = SOME "cvc5",
+          elaborate_datatypes = true} path, NONE)
       handle Feedback.HOL_ERR holerr =>
         (SmtLib_Parser.parse_file_state_with_options
-           {dict_logic = SOME "ALL", solver = SOME "cvc5", elaborate_datatypes = true} path,
+           {dict_logic = SOME "ALL", solver = SOME "cvc5",
+            elaborate_datatypes = true} path,
          SOME holerr)
     val observed_logic = #logic state
     val fragment_diagnostic =
