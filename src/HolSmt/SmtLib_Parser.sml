@@ -4653,7 +4653,9 @@ local
             val expected = typecheck_sort context tydict sort
             val expected_surface = surface_sort_of_ast context tydict sort
             val _ =
-              if checked_sort checked = expected then ()
+              if checked_sort checked = expected andalso
+                 surface_sort_compatible expected_surface
+                   (checked_surface_sort checked) then ()
               else
                 type_error "typecheck_term" context (loc_of term_ast)
                   (SOME expected) (SOME (checked_sort checked))
@@ -4668,7 +4670,9 @@ local
             val expected = typecheck_sort context tydict sort
             val expected_surface = surface_sort_of_ast context tydict sort
             val _ =
-              if checked_sort checked = expected then ()
+              if checked_sort checked = expected andalso
+                 surface_sort_compatible expected_surface
+                   (checked_surface_sort checked) then ()
               else
                 type_error "typecheck_term" context (loc_of term_ast)
                   (SOME expected) (SOME (checked_sort checked))

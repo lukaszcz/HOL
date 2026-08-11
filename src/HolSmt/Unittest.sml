@@ -4786,6 +4786,14 @@ in
   assert_builder "cvc5 set.universe" cvc5_options
     "(= (as set.universe (Set Bool)) (as set.universe (Set Bool)))"
     (boolSyntax.mk_eq (bool_univ, bool_univ));
+  reject cvc5_options "Set cannot be ascribed as Array"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(assert (= (as s (Array Int Bool)) s))\n";
+  reject cvc5_options "Array cannot be ascribed as Set"
+    "(set-logic ALL)\n\
+     \(declare-const a (Array Int Bool))\n\
+     \(assert (= (as a (Set Int)) a))\n";
   assert_builder "cvc5 forall Set binder" cvc5_options
     "(forall ((u (Set Int))) (= (set.card u) 0))"
     (boolSyntax.mk_forall (quantified_set, boolSyntax.mk_imp
