@@ -775,8 +775,15 @@ fun tryTrackedCloseWith unifier function assumptions (formula, literal) =
   let
     val formula_term = trackedTerm formula
     val literal_term = trackedTerm literal
+    fun positioned tracked = Option.isSome (trackedToken tracked)
+    val reconstructible =
+      if isGoal formula_term then positioned literal
+      else if isGoal literal_term then positioned formula
+      else if isNot formula_term orelse isNot literal_term then
+        positioned formula andalso positioned literal
+      else false
     fun close (left, right) =
-      if unifier ([], left, right) then
+      if reconstructible andalso unifier ([], left, right) then
         SOME (closeStep function assumptions (formula, literal))
       else NONE
   in

@@ -2651,6 +2651,35 @@ val _ =
 
 val _ =
   test
+    ("tokenless branch goals cannot masquerade as assumptions",
+     fn () =>
+       let
+         val xset = mk_var ("provenance_xset", alpha --> bool)
+         val yset = mk_var ("provenance_yset", alpha --> bool)
+         val zset = mk_var ("provenance_zset", alpha --> bool)
+         val union = pred_setSyntax.mk_union (yset, zset)
+         val subset = pred_setSyntax.mk_subset
+         val vset = mk_var ("provenance_vset", alpha --> bool)
+         val goal =
+           mk_eq
+             (mk_eq (xset, union),
+              list_mk_conj
+                [subset (yset, xset), subset (zset, xset),
+                 mk_forall
+                   (vset,
+                    mk_imp
+                      (mk_conj
+                         (subset (yset, vset), subset (zset, vset)),
+                       subset (xset, vset)))])
+       in
+         (ignore
+            (blastReconstruct.searchGoal
+              (clasetLib.the_claset ()) 20 ([], goal));
+          true)
+       end)
+
+val _ =
+  test
     ("hidden elimination antecedent shifts exact child selectors",
      fn () =>
        let

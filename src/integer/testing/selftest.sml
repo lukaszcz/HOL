@@ -80,4 +80,26 @@ val _ = convtest ("decide_closed_presburger gh1207c",
                        x ≤ -42 ∨ 1 < r ∨ -21 < k”,
                   boolSyntax.T);
 
+val _ = convtest
+  ("PresburgerEx free nat conditional",
+   Cooper.COOPER_CONV,
+   “~((m : num) <= j) ==> ~((n : num) <= i) ==>
+    (e : num) <> 0 ==> SUC j <= ja ==>
+    ?m. !ja ia. m <= ja ==>
+      (if j = ja /\ i = ia then e else 0) = 0”,
+   boolSyntax.T)
+
+val _ = convtest
+  ("PresburgerEx closed nat guard",
+   intLib.ARITH_CONV,
+   “!x : num. ?y : num. (0 : num) <= 5 ==> y = 5 + x”,
+   boolSyntax.T)
+
+val _ = convtest
+  ("PresburgerEx negated existential divisibility",
+   Cooper.COOPER_CONV,
+   “~(?x : int. ?y : int. ?z : int.
+      4 * x + (-6 : int) * y = (1 : int))”,
+   boolSyntax.T)
+
 val _ = exit_count0 erc

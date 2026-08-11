@@ -1,0 +1,49 @@
+INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
+           ../linarith/instances ../seeds ../../integer ../../real \
+           ../../rational ../../num/reduce/src
+
+all: $(DEFAULT_TARGETS) selftest.exe genparity.exe
+.PHONY: all
+
+selftest.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
+             benchSetShortfalls.uo benchSets.uo \
+             benchListCorpus.uo benchMapCorpus.uo benchOptionCorpus.uo \
+             benchProductCorpus.uo benchStringCorpus.uo \
+             benchLibraryShortfalls.uo benchListMap.uo \
+             benchLinarith.uo benchPresburger.uo benchAlgebra.uo \
+             parityLib.uo
+
+parityLib.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
+              benchSetShortfalls.uo benchSets.uo \
+              benchListCorpus.uo benchMapCorpus.uo benchOptionCorpus.uo \
+              benchProductCorpus.uo benchStringCorpus.uo \
+              benchLibraryShortfalls.uo benchListMap.uo \
+              benchLinarith.uo benchPresburger.uo benchAlgebra.uo
+
+genparity.uo: parityLib.uo
+
+genparity.exe: genparity.uo parityLib.uo
+	$(HOLMOSMLC) -o $@ $<
+
+benchLib.uo: ../linarith/instances/intLinarith.uo \
+             ../linarith/instances/realLinarith.uo \
+             ../linarith/instances/ratLinarith.uo
+
+benchSets.uo: benchSetCorpus.uo benchSetShortfalls.uo
+
+benchListMap.uo: benchListCorpus.uo benchMapCorpus.uo \
+                 benchOptionCorpus.uo benchLibraryShortfalls.uo \
+                 benchProductCorpus.uo \
+                 benchStringCorpus.uo
+
+selftest.exe: selftest.uo benchLib.uo
+	$(HOLMOSMLC) -o $@ $<
+
+ifdef HOLSELFTESTLEVEL
+all: benchmarks-selftest.log
+
+benchmarks-selftest.log: selftest.exe
+	$(tee ./selftest.exe 2>&1,$@)
+endif
+
+EXTRA_CLEANS = selftest.exe genparity.exe benchmarks-selftest.log

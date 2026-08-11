@@ -30,8 +30,9 @@ is the routine development gate building kernel + core theories + this layer,
 with selftests.  Its real scope is wider than the entries suggest: Holmake
 recurses from `linarith/instances/` into src/integer, src/real, src/rational
 and their closure, and a failure in any of those is reported against the
-`src/auto/linarith/instances` entry.  `bin/build -F -t` (full distribution)
-is the gate at phase boundaries.
+`src/auto/linarith/instances` entry.  Phase 8 then builds the post-boss
+`seeds/` and `benchmarks/` entries in that order.  `bin/build -F -t` (full
+distribution) is the gate at phase boundaries.
 
 Numeric attribute values (`[elim=75]`, `[norm=~3]`) need a quote filter
 built from the current `tools/parsing/HolLex`.  That lexer is generated
@@ -73,6 +74,9 @@ Phased subtree layout:
     aesop/       best-first engine (aesop-style)
     linarith/    generic linear arith, `LINARITH_TAC`; carrier
                  instances, no dispatching `ARITH_TAC`
+    seeds/       per-theory opt-in seeds, inversion audit, and named
+                 algebra/field simp collections
+    benchmarks/  translated parity corpora and exact shortfall accounting
 
 `linarith/` contains the pre-boss core and num instance.  Its
 `instances/` subdirectory contains the int, real and rat instances and
@@ -84,9 +88,10 @@ belongs to the parallel build band.
   libraries built before `src/boss` (`portableML`, `src/1`,
   `src/parse`, `src/marker`, `src/basicProof`); `rules/` must not
   depend on `src/simp`.  This keeps eventual promotion into the core
-  build a sequence edit only.  The sole exception under `src/auto` is
-  `linarith/instances/`, whose post-boss `INCLUDES` provide the int,
-  real and rat instances.
+  build a sequence edit only.  The post-boss exceptions under `src/auto`
+  are `linarith/instances/`, `seeds/`, and `benchmarks/`; their `INCLUDES`
+  provide the source theories and tactic backends needed by the opt-in
+  corpus and parity suite.
 - **Portability**: the build entry is not `[poly]`-tagged — code must
   be Moscow-ML-compatible SML (no Poly/ML-isms).
 - **No goal metavariables in HOL4**: safe steps run as genuine tactics
@@ -115,6 +120,13 @@ belongs to the parallel build band.
   algebra corpora) are selftest assertions: solved-goal counts + time
   budgets.  Exhaustive corpora sit behind a higher `HOLSELFTESTLEVEL`;
   never prune goals to make a gate pass.
+- The Phase-8 harness asserts the exact mapped-tactic solved set and the
+  exact dated shortfall register in both directions.  A newly solved
+  registered goal is a failing test until it leaves the register; only
+  `under-iteration` entries block a parity claim.
+- Every safe seed declaration is covered by `seedAudit`; an exception is a
+  dated, reasoned waiver consumed by the selftest, and stale waivers fail.
+  Seed rules must not duplicate TypeBase contributions.
 - Benchmark goals are closed by search, never recognition: no tactic,
   preprocessor, rewrite set or seed may name a problem, its statement,
   or a lemma that only discharges one.  Seeds carry general rule

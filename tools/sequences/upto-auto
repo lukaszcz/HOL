@@ -11,8 +11,8 @@ src/auto/linarith
 src/auto/clasimp
 src/auto/aesop
 
-# The layer's sole post-boss directory, kept last so the pre-boss block
-# above stays contiguous.  Holmake recurses from here into src/integer,
+# The layer's first post-boss directory, kept after the pre-boss block so
+# that block stays contiguous.  Holmake recurses from here into src/integer,
 # src/real, src/rational and their INCLUDES closure, so the gate really
 # does build those; a failure in any of them is reported against this
 # entry.  Do not promote them to sequence entries of their own: their
@@ -21,6 +21,12 @@ src/auto/aesop
 # ...: File exists").  src/quotient/src is the one directory that is
 # both, and it pays for it by commenting that block out.
 src/auto/linarith/instances
+
+# Post-boss opt-in rule corpus and its parity gate.  Seeds depend on the
+# source theories and linarith instances; benchmarks depend on the seeds.
+# Neither directory runs HOL_LNSIGOBJ under HOLBUILD.
+src/auto/seeds
+src/auto/benchmarks
 
 # User-level showcase theories for the layer's tactics.  Post-boss like
 # instances/ (they use bossLib and the int, real and rat instances), so
@@ -31,3 +37,4 @@ src/auto/examples
 !src/auto/linarith/theory_tests
 !src/auto/clasimp/theory_tests
 !src/auto/aesop/theory_tests
+!src/auto/seeds/theory_tests

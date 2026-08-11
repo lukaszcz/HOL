@@ -371,7 +371,8 @@ in
 val nat_rewrites =
     [arithmeticTheory.LEFT_ADD_DISTRIB, arithmeticTheory.RIGHT_ADD_DISTRIB,
      arithmeticTheory.MAX_DEF, arithmeticTheory.MIN_DEF,
-     arithmeticTheory.ODD_EXISTS, arithmeticTheory.EVEN_EXISTS]
+     arithmeticTheory.ODD_EXISTS, arithmeticTheory.EVEN_EXISTS,
+     arithmeticTheory.ZERO_LESS_EQ]
 
 val dealwith_nats = let
   val phase1 =
@@ -460,7 +461,8 @@ val int_rewrites =
 fun BASIC_CONV DPname DP tm = let
   val (natgoal, natvalidation) = dealwith_nats tm
   val stage1 = PURE_REWRITE_CONV int_rewrites THENC
-               ONCE_DEPTH_CONV normalise_mult
+               ONCE_DEPTH_CONV normalise_mult THENC
+               move_quants_up
   fun stage2 tm =
     let
       val non_pbs = non_presburger_subterms0 ES tm

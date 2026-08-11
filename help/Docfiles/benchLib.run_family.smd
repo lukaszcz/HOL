@@ -1,0 +1,20 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `run_family`
+
+``` hol4
+benchLib.run_family :
+  {family : string, goals : benchLib.corpus_goal list,
+   shortfalls : benchLib.shortfall list, budget : Time.time,
+   battery : benchLib.tactic_id list, level : int} ->
+  benchLib.family_result
+```
+
+------------------------------------------------------------------------
+
+Runs each selected corpus goal with its mapped tactic and checks exact
+two-way agreement with the dated shortfall register.  Level 1 selects the
+declared representative slice.  Level 2 runs the full supplied family and
+records, but does not gate on, the requested tactic battery.
+
+Self-analogue exclusions are checked before execution.  A newly solved
+registered goal is an error just like an unregistered failure.

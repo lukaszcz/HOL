@@ -4,7 +4,7 @@ CLINE_OPTIONS = -r
 SRCRELNAMES = \
   algebra auto/rules auto/classical auto/blast auto/linarith \
   auto/linarith/instances auto/clasimp \
-  auto/aesop auto/examples \
+  auto/aesop auto/seeds auto/benchmarks auto/examples \
   bag Boolify/src \
   coalgebras \
   datatype/inftree \
