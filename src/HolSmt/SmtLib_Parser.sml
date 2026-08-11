@@ -5121,12 +5121,18 @@ local
 
   fun check_elaborated_datatype_surface context tydict decl =
     let
+      fun contains_collection sort =
+        case node_of sort of
+          SortApply (head, args) =>
+            located_string_node head = "Set" orelse
+            located_string_node head = "Bag" orelse
+            List.exists contains_collection args
+        | _ => false
       fun check_sort sort =
         let
-          val surface_sort = surface_sort_of_ast context tydict sort
           val _ =
             if #solver context = SOME "cvc5" andalso
-               nested_collection_surface surface_sort then
+               contains_collection sort then
               type_error "typecheck_declare_datatype" context (loc_of sort)
                 NONE NONE "cvc5 datatype Set/Bag fields are unsupported"
             else ()
