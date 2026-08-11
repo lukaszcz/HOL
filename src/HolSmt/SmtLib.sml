@@ -5629,21 +5629,24 @@ in
 
   (* Preserve equality on native collections.  FUN_EQ_THM would turn it into
      a predicate equality before collection discovery can select Set or Bag. *)
-  fun fun_eq_preprocess_conv tm =
+  fun fun_eq_preprocess_conv preserve_native_collections tm =
     let
       val (left, right) = boolSyntax.dest_eq tm
       val collection_equality =
         (is_set_type left andalso is_set_type right) orelse
         (is_bag_type left andalso is_bag_type right)
     in
-      if collection_equality then raise Conv.UNCHANGED
-      else Conv.REWR_CONV boolTheory.FUN_EQ_THM tm
+      if preserve_native_collections andalso collection_equality then
+        raise Conv.UNCHANGED
+      else
+        Conv.REWR_CONV boolTheory.FUN_EQ_THM tm
     end
     handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
 
   fun cvc_native_bag_goal goal =
   let
-    val bag_terms = List.foldl collect_native_bag_terms []
+    val bag_terms = List.foldl
+      (fn (term, terms) => collect_native_bag_terms term terms) []
       (Lib.fst goal @ [Lib.snd goal])
   in
     cvc5_native_bags goal bag_terms
@@ -5697,7 +5700,8 @@ in
        HolSmtTheory.smt_rdiv_one, HolSmtTheory.smt_rdiv_neg_refl,
        HolSmtTheory.smt_rdiv_neg_one] THEN
     SIMP_TAC pureSimps.pure_ss [boolTheory.REFL_CLAUSE] THEN
-    Tactic.CONV_TAC (Conv.DEPTH_CONV fun_eq_preprocess_conv) THEN
+    Tactic.CONV_TAC
+      (Conv.DEPTH_CONV (fun_eq_preprocess_conv preserve_native_bags)) THEN
     Library.WORD_SIMP_TAC THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,

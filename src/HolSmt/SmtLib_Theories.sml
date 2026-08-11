@@ -1150,6 +1150,10 @@ in
       if is_string (List.hd args) then smtstring_app string_name args
       else seq_fun args
 
+    fun string_or_seq_one string_name seq_fun sequence =
+      if is_string sequence then smtstring_app string_name [sequence]
+      else seq_fun sequence
+
     fun string_or_seq_two string_name seq_fun (left, right) =
       string_or_seq string_name (fn [x, y] => seq_fun (x, y)
                                   | _ => raise Fail "wrong arity")
@@ -1167,7 +1171,7 @@ in
           (string_or_seq_two "smtstr_concat" listSyntax.mk_append)),
       shared_term "seq.len" no_attributes ["(seq.len (Seq A) Int)"]
         (K_zero_one
-          (string_or_seq "smtstr_len" mk_seq_len)),
+          (string_or_seq_one "smtstr_len" mk_seq_len)),
       shared_term "seq.unit" no_attributes ["(seq.unit A (Seq A))"]
         (K_zero_one mk_seq_unit),
       shared_term "seq.empty" no_attributes ["(seq.empty (Seq A))"]
