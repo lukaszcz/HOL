@@ -6531,12 +6531,18 @@ let
       [stub] => stub
     | _ => die "expected exactly one cvc5 dialect_stub parser"
   val parsed = stub "dialect_stub" [] []
+  val unknown_solver_message =
+    (ignore (SmtLib_Logics.parsedicts_of_solver_logic "typo" "QF_UF");
+     die "unknown solver was accepted")
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
   val _ = SmtLib_Logics.clear_dialect_dictionaries ()
 in
   assert (Term.aconv parsed boolSyntax.T,
     "cvc5 dialect dictionary did not parse its registered symbol");
   assert (not (has_stub z3_dicts),
-    "Z3 accepted a cvc5-only dialect dictionary symbol")
+    "Z3 accepted a cvc5-only dialect dictionary symbol");
+  assert (String.isSubstring "unknown solver 'typo'" unknown_solver_message,
+    "unknown solver diagnostic changed: " ^ unknown_solver_message)
 end
 
 fun smtlib_hol_string_injection_translation_success () =

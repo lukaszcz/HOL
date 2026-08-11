@@ -1107,6 +1107,15 @@ in
      solver-neutral Seq, cvc5 Set/Bag, and Z3 Set entries independently. *)
   fun parsedicts_of_solver_logic solver logic =
     let
+      val known_solver =
+        solver = "Z3" orelse solver = "cvc5" orelse
+        List.exists (fn ({solver = registered_solver, ...}
+                          : dialect_dictionary_registration) =>
+          solver = registered_solver) (!dialect_dictionary_registrations)
+      val _ =
+        if known_solver then ()
+        else raise ERR "parsedicts_of_solver_logic"
+          ("unknown solver '" ^ solver ^ "'")
       val (base_tydict, base_tmdict) = parsedicts_of_logic logic
       val registrations = List.filter
         (fn ({solver = registered_solver, logic = registered_logic, ...}
