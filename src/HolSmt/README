@@ -635,7 +635,9 @@ Local CI contract commands:
     --conformance-report .holsmt-ci/conformance/typecheck/conformance.json \
     --conformance-report .holsmt-ci/conformance/z3-tac/conformance.json
 
-  # SML unit tests without configured solvers, matching the CI Docker job
+  # SML unit tests without configured solvers, matching the CI Docker job.
+  # The functional test gate is sharded: never invoke selftest.exe directly.
+  # Make HOLSMT_VALIDATION_DIR available inside the container.
   docker buildx build \
     --load \
     --tag holsmt-nosolver:ci \
@@ -647,7 +649,7 @@ Local CI contract commands:
     -e HOL4_CVC_EXECUTABLE= \
     -e HOL4_YICES_EXECUTABLE= \
     holsmt-nosolver:ci \
-    sh -lc 'src/HolSmt/selftest.exe'
+    sh -lc '$HOLSMT_VALIDATION_DIR/tools/run_selftest.sh --keep-going'
 
   # Selected legacy Z3 Docker lanes.  The five-version verifier above is the
   # complete support contract.
@@ -660,7 +662,8 @@ Local CI contract commands:
       --build-arg 'BUILDOPTS=--no-cache --expk -j4' \
       -f developers/docker-ci/Dockerfile .
     docker run --rm "holsmt-z3:${z3_version}" \
-      sh -lc '"$HOL4_Z3_EXECUTABLE" -version && src/HolSmt/selftest.exe'
+      sh -lc '"$HOL4_Z3_EXECUTABLE" -version &&
+        $HOLSMT_VALIDATION_DIR/tools/run_selftest.sh --keep-going'
   done
 
 Adding support for a new Z3 proof rule:
