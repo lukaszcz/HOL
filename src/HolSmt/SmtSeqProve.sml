@@ -67,6 +67,7 @@ struct
     listTheory.EL,
     listTheory.MAP_APPEND,
     rich_listTheory.FOLDL_APPEND,
+    integerTheory.INT_ADD_COMM,
     HolSmtTheory.smt_seq_nth_def,
     HolSmtTheory.smt_seq_extract_def,
     HolSmtTheory.smt_seq_at_def
