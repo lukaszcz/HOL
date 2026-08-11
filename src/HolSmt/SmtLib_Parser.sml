@@ -2554,12 +2554,18 @@ local
                  {logic = logic, frames = rest, queries = queries}
          | [] => raise ERR "pop" "empty assertion stack")
 
-  fun reset_assertions ({logic, frames, queries}: command_state) =
-    let val frame = current_frame {logic = logic, frames = frames, queries = queries}
+  fun reset_assertions (state as {logic, frames, queries}: command_state) =
+    let
+      val frame = current_frame state
+      val reset_frame = {
+        tydict = frame_tydict frame,
+        tmdict = frame_tmdict frame,
+        assertions = [],
+        named_assertions = [],
+        local_definitions = active_local_definitions state
+      }
     in
-      {logic = logic,
-       frames = [mk_frame (frame_tydict frame) (frame_tmdict frame)],
-       queries = queries}
+      {logic = logic, frames = [reset_frame], queries = queries}
     end
 
   fun parse_top_level_assertion get_token (tydict, tmdict) =
@@ -3524,7 +3530,7 @@ local
         finite_sets = active_typechecked_finite_sets state,
         assertions = [],
         named_assertions = [],
-        local_definitions = []
+        local_definitions = active_typechecked_local_definitions state
       }
     in
       {logic = logic,
