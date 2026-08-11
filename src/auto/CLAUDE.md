@@ -30,9 +30,9 @@ is the routine development gate building kernel + core theories + this layer,
 with selftests.  Its real scope is wider than the entries suggest: Holmake
 recurses from `linarith/instances/` into src/integer, src/real, src/rational
 and their closure, and a failure in any of those is reported against the
-`src/auto/linarith/instances` entry.  Phase 8 then builds the post-boss
-`seeds/` and `benchmarks/` entries in that order.  `bin/build -F -t` (full
-distribution) is the gate at phase boundaries.
+`src/auto/linarith/instances` entry.  The sequence then builds the
+post-`boss` `seeds/` and `benchmarks/` entries in that order.
+`bin/build -F -t` checks the full distribution.
 
 Numeric attribute values (`[elim=75]`, `[norm=~3]`) need a quote filter
 built from the current `tools/parsing/HolLex`.  That lexer is generated
@@ -65,7 +65,7 @@ The layer is registered in `SRCRELNAMES` in
 
 ## Architecture
 
-Phased subtree layout:
+Subtree layout:
 
     rules/       rule DB, attributes, netpairs, seeds
     classical/   SAFE/CLARIFY step tactics, FAST/BEST/DEEPEN
@@ -120,10 +120,11 @@ belongs to the parallel build band.
   algebra corpora) are selftest assertions: solved-goal counts + time
   budgets.  Exhaustive corpora sit behind a higher `HOLSELFTESTLEVEL`;
   never prune goals to make a gate pass.
-- The Phase-8 harness asserts the exact mapped-tactic solved set and the
-  exact dated shortfall register in both directions.  A newly solved
-  registered goal is a failing test until it leaves the register; only
-  `under-iteration` entries block a parity claim.
+- The benchmark harness asserts the exact assigned-tactic solved set and the
+  exact dated expected-non-solution records in both directions.  A newly
+  solved registered goal is a failing test until its record is removed.  An
+  `UnderIteration` record means a source result is not yet represented or
+  otherwise accounted for; any such record blocks a parity claim.
 - Every safe seed declaration is covered by `seedAudit`; an exception is a
   dated, reasoned waiver consumed by the selftest, and stale waivers fail.
   Seed rules must not duplicate TypeBase contributions.
@@ -142,7 +143,7 @@ belongs to the parallel build band.
   internals — nets and `claset` internals may change.
 - Bug fixes get a failing-first regression test.
 - Run: `Holmake` + `./selftest.exe` in the directory while editing;
-  the `upto-auto` gate before a change is done; `bin/build -F -t` at
-  phase boundaries, PRs, and any change outside `src/auto/` (simp,
+  use the `upto-auto` gate before a change is done and `bin/build -F -t`
+  before PR handoff or after any change outside `src/auto/` (simp,
   seeding).  New subdirectories go into `tools/sequences/upto-auto`
   and `SRCRELNAMES`.

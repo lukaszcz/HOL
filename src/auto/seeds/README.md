@@ -1,14 +1,15 @@
 # Automation seeds
 
-This post-boss directory contains the opt-in, promotion-ready rule corpus
-for the automation layer.  Each source theory has its own `*AutoSeed`
-theory; `autoSeed` is the complete umbrella.  Loading a seed changes only
-the theory-ancestry-backed automation databases and does not alter a
-distribution simpset.
+This directory contains optional automation rules built after `src/boss`.
+Each source theory has its own `*AutoSeed` theory; `autoSeed` imports all of
+them.  A child theory inherits the rules of every seed theory in its
+ancestry.  Loading a seed does not change HOL4's default simplifier rules.
 
-`seedAudit` checks every safe rule's inversion obligation.  The named
-`algebra_simps` and `field_simps` collections are exposed by
-`seedCollections` as stateful ssfrags and are likewise opt-in.
+`seedAudit` checks every rule classified as safe by proving the reverse
+direction required to show that applying the rule cannot lose solutions.
+The named `algebra_simps` and `field_simps` collections are exposed by
+`seedCollections` as optional simplifier fragments (`simpLib.ssfrag`
+values).
 
 For the complete seeded state, make `autoSeed` an ancestor of a theory (or
 `open autoSeedTheory` in an ML consumer).  A smaller consumer can depend on
