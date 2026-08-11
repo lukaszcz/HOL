@@ -2718,7 +2718,7 @@ local
   fun replay_arith_mult_neg args =
     case args of
       [coefficient, equality] =>
-        (let
+        ((let
            val (left, right) = boolSyntax.dest_eq equality
            val target = boolSyntax.mk_imp
              (boolSyntax.mk_conj
@@ -2745,7 +2745,7 @@ local
              arith_leq
               (arith_mult (coefficient, left),
                arith_mult (coefficient, right)))
-        in arith_prove target end
+        in arith_prove target end)
     | _ => raise ERR "arith_mult_neg"
       "expected a coefficient and a non-negative arithmetic literal"
 
