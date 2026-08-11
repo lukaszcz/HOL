@@ -4752,6 +4752,11 @@ in
        zero));
   assert_builder "cvc5 set.map" cvc5_options "(= (set.map f s) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_image (f, s), s));
+  ignore (typecheck cvc5_options
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Bool))\n\
+     \(declare-const f (-> Bool Bool))\n\
+     \(assert (= (ite true (set.map f s) s) s))\n");
   assert_builder "cvc5 set.filter" cvc5_options "(= (set.filter p s) s)"
     (boolSyntax.mk_eq
       (set_spec (filter_x, boolSyntax.mk_conj
