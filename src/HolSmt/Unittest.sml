@@ -6349,7 +6349,7 @@ let
   val string_text = z3 string_goal
   val raw_string_append_text = z3 ([], ``APPEND (s:string) t = t``)
   val word_length_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
-    ([], ``LENGTH (ws:word8 list) = 0``))
+    ([], ``&(LENGTH (ws:word8 list)) = 0``))
   val word_length_text = z3 word_length_goal
   val opaque_length_text = z3 ([], Term.mk_comb
     (Term.mk_var ("P", Type.--> (numSyntax.num, Type.bool)),
