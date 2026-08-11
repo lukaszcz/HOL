@@ -1829,7 +1829,8 @@ local
 
   val smt_reserved_type_names = [
     "Bool", "Int", "Real", "String", "RoundingMode", "FloatingPoint",
-    "Float16", "Float32", "Float64", "Float128", "Array", "BitVec"
+    "Float16", "Float32", "Float64", "Float128", "Array", "BitVec",
+    "Seq", "Set", "Bag"
   ]
 
   val smt_reserved_term_names = [
