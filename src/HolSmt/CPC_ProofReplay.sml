@@ -1113,11 +1113,13 @@ local
               HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
               List.map Thm.concl prems
           in
-            Tactical.TAC_PROOF ((context, target),
-              bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
-                [pred_setTheory.CARD_UNION_EQN,
-                 pred_setTheory.CARD_DIFF_EQN,
-                 integerTheory.INT_OF_NUM_ADD])
+            List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+              (Tactical.TAC_PROOF ((context, target),
+                bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+                  [pred_setTheory.CARD_UNION_EQN,
+                   pred_setTheory.CARD_DIFF_EQN,
+                   integerTheory.INT_OF_NUM_ADD,
+                   integerTheory.INT_OF_NUM_SUB])) prems
           end
         else if SmtArrayProve.has_set_term target then
           SmtArrayProve.array_prove target
