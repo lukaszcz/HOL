@@ -4556,7 +4556,8 @@ local
           val empty =
             if listSyntax.is_list_type expected then
               listSyntax.mk_nil (listSyntax.dest_list_type expected)
-            else if Type.compare (expected, smtstr_ty) = EQUAL then
+            else if Type.compare (expected, smtstr_ty) = EQUAL andalso
+                    z3_or_neutral () then
               SmtLib_String_Literal.mk_string_term ""
             else
               type_error "typecheck_term" context (loc_of term_ast)

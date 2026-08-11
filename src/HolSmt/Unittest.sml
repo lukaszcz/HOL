@@ -4525,6 +4525,8 @@ in
   assert_builder "shared seq.empty" cvc5_options
     "(= (as seq.empty (Seq Int)) (as seq.empty (Seq Int)))"
     (boolSyntax.mk_eq (empty, empty));
+  reject cvc5_options "cvc5 seq.empty String carrier"
+    "(set-logic ALL)\n(assert (= (as seq.empty String) \"\"))\n";
   assert_builder "shared seq.extract" z3_options
     "(= (seq.extract xs x x) ys)" (boolSyntax.mk_eq (extract, ys));
   assert_builder "seq.extract negative start" cvc5_options
