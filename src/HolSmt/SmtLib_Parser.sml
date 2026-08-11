@@ -675,6 +675,11 @@ local
         else if reserved_head andalso head_text = "set.comprehension" then
           let
             val vars = parse_sorted_var_list ()
+            val _ =
+              if List.null vars then
+                parse_error "parse_term" (token_loc head_tok)
+                  "set.comprehension requires a nonempty sorted-variable list"
+              else ()
             val predicate = parse_term_from_first
               (need_token "parse_term" "set comprehension predicate")
             val value = parse_term_from_first

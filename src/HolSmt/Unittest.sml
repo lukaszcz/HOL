@@ -4775,6 +4775,9 @@ in
     "(set-logic ALL)\n\
      \(assert (= (set.comprehension ((z Int)) true z)\n\
      \           (set.comprehension ((z Int)) true z)))\n";
+  reject cvc5_options "empty set.comprehension binders"
+    "(set-logic ALL)\n\
+     \(assert (set.comprehension () true 0))\n";
   assert_builder "cvc5 set.empty" cvc5_options
     "(= (as set.empty (Set Int)) (as set.empty (Set Int)))"
     (boolSyntax.mk_eq (empty, empty));
