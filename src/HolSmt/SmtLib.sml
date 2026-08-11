@@ -2826,8 +2826,7 @@ local
         CVC5NativeBag => bag_sort tydict bag
       | _ => bag_array_sort tydict bag
     fun bound_variable_sort tydict var =
-      if !current_set_backend <> CVC5ArraySet andalso
-         is_marked_set_term var then
+      if is_marked_set_term var then
         set_sort tydict var
       else if is_marked_bag_term var then
         selected_bag_sort tydict var
