@@ -4695,8 +4695,7 @@ let
     | _ => die "cvc5 set test did not produce one check-sat query"
   val cvc5_set_function_state = typecheck cvc5_options
     ("(set-logic ALL)\n" ^
-     "(define-sort IntSet () (Set Int))\n" ^
-     "(declare-fun sf (Int) IntSet)\n" ^
+     "(declare-fun sf (Int) (Set Int))\n" ^
      "(assert true)\n(check-sat)\n")
   val finite_function_hypotheses =
     case #queries cvc5_set_function_state of
@@ -5026,8 +5025,7 @@ let
     | _ => die "cvc5 bag-function test did not produce one check-sat query"
   val alias_state = typecheck cvc5_options
     ("(set-logic ALL)\n" ^
-     "(define-sort IntBag () (Bag Int))\n" ^
-     "(declare-const alias_b IntBag)\n" ^
+     "(declare-const alias_b (Bag Int))\n" ^
      "(assert (bag.member 0 alias_b))\n(check-sat)\n")
   val alias_b = Term.mk_var ("alias_b", bag_ty)
   val alias_transfer_hypotheses =
