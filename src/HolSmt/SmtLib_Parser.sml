@@ -3944,9 +3944,13 @@ local
               else type_error fn_name context loc NONE NONE
                 "ArraysEx store surface sort mismatch"
           | ("store", [set_surface, _, _]) =>
-              if is_set_surface set_surface andalso #solver context = SOME "cvc5"
-              then type_error fn_name context loc NONE NONE
-                "Z3 Set store is unavailable in the cvc5 dialect"
+              if is_bag_surface set_surface then
+                type_error fn_name context loc NONE NONE
+                  "ArraysEx store requires an Array sort, not a Bag"
+              else if is_set_surface set_surface andalso
+                      #solver context = SOME "cvc5" then
+                type_error fn_name context loc NONE NONE
+                  "Z3 Set store is unavailable in the cvc5 dialect"
               else ()
           | ("ite", _ :: then_sort :: else_sort :: _) =>
               if surface_sorts_equivalent then_sort else_sort then ()
@@ -4482,6 +4486,13 @@ local
           val expected = typecheck_sort context tydict sort
           val expected_surface = surface_sort_of_ast context tydict sort
           val payload = check payload
+          val _ =
+            case expected_surface of
+              MapSort _ =>
+                type_error "typecheck_term" context (loc_of term_ast)
+                  NONE (SOME expected)
+                  "const result must have an Array or Set sort"
+            | _ => ()
           val (domain, range) = Type.dom_rng expected
             handle Feedback.HOL_ERR _ =>
               type_error "typecheck_term" context (loc_of term_ast)
