@@ -1816,6 +1816,19 @@ local
         "(declare-fun " ^ name ^ " (" ^
         String.concatWith " " domain_sorts ^ ") " ^ range_sort ^ ")\n"
 
+  val emitted_term_sorts =
+    ref ([] : ((Term.term * int) * (string list * string)) list)
+
+  fun record_emitted_term_sorts key sorts =
+    emitted_term_sorts := (key, sorts) :: !emitted_term_sorts
+
+  fun emitted_term_sorts_for (tm, arity) =
+    case List.find (fn ((other_tm, other_arity), _) =>
+      arity = other_arity andalso Term.aconv tm other_tm) (!emitted_term_sorts)
+      of
+        SOME (_, sorts) => SOME sorts
+      | NONE => NONE
+
   fun term_decl_for_tmdict regime tydict ((tm, arity), name) =
     let
       fun doms_rng acc 0 ty = (List.rev acc, ty)
@@ -1825,12 +1838,14 @@ local
       val injected_string = arity = 0 andalso is_injected_string tm
       val injected_float = arity = 0 andalso is_injected_float tm
       val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
-      val domain_sorts =
-        List.map (smt_sort_of_type regime tydict) domtys
-      val range_sort =
-        if injected_string then "String"
-        else if injected_float then smtfp_sort rngty
-        else smt_sort_of_type regime tydict rngty
+      val (domain_sorts, range_sort) =
+        case emitted_term_sorts_for (tm, arity) of
+          SOME sorts => sorts
+        | NONE =>
+            (List.map (smt_sort_of_type regime tydict) domtys,
+             if injected_string then "String"
+             else if injected_float then smtfp_sort rngty
+             else smt_sort_of_type regime tydict rngty)
       val declaration =
         term_declaration_text regime name domain_sorts range_sort
     in
@@ -4070,6 +4085,8 @@ local
                      (tmdict, (function, 1), name)
                    val declaration = term_declaration_text regime name
                      [domain_sort] range_sort
+                   val _ = record_emitted_term_sorts (function, 1)
+                     ([domain_sort], range_sort)
                  in
                    ((tydict, tmdict),
                     (domdecls @ rngdecls @ [declaration], name))
@@ -4229,6 +4246,8 @@ local
                   (tmdict, (rator, declaration_arity), name)
                 val decl =
                   term_declaration_text regime name domtys rngty
+                val _ = record_emitted_term_sorts
+                  (rator, declaration_arity) (domtys, rngty)
               in
                 ((tydict, tmdict),
                  (domdecls @ rngdecls @ [decl], name))
@@ -4415,6 +4434,7 @@ local
       (goal as (original_ts, t)) : translation * string list =
   let
     val _ = current_native_sequence_emission := emit_sequences
+    val _ = emitted_term_sorts := []
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
     val bag_terms = List.foldl (fn (term, acc) =>
@@ -4591,21 +4611,25 @@ local
     val record_sequence_emission = !current_native_sequence_emission
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
+    val record_emitted_term_sorts = !emitted_term_sorts
     fun records () =
       let
         val saved_sequence_emission = !current_native_sequence_emission
         val saved_set_backend = !current_set_backend
         val saved_bag_backend = !current_bag_backend
+        val saved_emitted_term_sorts = !emitted_term_sorts
         fun work () =
           (current_native_sequence_emission := record_sequence_emission;
            current_set_backend := record_set_backend;
            current_bag_backend := record_bag_backend;
+           emitted_term_sorts := record_emitted_term_sorts;
            build_translation_records regime regime_reason terms
              selected_logic reason features tydict tmdict)
         fun restore () =
           (current_native_sequence_emission := saved_sequence_emission;
            current_set_backend := saved_set_backend;
-           current_bag_backend := saved_bag_backend)
+           current_bag_backend := saved_bag_backend;
+           emitted_term_sorts := saved_emitted_term_sorts)
       in
         Portable.finally restore work ()
       end
