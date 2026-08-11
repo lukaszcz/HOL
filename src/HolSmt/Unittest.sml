@@ -4857,7 +4857,13 @@ in
      "  (as set.universe (Set Int))))\n");
   reject cvc5_options "cvc5 infinite set.complement"
     ("(set-logic ALL)\n(declare-const s (Set Int))\n" ^
-     "(assert (= (set.complement s) s))\n")
+     "(assert (= (set.complement s) s))\n");
+  reject cvc5_options "cvc5 datatype Set field"
+    "(set-logic ALL)\n\
+     \(declare-datatype d ((mk-d (field (Set Int)))))\n";
+  reject cvc5_options "cvc5 datatype Bag field"
+    "(set-logic ALL)\n\
+     \(declare-datatype d ((mk-d (field (Bag Int)))))\n"
 end
 
 fun smtlib_bag_dialect_builders_success () =

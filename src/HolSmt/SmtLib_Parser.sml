@@ -5179,17 +5179,14 @@ local
   fun typecheck_declare_datatype elaborate_datatypes context name decl
       (tydict, tmdict, sigdict) =
     let
+      val _ = check_elaborated_datatype_surface context tydict decl
       val arity =
         case node_of decl of
           DatatypeDecl (params, _) => List.length params
       val result =
         if elaborate_datatypes then
-          let
-            val _ = check_elaborated_datatype_surface context tydict decl
-          in
-            SOME (#define_datatype
-              (require_datatype_elaborator context (loc_of name)) (name, decl))
-          end
+          SOME (#define_datatype
+            (require_datatype_elaborator context (loc_of name)) (name, decl))
         else NONE
       val tydict =
         if elaborate_datatypes then tydict
@@ -5236,6 +5233,8 @@ local
 
       val _ = List.app check_decl_arity (ListPair.zip (infos, decls))
 
+      val _ = List.app
+        (check_elaborated_datatype_surface context tydict) decls
       val tydict =
         if elaborate_datatypes then tydict
         else
@@ -5248,8 +5247,6 @@ local
     in
       if elaborate_datatypes then
         let
-          val _ = List.app
-            (check_elaborated_datatype_surface context tydict) decls
           val hooks =
             require_datatype_elaborator context
               (case bindings of b :: _ => loc_of b
