@@ -1419,18 +1419,11 @@ local
           named "HolSmt" holsmt_heads tm) andalso
          native_sequence_parts tm) orelse
         List.exists (fn whole => Term.aconv tm whole) totalized
-      fun length_is_coerced length =
-        List.exists (fn whole =>
-          case boolSyntax.strip_comb whole of
-            (rator, [argument]) =>
-              Term.aconv argument length andalso
-              (same_const rator intSyntax.int_injection orelse
-               named "integer" ["int_of_num"] rator)
-          | _ => false) subterms
-      fun is_length tm = named "list" ["LENGTH"] tm
+      fun has_unconverted_word_num tm =
+        Lib.can wordsSyntax.dest_w2n tm
     in
       List.all supported subterms andalso
-      List.all length_is_coerced (List.filter is_length subterms) andalso
+      not (List.exists has_unconverted_word_num subterms) andalso
       List.exists selects_seq subterms
     end
 
