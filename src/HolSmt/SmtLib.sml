@@ -1220,6 +1220,12 @@ local
       val _ = if intSyntax.is_Num nat_count then ()
               else raise ERR "dest_parsed_bag_literal" "not an integer count"
       val integer_count = intSyntax.dest_Num nat_count
+      val _ =
+        if Term.free_in bound element orelse
+           Term.free_in bound integer_count then
+          raise ERR "dest_parsed_bag_literal"
+            "literal element or count depends on binder"
+        else ()
       val (lower, upper) = intSyntax.dest_leq nonnegative
       val _ = if Term.aconv lower intSyntax.zero_tm andalso
                     Term.aconv upper integer_count andalso
@@ -1302,6 +1308,7 @@ local
 
   fun finite_bag_term finite_terms tm =
     mem_aconv tm finite_terms orelse bagSyntax.is_empty tm orelse
+    is_parsed_bag_literal tm orelse
     finite_element_type (bag_element_type tm) orelse
     (case Lib.total bagSyntax.dest_insert tm of
        SOME (_, bag) => finite_bag_term finite_terms bag
@@ -3255,9 +3262,14 @@ local
         val text =
           case !current_bag_backend of
             CVC5NativeBag => sexpr "bag" [element_name, count_name]
-          | _ => sexpr "store"
-              ["((as const (Array " ^ element_sort ^ " Int)) 0)",
-               element_name, count_name]
+          | _ =>
+              let val array_count =
+                sexpr "ite" [sexpr "<=" ["0", count_name], count_name, "0"]
+              in
+                sexpr "store"
+                  ["((as const (Array " ^ element_sort ^ " Int)) 0)",
+                   element_name, array_count]
+              end
       in
         ((tydict, Lib.snd acc),
          (element_decls @ count_decls @ type_decls, text))
