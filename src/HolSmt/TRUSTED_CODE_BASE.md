@@ -73,10 +73,12 @@ operations.  That encoding is a definitional translation choice, not an
 assumed bag theory: array/count correspondence and arithmetic side conditions
 are reconstructed in HOL by the checked replay path.
 
-The cvc5 native Set/Bag dialect is finite.  The finiteness guard is likewise
-not trusted evidence: inbound `FINITE`/`FINITE_BAG` facts and outbound native
-emission conditions are hypotheses in the generated HOL goal.  When
-finiteness is not entailed, HolSmt uses the quantified plain-array fallback.
-`set.card` and `bag.card` are exceptions: they require a
-finiteness-entailing cvc5 goal and are rejected otherwise (and are unavailable
-on Z3).  Both paths replay the solver proof and reject unexpected oracle tags.
+The cvc5 native Set/Bag dialect is finite.  Native emission is selected by
+an ML-side eligibility check: structural finiteness, finite element types, or
+an existing `FINITE`/`FINITE_BAG` assumption.  Such assumptions select the
+finite model and are omitted from the serialized SMT assertions; this is a
+translation-correctness obligation, not generated HOL evidence.  Otherwise,
+HolSmt uses the quantified plain-array fallback.  `set.card` and `bag.card`
+require native-backend eligibility and are rejected otherwise (and are
+unavailable on Z3).  Both paths replay the solver proof and reject unexpected
+oracle tags.
