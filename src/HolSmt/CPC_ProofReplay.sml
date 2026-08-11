@@ -3731,7 +3731,10 @@ local
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
           val thm = profile "CPC(rung:string/seq_contextual)"
-            (SmtSeqProve.seq_contextual_prove context) target
+            (fn target =>
+              SmtSeqProve.seq_prove target
+              handle Feedback.HOL_ERR _ =>
+                SmtSeqProve.seq_contextual_prove context target) target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems

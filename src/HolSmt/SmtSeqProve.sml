@@ -61,6 +61,7 @@ struct
     listTheory.APPEND_eq_NIL,
     listTheory.CONS_11,
     listTheory.LENGTH_APPEND,
+    integerTheory.INT_OF_NUM_ADD,
     listTheory.LENGTH_EQ_0,
     listTheory.LENGTH_EQ_1,
     listTheory.NOT_CONS_NIL,
