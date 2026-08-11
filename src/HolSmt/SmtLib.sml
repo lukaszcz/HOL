@@ -1415,8 +1415,19 @@ local
           named "HolSmt" holsmt_heads tm) andalso
          native_sequence_parts tm) orelse
         List.exists (fn whole => Term.aconv tm whole) totalized
+      fun length_is_coerced length =
+        List.exists (fn whole =>
+          case boolSyntax.strip_comb whole of
+            (rator, [argument]) =>
+              Term.aconv argument length andalso
+              (same_const rator intSyntax.int_injection orelse
+               named "integer" ["int_of_num"] rator)
+          | _ => false) subterms
+      fun is_length tm = named "list" ["LENGTH"] tm
     in
-      List.all supported subterms andalso List.exists selects_seq subterms
+      List.all supported subterms andalso
+      List.all length_is_coerced (List.filter is_length subterms) andalso
+      List.exists selects_seq subterms
     end
 
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
