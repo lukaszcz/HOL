@@ -677,7 +677,7 @@ local
             val vars = parse_sorted_var_list ()
             val _ =
               if List.null vars then
-                parse_error "parse_term" (token_loc head_tok)
+                syntax_error "parse_term" (token_loc head_tok)
                   "set.comprehension requires a nonempty sorted-variable list"
               else ()
             val predicate = parse_term_from_first
