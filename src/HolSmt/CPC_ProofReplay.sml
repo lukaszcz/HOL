@@ -1120,6 +1120,10 @@ local
                    pred_setTheory.CARD_DIFF_EQN,
                    integerTheory.INT_OF_NUM_ADD])) prems
           end
+        else if name = "sets-eval-op" then
+          (Tactical.TAC_PROOF (([], target),
+             bossLib.SIMP_TAC (bossLib.srw_ss ()) [])
+           handle Feedback.HOL_ERR _ => SmtArrayProve.array_prove target)
         else if SmtArrayProve.has_set_term target then
           SmtArrayProve.array_prove target
         else
