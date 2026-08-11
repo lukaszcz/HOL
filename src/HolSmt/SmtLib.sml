@@ -4396,6 +4396,8 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
+    val bag_terms = List.foldl (fn (term, acc) =>
+      collect_native_bag_terms term acc) [] (t :: original_ts)
     (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
        opaque HOL-num position it must remain an uninterpreted function. *)
     fun raw_num_terms term =
@@ -4407,8 +4409,10 @@ local
             let
               val (_, body) = Term.dest_abs tm
               val (_, range) = Type.dom_rng (Term.type_of tm)
+              val expected_body =
+                if mem_aconv tm bag_terms then NONE else SOME range
             in
-              visit (SOME range) body acc
+              visit expected_body body acc
             end
           else if Term.is_comb tm then
             let
@@ -4433,8 +4437,6 @@ local
       List.foldl (fn (num_tm, nums) =>
         if mem_aconv num_tm nums then nums else num_tm :: nums)
         acc (raw_num_terms term)) [] (t :: original_ts)
-    val bag_terms = List.foldl (fn (term, acc) =>
-      collect_native_bag_terms term acc) [] (t :: original_ts)
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
