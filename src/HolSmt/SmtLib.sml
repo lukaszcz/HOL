@@ -2990,7 +2990,7 @@ local
       Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
       Option.isSome (Lib.total dest_seq_at_shape tm) orelse
       List.exists (fn head => same_const rator head) [
-        seq_append_tm, seq_length_tm, seq_cons_tm, seq_reverse_tm,
+        seq_append_tm, seq_cons_tm, seq_reverse_tm,
         seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
         seq_contains_tm, seq_suffix_tm,
         smt_seq_nth_tm,

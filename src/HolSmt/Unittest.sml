@@ -6351,6 +6351,9 @@ let
   val word_length_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
     ([], ``LENGTH (ws:word8 list) = 0``))
   val word_length_text = z3 word_length_goal
+  val opaque_length_text = z3 ([], Term.mk_comb
+    (Term.mk_var ("P", Type.--> (numSyntax.num, Type.bool)),
+     listSyntax.mk_length xs))
 in
   assert_goal_roundtrip "native sequence totalization" ([],
     boolSyntax.list_mk_conj [boolSyntax.mk_eq (extract, ys),
@@ -6401,7 +6404,10 @@ in
   assert (contains "(Seq (_ BitVec 8))" word_length_text andalso
       contains "seq.len" word_length_text,
     "word sequence length did not transfer to integer Seq length:\n" ^
-    word_length_text)
+    word_length_text);
+  assert (not (contains "seq.len" opaque_length_text),
+    "opaque HOL-num LENGTH was emitted as an integer Seq length:\n" ^
+    opaque_length_text)
 end
 
 fun smtlib_seq_ho_combinators_success () =
