@@ -295,7 +295,7 @@ structure CVC = struct
   (* CPC is the sole checked cvc5 proof format. *)
   val cpc_proof_cmd =
     " --produce-proofs --dump-proofs --proof-format-mode=cpc " ^
-    "--proof-granularity=dsl-rewrite --fp-exp --lang smt "
+    "--proof-granularity=dsl-rewrite --fp-exp --sets-exp --lang smt "
 
   fun cpc_command (_, (_, arrays_exp)) =
     if arrays_exp then
