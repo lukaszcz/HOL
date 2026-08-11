@@ -102,7 +102,8 @@ fun term_heads tm =
     walk tm []
   end
 
-fun check_goal_operator_availability {solver, version} (assumptions, conclusion) =
+fun check_goal_operator_availability_unless ignore {solver, version}
+    (assumptions, conclusion) =
   let
     val heads = List.concat (List.map term_heads (conclusion :: assumptions))
     fun occurs head = List.exists (fn tm =>
@@ -122,7 +123,7 @@ fun check_goal_operator_availability {solver, version} (assumptions, conclusion)
              List.exists (fn registered => registered = resolved) versions
            end)
     fun check ({hol_head, operator, ...} : operator_availability) =
-      if occurs hol_head andalso
+      if not (ignore hol_head) andalso occurs hol_head andalso
          not (List.exists available (List.filter
            (fn ({hol_head = candidate, operator = candidate_name, ...}
                 : operator_availability) =>
@@ -137,6 +138,9 @@ fun check_goal_operator_availability {solver, version} (assumptions, conclusion)
   in
     List.app check (!operator_availabilities)
   end
+
+fun check_goal_operator_availability target =
+  check_goal_operator_availability_unless (Lib.K false) target
 
 local
 
@@ -5157,7 +5161,16 @@ in
           case target of
             NONE => ()
           | SOME solver_target =>
-              check_goal_operator_availability solver_target goal
+              if native_sequence_goal goal then
+                check_goal_operator_availability solver_target goal
+              else
+                check_goal_operator_availability_unless
+                  (fn head => List.exists (fn sequence_head =>
+                    Term.same_const head sequence_head
+                    handle Feedback.HOL_ERR _ => false)
+                    [smt_seq_update_tm, smt_seq_replace_all_tm, seq_lupdate_tm,
+                     seq_reverse_tm, seq_map_tm, seq_foldl_tm])
+                  solver_target goal
       in
         goal_to_SmtLib_translation_gen
           (emit_options [with_request (AutomaticRegime dialect),
