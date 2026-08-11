@@ -3640,7 +3640,7 @@ local
   fun replay_string state name prems conclusion args =
     let
       fun is_empty_string tm =
-        case Term.strip_comb tm of
+        case boolSyntax.strip_comb tm of
           (head, [chars]) =>
             (case Lib.total Term.dest_thy_const head of
                SOME {Thy, Name, ...} =>
