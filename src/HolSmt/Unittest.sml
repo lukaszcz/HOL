@@ -9012,6 +9012,7 @@ fun cpc_proof_replay_seq_rules_success () =
 let
   fun replay name goal text =
     let
+      val expected = Lib.snd goal
       val (translation, _) = CVC.goal_to_SmtLib_translation goal
       val proof = CPC_ProofParser.parse_stream_with_version
         (SmtLib.parser_dicts_for_translation translation) "1.3.4"
@@ -9019,41 +9020,43 @@ let
       val thm = CPC_ProofReplay.replay_root_for_test proof
     in
       check_oracle_tags ("CPC Seq " ^ name) thm;
+      assert (Thm.concl thm ~~ expected,
+        "CPC " ^ name ^ " replay conclusion did not match expected goal");
       assert (SmtSeqProve.has_seq_type (Thm.concl thm),
         "CPC " ^ name ^ " did not retain a native Seq proposition")
     end
   val update =
     "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
     \(define @u () (seq.update @s 0 @t)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+    \(step @p1 :rule seq-eval-op :args ((= @u @t))))"
   val reverse =
     "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
     \(define @u () (seq.rev (seq.++ @s @t))) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+    \(step @p1 :rule seq-eval-op :args ((= @u (seq.++ @t @s)))))"
   val replace_all =
     "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
     \(define @u () (seq.replace_all (seq.++ @s @s) @s @t)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+    \(step @p1 :rule seq-eval-op :args ((= @u (seq.++ @t @t)))))"
   val str_replace_all =
     "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
     \(define @u () (str.replace_all (seq.++ @s @s) @s @t)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+    \(step @p1 :rule seq-eval-op :args ((= @u (seq.++ @t @t)))))"
   val at_elim =
     "((define @s () (seq.unit 7)) \
     \(step @p1 (= (seq.at @s 0) (seq.extract @s 0 1)) \
     \:rule str-at-elim :args (@s 0)))"
   val str_macro =
     "((define @s () (seq.unit 1)) (define @u () (seq.rev @s)) \
-    \(step @p1 :rule str :args ((= @u @u))))"
+    \(step @p1 :rule str :args ((= @u @s))))"
   val trust =
     "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
     \(define @u () (seq.update @s 0 @t)) \
-    \(step @p1 :rule trust :args ((= @u @u))))"
+    \(step @p1 :rule trust :args ((= @u @t))))"
 in
   replay "seq-eval-op update"
     ([], ``smt_seq_update ([1]:int list) 0 [2] = [2]``) update;
   replay "seq-eval-op reverse"
-    ([], ``REVERSE ([1;2]:int list) = [2;1]``) reverse;
+    ([], ``REVERSE (([1]:int list) ++ [2]) = [2] ++ [1]``) reverse;
   replay "seq-eval-op replace_all"
     ([], ``smt_seq_replace_all ([1;1]:int list) [1] [2] = [2;2]``)
     replace_all;
