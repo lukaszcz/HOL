@@ -2796,6 +2796,18 @@ local
       in
         (tydict, (decls, "(Set " ^ element_sort ^ ")"))
       end
+    fun set_array_sort tydict set =
+      let
+        val element_ty = set_element_type set
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+      in
+        (tydict, (decls, "(Array " ^ element_sort ^ " Bool)"))
+      end
+    fun selected_set_sort tydict set =
+      case !current_set_backend of
+        CVC5ArraySet => set_array_sort tydict set
+      | _ => set_sort tydict set
     fun set_constant tydict set value =
       let
         val element_ty = set_element_type set
@@ -2835,7 +2847,7 @@ local
       | _ => bag_array_sort tydict bag
     fun bound_variable_sort tydict var =
       if is_marked_set_term var then
-        set_sort tydict var
+        selected_set_sort tydict var
       else if is_marked_bag_term var then
         selected_bag_sort tydict var
       else
@@ -3957,7 +3969,7 @@ local
                  let
                    val (_, range) = Type.dom_rng (Term.type_of function)
                    val (tydict, (domdecls, domain_sort)) =
-                     if native_set_argument then set_sort tydict argument
+                     if native_set_argument then selected_set_sort tydict argument
                      else selected_bag_sort tydict argument
                    val (tydict, (rngdecls, range_sort)) =
                      translate_type regime (tydict, range)
@@ -4057,9 +4069,8 @@ local
                   in
                     case argument of
                       SOME arg =>
-                        if !current_set_backend <> CVC5ArraySet andalso
-                           is_marked_set_term arg then
-                          set_sort tydict arg
+                        if is_marked_set_term arg then
+                          selected_set_sort tydict arg
                         else if !current_bag_backend = CVC5NativeBag andalso
                                 is_marked_bag_term arg then
                           selected_bag_sort tydict arg
@@ -4098,10 +4109,9 @@ local
                       | _ => false) then
                     translate_variable_function_type
                       (tydict, 0, Term.type_of rator)
-                  else if !current_set_backend <> CVC5ArraySet andalso
-                          declaration_arity = 0 andalso is_marked_set_term rator
+                  else if declaration_arity = 0 andalso is_marked_set_term rator
                   then
-                    set_sort tydict rator
+                    selected_set_sort tydict rator
                   else if declaration_arity = 0 andalso
                           is_marked_bag_term rator
                   then
