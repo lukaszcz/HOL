@@ -264,10 +264,11 @@ However, this will involve a (typically small) amount of Standard
 ML programming, e.g., to interpret the solver's output.  See
 `CVC.sml` and `Z3.sml` for some relevant code.
 
-### Wishlist
+### Further work and extensions
 
-The following features have not been implemented yet.  Please
-submit additional feature requests (or code contributions) via
+The following describes both features that have not been implemented yet and
+supported solver extensions.  Please submit additional feature requests (or
+code contributions) via
 <https://github.com/HOL-Theorem-Prover/HOL>.
 
 #### Counterexamples
