@@ -1194,7 +1194,8 @@ local
       val (cond_head, cond_args) = boolSyntax.strip_comb body
       val (test, count, otherwise) =
         if same_const cond_head boolSyntax.conditional then
-          case cond_args of [test, count, otherwise] => (test, count, otherwise)
+          case cond_args of
+            [test, count, otherwise] => (test, count, otherwise)
           | _ => raise ERR "dest_parsed_bag_literal" "wrong conditional arity"
         else
           raise ERR "dest_parsed_bag_literal" "not a conditional"

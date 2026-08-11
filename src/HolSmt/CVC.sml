@@ -274,7 +274,8 @@ structure CVC = struct
                if SmtResource.is_resource_gate holerr then
                  raise Feedback.HOL_ERR holerr
                else
-                 raise_with_context proof_name "proof parse" (command_stem data) holerr)
+                 raise_with_context proof_name "proof parse"
+                   (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
           val thm = replay (As, g, proof)
@@ -282,7 +283,8 @@ structure CVC = struct
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
               else
-                raise_with_context proof_name "proof replay" (command_stem data) holerr
+                raise_with_context proof_name "proof replay"
+                  (command_stem data) holerr
           val thm = Thm.CCONTR g thm
           val thm = validation [thm]
           val thm = check_reconstructed_theorem proof_name (original_goal, thm)
