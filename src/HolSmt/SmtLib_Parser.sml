@@ -4793,14 +4793,29 @@ local
       val body_checked =
         typecheck_term_with_options elaborate_datatypes context
           (tydict, tmdict, sigdict) body
+      (* cvc5 lambdas range only over finite Set/Bag values.  Make their HOL
+         extension outside that domain uniform, so function equality cannot
+         distinguish cvc5-equivalent lambdas on infinite collections. *)
+      val guards =
+        if #solver context = SOME "cvc5" then
+          List.mapPartial
+            (fn (_, var, surface) =>
+              if is_set_surface surface then SOME (pred_setSyntax.mk_finite var)
+              else if is_bag_surface surface then SOME (finite_bag_term var)
+              else NONE)
+            vars
+        else []
+      val body = checked_term body_checked
+      val body =
+        if List.null guards then body
+        else boolSyntax.mk_cond (boolSyntax.list_mk_conj guards, body,
+          boolSyntax.mk_arb (Term.type_of body))
     in
       checked_term_with_surface_sort
         (List.foldr
           (fn ((_, _, domain), range) => MapSort (domain, range))
           (checked_surface_sort body_checked) vars)
-        (Term.list_mk_abs
-          (List.map (fn (_, var, _) => var) vars,
-           checked_term body_checked))
+        (Term.list_mk_abs (List.map (fn (_, var, _) => var) vars, body))
     end
 
   fun typecheck_define_sort context tydict name params body =
