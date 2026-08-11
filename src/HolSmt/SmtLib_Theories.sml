@@ -1143,6 +1143,18 @@ in
     fun mk_seq_unit x =
       listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
 
+    fun is_string tm =
+      Type.compare (Term.type_of tm, UnicodeStrings.string_ty) = EQUAL
+
+    fun string_or_seq string_name seq_fun args =
+      if is_string (List.hd args) then smtstring_app string_name args
+      else seq_fun args
+
+    fun string_or_seq_two string_name seq_fun (left, right) =
+      string_or_seq string_name (fn [x, y] => seq_fun (x, y)
+                                  | _ => raise Fail "wrong arity")
+        [left, right]
+
     val tyentries = [
       extension_entry "shared" "Seq" (parametric_attributes ["Element"])
         ["(Seq Element)"] (K_zero_one sequence_ty)
@@ -1151,38 +1163,57 @@ in
     val tmentries = [
       shared_term "seq.++" left_assoc_attributes
         ["(seq.++ (Seq A) (Seq A) (Seq A) :left-assoc)"]
-        (leftassoc listSyntax.mk_append),
+        (leftassoc
+          (string_or_seq_two "smtstr_concat" listSyntax.mk_append)),
       shared_term "seq.len" no_attributes ["(seq.len (Seq A) Int)"]
-        (K_zero_one mk_seq_len),
+        (K_zero_one
+          (string_or_seq "smtstr_len" mk_seq_len)),
       shared_term "seq.unit" no_attributes ["(seq.unit A (Seq A))"]
         (K_zero_one mk_seq_unit),
       shared_term "seq.empty" no_attributes ["(seq.empty (Seq A))"]
         (K_zero_zero (listSyntax.mk_nil Type.bool)),
       shared_term "seq.extract" no_attributes
         ["(seq.extract (Seq A) Int Int (Seq A))"]
-        (K_zero_three mk_seq_extract),
+        (K_zero_three
+          (fn (s, i, n) =>
+            string_or_seq "smtstr_substr"
+              (fn [s, i, n] => mk_seq_extract (s, i, n)
+                | _ => raise Fail "wrong arity") [s, i, n])),
       shared_term "seq.at" no_attributes ["(seq.at (Seq A) Int (Seq A))"]
-        (K_zero_two mk_seq_at),
+        (K_zero_two
+          (fn (s, i) =>
+            string_or_seq "smtstr_at"
+              (fn [s, i] => mk_seq_at (s, i)
+                | _ => raise Fail "wrong arity") [s, i])),
       shared_term "seq.nth" no_attributes ["(seq.nth (Seq A) Int A)"]
         (K_zero_two (fn (s, i) => holsmt_app "smt_seq_nth" [s, i])),
       shared_term "seq.contains" no_attributes
         ["(seq.contains (Seq A) (Seq A) Bool)"]
-        (K_zero_two (fn (s, t) => rich_list_app "IS_SUBLIST" [s, t])),
+        (K_zero_two
+          (string_or_seq_two "smtstr_contains"
+            (fn (s, t) => rich_list_app "IS_SUBLIST" [s, t]))),
       shared_term "seq.indexof" no_attributes
         ["(seq.indexof (Seq A) (Seq A) Int Int)"]
         (K_zero_three (fn (s, t, i) =>
-          holsmt_app "smt_seq_indexof" [s, t, i])),
+          string_or_seq "smtstr_indexof"
+            (fn [s, t, i] => holsmt_app "smt_seq_indexof" [s, t, i]
+              | _ => raise Fail "wrong arity") [s, t, i])),
       shared_term "seq.replace" no_attributes
         ["(seq.replace (Seq A) (Seq A) (Seq A) (Seq A))"]
         (K_zero_three (fn (s, t, u) =>
-          holsmt_app "smt_seq_replace" [s, t, u])),
+          string_or_seq "smtstr_replace"
+            (fn [s, t, u] => holsmt_app "smt_seq_replace" [s, t, u]
+              | _ => raise Fail "wrong arity") [s, t, u])),
       shared_term "seq.prefixof" no_attributes
         ["(seq.prefixof (Seq A) (Seq A) Bool)"]
-        (K_zero_two listSyntax.mk_isprefix),
+        (K_zero_two
+          (string_or_seq_two "smtstr_prefixof" listSyntax.mk_isprefix)),
       shared_term "seq.suffixof" no_attributes
         ["(seq.suffixof (Seq A) (Seq A) Bool)"]
-        (K_zero_two (fn (suffix, sequence) =>
-          rich_list_app "IS_SUFFIX" [sequence, suffix]))
+        (K_zero_two
+          (string_or_seq_two "smtstr_suffixof"
+            (fn (suffix, sequence) =>
+              rich_list_app "IS_SUFFIX" [sequence, suffix])))
     ]
 
     val tydict = dictionary_of_entries tyentries
