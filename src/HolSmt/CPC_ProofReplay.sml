@@ -3639,10 +3639,19 @@ local
 
   fun replay_string state name prems conclusion args =
     let
+      fun is_empty_string tm =
+        case Term.strip_comb tm of
+          (head, [chars]) =>
+            (case Lib.total Term.dest_thy_const head of
+               SOME {Thy, Name, ...} =>
+                 Thy = "smtstring" andalso Name = "SmtStr" andalso
+                 listSyntax.is_nil chars
+             | NONE => false)
+        | _ => false
       fun inferred_target () =
         case (name, args) of
           ("str-len-concat-rec", [left, right, empty]) =>
-            if listSyntax.is_nil empty then
+            if listSyntax.is_nil empty orelse is_empty_string empty then
               let
                 fun length sequence = Term.mk_comb
                   (intSyntax.int_injection, listSyntax.mk_length sequence)
