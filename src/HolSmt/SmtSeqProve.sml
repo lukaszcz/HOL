@@ -65,6 +65,8 @@ struct
     listTheory.LENGTH_EQ_1,
     listTheory.NOT_CONS_NIL,
     listTheory.EL,
+    listTheory.MAP_APPEND,
+    rich_listTheory.FOLDL_APPEND,
     HolSmtTheory.smt_seq_nth_def,
     HolSmtTheory.smt_seq_extract_def,
     HolSmtTheory.smt_seq_at_def
