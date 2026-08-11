@@ -6076,9 +6076,12 @@ let
     ([``FINITE (s:int set)``],
      Term.mk_comb (Term.mk_var ("set_predicate",
        Type.--> (Term.type_of s, Type.bool)), s))
-  val cvc_bound_function_text = cvc
-    ([``FINITE (s:int set)``],
-     ``(?P:int set -> bool. P s) ==> (!P:int set -> bool. P s)``)
+  val cvc_bound_function_message =
+    (ignore (cvc
+      ([``FINITE (s:int set)``],
+       ``(?P:int set -> bool. P s) ==> (!P:int set -> bool. P s)``));
+     die "cvc5 accepted a function over a Set domain")
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
   val card_message =
     (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
        ([], ``CARD (s:int set) = 0``));
@@ -6137,15 +6140,10 @@ in
       not (contains "((Array Int Bool)) Bool" cvc_set_argument_text),
     "native cvc5 Set function arguments lost their collection sort:\n" ^
     cvc_set_argument_text);
-  (ignore (SmtLib_Parser.typecheck_script_string_with_options
-      {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = false}
-      cvc_bound_function_text)
-   handle Feedback.HOL_ERR holerr =>
-     die ("bound cvc5 Set function fallback is not closed SMT-LIB: " ^
-       Feedback.message_of holerr));
-  assert (not (contains "(Set Int)" cvc_bound_function_text),
-    "bound cvc5 Set function did not use the safe array fallback:\n" ^
-    cvc_bound_function_text);
+  assert (cvc_bound_function_message =
+      "higher-order cvc5 functions over Sets or Bags are unsupported",
+    "bound cvc5 Set function diagnostic changed: " ^
+    cvc_bound_function_message);
   assert (card_message =
       "SMT-LIB operator 'set.card' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",

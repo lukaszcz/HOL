@@ -4487,18 +4487,17 @@ local
       in
         List.exists (visit []) (t :: original_ts)
       end
-    val backend =
+    val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
-          if bound_collection_application set_terms then CVC5ArraySet
-          else backend_for_target target goal set_terms
-      | _ => backend_for_target target goal set_terms
-    val bag_backend =
-      case target of
-        SOME {solver = "cvc5", ...} =>
-          if bound_collection_application bag_terms then CVC5ArrayBag
-          else bag_backend_for_target target goal bag_terms
-      | _ => bag_backend_for_target target goal bag_terms
+          if bound_collection_application set_terms orelse
+             bound_collection_application bag_terms then
+            raise ERR "goal_to_SmtLib_aux_inner"
+              "higher-order cvc5 functions over Sets or Bags are unsupported"
+          else ()
+      | _ => ()
+    val backend = backend_for_target target goal set_terms
+    val bag_backend = bag_backend_for_target target goal bag_terms
     val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
