@@ -233,7 +233,7 @@ structure CVC = struct
     mk_CVC_fun "CVC_SMT_Oracle"
       (fn goal =>
         let
-          val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC false) goal
+          val (goal, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC false) goal
           val (_, strings) = goal_to_SmtLib_translation goal
         in
           ((), strings)
@@ -247,7 +247,7 @@ structure CVC = struct
   fun proof_pre goal =
     let
       val original_goal = goal
-      val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
+      val (goal, validation) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true) goal
       val (translation, strings) =
         goal_to_SmtLib_with_get_proof_translation goal
       val arrays_exp = List.exists

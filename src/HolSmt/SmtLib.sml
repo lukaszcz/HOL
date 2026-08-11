@@ -5603,12 +5603,37 @@ in
         Library.SET_SIMP_TAC g
     end
 
+  (* Preserve equality on native collections.  FUN_EQ_THM would turn it into
+     a predicate equality before collection discovery can select Set or Bag. *)
+  fun fun_eq_preprocess_conv tm =
+    let
+      val (left, right) = boolSyntax.dest_eq tm
+      val collection_equality =
+        (is_set_type left andalso is_set_type right) orelse
+        (is_bag_type left andalso is_bag_type right)
+    in
+      if collection_equality then raise Conv.UNCHANGED
+      else Conv.REWR_CONV boolTheory.FUN_EQ_THM tm
+    end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun cvc_native_bag_goal goal =
+  let
+    val bag_terms = List.foldl collect_native_bag_terms []
+      (Lib.fst goal @ [Lib.snd goal])
+  in
+    cvc5_native_bags goal bag_terms
+  end
+
   (* Eliminates some HOL terms that are not supported by the SMT-LIB
      translation. It also adds some useful theorems to the list of assumptions
      so that SMT solvers can reason about some symbols defined in HOL4 theories. *)
-  fun SIMP_TAC simp_let =
+  fun SIMP_TAC_WITH_NATIVE_BAGS preserve_native_bags simp_let =
   let
     open Tactical simpLib
+    fun num_to_int g =
+      if preserve_native_bags andalso cvc_native_bag_goal g then ALL_TAC g
+      else NUM_TO_INT_TAC g
   in
     HOL_STRING_TO_SMT_TAC THEN
     NATIVE_FLOAT_TO_SMT_TAC THEN
@@ -5622,7 +5647,7 @@ in
       [HolSmtTheory.num_sub_assoc, HolSmtTheory.num_floor_zero,
        HolSmtTheory.num_ceiling_zero, arithmeticTheory.MAX_0,
        arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE] THEN
-    NUM_TO_INT_TAC THEN
+    num_to_int THEN
     (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV) THEN
     SIMP_TAC pureSimps.pure_ss [
@@ -5647,9 +5672,8 @@ in
       [HolSmtTheory.smt_rdiv_zero, HolSmtTheory.smt_rdiv_refl,
        HolSmtTheory.smt_rdiv_one, HolSmtTheory.smt_rdiv_neg_refl,
        HolSmtTheory.smt_rdiv_neg_one] THEN
-    SIMP_TAC pureSimps.pure_ss [
-      boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
-    ] THEN
+    SIMP_TAC pureSimps.pure_ss [boolTheory.REFL_CLAUSE] THEN
+    Tactic.CONV_TAC (Conv.DEPTH_CONV fun_eq_preprocess_conv) THEN
     Library.WORD_SIMP_TAC THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
@@ -5659,15 +5683,18 @@ in
       (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
     Tactic.BETA_TAC THEN
-    NUM_TO_INT_TAC THEN
+    num_to_int THEN
     ADD_THEOREMS_TAC THEN
     CLEANUP_ASSUMPTIONS_TAC THEN
     (* The theorem-discovery pass may expose a fresh num-valued occurrence.
        Run the semantic transfer last, then simplify its newly-added
        assumptions even when they no longer mention num themselves. *)
-    NUM_TO_INT_TAC THEN
+    num_to_int THEN
     CLEANUP_ASSUMPTIONS_TAC
   end
+
+  fun SIMP_TAC simp_let = SIMP_TAC_WITH_NATIVE_BAGS false simp_let
+  fun CVC_SIMP_TAC simp_let = SIMP_TAC_WITH_NATIVE_BAGS true simp_let
 
   (* Kept public for Unittest's outbound-scope audit. *)
   val builtin_encoding_for_test = builtin_encoding
