@@ -1185,8 +1185,31 @@ local
         raise ERR "dest_bag_binary" "wrong head"
     end
 
+  (* cvc5 bag literals are parsed as their extensional HOL function.  Retain
+     this exact shape so a checked proof can be sent back as a Bag literal,
+     rather than as an unrelated higher-order lambda. *)
+  fun dest_parsed_bag_literal tm =
+    let
+      val (bound, body) = Term.dest_abs tm
+      val (test, count, otherwise) = boolSyntax.dest_cond body
+      val (left, element) = boolSyntax.dest_eq test
+      val _ = if Term.aconv bound left then ()
+              else raise ERR "dest_parsed_bag_literal" "wrong binder"
+      val (_, nat_count, zero) = boolSyntax.dest_cond count
+      val integer_count = intSyntax.dest_Num nat_count
+      val _ = if numSyntax.is_zero zero andalso numSyntax.is_zero otherwise
+              then ()
+              else raise ERR "dest_parsed_bag_literal" "nonzero default"
+    in
+      (element, integer_count)
+    end
+
+  fun is_parsed_bag_literal tm =
+    Lib.can dest_parsed_bag_literal tm
+
   fun native_bag_term tm =
     Term.is_var tm orelse bagSyntax.is_empty tm orelse
+    is_parsed_bag_literal tm orelse
     (case Lib.total bagSyntax.dest_insert tm of
        SOME (_, bag) => native_bag_term bag
      | NONE =>
@@ -3192,6 +3215,25 @@ local
       in
         (tydict, (decls, text))
       end
+    fun translate_parsed_bag_literal acc =
+      let
+        val (element, count) = dest_parsed_bag_literal tm
+        val (acc, (element_decls, element_name)) =
+          translate_term regime apply_operator (acc, (bounds, element))
+        val (acc, (count_decls, count_name)) =
+          translate_term regime apply_operator (acc, (bounds, count))
+        val (tydict, (type_decls, element_sort)) =
+          translate_type regime (Lib.fst acc, Term.type_of element)
+        val text =
+          case !current_bag_backend of
+            CVC5NativeBag => sexpr "bag" [element_name, count_name]
+          | _ => sexpr "store"
+              ["((as const (Array " ^ element_sort ^ " Int)) 0)",
+               element_name, count_name]
+      in
+        ((tydict, Lib.snd acc),
+         (element_decls @ count_decls @ type_decls, text))
+      end
     fun fallback_bag_definition acc bag args body =
       fallback_array_definition "bag" "Int" (bag_element_type bag)
         acc bag args body
@@ -3805,10 +3847,13 @@ local
     handle e as NestedTranslation _ => raise e
          | Feedback.HOL_ERR _ =>
 
-    (* Native lambda terms survive preprocessing only in the HO regime. *)
-    (case regime of
-       FirstOrder => raise ERR "translate_term" "not first-order"
-     | HigherOrder _ => translate_lambda acc)
+    (* cvc5 parses a bag literal as a lambda, but retransmission must retain
+       the Bag operation rather than send that lambda to Array consumers. *)
+    (if is_parsed_bag_literal tm then translate_parsed_bag_literal acc
+     else
+       case regime of
+         FirstOrder => raise ERR "translate_term" "not first-order"
+       | HigherOrder _ => translate_lambda acc)
     handle Feedback.HOL_ERR _ =>
 
     (* translate the entire term (e.g., for numerals), using the dictionary of
