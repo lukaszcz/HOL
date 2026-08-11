@@ -10926,6 +10926,10 @@ fun seq_prove_core_rungs_success () =
      ``((x:'a) :: []) ++ ys = x :: ys``;
    assert_seq_prover "seq empty decomposition rung"
      SmtSeqProve.unit_empty_prove ``([]:'a list) ++ xs = xs``;
+   assert_seq_prover "seq MAP integer commutativity rung"
+     SmtSeqProve.seq_prove
+     ``MAP (\x:int. x + 1) (xs ++ ys) =
+       MAP (\x. 1 + x) xs ++ MAP (\x. 1 + x) ys``;
    assert_seq_prover "seq extract rung" SmtSeqProve.access_prove
      ``smt_seq_extract ([x]:'a list) 0 1 = [x]``;
    assert_seq_prover "seq nth rung" SmtSeqProve.access_prove
