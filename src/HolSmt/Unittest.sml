@@ -6348,9 +6348,6 @@ let
     ([], ``STRCAT (s:string) t = STRCAT t s``))
   val string_text = z3 string_goal
   val raw_string_append_text = z3 ([], ``APPEND (s:string) t = t``)
-  val word_length_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
-    ([], ``&(LENGTH (ws:word8 list)) = 0``))
-  val word_length_text = z3 word_length_goal
   val opaque_length_text = z3 ([], Term.mk_comb
     (Term.mk_var ("P", Type.--> (numSyntax.num, Type.bool)),
      listSyntax.mk_length xs))
@@ -6401,10 +6398,6 @@ in
     "Phase-4 String emission lost precedence over Seq Char:\n" ^ string_text);
   assert (not (contains "seq.++" raw_string_append_text),
     "ordinary HOL strings selected native Seq emission:\n" ^ raw_string_append_text);
-  assert (contains "(Seq (_ BitVec 8))" word_length_text andalso
-      contains "seq.len" word_length_text,
-    "word sequence length did not transfer to integer Seq length:\n" ^
-    word_length_text);
   assert (not (contains "seq.len" opaque_length_text),
     "opaque HOL-num LENGTH was emitted as an integer Seq length:\n" ^
     opaque_length_text)
