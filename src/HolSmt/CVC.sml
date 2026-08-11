@@ -256,8 +256,8 @@ structure CVC = struct
       (((original_goal, goal, validation), (translation, arrays_exp)), strings)
     end
 
-  fun checked_post proof_name cmd_stem parse replay
-      ((original_goal, goal, validation), (translation, _)) outfile =
+  fun checked_post proof_name command_stem parse replay
+      (data as ((original_goal, goal, validation), (translation, _))) outfile =
     let
       val instream = TextIO.openIn outfile
       val (result, proof_start) = is_sat_stream_with_consumed instream
@@ -274,7 +274,7 @@ structure CVC = struct
                if SmtResource.is_resource_gate holerr then
                  raise Feedback.HOL_ERR holerr
                else
-                 raise_with_context proof_name "proof parse" cmd_stem holerr)
+                 raise_with_context proof_name "proof parse" (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
           val thm = replay (As, g, proof)
@@ -282,7 +282,7 @@ structure CVC = struct
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
               else
-                raise_with_context proof_name "proof replay" cmd_stem holerr
+                raise_with_context proof_name "proof replay" (command_stem data) holerr
           val thm = Thm.CCONTR g thm
           val thm = validation [thm]
           val thm = check_reconstructed_theorem proof_name (original_goal, thm)
@@ -303,7 +303,7 @@ structure CVC = struct
 
   val CVC_SMT_CPC_Prover =
     mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_command
-      (checked_post "CVC_SMT_CPC_Prover" cpc_proof_cmd
+      (checked_post "CVC_SMT_CPC_Prover" cpc_command
         (fn dicts => CPC_ProofParser.parse_stream_with_version dicts
           (version_string ()))
         CPC_ProofReplay.check_proof)
