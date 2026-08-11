@@ -3469,11 +3469,11 @@ local
       let
         val (v, body) = Term.dest_abs tm
         val (bounds, smtvar) = create_bound_name (bounds, v)
-        val (((tydict, tmdict), typedecls), tyname) =
-          ensure_type (acc, Term.type_of v)
+        val (tydict, (typedecls, tyname)) =
+          bound_variable_sort (Lib.fst acc) v
         val (acc, (bodydecls, bodyname)) =
           translate_term regime apply_operator
-            ((tydict, tmdict), (bounds, body))
+            ((tydict, Lib.snd acc), (bounds, body))
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
         (acc, (typedecls @ bodydecls,
