@@ -3922,7 +3922,10 @@ local
         else
           case (name, List.map checked_surface_sort args) of
             ("select", [set_surface, actual_index]) =>
-              if is_set_surface set_surface then
+              if is_bag_surface set_surface then
+                type_error fn_name context loc NONE NONE
+                  "ArraysEx select requires an Array sort, not a Bag"
+              else if is_set_surface set_surface then
                 if #solver context = SOME "cvc5" then
                   type_error fn_name context loc NONE NONE
                     "Z3 Set select is unavailable in the cvc5 dialect"
