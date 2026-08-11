@@ -2220,7 +2220,12 @@ local
 
   val z3_th_lemma_native_seq = th_lemma_wrapper "seq" (fn (state, t) =>
     let
-      val thm = profile "th_lemma[seq](3)(seq_prove)" SmtSeqProve.seq_prove t
+      val thm =
+        profile "th_lemma[seq](3)(seq_prove)" SmtSeqProve.seq_prove t
+        handle Feedback.HOL_ERR _ =>
+          profile "Z3(rung:seq/contextual)"
+            (SmtSeqProve.seq_contextual_prove
+              (HOLset.listItems (#asserted_hyps state))) t
     in
       (state_cache_thm state thm, thm)
     end)
