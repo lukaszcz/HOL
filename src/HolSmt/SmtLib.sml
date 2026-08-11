@@ -2207,7 +2207,8 @@ local
            (Lib.fst (boolSyntax.strip_comb tm))) all_subterms)
       (* Finite-set hypotheses select cvc5's native Set sort and are removed
          before this scan, so backend selection itself is also a Set feature. *)
-      val sets = !current_set_backend = CVC5NativeSet orelse
+      val sets = not (List.null (!current_set_terms)) orelse
+        !current_set_backend = CVC5NativeSet orelse
         List.exists (fn tm => is_native_set_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       (* Checked preprocessing can lower native bag operations to count
