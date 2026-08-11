@@ -1362,7 +1362,10 @@ in
           ty :: _ => SOME (name, SmtLib_Theories.K_zero_zero
             (z3_seq_type_marker ty))
         | [] => NONE) (Redblackmap.listItems tydict))
-    val tmdict = Library.union_dict tmdict sort_markers
+    (* A sort and a term may share a name.  The marker is needed only as a
+       legacy Seq annotation fallback, so never let it shadow a declared
+       term at an ordinary term position. *)
+    val tmdict = Library.union_dict sort_markers tmdict
     val tmdict = Library.union_dict tmdict
       (z3_string_tmdict z3_version)
     (* union of user-declared names and Z3's inference rule names *)
