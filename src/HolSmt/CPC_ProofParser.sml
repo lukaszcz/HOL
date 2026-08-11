@@ -975,6 +975,7 @@ local
                       (Library.undo_look_ahead tokens get_token) tydict)
                 end
               fun is_set_sort_metadata position =
+                (rule_name = "sets-card-emp" andalso position = 2) orelse
                 (rule_name = "sets-is-empty-elim" andalso position = 2) orelse
                 (rule_name = "sets-member-emp" andalso position = 3) orelse
                 (rule_name = "sets-minus-self" andalso position = 2)
