@@ -190,6 +190,9 @@ local
   fun z3_num_to_char n =
     wordsSyntax.mk_n2w (n, z3_char_index_ty)
 
+  fun z3_char_result char =
+    (z3_char_terms := char :: !z3_char_terms; char)
+
   fun z3_string_const name =
     Term.prim_mk_const {Thy = "smtstringz3", Name = name}
 
@@ -348,7 +351,7 @@ local
         | add_bit _ = raise ERR "<z3_string_dict.bits2char>"
             "exactly 18 Boolean arguments expected"
     in
-      add_bit (bits, 0, zero)
+      z3_char_result (add_bit (bits, 0, zero))
     end
 
   (* Z3 treats String as (Seq Char), but `Char` and `(_ BitVec 18)` have
@@ -491,12 +494,12 @@ local
            The nth_i/tail uses are guarded by Z3's in-range branch, while
            nth_u is deliberately the existing totalized Seq access. *)
         ("seq.nth_i", SmtLib_Theories.K_zero_two
-          (fn (s, i) => if is_z3_string s then z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
+          (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
            else listSyntax.mk_el (intSyntax.mk_Num i, s))),
         ("seq.nth_u", SmtLib_Theories.K_zero_two
-          (fn (s, i) => if is_z3_string s then z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
+          (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
            else holsmt_app "smt_seq_nth" [s, i])),
         ("seq.tail", z3_indexed_binary "seq_tail"
           (fn (s, i) => if is_z3_string s then z3_string_app "seq_tail"
