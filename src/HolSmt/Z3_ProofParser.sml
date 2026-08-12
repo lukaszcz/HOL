@@ -180,9 +180,7 @@ local
        SOME (_, []) => false
      | SOME (head, args) =>
          List.exists (Term.aconv head) (!z3_char_result_terms) orelse
-         List.exists
-           (fn arg => List.exists (Term.aconv arg) (!z3_char_result_terms))
-           args
+         List.exists is_z3_char args
      | NONE => false)
 
   fun z3_char_to_num c = wordsSyntax.mk_w2n c

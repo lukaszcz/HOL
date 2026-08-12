@@ -9857,6 +9857,7 @@ let
     \ (= x \"a\")\n\
     \ (= ch (_ Char 97))\n\
     \ (= q (seq.unit (_ Char 97)))\n\
+    \ (= q (seq.unit (ite true ch ch)))\n\
     \ (= r (seq.++ r r))\n\
     \ (= (seq.len r) 0)\n\
     \ (= (seq.extract r 0 1) r)\n\
