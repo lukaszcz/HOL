@@ -9060,13 +9060,13 @@ let
     \(define @u () (seq.rev (seq.++ @s @t))) \
     \(step @p1 :rule seq-eval-op :args ((= @u (seq.++ @t @s)))))"
   val replace_all =
-    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
-    \(define @u () (seq.replace_all (seq.++ @s @s) @s @t)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+    "((define @s () (seq.unit 1)) \
+    \(define @u () (seq.replace_all @s (as seq.empty (Seq Int)) @s)) \
+    \(step @p1 :rule seq-eval-op :args ((= @u @s)))"
   val str_replace_all =
-    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
-    \(define @u () (str.replace_all (seq.++ @s @s) @s @t)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+    "((define @s () (seq.unit 1)) \
+    \(define @u () (str.replace_all @s (as seq.empty (Seq Int)) @s)) \
+    \(step @p1 :rule seq-eval-op :args ((= @u @s)))"
   val at_elim =
     "((define @s () (seq.unit 7)) \
     \(step @p1 (= (seq.at @s 0) (seq.extract @s 0 1)) \
@@ -9084,11 +9084,9 @@ in
   replay "seq-eval-op reverse"
     ([], ``REVERSE (([1]:int list) ++ [2]) = [2] ++ [1]``) reverse;
   replay "seq-eval-op replace_all"
-    ([], ``smt_seq_replace_all (([1]:int list) ++ [1]) [1] [2] =
-           smt_seq_replace_all ([1] ++ [1]) [1] [2]``) replace_all;
+    ([], ``smt_seq_replace_all ([1]:int list) [] [1] = [1]``) replace_all;
   replay "seq-eval-op str.replace_all"
-    ([], ``smt_seq_replace_all (([1]:int list) ++ [1]) [1] [2] =
-           smt_seq_replace_all ([1] ++ [1]) [1] [2]``) str_replace_all;
+    ([], ``smt_seq_replace_all ([1]:int list) [] [1] = [1]``) str_replace_all;
   replay "str-at-elim"
     ([], ``smt_seq_at ([7]:int list) 0 = smt_seq_extract [7] 0 1``) at_elim;
   replay "str macro native Seq" ([], ``REVERSE ([1]:int list) = [1]``)
