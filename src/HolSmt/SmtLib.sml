@@ -111,7 +111,7 @@ fun check_goal_operator_availability_unless ignore {solver, version}
     fun available ({solver = registered_solver, versions, ...}
                    : operator_availability) =
       solver = registered_solver andalso
-      (case version of NONE => true
+      (case version of NONE => false
        | SOME target_version =>
            (case Library.version_series target_version of
               NONE => false

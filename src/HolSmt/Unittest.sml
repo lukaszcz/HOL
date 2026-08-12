@@ -6496,8 +6496,14 @@ let
           ((SmtLib.check_goal_operator_availability
               {solver = "Z3", version = SOME "4.10.0"} goal; false)
            handle Feedback.HOL_ERR _ => true)
+        val unknown_rejected =
+          ((SmtLib.check_goal_operator_availability
+              {solver = "Z3", version = NONE} goal; false)
+           handle Feedback.HOL_ERR _ => true)
         val _ = assert (old_rejected,
           "an unsupported Z3 version accepted seq.len")
+        val _ = assert (unknown_rejected,
+          "an unknown Z3 version accepted seq.len")
       in
         message
       end) ()
