@@ -5102,12 +5102,14 @@ local
       not (free_in_asms v)) (Term.free_vars concl)
   end
 
-  fun SPEC_NUM_FREE_VARS_TAC g =
+  fun SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude g =
   let
-    val vars = num_free_concl_vars g
+    val vars = List.filter (not o exclude) (num_free_concl_vars g)
   in
     Tactical.MAP_EVERY (fn v => Tactic.SPEC_TAC (v, v)) vars g
   end
+
+  val SPEC_NUM_FREE_VARS_TAC = SPEC_NUM_FREE_VARS_TAC_EXCEPT (K false)
 
   local
     structure A = arithmeticTheory
@@ -5559,20 +5561,22 @@ in
   (* Runs the proved num-to-int transfer on the whole goal.  Assumptions are
      first moved into the conclusion so free num variables anywhere in the
      sequent are made explicit and get a non-negativity guard. *)
-  fun NUM_TO_INT_TAC g =
+  fun NUM_TO_INT_TAC_EXCEPT exclude g =
   let
     open Tactic Tactical
     val undisch_assums = MAP_EVERY UNDISCH_TAC (#1 g)
   in
     if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
       (undisch_assums THEN
-       SPEC_NUM_FREE_VARS_TAC THEN
+       SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
        bossLib.REV_FULL_SIMP_TAC pureSimps.pure_ss num_transfer_rewrites) g
     else
       ALL_TAC g
   end
+
+  val NUM_TO_INT_TAC = NUM_TO_INT_TAC_EXCEPT (K false)
 
   (* Relativizes num-typed binders to guarded int-typed binders. *)
   val NUM_BINDERS_TO_INT_TAC =
@@ -5719,7 +5723,8 @@ in
   let
     open Tactical simpLib
     fun num_to_int g =
-      if preserve_native_bags andalso cvc_native_bag_goal g then ALL_TAC g
+      if preserve_native_bags andalso cvc_native_bag_goal g then
+        NUM_TO_INT_TAC_EXCEPT is_bag_type g
       else NUM_TO_INT_TAC g
   in
     HOL_STRING_TO_SMT_TAC THEN
