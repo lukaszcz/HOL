@@ -1060,6 +1060,64 @@ local
     Type.compare (ty, Type.mk_thy_type
       {Thy = "smtstring", Tyop = "smtstr", Args = []}) = EQUAL
 
+  fun replay_seq_rev_rev args =
+    case args of
+      [sequence] =>
+        if is_smtstr_type (Term.type_of sequence) then
+          raise ERR "seq-rev-rev" "String reverse is unsupported"
+        else Thm.SPEC sequence listTheory.REVERSE_REVERSE
+    | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
+
+  fun replay_str_contains_refl args =
+    case args of
+      [sequence] =>
+        if is_smtstr_type (Term.type_of sequence) then
+          Thm.SPEC sequence smtstringTheory.smtstr_contains_refl
+        else
+          let
+            val sequence_ty = Term.type_of sequence
+            val contains = Term.mk_thy_const {Thy = "rich_list",
+              Name = "IS_SUBLIST", Ty = Type.--> (sequence_ty,
+                Type.--> (sequence_ty, Type.bool))}
+          in
+            SmtSeqProve.seq_prove
+              (Term.list_mk_comb (contains, [sequence, sequence]))
+          end
+    | _ => raise ERR "str-contains-refl" "expected one sequence argument"
+
+  fun replay_str_substr_full_eq args =
+    case args of
+      [sequence, length] =>
+        if is_smtstr_type (Term.type_of sequence) then
+          let
+            val theorem = Thm.SPEC sequence smtstringTheory.smtstr_substr_full
+            val expected_length = Term.list_mk_comb
+              (Term.mk_thy_const {Thy = "smtstring", Name = "smtstr_len",
+                 Ty = Type.--> (Term.type_of sequence, intSyntax.int_ty)},
+               [sequence])
+          in
+            if Term.aconv length expected_length then theorem
+            else raise ERR "str-substr-full-eq" "length argument does not match"
+          end
+        else
+          let
+            val sequence_ty = Term.type_of sequence
+            val extract = Term.mk_thy_const {Thy = "HolSmt",
+              Name = "smt_seq_extract", Ty = Type.--> (sequence_ty,
+                Type.--> (intSyntax.int_ty,
+                  Type.--> (intSyntax.int_ty, sequence_ty)))}
+            val expected_length = Term.mk_comb (intSyntax.int_injection,
+              listSyntax.mk_length sequence)
+            val target = boolSyntax.mk_eq
+              (Term.list_mk_comb (extract,
+                 [sequence, intSyntax.zero_tm, expected_length]), sequence)
+          in
+            if Term.aconv length expected_length then SmtSeqProve.seq_prove target
+            else raise ERR "str-substr-full-eq" "length argument does not match"
+          end
+    | _ => raise ERR "str-substr-full-eq"
+        "expected a sequence and its length"
+
   fun replay_string_at_elim sequence index =
     Drule.SPECL [sequence, index] smtstringTheory.smtstr_at_def
 
@@ -3920,6 +3978,9 @@ local
            | "bv_poly_norm" => replay_bv_poly_norm args
            | "bv_poly_norm_eq" => replay_bv_poly_norm_eq args
            | "seq_rewrite" => replay_seq_rewrite (#name rule) args
+           | "seq_rev_rev" => replay_seq_rev_rev args
+           | "str_contains_refl" => replay_str_contains_refl args
+           | "str_substr_full_eq" => replay_str_substr_full_eq args
            | "seq_at_elim" => replay_seq_at_elim conclusion args
            | "sets" => replay_sets state (#name rule) prems conclusion args
            | "sets_rewrite" =>

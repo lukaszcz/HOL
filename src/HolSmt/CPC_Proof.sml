@@ -83,6 +83,9 @@ struct
     mk_rule RareRewrite ("eq-symm", "rewrite"),
     (* Native (Seq A) rules observed in the frozen cvc5 CPC corpus. *)
     mk_rule RareRewrite ("seq-eval-op", "seq_rewrite"),
+    mk_rule RareRewrite ("seq-rev-rev", "seq_rev_rev"),
+    mk_rule RareRewrite ("str-contains-refl", "str_contains_refl"),
+    mk_rule RareRewrite ("str-substr-full-eq", "str_substr_full_eq"),
     mk_rule RareRewrite ("str-at-elim", "seq_at_elim"),
     (* Complete frozen cvc5 1.3.4 Set RARE inventory.  Keep this explicit:
        an unrecorded sets-* spelling must fail registry lookup loudly. *)

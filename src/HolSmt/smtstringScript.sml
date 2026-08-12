@@ -171,6 +171,14 @@ Definition smtstr_at_def:
   smtstr_at s (i : int) = smtstr_substr s i 1
 End
 
+Theorem smtstr_substr_full:
+  smtstr_substr s 0 (smtstr_len s) = s
+Proof
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  Cases_on `l` >>
+  simp [smtstr_substr_def, smtstr_len_def]
+QED
+
 Definition smtstr_prefixof_def:
   smtstr_prefixof s t <=>
     IS_PREFIX (smtstr_rep t) (smtstr_rep s)
