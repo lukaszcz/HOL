@@ -6217,6 +6217,10 @@ let
     ([``FINITE_BAG (b:int -> num)``], Term.mk_comb
       (Term.mk_var ("opaque_bag_card_pred", Type.--> (numSyntax.num,
          Type.bool)), bagSyntax.mk_card b))
+  val cvc_applied_union_text = cvc
+    ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``],
+     boolSyntax.mk_eq (Term.mk_comb (intSyntax.int_injection,
+       Term.mk_comb (union, x)), intSyntax.zero_tm))
   val card_message =
     (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
        ([], ``BAG_CARD (b:int -> num) = 0``));
@@ -6276,6 +6280,18 @@ in
       contains "(declare-sort" cvc_opaque_card_text,
     "opaque cvc5 BAG_CARD did not retain its num sort:\n" ^
     cvc_opaque_card_text);
+  assert (contains "bag.union_disjoint" cvc_applied_union_text andalso
+      contains "bag.count" cvc_applied_union_text andalso
+      not (contains "((Bag Int) (Bag Int) Int)" cvc_applied_union_text),
+    "applied native bag union did not use bag.count:\n" ^
+    cvc_applied_union_text);
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_applied_union_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("applied native bag union is not closed SMT-LIB: " ^
+       Feedback.message_of holerr));
   assert (card_message =
       "SMT-LIB operator 'bag.card' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",

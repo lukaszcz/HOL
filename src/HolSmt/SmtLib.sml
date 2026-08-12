@@ -1311,6 +1311,14 @@ local
        handle Feedback.HOL_ERR _ =>
          List.foldl (fn (arg, acc) => collect_native_bag_terms arg acc)
            terms rands)
+    (* [strip_comb] flattens a partially applied bag operation into its head
+       and all arguments.  Retain the immediate rator too: in [(b + c) x],
+       it is the bag-valued prefix that must be marked for [bag.count]. *)
+    val terms =
+      (let val (immediate_rator, _) = Term.dest_comb tm in
+         collect_native_bag_terms immediate_rator terms
+       end
+       handle Feedback.HOL_ERR _ => terms)
     fun binary () =
       case rands of [left, right] =>
         collect_bag tm (collect_bag left (collect_bag right terms))
@@ -1342,7 +1350,9 @@ local
     else terms
   end
 
-  fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
+  fun is_marked_bag_term tm =
+    mem_aconv tm (!current_bag_terms) orelse
+    (is_bag_type tm andalso native_bag_term tm)
 
   fun finite_bag_term finite_terms tm =
     mem_aconv tm finite_terms orelse bagSyntax.is_empty tm orelse
@@ -3350,30 +3360,80 @@ local
       if List.exists (fn known => known = name) (!current_bag_helpers) then []
       else
         (current_bag_helpers := name :: !current_bag_helpers; [definition])
+    fun native_bag_count_application rator rands =
+      case rands of
+        [left, right, element] =>
+          if same_const rator bagSyntax.BAG_INSERT_tm orelse
+             same_const rator bagSyntax.BAG_UNION_tm orelse
+             same_const rator bagSyntax.BAG_DIFF_tm orelse
+             same_const rator bag_merge_tm orelse
+             same_const rator bag_inter_tm then
+            SOME (Term.list_mk_comb (rator, [left, right]), element)
+          else NONE
+      | [element] =>
+          if same_const rator bagSyntax.EMPTY_BAG_tm then
+            SOME (rator, element)
+          else NONE
+      | _ => NONE
     fun native_bag_symbol rator rands =
-      (is_native_bag_head rator andalso
-       not (same_const rator bagSyntax.BAG_CARD_tm andalso
-            mem_aconv (Term.list_mk_comb (rator, rands))
-              (!current_raw_num_terms))) orelse
-      ((same_const rator intSyntax.int_injection orelse
-        same_const rator int_of_num_tm) andalso
-       (case rands of [arg] => bagSyntax.is_card arg | _ => false))
+      ((case rands of
+          [_, _] => same_const rator bag_in_tm orelse
+                    same_const rator bagSyntax.BAG_INSERT_tm orelse
+                    same_const rator bagSyntax.BAG_UNION_tm orelse
+                    same_const rator bagSyntax.BAG_DIFF_tm orelse
+                    same_const rator bag_merge_tm orelse
+                    same_const rator bag_inter_tm orelse
+                    same_const rator bagSyntax.SUB_BAG_tm
+        | [arg] =>
+            (same_const rator bagSyntax.BAG_CARD_tm andalso
+             not (mem_aconv (Term.mk_comb (rator, arg))
+               (!current_raw_num_terms)))
+        | [] => same_const rator bagSyntax.EMPTY_BAG_tm
+        | _ => false) orelse
+       ((same_const rator intSyntax.int_injection orelse
+         same_const rator int_of_num_tm) andalso
+        (case rands of
+           [arg] =>
+             bagSyntax.is_card arg orelse
+             Option.isSome
+               (native_bag_count_application (Lib.fst (boolSyntax.strip_comb arg))
+                 (Lib.snd (boolSyntax.strip_comb arg)))
+         | _ => false)))
     fun native_bag_builtin (rator, rands) =
       if same_const rator intSyntax.int_injection orelse
          same_const rator int_of_num_tm then
         (case rands of [card] =>
-           let
-             val bag = bagSyntax.dest_card card
-             val (acc, (decls, name)) =
-               translate_term regime apply_operator (acc, (bounds, bag))
-           in
-             case !current_bag_backend of
-               CVC5NativeBag => (acc, (decls, sexpr "bag.card" [name]))
-             | Z3ArrayBag => raise ERR "native_bag_builtin"
-                 "bag.card is unavailable for solver Z3"
-             | CVC5ArrayBag => raise ERR "native_bag_builtin"
-                 "bag.card requires a finiteness-entailing cvc5 goal"
-           end
+           (case native_bag_count_application
+               (Lib.fst (boolSyntax.strip_comb card))
+               (Lib.snd (boolSyntax.strip_comb card)) of
+              SOME (bag, element) =>
+                let
+                  val (acc, (bag_decls, bag_name)) =
+                    translate_term regime apply_operator (acc, (bounds, bag))
+                  val (acc, (element_decls, element_name)) =
+                    translate_term regime apply_operator
+                      (acc, (bounds, element))
+                  val count =
+                    case !current_bag_backend of
+                      CVC5NativeBag =>
+                        sexpr "bag.count" [element_name, bag_name]
+                    | _ => sexpr "select" [bag_name, element_name]
+                in
+                  (acc, (bag_decls @ element_decls, count))
+                end
+            | NONE =>
+                let
+                  val bag = bagSyntax.dest_card card
+                  val (acc, (decls, name)) =
+                    translate_term regime apply_operator (acc, (bounds, bag))
+                in
+                  case !current_bag_backend of
+                    CVC5NativeBag => (acc, (decls, sexpr "bag.card" [name]))
+                  | Z3ArrayBag => raise ERR "native_bag_builtin"
+                      "bag.card is unavailable for solver Z3"
+                  | CVC5ArrayBag => raise ERR "native_bag_builtin"
+                      "bag.card requires a finiteness-entailing cvc5 goal"
+                end)
          | _ => raise ERR "native_bag_builtin" "wrong card arity")
       else if same_const rator bagSyntax.BAG_CARD_tm then
         (case rands of [bag] =>
@@ -3999,24 +4059,39 @@ local
     in
       (* In an HO regime a fully ranked built-in may itself return a map.
          Translate that ranked prefix before any remaining map applications. *)
-      (if native_sequence_symbol rator rands orelse
-            native_set_symbol rator rands orelse
-            native_bag_symbol rator rands orelse
-            (case regime of
-               FirstOrder => tm_has_base_type
-             | HigherOrder _ =>
-                 Term.is_const rator andalso
-                 List.length rands = declared_const_arity rator)
-       then
-        if native_sequence_symbol rator rands then
-          native_sequence_builtin (rator, rands)
-        else if native_set_symbol rator rands then
-          native_set_builtin (rator, rands)
-        else if native_bag_symbol rator rands then
-          native_bag_builtin (rator, rands)
-        else builtin_symbol (rator, rands)
-      else
-        raise ERR "translate_term" "not first-order")  (* handled below *)
+      (case native_bag_count_application rator rands of
+         SOME (bag, element) =>
+           let
+             val (acc, (bag_decls, bag_name)) =
+               translate_term regime apply_operator (acc, (bounds, bag))
+             val (acc, (element_decls, element_name)) =
+               translate_term regime apply_operator (acc, (bounds, element))
+             val count =
+               case !current_bag_backend of
+                 CVC5NativeBag => sexpr "bag.count" [element_name, bag_name]
+               | _ => sexpr "select" [bag_name, element_name]
+           in
+             (acc, (bag_decls @ element_decls, count))
+           end
+       | NONE =>
+           if native_sequence_symbol rator rands orelse
+              native_set_symbol rator rands orelse
+              native_bag_symbol rator rands orelse
+              (case regime of
+                 FirstOrder => tm_has_base_type
+               | HigherOrder _ =>
+                   Term.is_const rator andalso
+                   List.length rands = declared_const_arity rator)
+           then
+             if native_sequence_symbol rator rands then
+               native_sequence_builtin (rator, rands)
+             else if native_set_symbol rator rands then
+               native_set_builtin (rator, rands)
+             else if native_bag_symbol rator rands then
+               native_bag_builtin (rator, rands)
+             else builtin_symbol (rator, rands)
+           else
+             raise ERR "translate_term" "not first-order")  (* handled below *)
     handle Feedback.HOL_ERR _ =>
 
       translate_constructor_application acc rator rands
