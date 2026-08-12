@@ -191,6 +191,13 @@ Definition smtstr_rev_def:
   smtstr_rev s = SmtStr (REVERSE (smtstr_rep s))
 End
 
+Theorem smtstr_rev_rev:
+  smtstr_rev (smtstr_rev s) = s
+Proof
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  simp [smtstr_rev_def]
+QED
+
 Definition smtstr_prefixof_def:
   smtstr_prefixof s t <=>
     IS_PREFIX (smtstr_rep t) (smtstr_rep s)

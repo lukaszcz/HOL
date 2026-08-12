@@ -1064,7 +1064,7 @@ local
     case args of
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
-          raise ERR "seq-rev-rev" "String reverse is unsupported"
+          Thm.SPEC sequence smtstringTheory.smtstr_rev_rev
         else Thm.SPEC sequence listTheory.REVERSE_REVERSE
     | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
 
