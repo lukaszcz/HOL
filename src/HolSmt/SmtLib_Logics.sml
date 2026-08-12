@@ -683,10 +683,15 @@ in
              Lib.can listSyntax.dest_list_type ty)
       fun type_contains_visible_datatype ty =
         type_is_visible_datatype_sort ty orelse
-        (if ignore_native_sequences then
-           (type_contains_visible_datatype (listSyntax.dest_list_type ty)
-            handle Feedback.HOL_ERR _ => false)
-         else false)
+        (case Lib.total Type.dom_rng ty of
+           SOME (dom, rng) =>
+             type_contains_visible_datatype dom orelse
+             type_contains_visible_datatype rng
+         | NONE =>
+             if ignore_native_sequences then
+               (type_contains_visible_datatype (listSyntax.dest_list_type ty)
+                handle Feedback.HOL_ERR _ => false)
+             else false)
       fun is_smtstr_value tm =
         case boolSyntax.strip_comb tm of
           (rator, [_]) =>
