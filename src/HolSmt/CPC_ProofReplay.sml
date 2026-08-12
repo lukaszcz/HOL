@@ -1801,6 +1801,12 @@ local
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss
             [boolTheory.LEFT_FORALL_OR_THM, boolTheory.RIGHT_FORALL_OR_THM])
+      else if name = "quant-var-elim-eq" then
+        Tactical.TAC_PROOF (([], target),
+          bossLib.SIMP_TAC bossLib.bool_ss
+            [GSYM boolTheory.IMP_DISJ_THM,
+             boolTheory.UNWIND_FORALL_THM1,
+             boolTheory.UNWIND_FORALL_THM2])
       else Tactical.TAC_PROOF (([], target),
         bossLib.SIMP_TAC (bossLib.srw_ss()) [boolTheory.IMP_DISJ_THM])
     end
