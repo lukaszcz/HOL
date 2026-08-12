@@ -3105,6 +3105,33 @@ local
   fun checked_sort (CheckedTerm {sort, ...}) = sort
   fun checked_surface_sort (CheckedTerm {surface_sort, ...}) = surface_sort
 
+  fun surface_sort_compatible expected actual =
+    case (expected, actual) of
+      (PolySort _, _) => true
+    | (RigidSort expected_ty, RigidSort actual_ty) =>
+        same_sort expected_ty actual_ty orelse
+        int_to_real_expected expected_ty actual_ty
+    | (ConstructorSort (expected_ty, expected_args),
+       ConstructorSort (actual_ty, actual_args)) =>
+        Lib.can (Type.match_type expected_ty) actual_ty andalso
+        ListPair.allEq
+          (fn (expected_arg, actual_arg) =>
+            surface_sort_compatible expected_arg actual_arg)
+          (expected_args, actual_args)
+    | (MapSort (expected_domain, expected_range),
+       MapSort (actual_domain, actual_range)) =>
+        surface_sort_compatible expected_domain actual_domain andalso
+        surface_sort_compatible expected_range actual_range
+    | (ArraySort (expected_index, expected_element),
+       ArraySort (actual_index, actual_element)) =>
+        surface_sort_compatible expected_index actual_index andalso
+        surface_sort_compatible expected_element actual_element
+    | _ => false
+
+  fun surface_sorts_equivalent left right =
+    surface_sort_compatible left right orelse
+    surface_sort_compatible right left
+
   fun surface_bindings (expected, actual) =
     case (expected, actual) of
       (PolySort ty, _) => [(ty, actual)]
@@ -3145,33 +3172,6 @@ local
 
   fun instantiate_surface_sort subst surface_sort =
     instantiate_surface_sort_with [] subst surface_sort
-
-  fun surface_sort_compatible expected actual =
-    case (expected, actual) of
-      (PolySort _, _) => true
-    | (RigidSort expected_ty, RigidSort actual_ty) =>
-        same_sort expected_ty actual_ty orelse
-        int_to_real_expected expected_ty actual_ty
-    | (ConstructorSort (expected_ty, expected_args),
-       ConstructorSort (actual_ty, actual_args)) =>
-        Lib.can (Type.match_type expected_ty) actual_ty andalso
-        ListPair.allEq
-          (fn (expected_arg, actual_arg) =>
-            surface_sort_compatible expected_arg actual_arg)
-          (expected_args, actual_args)
-    | (MapSort (expected_domain, expected_range),
-       MapSort (actual_domain, actual_range)) =>
-        surface_sort_compatible expected_domain actual_domain andalso
-        surface_sort_compatible expected_range actual_range
-    | (ArraySort (expected_index, expected_element),
-       ArraySort (actual_index, actual_element)) =>
-        surface_sort_compatible expected_index actual_index andalso
-        surface_sort_compatible expected_element actual_element
-    | _ => false
-
-  fun surface_sorts_equivalent left right =
-    surface_sort_compatible left right orelse
-    surface_sort_compatible right left
 
   fun surface_sort_type surface_sort =
     case surface_sort of
@@ -3786,6 +3786,15 @@ local
         (domain_surface, arg_surface) orelse raise Match
       val surface_subst = List.concat
         (ListPair.map surface_bindings (domain_surface, arg_surface))
+      val _ =
+        List.all
+          (fn (template, actual) =>
+            List.all
+              (fn (other_template, other_actual) =>
+                not (same_sort template other_template) orelse
+                surface_sorts_equivalent actual other_actual)
+              surface_subst)
+          surface_subst orelse raise Match
       fun match_one ((expected, actual), subst) =
         let
           val expected = Type.type_subst subst expected
@@ -4003,6 +4012,13 @@ local
           fun require_set_args operator surfaces =
             List.app (require_set operator) surfaces
           val surfaces = List.map checked_surface_sort args
+          fun require_same_surfaces operator surfaces =
+            case surfaces of
+              [] => ()
+            | surface :: rest =>
+                if List.all (surface_sorts_equivalent surface) rest then ()
+                else type_error fn_name context loc NONE NONE
+                  (operator ^ " arguments must have the same surface sort")
           fun check_sets () =
             case (name, surfaces) of
               ("set.member", [_ , set]) => require_set "set.member" set
@@ -4035,6 +4051,25 @@ local
         in
           if not (List.null indices) then () else
           (check_sets ();
+          (case name of
+             "=" => require_same_surfaces "=" surfaces
+           | "distinct" => require_same_surfaces "distinct" surfaces
+           | "seq.++" => require_same_surfaces "seq.++" surfaces
+           | "seq.contains" => require_same_surfaces "seq.contains" surfaces
+           | "seq.indexof" =>
+               (case surfaces of first :: second :: _ =>
+                  require_same_surfaces "seq.indexof" [first, second]
+                | _ => ())
+           | "seq.replace" => require_same_surfaces "seq.replace" surfaces
+           | "seq.prefixof" => require_same_surfaces "seq.prefixof" surfaces
+           | "seq.suffixof" => require_same_surfaces "seq.suffixof" surfaces
+           | "seq.update" =>
+               (case surfaces of first :: _ :: third :: _ =>
+                  require_same_surfaces "seq.update" [first, third]
+                | _ => ())
+           | "seq.replace_all" => require_same_surfaces "seq.replace_all"
+               surfaces
+           | _ => ());
           case (name, surfaces) of
             ("select", [set_surface, actual_index]) =>
               if is_bag_surface set_surface then
