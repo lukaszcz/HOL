@@ -675,26 +675,44 @@ local
           end
         else if reserved_head andalso head_text = "set.comprehension" then
           let
-            val vars = parse_sorted_var_list ()
-            val _ =
-              if List.null vars then
-                syntax_error "parse_term" (token_loc head_tok)
-                  "set.comprehension requires a nonempty sorted-variable list"
-              else ()
-            val predicate = parse_term_from_first
-              (need_token "parse_term" "set comprehension predicate")
-            val value = parse_term_from_first
-              (need_token "parse_term" "set comprehension value")
-            val close_tok = need_token "parse_term" "')'"
-            val _ = expect_token "parse_term" ")" close_tok
-            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
-            val head = located (token_loc head_tok)
-              (TermIdentifier "set.comprehension")
-            val predicate = located (loc_of predicate)
-              (TermLambda (vars, predicate))
-            val value = located (loc_of value) (TermLambda (vars, value))
+            val first_tok = need_token "parse_term"
+              "set comprehension variables or argument"
           in
-            located loc (TermApply (head, [predicate, value]))
+            if token_text first_tok = "(" then
+              let
+                val (vars, _) =
+                  parse_until_rparen "parse_term" parse_sorted_var_from_first []
+                val _ =
+                  if List.null vars then
+                    syntax_error "parse_term" (token_loc head_tok)
+                      "set.comprehension requires a nonempty sorted-variable list"
+                  else ()
+                val predicate = parse_term_from_first
+                  (need_token "parse_term" "set comprehension predicate")
+                val value = parse_term_from_first
+                  (need_token "parse_term" "set comprehension value")
+                val close_tok = need_token "parse_term" "')'"
+                val _ = expect_token "parse_term" ")" close_tok
+                val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+                val head = located (token_loc head_tok)
+                  (TermIdentifier "set.comprehension")
+                val predicate = located (loc_of predicate)
+                  (TermLambda (vars, predicate))
+                val value = located (loc_of value) (TermLambda (vars, value))
+              in
+                located loc (TermApply (head, [predicate, value]))
+              end
+            else
+              let
+                val first = parse_term_from_first first_tok
+                val (args, close_tok) =
+                  parse_until_rparen "parse_term" parse_term_from_first [first]
+                val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+                val head = located (token_loc head_tok)
+                  (TermIdentifier "set.comprehension")
+              in
+                located loc (TermApply (head, args))
+              end
           end
         else if reserved_head andalso head_text = "let" then
           let
