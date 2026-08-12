@@ -1078,23 +1078,27 @@ local
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
           instantiate_smtstr smtstringTheory.smtstr_rev_rev sequence
-        else Thm.SPEC sequence listTheory.REVERSE_REVERSE
+        else Drule.ISPEC sequence listTheory.REVERSE_REVERSE
     | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
 
   fun replay_str_contains_refl args =
     case args of
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
-          instantiate_smtstr smtstringTheory.smtstr_contains_refl sequence
+          Drule.EQT_INTRO (instantiate_smtstr
+            smtstringTheory.smtstr_contains_refl sequence)
         else
           let
             val sequence_ty = Term.type_of sequence
             val contains = Term.mk_thy_const {Thy = "rich_list",
               Name = "IS_SUBLIST", Ty = Type.--> (sequence_ty,
                 Type.--> (sequence_ty, Type.bool))}
+            val target = Term.list_mk_comb (contains, [sequence, sequence])
+            val proof = Tactical.TAC_PROOF (([], target),
+              bossLib.SIMP_TAC (bossLib.srw_ss ())
+                [rich_listTheory.IS_SUBLIST_APPEND])
           in
-            SmtSeqProve.seq_prove
-              (Term.list_mk_comb (contains, [sequence, sequence]))
+            Drule.EQT_INTRO proof
           end
     | _ => raise ERR "str-contains-refl" "expected one sequence argument"
 
