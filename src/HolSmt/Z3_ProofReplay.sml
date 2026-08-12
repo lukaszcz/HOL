@@ -114,9 +114,16 @@ local
     }
 
   fun state_inst_cached_thm (s : state) (t : Term.term) : Thm.thm =
-    Lib.tryfind  (* may fail *)
-      (fn thm => exact_inst thm t)
-      (Net.match t (#thm_cache s))
+    let
+      val available = HOLset.union (#asserted_hyps s, #definition_hyps s)
+      fun instantiate thm =
+        let val thm = exact_inst thm t in
+          if HOLset.isSubset (Thm.hypset thm, available) then thm
+          else raise ERR "state_inst_cached_thm" "unavailable hypothesis"
+        end
+    in
+      Lib.tryfind instantiate (Net.match t (#thm_cache s))
+    end
 
   (* FP decomposition theorems carry proof-local packed-word definitions.
      Instantiating one cached decomposition at a different FP/BV pair creates
