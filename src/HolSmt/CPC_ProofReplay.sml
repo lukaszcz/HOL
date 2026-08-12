@@ -1182,8 +1182,10 @@ local
                           pred_setSyntax.mk_card right))
                   in
                     Tactical.TAC_PROOF ((context, bound),
-                      bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
-                        [pred_setTheory.CARD_INTER_LESS_EQ])
+                      bossLib.METIS_TAC
+                        [pred_setTheory.CARD_INTER_LESS_EQ,
+                         arithmeticTheory.LESS_EQ_ADD,
+                         arithmeticTheory.LESS_EQ_TRANS])
                   end
               | ("sets-card-minus", [left, right]) =>
                   let
