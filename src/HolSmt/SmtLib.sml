@@ -4085,6 +4085,13 @@ local
         val native_collection_argument =
           Term.is_var function andalso
           (native_set_argument orelse native_bag_argument)
+        val _ =
+          if !current_bag_backend = CVC5NativeBag andalso
+             is_marked_bag_term function andalso
+             mem_aconv tm (!current_raw_num_terms) then
+            raise NestedTranslation (ERR "translate_term"
+              "native cvc5 bag.count requires an Int coercion")
+          else ()
         val semantically_ranked_partial =
           Term.is_const rator andalso
           let val rank = declared_const_arity rator
@@ -4518,7 +4525,10 @@ local
               val acc = visit NONE rator acc
               val acc = visit expected_arg rand acc
             in
-              if same_const rator intSyntax.Num_tm andalso
+              if (same_const rator intSyntax.Num_tm orelse
+                  (case boolSyntax.strip_comb tm of
+                     (bag, [_]) => mem_aconv bag bag_terms
+                   | _ => false)) andalso
                  Option.isSome expected andalso
                  Type.compare (Option.valOf expected, numSyntax.num) = EQUAL
               then insert tm acc else acc
