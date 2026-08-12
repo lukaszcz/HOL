@@ -104,6 +104,8 @@ struct
     smtstringTheory.smtstr_concat_def,
     smtstringTheory.smtstr_len_def,
     smtstringTheory.smtstr_substr_def,
+    smtstringTheory.smtstr_update_def,
+    smtstringTheory.smtstr_rev_def,
     smtstringTheory.smtstr_at_def,
     smtstringTheory.smtstr_prefixof_def,
     smtstringTheory.smtstr_suffixof_def,
@@ -415,8 +417,8 @@ struct
   val string_theory_names =
     const_name_set
       (smtstring_consts "smtstring"
-         ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_at",
-          "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains",
+         ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_update",
+          "smtstr_rev", "smtstr_at", "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains",
           "smtstr_indexof", "smtstr_lt", "smtstr_le", "smtstr_replace",
           "smtstr_replace_all", "smtstr_replace_re",
           "smtstr_replace_re_all", "smtstr_is_digit", "smtstr_to_code",
@@ -440,6 +442,8 @@ struct
     smtstringTheory.smtstr_concat_assoc,
     smtstringTheory.smtstr_concat_nil_left,
     smtstringTheory.smtstr_concat_nil_right,
+    smtstringTheory.smtstr_update_def,
+    smtstringTheory.smtstr_rev_def,
     smtstringTheory.smtstr_len_concat,
     smtstringTheory.smtstr_len_eq_zero,
     smtstringTheory.smtstr_prefixof_refl,
