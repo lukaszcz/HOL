@@ -2602,7 +2602,18 @@ local
             profile "CPC(rung:trust/rdiv_zero_irrelevant)"
               irrelevant_zero_rewrite ()
         end
-      fun replay_set () = SmtArrayProve.array_prove target
+      fun replay_set () =
+        let
+          val context =
+            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+            List.map Thm.concl prems
+          val thm = Tactical.TAC_PROOF ((context, target),
+            bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])
+        in
+          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+            thm prems
+        end
+        handle Feedback.HOL_ERR _ => SmtArrayProve.array_prove target
       fun unsupported_set () =
         raise ERR "trust"
           ("unsupported CPC Set step: rule=trust; theory=set; " ^
