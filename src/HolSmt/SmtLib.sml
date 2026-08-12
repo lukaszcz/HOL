@@ -2115,7 +2115,8 @@ local
         let
           val raw =
             case field_name (field, info) of "" => field | name => name
-          val name = fresh_smt_name smt_reserved_term_names used raw
+          val name = fresh_smt_name smt_reserved_term_names used
+            ("sel_" ^ constructor_name ^ "_" ^ raw)
         in
           (name :: used, name :: acc)
         end
