@@ -13,11 +13,6 @@ local
 
   fun profile_event name = Profile.profile name (fn () => ()) ()
 
-  val sets_card_metis_limit : mlibMeter.limit =
-    {time = SOME 1.0, infs = SOME 5000}
-  fun with_sets_card_metis_limit f =
-    Lib.with_flag (metisTools.limit, sets_card_metis_limit) f
-
   (* Keep an instrumented form of the historical broken write side for
      same-binary baseline comparisons.  Normal replay always enables the
      cache; only an explicit benchmark environment setting disables it. *)
@@ -1188,11 +1183,8 @@ local
             val context =
               HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
               List.map Thm.concl prems
-            fun bounded_tac context target tactic =
-              Timeout.apply (Time.fromSeconds 1)
-                (fn () => Tactical.TAC_PROOF ((context, target), tactic)) ()
-              handle Timeout.TIMEOUT _ =>
-                raise ERR name "set cardinality replay timed out"
+            fun prove_tac context target tactic =
+              Tactical.TAC_PROOF ((context, target), tactic)
             fun card_bound () =
               case (name, args) of
                 ("sets-card-union", [left, right]) =>
@@ -1204,12 +1196,11 @@ local
                          (pred_setSyntax.mk_card left,
                           pred_setSyntax.mk_card right))
                   in
-                    with_sets_card_metis_limit (fn () =>
-                      bounded_tac context bound
-                        (bossLib.METIS_TAC
-                          [pred_setTheory.CARD_INTER_LESS_EQ,
-                           arithmeticTheory.LESS_EQ_ADD,
-                           arithmeticTheory.LESS_EQ_TRANS])) ()
+                    prove_tac context bound
+                      (bossLib.METIS_TAC
+                        [pred_setTheory.CARD_INTER_LESS_EQ,
+                         arithmeticTheory.LESS_EQ_ADD,
+                         arithmeticTheory.LESS_EQ_TRANS])
                   end
               | ("sets-card-minus", [left, right]) =>
                   let
@@ -1218,14 +1209,14 @@ local
                          (pred_setSyntax.mk_inter (left, right)),
                        pred_setSyntax.mk_card left)
                   in
-                    bounded_tac context bound
+                    prove_tac context bound
                       (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                         [pred_setTheory.CARD_INTER_LESS_EQ])
                   end
               | _ => raise ERR name "wrong cardinality arguments"
             val bound = card_bound ()
             val context = Thm.concl bound :: context
-            val proof = bounded_tac context target
+            val proof = prove_tac context target
               (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                 [pred_setTheory.CARD_UNION_EQN,
                  pred_setTheory.CARD_DIFF_EQN,
