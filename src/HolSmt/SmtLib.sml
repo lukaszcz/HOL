@@ -3351,7 +3351,10 @@ local
       else
         (current_bag_helpers := name :: !current_bag_helpers; [definition])
     fun native_bag_symbol rator rands =
-      is_native_bag_head rator orelse
+      (is_native_bag_head rator andalso
+       not (same_const rator bagSyntax.BAG_CARD_tm andalso
+            mem_aconv (Term.list_mk_comb (rator, rands))
+              (!current_raw_num_terms))) orelse
       ((same_const rator intSyntax.int_injection orelse
         same_const rator int_of_num_tm) andalso
        (case rands of [arg] => bagSyntax.is_card arg | _ => false))
@@ -4534,6 +4537,7 @@ local
               val acc = visit expected_arg rand acc
             in
               if (same_const rator intSyntax.Num_tm orelse
+                  same_const rator bagSyntax.BAG_CARD_tm orelse
                   (case boolSyntax.strip_comb tm of
                      (bag, [_]) => mem_aconv bag bag_terms
                    | _ => false)) andalso

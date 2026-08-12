@@ -6184,6 +6184,10 @@ let
     ([``FINITE_BAG (b:int -> num)``], boolSyntax.mk_eq
       (Term.mk_comb (intSyntax.int_injection, bagSyntax.mk_card b),
        intSyntax.zero_tm))
+  val cvc_opaque_card_text = cvc
+    ([``FINITE_BAG (b:int -> num)``], Term.mk_comb
+      (Term.mk_var ("opaque_bag_card_pred", Type.--> (numSyntax.num,
+         Type.bool)), bagSyntax.mk_card b))
   val card_message =
     (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
        ([], ``BAG_CARD (b:int -> num) = 0``));
@@ -6239,6 +6243,10 @@ in
     "finite cvc5 bag surface is incomplete:\n" ^ cvc_surface_text);
   assert (contains "bag.card" cvc_card_text,
     "finite cvc5 BAG_CARD did not emit bag.card:\n" ^ cvc_card_text);
+  assert (not (contains "bag.card" cvc_opaque_card_text) andalso
+      contains "(declare-sort" cvc_opaque_card_text,
+    "opaque cvc5 BAG_CARD did not retain its num sort:\n" ^
+    cvc_opaque_card_text);
   assert (card_message =
       "SMT-LIB operator 'bag.card' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",
