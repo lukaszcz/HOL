@@ -4669,6 +4669,7 @@ local
       emit_sequences goal =
   let
     val saved_sequence_emission = !current_native_sequence_emission
+    val saved_emitted_term_sorts = !emitted_term_sorts
     val saved_backend = !current_set_backend
     val saved_set_terms = !current_set_terms
     val saved_raw_num_terms = !current_raw_num_terms
@@ -4680,6 +4681,7 @@ local
         (emit_sequences andalso native_sequence_goal goal) goal
     fun restore () =
       (current_native_sequence_emission := saved_sequence_emission;
+       emitted_term_sorts := saved_emitted_term_sorts;
        current_set_backend := saved_backend;
        current_set_terms := saved_set_terms;
        current_raw_num_terms := saved_raw_num_terms;
