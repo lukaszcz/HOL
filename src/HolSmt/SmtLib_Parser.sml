@@ -4548,6 +4548,8 @@ local
         let
           val expected = typecheck_sort context tydict sort
           val expected_surface = surface_sort_of_ast context tydict sort
+          val _ = reject_nested_cvc5_collection context (loc_of term_ast)
+            expected_surface
           val _ =
             if is_set_surface expected_surface then ()
             else type_error "typecheck_term" context (loc_of term_ast)
@@ -4589,6 +4591,8 @@ local
         let
           val expected = typecheck_sort context tydict sort
           val expected_surface = surface_sort_of_ast context tydict sort
+          val _ = reject_nested_cvc5_collection context (loc_of term_ast)
+            expected_surface
           val _ =
             if bagSyntax.is_bag_ty expected then ()
             else type_error "typecheck_term" context (loc_of term_ast)
