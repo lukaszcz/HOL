@@ -183,7 +183,7 @@ structure CVC = struct
     raise Feedback.mk_HOL_ERR "CVC" function
       ("cvc5 " ^ phase ^ " failed\n" ^
        "cvc5 version: " ^ version_string () ^ "\n" ^
-       "cvc5 command: " ^ executable_string () ^ cmd_stem ^
+       "cvc5 command: " ^ executable_string () ^ with_timeout_option cmd_stem ^
        "<input-file> > <output-file>\n" ^
        "underlying HOL_ERR: " ^ hol_err_string holerr)
 
