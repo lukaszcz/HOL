@@ -1242,28 +1242,34 @@ local
       val _ = if Term.aconv bound left then ()
               else raise ERR "dest_parsed_bag_literal" "wrong binder"
       val (count_head, count_args) = boolSyntax.strip_comb count
-      val (nonnegative, nat_count, zero) =
+      val integer_count =
         if same_const count_head boolSyntax.conditional then
-          case count_args of [nonnegative, nat_count, zero] =>
-            (nonnegative, nat_count, zero)
-          | _ => raise ERR "dest_parsed_bag_literal" "wrong count arity"
+          (case count_args of
+             [nonnegative, nat_count, zero] =>
+               let
+                 val _ = if intSyntax.is_Num nat_count then ()
+                         else raise ERR "dest_parsed_bag_literal"
+                           "not an integer count"
+                 val integer_count = intSyntax.dest_Num nat_count
+                 val (lower, upper) = intSyntax.dest_leq nonnegative
+                 val _ =
+                   if Term.aconv lower intSyntax.zero_tm andalso
+                      Term.aconv upper integer_count andalso
+                      Term.aconv zero numSyntax.zero_tm then ()
+                   else raise ERR "dest_parsed_bag_literal" "wrong count clamp"
+               in integer_count end
+           | _ => raise ERR "dest_parsed_bag_literal" "wrong count arity")
+        else if numSyntax.is_numeral count then
+          intSyntax.mk_injection count
         else
           raise ERR "dest_parsed_bag_literal" "not a count"
-      val _ = if intSyntax.is_Num nat_count then ()
-              else raise ERR "dest_parsed_bag_literal" "not an integer count"
-      val integer_count = intSyntax.dest_Num nat_count
       val _ =
         if Term.free_in bound element orelse
-           Term.free_in bound integer_count then
+           Term.free_in bound integer_count orelse
+           not (Term.aconv otherwise numSyntax.zero_tm) then
           raise ERR "dest_parsed_bag_literal"
             "literal element or count depends on binder"
         else ()
-      val (lower, upper) = intSyntax.dest_leq nonnegative
-      val _ = if Term.aconv lower intSyntax.zero_tm andalso
-                    Term.aconv upper integer_count andalso
-                    Term.aconv zero numSyntax.zero_tm andalso
-                    Term.aconv otherwise numSyntax.zero_tm then ()
-              else raise ERR "dest_parsed_bag_literal" "wrong count clamp"
     in
       (element, integer_count)
     end
