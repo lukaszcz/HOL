@@ -178,7 +178,9 @@ end
 
 fun z3_tac_unsupported_command_diagnostic command =
   case SmtLib_Parser.node_of command of
-    _ => NONE
+    SmtLib_Parser.CmdEcho _ =>
+      SOME "echo is outside checked Z3_TAC command-line entry point"
+  | _ => NONE
 
 fun z3_tac_command_query_name command =
   case SmtLib_Parser.node_of command of
