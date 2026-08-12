@@ -3752,6 +3752,8 @@ local
   and instantiate_alias_surface params args surface =
     let
       val params = List.map Lib.snd params
+      val type_subst = ListPair.map (fn (param, arg) =>
+        {redex = param, residue = surface_sort_type arg}) (params, args)
       fun subst surface =
         case surface of
           PolySort ty =>
@@ -3760,7 +3762,8 @@ local
                SOME (_, arg) => arg
              | NONE => surface)
         | ConstructorSort (ty, children) =>
-            ConstructorSort (ty, List.map subst children)
+            ConstructorSort (Type.type_subst type_subst ty,
+              List.map subst children)
         | ArraySort (index, element) => ArraySort (subst index, subst element)
         | MapSort (domain, range) => MapSort (subst domain, subst range)
         | RigidSort ty =>
