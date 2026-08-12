@@ -4259,6 +4259,12 @@ local
       in
         (acc, (functiondecls @ argumentdecls,
           if native_collection_argument then sexpr functionname [argumentname]
+          else if !current_set_backend = CVC5ArraySet andalso
+                  is_marked_set_term function then
+            sexpr "select" [functionname, argumentname]
+          else if !current_bag_backend = CVC5ArrayBag andalso
+                  is_marked_bag_term function then
+            sexpr "select" [functionname, argumentname]
           else
             case !current_set_backend of
               CVC5NativeSet =>
