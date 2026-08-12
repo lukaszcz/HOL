@@ -2971,6 +2971,8 @@ local
 
   val surface_aliases =
     ref ([] : (string * ((string * Type.hol_type) list * surface_sort)) list)
+  val surface_alias_frames =
+    ref ([] : (string * ((string * Type.hol_type) list * surface_sort)) list list)
 
   fun is_set_surface surface =
     case surface of
@@ -3552,6 +3554,7 @@ local
             (typecheck_frame_tmdict top)
             (typecheck_frame_sigdict top)
         in
+          surface_alias_frames := !surface_aliases :: !surface_alias_frames;
           push_typecheck_frames (n - 1)
             {logic = logic, frames = frame :: frames, queries = queries,
              surface_flags = surface_flags}
@@ -3565,9 +3568,18 @@ local
              if List.null rest then
                raise ERR "pop" "pop scope underflow: cannot pop the base assertion scope"
              else
-               pop_typecheck_frames (n - 1)
-                 {logic = logic, frames = rest, queries = queries,
-                  surface_flags = surface_flags}
+               let
+                 val _ =
+                   case !surface_alias_frames of
+                     aliases :: older =>
+                       (surface_aliases := aliases;
+                        surface_alias_frames := older)
+                   | [] => raise ERR "pop" "surface alias scope underflow"
+               in
+                 pop_typecheck_frames (n - 1)
+                   {logic = logic, frames = rest, queries = queries,
+                    surface_flags = surface_flags}
+               end
          | [] => raise ERR "pop" "empty assertion stack")
 
   fun reset_typecheck_assertions
@@ -5807,6 +5819,7 @@ local
                 "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
             val _ = surface_aliases := []
+            val _ = surface_alias_frames := []
             val (tydict, tmdict) = parsedicts_for logic_name
             val queries =
               case state of
