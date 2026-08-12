@@ -3597,7 +3597,8 @@ fun smtlib_logic_fragment_diagnostics () =
       "(set-logic " ^ logic ^ ")\n" ^ body ^ "(check-sat)\n"
     fun script_for_checker parse_logic body =
       script parse_logic body
-    val all_dicts = {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = false}
+    val all_dicts =
+      {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = false}
     val all_elaborated =
       {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = true}
   in

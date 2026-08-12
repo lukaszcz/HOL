@@ -418,7 +418,8 @@ struct
     const_name_set
       (smtstring_consts "smtstring"
          ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_update",
-          "smtstr_rev", "smtstr_at", "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains",
+          "smtstr_rev", "smtstr_at", "smtstr_prefixof", "smtstr_suffixof",
+          "smtstr_contains",
           "smtstr_indexof", "smtstr_lt", "smtstr_le", "smtstr_replace",
           "smtstr_replace_all", "smtstr_replace_re",
           "smtstr_replace_re_all", "smtstr_is_digit", "smtstr_to_code",
