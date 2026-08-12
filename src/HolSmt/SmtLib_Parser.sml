@@ -4881,12 +4881,17 @@ local
                   type_error "typecheck_term" context (loc_of term_ast)
                     NONE (SOME expected)
                     "qualified function symbol must have a function sort"
-              val symbol = apply_symbol "typecheck_term" context
-                (loc_of term_ast) env "const" [] []
+              val (_, _, sigdict) = env
+              val signatures =
+                case peek_signatures (sigdict, "const") of
+                  SOME entries => entries
+                | NONE => []
               val _ =
-                if checked_sort symbol = expected then ()
+                if List.exists (fn {domain, range, ...} =>
+                    expected = boolSyntax.list_mk_fun (domain, range))
+                  signatures then ()
                 else type_error "typecheck_term" context (loc_of term_ast)
-                  (SOME expected) (SOME (checked_sort symbol))
+                  (SOME expected) NONE
                   "qualified identifier sort ascription mismatch"
               val result = apply_symbol "typecheck_term" context
                 (loc_of term_ast) env "const" [] [check payload]
