@@ -1398,6 +1398,9 @@ local
   fun contains_bag_card tm =
     Lib.can (HolKernel.find_term bagSyntax.is_card) tm
 
+  fun contains_set_card tm =
+    Lib.can (HolKernel.find_term pred_setSyntax.is_card) tm
+
   (* The shared first-order Seq surface is represented directly by stock list
      terms.  MAP and FOLDL below are the Z3-only higher-order extension. *)
   fun list_const name = Term.prim_mk_const {Thy = "list", Name = name}
@@ -4601,7 +4604,11 @@ local
     val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
-          if bag_backend = CVC5ArrayBag andalso
+          if backend = CVC5ArraySet andalso
+             List.exists contains_set_card (t :: original_ts) then
+            raise ERR "goal_to_SmtLib_aux_inner"
+              "set.card requires a finiteness-entailing cvc5 goal"
+          else if bag_backend = CVC5ArrayBag andalso
              List.exists contains_bag_card (t :: original_ts) then
             raise ERR "goal_to_SmtLib_aux_inner"
               "bag.card requires a finiteness-entailing cvc5 goal"
