@@ -1410,6 +1410,10 @@ in
     val _ = z3_char_terms := []
     val _ = z3_char_result_terms := []
     val string_witnesses = z3_string_witness_specs z3_version
+    val _ = z3_char_result_terms :=
+      List.mapPartial (fn (_, witness) =>
+        if Type.compare (z3_result_type (Term.type_of witness), z3_char_ty) =
+           EQUAL then SOME witness else NONE) string_witnesses
     val tydict = Library.union_dict tydict z3_string_tydict
     (* Z3 writes generated sort names (such as [t0]) in the legacy
        term-shaped Seq annotations.  Give each declared proof sort a local
