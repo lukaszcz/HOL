@@ -4646,6 +4646,23 @@ local
            Option.isSome (finite_set_hypothesis tm)) andalso
       not (bag_backend = CVC5NativeBag andalso
            Option.isSome (finite_bag_hypothesis tm))) original_ts
+    val t =
+      case finite_set_hypothesis t of
+        SOME set =>
+          if backend = CVC5NativeSet andalso
+             finite_set_term
+               (List.mapPartial finite_set_hypothesis original_ts) set then
+            boolSyntax.T
+          else t
+      | NONE =>
+          (case finite_bag_hypothesis t of
+             SOME bag =>
+               if bag_backend = CVC5NativeBag andalso
+                  finite_bag_term
+                    (List.mapPartial finite_bag_hypothesis original_ts) bag then
+                 boolSyntax.T
+               else t
+           | NONE => t)
     val (regime, regime_reason) = select_regime request (ts, t)
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
