@@ -3397,7 +3397,7 @@ local
             (case !current_bag_backend of
                CVC5NativeBag => (acc, (decls, sexpr native [left, right]))
              | Z3ArrayBag =>
-                 let val (map_decls, map_name) = z3 in
+                 let val (map_decls, map_name) = z3 () in
                    (acc, (decls @ map_decls,
                      "((_ map " ^ map_name ^ ") " ^ left ^ " " ^ right ^ ")"))
                  end
@@ -3429,9 +3429,9 @@ local
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
         else if same_const rator bagSyntax.BAG_DIFF_tm then
           binary "bag.difference_subtract"
-            (z3_bag_helper "holsmt_bag_nat_sub"
+            (fn () => (z3_bag_helper "holsmt_bag_nat_sub"
               ("(define-fun holsmt_bag_nat_sub ((x Int) (y Int)) Int " ^
-               "(ite (< x y) 0 (- x y)))\n"), "holsmt_bag_nat_sub")
+               "(ite (< x y) 0 (- x y)))\n"), "holsmt_bag_nat_sub"))
             (fn x => fn [left, right] =>
               sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
                 sexpr "select" [right, x]], "0",
@@ -3440,9 +3440,9 @@ local
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
         else if same_const rator bag_merge_tm then
           binary "bag.union_max"
-            (z3_bag_helper "holsmt_bag_max"
+            (fn () => (z3_bag_helper "holsmt_bag_max"
               ("(define-fun holsmt_bag_max ((x Int) (y Int)) Int " ^
-               "(ite (< x y) y x))\n"), "holsmt_bag_max")
+               "(ite (< x y) y x))\n"), "holsmt_bag_max"))
             (fn x => fn [left, right] =>
               sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
                 sexpr "select" [right, x]], sexpr "select" [right, x],
@@ -3450,9 +3450,9 @@ local
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
         else if same_const rator bag_inter_tm then
           binary "bag.inter_min"
-            (z3_bag_helper "holsmt_bag_min"
+            (fn () => (z3_bag_helper "holsmt_bag_min"
               ("(define-fun holsmt_bag_min ((x Int) (y Int)) Int " ^
-               "(ite (< x y) x y))\n"), "holsmt_bag_min")
+               "(ite (< x y) x y))\n"), "holsmt_bag_min"))
             (fn x => fn [left, right] =>
               sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
                 sexpr "select" [right, x]], sexpr "select" [left, x],
