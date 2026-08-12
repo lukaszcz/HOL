@@ -4863,6 +4863,13 @@ local
                   type_error "typecheck_term" context (loc_of term_ast)
                     NONE (SOME expected)
                     "qualified function symbol must have a function sort"
+              val symbol = apply_symbol "typecheck_term" context
+                (loc_of term_ast) env "const" [] []
+              val _ =
+                if checked_sort symbol = expected then ()
+                else type_error "typecheck_term" context (loc_of term_ast)
+                  (SOME expected) (SOME (checked_sort symbol))
+                  "qualified identifier sort ascription mismatch"
               val result = apply_symbol "typecheck_term" context
                 (loc_of term_ast) env "const" [] [check payload]
               val _ =
