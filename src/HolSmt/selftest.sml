@@ -256,10 +256,11 @@ in
       [thm_Z3p_v4, thm_CVCp]),
     (``MAP (\x : int. x + 1) ((xs : int list) ++ ys) =
         MAP (\x. x + 1) xs ++ MAP (\x. x + 1) ys``, [thm_Z3p_v4]),
-    (``(x : bool) IN (s UNION t) <=> x IN (t UNION s)``,
-      [thm_Z3p_v4, thm_CVCp]),
-    (* The infinite element type selects cvc5's plain-array fallback. *)
-    (``(x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
+    (* Set equality survives checked preprocessing, exercising cvc5's native
+       finite Set emission and CPC replay. *)
+    (``(s : bool set) UNION t = t UNION s``, [thm_Z3p_v4, thm_CVCp]),
+    (* Complements select cvc5's array fallback without expanding membership. *)
+    (``(x : int) IN COMPL (s UNION t) <=> ~(x IN s \/ x IN t)``,
       [thm_CVC, thm_CVCp]),
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
