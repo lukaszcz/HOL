@@ -2660,7 +2660,10 @@ local
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
-          val thm = SmtSeqProve.seq_contextual_prove context target
+          val thm =
+            SmtSeqProve.seq_prove target
+            handle Feedback.HOL_ERR _ =>
+              SmtSeqProve.seq_contextual_prove context target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -2677,7 +2680,7 @@ local
          second rung is the checked contextual simplifier used by its shared
          D2 prover; failure records a theory-specific CPC obligation. *)
       if SmtSeqProve.has_seq_type target then
-        profile "CPC(rung:trust/seq_contextual)" replay_seq ()
+        profile "CPC(rung:trust/seq)" replay_seq ()
       else if bag_context () then
         next (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
           (fn () => profile "CPC(rung:trust/bag_context)"
