@@ -1050,6 +1050,18 @@ local
        handle Feedback.HOL_ERR _ =>
          List.foldl (fn (arg, acc) => collect_native_set_terms arg acc)
            terms rands)
+    (* A let-local which is used as a native Set must give its value the same
+       representation.  The body is visited above, so propagate its marker
+       back to the corresponding binding value. *)
+    val terms =
+      (let
+         val (bindings, _) = pairSyntax.dest_anylet tm
+       in
+         List.foldl (fn ((variable, value), acc) =>
+           if mem_aconv variable acc then collect_set value acc else acc)
+           terms bindings
+       end
+       handle Feedback.HOL_ERR _ => terms)
   in
     if same_const rator pred_setSyntax.in_tm then
       (case rands of [_, set] => collect_set set terms | _ => terms)
