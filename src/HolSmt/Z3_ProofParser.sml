@@ -170,6 +170,12 @@ local
   val z3_char_width = Arbnum.fromInt 18
   val z3_char_index_ty = fcpLib.index_type z3_char_width
   val z3_char_ty = wordsSyntax.mk_word_type z3_char_index_ty
+  val z3_char_terms = ref ([] : Term.term list)
+  val z3_seen_char_sort = ref false
+
+  fun is_z3_char c =
+    List.exists (Term.aconv c) (!z3_char_terms) orelse
+    Lib.can wordsSyntax.dest_n2w c
 
   fun z3_char_to_num c = wordsSyntax.mk_w2n c
 
@@ -353,20 +359,20 @@ local
   val z3_char_sort_marker = z3_num_to_char numSyntax.zero_tm
 
   fun z3_seq_sort_marker element =
-    listSyntax.mk_nil (Term.type_of element)
+    if Term.aconv element z3_char_sort_marker then z3_char_sort_marker
+    else listSyntax.mk_nil (Term.type_of element)
 
   fun z3_seq_type_marker element =
     Term.mk_var ("z3_seq_type_marker", element)
 
   fun z3_seq_empty marker =
-    case Lib.total listSyntax.dest_list_type (Term.type_of marker) of
-      SOME element =>
-        if Type.compare (element, z3_char_ty) = EQUAL then
-          SmtLib_String_Literal.mk_string_term ""
-        else
-          listSyntax.mk_nil element
-    | NONE => raise ERR "<z3_string_dict.seq.empty>"
-        "expected a Seq sort marker"
+    if Term.aconv marker z3_char_sort_marker then
+      SmtLib_String_Literal.mk_string_term ""
+    else
+      case Lib.total listSyntax.dest_list_type (Term.type_of marker) of
+        SOME element => listSyntax.mk_nil element
+      | NONE => raise ERR "<z3_string_dict.seq.empty>"
+          "expected a Seq sort marker"
 
   val z3_empty_marker = listSyntax.mk_nil intSyntax.int_ty
 
@@ -374,8 +380,13 @@ local
     if Term.aconv empty z3_empty_marker then z3_seq_empty marker
     else raise ERR "<z3_string_dict.as>" "not a seq.empty annotation"
 
+  fun z3_char_type _ indices args =
+    if List.null indices andalso List.null args then
+      (z3_seen_char_sort := true; z3_char_ty)
+    else raise ERR "<z3_string_tydict.Char>" "no arguments expected"
+
   val z3_string_tydict = Library.dict_from_list [
-    ("Char", SmtLib_Theories.K_zero_zero z3_char_ty),
+    ("Char", z3_char_type),
     ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty),
     ("Seq Char", SmtLib_Theories.K_zero_one (fn _ => z3_string_seq_ty))
   ]
@@ -460,7 +471,7 @@ local
              smtstring_app "smtstr_suffixof" [s, t]
            else rich_list_app "IS_SUFFIX" [t, s])),
         ("seq.unit", SmtLib_Theories.K_zero_one
-          (fn c => if Type.compare (Term.type_of c, z3_char_ty) = EQUAL then
+          (fn c => if is_z3_char c then
              z3_string_app "seq_unit" [z3_char_to_num c]
            else listSyntax.mk_cons
              (c, listSyntax.mk_nil (Term.type_of c)))),
@@ -1297,7 +1308,14 @@ local
     )
     else if head = "declare-fun" then
       let
-        val (tm, tmdict) = SmtLib_Parser.parse_declare_fun get_token (tydict, tmdict)
+        val _ = z3_seen_char_sort := false
+        val (tm, tmdict) = SmtLib_Parser.parse_declare_fun get_token
+          (tydict, tmdict)
+        val _ =
+          if !z3_seen_char_sort andalso
+             not (Lib.can Type.dom_rng (Term.type_of tm)) then
+            z3_char_terms := tm :: !z3_char_terms
+          else ()
         val proof = update_proof_vars proof (HOLset.add (proof_vars proof, tm))
       in
         parse_proof_decl get_token (tydict, tmdict, proof) rpars
@@ -1350,6 +1368,7 @@ in
     (* Resolve once, here: everything downstream -- rule lookup, gating and
        diagnostics -- then works with a tested anchor. *)
     val z3_version = resolve_version z3_version
+    val _ = z3_char_terms := []
     val string_witnesses = z3_string_witness_specs z3_version
     val tydict = Library.union_dict tydict z3_string_tydict
     (* Z3 writes generated sort names (such as [t0]) in the legacy
