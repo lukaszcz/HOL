@@ -4181,11 +4181,16 @@ local
              in
                let
                  val result_surface = result_surface_sort t
+                 fun finite_binder surface =
+                   case surface of
+                     MapSort (domain, range) =>
+                       finite_cvc5_binder_surface domain andalso
+                       (case range of
+                          MapSort _ => finite_binder range
+                        | _ => true)
+                   | _ => false
                  val finite_binders =
-                   List.all (fn binder =>
-                     case checked_surface_sort binder of
-                       MapSort (domain, _) => finite_cvc5_binder_surface domain
-                     | _ => false) args
+                   List.all (finite_binder o checked_surface_sort) args
                in
                  if name = "set.comprehension" andalso
                     #solver context = SOME "cvc5" andalso not finite_binders
