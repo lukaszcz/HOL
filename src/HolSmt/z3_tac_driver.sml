@@ -314,9 +314,15 @@ fun z3_tac_raw_result path =
       "'" ^ String.translate
         (fn #"'" => "'\\''" | character => str character) path ^ "'"
     fun work () =
-      (ignore (OS.Process.system
-         (quote executable ^ " -smt2 -file:" ^ quote path ^ " > " ^ quote output));
-       Z3.is_sat_file output)
+      let
+        val status = OS.Process.system
+          (quote executable ^ " -smt2 -file:" ^ quote path ^ " > " ^
+           quote output)
+      in
+        if OS.Process.isSuccess status then Z3.is_sat_file output
+        else raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
+          "raw Z3 invocation failed"
+      end
     fun cleanup () = OS.FileSys.remove output handle OS.SysErr _ => ()
   in
     Portable.finally cleanup work ()
