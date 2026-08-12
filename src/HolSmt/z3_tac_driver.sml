@@ -24,7 +24,7 @@ fun z3_tac_args () =
    types, so establish an ephemeral theory before a driver elaborates them. *)
 val _ =
   case Thm.getCT () of
-    NONE => Theory.new_theory "HolSmtDriver"
+    NONE => Feedback.quiet_messages Theory.new_theory "HolSmtDriver"
   | SOME _ => ()
 
 val _ = SmtLib_Datatypes.empty_name_map

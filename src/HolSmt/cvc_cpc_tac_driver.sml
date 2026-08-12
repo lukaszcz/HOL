@@ -18,7 +18,7 @@ val _ = SmtLib_Datatypes.empty_name_map
 
 val _ =
   case Thm.getCT () of
-    NONE => Theory.new_theory "HolSmtDriver"
+    NONE => Feedback.quiet_messages Theory.new_theory "HolSmtDriver"
   | SOME _ => ()
 
 fun cvc_cpc_conjunction [] = boolSyntax.T
