@@ -3955,9 +3955,52 @@ local
               arity_mismatch "store" 3 (List.length arg_sorts)
           | _ => ()
       fun check_surface_builtin () =
-        if not (List.null indices) then ()
-        else
-          case (name, List.map checked_surface_sort args) of
+        let
+          fun require_set operator surface =
+            if is_set_surface surface then ()
+            else type_error fn_name context loc NONE NONE
+              (operator ^ " requires a Set sort")
+          fun require_map operator surface =
+            case surface of
+              MapSort _ => ()
+            | _ => type_error fn_name context loc NONE NONE
+                (operator ^ " requires a function sort")
+          fun require_set_args operator surfaces =
+            List.app (require_set operator) surfaces
+          val surfaces = List.map checked_surface_sort args
+          fun check_sets () =
+            case (name, surfaces) of
+              ("set.member", [_ , set]) => require_set "set.member" set
+            | ("set.insert", _ :: rest) =>
+                (case List.rev rest of set :: _ =>
+                   require_set "set.insert" set | [] => ())
+            | ("set.union", sets) => require_set_args "set.union" sets
+            | ("set.inter", sets) => require_set_args "set.inter" sets
+            | ("set.minus", sets) => require_set_args "set.minus" sets
+            | ("set.subset", sets) => require_set_args "set.subset" sets
+            | ("set.complement", [set]) => require_set "set.complement" set
+            | ("set.choose", [set]) => require_set "set.choose" set
+            | ("set.card", [set]) => require_set "set.card" set
+            | ("set.map", [map, set]) =>
+                (require_map "set.map" map; require_set "set.map" set)
+            | ("set.filter", [predicate, set]) =>
+                (require_map "set.filter" predicate;
+                 require_set "set.filter" set)
+            | ("set.all", [predicate, set]) =>
+                (require_map "set.all" predicate; require_set "set.all" set)
+            | ("set.some", [predicate, set]) =>
+                (require_map "set.some" predicate;
+                 require_set "set.some" set)
+            | ("set.fold", [fold, _, set]) =>
+                (require_map "set.fold" fold; require_set "set.fold" set)
+            | ("set.is_empty", [set]) => require_set "set.is_empty" set
+            | ("set.is_singleton", [set]) =>
+                require_set "set.is_singleton" set
+            | _ => ()
+        in
+          if not (List.null indices) then () else
+          (check_sets ();
+          case (name, surfaces) of
             ("select", [set_surface, actual_index]) =>
               if is_bag_surface set_surface then
                 type_error fn_name context loc NONE NONE
@@ -3999,7 +4042,8 @@ local
                 type_error fn_name context loc NONE NONE
                   "cvc5 set.complement requires a finite element sort"
               else ()
-          | _ => ()
+          | _ => ())
+        end
       fun collection_result_surface t =
         if pred_setSyntax.is_set_type (Term.type_of t) then
           let val element = pred_setSyntax.dest_set_type (Term.type_of t) in
@@ -4526,11 +4570,12 @@ local
           val payload = check payload
           val _ =
             case expected_surface of
-              MapSort _ =>
-                type_error "typecheck_term" context (loc_of term_ast)
+              ArraySort _ => ()
+            | surface =>
+                if is_set_surface surface then ()
+                else type_error "typecheck_term" context (loc_of term_ast)
                   NONE (SOME expected)
                   "const result must have an Array or Set sort"
-            | _ => ()
           val (domain, range) = Type.dom_rng expected
             handle Feedback.HOL_ERR _ =>
               type_error "typecheck_term" context (loc_of term_ast)
