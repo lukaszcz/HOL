@@ -226,6 +226,11 @@ local
 
   fun is_z3_string tm = Type.compare (Term.type_of tm, z3_string_ty) = EQUAL
 
+  fun z3_result_type ty =
+    case Lib.total Type.dom_rng ty of
+      SOME (_, range) => z3_result_type range
+    | NONE => ty
+
   fun seq_extract (s, i, n) =
     if is_z3_string s then smtstring_app "smtstr_substr" [s, i, n]
     else
@@ -1325,7 +1330,9 @@ local
         val (tm, tmdict) = SmtLib_Parser.parse_declare_fun get_token
           (tydict, tmdict)
         val _ =
-          if !z3_seen_char_sort then
+          if !z3_seen_char_sort andalso
+             Type.compare (z3_result_type (Term.type_of tm), z3_char_ty) = EQUAL
+          then
             if Lib.can Type.dom_rng (Term.type_of tm) then
               z3_char_result_terms := tm :: !z3_char_result_terms
             else z3_char_terms := tm :: !z3_char_terms
