@@ -1793,6 +1793,10 @@ local
       if name = "quant-miniscope-and" then
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss [boolTheory.FORALL_AND_THM])
+      else if name = "quant-miniscope-or" then
+        Tactical.TAC_PROOF (([], target),
+          bossLib.SIMP_TAC bossLib.bool_ss
+            [boolTheory.LEFT_FORALL_OR_THM, boolTheory.RIGHT_FORALL_OR_THM])
       else Tactical.TAC_PROOF (([], target),
         bossLib.SIMP_TAC (bossLib.srw_ss()) [boolTheory.IMP_DISJ_THM])
     end
