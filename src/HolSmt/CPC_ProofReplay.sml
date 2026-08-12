@@ -2624,7 +2624,20 @@ local
       fun replay_bag () =
         SmtBagProve.bag_prove_with_arith arith_prove target
       fun prove_scoped_bag () =
-        prove_scoped_arithmetic ()
+        let
+          val context =
+            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+            List.map Thm.concl prems
+          val thm = Tactical.TAC_PROOF ((context, target),
+            Tactical.THEN
+              (Tactical.REPEAT Tactic.COND_CASES_TAC,
+               Tactical.THEN
+                 (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                  intLib.ARITH_TAC)))
+        in
+          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+            thm prems
+        end
         handle Feedback.HOL_ERR _ =>
           raise ERR "trust"
             ("unsupported CPC Bag step: rule=trust; theory=bag; " ^
