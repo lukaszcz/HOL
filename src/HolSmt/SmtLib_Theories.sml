@@ -1564,18 +1564,6 @@ in
     fun mk_bag_setof b =
       mk_bag_of_set (mk_set_of_bag b)
 
-    fun mk_bag_partition (relation, b) =
-      let
-        val x = Term.variant (Term.all_varsl [relation, b])
-          (Term.mk_var ("bag_partition_x", bagSyntax.base_type b))
-        val group =
-          mk_bag_filter (Term.mk_comb (relation, x), b)
-        val groups = pred_setSyntax.mk_image
-          (Term.mk_abs (x, group), mk_set_of_bag b)
-      in
-        mk_bag_of_set groups
-      end
-
     (* cvc5's unqualified polymorphic literal defaults to [Bag Bool], just
        as its parser does when no explicit [as] qualification is present.
        HOL applications require exact types rather than SMT's bidirectional
@@ -1641,10 +1629,7 @@ in
         ["(bag.some (-> A Bool) (Bag A) Bool)"]
         (K_zero_two mk_bag_some),
       cvc_term "bag.setof" no_attributes ["(bag.setof (Bag A) (Bag A))"]
-        (K_zero_one mk_bag_setof),
-      cvc_term "bag.partition" no_attributes
-        ["(bag.partition (-> A A Bool) (Bag A) (Bag (Bag A)))"]
-        (K_zero_two mk_bag_partition)
+        (K_zero_one mk_bag_setof)
     ]
 
     val tydict = dictionary_of_entries tyentries

@@ -4889,8 +4889,6 @@ let
   val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
   val fold = Term.mk_var ("fold", Type.--> (intSyntax.int_ty,
     Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
-  val relation = Term.mk_var ("relation", Type.--> (intSyntax.int_ty,
-    Type.--> (intSyntax.int_ty, Type.bool)))
   val zero = intSyntax.zero_tm
   fun bag_const name ty =
     Term.mk_thy_const {Thy = "bag", Name = name, Ty = ty}
@@ -5000,7 +4998,6 @@ let
   val literal_x = Term.mk_var ("bag_literal_x", intSyntax.int_ty)
   val remove_x = Term.mk_var ("bag_difference_remove_x", intSyntax.int_ty)
   val some_x = Term.mk_var ("bag_some_x", intSyntax.int_ty)
-  val partition_x = Term.mk_var ("bag_partition_x", intSyntax.int_ty)
   val two = intSyntax.term_of_int (Arbint.fromInt 2)
   val three = intSyntax.term_of_int (Arbint.fromInt 3)
   val minus_two = intSyntax.mk_negated two
@@ -5021,12 +5018,6 @@ let
   val some_in = bag_in (some_x, b)
   val some = boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
     (some_in, Term.mk_comb (p, some_x)))
-  val partition_predicate = Term.mk_comb (relation, partition_x)
-  val partition_group =
-    bag_filter (partition_predicate, b)
-  val partition_set = pred_setSyntax.mk_image
-    (Term.mk_abs (partition_x, partition_group), set_of_bag b)
-  val partition = bag_of_set partition_set
   val cvc5_state = typecheck cvc5_options
     ("(set-logic ALL)\n" ^
      "(declare-const b (Bag Int))\n" ^
@@ -5143,9 +5134,11 @@ in
      \(assert (= (bag.fold fold 0 b) 0))\n";
   assert_builder "cvc5 bag.setof" "(= (bag.setof b) b)"
     (boolSyntax.mk_eq (bag_of_set (set_of_bag b), b));
-  assert_builder "cvc5 bag.partition"
-    "(= (bag.partition relation b) (bag.partition relation b))"
-    (boolSyntax.mk_eq (partition, partition));
+  reject cvc5_options "cvc5 bag.partition"
+    "(set-logic ALL)\n\
+     \(declare-const b (Bag Int))\n\
+     \(declare-const relation (-> Int (-> Int Bool)))\n\
+     \(assert (= (bag.partition relation b) (bag.partition relation b)))\n";
   assert_builder "cvc5 forall Bag binder"
     "(forall ((u (Bag Int))) (= (bag.card u) 0))"
     (boolSyntax.mk_forall (quantified_bag, boolSyntax.mk_imp
