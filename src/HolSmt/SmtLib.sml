@@ -4286,9 +4286,9 @@ local
                   then
                     selected_set_sort tydict rator
                   else if declaration_arity = 0 andalso
-                          is_marked_bag_term rator
+                          is_marked_bag_term tm
                   then
-                    selected_bag_sort tydict rator
+                    selected_bag_sort tydict tm
                   else
                     translate_type regime (tydict, rngty)
                 (* invent new name for 'rator' *)
