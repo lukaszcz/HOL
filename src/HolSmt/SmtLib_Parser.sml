@@ -2969,6 +2969,9 @@ local
     | ArraySort of surface_sort * surface_sort
     | MapSort of surface_sort * surface_sort
 
+  val surface_aliases =
+    ref ([] : (string * ((string * Type.hol_type) list * surface_sort)) list)
+
   fun is_set_surface surface =
     case surface of
       ConstructorSort (ty, _) => pred_setSyntax.is_set_type ty
@@ -3731,9 +3734,33 @@ local
                  (Feedback.message_of holerr))
     end
 
+  and instantiate_alias_surface params args surface =
+    let
+      val params = List.map Lib.snd params
+      fun subst surface =
+        case surface of
+          PolySort ty =>
+            (case List.find (fn (param, _) => same_sort param ty)
+                (ListPair.zip (params, args)) of
+               SOME (_, arg) => arg
+             | NONE => surface)
+        | ConstructorSort (ty, children) =>
+            ConstructorSort (ty, List.map subst children)
+        | ArraySort (index, element) => ArraySort (subst index, subst element)
+        | MapSort (domain, range) => MapSort (subst domain, subst range)
+        | RigidSort _ => surface
+    in
+      subst surface
+    end
+
   and surface_sort_of_ast context tydict sort_ast =
     case node_of sort_ast of
-      SortApply (head, args) =>
+      SortIdentifier name =>
+        (case List.find (fn (alias, _) => alias = name) (!surface_aliases) of
+           SOME (_, (params, surface)) =>
+             instantiate_alias_surface params [] surface
+         | NONE => RigidSort (typecheck_sort context tydict sort_ast))
+    | SortApply (head, args) =>
         if located_string_node head = "->" andalso List.length args >= 2 then
           let
             val (domains, range) =
@@ -3748,8 +3775,15 @@ local
             [index, element] => ArraySort (index, element)
           | _ => raise ERR "surface_sort_of_ast" "impossible Array arity"
         else
-          ConstructorSort (typecheck_sort context tydict sort_ast,
-            List.map (surface_sort_of_ast context tydict) args)
+          (case List.find
+              (fn (alias, _) => alias = located_string_node head)
+              (!surface_aliases) of
+             SOME (_, (params, surface)) =>
+               instantiate_alias_surface params
+                 (List.map (surface_sort_of_ast context tydict) args) surface
+           | NONE =>
+               ConstructorSort (typecheck_sort context tydict sort_ast,
+                 List.map (surface_sort_of_ast context tydict) args))
     | _ => RigidSort (typecheck_sort context tydict sort_ast)
 
   and typecheck_sorted_var context tydict sorted_var =
@@ -5018,11 +5052,9 @@ local
       val body_surface = surface_sort_of_ast context temp_tydict body
       val _ =
         if #solver context = SOME "cvc5" andalso
-           (is_set_surface body_surface orelse
-            is_bag_surface body_surface orelse
-            nested_collection_surface body_surface) then
+           nested_collection_surface body_surface then
           type_error "typecheck_define_sort" context (loc_of body) NONE NONE
-            "cvc5 Set/Bag sort aliases are unsupported"
+            "nested cvc5 Set/Bag sort aliases are unsupported"
         else ()
       fun parsefn token indices args =
         if List.null indices andalso List.length args = List.length param_tys then
@@ -5037,6 +5069,8 @@ local
         else
           raise ERR ("<" ^ alias_name ^ ">") "wrong number of arguments"
     in
+      surface_aliases := (alias_name, (param_tys, body_surface)) ::
+        List.filter (fn (alias, _) => alias <> alias_name) (!surface_aliases);
       Library.extend_dict ((alias_name, parsefn), tydict)
     end
 
@@ -5766,6 +5800,7 @@ local
               raise ERR "typecheck_script"
                 "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
+            val _ = surface_aliases := []
             val (tydict, tmdict) = parsedicts_for logic_name
             val queries =
               case state of
