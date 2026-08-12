@@ -1069,7 +1069,8 @@ local
     case List.filter (fn variable =>
         is_smtstr_type (Term.type_of variable))
       (Term.free_vars (Thm.concl theorem)) of
-      [variable] => Thm.INST [variable |-> sequence] theorem
+      [variable] => Thm.INST
+        [{redex = variable, residue = sequence}] theorem
     | _ => raise ERR "instantiate_smtstr" "expected one String variable"
 
   fun replay_seq_rev_rev args =

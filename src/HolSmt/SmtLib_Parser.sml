@@ -6062,7 +6062,18 @@ local
             val command_state =
               dest_typecheck_state "reset-assertions" state
           in
-            finish (reset_typecheck_assertions command_state)
+            if solver = SOME "cvc5" then
+              let
+                val logic = visible_logic (#logic command_state)
+                val (tydict, tmdict) = parsedicts_for logic
+                val _ = surface_aliases := []
+                val _ = surface_alias_frames := []
+              in
+                finish (new_typecheck_state_with_queries logic tydict tmdict
+                  (#queries command_state))
+              end
+            else
+              finish (reset_typecheck_assertions command_state)
           end
       | CmdCheckSat =>
           let val command_state = dest_typecheck_state "check-sat" state

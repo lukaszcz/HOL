@@ -3422,7 +3422,7 @@ local
            | _ => raise ERR "native_bag_builtin" "wrong insert arity")
         else if same_const rator bagSyntax.BAG_UNION_tm then
           binary "bag.union_disjoint"
-            ([], "(+ (Int Int) Int)")
+            (fn () => ([], "(+ (Int Int) Int)"))
             (fn x => fn [left, right] =>
               sexpr "+" [sexpr "select" [left, x],
                 sexpr "select" [right, x]]
