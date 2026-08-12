@@ -1422,6 +1422,8 @@ local
   val smt_seq_replace_tm = holsmt_const "smt_seq_replace"
   val smt_seq_replace_all_tm = holsmt_const "smt_seq_replace_all"
   val smt_seq_update_tm = holsmt_const "smt_seq_update"
+  val smtstr_update_tm = holsmt_const "smtstr_update"
+  val smtstr_rev_tm = holsmt_const "smtstr_rev"
 
   fun dest_seq_extract_shape tm =
     let
@@ -5443,6 +5445,16 @@ in
 
   val _ = register_operator_availability {
     hol_head = seq_reverse_tm, operator = "seq.rev", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
+
+  val _ = register_operator_availability {
+    hol_head = smtstr_update_tm, operator = "str.update", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
+
+  val _ = register_operator_availability {
+    hol_head = smtstr_rev_tm, operator = "str.rev", solver = "cvc5",
     versions = ["1.3.4"]
   }
 
