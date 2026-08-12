@@ -647,6 +647,7 @@ Local CI contract commands:
   docker run --rm \
     --mount type=bind,src="$HOLSMT_VALIDATION_DIR",dst=/ML/HOL/validation,readonly \
     -e HOLSMT_VALIDATION_DIR=/ML/HOL/validation \
+    -e HOLSMT_ROOT=/ML/HOL \
     -e OUT_DIR=/tmp/holsmt-selftest-shards \
     -e HOL4_Z3_EXECUTABLE= \
     -e HOL4_CVC_EXECUTABLE= \
@@ -667,6 +668,7 @@ Local CI contract commands:
     docker run --rm \
       --mount type=bind,src="$HOLSMT_VALIDATION_DIR",dst=/ML/HOL/validation,readonly \
       -e HOLSMT_VALIDATION_DIR=/ML/HOL/validation \
+      -e HOLSMT_ROOT=/ML/HOL \
       -e OUT_DIR=/tmp/holsmt-selftest-shards \
       "holsmt-z3:${z3_version}" \
       sh -lc '"$HOL4_Z3_EXECUTABLE" -version &&
