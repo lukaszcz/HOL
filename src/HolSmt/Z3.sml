@@ -267,7 +267,7 @@ structure Z3 = struct
               SolverSpec.UNSAT NONE =>
               let
                 val (ty_dict, tm_dict) =
-                  SmtLib.parser_dicts_for_translation translation
+                  SmtLib.parser_dicts_for_solver_translation "Z3" translation
                 (* Reject oversized proof text before the untrusted proof
                    parser reads even its first token. *)
                 val proof =

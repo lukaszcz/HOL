@@ -2680,14 +2680,19 @@ local
       List.foldl add_constructor dict infos
     end
 
-  fun parser_dicts_for_translation_aux
+  fun parser_dicts_for_translation_aux solver
       ({logic, regime, tydict, tmdict, ...} : translation) =
     let
       fun parsedicts_for_logic logic =
-        SmtLib_Logics.parsedicts_of_any_solver_logic logic
+        (case solver of
+           SOME solver => SmtLib_Logics.parsedicts_of_solver_logic solver logic
+         | NONE => SmtLib_Logics.parsedicts_of_any_solver_logic logic)
         handle e as Feedback.HOL_ERR _ =>
           if String.isSubstring "DT" logic then
-            SmtLib_Logics.parsedicts_of_any_solver_logic "ALL"
+            (case solver of
+               SOME solver =>
+                 SmtLib_Logics.parsedicts_of_solver_logic solver "ALL"
+             | NONE => SmtLib_Logics.parsedicts_of_any_solver_logic "ALL")
           else
             raise e
       val ty_dict = Redblackmap.foldl (fn (ty, s, dict) =>
@@ -5277,7 +5282,9 @@ in
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
-  val parser_dicts_for_translation = parser_dicts_for_translation_aux
+  val parser_dicts_for_translation = parser_dicts_for_translation_aux NONE
+  fun parser_dicts_for_solver_translation solver =
+    parser_dicts_for_translation_aux (SOME solver)
   fun infer_logic_from_features features =
     infer_logic_from_features_for_regime FirstOrder features
   val infer_logic_from_features_with_regime =

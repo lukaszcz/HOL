@@ -265,7 +265,8 @@ structure CVC = struct
       case result of
         SolverSpec.UNSAT NONE =>
         let
-          val (ty_dict, tm_dict) = SmtLib.parser_dicts_for_translation translation
+          val (ty_dict, tm_dict) =
+            SmtLib.parser_dicts_for_solver_translation "cvc5" translation
           val proof =
             SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
               outfile proof_start instream (parse (ty_dict, tm_dict))
