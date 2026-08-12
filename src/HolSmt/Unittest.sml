@@ -4853,7 +4853,20 @@ in
      \(declare-datatype d ((mk-d (field (Set Int)))))\n";
   reject cvc5_options "cvc5 datatype Bag field"
     "(set-logic ALL)\n\
-     \(declare-datatype d ((mk-d (field (Bag Int)))))\n"
+     \(declare-datatype d ((mk-d (field (Bag Int)))))\n";
+  let
+    val alias_field_message =
+      (ignore (typecheck cvc5_options
+        "(set-logic ALL)\n(define-sort int-set () (Set Int))\n\
+        \(declare-datatype d ((mk-d (field int-set))))\n");
+       die "cvc5 datatype Set alias field was accepted")
+      handle Feedback.HOL_ERR error => Feedback.message_of error
+  in
+    assert (contains "cvc5 datatype Set/Bag fields are unsupported"
+      alias_field_message,
+      "cvc5 datatype Set alias field had the wrong diagnostic: " ^
+      alias_field_message)
+  end
 end
 
 fun smtlib_bag_dialect_builders_success () =

@@ -5371,11 +5371,20 @@ local
 
   fun check_elaborated_datatype_surface context tydict decl =
     let
+      fun contains_collection_surface surface =
+        is_set_surface surface orelse is_bag_surface surface orelse
+        nested_collection_surface surface
+      fun alias_contains_collection name =
+        case List.find (fn (alias, _) => alias = name) (!surface_aliases) of
+          SOME (_, (_, surface)) => contains_collection_surface surface
+        | NONE => false
       fun contains_collection sort =
         case node_of sort of
-          SortApply (head, args) =>
+          SortIdentifier name => alias_contains_collection name
+        | SortApply (head, args) =>
             located_string_node head = "Set" orelse
             located_string_node head = "Bag" orelse
+            alias_contains_collection (located_string_node head) orelse
             List.exists contains_collection args
         | _ => false
       fun check_sort sort =
