@@ -315,9 +315,10 @@ fun z3_tac_raw_result path =
         (fn #"'" => "'\\''" | character => str character) path ^ "'"
     fun work () =
       let
-        val status = OS.Process.system
-          (quote executable ^ " -smt2 -file:" ^ quote path ^ " > " ^
-           quote output)
+        val command =
+          quote executable ^ Z3.with_timeout_option " -smt2 -file:" ^
+          quote path ^ " > " ^ quote output
+        val status = OS.Process.system (SolverSpec.with_wall_timeout command)
       in
         if OS.Process.isSuccess status then Z3.is_sat_file output
         else raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
