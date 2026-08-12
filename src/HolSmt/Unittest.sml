@@ -3602,6 +3602,13 @@ fun smtlib_logic_fragment_diagnostics () =
     val all_elaborated =
       {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = true}
   in
+    expect_fragment_with_options "nested Seq datatype unavailable"
+      all_elaborated "QF_S"
+      (script "QF_S"
+       ("(declare-datatype FragSeqD ((mkFragSeqD)))\n" ^
+        "(declare-const xs (Seq FragSeqD))\n" ^
+        "(assert (= xs xs))\n"))
+      "datatype sort is outside logic fragment QF_S";
     expect_fragment "FO arrow sort" "QF_LIA"
       (script "QF_LIA"
        ("(declare-const f (-> Int Int))\n" ^

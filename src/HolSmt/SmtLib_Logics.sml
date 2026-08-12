@@ -681,6 +681,12 @@ in
         type_is_datatype_sort ty andalso
         not (ignore_native_sequences andalso
              Lib.can listSyntax.dest_list_type ty)
+      fun type_contains_visible_datatype ty =
+        type_is_visible_datatype_sort ty orelse
+        (if ignore_native_sequences then
+           (type_contains_visible_datatype (listSyntax.dest_list_type ty)
+            handle Feedback.HOL_ERR _ => false)
+         else false)
       fun is_smtstr_value tm =
         case boolSyntax.strip_comb tm of
           (rator, [_]) =>
@@ -700,7 +706,7 @@ in
             List.exists walk elements
           end
         else
-          term_type_contains type_is_visible_datatype_sort tm orelse
+          type_contains_visible_datatype (Term.type_of tm) orelse
           (let val (rator, rand) = Term.dest_comb tm
            in walk rator orelse walk rand end
            handle Feedback.HOL_ERR _ =>
