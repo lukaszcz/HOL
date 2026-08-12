@@ -220,6 +220,11 @@ fun z3_tac_script_query_diagnostic query_names =
 
 fun z3_tac_term_uses_fold_left term =
   let
+    fun sexp_uses_fold_left sexp =
+      case SmtLib_Parser.node_of sexp of
+        SmtLib_Parser.SexpAtom "seq.fold_left" => true
+      | SmtLib_Parser.SexpAtom _ => false
+      | SmtLib_Parser.SexpList sexps => List.exists sexp_uses_fold_left sexps
     fun any terms = List.exists scan terms
     and scan term =
       case SmtLib_Parser.node_of term of
@@ -240,7 +245,8 @@ fun z3_tac_term_uses_fold_left term =
       | SmtLib_Parser.TermForall (_, body) => scan body
       | SmtLib_Parser.TermExists (_, body) => scan body
       | SmtLib_Parser.TermLambda (_, body) => scan body
-      | SmtLib_Parser.TermAnnotated (body, _) => scan body
+      | SmtLib_Parser.TermAnnotated (body, attributes) =>
+          scan body orelse List.exists sexp_uses_fold_left attributes
   in
     scan term
   end
