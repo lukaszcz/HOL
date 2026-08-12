@@ -224,9 +224,14 @@ fun z3_tac_term_uses_fold_left term =
   let
     fun sexp_uses_fold_left sexp =
       case SmtLib_Parser.node_of sexp of
-        SmtLib_Parser.SexpAtom "seq.fold_left" => true
-      | SmtLib_Parser.SexpAtom _ => false
-      | SmtLib_Parser.SexpList sexps => List.exists sexp_uses_fold_left sexps
+        SmtLib_Parser.SexpAtom _ => false
+      | SmtLib_Parser.SexpList sexps =>
+          (case sexps of
+             head :: tail =>
+               (case SmtLib_Parser.node_of head of
+                  SmtLib_Parser.SexpAtom "seq.fold_left" => true
+                | _ => List.exists sexp_uses_fold_left sexps)
+           | [] => false)
     fun any terms = List.exists scan terms
     and scan term =
       case SmtLib_Parser.node_of term of
