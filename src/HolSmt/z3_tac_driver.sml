@@ -309,12 +309,12 @@ datatype z3_tac_checked_result =
 
 fun z3_tac_raw_result path =
   let
-    val output = OS.FileSys.tmpName ()
     val executable =
       case Z3.configured_executable () of
         SOME executable => executable
       | NONE => raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
           Z3.error_msg
+    val output = OS.FileSys.tmpName ()
     fun quote path =
       "'" ^ String.translate
         (fn #"'" => "'\\''" | character => str character) path ^ "'"
@@ -489,9 +489,27 @@ handle Feedback.HOL_ERR holerr =>
 fun z3_tac_snapshot source =
   let
     val snapshot = OS.FileSys.tmpName ()
-    val input = TextIO.openIn source
-    val contents = TextIO.inputAll input before TextIO.closeIn input
-    val () = Library.write_strings_to_file snapshot [contents]
+    val keep_snapshot = ref false
+    fun cleanup () =
+      if !keep_snapshot then ()
+      else OS.FileSys.remove snapshot handle OS.SysErr _ => ()
+    fun write_snapshot () =
+      let
+        val input = TextIO.openIn source
+        val output = TextIO.openOut snapshot
+        fun close_input () = TextIO.closeIn input handle IO.Io _ => ()
+        fun close_output () = TextIO.closeOut output handle IO.Io _ => ()
+        fun copy () =
+          let val chunk = TextIO.inputN (input, 8192) in
+            if chunk = "" then ()
+            else (TextIO.output (output, chunk); copy ())
+          end
+      in
+        Portable.finally close_input
+          (fn () => Portable.finally close_output
+            (fn () => (copy (); keep_snapshot := true)) ()) ()
+      end
+    val () = Portable.finally cleanup write_snapshot ()
   in
     snapshot
   end
