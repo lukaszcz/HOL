@@ -637,7 +637,7 @@ Local CI contract commands:
 
   # SML unit tests without configured solvers, matching the CI Docker job.
   # The functional test gate is sharded: never invoke selftest.exe directly.
-  # Make HOLSMT_VALIDATION_DIR available inside the container.
+  # Mount the separate validation checkout inside the container.
   docker buildx build \
     --load \
     --tag holsmt-nosolver:ci \
@@ -645,6 +645,9 @@ Local CI contract commands:
     --build-arg 'BUILDOPTS=--no-cache --expk -j4' \
     -f developers/docker-ci/Dockerfile .
   docker run --rm \
+    --mount type=bind,src="$HOLSMT_VALIDATION_DIR",dst=/ML/HOL/validation,readonly \
+    -e HOLSMT_VALIDATION_DIR=/ML/HOL/validation \
+    -e OUT_DIR=/tmp/holsmt-selftest-shards \
     -e HOL4_Z3_EXECUTABLE= \
     -e HOL4_CVC_EXECUTABLE= \
     -e HOL4_YICES_EXECUTABLE= \
@@ -661,7 +664,11 @@ Local CI contract commands:
       --build-arg "Z3_VERSION=${z3_version}" \
       --build-arg 'BUILDOPTS=--no-cache --expk -j4' \
       -f developers/docker-ci/Dockerfile .
-    docker run --rm "holsmt-z3:${z3_version}" \
+    docker run --rm \
+      --mount type=bind,src="$HOLSMT_VALIDATION_DIR",dst=/ML/HOL/validation,readonly \
+      -e HOLSMT_VALIDATION_DIR=/ML/HOL/validation \
+      -e OUT_DIR=/tmp/holsmt-selftest-shards \
+      "holsmt-z3:${z3_version}" \
       sh -lc '"$HOL4_Z3_EXECUTABLE" -version &&
         $HOLSMT_VALIDATION_DIR/tools/run_selftest.sh --keep-going'
   done
