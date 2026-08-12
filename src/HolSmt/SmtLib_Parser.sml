@@ -3500,11 +3500,14 @@ local
       SOME {logic, ...} => not (is_reset_logic logic)
     | NONE => false
 
-  fun new_typecheck_state logic tydict tmdict =
+  fun new_typecheck_state_with_queries logic tydict tmdict queries =
     {logic = logic,
      frames = [mk_typecheck_frame tydict tmdict (empty_sigdict ())],
-     queries = [],
+     queries = queries,
      surface_flags = ref (empty_surface_flags ())}
+
+  fun new_typecheck_state logic tydict tmdict =
+    new_typecheck_state_with_queries logic tydict tmdict []
 
   fun dest_typecheck_state cmd (SOME (x as {logic, ...})) =
         if is_reset_logic logic then
@@ -5722,8 +5725,14 @@ local
                 "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
             val (tydict, tmdict) = parsedicts_for logic_name
+            val queries =
+              case state of
+                SOME {logic, queries, ...} =>
+                  if is_reset_logic logic then queries else []
+              | NONE => []
           in
-            finish (new_typecheck_state logic_name tydict tmdict)
+            finish (new_typecheck_state_with_queries logic_name tydict tmdict
+              queries)
           end
       | CmdGetInfo option =>
           let
@@ -5949,7 +5958,8 @@ local
             val logic = visible_logic (#logic command_state)
             val (tydict, tmdict) = parsedicts_for logic
           in
-            finish (new_typecheck_state (reset_logic logic) tydict tmdict)
+            finish (new_typecheck_state_with_queries (reset_logic logic)
+              tydict tmdict (#queries command_state))
           end
       | CmdResetAssertions =>
           let
