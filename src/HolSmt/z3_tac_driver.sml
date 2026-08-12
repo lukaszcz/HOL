@@ -315,9 +315,14 @@ fun z3_tac_raw_result path =
         (fn #"'" => "'\\''" | character => str character) path ^ "'"
     fun work () =
       let
-        val command =
-          quote executable ^ Z3.with_timeout_option " -smt2 -file:" ^
-          quote path ^ " > " ^ quote output
+        val script =
+          "(printf '%s\\n' " ^
+          "'(set-option :produce-proofs true)' " ^
+          "'(set-option :produce-unsat-cores true)' " ^
+          "'(set-option :produce-unsat-assumptions true)'; cat " ^
+          quote path ^ ") | " ^ quote executable ^
+          Z3.with_timeout_option " -smt2 -in > " ^ quote output
+        val command = "sh -c " ^ quote script
         val status = OS.Process.system (SolverSpec.with_wall_timeout command)
       in
         if OS.Process.isSuccess status then Z3.is_sat_file output
