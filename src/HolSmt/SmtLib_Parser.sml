@@ -4083,8 +4083,6 @@ local
             | ("set.some", [predicate, set]) =>
                 (require_map "set.some" predicate;
                  require_set "set.some" set)
-            | ("set.fold", [fold, _, set]) =>
-                (require_map "set.fold" fold; require_set "set.fold" set)
             | ("set.is_empty", [set]) => require_set "set.is_empty" set
             | ("set.is_singleton", [set]) =>
                 require_set "set.is_singleton" set

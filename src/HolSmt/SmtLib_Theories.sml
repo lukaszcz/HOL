@@ -1405,22 +1405,6 @@ in
         pred_setSyntax.prim_mk_set_spec (result_var, body, [result_var])
       end
 
-    fun mk_set_fold (f, b, s) =
-      let
-        val element_ty = pred_setSyntax.eltype s
-        val accumulator_ty = Term.type_of b
-        val function_ty = Type.-->
-          (element_ty, Type.--> (accumulator_ty, accumulator_ty))
-        val itset_ty = Type.-->
-          (function_ty, Type.-->
-            (Term.type_of s, Type.--> (accumulator_ty, accumulator_ty)))
-        val itset = Term.mk_thy_const {
-          Thy = "pred_set", Name = "ITSET", Ty = itset_ty
-        }
-      in
-        Term.list_mk_comb (itset, [f, s, b])
-      end
-
     fun mk_set_singleton x =
       pred_setSyntax.mk_insert
         (x, pred_setSyntax.mk_empty (Term.type_of x))
@@ -1475,8 +1459,6 @@ in
         (K_zero_two mk_set_all),
       cvc_term "set.some" no_attributes ["(set.some (-> A Bool) (Set A) Bool)"]
         (K_zero_two mk_set_some),
-      cvc_term "set.fold" no_attributes ["(set.fold (-> A B B) B (Set A) B)"]
-        (K_zero_three mk_set_fold),
       cvc_term "set.is_empty" no_attributes ["(set.is_empty (Set A) Bool)"]
         (K_zero_one mk_set_is_empty),
       cvc_term "set.is_singleton" no_attributes
@@ -1658,19 +1640,6 @@ in
       cvc_term "bag.some" no_attributes
         ["(bag.some (-> A Bool) (Bag A) Bool)"]
         (K_zero_two mk_bag_some),
-      cvc_term "bag.fold" no_attributes
-        ["(bag.fold (-> A B B) B (Bag A) B)"]
-        (K_zero_three (fn (f, init, b) =>
-          let
-            val element = bagSyntax.base_type b
-            val accumulator = Term.type_of init
-            val bag = Term.type_of b
-            val itbag_ty = Type.--> (Type.--> (element,
-              Type.--> (accumulator, accumulator)), Type.--> (bag,
-                Type.--> (accumulator, accumulator)))
-          in
-            Term.list_mk_comb (bag_const "ITBAG" itbag_ty, [f, b, init])
-          end)),
       cvc_term "bag.setof" no_attributes ["(bag.setof (Bag A) (Bag A))"]
         (K_zero_one mk_bag_setof),
       cvc_term "bag.partition" no_attributes

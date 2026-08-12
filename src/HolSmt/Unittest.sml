@@ -4620,28 +4620,11 @@ let
   val y = Term.mk_var ("y", intSyntax.int_ty)
   val p = Term.mk_var ("p", Type.--> (intSyntax.int_ty, Type.bool))
   val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
-  val fold = Term.mk_var ("fold", Type.-->
-    (intSyntax.int_ty, Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
   val zero = intSyntax.zero_tm
   val empty = pred_setSyntax.mk_empty intSyntax.int_ty
   val univ = pred_setSyntax.mk_univ intSyntax.int_ty
   val bool_empty = pred_setSyntax.mk_empty Type.bool
   val bool_univ = pred_setSyntax.mk_univ Type.bool
-  fun mk_set_fold (f, b, s) =
-    let
-      val accumulator_ty = Term.type_of b
-      val function_ty = Type.-->
-        (pred_setSyntax.eltype s,
-         Type.--> (accumulator_ty, accumulator_ty))
-      val itset_ty = Type.-->
-        (function_ty, Type.-->
-          (Term.type_of s, Type.--> (accumulator_ty, accumulator_ty)))
-      val itset = Term.mk_thy_const {
-        Thy = "pred_set", Name = "ITSET", Ty = itset_ty
-      }
-    in
-      Term.list_mk_comb (itset, [f, s, b])
-    end
   fun typecheck options text =
     SmtLib_Parser.typecheck_script_string_with_options options text
   fun assertion options body =
@@ -4772,8 +4755,11 @@ in
   assert_builder "cvc5 set.some" cvc5_options "(set.some p s)"
     (boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
       (pred_setSyntax.mk_in (some_x, s), Term.mk_comb (p, some_x))));
-  assert_builder "cvc5 set.fold" cvc5_options "(= (set.fold fold 0 s) 0)"
-    (boolSyntax.mk_eq (mk_set_fold (fold, zero, s), zero));
+  reject cvc5_options "cvc5 set.fold"
+    "(set-logic ALL)\n\
+     \(declare-const s (Set Int))\n\
+     \(declare-const fold (-> Int (-> Int Int)))\n\
+     \(assert (= (set.fold fold 0 s) 0))\n";
   assert_builder "cvc5 set.is_empty" cvc5_options "(set.is_empty s)"
     (boolSyntax.mk_eq (s, empty));
   assert_builder "cvc5 set.is_singleton" cvc5_options "(set.is_singleton s)"
@@ -5137,8 +5123,11 @@ in
   assert_builder "cvc5 bag.all" "(bag.all p b)"
     (bagSyntax.mk_every (p, b));
   assert_builder "cvc5 bag.some" "(bag.some p b)" some;
-  assert_builder "cvc5 bag.fold" "(= (bag.fold fold 0 b) 0)"
-    (boolSyntax.mk_eq (itbag (fold, b, zero), zero));
+  reject cvc5_options "cvc5 bag.fold"
+    "(set-logic ALL)\n\
+     \(declare-const b (Bag Int))\n\
+     \(declare-const fold (-> Int (-> Int Int)))\n\
+     \(assert (= (bag.fold fold 0 b) 0))\n";
   assert_builder "cvc5 bag.setof" "(= (bag.setof b) b)"
     (boolSyntax.mk_eq (bag_of_set (set_of_bag b), b));
   assert_builder "cvc5 bag.partition"
