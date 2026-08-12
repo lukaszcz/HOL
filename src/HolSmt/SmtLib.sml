@@ -4245,8 +4245,7 @@ local
                       SOME arg =>
                         if is_marked_set_term arg then
                           selected_set_sort tydict arg
-                        else if !current_bag_backend = CVC5NativeBag andalso
-                                is_marked_bag_term arg then
+                        else if is_marked_bag_term arg then
                           selected_bag_sort tydict arg
                         else
                           translate_type regime (tydict, ty)
