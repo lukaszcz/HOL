@@ -273,7 +273,10 @@ fun z3_tac_script_diagnostic path =
   let
     val script = SmtLib_Parser.parse_script_file path
     val unsupported_fold_left =
-      Z3.configured_version () = SOME "4.11.2" andalso
+      (case Z3.configured_version () of
+         SOME version =>
+           Library.version_compare (version, "4.12.4") = LESS
+       | NONE => false) andalso
       List.exists z3_tac_command_uses_fold_left script
     fun scan [] query_names =
           z3_tac_script_query_diagnostic (List.rev query_names)
