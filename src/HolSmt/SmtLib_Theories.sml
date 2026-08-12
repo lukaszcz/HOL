@@ -1462,8 +1462,6 @@ in
         (K_zero_two pred_setSyntax.mk_diff),
       cvc_term "set.subset" no_attributes ["(set.subset (Set A) (Set A) Bool)"]
         (K_zero_two pred_setSyntax.mk_subset),
-      cvc_term "set.complement" no_attributes ["(set.complement (Set A) (Set A))"]
-        (K_zero_one pred_setSyntax.mk_compl),
       cvc_term "set.choose" no_attributes ["(set.choose (Set A) A)"]
         (K_zero_one pred_setSyntax.mk_choice),
       cvc_term "set.card" no_attributes ["(set.card (Set A) Int)"]

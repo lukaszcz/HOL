@@ -1162,6 +1162,7 @@ local
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
   in
     not (List.null set_terms) andalso
+    not (List.exists pred_setSyntax.is_compl set_terms) andalso
     not (shadowed_finite_collection is_set_type native_set_term finite_terms
       (Lib.fst goal @ [Lib.snd goal])) andalso
     not (List.exists (fn set =>
