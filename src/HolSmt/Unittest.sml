@@ -10738,6 +10738,9 @@ fun assert_z3_set_captured_shape (name, tm) =
   (let
      val thm = SmtArrayProve.array_prove tm
    in
+     assert (List.null (Thm.hyp thm),
+       "captured Z3 set shape " ^ name ^ " proved with hypotheses: " ^
+       Library.thm_to_string thm);
      assert (Thm.concl thm ~~ tm,
        "captured Z3 set shape " ^ name ^ " proved the wrong conclusion: " ^
        Library.thm_to_string thm);
@@ -10828,6 +10831,8 @@ fun assert_bag_prover name tm =
   (let
      val thm = SmtBagProve.bag_prove tm
    in
+     assert (List.null (Thm.hyp thm),
+       name ^ " proved with hypotheses: " ^ Library.thm_to_string thm);
      assert (Thm.concl thm ~~ tm,
        name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
      check_oracle_tags name thm
@@ -10942,6 +10947,8 @@ fun assert_seq_prover name prover tm =
   (let
      val thm = prover tm
    in
+     assert (List.null (Thm.hyp thm),
+       name ^ " proved with hypotheses: " ^ Library.thm_to_string thm);
      assert (Thm.concl thm ~~ tm,
        name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
      check_oracle_tags name thm
