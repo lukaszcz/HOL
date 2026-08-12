@@ -162,12 +162,17 @@ SMT-LIB support matrix:
   HO-Core function sorts       yes    yes        dual dialect   Z3/cvc5 paths
   Lambda/application surface   yes    yes        dual dialect   Z3/cvc5 paths
   Partial application          yes    yes        dual dialect   Z3/cvc5 paths
-  Sequences (Seq) yes yes native HOL lists; Z3/cvc5 checked
-                         Z3 HO only; `seq.fold_left` needs Z3 >= 4.12.4
-  Sets (Set)      yes yes native predicates; Z3 Array dialect
-                         cvc5 finite `set.*` guard; checked
-  Bags (Bag)      yes yes native HOL bags; Z3 Array Int + `(_ map ...)`
-                         cvc5 finite `bag.*` guard; checked
+  Sequences (Seq)              yes    yes        native HOL lists  Z3/cvc5 checked;
+                                                                       Z3 HO only;
+                                                                       `seq.fold_left`
+                                                                       needs Z3 >= 4.12.4
+  Sets (Set)                   yes    yes        native predicates  Z3 Array dialect;
+                                                                       cvc5 finite `set.*`
+                                                                       guard; checked
+  Bags (Bag)                   yes    yes        native HOL bags    Z3 Array Int +
+                                                                       `(_ map ...)`;
+                                                                       cvc5 finite `bag.*`
+                                                                       guard; checked
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
