@@ -6097,6 +6097,12 @@ let
     ([], ``(x:bool) IN (COMPL (UNIV:bool set))``)
   val cvc_finite_word_text = cvc
     ([], ``(x:word8) IN (COMPL (UNIV:word8 set))``)
+  val cvc_conditional_text = cvc
+    ([], ``(H:(bool -> bool) -> bool) (\z:bool. z) /\
+            (x:bool) IN (if p then (s:bool set) else t)``)
+  val cvc_function_text = cvc
+    ([], ``(H:(bool -> bool) -> bool) (\z:bool. z) /\
+            (x:bool) IN ((f:bool -> bool set) p)``)
   val cvc_card_text = cvc
     ([``FINITE (s:int set)``], boolSyntax.mk_eq
       (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card s),
@@ -6162,6 +6168,14 @@ in
       contains "(Array (_ BitVec 8) Bool)" cvc_finite_word_text,
     "finite word cvc5 complements did not use the array fallback:\n" ^
     cvc_finite_word_text);
+  assert (contains "(select (ite" cvc_conditional_text andalso
+      contains "(Array Bool Bool)" cvc_conditional_text,
+    "higher-order cvc5 Set conditional lost its array sort:\n" ^
+    cvc_conditional_text);
+  assert (contains "(-> Bool (Array Bool Bool))" cvc_function_text andalso
+      contains "(select (@" cvc_function_text,
+    "higher-order cvc5 Set result lost its array sort:\n" ^
+    cvc_function_text);
   assert (contains "set.card" cvc_card_text,
     "finite cvc5 CARD did not emit set.card:\n" ^ cvc_card_text);
   assert (contains "((Set Int)) Bool" cvc_set_argument_text andalso
@@ -6228,6 +6242,12 @@ let
     ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``],
      boolSyntax.mk_eq (Term.mk_comb (intSyntax.int_injection,
        Term.mk_comb (union, x)), intSyntax.zero_tm))
+  val cvc_conditional_text = cvc
+    ([], ``(H:(bool -> bool) -> bool) (\z:bool. z) /\
+            BAG_IN (x:bool) (if p then (b:bool -> num) else c)``)
+  val cvc_function_text = cvc
+    ([], ``(H:(bool -> bool) -> bool) (\z:bool. z) /\
+            BAG_IN (x:bool) ((f:bool -> bool -> num) p)``)
   val card_message =
     (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
        ([], ``BAG_CARD (b:int -> num) = 0``));
@@ -6292,6 +6312,14 @@ in
       not (contains "((Bag Int) (Bag Int) Int)" cvc_applied_union_text),
     "applied native bag union did not use bag.count:\n" ^
     cvc_applied_union_text);
+  assert (contains "(select (ite" cvc_conditional_text andalso
+      contains "(Array Bool Int)" cvc_conditional_text,
+    "higher-order cvc5 Bag conditional lost its array sort:\n" ^
+    cvc_conditional_text);
+  assert (contains "(-> Bool (Array Bool Int))" cvc_function_text andalso
+      contains "(select (@" cvc_function_text,
+    "higher-order cvc5 Bag result lost its array sort:\n" ^
+    cvc_function_text);
   (ignore (SmtLib_Parser.typecheck_script_string_with_options
       {dict_logic = NONE, solver = SOME "cvc5",
        elaborate_datatypes = false}

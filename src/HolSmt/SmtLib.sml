@@ -1039,7 +1039,11 @@ local
      INSERT, for example, incorrectly declares its element as a Set. *)
   fun collect_native_set_terms tm terms =
   let
-    fun collect_set set terms = add_set_term set terms
+    fun collect_set set terms =
+      case Lib.total boolSyntax.dest_cond set of
+        SOME (_, then_set, else_set) =>
+          collect_set else_set (collect_set then_set (add_set_term set terms))
+      | NONE => add_set_term set terms
     val (rator, rands) = boolSyntax.strip_comb tm
     val terms =
       (let
@@ -1352,7 +1356,11 @@ local
 
   fun collect_native_bag_terms tm terms =
   let
-    fun collect_bag bag terms = add_bag_term bag terms
+    fun collect_bag bag terms =
+      case Lib.total boolSyntax.dest_cond bag of
+        SOME (_, then_bag, else_bag) =>
+          collect_bag else_bag (collect_bag then_bag (add_bag_term bag terms))
+      | NONE => add_bag_term bag terms
     val (rator, rands) = boolSyntax.strip_comb tm
     val terms =
       (let val (_, body) = Term.dest_abs tm in
@@ -4397,36 +4405,42 @@ local
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 fun translate_variable_function_type (tydict, index, ty) =
-                  case Lib.total Type.dom_rng ty of
-                    SOME (domain, range) =>
-                      let
-                        val (tydict, (ddecls, dsort)) =
-                          translate_domain (tydict, (index, domain))
-                        val (tydict, (rdecls, rsort)) =
-                          translate_variable_function_type
-                            (tydict, index + 1, range)
-                      in
-                        (tydict, (ddecls @ rdecls,
-                          "(-> " ^ dsort ^ " " ^ rsort ^ ")"))
-                      end
-                  | NONE => translate_type regime (tydict, ty)
+                  if Type.compare (ty, Term.type_of tm) = EQUAL andalso
+                     is_marked_set_term tm then
+                    selected_set_sort tydict tm
+                  else if Type.compare (ty, Term.type_of tm) = EQUAL andalso
+                          is_marked_bag_term tm then
+                    selected_bag_sort tydict tm
+                  else
+                    case Lib.total Type.dom_rng ty of
+                      SOME (domain, range) =>
+                        let
+                          val (tydict, (ddecls, dsort)) =
+                            translate_domain (tydict, (index, domain))
+                          val (tydict, (rdecls, rsort)) =
+                            translate_variable_function_type
+                              (tydict, index + 1, range)
+                        in
+                          (tydict, (ddecls @ rdecls,
+                            "(-> " ^ dsort ^ " " ^ rsort ^ ")"))
+                        end
+                    | NONE => translate_type regime (tydict, ty)
                 val (tydict, (rngdecls, rngty)) =
                   if declaration_arity = 0 andalso
                      (case regime of
                         HigherOrder Standard27 =>
                           Term.is_var rator andalso
-                          List.exists (fn argument =>
-                            is_marked_set_term argument orelse
-                            is_marked_bag_term argument) rands
+                          (is_marked_set_term tm orelse
+                           is_marked_bag_term tm orelse
+                           List.exists (fn argument =>
+                             is_marked_set_term argument orelse
+                             is_marked_bag_term argument) rands)
                       | _ => false) then
                     translate_variable_function_type
                       (tydict, 0, Term.type_of rator)
-                  else if declaration_arity = 0 andalso is_marked_set_term rator
-                  then
-                    selected_set_sort tydict rator
-                  else if declaration_arity = 0 andalso
-                          is_marked_bag_term tm
-                  then
+                  else if is_marked_set_term tm then
+                    selected_set_sort tydict tm
+                  else if is_marked_bag_term tm then
                     selected_bag_sort tydict tm
                   else
                     translate_type regime (tydict, rngty)
@@ -4467,9 +4481,11 @@ local
               case regime of
                 HigherOrder Standard27 =>
                   if Term.is_var rator andalso
-                     List.exists (fn argument =>
-                       is_marked_set_term argument orelse
-                       is_marked_bag_term argument) rands andalso
+                     (is_marked_set_term tm orelse
+                      is_marked_bag_term tm orelse
+                      List.exists (fn argument =>
+                        is_marked_set_term argument orelse
+                        is_marked_bag_term argument) rands) andalso
                      not (Option.isSome
                        (Redblackmap.peek (bounds, rator))) then
                     List.foldl (fn (argument, function) =>
