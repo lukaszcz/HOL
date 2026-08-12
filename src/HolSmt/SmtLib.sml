@@ -3014,6 +3014,8 @@ local
               Lib.split dependency_data
             val array_sort = "(Array " ^ element_sort ^ " " ^
               range_sort ^ ")"
+            val _ = record_emitted_term_sorts cache_key
+              (dependency_sorts, array_sort)
             val declaration =
               if List.null dependency_sorts then
                 "(declare-const " ^ name ^ " " ^ array_sort ^ ")\n"
