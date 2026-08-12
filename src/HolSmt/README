@@ -585,9 +585,9 @@ Local CI contract commands:
 
   # Coverage report regeneration and enforcing manifest audit
   python3 $HOLSMT_VALIDATION_DIR/tools/coverage/generate_smtlib_coverage.py --release
-  git diff --exit-code -- \
-    $HOLSMT_VALIDATION_DIR/tools/coverage/smtlib_coverage.json \
-    $HOLSMT_VALIDATION_DIR/tools/coverage/SMTLIB_COVERAGE.md
+  git -C "$HOLSMT_VALIDATION_DIR" diff --exit-code -- \
+    tools/coverage/smtlib_coverage.json \
+    tools/coverage/SMTLIB_COVERAGE.md
   python3 $HOLSMT_VALIDATION_DIR/tools/coverage/audit_coverage_manifest.py --enforce
 
   # Parser conformance for the full checked-in corpus
