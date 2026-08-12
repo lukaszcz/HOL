@@ -3751,7 +3751,11 @@ local
             ConstructorSort (ty, List.map subst children)
         | ArraySort (index, element) => ArraySort (subst index, subst element)
         | MapSort (domain, range) => MapSort (subst domain, subst range)
-        | RigidSort _ => surface
+        | RigidSort ty =>
+            (case List.find (fn (param, _) => same_sort param ty)
+                (ListPair.zip (params, args)) of
+               SOME (_, arg) => arg
+             | NONE => surface)
     in
       subst surface
     end
