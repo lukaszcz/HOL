@@ -5070,7 +5070,7 @@ local
       fun add_param (param, (tydict, param_tys)) =
         let
           val pname = located_string_node param
-          val ty = Type.mk_vartype ("'" ^ pname)
+          val ty = Type.gen_tyvar ()
           fun parsefn token indices args =
             if List.null indices andalso List.null args then ty
             else raise ERR ("<" ^ pname ^ ">") "wrong number of arguments"
