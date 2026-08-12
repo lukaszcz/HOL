@@ -36,11 +36,16 @@ RUN if [ "" != "${Z3_VERSION}" ]; then \
 fi
 
 # if --build-arg CVC_VERSION=5, install cvc5 1.3.4 and set HOL4_CVC_EXECUTABLE
-RUN if [ "5" = "${CVC_VERSION}" ] && [ "linux/amd64" = "${TARGETPLATFORM:-linux/amd64}" ]; then \
+RUN if [ "5" = "${CVC_VERSION}" ]; then \
+    case "${TARGETPLATFORM:-linux/amd64}" in \
+      linux/amd64) cvc_arch=x86_64 ;; \
+      linux/arm64) cvc_arch=arm64 ;; \
+      *) echo "unsupported cvc5 platform: ${TARGETPLATFORM}" >&2; exit 1 ;; \
+    esac && \
     wget -q -O /tmp/cvc5.zip \
-      "https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.4/cvc5-Linux-x86_64-static.zip" && \
+      "https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.4/cvc5-Linux-${cvc_arch}-static.zip" && \
     unzip -o /tmp/cvc5.zip -d /ML && \
-    ln -sf /ML/cvc5-Linux-x86_64-static/bin/cvc5 /ML/cvc5-Linux && \
+    ln -sf /ML/cvc5-Linux-${cvc_arch}-static/bin/cvc5 /ML/cvc5-Linux && \
     rm /tmp/cvc5.zip; \
 fi
 ENV HOL4_CVC_EXECUTABLE=${CVC_VERSION:+/ML/cvc5-Linux}
