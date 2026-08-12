@@ -1422,8 +1422,8 @@ local
   val smt_seq_replace_tm = holsmt_const "smt_seq_replace"
   val smt_seq_replace_all_tm = holsmt_const "smt_seq_replace_all"
   val smt_seq_update_tm = holsmt_const "smt_seq_update"
-  val smtstr_update_tm = holsmt_const "smtstr_update"
-  val smtstr_rev_tm = holsmt_const "smtstr_rev"
+  val smtstr_update_tm = smtstring_const "smtstr_update"
+  val smtstr_rev_tm = smtstring_const "smtstr_rev"
 
   fun dest_seq_extract_shape tm =
     let
