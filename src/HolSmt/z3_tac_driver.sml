@@ -291,6 +291,26 @@ datatype z3_tac_checked_result =
   | Z3_TAC_SAT
   | Z3_TAC_UNKNOWN of string option
 
+fun z3_tac_raw_result path =
+  let
+    val output = OS.FileSys.tmpName ()
+    val executable =
+      case Z3.configured_executable () of
+        SOME executable => executable
+      | NONE => raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
+          Z3.error_msg
+    fun quote path =
+      "'" ^ String.translate
+        (fn #"'" => "'\\''" | character => str character) path ^ "'"
+    fun work () =
+      (ignore (OS.Process.system
+         (quote executable ^ " -smt2 -file:" ^ quote path ^ " > " ^ quote output));
+       Z3.is_sat_file output)
+    fun cleanup () = OS.FileSys.remove output handle OS.SysErr _ => ()
+  in
+    Portable.finally cleanup work ()
+  end
+
 fun z3_tac_checked_result goal =
   case Z3.Z3_SMT_Prover goal of
     SolverSpec.UNSAT (SOME thm) =>
@@ -353,6 +373,7 @@ in
         val transfer_hypotheses =
           z3_tac_query_transfer_hypotheses queries
         val goal = z3_tac_goal queries assertions transfer_hypotheses
+        val expected_result = z3_tac_raw_result path
         val result =
           (z3_tac_preflight_resource_gate assertions;
            z3_tac_checked_result goal)
@@ -370,27 +391,57 @@ in
            "queries=" ^ Int.toString (List.length queries),
            "z3_version=" ^ Z3.version_string ()]
       in
-        case result of
-          Z3_TAC_UNSAT thm =>
+        case (expected_result, result) of
+          (SolverSpec.UNSAT _, Z3_TAC_UNSAT thm) =>
             z3_tac_emit "Z3_TAC_PASS"
               (common_fields @
                ["result=unsat",
                 "theorem=" ^ Library.thm_to_string thm] @
                z3_tac_unsat_response_fields thm queries assumptions
                  (#named_assertions state))
-        | Z3_TAC_SAT =>
+        | (SolverSpec.SAT _, Z3_TAC_SAT) =>
             z3_tac_emit "Z3_TAC_PASS" (common_fields @ ["result=sat"])
-        | Z3_TAC_UNKNOWN NONE =>
+        | (SolverSpec.UNKNOWN NONE, _) =>
             z3_tac_die "Z3_TAC_UNSUPPORTED"
               (common_fields @
-               ["result=unknown",
-                "diagnostic=UNKNOWN result has no HOL theorem to reconstruct"])
-        | Z3_TAC_UNKNOWN (SOME message) =>
+               ["expected=unknown",
+                "diagnostic=raw Z3 result is UNKNOWN"])
+        | (SolverSpec.UNKNOWN (SOME message), _) =>
             z3_tac_die "Z3_TAC_UNSUPPORTED"
               (common_fields @
-               ["result=unknown",
-                "diagnostic=UNKNOWN result has no HOL theorem to reconstruct: " ^
-                  message]);
+               ["expected=unknown", "diagnostic=raw Z3 result is UNKNOWN: " ^
+                 message])
+        | (SolverSpec.UNSAT _, Z3_TAC_SAT) =>
+            z3_tac_die "Z3_TAC_FAIL"
+              (common_fields @
+               ["expected=unsat", "result=sat",
+                "diagnostic=translated query lost native Z3 unsatisfiability"])
+        | (SolverSpec.SAT _, Z3_TAC_UNSAT _) =>
+            z3_tac_die "Z3_TAC_FAIL"
+              (common_fields @
+               ["expected=sat", "result=unsat",
+                "diagnostic=translated query changed the native Z3 result"])
+        | (SolverSpec.UNSAT _, Z3_TAC_UNKNOWN NONE) =>
+            z3_tac_die "Z3_TAC_UNSUPPORTED"
+              (common_fields @
+               ["expected=unsat", "result=unknown",
+                "diagnostic=UNSAT result has no HOL theorem to reconstruct"])
+        | (SolverSpec.UNSAT _, Z3_TAC_UNKNOWN (SOME message)) =>
+            z3_tac_die "Z3_TAC_UNSUPPORTED"
+              (common_fields @
+               ["expected=unsat", "result=unknown",
+                "diagnostic=UNSAT result has no HOL theorem to reconstruct: " ^
+                  message])
+        | (SolverSpec.SAT _, Z3_TAC_UNKNOWN NONE) =>
+            z3_tac_die "Z3_TAC_UNSUPPORTED"
+              (common_fields @
+               ["expected=sat", "result=unknown",
+                "diagnostic=SAT result was not reproduced"])
+        | (SolverSpec.SAT _, Z3_TAC_UNKNOWN (SOME message)) =>
+            z3_tac_die "Z3_TAC_UNSUPPORTED"
+              (common_fields @
+               ["expected=sat", "result=unknown",
+                "diagnostic=SAT result was not reproduced: " ^ message]);
         OS.Process.exit OS.Process.success
       end
 end
