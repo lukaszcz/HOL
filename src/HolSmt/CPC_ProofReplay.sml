@@ -1199,15 +1199,18 @@ local
                         [pred_setTheory.CARD_INTER_LESS_EQ])
                   end
               | _ => raise ERR name "wrong cardinality arguments"
-            val context = Thm.concl (card_bound ()) :: context
+            val bound = card_bound ()
+            val context = Thm.concl bound :: context
+            val proof = Tactical.TAC_PROOF ((context, target),
+              bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+                [pred_setTheory.CARD_UNION_EQN,
+                 pred_setTheory.CARD_DIFF_EQN,
+                 integerTheory.INT_OF_NUM_ADD,
+                 integerTheory.INT_SUB])
+            val proof = Drule.PROVE_HYP bound proof
           in
             List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
-              (Tactical.TAC_PROOF ((context, target),
-                bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
-                  [pred_setTheory.CARD_UNION_EQN,
-                   pred_setTheory.CARD_DIFF_EQN,
-                   integerTheory.INT_OF_NUM_ADD,
-                   integerTheory.INT_SUB])) prems
+              proof prems
           end
         else if name = "sets-eval-op" then
           (Tactical.TAC_PROOF (([], target),
