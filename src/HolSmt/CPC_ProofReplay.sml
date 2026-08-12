@@ -1065,11 +1065,18 @@ local
     Type.compare (ty, Type.mk_thy_type
       {Thy = "smtstring", Tyop = "smtstr", Args = []}) = EQUAL
 
+  fun instantiate_smtstr theorem sequence =
+    case List.filter (fn variable =>
+        is_smtstr_type (Term.type_of variable))
+      (Term.free_vars (Thm.concl theorem)) of
+      [variable] => Thm.INST [variable |-> sequence] theorem
+    | _ => raise ERR "instantiate_smtstr" "expected one String variable"
+
   fun replay_seq_rev_rev args =
     case args of
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
-          Thm.SPEC sequence smtstringTheory.smtstr_rev_rev
+          instantiate_smtstr smtstringTheory.smtstr_rev_rev sequence
         else Thm.SPEC sequence listTheory.REVERSE_REVERSE
     | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
 
@@ -1077,7 +1084,7 @@ local
     case args of
       [sequence] =>
         if is_smtstr_type (Term.type_of sequence) then
-          Thm.SPEC sequence smtstringTheory.smtstr_contains_refl
+          instantiate_smtstr smtstringTheory.smtstr_contains_refl sequence
         else
           let
             val sequence_ty = Term.type_of sequence
@@ -1095,7 +1102,8 @@ local
       [sequence, length] =>
         if is_smtstr_type (Term.type_of sequence) then
           let
-            val theorem = Thm.SPEC sequence smtstringTheory.smtstr_substr_full
+            val theorem = instantiate_smtstr
+              smtstringTheory.smtstr_substr_full sequence
             val expected_length = Term.list_mk_comb
               (Term.mk_thy_const {Thy = "smtstring", Name = "smtstr_len",
                  Ty = Type.--> (Term.type_of sequence, intSyntax.int_ty)},
@@ -2679,6 +2687,22 @@ local
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
         end
+      fun string_context () = SmtStringProve.has_string_theory_term target
+      fun replay_string () =
+        let
+          val context =
+            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+            List.map Thm.concl prems
+          val thm =
+            SmtStringProve.string_rewrite_prove target
+            handle Feedback.HOL_ERR _ =>
+              SmtStringProve.string_prove arith_prove target
+            handle Feedback.HOL_ERR _ =>
+              SmtStringProve.string_contextual_prove context target
+        in
+          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+            thm prems
+        end
       fun set_context () = SmtArrayProve.has_set_term target
       fun bag_context () = SmtBagProve.has_native_bag_encoding target
       fun fp_context () =
@@ -2692,6 +2716,8 @@ local
          D2 prover; failure records a theory-specific CPC obligation. *)
       if SmtSeqProve.has_seq_type target then
         profile "CPC(rung:trust/seq)" replay_seq ()
+      else if string_context () then
+        profile "CPC(rung:trust/string)" replay_string ()
       else if bag_context () then
         next (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
           (fn () => profile "CPC(rung:trust/bag_context)"
