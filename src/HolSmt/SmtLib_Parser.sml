@@ -1495,11 +1495,30 @@ local
   end
 
   and parse_compound_type get_token tydict (token : string) : Type.hol_type =
-   let
+  let
     val headfn = parse_type_aux get_token tydict token
-    val operands = parse_type_operands get_token tydict []
+    fun ordinary tokens =
+      headfn (parse_type_operands
+        (Library.undo_look_ahead tokens get_token) tydict [])
   in
-    headfn operands
+    (* A proof parser can distinguish Z3's `(Seq Char)` from a sequence of
+       the otherwise equal `(_ BitVec 18)` only while the lexical `Char`
+       spelling remains visible.  Dictionaries that care may install the
+       private `Seq Char` entry; all other grammars retain ordinary parsing. *)
+    if token = "Seq" then
+      let
+        val first = get_token ()
+        val close = get_token ()
+      in
+        if first = "Char" andalso close = ")" then
+          let val char_ty = parse_type_aux get_token tydict first [] in
+            t_with_args tydict "Seq Char" [char_ty]
+            handle Feedback.HOL_ERR _ => ordinary [first, close]
+          end
+        else ordinary [first, close]
+      end
+    else
+      headfn (parse_type_operands get_token tydict [])
   end
 
   and parse_indexed_or_compound_type get_token tydict

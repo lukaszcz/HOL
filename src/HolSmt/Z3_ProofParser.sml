@@ -337,13 +337,13 @@ local
       add_bit (bits, 0, zero)
     end
 
-  (* Z3 treats String as (Seq Char).  Keep the Phase-4 smtstr carrier at
-     that one sequence instance; every other Seq A remains A list. *)
-  fun z3_sequence_ty element =
-    if Type.compare (element, z3_char_ty) = EQUAL then
-      Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
-    else
-      SmtLib_Theories.sequence_ty element
+  (* Z3 treats String as (Seq Char), but `Char` and `(_ BitVec 18)` have
+     the same HOL representation.  The parser preserves the lexical Char
+     spelling long enough to select the separate `Seq Char` dictionary entry. *)
+  fun z3_sequence_ty element = SmtLib_Theories.sequence_ty element
+
+  val z3_string_seq_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
 
   (* The legacy Z3 proof grammar represents the sort annotation in
      `(as seq.empty (Seq Int))` as a term-shaped index.  These markers are
@@ -376,7 +376,8 @@ local
 
   val z3_string_tydict = Library.dict_from_list [
     ("Char", SmtLib_Theories.K_zero_zero z3_char_ty),
-    ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty)
+    ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty),
+    ("Seq Char", SmtLib_Theories.K_zero_one (K z3_string_seq_ty))
   ]
 
   fun z3_string_tmdict version =
