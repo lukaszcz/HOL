@@ -1191,6 +1191,7 @@ local
   val z3_proof_cfg = {
     mk_let_bindings = z3_mk_let_bindings,
     mk_let = z3_mk_let,
+    lookup_binder_list = fn _ => NONE,
     parse_choice = false,
     parse_lambda = true
   }

@@ -161,6 +161,7 @@ struct
   type parser_cfg = {
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
+    lookup_binder_list: string -> Term.term list option,
     parse_choice: bool,
     parse_lambda: bool
   }
@@ -1678,14 +1679,25 @@ local
           (parse_vars [], true, get_token)
         end
       else
-        let
-          val get_token = Library.undo_look_ahead
-            [binder_open, binder_head] get_token
-          val sorted_vars = parse_sorted_vars get_token tydict
-        in
-          (List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) sorted_vars,
-           false, get_token)
-        end
+        case #lookup_binder_list cfg binder_open of
+          SOME binders =>
+            let
+              val _ = List.all Term.is_var binders orelse
+                raise ERR "parse_binder_term"
+                  "binder list contains a non-variable term"
+            in
+              (List.map (fn tm => (Lib.fst (Term.dest_var tm), tm)) binders,
+               true, Library.undo_look_ahead [binder_head] get_token)
+            end
+        | NONE =>
+            let
+              val get_token = Library.undo_look_ahead
+                [binder_open, binder_head] get_token
+              val sorted_vars = parse_sorted_vars get_token tydict
+            in
+              (List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) sorted_vars,
+               false, get_token)
+            end
     (* variables don't take arguments *)
     fun parsefn var token indices args =
       if List.null indices andalso List.null args then
@@ -1948,6 +1960,7 @@ local
   val smtlib_cfg = {
     mk_let_bindings = smtlib_mk_let_bindings,
     mk_let = smtlib_mk_let,
+    lookup_binder_list = fn _ => NONE,
     parse_choice = false,
     parse_lambda = false
   }

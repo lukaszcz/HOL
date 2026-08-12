@@ -10,9 +10,25 @@ local
 
   type dicts = SmtLib_Parser.dicts
 
+  (* @list is CPC's compact representation for a list of binders or
+     resolution annotations.  It is not an SMT-LIB term, so retain only the
+     binder-list payload needed when it is referenced by a later quantifier. *)
+  val cpc_list_definitions = ref (Redblackmap.mkDict String.compare)
+  val cpc_list_names = ref ([] : string list)
+
+  fun add_cpc_list name terms =
+    (cpc_list_definitions := Redblackmap.insert
+       (!cpc_list_definitions, name, terms);
+     cpc_list_names := name :: !cpc_list_names)
+
+  fun lookup_cpc_list name =
+    SOME (Redblackmap.find (!cpc_list_definitions, name))
+    handle Redblackmap.NotFound => NONE
+
   val cpc_cfg : SmtLib_Parser.parser_cfg = {
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
     mk_let = SmtLib_Parser.smtlib_mk_let,
+    lookup_binder_list = lookup_cpc_list,
     parse_choice = false,
     parse_lambda = true
   }
@@ -493,21 +509,6 @@ local
           Library.extend_dict (("_", cpc_literal_parsefn),
             with_cpc_fp_entries tmdict))))))))))))))))))))))))))
     end
-
-  (* @list is CPC's compact representation for a list of binders or
-     resolution annotations.  It is not an SMT-LIB term, so retain only the
-     binder-list payload needed when it is referenced by a later quantifier. *)
-  val cpc_list_definitions = ref (Redblackmap.mkDict String.compare)
-  val cpc_list_names = ref ([] : string list)
-
-  fun add_cpc_list name terms =
-    (cpc_list_definitions := Redblackmap.insert
-       (!cpc_list_definitions, name, terms);
-     cpc_list_names := name :: !cpc_list_names)
-
-  fun lookup_cpc_list name =
-    SOME (Redblackmap.find (!cpc_list_definitions, name))
-    handle Redblackmap.NotFound => NONE
 
   fun parse_term dicts_ref get_token =
     let
