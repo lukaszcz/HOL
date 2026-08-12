@@ -396,10 +396,9 @@ in
         val transfer_hypotheses =
           z3_tac_query_transfer_hypotheses queries
         val goal = z3_tac_goal queries assertions transfer_hypotheses
-        val expected_result = z3_tac_raw_result path
-        val result =
+        val (expected_result, result) =
           (z3_tac_preflight_resource_gate assertions;
-           z3_tac_checked_result goal)
+           (z3_tac_raw_result path, z3_tac_checked_result goal))
           handle Feedback.HOL_ERR holerr =>
             if SmtResource.is_resource_gate holerr then
               z3_tac_die "Z3_TAC_RESOURCE_GATED"
