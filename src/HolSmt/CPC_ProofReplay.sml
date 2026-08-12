@@ -1183,7 +1183,7 @@ local
             val context =
               HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
               List.map Thm.concl prems
-            fun bounded_tac target tactic =
+            fun bounded_tac context target tactic =
               Timeout.apply (Time.fromSeconds 1)
                 (fn () => Tactical.TAC_PROOF ((context, target), tactic)) ()
               handle Timeout.TIMEOUT _ =>
@@ -1200,7 +1200,7 @@ local
                           pred_setSyntax.mk_card right))
                   in
                     with_sets_card_metis_limit (fn () =>
-                      bounded_tac bound
+                      bounded_tac context bound
                         (bossLib.METIS_TAC
                           [pred_setTheory.CARD_INTER_LESS_EQ,
                            arithmeticTheory.LESS_EQ_ADD,
@@ -1213,14 +1213,14 @@ local
                          (pred_setSyntax.mk_inter (left, right)),
                        pred_setSyntax.mk_card left)
                   in
-                    bounded_tac bound
+                    bounded_tac context bound
                       (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                         [pred_setTheory.CARD_INTER_LESS_EQ])
                   end
               | _ => raise ERR name "wrong cardinality arguments"
             val bound = card_bound ()
             val context = Thm.concl bound :: context
-            val proof = bounded_tac target
+            val proof = bounded_tac context target
               (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                 [pred_setTheory.CARD_UNION_EQN,
                  pred_setTheory.CARD_DIFF_EQN,
