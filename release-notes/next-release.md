@@ -49,9 +49,10 @@ New features
     reconstruct checked HOL proofs without oracle tags.
 
 -   `HolSmt` now translates native HOL lists, predicates, and bags to and
-    from SMT Seq, Set, and Bag terms with checked replay.  Z3 uses its
-    array-based Set dialect and an Array-Int `(_ map ...)` Bag encoding;
-    cvc5 uses native finite `set.*`/`bag.*` operations when finiteness is
+    from SMT Seq, Set, and Bag terms.  Z3 uses its array-based Set dialect
+    and an Array-Int `(_ map ...)` Bag encoding; its Bag array-lemma proofs
+    remain oracle-only.  cvc5 uses native finite `set.*`/`bag.*` operations
+    when finiteness is
     established, otherwise a quantified array fallback.  `set.card` and
     `bag.card` require a finiteness-entailing cvc5 goal and are rejected
     otherwise; neither cardinality operator is available on Z3.  The complete

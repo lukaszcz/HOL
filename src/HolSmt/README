@@ -170,7 +170,7 @@ SMT-LIB support matrix:
                                                                        cvc5 finite `set.*`
                                                                        guard; checked
   Bags (Bag)                   yes    yes        native HOL bags    Z3 Array Int +
-                                                                       `(_ map ...)`;
+                                                                       `(_ map ...)` oracle;
                                                                        cvc5 finite `bag.*`
                                                                        guard; checked
 
