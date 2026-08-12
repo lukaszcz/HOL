@@ -1112,13 +1112,42 @@ local
             val context =
               HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
               List.map Thm.concl prems
+            fun card_bound () =
+              case (name, args) of
+                ("sets-card-union", [left, right]) =>
+                  let
+                    val bound = numSyntax.mk_leq
+                      (pred_setSyntax.mk_card
+                         (pred_setSyntax.mk_inter (left, right)),
+                       numSyntax.mk_plus
+                         (pred_setSyntax.mk_card left,
+                          pred_setSyntax.mk_card right))
+                  in
+                    Tactical.TAC_PROOF ((context, bound),
+                      bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+                        [pred_setTheory.CARD_INTER_LESS_EQ])
+                  end
+              | ("sets-card-minus", [left, right]) =>
+                  let
+                    val bound = numSyntax.mk_leq
+                      (pred_setSyntax.mk_card
+                         (pred_setSyntax.mk_inter (left, right)),
+                       pred_setSyntax.mk_card left)
+                  in
+                    Tactical.TAC_PROOF ((context, bound),
+                      bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+                        [pred_setTheory.CARD_INTER_LESS_EQ])
+                  end
+              | _ => raise ERR name "wrong cardinality arguments"
+            val context = Thm.concl (card_bound ()) :: context
           in
             List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
               (Tactical.TAC_PROOF ((context, target),
                 bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                   [pred_setTheory.CARD_UNION_EQN,
                    pred_setTheory.CARD_DIFF_EQN,
-                   integerTheory.INT_OF_NUM_ADD])) prems
+                   integerTheory.INT_OF_NUM_ADD,
+                   integerTheory.INT_SUB])) prems
           end
         else if name = "sets-eval-op" then
           (Tactical.TAC_PROOF (([], target),
