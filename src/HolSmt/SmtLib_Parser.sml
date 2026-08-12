@@ -4170,6 +4170,7 @@ local
         case (name, args) of
           ("set.filter", _ :: set :: _) => checked_surface_sort set
         | ("set.map", _) => collection_result_surface t
+        | ("set.singleton", _) => collection_result_surface t
         | ("set.comprehension", _) => collection_result_surface t
         | ("seq.unit", element :: _) =>
             ConstructorSort (Term.type_of t, [checked_surface_sort element])

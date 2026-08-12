@@ -4725,6 +4725,10 @@ in
   assert_builder "cvc5 set.singleton" cvc5_options
     "(= (set.singleton x) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_insert (x, empty), s));
+  assert_builder "cvc5 nested set.singleton" cvc5_options
+    "(= (set.insert x (set.singleton y)) s)"
+    (boolSyntax.mk_eq
+      (pred_setSyntax.mk_insert (x, pred_setSyntax.mk_insert (y, empty)), s));
   assert_builder "cvc5 set.union" cvc5_options "(= (set.union s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_union (s, t), s));
   assert_builder "cvc5 set.union result surface" cvc5_options
