@@ -3023,10 +3023,7 @@ local
       fun finite ty =
         finite_cvc5_set_element_type ty orelse
         (pred_setSyntax.is_set_type ty andalso
-         finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)) orelse
-        (bagSyntax.is_bag_ty ty andalso
-         finite_cvc5_set_element_type
-           (bagSyntax.base_type (Term.mk_var ("finite_binder", ty))))
+         finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty))
     in
       case surface of
         ConstructorSort (ty, _) => finite ty
