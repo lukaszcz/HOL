@@ -465,8 +465,8 @@ local
         ("seq.extract", SmtLib_Theories.K_zero_three seq_extract),
         ("seq.at", SmtLib_Theories.K_zero_two seq_at),
         ("seq.nth", SmtLib_Theories.K_zero_two
-          (fn (s, i) => if is_z3_string s then z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
+          (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
            else holsmt_app "smt_seq_nth" [s, i])),
         ("seq.contains", SmtLib_Theories.K_zero_two
           (fn (s, t) => if is_z3_string s then
@@ -1326,11 +1326,31 @@ local
     )
     else if head = "declare-fun" then
       let
+        val declaration_tokens = ref ([] : string list)
+        fun tracked_token () =
+          let val token = get_token () in
+            declaration_tokens := token :: !declaration_tokens;
+            token
+          end
+        fun char_range (name :: "(" :: rest) =
+              let
+                fun after_domain 0 tokens = tokens
+                  | after_domain depth ("(" :: tokens) =
+                      after_domain (depth + 1) tokens
+                  | after_domain depth (")" :: tokens) =
+                      after_domain (depth - 1) tokens
+                  | after_domain depth (_ :: tokens) =
+                      after_domain depth tokens
+                  | after_domain _ [] = []
+              in
+                case after_domain 1 rest of "Char" :: _ => true | _ => false
+              end
+          | char_range _ = false
         val _ = z3_seen_char_sort := false
-        val (tm, tmdict) = SmtLib_Parser.parse_declare_fun get_token
+        val (tm, tmdict) = SmtLib_Parser.parse_declare_fun tracked_token
           (tydict, tmdict)
         val _ =
-          if !z3_seen_char_sort andalso
+          if char_range (List.rev (!declaration_tokens)) andalso
              Type.compare (z3_result_type (Term.type_of tm), z3_char_ty) = EQUAL
           then
             if Lib.can Type.dom_rng (Term.type_of tm) then
