@@ -113,15 +113,12 @@ fun check_goal_operator_availability_unless ignore {solver, version}
       solver = registered_solver andalso
       (case version of NONE => true
        | SOME target_version =>
-           let
-             val resolved =
-               Library.resolve_solver_version {
-                 solver = solver, supported = versions,
-                 version = target_version
-               }
-           in
-             List.exists (fn registered => registered = resolved) versions
-           end)
+           (case Library.version_series target_version of
+              NONE => false
+            | SOME target_series =>
+                List.exists (fn registered =>
+                  Library.version_series registered = SOME target_series)
+                  versions))
     fun check ({hol_head, operator, ...} : operator_availability) =
       if not (ignore hol_head) andalso occurs hol_head andalso
          not (List.exists available (List.filter
@@ -5508,7 +5505,7 @@ in
      cvc5 accepts neither.  The printer deliberately uses only `seq.foldl`:
      `seq.fold_left` is a version-gated parser alias, never an output name. *)
   val z3_seq_ho_versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1",
-                            "4.15.3"]
+                            "4.15.3", "4.16.0"]
 
   val _ = register_operator_availability {
     hol_head = seq_map_tm, operator = "seq.map", solver = "Z3",

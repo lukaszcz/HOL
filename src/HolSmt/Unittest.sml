@@ -6484,6 +6484,12 @@ let
         val message = unavailable_message ()
         val _ = SmtLib.check_goal_operator_availability
           {solver = "Z3", version = SOME "4.15.3"} goal
+        val old_rejected =
+          ((SmtLib.check_goal_operator_availability
+              {solver = "Z3", version = SOME "4.10.0"} goal; false)
+           handle Feedback.HOL_ERR _ => true)
+        val _ = assert (old_rejected,
+          "an unsupported Z3 version accepted seq.len")
       in
         message
       end) ()
