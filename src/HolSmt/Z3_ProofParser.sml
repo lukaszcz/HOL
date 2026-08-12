@@ -176,7 +176,7 @@ local
 
   fun is_z3_char c =
     List.exists (Term.aconv c) (!z3_char_terms) orelse
-    (case Lib.total Term.strip_comb c of
+    (case Lib.total boolSyntax.strip_comb c of
        SOME (_, []) => false
      | SOME (head, args) =>
          List.exists (Term.aconv head) (!z3_char_result_terms) orelse

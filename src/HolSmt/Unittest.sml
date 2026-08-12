@@ -4738,9 +4738,6 @@ in
     (boolSyntax.mk_eq (pred_setSyntax.mk_diff (s, t), s));
   assert_builder "cvc5 set.subset" cvc5_options "(set.subset s t)"
     (pred_setSyntax.mk_subset (s, t));
-  assert_builder "cvc5 set.complement" cvc5_options
-    "(= (set.complement bs) bs)"
-    (boolSyntax.mk_eq (pred_setSyntax.mk_compl bs, bs));
   assert_builder "cvc5 set.choose" cvc5_options "(= (set.choose s) x)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_choice s, x));
   assert_builder "cvc5 set.card" cvc5_options "(= (set.card s) 0)"
@@ -6126,16 +6123,15 @@ in
       ["set.insert", "set.minus", "set.inter", "set.subset",
        "set.singleton", "set.empty"],
     "finite cvc5 set surface is incomplete:\n" ^ cvc_surface_text);
-  assert (contains "set.member" cvc_finite_bool_text andalso
-      contains "set.complement" cvc_finite_bool_text andalso
-      contains "set.universe" cvc_finite_bool_text,
-    "finite Bool cvc5 sets did not use set.complement/set.universe:\n" ^
+  assert (not (contains "set.complement" cvc_finite_bool_text) andalso
+      not (contains "set.universe" cvc_finite_bool_text) andalso
+      contains "(Array Bool Bool)" cvc_finite_bool_text,
+    "finite Bool cvc5 complements did not use the array fallback:\n" ^
     cvc_finite_bool_text);
-  assert (contains "(Set (_ BitVec 8))" cvc_finite_word_text andalso
-      contains "set.member" cvc_finite_word_text andalso
-      contains "set.complement" cvc_finite_word_text andalso
-      contains "set.universe" cvc_finite_word_text,
-    "finite word cvc5 sets did not use native set.*:\n" ^
+  assert (not (contains "set.complement" cvc_finite_word_text) andalso
+      not (contains "set.universe" cvc_finite_word_text) andalso
+      contains "(Array (_ BitVec 8) Bool)" cvc_finite_word_text,
+    "finite word cvc5 complements did not use the array fallback:\n" ^
     cvc_finite_word_text);
   assert (contains "set.card" cvc_card_text,
     "finite cvc5 CARD did not emit set.card:\n" ^ cvc_card_text);

@@ -3108,12 +3108,25 @@ local
   fun checked_sort (CheckedTerm {sort, ...}) = sort
   fun checked_surface_sort (CheckedTerm {surface_sort, ...}) = surface_sort
 
+  fun surface_sort_type surface_sort =
+    case surface_sort of
+      RigidSort ty => ty
+    | PolySort ty => ty
+    | ConstructorSort (ty, _) => ty
+    | MapSort (domain, range) =>
+        Type.--> (surface_sort_type domain, surface_sort_type range)
+    | ArraySort (index, element) =>
+        Type.--> (surface_sort_type index, surface_sort_type element)
+
   fun surface_sort_compatible expected actual =
     case (expected, actual) of
       (PolySort _, _) => true
-    | (RigidSort expected_ty, RigidSort actual_ty) =>
-        same_sort expected_ty actual_ty orelse
-        int_to_real_expected expected_ty actual_ty
+    | (RigidSort expected_ty, actual) =>
+        same_sort expected_ty (surface_sort_type actual) orelse
+        int_to_real_expected expected_ty (surface_sort_type actual)
+    | (expected, RigidSort actual_ty) =>
+        same_sort (surface_sort_type expected) actual_ty orelse
+        int_to_real_expected (surface_sort_type expected) actual_ty
     | (ConstructorSort (expected_ty, expected_args),
        ConstructorSort (actual_ty, actual_args)) =>
         Lib.can (Type.match_type expected_ty) actual_ty andalso
@@ -3175,16 +3188,6 @@ local
 
   fun instantiate_surface_sort subst surface_sort =
     instantiate_surface_sort_with [] subst surface_sort
-
-  fun surface_sort_type surface_sort =
-    case surface_sort of
-      RigidSort ty => ty
-    | PolySort ty => ty
-    | ConstructorSort (ty, _) => ty
-    | MapSort (domain, range) =>
-        Type.--> (surface_sort_type domain, surface_sort_type range)
-    | ArraySort (index, element) =>
-        Type.--> (surface_sort_type index, surface_sort_type element)
 
   fun surface_component_of_type ty surface_sort =
     if same_sort ty (surface_sort_type surface_sort) then SOME surface_sort
