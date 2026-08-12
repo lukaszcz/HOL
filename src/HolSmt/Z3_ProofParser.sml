@@ -324,6 +324,21 @@ local
             "at most one self index and two arguments expected"
     end
 
+  fun z3_indexed_binary_marker name make =
+    let val marker = Term.mk_var (name, Type.alpha)
+    in
+      fn _ => fn indices => fn args =>
+        case (indices, args) of
+          ([], []) => marker
+        | ([], [x, y]) => make (x, y)
+        | ([index], [x, y]) =>
+            if z3_same_index marker index then make (x, y)
+            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+              "unexpected self index"
+        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+          "at most one self index and two arguments expected"
+    end
+
   fun z3_string_witness_specs version =
     let
       val common =
@@ -535,8 +550,8 @@ local
           (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
              (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
            else holsmt_app "smt_seq_nth" [s, i])),
-        ("seq.pre", z3_indexed_binary "seq_pre" z3_seq_pre),
-        ("seq.post", z3_indexed_binary "seq_post" z3_seq_post),
+        ("seq.pre", z3_indexed_binary_marker "seq_pre" z3_seq_pre),
+        ("seq.post", z3_indexed_binary_marker "seq_post" z3_seq_post),
         ("seq.tail", z3_indexed_binary "seq_tail"
           (fn (s, i) => if is_z3_string s then z3_string_app "seq_tail"
              [s, intSyntax.mk_Num i]
