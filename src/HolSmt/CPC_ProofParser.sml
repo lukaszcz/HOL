@@ -440,8 +440,31 @@ local
             end
         | _ => raise ERR "cpc_quantifiers_skolemize_parsefn"
             "expected a quantified formula and a binder index"
+      fun bags_deq_diff_parsefn token indices args =
+        case (token, indices, args) of
+          ("@bags_deq_diff", [], [left, right]) =>
+            let
+              val (element, count) = Type.dom_rng (Term.type_of left)
+              val _ =
+                if Type.compare (count, numSyntax.num) = EQUAL andalso
+                   Type.compare (Term.type_of left, Term.type_of right) = EQUAL
+                then ()
+                else raise ERR "bags_deq_diff_parsefn"
+                  "expected two Bags of the same type"
+              val element_var = Term.variant (Term.all_varsl [left, right])
+                (Term.mk_var ("bags_deq_diff_x", element))
+              val differs = boolSyntax.mk_neg (boolSyntax.mk_eq
+                (Term.mk_comb (left, element_var),
+                 Term.mk_comb (right, element_var)))
+            in
+              boolSyntax.mk_select (element_var, differs)
+            end
+        | _ => raise ERR "bags_deq_diff_parsefn"
+            "expected two unindexed Bag arguments"
     in
     (tydict, Library.extend_dict
+      (("@bags_deq_diff", bags_deq_diff_parsefn),
+      Library.extend_dict
       (("@quantifiers_skolemize", cpc_quantifiers_skolemize_parsefn),
       Library.extend_dict (("str.++",
         cpc_concat_parsefn "smtstr_concat"),
@@ -468,7 +491,7 @@ local
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
           Library.extend_dict (("_", cpc_literal_parsefn),
-            with_cpc_fp_entries tmdict)))))))))))))))))))))))))
+            with_cpc_fp_entries tmdict))))))))))))))))))))))))))
     end
 
   (* @list is CPC's compact representation for a list of binders or
