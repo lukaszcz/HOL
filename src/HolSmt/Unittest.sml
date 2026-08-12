@@ -4515,6 +4515,29 @@ let
   val at = boolSyntax.mk_cond (at_invalid, empty,
     listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num x, xs), empty))
 in
+  let
+    fun asserted text =
+      case #assertions (typecheck cvc5_options text) of
+        [tm] => tm
+      | _ => die "qualified built-in shadowing did not produce one assertion"
+    val const = Term.mk_var ("const", Type.--> (Type.bool, Type.bool))
+    val seq_empty = Term.mk_var ("seq.empty", Type.bool)
+  in
+    assert (Term.aconv
+      (asserted
+        "(set-logic ALL)\n\
+         \(declare-fun const (Bool) Bool)\n\
+         \(assert (= ((as const (-> Bool Bool)) true) true))\n")
+      (boolSyntax.mk_eq (Term.mk_comb (const, boolSyntax.T), boolSyntax.T)),
+      "qualified const did not resolve to the declared symbol");
+    assert (Term.aconv
+      (asserted
+        "(set-logic ALL)\n\
+         \(declare-const seq.empty Bool)\n\
+         \(assert (= (as seq.empty Bool) true))\n")
+      (boolSyntax.mk_eq (seq_empty, boolSyntax.T)),
+      "qualified seq.empty did not resolve to the declared symbol")
+  end;
   assert_builder "shared seq.++" z3_options "(= (seq.++ xs ys zs) xs)"
     (boolSyntax.mk_eq (listSyntax.mk_append
       (listSyntax.mk_append (xs, ys), zs), xs));

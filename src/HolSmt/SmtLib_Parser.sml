@@ -4701,6 +4701,7 @@ local
         case #solver context of SOME "cvc5" => false | _ => true
       fun cvc5_or_neutral () =
         case #solver context of SOME "Z3" => false | _ => true
+      fun shadowed name = Option.isSome (peek_signatures (sigdict, name))
       fun as_const_array_or_set sort payload =
         let
           val expected = typecheck_sort context tydict sort
@@ -4836,8 +4837,12 @@ local
     in
       case node_of term_ast of
         TermIdentifier "seq.empty" =>
-          type_error "typecheck_term" context (loc_of term_ast) NONE NONE
-            "seq.empty requires an explicit Seq sort ascription"
+          if shadowed "seq.empty" then
+            apply_symbol "typecheck_term" context (loc_of term_ast) env
+              "seq.empty" [] []
+          else
+            type_error "typecheck_term" context (loc_of term_ast) NONE NONE
+              "seq.empty requires an explicit Seq sort ascription"
       | TermIdentifier name =>
           apply_symbol "typecheck_term" context (loc_of term_ast) env name [] []
       | TermString value =>
@@ -4848,11 +4853,29 @@ local
       | TermIndexed (name, indices) =>
           indexed_or_apply (loc_of term_ast) name indices []
       | TermApply
-          (Located {node = TermAscribed
+          (head as Located {node = TermAscribed
              (Located {node = TermIdentifier "const", ...}, sort), ...}, [payload]) =>
-          if z3_or_neutral () orelse
-             not (is_set_surface
-               (surface_sort_of_ast context tydict sort)) then
+          if shadowed "const" then
+            let
+              val expected = typecheck_sort context tydict sort
+              val (_, range) = Type.dom_rng expected
+                handle Feedback.HOL_ERR _ =>
+                  type_error "typecheck_term" context (loc_of term_ast)
+                    NONE (SOME expected)
+                    "qualified function symbol must have a function sort"
+              val result = apply_symbol "typecheck_term" context
+                (loc_of term_ast) env "const" [] [check payload]
+              val _ =
+                if checked_sort result = range then ()
+                else type_error "typecheck_term" context (loc_of term_ast)
+                  (SOME range) (SOME (checked_sort result))
+                  "qualified identifier sort ascription mismatch"
+            in
+              result
+            end
+          else if z3_or_neutral () orelse
+                  not (is_set_surface
+                    (surface_sort_of_ast context tydict sort)) then
             as_const_array_or_set sort payload
           else type_error "typecheck_term" context (loc_of term_ast) NONE NONE
             "Z3 const Set syntax is unavailable in the cvc5 dialect"
@@ -4863,12 +4886,14 @@ local
             (check head) (List.map check args)
       | TermAscribed
           (ascribed as Located {node = TermIdentifier name, ...}, sort) =>
-          if (name = "set.empty" orelse name = "set.universe") andalso
+          if not (shadowed name) andalso
+             (name = "set.empty" orelse name = "set.universe") andalso
              cvc5_or_neutral () then
             as_cvc5_set_constant name sort
-          else if name = "seq.empty" then
+          else if name = "seq.empty" andalso not (shadowed name) then
             as_seq_empty sort
-          else if name = "bag.empty" andalso cvc5_or_neutral () then
+          else if name = "bag.empty" andalso not (shadowed name) andalso
+                  cvc5_or_neutral () then
             as_cvc5_bag_empty sort
           else
           let
