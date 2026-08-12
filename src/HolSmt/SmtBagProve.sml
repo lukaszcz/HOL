@@ -53,6 +53,7 @@ struct
     bagTheory.BAG_IN,
     bagTheory.BAG_INN,
     bagTheory.SUB_BAG,
+    integerTheory.INT_OF_NUM_ADD,
     combinTheory.UPDATE_def,
     combinTheory.APPLY_UPDATE_THM,
     boolTheory.FUN_EQ_THM
