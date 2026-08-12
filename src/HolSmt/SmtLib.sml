@@ -1129,11 +1129,39 @@ local
                       SOME _ => finite_element_type (set_element_type tm)
                     | NONE => false))))))
 
+  (* A finite-evidence term is meaningful only in the scope in which it was
+     assumed.  In particular, alpha conversion alone cannot distinguish a
+     free variable in an assumption from an identically named variable bound
+     beneath an abstraction.  Do not select cvc5's finite Set model when an
+     evidence-dependent collection occurrence is shadowed in this way. *)
+  fun shadowed_finite_collection is_collection native finite_terms terms =
+  let
+    fun evidence_uses_bound bound evidence =
+      List.exists (fn free => List.exists (fn variable =>
+        Term.aconv free variable) bound) (Term.free_vars evidence)
+    fun visit bound tm =
+      (is_collection tm andalso native tm andalso
+       List.exists (fn evidence => mem_aconv tm finite_terms andalso
+         evidence_uses_bound bound evidence) finite_terms) orelse
+      ((let
+          val (variable, body) = Term.dest_abs tm
+        in visit (variable :: bound) body end)
+       handle Feedback.HOL_ERR _ =>
+         ((let
+             val (rator, rand) = Term.dest_comb tm
+           in visit bound rator orelse visit bound rand end)
+          handle Feedback.HOL_ERR _ => false))
+  in
+    List.exists (visit []) terms
+  end
+
   fun cvc5_native_sets goal set_terms =
   let
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
   in
     not (List.null set_terms) andalso
+    not (shadowed_finite_collection is_set_type native_set_term finite_terms
+      (Lib.fst goal @ [Lib.snd goal])) andalso
     not (List.exists (fn set =>
       pred_setSyntax.is_set_type (set_element_type set)) set_terms) andalso
     List.all (fn set => native_set_term set andalso
@@ -1350,6 +1378,8 @@ local
   let val finite_terms = List.mapPartial finite_bag_hypothesis (Lib.fst goal)
   in
     not (List.null bag_terms) andalso
+    not (shadowed_finite_collection is_bag_type native_bag_term finite_terms
+      (Lib.fst goal @ [Lib.snd goal])) andalso
     not (List.exists (fn bag =>
       bagSyntax.is_bag_ty (bag_element_type bag)) bag_terms) andalso
     List.all (fn bag => native_bag_term bag andalso
