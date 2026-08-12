@@ -305,6 +305,8 @@ local
     {hol_name = "smtstr_concat", smt_name = "str.++"},
     {hol_name = "smtstr_len", smt_name = "str.len"},
     {hol_name = "smtstr_substr", smt_name = "str.substr"},
+    {hol_name = "smtstr_update", smt_name = "str.update"},
+    {hol_name = "smtstr_rev", smt_name = "str.rev"},
     {hol_name = "smtstr_at", smt_name = "str.at"},
     {hol_name = "smtstr_prefixof", smt_name = "str.prefixof"},
     {hol_name = "smtstr_suffixof", smt_name = "str.suffixof"},

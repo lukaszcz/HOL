@@ -179,6 +179,18 @@ Proof
   simp [smtstr_substr_def, smtstr_len_def]
 QED
 
+Definition smtstr_update_def:
+  smtstr_update s (i : int) t =
+    if i < 0 \/ LENGTH (smtstr_rep s) <= Num i then s
+    else SmtStr (TAKE (Num i) (smtstr_rep s) ++
+      TAKE (LENGTH (smtstr_rep s) - Num i) (smtstr_rep t) ++
+      DROP (Num i + LENGTH (smtstr_rep t)) (smtstr_rep s))
+End
+
+Definition smtstr_rev_def:
+  smtstr_rev s = SmtStr (REVERSE (smtstr_rep s))
+End
+
 Definition smtstr_prefixof_def:
   smtstr_prefixof s t <=>
     IS_PREFIX (smtstr_rep t) (smtstr_rep s)

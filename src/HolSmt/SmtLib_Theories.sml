@@ -1159,6 +1159,11 @@ in
                                   | _ => raise Fail "wrong arity")
         [left, right]
 
+    fun string_or_seq_three string_name seq_fun (first, second, third) =
+      string_or_seq string_name (fn [x, y, z] => seq_fun (x, y, z)
+                                  | _ => raise Fail "wrong arity")
+        [first, second, third]
+
     val tyentries = [
       extension_entry "shared" "Seq" (parametric_attributes ["Element"])
         ["(Seq Element)"] (K_zero_one sequence_ty)
@@ -1254,19 +1259,25 @@ in
     val tmentries = [
       cvc_term "seq.update" no_attributes
         ["(seq.update (Seq A) Int (Seq A) (Seq A))"]
-        (K_zero_three (fn (s, i, t) =>
-          holsmt_app "smt_seq_update" [s, i, t])),
+        (K_zero_three (string_or_seq_three "smtstr_update"
+          (fn (s, i, t) => holsmt_app "smt_seq_update" [s, i, t]))),
       cvc_term "seq.replace_all" no_attributes
         ["(seq.replace_all (Seq A) (Seq A) (Seq A) (Seq A))"]
-        (K_zero_three (fn (s, t, u) =>
-          holsmt_app "smt_seq_replace_all" [s, t, u])),
+        (K_zero_three (string_or_seq_three "smtstr_replace_all"
+          (fn (s, t, u) => holsmt_app "smt_seq_replace_all" [s, t, u]))),
       (* cvc5 accepts its String-spelled alias over arbitrary sequences. *)
       cvc_term "str.replace_all" no_attributes
         ["(str.replace_all (Seq A) (Seq A) (Seq A) (Seq A))"]
-        (K_zero_three (fn (s, t, u) =>
-          holsmt_app "smt_seq_replace_all" [s, t, u])),
+        (K_zero_three (string_or_seq_three "smtstr_replace_all"
+          (fn (s, t, u) => holsmt_app "smt_seq_replace_all" [s, t, u]))),
       cvc_term "seq.rev" no_attributes ["(seq.rev (Seq A) (Seq A))"]
-        (K_zero_one listSyntax.mk_reverse)
+        (K_zero_one (string_or_seq_one "smtstr_rev" listSyntax.mk_reverse)),
+      cvc_term "str.update" no_attributes
+        ["(str.update String Int String String)"]
+        (K_zero_three (string_or_seq_three "smtstr_update"
+          (fn (s, i, t) => holsmt_app "smt_seq_update" [s, i, t]))),
+      cvc_term "str.rev" no_attributes ["(str.rev String String)"]
+        (K_zero_one (string_or_seq_one "smtstr_rev" listSyntax.mk_reverse))
     ]
 
     val tydict :
