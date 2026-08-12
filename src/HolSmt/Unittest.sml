@@ -4778,6 +4778,8 @@ in
     (pred_setSyntax.mk_sing s);
   ignore (assertion cvc5_options
     "(= (set.comprehension ((z Bool)) z z) bs)");
+  ignore (assertion cvc5_options
+    "(= (set.comprehension ((z Bool)) z 0) (set.singleton 0))");
   reject cvc5_options "cvc5 infinite set.comprehension"
     "(set-logic ALL)\n\
      \(assert (= (set.comprehension ((z Int)) true z)\n\

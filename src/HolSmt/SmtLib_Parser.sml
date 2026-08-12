@@ -3018,6 +3018,12 @@ local
         finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)
     | _ => false
 
+  fun finite_cvc5_binder_surface surface =
+    case surface of
+      ConstructorSort (ty, _) => finite_cvc5_set_element_type ty
+    | RigidSort ty => finite_cvc5_set_element_type ty
+    | _ => false
+
   type function_signature = {
     tm: Term.term,
     domain: Type.hol_type list,
@@ -4163,12 +4169,18 @@ local
                       "' for actual sorts " ^ sort_list_to_string arg_sorts ^
                       ": " ^ Feedback.message_of holerr)
              in
-               let val result_surface = result_surface_sort t in
+               let
+                 val result_surface = result_surface_sort t
+                 val finite_binders =
+                   List.all (fn binder =>
+                     case checked_surface_sort binder of
+                       MapSort (domain, _) => finite_cvc5_binder_surface domain
+                     | _ => false) args
+               in
                  if name = "set.comprehension" andalso
-                    #solver context = SOME "cvc5" andalso
-                    not (finite_cvc5_set_surface result_surface) then
-                   type_error fn_name context loc NONE NONE
-                     "cvc5 set.comprehension requires a finite element sort"
+                    #solver context = SOME "cvc5" andalso not finite_binders
+                 then type_error fn_name context loc NONE NONE
+                   "cvc5 set.comprehension requires finite binder sorts"
                  else checked_term_with_surface_sort result_surface t
                end
              end)
