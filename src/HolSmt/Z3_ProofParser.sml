@@ -171,11 +171,19 @@ local
   val z3_char_index_ty = fcpLib.index_type z3_char_width
   val z3_char_ty = wordsSyntax.mk_word_type z3_char_index_ty
   val z3_char_terms = ref ([] : Term.term list)
+  val z3_char_result_terms = ref ([] : Term.term list)
   val z3_seen_char_sort = ref false
 
   fun is_z3_char c =
     List.exists (Term.aconv c) (!z3_char_terms) orelse
-    Lib.can wordsSyntax.dest_n2w c
+    (case Lib.total Term.strip_comb c of
+       SOME (_, []) => false
+     | SOME (head, args) =>
+         List.exists (Term.aconv head) (!z3_char_result_terms) orelse
+         List.exists
+           (fn arg => List.exists (Term.aconv arg) (!z3_char_result_terms))
+           args
+     | NONE => false)
 
   fun z3_char_to_num c = wordsSyntax.mk_w2n c
 
@@ -419,7 +427,9 @@ local
                 {Thy = "smtstring", Name = "reglan_diff"}, [x, y]))),
         ("Char", fn _ => fn indices => fn args =>
           case (indices, args) of
-            ([code], []) => z3_num_to_char (z3_natural code)
+            ([code], []) =>
+              let val char = z3_num_to_char (z3_natural code)
+              in z3_char_terms := char :: !z3_char_terms; char end
           | ([], []) => z3_char_sort_marker
           | _ => raise ERR "<z3_string_dict.Char>"
               "one code-point index or a sort marker expected"),
@@ -1312,9 +1322,10 @@ local
         val (tm, tmdict) = SmtLib_Parser.parse_declare_fun get_token
           (tydict, tmdict)
         val _ =
-          if !z3_seen_char_sort andalso
-             not (Lib.can Type.dom_rng (Term.type_of tm)) then
-            z3_char_terms := tm :: !z3_char_terms
+          if !z3_seen_char_sort then
+            if Lib.can Type.dom_rng (Term.type_of tm) then
+              z3_char_result_terms := tm :: !z3_char_result_terms
+            else z3_char_terms := tm :: !z3_char_terms
           else ()
         val proof = update_proof_vars proof (HOLset.add (proof_vars proof, tm))
       in
@@ -1369,6 +1380,7 @@ in
        diagnostics -- then works with a tested anchor. *)
     val z3_version = resolve_version z3_version
     val _ = z3_char_terms := []
+    val _ = z3_char_result_terms := []
     val string_witnesses = z3_string_witness_specs z3_version
     val tydict = Library.union_dict tydict z3_string_tydict
     (* Z3 writes generated sort names (such as [t0]) in the legacy
