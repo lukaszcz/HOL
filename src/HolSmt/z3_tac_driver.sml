@@ -341,7 +341,7 @@ fun z3_tac_checked_result goal =
   | SolverSpec.SAT (SOME _) => Z3_TAC_SAT
   | SolverSpec.UNKNOWN message => Z3_TAC_UNKNOWN message
 
-fun z3_tac_ok path expected_logic =
+fun z3_tac_ok_snapshot path expected_logic =
 let
   val _ = Library.trace := 0
   val script_diagnostic = z3_tac_script_diagnostic path
@@ -476,6 +476,25 @@ handle Feedback.HOL_ERR holerr =>
   z3_tac_die "Z3_TAC_FAIL"
     ["logic=" ^ expected_logic,
      "diagnostic=" ^ General.exnMessage exn]
+
+fun z3_tac_snapshot source =
+  let
+    val snapshot = OS.FileSys.tmpName ()
+    val input = TextIO.openIn source
+    val contents = TextIO.inputAll input before TextIO.closeIn input
+    val () = Library.write_strings_to_file snapshot [contents]
+  in
+    snapshot
+  end
+
+fun z3_tac_ok path expected_logic =
+  let
+    val snapshot = z3_tac_snapshot path
+    fun cleanup () = OS.FileSys.remove snapshot handle OS.SysErr _ => ()
+  in
+    Portable.finally cleanup
+      (fn () => z3_tac_ok_snapshot snapshot expected_logic) ()
+  end
 
 val () =
   case z3_tac_args () of
