@@ -218,9 +218,55 @@ fun z3_tac_script_query_diagnostic query_names =
       SOME ("raw SMT-LIB query " ^ query ^
             " is outside checked Z3_TAC command-line entry point")
 
+fun z3_tac_term_uses_fold_left term =
+  let
+    fun any terms = List.exists scan terms
+    and scan term =
+      case SmtLib_Parser.node_of term of
+        SmtLib_Parser.TermIdentifier "seq.fold_left" => true
+      | SmtLib_Parser.TermIdentifier _ => false
+      | SmtLib_Parser.TermString _ => false
+      | SmtLib_Parser.TermIndexed (_, args) => any args
+      | SmtLib_Parser.TermApply (head, args) => scan head orelse any args
+      | SmtLib_Parser.TermApplyOperator (_, head, args) =>
+          scan head orelse any args
+      | SmtLib_Parser.TermAscribed (body, _) => scan body
+      | SmtLib_Parser.TermLet (bindings, body) =>
+          List.exists (fn (_, value) => scan value) bindings orelse scan body
+      | SmtLib_Parser.TermMatch (scrutinee, cases) =>
+          scan scrutinee orelse List.exists (fn case_ast =>
+            case SmtLib_Parser.node_of case_ast of
+              SmtLib_Parser.MatchCase (_, body) => scan body) cases
+      | SmtLib_Parser.TermForall (_, body) => scan body
+      | SmtLib_Parser.TermExists (_, body) => scan body
+      | SmtLib_Parser.TermLambda (_, body) => scan body
+      | SmtLib_Parser.TermAnnotated (body, _) => scan body
+  in
+    scan term
+  end
+
+fun z3_tac_command_uses_fold_left command =
+  let
+    fun any terms = List.exists z3_tac_term_uses_fold_left terms
+  in
+    case SmtLib_Parser.node_of command of
+      SmtLib_Parser.CmdDefineConst (_, _, body) => z3_tac_term_uses_fold_left body
+    | SmtLib_Parser.CmdDefineFun (_, _, _, body) => z3_tac_term_uses_fold_left body
+    | SmtLib_Parser.CmdDefineFunRec (_, _, _, body) =>
+        z3_tac_term_uses_fold_left body
+    | SmtLib_Parser.CmdDefineFunsRec (_, bodies) => any bodies
+    | SmtLib_Parser.CmdAssert body => z3_tac_term_uses_fold_left body
+    | SmtLib_Parser.CmdCheckSatAssuming terms => any terms
+    | SmtLib_Parser.CmdGetValue terms => any terms
+    | _ => false
+  end
+
 fun z3_tac_script_diagnostic path =
   let
     val script = SmtLib_Parser.parse_script_file path
+    val unsupported_fold_left =
+      Z3.configured_version () = SOME "4.11.2" andalso
+      List.exists z3_tac_command_uses_fold_left script
     fun scan [] query_names =
           z3_tac_script_query_diagnostic (List.rev query_names)
       | scan (command :: rest) query_names =
@@ -235,7 +281,9 @@ fun z3_tac_script_diagnostic path =
                       SOME name => name :: query_names
                     | NONE => query_names))
   in
-    scan script []
+    if unsupported_fold_left then
+      SOME "seq.fold_left requires Z3 4.12.4 or later"
+    else scan script []
   end
 
 datatype z3_tac_checked_result =
