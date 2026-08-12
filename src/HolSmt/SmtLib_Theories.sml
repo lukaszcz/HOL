@@ -1259,25 +1259,29 @@ in
     val tmentries = [
       cvc_term "seq.update" no_attributes
         ["(seq.update (Seq A) Int (Seq A) (Seq A))"]
-        (K_zero_three (string_or_seq_three "smtstr_update"
+        (K_zero_three (Seq_Extensions.string_or_seq_three "smtstr_update"
           (fn (s, i, t) => holsmt_app "smt_seq_update" [s, i, t]))),
       cvc_term "seq.replace_all" no_attributes
         ["(seq.replace_all (Seq A) (Seq A) (Seq A) (Seq A))"]
-        (K_zero_three (string_or_seq_three "smtstr_replace_all"
+        (K_zero_three (Seq_Extensions.string_or_seq_three
+          "smtstr_replace_all"
           (fn (s, t, u) => holsmt_app "smt_seq_replace_all" [s, t, u]))),
       (* cvc5 accepts its String-spelled alias over arbitrary sequences. *)
       cvc_term "str.replace_all" no_attributes
         ["(str.replace_all (Seq A) (Seq A) (Seq A) (Seq A))"]
-        (K_zero_three (string_or_seq_three "smtstr_replace_all"
+        (K_zero_three (Seq_Extensions.string_or_seq_three
+          "smtstr_replace_all"
           (fn (s, t, u) => holsmt_app "smt_seq_replace_all" [s, t, u]))),
       cvc_term "seq.rev" no_attributes ["(seq.rev (Seq A) (Seq A))"]
-        (K_zero_one (string_or_seq_one "smtstr_rev" listSyntax.mk_reverse)),
+        (K_zero_one (Seq_Extensions.string_or_seq_one "smtstr_rev"
+          listSyntax.mk_reverse)),
       cvc_term "str.update" no_attributes
         ["(str.update String Int String String)"]
-        (K_zero_three (string_or_seq_three "smtstr_update"
+        (K_zero_three (Seq_Extensions.string_or_seq_three "smtstr_update"
           (fn (s, i, t) => holsmt_app "smt_seq_update" [s, i, t]))),
       cvc_term "str.rev" no_attributes ["(str.rev String String)"]
-        (K_zero_one (string_or_seq_one "smtstr_rev" listSyntax.mk_reverse))
+        (K_zero_one (Seq_Extensions.string_or_seq_one "smtstr_rev"
+          listSyntax.mk_reverse))
     ]
 
     val tydict :
