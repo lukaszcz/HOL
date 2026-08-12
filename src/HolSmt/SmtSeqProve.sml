@@ -204,6 +204,7 @@ struct
 
   val update_reverse_rewrites = list_rewrites @ [
     HolSmtTheory.smt_seq_update_def,
+    integerTheory.INT_SUB,
     listTheory.LUPDATE_def,
     listTheory.REVERSE_DEF
   ]
