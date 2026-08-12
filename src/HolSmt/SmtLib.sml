@@ -1166,11 +1166,49 @@ local
     List.exists (visit []) terms
   end
 
+  fun is_set_hol_type ty =
+    case Lib.total Type.dom_rng ty of
+      SOME (_, range) => Type.compare (range, Type.bool) = EQUAL
+    | NONE => false
+
+  (* cvc5's native Set and Bag sorts cannot be used as the element sort of a
+     Seq or in a datatype field.  The HOL collection is a function there, so
+     use the Array encoding consistently throughout the translation. *)
+  fun collection_nested_in_container is_collection goal =
+    let
+      fun type_contains ty =
+        is_collection ty orelse
+        (List.exists type_contains (Lib.snd (Type.dest_type ty))
+         handle Feedback.HOL_ERR _ => false)
+      fun type_is_nested ty =
+        (type_contains (listSyntax.dest_list_type ty)
+         handle Feedback.HOL_ERR _ => false) orelse
+        (case TypeBase.fetch ty of
+           SOME tyinfo =>
+             List.exists (fn constructor =>
+               List.exists type_contains
+                 (Lib.fst (boolSyntax.strip_fun (Term.type_of constructor))))
+               (TypeBasePure.constructors_of tyinfo)
+         | NONE => false)
+        handle Feedback.HOL_ERR _ => false
+      fun visit tm =
+        type_is_nested (Term.type_of tm) orelse
+        ((let val (rator, rand) = Term.dest_comb tm in
+            visit rator orelse visit rand
+          end)
+         handle Feedback.HOL_ERR _ =>
+           ((let val (_, body) = Term.dest_abs tm in visit body end)
+            handle Feedback.HOL_ERR _ => false))
+    in
+      List.exists visit (Lib.fst goal @ [Lib.snd goal])
+    end
+
   fun cvc5_native_sets goal set_terms =
   let
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
   in
     not (List.null set_terms) andalso
+    not (collection_nested_in_container is_set_hol_type goal) andalso
     not (List.exists pred_setSyntax.is_compl set_terms) andalso
     not (shadowed_finite_collection is_set_type native_set_term finite_terms
       (Lib.fst goal @ [Lib.snd goal])) andalso
@@ -1406,6 +1444,7 @@ local
   let val finite_terms = List.mapPartial finite_bag_hypothesis (Lib.fst goal)
   in
     not (List.null bag_terms) andalso
+    not (collection_nested_in_container bagSyntax.is_bag_ty goal) andalso
     not (shadowed_finite_collection is_bag_type native_bag_term finite_terms
       (Lib.fst goal @ [Lib.snd goal])) andalso
     not (List.exists (fn bag =>
