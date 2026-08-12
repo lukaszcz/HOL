@@ -76,7 +76,7 @@ ifdef HOLSELFTESTLEVEL
 all: holsmt-selftest.log
 
 holsmt-selftest.log: selftest.exe
-	$(tee ./selftest.exe 2>&1,$@)
+	$(tee HOL4_SELFTEST_SHARD=$${HOL4_SELFTEST_SHARD:-0/8} ./selftest.exe 2>&1,$@)
 endif
 
 EXTRA_CLEANS = selftest.exe smtfloat-diff.exe holsmt-typecheck \
