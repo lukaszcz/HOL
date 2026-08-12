@@ -36,7 +36,10 @@ RUN if [ "" != "${Z3_VERSION}" ]; then \
 fi
 
 # if --build-arg CVC_VERSION=5, install cvc5 1.3.4 and set HOL4_CVC_EXECUTABLE
-RUN if [ "5" = "${CVC_VERSION}" ]; then \
+RUN if [ -n "${CVC_VERSION}" ] && [ "5" != "${CVC_VERSION}" ]; then \
+    echo "unsupported CVC_VERSION: ${CVC_VERSION} (expected 5)" >&2; exit 1; \
+fi; \
+if [ "5" = "${CVC_VERSION}" ]; then \
     case "${TARGETPLATFORM:-linux/amd64}" in \
       linux/amd64) cvc_arch=x86_64 ;; \
       linux/arm64) cvc_arch=arm64 ;; \
@@ -50,7 +53,7 @@ RUN if [ "5" = "${CVC_VERSION}" ]; then \
 fi
 ENV HOL4_CVC_EXECUTABLE=${CVC_VERSION:+/ML/cvc5-Linux}
 RUN if [ "" != "${CVC_VERSION}" ]; then \
-    echo "Using CVC solver: `${HOL4_CVC_EXECUTABLE} --version | head -1`"; \
+    ${HOL4_CVC_EXECUTABLE} --version | head -1; \
 fi
 
 # if --build-arg YICES_VERSION=1.0.40, set HOL4_YICES_EXECUTABLE to its full path,
