@@ -5892,9 +5892,9 @@ in
   assert_has "record datatype" "(declare-datatypes ((Smt_rec 0))"
     record_text;
   assert_has "record int selector"
-    "(recordtype_smt_rec_seldef_smt_count Int)" record_text;
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count Int)" record_text;
   assert_has "record bool selector"
-    "(recordtype_smt_rec_seldef_smt_flag Bool)" record_text;
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_flag Bool)" record_text;
   assert_has "mutual datatype left sort" "(Smt_left 0)" mutual_text;
   assert_has "mutual datatype right sort" "(Smt_right 0)" mutual_text;
   assert_has "mutual datatype block" "(declare-datatypes" mutual_text;
@@ -7405,7 +7405,7 @@ in
   assert_has "automatic function-valued built-in" conditional_value_text
     "(select v0 (ite v1 v2 v3))";
   assert_has "function-valued record selector" selector_text
-    "(select (select (recordtype_smt_fun_rec_seldef_smt_fun v1) v2) v3)";
+    "(select (select (sel_ctor_Smt_fun_rec_recordtype_smt_fun_rec_recordtype_smt_fun_rec_seldef_smt_fun v1) v2) v3)";
   assert_lacks "function-valued record selector" selector_text
     "(declare-fun v0 (Smt_fun_rec Int Bool) Int)";
   assert (SmtLib.translation_regime complex_translation = z3_regime,
@@ -8075,11 +8075,11 @@ in
   assert_lacks "selector-shaped case" selector_text
     "(_ is ctor_Smt_tri_SmtTriB)";
   assert_has "record access" record_access_text
-    "(recordtype_smt_rec_seldef_smt_count v1)";
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v1)";
   assert_has "record update" record_update_text
     "(ctor_Smt_rec_recordtype_smt_rec 3";
   assert_has "record update" record_update_text
-    "(recordtype_smt_rec_seldef_smt_flag v1)"
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_flag v1)"
 end
 
 fun smtlib_datatype_parser_dict_success () =
