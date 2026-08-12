@@ -260,6 +260,37 @@ local
   fun z3_natural tm =
     numSyntax.mk_numeral (Arbint.toNat (intSyntax.int_of_term tm))
 
+  fun z3_seq_pre (s, i) =
+    if is_z3_string s then
+      let
+        val length = smtstring_app "smtstr_len" [s]
+        val invalid = boolSyntax.mk_disj
+          (intSyntax.mk_less (i, intSyntax.zero_tm),
+           intSyntax.mk_less (length, i))
+      in
+        boolSyntax.mk_cond (invalid, s,
+          smtstring_app "smtstr_substr" [s, intSyntax.zero_tm, i])
+      end
+    else
+      let
+        val index = intSyntax.mk_Num i
+        val invalid = boolSyntax.mk_disj
+          (intSyntax.mk_less (i, intSyntax.zero_tm),
+           numSyntax.mk_less (listSyntax.mk_length s, index))
+      in
+        boolSyntax.mk_cond (invalid, s, listSyntax.mk_take (index, s))
+      end
+
+  fun z3_seq_post (s, i) =
+    if is_z3_string s then
+      let val length = smtstring_app "smtstr_len" [s] in
+        boolSyntax.mk_cond (intSyntax.mk_leq (i, intSyntax.zero_tm), s,
+          smtstring_app "smtstr_substr" [s, i, length])
+      end
+    else
+      boolSyntax.mk_cond (intSyntax.mk_leq (i, intSyntax.zero_tm), s,
+        listSyntax.mk_drop (intSyntax.mk_Num i, s))
+
   fun z3_same_index expected actual =
     Term.same_const expected actual orelse Term.aconv expected actual
 
@@ -504,13 +535,15 @@ local
           (fn (s, i) => if is_z3_string s then z3_char_result (z3_num_to_char
              (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i]))
            else holsmt_app "smt_seq_nth" [s, i])),
+        ("seq.pre", z3_indexed_binary "seq_pre" z3_seq_pre),
+        ("seq.post", z3_indexed_binary "seq_post" z3_seq_post),
         ("seq.tail", z3_indexed_binary "seq_tail"
           (fn (s, i) => if is_z3_string s then z3_string_app "seq_tail"
-             [s, z3_natural i]
+             [s, intSyntax.mk_Num i]
            else listSyntax.mk_drop
-             (numSyntax.mk_plus (z3_natural i,
+             (numSyntax.mk_plus (intSyntax.mk_Num i,
                numSyntax.mk_numeral Arbnum.one), s))),
-        ("seq.eq", z3_indexed_binary "seq_eq"
+        ("seq.eq",  z3_indexed_binary "seq_eq"
           (fn (s, t) => if is_z3_string s then z3_string_app "seq_eq" [s, t]
            else boolSyntax.mk_eq (s, t))),
         ("seq.stoi", z3_indexed_binary "seq_stoi"
