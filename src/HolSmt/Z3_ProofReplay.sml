@@ -2440,6 +2440,7 @@ local
         | NONE => proofterm_replay_handler pt)
 
   fun proofterm_concl (AND_ELIM (_, concl)) = SOME concl
+    | proofterm_concl (APPLY_DEF (_, concl)) = SOME concl
     | proofterm_concl (ASSERTED concl) = SOME concl
     | proofterm_concl (COMMUTATIVITY concl) = SOME concl
     | proofterm_concl (DEF_AXIOM concl) = SOME concl
