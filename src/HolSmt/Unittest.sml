@@ -2487,6 +2487,21 @@ fun smtlib_datatype_elaboration_wellfounded_diagnostic () =
         "well-foundedness diagnostic mismatch: " ^ msg)
     end
 
+fun smtlib_elaborated_selector_surface_sort_diagnostic () =
+  let
+    val _ = SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
+      "(set-logic ALL)\n\
+      \(declare-datatype D ((mk (field (Array Int Bool)))))\n\
+      \(define-fun bad ((d D)) (Set Int) (field d))\n"
+  in
+    die "elaborated selector accepted an incompatible surface sort"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    assert (contains "surface sort mismatch" (Feedback.message_of holerr),
+      "elaborated selector surface-sort diagnostic changed: " ^
+      Feedback.message_of holerr)
+
 fun parse_file_echo_success () =
 let
   val assertions =
@@ -13208,6 +13223,8 @@ let
       smtlib_datatype_elaboration_core_success),
     ("smtlib_datatype_elaboration_wellfounded_diagnostic",
       smtlib_datatype_elaboration_wellfounded_diagnostic),
+    ("smtlib_elaborated_selector_surface_sort_diagnostic",
+      smtlib_elaborated_selector_surface_sort_diagnostic),
     ("parse_file_echo_success", parse_file_echo_success),
     ("parse_file_push_pop_assertion_scoping",
       parse_file_push_pop_assertion_scoping),

@@ -3141,12 +3141,11 @@ local
   fun surface_sort_compatible expected actual =
     case (expected, actual) of
       (PolySort _, _) => true
-    | (RigidSort expected_ty, actual) =>
-        same_sort expected_ty (surface_sort_type actual) orelse
-        int_to_real_expected expected_ty (surface_sort_type actual)
-    | (expected, RigidSort actual_ty) =>
-        same_sort (surface_sort_type expected) actual_ty orelse
-        int_to_real_expected (surface_sort_type expected) actual_ty
+    | (RigidSort expected_ty, RigidSort actual_ty) =>
+        same_sort expected_ty actual_ty orelse
+        int_to_real_expected expected_ty actual_ty
+    | (RigidSort _, _) => false
+    | (_, RigidSort _) => false
     | (ConstructorSort (expected_ty, expected_args),
        ConstructorSort (actual_ty, actual_args)) =>
         Lib.can (Type.match_type expected_ty) actual_ty andalso
