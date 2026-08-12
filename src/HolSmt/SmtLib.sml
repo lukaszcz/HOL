@@ -1260,7 +1260,7 @@ local
                in integer_count end
            | _ => raise ERR "dest_parsed_bag_literal" "wrong count arity")
         else if numSyntax.is_numeral count then
-          intSyntax.mk_injection count
+          Term.mk_comb (intSyntax.int_injection, count)
         else
           raise ERR "dest_parsed_bag_literal" "not a count"
       val _ =
