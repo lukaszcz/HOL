@@ -4780,7 +4780,10 @@ local
             end
     in
       case node_of term_ast of
-        TermIdentifier name =>
+        TermIdentifier "seq.empty" =>
+          type_error "typecheck_term" context (loc_of term_ast) NONE NONE
+            "seq.empty requires an explicit Seq sort ascription"
+      | TermIdentifier name =>
           apply_symbol "typecheck_term" context (loc_of term_ast) env name [] []
       | TermString value =>
           (checked_term_of (SmtLib_String_Literal.mk_string_term value)
