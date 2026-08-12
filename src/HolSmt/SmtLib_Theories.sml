@@ -1383,6 +1383,21 @@ in
             "predicate and value must bind the same variables"
         val result_var = Term.variant (Term.all_varsl [predicate, value])
           (Term.mk_var ("set_comprehension_x", Term.type_of value_body))
+        fun finite_guard var =
+          let val ty = Term.type_of var in
+            if pred_setSyntax.is_set_type ty then SOME (pred_setSyntax.mk_finite var)
+            else if bagSyntax.is_bag_ty ty then
+              SOME (Term.mk_comb
+                (Term.mk_thy_const {Thy = "bag", Name = "FINITE_BAG",
+                  Ty = Type.--> (ty, Type.bool)}, var))
+            else NONE
+          end
+        val guards = List.mapPartial finite_guard predicate_vars
+        val predicate_body =
+          case guards of
+            [] => predicate_body
+          | _ => boolSyntax.mk_conj (boolSyntax.list_mk_conj guards,
+              predicate_body)
         val body = boolSyntax.list_mk_exists (predicate_vars,
           boolSyntax.mk_conj (predicate_body,
             boolSyntax.mk_eq (result_var, value_body)))

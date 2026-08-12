@@ -3019,10 +3019,20 @@ local
     | _ => false
 
   fun finite_cvc5_binder_surface surface =
-    case surface of
-      ConstructorSort (ty, _) => finite_cvc5_set_element_type ty
-    | RigidSort ty => finite_cvc5_set_element_type ty
-    | _ => false
+    let
+      fun finite ty =
+        finite_cvc5_set_element_type ty orelse
+        (pred_setSyntax.is_set_type ty andalso
+         finite_cvc5_set_element_type (pred_setSyntax.dest_set_type ty)) orelse
+        (bagSyntax.is_bag_ty ty andalso
+         finite_cvc5_set_element_type
+           (bagSyntax.base_type (Term.mk_var ("finite_binder", ty))))
+    in
+      case surface of
+        ConstructorSort (ty, _) => finite ty
+      | RigidSort ty => finite ty
+      | _ => false
+    end
 
   type function_signature = {
     tm: Term.term,
