@@ -53,7 +53,7 @@ if [ "5" = "${CVC_VERSION}" ]; then \
 fi
 ENV HOL4_CVC_EXECUTABLE=${CVC_VERSION:+/ML/cvc5-Linux}
 RUN if [ "" != "${CVC_VERSION}" ]; then \
-    ${HOL4_CVC_EXECUTABLE} --version | head -1; \
+    ${HOL4_CVC_EXECUTABLE} --version; \
 fi
 
 # if --build-arg YICES_VERSION=1.0.40, set HOL4_YICES_EXECUTABLE to its full path,
