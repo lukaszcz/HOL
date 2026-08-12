@@ -3324,6 +3324,20 @@ local
                  "bag.card requires a finiteness-entailing cvc5 goal"
            end
          | _ => raise ERR "native_bag_builtin" "wrong card arity")
+      else if same_const rator bagSyntax.BAG_CARD_tm then
+        (case rands of [bag] =>
+           let
+             val (acc, (decls, name)) =
+               translate_term regime apply_operator (acc, (bounds, bag))
+           in
+             case !current_bag_backend of
+               CVC5NativeBag => (acc, (decls, sexpr "bag.card" [name]))
+             | Z3ArrayBag => raise ERR "native_bag_builtin"
+                 "bag.card is unavailable for solver Z3"
+             | CVC5ArrayBag => raise ERR "native_bag_builtin"
+                 "bag.card requires a finiteness-entailing cvc5 goal"
+           end
+         | _ => raise ERR "native_bag_builtin" "wrong card arity")
       else
       let
         fun translate_bag_arg (a, t) =
