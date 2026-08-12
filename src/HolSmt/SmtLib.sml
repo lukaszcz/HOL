@@ -5109,7 +5109,8 @@ local
     Tactical.MAP_EVERY (fn v => Tactic.SPEC_TAC (v, v)) vars g
   end
 
-  val SPEC_NUM_FREE_VARS_TAC = SPEC_NUM_FREE_VARS_TAC_EXCEPT (K false)
+  val SPEC_NUM_FREE_VARS_TAC =
+    SPEC_NUM_FREE_VARS_TAC_EXCEPT (fn _ => false)
 
   local
     structure A = arithmeticTheory
@@ -5576,7 +5577,7 @@ in
       ALL_TAC g
   end
 
-  val NUM_TO_INT_TAC = NUM_TO_INT_TAC_EXCEPT (K false)
+  val NUM_TO_INT_TAC = NUM_TO_INT_TAC_EXCEPT (fn _ => false)
 
   (* Relativizes num-typed binders to guarded int-typed binders. *)
   val NUM_BINDERS_TO_INT_TAC =

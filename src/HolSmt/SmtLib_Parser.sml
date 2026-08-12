@@ -1512,7 +1512,7 @@ local
       in
         if first = "Char" andalso close = ")" then
           let val char_ty = parse_type_aux get_token tydict first [] in
-            t_with_args tydict "Seq Char" [char_ty]
+            t_with_args tydict "Seq Char" [] [char_ty]
             handle Feedback.HOL_ERR _ => ordinary [first, close]
           end
         else ordinary [first, close]

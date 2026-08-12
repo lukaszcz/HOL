@@ -377,7 +377,7 @@ local
   val z3_string_tydict = Library.dict_from_list [
     ("Char", SmtLib_Theories.K_zero_zero z3_char_ty),
     ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty),
-    ("Seq Char", SmtLib_Theories.K_zero_one (K z3_string_seq_ty))
+    ("Seq Char", SmtLib_Theories.K_zero_one (fn _ => z3_string_seq_ty))
   ]
 
   fun z3_string_tmdict version =
