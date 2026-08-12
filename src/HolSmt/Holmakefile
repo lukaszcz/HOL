@@ -73,14 +73,24 @@ holsmt-cvc-cpc-tac: cvc_cpc_tac_driver.uo
 	chmod +x $@
 
 ifdef HOLSELFTESTLEVEL
-all: holsmt-selftest.log
+ifdef HOL4_SELFTEST_SHARD
+HOLSMT_SELFTEST_SHARDS = $(HOL4_SELFTEST_SHARD)
+else
+HOLSMT_SELFTEST_SHARDS = 0/8 1/8 2/8 3/8 4/8 5/8 6/8 7/8
+endif
 
-holsmt-selftest.log: selftest.exe
-	$(tee HOL4_SELFTEST_SHARD=$${HOL4_SELFTEST_SHARD:-0/8} ./selftest.exe 2>&1,$@)
+HOLSMT_SELFTEST_LOGS = $(patsubst %,holsmt-selftest-%.log,\
+  $(subst /,-,$(HOLSMT_SELFTEST_SHARDS)))
+
+all: $(HOLSMT_SELFTEST_LOGS)
+
+holsmt-selftest-%.log: selftest.exe
+	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) ./selftest.exe 2>&1,$@)
 endif
 
 EXTRA_CLEANS = selftest.exe smtfloat-diff.exe holsmt-typecheck \
-               holsmt-z3-tac holsmt-cvc-cpc-tac holsmt-selftest.log
+               holsmt-z3-tac holsmt-cvc-cpc-tac holsmt-selftest.log \
+               $(wildcard holsmt-selftest-*.log)
 
 ifdef HOLBUILD
 all: link-to-sigobj
