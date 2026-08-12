@@ -517,7 +517,8 @@ in
       higher_order = true
     }
     | logic_fragment_of_logic logic =
-    if String.isPrefix "HO_" logic then
+    if String.isPrefix "HO_" logic andalso
+       not (String.isPrefix "HO_" (String.extract (logic, 3, NONE))) then
       let
         val {quantifiers, uninterpreted, arrays, arith, ints, reals,
           bitvectors, strings, floatingpoint, datatypes, ...} =
@@ -922,7 +923,8 @@ in
      corresponding base packet (ALL already includes HO-Core, so the union
      is idempotent there). *)
   fun parsedicts_of_logic (logic : string) =
-    if String.isPrefix "HO_" logic then
+    if String.isPrefix "HO_" logic andalso
+       not (String.isPrefix "HO_" (String.extract (logic, 3, NONE))) then
       let
         val (tydict, tmdict) =
           parsedicts_of_logic (String.extract (logic, 3, NONE))
@@ -1203,7 +1205,8 @@ in
   (* returns the symbol metadata used to build the parse dictionaries of
      the given SMT-LIB 2 logic *)
   fun metadata_of_logic (logic : string) =
-    if String.isPrefix "HO_" logic then
+    if String.isPrefix "HO_" logic andalso
+       not (String.isPrefix "HO_" (String.extract (logic, 3, NONE))) then
       let
         val metadata =
           metadata_of_logic (String.extract (logic, 3, NONE))

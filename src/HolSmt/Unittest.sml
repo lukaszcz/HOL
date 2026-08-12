@@ -5267,6 +5267,10 @@ let
     ignore (SmtLib_Logics.parsedicts_of_logic "HO_XYZ")
   fun unknown_metadata () =
     ignore (SmtLib_Logics.metadata_of_logic "HO_XYZ")
+  fun nested_ho_dicts () =
+    ignore (SmtLib_Logics.parsedicts_of_logic "HO_HO_QF_UF")
+  fun nested_ho_metadata () =
+    ignore (SmtLib_Logics.metadata_of_logic "HO_HO_QF_UF")
 in
   List.app require_packet logic_pairs;
   assert (not (#quantifiers
@@ -5278,7 +5282,11 @@ in
   expect_hol_error_contains "unknown HO logic dictionaries"
     "unknown logic 'HO_XYZ'" unknown_dicts;
   expect_hol_error_contains "unknown HO logic metadata"
-    "unknown logic 'HO_XYZ'" unknown_metadata
+    "unknown logic 'HO_XYZ'" unknown_metadata;
+  expect_hol_error_contains "nested HO logic dictionaries"
+    "unknown logic 'HO_HO_QF_UF'" nested_ho_dicts;
+  expect_hol_error_contains "nested HO logic metadata"
+    "unknown logic 'HO_HO_QF_UF'" nested_ho_metadata
 end
 
 fun smtlib_scoped_logic_dictionary_success () =
