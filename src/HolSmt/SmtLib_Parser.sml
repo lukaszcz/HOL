@@ -680,13 +680,33 @@ local
           in
             if token_text first_tok = "(" then
               let
-                val (vars, _) =
-                  parse_until_rparen "parse_term" parse_sorted_var_from_first []
-                val _ =
-                  if List.null vars then
-                    syntax_error "parse_term" (token_loc head_tok)
-                      "set.comprehension requires a nonempty sorted-variable list"
-                  else ()
+                val var_first = need_token "parse_term"
+                  "set comprehension variable or argument"
+              in
+                if token_text var_first <> "(" then
+                  let
+                    val first = parse_term_from_first var_first
+                    val (args, close_tok) =
+                      parse_until_rparen "parse_term" parse_term_from_first
+                        [first]
+                    val loc = combine_span (token_loc open_tok)
+                      (token_loc close_tok)
+                    val head = located (token_loc head_tok)
+                      (TermIdentifier "set.comprehension")
+                  in
+                    located loc (TermApply (head, args))
+                  end
+                else
+                  let
+                    val (rest_vars, _) =
+                      parse_until_rparen "parse_term"
+                        parse_sorted_var_from_first []
+                    val vars = parse_sorted_var_from_first var_first :: rest_vars
+                    val _ =
+                      if List.null vars then
+                        syntax_error "parse_term" (token_loc head_tok)
+                          "set.comprehension requires a nonempty sorted-variable list"
+                      else ()
                 val predicate = parse_term_from_first
                   (need_token "parse_term" "set comprehension predicate")
                 val value = parse_term_from_first
@@ -699,8 +719,9 @@ local
                 val predicate = located (loc_of predicate)
                   (TermLambda (vars, predicate))
                 val value = located (loc_of value) (TermLambda (vars, value))
-              in
-                located loc (TermApply (head, [predicate, value]))
+                  in
+                    located loc (TermApply (head, [predicate, value]))
+                  end
               end
             else
               let
