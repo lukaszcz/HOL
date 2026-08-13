@@ -310,5 +310,16 @@ fun search_for_extensions gen {skip,starter_dirs = dlist} =
     walk (initial_visited, self_results, List.map #2 seeds)
   end
 
+(* Project suppression must not discard the older .holpath mechanism. *)
+fun search_for_holpath_extensions {skip, starter_dirs} =
+  let
+    val files = files_upward_in_hierarchy (fn _ => []) {diag = fn _ => ()}
+      {filenames = [holpath_file], starter_dirs = starter_dirs, skip = skip}
+  in
+    Binarymap.foldl
+      (fn (path, (_, contents), results) =>
+        {vname = extract_from_holpath_file contents, path = path} :: results)
+      [] files
+  end
 
 end (* struct *)

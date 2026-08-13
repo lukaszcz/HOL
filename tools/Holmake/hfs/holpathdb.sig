@@ -37,4 +37,9 @@ sig
       {starter_dirs : string list, skip : string Binaryset.set} ->
       {vname:string, path:string} list
 
+  (* Like [search_for_extensions], but consults legacy .holpath files only. *)
+  val search_for_holpath_extensions :
+      {starter_dirs : string list, skip : string Binaryset.set} ->
+      {vname:string, path:string} list
+
 end

@@ -73,18 +73,19 @@ fun parse_subcommand args =
          | _ => (REPL, args)) (* default to REPL, keep all args *)
 
 (* Get heap name from Holmakefile or return default *)
-fun get_heap_name () =
+fun get_heap_name no_project =
   let
     val default = Systeml.DEFAULT_STATE
     val heap =
         if OS.FileSys.access ("Holmakefile", [OS.FileSys.A_READ]) then
           let
             open Holmake_types
-            val holpathdb_extensions =
-                holpathdb.search_for_extensions ReadHMF.find_includes
-                  {starter_dirs = [OS.FileSys.getDir()],
-                   skip = holpathdb.db_dirs()}
-            val _ = List.app holpathdb.extend_db holpathdb_extensions
+            val _ =
+                if no_project then ()
+                else List.app holpathdb.extend_db
+                  (holpathdb.search_for_extensions ReadHMF.find_includes
+                    {starter_dirs = [OS.FileSys.getDir()],
+                     skip = holpathdb.db_dirs()})
             fun foldthis {vname,path} env = env_extend (vname, [LIT path]) env
             val env0 = holpathdb.fold foldthis (base_environment())
             val (env, _, _, _) = ReadHMF.read "Holmakefile" env0
@@ -380,7 +381,9 @@ fun main() = let
     else ()
   val _ = List.app check_unknown_opt objs0
   val OR options = List.foldl (fn (f, opts) => f opts) initial_cline cline_upds
-  val no_project = List.exists (fn arg => arg = "--no-project") remaining_args
+  val no_project = List.exists
+    (fn arg => String.size arg > 2 andalso
+               String.isPrefix arg "--no-project") remaining_args
   val {quietp = qp, output, base_state, all_forced, forced_objs,
        bare, z_repl, help, debug, extra_data, defaultout, exe, ...} = options
   (* Determine base_state:
@@ -393,7 +396,7 @@ fun main() = let
       if bare then SOME (OS.Path.concat(Systeml.HOLDIR, "bin/hol.state0"))
       else if subcmd = REPL andalso base_state = SOME Systeml.DEFAULT_STATE then
         (* Auto-detect heap for REPL mode when no explicit --holstate was given *)
-        SOME (get_heap_name())
+        SOME (get_heap_name no_project)
       else
         (* Use explicitly specified state (including NONE for --poly) *)
         base_state
@@ -401,7 +404,7 @@ fun main() = let
   val _ = not help orelse (print usage; OS.Process.exit OS.Process.success)
   (* For HEAPNAME subcommand, just print and exit immediately *)
   val _ = if subcmd = HEAPNAME then
-            (print (get_heap_name());
+            (print (get_heap_name no_project);
              print "\n";
              OS.Process.exit OS.Process.success)
           else ()
@@ -466,7 +469,10 @@ fun main() = let
                      NONE => "NONE"
                    | SOME s => "SOME(\"" ^ s ^"\")"))
   val exts =
-      if no_project then []
+      if no_project then
+        holpathdb.search_for_holpath_extensions
+          {skip = Binaryset.empty String.compare,
+           starter_dirs = [OS.FileSys.getDir()]}
       else holpathdb.search_for_extensions ReadHMF.find_includes
         {skip = Binaryset.empty String.compare,
          starter_dirs = [OS.FileSys.getDir()]}
