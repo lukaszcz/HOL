@@ -9,6 +9,16 @@ struct
 
   fun profile name f x = Profile.profile_with_exn_name name f x
 
+  fun with_string_budget case_id prove t =
+    SmtResource.with_resource_step_time "String" case_id
+      (fn target =>
+        (SmtResource.check_resource_goal "String" case_id target;
+         prove target)) t
+
+  fun rethrow_resource holerr =
+    if SmtResource.is_resource_gate holerr then raise Feedback.HOL_ERR holerr
+    else ()
+
   (* Keep future first-order string rungs under the shared replay bound. *)
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
   fun with_metis_limit f = Lib.with_flag (metisTools.limit, metis_limit) f
@@ -474,10 +484,16 @@ struct
      context by simplification with the shared string-theory rule sets.
      Callers order this after the rewrite and theory rungs. *)
   fun string_contextual_prove context target =
-    Tactical.TAC_PROOF ((context, target),
-      bossLib.ASM_SIMP_TAC
-        (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-        contextual_normalizations)
+    let
+      val _ = List.app
+        (SmtResource.check_resource_goal "String" "contextual") context
+    in
+      with_string_budget "contextual" (fn target =>
+        Tactical.TAC_PROOF ((context, target),
+          bossLib.ASM_SIMP_TAC
+            (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+            contextual_normalizations)) target
+    end
 
   fun rewrite_simp_prove t =
     simpLib.SIMP_PROVE
@@ -512,30 +528,40 @@ struct
      proforma net gets first refusal, then the executable compute set, then
      only the small, named normalization set above. *)
   fun string_rewrite_prove t =
-    if not (has_string_theory_term t) then
-      raise ERR "string_rewrite_prove" "no Unicode-string term"
-    else
-      profile "rewrite(03.0)(string-proforma)" proforma_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "rewrite(03.1)(string-ground-eval)" rewrite_evaluation_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "rewrite(03.2)(string-normalization)" rewrite_simp_prove t
+    with_string_budget "rewrite" (fn t =>
+      if not (has_string_theory_term t) then
+        raise ERR "string_rewrite_prove" "no Unicode-string term"
+      else
+        profile "rewrite(03.0)(string-proforma)" proforma_prove t
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "rewrite(03.1)(string-ground-eval)"
+           rewrite_evaluation_prove t)
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "rewrite(03.2)(string-normalization)" rewrite_simp_prove t)) t
 
   fun string_prove arith_prove t =
-    let val () = check_seq_type t in
-      profile "string(rung:1/proforma)" proforma_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "string(rung:2/ground-eval)" ground_eval_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "string(rung:3/length-arith)"
-        (length_arith_prove arith_prove) t
-      handle Feedback.HOL_ERR _ =>
-      profile "string(rung:4/symbolic)" symbolic_string_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "string(rung:5/regex)" regex_prove t
-      handle Feedback.HOL_ERR _ =>
-      profile "string(rung:7/unsupported)" (unsupported "seq") t
-    end
+    with_string_budget "replay" (fn t =>
+      let val () = check_seq_type t in
+        profile "string(rung:1/proforma)" proforma_prove t
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "string(rung:2/ground-eval)" ground_eval_prove t)
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "string(rung:3/length-arith)"
+           (length_arith_prove arith_prove) t)
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "string(rung:4/symbolic)" symbolic_string_prove t)
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "string(rung:5/regex)" regex_prove t)
+        handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "string(rung:7/unsupported)" (unsupported "seq") t)
+      end) t
 
   (* Z3 shares each tail of its bitwise comparison through proof lets.
      Parsing expands those lets, so compact the Boolean recurrence
@@ -576,8 +602,10 @@ struct
     end
 
   fun char_prove t =
-    profile "string(rung:6/char-bitblast)" char_bitblast_prove t
-    handle Feedback.HOL_ERR _ =>
-      profile "string(rung:7/unsupported)" (unsupported "char") t
+    with_string_budget "char-bitblast" (fn t =>
+      profile "string(rung:6/char-bitblast)" char_bitblast_prove t
+      handle holerr as Feedback.HOL_ERR _ =>
+        (rethrow_resource holerr;
+         profile "string(rung:7/unsupported)" (unsupported "char") t)) t
 
 end
