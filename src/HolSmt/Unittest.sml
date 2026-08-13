@@ -4594,6 +4594,15 @@ in
   ignore (typecheck z3_options
     "(set-logic ALL)\n\
      \(assert (= \"a\" (seq.unit (seq.nth \"a\" 0))))\n");
+  let
+    val distinct_negative_nths = assertion cvc5_options
+      "(distinct (seq.nth \"a\" (- 1)) (seq.nth \"a\" (- 2)))"
+    val (left, right) = boolSyntax.dest_eq
+      (boolSyntax.dest_neg distinct_negative_nths)
+  in
+    assert (not (Term.aconv left right),
+      "different negative String seq.nth calls were collapsed")
+  end;
   assert_builder "shared seq.empty" cvc5_options
     "(= (as seq.empty (Seq Int)) (as seq.empty (Seq Int)))"
     (boolSyntax.mk_eq (empty, empty));

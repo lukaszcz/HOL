@@ -1147,7 +1147,9 @@ in
     fun mk_string_nth (s, i) =
       boolSyntax.mk_cond
         (intSyntax.mk_less (i, intSyntax.zero_tm),
-         boolSyntax.mk_arb numSyntax.num,
+         apply_native_const
+           (boolSyntax.mk_arb (Type.--> (UnicodeStrings.string_ty,
+              Type.--> (intSyntax.int_ty, numSyntax.num)))) [s, i],
          apply_native_const
            (Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"})
            [s, intSyntax.mk_Num i])
