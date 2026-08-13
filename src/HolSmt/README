@@ -15,12 +15,18 @@ HolSmtScript.sml        Various theorems for HolSmtLib.
 Library.sml             Common auxiliary functions, tracing.
 README                  This file.
 selftest.sml            HolSmtLib tests.
+SmtLib_Datatypes.sml    Shared SMT-LIB datatype translation support.
 SmtLib_Logics.sml       SMT-LIB 2 logics.
 SmtLib_Parser.sml       Parsing of SMT-LIB 2 benchmarks.
+SmtLib_String_Literal.sml Unicode-string literal parsing and validation.
 SmtLib_Theories.sml     SMT-LIB 2 theories.
 SmtLib.sml              Translation of HOL terms into SMT-LIB 2 format.
+SmtArrayProve.sml       Checked proofs for SMT-LIB Array and Set operations.
 SmtBagProve.{sig,sml}   Checked proofs for SMT-LIB Bag operations.
+SmtDatatypeProve.sml    Checked proofs for SMT-LIB datatype operations.
+SmtFpProve.sml          Checked proofs for SMT-LIB floating-point operations.
 SmtSeqProve.{sig,sml}   Checked proofs for SMT-LIB sequence operations.
+SmtStringProve.sml      Checked proofs for SMT-LIB String and RegLan operations.
 SmtResource.sml         Fixed checked-replay resource budget and diagnostics.
 SolverSpec.sml          Definition of SMT solvers.
 TRUSTED_CODE_BASE.md    Higher-order trusted-translation note.
@@ -32,6 +38,11 @@ Z3_Proof.sml            Proof reconstruction for Z3: SML type of Z3 proofs.
 Z3_ProofParser.sml      Proof reconstruction for Z3: parsing of Z3's proofs.
 Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
                         HOL.
+cvc_cpc_tac_driver.sml  cvc5 CPC conformance driver.
+smtfloat{Lib,Script}.sml Floating-point syntax and theory support.
+smtstring{,z3}Script.sml String and Z3-string theory support.
+typecheck_driver.sml    SMT-LIB typechecking conformance driver.
+z3_tac_driver.sml       Z3 conformance driver.
 
 Validation assets:
 

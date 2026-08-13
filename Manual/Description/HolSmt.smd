@@ -200,14 +200,15 @@ and formulas) can
 be found in `SmtLib_Parser.sml`, with auxiliary functions in
 `SmtLib_{Logics,Theories}.sml`.
 
-The SMT-LIB 2 translation supports types `bool`, `num`, `int` and
-`real`, fixed-width word types, and the following terms: equality,
-Boolean connectives, quantifiers, numeric literals, arithmetic
-operators, comparison operators, function application, and various
-word operations.  Support for data types, records, and higher-order
-formulas depends on the selected solver and translation regime.  See the files
-mentioned above and the examples in `selftest.sml` for further
-details.
+The SMT-LIB 2 translation supports Boolean, numeric, real,
+fixed-width word, datatype, function/array, sequence, set, bag, String,
+regular-language, and floating-point surfaces, subject to the selected
+solver, translation regime, and checked-replay support.  In particular,
+collection cardinality and native collection operations have solver-specific
+finiteness requirements, and higher-order formulas depend on the selected
+solver and translation regime.  The coverage matrix in `src/HolSmt/README`
+is the authoritative per-operator account; see also the files mentioned above
+and the examples in `selftest.sml`.
 
 #### Tracing
 
