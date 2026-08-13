@@ -1480,6 +1480,10 @@ local
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_disj (left, right)),
            boolSyntax.mk_conj (boolSyntax.mk_neg left, boolSyntax.mk_neg right)))
+    | ("bool-and-de-morgan", [left, right, _]) =>
+        tautology name (boolSyntax.mk_eq
+          (boolSyntax.mk_neg (boolSyntax.mk_conj (left, right)),
+           boolSyntax.mk_disj (boolSyntax.mk_neg left, boolSyntax.mk_neg right)))
     | ("bool-implies-de-morgan", [left, right]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_imp (left, right)),

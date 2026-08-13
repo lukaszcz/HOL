@@ -130,6 +130,7 @@ struct
     mk_rule RareRewrite ("array-read-over-write-split", "rewrite"),
     mk_rule RareRewrite ("array-store-overwrite", "rewrite"),
     mk_rule RareRewrite ("bool-double-not-elim", "rewrite"),
+    mk_rule RareRewrite ("bool-and-de-morgan", "rewrite"),
     mk_rule RareRewrite ("bool-eq-false", "rewrite"),
     mk_rule RareRewrite ("bool-eq-true", "rewrite"),
     mk_rule RareRewrite ("bool-xor-comm", "rewrite"),
