@@ -6,9 +6,13 @@ fun z3_tac_usage () =
 fun z3_tac_emit status fields =
   print (String.concatWith "\n" (status :: fields) ^ "\n")
 
+exception Z3_Tac_Exit of OS.Process.status
+
+(* Do not exit below the snapshot finalizer: OS.Process.exit does not unwind
+   it, and would leave a snapshot behind for every diagnostic. *)
 fun z3_tac_die status fields =
   (z3_tac_emit status fields;
-   OS.Process.exit OS.Process.failure)
+   raise Z3_Tac_Exit OS.Process.failure)
 
 fun z3_tac_extra_args () =
   case !BuildHeap_CLINE.buildheap_extra_data of
@@ -503,11 +507,11 @@ in
             z3_tac_die "Z3_TAC_UNSUPPORTED"
               (common_fields @
                ["expected=sat", "result=unknown",
-                "diagnostic=SAT result was not reproduced: " ^ message]);
-        OS.Process.exit OS.Process.success
+                "diagnostic=SAT result was not reproduced: " ^ message])
       end
 end
-handle Feedback.HOL_ERR holerr =>
+handle Z3_Tac_Exit status => raise Z3_Tac_Exit status
+     | Feedback.HOL_ERR holerr =>
   z3_tac_die "Z3_TAC_FAIL"
     ["logic=" ^ expected_logic,
      "diagnostic=" ^ Feedback.message_of holerr]
@@ -559,6 +563,7 @@ fun z3_tac_ok path expected_logic =
   end
 
 val () =
-  case z3_tac_args () of
-    [path, logic] => z3_tac_ok path logic
-  | _ => z3_tac_die "Z3_TAC_FAIL" ["diagnostic=" ^ z3_tac_usage ()]
+  (case z3_tac_args () of
+     [path, logic] => z3_tac_ok path logic
+   | _ => z3_tac_die "Z3_TAC_FAIL" ["diagnostic=" ^ z3_tac_usage ()])
+  handle Z3_Tac_Exit status => OS.Process.exit status
