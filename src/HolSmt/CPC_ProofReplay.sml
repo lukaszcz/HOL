@@ -2659,13 +2659,19 @@ local
   fun replay_trust state prems args =
     let
       val target = expect_one_arg "trust" args
+      fun context_terms () =
+        HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+        List.map Thm.concl prems
+      fun discharge_prems thm =
+        List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+          thm prems
       fun prove_scoped_arithmetic () =
-        Tactical.TAC_PROOF ((#scope_hyps state, target),
+        discharge_prems (Tactical.TAC_PROOF ((context_terms (), target),
           Tactical.THEN
             (Tactical.REPEAT Tactic.COND_CASES_TAC,
              Tactical.THEN
                (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
-                intLib.ARITH_TAC)))
+                intLib.ARITH_TAC))))
       fun replay_rdiv () =
         let
           val (left, right) = boolSyntax.dest_eq target
@@ -2790,7 +2796,9 @@ local
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
         end
-      fun string_context () = SmtStringProve.has_string_theory_term target
+      fun string_context () =
+        List.exists SmtStringProve.has_string_theory_term
+          (target :: context_terms ())
       fun replay_string () =
         let
           val context =
@@ -2806,13 +2814,13 @@ local
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
         end
-      fun set_context () = SmtArrayProve.has_set_term target
-      fun bag_context () = SmtBagProve.has_native_bag_encoding target
+      fun set_context () =
+        List.exists SmtArrayProve.has_set_term (target :: context_terms ())
+      fun bag_context () =
+        List.exists SmtBagProve.has_native_bag_encoding
+          (target :: context_terms ())
       fun fp_context () =
-        SmtFpProve.has_fp_theory_term target orelse
-        Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
-          (#asserted_hyps state)) orelse
-        List.exists SmtFpProve.has_fp_theory_term (#scope_hyps state)
+        List.exists SmtFpProve.has_fp_theory_term (target :: context_terms ())
     in
       (* Native Seq, Set, and Bag trusts have no unchecked fallback.  Bag's
          second rung is the checked contextual simplifier used by its shared
