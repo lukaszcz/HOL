@@ -2101,7 +2101,7 @@ let
   val floatingpoint_state = typecheck
     ("(set-logic ALL)\n" ^
      "(declare-datatype FpBoxA2_09 " ^
-     "((mkFpBoxA2_09 (fpA2_09 (_ FloatingPoint 8 24))))\n" ^
+     "((mkFpBoxA2_09 (fpA2_09 (_ FloatingPoint 8 24)))))\n" ^
      "(declare-const fpboxA2_09 FpBoxA2_09)\n" ^
      "(assert ((_ is mkFpBoxA2_09) fpboxA2_09))\n" ^
      "(exit)\n")
