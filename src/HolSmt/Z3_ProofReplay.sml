@@ -2017,11 +2017,14 @@ local
        (* cache 'thm' *)
        (state_cache_thm state thm, thm)
      end
-     handle Feedback.HOL_ERR _ =>
-      raise ERR "z3_th_lemma_array"
-        ("unsupported th-lemma shape: theory=array; checked replay is only " ^
-         "implemented for function-update select/store/extensionality " ^
-         "lemmas; conclusion=" ^ Library.term_to_string t)))
+     handle holerr as Feedback.HOL_ERR _ =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+        raise ERR "z3_th_lemma_array"
+          ("unsupported th-lemma shape: theory=array; checked replay is only " ^
+           "implemented for function-update select/store/extensionality " ^
+           "lemmas; conclusion=" ^ Library.term_to_string t)))
 
   fun th_lemma_target (_, thms, t) =
     boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
@@ -2077,7 +2080,10 @@ local
       fun array attempts =
         if has_array_atom t then
           (profile "th_lemma[basic](6)(array)" SmtArrayProve.array_prove t
-           handle Feedback.HOL_ERR _ => metis ("array" :: attempts))
+           handle holerr as Feedback.HOL_ERR _ =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else metis ("array" :: attempts))
         else metis attempts
 
       fun bv attempts =
