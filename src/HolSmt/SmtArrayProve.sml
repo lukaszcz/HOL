@@ -71,6 +71,12 @@ struct
   fun set_simp_prove t =
     simpLib.SIMP_PROVE boolSimps.bool_ss set_rewrites t
 
+  fun with_replay_budget label prove t =
+    SmtResource.with_bitblast_step_time label
+      (fn t =>
+        (SmtResource.check_bitblast_goal label t;
+         prove t)) t
+
   (* The recorded subset map/const rewrite has an extensional equality of
      predicates below a Boolean equality.  Its quantified pointwise form
      needs one small checked METIS close after the Set rewrites. *)
@@ -193,7 +199,7 @@ struct
     Tactical.TAC_PROOF (([], t),
       bossLib.SIMP_TAC boolSimps.bool_ss [])
 
-  fun array_prove t =
+  fun array_prove_unbounded t =
     trivial_prove t
     handle Feedback.HOL_ERR _ =>
     if is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
@@ -221,5 +227,8 @@ struct
       unsupported t
     else
       unsupported t
+
+  fun array_prove t =
+    with_replay_budget "array-replay" array_prove_unbounded t
 
 end

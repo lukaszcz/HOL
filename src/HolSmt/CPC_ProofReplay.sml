@@ -2698,13 +2698,21 @@ local
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
-          val thm = Tactical.TAC_PROOF ((context, target),
-            bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])
+          val thm = SmtResource.with_bitblast_step_time "set-contextual"
+            (fn () =>
+              (List.app (SmtResource.check_bitblast_goal "set-contextual")
+                 (target :: context);
+               Tactical.TAC_PROOF ((context, target),
+                 bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))) ()
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
         end
-        handle Feedback.HOL_ERR _ => SmtArrayProve.array_prove target
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else
+            SmtArrayProve.array_prove target
       fun unsupported_set () =
         raise ERR "trust"
           ("unsupported CPC Set step: rule=trust; theory=set; " ^
