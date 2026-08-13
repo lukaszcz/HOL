@@ -4855,28 +4855,36 @@ local
     (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
        models; once selected they are semantic facts of those models and must
        not be serialized as unsupported HOL predicates. *)
-    val ts = List.filter (fn tm =>
+    val finite_sets = List.mapPartial finite_set_hypothesis original_ts
+    val finite_bags = List.mapPartial finite_bag_hypothesis original_ts
+    (* In cvc5's native finite collection models, finiteness evidence is a
+       semantic fact, including beneath Boolean connectives. *)
+    fun replace_finite tm =
+      case finite_set_hypothesis tm of
+        SOME set =>
+          if backend = CVC5NativeSet andalso finite_set_term finite_sets set
+          then boolSyntax.T else descend tm
+      | NONE =>
+          (case finite_bag_hypothesis tm of
+             SOME bag =>
+               if bag_backend = CVC5NativeBag andalso
+                  finite_bag_term finite_bags bag then boolSyntax.T
+               else descend tm
+           | NONE => descend tm)
+    and descend tm =
+      if Term.is_comb tm then
+        let val (rator, rand) = Term.dest_comb tm
+        in Term.mk_comb (replace_finite rator, replace_finite rand) end
+      else if Term.is_abs tm then
+        let val (var, body) = Term.dest_abs tm
+        in Term.mk_abs (var, replace_finite body) end
+      else tm
+    val ts = List.map replace_finite (List.filter (fn tm =>
       not (backend = CVC5NativeSet andalso
            Option.isSome (finite_set_hypothesis tm)) andalso
       not (bag_backend = CVC5NativeBag andalso
-           Option.isSome (finite_bag_hypothesis tm))) original_ts
-    val t =
-      case finite_set_hypothesis t of
-        SOME set =>
-          if backend = CVC5NativeSet andalso
-             finite_set_term
-               (List.mapPartial finite_set_hypothesis original_ts) set then
-            boolSyntax.T
-          else t
-      | NONE =>
-          (case finite_bag_hypothesis t of
-             SOME bag =>
-               if bag_backend = CVC5NativeBag andalso
-                  finite_bag_term
-                    (List.mapPartial finite_bag_hypothesis original_ts) bag then
-                 boolSyntax.T
-               else t
-           | NONE => t)
+           Option.isSome (finite_bag_hypothesis tm))) original_ts)
+    val t = replace_finite t
     val (regime, regime_reason) = select_regime request (ts, t)
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
