@@ -77,16 +77,18 @@ struct
   val seq_ss = simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)
 
   fun simp_prove_with rewrites t =
-    let
-      val normalized = simpLib.SIMP_CONV seq_ss rewrites t
-        handle Conv.UNCHANGED =>
-          raise ERR "simp_prove_with" "no rewrite applies to this rung"
-      val t' = boolSyntax.rhs (Thm.concl normalized)
-      val thm = tautLib.TAUT_PROVE t'
-        handle Feedback.HOL_ERR _ => intLib.ARITH_PROVE t'
-    in
-      Thm.EQ_MP (Thm.SYM normalized) thm
-    end
+    SmtResource.with_bitblast_step_time "seq-simp" (fn () =>
+      let
+        val _ = SmtResource.check_bitblast_goal "seq-simp" t
+        val normalized = simpLib.SIMP_CONV seq_ss rewrites t
+          handle Conv.UNCHANGED =>
+            raise ERR "simp_prove_with" "no rewrite applies to this rung"
+        val t' = boolSyntax.rhs (Thm.concl normalized)
+        val thm = tautLib.TAUT_PROVE t'
+          handle Feedback.HOL_ERR _ => intLib.ARITH_PROVE t'
+      in
+        Thm.EQ_MP (Thm.SYM normalized) thm
+      end) ()
 
   fun simp_prove t = simp_prove_with list_rewrites t
 
@@ -291,7 +293,9 @@ struct
       unsupported t
 
   fun seq_prove t =
+    SmtResource.with_bitblast_step_time "seq" (fn () =>
     let
+      val _ = SmtResource.check_bitblast_goal "seq" t
       fun next attempt fallback =
         attempt ()
         handle Feedback.HOL_ERR holerr =>
@@ -310,6 +314,6 @@ struct
         next (fn () => prefix_suffix_contains_prove t) (fn () =>
         next (fn () => indexof_replace_prove t) (fn () =>
         next (fn () => update_reverse_prove t) (fn () => unsupported t)))))))
-    end
+    end) ()
 
 end

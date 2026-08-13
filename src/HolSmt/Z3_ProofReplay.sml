@@ -1714,9 +1714,11 @@ local
                 (state_cache_thm state thm, thm)
               end))
 
-    handle Feedback.HOL_ERR _ =>
-
-    (state, profile "rewrite(02)(cache)" (state_inst_cached_thm state) t)
+    handle Feedback.HOL_ERR holerr =>
+    if SmtResource.is_resource_gate holerr then
+      raise Feedback.HOL_ERR holerr
+    else
+      (state, profile "rewrite(02)(cache)" (state_inst_cached_thm state) t)
 
     handle Feedback.HOL_ERR _ =>
 
