@@ -224,7 +224,7 @@ struct
           if node head = "Array" andalso List.length args = 2 then
             fun_pretype (self (List.nth (args, 0)), self (List.nth (args, 1)))
           else if node head = "Seq" andalso List.length args = 1 then
-            PD.dTyop {Tyop = "list", Thy = SOME "min",
+            PD.dTyop {Tyop = "list", Thy = SOME "list",
               Args = List.map self args}
           else if node head = "->" then
             (case List.rev (List.map self args) of
