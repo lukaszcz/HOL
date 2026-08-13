@@ -1154,13 +1154,18 @@ in
      non-conflicting dialect dictionaries; solver-facing callers must use the
      selector above and therefore retain dialect rejection. *)
   fun parsedicts_of_any_solver_logic logic =
-    let
-      val z3 = parsedicts_of_solver_logic "Z3" logic
-      val cvc5 = parsedicts_of_solver_logic "cvc5" logic
-    in
-      (union_dicts [Lib.fst z3, Lib.fst cvc5],
-       union_dicts [Lib.snd z3, Lib.snd cvc5])
-    end
+    if String.isPrefix "HO_" logic then
+      (* HO_* is cvc5-only, so do not let Z3's dialect guard prevent
+         solver-neutral parsing of its dictionaries. *)
+      parsedicts_of_solver_logic "cvc5" logic
+    else
+      let
+        val z3 = parsedicts_of_solver_logic "Z3" logic
+        val cvc5 = parsedicts_of_solver_logic "cvc5" logic
+      in
+        (union_dicts [Lib.fst z3, Lib.fst cvc5],
+         union_dicts [Lib.snd z3, Lib.snd cvc5])
+      end
 
   val set_dialect_logics = ["ALL", "HO_ALL"]
   val seq_dialect_logics =
