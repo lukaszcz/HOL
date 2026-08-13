@@ -197,9 +197,7 @@ struct
     HolSmtTheory.smt_seq_indexof_def,
     HolSmtTheory.smt_seq_indexof_aux_def,
     HolSmtTheory.smt_seq_replace_def,
-    HolSmtTheory.smt_seq_replace_raw_def,
-    HolSmtTheory.smt_seq_replace_all_def,
-    HolSmtTheory.smt_seq_replace_all_aux_def
+    HolSmtTheory.smt_seq_replace_raw_def
   ]
 
   (* Recursive replacement is deliberately not a general simp rule.  It is
@@ -271,8 +269,10 @@ struct
 
   fun indexof_replace_prove t =
     if mentions is_indexof_replace t then
-      simp_prove_with indexof_replace_rewrites t
-      handle Feedback.HOL_ERR _ => ground_replace_all_prove t
+      if mentions (named "HolSmt" ["smt_seq_replace_all"]) t then
+        ground_replace_all_prove t
+      else
+        simp_prove_with indexof_replace_rewrites t
     else
       raise ERR "indexof_replace_prove" "not an indexof/replace shape"
 
@@ -291,23 +291,25 @@ struct
       unsupported t
 
   fun seq_prove t =
-    if not (has_seq_type t) then
-      unsupported t
-    else
-      concat_length_prove t
-      handle Feedback.HOL_ERR _ =>
-      unit_empty_prove t
-      handle Feedback.HOL_ERR _ =>
-      access_prove t
-      handle Feedback.HOL_ERR _ =>
-      nth_decomposition_prove t
-      handle Feedback.HOL_ERR _ =>
-      prefix_suffix_contains_prove t
-      handle Feedback.HOL_ERR _ =>
-      indexof_replace_prove t
-      handle Feedback.HOL_ERR _ =>
-      update_reverse_prove t
-      handle Feedback.HOL_ERR _ =>
-      unsupported t
+    let
+      fun next attempt fallback =
+        attempt ()
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else
+            fallback ()
+    in
+      if not (has_seq_type t) then
+        unsupported t
+      else
+        next (fn () => concat_length_prove t) (fn () =>
+        next (fn () => unit_empty_prove t) (fn () =>
+        next (fn () => access_prove t) (fn () =>
+        next (fn () => nth_decomposition_prove t) (fn () =>
+        next (fn () => prefix_suffix_contains_prove t) (fn () =>
+        next (fn () => indexof_replace_prove t) (fn () =>
+        next (fn () => update_reverse_prove t) (fn () => unsupported t)))))))
+    end
 
 end

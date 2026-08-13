@@ -2713,12 +2713,15 @@ local
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
-          val thm = Tactical.TAC_PROOF ((context, target),
-            Tactical.THEN
-              (Tactical.REPEAT Tactic.COND_CASES_TAC,
-               Tactical.THEN
-                 (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
-                  intLib.ARITH_TAC)))
+          val thm = SmtResource.with_bitblast_step_time "bag-contextual"
+            (fn () =>
+              (SmtResource.check_bitblast_goal "bag-contextual" target;
+               Tactical.TAC_PROOF ((context, target),
+                 Tactical.THEN
+                   (Tactical.REPEAT Tactic.COND_CASES_TAC,
+                    Tactical.THEN
+                      (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                       intLib.ARITH_TAC))))) ()
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -2747,8 +2750,11 @@ local
             List.map Thm.concl prems
           val thm =
             SmtSeqProve.seq_prove target
-            handle Feedback.HOL_ERR _ =>
-              SmtSeqProve.seq_contextual_prove context target
+            handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else
+                SmtSeqProve.seq_contextual_prove context target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -3970,8 +3976,11 @@ local
           val thm = profile "CPC(rung:string/seq_contextual)"
             (fn target =>
               SmtSeqProve.seq_prove target
-              handle Feedback.HOL_ERR _ =>
-                SmtSeqProve.seq_contextual_prove context target) target
+              handle Feedback.HOL_ERR holerr =>
+                if SmtResource.is_resource_gate holerr then
+                  raise Feedback.HOL_ERR holerr
+                else
+                  SmtSeqProve.seq_contextual_prove context target) target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems

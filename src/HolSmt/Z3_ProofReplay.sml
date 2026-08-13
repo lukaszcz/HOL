@@ -1700,11 +1700,14 @@ local
           in
             (state_cache_thm state thm, thm)
           end
-          handle Feedback.HOL_ERR _ =>
-            (state, profile "rewrite(01.5)(proforma)"
-              (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
-            handle Feedback.HOL_ERR _ =>
-              let
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else
+              (state, profile "rewrite(01.5)(proforma)"
+                (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
+              handle Feedback.HOL_ERR _ =>
+                let
                 val thm = profile "rewrite(01.75)(array-set)"
                   SmtArrayProve.array_prove t
               in
@@ -2229,8 +2232,11 @@ local
     let
       val thm =
         profile "th_lemma[seq](3)(seq_prove)" SmtSeqProve.seq_prove t
-        handle Feedback.HOL_ERR _ =>
-          profile "Z3(rung:seq/contextual)"
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else
+            profile "Z3(rung:seq/contextual)"
             (SmtSeqProve.seq_contextual_prove
               (HOLset.listItems (#asserted_hyps state))) t
     in
