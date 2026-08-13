@@ -64,6 +64,7 @@ struct
     mk_rule ProofRule ("arrays-select-const", "arrays_select_const"),
     (* cvc5 has used both this macro and the narrow [sets-*] rewrites. *)
     mk_rule ProofRule ("sets", "sets"),
+    mk_rule ProofRule ("sets_ext", "sets_ext"),
     mk_rule ProofRule ("bool", "bool"),
     mk_rule ProofRule ("trust", "trust"),
     mk_rule ProofRule ("str", "string"),

@@ -456,6 +456,26 @@ local
             end
         | _ => raise ERR "cpc_quantifiers_skolemize_parsefn"
             "expected a quantified formula and a binder index"
+      fun sets_deq_diff_parsefn token indices args =
+        case (token, indices, args) of
+          ("@sets_deq_diff", [], [left, right]) =>
+            let
+              val (element, range) = Type.dom_rng (Term.type_of left)
+              val _ =
+                if Type.compare (range, Type.bool) = EQUAL andalso
+                   Type.compare (Term.type_of left, Term.type_of right) = EQUAL
+                then ()
+                else raise ERR "sets_deq_diff_parsefn"
+                  "expected two Sets of the same type"
+              val element_var = Term.variant (Term.all_varsl [left, right])
+                (Term.mk_var ("sets_deq_diff_x", element))
+            in
+              boolSyntax.mk_select (element_var, boolSyntax.mk_neg
+                (boolSyntax.mk_eq (Term.mk_comb (left, element_var),
+                  Term.mk_comb (right, element_var))))
+            end
+        | _ => raise ERR "sets_deq_diff_parsefn"
+            "expected two unindexed Set arguments"
       fun bags_deq_diff_parsefn token indices args =
         case (token, indices, args) of
           ("@bags_deq_diff", [], [left, right]) =>
@@ -479,6 +499,8 @@ local
             "expected two unindexed Bag arguments"
     in
     (tydict, Library.extend_dict
+      (("@sets_deq_diff", sets_deq_diff_parsefn),
+      Library.extend_dict
       (("@bags_deq_diff", bags_deq_diff_parsefn),
       Library.extend_dict
       (("@quantifiers_skolemize", cpc_quantifiers_skolemize_parsefn),

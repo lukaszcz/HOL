@@ -1168,6 +1168,28 @@ local
           end
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
+  fun replay_sets_ext prems =
+    case prems of
+      [premise] =>
+        let
+          val (left, right) = boolSyntax.dest_eq
+            (boolSyntax.dest_neg (Thm.concl premise))
+          val (element, range) = Type.dom_rng (Term.type_of left)
+          val _ = Type.compare (range, Type.bool) = EQUAL orelse
+            raise ERR "sets_ext" "expected two Sets"
+          val variable = Term.variant (Term.all_varsl [left, right])
+            (Term.mk_var ("sets_deq_diff_x", element))
+          val witness = boolSyntax.mk_select (variable, boolSyntax.mk_neg
+            (boolSyntax.mk_eq (Term.mk_comb (left, variable),
+              Term.mk_comb (right, variable))))
+          val target = boolSyntax.mk_neg (boolSyntax.mk_eq
+            (Term.mk_comb (left, witness), Term.mk_comb (right, witness)))
+        in
+          Tactical.TAC_PROOF (([Thm.concl premise], target),
+            bossLib.METIS_TAC [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM])
+        end
+    | _ => raise ERR "sets_ext" "expected one disequality premise"
+
   (* Set rewrites are deliberately driven by the certificate conclusion.
      Their names are closed explicitly in CPC_Proof's frozen inventory; this
      makes a future sets-* rule a versioned, loud registry error rather than
@@ -4066,6 +4088,7 @@ local
            | "str_substr_full_eq" => replay_str_substr_full_eq args
            | "seq_at_elim" => replay_seq_at_elim conclusion args
            | "sets" => replay_sets state (#name rule) prems conclusion args
+           | "sets_ext" => replay_sets_ext prems
            | "sets_rewrite" =>
                replay_sets state (#name rule) prems conclusion args
            | "rewrite" => replay_rare_rewrite (#name rule) args
