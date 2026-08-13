@@ -533,11 +533,11 @@ struct
         raise ERR "string_rewrite_prove" "no Unicode-string term"
       else
         profile "rewrite(03.0)(string-proforma)" proforma_prove t
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "rewrite(03.1)(string-ground-eval)"
            rewrite_evaluation_prove t)
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "rewrite(03.2)(string-normalization)" rewrite_simp_prove t)) t
 
@@ -545,20 +545,20 @@ struct
     with_string_budget "replay" (fn t =>
       let val () = check_seq_type t in
         profile "string(rung:1/proforma)" proforma_prove t
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:2/ground-eval)" ground_eval_prove t)
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:3/length-arith)"
            (length_arith_prove arith_prove) t)
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:4/symbolic)" symbolic_string_prove t)
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:5/regex)" regex_prove t)
-        handle holerr as Feedback.HOL_ERR _ =>
+        handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:7/unsupported)" (unsupported "seq") t)
       end) t
@@ -604,7 +604,7 @@ struct
   fun char_prove t =
     with_string_budget "char-bitblast" (fn t =>
       profile "string(rung:6/char-bitblast)" char_bitblast_prove t
-      handle holerr as Feedback.HOL_ERR _ =>
+      handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:7/unsupported)" (unsupported "char") t)) t
 
