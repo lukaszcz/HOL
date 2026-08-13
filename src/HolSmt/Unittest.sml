@@ -10339,8 +10339,7 @@ in
   assert (Thm.concl thm ~~ expected,
     "proof-bind quant-intro binder annotation: wrong conclusion " ^
     term_with_types (Thm.concl thm));
-  Library.check_oracle_tags
-    "Z3 proof-bind quant-intro binder annotation" thm
+  check_oracle_tags "Z3 proof-bind quant-intro binder annotation" thm
 end
 
 fun z3_proof_bind_nnf_pos_unliftable_premise_success () =
@@ -11717,8 +11716,7 @@ let
   fun check_boundary n =
     let val thm = replay_z3_proof_string (reconstruction_proof n)
     in
-      Library.check_oracle_tags
-        ("Z3 char boundary " ^ Int.toString n) thm
+      check_oracle_tags ("Z3 char boundary " ^ Int.toString n) thm
     end
   val digit_proof =
     "((declare-fun ch () Char) \
