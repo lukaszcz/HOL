@@ -219,7 +219,9 @@ struct
     smtstringTheory.smtstr_prefixof_singleton
   ] @ seq_shape_rules @ [
     smtstringz3Theory.seq_unit_def,
-    smtstringz3Theory.seq_eq_def
+    smtstringz3Theory.seq_eq_def,
+    smtstringTheory.smtstr_update_def,
+    smtstringTheory.smtstr_len_def
   ]
 
   val symbolic_lemmas = [
@@ -243,8 +245,8 @@ struct
   val symbolic_string_names =
     const_name_set
       (smtstring_consts "smtstring"
-        ["smtstr_concat", "smtstr_prefixof", "smtstr_suffixof",
-         "smtstr_contains"])
+        ["smtstr_concat", "smtstr_update", "smtstr_prefixof",
+         "smtstr_suffixof", "smtstr_contains"])
 
   val symbolic_thms =
     Z3_ProformaThms.thm_net_from_list symbolic_lemmas
