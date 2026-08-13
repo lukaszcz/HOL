@@ -8,6 +8,8 @@ sig
   val extend_db : {vname: string, path : string} -> unit
   val db_vnames : unit -> string Binaryset.set (* domain of map *)
   val db_dirs : unit -> string Binaryset.set (* range of map *)
+  val entries : unit -> {vname : string, path : string} list
+  val restore_entries : {vname : string, path : string} list -> unit
   val fold : ({vname:string,path:string} -> 'a -> 'a) -> 'a -> 'a
   val reverse_lookup : {path : string} -> string
   val subst_pathvars : string -> string

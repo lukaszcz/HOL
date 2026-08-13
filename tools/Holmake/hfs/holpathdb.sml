@@ -41,6 +41,18 @@ fun extend_db {vname, path} =
 
 fun db_vnames() = #dom (!holpath_db)
 fun db_dirs() = #rng (!holpath_db)
+fun entries () = fold (fn entry => fn acc => entry :: acc) []
+fun restore_entries saved =
+  let
+    val db = List.foldl (fn ({vname, path}, db) =>
+      {mapf = Binarymap.insert (#mapf db, vname, path),
+       dom = Binaryset.add (#dom db, vname),
+       rng = Binaryset.add (#rng db, path)})
+      {mapf = Binarymap.mkDict String.compare, dom = empty_strset,
+       rng = empty_strset} saved
+  in
+    holpath_db := db
+  end
 
 fun warn s = TextIO.output(TextIO.stdErr, "WARNING: " ^ s ^ "\n")
 
