@@ -280,7 +280,7 @@ fun fix s =
       | _ => s
   end
 
-fun create_heap diag qp findMod (objs, outputheap) = let
+fun create_heap diag qp findMod saved_load_path (objs, outputheap) = let
   open Systeml TextIO
   val p = if qp then fn _ => () else fn s => print (s ^ "\n")
   fun hload obj = (p ("Loading "^obj); load (fix obj))
@@ -290,6 +290,7 @@ in
   p "Sharing common data";
   PolyML.shareCommonData PolyML.rootFunction;
   p ("Writing heap: "^outputheap);
+  Meta.loadPath := saved_load_path;
   PolyML.SaveState.saveChild
     (outputheap, length (PolyML.SaveState.showHierarchy()));
   p ("Exported "^outputheap^"\n");
@@ -454,6 +455,7 @@ fun main() = let
                      PolyML.SaveState.loadState f
                      handle e => die ("Couldn't load HOL base-state "^f^": "^
                                       General.exnMessage e))
+  val saved_load_path = !Meta.loadPath
   (* AFTER loadState — the saved state restores refs to their save-
      time values and would otherwise wipe any earlier extension.
      Owns Meta.loadPath extension so prelude.ML doesn't have to,
@@ -540,7 +542,7 @@ in
             (* No --exe: create heap, expects .uo files.
                check_objpath validates paths are in sigobj or includes *)
             (List.app (check_objpath die (absPath "." :: allincs)) objs;
-             create_heap diag qp findmod (map #1 objs, s))
+             create_heap diag qp findmod saved_load_path (map #1 objs, s))
           | SOME fnname =>
             (* --exe specified: use maybe_check_load for .sml/.ML support,
                then export executable *)
