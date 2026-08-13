@@ -576,12 +576,8 @@ Local CI contract commands:
   $HOLSMT_VALIDATION_DIR/tools/run_holsmt_tests.sh --include-docker
 
   # Python tool unit tests
-  python3 -m unittest \
-    $HOLSMT_VALIDATION_DIR/tools/tests/test_audit_coverage_manifest.py \
-    $HOLSMT_VALIDATION_DIR/tools/tests/test_generate_complete_corpus.py \
-    $HOLSMT_VALIDATION_DIR/tools/tests/test_generate_smtlib_coverage.py \
-    $HOLSMT_VALIDATION_DIR/tools/tests/test_record_z3_proof_corpus.py \
-    $HOLSMT_VALIDATION_DIR/tools/tests/test_run_conformance_suite.py
+  HOLSMT_ROOT="$PWD" \
+    python3 -m unittest discover -s "$HOLSMT_VALIDATION_DIR/tools/tests"
 
   # Coverage report regeneration and enforcing manifest audit
   python3 $HOLSMT_VALIDATION_DIR/tools/coverage/generate_smtlib_coverage.py --release
