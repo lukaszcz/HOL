@@ -1209,7 +1209,8 @@ local
               HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
               List.map Thm.concl prems
             fun prove_tac context target tactic =
-              Tactical.TAC_PROOF ((context, target), tactic)
+              SmtResource.with_bitblast_step_time "sets-cardinality"
+                (fn () => Tactical.TAC_PROOF ((context, target), tactic)) ()
             fun card_bound () =
               case (name, args) of
                 ("sets-card-union", [left, right]) =>

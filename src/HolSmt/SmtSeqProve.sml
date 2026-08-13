@@ -211,7 +211,8 @@ struct
 
   fun ground_replace_all_prove t =
     if List.null (Term.free_vars t) then
-      Drule.EQT_ELIM (computeLib.CBV_CONV replace_all_compset t)
+      SmtResource.with_bitblast_step_time "seq-replace-all"
+        (fn t => Drule.EQT_ELIM (computeLib.CBV_CONV replace_all_compset t)) t
     else
       raise ERR "ground_replace_all_prove" "replacement is not ground"
 
@@ -283,8 +284,9 @@ struct
 
   fun seq_contextual_prove context t =
     if has_seq_type t then
-      Tactical.TAC_PROOF ((context, t),
-        bossLib.ASM_SIMP_TAC seq_ss list_rewrites)
+      SmtResource.with_bitblast_step_time "seq-contextual"
+        (fn () => Tactical.TAC_PROOF ((context, t),
+          bossLib.ASM_SIMP_TAC seq_ss list_rewrites)) ()
     else
       unsupported t
 
