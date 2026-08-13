@@ -1052,12 +1052,40 @@ local
      them out of the generic RARE ladder means an unrecognised Seq rule stays
      a named CPC obligation rather than becoming an accidental simplifier. *)
   fun replay_seq_rewrite name prems conclusion args =
-    case (name, conclusion, args) of
-      ("str-substr-concat1", SOME target, [_, _, _, _]) =>
-        SmtStringProve.string_contextual_prove (List.map Thm.concl prems)
-          target
-    | (_, _, [target]) => SmtSeqProve.seq_prove target
-    | _ => raise ERR name "expected one Seq rewrite proposition"
+    let
+      fun prove_string target =
+        List.foldl (fn (premise, proof) => Drule.PROVE_HYP premise proof)
+          (SmtStringProve.string_contextual_prove
+            (List.map Thm.concl prems) target) prems
+      fun substr_concat_target (prefix, suffix, start, length) =
+        let
+          val string_ty = Term.type_of prefix
+          val concat = Term.mk_thy_const {Thy = "smtstring",
+            Name = "smtstr_concat", Ty = Type.--> (string_ty,
+              Type.--> (string_ty, string_ty))}
+          val substr = Term.mk_thy_const {Thy = "smtstring",
+            Name = "smtstr_substr", Ty = Type.--> (string_ty,
+              Type.--> (intSyntax.int_ty, Type.--> (intSyntax.int_ty,
+                string_ty)))}
+        in
+          boolSyntax.mk_eq
+            (Term.list_mk_comb (substr,
+               [Term.list_mk_comb (concat, [prefix, suffix]), start, length]),
+             Term.list_mk_comb (substr, [prefix, start, length]))
+        end
+    in
+      case (name, conclusion, args) of
+        ("str-substr-concat1", SOME target, [prefix, suffix, start, length]) =>
+          let val expected = substr_concat_target (prefix, suffix, start, length)
+          in
+            if Term.aconv target expected then prove_string target
+            else raise ERR name "conclusion does not match arguments"
+          end
+      | ("str-substr-concat1", NONE, [prefix, suffix, start, length]) =>
+          prove_string (substr_concat_target (prefix, suffix, start, length))
+      | (_, _, [target]) => SmtSeqProve.seq_prove target
+      | _ => raise ERR name "expected one Seq rewrite proposition"
+    end
 
   fun is_smtstr_type ty =
     Type.compare (ty, Type.mk_thy_type
