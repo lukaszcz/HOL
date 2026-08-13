@@ -82,7 +82,9 @@ fun get_heap_name no_project =
             open Holmake_types
             val _ =
                 List.app holpathdb.extend_db
-                  ((if no_project then holpathdb.search_for_holpath_extensions
+                  ((if no_project then
+                       holpathdb.search_for_holpath_extensions_with_includes
+                         ReadHMF.find_includes
                     else holpathdb.search_for_extensions ReadHMF.find_includes)
                     {starter_dirs = [OS.FileSys.getDir()],
                      skip = holpathdb.db_dirs()})
@@ -471,7 +473,8 @@ fun main() = let
                    | SOME s => "SOME(\"" ^ s ^"\")"))
   val exts =
       if no_project then
-        holpathdb.search_for_holpath_extensions
+        holpathdb.search_for_holpath_extensions_with_includes
+          ReadHMF.find_includes
           {skip = Binaryset.empty String.compare,
            starter_dirs = [OS.FileSys.getDir()]}
       else holpathdb.search_for_extensions ReadHMF.find_includes

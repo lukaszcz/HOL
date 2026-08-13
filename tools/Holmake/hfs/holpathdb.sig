@@ -42,4 +42,10 @@ sig
       {starter_dirs : string list, skip : string Binaryset.set} ->
       {vname:string, path:string} list
 
+  (* Like [search_for_holpath_extensions], also walking explicit includes. *)
+  val search_for_holpath_extensions_with_includes :
+      (string -> string list) ->
+      {starter_dirs : string list, skip : string Binaryset.set} ->
+      {vname:string, path:string} list
+
 end
