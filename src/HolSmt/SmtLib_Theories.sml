@@ -1203,7 +1203,8 @@ in
       shared_term "seq.nth" no_attributes ["(seq.nth (Seq A) Int A)"]
         (K_zero_two
           (fn (s, i) =>
-            if is_string s then mk_string_nth (s, i)
+            if is_string s then
+              raise ERR "seq.nth" "String is supported only by Z3"
             else holsmt_app "smt_seq_nth" [s, i])),
       shared_term "seq.contains" no_attributes
         ["(seq.contains (Seq A) (Seq A) Bool)"]
@@ -1308,6 +1309,8 @@ in
       extension_entry "Z3" name attrs decl parse
 
     val tmentries = [
+      z3_term "seq.nth" no_attributes ["(seq.nth String Int String)"]
+        (K_zero_two Seq_Extensions.mk_string_nth),
       z3_term "seq.map" no_attributes
         ["(seq.map (-> A B) (Seq A) (Seq B))"]
         (K_zero_two listSyntax.mk_map),
