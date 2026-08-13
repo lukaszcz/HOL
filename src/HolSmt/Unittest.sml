@@ -12708,6 +12708,10 @@ let
     "resource-gated: fp-bitblast; limit=term-size; " ^
     "observed=200001 nodes; maximum=200000 nodes; " ^
     "feature=resource-gate:FloatingPoint:fp-rung"
+  val seq_diagnostic =
+    "resource-gated: sequence-replay; limit=term-size; " ^
+    "observed=200001 nodes; maximum=200000 nodes; " ^
+    "feature=resource-gate:Sequence:seq"
   val fp_continued = ref false
   fun expect_gate label expected thunk =
     (thunk ();
@@ -12738,6 +12742,8 @@ in
   expect_gate "step-time cap" time_diagnostic (fn () =>
     SmtResource.with_bitblast_step_time "comparison-step"
       (fn () => raise Timeout.TIMEOUT Time.zeroTime) ());
+  expect_gate "Sequence term-size cap" seq_diagnostic (fn () =>
+    SmtResource.check_term_size_for "Sequence" "seq" 200001);
   expect_gate "FP ladder resource propagation" fp_rung_diagnostic (fn () =>
     ignore (SmtFpProve.next_rung
       (fn _ =>

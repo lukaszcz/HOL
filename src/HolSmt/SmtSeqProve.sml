@@ -77,9 +77,9 @@ struct
   val seq_ss = simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)
 
   fun simp_prove_with rewrites t =
-    SmtResource.with_bitblast_step_time "seq-simp" (fn () =>
+    SmtResource.with_resource_step_time "Sequence" "seq-simp" (fn () =>
       let
-        val _ = SmtResource.check_bitblast_goal "seq-simp" t
+        val _ = SmtResource.check_resource_goal "Sequence" "seq-simp" t
         val normalized = simpLib.SIMP_CONV seq_ss rewrites t
           handle Conv.UNCHANGED =>
             raise ERR "simp_prove_with" "no rewrite applies to this rung"
@@ -211,7 +211,7 @@ struct
 
   fun ground_replace_all_prove t =
     if List.null (Term.free_vars t) then
-      SmtResource.with_bitblast_step_time "seq-replace-all"
+      SmtResource.with_resource_step_time "Sequence" "seq-replace-all"
         (fn t => Drule.EQT_ELIM (computeLib.CBV_CONV replace_all_compset t)) t
     else
       raise ERR "ground_replace_all_prove" "replacement is not ground"
@@ -286,16 +286,16 @@ struct
 
   fun seq_contextual_prove context t =
     if has_seq_type t then
-      SmtResource.with_bitblast_step_time "seq-contextual"
+      SmtResource.with_resource_step_time "Sequence" "seq-contextual"
         (fn () => Tactical.TAC_PROOF ((context, t),
           bossLib.ASM_SIMP_TAC seq_ss list_rewrites)) ()
     else
       unsupported t
 
   fun seq_prove t =
-    SmtResource.with_bitblast_step_time "seq" (fn () =>
+    SmtResource.with_resource_step_time "Sequence" "seq" (fn () =>
     let
-      val _ = SmtResource.check_bitblast_goal "seq" t
+      val _ = SmtResource.check_resource_goal "Sequence" "seq" t
       fun next attempt fallback =
         attempt ()
         handle Feedback.HOL_ERR holerr =>

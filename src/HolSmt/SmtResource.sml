@@ -18,25 +18,41 @@ struct
   val diagnostic_prefix = "resource-gated: fp-bitblast; "
   val feature_prefix = "resource-gate:FloatingPoint:"
 
-  fun feature case_id = feature_prefix ^ case_id
+  fun resource_diagnostic_prefix category =
+    if category = "FloatingPoint" then diagnostic_prefix
+    else "resource-gated: " ^ String.map Char.toLower category ^ "-replay; "
 
-  fun proof_size_diagnostic case_id observed =
-    diagnostic_prefix ^
+  fun resource_feature category case_id =
+    "resource-gate:" ^ category ^ ":" ^ case_id
+
+  fun feature case_id = resource_feature "FloatingPoint" case_id
+
+  fun proof_size_diagnostic_for category case_id observed =
+    resource_diagnostic_prefix category ^
     "limit=proof-size; observed=" ^ Int.toString observed ^
     " bytes; maximum=" ^ Int.toString max_proof_bytes ^
-    " bytes; feature=" ^ feature case_id
+    " bytes; feature=" ^ resource_feature category case_id
 
-  fun step_time_diagnostic case_id =
-    diagnostic_prefix ^
+  fun step_time_diagnostic_for category case_id =
+    resource_diagnostic_prefix category ^
     "limit=step-time; maximum=" ^
     LargeInt.toString (Time.toSeconds max_bitblast_step_time) ^
-    " s; feature=" ^ feature case_id
+    " s; feature=" ^ resource_feature category case_id
 
-  fun term_size_diagnostic case_id observed =
-    diagnostic_prefix ^
+  fun term_size_diagnostic_for category case_id observed =
+    resource_diagnostic_prefix category ^
     "limit=term-size; observed=" ^ Int.toString observed ^
     " nodes; maximum=" ^ Int.toString max_bitblast_term_nodes ^
-    " nodes; feature=" ^ feature case_id
+    " nodes; feature=" ^ resource_feature category case_id
+
+  fun proof_size_diagnostic case_id observed =
+    proof_size_diagnostic_for "FloatingPoint" case_id observed
+
+  fun step_time_diagnostic case_id =
+    step_time_diagnostic_for "FloatingPoint" case_id
+
+  fun term_size_diagnostic case_id observed =
+    term_size_diagnostic_for "FloatingPoint" case_id observed
 
   fun raise_gate function_name diagnostic =
     raise ERR function_name diagnostic
@@ -69,11 +85,15 @@ struct
 
   val with_z3_proof_size_gate = with_proof_size_gate
 
-  fun check_term_size case_id observed =
+  fun check_term_size_for category case_id observed =
     if observed <= max_bitblast_term_nodes then
       ()
     else
-      raise_gate "check_term_size" (term_size_diagnostic case_id observed)
+      raise_gate "check_term_size"
+        (term_size_diagnostic_for category case_id observed)
+
+  fun check_term_size case_id observed =
+    check_term_size_for "FloatingPoint" case_id observed
 
   (* Proof-parser terms are DAGs with extensive let-sharing.  [term_size]
      unfolds that sharing and turned a 100 KB comparison into 335 million
@@ -99,17 +119,24 @@ struct
       loop ([root], 0)
     end
 
-  fun check_bitblast_goal case_id goal =
-    check_term_size case_id
+  fun check_resource_goal category case_id goal =
+    check_term_size_for category case_id
       (term_nodes_up_to max_bitblast_term_nodes goal)
 
-  fun with_bitblast_step_time case_id f x =
+  fun check_bitblast_goal case_id goal =
+    check_resource_goal "FloatingPoint" case_id goal
+
+  fun with_resource_step_time category case_id f x =
     Timeout.apply max_bitblast_step_time f x
     handle Timeout.TIMEOUT _ =>
-      raise_gate "with_bitblast_step_time" (step_time_diagnostic case_id)
+      raise_gate "with_bitblast_step_time"
+        (step_time_diagnostic_for category case_id)
+
+  fun with_bitblast_step_time case_id f x =
+    with_resource_step_time "FloatingPoint" case_id f x
 
   fun is_resource_gate holerr =
     Feedback.top_structure_of holerr = "SmtResource" andalso
-    String.isPrefix diagnostic_prefix (Feedback.message_of holerr)
+    String.isPrefix "resource-gated: " (Feedback.message_of holerr)
 
 end

@@ -72,9 +72,9 @@ struct
     simpLib.SIMP_PROVE boolSimps.bool_ss set_rewrites t
 
   fun with_replay_budget label prove t =
-    SmtResource.with_bitblast_step_time label
+    SmtResource.with_resource_step_time "Array" label
       (fn t =>
-        (SmtResource.check_bitblast_goal label t;
+        (SmtResource.check_resource_goal "Array" label t;
          prove t)) t
 
   (* The recorded subset map/const rewrite has an extensional equality of
