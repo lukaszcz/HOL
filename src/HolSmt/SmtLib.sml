@@ -1211,16 +1211,6 @@ local
       List.exists visit (Lib.fst goal @ [Lib.snd goal])
     end
 
-  fun collection_nested_in_collection set_terms bag_terms =
-    List.exists (fn set =>
-      let val ty = set_element_type set in
-        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
-      end) set_terms orelse
-    List.exists (fn bag =>
-      let val ty = bag_element_type bag in
-        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
-      end) bag_terms
-
   fun cvc5_native_sets goal set_terms =
   let
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
@@ -1276,6 +1266,16 @@ local
   fun bag_element_type tm =
     if is_bag_type tm then bagSyntax.base_type tm
     else raise ERR "bag_element_type" "not a bag-valued term"
+
+  fun collection_nested_in_collection set_terms bag_terms =
+    List.exists (fn set =>
+      let val ty = set_element_type set in
+        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
+      end) set_terms orelse
+    List.exists (fn bag =>
+      let val ty = bag_element_type bag in
+        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
+      end) bag_terms
 
   fun add_bag_term tm terms =
     if is_bag_type tm andalso not (mem_aconv tm terms) then tm :: terms
