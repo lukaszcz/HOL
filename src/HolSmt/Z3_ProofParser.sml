@@ -176,12 +176,14 @@ local
 
   fun is_z3_char c =
     List.exists (Term.aconv c) (!z3_char_terms) orelse
-    (case Lib.total boolSyntax.strip_comb c of
-       SOME (_, []) => false
-     | SOME (head, args) =>
-         List.exists (Term.aconv head) (!z3_char_result_terms) orelse
-         List.exists is_z3_char args
-     | NONE => false)
+    (case Lib.total boolSyntax.dest_cond c of
+       SOME (_, then_tm, else_tm) =>
+         is_z3_char then_tm andalso is_z3_char else_tm
+     | NONE =>
+         (case Lib.total boolSyntax.strip_comb c of
+            SOME (head, _) =>
+              List.exists (Term.aconv head) (!z3_char_result_terms)
+          | NONE => false))
 
   fun z3_char_to_num c = wordsSyntax.mk_w2n c
 
