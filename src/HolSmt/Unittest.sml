@@ -11066,7 +11066,7 @@ fun bag_prove_ladder_rungs_success () =
    assert_bag_prover "bag map addition store"
      ``(\i:int. ((3:int =+ x) (a:int -> int)) i +
         ((3:int =+ 3) (b:int -> int)) i) =
-       (3 =+ x + 3) (\i:int. a i + b i)``);
+       (3 =+ x + 3) (\i:int. a i + b i)``;
    let
      val message =
        (ignore (SmtBagProve.bag_prove ``(x:num) = x``);
