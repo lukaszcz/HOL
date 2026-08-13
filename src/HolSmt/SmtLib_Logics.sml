@@ -1129,6 +1129,12 @@ in
         if known_solver then ()
         else raise ERR "parsedicts_of_solver_logic"
           ("unknown solver '" ^ solver ^ "'")
+      val _ =
+        if solver = "Z3" andalso String.isPrefix "HO_" logic then
+          raise ERR "parsedicts_of_solver_logic"
+            ("logic '" ^ logic ^ "' is a cvc5-only HO_* logic; use its " ^
+             "base logic or ALL for Z3")
+        else ()
       val (base_tydict, base_tmdict) = parsedicts_of_logic logic
       val registrations = List.filter
         (fn ({solver = registered_solver, logic = registered_logic, ...}
