@@ -1309,7 +1309,7 @@ in
       extension_entry "Z3" name attrs decl parse
 
     val tmentries = [
-      z3_term "seq.nth" no_attributes ["(seq.nth String Int String)"]
+      z3_term "seq.nth" no_attributes ["(seq.nth String Int Char)"]
         (K_zero_two Seq_Extensions.mk_string_nth),
       z3_term "seq.map" no_attributes
         ["(seq.map (-> A B) (Seq A) (Seq B))"]
