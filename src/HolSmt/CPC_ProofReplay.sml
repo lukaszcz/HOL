@@ -1213,9 +1213,9 @@ local
           val target = boolSyntax.mk_neg (boolSyntax.mk_eq
             (Term.mk_comb (left, witness), Term.mk_comb (right, witness)))
         in
-          SmtResource.with_bitblast_step_time "sets-extensionality"
+          SmtResource.with_resource_step_time "Set" "extensionality"
             (fn () =>
-              (SmtResource.check_bitblast_goal "sets-extensionality" target;
+              (SmtResource.check_resource_goal "Set" "extensionality" target;
                Drule.PROVE_HYP premise
                  (Tactical.TAC_PROOF (([Thm.concl premise], target),
                    bossLib.METIS_TAC
@@ -1242,8 +1242,11 @@ local
               HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
               List.map Thm.concl prems
             fun prove_tac context target tactic =
-              SmtResource.with_bitblast_step_time "sets-cardinality"
-                (fn () => Tactical.TAC_PROOF ((context, target), tactic)) ()
+              SmtResource.with_resource_step_time "Set" "cardinality"
+                (fn () =>
+                  (SmtResource.check_resource_goal "Set" "cardinality"
+                     target;
+                   Tactical.TAC_PROOF ((context, target), tactic))) ()
             fun card_bound () =
               case (name, args) of
                 ("sets-card-union", [left, right]) =>
@@ -2721,9 +2724,9 @@ local
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
-          val thm = SmtResource.with_bitblast_step_time "set-contextual"
+          val thm = SmtResource.with_resource_step_time "Set" "contextual"
             (fn () =>
-              (List.app (SmtResource.check_bitblast_goal "set-contextual")
+              (List.app (SmtResource.check_resource_goal "Set" "contextual")
                  (target :: context);
                Tactical.TAC_PROOF ((context, target),
                  bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))) ()
@@ -2747,9 +2750,9 @@ local
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
-          val thm = SmtResource.with_bitblast_step_time "bag-contextual"
+          val thm = SmtResource.with_resource_step_time "Bag" "contextual"
             (fn () =>
-              (SmtResource.check_bitblast_goal "bag-contextual" target;
+              (SmtResource.check_resource_goal "Bag" "contextual" target;
                Tactical.TAC_PROOF ((context, target),
                  Tactical.THEN
                    (Tactical.REPEAT Tactic.COND_CASES_TAC,
