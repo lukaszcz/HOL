@@ -1676,11 +1676,17 @@ local
     let val target = expect_one_arg "aci_norm" args
     in
       profile "CPC(rung:word/aci_norm)" wordsLib.WORD_ARITH_PROVE target
-      handle Feedback.HOL_ERR _ =>
-        profile "CPC(rung:seq/aci_norm)" SmtSeqProve.seq_prove target
-      handle Feedback.HOL_ERR _ =>
-        profile "CPC(rung:word/aci_norm_tautology)"
-          (tautology "aci_norm") target
+      handle Feedback.HOL_ERR holerr =>
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else
+          (profile "CPC(rung:seq/aci_norm)" SmtSeqProve.seq_prove target
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else
+               profile "CPC(rung:word/aci_norm_tautology)"
+                 (tautology "aci_norm") target)
     end
 
   fun replay_bv_xor_duplicate args =
