@@ -241,6 +241,12 @@ fun assert_num_binder_conv (label, input, expected) =
 (* local datatypes for translation tests                                      *)
 (*****************************************************************************)
 
+(* Unit tests are linked before selftest.sml opens its scratch theory. *)
+val _ =
+  case Thm.getCT () of
+    NONE => Feedback.quiet_messages Theory.new_theory "HolSmtUnittest"
+  | SOME _ => ()
+
 val _ = Hol_datatype
   `smt_rec = <| smt_count : int; smt_flag : bool |>`
 
