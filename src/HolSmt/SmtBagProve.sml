@@ -98,10 +98,13 @@ struct
         else unsupported t
 
   fun bag_prove_with_arith arith_prove t =
-    SmtResource.with_bitblast_step_time "bag-replay"
-      (fn t =>
-        (SmtResource.check_bitblast_goal "bag-replay" t;
-         bag_prove_with_arith_unbounded arith_prove t)) t
+    if not (has_bag_encoding t) then
+      unsupported t
+    else
+      SmtResource.with_bitblast_step_time "bag-replay"
+        (fn t =>
+          (SmtResource.check_bitblast_goal "bag-replay" t;
+           bag_prove_with_arith_unbounded arith_prove t)) t
 
   fun bag_prove t = bag_prove_with_arith intLib.ARITH_PROVE t
 
