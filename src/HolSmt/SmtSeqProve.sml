@@ -202,6 +202,19 @@ struct
     HolSmtTheory.smt_seq_replace_all_aux_def
   ]
 
+  (* Recursive replacement is deliberately not a general simp rule.  It is
+     nevertheless safe to compute a closed certificate conclusion. *)
+  val replace_all_compset =
+    computeLib.add_thms [HolSmtTheory.smt_seq_replace_all_def,
+      HolSmtTheory.smt_seq_replace_all_aux_def]
+      (computeLib.copy (computeLib.the_compset ()))
+
+  fun ground_replace_all_prove t =
+    if List.null (Term.free_vars t) then
+      Drule.EQT_ELIM (computeLib.CBV_CONV replace_all_compset t)
+    else
+      raise ERR "ground_replace_all_prove" "replacement is not ground"
+
   val update_reverse_rewrites = list_rewrites @ [
     HolSmtTheory.smt_seq_update_def,
     integerTheory.INT_SUB,
@@ -258,6 +271,7 @@ struct
   fun indexof_replace_prove t =
     if mentions is_indexof_replace t then
       simp_prove_with indexof_replace_rewrites t
+      handle Feedback.HOL_ERR _ => ground_replace_all_prove t
     else
       raise ERR "indexof_replace_prove" "not an indexof/replace shape"
 
