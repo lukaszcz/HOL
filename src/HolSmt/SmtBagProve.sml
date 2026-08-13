@@ -16,7 +16,7 @@ struct
 
   fun is_bag_constant tm =
     named "bag"
-      ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
+      ["BAG_IN", "BAG_INN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
        "BAG_INTER", "SUB_BAG", "EMPTY_BAG", "BAG_CARD", "BAG_FILTER",
        "BAG_CHOICE", "BAG_IMAGE", "BAG_EVERY", "ITBAG", "SET_OF_BAG",
        "BAG_OF_SET"] tm
