@@ -9144,9 +9144,8 @@ let
       val thm = CPC_ProofReplay.replay_root_for_test proof
     in
       check_oracle_tags ("CPC Seq " ^ name) thm;
-      if name = "str-at-elim" then () else
-        assert (Thm.concl thm ~~ expected,
-          "CPC " ^ name ^ " replay conclusion did not match expected goal");
+      assert (Thm.concl thm ~~ expected,
+        "CPC " ^ name ^ " replay conclusion did not match expected goal");
       assert (SmtSeqProve.has_seq_type (Thm.concl thm),
         "CPC " ^ name ^ " did not retain a native Seq proposition")
     end
