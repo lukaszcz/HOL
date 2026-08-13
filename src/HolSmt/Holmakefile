@@ -82,6 +82,16 @@ endif
 HOLSMT_SELFTEST_LOGS = $(patsubst %,holsmt-selftest-%.log,\
   $(subst /,-,$(HOLSMT_SELFTEST_SHARDS)))
 
+# The shards are memory-heavy. Keep their individual logs, but chain the
+# full matrix so a parallel jobserver cannot run multiple heaps at once.
+holsmt-selftest-1-8.log: holsmt-selftest-0-8.log
+holsmt-selftest-2-8.log: holsmt-selftest-1-8.log
+holsmt-selftest-3-8.log: holsmt-selftest-2-8.log
+holsmt-selftest-4-8.log: holsmt-selftest-3-8.log
+holsmt-selftest-5-8.log: holsmt-selftest-4-8.log
+holsmt-selftest-6-8.log: holsmt-selftest-5-8.log
+holsmt-selftest-7-8.log: holsmt-selftest-6-8.log
+
 all: $(HOLSMT_SELFTEST_LOGS)
 
 holsmt-selftest-%.log: selftest.exe
