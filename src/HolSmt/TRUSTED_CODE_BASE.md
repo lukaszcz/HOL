@@ -71,7 +71,9 @@ are stock HOL definitions or proved transfer lemmas.  Z3 bags are emitted as
 an `Array a Int` encoding, with `(_ map ...)` used for pointwise bag
 operations.  That encoding is a definitional translation choice, not an
 assumed bag theory: array/count correspondence and arithmetic side conditions
-are reconstructed in HOL by the checked replay path.
+are reconstructed in HOL where the replay supports the emitted array
+lemmas.  Z3 Bag proofs that require unsupported array lemmas remain
+oracle-only and are not accepted by checked `Z3_TAC`.
 
 The cvc5 native Set/Bag dialect is finite.  Native emission is selected by
 an ML-side eligibility check: structural finiteness, finite element types, or
