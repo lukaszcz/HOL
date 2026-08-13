@@ -3230,18 +3230,17 @@ local
      while checking applications such as String [seq.nth]/[seq.unit]. *)
   val smtstr_ty =
     Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
-  val unicode_seq_ty =
-    Type.mk_thy_type {Thy = "list", Tyop = "list", Args = [numSyntax.num]}
+  fun unicode_sequence_sort ty element =
+    listSyntax.is_list_type ty andalso
+    Type.compare (element, numSyntax.num) = EQUAL
 
   fun string_seq_unicode_alias left right =
     case (left, right) of
       (RigidSort left_ty, ConstructorSort (right_ty, [RigidSort element])) =>
         Type.compare (left_ty, smtstr_ty) = EQUAL andalso
-        Type.compare (right_ty, unicode_seq_ty) = EQUAL andalso
-        Type.compare (element, numSyntax.num) = EQUAL
+        unicode_sequence_sort right_ty element
     | (ConstructorSort (left_ty, [RigidSort element]), RigidSort right_ty) =>
-        Type.compare (left_ty, unicode_seq_ty) = EQUAL andalso
-        Type.compare (element, numSyntax.num) = EQUAL andalso
+        unicode_sequence_sort left_ty element andalso
         Type.compare (right_ty, smtstr_ty) = EQUAL
     | _ => false
 
