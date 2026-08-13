@@ -1051,9 +1051,12 @@ local
   (* The Seq RARE names have deliberately narrow, recorded schemas.  Keeping
      them out of the generic RARE ladder means an unrecognised Seq rule stays
      a named CPC obligation rather than becoming an accidental simplifier. *)
-  fun replay_seq_rewrite name args =
-    case args of
-      [target] => SmtSeqProve.seq_prove target
+  fun replay_seq_rewrite name prems conclusion args =
+    case (name, conclusion, args) of
+      ("str-substr-concat1", SOME target, [_, _, _, _]) =>
+        SmtStringProve.string_contextual_prove (List.map Thm.concl prems)
+          target
+    | (_, _, [target]) => SmtSeqProve.seq_prove target
     | _ => raise ERR name "expected one Seq rewrite proposition"
 
   fun is_smtstr_type ty =
@@ -4056,7 +4059,8 @@ local
            | "bv_ashr_by_const_0" => replay_bv_ashr_by_const_0 args
            | "bv_poly_norm" => replay_bv_poly_norm args
            | "bv_poly_norm_eq" => replay_bv_poly_norm_eq args
-           | "seq_rewrite" => replay_seq_rewrite (#name rule) args
+           | "seq_rewrite" =>
+               replay_seq_rewrite (#name rule) prems conclusion args
            | "seq_rev_rev" => replay_seq_rev_rev args
            | "str_contains_refl" => replay_str_contains_refl args
            | "str_substr_full_eq" => replay_str_substr_full_eq args
