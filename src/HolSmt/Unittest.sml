@@ -4583,6 +4583,9 @@ in
       listSyntax.mk_length xs), zero));
   assert_builder "shared seq.unit" z3_options "(= (seq.unit x) xs)"
     (boolSyntax.mk_eq (unit_x, xs));
+  ignore (typecheck z3_options
+    "(set-logic ALL)\n\
+     \(assert (= \"a\" (seq.unit (seq.nth \"a\" 0))))\n");
   assert_builder "shared seq.empty" cvc5_options
     "(= (as seq.empty (Seq Int)) (as seq.empty (Seq Int)))"
     (boolSyntax.mk_eq (empty, empty));

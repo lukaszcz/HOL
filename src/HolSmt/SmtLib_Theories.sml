@@ -1152,11 +1152,12 @@ in
            (Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"})
            [s, intSyntax.mk_Num i])
 
-    fun mk_seq_unit x =
-      listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
-
     fun is_string tm =
       Type.compare (Term.type_of tm, UnicodeStrings.string_ty) = EQUAL
+
+    fun mk_seq_unit x =
+      if is_string x then smtstring_app "smtstr_char" [x]
+      else listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
 
     fun string_or_seq string_name seq_fun args =
       if is_string (List.hd args) then smtstring_app string_name args
