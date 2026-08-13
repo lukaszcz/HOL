@@ -1140,11 +1140,17 @@ in
     fun mk_seq_len s =
       Term.mk_comb (intSyntax.int_injection, listSyntax.mk_length s)
 
-    (* Strings are sequences of Unicode code points.  Unlike str.at, seq.nth
-       returns an element, so use the total list selector directly. *)
+    (* Strings are sequences of Unicode code points.  seq.nth is unspecified
+       outside its domain, so negative indices must not be totalized to zero.
+       Z3's string-internal selector has exactly the required in-range
+       equation and an unspecified out-of-range result. *)
     fun mk_string_nth (s, i) =
-      listSyntax.mk_el (intSyntax.mk_Num i,
-        smtstring_app "smtstr_rep" [s])
+      boolSyntax.mk_cond
+        (intSyntax.mk_less (i, intSyntax.zero_tm),
+         Term.mk_arb numSyntax.num,
+         apply_native_const
+           (Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"})
+           [s, intSyntax.mk_Num i])
 
     fun mk_seq_unit x =
       listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
