@@ -4719,6 +4719,13 @@ local
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
     val subterms = List.concat (List.map Library.subterms (t :: original_ts))
+    fun computed_collection_application collection_terms =
+      List.exists (fn subterm =>
+        case Lib.total Term.dest_comb subterm of
+          SOME (function, argument) =>
+            mem_aconv argument collection_terms andalso
+            not (Term.is_var function orelse Term.is_const function)
+        | NONE => false) subterms
     fun has_mixed_collection_argument collection_terms =
       let
         fun positions function [] _ = []
@@ -4783,7 +4790,12 @@ local
           if collection_nested_in_collection set_terms bag_terms then
             (CVC5ArraySet, CVC5ArrayBag)
           else
-            (initial_backend, initial_bag_backend)
+            (if computed_collection_application set_terms then
+               CVC5ArraySet
+             else initial_backend,
+             if computed_collection_application bag_terms then
+               CVC5ArrayBag
+             else initial_bag_backend)
       | _ => (initial_backend, initial_bag_backend)
     val _ =
       case target of

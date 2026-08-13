@@ -6169,6 +6169,12 @@ let
     ([``FINITE (s:int set)``],
      Term.mk_comb (Term.mk_var ("set_predicate",
        Type.--> (Term.type_of s, Type.bool)), s))
+  val cvc_computed_function_text = cvc
+    ([``FINITE (s:int set)``],
+     Term.mk_comb
+       (boolSyntax.mk_cond (``p:bool``,
+          Term.mk_var ("set_f", Type.--> (Term.type_of s, Type.bool)),
+          Term.mk_var ("set_g", Type.--> (Term.type_of s, Type.bool))), s))
   val cvc_bound_function_message =
     (ignore (cvc
       ([``FINITE (s:int set)``],
@@ -6240,6 +6246,17 @@ in
       not (contains "((Array Int Bool)) Bool" cvc_set_argument_text),
     "native cvc5 Set function arguments lost their collection sort:\n" ^
     cvc_set_argument_text);
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_computed_function_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("computed cvc5 Set function is not closed SMT-LIB: " ^
+       Feedback.message_of holerr));
+  assert (contains "(Array Int Bool)" cvc_computed_function_text andalso
+      not (contains "(Set Int)" cvc_computed_function_text),
+    "computed cvc5 Set function did not use the array fallback:\n" ^
+    cvc_computed_function_text);
   assert (cvc_bound_function_message =
       "higher-order cvc5 functions over Sets or Bags are unsupported",
     "bound cvc5 Set function diagnostic changed: " ^
@@ -6321,6 +6338,12 @@ let
     ([``FINITE_BAG (b:int -> num)``],
      Term.mk_comb (Term.mk_var ("bag_predicate",
        Type.--> (Term.type_of b, Type.bool)), b))
+  val cvc_computed_function_text = cvc
+    ([``FINITE_BAG (b:int -> num)``],
+     Term.mk_comb
+       (boolSyntax.mk_cond (``p:bool``,
+          Term.mk_var ("bag_f", Type.--> (Term.type_of b, Type.bool)),
+          Term.mk_var ("bag_g", Type.--> (Term.type_of b, Type.bool))), b))
 in
   assert (contains "(Array Int Int)" z3_text andalso
       contains "((_ map (+ (Int Int) Int))" z3_text,
@@ -6395,7 +6418,18 @@ in
   assert (contains "((Bag Int)) Bool" cvc_bag_argument_text andalso
       not (contains "((Array Int Int)) Bool" cvc_bag_argument_text),
     "native cvc5 Bag function arguments lost their collection sort:\n" ^
-    cvc_bag_argument_text)
+    cvc_bag_argument_text);
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_computed_function_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("computed cvc5 Bag function is not closed SMT-LIB: " ^
+       Feedback.message_of holerr));
+  assert (contains "(Array Int Int)" cvc_computed_function_text andalso
+      not (contains "(Bag Int)" cvc_computed_function_text),
+    "computed cvc5 Bag function did not use the array fallback:\n" ^
+    cvc_computed_function_text)
 end
 
 fun smtlib_native_sequence_translation_success () =
