@@ -266,6 +266,7 @@ fun make_build_command (buildinfo : HM_Cline.t buildinfo_t) = let
     p ("set -e");
     (* Poly/ML runtime options (--gcthreads) must come before subcommand *)
     p (protect(fullPath [HOLDIR, "bin", "hol"]) ^ " --gcthreads=1 run " ^
+       (if #no_project (#core optv) then "--no-project " else "") ^
        (case #holheap extra of NONE => "--poly"
                              | SOME d => "--holstate="^tgt_toString d) ^ " " ^
        (if isSome debug then "--dbg " else "") ^
@@ -360,6 +361,7 @@ fun make_build_command (buildinfo : HM_Cline.t buildinfo_t) = let
                  NONE => []
                | SOME n => ["--maxheap", Int.toString n]) @
             ["run"] @
+            (if #no_project (#core optv) then ["--no-project"] else []) @
             (case #multithread optv of
                  NONE => []
                | SOME i => ["--mt=" ^ Int.toString i]) @

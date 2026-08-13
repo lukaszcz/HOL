@@ -204,6 +204,8 @@ val cline_opts = [
    desc = OptArg (set_threadcount, "c")},
   {help = "Don't use user config file in HOL repl", long = ["noconfig"], short = "",
    desc = NoArg (fn () => fn r => r)}, (* checked for and acted on by HOL repl *)
+  {help = "ignore holproject.toml and project include paths",
+   long = ["no-project"], short = "", desc = NoArg (fn () => fn r => r)},
   {help = "output heap/munger name", long = [], short = "o",
    desc = setStringOpt "filename" #output},
   {help = "use poly as base (no HOL state)", long = ["poly"], short = "",
@@ -378,6 +380,7 @@ fun main() = let
     else ()
   val _ = List.app check_unknown_opt objs0
   val OR options = List.foldl (fn (f, opts) => f opts) initial_cline cline_upds
+  val no_project = List.exists (fn arg => arg = "--no-project") remaining_args
   val {quietp = qp, output, base_state, all_forced, forced_objs,
        bare, z_repl, help, debug, extra_data, defaultout, exe, ...} = options
   (* Determine base_state:
@@ -418,16 +421,18 @@ fun main() = let
      .uo search (via `allincs`) and `Meta.loadPath` (used by
      interactive `load`/`open`) both need these visible. *)
   val project_incs =
-      case HMProject.find_root {start = OS.FileSys.getDir()} of
-          NONE => []
-        | SOME root =>
-            (let val cfg = HMProject.load {root = root}
-                 val dirs = if #holmake cfg then HMProject.discover_dirs cfg
-                            else []
-             in dirs @ #external_includes cfg end
-             handle Fail msg =>
-               (warn ("holproject.toml at " ^ root ^ " ignored: " ^ msg);
-                []))
+      if no_project then []
+      else
+        case HMProject.find_root {start = OS.FileSys.getDir()} of
+            NONE => []
+          | SOME root =>
+              (let val cfg = HMProject.load {root = root}
+                   val dirs = if #holmake cfg then HMProject.discover_dirs cfg
+                              else []
+               in dirs @ #external_includes cfg end
+               handle Fail msg =>
+                 (warn ("holproject.toml at " ^ root ^ " ignored: " ^ msg);
+                  []))
   val allincs = cwd_incs @ project_incs
   val _ = diag ("allincs = ["^String.concatWith ", " allincs ^"]")
   val base_state = Option.map mkAbs base_state
@@ -460,9 +465,11 @@ fun main() = let
                 (case !buildheap_extra_data of
                      NONE => "NONE"
                    | SOME s => "SOME(\"" ^ s ^"\")"))
-  val exts = holpathdb.search_for_extensions ReadHMF.find_includes
-               {skip = Binaryset.empty String.compare,
-                starter_dirs = [OS.FileSys.getDir()]}
+  val exts =
+      if no_project then []
+      else holpathdb.search_for_extensions ReadHMF.find_includes
+        {skip = Binaryset.empty String.compare,
+         starter_dirs = [OS.FileSys.getDir()]}
   fun print_ext{vname,path} = vname ^ " |-> " ^ path
   val _ = diag ("holpathdb extensions: "^
                 String.concatWith ", " (map print_ext exts))
