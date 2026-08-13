@@ -4457,6 +4457,11 @@ let
     solver = SOME "cvc5",
     elaborate_datatypes = false
   }
+  val cvc5_ho_options = {
+    dict_logic = SOME "HO_ALL",
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
   val seq_ty = listSyntax.mk_list_type intSyntax.int_ty
   val xs = Term.mk_var ("xs", seq_ty)
   val ys = Term.mk_var ("ys", seq_ty)
@@ -4790,24 +4795,24 @@ in
     (boolSyntax.mk_eq
       (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card bool_empty),
        zero));
-  assert_builder "cvc5 set.map" cvc5_options "(= (set.map f s) s)"
+  assert_builder "cvc5 set.map" cvc5_ho_options "(= (set.map f s) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_image (f, s), s));
-  ignore (typecheck cvc5_options
-    "(set-logic ALL)\n\
+  ignore (typecheck cvc5_ho_options
+    "(set-logic HO_ALL)\n\
      \(declare-const s (Set Bool))\n\
      \(declare-const f (-> Bool Bool))\n\
      \(assert (= (ite true (set.map f s) s) s))\n");
-  assert_builder "cvc5 set.filter" cvc5_options "(= (set.filter p s) s)"
+  assert_builder "cvc5 set.filter" cvc5_ho_options "(= (set.filter p s) s)"
     (boolSyntax.mk_eq
       (set_spec (filter_x, boolSyntax.mk_conj
         (pred_setSyntax.mk_in (filter_x, s), Term.mk_comb (p, filter_x)),
         [filter_x]), s));
-  ignore (assertion cvc5_options
+  ignore (assertion cvc5_ho_options
     "(= (ite true (set.filter p s) s) s)");
-  assert_builder "cvc5 set.all" cvc5_options "(set.all p s)"
+  assert_builder "cvc5 set.all" cvc5_ho_options "(set.all p s)"
     (boolSyntax.mk_forall (all_x, boolSyntax.mk_imp
       (pred_setSyntax.mk_in (all_x, s), Term.mk_comb (p, all_x))));
-  assert_builder "cvc5 set.some" cvc5_options "(set.some p s)"
+  assert_builder "cvc5 set.some" cvc5_ho_options "(set.some p s)"
     (boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
       (pred_setSyntax.mk_in (some_x, s), Term.mk_comb (p, some_x))));
   reject cvc5_options "cvc5 set.fold"
