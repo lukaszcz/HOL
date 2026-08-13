@@ -965,29 +965,37 @@ local
                   [boolSyntax.mk_eq (lhs, rhs)]
                 end
               fun quant_rewrite_args () =
-                let
-                  val _ = Library.expect_token "(" (get_token ())
-                  val _ = Library.expect_token "=" (get_token ())
-                  val _ = Library.expect_token "(" (get_token ())
-                  val quantifier = get_token ()
-                  val binder_name = get_token ()
-                  val binders =
-                    case lookup_cpc_list binder_name of
-                      SOME vars => vars
-                    | NONE => raise ERR "parse_step"
-                        ("undefined CPC @list alias " ^ binder_name)
-                  val body = parse_term dicts_ref get_token
-                  val _ = Library.expect_token ")" (get_token ())
-                  val rhs = parse_term dicts_ref get_token
-                  val _ = Library.expect_token ")" (get_token ())
-                  val _ = Library.expect_token ")" (get_token ())
-                  val lhs = if quantifier = "forall" then
-                    boolSyntax.list_mk_forall (binders, body)
-                    else if quantifier = "exists" then
-                      boolSyntax.list_mk_exists (binders, body)
-                    else raise ERR "parse_step"
-                      "expected quantified left side for CPC quantifier rewrite"
-                in [boolSyntax.mk_eq (lhs, rhs)] end
+                let val first = get_token () in
+                  if first <> "(" then
+                    let
+                      val proposition = parse_term dicts_ref
+                        (Library.undo_look_ahead [first] get_token)
+                      val _ = Library.expect_token ")" (get_token ())
+                    in [proposition] end
+                  else
+                    let
+                      val _ = Library.expect_token "=" (get_token ())
+                      val _ = Library.expect_token "(" (get_token ())
+                      val quantifier = get_token ()
+                      val binder_name = get_token ()
+                      val binders =
+                        case lookup_cpc_list binder_name of
+                          SOME vars => vars
+                        | NONE => raise ERR "parse_step"
+                            ("undefined CPC @list alias " ^ binder_name)
+                      val body = parse_term dicts_ref get_token
+                      val _ = Library.expect_token ")" (get_token ())
+                      val rhs = parse_term dicts_ref get_token
+                      val _ = Library.expect_token ")" (get_token ())
+                      val _ = Library.expect_token ")" (get_token ())
+                      val lhs = if quantifier = "forall" then
+                        boolSyntax.list_mk_forall (binders, body)
+                        else if quantifier = "exists" then
+                          boolSyntax.list_mk_exists (binders, body)
+                        else raise ERR "parse_step"
+                          "expected quantified left side for CPC quantifier rewrite"
+                    in [boolSyntax.mk_eq (lhs, rhs)] end
+                end
               (* CPC Set rules carry their set sort as an argument, e.g.
                  [(Set Int)].  This is proof metadata, not a HOL term; retain
                  it only as a variable of the parsed sort so rule-specific
