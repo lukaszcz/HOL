@@ -4682,6 +4682,11 @@ let
     solver = SOME "cvc5",
     elaborate_datatypes = false
   }
+  val cvc5_ho_options = {
+    dict_logic = SOME "HO_ALL",
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
   val int_set_ty = Type.--> (intSyntax.int_ty, Type.bool)
   val bool_set_ty = Type.--> (Type.bool, Type.bool)
   val s = Term.mk_var ("s", int_set_ty)
