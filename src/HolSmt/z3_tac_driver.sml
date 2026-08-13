@@ -324,7 +324,8 @@ fun z3_tac_timed_out status =
 fun z3_tac_status_script path =
   let
     val input = TextIO.openIn path
-    val text = Portable.finally TextIO.closeIn TextIO.inputAll input
+    val text =
+      Portable.finally (fn () => TextIO.closeIn input) TextIO.inputAll input
     val commands = SmtLib_Parser.parse_script_string text
     fun response command =
       case SmtLib_Parser.node_of command of
@@ -365,8 +366,8 @@ fun z3_tac_raw_result path =
       let
         val _ =
           let val stream = TextIO.openOut input in
-            Portable.finally TextIO.closeOut
-              (fn () => TextIO.output (stream, z3_tac_status_script path)) stream
+            Portable.finally (fn () => TextIO.closeOut stream)
+              (fn () => TextIO.output (stream, z3_tac_status_script path)) ()
           end
         val script = quote executable ^
           Z3.with_timeout_option " -smt2 -in < " ^ quote input ^
