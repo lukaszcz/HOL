@@ -2726,10 +2726,13 @@ local
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
         end
-        handle Feedback.HOL_ERR _ =>
-          raise ERR "trust"
-            ("unsupported CPC Bag step: rule=trust; theory=bag; " ^
-             "conclusion=" ^ Library.term_to_string target)
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else
+            raise ERR "trust"
+              ("unsupported CPC Bag step: rule=trust; theory=bag; " ^
+               "conclusion=" ^ Library.term_to_string target)
       fun replay_fp () =
         SmtFpProve.fp_prove_with_decompositions_and_arith
           arith_prove [] target
