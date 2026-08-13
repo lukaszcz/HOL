@@ -1211,6 +1211,16 @@ local
       List.exists visit (Lib.fst goal @ [Lib.snd goal])
     end
 
+  fun collection_nested_in_collection set_terms bag_terms =
+    List.exists (fn set =>
+      let val ty = set_element_type set in
+        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
+      end) set_terms orelse
+    List.exists (fn bag =>
+      let val ty = bag_element_type bag in
+        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
+      end) bag_terms
+
   fun cvc5_native_sets goal set_terms =
   let
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
@@ -4790,8 +4800,17 @@ local
               "higher-order cvc5 functions over Sets or Bags are unsupported"
           else ()
       | _ => ()
-    val backend = backend_for_target target goal set_terms
-    val bag_backend = bag_backend_for_target target goal bag_terms
+    val initial_backend = backend_for_target target goal set_terms
+    val initial_bag_backend =
+      bag_backend_for_target target goal bag_terms
+    val (backend, bag_backend) =
+      case target of
+        SOME {solver = "cvc5", ...} =>
+          if collection_nested_in_collection set_terms bag_terms then
+            (CVC5ArraySet, CVC5ArrayBag)
+          else
+            (initial_backend, initial_bag_backend)
+      | _ => (initial_backend, initial_bag_backend)
     val _ =
       case target of
         SOME {solver = "cvc5", ...} =>
