@@ -2925,35 +2925,40 @@ local
         val tydict_with_family = ListPair.foldlEq
           (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
           tydict (family, names)
-        fun translate_constructor_doms (fam_ty, (dict, decls)) =
+        fun translate_constructor_doms (fam_ty, (dict, decls, sorts)) =
           let
             val tyinfo =
               case TypeBase.fetch fam_ty of
                 SOME info => info
               | NONE => raise ERR "translate_datatype_type"
                   "missing TypeBase entry"
-            fun translate_one (constructor, (dict, decls)) =
+            fun translate_one (constructor, (dict, decls, sorts)) =
               let
                 val constructor = TypeBasePure.cinst fam_ty constructor
                 val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-                fun translate_dom (dom, (dict, decls)) =
+                fun translate_dom (dom, (dict, decls, sorts)) =
                   let
-                    val (dict, (new_decls, _)) =
+                    val (dict, (new_decls, sort)) =
                       translate_type regime (dict, dom)
                   in
-                    (dict, decls @ new_decls)
+                    (dict, decls @ new_decls, (dom, sort) :: sorts)
                   end
               in
-                List.foldl translate_dom (dict, decls) doms
+                List.foldl translate_dom (dict, decls, sorts) doms
               end
           in
-            List.foldl translate_one (dict, decls)
+            List.foldl translate_one (dict, decls, sorts)
               (TypeBasePure.constructors_of tyinfo)
           end
-        val (tydict, dependency_decls) =
-          List.foldl translate_constructor_doms (tydict_with_family, []) family
-        val declaration = datatype_declaration_text
-          (smt_sort_of_type regime tydict) family names
+        val (tydict, dependency_decls, field_sorts) =
+          List.foldl translate_constructor_doms
+            (tydict_with_family, [], []) family
+        fun field_sort ty =
+          case List.find (fn (field_ty, _) => same_type (ty, field_ty))
+              field_sorts of
+            SOME (_, sort) => sort
+          | NONE => smt_sort_of_type regime tydict ty
+        val declaration = datatype_declaration_text field_sort family names
         val name =
           case Redblackmap.peek (tydict, ty) of
             SOME n => n
