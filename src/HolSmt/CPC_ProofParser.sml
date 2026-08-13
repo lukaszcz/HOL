@@ -1061,6 +1061,24 @@ local
                     (terms, Term.type_of first)
                 | [] => listSyntax.mk_list
                     ([], Type.mk_vartype "'cpc_list")
+              fun validate_set_sort_metadata args =
+                let
+                  fun check (set, marker) =
+                    if Type.compare (Term.type_of set, Term.type_of marker) =
+                         EQUAL then ()
+                    else raise ERR "parse_step"
+                      ("CPC Set sort metadata does not match its set argument " ^
+                       "in step " ^ id ^ " (rule " ^ rule_name ^ ")")
+                in
+                  case (rule_name, args) of
+                    ("sets-card-emp", [set, marker]) => check (set, marker)
+                  | ("sets-is-empty-elim", [set, marker]) =>
+                      check (set, marker)
+                  | ("sets-member-emp", [_ , set, marker]) =>
+                      check (set, marker)
+                  | ("sets-minus-self", [set, marker]) => check (set, marker)
+                  | _ => ()
+                end
               fun structured_terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
@@ -1108,7 +1126,10 @@ local
               else if rule_name = "arith-mod-over-mod" orelse
                       rule_name = "arith-mod-over-mod-mult" then
                 attrs premises (structured_terms [])
-              else attrs premises (terms [])
+              else
+                let val args = terms [] in
+                  (validate_set_sort_metadata args; attrs premises args)
+                end
             end
         | attribute => raise ERR "parse_step"
             ("unknown CPC step attribute " ^ attribute ^
