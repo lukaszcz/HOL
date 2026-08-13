@@ -2017,7 +2017,7 @@ local
        (* cache 'thm' *)
        (state_cache_thm state thm, thm)
      end
-     handle holerr as Feedback.HOL_ERR _ =>
+     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
@@ -2080,7 +2080,7 @@ local
       fun array attempts =
         if has_array_atom t then
           (profile "th_lemma[basic](6)(array)" SmtArrayProve.array_prove t
-           handle holerr as Feedback.HOL_ERR _ =>
+           handle Feedback.HOL_ERR holerr =>
              if SmtResource.is_resource_gate holerr then
                raise Feedback.HOL_ERR holerr
              else metis ("array" :: attempts))
