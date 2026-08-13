@@ -311,6 +311,13 @@ datatype z3_tac_checked_result =
   | Z3_TAC_SAT
   | Z3_TAC_UNKNOWN of string option
 
+exception Z3_Tac_Raw_Timeout
+
+fun z3_tac_timed_out status =
+  case Posix.Process.fromStatus status of
+    Posix.Process.W_EXITSTATUS code => Word8.toInt code = 124
+  | _ => false
+
 (* Raw status checking needs only the result of check-sat.  In particular,
    never ask the unbounded raw invocation to materialise a proof: that is
    done only by the size-gated checked invocation. *)
@@ -368,6 +375,7 @@ fun z3_tac_raw_result path =
         val status = OS.Process.system (SolverSpec.with_wall_timeout command)
       in
         if OS.Process.isSuccess status then Z3.is_sat_file output
+        else if z3_tac_timed_out status then raise Z3_Tac_Raw_Timeout
         else raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
           "raw Z3 invocation failed"
       end
@@ -443,7 +451,11 @@ in
         val (expected_result, result) =
           (z3_tac_preflight_resource_gate assertions;
            (z3_tac_raw_result path, z3_tac_checked_result goal))
-          handle Feedback.HOL_ERR holerr =>
+          handle Z3_Tac_Raw_Timeout =>
+            z3_tac_die "Z3_TAC_RESOURCE_GATED"
+              ["logic=" ^ observed_logic,
+               "diagnostic=raw Z3 invocation exceeded wall timeout"]
+               | Feedback.HOL_ERR holerr =>
             if SmtResource.is_resource_gate holerr then
               z3_tac_die "Z3_TAC_RESOURCE_GATED"
                 ["logic=" ^ observed_logic,
