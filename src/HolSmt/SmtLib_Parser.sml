@@ -441,10 +441,17 @@ local
     val last_loc =
       ref (mk_point_span {line = 1, column = 1, offset = 0})
 
+    val pending_token = ref (NONE : located_token option)
+
     fun get_next_token () =
-      case next_token () of
-        NONE => NONE
-      | SOME tok => (last_loc := token_loc tok; SOME tok)
+      case !pending_token of
+        SOME tok => (pending_token := NONE; SOME tok)
+      | NONE =>
+          (case next_token () of
+             NONE => NONE
+           | SOME tok => (last_loc := token_loc tok; SOME tok))
+
+    fun unread_token tok = pending_token := SOME tok
 
     fun eof_loc () =
       !last_loc
@@ -685,7 +692,8 @@ local
               in
                 if token_text var_first <> "(" then
                   let
-                    val first = parse_term_from_first var_first
+                    val _ = unread_token var_first
+                    val first = parse_term_from_first first_tok
                     val (args, close_tok) =
                       parse_until_rparen "parse_term" parse_term_from_first
                         [first]
@@ -698,10 +706,11 @@ local
                   end
                 else
                   let
+                    val first_var = parse_sorted_var_from_first var_first
                     val (rest_vars, _) =
                       parse_until_rparen "parse_term"
                         parse_sorted_var_from_first []
-                    val vars = parse_sorted_var_from_first var_first :: rest_vars
+                    val vars = first_var :: rest_vars
                     val _ =
                       if List.null vars then
                         syntax_error "parse_term" (token_loc head_tok)
