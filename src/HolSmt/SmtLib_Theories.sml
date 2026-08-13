@@ -1157,8 +1157,18 @@ in
     fun is_string tm =
       Type.compare (Term.type_of tm, UnicodeStrings.string_ty) = EQUAL
 
+    (* [String] is a valid element sort of [Seq], not a Unicode character.
+       The String = Seq Unicode alias is recovered for the Z3 selector shape
+       below, whose result is known to be Unicode despite HOL representing
+       both Unicode and Int as [num]. *)
+    fun is_z3_string_nth tm =
+      Lib.can (HolKernel.find_term (fn subterm =>
+        Term.is_const subterm andalso
+        let val {Thy, Name, ...} = Term.dest_thy_const subterm
+        in Thy = "smtstringz3" andalso Name = "seq_nth_i" end)) tm
+
     fun mk_seq_unit x =
-      if is_string x then smtstring_app "smtstr_char" [x]
+      if is_z3_string_nth x then smtstring_app "smtstr_char" [x]
       else listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
 
     fun string_or_seq string_name seq_fun args =
