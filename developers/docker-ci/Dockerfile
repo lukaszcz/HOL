@@ -46,7 +46,8 @@ if [ "5" = "${CVC_VERSION}" ]; then \
       *) echo "unsupported cvc5 platform: ${TARGETPLATFORM}" >&2; exit 1 ;; \
     esac && \
     wget -q -O /tmp/cvc5.zip \
-      "https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.4/cvc5-Linux-${cvc_arch}-static.zip" && \
+      "https://github.com/cvc5/cvc5/releases/download/cvc5-1.3.4/"\
+      "cvc5-Linux-${cvc_arch}-static.zip" && \
     unzip -o /tmp/cvc5.zip -d /ML && \
     ln -sf /ML/cvc5-Linux-${cvc_arch}-static/bin/cvc5 /ML/cvc5-Linux && \
     rm /tmp/cvc5.zip; \
