@@ -5184,7 +5184,17 @@ local
         List.foldl add_param (tydict, []) params
       val param_tys = List.rev param_tys
       val body_ty = typecheck_sort context temp_tydict body
-      val body_surface = surface_sort_of_ast context temp_tydict body
+      (* Parameters shadow aliases in both sort representations. *)
+      val saved_surface_aliases = !surface_aliases
+      val shadowed_names = List.map located_string_node params
+      fun body_surface () =
+        (surface_aliases := List.filter
+           (fn (alias, _) => not (List.exists (Lib.equal alias) shadowed_names))
+           saved_surface_aliases;
+         surface_sort_of_ast context temp_tydict body)
+        handle e => (surface_aliases := saved_surface_aliases; raise e)
+      val body_surface = body_surface ()
+      val _ = surface_aliases := saved_surface_aliases
       val _ =
         if #solver context = SOME "cvc5" andalso
            nested_collection_surface body_surface then
