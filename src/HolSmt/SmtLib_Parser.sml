@@ -5957,14 +5957,9 @@ local
             val _ = surface_aliases := []
             val _ = surface_alias_frames := []
             val (tydict, tmdict) = parsedicts_for logic_name
-            val queries =
-              case state of
-                SOME {logic, queries, ...} =>
-                  if is_reset_logic logic then queries else []
-              | NONE => []
           in
             finish (new_typecheck_state_with_queries logic_name tydict tmdict
-              queries)
+              [])
           end
       | CmdGetInfo option =>
           let
@@ -6191,7 +6186,7 @@ local
             val (tydict, tmdict) = parsedicts_for logic
           in
             finish (new_typecheck_state_with_queries (reset_logic logic)
-              tydict tmdict (#queries command_state))
+              tydict tmdict [])
           end
       | CmdResetAssertions =>
           let
@@ -6206,7 +6201,7 @@ local
                 val _ = surface_alias_frames := []
               in
                 finish (new_typecheck_state_with_queries logic tydict tmdict
-                  (#queries command_state))
+                  [])
               end
             else
               finish (reset_typecheck_assertions command_state)
