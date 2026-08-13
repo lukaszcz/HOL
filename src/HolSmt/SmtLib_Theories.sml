@@ -1195,7 +1195,9 @@ in
               (fn [s, i] => mk_seq_at (s, i)
                 | _ => raise Fail "wrong arity") [s, i])),
       shared_term "seq.nth" no_attributes ["(seq.nth (Seq A) Int A)"]
-        (K_zero_two (fn (s, i) => holsmt_app "smt_seq_nth" [s, i])),
+        (K_zero_two
+          (string_or_seq_two "smtstr_at"
+            (fn (s, i) => holsmt_app "smt_seq_nth" [s, i]))),
       shared_term "seq.contains" no_attributes
         ["(seq.contains (Seq A) (Seq A) Bool)"]
         (K_zero_two
