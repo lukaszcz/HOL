@@ -1308,8 +1308,16 @@ in
     fun z3_term name attrs decl parse =
       extension_entry "Z3" name attrs decl parse
 
+    val tyentries = [
+      z3_term "Unicode" no_attributes ["(Unicode 0)"]
+        (K_zero_zero numSyntax.num)
+    ]
+
     val tmentries = [
-      z3_term "seq.nth" no_attributes ["(seq.nth String Int Char)"]
+      z3_term "Char" (indexed_attributes ["code"])
+        ["((_ Char code) Unicode)"]
+        (K_one_zero smtstring_char_index),
+      z3_term "seq.nth" no_attributes ["(seq.nth String Int Unicode)"]
         (K_zero_two Seq_Extensions.mk_string_nth),
       z3_term "seq.map" no_attributes
         ["(seq.map (-> A B) (Seq A) (Seq B))"]
@@ -1322,12 +1330,11 @@ in
         (K_zero_three listSyntax.mk_foldl)
     ]
 
-    val tydict :
-      (string, (string -> Term.term list -> Type.hol_type list ->
-        Type.hol_type) list) Redblackmap.dict =
-      Redblackmap.mkDict String.compare
+    val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
-    val metadata = metadata_of_entries "Z3_Seq" "term" tmentries
+    val metadata =
+      metadata_of_entries "Z3_Seq" "sort" tyentries @
+      metadata_of_entries "Z3_Seq" "term" tmentries
   end
 
   (* cvc5's finite-set dialect.  These entries deliberately live outside
