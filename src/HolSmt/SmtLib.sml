@@ -4617,6 +4617,14 @@ local
           SOME (rator, _) =>
             same_const rator seq_map_tm orelse same_const rator seq_foldl_tm
         | NONE => false
+      fun partial_ranked_builtin rator rands =
+        Term.is_const rator andalso
+        let
+          val {Thy, Name, ...} = Term.dest_thy_const rator
+        in
+          List.length rands < declared_const_arity rator andalso
+          Redblackset.member (builtin_const_names, (Thy, Name))
+        end
       fun scan inherited tm =
         if is_seq_ho_combinator tm then
           SOME "automatic:seq-ho-combinator"
@@ -4657,6 +4665,8 @@ local
                            if List.exists (Term.aconv rator) inherited then
                              SOME
                                "automatic:non-constant/non-variable-rator"
+                           else if partial_ranked_builtin rator rands then
+                             SOME "automatic:partial-ranked-builtin"
                            else if Term.is_const rator orelse
                                    Term.is_var rator then
                              first_reason (scan inherited) rands
