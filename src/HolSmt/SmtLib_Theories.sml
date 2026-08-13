@@ -1140,6 +1140,12 @@ in
     fun mk_seq_len s =
       Term.mk_comb (intSyntax.int_injection, listSyntax.mk_length s)
 
+    (* Strings are sequences of Unicode code points.  Unlike str.at, seq.nth
+       returns an element, so use the total list selector directly. *)
+    fun mk_string_nth (s, i) =
+      listSyntax.mk_el (intSyntax.mk_Num i,
+        smtstring_app "smtstr_rep" [s])
+
     fun mk_seq_unit x =
       listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
 
@@ -1196,8 +1202,9 @@ in
                 | _ => raise Fail "wrong arity") [s, i])),
       shared_term "seq.nth" no_attributes ["(seq.nth (Seq A) Int A)"]
         (K_zero_two
-          (string_or_seq_two "smtstr_at"
-            (fn (s, i) => holsmt_app "smt_seq_nth" [s, i]))),
+          (fn (s, i) =>
+            if is_string s then mk_string_nth (s, i)
+            else holsmt_app "smt_seq_nth" [s, i])),
       shared_term "seq.contains" no_attributes
         ["(seq.contains (Seq A) (Seq A) Bool)"]
         (K_zero_two
