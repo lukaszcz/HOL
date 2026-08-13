@@ -5490,13 +5490,19 @@ local
 
   fun check_elaborated_datatype_surface context tydict decl =
     let
+      val parameters =
+        case node_of decl of DatatypeDecl (params, _) => params
+      fun shadows_alias name =
+        List.exists (fn param => located_string_node param = name) parameters
       fun contains_collection_surface surface =
         is_set_surface surface orelse is_bag_surface surface orelse
         nested_collection_surface surface
       fun alias_contains_collection name =
-        case List.find (fn (alias, _) => alias = name) (!surface_aliases) of
-          SOME (_, (_, surface)) => contains_collection_surface surface
-        | NONE => false
+        if shadows_alias name then false
+        else
+          case List.find (fn (alias, _) => alias = name) (!surface_aliases) of
+            SOME (_, (_, surface)) => contains_collection_surface surface
+          | NONE => false
       fun contains_collection sort =
         case node_of sort of
           SortIdentifier name => alias_contains_collection name
