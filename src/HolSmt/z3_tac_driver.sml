@@ -307,6 +307,37 @@ datatype z3_tac_checked_result =
   | Z3_TAC_SAT
   | Z3_TAC_UNKNOWN of string option
 
+(* Raw status checking needs only the result of check-sat.  In particular,
+   never ask the unbounded raw invocation to materialise a proof: that is
+   done only by the size-gated checked invocation. *)
+fun z3_tac_status_script path =
+  let
+    val input = TextIO.openIn path
+    val text = Portable.finally TextIO.closeIn TextIO.inputAll input
+    val commands = SmtLib_Parser.parse_script_string text
+    fun response command =
+      case SmtLib_Parser.node_of command of
+        SmtLib_Parser.CmdGetProof => true
+      | SmtLib_Parser.CmdGetUnsatAssumptions => true
+      | SmtLib_Parser.CmdGetUnsatCore => true
+      | _ => false
+    fun span command =
+      case SmtLib_Parser.loc_of command of
+        SmtLib_Parser.SourceSpan
+          {start = {offset = start, ...}, stop = {offset = stop, ...}} =>
+          (start, stop)
+    fun copy_from offset [] = String.extract (text, offset, NONE)
+      | copy_from offset (command :: rest) =
+          if response command then
+            let val (start, stop) = span command in
+              String.extract (text, offset, SOME (start - offset)) ^
+              copy_from stop rest
+            end
+          else copy_from offset rest
+  in
+    copy_from 0 commands
+  end
+
 fun z3_tac_raw_result path =
   let
     val executable =
@@ -315,18 +346,20 @@ fun z3_tac_raw_result path =
       | NONE => raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
           Z3.error_msg
     val output = OS.FileSys.tmpName ()
+    val input = OS.FileSys.tmpName ()
     fun quote path =
       "'" ^ String.translate
         (fn #"'" => "'\\''" | character => str character) path ^ "'"
     fun work () =
       let
-        val script =
-          "(printf '%s\\n' " ^
-          "'(set-option :produce-proofs true)' " ^
-          "'(set-option :produce-unsat-cores true)' " ^
-          "'(set-option :produce-unsat-assumptions true)'; cat " ^
-          quote path ^ ") | " ^ quote executable ^
-          Z3.with_timeout_option " -smt2 -in > " ^ quote output
+        val _ =
+          let val stream = TextIO.openOut input in
+            Portable.finally TextIO.closeOut
+              (fn () => TextIO.output (stream, z3_tac_status_script path)) stream
+          end
+        val script = quote executable ^
+          Z3.with_timeout_option " -smt2 -in < " ^ quote input ^
+          " > " ^ quote output
         val command = "sh -c " ^ quote script
         val status = OS.Process.system (SolverSpec.with_wall_timeout command)
       in
@@ -334,7 +367,9 @@ fun z3_tac_raw_result path =
         else raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_raw_result"
           "raw Z3 invocation failed"
       end
-    fun cleanup () = OS.FileSys.remove output handle OS.SysErr _ => ()
+    fun cleanup () =
+      (OS.FileSys.remove output handle OS.SysErr _ => ();
+       OS.FileSys.remove input handle OS.SysErr _ => ())
   in
     Portable.finally cleanup work ()
   end
