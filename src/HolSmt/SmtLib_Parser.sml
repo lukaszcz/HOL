@@ -2643,18 +2643,17 @@ local
                  {logic = logic, frames = rest, queries = queries}
          | [] => raise ERR "pop" "empty assertion stack")
 
-  fun reset_assertions (state as {logic, frames, queries}: command_state) =
+  fun reset_assertions ({logic, frames, queries}: command_state) =
     let
-      val frame = current_frame state
-      val reset_frame = {
+      fun reset_frame frame = {
         tydict = frame_tydict frame,
         tmdict = frame_tmdict frame,
         assertions = [],
         named_assertions = [],
-        local_definitions = active_local_definitions state
+        local_definitions = frame_local_definitions frame
       }
     in
-      {logic = logic, frames = [reset_frame], queries = queries}
+      {logic = logic, frames = List.map reset_frame frames, queries = queries}
     end
 
   fun parse_top_level_assertion get_token (tydict, tmdict) =
@@ -3639,24 +3638,20 @@ local
          | [] => raise ERR "pop" "empty assertion stack")
 
   fun reset_typecheck_assertions
-      (state as
-        {logic, frames, queries, surface_flags}: typecheck_state) =
+      ({logic, frames, queries, surface_flags}: typecheck_state) =
     let
-      val frame = current_typecheck_frame
-        {logic = logic, frames = frames, queries = queries,
-         surface_flags = surface_flags}
-      val reset_frame = {
+      fun reset_frame frame = {
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
-        finite_sets = active_typechecked_finite_sets state,
+        finite_sets = typecheck_frame_finite_sets frame,
         assertions = [],
         named_assertions = [],
-        local_definitions = active_typechecked_local_definitions state
+        local_definitions = typecheck_frame_local_definitions frame
       }
     in
       {logic = logic,
-       frames = [reset_frame],
+       frames = List.map reset_frame frames,
        queries = queries,
        surface_flags = surface_flags}
     end

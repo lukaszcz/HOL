@@ -2572,6 +2572,7 @@ let
        "(push 1)\n" ^
        "(assert false)\n" ^
        "(reset-assertions)\n" ^
+       "(pop 1)\n" ^
        "(assert b)\n" ^
        "(exit)\n")
 in
