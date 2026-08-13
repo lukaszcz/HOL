@@ -6,6 +6,7 @@ holmake = false
 # and friends) contain long-line legacy code and embedded TABs
 # that pre-date the style rules and are simply not in scope.
 [h4pedant]
+include = ["src", "examples"]
 linelen = 80
 unicode_ok = false
 exclude = ["bin", "sigobj", "tools", "tools-poly",
