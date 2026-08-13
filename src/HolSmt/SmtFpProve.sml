@@ -82,7 +82,7 @@ struct
      particular, neither native_ieeeLib nor fp64_machineLib is involved. *)
   val ground_eval_compset =
     smtfloatLib.add_smtfloat_to_compset
-      (computeLib.copy (!computeLib.the_compset))
+      (computeLib.copy (computeLib.the_compset()))
 
   fun ground_eval_prove t =
     if List.null (Term.free_vars t) then

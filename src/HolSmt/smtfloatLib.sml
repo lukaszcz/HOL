@@ -628,7 +628,7 @@ fun add_smtfloat_to_compset cs =
   end
 
 val () =
-  computeLib.the_compset :=
-    add_smtfloat_to_compset (!computeLib.the_compset)
+  computeLib.put_compset
+    (add_smtfloat_to_compset (computeLib.the_compset()))
 
 end

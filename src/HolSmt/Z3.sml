@@ -238,7 +238,7 @@ structure Z3 = struct
              Library.term_to_string (Thm.concl thm) ^
              ", expected parsed assertion-negation goal " ^
              Library.term_to_string g)
-      val () = Library.check_oracle_tags name thm
+      val () = Library.check_oracle_tags "HolSmtLib" name thm
     in
       thm
     end

@@ -119,7 +119,7 @@ fun cvc_cpc_run path expected_logic =
   in
     case result of
       SolverSpec.UNSAT (SOME thm) =>
-        let val () = Library.check_oracle_tags "CPC conformance driver" thm
+        let val () = Library.check_oracle_tags "HolSmtLib" "CPC conformance driver" thm
         in cvc_cpc_emit "CVC_CPC_TAC_PASS"
              (fields @ ["result=unsat", "theorem=" ^ Library.thm_to_string thm]);
            OS.Process.exit OS.Process.success

@@ -140,7 +140,7 @@ struct
 
   val ground_eval_compset =
     computeLib.add_thms ground_eval_thms
-      (computeLib.copy (!computeLib.the_compset))
+      (computeLib.copy (computeLib.the_compset()))
 
   fun ground_eval_prove t =
     Drule.EQT_ELIM (computeLib.CBV_CONV ground_eval_compset t)

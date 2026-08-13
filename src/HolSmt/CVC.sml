@@ -197,7 +197,7 @@ structure CVC = struct
       val _ = Term.aconv (Thm.concl thm) g orelse
         raise Feedback.mk_HOL_ERR "CVC" "check_reconstructed_theorem"
           ("solver '" ^ name ^ "' produced theorem with an unexpected conclusion")
-      val _ = Library.check_oracle_tags name thm
+      val _ = Library.check_oracle_tags "HolSmtLib" name thm
     in thm end
 
   (* cvc5 1.3.4 treats a lambda binder as a quantifier for logic checking,

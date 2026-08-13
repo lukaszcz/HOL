@@ -10,7 +10,7 @@ fun report (label, tm) =
     val rhs = boolSyntax.rhs (Thm.concl thm)
     val clean =
       null (Thm.hyp thm) andalso
-      ((Library.check_oracle_tags ("FP differential " ^ label) thm; true)
+      ((Library.check_oracle_tags "HolSmtLib" ("FP differential " ^ label) thm; true)
        handle Feedback.HOL_ERR _ => false)
     val pass = rhs ~~ boolSyntax.T andalso clean
   in

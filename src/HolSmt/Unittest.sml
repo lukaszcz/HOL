@@ -19,6 +19,9 @@ fun die s =
 
 fun assert (x, msg) = if x then () else die ("FAIL: " ^ msg)
 
+fun check_oracle_tags name thm =
+  Library.check_oracle_tags "HolSmtLib" name thm
+
 fun with_temp_file contents f =
 let
   val path = OS.FileSys.tmpName ()
@@ -389,14 +392,14 @@ let
       false)
      handle Feedback.HOL_ERR _ => true)
 in
-  Library.check_oracle_tags "smtfp exact universe goal" exact_universe;
+  check_oracle_tags "smtfp exact universe goal" exact_universe;
   assert_concl_alpha
     ("smtfp exact universe goal", exact_universe, exact_universe_goal);
-  Library.check_oracle_tags "smtfp representation canonical"
+  check_oracle_tags "smtfp representation canonical"
     smtfloatTheory.smtfp_rep_canonical;
-  Library.check_oracle_tags "smtfp representation injective"
+  check_oracle_tags "smtfp representation injective"
     smtfloatTheory.smtfp_rep_11;
-  Library.check_oracle_tags "smtfp representation surjective"
+  check_oracle_tags "smtfp representation surjective"
     smtfloatTheory.smtfp_rep_surjective;
   if Z3.is_configured () then
     assert (oracle_rejects (),
@@ -413,7 +416,7 @@ let
      in
        assert_no_hyps (label, thm);
        assert_concl_alpha (label, thm, tm);
-       Library.check_oracle_tags label thm
+       check_oracle_tags label thm
      end
      handle Feedback.HOL_ERR holerr =>
        die (label ^ " did not match fp_thm_list: " ^
@@ -493,7 +496,7 @@ let
        val thm = conv input
      in
        assert_no_hyps (label, thm);
-       Library.check_oracle_tags label thm;
+       check_oracle_tags label thm;
        assert_concl_alpha
          (label, thm, boolSyntax.mk_eq (input, expected))
      end
@@ -690,7 +693,7 @@ let
              Parse.term_to_string (boolSyntax.rhs (Thm.concl eval_thm)))
      in
        assert_no_hyps (label, thm);
-       Library.check_oracle_tags label thm
+       check_oracle_tags label thm
      end
      handle e => die (label ^ " raised " ^ General.exnMessage e))
   val modes =
@@ -870,7 +873,7 @@ in
   assert_concl_alpha
     ("existential NATIVE_FLOAT_TO_SMT_CONV", existential_thm,
      boolSyntax.mk_eq (existential_input, existential_expected));
-  List.app (Library.check_oracle_tags "native float transfer theorem")
+  List.app (check_oracle_tags "native float transfer theorem")
     SmtLib.native_float_transfer_theorems;
   assert (SmtLib.native_float_transfer_surface = expected_surface,
     "native float transfer coverage list changed without updating its pin")
@@ -8523,7 +8526,7 @@ in
    | _ => die "FAIL: CPC unary str.++ annotation did not parse");
   List.app (check CPC_Proof.ProofRule "string") proof_rules;
   List.app check_rare rare_rules;
-  Library.check_oracle_tags "CPC string literal parser" theorem
+  check_oracle_tags "CPC string literal parser" theorem
 end
 
 fun cpc_proof_replay_string_rules_success () =
@@ -8560,7 +8563,7 @@ in
     "CPC str-lt-elim omitted-conclusion reconstruction disagrees");
   assert (Thm.concl digit_omitted ~~ Thm.concl digit,
     "CPC str-is-digit-elim omitted-conclusion reconstruction disagrees");
-  List.app (Library.check_oracle_tags "CPC string RARE rewrite")
+  List.app (check_oracle_tags "CPC string RARE rewrite")
     [lt, digit, lt_omitted, digit_omitted]
 end
 
@@ -8600,7 +8603,7 @@ in
     "CPC string step leaked premise conclusions as hypotheses: " ^
     String.concatWith ", "
       (List.map Library.term_to_string (HOLset.listItems leaked)));
-  Library.check_oracle_tags "CPC string contextual premise unit test" theorem
+  check_oracle_tags "CPC string contextual premise unit test" theorem
 end
 
 (* Captured cvc5 1.3.4 CPC spelling: binders may be inline @var terms and
@@ -8663,7 +8666,7 @@ in
   end;
   assert (Thm.concl alpha ~~ ``(\x:int. x) = (\y:int. y)``,
     "CPC alpha_equiv did not replay abstraction renaming");
-  List.app (Library.check_oracle_tags "CPC HO conversion unit test")
+  List.app (check_oracle_tags "CPC HO conversion unit test")
     [beta, eta, alpha]
 end
 
@@ -8701,7 +8704,7 @@ in
     "CPC ho_cong did not apply MK_COMB to both premises");
   assert (Thm.concl ite ~~ ``(if c then t else e) = (c = t)``,
     "CPC ite-neg-branch returned the wrong equality");
-  List.app (Library.check_oracle_tags "CPC HO congruence unit test")
+  List.app (check_oracle_tags "CPC HO congruence unit test")
     [ho_cong, ite]
 end
 
@@ -8738,7 +8741,7 @@ let
 in
   assert (Thm.concl theorem ~~ expected,
     "CPC ho_cong did not fold MK_COMB over every argument equality");
-  Library.check_oracle_tags "CPC n-ary HO congruence unit test" theorem
+  check_oracle_tags "CPC n-ary HO congruence unit test" theorem
 end
 
 fun cpc_proof_replay_ho_rare_rewrites_success () =
@@ -8761,7 +8764,7 @@ in
   assert (Thm.concl theorem ~~
       ``ALL_DISTINCT [T; F] = ~(T = F)``,
     "CPC distinct-elim returned the wrong equality");
-  Library.check_oracle_tags "CPC HO RARE rewrite unit test" theorem
+  check_oracle_tags "CPC HO RARE rewrite unit test" theorem
 end
 
 fun cpc_proof_parser_declarations_success () =
@@ -9283,7 +9286,7 @@ let
     \    (fp #b0 #b100 #b0000)))))"
   val thm = CPC_ProofReplay.replay_root_for_test proof
 in
-  Library.check_oracle_tags "CPC FP trust unit test" thm;
+  check_oracle_tags "CPC FP trust unit test" thm;
   assert (SmtFpProve.has_fp_theory_term (Thm.concl thm),
     "CPC FP trust did not replay an FP proposition")
 end
@@ -9506,7 +9509,7 @@ fun cpc_live_checked_replay_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``T``,
         "live CPC replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live replay unit test" thm)
+       check_oracle_tags "CPC live replay unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for the negation of true"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for true"
@@ -9516,7 +9519,7 @@ fun cpc_live_checked_replay_equality_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``(cpc_x : int) = cpc_x``,
         "live CPC equality replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live equality replay unit test" thm)
+       check_oracle_tags "CPC live equality replay unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC equality replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for a reflexive equality"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for a reflexive equality"
@@ -9526,7 +9529,7 @@ fun cpc_live_checked_replay_datatype_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``foo <> bar``,
         "live CPC datatype replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live datatype replay unit test" thm)
+       check_oracle_tags "CPC live datatype replay unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC datatype replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for distinct constructors"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for datatype test"
@@ -9537,7 +9540,7 @@ fun cpc_live_checked_replay_selector_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``((x : person) with age := 7).age = 7``,
         "live CPC selector replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live selector replay unit test" thm)
+       check_oracle_tags "CPC live selector replay unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC selector replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for selector theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for selector test"
@@ -9547,7 +9550,7 @@ fun cpc_live_checked_replay_bv_xor_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``(x : word32) ?? x = 0w``,
         "live CPC bit-vector xor replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live bit-vector replay unit test" thm)
+       check_oracle_tags "CPC live bit-vector replay unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector xor theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector xor test"
@@ -9558,7 +9561,7 @@ fun cpc_live_checked_replay_bv_bitblast_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``((x : word32) || y) || z = x || y || z``,
         "live CPC bit-blast replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live bit-blast replay unit test" thm)
+       check_oracle_tags "CPC live bit-blast replay unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector OR theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector OR test"
@@ -9569,7 +9572,7 @@ fun cpc_live_checked_replay_boolean_resolution_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``((p : bool) ==> q) /\ (q ==> p) ==> (p = q)``,
         "live CPC Boolean resolution replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live Boolean resolution unit test" thm)
+       check_oracle_tags "CPC live Boolean resolution unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC Boolean resolution returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for Boolean equivalence theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for Boolean equivalence theorem"
@@ -9579,7 +9582,7 @@ fun cpc_live_checked_replay_nat_max_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``MAX (x : num) y >= y``,
         "live CPC natural MAX replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live natural MAX unit test" thm)
+       check_oracle_tags "CPC live natural MAX unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC natural MAX replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for natural MAX theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for natural MAX theorem"
@@ -9589,7 +9592,7 @@ fun cpc_live_checked_replay_int_abs_success () =
     SolverSpec.UNSAT (SOME thm) =>
       (assert (Thm.concl thm ~~ ``(x : int) >= 0 ==> ABS x = x``,
         "live CPC integer ABS replay returned an unexpected theorem");
-       Library.check_oracle_tags "CPC live integer ABS unit test" thm)
+       check_oracle_tags "CPC live integer ABS unit test" thm)
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC integer ABS replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for integer ABS theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for integer ABS theorem"
@@ -9726,7 +9729,7 @@ let
 in
   assert (Thm.concl thm ~~ boolSyntax.mk_eq (var, var),
     "structured proof-bind did not replay its body theorem");
-  Library.check_oracle_tags "Z3 structured proof-bind replay" thm
+  check_oracle_tags "Z3 structured proof-bind replay" thm
 end
 
 fun z3_proof_bind_empty_annotation_replay_success () =
@@ -9742,7 +9745,7 @@ in
      its body rather than rejecting the certificate. *)
   assert (Thm.concl thm ~~ ``T = T``,
     "empty proof-bind annotation did not replay its body theorem");
-  Library.check_oracle_tags "Z3 empty proof-bind annotation replay" thm
+  check_oracle_tags "Z3 empty proof-bind annotation replay" thm
 end
 
 fun z3_proof_parser_th_lemma_metadata_success () =
@@ -10123,10 +10126,10 @@ in
     "monotonicity beta rung returned the wrong equality");
   assert (Thm.concl eta_mono ~~ boolSyntax.mk_eq (eta_lhs, eta_rhs),
     "monotonicity eta rung returned the wrong equality");
-  Library.check_oracle_tags "Z3 beta replay rung" beta_thm;
-  Library.check_oracle_tags "Z3 eta replay rung" eta_thm;
-  Library.check_oracle_tags "Z3 monotonicity beta rung" beta_mono;
-  Library.check_oracle_tags "Z3 monotonicity eta rung" eta_mono
+  check_oracle_tags "Z3 beta replay rung" beta_thm;
+  check_oracle_tags "Z3 eta replay rung" eta_thm;
+  check_oracle_tags "Z3 monotonicity beta rung" beta_mono;
+  check_oracle_tags "Z3 monotonicity eta rung" eta_mono
 end
 
 fun z3_beta_eta_replay_rungs_shaped_failure () =
@@ -10170,9 +10173,9 @@ in
     "rewrite eta rung returned the wrong equality");
   assert (Thm.concl abs ~~ ``(\x:int. x + 1) = (\x. 1 + x)``,
     "rewrite ABS rung returned the wrong equality");
-  Library.check_oracle_tags "Z3 rewrite beta rung" beta;
-  Library.check_oracle_tags "Z3 rewrite eta rung" eta;
-  Library.check_oracle_tags "Z3 rewrite ABS rung" abs
+  check_oracle_tags "Z3 rewrite beta rung" beta;
+  check_oracle_tags "Z3 rewrite eta rung" eta;
+  check_oracle_tags "Z3 rewrite ABS rung" abs
 end
 
 fun z3_rewrite_abs_rung_shaped_failure () =
@@ -10197,8 +10200,8 @@ in
     "ABS congruence replay rung returned the wrong equality");
   assert (Thm.concl capture_safe ~~ capture_safe_target,
     "ABS congruence did not preserve alpha-renamed binders");
-  Library.check_oracle_tags "Z3 ABS congruence replay rung" thm;
-  Library.check_oracle_tags "Z3 capture-safe ABS congruence" capture_safe
+  check_oracle_tags "Z3 ABS congruence replay rung" thm;
+  check_oracle_tags "Z3 capture-safe ABS congruence" capture_safe
 end
 
 fun z3_abs_congruence_replay_rung_shaped_failure () =
@@ -10248,9 +10251,9 @@ in
     "two-binder :lambda-def did not record its function definition: " ^
     String.concatWith ", "
       (List.map term_with_types (HOLset.listItems (Thm.hypset binary))));
-  Library.check_oracle_tags "Z3 :lambda-def intro-def" thm;
-  Library.check_oracle_tags "Z3 left-oriented :lambda-def" left;
-  Library.check_oracle_tags "Z3 two-binder :lambda-def" binary
+  check_oracle_tags "Z3 :lambda-def intro-def" thm;
+  check_oracle_tags "Z3 left-oriented :lambda-def" left;
+  check_oracle_tags "Z3 two-binder :lambda-def" binary
 end
 
 fun z3_lambda_intro_def_replay_shaped_failure () =
@@ -10313,9 +10316,9 @@ in
         term_with_types (Thm.concl bound_thm))
     end)
     [("quant-intro", two_bound), ("nnf-pos", two_bound_nnf)];
-  Library.check_oracle_tags "Z3 C1 proof-bind consumer chain" thm;
-  Library.check_oracle_tags "Z3 two-binder proof-bind" two_bound;
-  Library.check_oracle_tags "Z3 two-binder proof-bind nnf-pos" two_bound_nnf
+  check_oracle_tags "Z3 C1 proof-bind consumer chain" thm;
+  check_oracle_tags "Z3 two-binder proof-bind" two_bound;
+  check_oracle_tags "Z3 two-binder proof-bind nnf-pos" two_bound_nnf
 end
 
 fun z3_proof_bind_quant_intro_binder_annotation_ignored () =
@@ -10357,7 +10360,7 @@ in
   assert (Thm.concl thm ~~ expected,
     "unliftable proof-bind premise: wrong conclusion " ^
     term_with_types (Thm.concl thm));
-  Library.check_oracle_tags "Z3 unliftable proof-bind nnf-pos premise" thm
+  check_oracle_tags "Z3 unliftable proof-bind nnf-pos premise" thm
 end
 
 fun z3_remove_extra_hyps_only_p_eq_p_success () =
@@ -10670,7 +10673,7 @@ in
        val _ = assert (List.null (Thm.hyp thm),
          "th-lemma " ^ name ^ " replayed with unexpected hypotheses: " ^
          Library.thm_to_string thm)
-       val _ = Library.check_oracle_tags ("th-lemma " ^ name) thm
+       val _ = check_oracle_tags ("th-lemma " ^ name) thm
      in
        ()
      end
@@ -10689,7 +10692,7 @@ in
   assert (List.null (Thm.hyp thm),
     "basic th-lemma " ^ name ^ " replayed with unexpected hypotheses: " ^
     Library.thm_to_string thm);
-  Library.check_oracle_tags ("basic th-lemma " ^ name) thm;
+  check_oracle_tags ("basic th-lemma " ^ name) thm;
   assert (profile_call_count required_profile > 0,
     "basic th-lemma " ^ name ^ " did not use " ^ required_profile);
   List.app (fn profile =>
@@ -10791,7 +10794,7 @@ fun assert_array_prover name prover tm =
    in
      assert (Thm.concl thm ~~ tm,
        name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
-     Library.check_oracle_tags name thm
+     check_oracle_tags name thm
    end
    handle Feedback.HOL_ERR holerr =>
      die ("FAIL: " ^ name ^ " did not prove array goal: " ^
@@ -11365,7 +11368,7 @@ fun assert_datatype_prover name prover tm =
    in
      assert (Thm.concl thm ~~ tm,
        name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
-     Library.check_oracle_tags name thm
+     check_oracle_tags name thm
    end
    handle Feedback.HOL_ERR holerr =>
      die ("FAIL: " ^ name ^ " did not prove datatype goal: " ^
@@ -11445,7 +11448,7 @@ fun assert_string_prover name prover tm =
    in
      assert (Thm.concl thm ~~ tm,
        name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
-     Library.check_oracle_tags name thm
+     check_oracle_tags name thm
    end
    handle Feedback.HOL_ERR holerr =>
      die ("FAIL: " ^ name ^ " did not prove string goal: " ^
@@ -11695,9 +11698,9 @@ in
     "th-lemma-string alias did not route through ground evaluation");
   assert (Thm.concl alias ~~ ``T``,
     "th-lemma-regexp alias did not route through the seq handler");
-  Library.check_oracle_tags "Z3 seq proforma dispatch" proforma;
-  Library.check_oracle_tags "Z3 string ground dispatch" ground;
-  Library.check_oracle_tags "Z3 regexp alias dispatch" alias
+  check_oracle_tags "Z3 seq proforma dispatch" proforma;
+  check_oracle_tags "Z3 string ground dispatch" ground;
+  check_oracle_tags "Z3 regexp alias dispatch" alias
 end
 
 fun z3_char_th_lemma_bit_decomposition_success () =
@@ -11731,7 +11734,7 @@ in
     "char decomposition proofs did not use rung 6 exactly four times");
   assert (profile_call_count "string(rung:7/unsupported)" = 0,
     "char decomposition proofs fell through to unsupported");
-  Library.check_oracle_tags "Z3 char.is_digit decomposition" digit_thm
+  check_oracle_tags "Z3 char.is_digit decomposition" digit_thm
 end
 
 fun z3_char_th_lemma_shaped_diagnostics () =
@@ -11748,7 +11751,7 @@ in
   expect "char bit outside 18-bit decomposition"
     "((proof ((_ th-lemma char) \
     \(not ((_ char.bit char.bit 18) (_ Char 0))))))";
-  Library.check_oracle_tags "ground char comparison" comparison
+  check_oracle_tags "ground char comparison" comparison
 end
 
 fun z3_char_th_lemma_false_diagnostic () =
@@ -11777,7 +11780,7 @@ in
     Library.thm_to_string thm);
   assert (profile_call_count "rewrite(11.1)(datatype)" > 0,
     "datatype rewrite did not use the rewrite datatype rung");
-  Library.check_oracle_tags "datatype rewrite replay" thm
+  check_oracle_tags "datatype rewrite replay" thm
 end
 
 fun z3_rewrite_string_rungs_replay_success () =
@@ -11833,8 +11836,8 @@ in
   assert (Thm.concl direct_ground ~~
       ``smtstr_len (SmtStr [97; 98; 99]) = 3``,
     "direct string ground rewrite returned the wrong equality");
-  Library.check_oracle_tags "Z3 string literal rewrite" literal;
-  Library.check_oracle_tags "Z3 string length rewrite" length;
+  check_oracle_tags "Z3 string literal rewrite" literal;
+  check_oracle_tags "Z3 string length rewrite" length;
   ()
 end
 
@@ -11877,7 +11880,7 @@ let
         (fn tag => contains "native_ieee" tag orelse
           contains "fp64_machine" tag) oracles),
         label ^ " enabled native_ieeeLib or fp64_machineLib");
-      Library.check_oracle_tags label thm
+      check_oracle_tags label thm
     end
 in
   check "FP rung 1 literal" SmtFpProve.proforma_prove literal;
@@ -11900,7 +11903,7 @@ let
     let val thm = SmtFpProve.fp_prove goal in
       assert_no_hyps (label, thm);
       assert_concl_alpha (label, thm, goal);
-      Library.check_oracle_tags label thm
+      check_oracle_tags label thm
     end
 in
   Profile.reset_all ();
@@ -11973,7 +11976,7 @@ let
     let val thm = SmtFpProve.ground_eval_prove goal in
       assert_no_hyps (label, thm);
       assert_concl_alpha (label, thm, goal);
-      Library.check_oracle_tags label thm
+      check_oracle_tags label thm
     end
 in
   List.app check [("finite RNA add circuit", finite_add),
@@ -11998,7 +12001,7 @@ fun smtfp_addsub_circuit_replay_success () =
     in
       assert_no_hyps ("tiny symbolic add generated replay", thm);
       assert_concl_alpha ("tiny symbolic add generated replay", thm, goal);
-      Library.check_oracle_tags "tiny symbolic add generated replay" thm
+      check_oracle_tags "tiny symbolic add generated replay" thm
     end
 
 fun smtfp_addsub_circuit_resource_diagnostic () =
@@ -12026,7 +12029,7 @@ let
 in
   assert_no_hyps ("FP rung 5 Float16 mul", thm);
   assert_concl_alpha ("FP rung 5 Float16 mul", thm, goal);
-  Library.check_oracle_tags "FP rung 5 Float16 mul" thm;
+  check_oracle_tags "FP rung 5 Float16 mul" thm;
   assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 1,
     "Float16 mul identity did not use rung 5");
   assert (profile_call_count "fp(rung:6/unsupported)" = 0,
@@ -12079,7 +12082,7 @@ let
 in
   assert_no_hyps ("finite RNE mul circuit", thm);
   assert_concl_alpha ("finite RNE mul circuit", thm, finite);
-  Library.check_oracle_tags "finite RNE mul circuit" thm
+  check_oracle_tags "finite RNE mul circuit" thm
 end
 
 fun smtfp_mul_circuit_replay_resource_diagnostic () =
@@ -12191,7 +12194,7 @@ let
     in
       assert_no_hyps ("FP Tier-2 " ^ label, thm);
       assert_concl_alpha ("FP Tier-2 " ^ label, thm, goal);
-      Library.check_oracle_tags ("FP Tier-2 " ^ label) thm
+      check_oracle_tags ("FP Tier-2 " ^ label) thm
     end
 in
   List.app check cases
@@ -12254,8 +12257,8 @@ let
       assert (List.length definitions = 1,
         label ^ " decomposition did not define exactly one packed skolem");
       assert_no_hyps (label ^ " cleaned decomposition", cleaned);
-      Library.check_oracle_tags (label ^ " decomposition") thm;
-      Library.check_oracle_tags (label ^ " cleaned decomposition") cleaned
+      check_oracle_tags (label ^ " decomposition") thm;
+      check_oracle_tags (label ^ " cleaned decomposition") cleaned
     end
   val float32 =
     ("Float32", "Float32", "32", "31", "30", "23", "22")
@@ -12321,7 +12324,7 @@ in
   assert (HOLset.isSubset (Thm.hypset thm,
       HOLset.addList (Term.empty_tmset, assertions)),
     "classification replay leaked its packed skolem definition");
-  Library.check_oracle_tags "FP classification decomposition replay" thm
+  check_oracle_tags "FP classification decomposition replay" thm
 end
 
 fun smtfp_bit_decomposition_sat_replay_success () =
@@ -12357,7 +12360,7 @@ in
   assert (HOLset.isSubset (Thm.hypset thm,
       HOLset.addList (Term.empty_tmset, assertions)),
     "packed skolem definition escaped decomposition/SAT replay");
-  Library.check_oracle_tags "FP decomposition and SAT replay" thm
+  check_oracle_tags "FP decomposition and SAT replay" thm
 end
 
 fun smtfp_bit_decomposition_nonfresh_failure () =
@@ -12401,7 +12404,7 @@ let
   fun check (label, proof_text) =
     let val thm = replay_z3_proof_string proof_text in
       assert_no_hyps ("FP rewrite " ^ label, thm);
-      Library.check_oracle_tags ("FP rewrite " ^ label) thm
+      check_oracle_tags ("FP rewrite " ^ label) thm
     end
 in
   List.app check rewrites
@@ -12456,7 +12459,7 @@ in
   List.app check_alias aliases;
   assert_no_hyps ("defensive th-lemma-fp route", thm);
   assert_concl_alpha ("defensive th-lemma-fp route", thm, goal);
-  Library.check_oracle_tags "defensive th-lemma-fp route" thm
+  check_oracle_tags "defensive th-lemma-fp route" thm
 end
 
 fun expect_advanced_th_lemma_diagnostic
@@ -12577,7 +12580,7 @@ in
 end
 
 fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
-  (Library.check_oracle_tags "Z3_SMT_Prover"
+  (check_oracle_tags "Z3_SMT_Prover"
      (Thm.mk_oracle_thm "HolSmtLib" ([], boolSyntax.T));
    die "FAIL: oracle-tagged theorem passed the Z3_TAC oracle gate")
   handle Feedback.HOL_ERR holerr =>
@@ -12856,7 +12859,7 @@ fun z3_direct_higher_order_replay_success () =
           label ^ " theorem has unexpected hypotheses");
         assert (Term.aconv (Thm.concl thm) goal,
           label ^ " theorem conclusion does not match its goal");
-        Library.check_oracle_tags ("Z3 " ^ label) thm
+        check_oracle_tags ("Z3 " ^ label) thm
       end
   in
     List.app check goals
@@ -12888,7 +12891,7 @@ fun z3_direct_bitvector_contradiction_success () =
       "direct bitvector contradiction theorem has unexpected hypotheses");
     assert (Term.aconv (Thm.concl thm) goal,
       "direct bitvector contradiction theorem conclusion does not match goal");
-    Library.check_oracle_tags "unit-test" thm
+    check_oracle_tags "unit-test" thm
   end)
 
 fun z3_direct_bitvector_overflow_tautology_sat_success () =
@@ -12931,7 +12934,7 @@ fun z3_direct_distinct_contradiction_success () =
       "direct integer contradiction theorem has unexpected hypotheses");
     assert (Term.aconv (Thm.concl thm) goal,
       "direct integer contradiction theorem conclusion does not match goal");
-    Library.check_oracle_tags "unit-test" thm
+    check_oracle_tags "unit-test" thm
   end)
 
 (* Each script below is a trivially true ground or satisfiable arithmetic
@@ -13006,7 +13009,7 @@ fun z3_direct_ground_arithmetic_unsat_success () =
           label ^ " theorem has unexpected hypotheses");
         assert (Term.aconv (Thm.concl thm) goal,
           label ^ " theorem conclusion does not match goal");
-        Library.check_oracle_tags "unit-test" thm
+        check_oracle_tags "unit-test" thm
       end
   in
     expect_unsat "int divisible"
@@ -13046,7 +13049,7 @@ fun z3_direct_fp_ground_replay_success () =
       in
         assert_no_hyps ("checked Z3 FP " ^ label, thm);
         assert_concl_alpha ("checked Z3 FP " ^ label, thm, goal);
-        Library.check_oracle_tags ("checked Z3 FP " ^ label) thm
+        check_oracle_tags ("checked Z3 FP " ^ label) thm
       end
   in
     List.app check goals

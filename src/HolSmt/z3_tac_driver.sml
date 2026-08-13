@@ -389,7 +389,7 @@ fun z3_tac_raw_result path =
 fun z3_tac_checked_result goal =
   case Z3.Z3_SMT_Prover goal of
     SolverSpec.UNSAT (SOME thm) =>
-      let val () = Library.check_oracle_tags "Z3_TAC conformance driver" thm
+      let val () = Library.check_oracle_tags "HolSmtLib" "Z3_TAC conformance driver" thm
       in Z3_TAC_UNSAT thm end
   | SolverSpec.UNSAT NONE =>
       raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
