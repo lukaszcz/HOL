@@ -4839,6 +4839,10 @@ in
     "(= (set.comprehension ((z Bool)) z z) bs)");
   ignore (assertion cvc5_options
     "(= (set.comprehension ((z Bool)) z 0) (set.singleton 0))");
+  ignore (typecheck cvc5_options
+    "(set-logic ALL)\n\
+     \(declare-fun set.comprehension ((Array Int Int)) Bool)\n\
+     \(assert (set.comprehension ((as const (Array Int Int)) 0)))\n");
   reject cvc5_options "cvc5 infinite set.comprehension"
     "(set-logic ALL)\n\
      \(assert (= (set.comprehension ((z Int)) true z)\n\

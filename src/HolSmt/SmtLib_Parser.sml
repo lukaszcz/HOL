@@ -441,17 +441,17 @@ local
     val last_loc =
       ref (mk_point_span {line = 1, column = 1, offset = 0})
 
-    val pending_token = ref (NONE : located_token option)
+    val pending_tokens = ref ([] : located_token list)
 
     fun get_next_token () =
-      case !pending_token of
-        SOME tok => (pending_token := NONE; SOME tok)
-      | NONE =>
+      case !pending_tokens of
+        tok :: rest => (pending_tokens := rest; SOME tok)
+      | [] =>
           (case next_token () of
              NONE => NONE
            | SOME tok => (last_loc := token_loc tok; SOME tok))
 
-    fun unread_token tok = pending_token := SOME tok
+    fun unread_token tok = pending_tokens := tok :: !pending_tokens
 
     fun eof_loc () =
       !last_loc
@@ -706,6 +706,29 @@ local
                   end
                 else
                   let
+                    val var_name = need_token "parse_term"
+                      "set comprehension variable or argument"
+                    val _ = unread_token var_name
+                    val first_is_qualified =
+                      token_text var_name = "_" orelse
+                      token_text var_name = "as"
+                  in
+                    if first_is_qualified then
+                      let
+                        val _ = unread_token var_first
+                        val first = parse_term_from_first first_tok
+                        val (args, close_tok) =
+                          parse_until_rparen "parse_term" parse_term_from_first
+                            [first]
+                        val loc = combine_span (token_loc open_tok)
+                          (token_loc close_tok)
+                        val head = located (token_loc head_tok)
+                          (TermIdentifier "set.comprehension")
+                      in
+                        located loc (TermApply (head, args))
+                      end
+                    else
+                      let
                     val first_var = parse_sorted_var_from_first var_first
                     val (rest_vars, _) =
                       parse_until_rparen "parse_term"
@@ -730,6 +753,7 @@ local
                 val value = located (loc_of value) (TermLambda (vars, value))
                   in
                     located loc (TermApply (head, [predicate, value]))
+                      end
                   end
               end
             else
