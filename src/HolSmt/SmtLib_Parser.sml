@@ -4215,23 +4215,30 @@ local
               else ()
           | _ => ())
         end
-      fun collection_result_surface t =
-        if pred_setSyntax.is_set_type (Term.type_of t) then
-          let val element = pred_setSyntax.dest_set_type (Term.type_of t) in
-            ConstructorSort (Term.type_of t, [RigidSort element])
-          end
-        else if bagSyntax.is_bag_ty (Term.type_of t) then
-          let val element = bagSyntax.base_type
-            (Term.mk_var ("collection_result", Term.type_of t)) in
-            ConstructorSort (Term.type_of t, [RigidSort element])
-          end
+      fun collection_result_surface element_surface t =
+        if pred_setSyntax.is_set_type (Term.type_of t) orelse
+           bagSyntax.is_bag_ty (Term.type_of t) then
+          ConstructorSort (Term.type_of t, [element_surface])
         else RigidSort (Term.type_of t)
+      fun terminal_map_surface surface =
+        case surface of
+          MapSort (_, range) => terminal_map_surface range
+        | _ => surface
       fun result_surface_sort t =
         case (name, args) of
           ("set.filter", _ :: set :: _) => checked_surface_sort set
-        | ("set.map", _) => collection_result_surface t
-        | ("set.singleton", _) => collection_result_surface t
-        | ("set.comprehension", _) => collection_result_surface t
+        | ("bag.filter", _ :: bag :: _) => checked_surface_sort bag
+        | ("set.map", map :: _) =>
+            collection_result_surface (terminal_map_surface
+              (checked_surface_sort map)) t
+        | ("bag.map", map :: _) =>
+            collection_result_surface (terminal_map_surface
+              (checked_surface_sort map)) t
+        | ("set.singleton", element :: _) =>
+            collection_result_surface (checked_surface_sort element) t
+        | ("set.comprehension", _ :: value :: _) =>
+            collection_result_surface (terminal_map_surface
+              (checked_surface_sort value)) t
         | ("seq.unit", element :: _) =>
             ConstructorSort (Term.type_of t, [checked_surface_sort element])
         | ("select", array :: _) =>
@@ -4263,7 +4270,8 @@ local
                     else NONE
                   end) args of
                SOME surface_sort => surface_sort
-             | NONE => collection_result_surface t)
+             | NONE => collection_result_surface
+                 (RigidSort (Term.type_of t)) t)
     in
       if List.null indices andalso name = "@bbterm" then
         let
