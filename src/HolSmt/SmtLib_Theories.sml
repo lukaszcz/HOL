@@ -1483,6 +1483,9 @@ in
 
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
+    val first_order_tmdict = dictionary_of_entries (List.filter
+      (fn {name, ...} => not (List.exists (Lib.equal name)
+        ["set.map", "set.filter", "set.all", "set.some"])) tmentries)
     val metadata =
       metadata_of_entries "CVC5_Set" "sort" tyentries @
       metadata_of_entries "CVC5_Set" "term" tmentries
@@ -1646,6 +1649,9 @@ in
 
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
+    val first_order_tmdict = dictionary_of_entries (List.filter
+      (fn {name, ...} => not (List.exists (Lib.equal name)
+        ["bag.map", "bag.filter", "bag.all", "bag.some"])) tmentries)
     val metadata =
       metadata_of_entries "CVC5_Bag" "sort" tyentries @
       metadata_of_entries "CVC5_Bag" "term" tmentries
