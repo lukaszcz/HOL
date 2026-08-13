@@ -1508,6 +1508,27 @@ local
   val smt_seq_update_tm = holsmt_const "smt_seq_update"
   val smtstr_update_tm = smtstring_const "smtstr_update"
   val smtstr_rev_tm = smtstring_const "smtstr_rev"
+  val z3_seq_nth_i_tm =
+    Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"}
+
+  (* The parser represents String [seq.nth] with an explicit negative-index
+     branch, since its out-of-range value is unspecified.  Recover the
+     original surface operation before re-emission: translating the ARB
+     branch separately loses sharing between repeated accesses. *)
+  fun dest_string_nth_shape tm =
+    let
+      val (negative, _, in_range) = boolSyntax.dest_cond tm
+      val (nth, index_num) = Term.dest_comb in_range
+      val (head, string) = Term.dest_comb nth
+      val index = intSyntax.dest_Num index_num
+      val _ =
+        if same_const head z3_seq_nth_i_tm andalso
+           Term.aconv negative
+             (intSyntax.mk_less (index, intSyntax.zero_tm)) then ()
+        else raise ERR "dest_string_nth_shape" "not a String seq.nth"
+    in
+      (string, index)
+    end
 
   fun dest_seq_extract_shape tm =
     let
@@ -3147,6 +3168,7 @@ local
           [arg] => same_const (Lib.fst (boolSyntax.strip_comb arg))
             seq_length_tm
         | _ => false)) orelse
+      Option.isSome (Lib.total dest_string_nth_shape tm) orelse
       Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
       Option.isSome (Lib.total dest_seq_at_shape tm) orelse
       List.exists (fn head => same_const rator head) [
@@ -3185,6 +3207,9 @@ local
                end
            | _ => raise ERR "native_sequence_builtin" "wrong coercion")
         else
+          (case Lib.total dest_string_nth_shape tm of
+             SOME (string, index) => emit "seq.nth" [string, index]
+           | NONE =>
           (case Lib.total dest_seq_extract_shape tm of
           SOME shape => emit_extract shape
         | NONE =>
@@ -3250,7 +3275,7 @@ local
              else if same_const rator smt_seq_update_tm then
                emit "seq.update" rands
              else raise ERR "native_sequence_builtin"
-               "unsupported native sequence term"))
+               "unsupported native sequence term")))
       end
     fun native_set_symbol rator rands =
       same_const rator pred_setSyntax.in_tm orelse
