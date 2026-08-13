@@ -4252,6 +4252,9 @@ local
         | ("bag.map", map :: _) =>
             collection_result_surface (terminal_map_surface
               (checked_surface_sort map)) t
+        | ("seq.map", map :: _) =>
+            ConstructorSort (Term.type_of t, [terminal_map_surface
+              (checked_surface_sort map)])
         | ("set.singleton", element :: _) =>
             collection_result_surface (checked_surface_sort element) t
         | ("set.comprehension", _ :: value :: _) =>
