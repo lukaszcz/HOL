@@ -1185,8 +1185,10 @@ local
           val target = boolSyntax.mk_neg (boolSyntax.mk_eq
             (Term.mk_comb (left, witness), Term.mk_comb (right, witness)))
         in
-          Tactical.TAC_PROOF (([Thm.concl premise], target),
-            bossLib.METIS_TAC [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM])
+          Drule.PROVE_HYP premise
+            (Tactical.TAC_PROOF (([Thm.concl premise], target),
+              bossLib.METIS_TAC
+                [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM]))
         end
     | _ => raise ERR "sets_ext" "expected one disequality premise"
 
