@@ -338,16 +338,27 @@ fun z3_tac_status_script path =
         SmtLib_Parser.SourceSpan
           {start = {offset = start, ...}, stop = {offset = stop, ...}} =>
           (start, stop)
-    fun copy_from offset [] = String.extract (text, offset, NONE)
-      | copy_from offset (command :: rest) =
-          if response command then
+    fun final_session commands =
+      let
+        fun loop [] session = List.rev session
+          | loop (command :: rest) session =
+              case SmtLib_Parser.node_of command of
+                SmtLib_Parser.CmdReset => loop rest []
+              | SmtLib_Parser.CmdExit => List.rev session
+              | _ => loop rest (command :: session)
+      in
+        loop commands []
+      end
+    fun copy [] = ""
+      | copy (command :: rest) =
+          if response command then copy rest
+          else
             let val (start, stop) = span command in
-              String.extract (text, offset, SOME (start - offset)) ^
-              copy_from stop rest
+              String.extract (text, start, SOME (stop - start)) ^ "\n" ^
+              copy rest
             end
-          else copy_from offset rest
   in
-    copy_from 0 commands
+    copy (final_session commands)
   end
 
 fun z3_tac_raw_result path =
