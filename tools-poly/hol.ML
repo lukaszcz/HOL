@@ -81,9 +81,9 @@ fun get_heap_name no_project =
           let
             open Holmake_types
             val _ =
-                if no_project then ()
-                else List.app holpathdb.extend_db
-                  (holpathdb.search_for_extensions ReadHMF.find_includes
+                List.app holpathdb.extend_db
+                  ((if no_project then holpathdb.search_for_holpath_extensions
+                    else holpathdb.search_for_extensions ReadHMF.find_includes)
                     {starter_dirs = [OS.FileSys.getDir()],
                      skip = holpathdb.db_dirs()})
             fun foldthis {vname,path} env = env_extend (vname, [LIT path]) env
