@@ -62,6 +62,8 @@ struct
     mk_rule ProofRule ("arith", "arith"),
     mk_rule ProofRule ("array", "array"),
     mk_rule ProofRule ("arrays-select-const", "arrays_select_const"),
+    mk_rule ProofRule ("arrays_read_over_write_1", "arrays_read_over_write"),
+    mk_rule ProofRule ("arrays_read_over_write", "arrays_read_over_write"),
     (* cvc5 has used both this macro and the narrow [sets-*] rewrites. *)
     mk_rule ProofRule ("sets", "sets"),
     mk_rule ProofRule ("sets_ext", "sets_ext"),

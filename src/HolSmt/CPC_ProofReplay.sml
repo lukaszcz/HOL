@@ -2589,6 +2589,17 @@ local
         bossLib.SIMP_TAC boolSimps.bool_ss [])
     | _ => raise ERR "arrays-select-const" "expected one equality"
 
+  (* cvc5 emits these standard select/store rewrites both with a declared
+     conclusion and, in compact CPC, as their sole argument.  The bounded
+     array prover is the common checked replay path for both forms. *)
+  fun replay_arrays_read_over_write conclusion args =
+    case conclusion of
+      SOME target => SmtArrayProve.array_prove target
+    | NONE =>
+        (case args of
+           [target] => SmtArrayProve.array_prove target
+         | _ => raise ERR "arrays_read_over_write" "expected one equality")
+
   fun replay_ite_not_cond args =
     case args of
       [condition, then_tm, else_tm] =>
@@ -4101,6 +4112,8 @@ local
            | "arith_abs_eq" => replay_arith_abs_eq args
            | "arith_abs_int_gt" => replay_arith_abs_int_gt args
            | "arrays_select_const" => replay_arrays_select_const args
+           | "arrays_read_over_write" =>
+               replay_arrays_read_over_write conclusion args
            | "ite_not_cond" => replay_ite_not_cond args
            | "ite_true_cond" => replay_ite_true_cond args
            | "ite_then_true" => replay_ite_then_true args
