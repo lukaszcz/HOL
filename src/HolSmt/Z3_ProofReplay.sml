@@ -2933,7 +2933,11 @@ local
            [w = v2w (GENLIST (flip word_bit w) ...)].  Discharge such checked
            word identities before searching the remaining definition DAG. *)
         fun prove_word_identity def =
-          SOME (blastLib.BBLAST_PROVE def)
+          let val (lhs, _) = boolSyntax.dest_eq def in
+            if wordsSyntax.is_word_type (Term.type_of lhs) then
+              SOME (blastLib.BBLAST_PROVE def)
+            else NONE
+          end
           handle Feedback.HOL_ERR _ => NONE
                | HolSatLib.SAT_cex _ => NONE
         fun discharge_word_identity (def, (remaining, thm)) =
