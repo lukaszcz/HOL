@@ -1213,10 +1213,13 @@ local
           val target = boolSyntax.mk_neg (boolSyntax.mk_eq
             (Term.mk_comb (left, witness), Term.mk_comb (right, witness)))
         in
-          Drule.PROVE_HYP premise
-            (Tactical.TAC_PROOF (([Thm.concl premise], target),
-              bossLib.METIS_TAC
-                [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM]))
+          SmtResource.with_bitblast_step_time "sets-extensionality"
+            (fn () =>
+              (SmtResource.check_bitblast_goal "sets-extensionality" target;
+               Drule.PROVE_HYP premise
+                 (Tactical.TAC_PROOF (([Thm.concl premise], target),
+                   bossLib.METIS_TAC
+                     [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM])))) ()
         end
     | _ => raise ERR "sets_ext" "expected one disequality premise"
 
