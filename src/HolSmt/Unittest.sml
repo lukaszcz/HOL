@@ -2098,6 +2098,13 @@ let
      "(tailA2_09 ListA2_09))))\n" ^
      "(assert (= (tailA2_09 (consA2_09 1 nilA2_09)) nilA2_09))\n" ^
      "(exit)\n")
+  val floatingpoint_state = typecheck
+    ("(set-logic ALL)\n" ^
+     "(declare-datatype FpBoxA2_09 " ^
+     "((mkFpBoxA2_09 (fpA2_09 (_ FloatingPoint 8 24))))\n" ^
+     "(declare-const fpboxA2_09 FpBoxA2_09)\n" ^
+     "(assert ((_ is mkFpBoxA2_09) fpboxA2_09))\n" ^
+     "(exit)\n")
   val mutual_state = typecheck
     ("(set-logic ALL)\n" ^
      "(declare-datatypes ((TreeA2_09 0) (ForestA2_09 0))\n" ^
@@ -2120,6 +2127,7 @@ let
 in
   assert_assertions "enum datatype elaboration" enum_state;
   assert_assertions "recursive datatype elaboration" recursive_state;
+  assert_assertions "floating-point datatype elaboration" floatingpoint_state;
   assert_assertions "mutual datatype elaboration" mutual_state;
   assert_assertions "parametric datatype elaboration" parametric_state
 end

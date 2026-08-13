@@ -195,6 +195,13 @@ struct
     | _ => raise ERR "sort_to_pretype"
         "BitVec sort expects exactly one index"
 
+  fun floatingpoint_pretype indices =
+    case indices of
+      [eb, sb] => PD.dAQ (SmtLib_Theories.smtfp_type
+        (Library.parse_arbnum (node eb), Library.parse_arbnum (node sb)))
+    | _ => raise ERR "sort_to_pretype"
+        "FloatingPoint sort expects exponent and significand indices"
+
   fun sort_to_pretype type_names params sort =
     let
       fun self s = sort_to_pretype type_names params s
@@ -218,6 +225,8 @@ struct
         P.SortIdentifier name => sort_name name []
       | P.SortIndexed (head, indices) =>
           if node head = "BitVec" then bitvector_pretype indices
+          else if node head = "FloatingPoint" then
+            floatingpoint_pretype indices
           else raise ERR "sort_to_pretype"
             ("unknown indexed datatype selector sort '" ^ node head ^ "'")
       | P.SortApply (head, args) =>
