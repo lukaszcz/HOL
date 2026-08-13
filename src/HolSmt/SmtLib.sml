@@ -1416,9 +1416,7 @@ local
     else terms
   end
 
-  fun is_marked_bag_term tm =
-    mem_aconv tm (!current_bag_terms) orelse
-    (is_bag_type tm andalso native_bag_term tm)
+  fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
 
   fun finite_bag_term finite_terms tm =
     mem_aconv tm finite_terms orelse bagSyntax.is_empty tm orelse
