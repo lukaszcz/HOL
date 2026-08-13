@@ -5163,12 +5163,17 @@ local
            (pname, ty) :: param_tys)
         end
       val alias_name = located_string_node name
+      val shadowed_names = List.map located_string_node params
+      fun mentions_alias name =
+        name = alias_name andalso
+        not (List.exists (Lib.equal name) shadowed_names)
       fun sort_mentions_alias sort =
         case node_of sort of
-          SortIdentifier n => n = alias_name
-        | SortIndexed (head, _) => located_string_node head = alias_name
+          SortIdentifier n => mentions_alias n
+        | SortIndexed (head, _) =>
+            mentions_alias (located_string_node head)
         | SortApply (head, args) =>
-            located_string_node head = alias_name orelse
+            mentions_alias (located_string_node head) orelse
             List.exists sort_mentions_alias args
       val _ =
         if sort_mentions_alias body then
@@ -5181,7 +5186,6 @@ local
       val body_ty = typecheck_sort context temp_tydict body
       (* Parameters shadow aliases in both sort representations. *)
       val saved_surface_aliases = !surface_aliases
-      val shadowed_names = List.map located_string_node params
       fun body_surface () =
         (surface_aliases := List.filter
            (fn (alias, _) => not (List.exists (Lib.equal alias) shadowed_names))
