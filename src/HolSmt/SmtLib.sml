@@ -979,6 +979,10 @@ local
   val current_set_terms = ref ([] : Term.term list)
   val current_raw_num_terms = ref ([] : Term.term list)
 
+  fun has_marked_set_type ty =
+    List.exists (fn set => Type.compare (Term.type_of set, ty) = EQUAL)
+      (!current_set_terms)
+
   val native_set_heads = [
     pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
     pred_setSyntax.union_tm, pred_setSyntax.inter_tm, pred_setSyntax.diff_tm,
@@ -1236,6 +1240,10 @@ local
   val current_bag_backend = ref Z3ArrayBag
   val current_bag_terms = ref ([] : Term.term list)
   val current_bag_helpers = ref ([] : string list)
+
+  fun has_marked_bag_type ty =
+    List.exists (fn bag => Type.compare (Term.type_of bag, ty) = EQUAL)
+      (!current_bag_terms)
 
   fun bag_const name = Term.prim_mk_const {Thy = "bag", Name = name}
 
@@ -2833,6 +2841,24 @@ local
           translate_type regime (tydict, listSyntax.dest_list_type ty)
       in
         (tydict, (decls, "(Seq " ^ element_sort ^ ")"))
+      end
+    else if !current_set_backend = CVC5ArraySet andalso
+            has_marked_set_type ty then
+      let
+        val (domain, _) = Type.dom_rng ty
+        val (tydict, (decls, domain_sort)) =
+          translate_type regime (tydict, domain)
+      in
+        (tydict, (decls, "(Array " ^ domain_sort ^ " Bool)"))
+      end
+    else if !current_bag_backend = CVC5ArrayBag andalso
+            has_marked_bag_type ty then
+      let
+        val (domain, _) = Type.dom_rng ty
+        val (tydict, (decls, domain_sort)) =
+          translate_type regime (tydict, domain)
+      in
+        (tydict, (decls, "(Array " ^ domain_sort ^ " Int)"))
       end
     else if is_function_type ty then
       (case regime of
