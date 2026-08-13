@@ -9165,6 +9165,16 @@ let
     "((define @s () (seq.unit 1)) \
     \(define @u () (str.replace_all @s (as seq.empty (Seq Int)) @s)) \
     \(step @p1 :rule seq-eval-op :args ((= @u @s)))"
+  val replace_all_nonempty =
+    "((define @s () (seq.++ (seq.unit 1) (seq.unit 1))) \
+    \(define @u () (seq.replace_all @s (seq.unit 1) (seq.unit 2))) \
+    \(step @p1 :rule seq-eval-op :args ((= @u \
+    \  (seq.++ (seq.unit 2) (seq.unit 2))))))"
+  val str_replace_all_nonempty =
+    "((define @s () (str.++ (seq.unit 1) (seq.unit 1))) \
+    \(define @u () (str.replace_all @s (seq.unit 1) (seq.unit 2))) \
+    \(step @p1 :rule seq-eval-op :args ((= @u \
+    \  (str.++ (seq.unit 2) (seq.unit 2))))))"
   val at_elim =
     "((define @s () (seq.unit 7)) \
     \(step @p1 (= (seq.at @s 0) (seq.extract @s 0 1)) \
@@ -9185,6 +9195,12 @@ in
     ([], ``smt_seq_replace_all ([1]:int list) [] [1] = [1]``) replace_all;
   replay "seq-eval-op str.replace_all"
     ([], ``smt_seq_replace_all ([1]:int list) [] [1] = [1]``) str_replace_all;
+  replay "seq-eval-op replace_all nonempty"
+    ([], ``smt_seq_replace_all ([1; 1]:int list) [1] [2] = [2; 2]``)
+    replace_all_nonempty;
+  replay "seq-eval-op str.replace_all nonempty"
+    ([], ``smt_seq_replace_all ([1; 1]:int list) [1] [2] = [2; 2]``)
+    str_replace_all_nonempty;
   replay "str-at-elim"
     ([], ``smt_seq_at ([7]:int list) 0 = smt_seq_extract [7] 0 1``) at_elim;
   replay "str macro native Seq" ([], ``REVERSE ([1]:int list) = [1]``)
