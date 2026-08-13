@@ -428,7 +428,7 @@ fun main() = let
              handle Fail msg =>
                (warn ("holproject.toml at " ^ root ^ " ignored: " ^ msg);
                 []))
-  val allincs = project_incs @ cwd_incs
+  val allincs = cwd_incs @ project_incs
   val _ = diag ("allincs = ["^String.concatWith ", " allincs ^"]")
   val base_state = Option.map mkAbs base_state
   val output = Option.map mkAbs output
@@ -454,7 +454,7 @@ fun main() = let
   val _ = ReadHMF.extend_path_with_includes
             {verbosity = 1 + (if debug then 1 else 0),
              lpref = Meta.loadPath}
-  val _ = Meta.loadPath := project_incs @ !Meta.loadPath
+  val _ = Meta.loadPath := !Meta.loadPath @ project_incs
   val _ = buildheap_extra_data := extra_data
   val _ = diag ("Buildheap extra now = " ^
                 (case !buildheap_extra_data of
