@@ -4229,6 +4229,17 @@ local
            bagSyntax.is_bag_ty (Term.type_of t) then
           ConstructorSort (Term.type_of t, [element_surface])
         else RigidSort (Term.type_of t)
+      fun collapsed_collection_result_surface t =
+        if pred_setSyntax.is_set_type (Term.type_of t) then
+          let val element = pred_setSyntax.dest_set_type (Term.type_of t) in
+            ConstructorSort (Term.type_of t, [RigidSort element])
+          end
+        else if bagSyntax.is_bag_ty (Term.type_of t) then
+          let val element = bagSyntax.base_type
+            (Term.mk_var ("collection_result", Term.type_of t)) in
+            ConstructorSort (Term.type_of t, [RigidSort element])
+          end
+        else RigidSort (Term.type_of t)
       fun terminal_map_surface surface =
         case surface of
           MapSort (_, range) => terminal_map_surface range
@@ -4279,8 +4290,7 @@ local
                     else NONE
                   end) args of
                SOME surface_sort => surface_sort
-             | NONE => collection_result_surface
-                 (RigidSort (Term.type_of t)) t)
+             | NONE => collapsed_collection_result_surface t)
     in
       if List.null indices andalso name = "@bbterm" then
         let
