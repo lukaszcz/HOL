@@ -4196,7 +4196,8 @@ local
                      if surface_sort_compatible index actual_index then ()
                      else type_error fn_name context loc NONE NONE
                        "ArraysEx select surface sort mismatch"
-                 | _ => ())
+                 | _ => type_error fn_name context loc NONE NONE
+                     "ArraysEx select requires an Array sort")
           | ("store", [ArraySort (index, element), actual_index,
                         actual_element]) =>
               if surface_sort_compatible index actual_index andalso
@@ -4207,11 +4208,13 @@ local
               if is_bag_surface set_surface then
                 type_error fn_name context loc NONE NONE
                   "ArraysEx store requires an Array sort, not a Bag"
-              else if is_set_surface set_surface andalso
-                      #solver context = SOME "cvc5" then
-                type_error fn_name context loc NONE NONE
-                  "Z3 Set store is unavailable in the cvc5 dialect"
-              else ()
+              else if is_set_surface set_surface then
+                if #solver context = SOME "cvc5" then
+                  type_error fn_name context loc NONE NONE
+                    "Z3 Set store is unavailable in the cvc5 dialect"
+                else ()
+              else type_error fn_name context loc NONE NONE
+                "ArraysEx store requires an Array sort"
           | ("ite", _ :: then_sort :: else_sort :: _) =>
               if surface_sorts_equivalent then_sort else_sort then ()
               else type_error fn_name context loc NONE NONE
