@@ -3225,7 +3225,28 @@ local
         surface_sort_compatible expected_element actual_element
     | _ => false
 
+  (* Z3 identifies String with (Seq Unicode).  Their HOL encodings differ
+     (:smtstr versus :num list), so retain that surface alias explicitly
+     while checking applications such as String [seq.nth]/[seq.unit]. *)
+  val smtstr_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
+  val unicode_seq_ty =
+    Type.mk_thy_type {Thy = "list", Tyop = "list", Args = [numSyntax.num]}
+
+  fun string_seq_unicode_alias left right =
+    case (left, right) of
+      (RigidSort left_ty, ConstructorSort (right_ty, [RigidSort element])) =>
+        Type.compare (left_ty, smtstr_ty) = EQUAL andalso
+        Type.compare (right_ty, unicode_seq_ty) = EQUAL andalso
+        Type.compare (element, numSyntax.num) = EQUAL
+    | (ConstructorSort (left_ty, [RigidSort element]), RigidSort right_ty) =>
+        Type.compare (left_ty, unicode_seq_ty) = EQUAL andalso
+        Type.compare (element, numSyntax.num) = EQUAL andalso
+        Type.compare (right_ty, smtstr_ty) = EQUAL
+    | _ => false
+
   fun surface_sorts_equivalent left right =
+    string_seq_unicode_alias left right orelse
     surface_sort_compatible left right orelse
     surface_sort_compatible right left
 
