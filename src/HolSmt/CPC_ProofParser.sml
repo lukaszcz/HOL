@@ -529,7 +529,7 @@ local
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
           Library.extend_dict (("_", cpc_literal_parsefn),
-            with_cpc_fp_entries tmdict))))))))))))))))))))))))))
+            with_cpc_fp_entries tmdict)))))))))))))))))))))))))))
     end
 
   fun parse_term dicts_ref get_token =
