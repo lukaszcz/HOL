@@ -4955,7 +4955,11 @@ in
       alias_field_message,
       "cvc5 datatype Set alias field had the wrong diagnostic: " ^
       alias_field_message)
-  end
+  end;
+  ignore (typecheck cvc5_options
+    "(set-logic ALL)\n(define-sort A () (Set Int))\n\
+     \(declare-datatype D (par (A) ((mk-d (field A)))))\n\
+     \(declare-const d (D Int))\n(assert (= (field d) 0))\n")
 end
 
 fun smtlib_bag_dialect_builders_success () =

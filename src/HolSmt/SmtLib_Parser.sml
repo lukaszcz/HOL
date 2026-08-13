@@ -5413,9 +5413,17 @@ local
         DatatypeDecl (params, constructors) =>
           let
             val constructor_tydict = add_datatype_params params tydict
-            val (tmdict, sigdict) =
-              List.foldl (add_constructor constructor_tydict)
-                (tmdict, sigdict) constructors
+            val shadowed_names = List.map located_string_node params
+            val saved_surface_aliases = !surface_aliases
+            fun add_constructors () =
+              (surface_aliases := List.filter
+                 (fn (alias, _) => not (List.exists (Lib.equal alias)
+                   shadowed_names)) saved_surface_aliases;
+               List.foldl (add_constructor constructor_tydict)
+                 (tmdict, sigdict) constructors)
+              handle e => (surface_aliases := saved_surface_aliases; raise e)
+            val (tmdict, sigdict) = add_constructors ()
+            val _ = surface_aliases := saved_surface_aliases
           in
             (tydict, tmdict, sigdict)
           end
