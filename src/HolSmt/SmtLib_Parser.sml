@@ -1809,15 +1809,27 @@ local
      which the enclosing application supplies with [e]. *)
   and parse_ascribed_term cfg get_token (tydict, tmdict) : Term.term =
   let
+    (* These qualified constants are parsed directly, rather than through the
+       source AST typechecker.  Keep the sort constructor spelling long
+       enough to reject another function-shaped HOL representation. *)
+    fun parse_qualified_type constructor description =
+      let
+        val open_paren = get_token ()
+        val head = get_token ()
+        val _ =
+          if open_paren = "(" andalso head = constructor then ()
+          else raise ERR "parse_ascribed_term"
+            (description ^ " expects a " ^ constructor ^ " sort")
+      in
+        parse_type (Library.undo_look_ahead [open_paren, head] get_token)
+          tydict
+      end
     val name = get_token ()
   in
     if name = "const" then
       let
-        val array_ty = parse_type get_token tydict
+        val array_ty = parse_qualified_type "Array" "Z3 const"
         val (domain, range) = Type.dom_rng array_ty
-          handle Feedback.HOL_ERR _ =>
-            raise ERR "parse_ascribed_term"
-              "Z3 const expects an Array sort"
         val payload = Term.mk_var ("array_const_value", range)
         val index = Term.variant [payload]
           (Term.mk_var ("array_const_index", domain))
@@ -1827,7 +1839,7 @@ local
       end
     else if name = "seq.empty" then
       let
-        val sequence_ty = parse_type get_token tydict
+        val sequence_ty = parse_qualified_type "Seq" "seq.empty"
         val smtstr_ty = Type.mk_thy_type {
           Thy = "smtstring", Tyop = "smtstr", Args = []
         }
@@ -1845,7 +1857,7 @@ local
       end
     else if name = "set.empty" orelse name = "set.universe" then
       let
-        val set_ty = parse_type get_token tydict
+        val set_ty = parse_qualified_type "Set" name
         val _ =
           if pred_setSyntax.is_set_type set_ty then ()
           else raise ERR "parse_ascribed_term"
@@ -1858,7 +1870,7 @@ local
       end
     else if name = "bag.empty" then
       let
-        val bag_ty = parse_type get_token tydict
+        val bag_ty = parse_qualified_type "Bag" "bag.empty"
         val _ =
           if bagSyntax.is_bag_ty bag_ty then ()
           else raise ERR "parse_ascribed_term"
@@ -1871,11 +1883,8 @@ local
       end
     else if name = "union" then
       let
-        val array_ty = parse_type get_token tydict
+        val array_ty = parse_qualified_type "Array" "Z3 union"
         val (_, range) = Type.dom_rng array_ty
-          handle Feedback.HOL_ERR _ =>
-            raise ERR "parse_ascribed_term"
-              "Z3 union expects an Array sort"
         val _ = if range = Type.bool then () else
           raise ERR "parse_ascribed_term"
             "Z3 union expects an Array with Bool range"
