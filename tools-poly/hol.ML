@@ -461,9 +461,9 @@ fun main() = let
      Owns Meta.loadPath extension so prelude.ML doesn't have to,
      and every subcommand (REPL, LSP, BUILDHEAP, ...) sees the
      same paths. *)
-  val _ = ReadHMF.extend_path_with_includes
-            {verbosity = 1 + (if debug then 1 else 0),
-             lpref = Meta.loadPath}
+  val _ = if no_project then () else
+    ReadHMF.extend_path_with_includes
+      {verbosity = 1 + (if debug then 1 else 0), lpref = Meta.loadPath}
   val _ = Meta.loadPath := !Meta.loadPath @ project_incs
   val _ = buildheap_extra_data := extra_data
   val _ = diag ("Buildheap extra now = " ^
