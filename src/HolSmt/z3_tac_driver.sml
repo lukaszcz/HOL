@@ -281,29 +281,29 @@ fun z3_tac_command_uses_fold_left command =
 fun z3_tac_script_diagnostic path =
   let
     val script = SmtLib_Parser.parse_script_file path
-    val unsupported_fold_left =
-      (case Z3.configured_version () of
-         SOME version =>
-           Library.version_compare (version, "4.12.4") = LESS
-       | NONE => false) andalso
-      List.exists z3_tac_command_uses_fold_left script
+    val old_fold_left =
+      case Z3.configured_version () of
+        SOME version => Library.version_compare (version, "4.12.4") = LESS
+      | NONE => false
     fun scan [] query_names =
           z3_tac_script_query_diagnostic (List.rev query_names)
       | scan (command :: rest) query_names =
           (case SmtLib_Parser.node_of command of
              SmtLib_Parser.CmdExit => NONE
+           | SmtLib_Parser.CmdReset => scan rest []
            | _ =>
-             case z3_tac_unsupported_command_diagnostic command of
-               SOME diagnostic => SOME diagnostic
-             | NONE =>
-                 scan rest
-                   (case z3_tac_command_query_name command of
-                      SOME name => name :: query_names
-                    | NONE => query_names))
+             if old_fold_left andalso z3_tac_command_uses_fold_left command then
+               SOME "seq.fold_left requires Z3 4.12.4 or later"
+             else
+               case z3_tac_unsupported_command_diagnostic command of
+                 SOME diagnostic => SOME diagnostic
+               | NONE =>
+                   scan rest
+                     (case z3_tac_command_query_name command of
+                        SOME name => name :: query_names
+                      | NONE => query_names))
   in
-    if unsupported_fold_left then
-      SOME "seq.fold_left requires Z3 4.12.4 or later"
-    else scan script []
+    scan script []
   end
 
 datatype z3_tac_checked_result =
