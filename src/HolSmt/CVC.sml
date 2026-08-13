@@ -247,17 +247,26 @@ structure CVC = struct
   fun proof_pre goal =
     let
       val original_goal = goal
+      (* CVC_SIMP_TAC removes these transfer assumptions before translation,
+         but CPC's symbolic cardinality rules need them during reconstruction.
+         They remain assumptions of the original goal, so retain them only as
+         replay context. *)
+      val finite_hyps = List.mapPartial (fn hyp =>
+        if Lib.can pred_setSyntax.dest_finite hyp then SOME hyp else NONE)
+        (Lib.fst original_goal)
       val (goal, validation) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true) goal
       val (translation, strings) =
         goal_to_SmtLib_with_get_proof_translation goal
       val arrays_exp = List.exists
         (fn text => String.isSubstring "(as const (Array" text) strings
     in
-      (((original_goal, goal, validation), (translation, arrays_exp)), strings)
+      (((original_goal, goal, validation, finite_hyps),
+        (translation, arrays_exp)), strings)
     end
 
   fun checked_post proof_name command_stem parse replay
-      (data as ((original_goal, goal, validation), (translation, _))) outfile =
+      (data as ((original_goal, goal, validation, finite_hyps),
+        (translation, _))) outfile =
     let
       val instream = TextIO.openIn outfile
       val (result, proof_start) = is_sat_stream_with_consumed instream
@@ -279,7 +288,7 @@ structure CVC = struct
                    (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
-          val thm = replay (As, g, proof)
+          val thm = replay (finite_hyps @ As, g, proof)
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
