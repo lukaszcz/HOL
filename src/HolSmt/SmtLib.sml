@@ -978,6 +978,14 @@ local
   val current_set_backend = ref Z3Set
   val current_set_terms = ref ([] : Term.term list)
   val current_raw_num_terms = ref ([] : Term.term list)
+  val current_collection_function_arguments =
+    ref ([] : (Term.term * Term.term) list)
+
+  fun contextual_collection_argument function =
+    case List.find (fn (candidate, _) => Term.aconv function candidate)
+        (!current_collection_function_arguments) of
+      SOME (_, argument) => SOME argument
+    | NONE => NONE
 
   val native_set_heads = [
     pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
@@ -2381,7 +2389,8 @@ local
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       (* Checked preprocessing can lower native bag operations to count
          applications.  The native cvc5 backend still emits Bag sorts. *)
-      val bags = !current_bag_backend = CVC5NativeBag orelse
+      val bags = not (List.null (!current_bag_terms)) orelse
+        !current_bag_backend = CVC5NativeBag orelse
         List.exists (fn tm => is_native_bag_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       fun term_is_native_string_surface tm =
@@ -4424,6 +4433,8 @@ local
                     val argument =
                       if index < List.length rands then
                         SOME (List.nth (rands, index))
+                      else if index = 0 then
+                        contextual_collection_argument rator
                       else NONE
                   in
                     case argument of
@@ -4470,6 +4481,8 @@ local
                           Term.is_var rator andalso
                           (is_marked_set_term tm orelse
                            is_marked_bag_term tm orelse
+                           Option.isSome
+                             (contextual_collection_argument rator) orelse
                            List.exists (fn argument =>
                              is_marked_set_term argument orelse
                              is_marked_bag_term argument) rands)
@@ -4754,13 +4767,41 @@ local
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
     val subterms = List.concat (List.map Library.subterms (t :: original_ts))
-    fun computed_collection_application collection_terms =
-      List.exists (fn subterm =>
+    fun computed_collection_applications collection_terms =
+      List.concat (List.map (fn subterm =>
         case Lib.total Term.dest_comb subterm of
           SOME (function, argument) =>
-            mem_aconv argument collection_terms andalso
-            not (Term.is_var function orelse Term.is_const function)
-        | NONE => false) subterms
+            let
+              val (head, applied) = boolSyntax.strip_comb function
+              fun ordinary_symbol_application () =
+                if Term.is_var head then true
+                else if Term.is_const head then
+                  let
+                    val {Thy, Name, ...} = Term.dest_thy_const head
+                    val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
+                    val (domains, _) = boolSyntax.strip_fun
+                      (Term.type_of generic)
+                  in
+                    List.length applied < List.length domains
+                  end
+                else false
+              fun compatible_variable variable =
+                case Lib.total Type.dom_rng (Term.type_of variable) of
+                  SOME (domain, _) =>
+                    Type.compare (domain, Term.type_of argument) = EQUAL
+                | NONE => false
+            in
+              if mem_aconv argument collection_terms andalso
+                 not (ordinary_symbol_application ()) then
+                List.map (fn variable => (variable, argument))
+                  (List.filter compatible_variable (Term.free_vars function))
+              else []
+            end
+        | NONE => []) subterms)
+    val computed_set_applications =
+      computed_collection_applications set_terms
+    val computed_bag_applications =
+      computed_collection_applications bag_terms
     fun has_mixed_collection_argument collection_terms =
       let
         fun positions function [] _ = []
@@ -4825,10 +4866,10 @@ local
           if collection_nested_in_collection set_terms bag_terms then
             (CVC5ArraySet, CVC5ArrayBag)
           else
-            (if computed_collection_application set_terms then
+            (if not (List.null computed_set_applications) then
                CVC5ArraySet
              else initial_backend,
-             if computed_collection_application bag_terms then
+             if not (List.null computed_bag_applications) then
                CVC5ArrayBag
              else initial_bag_backend)
       | _ => (initial_backend, initial_bag_backend)
@@ -4861,6 +4902,8 @@ local
     val _ = current_raw_num_terms := raw_num_terms
     val _ = current_bag_backend := bag_backend
     val _ = current_bag_terms := bag_terms
+    val _ = current_collection_function_arguments :=
+      computed_set_applications @ computed_bag_applications
     val _ = current_bag_helpers := []
     (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
        models; once selected they are semantic facts of those models and must
@@ -4998,6 +5041,8 @@ local
     val saved_bag_backend = !current_bag_backend
     val saved_bag_terms = !current_bag_terms
     val saved_bag_helpers = !current_bag_helpers
+    val saved_collection_function_arguments =
+      !current_collection_function_arguments
     fun work () =
       goal_to_SmtLib_aux_inner request apply_operator policy target
         (emit_sequences andalso native_sequence_goal goal) goal
@@ -5009,7 +5054,9 @@ local
        current_raw_num_terms := saved_raw_num_terms;
        current_bag_backend := saved_bag_backend;
        current_bag_terms := saved_bag_terms;
-       current_bag_helpers := saved_bag_helpers)
+       current_bag_helpers := saved_bag_helpers;
+       current_collection_function_arguments :=
+         saved_collection_function_arguments)
   in
     Portable.finally restore work ()
   end

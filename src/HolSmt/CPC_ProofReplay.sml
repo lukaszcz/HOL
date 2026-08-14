@@ -2592,16 +2592,46 @@ local
         bossLib.SIMP_TAC boolSimps.bool_ss [])
     | _ => raise ERR "arrays-select-const" "expected one equality"
 
-  (* cvc5 emits these standard select/store rewrites both with a declared
-     conclusion and, in compact CPC, as their sole argument.  The bounded
-     array prover is the common checked replay path for both forms. *)
-  fun replay_arrays_read_over_write conclusion args =
-    case conclusion of
-      SOME target => SmtArrayProve.array_prove target
-    | NONE =>
-        (case args of
-           [target] => SmtArrayProve.array_prove target
-         | _ => raise ERR "arrays_read_over_write" "expected one equality")
+  (* Compact CPC omits the conclusion of the read-over-write rules and gives
+     only the selected update term.  Reconstruct the equality specified by
+     the rule before handing it to the bounded, kernel-checked array prover. *)
+  fun replay_arrays_read_over_write name prems conclusion args =
+    let
+      fun selected_update selected =
+        let
+          val (updated, selected_index) = Term.dest_comb selected
+          val ((stored_index, stored_value), array) =
+            combinSyntax.dest_update_comb updated
+        in
+          (selected_index, stored_index, stored_value, array)
+        end
+        handle Feedback.HOL_ERR _ =>
+          raise ERR name "expected a select from a stored array"
+      fun omitted_target () =
+        case args of
+          [selected] =>
+            let
+              val (selected_index, stored_index, stored_value, array) =
+                selected_update selected
+              val right =
+                if name = "arrays_read_over_write_1" then
+                  if Term.aconv selected_index stored_index then stored_value
+                  else raise ERR name "select and store indices differ"
+                else
+                  Term.mk_comb (array, selected_index)
+            in
+              boolSyntax.mk_eq (selected, right)
+            end
+        | _ => raise ERR name "expected one selected update term"
+      val target =
+        case conclusion of SOME target => target | NONE => omitted_target ()
+      val implication = boolSyntax.list_mk_imp
+        (List.map Thm.concl prems, target)
+      val thm = SmtArrayProve.array_prove implication
+    in
+      List.foldl (fn (premise, accumulated) => Thm.MP accumulated premise)
+        thm prems
+    end
 
   fun replay_ite_not_cond args =
     case args of
@@ -2926,6 +2956,15 @@ local
         boolSyntax.mk_neg conjunction
       else boolSyntax.mk_imp (conjunction, scope_result)
       val conjunction_thm = Thm.ASSUME conjunction
+      fun prove_scoped_bridge left right =
+        prove_trans_bridge left right
+        handle Feedback.HOL_ERR _ =>
+          let
+            val bridge = boolSyntax.mk_eq (left, right)
+            val conditional = boolSyntax.mk_imp (conjunction, bridge)
+          in
+            Thm.MP (SmtArrayProve.array_prove conditional) conjunction_thm
+          end
       val applied = List.foldl
         (fn (antecedent, implication) =>
           Thm.MP implication (Library.conj_elim
@@ -2934,7 +2973,7 @@ local
       val normalized = case normalized_result of
           NONE => applied
         | SOME tm => Thm.EQ_MP
-            (prove_trans_bridge tm scope_result) applied
+            (prove_scoped_bridge tm scope_result) applied
       val discharged = Thm.DISCH conjunction normalized
       val result =
         if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
@@ -4124,7 +4163,7 @@ local
            | "arith_abs_int_gt" => replay_arith_abs_int_gt args
            | "arrays_select_const" => replay_arrays_select_const args
            | "arrays_read_over_write" =>
-               replay_arrays_read_over_write conclusion args
+               replay_arrays_read_over_write (#name rule) prems conclusion args
            | "ite_not_cond" => replay_ite_not_cond args
            | "ite_true_cond" => replay_ite_true_cond args
            | "ite_then_true" => replay_ite_then_true args

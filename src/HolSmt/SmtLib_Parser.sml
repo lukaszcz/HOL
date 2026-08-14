@@ -4305,7 +4305,11 @@ local
             collection_result_surface (terminal_map_surface
               (checked_surface_sort value)) t
         | ("seq.unit", element :: _) =>
-            ConstructorSort (Term.type_of t, [checked_surface_sort element])
+            if Type.compare (Term.type_of t, smtstr_ty) = EQUAL then
+              RigidSort smtstr_ty
+            else
+              ConstructorSort (Term.type_of t,
+                [checked_surface_sort element])
         | ("select", array :: _) =>
             (case checked_surface_sort array of
                ArraySort (_, element) => element

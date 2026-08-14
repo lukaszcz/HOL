@@ -7,7 +7,8 @@ struct
 
 local
 
-  local open HolSmtTheory smtfloatTheory smtstringTheory in end
+  local open HolSmtTheory smtfloatTheory smtstringTheory
+    smtstringz3Theory in end
 
   val ERR = Feedback.mk_HOL_ERR "SmtLib_Theories"
 

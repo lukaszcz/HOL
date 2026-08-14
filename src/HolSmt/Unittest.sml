@@ -4595,13 +4595,16 @@ in
     "(set-logic ALL)\n\
      \(assert (= \"a\" (seq.unit (seq.nth \"a\" 0))))\n");
   let
-    val distinct_negative_nths = assertion cvc5_options
+    val distinct_negative_nths = assertion z3_options
       "(distinct (seq.nth \"a\" (- 1)) (seq.nth \"a\" (- 2)))"
-    val (left, right) = boolSyntax.dest_eq
-      (boolSyntax.dest_neg distinct_negative_nths)
+    val (elements, _) = listSyntax.dest_list
+      (listSyntax.dest_all_distinct distinct_negative_nths)
   in
-    assert (not (Term.aconv left right),
-      "different negative String seq.nth calls were collapsed")
+    case elements of
+      [left, right] =>
+        assert (not (Term.aconv left right),
+          "different negative String seq.nth calls were collapsed")
+    | _ => die "negative String seq.nth test did not retain two elements"
   end;
   assert_builder "shared seq.empty" cvc5_options
     "(= (as seq.empty (Seq Int)) (as seq.empty (Seq Int)))"
@@ -4974,6 +4977,11 @@ let
     solver = SOME "cvc5",
     elaborate_datatypes = false
   }
+  val cvc5_ho_options = {
+    dict_logic = SOME "HO_ALL",
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
   val bag_ty = Type.--> (intSyntax.int_ty, numSyntax.num)
   val b = Term.mk_var ("b", bag_ty)
   val c = Term.mk_var ("c", bag_ty)
@@ -5058,8 +5066,8 @@ let
         [tm] => tm
       | _ => die "bag-builder test did not produce one assertion"
     end
-  fun assert_builder label body expected =
-    let val actual = assertion cvc5_options body in
+  fun assert_builder_with_options options label body expected =
+    let val actual = assertion options body in
       assert (Term.aconv actual expected,
         label ^ " did not construct the expected bagTheory term\nexpected: " ^
         term_with_types expected ^ "\nactual: " ^ term_with_types actual);
@@ -5068,6 +5076,10 @@ let
           String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))) actual),
         label ^ " retained an smtlib_* placeholder")
     end
+  fun assert_builder label body expected =
+    assert_builder_with_options cvc5_options label body expected
+  fun assert_ho_builder label body expected =
+    assert_builder_with_options cvc5_ho_options label body expected
   fun assert_semantics label tm =
     let
       val thm = simpLib.SIMP_PROVE
@@ -5213,13 +5225,13 @@ in
   assert_builder "cvc5 bag.card" "(= (bag.card b) 0)"
     (boolSyntax.mk_eq (Term.mk_comb (intSyntax.int_injection,
       bagSyntax.mk_card b), zero));
-  assert_builder "cvc5 bag.map" "(= (bag.map f b) b)"
+  assert_ho_builder "cvc5 bag.map" "(= (bag.map f b) b)"
     (boolSyntax.mk_eq (bagSyntax.mk_image (f, b), b));
-  assert_builder "cvc5 bag.filter" "(= (bag.filter p b) b)"
+  assert_ho_builder "cvc5 bag.filter" "(= (bag.filter p b) b)"
     (boolSyntax.mk_eq (bag_filter (p, b), b));
-  assert_builder "cvc5 bag.all" "(bag.all p b)"
+  assert_ho_builder "cvc5 bag.all" "(bag.all p b)"
     (bagSyntax.mk_every (p, b));
-  assert_builder "cvc5 bag.some" "(bag.some p b)" some;
+  assert_ho_builder "cvc5 bag.some" "(bag.some p b)" some;
   reject cvc5_options "cvc5 bag.fold"
     "(set-logic ALL)\n\
      \(declare-const b (Bag Int))\n\
@@ -9218,7 +9230,9 @@ let
     in
       check_oracle_tags ("CPC Seq " ^ name) thm;
       assert (Thm.concl thm ~~ expected,
-        "CPC " ^ name ^ " replay conclusion did not match expected goal");
+        "CPC " ^ name ^ " replay conclusion did not match expected goal\n" ^
+        "expected: " ^ term_with_types expected ^ "\nactual: " ^
+        term_with_types (Thm.concl thm));
       assert (SmtSeqProve.has_seq_type (Thm.concl thm),
         "CPC " ^ name ^ " did not retain a native Seq proposition")
     end
@@ -9244,10 +9258,10 @@ let
     \(step @p1 :rule seq-eval-op :args ((= @u \
     \  (seq.++ (seq.unit 2) (seq.unit 2))))))"
   val str_replace_all_nonempty =
-    "((define @s () (str.++ (seq.unit 1) (seq.unit 1))) \
+    "((define @s () (seq.++ (seq.unit 1) (seq.unit 1))) \
     \(define @u () (str.replace_all @s (seq.unit 1) (seq.unit 2))) \
     \(step @p1 :rule seq-eval-op :args ((= @u \
-    \  (str.++ (seq.unit 2) (seq.unit 2))))))"
+    \  (seq.++ (seq.unit 2) (seq.unit 2))))))"
   val at_elim =
     "((define @s () (seq.unit 7)) \
     \(step @p1 (= (seq.at @s 0) (seq.extract @s 0 1)) \
@@ -9269,13 +9283,20 @@ in
   replay "seq-eval-op str.replace_all"
     ([], ``smt_seq_replace_all ([1]:int list) [] [1] = [1]``) str_replace_all;
   replay "seq-eval-op replace_all nonempty"
-    ([], ``smt_seq_replace_all ([1; 1]:int list) [1] [2] = [2; 2]``)
+    ([], ``smt_seq_replace_all (([1]:int list) ++ [1]) [1] [2] =
+           [2] ++ [2]``)
     replace_all_nonempty;
   replay "seq-eval-op str.replace_all nonempty"
-    ([], ``smt_seq_replace_all ([1; 1]:int list) [1] [2] = [2; 2]``)
+    ([], ``smt_seq_replace_all (([1]:int list) ++ [1]) [1] [2] =
+           [2] ++ [2]``)
     str_replace_all_nonempty;
   replay "str-at-elim"
-    ([], ``smt_seq_at ([7]:int list) 0 = smt_seq_extract [7] 0 1``) at_elim;
+    ([], boolSyntax.mk_eq
+      (SmtLib_Theories.Seq_Extensions.mk_seq_at
+         (``[7]:int list``, intSyntax.zero_tm),
+       SmtLib_Theories.Seq_Extensions.mk_seq_extract
+         (``[7]:int list``, intSyntax.zero_tm,
+          intSyntax.term_of_int (Arbint.fromInt 1)))) at_elim;
   replay "str macro native Seq" ([], ``REVERSE ([1]:int list) = [1]``)
     str_macro;
   replay "trust native Seq"
