@@ -1844,6 +1844,29 @@ fun script_ast_command_syntax_error () =
         "syntax error did not include the source location: " ^ msg)
     end
 
+fun script_ast_empty_application_syntax_error () =
+let
+  fun expect_rejection label script =
+    let
+      val _ = SmtLib_Parser.parse_script_string script
+    in
+      die ("script AST parser accepted an empty " ^ label ^ " application")
+    end
+    handle Feedback.HOL_ERR holerr =>
+      let
+        val msg = Feedback.message_of holerr
+      in
+        assert (contains "requires at least one argument" msg,
+          label ^ " empty-application diagnostic was unclear: " ^ msg)
+      end
+in
+  expect_rejection "built-in" "(set-logic QF_UF)\n(assert (true))\n";
+  expect_rejection "declared function"
+    ("(set-logic QF_UF)\n" ^
+     "(declare-fun f () Bool)\n" ^
+     "(assert (f))\n")
+end
+
 fun script_ast_stack_and_query_success () =
 let
   val script =
@@ -4451,6 +4474,23 @@ in
     "Z3 extension signature script produced the wrong assertion count");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "Z3 extension signature assertion did not parse as Bool")
+end
+
+fun smtlib_z3_array_lambda_surface_compatibility () =
+let
+  val options = {
+    dict_logic = NONE,
+    solver = SOME "Z3",
+    elaborate_datatypes = false
+  }
+  val state = SmtLib_Parser.typecheck_script_string_with_options options
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (Array Int Int))\n" ^
+     "(assert (= f (lambda ((x Int)) (+ x 1))))\n" ^
+     "(assert (= (select (lambda ((x Int)) (+ x 1)) 2) 3))\n")
+in
+  assert (List.length (#assertions state) = 2,
+    "Z3 array/lambda compatibility script lost assertions")
 end
 
 fun smtlib_seq_dialect_builders_success () =
@@ -13329,6 +13369,8 @@ let
     ("script_ast_locations_syntax_error", script_ast_locations_syntax_error),
     ("script_ast_metadata_decls_success", script_ast_metadata_decls_success),
     ("script_ast_command_syntax_error", script_ast_command_syntax_error),
+    ("script_ast_empty_application_syntax_error",
+      script_ast_empty_application_syntax_error),
     ("script_ast_stack_and_query_success", script_ast_stack_and_query_success),
     ("script_ast_datatype_recursive_remaining_success",
       script_ast_datatype_recursive_remaining_success),
@@ -13454,6 +13496,8 @@ let
       smtlib_string_regex_parse_signatures_success),
     ("smtlib_z3_extension_parse_signatures_success",
       smtlib_z3_extension_parse_signatures_success),
+    ("smtlib_z3_array_lambda_surface_compatibility",
+      smtlib_z3_array_lambda_surface_compatibility),
     ("smtlib_seq_dialect_builders_success",
       smtlib_seq_dialect_builders_success),
     ("smtlib_set_dialect_builders_success",

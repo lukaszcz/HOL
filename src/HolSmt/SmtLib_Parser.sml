@@ -884,6 +884,11 @@ local
             val (args, close_tok) =
               parse_until_rparen "parse_term" parse_term_from_first []
             val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+            val _ =
+              if List.null args then
+                syntax_error "parse_term" loc
+                  "function application requires at least one argument"
+              else ()
           in
             located loc (TermApply (head, args))
           end
@@ -4151,6 +4156,21 @@ local
           | _ => ()
       fun check_surface_builtin () =
         let
+          fun z3_array_map_equivalent left right =
+            case (left, right) of
+              (ArraySort (left_domain, left_range),
+               MapSort (right_domain, right_range)) =>
+                surface_sorts_equivalent left_domain right_domain andalso
+                surface_sorts_equivalent left_range right_range
+            | (MapSort (left_domain, left_range),
+               ArraySort (right_domain, right_range)) =>
+                surface_sorts_equivalent left_domain right_domain andalso
+                surface_sorts_equivalent left_range right_range
+            | _ => false
+          fun dialect_sorts_equivalent left right =
+            surface_sorts_equivalent left right orelse
+            (#solver context = SOME "Z3" andalso
+             z3_array_map_equivalent left right)
           fun require_set operator surface =
             if is_set_surface surface then ()
             else type_error fn_name context loc NONE NONE
@@ -4167,7 +4187,7 @@ local
             case surfaces of
               [] => ()
             | surface :: rest =>
-                if List.all (surface_sorts_equivalent surface) rest then ()
+                if List.all (dialect_sorts_equivalent surface) rest then ()
                 else type_error fn_name context loc NONE NONE
                   (operator ^ " arguments must have the same surface sort")
           fun check_sets () =
@@ -4231,10 +4251,15 @@ local
                 else ()
               else
                 (case set_surface of
-                   ArraySort (index, _) =>
+                 ArraySort (index, _) =>
                      if surface_sort_compatible index actual_index then ()
                      else type_error fn_name context loc NONE NONE
                        "ArraysEx select surface sort mismatch"
+                 | MapSort (index, _) =>
+                     if #solver context = SOME "Z3" andalso
+                        surface_sort_compatible index actual_index then ()
+                     else type_error fn_name context loc NONE NONE
+                       "ArraysEx select requires an Array sort"
                  | _ => type_error fn_name context loc NONE NONE
                      "ArraysEx select requires an Array sort")
           | ("store", [ArraySort (index, element), actual_index,
@@ -4313,6 +4338,7 @@ local
         | ("select", array :: _) =>
             (case checked_surface_sort array of
                ArraySort (_, element) => element
+             | MapSort (_, range) => range
              | _ => RigidSort (Term.type_of t))
         | ("store", array :: _) => checked_surface_sort array
         | ("ite", _ :: then_term :: else_term :: _) =>
