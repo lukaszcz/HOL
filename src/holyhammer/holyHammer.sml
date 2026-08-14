@@ -102,14 +102,15 @@ fun progress found (hhSchedule.SliceStarted slice) =
        print_endline ("  proof found by " ^ #prover slice ^ ":");
        print_endline ("    " ^ mk_metis_call lemmas))
   | progress _ (hhSchedule.Verified suggestion) =
-      print_endline ("  minimized proof:  \n    " ^ #stac suggestion)
+      print_endline ("  verified proof:  \n    " ^ #stac suggestion)
   | progress _ (hhSchedule.ScheduleDone _) = ()
 
 fun problem_path (slice : hhProver.slice) =
   pathl [hhConfig.state_dir (), "problems",
          String.concatWith "."
-           (map aiLib.escape [#format slice, #type_enc slice,
-                              #lam_trans slice, Int.toString (#nfacts slice)]),
+           (map aiLib.escape [#prover slice, #format slice,
+                              #type_enc slice, #lam_trans slice,
+                              Int.toString (#nfacts slice)]),
          "atp_in"]
 
 fun output_paths directory prover =

@@ -67,13 +67,13 @@ fun default_progress (SliceStarted slice) =
       (print_endline ("  proof found by " ^ #prover slice ^ ":");
        print_endline ("    " ^ mlThmData.mk_metis_call lemmas))
   | default_progress (Verified suggestion) =
-      print_endline ("  minimized proof:  \n    " ^ #stac suggestion)
+      print_endline ("  verified proof:  \n    " ^ #stac suggestion)
   | default_progress (ScheduleDone _) = ()
 
 fun problem_key (slice : hhProver.slice) =
   String.concatWith "."
-    (map aiLib.escape [#format slice, #type_enc slice, #lam_trans slice,
-                       Int.toString (#nfacts slice)])
+    (map aiLib.escape [#prover slice, #format slice, #type_enc slice,
+                       #lam_trans slice, Int.toString (#nfacts slice)])
 
 fun problem_dir (slice : hhProver.slice) =
   join (join (hhConfig.state_dir ()) "problems") (problem_key slice)
@@ -81,7 +81,8 @@ fun problem_dir (slice : hhProver.slice) =
 fun problem_path (slice : hhProver.slice) = join (problem_dir slice) "atp_in"
 
 fun same_problem_key (left : hhProver.slice) (right : hhProver.slice) =
-  #format left = #format right andalso #type_enc left = #type_enc right andalso
+  #prover left = #prover right andalso #format left = #format right andalso
+  #type_enc left = #type_enc right andalso
   #lam_trans left = #lam_trans right andalso #nfacts left = #nfacts right
 
 fun distinct_problem_slices slices =
@@ -109,18 +110,29 @@ fun export_problems options goal premises schedule =
     val memo = hhProblemGen.new_export_memo ()
     val named_memo = ref []
     fun named_for nfacts =
-      case List.find (fn (old_nfacts, _) => old_nfacts = nfacts) (!named_memo) of
+      let
+        val count =
+          if #filter options = "none" then
+            (case #max_facts options of
+                 NONE => length premises
+               | SOME maximum => Int.min (maximum, length premises))
+          else nfacts
+      in
+      case List.find (fn (old_nfacts, _) => old_nfacts = count)
+          (!named_memo) of
           SOME (_, named) => named
         | NONE =>
             let
-              val selected = first_n nfacts premises
+              val selected = first_n count premises
               val named = smlRedirect.hidef mlThmData.thml_of_namel selected
             in
-              named_memo := (nfacts, named) :: !named_memo;
+              named_memo := (count, named) :: !named_memo;
               named
             end
+      end
     fun config_for slice =
-      case List.find (fn (config, other) => same_problem_key slice other) schedule of
+      case List.find
+          (fn (config, other) => same_problem_key slice other) schedule of
           SOME (config, _) => config
         | NONE => raise Fail "HolyHammer: missing config for problem slice"
     fun export slice =
@@ -318,8 +330,16 @@ fun run {options, goal, premises, progress} =
                 in
                   case register_running (#kill process) of
                       NONE =>
-                        (#kill process ();
-                         #wait process ())
+                        let
+                          val _ = #kill process ()
+                          val result = #wait process ()
+                          val _ =
+                            case parts of
+                                NONE => ()
+                              | SOME key => hhCache.store options key result
+                        in
+                          result
+                        end
                     | SOME id =>
                         let
                           val result =
@@ -384,7 +404,9 @@ fun run {options, goal, premises, progress} =
           ((let
               val ((stac, tac), t_recon) =
                 add_time
-                  (smlRedirect.hidef (hhReconstruct.hh_reconstruct lemmas))
+                  (smlRedirect.hidef
+                    (hhReconstruct.hh_reconstruct_with
+                      (#minimize options) lemmas))
                   goal
               val suggestion : suggestion =
                 {stac = stac, tac = tac, lemmas = lemmas,

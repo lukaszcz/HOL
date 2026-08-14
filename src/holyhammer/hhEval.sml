@@ -36,7 +36,16 @@ type journal_entry =
    axioms_used : string list option, recon_ok : bool option,
    recon_method : string option, t_recon : real option,
    stac : string option, error : string option, stop : string option,
-   t_total : real option, slices : journal_slice list}
+   t_total : real option, winner : hhProver.slice option,
+   slices : journal_slice list}
+
+fun same_slice (left : hhProver.slice) (right : hhProver.slice) =
+  #prover left = #prover right andalso #format left = #format right andalso
+  #type_enc left = #type_enc right andalso
+  #lam_trans left = #lam_trans right andalso
+  #nfacts left = #nfacts right andalso #filter left = #filter right andalso
+  #extra_opts left = #extra_opts right andalso
+  #slice_size left = #slice_size right
 
 type corpus_coverage =
   {srcfiles : string list, dat_theories : string list,
@@ -391,7 +400,8 @@ fun json_engine_params {provers, slices, cores, max_proofs} =
 fun journal_json
     {run, thy, thm, goal_id, cond, regime, selector, engine, ho, prover,
      prover_version, nfacts, timeout, szs, t_prover, axioms_used,
-     recon_ok, recon_method, t_recon, stac, error, stop, t_total, slices} =
+     recon_ok, recon_method, t_recon, stac, error, stop, t_total, winner,
+     slices} =
   let
     val common =
       [("run", JSON.STRING run), ("thy", JSON.STRING thy),
@@ -428,6 +438,9 @@ fun journal_json
                    winning @
                    [("stop", JSON.STRING reason),
                     ("t_total", JSON.FLOAT total),
+                    ("winner", case winner of
+                         NONE => JSON.NULL
+                       | SOME slice => json_slice slice),
                     ("slices", JSON.ARRAY (map json_journal_slice slices))]
                | _ => raise Fail
                    "invalid hhEval Sched journal entry: stop and t_total are required")
@@ -481,13 +494,30 @@ fun array_or_empty decoder name value =
     | SOME items => JSONUtil.arrayMap decoder items
 
 fun parse_journal_value value : journal_entry =
-  let val prover = string_field "prover" value in
+  let
+    val prover = string_field "prover" value
+    val engine = parse_journal_engine value prover
+    val slices = array_or_empty parse_journal_slice "slices" value
+    val stored_winner = nullable_optional parse_slice "winner" value
+    val winner =
+      case (engine, stored_winner) of
+          (_, SOME slice) => SOME slice
+        | (Prover _, NONE) => NONE
+        | (Sched _, NONE) =>
+            (* Older journals did not persist the winning translation.
+               Recover it only when their abbreviated identity is unique. *)
+            (case List.filter (fn {slice, szs, ...} : journal_slice =>
+               szs = "Theorem" andalso #prover slice = prover andalso
+               #nfacts slice = int_field "nfacts" value) slices of
+                 [{slice, ...}] => SOME slice
+               | _ => NONE)
+  in
     {run = string_field "run" value, thy = string_field "thy" value,
      thm = string_field "thm" value, goal_id = string_field "goal_id" value,
      cond = string_field "cond" value,
      regime = regime_of_string (string_field "regime" value),
      selector = selector_of_string (string_field "selector" value),
-     engine = parse_journal_engine value prover,
+     engine = engine,
      ho = nullable_optional JSONUtil.asBool "ho" value, prover = prover,
      prover_version = option_field JSONUtil.asString "prover_version" value,
      nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
@@ -500,7 +530,7 @@ fun parse_journal_value value : journal_entry =
      error = option_field JSONUtil.asString "error" value,
      stop = nullable_optional JSONUtil.asString "stop" value,
      t_total = nullable_optional JSONUtil.asNumber "t_total" value,
-     slices = array_or_empty parse_journal_slice "slices" value}
+     winner = winner, slices = slices}
   end
 
 fun encode_journal_line entry = JSONPrinter.valueToString (journal_json entry)
@@ -834,11 +864,9 @@ fun winning_slice_fields entry =
   case #engine entry of
       Prover _ => SOME ("fof", "", "", #prover entry, #nfacts entry)
     | Sched _ =>
-        (case List.find (fn {slice, szs, ...} : journal_slice =>
-          szs = "Theorem" andalso #prover slice = #prover entry andalso
-          #nfacts slice = #nfacts entry) (#slices entry) of
+        (case #winner entry of
              NONE => NONE
-           | SOME {slice, ...} =>
+           | SOME slice =>
                SOME (#format slice, #type_enc slice, #lam_trans slice,
                  #prover slice, #nfacts slice))
 
@@ -1296,7 +1324,7 @@ fun base_entry expdir thy name condition ho nfacts szs t_prover axioms version
    t_total = (case #engine condition of
                   Prover _ => NONE
                 | Sched _ => SOME 0.0),
-   slices = []} : journal_entry
+   winner = NONE, slices = []} : journal_entry
 
 fun journal_theory_error expdir thy message =
   let
@@ -1434,11 +1462,9 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
        cached = cached} : journal_slice) (#slices_run result)
     fun slice_result wanted =
       List.find (fn (slice, _, _, _) =>
-        #prover slice = #prover wanted andalso
-        #nfacts slice = #nfacts wanted andalso
-        #extra_opts slice = #extra_opts wanted) (#slices_run result)
-    fun finish prover nfacts szs t_prover axioms recon_ok recon_method
-        t_recon stac error =
+        same_slice slice wanted) (#slices_run result)
+    fun finish winner prover nfacts szs t_prover axioms recon_ok
+        recon_method t_recon stac error =
       {run = run_name expdir, thy = thy, thm = name,
        goal_id = goal_id thy name, cond = #cond_id condition,
        regime = #regime condition, selector = #selector condition,
@@ -1450,14 +1476,15 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
        axioms_used = axioms, recon_ok = recon_ok,
        recon_method = recon_method, t_recon = t_recon, stac = stac,
        error = error, stop = SOME (schedule_stop_name (#stopped result)),
-       t_total = SOME (#t_total result), slices = slices} : journal_entry
+       t_total = SOME (#t_total result), winner = winner,
+       slices = slices} : journal_entry
   in
     case #suggestions result of
         suggestion :: _ =>
-          finish (#prover suggestion) (#nfacts (#slice suggestion)) "Theorem"
-            (#t_prover suggestion) (SOME (#lemmas suggestion)) (SOME true)
-            (SOME "metis") (SOME (#t_recon suggestion))
-            (SOME (#stac suggestion)) NONE
+          finish (SOME (#slice suggestion)) (#prover suggestion)
+            (#nfacts (#slice suggestion)) "Theorem" (#t_prover suggestion)
+            (SOME (#lemmas suggestion)) (SOME true) (SOME "metis")
+            (SOME (#t_recon suggestion)) (SOME (#stac suggestion)) NONE
       | [] =>
           (case !proofs of
                (slice, lemmas) :: _ =>
@@ -1467,18 +1494,19 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
                          SOME (_, _, time, _) => time
                        | NONE => 0.0
                  in
-                   finish (#prover slice) (#nfacts slice) "Theorem" elapsed
-                     (SOME lemmas) (SOME false) (SOME "metis") NONE NONE
+                   finish (SOME slice) (#prover slice) (#nfacts slice)
+                     "Theorem" elapsed (SOME lemmas) (SOME false)
+                     (SOME "metis") NONE NONE
                      (SOME "ATP proof found but reconstruction failed")
                  end
              | [] =>
                  (case #slices_run result of
                       (slice, status, elapsed, _) :: _ =>
-                        finish (#prover slice) (#nfacts slice)
+                        finish NONE (#prover slice) (#nfacts slice)
                           (szs_name status) elapsed NONE NONE NONE NONE NONE
                           (run_failure_error status)
-                    | [] => finish "" maximum "RunFailure" 0.0 NONE NONE
-                        NONE NONE NONE
+                    | [] => finish NONE "" maximum "RunFailure" 0.0 NONE
+                        NONE NONE NONE NONE
                         (SOME "schedule contained no runnable slices")))
   end
 

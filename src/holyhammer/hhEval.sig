@@ -23,7 +23,8 @@ sig
      axioms_used : string list option, recon_ok : bool option,
      recon_method : string option, t_recon : real option,
      stac : string option, error : string option, stop : string option,
-     t_total : real option, slices : journal_slice list}
+     t_total : real option, winner : hhProver.slice option,
+     slices : journal_slice list}
 
   type corpus_coverage =
     {srcfiles : string list, dat_theories : string list,

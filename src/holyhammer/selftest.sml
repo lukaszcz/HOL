@@ -1971,6 +1971,10 @@ fun same_journal_entry (expected : hhEval.journal_entry)
   #stac expected = #stac actual andalso #error expected = #error actual andalso
   #stop expected = #stop actual andalso
   same_real_option (#t_total expected) (#t_total actual) andalso
+  (case (#winner expected, #winner actual) of
+       (NONE, NONE) => true
+     | (SOME left, SOME right) => same_slice left right
+     | _ => false) andalso
   ListPair.allEq (fn (left, right) => same_journal_slice left right)
     (#slices expected, #slices actual)
 
@@ -2033,7 +2037,7 @@ fun test_hhEval root =
        nfacts = 0, timeout = 5,
        szs = "BrokenDeps", t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
-       error = NONE, stop = NONE, t_total = NONE, slices = []}
+       error = NONE, stop = NONE, t_total = NONE, winner = NONE, slices = []}
     val full_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "cons", goal_id = "list.cons",
        cond = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
@@ -2043,7 +2047,7 @@ fun test_hhEval root =
        axioms_used = SOME ["list.nil", "arithmetic.add"], recon_ok = SOME true,
        recon_method = SOME "metis", t_recon = SOME 0.5,
        stac = SOME "metis_tac [list_nil]", error = SOME "fixture",
-       stop = NONE, t_total = NONE, slices = []}
+       stop = NONE, t_total = NONE, winner = NONE, slices = []}
     val _ = expect "journal null-field round trip"
       (same_journal_entry null_entry
        (hhEval.parse_journal_line (hhEval.encode_journal_line null_entry)))
@@ -2080,7 +2084,7 @@ fun test_hhEval root =
        szs = "Error", t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
        error = SOME "transient harness failure", stop = NONE,
-       t_total = NONE, slices = []}
+       t_total = NONE, winner = NONE, slices = []}
     val _ = hhEval.append_journal retry retry_entry
     val _ = expect "resume retries harness errors"
       (not (hhEval.cell_completed (hhEval.read_completed retry)
@@ -2096,7 +2100,7 @@ fun test_hhEval root =
        szs = "RunFailure", t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
        error = SOME "prover binary was missing", stop = NONE,
-       t_total = NONE, slices = []}
+       t_total = NONE, winner = NONE, slices = []}
     val _ = expect "resume retries cells whose prover never ran"
       (not (hhEval.cell_completed (hhEval.read_completed run_failure)
         ("list.nil", "deps-e")))
@@ -2154,6 +2158,12 @@ fun test_hhEval root =
           lam_trans = "", nfacts = 256, filter = "mepo",
           extra_opts = ["--auto"], slice_size = 15},
        szs = "Theorem", time = 1.75, cached = true}
+    val competing_schedule_slice : hhEval.journal_slice =
+      {slice =
+         {prover = "e", format = "tx0-", type_enc = "mono_native_fool",
+          lam_trans = "lifting", nfacts = 256, filter = "mepo",
+          extra_opts = ["--auto"], slice_size = 15},
+       szs = "Theorem", time = 1.5, cached = false}
     val sched_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "scheduled",
        goal_id = "list.scheduled", cond = "sched",
@@ -2165,7 +2175,8 @@ fun test_hhEval root =
        recon_method = SOME "metis", t_recon = SOME 0.25,
        stac = SOME "metis_tac [list_one]", error = NONE,
        stop = SOME "MaxProofs", t_total = SOME 2.0,
-       slices = [schedule_slice]}
+       winner = SOME (#slice schedule_slice),
+       slices = [competing_schedule_slice, schedule_slice]}
     val sched_line = hhEval.encode_journal_line sched_entry
     val _ = expect "Sched journal round trip"
       (same_journal_entry sched_entry (hhEval.parse_journal_line sched_line))
@@ -2176,10 +2187,12 @@ fun test_hhEval root =
        in
          path
        end)
-    val _ = expect "Sched journal emits v3 engine, HO, and slice fields"
+    val _ = expect "Sched journal emits engine, HO, and exact winner fields"
       (JSONUtil.asString (JSONUtil.lookupField sched_json "engine") =
          "sched" andalso
        JSONUtil.asBool (JSONUtil.lookupField sched_json "ho") andalso
+       JSONUtil.asString (JSONUtil.lookupField
+         (JSONUtil.lookupField sched_json "winner") "format") = "fof" andalso
        JSONUtil.asString (JSONUtil.lookupField
          (hd (JSONUtil.arrayMap (fn item => item)
            (JSONUtil.lookupField sched_json "slices"))) "szs") = "Theorem")
@@ -2255,7 +2268,7 @@ fun test_hhEval root =
        prover_version = #prover_version full_entry, nfacts = 3, timeout = 6,
        szs = szs, t_prover = 0.1, axioms_used = NONE,
        recon_ok = recon, recon_method = NONE, t_recon = NONE, stac = NONE,
-       error = NONE, stop = NONE, t_total = NONE, slices = []}
+       error = NONE, stop = NONE, t_total = NONE, winner = NONE, slices = []}
     val subset_journal = join report_journal "subset.jsonl"
     val _ = hhEval.append_journal subset_journal
       (subset_entry "ho" true "Theorem" (SOME true))
@@ -2487,6 +2500,20 @@ fun fixture_options provers slices cores timeout max_proofs cache cache_dir
    cache = cache, cache_dir = cache_dir, cache_max_entries = 100,
    debug_dir = debug_dir}
 
+fun without_minimization (options : hhConfig.hh_options)
+    : hhConfig.hh_options =
+  {timeout = #timeout options, max_proofs = #max_proofs options,
+   provers = #provers options, slices = #slices options,
+   cores = #cores options, filter = #filter options,
+   max_facts = #max_facts options, format = #format options,
+   type_enc = #type_enc options, lam_trans = #lam_trans options,
+   mono_iters = #mono_iters options, mono_instances = #mono_instances options,
+   minimize = false, preplay_timeout = #preplay_timeout options,
+   minimize_timeout = #minimize_timeout options, cache = #cache options,
+   cache_dir = #cache_dir options,
+   cache_max_entries = #cache_max_entries options,
+   debug_dir = #debug_dir options}
+
 fun slice_event_tag (slice : hhProver.slice) =
   #prover slice ^ ":" ^ String.concatWith "," (#extra_opts slice)
 
@@ -2652,6 +2679,25 @@ fun test_schedule_reconstruction_failure parser =
     ()
   end
 
+fun test_schedule_without_minimization () =
+  let
+    val name = "hh-schedule-no-minimize"
+    val lemmas = ["boolTheory.TRUTH", "boolTheory.T_DEF"]
+    val slice = fixture_slice name ["0", "schedule-truth.out"] 1
+    val config = printer_config name [slice] (fn _ => ())
+      (fn _ => (hhProver.SzsTheorem, SOME lemmas))
+    val _ = hhProver.register config
+    val options = without_minimization
+      (fixture_options [name] 1 1 5 1 false "" NONE)
+    val (result, _) = run_schedule options
+    val _ = expect "scheduler minimize=false preserves the ATP lemma list"
+      (case #suggestions result of
+           [suggestion] => #stac suggestion = mlThmData.mk_metis_call lemmas
+         | _ => false)
+  in
+    ()
+  end
+
 fun test_schedule_early_stop parser =
   let
     val slow1 = "hh-schedule-slow-one"
@@ -2772,6 +2818,7 @@ fun test_schedule_timeout parser =
 fun test_schedule_export_wiring () =
   let
     val e = prover "e"
+    val vampire = prover "vampire"
     fun options mono_instances : hhConfig.hh_options =
       {timeout = 30, max_proofs = 1, provers = ["e"], slices = 1, cores = 1,
        filter = "none", max_facts = NONE, format = "", type_enc = "",
@@ -2797,9 +2844,14 @@ fun test_schedule_export_wiring () =
     val _ = mkdir expected_dir
     val _ = hhExportFof.fof_export_pb expected_dir (boolSyntax.T, [])
     val _ = hhSchedule.export_problems (options NONE) goal [] [(e, legacy)]
+    val legacy_empty_text = String.concat (read_lines legacy_path)
     val _ = expect "legacy scheduler dispatch is byte-identical"
-      (String.concat (read_lines legacy_path) =
+      (legacy_empty_text =
        String.concat (read_lines (join expected_dir "atp_in")))
+    val _ = hhSchedule.export_problems (options NONE) goal
+      ["boolTheory.TRUTH"] [(e, legacy)]
+    val _ = expect "filter=none exports premises beyond the slice fact count"
+      (legacy_empty_text <> String.concat (read_lines legacy_path))
     val _ = hhSchedule.export_problems (options NONE) goal []
       [(e, lifting), (e, combs), (e, lifting)]
     val lifting_text = String.concat (read_lines lifting_path)
@@ -2813,6 +2865,22 @@ fun test_schedule_export_wiring () =
     val _ = hhSchedule.export_problems (options (SOME 77)) goal [] [(e, lifting)]
     val _ = expect "explicit mono-instance option beats registry override"
       (contains "mono_instances=77" (String.concat (read_lines lifting_path)))
+    fun mono_slice prover : hhProver.slice =
+      {prover = prover, format = "th0", type_enc = "mono_native_higher",
+       lam_trans = "keep_lams", nfacts = 0, filter = "none",
+       extra_opts = [], slice_size = 1}
+    val e_mono = mono_slice "e"
+    val vampire_mono = mono_slice "vampire"
+    val _ = hhSchedule.export_problems (options NONE) goal []
+      [(e, e_mono), (vampire, vampire_mono)]
+    val e_mono_path = hhSchedule.problem_path e_mono
+    val vampire_mono_path = hhSchedule.problem_path vampire_mono
+    val _ = expect "prover-specific monomorphization exports stay distinct"
+      (e_mono_path <> vampire_mono_path andalso
+       contains "mono_instances=128"
+         (String.concat (read_lines e_mono_path)) andalso
+       contains "mono_instances=256"
+         (String.concat (read_lines vampire_mono_path)))
     val _ = remove_tree expected_dir
   in
     ()
@@ -2827,6 +2895,7 @@ fun test_hhSchedule () =
           val started = Time.now ()
           val _ = test_schedule_max_proofs parser
           val _ = test_schedule_reconstruction_failure parser
+          val _ = test_schedule_without_minimization ()
           val _ = test_schedule_early_stop parser
           val _ = test_schedule_budget_truncation parser
           val _ = test_schedule_cache parser
