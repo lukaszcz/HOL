@@ -173,6 +173,15 @@ New tools
     their provenance.  `holyHammer.set_timeout` remains as a deprecated alias
     for `hhConfig.hh_set ("timeout", ...)`.
 
+-   HOLyHammer schedules TPTP formats, type encodings, and lambda
+    translations per prover slice.  Alongside its legacy FOF exporter it can
+    generate typed `tf0`, `tf1`, `tx0`, `tx0-`, `th0`, and `th1` problems,
+    with used-axiom parse-back and Metis reconstruction.  The new
+    `hhConfig` keys `format`, `type_enc`, and `lam_trans` provide
+    schedule-wide overrides; `mono_iters` and `mono_instances` control the
+    bounded monomorphization pass.  Empty overrides retain the tested
+    per-slice schedule.
+
 New examples
 ------------
 
