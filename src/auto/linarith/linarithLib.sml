@@ -488,19 +488,43 @@ fun augmentation function limit processed assumptions =
     loop (remember assumptions Termtab.empty) processed [] 0 assumptions
   end
 
-(* Eliminate the first disjunctive assumption.  The caller orders the
-   assumptions by arithmetic connectedness before reaching this function.
-   Each child is refuted immediately, so running the solver here as well
-   would duplicate the dominant work at every branch. *)
-fun disj_elim_tac (assumptions, conclusion) =
+(* Whether a disjunct can be added to the literals already assumed
+   without the arithmetic refuting the result.  A disjunct that cannot
+   is a case the split would close immediately, so counting them
+   measures how much of a disjunction is still live.  The literals are
+   taken already decomposed, since every disjunct of every disjunction
+   is scored against the same ones. *)
+fun consistent config decomposed disjunct =
+  case linarithSolve.prove_decomposed config linarithDecomp.decomp
+         linarithDecomp.is_nonnegative
+         ((disjunct, linarithDecomp.decomp disjunct) :: decomposed)
+         boolSyntax.F of
+      (_, SOME _) => false
+    | (_, NONE) => true
+
+(* Eliminate the disjunction with the fewest arithmetically consistent
+   cases.  Connectedness cannot distinguish whole disjunctions because
+   they have no decomposed atoms; scoring their cases is arithmetic unit
+   propagation and avoids enumerating unrelated total-order choices. *)
+fun disj_elim_tac config (assumptions, conclusion) =
   let
-    val (disjunctions, _) =
+    val (disjunctions, literals) =
       List.partition boolSyntax.is_disj assumptions
     val _ =
       if List.null disjunctions then
         raise ERR "disj_elim_tac" "no disjunctive assumption"
       else ()
-    val chosen = hd disjunctions
+    val decomposed =
+      List.map (fn tm => (tm, linarithDecomp.decomp tm)) literals
+    fun score disjunction =
+      (List.length
+         (List.filter (consistent config decomposed)
+            (boolSyntax.strip_disj disjunction)),
+       disjunction)
+    fun cheaper (candidate as (count, _), best as (fewest, _)) =
+      if count < fewest then candidate else best
+    val scored = List.map score disjunctions
+    val (_, chosen) = List.foldl cheaper (hd scored) (tl scored)
     val (left, right) = boolSyntax.dest_disj chosen
     val common = List.filter (not o Term.aconv chosen) assumptions
     val goals =
@@ -725,7 +749,7 @@ fun split_on_demand function config split_tac =
           SOME tactic => tactic goal
         | NONE => branch hint spent goal)
     and branch hint (spent as {splits, augmentations, processed}) goal =
-      case Lib.total disj_elim_tac (connected_split_goal goal) of
+      case Lib.total (disj_elim_tac config) (connected_split_goal goal) of
           SOME split =>
             (note_search DisjunctionSplit;
              expand node hint spent split)

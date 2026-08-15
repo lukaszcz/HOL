@@ -174,6 +174,15 @@ fun recipe_solves recipe goal =
 
 val conjunction_commute = boolTheory.CONJ_COMM
 val disjunction_commute = boolTheory.DISJ_COMM
+val r = mk_var ("bench_unit_r", bool)
+val nested_conjunction_commute =
+  boolSyntax.mk_eq
+    (boolSyntax.mk_conj (p, boolSyntax.mk_conj (q, r)),
+     boolSyntax.mk_conj (boolSyntax.mk_conj (q, r), p))
+val nested_disjunction_commute =
+  boolSyntax.mk_eq
+    (boolSyntax.mk_disj (p, boolSyntax.mk_disj (q, r)),
+     boolSyntax.mk_disj (boolSyntax.mk_disj (q, r), p))
 
 val rewrite_recipe =
   benchLib.Invoke
@@ -190,25 +199,30 @@ val definition_recipe =
 
 val _ =
   check
-    ("recipe-local rewrite closes a goal that bare simp leaves",
+    ("an empty exclusion list cannot admit the measured theorem",
      fn () =>
-       recipe_solves rewrite_recipe (Thm.concl conjunction_commute) andalso
        not
-         (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
-            (Thm.concl conjunction_commute)))
+         (recipe_solves rewrite_recipe (Thm.concl conjunction_commute)))
 
 val _ =
   check
-    ("recipe-local definition closes a goal that bare simp leaves",
+    ("recipe-local schemas still close non-analogue instances",
      fn () =>
-       recipe_solves definition_recipe (Thm.concl disjunction_commute) andalso
+       recipe_solves rewrite_recipe nested_conjunction_commute andalso
+       recipe_solves definition_recipe nested_disjunction_commute andalso
        not
          (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
-            (Thm.concl disjunction_commute)))
+            nested_conjunction_commute) andalso
+       not
+         (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
+            nested_disjunction_commute))
 
 val length_reverse =
   {name = "list$LENGTH_REVERSE", theorem = listTheory.LENGTH_REVERSE}
-val length_reverse_goal = Thm.concl listTheory.LENGTH_REVERSE
+val length_reverse_goal =
+  Thm.concl
+    (SPEC ``[T]``
+      (INST_TYPE [Type.alpha |-> Type.bool] listTheory.LENGTH_REVERSE))
 val fact_recipe =
   benchLib.Invoke
     (benchLib.Safe, [benchLib.FactAdd length_reverse])
@@ -318,6 +332,38 @@ val _ =
           "elim-safe(list$LENGTH_REVERSE)",
           "dest-unsafe(list$LENGTH_REVERSE)",
           "cong(list$LENGTH_REVERSE)"])
+
+fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.SplitAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.IntroAdd (_, {theorem, ...})) = SOME theorem
+  | argument_theorem (benchLib.ElimAdd (_, {theorem, ...})) = SOME theorem
+  | argument_theorem (benchLib.DestAdd (_, {theorem, ...})) = SOME theorem
+  | argument_theorem (benchLib.CongruenceAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.FactAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.DefinitionAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.RewriteDelete _) = NONE
+
+fun recipe_theorems (benchLib.Invoke (_, arguments)) =
+      List.mapPartial argument_theorem arguments
+  | recipe_theorems (benchLib.Then (left, right)) =
+      recipe_theorems left @ recipe_theorems right
+  | recipe_theorems (benchLib.AllGoals (left, right)) =
+      recipe_theorems left @ recipe_theorems right
+
+val every_corpus_goal =
+  benchClassical.goals @ benchSets.goals @ benchListMap.goals @
+  benchLinarith.goals @ benchPresburger.goals @ benchAlgebra.goals
+
+val direct_recipe_goals =
+  List.filter
+    (fn ({goal, recipe, ...} : benchLib.corpus_goal) =>
+      List.exists (benchLib.theorem_is_goal goal) (recipe_theorems recipe))
+    every_corpus_goal
+
+val _ =
+  check
+    ("no benchmark recipe supplies its measured theorem",
+     fn () => null direct_recipe_goals)
 
 fun goal_named id goals =
   case List.filter
@@ -568,15 +614,20 @@ val promoted_set_bridge_goals =
    (goal_named "set_L1967_pairwise_image" benchSets.goals,
     "parityTranslation$source_pairwise_image")]
 
+fun shortfall_id entries id =
+  List.exists (fn ({id = other, ...} : benchLib.shortfall) => id = other)
+    entries
+
 val _ =
   check
-    ("promoted translated set goals execute exactly",
+    ("promoted translated set goals match corrected accounting",
      fn () =>
        List.all
          (fn (goal, _) =>
            benchLib.outcome_solved
              (benchLib.run_goal (Time.fromSeconds 5)
-                (#recipe goal) goal))
+                (#recipe goal) goal) =
+           not (shortfall_id benchSets.shortfalls (#id goal)))
          promoted_set_bridge_goals)
 
 val _ =
@@ -2276,18 +2327,21 @@ val translated_recovered_goals =
 
 val _ =
   check
-    ("recovered source translations execute exactly",
+    ("recovered source translations match corrected accounting",
      fn () =>
        List.all
          (fn (goal : benchLib.corpus_goal) =>
            case benchLib.run_goal
                   (Time.fromSeconds 5) (#recipe goal) goal of
-               benchLib.SOLVED _ => true
+               benchLib.SOLVED _ =>
+                 not (shortfall_id benchListMap.shortfalls (#id goal))
              | benchLib.TIMEOUT =>
-                 (print ("\n" ^ #id goal ^ ": timeout\n"); false)
+                 shortfall_id benchListMap.shortfalls (#id goal)
              | benchLib.FAILED message =>
-                 (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
-                  false))
+                 if shortfall_id benchListMap.shortfalls (#id goal) then true
+                 else
+                   (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
+                    false))
          translated_recovered_goals)
 
 val translated_interval_list_goals =
@@ -2672,9 +2726,9 @@ val _ =
   check
     ("exhaustive shortfall registers are exact",
      fn () =>
-       count_cause benchLib.EngineLimitation benchSets.shortfalls = 0 andalso
+       count_cause benchLib.EngineLimitation benchSets.shortfalls = 3 andalso
        count_cause benchLib.TranslationGap benchSets.shortfalls = 0 andalso
-       count_cause benchLib.EngineLimitation benchListMap.shortfalls = 0 andalso
+       count_cause benchLib.EngineLimitation benchListMap.shortfalls = 50 andalso
        count_cause benchLib.TranslationGap benchListMap.shortfalls = 0 andalso
        count_cause benchLib.EngineLimitation
          benchPresburger.shortfalls = 0 andalso

@@ -76,6 +76,41 @@ val _ =
          List.exists failed_result (#results report)
        end)
 
+val slow_variables =
+  List.tabulate
+    (24, fn i =>
+       Term.mk_var ("audit_slow_" ^ Int.toString i, Type.bool))
+val slow_premise = hd slow_variables
+val slow_conclusion =
+  List.foldl
+    (fn (alternative, conclusion) =>
+      boolSyntax.mk_disj (conclusion, alternative))
+    slow_premise (tl slow_variables)
+val slow_theorem =
+  DISCH slow_premise
+    (List.foldl
+       (fn (alternative, theorem) => DISJ1 theorem alternative)
+       (ASSUME slow_premise) (tl slow_variables))
+val slow_audit_cs =
+  clasetLib.add_rule audit_spec
+    ("audit_budget", slow_theorem) clasetLib.empty_cs
+
+val _ =
+  check
+    ("seed audit interrupts a prover at the obligation budget",
+     fn () =>
+       let
+         val timer = Timer.startRealTimer ()
+         val report =
+           seedAudit.inspect
+             {claset = slow_audit_cs,
+              budget = Time.fromReal 0.01, waivers = []}
+         val elapsed = Timer.checkRealTimer timer
+       in
+         List.exists failed_result (#results report) andalso
+         Time.< (elapsed, Time.fromReal 0.5)
+       end)
+
 val _ =
   check
     ("seed audit consumes a dated waiver",

@@ -240,11 +240,31 @@ fun named_theorem (RewriteAdd theorem) = SOME theorem
    persistent name.  This check happens before controls are appended, so a
    recipe cannot put the measured theorem back under an invocation-private
    name. *)
-fun permitted_arg ({goal, excl, ...} : corpus_goal) arg =
-  null excl orelse
+fun permitted_for goal arg =
   case named_theorem arg of
       NONE => true
     | SOME {theorem, ...} => not (theorem_is_goal goal theorem)
+
+fun permitted_arg ({goal, ...} : corpus_goal) = permitted_for goal
+
+fun sanitize_recipe goal recipe =
+  let
+    fun sanitize (Invoke (tactic_id, args)) =
+          Invoke (tactic_id, List.filter (permitted_for goal) args)
+      | sanitize (Then (left, right)) =
+          Then (sanitize left, sanitize right)
+      | sanitize (AllGoals (left, right)) =
+          AllGoals (sanitize left, sanitize right)
+  in
+    sanitize recipe
+  end
+
+fun sanitize_goal
+      ({id, goal, source_method, recipe, excl, provenance,
+        representative} : corpus_goal) : corpus_goal =
+  {id = id, goal = goal, source_method = source_method,
+   recipe = sanitize_recipe goal recipe, excl = excl,
+   provenance = provenance, representative = representative}
 
 fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
   | class_args (RewriteDelete name) =

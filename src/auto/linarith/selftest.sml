@@ -1582,6 +1582,38 @@ val _ =
          (chain_literals @ [chain_disjunction],
           num_leq (hd chain_vars) chain_target))
 
+(* Arithmetic scoring must select the final decisive disjunction before
+   the unrelated total-order choices that precede it. *)
+val choice_vars =
+  List.tabulate
+    (8, fn i =>
+       Term.mk_var ("linarith_choice_" ^ Int.toString i, numSyntax.num))
+val unrelated_choices =
+  map
+    (fn y =>
+      boolSyntax.mk_disj
+        (num_leq public_x y, num_less y public_x))
+    choice_vars
+val decisive_choice =
+  boolSyntax.mk_disj
+    (num_less public_x num_one, num_eq public_x num_one)
+
+val _ =
+  check
+    ("arithmetic scoring avoids unrelated disjunction enumeration",
+     fn () =>
+       let
+         val closes =
+           valid_closes (linarithLib.LINARITH_TAC [])
+             (num_leq num_one public_x ::
+                unrelated_choices @ [decisive_choice],
+              num_eq public_x num_one)
+         val {disjunction_splits, ...} =
+           linarithLib.last_search_stats ()
+       in
+         closes andalso disjunction_splits = 1
+       end)
+
 (* Conditionals are the propositional form the old six-theorem rewrite
    list could not reach; normalForms.NNF_CONV splits them on both sides
    of the turnstile. *)

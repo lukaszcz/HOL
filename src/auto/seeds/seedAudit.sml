@@ -161,19 +161,24 @@ fun remaining budget timer =
   Time.toReal budget - Time.toReal (Timer.checkRealTimer timer)
 
 fun run_tactic budget timer name tactic term =
-  if remaining budget timer <= 0.0 then NONE
-  else
-    let
-      val started = Timer.startRealTimer ()
-      val (goals, validation) = Tactical.VALID tactic ([], term)
-      val elapsed = Timer.checkRealTimer started
-    in
-      if not (null goals) orelse Time.> (Timer.checkRealTimer timer, budget)
-      then NONE
-      else SOME (name, elapsed, validation [])
-    end
-    handle Portable.Interrupt => raise Portable.Interrupt
-         | _ => NONE
+  let
+    val seconds = remaining budget timer
+  in
+    if seconds <= 0.0 then NONE
+    else
+      (Timeout.apply (Time.fromReal seconds)
+         (fn () =>
+           let
+             val started = Timer.startRealTimer ()
+             val (goals, validation) = Tactical.VALID tactic ([], term)
+             val elapsed = Timer.checkRealTimer started
+           in
+             if null goals then SOME (name, elapsed, validation []) else NONE
+           end) ()
+       handle Timeout.TIMEOUT _ => NONE
+            | Portable.Interrupt => raise Portable.Interrupt
+            | _ => NONE)
+  end
 
 fun metis_tactic seconds =
   let
