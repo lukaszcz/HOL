@@ -13339,10 +13339,24 @@ in
   ()
 end
 
+fun library_type_contains_nested_arguments_success () =
+let
+  val nested_int = listSyntax.mk_list_type intSyntax.int_ty
+  val nested_real = listSyntax.mk_list_type
+    (listSyntax.mk_list_type realSyntax.real_ty)
+in
+  assert (Library.type_contains_int nested_int,
+    "nested list element did not contribute its Int feature");
+  assert (Library.type_contains_real nested_real,
+    "nested list element did not contribute its Real feature")
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("library_type_contains_nested_arguments_success",
+      library_type_contains_nested_arguments_success),
     ("smtlib_string_literal_codec_success",
       smtlib_string_literal_codec_success),
     ("smtlib_string_literal_typecheck_success",

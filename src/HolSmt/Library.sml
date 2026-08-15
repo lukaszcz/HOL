@@ -590,12 +590,17 @@ struct
   (*  proof replay)                                                          *)
   (***************************************************************************)
 
-  (* does 'ty', or any of its domain/range components, satisfy 'pred'? *)
+  (* Does [ty], a function component, or a native sequence element type
+     satisfy [pred]?  Do not descend through arbitrary constructor arguments:
+     word widths and similar phantom parameters are not SMT value sorts. *)
   fun type_contains pred ty =
     pred ty orelse
-    (let val (dom, rng) = Type.dom_rng ty
-     in type_contains pred dom orelse type_contains pred rng end
-     handle Feedback.HOL_ERR _ => false)
+    (case Lib.total Type.dom_rng ty of
+       SOME (dom, rng) =>
+         type_contains pred dom orelse type_contains pred rng
+     | NONE =>
+         (type_contains pred (listSyntax.dest_list_type ty)
+          handle Feedback.HOL_ERR _ => false))
 
   fun type_contains_int ty =
     type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty

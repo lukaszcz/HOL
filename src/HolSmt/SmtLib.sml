@@ -3007,6 +3007,16 @@ local
     fun beta_reduce t =
       boolSyntax.rhs (Thm.concl (Drule.LIST_BETA_CONV t))
       handle Feedback.HOL_ERR _ => t
+    (* Create a mapping from bound variables to their SMT-LIB names; if a
+       variable is already mapped, return its existing SMT-LIB name. *)
+    fun create_bound_name (bounds, v) =
+      (bounds, Redblackmap.find (bounds, v))
+      handle Redblackmap.NotFound =>
+        let
+          val name = bv_prefix ^ Int.toString (Redblackmap.numItems bounds)
+        in
+          (Redblackmap.insert (bounds, v, name), name)
+        end
     fun builtin_symbol (rator, rands) =
       let
         val _ =
@@ -3189,19 +3199,64 @@ local
         smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
     fun native_sequence_builtin (rator, rands) =
       let
-        fun translate_args args =
+        fun translate_args_from start args =
           let
             val (acc, declnames) = Lib.foldl_map
               (fn (a, arg) =>
                 translate_term regime apply_operator (a, (bounds, arg)))
-              (acc, args)
+              (start, args)
             val (declss, names) = Lib.split declnames
           in
             (acc, (List.concat declss, names))
           end
+        fun translate_args args = translate_args_from acc args
+        fun translate_fold_function start function =
+          let
+            val (vars, body) = Term.strip_abs function
+            fun add_bound (v, (tydict, current_bounds, decls, binders)) =
+              let
+                val (next_bounds, smtvar) =
+                  create_bound_name (current_bounds, v)
+                val (tydict, (typedecls, tyname)) =
+                  bound_variable_sort tydict v
+              in
+                (tydict, next_bounds, decls @ typedecls,
+                 binders @ ["(" ^ smtvar ^ " " ^ tyname ^ ")"])
+              end
+          in
+            if List.length vars < 2 then
+              translate_term regime apply_operator
+                (start, (bounds, function))
+            else
+              let
+                val (tydict, lambda_bounds, typedecls, binders) =
+                  List.foldl add_bound
+                    (Lib.fst start, bounds, [], []) vars
+                val (next, (bodydecls, bodyname)) =
+                  translate_term regime apply_operator
+                    ((tydict, Lib.snd start), (lambda_bounds, body))
+              in
+                (next, (typedecls @ bodydecls,
+                  "(lambda (" ^ String.concatWith " " binders ^ ") " ^
+                  bodyname ^ ")"))
+              end
+          end
         fun emit name args =
           let val (acc, (decls, names)) = translate_args args
           in (acc, (decls, sexpr name names)) end
+        fun emit_foldl args =
+          case args of
+            function :: rest =>
+              let
+                val (acc, (function_decls, function_name)) =
+                  translate_fold_function acc function
+                val (acc, (rest_decls, rest_names)) =
+                  translate_args_from acc rest
+              in
+                (acc, (function_decls @ rest_decls,
+                  sexpr "seq.foldl" (function_name :: rest_names)))
+              end
+          | [] => raise ERR "native_sequence_builtin" "wrong FOLDL arity"
         fun emit_extract (sequence, index, size) =
           emit "seq.extract" [sequence, index, size]
         fun emit_at (sequence, index) = emit "seq.at" [sequence, index]
@@ -3268,7 +3323,7 @@ local
                 | _ => raise ERR "native_sequence_builtin"
                     "wrong LUPDATE arity")
              else if same_const rator seq_map_tm then emit "seq.map" rands
-             else if same_const rator seq_foldl_tm then emit "seq.foldl" rands
+             else if same_const rator seq_foldl_tm then emit_foldl rands
              else if same_const rator seq_contains_tm then
                emit "seq.contains" rands
              else if same_const rator smt_seq_nth_tm then emit "seq.nth" rands
@@ -3660,16 +3715,6 @@ local
         else
           raise ERR "native_bag_builtin" "unsupported native bag term"
       end
-    (* creates a mapping from bound variables to their SMT-LIB names; if a
-       variable is already mapped, we return its existing SMT-LIB name *)
-    fun create_bound_name (bounds, v) =
-      (bounds, Redblackmap.find (bounds, v))
-      handle Redblackmap.NotFound =>
-        let
-          val name = bv_prefix ^ Int.toString (Redblackmap.numItems bounds)
-        in
-          (Redblackmap.insert (bounds, v, name), name)
-        end
     fun ensure_type ((tydict, tmdict), ty) =
       let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
       in (((tydict, tmdict), decls), name) end
