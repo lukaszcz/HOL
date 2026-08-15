@@ -1846,6 +1846,26 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* Congruence one level below a Boolean equality.  Lambda definitions
+       often appear as [(f = lhs) = (f = rhs)]; prove [lhs = rhs] through
+       the ordinary rewrite ladder, then lift that checked theorem through
+       the shared equality context. *)
+    profile "rewrite(11.15)(equality-congruence)" (fn () =>
+      let
+        val (ll, lr) = boolSyntax.dest_eq l
+        val (rl, rr) = boolSyntax.dest_eq r
+        val (sub_l, sub_r) =
+          if ll ~~ rl then (lr, rr)
+          else if lr ~~ rr then (ll, rl)
+          else raise ERR "z3_rewrite" "no shared equality argument"
+        val (state', sub_thm) = z3_rewrite
+          (state, boolSyntax.mk_eq (sub_l, sub_r))
+        val thm = simpLib.SIMP_PROVE bossLib.bool_ss [sub_thm] t
+      in
+        (state_cache_thm state' thm, thm)
+      end) ()
+    handle Feedback.HOL_ERR _ =>
+
     (* Congruence below a lambda; the shared `abs_congruence` handles the
        capture-avoiding binder alignment, while the body is replayed through
        `z3_rewrite` (threading the state via `state_ref`). *)

@@ -1453,6 +1453,20 @@ in
 
     fun mk_set_is_singleton s = pred_setSyntax.mk_sing s
 
+    fun mk_set_fold (f, init, s) =
+      let
+        val element = pred_setSyntax.eltype s
+        val accumulator = Term.type_of init
+        val set = Term.type_of s
+        val fold_ty = Type.-->
+          (Type.--> (element, Type.--> (accumulator, accumulator)),
+           Type.--> (set, Type.--> (accumulator, accumulator)))
+        val fold = Term.mk_thy_const {
+          Thy = "pred_set", Name = "ITSET", Ty = fold_ty}
+      in
+        Term.list_mk_comb (fold, [f, s, init])
+      end
+
     (* Match cvc5's default carrier for unqualified polymorphic literals.
        Explicitly ascribed Set literals are handled by the parser. *)
     val unqualified_empty = pred_setSyntax.mk_empty Type.bool
@@ -1501,6 +1515,9 @@ in
         (K_zero_two mk_set_all),
       cvc_term "set.some" no_attributes ["(set.some (-> A Bool) (Set A) Bool)"]
         (K_zero_two mk_set_some),
+      cvc_term "set.fold" no_attributes
+        ["(set.fold (-> A B B) B (Set A) B)"]
+        (K_zero_three mk_set_fold),
       cvc_term "set.is_empty" no_attributes ["(set.is_empty (Set A) Bool)"]
         (K_zero_one mk_set_is_empty),
       cvc_term "set.is_singleton" no_attributes
@@ -1515,7 +1532,8 @@ in
     val tmdict = dictionary_of_entries tmentries
     val first_order_tmdict = dictionary_of_entries (List.filter
       (fn {name, ...} => not (List.exists (Lib.equal name)
-        ["set.map", "set.filter", "set.all", "set.some"])) tmentries)
+        ["set.map", "set.filter", "set.all", "set.some", "set.fold"]))
+      tmentries)
     val metadata =
       metadata_of_entries "CVC5_Set" "sort" tyentries @
       metadata_of_entries "CVC5_Set" "term" tmentries
@@ -1609,6 +1627,36 @@ in
     fun mk_bag_setof b =
       mk_bag_of_set (mk_set_of_bag b)
 
+    fun mk_bag_fold (f, init, b) =
+      let
+        val element = bagSyntax.base_type b
+        val accumulator = Term.type_of init
+        val bag = Term.type_of b
+        val fold_ty = Type.-->
+          (Type.--> (element, Type.--> (accumulator, accumulator)),
+           Type.--> (bag, Type.--> (accumulator, accumulator)))
+        val fold = Term.mk_thy_const {
+          Thy = "bag", Name = "ITBAG", Ty = fold_ty}
+      in
+        Term.list_mk_comb (fold, [f, b, init])
+      end
+
+    fun mk_bag_partition (relation, b) =
+      let
+        val element = bagSyntax.base_type b
+        val x = Term.variant (Term.all_varsl [relation, b])
+          (Term.mk_var ("bag_partition_x", element))
+        val y = Term.variant (x :: Term.all_varsl [relation, b])
+          (Term.mk_var ("bag_partition_y", element))
+        val related =
+          Term.list_mk_comb (relation, [x, y])
+        val class = mk_bag_filter (Term.mk_abs (y, related), b)
+        val classes = bagSyntax.mk_image
+          (Term.mk_abs (x, class), mk_bag_setof b)
+      in
+        mk_bag_setof classes
+      end
+
     (* cvc5's unqualified polymorphic literal defaults to [Bag Bool], just
        as its parser does when no explicit [as] qualification is present.
        HOL applications require exact types rather than SMT's bidirectional
@@ -1673,6 +1721,12 @@ in
       cvc_term "bag.some" no_attributes
         ["(bag.some (-> A Bool) (Bag A) Bool)"]
         (K_zero_two mk_bag_some),
+      cvc_term "bag.fold" no_attributes
+        ["(bag.fold (-> A B B) B (Bag A) B)"]
+        (K_zero_three mk_bag_fold),
+      cvc_term "bag.partition" no_attributes
+        ["(bag.partition (-> A A Bool) (Bag A) (Bag (Bag A)))"]
+        (K_zero_two mk_bag_partition),
       cvc_term "bag.setof" no_attributes ["(bag.setof (Bag A) (Bag A))"]
         (K_zero_one mk_bag_setof)
     ]
@@ -1681,7 +1735,8 @@ in
     val tmdict = dictionary_of_entries tmentries
     val first_order_tmdict = dictionary_of_entries (List.filter
       (fn {name, ...} => not (List.exists (Lib.equal name)
-        ["bag.map", "bag.filter", "bag.all", "bag.some"])) tmentries)
+        ["bag.map", "bag.filter", "bag.all", "bag.some", "bag.fold",
+         "bag.partition"])) tmentries)
     val metadata =
       metadata_of_entries "CVC5_Bag" "sort" tyentries @
       metadata_of_entries "CVC5_Bag" "term" tmentries

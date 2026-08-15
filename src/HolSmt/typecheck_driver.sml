@@ -97,7 +97,9 @@ in
        "logic=" ^ observed_logic ^ "\n" ^
        "diagnostic=logic fragment restrictions are not completely enforced: " ^
        valOf fragment_diagnostic)
-  else if Option.isSome scoped_parse_error then
+  else if Option.isSome scoped_parse_error andalso
+          not (SmtLib_Logics.is_supported_extension_logic observed_logic)
+  then
     raise Feedback.HOL_ERR (valOf scoped_parse_error)
   else
     (print

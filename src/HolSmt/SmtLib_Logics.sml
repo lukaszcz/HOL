@@ -123,6 +123,12 @@ in
   val default_dialect_dictionary_registrations =
     ref ([] : dialect_dictionary_registration list)
 
+  (* Solver-extension logic names are not part of the SMT-LIB inventory, but
+     a solver-neutral conformance driver may elaborate them with ALL's base
+     packet and the matching extension dictionaries. *)
+  fun is_supported_extension_logic logic =
+    List.exists (Lib.equal logic) ["QF_UFLIAFS"]
+
   fun register_dialect_dictionary registration =
     dialect_dictionary_registrations :=
       registration :: !dialect_dictionary_registrations

@@ -866,6 +866,10 @@ local
     ("not", SmtLib_Theories.zero_zero (fn token =>
       if token = "not" then boolSyntax.negation
       else raise ERR "<z3_builtin_dict.not>" "not a Boolean negation")),
+    (* Z3 4.15 uses this zero-premise proof rule while flattening nested
+       quantifiers.  Normalize it to the existing checked rewrite rule: the
+       conclusion still has to be proved by HOL during replay. *)
+    ("pull-quant", zero_prems "rewrite"),
     (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
        It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
        the Int-array representation of bags.  Reconstructing the lambda is

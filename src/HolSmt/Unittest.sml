@@ -4748,6 +4748,8 @@ let
   val y = Term.mk_var ("y", intSyntax.int_ty)
   val p = Term.mk_var ("p", Type.--> (intSyntax.int_ty, Type.bool))
   val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
+  val fold = Term.mk_var ("fold", Type.--> (intSyntax.int_ty,
+    Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
   val zero = intSyntax.zero_tm
   val empty = pred_setSyntax.mk_empty intSyntax.int_ty
   val univ = pred_setSyntax.mk_univ intSyntax.int_ty
@@ -4826,6 +4828,17 @@ let
   val quantified_card = boolSyntax.mk_eq
     (Term.mk_comb (intSyntax.int_injection,
        pred_setSyntax.mk_card quantified_set), zero)
+  fun itset (function, set, init) =
+    let
+      val fold_ty = Type.-->
+        (Term.type_of function,
+         Type.--> (Term.type_of set,
+           Type.--> (Term.type_of init, Term.type_of init)))
+      val fold_const = Term.mk_thy_const {
+        Thy = "pred_set", Name = "ITSET", Ty = fold_ty}
+    in
+      Term.list_mk_comb (fold_const, [function, set, init])
+    end
 in
   assert_builder "cvc5 set.member" cvc5_options "(set.member x s)"
     (pred_setSyntax.mk_in (x, s));
@@ -4883,11 +4896,9 @@ in
   assert_builder "cvc5 set.some" cvc5_ho_options "(set.some p s)"
     (boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
       (pred_setSyntax.mk_in (some_x, s), Term.mk_comb (p, some_x))));
-  reject cvc5_options "cvc5 set.fold"
-    "(set-logic ALL)\n\
-     \(declare-const s (Set Int))\n\
-     \(declare-const fold (-> Int (-> Int Int)))\n\
-     \(assert (= (set.fold fold 0 s) 0))\n";
+  assert_builder "cvc5 set.fold" cvc5_ho_options
+    "(= (set.fold fold 0 s) 0)"
+    (boolSyntax.mk_eq (itset (fold, s, zero), zero));
   assert_builder "cvc5 set.is_empty" cvc5_options "(set.is_empty s)"
     (boolSyntax.mk_eq (s, empty));
   assert_builder "cvc5 set.is_singleton" cvc5_options "(set.is_singleton s)"
@@ -5030,6 +5041,8 @@ let
   val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
   val fold = Term.mk_var ("fold", Type.--> (intSyntax.int_ty,
     Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
+  val relation = Term.mk_var ("relation", Type.--> (intSyntax.int_ty,
+    Type.--> (intSyntax.int_ty, Type.bool)))
   val zero = intSyntax.zero_tm
   fun bag_const name ty =
     Term.mk_thy_const {Thy = "bag", Name = name, Ty = ty}
@@ -5084,6 +5097,19 @@ let
         (Type.--> (element_ty, Type.--> (accumulator_ty, accumulator_ty)),
          Type.--> (bag_ty, Type.--> (accumulator_ty, accumulator_ty)))),
         [function, bag, init])
+    end
+  fun bag_partition (predicate, bag) =
+    let
+      val element_ty = bagSyntax.base_type bag
+      val partition_x = Term.mk_var ("bag_partition_x", element_ty)
+      val partition_y = Term.mk_var ("bag_partition_y", element_ty)
+      val related = Term.list_mk_comb
+        (predicate, [partition_x, partition_y])
+      val class = bag_filter (Term.mk_abs (partition_y, related), bag)
+      val classes = bagSyntax.mk_image
+        (Term.mk_abs (partition_x, class), bag_of_set (set_of_bag bag))
+    in
+      bag_of_set (set_of_bag classes)
     end
   fun bag_count (element, bag) =
     Term.mk_comb (intSyntax.int_injection, Term.mk_comb (bag, element))
@@ -5272,18 +5298,14 @@ in
   assert_ho_builder "cvc5 bag.all" "(bag.all p b)"
     (bagSyntax.mk_every (p, b));
   assert_ho_builder "cvc5 bag.some" "(bag.some p b)" some;
-  reject cvc5_options "cvc5 bag.fold"
-    "(set-logic ALL)\n\
-     \(declare-const b (Bag Int))\n\
-     \(declare-const fold (-> Int (-> Int Int)))\n\
-     \(assert (= (bag.fold fold 0 b) 0))\n";
+  assert_ho_builder "cvc5 bag.fold" "(= (bag.fold fold 0 b) 0)"
+    (boolSyntax.mk_eq (itbag (fold, b, zero), zero));
   assert_builder "cvc5 bag.setof" "(= (bag.setof b) b)"
     (boolSyntax.mk_eq (bag_of_set (set_of_bag b), b));
-  reject cvc5_options "cvc5 bag.partition"
-    "(set-logic ALL)\n\
-     \(declare-const b (Bag Int))\n\
-     \(declare-const relation (-> Int (-> Int Bool)))\n\
-     \(assert (= (bag.partition relation b) (bag.partition relation b)))\n";
+  assert_ho_builder "cvc5 bag.partition"
+    "(= (bag.partition relation b) (bag.partition relation b))"
+    (boolSyntax.mk_eq
+      (bag_partition (relation, b), bag_partition (relation, b)));
   assert_builder "cvc5 forall Bag binder"
     "(forall ((u (Bag Int))) (= (bag.card u) 0))"
     (boolSyntax.mk_forall (quantified_bag, boolSyntax.mk_imp
@@ -9807,6 +9829,19 @@ in
   | NONE => die "FAIL: verbatim lambda proof did not define root proof step"
 end
 
+fun z3_proof_parser_normalizes_pull_quant_success () =
+let
+  val proof = parse_z3_proof_string "4.15.3"
+    "((proof (pull-quant (= true true))))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.REWRITE concl) =>
+      assert (concl ~~ ``T = T``,
+        "pull-quant did not normalize to a checked rewrite")
+  | SOME _ => die "FAIL: pull-quant proof parsed to unexpected constructor"
+  | NONE => die "FAIL: pull-quant proof did not define root proof step"
+end
+
 fun z3_proof_parser_structures_proof_bind_success () =
 let
   (* Pinned from the 4.15.3 named-lambda-def proof family. *)
@@ -10247,6 +10282,22 @@ fun replay_z3_proof_string contents =
 fun replay_z3_proof_string_with_dicts dicts contents =
   Z3_ProofReplay.replay_root_for_test
     (parse_z3_proof_string_with_dicts dicts "4.12.4" contents)
+
+fun z3_nested_lambda_equality_rewrite_success () =
+let
+  val thm = replay_z3_proof_string
+    "((declare-fun f () (Array Int Int)) \
+    \(proof (rewrite (= \
+    \(= f (lambda ((x Int)) (+ x 1))) \
+    \(= f (lambda ((x Int)) (+ 1 x)))))))"
+  val expected =
+    ``((f:int->int) = (\x. x + 1)) = (f = (\x. 1 + x))``
+in
+  assert (Thm.concl thm ~~ expected,
+    "nested lambda equality rewrite returned the wrong conclusion");
+  assert_no_hyps ("nested lambda equality rewrite", thm);
+  check_oracle_tags "nested lambda equality rewrite" thm
+end
 
 fun assert_replays_raw_z3_proof_rule (name, proof_text, expected) =
 let
@@ -13689,6 +13740,10 @@ let
       z3_proof_parser_erases_proof_bind_success),
     ("z3_proof_parser_verbatim_lambda_binding_success",
       z3_proof_parser_verbatim_lambda_binding_success),
+    ("z3_proof_parser_normalizes_pull_quant_success",
+      z3_proof_parser_normalizes_pull_quant_success),
+    ("z3_nested_lambda_equality_rewrite_success",
+      z3_nested_lambda_equality_rewrite_success),
     ("z3_proof_parser_structures_proof_bind_success",
       z3_proof_parser_structures_proof_bind_success),
     ("z3_proof_parser_erases_inert_proof_bind_success",
