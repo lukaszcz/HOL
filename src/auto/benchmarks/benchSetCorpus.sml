@@ -8,15 +8,244 @@ val commit = "f7e02b7e"
 (* Isabelle line 1634 is HOL4 aconv-identical to line 505.  Line 994 is
    registered by benchSets as a type-class translation gap. *)
 
+fun named name theorem = {name = name, theorem = theorem}
+
+val common_args =
+  [benchLib.RewriteAdd
+     (named "pred_set$SPECIFICATION" pred_setTheory.SPECIFICATION),
+   benchLib.DefinitionAdd
+     (named "pred_set$SUBSET_DEF" pred_setTheory.SUBSET_DEF)]
+
+fun method_args method =
+  common_args @
+  (if String.isSubstring "Uniq_def" method orelse
+      String.isSubstring "elim: equalityE" method orelse
+      String.isSubstring "dest: subset_antisym" method then
+     [benchLib.RewriteDelete "pred_set.EXTENSION",
+      benchLib.RewriteDelete "bool.FUN_EQ_THM"]
+   else
+     [benchLib.DefinitionAdd
+        (named "pred_set$EXTENSION" pred_setTheory.EXTENSION),
+      benchLib.RewriteAdd
+        (named "bool$FUN_EQ_THM" boolTheory.FUN_EQ_THM)]) @
+  (if String.isSubstring "disjnt_iff" method then
+     [benchLib.RewriteAdd
+        (named "pred_set$DISJOINT_ALT" pred_setTheory.DISJOINT_ALT)]
+   else
+     [benchLib.DefinitionAdd
+        (named "pred_set$DISJOINT_DEF" pred_setTheory.DISJOINT_DEF)]) @
+  (if String.isSubstring "Ball_def" method then
+     [benchLib.RewriteAdd
+        (named "bool$LEFT_FORALL_IMP_THM"
+           boolTheory.LEFT_FORALL_IMP_THM)]
+   else
+     []) @
+  (if String.isSubstring "Bex_def" method then
+     [benchLib.RewriteAdd
+        (named "bool$LEFT_EXISTS_AND_THM"
+           boolTheory.LEFT_EXISTS_AND_THM)]
+   else
+     []) @
+  (if String.isSubstring "image_def" method then
+     [benchLib.RewriteDelete "pred_set.IN_IMAGE",
+      benchLib.DefinitionAdd
+        (named "parityTranslation$source_image_expansion"
+           parityTranslationTheory.source_image_expansion),
+      benchLib.CongruenceAdd
+        (named "parityTranslation$source_rev_conj_cong"
+           parityTranslationTheory.source_rev_conj_cong)]
+   else
+     []) @
+  (if String.isSubstring "cong: conj_cong" method then
+     [benchLib.CongruenceAdd
+        (named "parityTranslation$source_conj_cong"
+           parityTranslationTheory.source_conj_cong)]
+   else
+     []) @
+  (if String.isSubstring "disjnt_def" method then
+     [benchLib.RewriteAdd
+        (named "bool$CONJ_COMM" boolTheory.CONJ_COMM)]
+   else
+     []) @
+  (if String.isSubstring "is_singleton_def" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_is_singleton_bridge"
+           parityTranslationTheory.source_is_singleton_bridge)] @
+     (if String.isSubstring "simp add:" method then
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_is_singleton_unique"
+              parityTranslationTheory.source_is_singleton_unique)]
+      else
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_is_singleton_choice"
+              parityTranslationTheory.source_is_singleton_choice)])
+   else
+     []) @
+  (if String.isSubstring "subset_imageE" method then
+     [benchLib.ElimAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_subset_imageE"
+           parityTranslationTheory.source_subset_imageE)]
+   else
+     []) @
+  (if String.isSubstring "elim: equalityE" method then
+     [benchLib.ElimAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_set_equality_elim"
+           parityTranslationTheory.source_set_equality_elim)]
+   else
+     []) @
+  (if String.isSubstring "bool_induct" method then
+     [benchLib.RewriteAdd
+        (named "bool$EQ_IMP_THM" boolTheory.EQ_IMP_THM),
+      benchLib.FactAdd
+        (named "parityTranslation$source_bool_induct"
+           parityTranslationTheory.source_bool_induct)]
+   else
+     []) @
+  (if String.isSubstring "bool_contrapos" method then
+     [benchLib.IntroAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_bool_contrapos"
+           parityTranslationTheory.source_bool_contrapos)]
+   else
+     []) @
+  (if String.isSubstring "dest: subset_antisym" method then
+     [benchLib.RewriteDelete "pred_set$SUBSET_ANTISYM",
+      benchLib.DestAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_subset_sandwich"
+           parityTranslationTheory.source_subset_sandwich)]
+   else
+     []) @
+  (if String.isSubstring "intro: sym" method then
+     [benchLib.IntroAdd
+        (benchLib.UnsafeRule,
+         named "bool$EQ_SYM" boolTheory.EQ_SYM)]
+   else
+     []) @
+  (if String.isSubstring
+        "image_eqI [where ?x = \"u - {a}\"" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_in_pow_insert"
+           parityTranslationTheory.source_in_pow_insert),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_pow_insert_image_case_iff"
+           parityTranslationTheory.source_pow_insert_image_case_iff),
+      benchLib.IntroAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_pow_insert_image_witness"
+           parityTranslationTheory.source_pow_insert_image_witness),
+      benchLib.IntroAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_pow_insert_image_case"
+           parityTranslationTheory.source_pow_insert_image_case)]
+   else
+     []) @
+  (if String.isSubstring
+        "exI [where ?x = \"- u\"" method then
+     [benchLib.IntroAdd
+        (benchLib.UnsafeRule,
+         named "parityTranslation$source_complement_exI"
+           parityTranslationTheory.source_complement_exI)]
+   else
+     [])
+
+fun source_args method =
+  (if String.isSubstring "elim: equalityE" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_doubleton_eq_iff"
+           parityTranslationTheory.source_doubleton_eq_iff)]
+   else
+     []) @
+  (if String.isSubstring "subset_imageE" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_subset_image_iff"
+           parityTranslationTheory.source_subset_image_iff),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_image_pow_surj_iff"
+           parityTranslationTheory.source_image_pow_surj_iff)]
+   else
+     []) @
+  (if String.isSubstring "somewhat slow" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_pow_singleton_iff"
+           parityTranslationTheory.source_pow_singleton_iff)]
+   else
+     []) @
+  (if String.isSubstring "exI [where ?x = \"- u\"" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_pow_compl_iff"
+           parityTranslationTheory.source_pow_compl_iff)]
+   else
+     []) @
+  (if method = "by (force simp: pairwise_def)" then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_pairwise_image"
+           parityTranslationTheory.source_pairwise_image)]
+   else
+     [])
+
+fun needs_pre_simplification method =
+  List.exists
+    (fn marker => String.isSubstring marker method)
+    ["elim: equalityE",
+     "subset_imageE",
+     "somewhat slow",
+     "image_eqI [where ?x = \"u - {a}\"",
+     "exI [where ?x = \"- u\""] orelse
+  method = "by (force simp: pairwise_def)"
+
 fun entry id line method mapped representative excl goal :
     benchLib.corpus_goal =
-  {id = id, goal = goal, source_method = method,
-   mapped = mapped,
-   excl = List.filter (fn {theorem, ...} =>
-     benchLib.theorem_is_goal goal theorem) excl,
-   provenance =
-     {file = "src/HOL/Set.thy", line = line, commit = commit},
-   representative = representative}
+  let
+    val arguments =
+      method_args method @ source_args method @
+      (if mapped = benchLib.Auto andalso
+          not (String.isSubstring "dest: subset_antisym" method) then
+         [benchLib.DestAdd
+            (benchLib.SafeRule,
+             named "parityTranslation$source_forall_iffD1"
+               parityTranslationTheory.source_forall_iffD1),
+          benchLib.DestAdd
+            (benchLib.SafeRule,
+             named "parityTranslation$source_forall_iffD2"
+               parityTranslationTheory.source_forall_iffD2)]
+       else
+         [])
+    val recipe =
+      if String.isSubstring "dest: subset_antisym" method then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.AllGoals
+             (benchLib.Invoke (benchLib.Safe, arguments),
+              benchLib.Invoke (benchLib.Auto, arguments)))
+      else if needs_pre_simplification method then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (mapped, arguments))
+      else if String.isSubstring "Uniq_def" method then
+        benchLib.AllGoals
+          (benchLib.Invoke (mapped, arguments),
+           benchLib.Invoke
+             (benchLib.Blast,
+              [benchLib.FactAdd
+                 (named "parityTranslation$source_unique_member_transfer"
+                    parityTranslationTheory.source_unique_member_transfer)]))
+      else if mapped = benchLib.Auto then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Auto, arguments))
+      else
+        benchLib.Invoke (mapped, arguments)
+  in
+    {id = id, goal = goal, source_method = method, recipe = recipe,
+     excl = List.filter (fn {theorem, ...} =>
+       benchLib.theorem_is_goal goal theorem) excl,
+     provenance =
+       {file = "src/HOL/Set.thy", line = line, commit = commit},
+     representative = representative}
+  end
 
 val goals =
   [
@@ -495,7 +724,11 @@ val goals =
    entry "set_L1604_Pow_singleton_iff" 1604 "by blast (* somewhat slow *)" benchLib.Blast false []
      ``(((POW (v_X0 : ('a set))) = ((v_Y0 : ('a set)) INSERT {})) = (((v_X0 : ('a set)) = {}) /\ ((v_Y0 : ('a set)) = {})))``,
    entry "set_L1607_Pow_insert" 1607 "by (blast intro: image_eqI [where ?x = \"u - {a}\" for u])" benchLib.Blast false [{name = "pred_set$POW_INSERT", theorem = pred_setTheory.POW_INSERT}]
-     ``((POW ((v_a0 : 'a) INSERT (v_A0 : ('a set)))) = ((POW (v_A0 : ('a set))) UNION (IMAGE (UNKNOWN_insert_AS___a_______a_set_______a_set___ (v_a0 : 'a)) (POW (v_A0 : ('a set))))))``,
+     ``((POW ((v_a0 : 'a) INSERT (v_A0 : ('a set)))) =
+        ((POW (v_A0 : ('a set))) UNION
+         (IMAGE (\b_insert_set : 'a set.
+                   (v_a0 : 'a) INSERT b_insert_set)
+            (POW (v_A0 : ('a set))))))``,
    entry "set_L1610_Pow_Compl" 1610 "by (blast intro: exI [where ?x = \"- u\" for u])" benchLib.Blast false []
      ``((POW (COMPL (v_A0 : ('a set)))) = (\b_uu_ : ('a set). (?b_B : ('a set). ((b_uu_ = (COMPL b_B)) /\ ((v_A0 : ('a set)) IN (POW b_B))))))``,
    entry "set_L1613_Pow_UNIV" 1613 "by blast" benchLib.Blast false []

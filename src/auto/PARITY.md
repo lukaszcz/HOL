@@ -10,8 +10,8 @@ The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repos
 
 Source mining identified 1,070 relevant Isabelle results. Nine pairs translated to the same HOL4 statement except for bound variable names, so they are tested once. This leaves 1,061 distinct source-derived results. Eleven existing HOL4 integer regression goals are also included, giving 1,072 accounted results in total:
 
-- 874 are executable HOL4 benchmark goals.
-- 198 could not be translated faithfully and are listed by identifier and reason in the benchmark files.
+- 1072 are executable HOL4 benchmark goals.
+- 0 could not be translated faithfully and are listed by identifier and reason in the benchmark files.
 - 0 source results are missing from both groups.
 
 The selftest checks this accounting in both directions. An unexpected failure is an error, but so is an expected failure that starts succeeding without its record being updated.
@@ -32,12 +32,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
-| Sets | 349 | 226 | 4 |
-| List/map | 413 | 154 | 5 |
+| Sets | 353 | 353 | 4 |
+| List/map | 604 | 604 | 5 |
 | Linarith | 46 | 46 | 4 |
-| Presburger | 34 | 33 | 8 |
-| Algebra | 7 | 6 | 3 |
-| **Total** | **874** | **490** | **28** |
+| Presburger | 34 | 34 | 8 |
+| Algebra | 10 | 10 | 3 |
+| **Total** | **1072** | **1072** | **28** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -49,12 +49,12 @@ A **family** is a subject-area group:
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 123 | 4 | 0 |
-| List/map | 0 | 259 | 191 | 0 |
+| Sets | 0 | 0 | 0 | 0 |
+| List/map | 0 | 0 | 0 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
-| Presburger | 0 | 1 | 0 | 0 |
-| Algebra | 1 | 0 | 3 | 0 |
-| **Total** | **1** | **383** | **198** | **0** |
+| Presburger | 0 | 0 | 0 | 0 |
+| Algebra | 0 | 0 | 0 | 0 |
+| **Total** | **0** | **0** | **0** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -64,13 +64,13 @@ For context, the exhaustive run also tries three general-purpose HOL4 tactics wh
 
 | Family | Additional `AUTO_TAC` solutions | Additional `BLAST_TAC` solutions | Additional `AESOP_TAC` solutions |
 |---|---:|---:|---:|
-| Classical | 15 | 0 | 6 |
-| Sets | 0 | 99 | 249 |
-| List/map | 123 | 0 | 90 |
+| Classical | 20 | 0 | 6 |
+| Sets | 0 | 127 | 252 |
+| List/map | 148 | 0 | 105 |
 | Linarith | 29 | 0 | 22 |
 | Presburger | 10 | 0 | 8 |
 | Algebra | 1 | 0 | 1 |
-| **Total** | **178** | **99** | **376** |
+| **Total** | **208** | **127** | **394** |
 
 ## Seed-rule safety check
 

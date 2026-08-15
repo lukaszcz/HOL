@@ -334,6 +334,13 @@ fun ruleIsElim ({origin, ...} : tableau_rule) =
       blastRule.Stored {is_elim, ...} => is_elim
     | _ => false
 
+(* Formulae constructed by switching tableau goals are deliberately
+   tokenless: they do not name an assumption occurrence in the replay goal.
+   A stored elimination rule must therefore never select one as its major.
+   Conversely, introduction rules apply only to the tokenless goal side. *)
+fun ruleHasCompatibleMajor rule formula =
+  ruleIsElim rule = Option.isSome (trackedToken formula)
+
 fun ruleMajor function rule formula assumptions =
   if ruleIsElim rule then
     SOME (trackedPosition function formula assumptions)
@@ -1258,7 +1265,9 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                       val _ = checkpointAt mark
                       val _ = noteSafeRuleAttempt ()
                     in
-                      if not
+                      if not (ruleHasCompatibleMajor rule formula) then
+                        deeper other
+                      else if not
                            (unifyAt mark
                              (rule_vars, pattern, trackedTerm formula)) then
                         deeper other
@@ -1484,7 +1493,9 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                       val _ = checkpointAt mark
                       val _ = noteUnsafeRuleAttempt ()
                     in
-                      if not
+                      if not (ruleHasCompatibleMajor rule formula) then
+                        deeper other
+                      else if not
                            (unifyAt mark
                              (rule_vars, pattern, trackedTerm formula)) then
                         deeper other

@@ -5,6 +5,14 @@ sig
   type linarith_config = linarithData.linarith_config
   val default_config : linarith_config
 
+  type search_stats =
+    {nodes : int,
+     refutations : int,
+     disjunction_splits : int,
+     operator_splits : int,
+     augmentations : int}
+  val last_search_stats : unit -> search_stats
+
   val LINARITH_TAC : thm list -> tactic
   val SIMPLE_LINARITH_TAC : thm list -> tactic
   val CFG_LINARITH_TAC : linarith_config -> thm list -> tactic

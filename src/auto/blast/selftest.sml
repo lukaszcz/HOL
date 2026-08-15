@@ -2671,10 +2671,14 @@ val _ =
                       (mk_conj
                          (subset (yset, vset), subset (zset, vset)),
                        subset (xset, vset)))])
+         val cs =
+           clasetLib.add_selims
+             [("provenance-tokenless-negation", NOT_ELIM_THM)]
+             (clasetLib.the_claset ())
        in
          (ignore
             (blastReconstruct.searchGoal
-              (clasetLib.the_claset ()) 20 ([], goal));
+              cs 20 ([], goal));
           true)
        end)
 

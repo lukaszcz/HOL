@@ -1,21 +1,69 @@
 INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
            ../linarith/instances ../seeds ../../integer ../../real \
-           ../../rational ../../num/reduce/src
+           ../../rational ../../num/reduce/src ../../../examples/algebra/ring
 
-all: $(DEFAULT_TARGETS) selftest.exe genparity.exe
+all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe
 .PHONY: all
 
 selftest.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
              benchSetShortfalls.uo benchSets.uo \
-             benchListCorpus.uo benchMapCorpus.uo benchOptionCorpus.uo \
+             benchListCorpus.uo benchListSorted.uo benchListNumeric.uo \
+             benchListAdjacent.uo \
+             benchListRemoval.uo \
+             benchListIndexed.uo \
+             benchListRotate.uo \
+             benchListNths.uo \
+             benchListOrder.uo \
+             benchRecovered.uo \
+             benchListIntervals.uo \
+             benchListCode.uo \
+             benchListRel1.uo \
+             benchMeasures.uo \
+             benchListLex.uo \
+             benchListRelations.uo \
+             benchMapCorpus.uo benchOptionCorpus.uo \
              benchProductCorpus.uo benchStringCorpus.uo \
              benchLibraryShortfalls.uo benchListMap.uo \
              benchLinarith.uo benchPresburger.uo benchAlgebra.uo \
              parityLib.uo
 
+benchProductCorpus.uo: parityTranslationTheory.uo
+benchMapCorpus.uo: parityTranslationTheory.uo
+benchStringCorpus.uo: parityTranslationTheory.uo
+benchListSorted.uo: parityTranslationTheory.uo
+benchListNumeric.uo: parityTranslationTheory.uo
+benchListAdjacent.uo: parityTranslationTheory.uo
+benchListRemoval.uo: parityTranslationTheory.uo
+benchListIndexed.uo: parityTranslationTheory.uo
+benchListRotate.uo: parityTranslationTheory.uo
+benchListNths.uo: parityTranslationTheory.uo
+benchListOrder.uo: parityTranslationTheory.uo
+benchRecovered.uo: parityTranslationTheory.uo
+benchListIntervals.uo: parityTranslationTheory.uo
+benchListCode.uo: parityTranslationTheory.uo
+benchListRel1.uo: parityTranslationTheory.uo
+benchMeasures.uo: parityTranslationTheory.uo
+benchListLex.uo: parityTranslationTheory.uo
+benchListRelations.uo: parityTranslationTheory.uo
+benchAlgebra.uo: parityAlgebraTranslationTheory.uo
+
 parityLib.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
               benchSetShortfalls.uo benchSets.uo \
-              benchListCorpus.uo benchMapCorpus.uo benchOptionCorpus.uo \
+              benchListCorpus.uo benchListSorted.uo benchListNumeric.uo \
+              benchListAdjacent.uo \
+              benchListRemoval.uo \
+              benchListIndexed.uo \
+              benchListRotate.uo \
+              benchListNths.uo \
+              benchListOrder.uo \
+              benchRecovered.uo \
+              benchListIntervals.uo \
+              benchListCode.uo \
+              benchListRel1.uo \
+              benchMeasures.uo \
+              benchListLex.uo \
+              benchListRelations.uo \
+              benchMapCorpus.uo benchOptionCorpus.uo \
               benchProductCorpus.uo benchStringCorpus.uo \
               benchLibraryShortfalls.uo benchListMap.uo \
               benchLinarith.uo benchPresburger.uo benchAlgebra.uo
@@ -30,13 +78,32 @@ benchLib.uo: ../linarith/instances/intLinarith.uo \
              ../linarith/instances/ratLinarith.uo
 
 benchSets.uo: benchSetCorpus.uo benchSetShortfalls.uo
+benchSets.uo: parityTranslationTheory.uo
 
 benchListMap.uo: benchListCorpus.uo benchMapCorpus.uo \
                  benchOptionCorpus.uo benchLibraryShortfalls.uo \
-                 benchProductCorpus.uo \
+                 benchProductCorpus.uo benchListSorted.uo \
+                 benchListNumeric.uo benchListAdjacent.uo \
+                 benchListRemoval.uo \
+                 benchListIndexed.uo \
+                 benchListRotate.uo \
+                 benchListNths.uo \
+                 benchListOrder.uo \
+                 benchRecovered.uo \
+                 benchListIntervals.uo \
+                 benchListCode.uo \
+                 benchListRel1.uo \
+                 benchMeasures.uo \
+                 benchListLex.uo \
+                 benchListRelations.uo \
                  benchStringCorpus.uo
 
 selftest.exe: selftest.uo benchLib.uo
+	$(HOLMOSMLC) -o $@ $<
+
+focus.uo: parityLib.uo
+
+focus.exe: focus.uo parityLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL
@@ -46,4 +113,4 @@ benchmarks-selftest.log: selftest.exe
 	$(tee ./selftest.exe 2>&1,$@)
 endif
 
-EXTRA_CLEANS = selftest.exe genparity.exe benchmarks-selftest.log
+EXTRA_CLEANS = selftest.exe focus.exe genparity.exe benchmarks-selftest.log

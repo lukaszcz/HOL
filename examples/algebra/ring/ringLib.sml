@@ -215,17 +215,12 @@ local
       [RING_WORD_UNIVERSAL_cth, GSYM RING_OF_INT_OF_NUM] o
     PART_MATCH lhand RING_WORD_UNIVERSAL_pth
 in
-  fun RING_WORD_UNIVERSAL tm = let
-    val (avs,bod) = strip_forall tm
-  in
-    if is_imp bod then let
-      val (ant,con) = dest_imp bod;
+  fun replay_implication avs ant con ctms =
+    let
       val aths =
         mapfilter (CONV_RULE decorule) (CONJUNCTS(ASSUME ant))
       and cth = decorule con;
-      val atms = map (lhand o concl) aths
-      and ctm = lhand(rand(concl cth));
-      val ctms = ring_ring_cofactors_universal atms ctm;
+      val ctm = lhand(rand(concl cth));
       val zths = map2 (fn c => fn th =>
         SPEC c (MATCH_MP RING_WORD_UNIVERSAL_mth th)) ctms aths;
       val zth =
@@ -237,6 +232,30 @@ in
     in
       GENL avs (DISCH ant (EQ_MP (SYM cth) (TRANS eth zth)))
     end
+
+  fun RING_REPLAY_COFACTORS tm ctms =
+    let
+      val (avs, bod) = strip_forall tm
+      val (ant, con) = dest_imp bod
+    in
+      replay_implication avs ant con ctms
+    end
+
+  fun RING_WORD_UNIVERSAL tm = let
+    val (avs,bod) = strip_forall tm
+  in
+    if is_imp bod then
+      let
+        val (ant, con) = dest_imp bod
+        val aths =
+          mapfilter (CONV_RULE decorule) (CONJUNCTS (ASSUME ant))
+        val cth = decorule con
+        val atms = map (lhand o concl) aths
+        val ctm = lhand (rand (concl cth))
+        val ctms = ring_ring_cofactors_universal atms ctm
+      in
+        replay_implication avs ant con ctms
+      end
     else let
       val th1 = decorule tm;
       val th2 = CONV_RULE
@@ -257,7 +276,15 @@ in
   fun RING_RING_WORD ths tm = let
       val dty = type_of(rand tm);
       val rty = mk_type(ring_tyname,[dty]);
-      val rtms = filter (curry (=) rty o type_of) (freesl(tm::map concl ths))
+      (* The ring interpretation need not itself be a free variable.  The
+         explicit-record entry point supplies [toRing r], so discover the
+         unique ring-valued subterm in addition to the traditional [r]
+         variable case. *)
+      val rtms =
+        setify_term
+          (List.concat
+            (map (find_terms (curry (op =) rty o type_of))
+              (tm :: map concl ths)))
    in
       if length rtms <> 1
       then failwith "RING_RULE: can't deduce which ring" else
@@ -408,5 +435,37 @@ in
            ((fn g => MATCH_MP_TAC th g) THEN ASM_REWRITE_TAC[]))
        end)
 end;
+
+(* Normalize a goal over an ordinary ['a ring] record.  Requiring an
+   [IntegralDomain] assumption keeps the interpretation faithful to source
+   type-class translations; [RING_TAC] itself needs only the implied ring
+   laws.  Missing carrier hypotheses remain as residual goals. *)
+val EXPLICIT_RING_TAC =
+  FIRST_ASSUM
+    (fn idom =>
+      let
+        val (predicate, arguments) = strip_comb (concl idom)
+      in
+        if same_const predicate ``ring$IntegralDomain`` andalso
+           length arguments = 1
+        then
+          let
+            val ring_thm = MATCH_MP ringTheory.integral_domain_is_ring idom
+            fun bridge theorem =
+              GSYM (MATCH_MP (SPEC_ALL theorem) ring_thm)
+            val rewrites =
+              map bridge
+                [EXPLICIT_RING_CARRIER, EXPLICIT_RING_0,
+                 EXPLICIT_RING_1, EXPLICIT_RING_NEG,
+                 EXPLICIT_RING_ADD, EXPLICIT_RING_SUB,
+                 EXPLICIT_RING_MUL, EXPLICIT_RING_POW]
+          in
+            RULE_ASSUM_TAC (REWRITE_RULE rewrites) THEN
+            REWRITE_TAC rewrites THEN
+            RING_TAC
+          end
+        else NO_TAC
+      end
+      handle HOL_ERR _ => NO_TAC);
 
 end (* struct *)

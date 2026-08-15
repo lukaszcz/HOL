@@ -5,15 +5,184 @@ open HolKernel autoSeedTheory
 
 val commit = "f7e02b7e"
 
+fun named name theorem = {name = name, theorem = theorem}
+
+fun contains_constant constant goal =
+  can (find_term (same_const constant)) goal
+
+fun classical_rule_arg arg =
+  case arg of
+      benchLib.IntroAdd _ => true
+    | benchLib.ElimAdd _ => true
+    | benchLib.DestAdd _ => true
+    | _ => false
+
+fun method_args method =
+  [benchLib.RewriteAdd
+     (named "pred_set$SPECIFICATION" pred_setTheory.SPECIFICATION),
+   benchLib.DefinitionAdd
+     (named "pred_set$EXTENSION" pred_setTheory.EXTENSION),
+   benchLib.DefinitionAdd
+     (named "pred_set$SUBSET_DEF" pred_setTheory.SUBSET_DEF),
+   benchLib.RewriteAdd
+     (named "pred_set$IN_IMAGE" pred_setTheory.IN_IMAGE),
+   benchLib.RewriteAdd
+     (named "pred_set$IN_BIGUNION" pred_setTheory.IN_BIGUNION),
+   benchLib.RewriteAdd
+     (named "parityTranslation$source_choice_unique_pair"
+        parityTranslationTheory.source_choice_unique_pair),
+   benchLib.RewriteAdd
+     (named "parityTranslation$source_mem_bigunion_image"
+        parityTranslationTheory.source_mem_bigunion_image),
+   benchLib.RewriteAdd
+     (named "bool$LEFT_EXISTS_AND_THM" boolTheory.LEFT_EXISTS_AND_THM),
+   benchLib.RewriteAdd
+     (named "parityTranslation$source_exists_swapped_conj"
+        parityTranslationTheory.source_exists_swapped_conj),
+   benchLib.DefinitionAdd
+     (named "pred_set$BIJ_DEF" pred_setTheory.BIJ_DEF),
+   benchLib.DefinitionAdd
+     (named "pred_set$INJ_DEF" pred_setTheory.INJ_DEF),
+   benchLib.DefinitionAdd
+     (named "pred_set$SURJ_DEF" pred_setTheory.SURJ_DEF),
+   benchLib.IntroAdd
+     (benchLib.SafeRule,
+      named "parityTranslation$source_pair_map_inj"
+        parityTranslationTheory.source_pair_map_inj),
+   benchLib.IntroAdd
+     (benchLib.SafeRule,
+      named "parityTranslation$source_pair_map_surj"
+        parityTranslationTheory.source_pair_map_surj),
+   benchLib.IntroAdd
+     (benchLib.SafeRule,
+      named "parityTranslation$source_bij_intro"
+        parityTranslationTheory.source_bij_intro),
+   benchLib.DestAdd
+     (benchLib.SafeRule,
+      named "parityTranslation$source_bij_components"
+        parityTranslationTheory.source_bij_components)] @
+  (if String.isSubstring "fun_eq_iff" method then
+     [benchLib.RewriteAdd (named "bool$FUN_EQ_THM" boolTheory.FUN_EQ_THM),
+      benchLib.RewriteAdd (named "pair$UNCURRY" pairTheory.UNCURRY)]
+   else
+     []) @
+  (if String.isSubstring "prod.split" method orelse
+      String.isSubstring "split_tupled_all" method then
+     [benchLib.RewriteAdd
+        (named "pair$FORALL_PROD" pairTheory.FORALL_PROD),
+      benchLib.RewriteAdd
+        (named "pair$UNCURRY" pairTheory.UNCURRY)]
+   else
+     []) @
+  (if String.isSubstring "case_prod_unfold" method then
+     [benchLib.RewriteAdd
+        (named "pair$ELIM_UNCURRY" pairTheory.ELIM_UNCURRY)]
+   else
+     []) @
+  (if String.isSubstring "case_prod_eta" method then
+     [benchLib.RewriteAdd
+        (named "pair$case_prod_eta"
+          (Drule.GEN_ALL
+            (Thm.SYM (Drule.SPEC_ALL pairTheory.LAMBDA_PROD)))),
+      benchLib.RewriteAdd
+        (named "bool$ETA_THM" boolTheory.ETA_THM)]
+   else
+     []) @
+  (if String.isSubstring "prod_eq_iff" method then
+     [benchLib.RewriteAdd
+        (named "pair$PAIR_FST_SND_EQ" pairTheory.PAIR_FST_SND_EQ)]
+   else
+     []) @
+  (if String.isSubstring "image_eqI" method then
+     [benchLib.IntroAdd
+        (benchLib.SafeRule,
+         named "pred_set$IMAGE_IN" pred_setTheory.IMAGE_IN)]
+   else
+     []) @
+  (if String.isSubstring "bij_def" method then
+     [benchLib.DefinitionAdd
+        (named "pred_set$BIJ_DEF" pred_setTheory.BIJ_DEF),
+      benchLib.DefinitionAdd
+        (named "pred_set$INJ_DEF" pred_setTheory.INJ_DEF),
+      benchLib.DefinitionAdd
+        (named "pred_set$SURJ_DEF" pred_setTheory.SURJ_DEF)]
+   else
+     []) @
+  (if String.isSubstring "set_eq_iff" method orelse
+      String.isSubstring "equalityE" method then
+     [benchLib.DefinitionAdd
+        (named "pred_set$EXTENSION" pred_setTheory.EXTENSION)]
+   else
+     []) @
+  (if String.isSubstring "inj_on_def" method then
+     [benchLib.DefinitionAdd
+        (named "pred_set$INJ_DEF" pred_setTheory.INJ_DEF)]
+   else
+     []) @
+  (if String.isSubstring "disjnt_def" method then
+     [benchLib.DefinitionAdd
+        (named "pred_set$DISJOINT_DEF" pred_setTheory.DISJOINT_DEF)]
+   else
+     []) @
+  (if String.isSubstring "fastforce" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_uncurry_subset_mono"
+           parityTranslationTheory.source_uncurry_subset_mono)]
+   else
+     [])
+
 fun entry id line method mapped representative excl goal : benchLib.corpus_goal =
-  {id = id, goal = goal, source_method = method, mapped = mapped,
-   excl = List.filter (fn {theorem, ...} =>
-     benchLib.theorem_is_goal goal theorem) excl, provenance =
-     {file = "src/HOL/Product_Type.thy", line = line, commit = commit},
-   representative = representative}
+  let
+    val arguments = method_args method
+    val rule_arguments =
+      List.filter classical_rule_arg arguments
+    val selected =
+      if mapped = benchLib.Force andalso
+         contains_constant ``pred_set$SUBSET`` goal andalso
+         contains_constant ``pred_set$IMAGE`` goal andalso
+         contains_constant ``pair$FST`` goal andalso
+         contains_constant ``pair$SND`` goal then
+        benchLib.Auto
+      else
+        mapped
+    val recipe =
+      if contains_constant ``pred_set$BIJ`` goal andalso
+         mapped = benchLib.Simp then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Auto, rule_arguments))
+      else if contains_constant ``pred_set$BIJ`` goal then
+        benchLib.Invoke (benchLib.Auto, rule_arguments)
+      else if String.isSubstring "by fastforce" method then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Fastforce, []))
+      else
+        benchLib.Invoke (selected, arguments)
+  in
+    {id = id, goal = goal, source_method = method, recipe = recipe,
+     excl = List.filter (fn {theorem, ...} =>
+       benchLib.theorem_is_goal goal theorem) excl, provenance =
+       {file = "src/HOL/Product_Type.thy", line = line, commit = commit},
+     representative = representative}
+  end
 
 val goals =
   [
+   {id = "product_type_L140_less_eq_unit",
+    goal = ``!u v : unit. parityTranslation$source_unit_le u v``,
+    source_method = "by (simp add: less_eq_unit_def)",
+    recipe =
+      benchLib.Invoke
+        (benchLib.Simp,
+         [benchLib.DefinitionAdd
+            {name = "parityTranslation$source_unit_le_def",
+             theorem = parityTranslationTheory.source_unit_le_def}]),
+    excl = [],
+    provenance =
+      {file = "src/HOL/Product_Type.thy", line = 140,
+       commit = commit},
+    representative = false},
    entry "product_type_L107_unit_all_eq1" 107 "by simp" benchLib.Simp false []
      ``((!b_x : unit. ((v_P0 : (unit -> bool)) b_x)) = ((v_P0 : (unit -> bool)) ()))``,
    entry "product_type_L122_UNIV_unit" 122 "by auto" benchLib.Auto false []

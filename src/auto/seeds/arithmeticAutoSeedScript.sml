@@ -48,6 +48,13 @@ Proof
   Cases_on `n` >> simp []
 QED
 
+Theorem ZERO_LT_IMP_OR_ZERO_AUTO:
+  !n proposition.
+    ((0 < n ==> proposition) <=> proposition \/ n = 0)
+Proof
+  Cases_on `n` >> simp[]
+QED
+
 (* src/HOL/Groups.thy:221-341 @ f7e02b7e *)
 val _ =
   List.app export_algebra

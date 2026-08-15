@@ -197,9 +197,19 @@ val _ =
          (solved (clasimpLib.AUTO_TAC []))
          [``UNCURRY c p <=> !x y. p = (x,y) ==> c x y``,
           ``LIST_REL R [] ys <=> ys = []``,
+          ``start <= finish ==>
+            GENLIST (\offset. start + offset) (SUC finish - start) =
+            GENLIST (\offset. start + offset) (finish - start) ++ [finish]``,
           ``x IN (s UNION t) <=> x IN s \/ x IN t``,
+          ``INJ (\x : 'a. x) s UNIV``,
           ``FLOOKUP (FUNION n m) k = NONE <=>
             FLOOKUP n k = NONE /\ FLOOKUP m k = NONE``,
+          ``ALL_DISTINCT (MAP FST association) ==>
+            MEM (key, value) association ==>
+            ALOOKUP association key = SOME value``,
+          ``ALL_DISTINCT (MAP FST association) ==>
+            (ALOOKUP association key = SOME value <=>
+             MEM (key, value) association)``,
           ``STRLEN text = 0 <=> text = ""``])
 
 val _ =
@@ -210,6 +220,15 @@ val _ =
          ``(x : int) < y ==> x - y < 0`` andalso
        solved (clasimpLib.AUTO_TAC [])
          ``PERM ([] : 'a list) xs <=> xs = []``)
+
+val _ =
+  check
+    ("universal image membership simplifies through an implication",
+     fn () =>
+       solved
+         (simpLib.FULL_SIMP_TAC (clasimpLib.clasimp_ss ()) [])
+         ``(!y. y IN IMAGE (f : 'a -> 'b) source ==> property y) ==>
+           !x. x IN source ==> property (f x)``)
 
 val _ =
   check

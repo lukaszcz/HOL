@@ -9,7 +9,9 @@ Each benchmark goal records:
 
 - a HOL4 theorem statement;
 - the Isabelle source file, line, commit, and method;
-- the HOL4 tactic assigned as that method's closest counterpart;
+- the structured HOL4 method recipe assigned as that invocation's closest
+  counterpart, including local rewrites, splits, classical rules, facts,
+  and method composition;
 - whether the goal belongs to the fixed routine selftest subset; and
 - any HOL4 theorem that must be excluded to avoid solving the goal by
   reusing its direct analogue.

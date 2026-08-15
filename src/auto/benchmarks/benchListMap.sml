@@ -2,7 +2,22 @@ structure benchListMap =
 struct
 
 val goals =
-  benchListCorpus.goals @ benchMapCorpus.goals @
+  benchListCorpus.goals @ benchListSorted.goals @
+  benchListNumeric.goals @
+  benchListAdjacent.goals @
+  benchListRemoval.goals @
+  benchListIndexed.goals @
+  benchListRotate.goals @
+  benchListNths.goals @
+  benchListOrder.goals @
+  benchRecovered.goals @
+  benchListIntervals.goals @
+  benchListCode.goals @
+  benchListRel1.goals @
+  benchMeasures.goals @
+  benchListLex.goals @
+  benchListRelations.goals @
+  benchMapCorpus.goals @
   benchOptionCorpus.goals @
   benchStringCorpus.goals @
   benchProductCorpus.goals

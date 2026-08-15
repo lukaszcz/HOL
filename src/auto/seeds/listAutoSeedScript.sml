@@ -51,11 +51,27 @@ val _ =
      ("LIST_REL_CONS1_AUTO", listTheory.LIST_REL_CONS1),
      ("LIST_REL_CONS2_AUTO", listTheory.LIST_REL_CONS2),
      ("EVERY_APPEND_AUTO", listTheory.EVERY_APPEND),
-     ("EVERY_MEM_AUTO", listTheory.EVERY_MEM)]
+     ("EVERY_MEM_AUTO", listTheory.EVERY_MEM),
+     ("MEM_FILTER_AUTO", listTheory.MEM_FILTER)]
 
 Theorem LIST_REL_REVERSE_AUTO[iff]:
   !R left right.
     LIST_REL R (REVERSE left) (REVERSE right) <=> LIST_REL R left right
 Proof
   metis_tac [LIST_REL_REVERSE, REVERSE_REVERSE]
+QED
+
+(* src/HOL/List.thy:3475-3481 @ f7e02b7e.  The translated half-open
+   interval [start..<finish] is GENLIST (\offset. start + offset)
+   (finish - start). *)
+Theorem GENLIST_RANGE_SUC_AUTO[simp]:
+  !start finish.
+    start <= finish ==>
+    GENLIST (\offset. start + offset) (SUC finish - start) =
+    SNOC finish (GENLIST (\offset. start + offset) (finish - start))
+Proof
+  rpt strip_tac
+  >> `SUC finish - start = SUC (finish - start)` by decide_tac
+  >> `start + (finish - start) = finish` by decide_tac
+  >> simp[listTheory.GENLIST]
 QED

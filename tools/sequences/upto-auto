@@ -23,9 +23,12 @@ src/auto/aesop
 src/auto/linarith/instances
 
 # Post-boss opt-in rule corpus and its parity gate.  Seeds depend on the
-# source theories and linarith instances; benchmarks depend on the seeds.
-# Neither directory runs HOL_LNSIGOBJ under HOLBUILD.
+# source theories and linarith instances.  The benchmark's explicit-ring
+# adapter reuses the generic polynomial engine in examples/algebra/ring,
+# so build that engine before the benchmark.  None of these directories
+# runs HOL_LNSIGOBJ under HOLBUILD.
 src/auto/seeds
+examples/algebra/ring
 src/auto/benchmarks
 
 # User-level showcase theories for the layer's tactics.  Post-boss like

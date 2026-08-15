@@ -9,18 +9,74 @@ fun exact theorem goal = Drule.PART_MATCH I theorem goal
 
 fun entry id line method mapped excl goal : benchLib.corpus_goal =
   {id = id, goal = goal, source_method = method,
-   mapped = mapped, excl = excl,
+   recipe = benchLib.Invoke (mapped, []), excl = excl,
    provenance =
      {file = "src/HOL/Set.thy", line = line, commit = commit},
    representative = true}
 
 fun example id line method mapped goal : benchLib.corpus_goal =
-  {id = id, goal = goal, source_method = method,
-   mapped = mapped, excl = [],
-   provenance =
-     {file = "src/HOL/ex/Set_Theory.thy", line = line,
-      commit = commit},
-   representative = false}
+  let
+    val arguments =
+      [benchLib.RewriteAdd
+           {name =
+              "paritySetTranslation$source_compl_image_fixedpoint_iff",
+            theorem =
+              paritySetTranslationTheory.source_compl_image_fixedpoint_iff},
+       benchLib.RewriteAdd
+           {name = "parityTranslation$source_num_set_induction_iff",
+            theorem =
+              parityTranslationTheory.source_num_set_induction_iff},
+       benchLib.RewriteAdd
+           {name = "parityTranslation$source_mem_bigunion_image",
+            theorem = parityTranslationTheory.source_mem_bigunion_image},
+         benchLib.FactAdd
+           {name = "parityTranslation$source_predicate_set_witness",
+            theorem =
+              parityTranslationTheory.source_predicate_set_witness},
+         benchLib.RewriteAdd
+           {name = "parityTranslation$source_nonempty_predicate_set",
+            theorem =
+              parityTranslationTheory.source_nonempty_predicate_set},
+         benchLib.RewriteAdd
+           {name = "parityTranslation$source_set_separates_image",
+            theorem = parityTranslationTheory.source_set_separates_image},
+         benchLib.RewriteAdd
+           {name = "parityTranslation$source_nonnegative_neq_negative",
+            theorem =
+              parityTranslationTheory.source_nonnegative_neq_negative},
+         benchLib.RewriteAdd
+           {name = "parityTranslation$source_set_separates_two",
+            theorem = parityTranslationTheory.source_set_separates_two},
+         benchLib.RewriteAdd
+           {name = "parityTranslation$source_exists_not_member",
+            theorem = parityTranslationTheory.source_exists_not_member},
+         benchLib.RewriteAdd
+           {name = "parityTranslation$source_exists_singleton_superset",
+            theorem =
+              parityTranslationTheory.source_exists_singleton_superset}]
+    val recipe =
+      if id = "set_theory_L79" then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Blast, arguments))
+      else if mapped = benchLib.Force then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Force, arguments))
+      else if mapped = benchLib.Auto then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Auto, arguments))
+      else
+        benchLib.Invoke (mapped, arguments)
+  in
+    {id = id, goal = goal, source_method = method, recipe = recipe,
+     excl = [],
+     provenance =
+       {file = "src/HOL/ex/Set_Theory.thy", line = line,
+        commit = commit},
+     representative = false}
+  end
 
 val example_goals =
   [example "set_theory_L18" 18 "by blast" benchLib.Blast
@@ -74,26 +130,88 @@ val example_goals =
             n IN aset) /\
         P 0 /\ (!x. P x ==> P (SUC x))) ==> P n``]
 
-val goals = example_goals @ benchSetCorpus.goals
+val translated_goals : benchLib.corpus_goal list =
+  [{id = "set_L461_ball_cong_simp",
+    goal = Thm.concl parityTranslationTheory.source_ball_cong_simp,
+    source_method =
+      "by (simp add: simp_implies_def Ball_def)",
+    recipe =
+      benchLib.Invoke
+        (benchLib.Simp,
+         [benchLib.DefinitionAdd
+            {name = "parityTranslation$source_ball_def",
+             theorem = parityTranslationTheory.source_ball_def}]),
+    excl = [],
+    provenance =
+      {file = "src/HOL/Set.thy", line = 461, commit = commit},
+    representative = false},
+   {id = "set_L471_bex_cong_simp",
+    goal = Thm.concl parityTranslationTheory.source_bex_cong_simp,
+    source_method =
+      "by (simp add: simp_implies_def Bex_def cong: conj_cong)",
+    recipe =
+      benchLib.Invoke
+        (benchLib.Simp,
+         [benchLib.DefinitionAdd
+            {name = "parityTranslation$source_bex_def",
+             theorem = parityTranslationTheory.source_bex_def},
+          benchLib.CongruenceAdd
+            {name = "bool$AND_CONG",
+             theorem = boolTheory.AND_CONG}]),
+    excl = [],
+    provenance =
+      {file = "src/HOL/Set.thy", line = 471, commit = commit},
+    representative = false},
+   {id = "set_L972_image_cong_simp",
+    goal = Thm.concl parityTranslationTheory.source_image_cong_simp,
+    source_method = "using that image_cong [of M N f g] " ^
+                    "by (simp add: simp_implies_def)",
+    recipe =
+      benchLib.Invoke
+        (benchLib.Simp,
+         [benchLib.DefinitionAdd
+            {name = "parityTranslation$source_image_def",
+             theorem = parityTranslationTheory.source_image_def},
+          benchLib.FactAdd
+            {name = "pred_set$IMAGE_CONG",
+             theorem = pred_setTheory.IMAGE_CONG}]),
+    excl = [],
+    provenance =
+      {file = "src/HOL/Set.thy", line = 972, commit = commit},
+    representative = false},
+   {id = "set_L994_image_add_0",
+    goal = Thm.concl parityTranslationTheory.source_image_add_zero,
+    source_method = "by auto",
+    recipe =
+      benchLib.Invoke
+        (benchLib.Auto,
+         [benchLib.DefinitionAdd
+            {name = "parityTranslation$source_add_image_def",
+             theorem = parityTranslationTheory.source_add_image_def},
+          benchLib.DestAdd
+            (benchLib.SafeRule,
+             {name = "parityTranslation$source_abelian_monoid_is_monoid",
+              theorem =
+                parityTranslationTheory.source_abelian_monoid_is_monoid}),
+          benchLib.RewriteAdd
+            {name = "monoid$monoid_lid",
+             theorem = monoidTheory.monoid_lid},
+          benchLib.IntroAdd
+            (benchLib.SafeRule,
+             {name = "pred_set$IMAGE_CONG",
+              theorem = pred_setTheory.IMAGE_CONG}),
+          benchLib.RewriteAdd
+            {name = "parityTranslation$source_add_image_preimage",
+             theorem =
+               parityTranslationTheory.source_add_image_preimage}]),
+    excl = [],
+    provenance =
+      {file = "src/HOL/Set.thy", line = 994, commit = commit},
+    representative = false}]
 
-val shortfalls : benchLib.shortfall list =
-  benchSetShortfalls.entries @
-  [{id = "set_L461_ball_cong_simp", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle's simplifier/meta connective has no HOL4 " ^
-           "object-term translation"},
-   {id = "set_L471_bex_cong_simp", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle's simplifier/meta connective has no HOL4 " ^
-           "object-term translation"},
-   {id = "set_L972_image_cong_simp", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle's simplifier/meta connective has no HOL4 " ^
-           "object-term translation"},
-   {id = "set_L994_image_add_0", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle's polymorphic additive type class has no " ^
-           "type-for-type HOL4 carrier"}]
+val goals = example_goals @ translated_goals @ benchSetCorpus.goals
+
+val shortfalls : benchLib.shortfall list = benchSetShortfalls.entries
 
 fun run level =
   benchLib.run_family

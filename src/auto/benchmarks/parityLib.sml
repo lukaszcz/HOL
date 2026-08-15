@@ -65,6 +65,7 @@ val families : family list =
 
 fun measure_family ({name, size, slice, shortfalls, run} : family) =
   let
+    val _ = PolyML.fullGC ()
     val result = run 2
   in
     {name = name, size = size, slice = slice,

@@ -7,13 +7,71 @@ val commit = "f7e02b7e"
 
 fun entry id line method mapped representative goal : benchLib.corpus_goal =
   {id = id, goal = goal, source_method = method,
-   mapped = mapped, excl = [],
+   recipe = benchLib.Invoke (mapped, []), excl = [],
    provenance =
      {file = "src/HOL/Examples/Groebner_Examples.thy", line = line,
       commit = commit},
    representative = representative}
 
+fun named name theorem : benchLib.named_thm =
+  {name = name, theorem = theorem}
+
+fun translated id line method recipe goal : benchLib.corpus_goal =
+  {id = id, goal = goal, source_method = method, recipe = recipe,
+   excl = [], provenance =
+     {file = "src/HOL/Examples/Groebner_Examples.thy", line = line,
+      commit = commit},
+   representative = false}
+
+val explicit_ring_definitions =
+  [benchLib.DefinitionAdd
+     (named "parityAlgebraTranslation$source_ring_sq_def"
+       parityAlgebraTranslationTheory.source_ring_sq_def),
+   benchLib.DefinitionAdd
+     (named "parityAlgebraTranslation$source_ring_sum8_def"
+       parityAlgebraTranslationTheory.source_ring_sum8_def),
+   benchLib.DefinitionAdd
+     (named "parityAlgebraTranslation$source_ring_neg_def"
+       parityAlgebraTranslationTheory.source_ring_neg_def)]
+
+val translated_goals =
+  [translated "groebner_L61" 61 "by algebra"
+     (benchLib.AllGoals
+       (benchLib.Invoke
+         (benchLib.Auto,
+          [benchLib.IntroAdd
+           (benchLib.SafeRule,
+            named "parityAlgebraTranslation$source_idom_squares_x_nonzero_x"
+              parityAlgebraTranslationTheory.source_idom_squares_x_nonzero_x),
+         benchLib.IntroAdd
+           (benchLib.SafeRule,
+            named "parityAlgebraTranslation$source_idom_squares_x_nonzero_y"
+              parityAlgebraTranslationTheory.source_idom_squares_x_nonzero_y),
+         benchLib.IntroAdd
+           (benchLib.SafeRule,
+            named "parityAlgebraTranslation$source_idom_squares_y_nonzero_x"
+              parityAlgebraTranslationTheory.source_idom_squares_y_nonzero_x),
+         benchLib.IntroAdd
+           (benchLib.SafeRule,
+            named "parityAlgebraTranslation$source_idom_squares_y_nonzero_y"
+              parityAlgebraTranslationTheory.source_idom_squares_y_nonzero_y),
+           benchLib.RewriteAdd
+             (named "ring$integral_domain_one_ne_zero"
+               ringTheory.integral_domain_one_ne_zero)]),
+        benchLib.Invoke (benchLib.ExplicitRing, [])))
+     (Thm.concl
+       parityAlgebraTranslationTheory.source_idom_simultaneous_squares),
+   translated "groebner_L72" 72 "by (algebra add: sq_def)"
+     (benchLib.Invoke
+       (benchLib.ExplicitRing, explicit_ring_definitions))
+     (Thm.concl parityAlgebraTranslationTheory.source_idom_four_square),
+   translated "groebner_L82" 82 "by (algebra add: sq_def)"
+     (benchLib.Invoke
+       (benchLib.ExplicitRing, explicit_ring_definitions))
+     (Thm.concl parityAlgebraTranslationTheory.source_idom_eight_square)]
+
 val goals =
+  translated_goals @
   [entry "groebner_L39" 39 "by algebra" benchLib.IntRing true
      ``!x y z : int.
        (x + y) ** 3 - 1 = (x - z) ** 2 - 10 ==>
@@ -46,24 +104,12 @@ val goals =
          ((By * c + Bx * s) - (Cy * c + Cx * s)) =
        ((Ay * c + Ax * s) - (By * c + Bx * s)) *
          ((Bx * c - By * s) - (Cx * c - Cy * s))``,
-   entry "groebner_L113" 113 "by algebra" benchLib.IntRing true
+   entry "groebner_L113" 113 "by algebra" benchLib.IntIdeal true
      ``(?d : int. a * y - a * x = n * d) ==>
        (?u v : int. a * u + n * v = 1) ==>
        ?e : int. y - x = n * e``]
 
-val shortfalls : benchLib.shortfall list =
-  [{id = "groebner_L61", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle idom has no type-for-type HOL4 carrier"},
-   {id = "groebner_L72", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle idom has no type-for-type HOL4 carrier"},
-   {id = "groebner_L82", cause = benchLib.TranslationGap,
-    date = "2026-08-10",
-    note = "Isabelle idom has no type-for-type HOL4 carrier"},
-   {id = "groebner_L113", cause = benchLib.AcceptedGap,
-    date = "2026-08-10",
-    note = "D58 ideal-membership witness construction is out of scope"}]
+val shortfalls : benchLib.shortfall list = []
 
 fun run level =
   benchLib.run_family

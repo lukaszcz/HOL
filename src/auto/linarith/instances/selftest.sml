@@ -200,6 +200,90 @@ val _ =
        valid_closes (linarithLib.LINARITH_TAC [])
          ([], ileq i0 (intSyntax.mk_absval ix)))
 
+val abs_ix_eq_ix =
+  boolSyntax.mk_eq (intSyntax.mk_absval ix, ix)
+val abs_iy_eq_iy =
+  boolSyntax.mk_eq (intSyntax.mk_absval iy, iy)
+val pruned_abs_goal =
+  boolSyntax.mk_disj (abs_ix_eq_ix, abs_iy_eq_iy)
+
+fun same_search_stats
+      ({nodes = nodes1, refutations = refutations1,
+        disjunction_splits = disjunction_splits1,
+        operator_splits = operator_splits1,
+        augmentations = augmentations1} : linarithLib.search_stats)
+      ({nodes = nodes2, refutations = refutations2,
+        disjunction_splits = disjunction_splits2,
+        operator_splits = operator_splits2,
+        augmentations = augmentations2} : linarithLib.search_stats) =
+  nodes1 = nodes2 andalso refutations1 = refutations2 andalso
+  disjunction_splits1 = disjunction_splits2 andalso
+  operator_splits1 = operator_splits2 andalso
+  augmentations1 = augmentations2
+
+fun run_pruned_abs () =
+  let
+    val closed =
+      valid_closes (linarithLib.LINARITH_TAC [])
+        ([ileq i0 ix], pruned_abs_goal)
+  in
+    (closed, linarithLib.last_search_stats ())
+  end
+
+fun expected_pruned_stats
+      ({nodes, refutations, disjunction_splits,
+        operator_splits, augmentations} : linarithLib.search_stats) =
+  nodes = 4 andalso refutations = 1 andalso
+  disjunction_splits = 1 andalso operator_splits = 1 andalso
+  augmentations = 0
+
+val _ =
+  check
+    ("an inconsistent ABS branch is pruned before a later split",
+     fn () =>
+       let
+         val (closed1, stats1) = run_pruned_abs ()
+         val (closed2, stats2) = run_pruned_abs ()
+       in
+         closed1 andalso closed2 andalso
+         same_search_stats stats1 stats2 andalso
+         expected_pruned_stats stats1
+       end)
+
+val _ =
+  check
+    ("a satisfiable ABS sign system still returns failure",
+     fn () =>
+       tactic_fails (linarithLib.LINARITH_TAC [])
+         ([abs_ix_eq_ix], boolSyntax.mk_eq (ix, i0)))
+
+val nine_abs_recurrence =
+  ``x3 = ABS x2 - x1 ==> x4 = ABS x3 - x2 ==>
+    x5 = ABS x4 - x3 ==> x6 = ABS x5 - x4 ==>
+    x7 = ABS x6 - x5 ==> x8 = ABS x7 - x6 ==>
+    x9 = ABS x8 - x7 ==> x10 = ABS x9 - x8 ==>
+    x11 = ABS x10 - x9 ==> x1 = x10 /\ x2 = (x11 : int)``
+
+fun expected_recurrence_stats
+      ({nodes, refutations, disjunction_splits,
+        operator_splits, augmentations} : linarithLib.search_stats) =
+  nodes = 363 andalso refutations = 243 andalso
+  disjunction_splits = 121 andalso operator_splits = 120 andalso
+  augmentations = 0
+
+val _ =
+  check
+    ("nine-step ABS recurrence has a stable pruned search size",
+     fn () =>
+       let
+         val closed =
+           valid_closes (linarithLib.LINARITH_TAC [])
+             ([], nine_abs_recurrence)
+       in
+         closed andalso
+         expected_recurrence_stats (linarithLib.last_search_stats ())
+       end)
+
 val imod3 = intSyntax.mk_mod (ix, i3)
 val idiv3 = intSyntax.mk_div (ix, i3)
 

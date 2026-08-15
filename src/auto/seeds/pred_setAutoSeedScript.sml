@@ -15,6 +15,23 @@ fun export_iff (name, theorem) =
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
 
+Theorem EXISTS_SAME_IMAGE_AUTO[iff]:
+  !function item. ?witness. function item = function witness
+Proof
+  metis_tac[]
+QED
+
+Theorem INJ_DEF_AUTO[iff]:
+  !function source target.
+    INJ function source target <=>
+    (!item. item IN source ==> function item IN target) /\
+    (!left right.
+       left IN source /\ right IN source ==>
+       function left = function right ==> left = right)
+Proof
+  MATCH_ACCEPT_TAC pred_setTheory.INJ_DEF
+QED
+
 (* src/HOL/Set.thy:484-1088 @ f7e02b7e *)
 val _ =
   List.app export_iff
@@ -32,6 +49,7 @@ val _ =
      ("EQUAL_SING_AUTO", pred_setTheory.EQUAL_SING),
      ("INSERT_EQ_SING_AUTO", pred_setTheory.INSERT_EQ_SING),
      ("IN_IMAGE_AUTO", pred_setTheory.IN_IMAGE),
+     ("FORALL_IN_IMAGE_AUTO", pred_setTheory.FORALL_IN_IMAGE),
      ("IMAGE_EQ_EMPTY_1_AUTO",
       GEN_ALL (CONJUNCT1 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))),
      ("IMAGE_EQ_EMPTY_2_AUTO",

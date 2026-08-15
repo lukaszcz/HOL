@@ -79,3 +79,57 @@ val _ = List.app (rule_test RING_RULE) [
        “x IN ring_carrier r /\ y IN ring_carrier r
     ==> x = ring_add r y (ring_sub r x y)”)
       ];
+
+fun tactic_solves tactic goal =
+  (null (#1 (Tactical.VALID tactic ([], goal)))
+   handle HOL_ERR _ => false)
+
+val explicit_identity =
+  ``!r : 'a ring. !x y.
+      IntegralDomain r /\ x IN r.carrier /\ y IN r.carrier ==>
+      r.prod.op x (r.sum.op x y) =
+      r.sum.op (r.prod.op x x) (r.prod.op x y)``
+
+val explicit_without_domain =
+  ``!r : 'a ring. !x y.
+      x IN r.carrier /\ y IN r.carrier ==>
+      r.prod.op x (r.sum.op x y) =
+      r.sum.op (r.prod.op x x) (r.prod.op x y)``
+
+val explicit_without_membership =
+  ``!r : 'a ring. !x y.
+      IntegralDomain r /\ x IN r.carrier ==>
+      r.prod.op x (r.sum.op x y) =
+      r.sum.op (r.prod.op x x) (r.prod.op x y)``
+
+val explicit_tactic =
+  Tactical.THEN (Tactical.REPEAT Tactic.STRIP_TAC, EXPLICIT_RING_TAC)
+
+val _ =
+  (tprint "explicit-record ring normalization";
+   if tactic_solves explicit_tactic explicit_identity then OK ()
+   else die "failed")
+
+val _ =
+  (tprint "explicit-record normalization requires IntegralDomain";
+   if not (tactic_solves explicit_tactic explicit_without_domain)
+   then OK () else die "failed")
+
+val _ =
+  (tprint "explicit-record normalization requires carrier membership";
+   if not (tactic_solves explicit_tactic explicit_without_membership)
+   then OK () else die "failed")
+
+val corrupted_certificate_goal =
+  ``!x : 'a.
+      ring_mul (r : 'a Ring) x x = ring_0 r ==>
+      ring_mul r x x = ring_0 r``
+
+val _ =
+  (tprint "ring replay rejects a corrupted zero cofactor";
+   if
+     ((RING_REPLAY_COFACTORS corrupted_certificate_goal
+         [``ring_0 (r : 'a Ring)``];
+       false)
+      handle HOL_ERR _ => true)
+   then OK () else die "failed")

@@ -199,6 +199,66 @@ Proof
  >> rw [ring_sub_def, ring_add_def, ring_neg_def]
 QED
 
+(* These equations expose the existing normalizer on HOL4's ordinary
+   explicit ring records.  The side condition is essential: [toRing] is
+   the subtype abstraction and agrees with its argument only for records
+   satisfying [Ring]. *)
+Theorem EXPLICIT_RING_CARRIER:
+    !r : 'a ring.
+      Ring r ==> ring_carrier (toRing r) = r.carrier
+Proof
+  simp[ring_carrier_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_0:
+    !r : 'a ring.
+      Ring r ==> ring_0 (toRing r) = r.sum.id
+Proof
+  simp[ring_0_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_1:
+    !r : 'a ring.
+      Ring r ==> ring_1 (toRing r) = r.prod.id
+Proof
+  simp[ring_1_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_NEG:
+    !r : 'a ring.
+      Ring r ==> ring_neg (toRing r) = r.sum.inv
+Proof
+  simp[ring_neg_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_ADD:
+    !r : 'a ring.
+      Ring r ==> ring_add (toRing r) = r.sum.op
+Proof
+  simp[ring_add_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_SUB:
+    !r : 'a ring.
+      Ring r ==> ring_sub (toRing r) = ring$ring_sub r
+Proof
+  simp[ring_sub_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_MUL:
+    !r : 'a ring.
+      Ring r ==> ring_mul (toRing r) = r.prod.op
+Proof
+  simp[ring_mul_def, from_toRing]
+QED
+
+Theorem EXPLICIT_RING_POW:
+    !r : 'a ring.
+      Ring r ==> ring_pow (toRing r) = r.prod.exp
+Proof
+  simp[ring_pow_def, from_toRing]
+QED
+
 fun xfer th :tactic =
     Q.X_GEN_TAC ‘r0’
  >> Q.ABBREV_TAC ‘r = fromRing r0’
@@ -1759,6 +1819,13 @@ QED
 Definition integral_domain_def :
     integral_domain (r :'a Ring) = IntegralDomain (fromRing r)
 End
+
+Theorem EXPLICIT_INTEGRAL_DOMAIN:
+    !r : 'a ring.
+      IntegralDomain r ==> integral_domain (toRing r)
+Proof
+  simp[integral_domain_def, from_toRing, integral_domain_is_ring]
+QED
 
 Theorem integral_domain :
     integral_domain (r :'a Ring) <=>

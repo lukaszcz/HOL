@@ -46,7 +46,8 @@ fun goal number =
 
 fun entry number line representative : benchLib.corpus_goal =
   {id = "linarith_L" ^ Int.toString line, goal = goal number,
-   source_method = "by linarith", mapped = benchLib.Linarith,
+   source_method = "by linarith",
+   recipe = benchLib.Invoke (benchLib.Linarith, []),
    excl = [],
    provenance =
      {file = "src/HOL/ex/Arith_Examples.thy", line = line,

@@ -901,6 +901,19 @@ val force_native_goals : Abbrev.goal list =
 
 val force_goals = force_logic_goals @ force_native_goals
 
+val beta_force_goal : Abbrev.goal =
+  ([], ``(\proposition. proposition)
+          (((P ==> Q) /\ P) ==> Q)``)
+
+val nested_beta_force_goal : Abbrev.goal =
+  ([],
+   ``((\left : 'a -> 'b option.
+         \right : 'a -> 'b option.
+         !key value.
+           left key = SOME value ==> right key = SOME value)
+       (\query. if query = x then NONE else f query)
+       f)``)
+
 val force_tactics =
   [("FASTFORCE_TAC", clasimpLib.FASTFORCE_TAC []),
    ("SLOWSIMP_TAC", clasimpLib.SLOWSIMP_TAC []),
@@ -912,6 +925,23 @@ fun force_battery (name, tactic) =
      fn () => List.all (valid_closes tactic) force_goals)
 
 val _ = List.app force_battery force_tactics
+
+val _ =
+  check
+    ("FORCE_TAC restores a beta-normalized target",
+     fn () =>
+       List.all
+         (valid_closes (clasimpLib.FORCE_TAC []))
+         [beta_force_goal, nested_beta_force_goal])
+
+val _ =
+  check
+    ("AUTO_TAC restores an eta-normalized target",
+     fn () =>
+       case Tactical.VALID (clasimpLib.AUTO_TAC [])
+              ([], ``(\value : bool. predicate value) = predicate``) of
+           ([], validation) => (ignore (validation []); true)
+         | _ => false)
 
 val context_force_tactics =
   [("CS_FASTFORCE_TAC", clasimpLib.CS_FASTFORCE_TAC),

@@ -28,7 +28,9 @@ val _ =
      ("LIST_REL_REVERSE_EQ_AUTO",
       rich_listTheory.LIST_REL_REVERSE_EQ),
      ("APPEND_EQ_APPEND_EQ_AUTO",
-      rich_listTheory.APPEND_EQ_APPEND_EQ)]
+      rich_listTheory.APPEND_EQ_APPEND_EQ),
+     ("LENGTH_FILTER_LEQ_AUTO", rich_listTheory.LENGTH_FILTER_LEQ),
+     ("FILTER_ALL_DISTINCT_AUTO", listTheory.FILTER_ALL_DISTINCT)]
 
 val _ =
   List.app (clasetLib.export_rule sintro_spec)

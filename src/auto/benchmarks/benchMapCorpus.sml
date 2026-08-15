@@ -5,12 +5,204 @@ open HolKernel autoSeedTheory
 
 val commit = "f7e02b7e"
 
+fun named name theorem = {name = name, theorem = theorem}
+
+val ran_update_bridge =
+  parityTranslationTheory.source_ran_update_injective_pointwise_iff
+
+fun contains_constant constant goal =
+  can (find_term (same_const constant)) goal
+
+fun method_args method goal =
+  [benchLib.RewriteAdd
+     (named "pred_set$SPECIFICATION" pred_setTheory.SPECIFICATION),
+   benchLib.DefinitionAdd
+     (named "pred_set$EXTENSION" pred_setTheory.EXTENSION),
+   benchLib.DefinitionAdd
+     (named "pred_set$SUBSET_DEF" pred_setTheory.SUBSET_DEF),
+   benchLib.RewriteAdd
+     (named "bool$FUN_EQ_THM" boolTheory.FUN_EQ_THM),
+   benchLib.RewriteAdd
+     (named "parityTranslation$source_range_update_none"
+        parityTranslationTheory.source_range_update_none)] @
+  (if String.isSubstring "map_upds_def" method orelse
+      String.isSubstring "option.splits" method orelse
+      String.isSubstring "option.split" method orelse
+      (String.isSubstring "dom_def" method andalso
+       contains_constant ``option$option_CASE`` goal) then []
+   else
+     [benchLib.RewriteAdd
+        (named "option$option_case_eq" optionTheory.option_case_eq)]) @
+  (if String.isSubstring "option.splits" method orelse
+      String.isSubstring "option.split" method then
+     [benchLib.SplitAdd
+        (named "parityTranslation$source_option_split"
+           parityTranslationTheory.source_option_split)]
+   else
+     []) @
+  (if String.isSubstring "dom_def" method andalso
+      contains_constant ``option$option_CASE`` goal then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_option_overlay_not_none"
+           parityTranslationTheory.source_option_overlay_not_none)]
+   else if contains_constant ``option$option_CASE`` goal andalso
+      not (String.isSubstring "option.splits" method orelse
+           String.isSubstring "option.split" method) then
+     [benchLib.SplitAdd
+        (named "parityTranslation$source_option_split"
+           parityTranslationTheory.source_option_split),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_option_overlay_not_none"
+           parityTranslationTheory.source_option_overlay_not_none)]
+   else
+     []) @
+  (if String.isSubstring "inj_on_def" method orelse
+      String.isSubstring "inj_onD" method then
+     [benchLib.DefinitionAdd
+        (named "pred_set$INJ_DEF" pred_setTheory.INJ_DEF)] @
+     (if String.isSubstring "inj_onD" method then
+        [benchLib.DestAdd
+           (benchLib.SafeRule,
+            named "parityTranslation$source_inj_onD"
+              parityTranslationTheory.source_inj_onD)]
+      else
+        [])
+   else
+     []) @
+  (if String.isSubstring "domI" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_domI"
+           parityTranslationTheory.source_domI)]
+   else
+     []) @
+  (if String.isSubstring "simp del: map_of_eq_Some_iff" method then
+     [benchLib.RewriteDelete
+        "finite_mapAutoSeed.ALOOKUP_EQ_SOME_DISTINCT_AUTO",
+      benchLib.RewriteAdd
+        (named "finite_mapAutoSeed$ALOOKUP_MEM_DISTINCT_AUTO"
+           finite_mapAutoSeedTheory.ALOOKUP_MEM_DISTINCT_AUTO),
+      benchLib.RewriteAdd
+        (named "bool$EQ_SYM_EQ" boolTheory.EQ_SYM_EQ)]
+   else
+     []) @
+  (if String.isSubstring "ran_distinct" method then
+     [benchLib.RewriteAdd
+        (named "finite_mapAutoSeed$ALOOKUP_EQ_SOME_DISTINCT_AUTO"
+           finite_mapAutoSeedTheory.ALOOKUP_EQ_SOME_DISTINCT_AUTO),
+      benchLib.RewriteAdd
+        (named "list$MAP_ZIP" listTheory.MAP_ZIP),
+      benchLib.FactAdd
+        (named "finite_mapAutoSeed$MEM_SND_ZIP_AUTO"
+           finite_mapAutoSeedTheory.MEM_SND_ZIP_AUTO),
+      benchLib.RewriteAdd
+        (named "bool$EQ_SYM_EQ" boolTheory.EQ_SYM_EQ)]
+   else
+     []) @
+  (if String.isSubstring "map_upd_upds_conv_if" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_map_upd_upds_conv_if"
+           parityTranslationTheory.source_map_upd_upds_conv_if),
+      benchLib.DestAdd
+        (benchLib.SafeRule,
+         named "parityTranslation$source_alookup_reverse_zip_none_full"
+           parityTranslationTheory.source_alookup_reverse_zip_none_full),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_option_update_twist"
+           parityTranslationTheory.source_option_update_twist)]
+   else
+     []) @
+  (if String.isSubstring "map_upds_def" method then
+     [benchLib.DefinitionAdd
+        (named "list$ZIP_def" listTheory.ZIP_def),
+      benchLib.DefinitionAdd
+        (named "list$REVERSE_DEF" listTheory.REVERSE_DEF),
+      benchLib.DefinitionAdd
+        (named "parityTranslation$source_alookup_def"
+           parityTranslationTheory.source_alookup_def),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_alookup_append"
+           parityTranslationTheory.source_alookup_append),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_option_overlay_assoc"
+           parityTranslationTheory.source_option_overlay_assoc),
+      benchLib.RewriteAdd
+        (named "parityTranslation$source_map_upds_cons_pointwise"
+           parityTranslationTheory.source_map_upds_cons_pointwise)]
+   else
+     []) @
+  (if String.isSubstring "map_add_le_mapI" method andalso
+      String.isSubstring "map_le_antisym" method then
+     [benchLib.RewriteAdd
+        (named "parityTranslation$source_map_add_subsumed_step"
+           parityTranslationTheory.source_map_add_subsumed_step)]
+   else
+     []) @
+  (if contains_constant ``alist$ALOOKUP`` goal then
+     [benchLib.IntroAdd
+        (benchLib.SafeRule,
+         named "parityTranslation$source_finite_graph_alookup"
+           parityTranslationTheory.source_finite_graph_alookup)]
+   else
+     []) @
+  (if contains_constant ``parityTranslation$source_alookup`` goal then
+     [benchLib.RewriteAdd
+        (named "bool$EQ_SYM_EQ" boolTheory.EQ_SYM_EQ),
+      benchLib.DestAdd
+        (benchLib.SafeRule,
+        (named "parityTranslation$source_alookup_some_mem"
+           parityTranslationTheory.source_alookup_some_mem)),
+      benchLib.DestAdd
+        (benchLib.SafeRule,
+        (named "parityTranslation$source_mem_alookup_some"
+           parityTranslationTheory.source_mem_alookup_some)),
+      benchLib.DestAdd
+        (benchLib.SafeRule,
+        (named "parityTranslation$source_distinct_keys_unique"
+           parityTranslationTheory.source_distinct_keys_unique))]
+   else
+     [])
+
 fun entry id line method mapped representative excl goal : benchLib.corpus_goal =
-  {id = id, goal = goal, source_method = method, mapped = mapped,
-   excl = List.filter (fn {theorem, ...} =>
-     benchLib.theorem_is_goal goal theorem) excl, provenance =
-     {file = "src/HOL/Map.thy", line = line, commit = commit},
-   representative = representative}
+  let
+    val arguments = method_args method goal
+    val recipe =
+      if method =
+           "by (fastforce simp add: map_upd_upds_conv_if)" then
+        benchLib.Invoke
+          (benchLib.Simp,
+           [benchLib.RewriteAdd
+              (named
+                 "parityTranslation$source_map_upd_upds_twist_full_iff"
+                 parityTranslationTheory.source_map_upd_upds_twist_full_iff)])
+      else if method =
+           "by(force simp add: ran_def domI inj_onD)" then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke
+             (benchLib.Simp,
+              [benchLib.RewriteAdd
+                 (named
+                    "parityTranslation$source_ran_update_injective_pointwise_iff"
+                    ran_update_bridge)]))
+      else if method =
+           "by (fastforce simp add: map_le_def dom_def)" then
+        benchLib.Invoke (benchLib.Auto, arguments)
+      else if method = "by (fastforce simp add: map_le_def)" orelse
+         method = "by (fastforce simp: map_le_def)" orelse
+         method =
+           "by (fastforce simp: map_le_def map_add_def dom_def)" then
+        benchLib.AllGoals
+          (benchLib.Invoke (benchLib.Simp, arguments),
+           benchLib.Invoke (benchLib.Fastforce, arguments))
+      else
+        benchLib.Invoke (mapped, arguments)
+  in
+    {id = id, goal = goal, source_method = method, recipe = recipe,
+     excl = List.filter (fn {theorem, ...} =>
+       benchLib.theorem_is_goal goal theorem) excl, provenance =
+       {file = "src/HOL/Map.thy", line = line, commit = commit},
+     representative = representative}
+  end
 
 val goals =
   [
@@ -18,10 +210,13 @@ val goals =
      ``(((((((\b_update_func : ('b -> ('a option)). \b_update_key : 'b. \b_update_value : ('a option). \b_update_query : 'b. if b_update_query = b_update_key then b_update_value else b_update_func b_update_query) (v_m0 : ('b -> ('a option)))) (v_a0 : 'b)) (SOME (v_b0 : 'a))) (v_x0 : 'b)) = (SOME (v_y0 : 'a))) = ((((v_x0 : 'b) = (v_a0 : 'b)) /\ ((v_b0 : 'a) = (v_y0 : 'a))) \/ ((~((v_x0 : 'b) = (v_a0 : 'b))) /\ (((v_m0 : ('b -> ('a option))) (v_x0 : 'b)) = (SOME (v_y0 : 'a))))))``,
    entry "map_L155_image_map_upd" 155 "by auto" benchLib.Auto false []
      ``((~((v_x0 : 'a) IN (v_A0 : ('a set)))) ==> ((IMAGE ((((\b_update_func : ('a -> ('b option)). \b_update_key : 'a. \b_update_value : ('b option). \b_update_query : 'a. if b_update_query = b_update_key then b_update_value else b_update_func b_update_query) (v_m0 : ('a -> ('b option)))) (v_x0 : 'a)) (SOME (v_y0 : 'b))) (v_A0 : ('a set))) = (IMAGE (v_m0 : ('a -> ('b option))) (v_A0 : ('a set)))))``,
-   entry "map_L193_Some_eq_map_of_iff" 193 "by (auto simp del: map_of_eq_Some_iff simp: map_of_eq_Some_iff [symmetric])" benchLib.Auto false []
-     ``((ALL_DISTINCT ((MAP FST) (v_xys0 : (('a # 'b) list)))) ==> (((SOME (v_y0 : 'b)) = ((ALOOKUP (v_xys0 : (('a # 'b) list))) (v_x0 : 'a))) = (((v_x0 : 'a),(v_y0 : 'b)) IN (LIST_TO_SET (v_xys0 : (('a # 'b) list))))))``,
-   entry "map_L197_map_of_is_SomeI" 197 "by simp" benchLib.Simp false []
-     ``((ALL_DISTINCT ((MAP FST) (v_xys0 : (('a # 'b) list)))) ==> ((((v_x0 : 'a),(v_y0 : 'b)) IN (LIST_TO_SET (v_xys0 : (('a # 'b) list)))) ==> (((ALOOKUP (v_xys0 : (('a # 'b) list))) (v_x0 : 'a)) = (SOME (v_y0 : 'b)))))``,
+   entry "map_L193_Some_eq_map_of_iff" 193
+     "by (auto simp del: map_of_eq_Some_iff simp: map_of_eq_Some_iff [symmetric])"
+     benchLib.Auto false []
+     ``((ALL_DISTINCT ((MAP FST) (v_xys0 : (('a # 'b) list)))) ==> (((SOME (v_y0 : 'b)) = ((alist$ALOOKUP (v_xys0 : (('a # 'b) list))) (v_x0 : 'a))) = (((v_x0 : 'a),(v_y0 : 'b)) IN (LIST_TO_SET (v_xys0 : (('a # 'b) list))))))``,
+   entry "map_L197_map_of_is_SomeI" 197
+     "by simp" benchLib.Simp false []
+     ``((ALL_DISTINCT ((MAP FST) (v_xys0 : (('a # 'b) list)))) ==> ((((v_x0 : 'a),(v_y0 : 'b)) IN (LIST_TO_SET (v_xys0 : (('a # 'b) list)))) ==> (((alist$ALOOKUP (v_xys0 : (('a # 'b) list))) (v_x0 : 'a)) = (SOME (v_y0 : 'b)))))``,
    entry "map_L304_dom_map_option" 304 "by (simp add: dom_def)" benchLib.Simp false []
      ``(((\b_dom_func : ('a -> ('b option)). \b_dom_key : 'a. b_dom_func b_dom_key <> NONE) (\b_k : 'a. ((OPTION_MAP ((v_f0 : ('a -> ('c -> 'b))) b_k)) ((v_m0 : ('a -> ('c option))) b_k)))) = ((\b_dom_func : ('a -> ('c option)). \b_dom_key : 'a. b_dom_func b_dom_key <> NONE) (v_m0 : ('a -> ('c option)))))``,
    entry "map_L308_dom_map_option_comp" 308 "by (simp add: comp_def)" benchLib.Simp false []
@@ -117,7 +312,7 @@ val goals =
    entry "map_L730_ran_map_upd_Some" 730 "by(force simp add: ran_def domI inj_onD)" benchLib.Force false []
      ``((((v_m0 : ('b -> ('a option))) (v_x0 : 'b)) = (SOME (v_y0 : 'a))) ==> ((((\b_inj_func : ('b -> ('a option)). \b_inj_set : ('b set). INJ b_inj_func b_inj_set UNIV) (v_m0 : ('b -> ('a option)))) ((\b_dom_func : ('b -> ('a option)). \b_dom_key : 'b. b_dom_func b_dom_key <> NONE) (v_m0 : ('b -> ('a option))))) ==> ((~((v_z0 : 'a) IN ((\b_ran_func : ('b -> ('a option)). \b_ran_value : 'a. ?b_ran_key : 'b. b_ran_func b_ran_key = SOME b_ran_value) (v_m0 : ('b -> ('a option)))))) ==> (((\b_ran_func : ('b -> ('a option)). \b_ran_value : 'a. ?b_ran_key : 'b. b_ran_func b_ran_key = SOME b_ran_value) ((((\b_update_func : ('b -> ('a option)). \b_update_key : 'b. \b_update_value : ('a option). \b_update_query : 'b. if b_update_query = b_update_key then b_update_value else b_update_func b_update_query) (v_m0 : ('b -> ('a option)))) (v_x0 : 'b)) (SOME (v_z0 : 'a)))) = ((((\b_ran_func : ('b -> ('a option)). \b_ran_value : 'a. ?b_ran_key : 'b. b_ran_func b_ran_key = SOME b_ran_value) (v_m0 : ('b -> ('a option)))) DIFF ((v_y0 : 'a) INSERT {})) UNION ((v_z0 : 'a) INSERT {}))))))``,
    entry "map_L776_ran_map_of_zip" 776 "by (simp add: ran_distinct set_map[symmetric])" benchLib.Simp false []
-     ``(((LENGTH (v_xs0 : ('a list))) = (LENGTH (v_ys0 : ('b list)))) ==> ((ALL_DISTINCT (v_xs0 : ('a list))) ==> (((\b_ran_func : ('a -> ('b option)). \b_ran_value : 'b. ?b_ran_key : 'a. b_ran_func b_ran_key = SOME b_ran_value) (ALOOKUP (ZIP ((v_xs0 : ('a list)),(v_ys0 : ('b list)))))) = (LIST_TO_SET (v_ys0 : ('b list))))))``,
+     ``(((LENGTH (v_xs0 : ('a list))) = (LENGTH (v_ys0 : ('b list)))) ==> ((ALL_DISTINCT (v_xs0 : ('a list))) ==> (((\b_ran_func : ('a -> ('b option)). \b_ran_value : 'b. ?b_ran_key : 'a. b_ran_func b_ran_key = SOME b_ran_value) (alist$ALOOKUP (ZIP ((v_xs0 : ('a list)),(v_ys0 : ('b list)))))) = (LIST_TO_SET (v_ys0 : ('b list))))))``,
    entry "map_L781_ran_map_option" 781 "by (auto simp add: ran_def)" benchLib.Auto false []
      ``(((\b_ran_func : ('b -> ('a option)). \b_ran_value : 'a. ?b_ran_key : 'b. b_ran_func b_ran_key = SOME b_ran_value) (\b_x : 'b. ((OPTION_MAP (v_f0 : ('c -> 'a))) ((v_m0 : ('b -> ('c option))) b_x)))) = (IMAGE (v_f0 : ('c -> 'a)) ((\b_ran_func : ('b -> ('c option)). \b_ran_value : 'c. ?b_ran_key : 'b. b_ran_func b_ran_key = SOME b_ran_value) (v_m0 : ('b -> ('c option))))))``,
    entry "map_L786_graph_empty" 786 "by simp" benchLib.Simp false []
@@ -145,9 +340,9 @@ val goals =
    entry "map_L822_snd_graph_ran" 822 "by force" benchLib.Force false []
      ``((IMAGE SND ((\b_graph_func : ('b -> ('a option)). \b_graph_pair : ('b # 'a). b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (v_m0 : ('b -> ('a option))))) = ((\b_ran_func : ('b -> ('a option)). \b_ran_value : 'a. ?b_ran_key : 'b. b_ran_func b_ran_key = SOME b_ran_value) (v_m0 : ('b -> ('a option)))))``,
    entry "map_L828_finite_graph_map_of" 828 "by blast" benchLib.Blast false []
-     ``(FINITE ((\b_graph_func : ('a -> ('b option)). \b_graph_pair : ('a # 'b). b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (ALOOKUP (v_al0 : (('a # 'b) list)))))``,
+     ``(FINITE ((\b_graph_func : ('a -> ('b option)). \b_graph_pair : ('a # 'b). b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (alist$ALOOKUP (v_al0 : (('a # 'b) list)))))``,
    entry "map_L832_graph_map_of_if_distinct_dom" 832 "by auto" benchLib.Auto false []
-     ``((ALL_DISTINCT ((MAP FST) (v_al0 : (('a # 'b) list)))) ==> (((\b_graph_func : ('a -> ('b option)). \b_graph_pair : ('a # 'b). b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (ALOOKUP (v_al0 : (('a # 'b) list)))) = (LIST_TO_SET (v_al0 : (('a # 'b) list)))))``,
+     ``((ALL_DISTINCT ((MAP FST) (v_al0 : (('a # 'b) list)))) ==> (((\b_graph_func : ('a -> ('b option)). \b_graph_pair : ('a # 'b). b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (alist$ALOOKUP (v_al0 : (('a # 'b) list)))) = (LIST_TO_SET (v_al0 : (('a # 'b) list)))))``,
    entry "map_L849_inj_on_fst_graph" 849 "by force" benchLib.Force false []
      ``(((\b_inj_func : (('a # 'b) -> 'a). \b_inj_set : (('a # 'b) set). INJ b_inj_func b_inj_set UNIV) FST) ((\b_graph_func : ('a -> ('b option)). \b_graph_pair : ('a # 'b). b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (v_m0 : ('a -> ('b option)))))``,
    entry "map_L854_map_le_empty" 854 "by (simp add: map_le_def)" benchLib.Simp false []
@@ -172,7 +367,8 @@ val goals =
      ``((((\b_le_left : ('a -> ('b option)). \b_le_right : ('a -> ('b option)). !b_le_key : 'a. !b_le_value : 'b. b_le_left b_le_key = SOME b_le_value ==> b_le_right b_le_key = SOME b_le_value) (((\b_add_left : ('a -> ('b option)). \b_add_right : ('a -> ('b option)). \b_add_key : 'a. option_CASE (b_add_right b_add_key) (b_add_left b_add_key) SOME) (v_f0 : ('a -> ('b option)))) (v_g0 : ('a -> ('b option))))) (v_h0 : ('a -> ('b option)))) ==> (((\b_le_left : ('a -> ('b option)). \b_le_right : ('a -> ('b option)). !b_le_key : 'a. !b_le_value : 'b. b_le_left b_le_key = SOME b_le_value ==> b_le_right b_le_key = SOME b_le_value) (v_g0 : ('a -> ('b option)))) (v_h0 : ('a -> ('b option)))))``,
    entry "map_L896_map_add_le_mapI" 896 "by (auto simp: map_le_def map_add_def dom_def split: option.splits)" benchLib.Auto false []
      ``((((\b_le_left : ('a -> ('b option)). \b_le_right : ('a -> ('b option)). !b_le_key : 'a. !b_le_value : 'b. b_le_left b_le_key = SOME b_le_value ==> b_le_right b_le_key = SOME b_le_value) (v_f0 : ('a -> ('b option)))) (v_h0 : ('a -> ('b option)))) ==> ((((\b_le_left : ('a -> ('b option)). \b_le_right : ('a -> ('b option)). !b_le_key : 'a. !b_le_value : 'b. b_le_left b_le_key = SOME b_le_value ==> b_le_right b_le_key = SOME b_le_value) (v_g0 : ('a -> ('b option)))) (v_h0 : ('a -> ('b option)))) ==> (((\b_le_left : ('a -> ('b option)). \b_le_right : ('a -> ('b option)). !b_le_key : 'a. !b_le_value : 'b. b_le_left b_le_key = SOME b_le_value ==> b_le_right b_le_key = SOME b_le_value) (((\b_add_left : ('a -> ('b option)). \b_add_right : ('a -> ('b option)). \b_add_key : 'a. option_CASE (b_add_right b_add_key) (b_add_left b_add_key) SOME) (v_f0 : ('a -> ('b option)))) (v_g0 : ('a -> ('b option))))) (v_h0 : ('a -> ('b option))))))``,
-   entry "map_L899_map_add_subsumed1" 899 "by (simp add: map_add_le_mapI map_le_antisym)" benchLib.Simp false []
+   entry "map_L899_map_add_subsumed1" 899
+     "by (simp add: map_add_le_mapI map_le_antisym)" benchLib.Simp false []
      ``((((\b_le_left : ('a -> ('b option)). \b_le_right : ('a -> ('b option)). !b_le_key : 'a. !b_le_value : 'b. b_le_left b_le_key = SOME b_le_value ==> b_le_right b_le_key = SOME b_le_value) (v_f0 : ('a -> ('b option)))) (v_g0 : ('a -> ('b option)))) ==> ((((\b_add_left : ('a -> ('b option)). \b_add_right : ('a -> ('b option)). \b_add_key : 'a. option_CASE (b_add_right b_add_key) (b_add_left b_add_key) SOME) (v_f0 : ('a -> ('b option)))) (v_g0 : ('a -> ('b option)))) = (v_g0 : ('a -> ('b option)))))``
   ]
 

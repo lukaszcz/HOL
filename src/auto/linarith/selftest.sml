@@ -1553,11 +1553,9 @@ val _ =
            boolSyntax.mk_neg irrelevant_premise],
           num_less public_x num_zero))
 
-(* Choosing which disjunction to eliminate scores every disjunct
-   against the same literals.  The goal below is the one that scoring
-   has to work through: a chain of literals no disjunct closes on its
-   own, so every disjunct is scored against all of them and every
-   branch of the chosen disjunction is then searched. *)
+(* Connected assumption ordering has to retain a disjunction after a
+   chain of literals no disjunct closes on its own, then search every
+   branch without losing any of the chain. *)
 val chain_vars =
   List.tabulate
     (9, fn i =>
@@ -1578,7 +1576,7 @@ val chain_disjunction =
 
 val _ =
   check
-    ("a scored disjunction is eliminated and the chain closed",
+    ("a connected disjunction is eliminated and the chain closed",
      fn () =>
        valid_closes (linarithLib.LINARITH_TAC [])
          (chain_literals @ [chain_disjunction],
@@ -1613,7 +1611,7 @@ val left_le_max = num_leq public_x public_max
 
 val _ =
   check
-    ("LINARITH_TAC eliminates num MIN and MAX",
+    ("LINARITH_TAC keeps the ordinary MIN and MAX split path",
      fn () =>
        valid_closes (linarithLib.LINARITH_TAC []) ([], min_le_left) andalso
        valid_closes (linarithLib.LINARITH_TAC []) ([], left_le_max))

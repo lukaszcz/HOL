@@ -13,7 +13,7 @@ fun exact theorem goal = Drule.PART_MATCH I theorem goal
 
 fun entry id line representative method excl goal : benchLib.corpus_goal =
   {id = id, goal = goal, source_method = method,
-   mapped = benchLib.Blast, excl = excl,
+   recipe = benchLib.Invoke (benchLib.Blast, []), excl = excl,
    provenance =
      {file = "src/HOL/ex/Classical.thy", line = line,
       commit = commit},

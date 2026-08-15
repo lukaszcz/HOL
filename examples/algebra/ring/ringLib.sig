@@ -12,4 +12,6 @@ sig
 
   val RING_RULE : term -> thm
   val RING_TAC  : tactic
+  val EXPLICIT_RING_TAC : tactic
+  val RING_REPLAY_COFACTORS : term -> term list -> thm
 end

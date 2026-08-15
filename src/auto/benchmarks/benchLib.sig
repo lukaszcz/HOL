@@ -19,8 +19,30 @@ sig
     | Cooper
     | NumRing
     | IntRing
+    | IntIdeal
+    | ExplicitRing
     | RealRing
     | RealField
+
+  type named_thm = {name : string, theorem : thm}
+
+  datatype rule_strength = SafeRule | UnsafeRule
+
+  datatype method_arg =
+      RewriteAdd of named_thm
+    | RewriteDelete of string
+    | SplitAdd of named_thm
+    | IntroAdd of rule_strength * named_thm
+    | ElimAdd of rule_strength * named_thm
+    | DestAdd of rule_strength * named_thm
+    | CongruenceAdd of named_thm
+    | FactAdd of named_thm
+    | DefinitionAdd of named_thm
+
+  datatype method_recipe =
+      Invoke of tactic_id * method_arg list
+    | Then of method_recipe * method_recipe
+    | AllGoals of method_recipe * method_recipe
 
   type exclusion = {name : string, theorem : thm}
 
@@ -28,7 +50,7 @@ sig
     id : string,
     goal : term,
     source_method : string,
-    mapped : tactic_id,
+    recipe : method_recipe,
     excl : exclusion list,
     provenance : provenance,
     representative : bool
@@ -57,6 +79,7 @@ sig
   val default_budget : Time.time
   val selftest_level : unit -> int
   val tactic_name : tactic_id -> string
+  val recipe_name : method_recipe -> string
   val cause_name : cause -> string
   val outcome_solved : outcome -> bool
 
@@ -65,7 +88,7 @@ sig
   val exclusions_effective :
     clasetLib.claset -> corpus_goal -> bool
 
-  val run_goal : Time.time -> tactic_id -> corpus_goal -> outcome
+  val run_goal : Time.time -> method_recipe -> corpus_goal -> outcome
 
   val assert_accounting : {
     family : string,

@@ -500,9 +500,29 @@ fun clarsimp_with cs ss simp_args =
 
 val CS_CLARSIMP_TAC = CS_of clarsimp_with
 
-fun public body theorems goal =
-  process_clasimp_args body
-    (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal
+fun restore_normalized_target target validation theorems =
+  let
+    val theorem = validation theorems
+    val normalization =
+      Conv.QCONV
+        (Conv.REDEPTH_CONV
+           (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) target
+    val normalized = boolSyntax.rhs (concl normalization)
+  in
+    if aconv (concl theorem) target then theorem
+    else if aconv (concl theorem) normalized then
+      EQ_MP (SYM normalization) theorem
+    else theorem
+  end
+
+fun public body theorems (goal as (_, target)) =
+  let
+    val (goals, validation) =
+      process_clasimp_args body
+        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal
+  in
+    (goals, restore_normalized_target target validation)
+  end
 
 fun AUTO_DEPTH_TAC bounds theorems =
   public (auto_with bounds) theorems

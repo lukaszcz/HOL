@@ -8,7 +8,7 @@ val commit = "f7e02b7e"
 fun entry id line method mapped representative goal :
     benchLib.corpus_goal =
   {id = id, goal = goal, source_method = method,
-   mapped = mapped, excl = [],
+   recipe = benchLib.Invoke (mapped, []), excl = [],
    provenance =
      {file = "src/HOL/ex/PresburgerEx.thy", line = line,
       commit = commit},
@@ -20,7 +20,8 @@ fun presburger line mapped representative goal =
 
 fun integer_case id line mapped goal : benchLib.corpus_goal =
   {id = "integer_" ^ id, goal = goal,
-   source_method = "test_cases.perform_tests", mapped = mapped,
+   source_method = "test_cases.perform_tests",
+   recipe = benchLib.Invoke (mapped, []),
    excl = [],
    provenance =
      {file = "src/integer/testing/test_cases.sml", line = line,
@@ -122,10 +123,7 @@ val goals =
          x <= w /\ w < z``]
 
 (* Lines 14 and 64 repeat lines 12 and 61 exactly. *)
-val shortfalls : benchLib.shortfall list =
-  [{id = "presburger_L102", cause = benchLib.EngineLimitation,
-    date = "2026-08-10",
-    note = "nine ABS splits exceed the 30s gate; upstream documents 4.2m"}]
+val shortfalls : benchLib.shortfall list = []
 
 fun run level =
   benchLib.run_family

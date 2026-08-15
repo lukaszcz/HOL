@@ -397,6 +397,40 @@ fun decomp_atoms tm =
     | SOME (linarithSolve.Decomp {lhs, rhs, ...}) =>
         map #1 (lhs @ rhs)
 
+(* splitLib deliberately chooses the first applicable assumption.  Put
+   assumptions connected to the current arithmetic context first: an
+   operator whose ordinary atoms already occur elsewhere is more likely
+   to expose a contradiction before independent operators are split.  Ties
+   retain the incoming order, and only the assumption order changes. *)
+fun connected_split_goal (assumptions, conclusion) =
+  let
+    fun atoms assumption =
+      linarithData.distinct_by Term.compare I (decomp_atoms assumption)
+    val entries = map (fn assumption => (assumption, atoms assumption))
+      assumptions
+    fun occurrence_count atom =
+      List.foldl
+        (fn ((_, entry_atoms), count) =>
+           if List.exists (Term.aconv atom) entry_atoms then count + 1
+           else count)
+        0 entries
+    fun score (_, entry_atoms) =
+      List.foldl
+        (fn (atom, total) =>
+           Int.max (0, occurrence_count atom - 1) + total)
+        0 entry_atoms
+    val scored = map (fn entry => (score entry, entry)) entries
+    fun insert item [] = [item]
+      | insert (item as (item_score, _))
+          ((first as (first_score, _)) :: rest) =
+          if item_score >= first_score then item :: first :: rest
+          else first :: insert item rest
+    val ordered = List.foldr (fn (item, result) => insert item result)
+      [] scored
+  in
+    (map (fn (_, (assumption, _)) => assumption) ordered, conclusion)
+  end
+
 (* Every instance sees every atom: an instance's atom_facts declines the
    atoms outside its own carrier, and the ones it accepts need not live
    in that carrier either (int accepts Num i : num). *)
@@ -454,47 +488,19 @@ fun augmentation function limit processed assumptions =
     loop (remember assumptions Termtab.empty) processed [] 0 assumptions
   end
 
-(* Whether a disjunct can be added to the literals already assumed
-   without the arithmetic refuting the result.  A disjunct that cannot
-   is a case the split would close immediately, so counting them
-   measures how much of a disjunction is still live.  The literals are
-   taken already decomposed, since every disjunct of every disjunction
-   is scored against the same ones. *)
-fun consistent config decomposed disjunct =
-  case linarithSolve.prove_decomposed config linarithDecomp.decomp
-         linarithDecomp.is_nonnegative
-         ((disjunct, linarithDecomp.decomp disjunct) :: decomposed)
-         boolSyntax.F of
-      (_, SOME _) => false
-    | (_, NONE) => true
-
-(* Eliminate one disjunctive assumption, choosing the one with the
-   fewest disjuncts still consistent with the literals already assumed.
-   Choosing blindly makes the search exponential in the number of
-   disjunctions, because it expands a disjunction of conjunctions into
-   its disjunctive normal form before the arithmetic ever runs.
-   Choosing this way is unit propagation modulo the arithmetic: a
-   disjunction all but one of whose cases the current literals already
-   refute costs one branch, not two. *)
-fun disj_elim_tac config (assumptions, conclusion) =
+(* Eliminate the first disjunctive assumption.  The caller orders the
+   assumptions by arithmetic connectedness before reaching this function.
+   Each child is refuted immediately, so running the solver here as well
+   would duplicate the dominant work at every branch. *)
+fun disj_elim_tac (assumptions, conclusion) =
   let
-    val (disjunctions, literals) =
+    val (disjunctions, _) =
       List.partition boolSyntax.is_disj assumptions
     val _ =
       if List.null disjunctions then
         raise ERR "disj_elim_tac" "no disjunctive assumption"
       else ()
-    val decomposed =
-      List.map (fn tm => (tm, linarithDecomp.decomp tm)) literals
-    fun score disjunction =
-      (List.length
-         (List.filter (consistent config decomposed)
-            (boolSyntax.strip_disj disjunction)),
-       disjunction)
-    fun cheaper (candidate as (count, _), best as (fewest, _)) =
-      if count < fewest then candidate else best
-    val scored = List.map score disjunctions
-    val (_, chosen) = List.foldl cheaper (hd scored) (tl scored)
+    val chosen = hd disjunctions
     val (left, right) = boolSyntax.dest_disj chosen
     val common = List.filter (not o Term.aconv chosen) assumptions
     val goals =
@@ -502,6 +508,97 @@ fun disj_elim_tac config (assumptions, conclusion) =
     fun justify [left_case, right_case] =
           Thm.DISJ_CASES (Thm.ASSUME chosen) left_case right_case
       | justify _ = raise ERR "disj_elim_tac" "invalid justification"
+  in
+    (goals, justify)
+  end
+
+(* A P-form operator split commonly leaves a complementary pair of
+   implications.  Flattening them independently turns one binary sign
+   choice into as many as four propositional cases.  When arithmetic can
+   prove that the negation of one guard implies the other, branch on the
+   first guard directly and carry the corresponding consequence into each
+   child.  The validation below reconstructs both consequences from the
+   original implications, so this is only a search compression.
+
+   A recurrence reaches the same guard pair under many partial sign
+   contexts.  The conjunction of the two guards is its canonical term key;
+   both proofs and failures are memoized for the lifetime of one search. *)
+fun complementary_implications_tac config cache
+                                      (assumptions, conclusion) =
+  let
+    fun implication assumption =
+      case Lib.total boolSyntax.dest_imp_only assumption of
+          SOME (guard, consequence) =>
+            SOME (assumption, guard, consequence)
+        | NONE => NONE
+    val implications = List.mapPartial implication assumptions
+
+    fun complement left_guard right_guard =
+      let
+        val key = boolSyntax.mk_conj (left_guard, right_guard)
+        val negated = boolSyntax.mk_neg left_guard
+        fun prove () =
+          SOME
+            (linarithReplay.fwd_prove config
+               [Thm.ASSUME negated] right_guard)
+          handle Feedback.HOL_ERR _ => NONE
+        val answer =
+          case Termtab.lookup (!cache) key of
+              SOME cached => cached
+            | NONE =>
+                let
+                  val computed = prove ()
+                  val _ = cache := Termtab.update (key, computed) (!cache)
+                in
+                  computed
+                end
+      in
+        Option.map (fn theorem => (negated, theorem)) answer
+      end
+
+    fun pair_with _ [] = NONE
+      | pair_with (left as (_, left_guard, _)) (right :: rest) =
+          let
+            val (_, right_guard, _) = right
+          in
+            case complement left_guard right_guard of
+                SOME proof => SOME (left, right, proof)
+              | NONE => pair_with left rest
+          end
+    fun find_pair [] = NONE
+      | find_pair (left :: rest) =
+          (case pair_with left rest of
+               SOME pair => SOME pair
+             | NONE => find_pair rest)
+
+    val ((left_assumption, left_guard, left_consequence),
+         (right_assumption, _, right_consequence),
+         (negated_guard, right_guard_theorem)) =
+      case find_pair implications of
+          SOME pair => pair
+        | NONE =>
+            raise ERR "complementary_implications_tac"
+              "no complementary implication pair"
+    fun chosen assumption =
+      Term.aconv assumption left_assumption orelse
+      Term.aconv assumption right_assumption
+    val common = List.filter (not o chosen) assumptions
+    val goals =
+      [(common @ [left_guard, left_consequence], conclusion),
+       (common @ [negated_guard, right_consequence], conclusion)]
+    val excluded_middle =
+      SPEC left_guard boolTheory.EXCLUDED_MIDDLE
+    val left_consequence_theorem =
+      MP (Thm.ASSUME left_assumption) (Thm.ASSUME left_guard)
+    val right_consequence_theorem =
+      MP (Thm.ASSUME right_assumption) right_guard_theorem
+    fun justify [left_case, right_case] =
+          Thm.DISJ_CASES excluded_middle
+            (PROVE_HYP left_consequence_theorem left_case)
+            (PROVE_HYP right_consequence_theorem right_case)
+      | justify _ =
+          raise ERR "complementary_implications_tac"
+            "invalid justification"
   in
     (goals, justify)
   end
@@ -553,31 +650,100 @@ fun disj_elim_tac config (assumptions, conclusion) =
 type search_branch =
   {splits : int, augmentations : int, processed : Termtab.set}
 
+type search_stats =
+  {nodes : int,
+   refutations : int,
+   disjunction_splits : int,
+   operator_splits : int,
+   augmentations : int}
+
+val empty_search_stats : search_stats =
+  {nodes = 0, refutations = 0,
+   disjunction_splits = 0, operator_splits = 0,
+   augmentations = 0}
+
+val last_search_stats_ref = ref empty_search_stats
+
+fun last_search_stats () = !last_search_stats_ref
+
+datatype search_event =
+    Node
+  | Refutation
+  | DisjunctionSplit
+  | OperatorSplit
+  | Augmentation
+
+fun note_search event =
+  let
+    val {nodes, refutations, disjunction_splits,
+         operator_splits, augmentations} = !last_search_stats_ref
+    fun increment selected value =
+      if event = selected then value + 1 else value
+  in
+    last_search_stats_ref :=
+      {nodes = increment Node nodes,
+       refutations = increment Refutation refutations,
+       disjunction_splits =
+         increment DisjunctionSplit disjunction_splits,
+       operator_splits = increment OperatorSplit operator_splits,
+       augmentations = increment Augmentation augmentations}
+  end
+
 fun split_on_demand function config split_tac =
   let
     val limit = #split_limit config
     val carrier_rule = carrier_nnf_rule ()
     val flatten = nnf_flatten carrier_rule
+    val complement_cache =
+      ref (Termtab.empty : thm option Termtab.table)
     val start : search_branch =
       {splits = 0, augmentations = 0, processed = Termtab.empty}
+
+    (* One remaining operator cannot multiply later sign choices, so it
+       keeps the established splitter.  If the result of the current split
+       still contains a splittable operator, there were at least two pending
+       and the generic implication expansion would introduce a third live
+       case before the next operator.  That branch-count boundary is the
+       threshold for the direct binary path. *)
+    fun has_successor_split (goals, _) =
+      List.exists (Lib.can split_tac) goals
+
     fun node hint spent goal =
-      Tactical.THEN (flatten, decide hint spent) goal
+      (note_search Node;
+       Tactical.THEN (flatten, decide hint spent) goal)
+    and open_node hint spent goal =
+      (note_search Node;
+       case Lib.total
+              (complementary_implications_tac config complement_cache) goal of
+           SOME split =>
+             (note_search DisjunctionSplit;
+              expand node hint spent split)
+         | NONE => Tactical.THEN (flatten, branch hint spent) goal)
     and decide hint spent goal =
-      case refutation config goal of
+      (note_search Refutation;
+       case refutation config goal of
           SOME tactic => tactic goal
-        | NONE => branch hint spent goal
+        | NONE => branch hint spent goal)
     and branch hint (spent as {splits, augmentations, processed}) goal =
-      case Lib.total (disj_elim_tac config) goal of
-          SOME split => expand hint spent split
+      case Lib.total disj_elim_tac (connected_split_goal goal) of
+          SOME split =>
+            (note_search DisjunctionSplit;
+             expand node hint spent split)
         | NONE =>
-            (case Lib.total split_tac goal of
+            (case Lib.total split_tac (connected_split_goal goal) of
                  SOME split =>
                    if splits >= limit then limit_exceeded function limit
                    else
-                     expand hint
-                       {splits = splits + 1,
-                        augmentations = augmentations,
-                        processed = processed} split
+                     let
+                       val continue =
+                         if has_successor_split split then open_node else node
+                     in
+                       note_search OperatorSplit;
+                       expand continue hint
+                         {splits = splits + 1,
+                          augmentations = augmentations,
+                          processed = processed} split
+                     end
                | NONE => augment hint spent goal)
     and augment hint {splits, augmentations, processed}
                 (goal as (assumptions, _)) =
@@ -591,24 +757,27 @@ fun split_on_demand function config split_tac =
         if null facts then exhausted function hint goal
         else if augmentations >= limit then limit_exceeded function limit
         else
-          Tactical.THEN
-            (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts,
-             Tactical.THEN
-               (flatten,
-                decide hint
-                  {splits = splits,
-                   augmentations = augmentations + 1,
-                   processed = processed'})) goal
+          (note_search Augmentation;
+           Tactical.THEN
+             (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts,
+              Tactical.THEN
+                (flatten,
+                 decide hint
+                   {splits = splits,
+                    augmentations = augmentations + 1,
+                    processed = processed'})) goal)
       end
-    and expand hint spent (goals, validation) =
+    and expand continue hint spent (goals, validation) =
       let
         val (result, revalidation) =
-          Tactical.ALLGOALS (node hint spent) goals
+          Tactical.ALLGOALS (continue hint spent) goals
       in
         (result, validation o revalidation)
       end
   in
-    fn hint => node hint start
+    fn hint => fn goal =>
+      (last_search_stats_ref := empty_search_stats;
+       node hint start goal)
   end
 
 type linarith_config = linarithData.linarith_config
