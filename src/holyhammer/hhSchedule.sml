@@ -29,15 +29,8 @@ type success = hhProver.slice * string list * real
 
 fun join left right = OS.Path.concat (left, right)
 
-fun with_mutex mutex f =
-  let
-    val _ = Mutex.lock mutex
-  in
-    (f () before Mutex.unlock mutex)
-    handle exn => (Mutex.unlock mutex; raise exn)
-  end
-
-fun elapsed started = Time.toReal (Time.- (Time.now (), started))
+val with_mutex = hhProver.with_mutex
+val elapsed = hhProver.elapsed
 
 fun real_min left right = if left < right then left else right
 
@@ -45,15 +38,7 @@ fun time_before left right = Time.compare (left, right) = LESS
 
 fun time_min left right = if time_before left right then left else right
 
-fun szs_name hhProver.SzsTheorem = "Theorem"
-  | szs_name hhProver.SzsCounterSat = "CounterSatisfiable"
-  | szs_name hhProver.SzsSatisfiable = "Satisfiable"
-  | szs_name hhProver.SzsGaveUp = "GaveUp"
-  | szs_name hhProver.SzsTimeout = "Timeout"
-  | szs_name hhProver.SzsResourceOut = "ResourceOut"
-  | szs_name hhProver.SzsInappropriate = "Inappropriate"
-  | szs_name (hhProver.SzsUnknown text) = text
-  | szs_name (hhProver.RunFailure text) = "failure: " ^ text
+val szs_name = hhProver.szs_name
 
 fun default_progress (SliceStarted slice) =
       print_endline
@@ -280,7 +265,7 @@ fun run {options, goal, premises, progress} =
           NONE => NONE
         | SOME {path, version, ...} =>
             let
-              val (_, argv) = #mk_command config path (#format request) request
+              val (_, argv) = #mk_command config path request
             in
               SOME
                 ({prover = #name config, version = version, argv = argv,

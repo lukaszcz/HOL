@@ -20,6 +20,7 @@ sig
      stopped : stop_reason, t_total : real}
 
   val problem_path : hhProver.slice -> string
+  val default_progress : event -> unit
   val export_problems : hhConfig.hh_options -> goal -> string list ->
     (hhProver.prover_config * hhProver.slice) list -> unit
   val run :

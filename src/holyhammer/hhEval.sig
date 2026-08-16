@@ -47,7 +47,6 @@ sig
   val string_of_regime : regime -> string
   val string_of_selector : selector -> string
   val is_higher_order_goal : Term.term -> bool
-  val is_ho_goal : Term.term -> bool
   val validate_condition : condition -> unit
   val encode_condition : condition -> string
   val parse_condition : string -> condition

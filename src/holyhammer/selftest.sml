@@ -935,22 +935,13 @@ fun test_hhProblemGen () =
           terms)
     fun occurrences needle text =
       let
-        fun loop start count =
-          case String.fields (fn _ => false) (String.extract (text, start, NONE)) of
-              _ =>
-                (case String.isSubstring needle (String.extract (text, start, NONE)) of
-                   false => count
-                 | true =>
-                     let
-                       fun find index =
-                         if String.isPrefix needle
-                              (String.extract (text, index, NONE)) then index
-                         else find (index + 1)
-                     in
-                       loop (find start + size needle) (count + 1)
-                     end)
+        fun loop haystack count =
+          case Substring.position needle haystack of
+              (_, rest) =>
+                if Substring.isEmpty rest then count
+                else loop (Substring.triml (size needle) rest) (count + 1)
       in
-        loop 0 0
+        loop (Substring.full text) 0
       end
     val binary_num = Type.mk_type ("fun", [num, unary_num])
     val pxy_f = Term.mk_var ("pxy.f", binary_num)
@@ -1293,26 +1284,26 @@ fun test_hhProver () =
     val _ = expect_equal "E command"
       ("e", ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
              "--cpu-limit=7", "--proof-object=1", "--extra", "problem.p"])
-      (#mk_command e "e" "fof" sample_request)
+      (#mk_command e "e" sample_request)
     val _ = expect_equal "Vampire command"
       ("vampire", ["--mode", "portfolio", "--schedule", "casc",
         "--input_syntax", "tptp", "--proof", "tptp",
         "--output_axiom_names", "on", "-t", "7", "--input_file",
         "--extra", "problem.p"])
-      (#mk_command vampire "vampire" "fof" sample_request)
+      (#mk_command vampire "vampire" sample_request)
     val _ = expect_equal "Zipperposition command"
       ("zipperposition", ["--input", "tptp", "--output", "tptp",
         "--timeout", "7", "--extra", "problem.p"])
-      (#mk_command zipperposition "zipperposition" "fof" sample_request)
+      (#mk_command zipperposition "zipperposition" sample_request)
     val _ = expect_equal "Z3 legacy command"
       ("z3", ["-tptp", "DISPLAY_UNSAT_CORE=true",
         "ELIM_QUANTIFIERS=true", "PULL_NESTED_QUANTIFIERS=true", "-T:7",
         "--extra", "problem.p"])
-      (#mk_command z3 "z3" "fof" sample_request)
+      (#mk_command z3 "z3" sample_request)
     val _ = expect_equal "Z3 standalone TPTP command"
       ("z3_tptp", ["-c", "-smt.pull_nested_quantifiers:true", "-t:7",
         "--extra", "-file:problem.p"])
-      (#mk_command z3 "z3_tptp" "fof" sample_request)
+      (#mk_command z3 "z3_tptp" sample_request)
   in
     ()
   end
@@ -1422,8 +1413,8 @@ fun test_hhSlice () =
           {timeout = 30, format = #format slice, problem = "anchor.p",
            extra = #extra_opts slice, debug_dir = NONE}
       in
-        #mk_command config "anchor-prover" "fof" baseline =
-        #mk_command config "anchor-prover" (#format slice) scheduled
+        #mk_command config "anchor-prover" baseline =
+        #mk_command config "anchor-prover" scheduled
       end
     val _ = expect "gate anchors are command-equivalent to one-shot B"
       (List.all anchor_command_equal anchors)
@@ -1686,9 +1677,8 @@ fun fake_config name exec_name args parser : hhProver.prover_config =
   {name = name, exec_names = [exec_name], env_var = "",
    version_args = ["--version"], parse_version = fn _ => SOME "test",
    tested_versions = ["test"], supported_formats = ["fof"],
-   format_args = fn _ => [],
-   mk_command = fn executable => fn _ => fn _ => (executable, args),
-   parse_output = parser, default_nfacts = 0, mono_instances = NONE,
+   mk_command = fn executable => fn _ => (executable, args),
+   parse_output = parser, mono_instances = NONE,
    slices = fn () => [],
    legacy = false}
 
@@ -1850,10 +1840,9 @@ fun test_runner () =
       {name = "runner-exec-failure", exec_names = ["/bin/true"],
        env_var = "", version_args = [], parse_version = fn _ => SOME "test",
        tested_versions = ["test"], supported_formats = ["fof"],
-       format_args = fn _ => [],
-       mk_command = fn _ => fn _ => fn _ =>
+       mk_command = fn _ => fn _ =>
          ("/definitely/missing/holyhammer-prover", []),
-       parse_output = #parse_output e, default_nfacts = 0,
+       parse_output = #parse_output e,
        mono_instances = NONE, slices = fn () => [], legacy = false}
     val exec_result = hhProver.run exec_failure timeout_request
     val _ = expect "runner exec failure returns RunFailure"
@@ -1862,9 +1851,8 @@ fun test_runner () =
       {name = "runner-missing", exec_names = ["missing-hh-prover"],
        env_var = "", version_args = [], parse_version = fn _ => NONE,
        tested_versions = [], supported_formats = ["fof"],
-       format_args = fn _ => [],
-       mk_command = fn executable => fn _ => fn _ => (executable, []),
-       parse_output = #parse_output e, default_nfacts = 0,
+       mk_command = fn executable => fn _ => (executable, []),
+       parse_output = #parse_output e,
        mono_instances = NONE, slices = fn () => [], legacy = false}
     val missing_result = hhProver.run missing timeout_request
     val _ = expect "missing prover names downloader"
@@ -1930,15 +1918,7 @@ fun same_engine (hhEval.Prover left) (hhEval.Prover right) = left = right
       left_cores = right_cores andalso left_max_proofs = right_max_proofs
   | same_engine _ _ = false
 
-fun same_slice (expected : hhProver.slice) (actual : hhProver.slice) =
-  #prover expected = #prover actual andalso
-  #format expected = #format actual andalso
-  #type_enc expected = #type_enc actual andalso
-  #lam_trans expected = #lam_trans actual andalso
-  #nfacts expected = #nfacts actual andalso
-  #filter expected = #filter actual andalso
-  #extra_opts expected = #extra_opts actual andalso
-  #slice_size expected = #slice_size actual
+val same_slice = hhProver.same_slice
 
 fun same_journal_slice (expected : hhEval.journal_slice)
     (actual : hhEval.journal_slice) =
@@ -2473,10 +2453,9 @@ fun printer_config name slices note parser : hhProver.prover_config =
   {name = name, exec_names = [schedule_printer], env_var = "",
    version_args = ["--version"], parse_version = fn _ => SOME "test",
    tested_versions = ["test"], supported_formats = ["fof"],
-   format_args = fn _ => [],
-   mk_command = fn executable => fn _ => fn request =>
+   mk_command = fn executable => fn request =>
      (note request; (executable, #extra request)),
-   parse_output = parser, default_nfacts = 0, mono_instances = NONE,
+   parse_output = parser, mono_instances = NONE,
    slices = fn () => slices, legacy = false}
 
 fun sleeper_config name parser : hhProver.prover_config =
@@ -2484,9 +2463,8 @@ fun sleeper_config name parser : hhProver.prover_config =
     {name = name, exec_names = [schedule_sleeper], env_var = "",
      version_args = ["--version"], parse_version = fn _ => SOME "test",
      tested_versions = ["test"], supported_formats = ["fof"],
-     format_args = fn _ => [],
-     mk_command = fn executable => fn _ => fn _ => (executable, []),
-     parse_output = parser, default_nfacts = 0, mono_instances = NONE,
+     mk_command = fn executable => fn _ => (executable, []),
+     parse_output = parser, mono_instances = NONE,
      slices = fn () => [slice], legacy = false}
   end
 

@@ -44,10 +44,8 @@ type prover_config =
    parse_version : string -> string option,
    tested_versions : string list,
    supported_formats : string list,
-   format_args : string -> string list,
-   mk_command : string -> string -> run_request -> string * string list,
+   mk_command : string -> run_request -> string * string list,
    parse_output : string list -> szs * string list option,
-   default_nfacts : int,
    mono_instances : int option,
    slices : unit -> slice list,
    legacy : bool}
@@ -77,19 +75,30 @@ fun status_of_word word =
     | "Inappropriate" => SzsInappropriate
     | other => SzsUnknown other
 
+fun szs_name SzsTheorem = "Theorem"
+  | szs_name SzsCounterSat = "CounterSatisfiable"
+  | szs_name SzsSatisfiable = "Satisfiable"
+  | szs_name SzsGaveUp = "GaveUp"
+  | szs_name SzsTimeout = "Timeout"
+  | szs_name SzsResourceOut = "ResourceOut"
+  | szs_name SzsInappropriate = "Inappropriate"
+  | szs_name (SzsUnknown text) = text
+  | szs_name (RunFailure text) = "failure: " ^ text
+
 fun szs_of_line line =
   let
     val marker = "SZS status "
-    val n = String.size marker
-    fun seek i =
-      if i + n > String.size line then NONE
-      else if String.substring (line, i, n) = marker then
-        let val word = first_word (String.extract (line, i + n, NONE)) in
-          if word = "" then NONE else SOME (status_of_word word)
-        end
-      else seek (i + 1)
+    val (_, rest) = Substring.position marker (Substring.full line)
   in
-    seek 0
+    if Substring.isEmpty rest then NONE
+    else
+      let
+        val word =
+          first_word (Substring.string
+            (Substring.triml (String.size marker) rest))
+      in
+        if word = "" then NONE else SOME (status_of_word word)
+      end
   end
 
 fun is_comment line =
@@ -330,6 +339,14 @@ fun z3_version output =
       SOME version => SOME version
     | NONE => version_between "Z3tptp [" "]" output
 
+fun same_slice (left : slice) (right : slice) =
+  #prover left = #prover right andalso #format left = #format right andalso
+  #type_enc left = #type_enc right andalso
+  #lam_trans left = #lam_trans right andalso
+  #nfacts left = #nfacts right andalso #filter left = #filter right andalso
+  #extra_opts left = #extra_opts right andalso
+  #slice_size left = #slice_size right
+
 fun mk_slice prover (format, type_enc, lam_trans) nfacts extra_opts : slice =
   {prover = prover, format = format, type_enc = type_enc, lam_trans = lam_trans,
    nfacts = nfacts, filter = "knn", extra_opts = extra_opts,
@@ -343,48 +360,42 @@ fun slices prover entries () =
    recordings validate these TPTP-3 dialect choices for every Phase 2 slice.
    E's --tstp-in and Zipperposition's --input tptp are base command options;
    Vampire alone requires its explicit TPTP input selector. *)
-fun e_format_args _ = []
-fun vampire_format_args _ = ["--input_syntax", "tptp"]
-fun zipperposition_format_args _ = []
-fun z3_format_args _ = []
-
-fun e_command executable format {timeout, problem, extra, ...} =
+fun e_command executable {timeout, problem, extra, ...} =
   (executable,
    ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
     "--cpu-limit=" ^ Int.toString timeout, "--proof-object=1"] @
-   e_format_args format @ extra @ [problem])
+   extra @ [problem])
 
-fun vampire_command executable format {timeout, problem, extra, ...} =
+fun vampire_command executable {timeout, problem, extra, ...} =
   (executable,
-   ["--mode", "portfolio", "--schedule", "casc"] @
-   vampire_format_args format @
-   ["--proof", "tptp", "--output_axiom_names", "on", "-t",
+   ["--mode", "portfolio", "--schedule", "casc",
+    "--input_syntax", "tptp",
+    "--proof", "tptp", "--output_axiom_names", "on", "-t",
     Int.toString timeout, "--input_file"] @ extra @ [problem])
 
-fun zipperposition_command executable format {timeout, problem, extra, ...} =
+fun zipperposition_command executable {timeout, problem, extra, ...} =
   (executable,
    ["--input", "tptp", "--output", "tptp", "--timeout",
-    Int.toString timeout] @ zipperposition_format_args format @ extra @ [problem])
+    Int.toString timeout] @ extra @ [problem])
 
-fun z3_command executable format {timeout, problem, extra, ...} =
+fun z3_command executable {timeout, problem, extra, ...} =
   if String.isSubstring "z3_tptp" (OS.Path.file executable) then
     (executable,
      ["-c", "-smt.pull_nested_quantifiers:true",
-      "-t:" ^ Int.toString timeout] @ z3_format_args format @ extra @
-      ["-file:" ^ problem])
+      "-t:" ^ Int.toString timeout] @ extra @ ["-file:" ^ problem])
   else
     (executable,
      ["-tptp", "DISPLAY_UNSAT_CORE=true", "ELIM_QUANTIFIERS=true",
       "PULL_NESTED_QUANTIFIERS=true", "-T:" ^ Int.toString timeout] @
-     z3_format_args format @ extra @ [problem])
+     extra @ [problem])
 
 val e_config : prover_config =
   {name = "e", exec_names = ["eprover-ho", "eprover"],
    env_var = "HOL4_EPROVER_EXECUTABLE", version_args = ["--version"],
    parse_version = e_version, tested_versions = ["3.2.5"],
    supported_formats = ["fof", "tf0", "tx0-", "th0"],
-   format_args = e_format_args, mk_command = e_command,
-   parse_output = parse_tstp, default_nfacts = 128, mono_instances = SOME 128,
+   mk_command = e_command,
+   parse_output = parse_tstp, mono_instances = SOME 128,
    slices = slices "e"
      [(("fof", "", ""), 128, []),
       (("fof", "", ""), 512, []),
@@ -401,9 +412,8 @@ val vampire_config : prover_config =
    env_var = "HOL4_VAMPIRE_EXECUTABLE", version_args = ["--version"],
    parse_version = vampire_version, tested_versions = ["5.0.1"],
    supported_formats = ["fof", "tf0", "tf1", "tx0", "th0", "th1"],
-   format_args = vampire_format_args, mk_command = vampire_command,
-   parse_output = parse_tstp, default_nfacts = 96,
-   mono_instances = SOME 256,
+   mk_command = vampire_command,
+   parse_output = parse_tstp, mono_instances = SOME 256,
    slices = slices "vampire"
      [(("fof", "", ""), 96, []),
       (("fof", "", ""), 512, []),
@@ -423,9 +433,8 @@ val zipperposition_config : prover_config =
    env_var = "HOL4_ZIPPERPOSITION_EXECUTABLE", version_args = ["--version"],
    parse_version = zipperposition_version, tested_versions = ["2.1"],
    supported_formats = ["fof", "th1"],
-   format_args = zipperposition_format_args,
    mk_command = zipperposition_command, parse_output = parse_tstp,
-   default_nfacts = 128, mono_instances = NONE,
+   mono_instances = NONE,
    slices = slices "zipperposition"
      [(("fof", "", ""), 128, []),
       (("fof", "", ""), 512, []),
@@ -441,8 +450,8 @@ val z3_config : prover_config =
    env_var = "HOL4_Z3_EXECUTABLE",
    version_args = ["--version"], parse_version = z3_version,
    tested_versions = ["4.11.2"], supported_formats = ["fof"],
-   format_args = z3_format_args, mk_command = z3_command,
-   parse_output = parse_z3, default_nfacts = 32, mono_instances = NONE,
+   mk_command = z3_command,
+   parse_output = parse_z3, mono_instances = NONE,
    slices = fn () => [], legacy = true}
 
 val registry = ref
@@ -772,7 +781,7 @@ fun run_async (config : prover_config) request =
       | SOME {path = executable, version, ...} =>
           ((let
               val (path, args) =
-                #mk_command config executable (#format request) request
+                #mk_command config executable request
               val process = start_process path args
                 (Real.fromInt (#timeout request + 2))
               val result_mutex = Mutex.mutex ()

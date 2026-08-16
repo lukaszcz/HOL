@@ -202,10 +202,6 @@ fun ninety_percent maximum =
   if maximum <= 0 then 0
   else (maximum div 10) * 9 + ((maximum mod 10) * 9) div 10
 
-fun take 0 _ = []
-  | take _ [] = []
-  | take count (item :: items) = item :: take (count - 1) items
-
 fun prune (options : hhConfig.hh_options) =
   if not (#cache options) then ()
   else
@@ -217,7 +213,7 @@ fun prune (options : hhConfig.hh_options) =
         else
           let
             val target = ninety_percent maximum
-            val oldest = take (length entries - target)
+            val oldest = aiLib.first_n (length entries - target)
               (Portable.sort entry_before entries)
           in
             List.app (remove o #3) oldest

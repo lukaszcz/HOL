@@ -39,13 +39,7 @@ type journal_entry =
    t_total : real option, winner : hhProver.slice option,
    slices : journal_slice list}
 
-fun same_slice (left : hhProver.slice) (right : hhProver.slice) =
-  #prover left = #prover right andalso #format left = #format right andalso
-  #type_enc left = #type_enc right andalso
-  #lam_trans left = #lam_trans right andalso
-  #nfacts left = #nfacts right andalso #filter left = #filter right andalso
-  #extra_opts left = #extra_opts right andalso
-  #slice_size left = #slice_size right
+val same_slice = hhProver.same_slice
 
 type corpus_coverage =
   {srcfiles : string list, dat_theories : string list,
@@ -63,7 +57,12 @@ type run_header =
    provers : prover_identity list, corpus : corpus_entry list,
    added_from_dat : string list, conditions : condition list, sample : int}
 
-type completed = (string * string) list
+type completed = (string * string) Binaryset.set
+
+fun cell_key_compare ((goal1, cond1), (goal2, cond2)) =
+  case String.compare (goal1, goal2) of
+      EQUAL => String.compare (cond1, cond2)
+    | order => order
 
 fun join left right = OS.Path.concat (left, right)
 
@@ -94,29 +93,8 @@ fun selector_of_string "deps" = Deps
 (* This deliberately examines only the normalized goal, never a translation.
    Quantifier abstractions are consumed by their binder representation;
    every other abstraction has survived in term position. *)
-fun beta_eta_contract tm =
+fun is_higher_order_goal tm =
   let
-    fun recurse body =
-      if is_abs body then
-        let
-          val (var, matrix) = dest_abs body
-          val matrix' = recurse matrix
-        in
-          if is_comb matrix' andalso aconv (rand matrix') var andalso
-             not (List.exists (fn other => aconv var other)
-               (free_vars_lr (rator matrix')))
-          then recurse (rator matrix')
-          else mk_abs (var, matrix')
-        end
-      else if is_comb body then
-        let val left = recurse (rator body)
-            val right = recurse (rand body)
-            val combined = mk_comb (left, right)
-        in
-          if is_abs left then recurse (beta_conv combined) else combined
-        end
-      else body
-
     fun is_fun_type ty =
       (ignore (dom_rng ty); true) handle HOL_ERR _ => false
 
@@ -175,11 +153,8 @@ fun beta_eta_contract tm =
         end
       else false
   in
-    scan [] true (recurse tm)
+    scan [] true (hhProblemGen.beta_eta_contract false tm)
   end
-
-val is_higher_order_goal = beta_eta_contract
-val is_ho_goal = is_higher_order_goal
 
 fun validate_condition (condition : condition) =
   case (#engine condition, #reconstruct condition) of
@@ -570,17 +545,13 @@ fun retryable_szs szs = szs = "Error" orelse szs = "RunFailure"
 
 fun add_completed entry pairs =
   if retryable_szs (#szs entry) then pairs
-  else
-    let val pair = (#goal_id entry, #cond entry) in
-      if List.exists (fn item => item = pair) pairs then pairs
-      else pair :: pairs
-    end
+  else Binaryset.add (pairs, (#goal_id entry, #cond entry))
 
 fun read_completed path =
-  List.foldl (fn (entry, pairs) => add_completed entry pairs) []
-    (read_journal path)
+  List.foldl (fn (entry, pairs) => add_completed entry pairs)
+    (Binaryset.empty cell_key_compare) (read_journal path)
 
-fun cell_completed pairs pair = List.exists (fn item => item = pair) pairs
+fun cell_completed pairs pair = Binaryset.member (pairs, pair)
 
 fun journal_complete path cells =
   let val pairs = read_completed path in
@@ -729,11 +700,6 @@ fun journal_files expdir =
   end
 
 fun cell_key entry = (#goal_id entry, #cond entry)
-
-fun cell_key_compare ((goal1, cond1), (goal2, cond2)) =
-  case String.compare (goal1, goal2) of
-      EQUAL => String.compare (cond1, cond2)
-    | order => order
 
 fun latest_cells entries =
   let
@@ -937,11 +903,10 @@ fun reconstruction_ids entries = goal_ids entries reconstructed_cell
 fun unique_count prover ids_of entries =
   let
     val own = ids_of (List.filter (fn entry => #prover entry = prover) entries)
-    val others = ids_of (List.filter (fn entry => #prover entry <> prover)
-                           entries)
+    val others = Binaryset.addList (Binaryset.empty String.compare,
+      ids_of (List.filter (fn entry => #prover entry <> prover) entries))
   in
-    length (List.filter (fn goal => not (List.exists (fn other =>
-      other = goal) others)) own)
+    length (List.filter (fn goal => not (Binaryset.member (others, goal))) own)
   end
 
 fun portfolio_prover_json prover entries =
@@ -980,10 +945,7 @@ fun theory_json theory entries =
           (entries_for_condition name in_theory)) conditions))]
   end
 
-fun count_int value values =
-  length (List.filter (fn other => other = value) values)
-
-fun count_string value values =
+fun count value values =
   length (List.filter (fn other => other = value) values)
 
 fun schedule_distribution_json name entries =
@@ -998,10 +960,10 @@ fun schedule_distribution_json name entries =
       [("cond", JSON.STRING name),
        ("slices_run", JSON.ARRAY (map (fn value => JSON.OBJECT
           [("value", json_int value),
-           ("count", json_int (count_int value slice_counts))]) slice_values)),
+           ("count", json_int (count value slice_counts))]) slice_values)),
        ("stop_reasons", JSON.ARRAY (map (fn value => JSON.OBJECT
           [("value", JSON.STRING value),
-           ("count", json_int (count_string value
+           ("count", json_int (count value
              (List.mapPartial #stop entries)))]) stops))]
   end
 
@@ -1063,14 +1025,14 @@ fun int_distribution values =
   in
     if null distinct then "-"
     else String.concatWith ", " (map (fn value =>
-      Int.toString value ^ ":" ^ Int.toString (count_int value values)) distinct)
+      Int.toString value ^ ":" ^ Int.toString (count value values)) distinct)
   end
 
 fun string_distribution values =
   let val distinct = sorted_unique values in
     if null distinct then "-"
     else String.concatWith ", " (map (fn value =>
-      value ^ ":" ^ Int.toString (count_string value values)) distinct)
+      value ^ ":" ^ Int.toString (count value values)) distinct)
   end
 
 fun schedule_distribution_markdown name entries =
@@ -1834,8 +1796,11 @@ fun smoke_options expdir timeout : hhConfig.hh_options =
      debug_dir = SOME (join expdir "out")}
   end
 
+(* The format smoke test validates the typed slices.  Select them by
+   encoding, not position: the rotation is tuning data and reorders. *)
 fun phase2_smoke_slices options =
-  List.drop (hhSlice.mk_schedule options, 8)
+  List.filter (fn (_, slice) => #type_enc slice <> "")
+    (hhSlice.mk_schedule options)
 
 fun run_format_smoke expdir timeout options (config, slice) =
   let

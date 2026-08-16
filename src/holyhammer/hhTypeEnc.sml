@@ -37,39 +37,29 @@ struct
   fun valid_format format =
     (ignore (format_of_string format); true) handle Fail _ => false
 
-  fun of_string "mono_native" =
-        Native {higher = false, fool = false, poly = false}
-    | of_string "mono_native_fool" =
-        Native {higher = false, fool = true, poly = false}
-    | of_string "mono_native_higher" =
-        Native {higher = true, fool = false, poly = false}
-    | of_string "mono_native_higher_fool" =
-        Native {higher = true, fool = true, poly = false}
-    | of_string "poly_native" =
-        Native {higher = false, fool = false, poly = true}
-    | of_string "mono_guards" =
-        Guards {poly = false, level = AllTypes}
-    | of_string "mono_guards??" =
-        Guards {poly = false, level = NonmonoNonUniform}
-    | of_string "" = LegacySP
-    | of_string string =
-        fail ("unknown type encoding " ^ String.toString string)
+  (* The slice vocabulary: names and encodings must stay mutually inverse,
+     so keep them in one table rather than two mirrored case analyses. *)
+  val encodings =
+    [("mono_native", Native {higher = false, fool = false, poly = false}),
+     ("mono_native_fool", Native {higher = false, fool = true, poly = false}),
+     ("mono_native_higher",
+      Native {higher = true, fool = false, poly = false}),
+     ("mono_native_higher_fool",
+      Native {higher = true, fool = true, poly = false}),
+     ("poly_native", Native {higher = false, fool = false, poly = true}),
+     ("mono_guards", Guards {poly = false, level = AllTypes}),
+     ("mono_guards??", Guards {poly = false, level = NonmonoNonUniform}),
+     ("", LegacySP)]
 
-  fun to_string (Native {higher = false, fool = false, poly = false}) =
-        "mono_native"
-    | to_string (Native {higher = false, fool = true, poly = false}) =
-        "mono_native_fool"
-    | to_string (Native {higher = true, fool = false, poly = false}) =
-        "mono_native_higher"
-    | to_string (Native {higher = true, fool = true, poly = false}) =
-        "mono_native_higher_fool"
-    | to_string (Native {higher = false, fool = false, poly = true}) =
-        "poly_native"
-    | to_string (Guards {poly = false, level = AllTypes}) = "mono_guards"
-    | to_string (Guards {poly = false, level = NonmonoNonUniform}) =
-        "mono_guards??"
-    | to_string LegacySP = ""
-    | to_string _ = fail "encoding is outside the slice vocabulary"
+  fun of_string string =
+    case List.find (fn (name, _) => name = string) encodings of
+        SOME (_, enc) => enc
+      | NONE => fail ("unknown type encoding " ^ String.toString string)
+
+  fun to_string enc =
+    case List.find (fn (_, other) => other = enc) encodings of
+        SOME (name, _) => name
+      | NONE => fail "encoding is outside the slice vocabulary"
 
   fun has_fool hhTptpProblem.NoFool = false
     | has_fool (hhTptpProblem.Fool _) = true
@@ -78,8 +68,8 @@ struct
 
   fun adjust_type_enc hhTptpProblem.FOF (Native _) =
         Guards {poly = false, level = AllTypes}
-    | adjust_type_enc hhTptpProblem.FOF (Guards {poly = false, level}) =
-        Guards {poly = false, level = level}
+    | adjust_type_enc hhTptpProblem.FOF (enc as Guards {poly = false, ...}) =
+        enc
     | adjust_type_enc hhTptpProblem.FOF (Guards {poly = true, ...}) =
         fail "polymorphic guards are not in the slice vocabulary"
     | adjust_type_enc hhTptpProblem.FOF LegacySP = LegacySP

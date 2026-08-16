@@ -36,19 +36,22 @@ sig
      parse_version : string -> string option,
      tested_versions : string list,
      supported_formats : string list,
-     format_args : string -> string list,
-     mk_command : string -> string -> run_request -> string * string list,
+     mk_command : string -> run_request -> string * string list,
      parse_output : string list -> szs * string list option,
-     default_nfacts : int,
      mono_instances : int option,
      slices : unit -> slice list,
      legacy : bool}
+
+  val same_slice : slice -> slice -> bool
 
   val all : unit -> prover_config list
   val lookup : string -> prover_config option
   val register : prover_config -> unit
   val default_provers : unit -> string list
 
+  (* Human-readable rendering, for progress output.  Not a wire format:
+     hhCache keeps its own round-trippable encoding. *)
+  val szs_name : szs -> string
   val szs_of_line : string -> szs option
   val axioms_from_tstp : string list -> string list
 
@@ -56,6 +59,10 @@ sig
   val find_exec : prover_config -> string option
   val probe : prover_config ->
     {path : string, version : string option, tested : bool} option
+  (* Shared with the scheduler: lock discipline must have one definition. *)
+  val with_mutex : Mutex.mutex -> (unit -> 'a) -> 'a
+  val elapsed : Time.time -> real
+
   (* Test hook: counts every successful fork, including version probes. *)
   val spawn_count : unit -> int
   val reset_spawn_count : unit -> unit

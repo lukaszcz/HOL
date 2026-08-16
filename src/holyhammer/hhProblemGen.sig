@@ -24,6 +24,9 @@ sig
                    facts : (string * hol_formula) list,
                    proxies : string list}
 
+  (* Beta-eta contraction, unfolding LET when the flag is set. *)
+  val beta_eta_contract : bool -> term -> term
+
   (* Pass 1.  Beta-eta contract every formula and unfold LET exactly when
      the target syntax lacks $let.  COND remains for the helper/$ite pass. *)
   val presimp : hhTptpProblem.format -> named_terms -> named_terms

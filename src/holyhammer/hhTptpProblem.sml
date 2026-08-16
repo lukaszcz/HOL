@@ -34,9 +34,7 @@ struct
 
   fun fail message = raise Fail ("hhTptpProblem: " ^ message)
 
-  fun join _ [] = ""
-    | join _ [x] = x
-    | join sep (x :: xs) = x ^ sep ^ join sep xs
+  val join = String.concatWith
 
   fun is_higher FOF = false
     | is_higher (TFF _) = false

@@ -49,11 +49,6 @@ fun available_configs caller configs =
     if null available then no_prover caller else available
   end
 
-fun pathl sl = case sl of
-    [] => raise ERR "pathl" "empty"
-  | [a] => a
-  | a :: rest => OS.Path.concat (a, pathl rest)
-
 (* Deliberately a function: state_dir needs HOME and creates directories,
    so binding it at structure-initialisation time would make merely loading
    holyHammer fail wherever HOME is unset or the home is read-only. *)
@@ -77,41 +72,16 @@ fun interactive_options provers (options : hhConfig.hh_options) :
    cache_max_entries = #cache_max_entries options,
    debug_dir = #debug_dir options}
 
-fun szs_name hhProver.SzsTheorem = "Theorem"
-  | szs_name hhProver.SzsCounterSat = "CounterSatisfiable"
-  | szs_name hhProver.SzsSatisfiable = "Satisfiable"
-  | szs_name hhProver.SzsGaveUp = "GaveUp"
-  | szs_name hhProver.SzsTimeout = "Timeout"
-  | szs_name hhProver.SzsResourceOut = "ResourceOut"
-  | szs_name hhProver.SzsInappropriate = "Inappropriate"
-  | szs_name (hhProver.SzsUnknown text) = text
-  | szs_name (hhProver.RunFailure text) = "failure: " ^ text
-
 type unverified = hhProver.slice * string list
 
-fun progress found (hhSchedule.SliceStarted slice) =
-      print_endline
-        ("  starting " ^ #prover slice ^ " slice (" ^
-         Int.toString (#nfacts slice) ^ " facts)")
-  | progress found (hhSchedule.SliceDone (slice, status, elapsed)) =
-      print_endline
-        ("  " ^ #prover slice ^ " slice: " ^ szs_name status ^ " (" ^
-         Real.toString elapsed ^ " s)")
-  | progress found (hhSchedule.ProofFound (slice, lemmas)) =
-      (found := (slice, lemmas) :: !found;
-       print_endline ("  proof found by " ^ #prover slice ^ ":");
-       print_endline ("    " ^ mk_metis_call lemmas))
-  | progress _ (hhSchedule.Verified suggestion) =
-      print_endline ("  verified proof:  \n    " ^ #stac suggestion)
-  | progress _ (hhSchedule.ScheduleDone _) = ()
+(* The schedule's own reporting, plus a record of the proofs it announced. *)
+fun progress found event =
+  (case event of
+       hhSchedule.ProofFound pair => found := pair :: !found
+     | _ => ();
+   hhSchedule.default_progress event)
 
-fun problem_path (slice : hhProver.slice) =
-  pathl [hhConfig.state_dir (), "problems",
-         String.concatWith "."
-           (map aiLib.escape [#prover slice, #format slice,
-                              #type_enc slice, #lam_trans slice,
-                              Int.toString (#nfacts slice)]),
-         "atp_in"]
+val problem_path = hhSchedule.problem_path
 
 fun output_paths directory prover =
   let

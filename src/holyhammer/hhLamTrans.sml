@@ -9,11 +9,6 @@ struct
     List.exists (fn known => known = mode)
       ["lifting", "combs", "combs_and_lifting", "keep_lams"]
 
-  fun has_var variable tm =
-    List.exists (fn other => aconv variable other) (free_vars_lr tm)
-
-  fun mk_fun domain range = Type.mk_type ("fun", [domain, range])
-
   fun generated_symbol variable =
     let val name = #1 (dest_var variable) in
       String.isPrefix "pxy." name orelse String.isPrefix "$" name
@@ -21,26 +16,6 @@ struct
 
   fun close_formula tm =
     list_mk_forall (List.filter (not o generated_symbol) (free_vars_lr tm), tm)
-
-  fun strip_abs tm =
-    let
-      fun loop vars body =
-        if is_abs body then
-          let val (var, next) = dest_abs body in loop (vars @ [var]) next end
-        else (vars, body)
-    in
-      loop [] tm
-    end
-
-  fun strip_foralls tm =
-    let
-      fun loop vars body =
-        if is_forall body then
-          let val (var, next) = dest_forall body in loop (vars @ [var]) next end
-        else (vars, body)
-    in
-      loop [] tm
-    end
 
   (* HOL represents binders as constants applied to abstractions.  Recognise
      that representation only in formula position.  In term position, as in
@@ -150,7 +125,7 @@ struct
               if type_of matrix = Type.bool then formula matrix else term matrix
           in
             if is_comb matrix' andalso aconv (rand matrix') var andalso
-               not (has_var var (rator matrix')) then term (rator matrix')
+               not (var_occurs var (rator matrix')) then term (rator matrix')
             else mk_abs (var, matrix')
           end
         else if is_comb body then
@@ -184,9 +159,7 @@ struct
           val captured = free_vars_lr tm
           val matrix' =
             if type_of matrix = Type.bool then formula matrix else term matrix
-          val lam_type =
-            List.foldr (fn (var, result) => mk_fun (type_of var) result)
-              (type_of tm) captured
+          val lam_type = list_mk_fun (map type_of captured, type_of tm)
           val lam = mk_var (fresh_name (), lam_type)
           val replacement = list_mk_comb (lam, captured)
           val lhs = list_mk_comb (replacement, bound)
@@ -205,7 +178,7 @@ struct
 
   fun intentionalize definition =
     let
-      val (_, equation) = strip_foralls definition
+      val (_, equation) = strip_forall definition
       val (left, right) = dest_eq equation
       val (head, args) = strip_comb left
     in

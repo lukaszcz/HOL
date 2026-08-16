@@ -59,8 +59,7 @@ struct
             val matrix' = recurse matrix
           in
             if is_comb matrix' andalso aconv (rand matrix') var andalso
-               not (List.exists (fn other => aconv var other)
-                 (free_vars_lr (rator matrix'))) then
+               not (var_occurs var (rator matrix')) then
               recurse (rator matrix')
             else mk_abs (var, matrix')
           end
@@ -143,8 +142,7 @@ struct
     else if same_const head F then SOME ("false", 0, "$false")
     else NONE
 
-  fun rebuild head args = List.foldl (fn (arg, fun_tm) => mk_comb (fun_tm, arg))
-    head args
+  fun rebuild head args = list_mk_comb (head, args)
   fun proxy_head name head = mk_var ("pxy." ^ name, type_of head)
   fun builtin_head name head = mk_var (name, type_of head)
   fun is_cond_head head = same_const head conditional
@@ -210,7 +208,7 @@ struct
     end
   fun is_symbol tm = is_const tm orelse is_generated_var tm
 
-  fun same_head left right = aconv left right
+  val same_head = aconv
   fun find_head head [] = NONE
     | find_head head ((other, value) :: rest) =
         if same_head head other then SOME value else find_head head rest
@@ -467,11 +465,7 @@ struct
   fun proxy_type_args head =
     let
       val name = raw_symbol head
-      fun domains ty =
-        case dom_rng ty of
-            SOME (domain, range) => domain :: domains range
-          | NONE => []
-      val args = domains (type_of head)
+      val args = #1 (strip_fun (type_of head))
     in
       case name of
           "pxy.eq" => (case args of ty :: _ => [ty] | [] => [])
@@ -651,10 +645,10 @@ struct
 
   fun heads_of_fo_term (FOHead (head, args), heads) =
         List.foldl heads_of_fo_term (if is_symbol head then
-          add_once (fn left => fn right => same_head left right) head heads else heads) args
+          add_once same_head head heads else heads) args
     | heads_of_fo_term (FOValue head, heads) =
         if is_symbol head then
-          add_once (fn left => fn right => same_head left right) head heads
+          add_once same_head head heads
         else heads
     | heads_of_fo_term (FOApp {left, right, ...}, heads) =
         heads_of_fo_term (right, heads_of_fo_term (left, heads))
@@ -666,23 +660,16 @@ struct
         List.foldl heads_of_fo_formula heads bodies
     | heads_of_fo_formula (FOAtom tm, heads) = heads_of_fo_term (tm, heads)
 
-  fun type_parts ty =
-    case dom_rng ty of
-        SOME (domain, range) =>
-          let val (domains, result) = type_parts range in (domain :: domains, result) end
-      | NONE => ([], ty)
-
   fun generic_proxy_type head =
     let
       val alpha = Type.alpha
-      fun arrow left right = Type.mk_type ("fun", [left, right])
-      val predicate = arrow alpha Type.bool
+      val predicate = alpha --> Type.bool
     in
       case raw_symbol head of
-          "pxy.eq" => arrow alpha (arrow alpha Type.bool)
-        | "pxy.all" => arrow predicate Type.bool
-        | "pxy.ex" => arrow predicate Type.bool
-        | "$ite" => arrow Type.bool (arrow alpha (arrow alpha alpha))
+          "pxy.eq" => alpha --> alpha --> Type.bool
+        | "pxy.all" => predicate --> Type.bool
+        | "pxy.ex" => predicate --> Type.bool
+        | "$ite" => Type.bool --> alpha --> alpha --> alpha
         | _ => type_of head
     end
 
@@ -702,16 +689,11 @@ struct
         case encoding of
             hhTypeEnc.Native {higher = false, poly = false, ...} =>
               consume arity full_type []
-          | _ => type_parts full_type
+          | _ => strip_fun full_type
       val ty =
-        case encoding of
-            hhTypeEnc.Native {poly = false, ...} =>
-              List.foldr (fn (domain, range) =>
-                hhTptpProblem.TyFun (type_for encoding domain, range))
-                (type_for encoding result) domains
-          | _ => List.foldr (fn (domain, range) =>
-              hhTptpProblem.TyFun (type_for encoding domain, range))
-              (type_for encoding result) domains
+        List.foldr (fn (domain, range) =>
+          hhTptpProblem.TyFun (type_for encoding domain, range))
+          (type_for encoding result) domains
     in
       case encoding of
           hhTypeEnc.Native {poly = true, ...} =>
@@ -750,7 +732,7 @@ struct
 
   fun gsy_line encoding needs head =
     let
-      val (domains, result) = type_parts (type_of head)
+      val (domains, result) = strip_fun (type_of head)
     in
       if not (guarded_type encoding needs result) then NONE
       else
@@ -824,9 +806,9 @@ struct
      proxy, application, and type-encoding route as selected premises. *)
   fun proxy_helpers heads =
     let
-      fun app head args = List.foldl (fn (arg, f) => mk_comb (f, arg)) head args
-      fun all vars body = list_mk_forall (vars, body)
-      fun domains ty = fst (type_parts ty)
+      fun app head args = list_mk_comb (head, args)
+      val all = curry list_mk_forall
+      fun domains ty = #1 (strip_fun ty)
       fun helpers head =
         let
           val name = raw_symbol head
@@ -941,9 +923,8 @@ struct
              mk_disj (mk_eq (b, T), mk_eq (b, F))))]
         end
         else []
-      val ext = []
     in
-      combinators @ conds @ ext
+      combinators @ conds
     end
 
   fun app_signatures_term (FOHead (_, args), result) =
@@ -1004,7 +985,7 @@ struct
   fun value_heads_term (FOHead (_, args), result) =
         List.foldl value_heads_term result args
     | value_heads_term (FOValue head, result) =
-        add_once (fn left => fn right => same_head left right) head result
+        add_once same_head head result
     | value_heads_term (FOApp {left, right, ...}, result) =
         value_heads_term (right, value_heads_term (left, result))
     | value_heads_term (FOPred body, result) =
@@ -1033,8 +1014,8 @@ struct
       val base_heads = List.foldl heads_of_fo_formula [] all_formulas
       val bool_proxies = if used_pp then
         [mk_var ("pxy.true", Type.bool), mk_var ("pxy.false", Type.bool)] else []
-      val heads = List.foldl (fn (head, result) => add_once
-        (fn left => fn right => same_head left right) head result)
+      val heads = List.foldl
+        (fn (head, result) => add_once same_head head result)
         base_heads bool_proxies
       fun declared head = raw_symbol head = "$ite" orelse
         not (String.isPrefix "$" (raw_symbol head))
@@ -1202,7 +1183,6 @@ struct
       val preliminary_fo = firstorder (combined preliminary_helpers)
       val proxy_source = proxy_helpers (heads_of preliminary_fo)
       val with_proxies = initial @ proxy_source
-      val proxy_terms = translate_helpers with_proxies
       val extensionality = if #used_app main_fo then
         [("help.eq_ext", Thm.concl boolTheory.EQ_EXT)] else []
       val helper_terms = translate_helpers (with_proxies @ extensionality)

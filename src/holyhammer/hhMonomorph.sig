@@ -11,8 +11,4 @@ sig
     {max_iters : int, max_new_instances : int} ->
     term -> (string * term) list -> (string * term) list
 
-  val monomorphize :
-    {max_iters : int, max_new_instances : int} ->
-    term -> (string * term) list -> (string * term) list
-
 end

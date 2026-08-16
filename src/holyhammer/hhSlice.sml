@@ -14,21 +14,7 @@ val rotation =
    "vampire", "e", "zipperposition", "e", "vampire", "e", "vampire",
    "zipperposition"]
 
-fun member item = List.exists (fn other => item = other)
-
-fun distinct items =
-  let
-    fun collect _ [] = []
-      | collect seen (item :: rest) =
-          if member item seen then collect seen rest
-          else item :: collect (item :: seen) rest
-  in
-    collect [] items
-  end
-
-fun take 0 _ = []
-  | take _ [] = []
-  | take n (item :: rest) = item :: take (n - 1) rest
+val distinct = aiLib.mk_sameorder_set String.compare
 
 fun round_robin count items =
   let
@@ -45,10 +31,10 @@ fun schedule_of_provers requested count =
   else
     let
       val requested' = distinct requested
-      val initial = List.filter (fn name => member name requested') rotation
+      val initial = List.filter (fn name => Lib.mem name requested') rotation
       val initial_count = length initial
     in
-      if count <= initial_count then take count initial
+      if count <= initial_count then aiLib.first_n count initial
       else initial @ round_robin (count - initial_count) requested'
     end
 
@@ -90,13 +76,7 @@ fun adjust_slice (options : hhConfig.hh_options)
    filter = #filter options, extra_opts = #extra_opts slice,
    slice_size = #slice_size slice}
 
-fun same_slice (left : hhProver.slice) (right : hhProver.slice) =
-  #prover left = #prover right andalso #format left = #format right andalso
-  #type_enc left = #type_enc right andalso
-  #lam_trans left = #lam_trans right andalso
-  #nfacts left = #nfacts right andalso #filter left = #filter right andalso
-  #extra_opts left = #extra_opts right andalso
-  #slice_size left = #slice_size right
+val same_slice = hhProver.same_slice
 
 fun mk_schedule (options : hhConfig.hh_options) =
   let

@@ -26,6 +26,10 @@ struct
 
   val sort = Listsort.sort
 
+  fun take 0 _ = []
+    | take _ [] = []
+    | take count (item :: items) = item :: take (count - 1) items
+
   fun mem_type ty = List.exists (fn other => other = ty)
 
   fun insert_type ty [] = [ty]
@@ -219,13 +223,9 @@ struct
             if List.exists (fn old => same_subst subst old) result then
               unique rest result
             else unique rest (subst :: result)
-      fun truncate 0 _ = []
-        | truncate _ [] = []
-        | truncate count (item :: items) =
-            item :: truncate (count - 1) items
       fun add_best subst result =
         if List.exists (fn old => same_subst subst old) result then result
-        else truncate limit
+        else take limit
           (Listsort.sort subst_compare (subst :: result))
       fun covers_all ty =
         let val vars = Type.type_vars ty in
@@ -268,10 +268,6 @@ struct
     in
       loop candidates [] []
     end
-
-  fun take 0 _ = []
-    | take _ [] = []
-    | take count (item :: items) = item :: take (count - 1) items
 
   fun grounds_from_instances instances table =
     List.foldl (fn ((_, _, theorem), result) => add_grounds theorem result)
@@ -342,7 +338,5 @@ struct
     in
       List.concat (map result_of infos)
     end
-
-  val monomorphize = monomorph
 
 end
