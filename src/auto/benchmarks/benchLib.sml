@@ -214,16 +214,43 @@ fun controls exclusions =
 
 fun simp_controls exclusions = translation_base :: controls exclusions
 
+fun beta_eta_normalise term =
+  boolSyntax.rhs
+    (Thm.concl
+      (Conv.QCONV
+        (Conv.REDEPTH_CONV
+          (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) term))
+
+fun strip_truth_equivalence term =
+  let
+    val normal = beta_eta_normalise term
+  in
+    if boolSyntax.is_eq normal then
+      let
+        val (left, right) = boolSyntax.dest_eq normal
+      in
+        if Term.aconv right boolSyntax.T then left
+        else if Term.aconv left boolSyntax.T then right
+        else normal
+      end
+    else
+      normal
+  end
+
 fun theorem_is_goal goal theorem =
   let
     val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
     val (_, conclusion) = boolSyntax.strip_imp_only body
+    val goal = strip_truth_equivalence goal
+    val conclusion = strip_truth_equivalence conclusion
+    val theorem_conclusion =
+      strip_truth_equivalence (Thm.concl theorem)
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
   in
     Term.aconv conclusion goal orelse
-    Term.aconv (Thm.concl theorem) goal orelse
-    variants conclusion goal
+    Term.aconv theorem_conclusion goal orelse
+    variants conclusion goal orelse variants theorem_conclusion goal
   end
 
 fun named_theorem (RewriteAdd theorem) = SOME theorem
@@ -240,31 +267,103 @@ fun named_theorem (RewriteAdd theorem) = SOME theorem
    persistent name.  This check happens before controls are appended, so a
    recipe cannot put the measured theorem back under an invocation-private
    name. *)
-fun permitted_for goal arg =
-  case named_theorem arg of
-      NONE => true
-    | SOME {theorem, ...} => not (theorem_is_goal goal theorem)
+fun location_name (DB.Local name) = name
+  | location_name (DB.Stored name) = KernelSig.name_toString name
+
+fun registered_definition theorem =
+  List.exists
+    (fn location =>
+      let val name = location_name location
+      in String.isSuffix "_def" name orelse String.isSuffix "_DEF" name
+      end)
+    (DB.revlookup theorem)
+
+fun permitted_for goal (DefinitionAdd {theorem, ...}) =
+      not (theorem_is_goal goal theorem) orelse
+      registered_definition theorem
+  | permitted_for goal arg =
+      case named_theorem arg of
+          NONE => true
+        | SOME {theorem, ...} => not (theorem_is_goal goal theorem)
 
 fun permitted_arg ({goal, ...} : corpus_goal) = permitted_for goal
 
-fun sanitize_recipe goal recipe =
+fun simpset_analogues goal =
+  List.filter (theorem_is_goal goal)
+    (List.concat
+      (map simpLib.frag_rewrites
+        (simpLib.ssfrags_of (clasimpLib.clasimp_ss ()))))
+
+fun named_rewrite theorem =
+  map
+    (fn location =>
+      {name = location_name location, theorem = theorem})
+    (DB.revlookup theorem)
+
+val benchmark_safe_solver =
+  simpLib.mk_tactic_solver
+    ("benchmark clasimp safe",
+     Tactical.FIRST
+       [Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC,
+        Tactic.REFL_TAC,
+        Tactic.ACCEPT_TAC boolTheory.TRUTH,
+        Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
+
+fun clean_simpset goal =
   let
-    fun sanitize (Invoke (tactic_id, args)) =
-          Invoke (tactic_id, List.filter (permitted_for goal) args)
-      | sanitize (Then (left, right)) =
-          Then (sanitize left, sanitize right)
-      | sanitize (AllGoals (left, right)) =
-          AllGoals (sanitize left, sanitize right)
+    fun clean_fragment fragment =
+      simpLib.ssf_upd_rewrs
+        (List.filter (not o theorem_is_goal goal o #2)) fragment
   in
-    sanitize recipe
+    simpLib.mk_simpset
+      (map clean_fragment
+        (List.rev (simpLib.ssfrags_of (clasimpLib.clasimp_ss ()))))
+    |> simpLib.set_cond_depth 40
+    |> simpLib.set_safe_solvers [benchmark_safe_solver]
+    |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   end
 
-fun sanitize_goal
+fun processed_clasimp goal body arguments =
+  clasimpLib.process_clasimp_args
+    (fn claset => fn simpset => fn _ => body claset simpset)
+    (clasetLib.the_claset ()) (clean_simpset goal) arguments
+
+(* Recipe pools are shared by many translated goals.  Remove an argument
+   when its instance is the goal itself, and derive exclusions for every
+   goal-shaped declaration already present in the ambient claset.  The
+   compiler and corpus validator below independently reject any direct
+   theorem that survives this preparation step. *)
+fun prepare_goal
       ({id, goal, source_method, recipe, excl, provenance,
         representative} : corpus_goal) : corpus_goal =
-  {id = id, goal = goal, source_method = source_method,
-   recipe = sanitize_recipe goal recipe, excl = excl,
-   provenance = provenance, representative = representative}
+  let
+    fun prepare_recipe (Invoke (tactic_id, arguments)) =
+          Invoke (tactic_id, List.filter (permitted_for goal) arguments)
+      | prepare_recipe (Then (left, right)) =
+          Then (prepare_recipe left, prepare_recipe right)
+      | prepare_recipe (AllGoals (left, right)) =
+          AllGoals (prepare_recipe left, prepare_recipe right)
+    fun is_analogue ({thm, ...} : clasetLib.aesop_rule) =
+      theorem_is_goal goal thm
+    val ambient =
+      map
+        (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
+          {name = name, theorem = thm})
+        (List.filter is_analogue
+          (clasetLib.all_rules (clasetLib.the_claset ())))
+    val candidates =
+      ambient @ List.concat (map named_rewrite (simpset_analogues goal))
+    fun add_exclusion (candidate : exclusion, exclusions) =
+      if List.exists (equal (#name candidate) o #name) exclusions then
+        exclusions
+      else
+        exclusions @ [candidate]
+    val exclusions = List.foldl add_exclusion excl candidates
+  in
+    {id = id, goal = goal, source_method = source_method,
+     recipe = prepare_recipe recipe, excl = exclusions,
+     provenance = provenance, representative = representative}
+  end
 
 fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
   | class_args (RewriteDelete name) =
@@ -362,9 +461,13 @@ fun with_facts args tactic =
        Tactical.THEN (insert_facts facts, tactic))
   end
 
-fun recipe_args entry args = List.filter (permitted_arg entry) args
+fun recipe_args entry args =
+  if List.all (permitted_arg entry) args then args
+  else
+    raise ERR "compile_recipe"
+      (#id entry ^ ": recipe supplies the measured theorem")
 
-fun tactic_for Simp args exclusions =
+fun tactic_for goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
@@ -372,19 +475,20 @@ fun tactic_for Simp args exclusions =
         Tactical.THEN
           (insert_facts facts,
            simpLib.FULL_SIMP_TAC
-             (clasimpLib.clasimp_ss ())
+             (clean_simpset goal)
              (simps @ simp_controls exclusions))
       end
-  | tactic_for Auto args exclusions =
+  | tactic_for goal Auto args exclusions =
       let
         val automatic =
-          clasimpLib.AUTO_TAC
+          processed_clasimp goal
+            (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
             (all_class_args args @ simp_controls exclusions)
         val prepare =
           Tactical.THEN
             (Tactical.TRY hurdUtils.SET_EQ_TAC,
              simpLib.FULL_SIMP_TAC
-               (clasimpLib.clasimp_ss ())
+               (clean_simpset goal)
                (List.mapPartial simp_arg args @
                 simp_controls exclusions))
       in
@@ -396,9 +500,10 @@ fun tactic_for Simp args exclusions =
              Tactical.THEN
                (prepare, automatic))
       end
-  | tactic_for Blast args exclusions =
+  | tactic_for goal Blast args exclusions =
       let
         val simps = List.mapPartial simp_arg args
+        val benchmark_simpset = clean_simpset goal
         val supplied_rules = List.mapPartial supplied_rule args
         val accept_supplied =
           Tactical.FIRST
@@ -409,10 +514,9 @@ fun tactic_for Simp args exclusions =
              Tactical.ORELSE
                (accept_supplied,
                 Tactical.THEN (Tactic.EQ_TAC, accept_supplied)))
-        fun simplify goal =
-          simpLib.SIMP_TAC
-            (clasimpLib.clasimp_ss ())
-            (simps @ simp_controls exclusions) goal
+        val simplify =
+          simpLib.SIMP_TAC benchmark_simpset
+            (simps @ simp_controls exclusions)
         val preprocess =
           if null args then
             Tactical.TRY
@@ -442,53 +546,54 @@ fun tactic_for Simp args exclusions =
                               blast_translation_args @
                               controls exclusions))))))))
       end
-  | tactic_for Force args exclusions =
+  | tactic_for goal Force args exclusions =
       with_facts args
-        (clasimpLib.FORCE_TAC
+        (processed_clasimp goal clasimpLib.CS_FORCE_TAC
           (all_class_args args @ simp_controls exclusions))
-  | tactic_for Fastforce args exclusions =
+  | tactic_for goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
           (Tactical.TRY hurdUtils.SET_EQ_TAC,
-           clasimpLib.FASTFORCE_TAC
+           processed_clasimp goal clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls exclusions)))
-  | tactic_for Safe args exclusions =
+  | tactic_for _ Safe args exclusions =
       with_facts args
         (classicalLib.SAFE_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for Clarify args exclusions =
+  | tactic_for _ Clarify args exclusions =
       with_facts args
         (classicalLib.CLARIFY_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for Clarsimp args exclusions =
+  | tactic_for goal Clarsimp args exclusions =
       with_facts args
-        (clasimpLib.CLARSIMP_TAC
+        (processed_clasimp goal clasimpLib.CS_CLARSIMP_TAC
           (all_class_args args @ simp_controls exclusions))
-  | tactic_for Aesop args exclusions =
+  | tactic_for goal Aesop args exclusions =
       with_facts args
-        (aesopLib.AESOP_TAC
+        (processed_clasimp goal
+          (aesopLib.CS_AESOP_TAC aesopLib.default_config)
           (all_class_args args @ simp_controls exclusions))
-  | tactic_for Linarith args exclusions =
+  | tactic_for _ Linarith args _ =
       with_facts args
         (linarithLib.LINARITH_TAC
-          (all_class_args args @ controls exclusions))
+          (all_class_args args))
   (* Bind the current integer backends into the benchmark image. *)
-  | tactic_for IntArith args _ =
+  | tactic_for _ IntArith args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.ARITH_TAC)
-  | tactic_for Cooper args _ =
+  | tactic_for _ Cooper args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.COOPER_TAC)
-  | tactic_for NumRing args _ =
+  | tactic_for _ NumRing args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      Tactical.CONV_TAC Grobner.NUM_RING)
-  | tactic_for IntRing args _ =
+  | tactic_for _ IntRing args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.INT_RING_TAC)
-  | tactic_for IntIdeal args _ =
+  | tactic_for _ IntIdeal args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.INTEGER_TAC)
-  | tactic_for ExplicitRing args _ =
+  | tactic_for _ ExplicitRing args _ =
       Tactical.THEN
         (Tactical.REPEAT Tactic.STRIP_TAC,
          Tactical.THEN
@@ -498,17 +603,18 @@ fun tactic_for Simp args exclusions =
                  (clasimpLib.clasimp_ss ())
                  (List.mapPartial simp_arg args),
                ringLib.EXPLICIT_RING_TAC)))
-  | tactic_for RealRing args _ =
+  | tactic_for _ RealRing args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      Tactical.CONV_TAC RealField.REAL_RING)
-  | tactic_for RealField args _ =
+  | tactic_for _ RealField args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      RealField.REAL_FIELD_TAC)
 
 fun compile_recipe entry recipe =
   case recipe of
       Invoke (tactic_id, args) =>
-        tactic_for tactic_id (recipe_args entry args) (#excl entry)
+        tactic_for (#goal entry) tactic_id
+          (recipe_args entry args) (#excl entry)
     | Then (left, right) =>
         Tactical.THEN1
           (compile_recipe entry left, compile_recipe entry right)
@@ -519,15 +625,26 @@ fun compile_recipe entry recipe =
 fun exclusions_effective claset ({goal, excl, ...} : corpus_goal) =
   let
     val names = List.concat (map (claset_names o #name) excl)
+    val base_names = map #name excl
     val diminished = List.foldl (fn (name, cs) =>
       clasetLib.remove_rule name cs) claset names
     fun supplied_is_analogue ({theorem, ...} : exclusion) =
       theorem_is_goal goal theorem
     fun context_has_analogue ({thm, ...} : clasetLib.aesop_rule) =
       theorem_is_goal goal thm
+    fun rewrite_is_unexcluded theorem =
+      case DB.revlookup theorem of
+          [] => false
+        | locations =>
+            List.exists
+              (fn location =>
+                not (List.exists (equal (location_name location)) base_names))
+              locations
   in
     List.all supplied_is_analogue excl andalso
     not (List.exists context_has_analogue (clasetLib.all_rules diminished))
+    andalso
+    not (List.exists rewrite_is_unexcluded (simpset_analogues goal))
   end
 
 fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =
@@ -548,11 +665,32 @@ fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =
           (fn ({thm, ...} : clasetLib.aesop_rule) =>
             theorem_is_goal goal thm)
           (clasetLib.all_rules diminished))
+    fun rewrite_names theorem =
+      case DB.revlookup theorem of
+          [] => ["<unnamed>"]
+        | locations => map location_name locations
+    val remaining_rewrites =
+      List.concat
+        (map rewrite_names
+          (List.filter
+            (fn theorem =>
+              case DB.revlookup theorem of
+                  [] => false
+                | locations =>
+                    List.exists
+                      (fn location =>
+                        not
+                          (List.exists (equal (location_name location))
+                            (map #name excl)))
+                      locations)
+            (simpset_analogues goal)))
   in
     "non-analogues = [" ^ String.concatWith ", " bad_supplied ^
     "], goal = " ^ Parse.term_to_string goal ^
     ", remaining rules = [" ^
-    String.concatWith ", " remaining ^ "]"
+    String.concatWith ", " remaining ^
+    "], remaining rewrites = [" ^
+    String.concatWith ", " remaining_rewrites ^ "]"
   end
 
 fun run_goal budget recipe (entry : corpus_goal) =
@@ -610,6 +748,15 @@ fun duplicate_goal_pairs ([] : corpus_goal list) = []
             Term.aconv (#goal goal) (#goal other)) rest) @
       duplicate_goal_pairs rest
 
+fun recipe_arguments (Invoke (_, arguments)) = arguments
+  | recipe_arguments (Then (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (AllGoals (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+
+fun direct_recipe_arguments ({goal, recipe, ...} : corpus_goal) =
+  List.filter (not o permitted_for goal) (recipe_arguments recipe)
+
 fun is_translation ({cause = TranslationGap, ...} : shortfall) = true
   | is_translation _ = false
 
@@ -618,6 +765,9 @@ fun validate_corpus {family, goals, shortfalls} =
     val goal_ids = map #id goals
     val shortfall_ids = map #id shortfalls
     val duplicate_pairs = duplicate_goal_pairs goals
+    val circular =
+      List.filter
+        (not o null o direct_recipe_arguments) goals
     fun is_goal id = List.exists (equal id) goal_ids
     val unknown =
       List.filter
@@ -640,6 +790,10 @@ fun validate_corpus {family, goals, shortfalls} =
          String.concatWith ", "
            (map (fn (left, right) => left ^ "=" ^ right)
              duplicate_pairs))
+    else if not (null circular) then
+      raise ERR "validate_corpus"
+        (family ^ ": recipes supply their measured theorem: " ^
+         String.concatWith ", " (map #id circular))
     else if duplicate shortfall_ids then
       raise ERR "validate_corpus" (family ^ ": duplicate shortfall id")
     else if not valid_entries then
@@ -722,8 +876,7 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
     val _ =
       List.app
         (fn goal =>
-          if null (#excl goal) orelse
-             exclusions_effective (clasetLib.the_claset ()) goal
+          if exclusions_effective (clasetLib.the_claset ()) goal
           then ()
           else
             raise ERR "run_family"

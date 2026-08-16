@@ -28,7 +28,7 @@ fun integer_case id line mapped goal : benchLib.corpus_goal =
       commit = "HOL4-worktree"},
    representative = false}
 
-val goals =
+val raw_goals =
   [presburger 11 benchLib.Cooper true
      ``~((m : num) <= j) ==> ~((n : num) <= i) ==>
        (e : num) <> 0 ==> SUC j <= ja ==>
@@ -121,6 +121,8 @@ val goals =
      ``!x y z : int. 2 * x < y /\ y < 2 * z ==>
        ?w : int. (y = 2 * w \/ y = 2 * w + 1) /\
          x <= w /\ w < z``]
+
+val goals = map benchLib.prepare_goal raw_goals
 
 (* Lines 14 and 64 repeat lines 12 and 61 exactly. *)
 val shortfalls : benchLib.shortfall list = []

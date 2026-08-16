@@ -70,7 +70,7 @@ val translated_goals =
        (benchLib.ExplicitRing, explicit_ring_definitions))
      (Thm.concl parityAlgebraTranslationTheory.source_idom_eight_square)]
 
-val goals =
+val raw_goals =
   translated_goals @
   [entry "groebner_L39" 39 "by algebra" benchLib.IntRing true
      ``!x y z : int.
@@ -108,6 +108,8 @@ val goals =
      ``(?d : int. a * y - a * x = n * d) ==>
        (?u v : int. a * u + n * v = 1) ==>
        ?e : int. y - x = n * e``]
+
+val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list = []
 

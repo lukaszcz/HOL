@@ -85,7 +85,7 @@ sig
 
   val theorem_is_goal : term -> thm -> bool
 
-  val sanitize_goal : corpus_goal -> corpus_goal
+  val prepare_goal : corpus_goal -> corpus_goal
 
   val exclusions_effective :
     clasetLib.claset -> corpus_goal -> bool

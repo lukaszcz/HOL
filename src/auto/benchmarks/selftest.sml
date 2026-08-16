@@ -16,7 +16,7 @@ val p = mk_var ("bench_unit_p", bool)
 val q = mk_var ("bench_unit_q", bool)
 
 val solved_goal : benchLib.corpus_goal =
-  {id = "unit-solved", goal = boolSyntax.T,
+  {id = "unit-solved", goal = boolSyntax.mk_eq (p, p),
    source_method = "simp", recipe = benchLib.Invoke (benchLib.Simp, []),
    excl = [],
    provenance = provenance, representative = true}
@@ -28,7 +28,7 @@ val failed_goal : benchLib.corpus_goal =
    provenance = provenance, representative = true}
 
 val duplicate_solved_goal : benchLib.corpus_goal =
-  {id = "unit-solved-duplicate", goal = boolSyntax.T,
+  {id = "unit-solved-duplicate", goal = boolSyntax.mk_eq (p, p),
    source_method = "simp", recipe = benchLib.Invoke (benchLib.Simp, []),
    excl = [],
    provenance = provenance, representative = true}
@@ -65,7 +65,8 @@ val _ =
        let
          val result =
            benchLib.run_family
-             {family = "unit", goals = [solved_goal, failed_goal],
+             {family = "unit",
+              goals = map benchLib.prepare_goal [solved_goal, failed_goal],
               shortfalls = [failed_shortfall],
               budget = Time.fromSeconds 5, battery = [], level = 1}
        in
@@ -150,7 +151,8 @@ val _ =
        let
          val result =
            benchLib.run_family
-             {family = "unit-battery", goals = [solved_goal],
+             {family = "unit-battery",
+              goals = map benchLib.prepare_goal [solved_goal],
               shortfalls = [], budget = Time.fromSeconds 5,
               battery = [benchLib.Auto, benchLib.Aesop], level = 2}
        in
@@ -196,6 +198,12 @@ val definition_recipe =
      [benchLib.DefinitionAdd
         {name = "unit$disjunction_commute",
          theorem = disjunction_commute}])
+val mislabeled_definition_recipe =
+  benchLib.Invoke
+    (benchLib.Simp,
+     [benchLib.DefinitionAdd
+        {name = "unit$not_a_definition",
+         theorem = conjunction_commute}])
 
 val _ =
   check
@@ -203,6 +211,32 @@ val _ =
      fn () =>
        not
          (recipe_solves rewrite_recipe (Thm.concl conjunction_commute)))
+
+val _ =
+  check
+    ("a definition label cannot admit the measured theorem",
+     fn () =>
+       not
+         (recipe_solves mislabeled_definition_recipe
+            (Thm.concl conjunction_commute)))
+
+val truth_wrapped_recipe =
+  benchLib.Invoke
+    (benchLib.Simp,
+     [benchLib.RewriteAdd
+        {name = "unit$conjunction_commute_as_truth",
+         theorem = Drule.EQT_INTRO conjunction_commute}])
+
+val _ =
+  check
+    ("a goal-as-truth wrapper cannot admit the measured theorem",
+     fn () =>
+       benchLib.theorem_is_goal
+         (Thm.concl conjunction_commute)
+         (Drule.EQT_INTRO conjunction_commute) andalso
+       not
+         (recipe_solves truth_wrapped_recipe
+            (Thm.concl conjunction_commute)))
 
 val _ =
   check
@@ -333,6 +367,19 @@ val _ =
           "dest-unsafe(list$LENGTH_REVERSE)",
           "cong(list$LENGTH_REVERSE)"])
 
+fun registered_definition theorem =
+  List.exists
+    (fn location =>
+      let
+        val name =
+          case location of
+              DB.Local local_name => local_name
+            | DB.Stored stored_name => KernelSig.name_toString stored_name
+      in
+        String.isSuffix "_def" name orelse String.isSuffix "_DEF" name
+      end)
+    (DB.revlookup theorem)
+
 fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.SplitAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.IntroAdd (_, {theorem, ...})) = SOME theorem
@@ -340,8 +387,19 @@ fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.DestAdd (_, {theorem, ...})) = SOME theorem
   | argument_theorem (benchLib.CongruenceAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.FactAdd {theorem, ...}) = SOME theorem
-  | argument_theorem (benchLib.DefinitionAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.DefinitionAdd {theorem, ...}) =
+      if registered_definition theorem then NONE else SOME theorem
   | argument_theorem (benchLib.RewriteDelete _) = NONE
+
+fun argument_name (benchLib.RewriteAdd {name, ...}) = SOME name
+  | argument_name (benchLib.SplitAdd {name, ...}) = SOME name
+  | argument_name (benchLib.IntroAdd (_, {name, ...})) = SOME name
+  | argument_name (benchLib.ElimAdd (_, {name, ...})) = SOME name
+  | argument_name (benchLib.DestAdd (_, {name, ...})) = SOME name
+  | argument_name (benchLib.CongruenceAdd {name, ...}) = SOME name
+  | argument_name (benchLib.FactAdd {name, ...}) = SOME name
+  | argument_name (benchLib.DefinitionAdd {name, ...}) = SOME name
+  | argument_name (benchLib.RewriteDelete _) = NONE
 
 fun recipe_theorems (benchLib.Invoke (_, arguments)) =
       List.mapPartial argument_theorem arguments
@@ -363,7 +421,35 @@ val direct_recipe_goals =
 val _ =
   check
     ("no benchmark recipe supplies its measured theorem",
-     fn () => null direct_recipe_goals)
+     fn () =>
+       if null direct_recipe_goals then true
+       else
+         (print
+            ("\ncircular recipes: " ^
+             String.concatWith ", "
+               (map
+                 (fn ({id, goal, recipe, ...} : benchLib.corpus_goal) =>
+                   id ^ "=[" ^
+                   String.concatWith ", "
+                     (List.mapPartial argument_name
+                       (List.filter
+                         (fn argument =>
+                           case argument_theorem argument of
+                               SOME theorem =>
+                                 benchLib.theorem_is_goal goal theorem
+                             | NONE => false)
+                         (let
+                            fun arguments (benchLib.Invoke (_, args)) = args
+                              | arguments (benchLib.Then (left, right)) =
+                                  arguments left @ arguments right
+                              | arguments
+                                  (benchLib.AllGoals (left, right)) =
+                                  arguments left @ arguments right
+                          in
+                            arguments recipe
+                          end))) ^ "]")
+                 direct_recipe_goals) ^ "\n");
+          false))
 
 fun goal_named id goals =
   case List.filter
@@ -371,6 +457,18 @@ fun goal_named id goals =
            candidate = id) goals of
       [goal] => goal
     | _ => raise mk_HOL_ERR "selftest" "goal_named" id
+
+val ambient_list_all_goal =
+  goal_named "list_L8167_list_all_iff" benchListMap.goals
+
+val _ =
+  check
+    ("persistent measured-goal rewrites are excluded from simp",
+     fn () =>
+       not
+         (benchLib.outcome_solved
+           (benchLib.run_goal (Time.fromSeconds 5)
+              (#recipe ambient_list_all_goal) ambient_list_all_goal)))
 
 val absolute_recurrence_goal =
   goal_named "presburger_L102" benchPresburger.goals
@@ -548,12 +646,12 @@ val fixed_point_without_bridge =
 
 val _ =
   check
-    ("translated complement-image fixed point executes exactly",
+    ("complement-image fixed point remains an assigned-tactic limitation",
      fn () =>
-       benchLib.outcome_solved
+       not (benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_fixed_point_goal)
-            translated_fixed_point_goal))
+            translated_fixed_point_goal)))
 
 val _ =
   check
@@ -581,12 +679,12 @@ val num_set_induction_without_bridge =
 
 val _ =
   check
-    ("translated number-set induction executes exactly",
+    ("number-set induction remains an assigned-tactic limitation",
      fn () =>
-       benchLib.outcome_solved
+       not (benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_num_set_induction_goal)
-            translated_num_set_induction_goal))
+            translated_num_set_induction_goal)))
 
 val _ =
   check
@@ -808,12 +906,12 @@ val translated_omitting_set_goal =
 
 val _ =
   check
-    ("translated omitting-set witness executes exactly",
+    ("omitting-set witness remains an assigned-tactic limitation",
      fn () =>
-       benchLib.outcome_solved
+       not (benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_omitting_set_goal)
-            translated_omitting_set_goal))
+            translated_omitting_set_goal)))
 
 val _ =
   check
@@ -1551,18 +1649,14 @@ val translated_numeric_list_goals =
 
 val _ =
   check
-    ("numeric and inclusive-range translations execute exactly",
+    ("numeric and inclusive-range translations match accounting",
      fn () =>
        List.all
          (fn (goal : benchLib.corpus_goal) =>
-           case benchLib.run_goal
-                  (Time.fromSeconds 5) (#recipe goal) goal of
-               benchLib.SOLVED _ => true
-             | benchLib.TIMEOUT =>
-                 (print ("\n" ^ #id goal ^ ": timeout\n"); false)
-             | benchLib.FAILED message =>
-                 (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
-                  false))
+           benchLib.outcome_solved
+             (benchLib.run_goal
+                (Time.fromSeconds 5) (#recipe goal) goal) =
+           not (shortfall_id benchListMap.shortfalls (#id goal)))
          translated_numeric_list_goals)
 
 val _ =
@@ -1894,12 +1988,13 @@ val translated_range_update_goal =
 
 val _ =
   check
-    ("translated range update executes exactly",
+    ("translated range update matches corrected accounting",
      fn () =>
-       benchLib.outcome_solved
-         (benchLib.run_goal (Time.fromSeconds 5)
-            (#recipe translated_range_update_goal)
-            translated_range_update_goal))
+       not
+         (benchLib.outcome_solved
+           (benchLib.run_goal (Time.fromSeconds 5)
+              (#recipe translated_range_update_goal)
+              translated_range_update_goal)))
 
 val _ =
   check
@@ -1983,12 +2078,12 @@ val translated_map_upds_twist_goal =
 
 val _ =
   check
-    ("translated map-update twist executes exactly",
+    ("map-update twist remains an assigned-tactic limitation",
      fn () =>
-       benchLib.outcome_solved
+       not (benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_map_upds_twist_goal)
-            translated_map_upds_twist_goal))
+            translated_map_upds_twist_goal)))
 
 val _ =
   check
@@ -2081,12 +2176,12 @@ val finite_graph_without_bridge =
 
 val _ =
   check
-    ("translated finite association-list graph executes exactly",
+    ("finite association-list graph remains a tactic limitation",
      fn () =>
-       benchLib.outcome_solved
+       not (benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_finite_graph_goal)
-            translated_finite_graph_goal))
+            translated_finite_graph_goal)))
 
 val _ =
   check
@@ -2726,9 +2821,9 @@ val _ =
   check
     ("exhaustive shortfall registers are exact",
      fn () =>
-       count_cause benchLib.EngineLimitation benchSets.shortfalls = 3 andalso
+       count_cause benchLib.EngineLimitation benchSets.shortfalls = 11 andalso
        count_cause benchLib.TranslationGap benchSets.shortfalls = 0 andalso
-       count_cause benchLib.EngineLimitation benchListMap.shortfalls = 50 andalso
+       count_cause benchLib.EngineLimitation benchListMap.shortfalls = 63 andalso
        count_cause benchLib.TranslationGap benchListMap.shortfalls = 0 andalso
        count_cause benchLib.EngineLimitation
          benchPresburger.shortfalls = 0 andalso

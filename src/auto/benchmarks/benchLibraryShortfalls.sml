@@ -1,16 +1,16 @@
 structure benchLibraryShortfalls =
 struct
 
-val translation : benchLib.shortfall list =
-  []
+val translation : benchLib.shortfall list = []
 
 val execution : benchLib.shortfall list =
   map
     (fn id =>
       {id = id, cause = benchLib.EngineLimitation,
-       date = "2026-08-15",
-       note = "assigned tactic does not close without a direct analogue"})
-    ["list_L5241_rotate_conv_mod",
+       date = "2026-08-16",
+       note = "assigned tactic does not close without a measured-goal theorem"})
+    ["list_L8167_list_all_iff",
+     "list_L5241_rotate_conv_mod",
      "list_L5409_nths_drop",
      "list_L6101_sorted_remove1",
      "list_L6104_sorted_butlast",
@@ -51,14 +51,26 @@ val execution : benchLib.shortfall list =
      "list_L7508_lexord_trans",
      "list_L7537_lexord_irrefl",
      "list_L7570_asym_lenlex",
-     "list_L7716_lexordp_conv_lexord",
-     "list_L7752_lexordp_eq_conv_lexord",
      "list_L7054_set_trans_list_step_subset_trancl",
      "list_L7954_listrel_iff_nth",
      "list_L7995_equiv_listrel",
-     "list_L8259_anon_L8259",
-     "list_L8273_anon_L8273",
      "list_L8709_wf_set",
-     "list_L8999_set_Cons_transfer"]
+     "list_L8999_set_Cons_transfer",
+     "map_L519_map_upds_twist",
+     "map_L723_ran_map_upd",
+     "map_L810_graph_map_add",
+     "map_L816_fst_graph_eq_dom",
+     "map_L822_snd_graph_ran",
+     "map_L828_finite_graph_map_of",
+     "map_L849_inj_on_fst_graph",
+     "map_L857_upd_None_map_le",
+     "map_L863_map_le_imp_upd_le",
+     "product_type_L785_curry_conv",
+     "product_type_L797_curry_case_prod",
+     "product_type_L800_case_prod_curry",
+     "product_type_L1162_fst_image_times",
+     "product_type_L1165_snd_image_times",
+     "product_type_L1168_fst_image_Sigma",
+     "product_type_L1171_snd_image_Sigma"]
 
 end

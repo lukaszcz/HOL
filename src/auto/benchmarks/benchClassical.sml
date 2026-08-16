@@ -22,7 +22,7 @@ fun entry id line representative method excl goal : benchLib.corpus_goal =
 fun blast id line representative excl goal =
   entry id line representative "by blast" excl goal
 
-val goals =
+val raw_goals =
   [blast "classical_L17" 17 true []
      ``(p ==> q \/ r) ==> (p ==> q) \/ (p ==> r)``,
    blast "classical_L22" 22 true
@@ -116,6 +116,8 @@ val goals =
        (p3 <=> (p4 <=>
          (p5 <=> (p1 <=>
            (p2 <=> (p3 <=> (p4 <=> p5))))))))``]
+
+val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list = []
 

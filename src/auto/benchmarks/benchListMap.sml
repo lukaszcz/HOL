@@ -2,7 +2,7 @@ structure benchListMap =
 struct
 
 val goals =
-  map benchLib.sanitize_goal
+  map benchLib.prepare_goal
     (benchListCorpus.goals @ benchListSorted.goals @
      benchListNumeric.goals @
      benchListAdjacent.goals @

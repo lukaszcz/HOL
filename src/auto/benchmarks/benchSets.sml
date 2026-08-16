@@ -210,7 +210,7 @@ val translated_goals : benchLib.corpus_goal list =
     representative = false}]
 
 val goals =
-  map benchLib.sanitize_goal
+  map benchLib.prepare_goal
     (example_goals @ translated_goals @ benchSetCorpus.goals)
 
 val shortfalls : benchLib.shortfall list = benchSetShortfalls.entries

@@ -160,7 +160,7 @@ fun render () =
       "The comparison data was mined from Isabelle/HOL commit ",
       "`f7e02b7e`. Each in-repository benchmark entry records its source ",
       "file, line, method, and commit. The report was generated on ",
-      "2026-08-15 with a 30-second limit for each tactic attempt.\n\n",
+      "2026-08-16 with a 30-second limit for each tactic attempt.\n\n",
       "## Source accounting\n\n",
       "Source mining identified 1,070 relevant Isabelle results. Nine ",
       "pairs translated to the same HOL4 statement except for bound ",

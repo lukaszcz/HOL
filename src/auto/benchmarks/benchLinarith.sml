@@ -73,9 +73,10 @@ fun representative number =
   List.exists (equal number) [1, 3, 5, 19]
 
 val goals =
-  map
-    (fn (number, line) => entry number line (representative number))
-    source_index
+  map benchLib.prepare_goal
+    (map
+      (fn (number, line) => entry number line (representative number))
+      source_index)
 
 val shortfalls : benchLib.shortfall list = []
 

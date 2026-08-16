@@ -4,7 +4,7 @@
 
 Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used for the corresponding source result, and the HOL4 tactic chosen as that method's closest counterpart. This report calls that HOL4 tactic the **assigned tactic**.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-15 with a 30-second limit for each tactic attempt.
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-16 with a 30-second limit for each tactic attempt.
 
 ## Source accounting
 
@@ -32,12 +32,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
-| Sets | 353 | 350 | 4 |
-| List/map | 604 | 554 | 5 |
+| Sets | 353 | 342 | 4 |
+| List/map | 604 | 541 | 5 |
 | Linarith | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 8 |
 | Algebra | 10 | 10 | 3 |
-| **Total** | **1072** | **1019** | **28** |
+| **Total** | **1072** | **998** | **28** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -49,12 +49,12 @@ A **family** is a subject-area group:
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 3 | 0 | 0 |
-| List/map | 0 | 50 | 0 | 0 |
+| Sets | 0 | 11 | 0 | 0 |
+| List/map | 0 | 63 | 0 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 | 0 |
-| **Total** | **0** | **53** | **0** | **0** |
+| **Total** | **0** | **74** | **0** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -64,13 +64,13 @@ For context, the exhaustive run also tries three general-purpose HOL4 tactics wh
 
 | Family | Additional `AUTO_TAC` solutions | Additional `BLAST_TAC` solutions | Additional `AESOP_TAC` solutions |
 |---|---:|---:|---:|
-| Classical | 20 | 0 | 6 |
-| Sets | 0 | 127 | 252 |
-| List/map | 148 | 0 | 105 |
-| Linarith | 29 | 0 | 22 |
+| Classical | 15 | 0 | 6 |
+| Sets | 0 | 125 | 231 |
+| List/map | 128 | 0 | 97 |
+| Linarith | 28 | 0 | 21 |
 | Presburger | 10 | 0 | 8 |
 | Algebra | 1 | 0 | 1 |
-| **Total** | **208** | **127** | **394** |
+| **Total** | **182** | **125** | **364** |
 
 ## Seed-rule safety check
 
