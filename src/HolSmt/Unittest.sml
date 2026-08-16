@@ -3822,10 +3822,26 @@ fun smtlib_logic_fragment_diagnostics () =
        "(assert (= \"a\" \"a\"))\n")
       "string term sort";
     expect_no_fragment "finite-set logic includes UF and LIA" "QF_UFLIAFS"
-      (script_for_checker "ALL"
+      (script "QF_UFLIAFS"
        "(declare-fun f (Int) Int)\n" ^
        "(declare-const x Int)\n" ^
        "(assert (= (f x) (+ x 1)))\n");
+    expect_no_fragment "finite-set logic includes finite sets" "QF_UFLIAFS"
+      (script "QF_UFLIAFS"
+       "(declare-const s (Set Int))\n" ^
+       "(assert (set.member 0 (set.union s (set.singleton 1))))\n");
+    expect_hol_error_contains "finite-set logic excludes arrays" "Array"
+      (fn () => ignore (parse_smtlib_state
+        (script "QF_UFLIAFS"
+         "(declare-const a (Array Int Int))\n" ^
+         "(assert (= (select a 0) 0))\n")));
+    expect_hol_error_contains "finite-set logic excludes Z3 set union"
+      "union"
+      (fn () => ignore (parse_smtlib_state
+        (script "QF_UFLIAFS"
+         "(declare-const s (Set Int))\n" ^
+         "(declare-const t (Set Int))\n" ^
+         "(assert (= (union s t) s))\n")));
     expect_no_fragment "SMT String literal payload is not a datatype sort"
       "QF_S"
       (script "QF_S"
@@ -6277,6 +6293,12 @@ let
        ``(?P:int set -> bool. P s) ==> (!P:int set -> bool. P s)``));
      die "cvc5 accepted a function over a Set domain")
     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
+  val cvc_bound_computed_function_message =
+    (ignore (cvc
+      ([], ``!set_f:int set -> bool.
+        (if c then set_f else set_g) s /\ (0:int) IN s``));
+     die "cvc5 accepted a computed bound function over a Set domain")
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
   val card_message =
     (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
        ([], ``CARD (s:int set) = 0``));
@@ -6357,6 +6379,10 @@ in
       "higher-order cvc5 functions over Sets or Bags are unsupported",
     "bound cvc5 Set function diagnostic changed: " ^
     cvc_bound_function_message);
+  assert (cvc_bound_computed_function_message =
+      "higher-order cvc5 functions over Sets or Bags are unsupported",
+    "computed bound cvc5 Set function diagnostic changed: " ^
+    cvc_bound_computed_function_message);
   assert (card_message =
       "SMT-LIB operator 'set.card' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",
@@ -9853,6 +9879,16 @@ end
 
 fun z3_proof_parser_normalizes_pull_quant_success () =
 let
+  val _ = assert (Option.isSome
+      (Z3_Proof.lookup_rule "4.15.3" "pull-quant"),
+    "pull-quant was not registered for Z3 4.15")
+  val _ = assert (not (Option.isSome
+      (Z3_Proof.lookup_rule "4.14.1" "pull-quant")),
+    "pull-quant was registered before Z3 4.15")
+  val _ = expect_hol_error_contains "pull-quant before Z3 4.15"
+    "not supported by Z3 version 4.14.1"
+    (fn () => ignore (parse_z3_proof_string "4.14.1"
+      "((proof (pull-quant (= true true))))"))
   val proof = parse_z3_proof_string "4.15.3"
     "((proof (pull-quant (= true true))))"
 in

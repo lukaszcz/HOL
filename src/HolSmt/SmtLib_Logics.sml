@@ -123,12 +123,6 @@ in
   val default_dialect_dictionary_registrations =
     ref ([] : dialect_dictionary_registration list)
 
-  (* Solver-extension logic names are not part of the SMT-LIB inventory, but
-     a solver-neutral conformance driver may elaborate them with ALL's base
-     packet and the matching extension dictionaries. *)
-  fun is_supported_extension_logic logic =
-    List.exists (Lib.equal logic) ["QF_UFLIAFS"]
-
   fun register_dialect_dictionary registration =
     dialect_dictionary_registrations :=
       registration :: !dialect_dictionary_registrations
@@ -1110,6 +1104,8 @@ in
       (QF_UFIDL.tydict, QF_UFIDL.tmdict)
     | "QF_UFLIA" =>
       (QF_UFLIA.tydict, QF_UFLIA.tmdict)
+    | "QF_UFLIAFS" =>
+      (QF_UFLIA.tydict, QF_UFLIA.tmdict)
     | "QF_UFLIRA" =>
       (QF_UFLIRA.tydict, QF_UFLIRA.tmdict)
     | "QF_UFLRA" =>
@@ -1223,6 +1219,12 @@ in
     [("ALL", CVC5_Set.first_order_tmdict, CVC5_Bag.first_order_tmdict),
      ("HO_ALL", CVC5_Set.tmdict, CVC5_Bag.tmdict)]
 
+  (* cvc5's QF_UFLIAFS extension is precisely QF_UFLIA plus the
+     first-order finite-set surface. *)
+  val _ = register_dialect_dictionary {
+    solver = "cvc5", logic = "QF_UFLIAFS",
+    dictionaries = (CVC5_Set.tydict, CVC5_Set.first_order_tmdict)}
+
   val _ = default_dialect_dictionary_registrations :=
     !dialect_dictionary_registrations
 
@@ -1322,6 +1324,7 @@ in
     | "QF_UFDTNIA" => QF_UFDTNIA.metadata
     | "QF_UFIDL" => QF_UFIDL.metadata
     | "QF_UFLIA" => QF_UFLIA.metadata
+    | "QF_UFLIAFS" => QF_UFLIA.metadata
     | "QF_UFLIRA" => QF_UFLIRA.metadata
     | "QF_UFLRA" => QF_UFLRA.metadata
     | "QF_UFNIRA" => QF_UFNIRA.metadata

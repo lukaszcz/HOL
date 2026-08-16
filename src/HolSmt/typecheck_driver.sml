@@ -31,9 +31,6 @@ val _ = SmtLib_Datatypes.empty_name_map
 fun typecheck_datatype_options elaborate =
   {dict_logic = NONE, solver = NONE, elaborate_datatypes = elaborate}
 
-fun typecheck_datatype_options_with_logic elaborate logic =
-  {dict_logic = SOME logic, solver = NONE, elaborate_datatypes = elaborate}
-
 fun typecheck_count_assertions
     (state: SmtLib_Parser.command_state_snapshot) =
   List.length (#assertions state)
@@ -72,13 +69,9 @@ fun typecheck_query_fragment_terms queries =
 fun typecheck_ok path expected_logic elaborate_datatypes =
 let
   val _ = Library.trace := 0
-  val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
-    (SmtLib_Parser.parse_file_state_with_options
-       (typecheck_datatype_options elaborate_datatypes) path, NONE)
-    handle Feedback.HOL_ERR holerr =>
-      (SmtLib_Parser.parse_file_state_with_options
-         (typecheck_datatype_options_with_logic elaborate_datatypes "ALL") path,
-       SOME holerr)
+  val state: SmtLib_Parser.command_state_snapshot =
+    SmtLib_Parser.parse_file_state_with_options
+      (typecheck_datatype_options elaborate_datatypes) path
   val observed_logic = #logic state
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
@@ -97,10 +90,6 @@ in
        "logic=" ^ observed_logic ^ "\n" ^
        "diagnostic=logic fragment restrictions are not completely enforced: " ^
        valOf fragment_diagnostic)
-  else if Option.isSome scoped_parse_error andalso
-          not (SmtLib_Logics.is_supported_extension_logic observed_logic)
-  then
-    raise Feedback.HOL_ERR (valOf scoped_parse_error)
   else
     (print
        ("TYPECHECK_PASS\n" ^

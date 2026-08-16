@@ -181,6 +181,10 @@ struct
     mk_rule ("quant-intro", [], OnePremise, "quant_intro"),
     mk_rule ("refl", [], ZeroPremises, "refl"),
     mk_rule ("rewrite", [], ZeroPremises, "rewrite"),
+    (* Observed in the 4.15.3 corpus while flattening nested quantifiers.
+       Its conclusion is checked by the existing HOL rewrite replay. *)
+    mk_rule_with_version (Z3VersionPrefixes ["4.15."])
+      ("pull-quant", [], ZeroPremises, "rewrite"),
     mk_rule ("sk", ["skolem"], ZeroPremises, "skolem"),
     mk_rule ("symm", [], OnePremise, "symm"),
     mk_rule ("th-lemma-arith", ["th-lemma[arith]"], ListPremises,

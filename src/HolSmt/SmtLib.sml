@@ -4815,36 +4815,34 @@ local
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
     val subterms = List.concat (List.map Library.subterms (t :: original_ts))
+    fun ordinary_symbol_application function =
+      let val (head, applied) = boolSyntax.strip_comb function in
+        if Term.is_var head then true
+        else if Term.is_const head then
+          let
+            val {Thy, Name, ...} = Term.dest_thy_const head
+            val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
+            val (domains, _) = boolSyntax.strip_fun (Term.type_of generic)
+          in
+            List.length applied < List.length domains
+          end
+        else false
+      end
+    fun compatible_collection_variable argument variable =
+      case Lib.total Type.dom_rng (Term.type_of variable) of
+        SOME (domain, _) =>
+          Type.compare (domain, Term.type_of argument) = EQUAL
+      | NONE => false
     fun computed_collection_applications collection_terms =
       List.concat (List.map (fn subterm =>
         case Lib.total Term.dest_comb subterm of
           SOME (function, argument) =>
-            let
-              val (head, applied) = boolSyntax.strip_comb function
-              fun ordinary_symbol_application () =
-                if Term.is_var head then true
-                else if Term.is_const head then
-                  let
-                    val {Thy, Name, ...} = Term.dest_thy_const head
-                    val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
-                    val (domains, _) = boolSyntax.strip_fun
-                      (Term.type_of generic)
-                  in
-                    List.length applied < List.length domains
-                  end
-                else false
-              fun compatible_variable variable =
-                case Lib.total Type.dom_rng (Term.type_of variable) of
-                  SOME (domain, _) =>
-                    Type.compare (domain, Term.type_of argument) = EQUAL
-                | NONE => false
-            in
-              if mem_aconv argument collection_terms andalso
-                 not (ordinary_symbol_application ()) then
-                List.map (fn variable => (variable, argument))
-                  (List.filter compatible_variable (Term.free_vars function))
-              else []
-            end
+            if mem_aconv argument collection_terms andalso
+               not (ordinary_symbol_application function) then
+              List.map (fn variable => (variable, argument))
+                (List.filter (compatible_collection_variable argument)
+                  (Term.free_vars function))
+            else []
         | NONE => []) subterms)
     val computed_set_applications =
       computed_collection_applications set_terms
@@ -4888,9 +4886,20 @@ local
               val has_collection_argument =
                 List.exists (fn argument => mem_aconv argument collection_terms)
                   arguments
+              val computed_applies_bound =
+                case Lib.total Term.dest_comb tm of
+                  SOME (rator, argument) =>
+                    mem_aconv argument collection_terms andalso
+                    not (ordinary_symbol_application rator) andalso
+                    List.exists (fn variable =>
+                      compatible_collection_variable argument variable andalso
+                      List.exists (fn binder => Term.aconv variable binder)
+                        bound) (Term.free_vars rator)
+                | NONE => false
               val (_, rands) = boolSyntax.strip_comb tm
             in
               (applies_bound andalso has_collection_argument) orelse
+              computed_applies_bound orelse
               List.exists (visit bound) rands
             end
       in
