@@ -3212,7 +3212,7 @@ local
         fun translate_args args = translate_args_from acc args
         fun translate_fold_function start function =
           let
-            val (vars, body) = Term.strip_abs function
+            val (all_vars, stripped_body) = Term.strip_abs function
             fun add_bound (v, (tydict, current_bounds, decls, binders)) =
               let
                 val (next_bounds, smtvar) =
@@ -3224,11 +3224,14 @@ local
                  binders @ ["(" ^ smtvar ^ " " ^ tyname ^ ")"])
               end
           in
-            if List.length vars < 2 then
+            if List.length all_vars < 2 then
               translate_term regime apply_operator
                 (start, (bounds, function))
             else
               let
+                val vars = List.take (all_vars, 2)
+                val body = Term.list_mk_abs
+                  (List.drop (all_vars, 2), stripped_body)
                 val (tydict, lambda_bounds, typedecls, binders) =
                   List.foldl add_bound
                     (Lib.fst start, bounds, [], []) vars

@@ -516,7 +516,13 @@ in
     else
       NO_ARITH
 
-  fun logic_fragment_of_logic "ALL" = {
+  fun logic_fragment_of_logic "QF_UFLIAFS" = {
+      quantifiers = false, uninterpreted = true, arrays = false,
+      arith = LINEAR, ints = true, reals = false, bitvectors = false,
+      strings = false, floatingpoint = false, datatypes = false,
+      higher_order = false
+    }
+    | logic_fragment_of_logic "ALL" = {
       quantifiers = true, uninterpreted = true, arrays = true,
       arith = NONLINEAR, ints = true, reals = true, bitvectors = true,
       strings = true, floatingpoint = true, datatypes = true,

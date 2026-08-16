@@ -3817,6 +3817,15 @@ fun smtlib_logic_fragment_diagnostics () =
       (script "QF_S"
        "(declare-const s String)\n" ^
        "(assert (= s s))\n");
+    expect_fragment "finite-set logic excludes strings" "QF_UFLIAFS"
+      (script_for_checker "ALL"
+       "(assert (= \"a\" \"a\"))\n")
+      "string term sort";
+    expect_no_fragment "finite-set logic includes UF and LIA" "QF_UFLIAFS"
+      (script_for_checker "ALL"
+       "(declare-fun f (Int) Int)\n" ^
+       "(declare-const x Int)\n" ^
+       "(assert (= (f x) (+ x 1)))\n");
     expect_no_fragment "SMT String literal payload is not a datatype sort"
       "QF_S"
       (script "QF_S"
@@ -6682,14 +6691,23 @@ let
   val fold_goal = ([], boolSyntax.mk_eq
     (listSyntax.mk_foldl (``\a:int x. a + x``, intSyntax.zero_tm, xs),
      intSyntax.zero_tm))
+  val function_fold_goal = ([], boolSyntax.mk_eq
+    (listSyntax.mk_foldl
+      (``\a:int -> int x:int y:int. a y + x``, ``\y:int. y``, xs),
+     ``\y:int. y``))
   val z3_regime = SmtLib.HigherOrder SmtLib.Z3LambdaArray
   val standard_regime = SmtLib.HigherOrder SmtLib.Standard27
   val map_result = z3 "4.15.3" map_goal
   val fold_result = z3 "4.15.3" fold_goal
+  val function_fold_result = z3 "4.15.3" function_fold_goal
   val map_translation = Lib.fst map_result
   val fold_translation = Lib.fst fold_result
   val map_text = text_of map_result
   val fold_text = text_of fold_result
+  val function_fold_text = text_of function_fold_result
+  val _ = SmtLib_Parser.typecheck_script_string_with_options
+    {dict_logic = NONE, solver = SOME "Z3", elaborate_datatypes = false}
+    function_fold_text
   val standard_map = Lib.fst
     (SmtLib.goal_to_SmtLib_translation_with_dialect
       SmtLib.Standard27 NONE map_goal)
@@ -6716,6 +6734,10 @@ in
     "MAP did not emit seq.map with Z3 lambda lowering:\n" ^ map_text);
   assert (contains "(seq.foldl" fold_text andalso contains "(lambda" fold_text,
     "FOLDL did not emit seq.foldl with Z3 lambda lowering:\n" ^ fold_text);
+  assert (contains "(seq.foldl" function_fold_text andalso
+      contains ")) (lambda ((" function_fold_text,
+    "function-valued FOLDL accumulator was flattened into the callback:\n" ^
+    function_fold_text);
   assert (not (contains "seq.fold_left" map_text) andalso
       not (contains "seq.fold_left" fold_text),
     "the version-gated seq.fold_left alias was emitted:\n" ^
