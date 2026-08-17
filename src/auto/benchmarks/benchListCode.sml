@@ -46,9 +46,17 @@ val goals =
       "map_filter_def)")
      (benchLib.Invoke
        (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_these_list_to_set"
-              parityTranslationTheory.source_these_list_to_set)]))
+        [benchLib.DefinitionAdd
+           (named "parityTranslation$source_these_def"
+              parityTranslationTheory.source_these_def),
+         benchLib.DefinitionAdd
+           (named "parityTranslation$source_map_filter_def"
+              parityTranslationTheory.source_map_filter_def),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_mem_map_filter"
+              parityTranslationTheory.source_mem_map_filter),
+         benchLib.DefinitionAdd
+           (named "pred_set$EXTENSION" pred_setTheory.EXTENSION)]))
      ``!xs.
          parityTranslation$source_these (LIST_TO_SET xs) =
          LIST_TO_SET (parityTranslation$source_map_filter I xs)``,
@@ -78,8 +86,11 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_trancl_set_ntrancl"
-              parityTranslationTheory.source_trancl_set_ntrancl)]))
+           (named "parityTranslation$source_list_relation_set"
+              parityTranslationTheory.source_list_relation_set),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_finite_tc_ntrancl"
+              parityTranslationTheory.source_finite_tc_ntrancl)]))
      ``!pairs.
          relation$TC
            (parityTranslation$source_list_relation pairs) =

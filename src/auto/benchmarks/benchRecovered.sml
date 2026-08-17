@@ -16,10 +16,10 @@ val goals =
   [entry "list_L3349_anon_L3349" "src/HOL/List.thy" 3349
      "by simp"
      (benchLib.Invoke
-       (benchLib.Blast,
-        [benchLib.FactAdd
-           (named "parityTranslation$source_set_empty_abort"
-              parityTranslationTheory.source_set_empty_abort)]))
+       (benchLib.Simp,
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_abort_empty_set_def"
+              parityTranslationTheory.source_abort_empty_set_def)]))
      ``!function.
          function (LIST_TO_SET []) =
          parityTranslation$source_abort_empty_set function``,
@@ -42,8 +42,11 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_INF_set_fold"
-              parityTranslationTheory.source_INF_set_fold)]))
+           (named "parityTranslation$source_INF_def"
+              parityTranslationTheory.source_INF_def),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_aggregate_image_set_fold"
+              parityTranslationTheory.source_aggregate_image_set_fold)]))
      ``!aggregate operation top function xs.
          (!ys.
             aggregate (LIST_TO_SET ys) =
@@ -58,8 +61,11 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_SUP_set_fold"
-              parityTranslationTheory.source_SUP_set_fold)]))
+           (named "parityTranslation$source_SUP_def"
+              parityTranslationTheory.source_SUP_def),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_aggregate_image_set_fold"
+              parityTranslationTheory.source_aggregate_image_set_fold)]))
      ``!aggregate operation bottom function xs.
          (!ys.
             aggregate (LIST_TO_SET ys) =
@@ -119,8 +125,11 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_nil_in_shuffles"
-              parityTranslationTheory.source_nil_in_shuffles)]))
+           (named "parityTranslation$source_shuffles_def"
+              parityTranslationTheory.source_shuffles_def),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_shuffle_rules"
+              parityTranslationTheory.source_shuffle_rules)]))
      ``!xs ys.
          xs = [] ==> ys = [] ==>
          [] IN parityTranslation$source_shuffles xs ys``,
@@ -129,8 +138,8 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_subset_subseqs"
-              parityTranslationTheory.source_subset_subseqs)]))
+           (named "parityTranslation$source_subseqs_powset_member"
+              parityTranslationTheory.source_subseqs_powset_member)]))
      ``!xs subset.
          subset SUBSET LIST_TO_SET xs ==>
          subset IN
@@ -142,9 +151,19 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named
-              "parityTranslation$source_all_distinct_subseq_sets"
-              parityTranslationTheory.source_all_distinct_subseq_sets)]))
+           (named "parityTranslation$source_all_distinct_card"
+              parityTranslationTheory.source_all_distinct_card),
+         benchLib.RewriteAdd
+           (named "list$LIST_TO_SET_MAP"
+              listTheory.LIST_TO_SET_MAP),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_subseqs_powset"
+              parityTranslationTheory.source_subseqs_powset),
+         benchLib.RewriteAdd
+           (named "pred_set$CARD_POW" pred_setTheory.CARD_POW),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_length_subseqs"
+              parityTranslationTheory.source_length_subseqs)]))
      ``!xs.
          ALL_DISTINCT xs ==>
          ALL_DISTINCT
@@ -155,8 +174,12 @@ val goals =
      (benchLib.Invoke
        (benchLib.Auto,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_mono_lists"
-              parityTranslationTheory.source_mono_lists)]))
+           (named "parityTranslation$source_lists_def"
+              parityTranslationTheory.source_lists_def),
+         benchLib.RewriteAdd
+           (named "pred_set$SUBSET_DEF" pred_setTheory.SUBSET_DEF),
+         benchLib.FactAdd
+           (named "list$MONO_EVERY" listTheory.MONO_EVERY)]))
      ``!left right.
          left SUBSET right ==>
          parityTranslation$source_lists left SUBSET

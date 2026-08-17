@@ -107,11 +107,16 @@ val goals =
       "lists_accI[THEN Cons_in_lists_iff[THEN iffD1, " ^
       "THEN conjunct1]])")
      (benchLib.Invoke
-       (benchLib.Auto,
-        [benchLib.IntroAdd
-           (benchLib.SafeRule,
-            named "parityTranslation$source_wf_listrel1_iff"
-              parityTranslationTheory.source_wf_listrel1_iff)]))
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_WF_list_lift"
+              parityTranslationTheory.source_WF_list_lift),
+         benchLib.FactAdd
+           (named "parityTranslation$source_listrel1_singleton"
+              parityTranslationTheory.source_listrel1_singleton),
+         benchLib.FactAdd
+           (named "parityTranslation$source_listrel1_shortlex"
+              parityTranslationTheory.source_listrel1_shortlex)]))
      ``!relation.
          (relation$WF
             (parityTranslation$source_listrel1 relation) <=>

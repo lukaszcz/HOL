@@ -89,6 +89,9 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [rotate_definition,
+         benchLib.DefinitionAdd
+           (named "parityTranslation$source_rotate1_def"
+              parityTranslationTheory.source_rotate1_def),
          benchLib.RewriteAdd
            (named "parityTranslation$source_funpow_rotate1_swap"
               parityTranslationTheory.source_funpow_rotate1_swap)]))
@@ -101,10 +104,15 @@ val goals =
      "by (simp add: rotate_drop_take)"
      (benchLib.Invoke
        (benchLib.Simp,
-         [benchLib.RewriteAdd
-           (named "parityTranslation$source_rotate_conv_mod"
-              (BoundedRewrites.Once
-                 parityTranslationTheory.source_rotate_conv_mod))]))
+        [rotate_definition,
+         benchLib.RewriteAdd
+           (named "number$FUNPOW_MOD" numberTheory.FUNPOW_MOD),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_funpow_mod_periodic"
+              parityTranslationTheory.source_funpow_mod_periodic),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_funpow_rotate1_period"
+              parityTranslationTheory.source_funpow_rotate1_period)]))
      ``!count xs.
          parityTranslation$source_rotate count xs =
          parityTranslation$source_rotate
@@ -113,11 +121,14 @@ val goals =
      "by (simp add: rotate_drop_take)"
      (benchLib.Invoke
        (benchLib.Simp,
-         [benchLib.RewriteAdd
-           (named "parityTranslation$source_rotate_conv_mod"
-              (BoundedRewrites.Once
-                 parityTranslationTheory.source_rotate_conv_mod)),
-         rotate_definition]))
+        [rotate_definition,
+         benchLib.RewriteAdd
+           (named
+              "parityTranslation$source_funpow_mod_zero_imp_normalize"
+              parityTranslationTheory.source_funpow_mod_zero_imp_normalize),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_funpow_rotate1_period"
+              parityTranslationTheory.source_funpow_rotate1_period)]))
      ``!count xs.
          count MOD LENGTH xs = 0 ==>
          parityTranslation$source_rotate count xs = xs``,

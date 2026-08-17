@@ -32,12 +32,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
-| Sets | 353 | 342 | 4 |
-| List/map | 604 | 541 | 5 |
+| Sets | 353 | 353 | 4 |
+| List/map | 604 | 604 | 5 |
 | Linarith | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 8 |
 | Algebra | 10 | 10 | 3 |
-| **Total** | **1072** | **998** | **28** |
+| **Total** | **1072** | **1072** | **28** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -49,12 +49,12 @@ A **family** is a subject-area group:
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 11 | 0 | 0 |
-| List/map | 0 | 63 | 0 | 0 |
+| Sets | 0 | 0 | 0 | 0 |
+| List/map | 0 | 0 | 0 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 | 0 |
-| **Total** | **0** | **74** | **0** | **0** |
+| **Total** | **0** | **0** | **0** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -64,13 +64,13 @@ For context, the exhaustive run also tries three general-purpose HOL4 tactics wh
 
 | Family | Additional `AUTO_TAC` solutions | Additional `BLAST_TAC` solutions | Additional `AESOP_TAC` solutions |
 |---|---:|---:|---:|
-| Classical | 15 | 0 | 6 |
+| Classical | 20 | 0 | 6 |
 | Sets | 0 | 125 | 231 |
-| List/map | 128 | 0 | 97 |
+| List/map | 133 | 0 | 97 |
 | Linarith | 28 | 0 | 21 |
 | Presburger | 10 | 0 | 8 |
 | Algebra | 1 | 0 | 1 |
-| **Total** | **182** | **125** | **364** |
+| **Total** | **192** | **125** | **364** |
 
 ## Seed-rule safety check
 

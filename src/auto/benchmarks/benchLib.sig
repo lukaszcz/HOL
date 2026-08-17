@@ -14,6 +14,7 @@ sig
     | Clarify
     | Clarsimp
     | Aesop
+    | Metis
     | Linarith
     | IntArith
     | Cooper
@@ -38,6 +39,7 @@ sig
     | CongruenceAdd of named_thm
     | FactAdd of named_thm
     | DefinitionAdd of named_thm
+    | SimpFragmentAdd of string * simpLib.ssfrag
 
   datatype method_recipe =
       Invoke of tactic_id * method_arg list
@@ -85,6 +87,8 @@ sig
 
   val theorem_is_goal : term -> thm -> bool
 
+  val validate_raw_goal : corpus_goal -> unit
+  val validate_raw_goals : string -> corpus_goal list -> unit
   val prepare_goal : corpus_goal -> corpus_goal
 
   val exclusions_effective :

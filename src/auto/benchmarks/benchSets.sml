@@ -14,52 +14,58 @@ fun entry id line method mapped excl goal : benchLib.corpus_goal =
      {file = "src/HOL/Set.thy", line = line, commit = commit},
    representative = true}
 
-fun example id line method mapped goal : benchLib.corpus_goal =
+val common_arguments =
+  [benchLib.RewriteAdd
+     {name = "parityTranslation$source_mem_bigunion_image",
+      theorem = parityTranslationTheory.source_mem_bigunion_image},
+   benchLib.FactAdd
+     {name = "parityTranslation$source_predicate_set_witness",
+      theorem = parityTranslationTheory.source_predicate_set_witness},
+   benchLib.RewriteAdd
+     {name = "parityTranslation$source_nonempty_predicate_set",
+      theorem = parityTranslationTheory.source_nonempty_predicate_set},
+   benchLib.RewriteAdd
+     {name = "parityTranslation$source_set_separates_image",
+      theorem = parityTranslationTheory.source_set_separates_image},
+   benchLib.RewriteAdd
+     {name = "parityTranslation$source_nonnegative_neq_negative",
+      theorem = parityTranslationTheory.source_nonnegative_neq_negative},
+   benchLib.RewriteAdd
+     {name = "parityTranslation$source_set_separates_two",
+      theorem = parityTranslationTheory.source_set_separates_two},
+   benchLib.RewriteAdd
+     {name = "parityTranslation$source_exists_singleton_superset",
+      theorem = parityTranslationTheory.source_exists_singleton_superset}]
+
+val fixed_point_arguments =
+  [benchLib.DefinitionAdd
+     {name = "fixedPoint$monotone_def",
+      theorem = fixedPointTheory.monotone_def},
+   benchLib.DefinitionAdd
+     {name = "pred_set$SUBSET_DEF",
+      theorem = pred_setTheory.SUBSET_DEF},
+   benchLib.RewriteAdd
+     {name = "pred_set$SPECIFICATION",
+      theorem = pred_setTheory.SPECIFICATION},
+   benchLib.RewriteAdd
+     {name = "pred_set$IN_IMAGE",
+      theorem = pred_setTheory.IN_IMAGE},
+   benchLib.RewriteAdd
+     {name = "pred_set$IN_COMPL",
+      theorem = pred_setTheory.IN_COMPL},
+   benchLib.RewriteAdd
+     {name = "parityTranslation$source_complement_subset_swap",
+      theorem = parityTranslationTheory.source_complement_subset_swap},
+   benchLib.RewriteAdd
+     {name = "pred_set$IMAGE_SUBSET",
+      theorem = pred_setTheory.IMAGE_SUBSET}]
+
+fun example_with extra_arguments id line method mapped goal
+    : benchLib.corpus_goal =
   let
-    val arguments =
-      [benchLib.RewriteAdd
-           {name =
-              "paritySetTranslation$source_compl_image_fixedpoint_iff",
-            theorem =
-              paritySetTranslationTheory.source_compl_image_fixedpoint_iff},
-       benchLib.RewriteAdd
-           {name = "parityTranslation$source_num_set_induction_iff",
-            theorem =
-              parityTranslationTheory.source_num_set_induction_iff},
-       benchLib.RewriteAdd
-           {name = "parityTranslation$source_mem_bigunion_image",
-            theorem = parityTranslationTheory.source_mem_bigunion_image},
-         benchLib.FactAdd
-           {name = "parityTranslation$source_predicate_set_witness",
-            theorem =
-              parityTranslationTheory.source_predicate_set_witness},
-         benchLib.RewriteAdd
-           {name = "parityTranslation$source_nonempty_predicate_set",
-            theorem =
-              parityTranslationTheory.source_nonempty_predicate_set},
-         benchLib.RewriteAdd
-           {name = "parityTranslation$source_set_separates_image",
-            theorem = parityTranslationTheory.source_set_separates_image},
-         benchLib.RewriteAdd
-           {name = "parityTranslation$source_nonnegative_neq_negative",
-            theorem =
-              parityTranslationTheory.source_nonnegative_neq_negative},
-         benchLib.RewriteAdd
-           {name = "parityTranslation$source_set_separates_two",
-            theorem = parityTranslationTheory.source_set_separates_two},
-         benchLib.RewriteAdd
-           {name = "parityTranslation$source_exists_not_member",
-            theorem = parityTranslationTheory.source_exists_not_member},
-         benchLib.RewriteAdd
-           {name = "parityTranslation$source_exists_singleton_superset",
-            theorem =
-              parityTranslationTheory.source_exists_singleton_superset}]
+    val arguments = common_arguments @ extra_arguments
     val recipe =
-      if id = "set_theory_L79" then
-        benchLib.AllGoals
-          (benchLib.Invoke (benchLib.Simp, arguments),
-           benchLib.Invoke (benchLib.Blast, arguments))
-      else if mapped = benchLib.Force then
+      if mapped = benchLib.Force then
         benchLib.AllGoals
           (benchLib.Invoke (benchLib.Simp, arguments),
            benchLib.Invoke (benchLib.Force, arguments))
@@ -77,6 +83,9 @@ fun example id line method mapped goal : benchLib.corpus_goal =
         commit = commit},
      representative = false}
   end
+
+fun example id line method mapped goal =
+  example_with [] id line method mapped goal
 
 val example_goals =
   [example "set_theory_L18" 18 "by blast" benchLib.Blast
@@ -104,7 +113,7 @@ val example_goals =
    example "set_theory_L48" 48 "by blast" benchLib.Blast
      ``(!x. x IN (sets : 'a set set) ==> BIGUNION sets SUBSET x) ==>
        ?z. sets SUBSET {z}``,
-   example "set_theory_L79" 79
+   example_with fixed_point_arguments "set_theory_L79" 79
      "using lfp_unfold [OF monoI, of F] by blast" benchLib.Blast
      ``?fixed. fixed = COMPL (IMAGE g (COMPL (IMAGE f fixed)))``,
    example "set_theory_L156" 156 "by force" benchLib.Force
@@ -209,9 +218,9 @@ val translated_goals : benchLib.corpus_goal list =
       {file = "src/HOL/Set.thy", line = 994, commit = commit},
     representative = false}]
 
-val goals =
-  map benchLib.prepare_goal
-    (example_goals @ translated_goals @ benchSetCorpus.goals)
+val raw_goals = example_goals @ translated_goals @ benchSetCorpus.goals
+val _ = benchLib.validate_raw_goals "sets" raw_goals
+val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list = benchSetShortfalls.entries
 

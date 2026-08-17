@@ -79,9 +79,13 @@ val goals =
      "by force"
      (benchLib.Invoke
        (benchLib.Simp,
+        definition_context @ representation_context @
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_nths_drop"
-              parityTranslationTheory.source_nths_drop)]))
+           (named "parityTranslation$source_shift_image"
+              parityTranslationTheory.source_shift_image),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_selected_drop_shift"
+              parityTranslationTheory.source_selected_drop_shift)]))
      ``!count xs indices.
          parityTranslation$source_nths (DROP count xs) indices =
          parityTranslation$source_nths xs

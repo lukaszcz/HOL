@@ -30,6 +30,10 @@ selftest.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
 benchProductCorpus.uo: parityTranslationTheory.uo
 benchMapCorpus.uo: parityTranslationTheory.uo
 benchStringCorpus.uo: parityTranslationTheory.uo
+benchSetCorpus.uo benchListCorpus.uo benchMapCorpus.uo: benchExplicit.uo
+benchOptionCorpus.uo benchProductCorpus.uo: benchExplicit.uo
+benchStringCorpus.uo: benchExplicit.uo
+benchExplicit.uo: benchLib.uo parityTranslationTheory.uo
 benchListSorted.uo: parityTranslationTheory.uo
 benchListNumeric.uo: parityTranslationTheory.uo
 benchListAdjacent.uo: parityTranslationTheory.uo

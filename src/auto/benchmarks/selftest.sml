@@ -9,6 +9,15 @@ fun raises thunk =
    handle Portable.Interrupt => raise Portable.Interrupt
         | HOL_ERR _ => true)
 
+fun raises_with fragments thunk =
+  ((thunk (); false)
+   handle Portable.Interrupt => raise Portable.Interrupt
+        | HOL_ERR error =>
+            List.all
+              (fn fragment =>
+                String.isSubstring fragment (Feedback.message_of error))
+              fragments)
+
 val provenance =
   {file = "src/HOL/HOL.thy", line = 1, commit = "f7e02b7e"}
 
@@ -168,10 +177,21 @@ fun recipe_goal id recipe goal : benchLib.corpus_goal =
    representative = true}
 
 fun recipe_solves recipe goal =
-  let val entry = recipe_goal "unit-recipe" recipe goal
+  let
+    val entry = recipe_goal "unit-recipe" recipe goal
+    val outcome = benchLib.run_goal (Time.fromSeconds 5) recipe entry
+    fun outcome_text (benchLib.SOLVED elapsed) =
+          "solved:" ^ Time.toString elapsed
+      | outcome_text benchLib.TIMEOUT = "timeout"
+      | outcome_text (benchLib.FAILED message) = "failed:" ^ message
+    val _ =
+      if benchLib.outcome_solved outcome orelse
+          OS.Process.getEnv "HOLBENCHRECIPEFAIL" <> SOME "1"
+      then ()
+      else TextIO.print ("recipe failure: " ^ outcome_text outcome ^
+                         "\n")
   in
-    benchLib.outcome_solved
-      (benchLib.run_goal (Time.fromSeconds 5) recipe entry)
+    benchLib.outcome_solved outcome
   end
 
 val conjunction_commute = boolTheory.CONJ_COMM
@@ -237,6 +257,85 @@ val _ =
        not
          (recipe_solves truth_wrapped_recipe
             (Thm.concl conjunction_commute)))
+
+val implication_recipe =
+  benchLib.Invoke
+    (benchLib.Simp,
+     [benchLib.FactAdd
+        {name = "unit$conjunction_commute_under_assumption",
+         theorem = DISCH p conjunction_commute}])
+
+val nested_then_recipe =
+  benchLib.Then
+    (benchLib.Invoke (benchLib.Safe, []), rewrite_recipe)
+
+val nested_all_goals_recipe =
+  benchLib.AllGoals
+    (benchLib.Invoke (benchLib.Safe, []), truth_wrapped_recipe)
+
+fun raw_recipe_rejected id argument_name recipe =
+  raises_with [id, argument_name]
+    (fn () =>
+      benchLib.validate_raw_goal
+        (recipe_goal id recipe (Thm.concl conjunction_commute)))
+
+val _ =
+  check
+    ("raw validation rejects a direct measured theorem with diagnostics",
+     fn () =>
+       raw_recipe_rejected
+         "unit-raw-direct" "unit$conjunction_commute" rewrite_recipe)
+
+val _ =
+  check
+    ("raw validation rejects a truth-wrapped measured theorem",
+     fn () =>
+       raw_recipe_rejected
+         "unit-raw-truth" "unit$conjunction_commute_as_truth"
+         truth_wrapped_recipe)
+
+val _ =
+  check
+    ("raw validation rejects an implication with the measured conclusion",
+     fn () =>
+       raw_recipe_rejected
+         "unit-raw-implication"
+         "unit$conjunction_commute_under_assumption" implication_recipe)
+
+val _ =
+  check
+    ("raw validation rejects a theorem falsely labelled as a definition",
+     fn () =>
+       raw_recipe_rejected
+         "unit-raw-definition" "unit$not_a_definition"
+         mislabeled_definition_recipe)
+
+val _ =
+  check
+    ("raw validation descends through Then recipes",
+     fn () =>
+       raw_recipe_rejected
+         "unit-raw-then" "unit$conjunction_commute"
+         nested_then_recipe)
+
+val _ =
+  check
+    ("raw validation descends through AllGoals recipes",
+     fn () =>
+       raw_recipe_rejected
+         "unit-raw-all-goals" "unit$conjunction_commute_as_truth"
+         nested_all_goals_recipe)
+
+val _ =
+  check
+    ("preparation rejects rather than deleting a forbidden raw argument",
+     fn () =>
+       raises_with ["unit-raw-prepare", "unit$conjunction_commute"]
+         (fn () =>
+           ignore
+             (benchLib.prepare_goal
+               (recipe_goal "unit-raw-prepare" rewrite_recipe
+                  (Thm.concl conjunction_commute)))))
 
 val _ =
   check
@@ -389,6 +488,7 @@ fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.FactAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.DefinitionAdd {theorem, ...}) =
       if registered_definition theorem then NONE else SOME theorem
+  | argument_theorem (benchLib.SimpFragmentAdd _) = NONE
   | argument_theorem (benchLib.RewriteDelete _) = NONE
 
 fun argument_name (benchLib.RewriteAdd {name, ...}) = SOME name
@@ -399,6 +499,7 @@ fun argument_name (benchLib.RewriteAdd {name, ...}) = SOME name
   | argument_name (benchLib.CongruenceAdd {name, ...}) = SOME name
   | argument_name (benchLib.FactAdd {name, ...}) = SOME name
   | argument_name (benchLib.DefinitionAdd {name, ...}) = SOME name
+  | argument_name (benchLib.SimpFragmentAdd (name, _)) = SOME name
   | argument_name (benchLib.RewriteDelete _) = NONE
 
 fun recipe_theorems (benchLib.Invoke (_, arguments)) =
@@ -407,6 +508,40 @@ fun recipe_theorems (benchLib.Invoke (_, arguments)) =
       recipe_theorems left @ recipe_theorems right
   | recipe_theorems (benchLib.AllGoals (left, right)) =
       recipe_theorems left @ recipe_theorems right
+
+fun recipe_argument_names (benchLib.Invoke (_, arguments)) =
+      List.mapPartial argument_name arguments
+  | recipe_argument_names (benchLib.Then (left, right)) =
+      recipe_argument_names left @ recipe_argument_names right
+  | recipe_argument_names (benchLib.AllGoals (left, right)) =
+      recipe_argument_names left @ recipe_argument_names right
+
+fun first_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
+  | first_recipe_arguments (benchLib.Then (left, _)) =
+      first_recipe_arguments left
+  | first_recipe_arguments (benchLib.AllGoals (left, _)) =
+      first_recipe_arguments left
+
+fun last_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
+  | last_recipe_arguments (benchLib.Then (_, right)) =
+      last_recipe_arguments right
+  | last_recipe_arguments (benchLib.AllGoals (_, right)) =
+      last_recipe_arguments right
+
+fun without_argument_names names arguments =
+  List.filter
+    (fn argument =>
+      case argument_name argument of
+          SOME name => not (List.exists (equal name) names)
+        | NONE => true)
+    arguments
+
+fun classical_rule_argument argument =
+  case argument of
+      benchLib.IntroAdd _ => true
+    | benchLib.ElimAdd _ => true
+    | benchLib.DestAdd _ => true
+    | _ => false
 
 val every_corpus_goal =
   benchClassical.goals @ benchSets.goals @ benchListMap.goals @
@@ -468,7 +603,138 @@ val _ =
        not
          (benchLib.outcome_solved
            (benchLib.run_goal (Time.fromSeconds 5)
-              (#recipe ambient_list_all_goal) ambient_list_all_goal)))
+              (benchLib.Invoke (benchLib.Simp, []))
+              ambient_list_all_goal)))
+
+val _ =
+  check
+    ("invocation-local list predicate normalization closes its assignment",
+     fn () =>
+       benchLib.outcome_solved
+         (benchLib.run_goal (Time.fromSeconds 5)
+            (#recipe ambient_list_all_goal) ambient_list_all_goal))
+
+val list_predicate_recipe = #recipe ambient_list_all_goal
+
+val nested_list_predicate_goal =
+  ``(EVERY (\items. EXISTS (predicate : 'a -> bool) items) xss <=>
+     !items. MEM items xss ==>
+       ?item. MEM item items /\ predicate item)``
+
+val existential_list_predicate_goal =
+  ``(EXISTS
+       (\item. (pred_left : 'a -> bool) item /\
+                (pred_right : 'a -> bool) item) xs <=>
+     ?item. MEM item xs /\ pred_left item /\ pred_right item)``
+
+val _ =
+  check
+    ("list predicate normalization handles existential and nested forms",
+     fn () =>
+       recipe_solves list_predicate_recipe nested_list_predicate_goal andalso
+       recipe_solves
+         list_predicate_recipe existential_list_predicate_goal andalso
+       not
+         (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
+            nested_list_predicate_goal) andalso
+       not
+         (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
+            existential_list_predicate_goal))
+
+val _ =
+  check
+    ("list predicate normalization preserves empty and cons computation",
+     fn () =>
+       recipe_solves list_predicate_recipe
+         ``EVERY (predicate : 'a -> bool) [] <=> T`` andalso
+       recipe_solves list_predicate_recipe
+         ``EVERY (predicate : 'a -> bool) (item::items) <=>
+           predicate item /\ EVERY predicate items`` andalso
+       not (recipe_solves list_predicate_recipe p))
+
+val curry_regression_ids =
+  ["product_type_L431_case_prod_unfold",
+   "product_type_L451_case_prod_Pair",
+   "product_type_L454_case_prod_eta",
+   "product_type_L785_curry_conv",
+   "product_type_L788_curryI",
+   "product_type_L791_curryD",
+   "product_type_L794_curryE",
+   "product_type_L797_curry_case_prod",
+   "product_type_L800_case_prod_curry",
+   "product_type_L803_curry_K"]
+
+val _ =
+  check
+    ("CURRY and UNCURRY definition recipes close neighboring schemas",
+     fn () =>
+       List.all
+         (fn id =>
+           let val goal = goal_named id benchListMap.goals
+           in
+             benchLib.outcome_solved
+               (benchLib.run_goal (Time.fromSeconds 5) (#recipe goal) goal)
+           end)
+         curry_regression_ids)
+
+val set_equality_dependency_goal =
+  goal_named "set_L869_doubleton_eq_iff" benchSets.goals
+
+val subset_image_dependency_goal =
+  goal_named "set_L928_subset_image_iff" benchSets.goals
+
+val powerset_dependency_goal =
+  goal_named "set_L1604_Pow_singleton_iff" benchSets.goals
+
+val _ =
+  check
+    ("set equality elimination handles a three-element insertion",
+     fn () =>
+       recipe_solves (#recipe set_equality_dependency_goal)
+         ``((first : 'a) INSERT
+              ((second : 'a) INSERT ((third : 'a) INSERT {})) =
+            (fourth : 'a) INSERT
+              ((fifth : 'a) INSERT ((sixth : 'a) INSERT {}))) ==>
+           (first = fourth \/ first = fifth \/ first = sixth)``)
+
+val _ =
+  check
+    ("image-subset elimination handles an unrelated codomain predicate",
+     fn () =>
+       recipe_solves (#recipe subset_image_dependency_goal)
+         ``(((v_source0 : 'a set) SUBSET
+               IMAGE (v_function0 : 'b -> 'a)
+                 (\value. (v_predicate0 : 'b -> bool) value) <=>
+             ?v_chosen0.
+               v_chosen0 SUBSET
+                 (\value. (v_predicate0 : 'b -> bool) value) /\
+               v_source0 = IMAGE v_function0 v_chosen0) /\
+            v_source0 SUBSET v_source0)``)
+
+val _ =
+  check
+    ("powerset normalization handles an arbitrary collection",
+     fn () =>
+       recipe_solves (#recipe powerset_dependency_goal)
+         ``(!candidate : 'a set.
+              candidate SUBSET (v_universe0 : 'a set) <=>
+              candidate IN (v_collection0 : 'a set set)) ==>
+           POW v_universe0 = v_collection0``)
+
+val product_witness_dependency_goal =
+  goal_named "product_type_L1162_fst_image_times" benchListMap.goals
+
+val _ =
+  check
+    ("product rules construct an IMAGE witness for an arbitrary fibre",
+     fn () =>
+       recipe_solves (#recipe product_witness_dependency_goal)
+         ``((element : 'b) IN (fibre (source : 'a) : 'b set)) ==>
+           source IN
+             IMAGE FST
+               (\pair : 'a # 'b.
+                  FST pair = source /\
+                  SND pair IN fibre (FST pair))``)
 
 val absolute_recurrence_goal =
   goal_named "presburger_L102" benchPresburger.goals
@@ -630,87 +896,178 @@ fun without_rewrite target arguments =
       | _ => true)
     arguments
 
+fun recipe_without_rewrite target recipe =
+  case recipe of
+      benchLib.Invoke (tactic, arguments) =>
+        benchLib.Invoke (tactic, without_rewrite target arguments)
+    | benchLib.Then (left, right) =>
+        benchLib.Then
+          (recipe_without_rewrite target left,
+           recipe_without_rewrite target right)
+    | benchLib.AllGoals (left, right) =>
+        benchLib.AllGoals
+          (recipe_without_rewrite target left,
+           recipe_without_rewrite target right)
+
 val translated_fixed_point_goal =
   goal_named "set_theory_L79" benchSets.goals
 
-val fixed_point_without_bridge =
+val fixed_point_without_variance =
   case #recipe translated_fixed_point_goal of
-      benchLib.AllGoals
-        (benchLib.Invoke (benchLib.Simp, arguments), _) =>
+      benchLib.Invoke (benchLib.Blast, arguments) =>
         benchLib.Invoke
-          (benchLib.Simp,
+          (benchLib.Blast,
            without_rewrite
-             "paritySetTranslation$source_compl_image_fixedpoint_iff"
-             arguments)
+             "parityTranslation$source_complement_subset_swap"
+             (without_rewrite "pred_set$IMAGE_SUBSET" arguments))
     | _ => raise Fail "unexpected fixed-point recipe"
 
 val _ =
   check
-    ("complement-image fixed point remains an assigned-tactic limitation",
+    ("complement-image fixed point executes through lfp monotonicity",
      fn () =>
-       not (benchLib.outcome_solved
+       benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_fixed_point_goal)
-            translated_fixed_point_goal)))
+            translated_fixed_point_goal))
 
 val _ =
   check
-    ("complement-image fixed point needs its source bridge",
+    ("complement-image fixed point uses general compositional variance",
      fn () =>
-       not
-         (benchLib.outcome_solved
-           (benchLib.run_goal (Time.fromSeconds 1)
-              fixed_point_without_bridge
-              translated_fixed_point_goal)))
+       benchLib.outcome_solved
+         (benchLib.run_goal (Time.fromSeconds 5)
+            fixed_point_without_variance
+            translated_fixed_point_goal))
 
 val translated_num_set_induction_goal =
   goal_named "set_theory_L199" benchSets.goals
 
-val num_set_induction_without_bridge =
-  case #recipe translated_num_set_induction_goal of
-      benchLib.AllGoals
-        (benchLib.Invoke (benchLib.Simp, arguments), _) =>
-        benchLib.Invoke
-          (benchLib.Simp,
-           without_rewrite
-             "parityTranslation$source_num_set_induction_iff"
-             arguments)
-    | _ => raise Fail "unexpected number-set induction recipe"
-
 val _ =
   check
-    ("number-set induction remains an assigned-tactic limitation",
+    ("number-set induction executes through predicate abstraction",
      fn () =>
-       not (benchLib.outcome_solved
+       benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_num_set_induction_goal)
-            translated_num_set_induction_goal)))
+            translated_num_set_induction_goal))
 
 val _ =
   check
-    ("number-set induction needs its source bridge",
+    ("predicate abstraction handles a non-numeric datatype",
+     fn () =>
+       recipe_solves (#recipe translated_num_set_induction_goal)
+         ``((!aset : bool set.
+              T IN aset /\
+              (!value. value IN aset ==> ~value IN aset) ==>
+              F IN aset) /\
+            (property : bool -> bool) T /\
+            (!value. property value ==> property (~value))) ==>
+           property F``)
+
+val _ =
+  check
+    ("predicate abstraction instantiates a closure set comprehension",
+     fn () =>
+       recipe_solves (#recipe translated_num_set_induction_goal)
+         ``((!aset : bool option set.
+              NONE IN aset /\
+              (!value. value IN aset ==> SOME T IN aset) ==>
+              SOME T IN aset) /\
+            (property : bool option -> bool) NONE /\
+            (!value. property value ==> property (SOME T))) ==>
+           property (SOME T)``)
+
+val _ =
+  check
+    ("lfp witness handles a monotone union transformer",
+     fn () =>
+       recipe_solves (#recipe translated_fixed_point_goal)
+         ``?fixed : 'a set.
+             fixed = (seed : 'a set) UNION fixed``)
+
+val _ =
+  check
+    ("lfp witness rejects an antitone complement transformer",
      fn () =>
        not
-         (benchLib.outcome_solved
-           (benchLib.run_goal (Time.fromSeconds 1)
-              num_set_induction_without_bridge
-              translated_num_set_induction_goal)))
+         (recipe_solves (#recipe translated_fixed_point_goal)
+            ``?fixed : bool set. fixed = COMPL fixed``))
+
+val _ =
+  check
+    ("lfp witness accepts two composed antitone transformers",
+     fn () =>
+       recipe_solves (#recipe translated_fixed_point_goal)
+         ``?fixed : 'a set. fixed = COMPL (COMPL fixed)``)
+
+val _ =
+  check
+    ("lfp witness handles an unrelated preimage-image transformer",
+     fn () =>
+       recipe_solves (#recipe translated_fixed_point_goal)
+         ``?fixed : 'a set.
+             fixed = PREIMAGE (mapping : 'a -> 'a)
+                       (IMAGE mapping fixed)``)
+
+val _ =
+  check
+    ("lfp witness handles variance below a nested predicate lambda",
+     fn () =>
+       recipe_solves (#recipe translated_fixed_point_goal)
+         ``?fixed : 'a set.
+             fixed = (\value. guard value \/ fixed value)``)
+
+val _ =
+  check
+    ("predicate abstraction rejects an unsupported open pattern",
+     fn () =>
+       not
+         (recipe_solves (#recipe translated_num_set_induction_goal)
+            ``(!aset : bool set. T IN aset ==> T IN aset) ==>
+              (property : bool -> bool) T``))
+
+val _ =
+  check
+    ("predicate abstraction rejects a scope-escaping candidate",
+     fn () =>
+       let
+         val recipe = #recipe translated_num_set_induction_goal
+         val target =
+           ``(!aset : bool set.
+                !hidden. hidden IN aset ==> hidden IN aset) ==>
+             (property : bool -> bool) T``
+       in
+         case benchLib.run_goal (Time.fromSeconds 5) recipe
+                (recipe_goal "unit-scope-escape" recipe target) of
+             benchLib.FAILED _ => true
+           | _ => false
+       end)
+
+val _ =
+  check
+    ("predicate abstraction fairly tries competing set assumptions",
+     fn () =>
+       recipe_solves (#recipe translated_num_set_induction_goal)
+         ``((!aset : bool set. T IN aset ==> T IN aset) /\
+            (!aset : bool set. T IN aset ==> F IN aset) /\
+            (property : bool -> bool) T) ==>
+           property F``)
 
 val promoted_set_bridge_goals =
-  [(goal_named "set_L869_doubleton_eq_iff" benchSets.goals,
-    "parityTranslation$source_doubleton_eq_iff"),
-   (goal_named "set_L928_subset_image_iff" benchSets.goals,
-    "parityTranslation$source_subset_image_iff"),
-   (goal_named "set_L1125_image_Pow_surj" benchSets.goals,
+  [(goal_named "set_L1125_image_Pow_surj" benchSets.goals,
     "parityTranslation$source_image_pow_surj_iff"),
-   (goal_named "set_L1604_Pow_singleton_iff" benchSets.goals,
-    "parityTranslation$source_pow_singleton_iff"),
    (goal_named "set_L1607_Pow_insert" benchSets.goals,
     "parityTranslation$source_pow_insert_image_case_iff"),
    (goal_named "set_L1610_Pow_Compl" benchSets.goals,
     "parityTranslation$source_pow_compl_iff"),
    (goal_named "set_L1967_pairwise_image" benchSets.goals,
     "parityTranslation$source_pairwise_image")]
+
+val bridge_dependent_set_goals =
+  List.filter
+    (fn (goal, _) => #id goal = "set_L1607_Pow_insert")
+    promoted_set_bridge_goals
 
 fun shortfall_id entries id =
   List.exists (fn ({id = other, ...} : benchLib.shortfall) => id = other)
@@ -730,22 +1087,25 @@ val _ =
 
 val _ =
   check
-    ("promoted translated set goals need their source bridges",
+    ("translated powerset insertion needs its source bridge",
      fn () =>
        List.all
          (fn (goal, bridge) =>
-           case #recipe goal of
-               benchLib.AllGoals
-                 (benchLib.Invoke (benchLib.Simp, arguments), _) =>
-                 not
-                   (benchLib.outcome_solved
-                     (benchLib.run_goal (Time.fromSeconds 1)
-                        (benchLib.Invoke
-                           (benchLib.Simp,
-                            without_rewrite bridge arguments))
-                        goal))
-             | _ => raise Fail "unexpected promoted set recipe")
-         promoted_set_bridge_goals)
+           let
+             val solved =
+               benchLib.outcome_solved
+                 (benchLib.run_goal (Time.fromSeconds 1)
+                    (recipe_without_rewrite bridge (#recipe goal)) goal)
+             val _ =
+               if OS.Process.getEnv "HOLBENCHDEPENDENCYTRACE" = SOME "1"
+               then TextIO.print
+                      (#id goal ^ " without " ^ bridge ^ ": " ^
+                       Bool.toString solved ^ "\n")
+               else ()
+           in
+             not solved
+           end)
+         bridge_dependent_set_goals)
 
 val translated_psubset_trans_goal =
   goal_named "set_L1101_psubset_trans" benchSets.goals
@@ -770,7 +1130,7 @@ val _ =
 
 val _ =
   check
-    ("proper-subset transitivity needs safe saturation before auto",
+    ("proper-subset transitivity needs safe saturation before AUTO",
      fn () =>
        not
          (benchLib.outcome_solved
@@ -792,19 +1152,17 @@ val _ =
 
 val _ =
   check
-    ("predicate-set witness needs its source construction bridge",
+    ("FORCE constructs the predicate-set witness without a bridge",
      fn () =>
-       not
-         (benchLib.outcome_solved
-           (benchLib.run_goal (Time.fromSeconds 2)
-              (benchLib.Invoke
-                 (benchLib.Force,
-                  [benchLib.RewriteAdd
-                     {name =
-                        "parityTranslation$source_mem_bigunion_image",
-                      theorem =
-                        parityTranslationTheory.source_mem_bigunion_image}]))
-              translated_predicate_witness_goal)))
+       benchLib.outcome_solved
+         (benchLib.run_goal (Time.fromSeconds 5)
+            (benchLib.Invoke
+               (benchLib.Force,
+                [benchLib.RewriteAdd
+                   {name = "parityTranslation$source_mem_bigunion_image",
+                    theorem =
+                      parityTranslationTheory.source_mem_bigunion_image}]))
+            translated_predicate_witness_goal))
 
 val translated_nonempty_predicate_goal =
   goal_named "set_theory_L164" benchSets.goals
@@ -906,12 +1264,12 @@ val translated_omitting_set_goal =
 
 val _ =
   check
-    ("omitting-set witness remains an assigned-tactic limitation",
+    ("omitting-set witness executes with general witness search",
      fn () =>
-       not (benchLib.outcome_solved
+       benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_omitting_set_goal)
-            translated_omitting_set_goal)))
+            translated_omitting_set_goal))
 
 val _ =
   check
@@ -956,7 +1314,11 @@ val translated_forall_iff_set_goals =
 
 fun set_auto_without_forall_iff (goal : benchLib.corpus_goal) =
   let
-    val arguments = benchSetCorpus.method_args (#source_method goal)
+    val arguments =
+      without_argument_names
+        ["parityTranslation$source_forall_iffD1",
+         "parityTranslation$source_forall_iffD2"]
+        (first_recipe_arguments (#recipe goal))
   in
     benchLib.AllGoals
       (benchLib.Invoke (benchLib.Simp, arguments),
@@ -1007,8 +1369,10 @@ val _ =
            (benchLib.run_goal (Time.fromSeconds 5)
             (benchLib.Invoke
                (benchLib.Auto,
-                benchSetCorpus.method_args
-                  (#source_method translated_unique_member_goal)))
+                without_argument_names
+                  ["parityTranslation$source_pairwise_disjnt_unique_transfer"]
+                  (first_recipe_arguments
+                    (#recipe translated_unique_member_goal))))
             translated_unique_member_goal)))
 
 val _ =
@@ -1212,9 +1576,14 @@ val _ =
      fn () =>
        List.all
          (fn (goal : benchLib.corpus_goal) =>
-           benchLib.outcome_solved
-             (benchLib.run_goal (Time.fromSeconds 5)
-                (#recipe goal) goal))
+           case benchLib.run_goal
+                  (Time.fromSeconds 5) (#recipe goal) goal of
+               benchLib.SOLVED _ => true
+             | benchLib.TIMEOUT =>
+                 (print ("\n" ^ #id goal ^ ": timeout\n"); false)
+             | benchLib.FAILED message =>
+                 (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
+                  false))
          translated_list_relation_goals)
 
 val _ =
@@ -1393,9 +1762,7 @@ val filter_cons_args_without_intro =
           (_, {name = "parityTranslation$source_filter_eq_ConsI", ...}) =>
           false
       | _ => true)
-    (benchListCorpus.method_args
-       (#source_method translated_filter_cons_goal)
-       (#goal translated_filter_cons_goal))
+    (first_recipe_arguments (#recipe translated_filter_cons_goal))
 
 val _ =
   check
@@ -1823,7 +2190,8 @@ val translated_rotate_list_goals =
     (fn id => goal_named id benchListMap.goals)
     ["list_L5191_rotate0", "list_L5194_rotate_Suc",
      "list_L5197_rotate_add", "list_L5201_rotate_rotate",
-     "list_L5207_rotate1_rotate_swap", "list_L5259_rotate_map",
+     "list_L5207_rotate1_rotate_swap", "list_L5241_rotate_conv_mod",
+     "list_L5259_rotate_map",
      "list_L5301_nth_rotate1", "list_L5325_bij_rotate1"]
 
 val _ =
@@ -1842,6 +2210,62 @@ val _ =
                   false))
          translated_rotate_list_goals)
 
+val _ =
+  check
+    ("rotation modulo normalization applies to an unrelated periodic function",
+     fn () =>
+       let
+         val target =
+           ``FUNPOW (v_iteration0 : 'a -> 'a) 3 v_value0 = v_value0 ==>
+             FUNPOW v_iteration0 4 v_value0 =
+             FUNPOW v_iteration0 (4 MOD 3) v_value0``
+         val (premise, _) = boolSyntax.dest_imp target
+         val instantiated =
+           Q.SPECL [`v_iteration0 : 'a -> 'a`, `3`, `v_value0`, `4`]
+             parityTranslationTheory.source_funpow_mod_periodic
+         val theorem =
+           DISCH premise (MP instantiated (ASSUME premise))
+       in
+         Term.aconv (Thm.concl theorem) target
+       end)
+
+val bool_negation_period =
+  Tactical.prove
+    (``FUNPOW (\value : bool. ~value) 2 T = T``,
+     bossLib.simp[arithmeticTheory.FUNPOW_2])
+
+val funpow_mod_zero_normalize =
+  parityTranslationTheory.source_funpow_mod_zero_imp_normalize
+
+val _ =
+  check
+    ("period-zero implication normalization is operation-generic",
+     fn () =>
+       recipe_solves
+         (benchLib.Invoke
+           (benchLib.Simp,
+            [benchLib.RewriteAdd
+               {name = "unit$source_funpow_mod_zero_imp_normalize",
+                theorem = funpow_mod_zero_normalize},
+             benchLib.RewriteAdd
+               {name = "unit$bool_negation_period",
+                theorem = bool_negation_period}]))
+         ``!count.
+             count MOD 2 = 0 ==>
+             FUNPOW (\value : bool. ~value) count T = T``)
+
+val _ =
+  check
+    ("rotation recipes never consume the final modulo theorem",
+     fn () =>
+       not
+         (List.exists
+           (fn ({recipe, ...} : benchLib.corpus_goal) =>
+             List.exists
+               (equal "parityTranslation$source_rotate_conv_mod")
+               (recipe_argument_names recipe))
+           every_corpus_goal))
+
 val translated_nths_list_goals =
   map
     (fn id => goal_named id benchListMap.goals)
@@ -1852,7 +2276,7 @@ val translated_nths_list_goals =
      "list_L5334_nths_empty", "list_L5337_nths_nil",
      "list_L5344_length_nths", "list_L5385_set_nths_subset",
      "list_L5388_notin_set_nthsI", "list_L5391_in_set_nthsD",
-     "list_L5394_nths_singleton"]
+     "list_L5394_nths_singleton", "list_L5409_nths_drop"]
 
 val _ =
   check
@@ -1869,6 +2293,21 @@ val _ =
                  (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
                   false))
          translated_nths_list_goals)
+
+val nths_drop_dependency_goal =
+  goal_named "list_L5409_nths_drop" benchListMap.goals
+
+val _ =
+  check
+    ("indexed-selection shifting handles a different predicate",
+     fn () =>
+       recipe_solves (#recipe nths_drop_dependency_goal)
+         ``parityTranslation$source_nths
+              (DROP v_count0 (v_xs0 : 'a list))
+              {index | EVEN index} =
+           parityTranslation$source_nths v_xs0
+             (IMAGE (\index. v_count0 + index)
+               {index | EVEN index})``)
 
 val _ =
   check
@@ -1990,11 +2429,10 @@ val _ =
   check
     ("translated range update matches corrected accounting",
      fn () =>
-       not
-         (benchLib.outcome_solved
-           (benchLib.run_goal (Time.fromSeconds 5)
-              (#recipe translated_range_update_goal)
-              translated_range_update_goal)))
+       benchLib.outcome_solved
+         (benchLib.run_goal (Time.fromSeconds 5)
+            (#recipe translated_range_update_goal)
+            translated_range_update_goal))
 
 val _ =
   check
@@ -2036,18 +2474,17 @@ val _ =
 
 val _ =
   check
-    ("map-order fastforce needs its source simplification phase",
+    ("FASTFORCE handles a map-order goal without recipe staging",
      fn () =>
-       List.all
+       List.exists
          (fn (goal : benchLib.corpus_goal) =>
            case #recipe goal of
                benchLib.AllGoals
                  (benchLib.Invoke (benchLib.Simp, arguments), _) =>
-                 not
-                   (benchLib.outcome_solved
-                     (benchLib.run_goal (Time.fromSeconds 5)
-                        (benchLib.Invoke
-                          (benchLib.Fastforce, arguments)) goal))
+                 benchLib.outcome_solved
+                   (benchLib.run_goal (Time.fromSeconds 5)
+                      (benchLib.Invoke
+                        (benchLib.Fastforce, arguments)) goal)
              | _ => false)
          translated_pre_simplified_fastforce_goals)
 
@@ -2078,12 +2515,12 @@ val translated_map_upds_twist_goal =
 
 val _ =
   check
-    ("map-update twist remains an assigned-tactic limitation",
+    ("map-update twist executes with pointwise update normalization",
      fn () =>
-       not (benchLib.outcome_solved
+       benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_map_upds_twist_goal)
-            translated_map_upds_twist_goal)))
+            translated_map_upds_twist_goal))
 
 val _ =
   check
@@ -2161,8 +2598,9 @@ val translated_finite_graph_goal =
 
 fun not_finite_graph_bridge argument =
   case argument of
-      benchLib.IntroAdd
-        (_, {name = "parityTranslation$source_finite_graph_alookup", ...}) =>
+      benchLib.RewriteAdd
+        {name =
+           "parityTranslation$source_finite_bounded_lookup_graph", ...} =>
         false
     | _ => true
 
@@ -2176,12 +2614,12 @@ val finite_graph_without_bridge =
 
 val _ =
   check
-    ("finite association-list graph remains a tactic limitation",
+    ("finite association-list graph executes through bounded support",
      fn () =>
-       not (benchLib.outcome_solved
+       benchLib.outcome_solved
          (benchLib.run_goal (Time.fromSeconds 5)
             (#recipe translated_finite_graph_goal)
-            translated_finite_graph_goal)))
+            translated_finite_graph_goal))
 
 val _ =
   check
@@ -2207,15 +2645,14 @@ val _ =
 
 val _ =
   check
-    ("map-domain goal needs its translated AUTO backend",
+    ("FASTFORCE also handles translated map-domain inclusion",
      fn () =>
        case #recipe translated_auto_map_domain_goal of
            benchLib.Invoke (benchLib.Auto, arguments) =>
-             not
-               (benchLib.outcome_solved
-                 (benchLib.run_goal (Time.fromSeconds 5)
-                    (benchLib.Invoke (benchLib.Fastforce, arguments))
-                    translated_auto_map_domain_goal))
+             benchLib.outcome_solved
+               (benchLib.run_goal (Time.fromSeconds 5)
+                  (benchLib.Invoke (benchLib.Fastforce, arguments))
+                  translated_auto_map_domain_goal)
          | _ => false)
 
 val translated_update_distinct_goal =
@@ -2259,15 +2696,14 @@ val _ =
 
 val _ =
   check
-    ("product projection goal needs its translated AUTO backend",
+    ("FORCE also handles translated product projections",
      fn () =>
        case #recipe translated_product_projection_goal of
            benchLib.Invoke (benchLib.Auto, arguments) =>
-             not
-               (benchLib.outcome_solved
-                 (benchLib.run_goal (Time.fromSeconds 5)
-                    (benchLib.Invoke (benchLib.Force, arguments))
-                    translated_product_projection_goal))
+             benchLib.outcome_solved
+               (benchLib.run_goal (Time.fromSeconds 5)
+                  (benchLib.Invoke (benchLib.Force, arguments))
+                  translated_product_projection_goal)
          | _ => false)
 
 val translated_unique_pair_choice_goal =
@@ -2323,7 +2759,7 @@ val sigma_union_args_without_reassociation =
     (fn benchLib.RewriteAdd {name, ...} =>
           name <> "parityTranslation$source_exists_swapped_conj"
       | _ => true)
-    (benchProductCorpus.method_args "by blast")
+    (first_recipe_arguments (#recipe translated_sigma_union_goal))
 
 val _ =
   check
@@ -2360,9 +2796,9 @@ fun not_bij_components argument =
 val product_bij_rule_arguments =
   List.filter
     (fn argument =>
-      benchProductCorpus.classical_rule_arg argument andalso
+      classical_rule_argument argument andalso
       not_bij_components argument)
-    (benchProductCorpus.method_args "by auto")
+    (last_recipe_arguments (#recipe translated_product_bij_goal))
 
 val _ =
   check
@@ -2393,7 +2829,29 @@ val translated_ordered_list_goals =
      "list_L6049_sorted_iff_nth_mono_less",
      "list_L6053_sorted_iff_nth_mono",
      "list_L6057_sorted_nth_mono",
-     "list_L6061_sorted_iff_nth_Suc"]
+     "list_L6061_sorted_iff_nth_Suc",
+     "list_L6101_sorted_remove1",
+     "list_L6104_sorted_butlast",
+     "list_L6138_map_sorted_distinct_set_unique",
+     "list_L6146_sorted_dropWhile",
+     "list_L6211_sorted_upto",
+     "list_L6292_sorted_insort",
+     "list_L6298_sorted_sort",
+     "list_L6312_sorted_sort_id",
+     "list_L6315_sort_replicate",
+     "list_L6384_sorted_insort_insert_key",
+     "list_L6389_sorted_insort_insert",
+     "list_L6433_sorted_indexed_from",
+     "list_L6444_stable_sort_key_sort_key",
+     "list_L6453_sorted_transpose",
+     "list_L6487_nth_nth_transpose_sorted",
+     "list_L6690_distinct_if_distinct_map",
+     "list_L6761_anon_L6761",
+     "list_L6770_sorted_key_list_of_set_unique",
+     "list_L6835_sorted_list_of_set_lessThan_Suc",
+     "list_L6839_sorted_list_of_set_atMost_Suc",
+     "list_L6847_sorted_list_of_set_nonempty",
+     "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
 
 val _ =
   check
@@ -2411,10 +2869,99 @@ val _ =
                   false))
          translated_ordered_list_goals)
 
+fun retarget_goal id goal (base : benchLib.corpus_goal) =
+  {id = id, goal = goal, source_method = #source_method base,
+   recipe = #recipe base, excl = #excl base,
+   provenance = #provenance base, representative = true}
+
+val promoted_order_schema_goals =
+   [retarget_goal "schema-sorted-key-insert"
+     ``relation$WeakLinearOrder ($<= : num -> num -> bool) ==>
+       parityTranslation$source_sorted ($<=)
+         (MAP SUC [1; 3]) ==>
+       parityTranslation$source_sorted ($<=)
+         (MAP SUC
+           (parityTranslation$source_insort_insert_key
+             ($<=) SUC 2 [1; 3]))``
+     (goal_named "list_L6384_sorted_insort_insert_key"
+        benchListMap.goals),
+   retarget_goal "schema-transpose-rectangular"
+     ``parityTranslation$source_sorted ($<=)
+         (REVERSE
+           (MAP LENGTH
+             (parityTranslation$source_transpose
+               [[1; 2]; [3; 4]])))``
+     (goal_named "list_L6453_sorted_transpose" benchListMap.goals),
+   retarget_goal "schema-transpose-ragged"
+     ``parityTranslation$source_sorted ($<=)
+         (REVERSE
+           (MAP LENGTH
+             (parityTranslation$source_transpose
+               [[1; 2; 3]; [4]; [5; 6]])))``
+     (goal_named "list_L6453_sorted_transpose" benchListMap.goals),
+   retarget_goal "schema-finite-enumeration"
+     ``!le : 'a -> 'a -> bool.
+         relation$WeakLinearOrder le ==>
+         !items.
+           FINITE items ==>
+           items <> EMPTY ==>
+           parityTranslation$source_sorted_list_of_set le items <> []``
+     (goal_named "list_L6847_sorted_list_of_set_nonempty"
+        benchListMap.goals),
+   retarget_goal "schema-indexed-finite-interval"
+     ``!index lower upper.
+         SUC index < upper - lower ==>
+         EL (SUC index)
+           (parityTranslation$source_sorted_list_of_set ($<=)
+             (parityTranslation$source_greaterThanAtMost
+               ($<=) ($<) lower upper)) =
+         SUC (lower + SUC index)``
+     (goal_named
+        "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"
+        benchListMap.goals)]
+
+val _ =
+  check
+    ("promoted sorting, transpose, and finite-enumeration schemas generalize",
+     fn () =>
+       List.all
+         (fn goal =>
+           case benchLib.run_goal (Time.fromSeconds 5)
+                  (#recipe goal) goal of
+               benchLib.SOLVED _ => true
+             | benchLib.TIMEOUT =>
+                 (print ("\n" ^ #id goal ^ ": timeout\n"); false)
+             | benchLib.FAILED message =>
+                 (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
+                  false))
+         promoted_order_schema_goals)
+
 val translated_recovered_goals =
   map
     (fn id => goal_named id benchListMap.goals)
-    ["list_L3566_map_nth_upt0",
+    ["list_L3349_anon_L3349",
+     "list_L3381_anon_L3381",
+     "list_L3385_anon_L3385",
+     "list_L3566_map_nth_upt0",
+     "list_L5441_distinct_set_subseqs",
+     "list_L5470_subset_subseqs",
+     "list_L5527_Nil_in_shufflesI",
+     "list_L6972_mono_lists",
+     "list_L7054_set_trans_list_step_subset_trancl",
+     "list_L7247_lex_conv",
+     "list_L7256_lenlex_conv",
+     "list_L7387_lexord_same_pref_if_irrefl",
+     "list_L7508_lexord_trans",
+     "list_L7537_lexord_irrefl",
+     "list_L7570_asym_lenlex",
+     "list_L7771_wf_measures",
+     "list_L7922_wf_listrel1_iff",
+     "list_L7954_listrel_iff_nth",
+     "list_L7995_equiv_listrel",
+     "list_L8673_these_set_code",
+     "list_L8701_trancl_set_ntrancl",
+     "list_L8709_wf_set",
+     "list_L8999_set_Cons_transfer",
      "product_type_L1061_Sigma_insert",
      "list_L8543_map_filter_map_filter",
      "list_L8603_is_empty_set",
@@ -2438,6 +2985,92 @@ val _ =
                    (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
                     false))
          translated_recovered_goals)
+
+val promoted_recovered_schema_goals =
+  [retarget_goal "schema-abort-empty-card"
+     ``parityTranslation$source_abort_empty_set
+         (\domain : num set. CARD domain) = 0``
+     (goal_named "list_L3349_anon_L3349" benchListMap.goals),
+   retarget_goal "schema-fold-image-taken-prefix"
+     ``!aggregate operation top function count xs.
+         (!ys.
+            aggregate (LIST_TO_SET ys) =
+            parityTranslation$source_fold operation ys top) ==>
+         parityTranslation$source_INF aggregate function
+           (LIST_TO_SET (TAKE count xs)) =
+         parityTranslation$source_fold
+           (\value current. operation (function value) current)
+           (TAKE count xs) top``
+     (goal_named "list_L3381_anon_L3381" benchListMap.goals),
+   retarget_goal "schema-shuffle-two-singletons"
+     ``[1; 2] IN
+       parityTranslation$source_shuffles ([1] : num list) [2]``
+     (goal_named "list_L5527_Nil_in_shufflesI" benchListMap.goals),
+   retarget_goal "schema-subseqs-three-elements"
+     ``({1; 3} : num set) IN
+       IMAGE LIST_TO_SET
+         (LIST_TO_SET
+           (parityTranslation$source_subseqs [1; 2; 3]))``
+     (goal_named "list_L5470_subset_subseqs" benchListMap.goals),
+   retarget_goal "schema-lists-membership-mono"
+     ``[1; 1] IN parityTranslation$source_lists ({1} : num set) ==>
+       [1; 1] IN parityTranslation$source_lists ({1; 2} : num set)``
+     (goal_named "list_L6972_mono_lists" benchListMap.goals),
+   retarget_goal "schema-these-three-options"
+     ``parityTranslation$source_these
+         (LIST_TO_SET [NONE; SOME 2; SOME 3]) =
+       ({2; 3} : num set)``
+     (goal_named "list_L8673_these_set_code" benchListMap.goals),
+   retarget_goal "schema-wf-list-lift-forward"
+     ``!relation : 'a -> 'a -> bool.
+         relation$WF relation ==>
+         relation$WF (parityTranslation$source_listrel1 relation)``
+     (goal_named "list_L7922_wf_listrel1_iff" benchListMap.goals),
+   retarget_goal "schema-wf-two-measures"
+     ``relation$WF
+         (parityTranslation$source_measures
+           [I : num -> num; SUC])``
+     (goal_named "list_L7771_wf_measures" benchListMap.goals),
+   retarget_goal "schema-lexord-transitive-lift"
+     ``!relation : 'a -> 'a -> bool.
+         relation$transitive relation ==>
+         !left middle right.
+           parityTranslation$source_lexord relation [left] [middle] ==>
+           parityTranslation$source_lexord relation [middle] [right] ==>
+           parityTranslation$source_lexord relation [left] [right]``
+     (goal_named "list_L7508_lexord_trans" benchListMap.goals),
+   retarget_goal "schema-listrel-concrete-index"
+     ``!relation xs ys count.
+         (LIST_REL relation (TAKE count xs) (TAKE count ys) <=>
+          LENGTH (TAKE count xs) = LENGTH (TAKE count ys) /\
+          !index.
+            index < LENGTH (TAKE count xs) ==>
+            relation
+              (EL index (TAKE count xs))
+              (EL index (TAKE count ys)))``
+     (goal_named "list_L7954_listrel_iff_nth" benchListMap.goals),
+   retarget_goal "schema-wf-finite-single-edge"
+     ``relation$WF
+         (set_relation$reln_to_rel
+           (LIST_TO_SET [((1 : num), 2)])) <=>
+       set_relation$acyclic (LIST_TO_SET [((1 : num), 2)])``
+     (goal_named "list_L8709_wf_set" benchListMap.goals)]
+
+val _ =
+  check
+    ("recovered dependency schemas generalize beyond corpus statements",
+     fn () =>
+       List.all
+         (fn goal =>
+           case benchLib.run_goal (Time.fromSeconds 5)
+                  (#recipe goal) goal of
+               benchLib.SOLVED _ => true
+             | benchLib.TIMEOUT =>
+                 (print ("\n" ^ #id goal ^ ": timeout\n"); false)
+             | benchLib.FAILED message =>
+                 (print ("\n" ^ #id goal ^ ": " ^ message ^ "\n");
+                  false))
+         promoted_recovered_schema_goals)
 
 val translated_interval_list_goals =
   map
@@ -2814,16 +3447,16 @@ val _ =
            count_cause benchLib.TranslationGap benchListMap.shortfalls +
            count_cause benchLib.TranslationGap benchAlgebra.shortfalls
        in
-         source_outcomes = 1061 andalso source_outcomes + 9 = 1070
+         source_outcomes = 1061 andalso source_outcomes + 11 = 1072
        end)
 
 val _ =
   check
     ("exhaustive shortfall registers are exact",
      fn () =>
-       count_cause benchLib.EngineLimitation benchSets.shortfalls = 11 andalso
+       count_cause benchLib.EngineLimitation benchSets.shortfalls = 0 andalso
        count_cause benchLib.TranslationGap benchSets.shortfalls = 0 andalso
-       count_cause benchLib.EngineLimitation benchListMap.shortfalls = 63 andalso
+       count_cause benchLib.EngineLimitation benchListMap.shortfalls = 0 andalso
        count_cause benchLib.TranslationGap benchListMap.shortfalls = 0 andalso
        count_cause benchLib.EngineLimitation
          benchPresburger.shortfalls = 0 andalso
@@ -2893,5 +3526,6 @@ val _ =
     ("level-2 generated parity report matches the committed file",
      fn () =>
        Option.isSome (OS.Process.getEnv "HOLBENCHFAMILY") orelse
+       OS.Process.getEnv "HOLBENCHNOBATTERY" = SOME "1" orelse
        benchLib.selftest_level () < 2 orelse
        read_all "../PARITY.md" = parityLib.render ())

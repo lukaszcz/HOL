@@ -117,6 +117,7 @@ val raw_goals =
          (p5 <=> (p1 <=>
            (p2 <=> (p3 <=> (p4 <=> p5))))))))``]
 
+val _ = benchLib.validate_raw_goals "classical" raw_goals
 val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list = []

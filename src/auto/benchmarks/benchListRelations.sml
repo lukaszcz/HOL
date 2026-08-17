@@ -15,12 +15,20 @@ fun entry id line method recipe goal : benchLib.corpus_goal =
 val goals =
   [entry "list_L7054_set_trans_list_step_subset_trancl" 7054
      "unfolding trans_list_step_def by auto"
-     (benchLib.Invoke
-       (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named
-              "parityTranslation$source_trans_list_step_subset_tc"
-              parityTranslationTheory.source_trans_list_step_subset_tc)]))
+     (benchLib.Then
+       (benchLib.Invoke
+         (benchLib.Simp,
+          [benchLib.RewriteAdd
+             (named "pred_set$SUBSET_DEF"
+                pred_setTheory.SUBSET_DEF)]),
+        benchLib.Invoke
+          (benchLib.Metis,
+           [benchLib.FactAdd
+              (named "parityTranslation$source_trans_list_step_member"
+                 parityTranslationTheory.source_trans_list_step_member),
+            benchLib.FactAdd
+              (named "parityTranslation$source_tc_two_step"
+                 parityTranslationTheory.source_tc_two_step)])))
      ``!pairs.
          LIST_TO_SET
            (parityTranslation$source_trans_list_step pairs) SUBSET
@@ -30,8 +38,11 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "list$LIST_REL_EL_EQN"
-              listTheory.LIST_REL_EL_EQN)]))
+           (named "list$LIST_REL_EVERY_ZIP"
+              listTheory.LIST_REL_EVERY_ZIP),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_every_zip_nth_conj"
+              parityTranslationTheory.source_every_zip_nth_conj)]))
      ``!relation xs ys.
          (LIST_REL relation xs ys <=>
           LENGTH xs = LENGTH ys /\
@@ -58,10 +69,19 @@ val goals =
    entry "list_L7995_equiv_listrel" 7995
      "by (simp add: equiv_def listrel_subset listrel_refl_on listrel_sym listrel_trans)"
      (benchLib.Invoke
-       (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_equiv_LIST_REL"
-              parityTranslationTheory.source_equiv_LIST_REL)]))
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_equiv_def"
+              parityTranslationTheory.source_equiv_def),
+         benchLib.FactAdd
+           (named "parityTranslation$source_LIST_REL_refl_on_preserve"
+              parityTranslationTheory.source_LIST_REL_refl_on_preserve),
+         benchLib.FactAdd
+           (named "parityTranslation$source_LIST_REL_symmetric"
+              parityTranslationTheory.source_LIST_REL_symmetric),
+         benchLib.FactAdd
+           (named "parityTranslation$source_LIST_REL_transitive"
+              parityTranslationTheory.source_LIST_REL_transitive)]))
      ``!domain relation.
          parityTranslation$source_equiv domain relation ==>
          parityTranslation$source_equiv
@@ -177,19 +197,30 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_wf_list_set"
-              parityTranslationTheory.source_wf_list_set)]))
+           (named "parityTranslation$source_finite_wf_acyclic"
+              parityTranslationTheory.source_finite_wf_acyclic)]))
      ``!pairs.
          relation$WF
            (set_relation$reln_to_rel (LIST_TO_SET pairs)) <=>
          set_relation$acyclic (LIST_TO_SET pairs)``,
    entry "list_L8999_set_Cons_transfer" 8999
      "unfolding rel_fun_def rel_set_def set_Cons_def by fastforce"
-     (benchLib.Invoke
-       (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_set_Cons_transfer"
-              parityTranslationTheory.source_set_Cons_transfer)]))
+     (benchLib.Then
+       (benchLib.Invoke
+         (benchLib.Simp,
+          [benchLib.DefinitionAdd
+             (named "transfer$FUN_REL_def"
+                transferTheory.FUN_REL_def),
+           benchLib.RewriteAdd
+             (named "list$SET_REL_THM" listTheory.SET_REL_THM),
+           benchLib.DefinitionAdd
+             (named "parityTranslation$source_set_Cons_def"
+                parityTranslationTheory.source_set_Cons_def)]),
+        benchLib.Invoke
+          (benchLib.Metis,
+           [benchLib.FactAdd
+              (named "list$LIST_REL_CONS1"
+                 listTheory.LIST_REL_CONS1)])))
      ``!relation.
          (list$SET_REL relation ===>
           list$SET_REL (LIST_REL relation) ===>

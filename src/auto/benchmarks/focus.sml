@@ -6,7 +6,12 @@ fun required_environment name =
     | NONE => raise Fail (name ^ " must be set")
 
 val family = required_environment "HOLBENCHFAMILY"
-val goal_id = required_environment "HOLBENCHGOAL"
+val goal_id =
+  case OS.Process.getEnv "HOLBENCHGOAL" of
+      SOME id => id
+    | NONE =>
+        if OS.Process.getEnv "HOLBENCHSHORTFALLSONLY" = SOME "1" then ""
+        else required_environment "HOLBENCHGOAL"
 val level = benchLib.selftest_level ()
 fun set_trace_from_environment environment trace =
   case OS.Process.getEnv environment of
@@ -52,6 +57,7 @@ fun override_tactic name =
     | "blast" => benchLib.Blast
     | "force" => benchLib.Force
     | "fastforce" => benchLib.Fastforce
+    | "metis" => benchLib.Metis
     | _ => raise Fail ("unknown HOLBENCHOVERRIDE: " ^ name)
 
 fun print_outcome outcome =

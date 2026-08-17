@@ -21,6 +21,7 @@ datatype tactic_id =
   | Clarify
   | Clarsimp
   | Aesop
+  | Metis
   | Linarith
   | IntArith
   | Cooper
@@ -45,6 +46,7 @@ datatype method_arg =
   | CongruenceAdd of named_thm
   | FactAdd of named_thm
   | DefinitionAdd of named_thm
+  | SimpFragmentAdd of string * simpLib.ssfrag
 
 datatype method_recipe =
     Invoke of tactic_id * method_arg list
@@ -106,6 +108,7 @@ fun tactic_name Simp = "simp"
   | tactic_name Clarify = "CLARIFY_TAC"
   | tactic_name Clarsimp = "CLARSIMP_TAC"
   | tactic_name Aesop = "AESOP_TAC"
+  | tactic_name Metis = "METIS_TAC"
   | tactic_name Linarith = "LINARITH_TAC"
   | tactic_name IntArith = "intLib.ARITH_TAC"
   | tactic_name Cooper = "intLib.COOPER_TAC"
@@ -137,6 +140,8 @@ fun method_arg_name (RewriteAdd theorem) = named_arg "rewrite" theorem
   | method_arg_name (CongruenceAdd theorem) = named_arg "cong" theorem
   | method_arg_name (FactAdd theorem) = named_arg "fact" theorem
   | method_arg_name (DefinitionAdd theorem) = named_arg "definition" theorem
+  | method_arg_name (SimpFragmentAdd (name, _)) =
+      "simp-fragment(" ^ name ^ ")"
 
 fun recipe_name recipe =
   let
@@ -184,6 +189,21 @@ fun outcome_solved (SOLVED _) = true
 fun outcome_text (SOLVED elapsed) = "solved:" ^ Time.toString elapsed
   | outcome_text TIMEOUT = "timeout"
   | outcome_text (FAILED message) = "failed:" ^ message
+
+fun diagnostic_output text =
+  case OS.Process.getEnv "HOLBENCHDIAGNOSTICS" of
+      NONE => ()
+    | SOME "1" => TextIO.print text
+    | SOME path =>
+        let
+          val stream = TextIO.openAppend path
+          val _ = TextIO.output (stream, text)
+        in
+          TextIO.closeOut stream
+        end
+
+fun diagnostics_enabled () =
+  Option.isSome (OS.Process.getEnv "HOLBENCHDIAGNOSTICS")
 
 fun claset_names name =
   [name,
@@ -261,6 +281,7 @@ fun named_theorem (RewriteAdd theorem) = SOME theorem
   | named_theorem (CongruenceAdd theorem) = SOME theorem
   | named_theorem (FactAdd theorem) = SOME theorem
   | named_theorem (DefinitionAdd theorem) = SOME theorem
+  | named_theorem (SimpFragmentAdd _) = NONE
   | named_theorem (RewriteDelete _) = NONE
 
 (* A direct analogue is excluded by theorem shape as well as by its
@@ -287,6 +308,49 @@ fun permitted_for goal (DefinitionAdd {theorem, ...}) =
         | SOME {theorem, ...} => not (theorem_is_goal goal theorem)
 
 fun permitted_arg ({goal, ...} : corpus_goal) = permitted_for goal
+
+fun recipe_arguments (Invoke (_, arguments)) = arguments
+  | recipe_arguments (Then (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (AllGoals (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+
+fun direct_recipe_arguments ({goal, recipe, ...} : corpus_goal) =
+  List.filter (not o permitted_for goal) (recipe_arguments recipe)
+
+fun direct_argument_name argument =
+  case named_theorem argument of
+      SOME {name, ...} => name
+    | NONE => method_arg_name argument
+
+fun raw_goal_diagnostic ({id, ...} : corpus_goal) arguments =
+  id ^ "=[" ^
+  String.concatWith ", " (map direct_argument_name arguments) ^ "]"
+
+fun validate_raw_goal (goal : corpus_goal) =
+  case direct_recipe_arguments goal of
+      [] => ()
+    | arguments =>
+        raise ERR "validate_raw_goal"
+          ("forbidden method arguments: " ^
+           raw_goal_diagnostic goal arguments)
+
+fun validate_raw_goals family goals =
+  let
+    val circular =
+      List.mapPartial
+        (fn goal =>
+          case direct_recipe_arguments goal of
+              [] => NONE
+            | arguments => SOME (raw_goal_diagnostic goal arguments))
+        goals
+  in
+    if null circular then ()
+    else
+      raise ERR "validate_raw_goals"
+        (family ^ ": forbidden method arguments: " ^
+         String.concatWith "; " circular)
+  end
 
 fun simpset_analogues goal =
   List.filter (theorem_is_goal goal)
@@ -323,26 +387,53 @@ fun clean_simpset goal =
     |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   end
 
-fun processed_clasimp goal body arguments =
-  clasimpLib.process_clasimp_args
-    (fn claset => fn simpset => fn _ => body claset simpset)
-    (clasetLib.the_claset ()) (clean_simpset goal) arguments
+fun preserve_target tactic (original as (_, target)) =
+  let
+    val (goals, validation) = tactic original
+    fun restore theorems =
+      let
+        val theorem = validation theorems
+        val normalization =
+          Conv.QCONV
+            (Conv.REDEPTH_CONV
+               (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) target
+        val normalized = boolSyntax.rhs (concl normalization)
+      in
+        if aconv (concl theorem) target then theorem
+        else if aconv (concl theorem) normalized then
+          EQ_MP (SYM normalization) theorem
+        else theorem
+      end
+  in
+    (goals, restore)
+  end
 
-(* Recipe pools are shared by many translated goals.  Remove an argument
-   when its instance is the goal itself, and derive exclusions for every
-   goal-shaped declaration already present in the ambient claset.  The
-   compiler and corpus validator below independently reject any direct
-   theorem that survives this preparation step. *)
+fun processed_clasimp goal body method_arguments arguments =
+  let
+    val simpset =
+      List.foldl
+        (fn (SimpFragmentAdd (_, fragment), current) =>
+              simpLib.force_add current fragment
+          | (_, current) => current)
+        (clean_simpset goal) method_arguments
+  in
+    clasimpLib.process_clasimp_args
+      (fn claset => fn processed_simpset => fn _ =>
+        preserve_target (body claset processed_simpset))
+      (clasetLib.the_claset ()) simpset arguments
+  end
+
+(* Preparation derives only the clean invocation-local context.  Raw recipe
+   validation happens before any ambient declarations are inspected, so a
+   forbidden argument is an error rather than something preparation hides. *)
 fun prepare_goal
       ({id, goal, source_method, recipe, excl, provenance,
         representative} : corpus_goal) : corpus_goal =
   let
-    fun prepare_recipe (Invoke (tactic_id, arguments)) =
-          Invoke (tactic_id, List.filter (permitted_for goal) arguments)
-      | prepare_recipe (Then (left, right)) =
-          Then (prepare_recipe left, prepare_recipe right)
-      | prepare_recipe (AllGoals (left, right)) =
-          AllGoals (prepare_recipe left, prepare_recipe right)
+    val _ = validate_raw_goal
+      {id = id, goal = goal, source_method = source_method,
+       recipe = recipe, excl = excl, provenance = provenance,
+       representative = representative}
     fun is_analogue ({thm, ...} : clasetLib.aesop_rule) =
       theorem_is_goal goal thm
     val ambient =
@@ -361,7 +452,7 @@ fun prepare_goal
     val exclusions = List.foldl add_exclusion excl candidates
   in
     {id = id, goal = goal, source_method = source_method,
-     recipe = prepare_recipe recipe, excl = exclusions,
+     recipe = recipe, excl = exclusions,
      provenance = provenance, representative = representative}
   end
 
@@ -385,6 +476,7 @@ fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
   | class_args (FactAdd _) = []
   | class_args (DefinitionAdd {theorem, ...}) =
       [clasetLib.Simp theorem]
+  | class_args (SimpFragmentAdd _) = []
 
 fun all_class_args args = List.concat (map class_args args)
 
@@ -441,6 +533,13 @@ fun simp_arg (RewriteAdd {theorem, ...}) = SOME theorem
   | simp_arg (DefinitionAdd {theorem, ...}) = SOME theorem
   | simp_arg _ = NONE
 
+fun add_simp_fragments args simpset =
+  List.foldl
+    (fn (SimpFragmentAdd (_, fragment), current) =>
+          simpLib.force_add current fragment
+      | (_, current) => current)
+    simpset args
+
 fun fact_arg (FactAdd {theorem, ...}) = SOME theorem
   | fact_arg _ = NONE
 
@@ -461,6 +560,93 @@ fun with_facts args tactic =
        Tactical.THEN (insert_facts facts, tactic))
   end
 
+(* Restricted higher-order pattern instantiation.  If the target is
+   [predicate argument], try a universally quantified assumption at the set
+   (predicate) [predicate].  The quantified variable is instantiated only
+   by a well-typed term already present at the target head; SPEC performs the
+   kernel type/scope checks and no non-pattern term is guessed. *)
+fun predicate_abstraction_core
+      (goal as (_, target)) =
+  let
+    fun trace text =
+      if OS.Process.getEnv "HOLBENCHPATTERNTRACE" = SOME "1" then
+        TextIO.print (text ^ "\n")
+      else
+        ()
+    val _ = trace ("pattern target: " ^ Parse.term_to_string target)
+    val (predicate, _) = dest_comb target
+    val (_, predicate_range) = dom_rng (type_of predicate)
+    val _ =
+      if predicate_range = Type.bool then ()
+      else
+        raise ERR "predicate_abstraction_tac" "target head is not a predicate"
+    fun use assumption =
+      let
+        val _ = boolSyntax.dest_forall (concl assumption)
+        val instantiated =
+          Rewrite.REWRITE_RULE [pred_setTheory.SPECIFICATION]
+            (SPEC predicate assumption)
+        val (_, result) = boolSyntax.strip_imp_only (concl instantiated)
+        val _ =
+          trace ("pattern candidate: " ^
+            Parse.term_to_string result)
+      in
+        if aconv result target then
+          Tactical.THEN
+            (Tactic.MATCH_MP_TAC instantiated,
+             Tactical.THEN
+               (Tactic.BETA_TAC,
+                Tactical.THEN
+                  (Tactical.REPEAT Tactic.CONJ_TAC,
+                   Tactical.FIRST_ASSUM Tactic.MATCH_ACCEPT_TAC)))
+        else
+          Tactical.NO_TAC
+      end
+  in
+    Tactical.FIRST_ASSUM use goal
+  end
+  handle HOL_ERR _ => Tactical.NO_TAC goal
+
+fun predicate_abstraction_tac goal =
+  Tactical.THEN
+    (Tactical.REPEAT
+       (Tactical.FIRST
+          [Tactic.GEN_TAC,
+           Thm_cont.DISCH_THEN Tactic.STRIP_ASSUME_TAC]),
+     predicate_abstraction_core) goal
+
+(* Construct the least-fixed-point witness for any set-valued equation.
+   The tactic only recognizes the logical pattern [?x. x = body x]; all
+   reasoning about [body] is left as the ordinary monotonicity subgoal. *)
+fun lfp_witness_tac (goal as (_, target)) =
+  let
+    val (fixed, equation) = boolSyntax.dest_exists target
+    val (left, right) = dest_eq equation
+    val _ =
+      if aconv left fixed then ()
+      else raise ERR "lfp_witness_tac" "left side is not the witness"
+    val operator = mk_abs (fixed, right)
+    val fixedpoint =
+      SPEC operator fixedPointTheory.lfp_fixedpoint
+    val (monotone, fixedpoint_conclusion) =
+      boolSyntax.dest_imp (concl fixedpoint)
+    val (fixedpoint_equation, _) =
+      boolSyntax.dest_conj fixedpoint_conclusion
+    val (_, witness) = dest_eq fixedpoint_equation
+    val assumed = ASSUME monotone
+    val equation = SYM (Drule.cj 1 (MP fixedpoint assumed))
+    val rule =
+      Conv.CONV_RULE (Conv.DEPTH_CONV Thm.BETA_CONV)
+        (DISCH monotone equation)
+  in
+    Tactical.THEN
+      (Tactic.EXISTS_TAC witness,
+       Tactical.THEN
+         (Tactical.TRY Tactic.BETA_TAC,
+          Tactic.MATCH_MP_TAC rule)) goal
+  end
+  handle HOL_ERR _ => Tactical.NO_TAC goal
+
 fun recipe_args entry args =
   if List.all (permitted_arg entry) args then args
   else
@@ -471,18 +657,20 @@ fun tactic_for goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
+        val simplify =
+          simpLib.FULL_SIMP_TAC
+            (add_simp_fragments args (clean_simpset goal))
+            (simps @ simp_controls exclusions)
       in
         Tactical.THEN
-          (insert_facts facts,
-           simpLib.FULL_SIMP_TAC
-             (clean_simpset goal)
-             (simps @ simp_controls exclusions))
+          (insert_facts facts, simplify)
       end
   | tactic_for goal Auto args exclusions =
       let
         val automatic =
           processed_clasimp goal
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
+            args
             (all_class_args args @ simp_controls exclusions)
         val prepare =
           Tactical.THEN
@@ -493,17 +681,22 @@ fun tactic_for goal Simp args exclusions =
                 simp_controls exclusions))
       in
         with_facts args
-          (if null args then
-             Tactical.THEN
-               (Tactical.TRY hurdUtils.SET_EQ_TAC, automatic)
-           else
-             Tactical.THEN
-               (prepare, automatic))
+          (Tactical.ORELSE
+            (predicate_abstraction_tac,
+             if null args then
+               Tactical.THEN
+                 (Tactical.TRY hurdUtils.SET_EQ_TAC, automatic)
+             else
+               Tactical.THEN
+                 (prepare,
+                  Tactical.ORELSE
+                    (predicate_abstraction_tac, automatic))))
       end
   | tactic_for goal Blast args exclusions =
       let
         val simps = List.mapPartial simp_arg args
-        val benchmark_simpset = clean_simpset goal
+        val benchmark_simpset =
+          add_simp_fragments args (clean_simpset goal)
         val supplied_rules = List.mapPartial supplied_rule args
         val accept_supplied =
           Tactical.FIRST
@@ -526,35 +719,58 @@ fun tactic_for goal Simp args exclusions =
             Tactical.THEN
               (Tactical.TRY hurdUtils.SET_EQ_TAC,
                simplify)
+        fun trace_residual (goal as (_, target)) =
+          (if OS.Process.getEnv "HOLBENCHBLASTRESIDUAL" = SOME "1" then
+             TextIO.print
+               ("blast residual: " ^ Parse.term_to_string target ^ "\n")
+           else
+             ();
+           Tactical.ALL_TAC goal)
       in
         with_facts args
           (Tactical.ORELSE
             (direct_supplied,
              Tactical.THEN
-               (Tactical.TRY
-                  (Tactic.MATCH_MP_TAC boolTheory.SELECT_UNIQUE),
+               (Tactical.TRY lfp_witness_tac,
                 Tactical.THEN
-                  (preprocess,
+                  (Tactical.TRY
+                     (Tactic.MATCH_MP_TAC boolTheory.SELECT_UNIQUE),
                    Tactical.THEN
-                     (Tactical.TRY Tactic.EQ_TAC,
+                     (preprocess,
                       Tactical.THEN
-                       (Tactical.TRY Tactic.BETA_TAC,
-                        Tactical.ORELSE
-                          (accept_supplied,
-                           tableauLib.BLAST_TAC
-                             (all_blast_args args @
-                              blast_translation_args @
-                              controls exclusions))))))))
+                        (trace_residual,
+                         Tactical.THEN
+                           (Tactical.TRY Tactic.EQ_TAC,
+                            Tactical.THEN
+                             (Tactical.TRY Tactic.BETA_TAC,
+                              Tactical.ORELSE
+                                (accept_supplied,
+                                 tableauLib.BLAST_TAC
+                                   (all_blast_args args @
+                                    blast_translation_args @
+                                    controls exclusions))))))))))
       end
   | tactic_for goal Force args exclusions =
-      with_facts args
-        (processed_clasimp goal clasimpLib.CS_FORCE_TAC
-          (all_class_args args @ simp_controls exclusions))
+      let
+        val prepare =
+          Tactical.THEN
+            (Tactical.TRY hurdUtils.SET_EQ_TAC,
+             simpLib.FULL_SIMP_TAC
+               (clean_simpset goal)
+               (List.mapPartial simp_arg args @
+                simp_controls exclusions))
+      in
+        with_facts args
+          (Tactical.THEN
+            (prepare,
+             processed_clasimp goal clasimpLib.CS_FORCE_TAC args
+               (all_class_args args @ simp_controls exclusions)))
+      end
   | tactic_for goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
           (Tactical.TRY hurdUtils.SET_EQ_TAC,
-           processed_clasimp goal clasimpLib.CS_FASTFORCE_TAC
+           processed_clasimp goal clasimpLib.CS_FASTFORCE_TAC args
              (all_class_args args @ simp_controls exclusions)))
   | tactic_for _ Safe args exclusions =
       with_facts args
@@ -566,13 +782,16 @@ fun tactic_for goal Simp args exclusions =
           (all_classical_args args @ classical_controls exclusions))
   | tactic_for goal Clarsimp args exclusions =
       with_facts args
-        (processed_clasimp goal clasimpLib.CS_CLARSIMP_TAC
+        (processed_clasimp goal clasimpLib.CS_CLARSIMP_TAC args
           (all_class_args args @ simp_controls exclusions))
   | tactic_for goal Aesop args exclusions =
       with_facts args
         (processed_clasimp goal
           (aesopLib.CS_AESOP_TAC aesopLib.default_config)
+          args
           (all_class_args args @ simp_controls exclusions))
+  | tactic_for _ Metis args _ =
+      metisLib.METIS_TAC (List.mapPartial fact_arg args)
   | tactic_for _ Linarith args _ =
       with_facts args
         (linarithLib.LINARITH_TAC
@@ -703,7 +922,7 @@ fun run_goal budget recipe (entry : corpus_goal) =
             " |- ") ^
       Parse.term_to_string conclusion
     fun run () =
-      case Tactical.VALID (compile_recipe entry recipe)
+      case Tactical.VALID (preserve_target (compile_recipe entry recipe))
              ([], #goal entry) of
           ([], validation) => (ignore (validation []); true)
         | (goals, _) =>
@@ -747,15 +966,6 @@ fun duplicate_goal_pairs ([] : corpus_goal list) = []
           (fn (other : corpus_goal) =>
             Term.aconv (#goal goal) (#goal other)) rest) @
       duplicate_goal_pairs rest
-
-fun recipe_arguments (Invoke (_, arguments)) = arguments
-  | recipe_arguments (Then (left, right)) =
-      recipe_arguments left @ recipe_arguments right
-  | recipe_arguments (AllGoals (left, right)) =
-      recipe_arguments left @ recipe_arguments right
-
-fun direct_recipe_arguments ({goal, recipe, ...} : corpus_goal) =
-  List.filter (not o permitted_for goal) (recipe_arguments recipe)
 
 fun is_translation ({cause = TranslationGap, ...} : shortfall) = true
   | is_translation _ = false
@@ -857,6 +1067,11 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
       List.filter
         (fn (goal : corpus_goal) =>
           selected level goal andalso
+          (OS.Process.getEnv "HOLBENCHSHORTFALLSONLY" <> SOME "1" orelse
+           List.exists
+             (fn ({id, cause, ...} : shortfall) =>
+               id = #id goal andalso cause <> TranslationGap)
+             shortfalls) andalso
           (case (OS.Process.getEnv "HOLBENCHFAMILY",
                  OS.Process.getEnv "HOLBENCHGOAL") of
                (SOME selected_family, SOME id) =>
@@ -873,6 +1088,11 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
     val _ = validate_corpus
       {family = family, goals = selected_goals,
        shortfalls = selected_shortfalls}
+    val _ =
+      if diagnostics_enabled () then
+        diagnostic_output ("## " ^ family ^ "\n\n")
+      else
+        ()
     val _ =
       List.app
         (fn goal =>
@@ -892,7 +1112,57 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
              TextIO.flushOut TextIO.stdOut)
           else
             ()
+        val started = Time.now ()
         val result = run_goal budget (#recipe goal) goal
+        val elapsed = Time.- (Time.now (), started)
+        val exclusion_names = map #name (#excl goal)
+        fun is_excluded name =
+          List.exists (equal name) exclusion_names
+        val excluded_claset =
+          map #name
+            (List.filter
+              (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
+                is_excluded name andalso
+                theorem_is_goal (#goal goal) thm)
+              (clasetLib.all_rules (clasetLib.the_claset ())))
+        val excluded_simpset =
+          map #name
+            (List.filter (is_excluded o #name)
+              (List.concat
+                (map named_rewrite (simpset_analogues (#goal goal)))))
+        val classification =
+          case List.find
+                 (fn ({id, ...} : shortfall) => id = #id goal)
+                 selected_shortfalls of
+              NONE => "None"
+            | SOME {note, ...} =>
+                (case String.tokens (equal #":") note of
+                     [] => "Unclassified"
+                   | first :: _ => first)
+        val search_statistics =
+          if recipe_has_tactic Linarith (#recipe goal) then
+            linarith_stats_text ()
+          else
+            "not exposed by assigned backend"
+        val _ =
+          if diagnostics_enabled () then
+            diagnostic_output
+              (String.concat
+                ["### ", #id goal, "\n\n",
+                 "- Source method: `", #source_method goal, "`\n",
+                 "- Assigned recipe: `", recipe_name (#recipe goal),
+                 "`\n",
+                 "- Excluded ambient simp analogues: ",
+                 "[", String.concatWith ", " excluded_simpset, "]\n",
+                 "- Excluded ambient claset analogues: ",
+                 "[", String.concatWith ", " excluded_claset, "]\n",
+                 "- Outcome: `", outcome_text result, "`\n",
+                 "- Elapsed: `", Time.toString elapsed, "`\n",
+                 "- Search statistics: ", search_statistics, "\n",
+                 "- Working classification: `", classification,
+                 "`\n\n"])
+          else
+            ()
         val _ =
           if OS.Process.getEnv "HOLBENCHPROGRESS" = SOME "1" then
             TextIO.print

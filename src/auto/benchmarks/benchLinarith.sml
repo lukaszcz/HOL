@@ -72,11 +72,13 @@ val source_index =
 fun representative number =
   List.exists (equal number) [1, 3, 5, 19]
 
-val goals =
-  map benchLib.prepare_goal
-    (map
-      (fn (number, line) => entry number line (representative number))
-      source_index)
+val raw_goals =
+  map
+    (fn (number, line) => entry number line (representative number))
+    source_index
+
+val _ = benchLib.validate_raw_goals "linarith" raw_goals
+val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list = []
 

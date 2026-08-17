@@ -1,9 +1,8 @@
 structure benchListMap =
 struct
 
-val goals =
-  map benchLib.prepare_goal
-    (benchListCorpus.goals @ benchListSorted.goals @
+val raw_goals =
+  benchListCorpus.goals @ benchListSorted.goals @
      benchListNumeric.goals @
      benchListAdjacent.goals @
      benchListRemoval.goals @
@@ -21,7 +20,10 @@ val goals =
      benchMapCorpus.goals @
      benchOptionCorpus.goals @
      benchStringCorpus.goals @
-     benchProductCorpus.goals)
+     benchProductCorpus.goals
+
+val _ = benchLib.validate_raw_goals "listmap" raw_goals
+val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list =
   benchLibraryShortfalls.translation @ benchLibraryShortfalls.execution

@@ -943,6 +943,27 @@ val _ =
            ([], validation) => (ignore (validation []); true)
          | _ => false)
 
+val extensional_search_goals : Abbrev.goal list =
+  [([],
+    ``(\value : 'a. left value /\ right value) =
+      (\value. right value /\ left value)``),
+   ([],
+    ``(\first : 'a. \second : 'b.
+          relation first second /\ guard first second) =
+      (\first. \second.
+          guard first second /\ relation first second)``)]
+
+val _ =
+  check
+    ("AUTO and FORCE normalize nested function equality once",
+     fn () =>
+       List.all
+         (valid_closes (clasimpLib.AUTO_TAC []))
+         extensional_search_goals andalso
+       List.all
+         (valid_closes (clasimpLib.FORCE_TAC []))
+         extensional_search_goals)
+
 val context_force_tactics =
   [("CS_FASTFORCE_TAC", clasimpLib.CS_FASTFORCE_TAC),
    ("CS_SLOWSIMP_TAC", clasimpLib.CS_SLOWSIMP_TAC),
@@ -1312,6 +1333,41 @@ val _ =
             (clasetLib.the_claset ())
             (clasimpLib.clasimp_ss ()))
          force_negative_goal)
+
+val force_witness_goals : (string * tactic * Abbrev.goal) list =
+  [("complement",
+    clasimpLib.FORCE_TAC [],
+    ([``value = COMPL (candidate : 'a set)``],
+     ``?witness : 'a set. value = COMPL witness``)),
+   ("option case",
+    clasimpLib.FORCE_TAC [],
+    ([],
+     ``(if flag then NONE else SOME (value : 'a)) = NONE \/
+       ?witness.
+         (if flag then NONE else SOME value) = SOME witness``))]
+
+val _ =
+  List.app
+    (fn (name, tactic, goal) =>
+      check
+        ("FORCE synthesizes a " ^ name ^ " witness",
+         fn () => valid_closes tactic goal))
+    force_witness_goals
+
+val staged_branch_goal : Abbrev.goal =
+  ([``branch_a1 \/ branch_b1``,
+    ``branch_a2 \/ branch_b2``,
+    ``branch_a3 \/ branch_b3``,
+    ``branch_a4 \/ branch_b4``,
+    ``decision ==> result``, ``~decision ==> result``],
+   ``result:bool``)
+
+val _ =
+  check
+    ("staged AUTO and FORCE bypass irrelevant satisfiable branches",
+     fn () =>
+       valid_closes (clasimpLib.AUTO_TAC []) staged_branch_goal andalso
+       valid_closes (clasimpLib.FORCE_TAC []) staged_branch_goal)
 
 val _ =
   check

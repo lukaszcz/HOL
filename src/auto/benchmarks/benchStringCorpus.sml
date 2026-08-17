@@ -3,183 +3,146 @@ struct
 
 open HolKernel autoSeedTheory
 
-val commit = "f7e02b7e"
-
-fun named name theorem : benchLib.named_thm =
-  {name = name, theorem = theorem}
-
-fun method_args method =
-  if String.isSubstring "UNIV_char_of_nat" method andalso
-     String.isSubstring "card_image" method then
-    [benchLib.RewriteAdd
-       (named "string$UNIV_IMAGE_CHR_count_256"
-          stringTheory.UNIV_IMAGE_CHR_count_256),
-     benchLib.RewriteAdd
-       (named "parityTranslation$source_card_image_chr_count"
-          parityTranslationTheory.source_card_image_chr_count)]
-  else
-    []
-
-fun entry id line method mapped representative excl goal : benchLib.corpus_goal =
-  {id = id, goal = goal, source_method = method,
-   recipe = benchLib.Invoke (mapped, method_args method),
-   excl = List.filter (fn {theorem, ...} =>
-     benchLib.theorem_is_goal goal theorem) excl, provenance =
-     {file = "src/HOL/String.thy", line = line, commit = commit},
-   representative = representative}
-
-fun translated id line method recipe goal : benchLib.corpus_goal =
-  {id = id, goal = goal, source_method = method, recipe = recipe,
-   excl = [], provenance =
-     {file = "src/HOL/String.thy", line = line, commit = commit},
-   representative = false}
-
-fun simp_with arguments =
-  benchLib.Invoke (benchLib.Simp, arguments)
-
-val char_definitions =
-  [benchLib.DefinitionAdd
-     (named "parityTranslation$source_of_char_def"
-       parityTranslationTheory.source_of_char_def),
-   benchLib.DefinitionAdd
-     (named "parityTranslation$source_char_of_def"
-       parityTranslationTheory.source_char_of_def),
-   benchLib.DefinitionAdd
-     (named "parityTranslation$source_take_bit_def"
-       parityTranslationTheory.source_take_bit_def)]
-
-val translated_goals =
-  [translated "string_L34_of_char_Char" 34
-     "by (simp add: of_char_def)"
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_of_char_def"
-            parityTranslationTheory.source_of_char_def),
-        benchLib.DefinitionAdd
-          (named "parityTranslation$source_Char_def"
-            parityTranslationTheory.source_Char_def),
-        benchLib.RewriteAdd
-          (named "parityTranslation$source_horner8_bound"
-            parityTranslationTheory.source_horner8_bound),
-        benchLib.RewriteAdd
-          (named "string$ORD_CHR_RWT"
-            stringTheory.ORD_CHR_RWT)])
-     (Thm.concl parityTranslationTheory.source_of_char_Char),
-   translated "string_L60_char_of_take_bit_eq" 60
-     "by (simp add: char_of_def bit_take_bit_iff)"
-     (simp_with
-       (char_definitions @
-        [benchLib.RewriteAdd
-           (named "arithmetic$MOD_MULT_MOD"
-             arithmeticTheory.MOD_MULT_MOD),
-         benchLib.RewriteAdd
-           (named "parityTranslation$source_take_bit_mod_256"
-             parityTranslationTheory.source_take_bit_mod_256)]))
-     (Thm.concl parityTranslationTheory.source_char_of_take_bit_eq),
-   translated "string_L68_char_of_comp_of_char" 68
-     "by (simp add: fun_eq_iff)"
-     (simp_with
-       [benchLib.RewriteAdd
-          (named "parityTranslation$source_char_roundtrip"
-            parityTranslationTheory.source_char_roundtrip),
-        benchLib.DefinitionAdd
-          (named "bool$FUN_EQ_THM" boolTheory.FUN_EQ_THM)])
-     (Thm.concl parityTranslationTheory.source_char_of_comp_of_char),
-   translated "string_L83_of_char_eqI" 83
-     "using that inj_of_char by (simp add: inj_eq)"
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_of_char_def"
-            parityTranslationTheory.source_of_char_def),
-        benchLib.RewriteAdd
-          (named "string$ORD_11" stringTheory.ORD_11)])
-     (Thm.concl parityTranslationTheory.source_of_char_eqI),
-   translated "string_L87_of_char_eq_iff" 87
-     "by (auto intro: of_char_eqI)"
-     (benchLib.Invoke
-       (benchLib.Auto,
-        [benchLib.IntroAdd
-           (benchLib.SafeRule,
-            named "parityTranslation$source_of_char_eqI"
-              parityTranslationTheory.source_of_char_eqI)]))
-     (Thm.concl parityTranslationTheory.source_of_char_eq_iff),
-   translated "string_L131_char_of_eq_iff" 131
-     "by (auto intro: of_char_eqI simp add: take_bit_eq_mod)"
-     (benchLib.Invoke
-       (benchLib.Auto,
-        char_definitions @
-        [benchLib.IntroAdd
-           (benchLib.SafeRule,
-            named "parityTranslation$source_of_char_eqI"
-              parityTranslationTheory.source_of_char_eqI),
-         benchLib.RewriteAdd
-           (named "string$CHR_ORD" stringTheory.CHR_ORD),
-         benchLib.RewriteAdd
-           (named "string$ORD_CHR_RWT"
-             stringTheory.ORD_CHR_RWT),
-         benchLib.RewriteAdd
-           (named "arithmetic$MOD_LESS"
-             arithmeticTheory.MOD_LESS)]))
-     (Thm.concl parityTranslationTheory.source_char_of_eq_iff),
-   translated "string_L135_char_of_nat" 135
-     ("by (simp add: char_of_def String.char_of_def " ^
-      "drop_bit_of_nat bit_simps possible_bit_def)")
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_of_nat_def"
-            parityTranslationTheory.source_of_nat_def)])
-     (Thm.concl parityTranslationTheory.source_char_of_nat),
-   translated "string_L344_char_of_integer_code" 344
-     ("by (simp add: bit_cut_integer_def char_of_integer_def " ^
-      "char_of_def div_mult2_numeral_eq bit_iff_odd_drop_bit " ^
-      "drop_bit_eq_div)")
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_bit_cut_integer_def"
-            parityTranslationTheory.source_bit_cut_integer_def),
-        benchLib.RewriteAdd
-          (named "bool$LET_THM" boolTheory.LET_THM),
-        benchLib.RewriteAdd
-          (named "parityTranslation$source_char_of_integer_eq_iff"
-            parityTranslationTheory.source_char_of_integer_eq_iff),
-        benchLib.RewriteAdd
-          (named "parityTranslation$source_num_mod_256_horner"
-            parityTranslationTheory.source_num_mod_256_horner)])
-     (Thm.concl parityTranslationTheory.source_char_of_integer_code),
-   translated "string_L357_integer_of_char_code" 357
-     "by (simp add: integer_of_char_def of_char_def)"
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_integer_of_char_def"
-            parityTranslationTheory.source_integer_of_char_def),
-        benchLib.DefinitionAdd
-          (named "parityTranslation$source_Char_def"
-            parityTranslationTheory.source_Char_def),
-        benchLib.RewriteAdd
-          (named "parityTranslation$source_horner8_bound"
-            parityTranslationTheory.source_horner8_bound),
-        benchLib.RewriteAdd
-          (named "string$ORD_CHR_RWT"
-            stringTheory.ORD_CHR_RWT)])
-     (Thm.concl parityTranslationTheory.source_integer_of_char_code),
-   translated "string_L728_anon_L728" 728 "by simp"
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_Literal_prime_def"
-            parityTranslationTheory.source_Literal_prime_def)])
-     (Thm.concl
-       parityTranslationTheory.source_Literal_code_computation_unfold),
-   translated "string_L919_abort_cong" 919 "by simp"
-     (simp_with
-       [benchLib.DefinitionAdd
-          (named "parityTranslation$source_abort_def"
-            parityTranslationTheory.source_abort_def)])
-     (Thm.concl parityTranslationTheory.source_abort_cong)]
-
-val goals =
-  translated_goals @ [
-   entry "string_L178_card_UNIV_char" 178 "by (auto simp add: UNIV_char_of_nat card_image)" benchLib.Auto true []
-     ``((CARD (UNIV : char set)) = 256)``
-  ]
+val goals : benchLib.corpus_goal list =
+[{id = "string_L34_of_char_Char",
+ goal = ``∀b0 b1 b2 b3 b4 b5 b6 b7.
+  source_of_char (source_Char b0 b1 b2 b3 b4 b5 b6 b7) =
+  source_horner8 b0 b1 b2 b3 b4 b5 b6 b7``,
+ source_method = "by (simp add: of_char_def)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_of_char_def" "parityTranslation" "source_of_char_def"),
+benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_Char_def" "parityTranslation" "source_Char_def"),
+benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_horner8_bound" "parityTranslation" "source_horner8_bound"),
+benchLib.RewriteAdd (benchExplicit.named_at "string$ORD_CHR_RWT" "string" "ORD_CHR_RWT")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 34, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L60_char_of_take_bit_eq",
+ goal = ``∀width number.
+  8 ≤ width ⇒
+  source_char_of (source_take_bit width number) = source_char_of number``,
+ source_method = "by (simp add: char_of_def bit_take_bit_iff)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_of_char_def" "parityTranslation" "source_of_char_def"),
+benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_char_of_def" "parityTranslation" "source_char_of_def"),
+benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_take_bit_def" "parityTranslation" "source_take_bit_def"),
+benchLib.RewriteAdd (benchExplicit.named_at "arithmetic$MOD_MULT_MOD" "arithmetic" "MOD_MULT_MOD"),
+benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_take_bit_mod_256" "parityTranslation" "source_take_bit_mod_256")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 60, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L68_char_of_comp_of_char",
+ goal = ``source_char_of ∘ source_of_char = I``,
+ source_method = "by (simp add: fun_eq_iff)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_char_roundtrip" "parityTranslation" "source_char_roundtrip"),
+benchLib.DefinitionAdd (benchExplicit.named_at "bool$FUN_EQ_THM" "bool" "FUN_EQ_THM")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 68, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L83_of_char_eqI",
+ goal = ``∀left right. source_of_char left = source_of_char right ⇒ left = right``,
+ source_method = "using that inj_of_char by (simp add: inj_eq)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_of_char_def" "parityTranslation" "source_of_char_def"),
+benchLib.RewriteAdd (benchExplicit.named_at "string$ORD_11" "stringAutoSeed" "ORD_11_AUTO")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 83, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L87_of_char_eq_iff",
+ goal = ``∀left right. source_of_char left = source_of_char right ⇔ left = right``,
+ source_method = "by (auto intro: of_char_eqI)",
+ recipe = benchLib.Invoke (benchLib.Auto,
+[benchLib.IntroAdd (benchLib.SafeRule, benchExplicit.named_at "parityTranslation$source_of_char_eqI" "parityTranslation" "source_of_char_eqI")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 87, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L131_char_of_eq_iff",
+ goal = ``∀number character.
+  source_char_of number = character ⇔
+  source_take_bit 8 number = source_of_char character``,
+ source_method = "by (auto intro: of_char_eqI simp add: take_bit_eq_mod)",
+ recipe = benchLib.Invoke (benchLib.Auto,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_of_char_def" "parityTranslation" "source_of_char_def"),
+benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_char_of_def" "parityTranslation" "source_char_of_def"),
+benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_take_bit_def" "parityTranslation" "source_take_bit_def"),
+benchLib.IntroAdd (benchLib.SafeRule, benchExplicit.named_at "parityTranslation$source_of_char_eqI" "parityTranslation" "source_of_char_eqI"),
+benchLib.RewriteAdd (benchExplicit.named_at "string$CHR_ORD" "string" "CHR_ORD"),
+benchLib.RewriteAdd (benchExplicit.named_at "string$ORD_CHR_RWT" "string" "ORD_CHR_RWT"),
+benchLib.RewriteAdd (benchExplicit.named_at "arithmetic$MOD_LESS" "arithmetic" "MOD_LESS")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 131, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L135_char_of_nat",
+ goal = ``∀number. source_char_of (source_of_nat number) = source_char_of number``,
+ source_method = "by (simp add: char_of_def String.char_of_def drop_bit_of_nat bit_simps possible_bit_def)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_of_nat_def" "parityTranslation" "source_of_nat_def")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 135, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L344_char_of_integer_code",
+ goal = ``∀number.
+  source_char_of_integer number =
+  (let
+     (q0,b0) = source_bit_cut_integer number;
+     (q1,b1) = source_bit_cut_integer q0;
+     (q2,b2) = source_bit_cut_integer q1;
+     (q3,b3) = source_bit_cut_integer q2;
+     (q4,b4) = source_bit_cut_integer q3;
+     (q5,b5) = source_bit_cut_integer q4;
+     (q6,b6) = source_bit_cut_integer q5;
+     (q7,b7) = source_bit_cut_integer q6
+   in
+     source_Char b0 b1 b2 b3 b4 b5 b6 b7)``,
+ source_method = "by (simp add: bit_cut_integer_def char_of_integer_def char_of_def div_mult2_numeral_eq bit_iff_odd_drop_bit drop_bit_eq_div)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_bit_cut_integer_def" "parityTranslation" "source_bit_cut_integer_def"),
+benchLib.RewriteAdd (benchExplicit.named_at "bool$LET_THM" "bool" "LET_THM"),
+benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_char_of_integer_eq_iff" "parityTranslation" "source_char_of_integer_eq_iff"),
+benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_num_mod_256_horner" "parityTranslation" "source_num_mod_256_horner")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 344, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L357_integer_of_char_code",
+ goal = ``∀b0 b1 b2 b3 b4 b5 b6 b7.
+  source_integer_of_char (source_Char b0 b1 b2 b3 b4 b5 b6 b7) =
+  &source_horner8 b0 b1 b2 b3 b4 b5 b6 b7``,
+ source_method = "by (simp add: integer_of_char_def of_char_def)",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_integer_of_char_def" "parityTranslation" "source_integer_of_char_def"),
+benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_Char_def" "parityTranslation" "source_Char_def"),
+benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_horner8_bound" "parityTranslation" "source_horner8_bound"),
+benchLib.RewriteAdd (benchExplicit.named_at "string$ORD_CHR_RWT" "string" "ORD_CHR_RWT")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 357, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L728_anon_L728",
+ goal = ``source_Literal = source_Literal_prime``,
+ source_method = "by simp",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_Literal_prime_def" "parityTranslation" "source_Literal_prime_def")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 728, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L919_abort_cong",
+ goal = ``∀message message' function.
+  message = message' ⇒
+  source_abort message function = source_abort message' function``,
+ source_method = "by simp",
+ recipe = benchLib.Invoke (benchLib.Simp,
+[benchLib.DefinitionAdd (benchExplicit.named_at "parityTranslation$source_abort_def" "parityTranslation" "source_abort_def")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 919, commit = "f7e02b7e"},
+ representative = false},
+{id = "string_L178_card_UNIV_char",
+ goal = ``CARD 𝕌(:char) = 256``,
+ source_method = "by (auto simp add: UNIV_char_of_nat card_image)",
+ recipe = benchLib.Invoke (benchLib.Auto,
+[benchLib.RewriteAdd (benchExplicit.named_at "string$UNIV_IMAGE_CHR_count_256" "string" "UNIV_IMAGE_CHR_count_256"),
+benchLib.RewriteAdd (benchExplicit.named_at "parityTranslation$source_card_image_chr_count" "parityTranslation" "source_card_image_chr_count")]),
+ excl = [],
+ provenance = {file = "src/HOL/String.thy", line = 178, commit = "f7e02b7e"},
+ representative = true}]
 
 end

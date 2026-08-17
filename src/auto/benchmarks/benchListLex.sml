@@ -32,9 +32,11 @@ val goals =
      "by (force simp add: lex_def lexn_conv)"
      (benchLib.Invoke
        (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_lex_conv"
-              parityTranslationTheory.source_lex_conv)]))
+        [lex_definition,
+         benchLib.RewriteAdd
+           (named
+              "parityTranslation$source_llex_equal_length_prefix_conj"
+              parityTranslationTheory.source_llex_equal_length_prefix_conj)]))
      ``!relation xs ys.
          (parityTranslation$source_lex relation xs ys <=>
           LENGTH xs = LENGTH ys /\
@@ -44,11 +46,14 @@ val goals =
             relation left right)``,
    entry "list_L7256_lenlex_conv" 7256
      "by (auto simp add: lenlex_def)"
-     (benchLib.Invoke
-       (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_lenlex_conv"
-              parityTranslationTheory.source_lenlex_conv)]))
+     (benchLib.Then
+       (benchLib.Invoke
+         (benchLib.Simp,
+          [lex_definition, lenlex_definition,
+           benchLib.RewriteAdd
+             (named "parityTranslation$source_shortlex_length_llex"
+                parityTranslationTheory.source_shortlex_length_llex)]),
+        benchLib.Invoke (benchLib.Metis, [])))
      ``!relation xs ys.
          (parityTranslation$source_lenlex relation xs ys <=>
           LENGTH xs < LENGTH ys \/
@@ -128,9 +133,10 @@ val goals =
      "by (simp add: irrefl_def lexord_same_pref_iff)"
      (benchLib.Invoke
        (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_lexord_append_prefix_iff"
-              parityTranslationTheory.source_lexord_append_prefix_iff)]))
+        [lexord_definition,
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_llex_append_prefix_iff"
+              parityTranslationTheory.source_llex_append_prefix_iff)]))
      ``!relation.
          relation$irreflexive relation ==>
          !prefix xs ys.
@@ -174,11 +180,16 @@ val goals =
          parityTranslation$source_lexord relation xs ys``,
    entry "list_L7508_lexord_trans" 7508
      "by (auto simp: trans_def intro: lexord_partial_trans)"
-     (benchLib.Invoke
-       (benchLib.Auto,
-        [benchLib.FactAdd
-           (named "parityTranslation$source_lexord_partial_trans"
-              parityTranslationTheory.source_lexord_partial_trans)]))
+     (benchLib.Then
+       (benchLib.Invoke (benchLib.Simp, [lexord_definition]),
+        benchLib.Invoke
+          (benchLib.Metis,
+           [benchLib.FactAdd
+              (named "list$LLEX_transitive"
+                 listTheory.LLEX_transitive),
+            benchLib.FactAdd
+              (named "relation$transitive_def"
+                 relationTheory.transitive_def)])))
      ``!relation xs ys zs.
          parityTranslation$source_lexord relation xs ys ==>
          parityTranslation$source_lexord relation ys zs ==>
@@ -188,23 +199,34 @@ val goals =
      "by (simp add: irrefl_def lexord_irreflexive)"
      (benchLib.Invoke
        (benchLib.Auto,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_lexord_irreflexive"
-              parityTranslationTheory.source_lexord_irreflexive),
+        [lexord_definition,
          benchLib.DefinitionAdd
            (named "relation$irreflexive_def"
-              relationTheory.irreflexive_def)]))
+              relationTheory.irreflexive_def),
+         benchLib.FactAdd
+           (named "parityTranslation$source_llex_irreflexive"
+              parityTranslationTheory.source_llex_irreflexive)]))
      ``!relation.
          relation$irreflexive relation ==>
          relation$irreflexive
            (parityTranslation$source_lexord relation)``,
    entry "list_L7570_asym_lenlex" 7570
      "by (simp add: lenlex_def asym_inv_image asym_less_than asym_lex)"
-     (benchLib.Invoke
-       (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_asym_lenlex"
-              parityTranslationTheory.source_asym_lenlex)]))
+     (benchLib.Then
+       (benchLib.Invoke
+         (benchLib.Simp,
+          [lenlex_definition,
+           benchLib.DefinitionAdd
+             (named "parityTranslation$source_asym_def"
+                parityTranslationTheory.source_asym_def)]),
+        benchLib.Invoke
+          (benchLib.Metis,
+           [benchLib.FactAdd
+              (named "parityTranslation$source_shortlex_asym"
+                 parityTranslationTheory.source_shortlex_asym),
+            benchLib.FactAdd
+              (named "parityTranslation$source_asym_def"
+                 parityTranslationTheory.source_asym_def)])))
      ``!relation.
          parityTranslation$source_asym relation ==>
          parityTranslation$source_asym

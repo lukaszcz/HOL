@@ -25,8 +25,13 @@ val goals =
      (benchLib.Invoke
        (benchLib.Simp,
         [benchLib.RewriteAdd
-           (named "parityTranslation$source_measures_WF"
-              parityTranslationTheory.source_measures_WF)]))
+           (named "parityTranslation$source_measures_inv_image_shortlex"
+              parityTranslationTheory.source_measures_inv_image_shortlex),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_WF_inv_image_shortlex"
+              parityTranslationTheory.source_WF_inv_image_shortlex),
+         benchLib.RewriteAdd
+           (named "prim_rec$WF_LESS" prim_recTheory.WF_LESS)]))
      ``!functions.
          relation$WF
            (parityTranslation$source_measures functions)``,

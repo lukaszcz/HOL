@@ -109,6 +109,7 @@ val raw_goals =
        (?u v : int. a * u + n * v = 1) ==>
        ?e : int. y - x = n * e``]
 
+val _ = benchLib.validate_raw_goals "algebra" raw_goals
 val goals = map benchLib.prepare_goal raw_goals
 
 val shortfalls : benchLib.shortfall list = []

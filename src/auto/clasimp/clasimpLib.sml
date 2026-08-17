@@ -5,6 +5,14 @@ open Abbrev HolKernel
 
 val ERR = mk_HOL_ERR "clasimpLib"
 
+val clasimp_trace = ref 0
+val _ = Feedback.register_trace ("clasimp", clasimp_trace, 3)
+
+fun trace level message =
+  if level <= Feedback.current_trace "clasimp" then
+    Feedback.HOL_MESG ("Clasimp: " ^ message ())
+  else ()
+
 val safe_solver =
   simpLib.mk_tactic_solver
     ("clasimp safe",
@@ -400,6 +408,66 @@ fun must_close name =
     (ERR name "tactic did not close the goal")
     (fn (_, goals) => null goals)
 
+(* Search tactics benefit from putting extensional equalities into their
+   pointwise form before simplification and rule search.  FUN_EQ_CONV is
+   proof-producing and applies equally to ordinary functions and sets.
+   The conversion is deliberately root-only: expanding a nested test such
+   as [f = EMPTY] would lose a useful case split, and a pointwise goal must
+   not be extensionalized again. *)
+val extensional_normalize =
+  Tactical.CONV_TAC
+    (Conv.CHANGED_CONV boolLib.FUN_EQ_CONV)
+
+fun search_stages limit =
+  let
+    fun loop bound stages =
+      if bound >= limit then List.rev (limit :: stages)
+      else loop (bound * 2) (bound :: stages)
+  in
+    if limit <= 0 then [] else loop 1 []
+  end
+
+(* Try the witness-producing tableau at its invocation bound, then deepen
+   the classical engine geometrically.  Re-running tableau from depth one
+   repeats its whole frontier and caused previously cheap depth-four goals
+   to spend their budget before reaching that bound.  Both legs remain
+   bounded, and tableau witnesses are not hidden behind a complete
+   classical traversal. *)
+fun staged_auto_search {blast, depth} tableau_cs classical_cs =
+  let
+    fun report engine bound tactic goal =
+      let
+        val result = tactic goal
+        val suffix =
+          if engine = "classical" then
+            ", expansions=" ^ Int.toString (clasetSearch.node_count ())
+          else
+            ", enable 'blast' trace level 2 for expansion statistics"
+        val _ =
+          trace 1
+            (fn () =>
+              engine ^ " search solved at stage " ^ Int.toString bound ^
+              suffix)
+      in
+        result
+      end
+    val tableau =
+      if blast <= 0 then []
+      else
+        [report "tableau" blast
+           (tableauLib.CS_BLAST_DEPTH_TAC tableau_cs blast)]
+    val classical =
+      map
+        (fn bound =>
+          report "classical" bound
+            (NTactical.DETERM
+               (classicalLib.CS_DEPTH_SOLVE_TAC
+                  {dup = false} bound classical_cs)))
+        (search_stages depth)
+  in
+    Tactical.FIRST (tableau @ classical)
+  end
+
 fun auto_with {blast, depth} cs ss simp_args =
   let
     val search_cs = add_simp_wrapper ss simp_args cs
@@ -407,11 +475,7 @@ fun auto_with {blast, depth} cs ss simp_args =
     val initial_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
     val search =
-      Tactical.ORELSE
-        (tableauLib.CS_BLAST_DEPTH_TAC cs blast,
-         NTactical.DETERM
-           (classicalLib.CS_DEPTH_SOLVE_TAC
-              {dup = false} depth search_cs))
+      staged_auto_search {blast = blast, depth = depth} cs search_cs
     val final_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC final_cs)
 
@@ -422,7 +486,8 @@ fun auto_with {blast, depth} cs ss simp_args =
        metavariables, so one TRY per subgoal (from THEN) is equivalent. *)
     val script =
       Tactical.EVERY
-        [asm_full_simp ss simp_args,
+        [Tactical.TRY extensional_normalize,
+         asm_full_simp ss simp_args,
          Tactical.TRY initial_safe,
          Tactical.TRY search,
          Tactical.TRY final_safe]
@@ -437,22 +502,26 @@ fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
 fun force_with name cs ss simp_args =
   let
     val search_cs = add_simp_wrapper ss simp_args cs
-
-    (* add_simp_wrapper installs an unsafe wrapper.  It is deliberately
-       inert under CS_CLARIFY_TAC, which consults only safe wrappers; this
-       follows Isabelle's force_tac literally.  Isabelle's clarify succeeds
-       unchanged, whereas CS_CLARIFY_TAC reports a no-op as failure, so TRY
-       restores the upstream sequencing behavior. *)
     val clarify =
-      NTactical.DETERM
-        (classicalLib.CS_CLARIFY_TAC search_cs)
+      NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
+
+    (* Simplify before safe saturation.  In particular, this preserves an
+       extensional IMAGE obligation until membership rewrites expose the
+       constructor constraints from which tableau search builds a witness. *)
+    val safe =
+      NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
     val search =
-      NTactical.DETERM
-        (classicalLib.CS_FIRST_BEST_TAC search_cs)
+      Tactical.ORELSE
+        (staged_auto_search {blast = 8, depth = 4} cs search_cs,
+         NTactical.DETERM
+           (classicalLib.CS_FIRST_BEST_TAC search_cs))
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,
+         Tactical.TRY extensional_normalize,
+         simpLib.FULL_SIMP_TAC ss simp_args,
          asm_full_simp ss simp_args,
+         Tactical.TRY safe,
          search]
   in
     must_close name script
@@ -464,9 +533,17 @@ val CS_FORCE_TAC = CS_of (force_with "CS_FORCE_TAC")
    state.  must_close is the public contract guard in case that invariant
    changes; it does not add another search step. *)
 fun search_with_simp name engine cs ss simp_args =
-  must_close name
-    (NTactical.DETERM
-       (engine (add_simp_wrapper ss simp_args cs)))
+  let
+    val clarify =
+      NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
+  in
+    must_close name
+      (Tactical.EVERY
+         [Tactical.TRY clarify,
+          Tactical.TRY extensional_normalize,
+          NTactical.DETERM
+            (engine (add_simp_wrapper ss simp_args cs))])
+  end
 
 val simp_search =
   (classicalLib.CS_FAST_TAC, classicalLib.CS_SLOW_TAC,

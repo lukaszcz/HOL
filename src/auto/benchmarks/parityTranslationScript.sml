@@ -193,6 +193,37 @@ Proof
   >> metis_tac[sortingTheory.SORTED_TL]
 QED
 
+Theorem source_sorted_front_transitive:
+  !le : 'a -> 'a -> bool.
+    relation$transitive le ==>
+    !xs.
+      source_sorted le xs ==>
+      source_sorted le (FRONT xs)
+Proof
+  rpt strip_tac
+  >> Cases_on `xs`
+  >- simp[source_sorted_def]
+  >> `FRONT (h::t) ++ [LAST (h::t)] = h::t` by
+       simp[listTheory.APPEND_FRONT_LAST]
+  >> fs[source_sorted_def]
+  >> metis_tac[sortingTheory.SORTED_APPEND]
+QED
+
+Theorem source_sorted_dropwhile_general:
+  !le predicate xs.
+    source_sorted le xs ==>
+    source_sorted le (dropWhile predicate xs)
+Proof
+  gen_tac
+  >> gen_tac
+  >> Induct_on `xs`
+  >- simp[source_sorted_def]
+  >> simp[source_sorted_def, listTheory.dropWhile_def]
+  >> Cases_on `predicate h`
+  >> fs[source_sorted_def]
+  >> metis_tac[sortingTheory.SORTED_TL]
+QED
+
 Theorem source_sorted_wrt_dropWhile:
   !relation predicate xs.
     source_sorted_wrt relation xs ==>
@@ -299,6 +330,37 @@ Proof
             source_weak_linear_transitive,
             source_weak_linear_antisymmetric,
             sortingTheory.SORTED_ALL_DISTINCT_LIST_TO_SET_EQ]
+QED
+
+Theorem source_sorted_all_distinct_unique:
+  !le : 'a -> 'a -> bool.
+    relation$transitive le ==>
+    relation$antisymmetric le ==>
+    !xs ys.
+      source_sorted le xs ==>
+      ALL_DISTINCT xs ==>
+      source_sorted le ys ==>
+      ALL_DISTINCT ys ==>
+      LIST_TO_SET xs = LIST_TO_SET ys ==>
+      xs = ys
+Proof
+  metis_tac[source_sorted_def,
+            sortingTheory.SORTED_ALL_DISTINCT_LIST_TO_SET_EQ]
+QED
+
+Theorem source_sorted_all_distinct_unique_exists:
+  !xs ys.
+    (?le : 'a -> 'a -> bool.
+       relation$transitive le /\
+       relation$antisymmetric le /\
+       source_sorted le xs /\
+       ALL_DISTINCT xs /\
+       source_sorted le ys /\
+       ALL_DISTINCT ys) ==>
+    LIST_TO_SET xs = LIST_TO_SET ys ==>
+    xs = ys
+Proof
+  metis_tac[source_sorted_all_distinct_unique]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:6222-6400.  The source insertion
@@ -429,6 +491,17 @@ Proof
   >> Induct_on `xs`
   >- simp[source_sort_key_def, source_sorted_def]
   >> simp[source_sort_key_def, source_sorted_insort_key]
+QED
+
+Theorem source_sorted_sort_key_identity:
+  !le : 'a -> 'a -> bool.
+    relation$WeakLinearOrder le ==>
+    !xs. source_sorted le (source_sort_key le I xs)
+Proof
+  rpt strip_tac
+  >> `source_sorted le (MAP I (source_sort_key le I xs))` by
+       metis_tac[source_sorted_sort_key]
+  >> fs[]
 QED
 
 Theorem source_sorted_sort:
@@ -685,6 +758,62 @@ Definition source_transpose_def:
       (rich_list$MAX_LIST (MAP LENGTH rows))
 End
 
+Theorem source_sorted_reverse_filter_lengths:
+  !items : 'a list. !bound predicate.
+    (!left right item.
+       left < right ==>
+       predicate right item ==>
+       predicate left item) ==>
+    sorting$SORTED ($<=)
+      (REVERSE
+        (GENLIST
+          (\index. LENGTH (FILTER (predicate index) items)) bound))
+Proof
+  simp[sortingTheory.SORTED_EL_LESS,
+       relationTheory.transitive_def]
+  >> rpt strip_tac
+  >> simp[listTheory.EL_REVERSE, listTheory.EL_GENLIST]
+  >> irule listTheory.LENGTH_FILTER_LEQ_MONO
+  >> simp[]
+  >> rpt strip_tac
+  >> qsuff_tac
+       `PRE (bound - n) < PRE (bound - m)`
+  >- metis_tac[]
+  >> decide_tac
+QED
+
+Theorem source_length_threshold_antitone:
+  !left right (items : 'a list).
+    left < right ==>
+    right < LENGTH items ==>
+    left < LENGTH items
+Proof
+  rpt strip_tac
+  >> decide_tac
+QED
+
+Theorem source_sorted_reverse_length_thresholds:
+  !v_rows0 : 'a list list. !v_bound0.
+    sorting$SORTED ($<=)
+      (REVERSE
+        (GENLIST
+          (\v_index0.
+             LENGTH
+               (FILTER
+                 (\v_row0. v_index0 < LENGTH v_row0) v_rows0))
+          v_bound0))
+Proof
+  rpt gen_tac
+  >> match_mp_tac
+       (BETA_RULE
+         (Q.ISPEC
+           `\v_index0 v_row0. v_index0 < LENGTH v_row0`
+           (Q.SPECL [`v_rows0`, `v_bound0`]
+              source_sorted_reverse_filter_lengths)))
+  >> rpt strip_tac
+  >> decide_tac
+QED
+
 Theorem source_sorted_transpose:
   !rows : 'a list list.
     source_sorted ($<=)
@@ -768,6 +897,37 @@ Proof
              (qspecl_then [`0`, `SUC offset`] mp_tac)
         >> simp[])
   >> fs[]
+QED
+
+Theorem source_transpose_lookup_length_mono:
+  !rows : 'a list list.
+    (!left right.
+       left < right ==>
+       right < LENGTH rows ==>
+       LENGTH (EL right rows) <= LENGTH (EL left rows)) ==>
+    !column row.
+      column < LENGTH (source_transpose rows) ==>
+      row < LENGTH
+        (FILTER (\items. column < LENGTH items) rows) ==>
+      EL row (EL column (source_transpose rows)) =
+      EL column (EL row rows)
+Proof
+  rpt strip_tac
+  >> simp[source_transpose_def]
+  >> fs[source_transpose_def]
+  >> simp[listTheory.EL_GENLIST, listTheory.EL_MAP]
+  >> qsuff_tac
+       `EL row
+          (FILTER (\items. column < LENGTH items) rows) =
+        EL row rows`
+  >- simp[]
+  >> irule source_el_filter_prefix
+  >> conj_tac
+  >- (rpt strip_tac
+      >> qpat_x_assum `!left right. _`
+           (qspecl_then [`left`, `right`] mp_tac)
+      >> fs[])
+  >> simp[]
 QED
 
 Theorem source_nth_nth_transpose_sorted:
@@ -1038,6 +1198,32 @@ Proof
   >> conj_tac
   >- (rw[pred_setTheory.EXTENSION] >> metis_tac[])
   >> metis_tac[sortingTheory.SORTED_TL]
+QED
+
+Theorem source_sorted_list_of_set_head_tail:
+  !le : 'a -> 'a -> bool.
+    relation$WeakLinearOrder le ==>
+    !items.
+      FINITE items ==>
+      items <> EMPTY ==>
+      source_sorted_list_of_set le items <> [] /\
+      HD (source_sorted_list_of_set le items) =
+        source_minimum le items /\
+      TL (source_sorted_list_of_set le items) =
+        source_sorted_list_of_set le
+          (items DELETE source_minimum le items)
+Proof
+  gen_tac
+  >> disch_tac
+  >> gen_tac
+  >> rpt disch_tac
+  >> `source_sorted_list_of_set le items =
+      source_minimum le items ::
+        source_sorted_list_of_set le
+          (items DELETE source_minimum le items)` by
+       metis_tac[source_sorted_list_of_set_nonempty]
+  >> asm_rewrite_tac[]
+  >> simp[]
 QED
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
@@ -1315,6 +1501,84 @@ Proof
   >> metis_tac[]
 QED
 
+Theorem source_mapped_sorted_distinct_unique:
+  !le : 'b -> 'b -> bool.
+    relation$transitive le ==>
+    relation$antisymmetric le ==>
+    !function xs ys.
+      source_inj_on function
+        (LIST_TO_SET xs UNION LIST_TO_SET ys) ==>
+      source_sorted le (MAP function xs) ==>
+      ALL_DISTINCT (MAP function xs) ==>
+      source_sorted le (MAP function ys) ==>
+      ALL_DISTINCT (MAP function ys) ==>
+      LIST_TO_SET xs = LIST_TO_SET ys ==>
+      xs = ys
+Proof
+  rpt strip_tac
+  >> qsuff_tac `MAP function xs = MAP function ys`
+  >- (strip_tac
+      >> irule listTheory.INJ_MAP_EQ
+      >> qexists_tac `function`
+      >> simp[]
+      >> fs[pred_setTheory.INJ_DEF, source_inj_on_def])
+  >> irule source_sorted_all_distinct_unique
+  >> simp[listTheory.LIST_TO_SET_MAP]
+  >> qexists_tac `le`
+  >> simp[]
+QED
+
+Theorem source_mapped_sorted_distinct_unique_exists:
+  !xs ys.
+    (?le : 'b -> 'b -> bool. ?function.
+       relation$transitive le /\
+       relation$antisymmetric le /\
+       source_inj_on function
+         (LIST_TO_SET xs UNION LIST_TO_SET ys) /\
+       source_sorted le (MAP function xs) /\
+       ALL_DISTINCT (MAP function xs) /\
+       source_sorted le (MAP function ys) /\
+       ALL_DISTINCT (MAP function ys)) ==>
+    LIST_TO_SET xs = LIST_TO_SET ys ==>
+    xs = ys
+Proof
+  metis_tac[source_mapped_sorted_distinct_unique]
+QED
+
+Theorem source_distinct_map_index_injective:
+  !function xs left right.
+    ALL_DISTINCT (MAP function xs) ==>
+    left < LENGTH xs ==>
+    right < LENGTH xs ==>
+    EL left xs = EL right xs ==>
+    left = right
+Proof
+  metis_tac[listTheory.ALL_DISTINCT_MAP,
+            listTheory.EL_ALL_DISTINCT_EL_EQ]
+QED
+
+Theorem source_distinct_map_index_injective_exists:
+  !xs left right.
+    (?function. ALL_DISTINCT (MAP function xs)) ==>
+    left < LENGTH xs ==>
+    right < LENGTH xs ==>
+    EL left xs = EL right xs ==>
+    left = right
+Proof
+  metis_tac[source_distinct_map_index_injective]
+QED
+
+Theorem source_inj_on_subset_exists:
+  !function domain.
+    (?source.
+       source_inj_on function source /\
+       domain SUBSET source) ==>
+    source_inj_on function domain
+Proof
+  simp[source_inj_on_def, pred_setTheory.SUBSET_DEF]
+  >> metis_tac[]
+QED
+
 Theorem source_sorted_key_list_of_set_eq:
   !le : 'b -> 'b -> bool.
     relation$WeakLinearOrder le ==>
@@ -1363,6 +1627,106 @@ Proof
                 source_sorted_sorted_key_list_of_set,
                 source_set_sorted_key_list_of_set,
                 source_length_sorted_key_list_of_set]
+QED
+
+Theorem source_sorted_key_list_of_set_canonical:
+  !le : 'b -> 'b -> bool.
+    relation$WeakLinearOrder le ==>
+    !source function domain.
+      source_inj_on function source ==>
+      domain SUBSET source ==>
+      FINITE domain ==>
+      source_strict_sorted le
+        (MAP function
+          (source_sorted_key_list_of_set le function domain)) /\
+      LIST_TO_SET
+        (source_sorted_key_list_of_set le function domain) = domain /\
+      LENGTH
+        (source_sorted_key_list_of_set le function domain) = CARD domain
+Proof
+  rpt strip_tac
+  >> simp[source_strict_sorted_iff]
+  >> metis_tac[source_all_distinct_map_sorted_key_list_of_set,
+                source_sorted_sorted_key_list_of_set,
+                source_set_sorted_key_list_of_set,
+                source_length_sorted_key_list_of_set]
+QED
+
+Theorem source_sorted_key_list_of_set_eq_on:
+  !le : 'b -> 'b -> bool.
+    relation$WeakLinearOrder le ==>
+    !function domain target.
+      source_inj_on function domain ==>
+      FINITE domain ==>
+      source_sorted le (MAP function target) ==>
+      ALL_DISTINCT (MAP function target) ==>
+      LIST_TO_SET target = domain ==>
+      source_sorted_key_list_of_set le function domain = target
+Proof
+  metis_tac[source_sorted_key_list_of_set_eq,
+            pred_setTheory.SUBSET_REFL]
+QED
+
+Theorem source_sorted_key_list_of_set_canonical_on:
+  !le : 'b -> 'b -> bool.
+    relation$WeakLinearOrder le ==>
+    !function domain.
+      source_inj_on function domain ==>
+      FINITE domain ==>
+      source_strict_sorted le
+        (MAP function
+          (source_sorted_key_list_of_set le function domain)) /\
+      LIST_TO_SET
+        (source_sorted_key_list_of_set le function domain) = domain /\
+      LENGTH
+        (source_sorted_key_list_of_set le function domain) = CARD domain
+Proof
+  metis_tac[source_sorted_key_list_of_set_canonical,
+            pred_setTheory.SUBSET_REFL]
+QED
+
+Theorem source_sorted_key_list_of_set_unique_forward_on:
+  !le : 'b -> 'b -> bool.
+    relation$WeakLinearOrder le ==>
+    !function domain target.
+      source_inj_on function domain ==>
+      FINITE domain ==>
+      source_strict_sorted le (MAP function target) ==>
+      LIST_TO_SET target = domain ==>
+      LENGTH target = CARD domain ==>
+      source_sorted_key_list_of_set le function domain = target
+Proof
+  metis_tac[source_strict_sorted_iff,
+            source_sorted_key_list_of_set_eq_on]
+QED
+
+Theorem source_sorted_key_list_of_set_unique_backward_on:
+  !le : 'b -> 'b -> bool.
+    relation$WeakLinearOrder le ==>
+    !function domain target.
+      source_inj_on function domain ==>
+      FINITE domain ==>
+      source_sorted_key_list_of_set le function domain = target ==>
+      source_strict_sorted le (MAP function target) /\
+      LIST_TO_SET target = domain /\
+      LENGTH target = CARD domain
+Proof
+  metis_tac[source_sorted_key_list_of_set_canonical_on]
+QED
+
+Theorem source_sorted_key_list_of_set_unique_on:
+  !le : 'b -> 'b -> bool.
+    relation$WeakLinearOrder le ==>
+    !function domain target.
+      source_inj_on function domain ==>
+      FINITE domain ==>
+      (source_strict_sorted le (MAP function target) /\
+       LIST_TO_SET target = domain /\
+       LENGTH target = CARD domain <=>
+       source_sorted_key_list_of_set le function domain = target)
+Proof
+  metis_tac[source_sorted_key_list_of_set_unique_forward_on,
+            source_sorted_key_list_of_set_unique_backward_on]
 QED
 
 Theorem source_successively_bridge:
@@ -1701,6 +2065,21 @@ Theorem source_fold_map:
       xs initial
 Proof
   simp[source_fold_def, rich_listTheory.FOLDL_MAP]
+QED
+
+Theorem source_aggregate_image_set_fold:
+  !aggregate operation initial function xs.
+    (!ys.
+       aggregate (LIST_TO_SET ys) =
+       source_fold operation ys initial) ==>
+    aggregate (IMAGE function (LIST_TO_SET xs)) =
+    source_fold
+      (\value current. operation (function value) current)
+      xs initial
+Proof
+  rpt strip_tac
+  >> first_x_assum (qspec_then `MAP function xs` mp_tac)
+  >> simp[listTheory.LIST_TO_SET_MAP, source_fold_map]
 QED
 
 Theorem source_INF_set_fold:
@@ -2184,6 +2563,25 @@ Proof
   >> metis_tac[source_remove1_mem]
 QED
 
+Theorem source_sorted_remove1_transitive:
+  !le : 'a -> 'a -> bool.
+    relation$transitive le ==>
+    !value xs.
+      source_sorted le xs ==>
+      source_sorted le (source_remove1 value xs)
+Proof
+  gen_tac
+  >> strip_tac
+  >> gen_tac
+  >> Induct_on `xs`
+  >- simp[source_sorted_def, source_remove1_def]
+  >> simp[source_remove1_def]
+  >> Cases_on `value = h`
+  >> fs[source_sorted_def, sortingTheory.SORTED_EQ]
+  >> metis_tac[source_remove1_mem,
+               relationTheory.transitive_def]
+QED
+
 Theorem source_sorted_indexed_from:
   !start xs.
     source_sorted ($<=)
@@ -2238,6 +2636,26 @@ QED
 Theorem source_sorted_upt:
   !start length.
     sorting$SORTED (\left right : num. left <= right)
+      (GENLIST (\offset. start + offset) length)
+Proof
+  rpt gen_tac
+  >> irule source_sorted_upt_weaken
+  >> simp[]
+QED
+
+Theorem source_sorted_upt_section:
+  !start length.
+    sorting$SORTED ($<=) (GENLIST ($+ start) length)
+Proof
+  rpt gen_tac
+  >> irule sortingTheory.SORTED_weaken
+  >> qexists_tac `$<`
+  >> simp[sortingTheory.SORTED_GENLIST_PLUS]
+QED
+
+Theorem source_sorted_upt_operator:
+  !start length.
+    sorting$SORTED ($<=)
       (GENLIST (\offset. start + offset) length)
 Proof
   rpt gen_tac
@@ -2365,6 +2783,41 @@ Proof
   gen_tac
   >> qspecl_then [`xs`, `[]`] mp_tac source_rotate_split_period
   >> simp[]
+QED
+
+Theorem source_funpow_mod_periodic:
+  !v_iteration0 v_period0 v_value0 v_count0.
+    FUNPOW v_iteration0 v_period0 v_value0 = v_value0 ==>
+    FUNPOW v_iteration0 v_count0 v_value0 =
+    FUNPOW v_iteration0 (v_count0 MOD v_period0) v_value0
+Proof
+  rpt strip_tac
+  >> Cases_on `v_period0`
+  >- simp[arithmeticTheory.MOD_0]
+  >> mp_tac
+       (Q.SPECL [`v_iteration0`, `SUC n`, `v_value0`]
+          numberTheory.FUNPOW_MOD)
+  >> impl_tac
+  >- simp[]
+  >> disch_then (qspec_then `v_count0` mp_tac)
+  >> simp[]
+QED
+
+Theorem source_funpow_mod_zero_imp_normalize:
+  !iteration period value count.
+    FUNPOW iteration period value = value ==>
+    ((count MOD period = 0 ==>
+      FUNPOW iteration count value = value) <=>
+     (count MOD period = 0 ==>
+      FUNPOW iteration (count MOD period) value = value))
+Proof
+  metis_tac[source_funpow_mod_periodic]
+QED
+
+Theorem source_funpow_rotate1_period:
+  !xs. FUNPOW source_rotate1 (LENGTH xs) xs = xs
+Proof
+  simp[GSYM source_rotate_def, source_rotate_period]
 QED
 
 Theorem source_rotate_conv_mod:
@@ -2555,6 +3008,24 @@ Proof
   >> simp[source_nths_def, source_shift_image]
 QED
 
+Theorem source_selected_drop_shift:
+  !count xs selected.
+    MAP (\index. EL index (DROP count xs))
+      (FILTER (\index. index IN selected)
+        (rich_list$COUNT_LIST (LENGTH (DROP count xs)))) =
+    MAP (\index. EL index xs)
+      (FILTER
+        (\index.
+           index IN
+             IMAGE (\offset. count + offset)
+               selected)
+        (rich_list$COUNT_LIST (LENGTH xs)))
+Proof
+  rpt gen_tac
+  >> PURE_REWRITE_TAC [GSYM source_nths_filter_bridge]
+  >> simp[source_nths_drop]
+QED
+
 (* Isabelle/HOL src/HOL/List.thy:8287-8321. *)
 Definition source_atMost_def:
   source_atMost le bound = {value | le value bound}
@@ -2718,6 +3189,39 @@ Proof
   >> simp[sortingTheory.SORTED_GENLIST_PLUS]
 QED
 
+Theorem source_el_genlist_suc_add:
+  !index lower length.
+    index < length ==>
+    EL index (GENLIST ($+ (SUC lower)) length) =
+    SUC (lower + index)
+Proof
+  simp[listTheory.EL_GENLIST]
+QED
+
+Theorem source_index_bound_positive:
+  !v_index0 v_bound0 : num.
+    v_index0 < v_bound0 ==> 0 < v_bound0
+Proof
+  rpt strip_tac
+  >> decide_tac
+QED
+
+Theorem source_sorted_list_of_set_greater_than_at_most_positive:
+  !v_lower0 v_upper0.
+    0 < v_upper0 - v_lower0 ==>
+    source_sorted_list_of_set ($<=)
+      (source_greaterThanAtMost ($<=) ($<) v_lower0 v_upper0) =
+    GENLIST ($+ (SUC v_lower0)) (v_upper0 - v_lower0)
+Proof
+  rpt strip_tac
+  >> irule source_sorted_list_of_set_greater_than_at_most
+  >> match_mp_tac
+       (iffRL
+         (Q.SPECL [`v_upper0`, `v_lower0`]
+            arithmeticTheory.SUB_LESS_0))
+  >> simp[]
+QED
+
 Theorem source_nth_sorted_list_of_set_greater_than_at_most:
   !index lower upper.
     index < upper - lower ==>
@@ -2752,6 +3256,20 @@ Proof
   >> rpt gen_tac
   >> Cases_on `function head`
   >> simp[source_map_filter_def, combinTheory.o_DEF]
+QED
+
+Theorem source_mem_map_filter:
+  !function xs value.
+    MEM value (source_map_filter function xs) <=>
+    ?item. MEM item xs /\ function item = SOME value
+Proof
+  gen_tac
+  >> Induct
+  >- simp[source_map_filter_bridge]
+  >> gen_tac
+  >> Cases_on `function h`
+  >> simp[source_map_filter_bridge, RIGHT_AND_OVER_OR,
+          EXISTS_OR_THM, EQ_SYM_EQ]
 QED
 
 Theorem source_map_filter_some_filter:
@@ -2894,6 +3412,28 @@ Proof
   >> simp[]
 QED
 
+Theorem source_WF_list_lift:
+  !relation lift.
+    (!left right. lift [left] [right] <=> relation left right) ==>
+    (!xs ys. lift xs ys ==> list$SHORTLEX relation xs ys) ==>
+    (relation$WF lift <=> relation$WF relation)
+Proof
+  rpt strip_tac
+  >> eq_tac
+  >- (strip_tac
+      >> irule relationTheory.WF_SUBSET
+      >> qexists_tac
+           `relation$inv_image lift (\value. [value])`
+      >> conj_tac
+      >- simp[relationTheory.inv_image_def]
+      >> irule relationTheory.WF_inv_image
+      >> simp[])
+  >> strip_tac
+  >> irule relationTheory.WF_SUBSET
+  >> qexists_tac `list$SHORTLEX relation`
+  >> simp[listTheory.WF_SHORTLEX]
+QED
+
 Theorem source_wf_listrel1_iff:
   !relation.
     relation$WF (source_listrel1 relation) <=>
@@ -2926,6 +3466,27 @@ Definition source_measures_def:
      (function left = function right /\
       source_measures functions left right))
 End
+
+Theorem source_measures_inv_image_shortlex:
+  !functions.
+    source_measures functions =
+    relation$inv_image
+      (list$SHORTLEX (($<) : num -> num -> bool))
+      (\value. MAP (\function. function value) functions)
+Proof
+  Induct
+  >> simp[boolTheory.FUN_EQ_THM, source_measures_def,
+          relationTheory.inv_image_def, listTheory.SHORTLEX_def]
+QED
+
+Theorem source_WF_inv_image_shortlex:
+  !relation function.
+    relation$WF relation ==>
+    relation$WF
+      (relation$inv_image (list$SHORTLEX relation) function)
+Proof
+  metis_tac[relationTheory.WF_inv_image, listTheory.WF_SHORTLEX]
+QED
 
 Theorem source_measures_WF:
   !functions. relation$WF (source_measures functions)
@@ -2961,6 +3522,67 @@ End
 Definition source_lexord_def:
   source_lexord relation xs ys <=> list$LLEX relation xs ys
 End
+
+Theorem source_llex_equal_length_prefix:
+  !relation xs ys.
+    LENGTH xs = LENGTH ys ==>
+    (list$LLEX relation xs ys <=>
+     ?prefix left right xs' ys'.
+       xs = prefix ++ left::xs' /\
+       ys = prefix ++ right::ys' /\
+       relation left right)
+Proof
+  rpt gen_tac
+  >> strip_tac
+  >> eq_tac
+  >- (rw[listTheory.LLEX_EL_THM]
+      >> `n < LENGTH xs` by fs[]
+      >> map_every qexists_tac
+           [`TAKE n xs`, `EL n xs`, `EL n ys`,
+            `DROP (SUC n) xs`, `DROP (SUC n) ys`]
+      >> simp[rich_listTheory.TAKE_DROP_SUC])
+  >> rw[listTheory.LLEX_EL_THM]
+  >> qexists_tac `LENGTH prefix`
+  >> simp[listTheory.EL_APPEND_EQN,
+          rich_listTheory.TAKE_APPEND1,
+          rich_listTheory.TAKE_LENGTH_APPEND]
+QED
+
+Theorem source_llex_equal_length_prefix_conj:
+  !relation xs ys.
+    (LENGTH xs = LENGTH ys /\ list$LLEX relation xs ys <=>
+     LENGTH xs = LENGTH ys /\
+     ?prefix left right xs' ys'.
+       xs = prefix ++ left::xs' /\
+       ys = prefix ++ right::ys' /\
+       relation left right)
+Proof
+  metis_tac[source_llex_equal_length_prefix]
+QED
+
+Theorem source_llex_append_prefix_iff:
+  !relation.
+    relation$irreflexive relation ==>
+    !prefix xs ys.
+      (list$LLEX relation (prefix ++ xs) (prefix ++ ys) <=>
+       list$LLEX relation xs ys)
+Proof
+  simp[relationTheory.irreflexive_def]
+  >> rpt strip_tac
+  >> Induct_on `prefix`
+  >> fs[listTheory.LLEX_def]
+QED
+
+Theorem source_llex_irreflexive:
+  !relation.
+    relation$irreflexive relation ==>
+    relation$irreflexive (list$LLEX relation)
+Proof
+  simp[relationTheory.irreflexive_def]
+  >> rpt strip_tac
+  >> Induct_on `x`
+  >> simp[listTheory.LLEX_def]
+QED
 
 Theorem source_lexord_partial_trans:
   !relation xs ys zs.
@@ -3018,6 +3640,18 @@ Proof
   >> metis_tac[]
 QED
 
+Theorem source_shortlex_length_llex:
+  !relation xs ys.
+    list$SHORTLEX relation xs ys <=>
+    LENGTH xs < LENGTH ys \/
+    (LENGTH xs = LENGTH ys /\ list$LLEX relation xs ys)
+Proof
+  metis_tac[source_shortlex_equal_length,
+            listTheory.LENGTH_LT_SHORTLEX,
+            listTheory.SHORTLEX_LENGTH_LE,
+            arithmeticTheory.LESS_OR_EQ]
+QED
+
 Theorem source_lenlex_conv:
   !relation xs ys.
     source_lenlex relation xs ys <=>
@@ -3035,6 +3669,22 @@ Definition source_asym_def:
   source_asym relation <=>
     !left right. relation left right ==> ~relation right left
 End
+
+Theorem source_shortlex_asym:
+  !relation.
+    source_asym relation ==>
+    source_asym (list$SHORTLEX relation)
+Proof
+  simp[source_asym_def]
+  >> gen_tac
+  >> strip_tac
+  >> Induct_on `left`
+  >> Cases_on `right`
+  >> simp[listTheory.SHORTLEX_def]
+  >> rpt strip_tac
+  >> TRY decide_tac
+  >> metis_tac[]
+QED
 
 Theorem source_asym_lenlex:
   !relation.
@@ -3219,6 +3869,80 @@ Proof
   >> simp[source_lists_def]
 QED
 
+Theorem source_LIST_REL_refl_on_preserve:
+  !carrier relation.
+    source_refl_on carrier relation ==>
+    source_refl_on (source_lists carrier) (LIST_REL relation)
+Proof
+  simp[source_refl_on_def]
+  >> rpt strip_tac
+  >- (irule source_LIST_REL_refl_on
+      >> qexists_tac `carrier`
+      >> fs[source_lists_def])
+  >- (qspecl_then [`carrier`, `relation`, `left`, `right`]
+        mp_tac source_LIST_REL_in_lists
+      >> simp[source_lists_def]
+      >> metis_tac[])
+  >> qspecl_then [`carrier`, `relation`, `left`, `right`]
+       mp_tac source_LIST_REL_in_lists
+  >> simp[source_lists_def]
+  >> metis_tac[]
+QED
+
+Theorem source_LIST_REL_symmetric:
+  !relation.
+    relation$symmetric relation ==>
+    relation$symmetric (LIST_REL relation)
+Proof
+  simp[relationTheory.symmetric_def]
+  >> metis_tac[listTheory.LIST_REL_sym]
+QED
+
+Theorem source_LIST_REL_transitive:
+  !relation.
+    relation$transitive relation ==>
+    relation$transitive (LIST_REL relation)
+Proof
+  simp[relationTheory.transitive_def]
+  >> metis_tac[listTheory.LIST_REL_trans_same]
+QED
+
+Theorem source_every_zip_nth:
+  !relation xs ys.
+    LENGTH xs = LENGTH ys ==>
+    (EVERY (UNCURRY relation) (ZIP (xs,ys)) <=>
+     !index.
+       index < LENGTH xs ==>
+       relation (EL index xs) (EL index ys))
+Proof
+  rpt gen_tac
+  >> strip_tac
+  >> rw[listTheory.EVERY_EL]
+  >> eq_tac
+  >- (rpt strip_tac
+      >> first_x_assum (qspec_then `index` mp_tac)
+      >> impl_tac
+      >- metis_tac[listTheory.LENGTH_ZIP]
+      >> simp[listTheory.EL_ZIP])
+  >> rpt strip_tac
+  >> first_x_assum (qspec_then `n` mp_tac)
+  >> impl_tac
+  >- metis_tac[listTheory.LENGTH_ZIP]
+  >> simp[listTheory.EL_ZIP]
+QED
+
+Theorem source_every_zip_nth_conj:
+  !relation xs ys.
+    (LENGTH xs = LENGTH ys /\
+     EVERY (UNCURRY relation) (ZIP (xs,ys)) <=>
+     LENGTH xs = LENGTH ys /\
+     !index.
+       index < LENGTH xs ==>
+       relation (EL index xs) (EL index ys))
+Proof
+  metis_tac[source_every_zip_nth]
+QED
+
 Theorem source_equiv_LIST_REL:
   !carrier relation.
     source_equiv carrier relation ==>
@@ -3266,6 +3990,34 @@ Proof
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:8709-8711. *)
+Theorem source_finite_wf_acyclic:
+  !pairs : ('a # 'a) set.
+    FINITE pairs ==>
+    (relation$WF (set_relation$reln_to_rel pairs) <=>
+     set_relation$acyclic pairs)
+Proof
+  rpt strip_tac
+  >> eq_tac
+  >- metis_tac[set_relationTheory.WF_acyclic]
+  >> strip_tac
+  >> irule set_relationTheory.acyclic_WF
+  >> conj_tac
+  >- simp[]
+  >> qexists_tac `IMAGE FST pairs UNION IMAGE SND pairs`
+  >> simp[set_relationTheory.domain_def,
+          set_relationTheory.range_def,
+          pred_setTheory.SUBSET_DEF]
+  >> conj_tac
+  >- (rpt strip_tac
+      >> disj1_tac
+      >> qexists_tac `(x,y)`
+      >> simp[])
+  >> rpt strip_tac
+  >> disj2_tac
+  >> qexists_tac `(x',x)`
+  >> simp[]
+QED
+
 Theorem source_wf_list_set:
   !pairs.
     relation$WF
@@ -3306,6 +4058,30 @@ Definition source_trans_list_step_def:
              (FILTER (\right. SND left = FST right) pairs))
         pairs)
 End
+
+Theorem source_trans_list_step_member:
+  !pairs left right.
+    MEM (left,right) (source_trans_list_step pairs) ==>
+    ?middle. MEM (left,middle) pairs /\ MEM (middle,right) pairs
+Proof
+  simp[source_trans_list_step_def, listTheory.MEM_FLAT,
+       listTheory.MEM_MAP, listTheory.MEM_FILTER, PULL_EXISTS]
+  >> rpt strip_tac
+  >> qexists_tac `SND left'`
+  >> Cases_on `left'`
+  >> Cases_on `right'`
+  >> fs[]
+QED
+
+Theorem source_tc_two_step:
+  !pairs left middle right.
+    MEM (left,middle) pairs ==>
+    MEM (middle,right) pairs ==>
+    (left,right) IN
+      set_relation$transitive_closure (LIST_TO_SET pairs)
+Proof
+  metis_tac[set_relationTheory.tc_rules]
+QED
 
 Theorem source_trans_list_step_subset_tc:
   !pairs.
@@ -3406,6 +4182,48 @@ Proof
   >> first_x_assum drule
   >> simp[source_subseqs_def]
   >> metis_tac[]
+QED
+
+Theorem source_subseqs_powset:
+  !xs.
+    IMAGE LIST_TO_SET (LIST_TO_SET (source_subseqs xs)) =
+    POW (LIST_TO_SET xs)
+Proof
+  rw[pred_setTheory.EXTENSION]
+  >> eq_tac
+  >- (strip_tac
+      >> fs[]
+      >> rw[pred_setTheory.IN_POW, pred_setTheory.SUBSET_DEF]
+      >> metis_tac[source_subseqs_member_subset,
+                   pred_setTheory.SUBSET_DEF])
+  >> strip_tac
+  >> fs[pred_setTheory.IN_POW]
+  >> drule source_subset_subseqs
+  >> simp[pred_setTheory.IN_IMAGE]
+  >> metis_tac[pred_setTheory.EXTENSION]
+QED
+
+Theorem source_subseqs_powset_member:
+  !xs subset.
+    subset IN IMAGE LIST_TO_SET (LIST_TO_SET (source_subseqs xs)) <=>
+    subset SUBSET LIST_TO_SET xs
+Proof
+  metis_tac[source_subseqs_powset, pred_setTheory.IN_POW]
+QED
+
+Theorem source_length_subseqs:
+  !xs. LENGTH (source_subseqs xs) = 2 EXP LENGTH xs
+Proof
+  Induct
+  >> simp[source_subseqs_def, arithmeticTheory.EXP]
+QED
+
+Theorem source_all_distinct_card:
+  !xs.
+    ALL_DISTINCT xs <=> CARD (LIST_TO_SET xs) = LENGTH xs
+Proof
+  metis_tac[listTheory.ALL_DISTINCT_CARD_LIST_TO_SET,
+            listTheory.CARD_LIST_TO_SET_ALL_DISTINCT]
 QED
 
 Theorem source_all_distinct_subseq_sets:
@@ -5164,6 +5982,60 @@ Proof
   >> metis_tac[alistTheory.ALOOKUP_MEM, pairTheory.PAIR]
 QED
 
+(* A reusable finite-graph constructor: the lookup implementation is
+   arbitrary, and finiteness follows from any finite association-list
+   support. *)
+Theorem source_finite_functional_graph:
+  !lookup entries.
+    (!key value.
+       lookup key = SOME value ==>
+       MEM (key,value) entries) ==>
+    FINITE
+      (\pair.
+         lookup (FST pair) = SOME (SND pair))
+Proof
+  rpt strip_tac
+  >> irule pred_setTheory.SUBSET_FINITE
+  >> qexists_tac `LIST_TO_SET entries`
+  >> simp[pred_setTheory.SUBSET_DEF]
+  >> metis_tac[pairTheory.PAIR]
+QED
+
+(* Keep the finite support visible in the graph constructor.  This lets
+   proof search infer the association-list witness by ordinary first-order
+   matching instead of guessing a hidden support for a partially applied
+   lookup function. *)
+Theorem source_finite_bounded_lookup_graph:
+  !lookup_builder entries.
+    (!key value.
+       lookup_builder entries key = SOME value ==>
+       MEM (key,value) entries) ==>
+    FINITE
+      (\pair.
+         lookup_builder entries (FST pair) = SOME (SND pair))
+Proof
+  rpt strip_tac
+  >> irule pred_setTheory.SUBSET_FINITE
+  >> qexists_tac `LIST_TO_SET entries`
+  >> simp[pred_setTheory.SUBSET_DEF]
+  >> metis_tac[pairTheory.PAIR]
+QED
+
+(* General dependent-pair witness used by image/Sigma normalization. *)
+Theorem source_pair_fibre_witness:
+  !domain fibre value.
+    domain value /\ fibre value <> {} ==>
+    ?pair.
+      FST pair = value /\
+      domain (FST pair) /\
+      SND pair IN fibre (FST pair)
+Proof
+  rpt strip_tac
+  >> qexists_tac `(value, CHOICE (fibre value))`
+  >> simp[]
+  >> metis_tac[pred_setTheory.CHOICE_DEF]
+QED
+
 Theorem source_ran_update_old_witness:
   !function key old_value new_value value candidate.
     function key = SOME old_value ==>
@@ -5239,36 +6111,6 @@ Proof
   >> rewrite_tac[boolTheory.EQ_CLAUSES]
   >> qspecl_then [`function`, `key`, `old_value`, `new_value`]
        MATCH_ACCEPT_TAC source_ran_update_injective_pointwise
-QED
-
-Theorem source_num_set_induction:
-  !index predicate.
-    ((!numbers.
-        0 IN numbers /\
-        (!number. number IN numbers ==> SUC number IN numbers) ==>
-        index IN numbers) /\
-     predicate 0 /\
-     (!number. predicate number ==> predicate (SUC number))) ==>
-    predicate index
-Proof
-  rpt strip_tac
-  >> first_x_assum
-       (qspec_then `\number. predicate number` mp_tac)
-  >> simp[]
-QED
-
-Theorem source_num_set_induction_iff:
-  !index predicate.
-    (((!numbers.
-         0 IN numbers /\
-         (!number. number IN numbers ==> SUC number IN numbers) ==>
-         index IN numbers) /\
-      predicate 0 /\
-      (!number. predicate number ==> predicate (SUC number))) ==>
-     predicate index) <=>
-    T
-Proof
-  simp[source_num_set_induction]
 QED
 
 (* src/HOL/Map.thy: map_le_antisym and map_add_le_mapI. *)
@@ -5644,6 +6486,82 @@ Proof
   >> Omega.OMEGA_TAC
 QED
 
+Theorem source_list_relation_set:
+  !pairs.
+    source_list_relation pairs =
+    set_relation$reln_to_rel (LIST_TO_SET pairs)
+Proof
+  simp[FUN_EQ_THM, source_list_relation_def,
+       set_relationTheory.reln_to_rel_def]
+QED
+
+Theorem source_lrc_finite_relation_bound:
+  !pairs path left right.
+    FINITE pairs ==>
+    list$LRC (set_relation$reln_to_rel pairs) path left right /\
+    ALL_DISTINCT path ==>
+    LENGTH path <= CARD pairs
+Proof
+  rpt gen_tac
+  >> strip_tac
+  >> strip_tac
+  >> drule source_lrc_edges
+  >> strip_tac
+  >> `ALL_DISTINCT edges`
+       by metis_tac[listTheory.ALL_DISTINCT_MAP]
+  >> `LIST_TO_SET edges SUBSET pairs`
+       by (fs[listTheory.EVERY_MEM,
+              set_relationTheory.reln_to_rel_def,
+              pred_setTheory.SUBSET_DEF]
+           >> metis_tac[])
+  >> `CARD (LIST_TO_SET edges) <= CARD pairs`
+       by metis_tac[pred_setTheory.CARD_SUBSET,
+                    listTheory.FINITE_LIST_TO_SET]
+  >> `LENGTH edges = LENGTH path`
+       by metis_tac[listTheory.LENGTH_MAP]
+  >> `CARD (LIST_TO_SET edges) = LENGTH edges`
+       by metis_tac[listTheory.ALL_DISTINCT_CARD_LIST_TO_SET]
+  >> Omega.OMEGA_TAC
+QED
+
+Theorem source_finite_tc_ntrancl:
+  !pairs.
+    FINITE pairs ==>
+    relation$TC (set_relation$reln_to_rel pairs) =
+    source_ntrancl (CARD pairs - 1)
+      (set_relation$reln_to_rel pairs)
+Proof
+  rpt strip_tac
+  >> simp[FUN_EQ_THM, EQ_IMP_THM]
+  >> rpt gen_tac
+  >> conj_tac
+  >- (rpt strip_tac
+      >> fs[arithmeticTheory.TC_eq_NRC]
+      >> drule (iffLR listTheory.NRC_LRC)
+      >> strip_tac
+      >> drule source_lrc_simple
+      >> strip_tac
+      >> `ls <> []` by (Cases_on `ls` >> fs[])
+      >> `simple <> []` by metis_tac[]
+      >> qspecl_then [`pairs`, `simple`, `x`, `x'`]
+           mp_tac source_lrc_finite_relation_bound
+      >> simp[]
+      >> strip_tac
+      >> Cases_on `simple`
+      >- fs[]
+      >> rw[source_ntrancl_nrc]
+      >> qexists_tac `LENGTH t`
+      >> conj_tac
+      >- (fs[] >> Omega.OMEGA_TAC)
+      >> simp[listTheory.NRC_LRC]
+      >> qexists_tac `h::t`
+      >> simp[])
+  >> rpt strip_tac
+  >> fs[source_ntrancl_nrc, arithmeticTheory.TC_eq_NRC]
+  >> qexists_tac `extra`
+  >> metis_tac[]
+QED
+
 Theorem source_trancl_set_ntrancl:
   !pairs.
     relation$TC (source_list_relation pairs) =
@@ -5844,6 +6762,17 @@ Proof
   >> simp[]
 QED
 
+(* Boolean datatype exhaustion in destructor form. *)
+Theorem source_exists_bool_cases:
+  !predicate.
+    (?value : bool. predicate value) ==>
+    predicate T \/ predicate F
+Proof
+  rpt strip_tac
+  >> Cases_on `value`
+  >> simp[]
+QED
+
 (* src/HOL/Option.thy: UNIV_option_conv. *)
 Theorem source_UNIV_option_conv:
   (UNIV : 'a option set) =
@@ -6014,6 +6943,62 @@ Theorem source_subset_imageE:
     conclusion
 Proof
   metis_tac[pred_setTheory.SUBSET_IMAGE]
+QED
+
+(* Explicit, reusable preimage construction for subsets of an image. *)
+Theorem source_subset_image_witness:
+  !function source target.
+    source SUBSET IMAGE function target ==>
+    ?preimage.
+      preimage SUBSET target /\
+      source = IMAGE function preimage
+Proof
+  metis_tac[pred_setTheory.SUBSET_IMAGE]
+QED
+
+Theorem source_subset_image_witness_iff:
+  !function source target.
+    ((?preimage.
+        preimage SUBSET target /\
+        source = IMAGE function preimage) <=>
+     source SUBSET IMAGE function target)
+Proof
+  metis_tac[pred_setTheory.SUBSET_IMAGE]
+QED
+
+(* The pointwise normal form of the same construction.  Keeping this as a
+   predicate theorem lets extensional simplification use it after set and
+   IMAGE notation have already been eliminated. *)
+Theorem source_subset_image_pointwise_witness_iff:
+  !function source target.
+    ((?preimage.
+        ((!element.
+            source element ==>
+            ?preimage_element.
+              element = function preimage_element /\
+              preimage preimage_element) /\
+         (!preimage_element.
+            preimage preimage_element ==>
+            source (function preimage_element))) /\
+        (!preimage_element.
+           preimage preimage_element ==>
+           target preimage_element)) <=>
+     (!element.
+        source element ==>
+        ?preimage_element.
+          element = function preimage_element /\
+          target preimage_element))
+Proof
+  rpt gen_tac
+  >> eq_tac
+  >- metis_tac[]
+  >> strip_tac
+  >> qexists_tac
+       `\preimage_element.
+          target preimage_element /\
+          source (function preimage_element)`
+  >> simp[]
+  >> metis_tac[]
 QED
 
 (* src/HOL/List.thy: rev_swap. *)
@@ -6510,6 +7495,60 @@ Proof
   simp[]
 QED
 
+Theorem source_unique_subset:
+  !universe unique.
+    (!candidate. candidate SUBSET universe ==> candidate = unique) <=>
+    universe = {} /\ unique = {}
+Proof
+  rpt gen_tac
+  >> eq_tac
+  >- (strip_tac
+      >> qpat_x_assum `!candidate. _`
+           (fn theorem =>
+              mp_tac (Q.SPEC `universe` theorem) >>
+              mp_tac (Q.SPEC `{}` theorem))
+      >> simp[])
+  >> simp[]
+QED
+
+Theorem source_unique_subset_iff:
+  !universe unique.
+    (!candidate. candidate SUBSET universe <=> candidate = unique) <=>
+    universe = {} /\ unique = {}
+Proof
+  rpt gen_tac
+  >> eq_tac
+  >- metis_tac[source_unique_subset]
+  >> simp[]
+QED
+
+Theorem source_unique_predicate_subset_iff:
+  !universe unique.
+    (!candidate.
+       (!element. candidate element ==> universe element) <=>
+       candidate = unique) <=>
+    universe = {} /\ unique = {}
+Proof
+  rpt gen_tac
+  >> eq_tac
+  >- (strip_tac
+      >> qpat_x_assum `!candidate. _`
+           (fn theorem =>
+              mp_tac (Q.SPEC `universe` theorem) >>
+              mp_tac (Q.SPEC `{}` theorem))
+      >> simp[])
+  >> simp[boolTheory.FUN_EQ_THM]
+  >> metis_tac[]
+QED
+
+Theorem source_powerset_extensional:
+  !universe collection.
+    POW universe = collection <=>
+    !candidate. candidate SUBSET universe <=> candidate IN collection
+Proof
+  simp[pred_setTheory.EXTENSION, pred_setTheory.IN_POW]
+QED
+
 Theorem source_forall_iffD1:
   !predicate other item.
     (!candidate. predicate candidate <=> other candidate) ==>
@@ -6537,6 +7576,56 @@ Proof
   rpt strip_tac
   >> qexists_tac `COMPL value`
   >> simp[]
+QED
+
+(* Difference retains its left operand exactly when the operands are
+   disjoint.  This is a reusable normalization boundary between set
+   constructors and the disjointness rules. *)
+Theorem source_diff_eq_self_iff_disjoint:
+  !left right.
+    left DIFF right = left <=>
+    DISJOINT left right
+Proof
+  simp[pred_setTheory.EXTENSION, pred_setTheory.DISJOINT_DEF]
+  >> metis_tac[]
+QED
+
+Theorem source_complement_witness_iff:
+  !value predicate.
+    ((?witness.
+        value = COMPL witness /\ predicate witness) <=>
+     predicate (COMPL value))
+Proof
+  rpt gen_tac
+  >> eq_tac
+  >- (rpt strip_tac >> fs[])
+  >> strip_tac
+  >> qexists_tac `COMPL value`
+  >> simp[]
+QED
+
+(* Complement reverses subset inclusion. *)
+Theorem source_complement_subset_swap:
+  !left right.
+    left SUBSET COMPL right <=>
+    right SUBSET COMPL left
+Proof
+  simp[pred_setTheory.SUBSET_DEF]
+  >> metis_tac[]
+QED
+
+(* Choice from an arbitrary set with a proved unique member. *)
+Theorem source_choice_unique_member:
+  !source element.
+    element IN source /\
+    (!candidate. candidate IN source ==> candidate = element) ==>
+    CHOICE source = element
+Proof
+  rpt strip_tac
+  >> `CHOICE source IN source` by
+       metis_tac[pred_setTheory.CHOICE_DEF,
+                 pred_setTheory.MEMBER_NOT_EMPTY]
+  >> metis_tac[]
 QED
 
 Theorem source_pow_insert_image_witness:

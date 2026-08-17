@@ -8,6 +8,17 @@ val commit = "f7e02b7e"
 fun named name theorem : benchLib.named_thm =
   {name = name, theorem = theorem}
 
+val sorted_reverse_length_thresholds =
+  parityTranslationTheory.source_sorted_reverse_length_thresholds
+
+val distinct_map_index_injective_exists =
+  parityTranslationTheory.source_distinct_map_index_injective_exists
+
+val sorted_greater_at_most_positive =
+  let open parityTranslationTheory
+  in source_sorted_list_of_set_greater_than_at_most_positive
+  end
+
 fun entry id line method recipe goal : benchLib.corpus_goal =
   {id = id, goal = goal, source_method = method,
    recipe = recipe, excl = [], provenance =
@@ -23,15 +34,6 @@ val definition =
   benchLib.DefinitionAdd
     (named "parityTranslation$source_sorted_def"
        parityTranslationTheory.source_sorted_def)
-
-val map_sorted_unique =
-  parityTranslationTheory.source_map_sorted_distinct_set_unique
-
-val strict_sorted_unique =
-  parityTranslationTheory.source_strict_sorted_equal_unique
-
-val nth_greater_than_at_most =
-  parityTranslationTheory.source_nth_sorted_list_of_set_greater_than_at_most
 
 val order_context =
   [definition,
@@ -64,6 +66,25 @@ val nth_context =
    benchLib.RewriteAdd
      (named "arithmetic$LESS_OR_EQ"
         arithmeticTheory.LESS_OR_EQ)]
+
+val transitive_context =
+  [benchLib.RewriteAdd
+     (named "parityTranslation$source_weak_linear_transitive"
+        parityTranslationTheory.source_weak_linear_transitive)]
+
+val sorting_definition_context =
+  [benchLib.DefinitionAdd
+     (named "parityTranslation$source_insort_def"
+        parityTranslationTheory.source_insort_def),
+   benchLib.DefinitionAdd
+     (named "parityTranslation$source_sort_def"
+        parityTranslationTheory.source_sort_def),
+   benchLib.DefinitionAdd
+     (named "parityTranslation$source_insort_insert_key_def"
+        parityTranslationTheory.source_insort_insert_key_def),
+   benchLib.DefinitionAdd
+     (named "parityTranslation$source_insort_insert_def"
+        parityTranslationTheory.source_insort_insert_def)]
 
 val goals =
   [entry "list_L6023_sorted0" 6023 "by simp"
@@ -171,8 +192,12 @@ val goals =
               le (EL index xs) (EL (SUC index) xs))``,
    entry "list_L6101_sorted_remove1" 6101
      "using sorted_map_remove1 [of \"\\<lambda>x. x\"] by simp"
-     (using_theorem "parityTranslation$source_sorted_remove1"
-        parityTranslationTheory.source_sorted_remove1)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        transitive_context @
+        [benchLib.FactAdd
+           (named "parityTranslation$source_sorted_remove1_transitive"
+              parityTranslationTheory.source_sorted_remove1_transitive)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !value xs.
@@ -181,8 +206,12 @@ val goals =
              (parityTranslation$source_remove1 value xs)``,
    entry "list_L6104_sorted_butlast" 6104
      "by (simp add: assms butlast_conv_take)"
-     (using_theorem "parityTranslation$source_sorted_front"
-        parityTranslationTheory.source_sorted_front)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        transitive_context @
+        [benchLib.FactAdd
+           (named "parityTranslation$source_sorted_front_transitive"
+              parityTranslationTheory.source_sorted_front_transitive)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !xs.
@@ -190,9 +219,18 @@ val goals =
            parityTranslation$source_sorted le (FRONT xs)``,
    entry "list_L6138_map_sorted_distinct_set_unique" 6138
      "using assms map_inj_on sorted_distinct_set_unique by fastforce"
-     (using_theorem
-        "parityTranslation$source_map_sorted_distinct_set_unique"
-        map_sorted_unique)
+     (benchLib.Invoke
+       (benchLib.Metis,
+        [benchLib.FactAdd
+         (named
+              "parityTranslation$source_mapped_sorted_distinct_unique"
+              parityTranslationTheory.source_mapped_sorted_distinct_unique),
+         benchLib.FactAdd
+           (named "parityTranslation$source_weak_linear_transitive"
+              parityTranslationTheory.source_weak_linear_transitive),
+         benchLib.FactAdd
+           (named "parityTranslation$source_weak_linear_antisymmetric"
+              parityTranslationTheory.source_weak_linear_antisymmetric)]))
      ``!le : 'b -> 'b -> bool.
          relation$WeakLinearOrder le ==>
          !function xs ys.
@@ -206,8 +244,11 @@ val goals =
            xs = ys``,
    entry "list_L6146_sorted_dropWhile" 6146
      "by (auto dest: sorted_wrt_drop simp add: dropWhile_eq_drop)"
-     (using_theorem "parityTranslation$source_sorted_dropwhile"
-        parityTranslationTheory.source_sorted_dropwhile)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_sorted_dropwhile_general"
+              parityTranslationTheory.source_sorted_dropwhile_general)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !predicate xs.
@@ -227,16 +268,24 @@ val goals =
      "by(simp add: sorted_wrt_mono_rel[OF _ sorted_wrt_upto])"
      (benchLib.Invoke
        (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_sorted_num_upto"
-              parityTranslationTheory.source_sorted_num_upto)]))
+        [definition,
+         benchLib.DefinitionAdd
+           (named "parityTranslation$source_num_upto_def"
+              parityTranslationTheory.source_num_upto_def),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_upt_section"
+              parityTranslationTheory.source_sorted_upt_section)]))
      ``!lower upper.
          parityTranslation$source_sorted ($<=)
            (parityTranslation$source_num_upto lower upper)``,
    entry "list_L6292_sorted_insort" 6292
      "using sorted_insort_key [where f=\"\<lambda>x. x\"] by simp"
-     (using_theorem "parityTranslation$source_sorted_insort"
-        parityTranslationTheory.source_sorted_insort)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        sorting_definition_context @
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_insort_identity"
+              parityTranslationTheory.source_sorted_insort_identity)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !value xs.
@@ -245,8 +294,12 @@ val goals =
             parityTranslation$source_sorted le xs)``,
    entry "list_L6298_sorted_sort" 6298
      "using sorted_sort_key [where f=\"\<lambda>x. x\"] by simp"
-     (using_theorem "parityTranslation$source_sorted_sort"
-        parityTranslationTheory.source_sorted_sort)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        sorting_definition_context @
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_sort_key_identity"
+              parityTranslationTheory.source_sorted_sort_key_identity)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !xs.
@@ -254,8 +307,12 @@ val goals =
              (parityTranslation$source_sort le xs)``,
    entry "list_L6312_sorted_sort_id" 6312
      "by (simp add: sort_key_id_if_sorted)"
-     (using_theorem "parityTranslation$source_sorted_sort_id"
-        parityTranslationTheory.source_sorted_sort_id)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        sorting_definition_context @
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_sort_key_id_if_sorted"
+              parityTranslationTheory.source_sort_key_id_if_sorted)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !xs.
@@ -263,8 +320,15 @@ val goals =
            parityTranslation$source_sort le xs = xs``,
    entry "list_L6315_sort_replicate" 6315
      "using sorted_replicate sorted_sort_id by presburger"
-     (using_theorem "parityTranslation$source_sort_replicate"
-        parityTranslationTheory.source_sort_replicate)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        sorting_definition_context @
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_sort_key_id_if_sorted"
+              parityTranslationTheory.source_sort_key_id_if_sorted),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_replicate"
+              parityTranslationTheory.source_sorted_replicate)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !count value.
@@ -338,8 +402,12 @@ val goals =
            value INSERT LIST_TO_SET xs``,
    entry "list_L6384_sorted_insort_insert_key" 6384
      "using assms by (simp add: insort_insert_key_def sorted_insort_key)"
-     (using_theorem "parityTranslation$source_sorted_insort_insert_key"
-        parityTranslationTheory.source_sorted_insort_insert_key)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        sorting_definition_context @
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_insort_key"
+              parityTranslationTheory.source_sorted_insort_key)]))
      ``!le : 'b -> 'b -> bool.
          relation$WeakLinearOrder le ==>
          !function value xs.
@@ -351,8 +419,12 @@ val goals =
                  le function value xs))``,
    entry "list_L6389_sorted_insort_insert" 6389
      "using assms sorted_insort_insert_key [of \"\<lambda>x. x\"] by simp"
-     (using_theorem "parityTranslation$source_sorted_insort_insert"
-        parityTranslationTheory.source_sorted_insort_insert)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        sorting_definition_context @
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_insort_identity"
+              parityTranslationTheory.source_sorted_insort_identity)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !value xs.
@@ -363,18 +435,30 @@ val goals =
      "by (simp add: indexed_from_eq_zip)"
      (benchLib.Invoke
        (benchLib.Simp,
-        [benchLib.RewriteAdd
-           (named "parityTranslation$source_sorted_indexed_from"
-              parityTranslationTheory.source_sorted_indexed_from)]))
+        [definition,
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_indexed_from_bridge"
+              parityTranslationTheory.source_indexed_from_bridge),
+         benchLib.RewriteAdd
+           (named "list$MAP_ZIP"
+              listTheory.MAP_ZIP),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_upt_operator"
+              parityTranslationTheory.source_sorted_upt_operator)]))
      ``!start xs.
          parityTranslation$source_sorted ($<=)
            (MAP FST
              (parityTranslation$source_indexed_from start xs))``,
    entry "list_L6444_stable_sort_key_sort_key" 6444
      "by (simp add: stable_sort_key_def sort_key_stable)"
-     (using_theorem
-        "parityTranslation$source_stable_sort_key_sort_key"
-        parityTranslationTheory.source_stable_sort_key_sort_key)
+     (benchLib.Invoke
+       (benchLib.Auto,
+        [benchLib.DefinitionAdd
+           (named "parityTranslation$source_stable_sort_key_def"
+              parityTranslationTheory.source_stable_sort_key_def),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sort_key_stable"
+              parityTranslationTheory.source_sort_key_stable)]))
      ``!le : 'b -> 'b -> bool.
          relation$WeakLinearOrder le ==>
          parityTranslation$source_stable_sort_key
@@ -382,9 +466,24 @@ val goals =
    entry "list_L6453_sorted_transpose" 6453
      ("by (auto simp: sorted_iff_nth_mono rev_nth nth_transpose " ^
       "length_filter_conv_card intro: card_mono)")
-     (using_theorem
-        "parityTranslation$source_sorted_transpose"
-        parityTranslationTheory.source_sorted_transpose)
+     (benchLib.Invoke
+       (benchLib.Simp,
+        [definition,
+         benchLib.DefinitionAdd
+           (named "parityTranslation$source_transpose_def"
+              parityTranslationTheory.source_transpose_def),
+         benchLib.RewriteAdd
+           (named "list$MAP_GENLIST"
+              listTheory.MAP_GENLIST),
+         benchLib.RewriteAdd
+           (named "combin$o_DEF"
+              combinTheory.o_DEF),
+         benchLib.RewriteAdd
+           (named "list$LENGTH_MAP"
+              listTheory.LENGTH_MAP),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_reverse_length_thresholds"
+              sorted_reverse_length_thresholds)]))
      ``!rows : 'a list list.
          parityTranslation$source_sorted ($<=)
            (REVERSE
@@ -392,9 +491,14 @@ val goals =
                (parityTranslation$source_transpose rows)))``,
    entry "list_L6487_nth_nth_transpose_sorted" 6487
      "by (simp add: takeWhile_nth)"
-     (using_theorem
-        "parityTranslation$source_nth_nth_transpose_sorted"
-        parityTranslationTheory.source_nth_nth_transpose_sorted)
+     (benchLib.Invoke
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_sorted_reverse_lengths_mono"
+              parityTranslationTheory.source_sorted_reverse_lengths_mono),
+         benchLib.FactAdd
+           (named "parityTranslation$source_transpose_lookup_length_mono"
+              parityTranslationTheory.source_transpose_lookup_length_mono)]))
      ``!rows : 'a list list.
          parityTranslation$source_sorted ($<=)
            (REVERSE (MAP LENGTH rows)) ==>
@@ -434,18 +538,36 @@ val goals =
    entry "list_L6690_distinct_if_distinct_map" 6690
      "using inj_on by (simp add: distinct_map)"
      (benchLib.Invoke
-       (benchLib.Auto,
-        [benchLib.IntroAdd
-           (benchLib.SafeRule,
-            named "list$ALL_DISTINCT_MAP"
-              listTheory.ALL_DISTINCT_MAP)]))
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "list$EL_ALL_DISTINCT_EL_EQ"
+              listTheory.EL_ALL_DISTINCT_EL_EQ),
+         benchLib.FactAdd
+           (named "list$EL_MAP"
+              listTheory.EL_MAP),
+         benchLib.FactAdd
+           (named
+              "parityTranslation$source_distinct_map_index_injective_exists"
+              distinct_map_index_injective_exists)]))
      ``!function xs.
          ALL_DISTINCT (MAP function xs) ==> ALL_DISTINCT xs``,
    entry "list_L6761_anon_L6761" 6761
      "by (simp add: Uniq_def strict_sorted_equal)"
-     (using_theorem
-        "parityTranslation$source_strict_sorted_equal_unique"
-        strict_sorted_unique)
+     (benchLib.Invoke
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_strict_sorted_iff"
+              parityTranslationTheory.source_strict_sorted_iff),
+         benchLib.FactAdd
+           (named
+              "parityTranslation$source_sorted_all_distinct_unique_exists"
+              parityTranslationTheory.source_sorted_all_distinct_unique_exists),
+         benchLib.FactAdd
+           (named "parityTranslation$source_weak_linear_transitive"
+              parityTranslationTheory.source_weak_linear_transitive),
+         benchLib.FactAdd
+           (named "parityTranslation$source_weak_linear_antisymmetric"
+              parityTranslationTheory.source_weak_linear_antisymmetric)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !domain xs ys.
@@ -457,9 +579,14 @@ val goals =
    entry "list_L6770_sorted_key_list_of_set_unique" 6770
      ("by (auto simp: strict_sorted_iff card_distinct " ^
       "idem_if_sorted_distinct)")
-     (using_theorem
-        "parityTranslation$source_sorted_key_list_of_set_unique"
-        parityTranslationTheory.source_sorted_key_list_of_set_unique)
+     (benchLib.Invoke
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_sorted_key_list_of_set_unique_on"
+              parityTranslationTheory.source_sorted_key_list_of_set_unique_on),
+         benchLib.FactAdd
+           (named "parityTranslation$source_inj_on_subset_exists"
+              parityTranslationTheory.source_inj_on_subset_exists)]))
      ``!le : 'b -> 'b -> bool.
          relation$WeakLinearOrder le ==>
          !source function domain target.
@@ -474,9 +601,20 @@ val goals =
               le function domain = target)``,
    entry "list_L6835_sorted_list_of_set_lessThan_Suc" 6835
      "by presburger"
-     (using_theorem
-        "parityTranslation$source_sorted_list_of_set_less_than_suc"
-        parityTranslationTheory.source_sorted_list_of_set_less_than_suc)
+     (benchLib.Invoke
+       (benchLib.Simp,
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_less_than_count"
+              parityTranslationTheory.source_less_than_count),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_list_of_count"
+              parityTranslationTheory.source_sorted_list_of_count),
+         benchLib.RewriteAdd
+           (named "rich_list$COUNT_LIST_SNOC"
+              rich_listTheory.COUNT_LIST_SNOC),
+         benchLib.RewriteAdd
+           (named "list$SNOC_APPEND"
+              listTheory.SNOC_APPEND)]))
      ``!bound.
          parityTranslation$source_sorted_list_of_set ($<=)
            (parityTranslation$source_lessThan ($<) (SUC bound)) =
@@ -484,9 +622,20 @@ val goals =
            (parityTranslation$source_lessThan ($<) bound) ++ [bound]``,
    entry "list_L6839_sorted_list_of_set_atMost_Suc" 6839
      "by fastforce"
-     (using_theorem
-        "parityTranslation$source_sorted_list_of_set_at_most_suc"
-        parityTranslationTheory.source_sorted_list_of_set_at_most_suc)
+     (benchLib.Invoke
+       (benchLib.Simp,
+        [benchLib.RewriteAdd
+           (named "parityTranslation$source_at_most_count"
+              parityTranslationTheory.source_at_most_count),
+         benchLib.RewriteAdd
+           (named "parityTranslation$source_sorted_list_of_count"
+              parityTranslationTheory.source_sorted_list_of_count),
+         benchLib.RewriteAdd
+           (named "rich_list$COUNT_LIST_SNOC"
+              rich_listTheory.COUNT_LIST_SNOC),
+         benchLib.RewriteAdd
+           (named "list$SNOC_APPEND"
+              listTheory.SNOC_APPEND)]))
      ``!bound.
          parityTranslation$source_sorted_list_of_set ($<=)
            (parityTranslation$source_atMost ($<=) (SUC bound)) =
@@ -496,9 +645,14 @@ val goals =
    entry "list_L6847_sorted_list_of_set_nonempty" 6847
      ("by (auto simp: less_le simp flip: " ^
       "sorted_list_of_set.sorted_key_list_of_set_unique intro: Min_in)")
-     (using_theorem
-        "parityTranslation$source_sorted_list_of_set_nonempty"
-        parityTranslationTheory.source_sorted_list_of_set_nonempty)
+     (benchLib.Invoke
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named "parityTranslation$source_sorted_list_of_set_head_tail"
+              parityTranslationTheory.source_sorted_list_of_set_head_tail),
+         benchLib.FactAdd
+           (named "list$LIST_NOT_NIL"
+              listTheory.LIST_NOT_NIL)]))
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
          !domain.
@@ -512,10 +666,19 @@ val goals =
    entry "list_L6873_nth_sorted_list_of_set_greaterThanAtMost" 6873
      ("by (simp add: greaterThanAtMost_def greaterThanLessThan_eq " ^
       "lessThan_Suc_atMost)")
-     (using_theorem
-        ("parityTranslation$" ^
-         "source_nth_sorted_list_of_set_greater_than_at_most")
-        nth_greater_than_at_most)
+     (benchLib.Invoke
+       (benchLib.Metis,
+        [benchLib.FactAdd
+           (named
+              ("parityTranslation$" ^
+               "source_sorted_list_of_set_greater_than_at_most_positive")
+              sorted_greater_at_most_positive),
+         benchLib.FactAdd
+           (named "parityTranslation$source_el_genlist_suc_add"
+              parityTranslationTheory.source_el_genlist_suc_add),
+         benchLib.FactAdd
+           (named "parityTranslation$source_index_bound_positive"
+              parityTranslationTheory.source_index_bound_positive)]))
      ``!index lower upper.
          index < upper - lower ==>
          EL index

@@ -122,6 +122,7 @@ val raw_goals =
        ?w : int. (y = 2 * w \/ y = 2 * w + 1) /\
          x <= w /\ w < z``]
 
+val _ = benchLib.validate_raw_goals "presburger" raw_goals
 val goals = map benchLib.prepare_goal raw_goals
 
 (* Lines 14 and 64 repeat lines 12 and 61 exactly. *)
