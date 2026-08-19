@@ -6097,3 +6097,26 @@ val _ =
             | _ => false) andalso
          same_nodes (substitutions, selected_substitutions)
        end)
+
+(* Search work is reported to the shared meter, not just to the per-search
+   counter the previous test reads. *)
+val _ =
+  test
+    ("classical search charges the shared work meter",
+     fn () =>
+       let
+         val goal =
+           ([] : term list,
+            boolSyntax.mk_imp
+              (boolSyntax.mk_imp (goal_p, goal_q),
+               boolSyntax.mk_imp
+                 (boolSyntax.mk_neg goal_q, boolSyntax.mk_neg goal_p)))
+         val (solved, work) =
+           searchWork.measure
+             (fn () =>
+               case total (Tactical.VALID (classicalLib.BEST_TAC [])) goal of
+                   SOME ([], validation) => (ignore (validation []); true)
+                 | _ => false)
+       in
+         solved andalso #expansions work > 0
+       end)

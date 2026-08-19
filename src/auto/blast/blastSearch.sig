@@ -89,8 +89,9 @@ sig
     claset -> int -> goal -> (proof -> 'a) -> 'a option
   (* This and the measured/debug entry points enable internal
      instrumentation.  The legacy searchGoal, tryGoal and deepenGoal entry
-     points do not poll a stop predicate or maintain the
-     inference/resource counters below.
+     points do not poll a stop predicate; they do maintain the
+     inference/resource counters below, and every fixed-depth run reports
+     its depth, branch and inference counts to searchWork.
 
      Statistics cover the complete fixed-depth run, including work before
      failed reconstruction or final search failure.  configured_depth is

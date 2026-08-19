@@ -48,8 +48,11 @@ val trace = clasetReplay.trace
 fun show_node node =
   Parse.term_to_string (clasetGoal.canonical_rendering node)
 
+(* Every driver reports an admitted expansion here, so this is also where
+   the shared work meter is charged. *)
 fun expansion_trace driver count node =
-  (trace 2
+  (searchWork.note_expansion ();
+   trace 2
      (fn () =>
        driver ^ " expansion " ^ Int.toString count ^
        ", goals=" ^ Int.toString (length (clasetGoal.goals node)) ^

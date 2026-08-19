@@ -3589,6 +3589,26 @@ val _ =
            surface_registry_before
        end)
 
+(* Rule applications are aesop's unit of work; the shared meter carries
+   them so a benchmark caller can tell search from rewriting. *)
+val _ =
+  check
+    ("aesop search charges the shared work meter",
+     fn () =>
+       let
+         val goal : Abbrev.goal =
+           ([], ``((work_meter_p ==> work_meter_q) ==> work_meter_p) ==>
+                 work_meter_p``)
+         val (solved, work) =
+           searchWork.measure
+             (fn () =>
+               case Lib.total (Tactical.VALID (aesopLib.AESOP_TAC [])) goal of
+                   SOME ([], validation) => (ignore (validation []); true)
+                 | _ => false)
+       in
+         solved andalso #rule_applications work > 0
+       end)
+
 (* Every registration in this file is scoped, so nothing a test declared is
    still visible to the goals of any later test. *)
 val _ =

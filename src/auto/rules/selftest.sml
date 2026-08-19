@@ -2923,3 +2923,40 @@ val _ =
                  (asl, map concl facts)
            | _ => false
        end)
+
+(* The shared work meter is what lets a caller ask how much search a
+   proof did.  Nesting must not lose the enclosing measurement. *)
+val _ =
+  test
+    ("the search-work meter reports each run and keeps the enclosing one",
+     fn () =>
+       let
+         val (inner, outer) =
+           searchWork.measure
+             (fn () =>
+               (searchWork.note_expansion ();
+                #2 (searchWork.measure
+                     (fn () =>
+                       (searchWork.note_expansion ();
+                        searchWork.note_expansion ())))))
+       in
+         #expansions inner = 2 andalso #expansions outer = 3
+       end)
+
+val _ =
+  test
+    ("the search-work meter restores the enclosing run after an exception",
+     fn () =>
+       let
+         val (_, outer) =
+           searchWork.measure
+             (fn () =>
+               (searchWork.note_expansion ();
+                (searchWork.measure
+                   (fn () =>
+                     (searchWork.note_expansion ();
+                      raise Fail "work meter selftest"))
+                 handle Fail _ => ((), searchWork.zero))))
+       in
+         #expansions outer = 2
+       end)

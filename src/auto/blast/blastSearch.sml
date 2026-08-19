@@ -1597,6 +1597,10 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
        rule_conversions = blastRule.conversionCount rule_cache,
        remaining_trail_assignments = trailSize state,
        phase = phase}
+    val _ =
+      searchWork.note_tableau
+        {depth = depth, branches = !created,
+         inferences = inferences}
   in
     {completion = completion, fullTrace = fullTrace, result = result,
      statistics = statistics}
@@ -1613,8 +1617,12 @@ fun searchGoalWithStats claset depth goal cont =
     {result = #result report, statistics = #statistics report}
   end
 
+(* Statistics instrumentation selects the same plain workers as [Off] and
+   adds two counter updates per committed transition, so the production
+   entry point uses it: the inference and resource-cost counters are what
+   the shared work meter reports. *)
 fun searchGoal claset depth goal cont =
-  #result (runGoal Restore Off claset depth goal cont)
+  #result (runGoal Restore Stats claset depth goal cont)
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)
@@ -1629,9 +1637,9 @@ fun debugGoal claset depth goal =
   end
 
 (* This legacy iterative-deepening API has no cooperative timeout: each
-   fixed-depth run is uninstrumented and is bounded only by its resource
-   limit, while the sequence of runs is capped by depth_limit.  Callers that
-   need cooperative interruption use the measured fixed-depth APIs. *)
+   fixed-depth run is bounded only by its resource limit, while the
+   sequence of runs is capped by depth_limit.  Callers that need
+   cooperative interruption use the measured fixed-depth APIs. *)
 fun deepenGoal claset goal cont =
   let
     val limit = !depth_limit

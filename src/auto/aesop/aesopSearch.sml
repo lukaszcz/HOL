@@ -664,8 +664,17 @@ fun search
                          {depth_limited = depth_limited,
                           rapp_limited = true}
                          next)
+      (* Rule applications are the engine's unit of work; charge the shared
+         meter with the count the finished tree carries. *)
+      fun charge tree =
+        searchWork.note_rule_applications (aesopTree.rapp_count tree)
+      val outcome = loop {depth_limited = false, rapp_limited = false} initial
+      val _ =
+        case outcome of
+            SearchProved tree => charge tree
+          | SearchFailed {tree, ...} => charge tree
     in
-      loop {depth_limited = false, rapp_limited = false} initial
+      outcome
     end
 
 fun proved_rapp tree id =

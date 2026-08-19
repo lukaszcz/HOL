@@ -4747,3 +4747,23 @@ val _ =
          Time.< (Time.- (Time.now (), started),
                  blast_regression_budget)
        end)
+
+(* Every fixed-depth run reports its depth, branches and inferences to the
+   shared meter, so a caller can tell a searched proof from a rewritten
+   one without reading blast's own statistics record. *)
+val _ =
+  test
+    ("tableau search charges the shared work meter",
+     fn () =>
+       let
+         val p = mk_var ("work_meter_p", bool)
+         val q = mk_var ("work_meter_q", bool)
+         val goal : Abbrev.goal =
+           ([], mk_imp (mk_imp (p, q), mk_imp (mk_neg q, mk_neg p)))
+         val (solved, work) =
+           searchWork.measure
+             (fn () => blast_solves (tableauLib.BLAST_TAC []) goal)
+       in
+         solved andalso #tableau_branches work > 0 andalso
+         #inferences work > 0
+       end)
