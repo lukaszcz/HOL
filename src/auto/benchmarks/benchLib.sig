@@ -87,6 +87,10 @@ sig
 
   val theorem_is_goal : term -> thm -> bool
 
+  val method_arg_name : method_arg -> string
+  val named_theorem : method_arg -> named_thm option
+  val recipe_arguments : method_recipe -> method_arg list
+
   val validate_raw_goal : corpus_goal -> unit
   val validate_raw_goals : string -> corpus_goal list -> unit
   val prepare_goal : corpus_goal -> corpus_goal

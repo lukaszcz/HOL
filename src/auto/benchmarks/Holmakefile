@@ -2,10 +2,10 @@ INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
            ../linarith/instances ../seeds ../../integer ../../real \
            ../../rational ../../num/reduce/src ../../../examples/algebra/ring
 
-all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe
+all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe guards.exe
 .PHONY: all
 
-selftest.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
+selftest.uo: benchLib.uo benchGuards.uo benchClassical.uo benchSetCorpus.uo \
              benchSetShortfalls.uo benchSets.uo \
              benchListCorpus.uo benchListSorted.uo benchListNumeric.uo \
              benchListAdjacent.uo \
@@ -34,6 +34,7 @@ benchSetCorpus.uo benchListCorpus.uo benchMapCorpus.uo: benchExplicit.uo
 benchOptionCorpus.uo benchProductCorpus.uo: benchExplicit.uo
 benchStringCorpus.uo: benchExplicit.uo
 benchExplicit.uo: benchLib.uo parityTranslationTheory.uo
+benchGuards.uo: benchLib.uo benchExplicit.uo
 benchListSorted.uo: parityTranslationTheory.uo
 benchListNumeric.uo: parityTranslationTheory.uo
 benchListAdjacent.uo: parityTranslationTheory.uo
@@ -77,6 +78,11 @@ genparity.uo: parityLib.uo
 genparity.exe: genparity.uo parityLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
+guards.uo: parityLib.uo benchGuards.uo
+
+guards.exe: guards.uo parityLib.uo benchGuards.uo
+	$(HOLMOSMLC) -o $@ $<
+
 benchLib.uo: ../linarith/instances/intLinarith.uo \
              ../linarith/instances/realLinarith.uo \
              ../linarith/instances/ratLinarith.uo
@@ -117,4 +123,5 @@ benchmarks-selftest.log: selftest.exe
 	$(tee ./selftest.exe 2>&1,$@)
 endif
 
-EXTRA_CLEANS = selftest.exe focus.exe genparity.exe benchmarks-selftest.log
+EXTRA_CLEANS = selftest.exe focus.exe genparity.exe guards.exe \
+               benchmarks-selftest.log

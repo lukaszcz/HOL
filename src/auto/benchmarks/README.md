@@ -49,6 +49,44 @@ HOLSELFTESTLEVEL=2 ./selftest.exe
 `./genparity.exe` performs the exhaustive measurement and rewrites
 `../PARITY.md` deterministically.
 
+## Corpus integrity detectors
+
+`benchGuards` answers the questions a corpus entry cannot be trusted to
+answer about itself.  Each detector reports findings; the caller decides
+whether a finding is fatal.
+
+- **A1 recognition** — whether a supplied theorem alone closes the goal,
+  by `MATCH_ACCEPT_TAC`, `REWRITE_TAC`, its `GSYM`, a pure boolean
+  simplification, `MATCH_MP_TAC` followed by safe steps, or a
+  minimum-budget `METIS_TAC`.  A route counts only when the same route
+  without the theorem fails, so an ambient tautology is not mistaken for
+  recognition.  The syntactic `benchLib.theorem_is_goal` test is kept as a
+  cheap accepting pre-filter.
+- **A2 provenance** — every `parityTranslation$source_X` argument must be
+  named by the entry's Isabelle method, modulo a closed suffix list, or be
+  a registered definition of a constant occurring in the goal.
+- **A3 search work** — a goal whose Isabelle method is a search method
+  must do search work.  The engines report node expansions, tableau depth,
+  branches, inferences and rule applications to the shared `searchWork`
+  meter, which brackets the run.
+- **A4 single-use rules** — a translation lemma used by exactly one corpus
+  goal must be named by that goal's method.
+- **A5 alias audit** — every hand-mapped display name in
+  `benchExplicit.special`, reported unless it renders a real lemma under a
+  documented Isabelle attribute.
+- **A6 goal-term pin** — a structural hash of every goal statement, de
+  Bruijn for bound variables and theory-qualified for constants, pinned per
+  family in `selftest.sml`.  A changed hash means a goal statement moved.
+
+Detector logic, thresholds and pins are owner-signed.  Widening one to make
+a run green is the defect they exist to catch.
+
+`./guards.exe` sweeps the whole corpus and writes the findings list.
+`HOLGUARDSOUT` names the output file, `HOLGUARDSSKIP` leaves detectors out,
+`HOLGUARDSFAMILY` restricts the sweep to one family, `HOLGUARDSLIMIT` caps
+the goals per family, and `HOLGUARDSPROGRESS=1` names each goal as it is
+swept.  Each restriction is recorded in the generated header.
+
 Set `HOLBENCHDIAGNOSTICS=1` to emit a diagnostic block for every selected
 goal.  Set it to a path instead to append those blocks to a manifest file.
 Set `HOLBENCHSHORTFALLSONLY=1` to select only executable registered

@@ -466,6 +466,234 @@ val _ =
           "dest-unsafe(list$LENGTH_REVERSE)",
           "cong(list$LENGTH_REVERSE)"])
 
+(* ---- Phase A detectors ------------------------------------------- *)
+
+fun guard_entry id method arguments goal : benchLib.corpus_goal =
+  {id = id, goal = goal, source_method = method,
+   recipe = benchLib.Invoke (benchLib.Simp, arguments),
+   excl = [], provenance = provenance, representative = true}
+
+val subset_goal = Thm.concl (Drule.SPEC_ALL pred_setTheory.SUBSET_DEF)
+val subset_flipped = Conv.GSYM pred_setTheory.SUBSET_DEF
+
+val _ =
+  check
+    ("A1 catches a supplied theorem that is the goal with a flipped iff",
+     fn () =>
+       not (benchLib.theorem_is_goal subset_goal subset_flipped) andalso
+       Option.isSome
+         (benchGuards.recognition_route subset_goal subset_flipped))
+
+val _ =
+  check
+    ("A1 catches a goal-as-truth wrapper through the cheap pre-filter",
+     fn () =>
+       benchGuards.recognition_route subset_goal
+         (Drule.EQT_INTRO (Drule.SPEC_ALL pred_setTheory.SUBSET_DEF)) =
+       SOME "syntactic")
+
+val guarded_length_reverse =
+  Drule.GEN_ALL
+    (Thm.DISCH boolSyntax.T (Drule.SPEC_ALL listTheory.LENGTH_REVERSE))
+
+val _ =
+  check
+    ("A1 catches a supplied theorem behind a dischargeable hypothesis",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal length_reverse_goal
+            guarded_length_reverse) andalso
+       Option.isSome
+         (benchGuards.recognition_route length_reverse_goal
+            guarded_length_reverse))
+
+val _ =
+  check
+    ("A1 does not call an unrelated supplied theorem recognition",
+     fn () =>
+       benchGuards.recognition_route length_reverse_goal
+         boolTheory.CONJ_COMM = NONE)
+
+val _ =
+  check
+    ("A1 does not credit a theorem for a goal the ambient route closes",
+     fn () =>
+       benchGuards.recognition_route
+         (boolSyntax.mk_disj (p, boolSyntax.mk_neg p))
+         boolTheory.CONJ_COMM = NONE)
+
+val translation_fact =
+  benchLib.FactAdd
+    {name = "parityTranslation$source_widget_iff",
+     theorem = boolTheory.TRUTH}
+
+val _ =
+  check
+    ("A2 rejects a translation lemma the Isabelle method never names",
+     fn () =>
+       benchGuards.provenance_violations
+         (guard_entry "unit-a2-unnamed" "by blast" [translation_fact]
+            subset_goal) =
+       ["parityTranslation$source_widget_iff"])
+
+val _ =
+  check
+    ("A2 accepts a translation lemma named modulo a documented suffix",
+     fn () =>
+       null
+         (benchGuards.provenance_violations
+            (guard_entry "unit-a2-named" "by (blast intro: widget)"
+               [translation_fact] subset_goal)))
+
+val _ =
+  check
+    ("A2 accepts a registered definition of a constant of the goal",
+     fn () =>
+       null
+         (benchGuards.provenance_violations
+            (guard_entry "unit-a2-definition" "by blast"
+               [benchLib.DefinitionAdd
+                  {name = "parityTranslation$source_subset_def",
+                   theorem = pred_setTheory.SUBSET_DEF}]
+               subset_goal)))
+
+val _ =
+  check
+    ("A2 ignores arguments that are not translation lemmas",
+     fn () =>
+       null
+         (benchGuards.provenance_violations
+            (guard_entry "unit-a2-library" "by blast"
+               [benchLib.RewriteAdd
+                  {name = "pred_set$SUBSET_DEF",
+                   theorem = pred_setTheory.SUBSET_DEF}]
+               subset_goal)))
+
+val _ =
+  check
+    ("A3 classifies Isabelle methods by their head",
+     fn () =>
+       List.all benchGuards.is_search_method
+         ["by blast", "by (auto simp: dom_def)", "by force",
+          "using takeWhile_eq_Nil_iff by fastforce", "by(clarsimp)"]
+       andalso
+       not
+         (List.exists benchGuards.is_search_method
+            ["by simp", "by (simp add: fun_eq_iff)", "by linarith"]))
+
+val a3_budget = Time.fromSeconds 10
+
+val _ =
+  check
+    ("A3 reports a search-method goal closed with no search work",
+     fn () =>
+       length
+         (benchGuards.search_work_findings a3_budget
+            [guard_entry "unit-a3-idle" "by blast"
+               [benchLib.RewriteAdd length_reverse] length_reverse_goal]) = 1)
+
+val a3_search_goal =
+  boolSyntax.mk_imp
+    (boolSyntax.mk_imp (p, q),
+     boolSyntax.mk_imp (boolSyntax.mk_neg q, boolSyntax.mk_neg p))
+
+val a3_search_entry : benchLib.corpus_goal =
+  {id = "unit-a3-search", goal = a3_search_goal,
+   source_method = "by blast",
+   recipe = benchLib.Invoke (benchLib.Blast, []),
+   excl = [], provenance = provenance, representative = true}
+
+val _ =
+  check
+    ("A3 accepts a search-method goal that the engine actually searched",
+     fn () =>
+       let
+         val (outcome, work) =
+           benchGuards.measured_run a3_budget a3_search_entry
+       in
+         benchLib.outcome_solved outcome andalso
+         searchWork.total work >= benchGuards.work_floor andalso
+         null (benchGuards.search_work_findings a3_budget [a3_search_entry])
+       end)
+
+val _ =
+  check
+    ("A3 leaves goals whose method is not a search method alone",
+     fn () =>
+       null
+         (benchGuards.search_work_findings a3_budget
+            [guard_entry "unit-a3-simp" "by simp"
+               [benchLib.RewriteAdd length_reverse] length_reverse_goal]))
+
+val a4_goals =
+  [guard_entry "unit-a4-one" "by blast" [translation_fact] subset_goal,
+   guard_entry "unit-a4-two" "by auto" [] length_reverse_goal]
+
+val _ =
+  check
+    ("A4 reports a translation lemma used by one goal that never names it",
+     fn () =>
+       map #id (benchGuards.single_use_findings a4_goals) = ["unit-a4-one"])
+
+val _ =
+  check
+    ("A4 leaves a translation lemma shared by two goals alone",
+     fn () =>
+       null
+         (benchGuards.single_use_findings
+            [guard_entry "unit-a4-shared-one" "by blast"
+               [translation_fact] subset_goal,
+             guard_entry "unit-a4-shared-two" "by auto"
+               [translation_fact] length_reverse_goal]))
+
+val alias_audit = benchGuards.alias_findings ()
+
+val _ =
+  check
+    ("A5 reports every goal-shaped display alias",
+     fn () =>
+       List.all
+         (fn name => List.exists (fn item => #id item = name) alias_audit)
+         ["list$nub_set_for_card_set",
+          "list$ALL_DISTINCT_CARD_LIST_TO_SET_for_nub"])
+
+val _ =
+  check
+    ("A5 leaves an Isabelle attribute rendering alone",
+     fn () =>
+       not
+         (List.exists
+            (fn item => #id item = "list$SNOC_APPEND[symmetric]")
+            alias_audit))
+
+val _ =
+  check
+    ("A5 reports a display name mapped to a different theorem",
+     fn () =>
+       List.exists
+         (fn item =>
+           #id item = "list$LIST_REL_NIL" andalso
+           String.isSubstring "different theorem" (#detail item))
+         alias_audit)
+
+val bound_x = ``!bench_guard_x. bench_guard_x = bench_guard_x``
+val bound_y = ``!bench_guard_y. bench_guard_y = bench_guard_y``
+
+val _ =
+  check
+    ("A6 signatures ignore bound variable names",
+     fn () =>
+       benchGuards.goal_signature bound_x =
+       benchGuards.goal_signature bound_y)
+
+val _ =
+  check
+    ("A6 signatures separate different statements",
+     fn () =>
+       benchGuards.goal_signature subset_goal <>
+       benchGuards.goal_signature length_reverse_goal andalso
+       benchGuards.goal_signature p <> benchGuards.goal_signature q)
+
 fun registered_definition theorem =
   List.exists
     (fn location =>
@@ -3511,6 +3739,27 @@ val _ =
        not (family_selected "algebra") orelse family_ok
          (if benchLib.selftest_level () >= 2 then 10 else 3)
          benchAlgebra.run)
+
+(* A6.  Goal statements are owner-signed: a changed hash means a goal
+   statement moved, which needs an explicit decision rather than an
+   updated pin. *)
+val goal_term_pins =
+  [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
+   ("List/map", "38B4820A"), ("Linarith", "E9DDA580"),
+   ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
+
+val _ =
+  check
+    ("A6 goal-term hashes match their pins",
+     fn () =>
+       length goal_term_pins = length parityLib.families andalso
+       List.all
+         (fn ({name, goals, ...} : parityLib.family) =>
+           case List.find (fn (family, _) => family = name)
+                  goal_term_pins of
+               NONE => false
+             | SOME (_, pin) => benchGuards.family_hash goals = pin)
+         parityLib.families)
 
 fun read_all path =
   let

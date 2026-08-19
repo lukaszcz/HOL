@@ -21,6 +21,7 @@ type family = {
   name : string,
   size : int,
   slice : int,
+  goals : benchLib.corpus_goal list,
   shortfalls : benchLib.shortfall list,
   run : int -> benchLib.family_result
 }
@@ -44,26 +45,32 @@ fun representative_count goals =
 val families : family list =
   [{name = "Classical", size = length benchClassical.goals,
     slice = representative_count benchClassical.goals,
+    goals = benchClassical.goals,
     shortfalls = benchClassical.shortfalls, run = benchClassical.run},
    {name = "Sets", size = length benchSets.goals,
     slice = representative_count benchSets.goals,
+    goals = benchSets.goals,
     shortfalls = benchSets.shortfalls, run = benchSets.run},
    {name = "List/map", size = length benchListMap.goals,
     slice = representative_count benchListMap.goals,
+    goals = benchListMap.goals,
     shortfalls = benchListMap.shortfalls, run = benchListMap.run},
    {name = "Linarith", size = length benchLinarith.goals,
     slice = representative_count benchLinarith.goals,
+    goals = benchLinarith.goals,
     shortfalls = benchLinarith.shortfalls, run = benchLinarith.run},
    {name = "Presburger", size = length benchPresburger.goals,
     slice = representative_count benchPresburger.goals,
+    goals = benchPresburger.goals,
     shortfalls = benchPresburger.shortfalls,
     run = benchPresburger.run},
    {name = "Algebra", size = length benchAlgebra.goals,
     slice = representative_count benchAlgebra.goals,
+    goals = benchAlgebra.goals,
     shortfalls = benchAlgebra.shortfalls,
     run = benchAlgebra.run}]
 
-fun measure_family ({name, size, slice, shortfalls, run} : family) =
+fun measure_family ({name, size, slice, shortfalls, run, ...} : family) =
   let
     val _ = PolyML.fullGC ()
     val result = run 2
