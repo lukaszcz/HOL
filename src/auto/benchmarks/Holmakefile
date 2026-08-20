@@ -5,7 +5,8 @@ INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
 all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe guards.exe
 .PHONY: all
 
-selftest.uo: benchLib.uo benchGuards.uo benchClassical.uo benchSetCorpus.uo \
+selftest.uo: benchLib.uo benchGuards.uo benchRecipe.uo benchNames.uo \
+             benchClassical.uo benchSetCorpus.uo \
              benchSetShortfalls.uo benchSets.uo \
              benchListCorpus.uo benchListSorted.uo benchListNumeric.uo \
              benchListAdjacent.uo \
@@ -35,6 +36,8 @@ benchOptionCorpus.uo benchProductCorpus.uo: benchExplicit.uo
 benchStringCorpus.uo: benchExplicit.uo
 benchExplicit.uo: benchLib.uo parityTranslationTheory.uo
 benchGuards.uo: benchLib.uo benchExplicit.uo
+benchRecipe.uo: benchLib.uo
+benchNames.uo: benchLib.uo
 benchListSorted.uo: parityTranslationTheory.uo
 benchListNumeric.uo: parityTranslationTheory.uo
 benchListAdjacent.uo: parityTranslationTheory.uo

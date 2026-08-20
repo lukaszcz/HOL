@@ -694,6 +694,271 @@ val _ =
        benchGuards.goal_signature length_reverse_goal andalso
        benchGuards.goal_signature p <> benchGuards.goal_signature q)
 
+(* ---- Phase B: the method parser ---------------------------------- *)
+
+fun parses text = benchRecipe.parse text
+
+fun parse_fails text =
+  ((parses text; false)
+   handle Portable.Interrupt => raise Portable.Interrupt
+        | benchRecipe.Unparseable _ => true)
+
+val _ =
+  check
+    ("the parser reads a bare method",
+     fn () =>
+       let val {facts, unfolded, methods} = parses "by blast"
+       in
+         null facts andalso null unfolded andalso
+         map #name methods = ["blast"] andalso
+         List.all (null o #modifiers) methods
+       end)
+
+val _ =
+  check
+    ("the parser reads simp add: and its one-token spelling alike",
+     fn () =>
+       benchRecipe.render (parses "by (auto simp add: dom_def fun_eq_iff)") =
+       benchRecipe.render (parses "by(auto simp: dom_def fun_eq_iff)"))
+
+fun modifiers_of text = #modifiers (hd (#methods (parses text)))
+
+val _ =
+  check
+    ("the parser separates safe and unsafe rule modifiers",
+     fn () =>
+       modifiers_of
+         "by (auto intro!: inj_onI dest: inj_onD elim: split_list)"
+       = [benchRecipe.Intro (benchLib.SafeRule, ["inj_onI"]),
+          benchRecipe.Dest (benchLib.UnsafeRule, ["inj_onD"]),
+          benchRecipe.Elim (benchLib.UnsafeRule, ["split_list"])])
+
+val _ =
+  check
+    ("the parser keeps deletions and additions apart",
+     fn () =>
+       modifiers_of
+         ("by (auto simp del: map_of_eq_Some_iff " ^
+          "simp: map_of_eq_Some_iff [symmetric])")
+       = [benchRecipe.SimpDelete ["map_of_eq_Some_iff"],
+          benchRecipe.SimpAdd ["map_of_eq_Some_iff[symmetric]"]])
+
+val _ =
+  check
+    ("simp flip: reads its names right to left",
+     fn () =>
+       modifiers_of "by (auto simp flip: sorted_key_list_of_set_unique)"
+       = [benchRecipe.SimpAdd
+            ["sorted_key_list_of_set_unique[symmetric]"]])
+
+val _ =
+  check
+    ("the parser attaches an attribute to the name it qualifies",
+     fn () =>
+       benchRecipe.cited_names
+         (parses "by (blast dest!: set_update_subset_insert [THEN subsetD])")
+       = ["set_update_subset_insert[THEN subsetD]"])
+
+val _ =
+  check
+    ("the parser keeps a quoted term inside its attribute",
+     fn () =>
+       benchRecipe.cited_names
+         (parses "by (blast intro: image_eqI [where ?x = \"u - {a}\" for u])")
+       = ["image_eqI[where ?x = \"u - {a}\" for u]"])
+
+val _ =
+  check
+    ("the parser reads using premises",
+     fn () =>
+       let
+         val {facts, methods, ...} =
+           parses "using takeWhile_eq_Nil_iff by fastforce"
+       in
+         facts = ["takeWhile_eq_Nil_iff"] andalso
+         map #name methods = ["fastforce"]
+       end)
+
+val _ =
+  check
+    ("the parser reads unfolding names",
+     fn () =>
+       let
+         val {unfolded, methods, ...} =
+           parses "unfolding rel_fun_def rel_set_def set_Cons_def by fastforce"
+       in
+         unfolded = ["rel_fun_def", "rel_set_def", "set_Cons_def"] andalso
+         map #name methods = ["fastforce"]
+       end)
+
+val _ =
+  check
+    ("the parser reads a terminal method after the first",
+     fn () =>
+       map #name (#methods (parses "by auto (auto elim!: le_funE)"))
+       = ["auto", "auto"])
+
+val _ =
+  check
+    ("the parser drops an Isabelle comment",
+     fn () =>
+       benchRecipe.render (parses "by blast (* somewhat slow *)")
+       = "by blast")
+
+val _ =
+  check
+    ("algebra add: names facts, not rewrites",
+     fn () =>
+       modifiers_of "by (algebra add: sq_def)"
+       = [benchRecipe.FactsAdd ["sq_def"]] andalso
+       modifiers_of "by (simp add: sq_def)"
+       = [benchRecipe.SimpAdd ["sq_def"]])
+
+val _ =
+  check
+    ("an uncovered method string is an error, not a bare tactic",
+     fn () =>
+       parse_fails "apply (induct xs) apply simp done" andalso
+       parse_fails "by (auto frobnicate: x)" andalso
+       parse_fails "by (auto simp add:)")
+
+val _ =
+  check
+    ("rendering a parsed method is idempotent",
+     fn () =>
+       let
+         fun stable text =
+           let val once = benchRecipe.render (parses text)
+               val twice = benchRecipe.render (parses once)
+           in
+             once = twice orelse
+             (print ("\n  " ^ text ^ "\n  -> " ^ once ^ "\n  -> " ^
+                     twice ^ "\n"); false)
+           end
+       in
+         List.all stable
+           ["by blast", "by (simp add: dom_def)", "by(auto simp: Pow_def)",
+            "using assms by (algebra add: collinear_def)",
+            "unfolding mono_def by auto",
+            "by auto (auto elim!: le_funE)",
+            "by (auto simp del: X simp: X [symmetric])"]
+       end)
+
+(* Every Isabelle method string in the corpus parses.  This is the
+   coverage claim B1 makes: no fallback, no hand-written override. *)
+fun from_isabelle (entry : benchLib.corpus_goal) =
+  String.isPrefix "src/HOL/" (#file (#provenance entry))
+
+val corpus_goals =
+  List.concat (map #goals parityLib.families)
+
+val corpus_methods =
+  let
+    val seen = ref ([] : string list)
+    fun note method =
+      if List.exists (equal method) (!seen) then ()
+      else seen := method :: !seen
+  in
+    app (note o #source_method) (List.filter from_isabelle corpus_goals);
+    List.rev (!seen)
+  end
+
+val unparseable_methods =
+  List.filter
+    (fn method =>
+      ((benchRecipe.parse method; false)
+       handle Portable.Interrupt => raise Portable.Interrupt
+            | benchRecipe.Unparseable _ => true))
+    corpus_methods
+
+val _ =
+  check
+    ("every Isabelle method string in the corpus parses",
+     fn () =>
+       (if null unparseable_methods then ()
+        else
+          print
+            ("\nunparseable: " ^
+             String.concatWith "\n             " unparseable_methods ^ "\n");
+        null unparseable_methods))
+
+(* ---- Phase B: the name table ------------------------------------- *)
+
+(* Every name an Isabelle method cites has to resolve, or the recipe
+   cannot be derived from the method. *)
+val cited_by_corpus =
+  let
+    val seen = ref ([] : string list)
+    fun note name =
+      if List.exists (equal name) (!seen) then () else seen := name :: !seen
+  in
+    app (fn method => app note (benchRecipe.cited_names
+                                  (benchRecipe.parse method)))
+      corpus_methods;
+    List.rev (!seen)
+  end
+
+val unresolved_names =
+  List.filter (fn name => not (isSome (benchNames.lookup name)))
+    cited_by_corpus
+
+val _ =
+  check
+    ("the name table covers every name the corpus cites",
+     fn () =>
+       (if null unresolved_names then ()
+        else
+          print
+            ("\nunresolved (" ^ Int.toString (length unresolved_names) ^
+             " of " ^ Int.toString (length cited_by_corpus) ^ "):\n" ^
+             String.concatWith "\n" unresolved_names ^ "\n");
+        null unresolved_names))
+
+(* A citation that names no theorem has to say why.  [Native] is the
+   one kind an agent could abuse to make a shortfall disappear, so the
+   table's whole native set is pinned here by name. *)
+val native_citations =
+  List.filter
+    (fn name =>
+      case benchNames.resolve name of
+          benchNames.Native => true
+        | _ => false)
+    benchNames.names
+
+val _ =
+  check
+    ("only the documented citations resolve as engine-native",
+     fn () =>
+       Portable.sort (fn a => fn b => String.<= (a, b)) native_citations =
+       ["classical", "exI[where ?x = \"- u\" for u]", "if_split_asm",
+        "if_splits", "le_Suc_eq", "nat_less_le"])
+
+(* A goal identifier in the table would make it a per-goal hint table. *)
+val _ =
+  check
+    ("no corpus goal identifier appears in the name table",
+     fn () =>
+       let
+         val identifiers = map #id corpus_goals
+       in
+         List.all
+           (fn name =>
+             List.all (fn id => not (String.isSubstring id name)) identifiers)
+           benchNames.names
+       end)
+
+(* The goals with no Isabelle method are the HOL4 integer regression
+   goals the corpus adds; they are named here so a new one cannot slip
+   past the parser by having no method to parse. *)
+val _ =
+  check
+    ("only the HOL4 regression goals lack an Isabelle method",
+     fn () =>
+       List.all
+         (fn entry => #file (#provenance entry) =
+                      "src/integer/testing/test_cases.sml")
+         (List.filter (not o from_isabelle) corpus_goals))
+
 fun registered_definition theorem =
   List.exists
     (fn location =>
