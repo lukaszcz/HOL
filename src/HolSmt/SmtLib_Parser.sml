@@ -3966,7 +3966,7 @@ local
     let
       val _ = ListPair.allEq
         (fn (expected, actual) =>
-          surface_sort_compatible expected actual)
+          dialect_sorts_equivalent context expected actual)
         (domain_surface, arg_surface) orelse raise Match
       val surface_subst = List.concat
         (ListPair.map surface_bindings (domain_surface, arg_surface))

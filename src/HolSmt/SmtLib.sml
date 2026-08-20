@@ -986,10 +986,19 @@ local
   val current_set_terms = ref ([] : Term.term list)
   val current_raw_num_terms = ref ([] : Term.term list)
   val current_collection_function_arguments =
-    ref ([] : (Term.term * Term.term) list)
+    ref ([] : (Term.term * int * Term.term) list)
 
-  fun contextual_collection_argument function =
-    Lib.op_assoc1 Term.aconv function (!current_collection_function_arguments)
+  fun contextual_collection_argument function index =
+    case List.find
+        (fn (other, other_index, _) =>
+          index = other_index andalso Term.aconv function other)
+        (!current_collection_function_arguments) of
+      SOME (_, _, argument) => SOME argument
+    | NONE => NONE
+
+  fun has_contextual_collection_argument function =
+    List.exists (fn (other, _, _) => Term.aconv function other)
+      (!current_collection_function_arguments)
 
   val native_set_heads = [
     pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
@@ -4463,9 +4472,7 @@ local
                     val argument =
                       if index < List.length rands then
                         SOME (List.nth (rands, index))
-                      else if index = 0 then
-                        contextual_collection_argument rator
-                      else NONE
+                      else contextual_collection_argument rator index
                   in
                     case argument of
                       SOME arg =>
@@ -4511,8 +4518,7 @@ local
                           Term.is_var rator andalso
                           (is_marked_set_term tm orelse
                            is_marked_bag_term tm orelse
-                           Option.isSome
-                             (contextual_collection_argument rator) orelse
+                           has_contextual_collection_argument rator orelse
                            List.exists (fn argument =>
                              is_marked_set_term argument orelse
                              is_marked_bag_term argument) rands)
@@ -4803,21 +4809,37 @@ local
         (Term.is_const head andalso
          List.length applied < declared_const_arity head)
       end
-    fun compatible_collection_variable argument variable =
-      case Lib.total Type.dom_rng (Term.type_of variable) of
-        SOME (domain, _) =>
-          Type.compare (domain, Term.type_of argument) = EQUAL
-      | NONE => false
-    (* The (variable, argument) pairs by which [tm] applies a computed
-       function to a native collection. *)
+    fun collection_parameter_index function argument variable =
+      let
+        val residual_type = Term.type_of function
+        val argument_type = Term.type_of argument
+        fun find index ty =
+          if Type.compare (ty, residual_type) = EQUAL then
+            case Lib.total Type.dom_rng ty of
+              SOME (domain, _) =>
+                if Type.compare (domain, argument_type) = EQUAL then
+                  SOME index
+                else
+                  NONE
+            | NONE => NONE
+          else
+            case Lib.total Type.dom_rng ty of
+              SOME (_, range) => find (index + 1) range
+            | NONE => NONE
+      in
+        find 0 (Term.type_of variable)
+      end
+    (* The (variable, parameter index, argument) triples by which [tm]
+       applies a computed function to a native collection. *)
     fun computed_collection_pairs collection_terms tm =
       case Lib.total Term.dest_comb tm of
         SOME (function, argument) =>
           if mem_aconv argument collection_terms andalso
              not (ordinary_symbol_application function) then
-            List.map (fn variable => (variable, argument))
-              (List.filter (compatible_collection_variable argument)
-                (Term.free_vars function))
+            List.mapPartial (fn variable =>
+              Option.map (fn index => (variable, index, argument))
+                (collection_parameter_index function argument variable))
+              (Term.free_vars function)
           else []
       | NONE => []
     fun computed_collection_applications collection_terms =
@@ -4867,7 +4889,7 @@ local
                 List.exists (fn argument => mem_aconv argument collection_terms)
                   arguments
               fun computed_applies_bound () =
-                List.exists (fn (variable, _) => mem_aconv variable bound)
+                List.exists (fn (variable, _, _) => mem_aconv variable bound)
                   (computed_collection_pairs collection_terms tm)
             in
               (applies_bound andalso has_collection_argument) orelse

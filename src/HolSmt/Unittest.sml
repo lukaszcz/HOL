@@ -3698,6 +3698,8 @@ fun smtlib_logic_fragment_diagnostics () =
       {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = false}
     val all_elaborated =
       {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = true}
+    val cvc5_options =
+      {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = false}
   in
     expect_fragment_with_options "nested Seq datatype unavailable"
       all_elaborated "QF_S"
@@ -3882,6 +3884,12 @@ fun smtlib_logic_fragment_diagnostics () =
        "(declare-fun f (Int) Real)\n" ^
        "(declare-const x Int)\n" ^
        "(assert (= (f x) (+ 1.0 2.0)))\n");
+    expect_no_fragment_with_options
+      "second finite-set logic includes finite sets" cvc5_options
+      "QF_UFLIRAFS"
+      (script "QF_UFLIRAFS"
+       "(declare-const s (Set Int))\n" ^
+       "(assert (set.member 0 (set.union s (set.singleton 1))))\n");
     expect_hol_error_contains "finite-set logic excludes arrays" "Array"
       (fn () => ignore (parse_smtlib_state
         (script "QF_UFLIAFS"
@@ -4599,6 +4607,7 @@ let
   val declarations =
     "(set-logic ALL)\n" ^
     "(declare-const f (Array Int Int))\n" ^
+    "(declare-fun consume ((Array Int Int)) Bool)\n" ^
     "(declare-const c Bool)\n"
   val state = SmtLib_Parser.typecheck_script_string_with_options options
     (declarations ^
@@ -4606,7 +4615,8 @@ let
      "(assert (= (select (lambda ((x Int)) (+ x 1)) 2) 3))\n" ^
      (* A lambda is an array in Z3, so store and ite accept one too. *)
      "(assert (= (store (lambda ((x Int)) (+ x 1)) 0 5) f))\n" ^
-     "(assert (= (ite c f (lambda ((x Int)) (+ x 1))) f))\n")
+     "(assert (= (ite c f (lambda ((x Int)) (+ x 1))) f))\n" ^
+     "(assert (consume (lambda ((x Int)) x)))\n")
   fun cvc5_rejects label body =
     let
       val rejected =
@@ -4619,13 +4629,15 @@ let
         "cvc5 accepted the Z3-only array/lambda alias at " ^ label)
     end
 in
-  assert (List.length (#assertions state) = 4,
+  assert (List.length (#assertions state) = 5,
     "Z3 array/lambda compatibility script lost assertions");
   (* The alias is dialect-scoped: cvc5 keeps arrays and lambdas apart. *)
   cvc5_rejects "=" "(= f (lambda ((x Int)) (+ x 1)))";
   cvc5_rejects "select" "(= (select (lambda ((x Int)) (+ x 1)) 2) 3)";
   cvc5_rejects "store" "(= (store (lambda ((x Int)) (+ x 1)) 0 5) f)";
-  cvc5_rejects "ite" "(= (ite c f (lambda ((x Int)) (+ x 1))) f)"
+  cvc5_rejects "ite" "(= (ite c f (lambda ((x Int)) (+ x 1))) f)";
+  cvc5_rejects "declared parameter"
+    "(consume (lambda ((x Int)) x))"
 end
 
 fun smtlib_seq_dialect_builders_success () =
@@ -6427,6 +6439,9 @@ let
        (boolSyntax.mk_cond (``p:bool``,
           Term.mk_var ("set_f", Type.--> (Term.type_of s, Type.bool)),
           Term.mk_var ("set_g", Type.--> (Term.type_of s, Type.bool))), s))
+  val cvc_curried_computed_function_text = cvc
+    ([``FINITE (s:int set)``],
+     ``(if c then (set_f:bool -> int set -> bool) else set_g) p s``)
   val cvc_bound_function_message =
     (ignore (cvc
       ([``FINITE (s:int set)``],
@@ -6515,6 +6530,18 @@ in
       not (contains "(Set Int)" cvc_computed_function_text),
     "computed cvc5 Set function did not use the array fallback:\n" ^
     cvc_computed_function_text);
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_curried_computed_function_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("curried computed cvc5 Set function is not closed SMT-LIB: " ^
+       Feedback.message_of holerr));
+  assert (contains "(-> Bool (-> (Array Int Bool) Bool))"
+      cvc_curried_computed_function_text andalso
+      not (contains "(Set Int)" cvc_curried_computed_function_text),
+    "curried computed cvc5 Set function lost its later array domain:\n" ^
+    cvc_curried_computed_function_text);
   assert (cvc_bound_function_message =
       "higher-order cvc5 functions over Sets or Bags are unsupported",
     "bound cvc5 Set function diagnostic changed: " ^

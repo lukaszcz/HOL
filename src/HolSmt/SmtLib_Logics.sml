@@ -1156,9 +1156,16 @@ in
       fun add ({dictionaries = (tydict, tmdict), ...}
                : dialect_dictionary_registration) (tys, tms) =
         (union_dicts [tys, tydict], union_dicts [tms, tmdict])
+      val dictionaries = List.foldl
+        (fn (registration, dictionaries) => add registration dictionaries)
+        (base_tydict, base_tmdict) registrations
     in
-      List.foldl (fn (registration, dictionaries) =>
-        add registration dictionaries) (base_tydict, base_tmdict) registrations
+      if solver = "cvc5" andalso
+         Option.isSome (strip_finite_set_suffix logic) then
+        (union_dicts [Lib.fst dictionaries, CVC5_Set.tydict],
+         union_dicts [Lib.snd dictionaries, CVC5_Set.first_order_tmdict])
+      else
+        dictionaries
     end
 
   (* The source parser is intentionally usable without a solver target for
@@ -1222,12 +1229,6 @@ in
        dictionaries = (CVC5_Bag.tydict, bag_terms)}))
     [("ALL", CVC5_Set.first_order_tmdict, CVC5_Bag.first_order_tmdict),
      ("HO_ALL", CVC5_Set.tmdict, CVC5_Bag.tmdict)]
-
-  (* cvc5's QF_UFLIAFS extension is precisely QF_UFLIA plus the
-     first-order finite-set surface. *)
-  val _ = register_dialect_dictionary {
-    solver = "cvc5", logic = "QF_UFLIAFS",
-    dictionaries = (CVC5_Set.tydict, CVC5_Set.first_order_tmdict)}
 
   val _ = default_dialect_dictionary_registrations :=
     !dialect_dictionary_registrations
