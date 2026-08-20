@@ -21,10 +21,15 @@ fun library theory theorem () = Theorems [named theory theorem]
    so faithfulness against f7e02b7e is checked there, not restated here. *)
 fun translated theorem () = Theorems [named "parityTranslation" theorem]
 
+(* The combinators below -- [bundle], [symmetric], [first_case] -- only
+   make sense over an entry that names theorems.  Applying one to an
+   entry that names none is an authoring mistake, not an empty list. *)
 fun resolved build =
   case build () of
       Theorems theorems => theorems
-    | Context => []
+    | _ =>
+        raise mk_HOL_ERR "benchNames" "resolved"
+          "a derived entry was built from one that names no theorem"
 
 (* What an Isabelle fact-list name abbreviates. *)
 fun bundle builds () = Theorems (List.concat (map resolved builds))
@@ -181,7 +186,7 @@ val table : (string * (unit -> resolution)) list =
    translated "source_set_zip_rightD"),
   ("zip_map_fst_snd",
    translated "source_zip_map_fst_snd"),
-  ("zip_rev", unrepresented),
+  ("zip_rev", symmetric (library "rich_list" "REVERSE_ZIP")),
   ("set_zip",
    translated "source_set_zip"),
   ("fold_Cons_rev",
@@ -379,12 +384,11 @@ val table : (string * (unit -> resolution)) list =
   ("asym_inv_image", unrepresented),
   ("asym_less_than", unrepresented),
   ("asym_lex", unrepresented),
-  ("bijI", unrepresented),
   ("bit_iff_odd_drop_bit", unrepresented),
   ("bit_simps", unrepresented),
   ("bit_take_bit_iff", unrepresented),
-  ("distinct_zipI1", unrepresented),
-  ("div_mult2_numeral_eq", unrepresented),
+  ("distinct_zipI1", library "list" "ALL_DISTINCT_ZIP"),
+  ("div_mult2_numeral_eq", library "arithmetic" "DIV_DIV_DIV_MULT"),
   ("dropWhile_append3", unrepresented),
   ("dropWhile_eq_drop", unrepresented),
   ("drop_bit_eq_div", unrepresented),
@@ -392,10 +396,8 @@ val table : (string * (unit -> resolution)) list =
   ("fold_insort_key.remove", unrepresented),
   ("greaterThanLessThan_eq", unrepresented),
   ("idem_if_sorted_distinct", unrepresented),
-  ("inj_rotate1", unrepresented),
   ("lessThan_Suc_atMost", unrepresented),
-  ("list_eq_iff_nth_eq", unrepresented),
-  ("listrel_subset", unrepresented),
+  ("listrel_subset", library "list" "LIST_REL_MEM_IMP"),
   ("lists_accD", unrepresented),
   ("lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]]",
    unrepresented),
@@ -422,11 +424,18 @@ val table : (string * (unit -> resolution)) list =
   ("sorted_wrt_mono_rel[OF _ sorted_wrt_upt]", unrepresented),
   ("sorted_wrt_mono_rel[OF _ sorted_wrt_upto]", unrepresented),
   ("strict_sorted_equal", unrepresented),
-  ("surj_rotate1", unrepresented),
   ("takeWhile_nth", unrepresented),
-  ("wf_iff_acc", unrepresented),
+  ("wf_iff_acc", library "relation" "WF_EQ_WFP"),
 
   (* ---- Names resolved to a HOL4 theorem ---- *)
+  ("list_eq_iff_nth_eq",
+   library "list" "LIST_EQ_REWRITE"),
+  ("bijI",
+   library "pred_set" "BIJ_DEF"),
+  ("inj_rotate1",
+   translated "source_rotate1_inj"),
+  ("surj_rotate1",
+   translated "source_rotate1_surj"),
   ("Diff_eq[symmetric]",
    translated "source_Diff_eq_symmetric"),
   ("Min_in",
