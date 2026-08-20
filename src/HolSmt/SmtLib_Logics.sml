@@ -490,11 +490,24 @@ in
     higher_order : bool
   }
 
-  fun logic_stem logic =
-    if String.isPrefix "QF_" logic then
-      String.extract (logic, 3, NONE)
+  (* [FS] is cvc5's finite-sets marker on a logic name, not an SMT-LIB
+     stem: its trailing [S] would otherwise read as the strings theory. *)
+  fun strip_finite_set_suffix logic =
+    if String.isSuffix "FS" logic andalso String.size logic > 2 then
+      SOME (String.substring (logic, 0, String.size logic - 2))
     else
-      logic
+      NONE
+
+  fun logic_stem logic =
+    let
+      val stem =
+        if String.isPrefix "QF_" logic then
+          String.extract (logic, 3, NONE)
+        else
+          logic
+    in
+      Option.getOpt (strip_finite_set_suffix stem, stem)
+    end
 
   fun arith_fragment_of_stem stem =
     if String.isSuffix "IDL" stem orelse String.isSuffix "RDL" stem then
@@ -510,13 +523,7 @@ in
     else
       NO_ARITH
 
-  fun logic_fragment_of_logic "QF_UFLIAFS" = {
-      quantifiers = false, uninterpreted = true, arrays = false,
-      arith = LINEAR, ints = true, reals = false, bitvectors = false,
-      strings = false, floatingpoint = false, datatypes = false,
-      higher_order = false
-    }
-    | logic_fragment_of_logic "ALL" = {
+  fun logic_fragment_of_logic "ALL" = {
       quantifiers = true, uninterpreted = true, arrays = true,
       arith = NONLINEAR, ints = true, reals = true, bitvectors = true,
       strings = true, floatingpoint = true, datatypes = true,
@@ -688,17 +695,13 @@ in
         type_is_datatype_sort ty andalso
         not (ignore_native_sequences andalso
              Lib.can listSyntax.dest_list_type ty)
-      fun type_contains_visible_datatype ty =
-        type_is_visible_datatype_sort ty orelse
-        (case Lib.total Type.dom_rng ty of
-           SOME (dom, rng) =>
-             type_contains_visible_datatype dom orelse
-             type_contains_visible_datatype rng
-         | NONE =>
-             if ignore_native_sequences then
-               (type_contains_visible_datatype (listSyntax.dest_list_type ty)
-                handle Feedback.HOL_ERR _ => false)
-             else false)
+      (* The unconditional descent into list elements is safe in both
+         settings: when sequences are ignored the predicate excludes list
+         types and the descent is wanted, and when they are not, every list
+         type is already a datatype sort except HOL's own :string, whose
+         :char element is not one either. *)
+      val type_contains_visible_datatype =
+        Library.type_contains type_is_visible_datatype_sort
       fun is_smtstr_value tm =
         case boolSyntax.strip_comb tm of
           (rator, [_]) =>
@@ -1104,8 +1107,6 @@ in
       (QF_UFIDL.tydict, QF_UFIDL.tmdict)
     | "QF_UFLIA" =>
       (QF_UFLIA.tydict, QF_UFLIA.tmdict)
-    | "QF_UFLIAFS" =>
-      (QF_UFLIA.tydict, QF_UFLIA.tmdict)
     | "QF_UFLIRA" =>
       (QF_UFLIRA.tydict, QF_UFLIRA.tmdict)
     | "QF_UFLRA" =>
@@ -1121,7 +1122,10 @@ in
     | "UFNRA" =>
       (UFNRA.tydict, UFNRA.tmdict)
     | _ =>
-      raise ERR "parsedicts_of_logic" ("unknown logic '" ^ logic ^ "'")
+      case strip_finite_set_suffix logic of
+        SOME base => parsedicts_of_logic base
+      | NONE =>
+        raise ERR "parsedicts_of_logic" ("unknown logic '" ^ logic ^ "'")
 
   (* Extends the standard logic packet with entries for exactly one solver
      dialect.  Multiple registrations compose, so the theory tasks can add
@@ -1324,7 +1328,6 @@ in
     | "QF_UFDTNIA" => QF_UFDTNIA.metadata
     | "QF_UFIDL" => QF_UFIDL.metadata
     | "QF_UFLIA" => QF_UFLIA.metadata
-    | "QF_UFLIAFS" => QF_UFLIA.metadata
     | "QF_UFLIRA" => QF_UFLIRA.metadata
     | "QF_UFLRA" => QF_UFLRA.metadata
     | "QF_UFNIRA" => QF_UFNIRA.metadata
@@ -1333,7 +1336,10 @@ in
     | "UFNIA" => UFNIA.metadata
     | "UFNRA" => UFNRA.metadata
     | _ =>
-      raise ERR "metadata_of_logic" ("unknown logic '" ^ logic ^ "'")
+      case strip_finite_set_suffix logic of
+        SOME base => metadata_of_logic base
+      | NONE =>
+        raise ERR "metadata_of_logic" ("unknown logic '" ^ logic ^ "'")
 
 end  (* local *)
 

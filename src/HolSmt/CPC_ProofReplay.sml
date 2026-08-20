@@ -531,26 +531,62 @@ local
       handle Feedback.HOL_ERR _ => fallback_cong ()
     end
 
-  fun prove_trans_bridge left right =
+  (* Discharge [prems] against a theory prover by proving the implication
+     they guard, then eliminating them. *)
+  fun prove_from_prems prove prems target =
+    Drule.LIST_MP prems
+      (prove (boolSyntax.list_mk_imp (List.map Thm.concl prems, target)))
+
+  (* Prove [left = right] under [hyps]: the one ladder every "these two
+     terms are interchangeable here" site uses.  Each rung may assume
+     [hyps], which the returned theorem carries for the caller to
+     discharge.  The rung order is load-bearing, not just a cost
+     heuristic: each simp-based rung diverges on goals an earlier one
+     closes, so [symmetry_simp] must stay behind [hypothesis_cases] and
+     [hypothesis_cases] behind the [smt_rdiv_eq_div] rewrite. *)
+  fun prove_bridge hyps left right =
     let
+      val target = boolSyntax.mk_eq (left, right)
       val rewrites = [integerTheory.INT_GE, realTheory.real_ge]
       fun normalize tm =
         Rewrite.PURE_REWRITE_CONV rewrites tm
         handle Conv.UNCHANGED => Thm.REFL tm
-      val left_norm = normalize left
-      val right_norm = normalize right
-      val (_, normalized_left) = boolSyntax.dest_eq (Thm.concl left_norm)
-      val (_, normalized_right) = boolSyntax.dest_eq (Thm.concl right_norm)
-      val _ = Term.aconv normalized_left normalized_right orelse
-        raise ERR "trans" "relation-alias bridge does not match"
+      fun relation_alias () =
+        let
+          val left_norm = normalize left
+          val right_norm = normalize right
+          val (_, normalized_left) = boolSyntax.dest_eq (Thm.concl left_norm)
+          val (_, normalized_right) =
+            boolSyntax.dest_eq (Thm.concl right_norm)
+          val _ = Term.aconv normalized_left normalized_right orelse
+            raise ERR "trans" "relation-alias bridge does not match"
+        in
+          Thm.TRANS left_norm (Thm.SYM right_norm)
+        end
+      fun hypothesis_cases () =
+        Tactical.TAC_PROOF ((hyps, target),
+          Tactical.THEN
+            (Tactical.REPEAT
+               (Tactical.THEN (Tactic.COND_CASES_TAC,
+                  bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [])),
+             bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) []))
+      fun symmetry_simp () =
+        simpLib.SIMP_PROVE (bossLib.srw_ss()) [boolTheory.EQ_SYM_EQ] target
     in
-      Thm.TRANS left_norm (Thm.SYM right_norm)
+      relation_alias ()
+      handle Feedback.HOL_ERR _ =>
+      simpLib.SIMP_PROVE (bossLib.srw_ss()) [HolSmtTheory.smt_rdiv_eq_div]
+        target
+      handle Feedback.HOL_ERR _ =>
+      hypothesis_cases ()
+      handle Feedback.HOL_ERR _ =>
+      profile "CPC(bridge:symmetry_simp)" symmetry_simp ()
+      handle Feedback.HOL_ERR _ =>
+      Library.arith_prove_with_cases target
+      handle Feedback.HOL_ERR _ =>
+      prove_from_prems SmtArrayProve.array_prove
+        (List.map Thm.ASSUME hyps) target
     end
-    handle Feedback.HOL_ERR _ =>
-    simpLib.SIMP_PROVE (bossLib.srw_ss()) [HolSmtTheory.smt_rdiv_eq_div]
-      (boolSyntax.mk_eq (left, right))
-    handle Feedback.HOL_ERR _ =>
-    Library.arith_prove_with_cases (boolSyntax.mk_eq (left, right))
 
   fun replay_trans prems =
     case prems of
@@ -575,24 +611,9 @@ local
                            val (_, acc_right) = boolSyntax.dest_eq (Thm.concl acc)
                            val (th_left, th_right) =
                              boolSyntax.dest_eq (Thm.concl th)
-                           fun contextual_bridge target =
-                             let
-                               val hyps = HOLset.listItems
-                                 (HOLset.union
-                                   (Thm.hypset acc, Thm.hypset th))
-                             in
-                               Tactical.TAC_PROOF
-                                 ((hyps,
-                                  boolSyntax.mk_eq (acc_right, target)),
-                                  Tactical.THEN
-                                    (Tactical.REPEAT
-                                       (Tactical.THEN
-                                         (Tactic.COND_CASES_TAC,
-                                          bossLib.ASM_SIMP_TAC
-                                            (bossLib.srw_ss()) [])),
-                                     bossLib.ASM_SIMP_TAC
-                                       (bossLib.srw_ss()) []))
-                             end
+                           val bridge_hyps = HOLset.listItems
+                             (HOLset.union
+                               (Thm.hypset acc, Thm.hypset th))
                            fun symmetry_bridge target =
                              let
                                fun align source target =
@@ -626,10 +647,6 @@ local
                              in
                                align acc_right target
                              end
-                           fun symmetry_simp_bridge target =
-                             simpLib.SIMP_PROVE (bossLib.srw_ss())
-                               [boolTheory.EQ_SYM_EQ]
-                               (boolSyntax.mk_eq (acc_right, target))
                            fun totalized_arith_bridge target =
                              let
                                val bridge_target =
@@ -745,12 +762,7 @@ local
                                    profile "CPC(trans:middle_symmetry)"
                                      (fn () => symmetry_bridge target) ()
                                  handle Feedback.HOL_ERR _ =>
-                                   contextual_bridge target
-                                 handle Feedback.HOL_ERR _ =>
-                                   profile "CPC(trans:middle_symmetry_simp)"
-                                     (fn () => symmetry_simp_bridge target) ()
-                                 handle Feedback.HOL_ERR _ =>
-                                   prove_trans_bridge acc_right target
+                                   prove_bridge bridge_hyps acc_right target
                              in
                                Thm.TRANS (Thm.TRANS acc middle) next
                              end
@@ -2146,15 +2158,7 @@ local
       profile "CPC(rung:arith/int_arith)" Tactical.TAC_PROOF
         (([], target), intLib.ARITH_TAC)
 
-  fun arith_prove_from_prems prems target =
-    let
-      val implication = boolSyntax.list_mk_imp
-        (List.map Thm.concl prems, target)
-      val thm = arith_prove implication
-    in
-      List.foldl (fn (premise, accumulated) => Thm.MP accumulated premise)
-        thm prems
-    end
+  val arith_prove_from_prems = prove_from_prems arith_prove
 
   fun replay_arith_abs_eq args =
     case args of
@@ -2625,12 +2629,8 @@ local
         | _ => raise ERR name "expected one selected update term"
       val target =
         case conclusion of SOME target => target | NONE => omitted_target ()
-      val implication = boolSyntax.list_mk_imp
-        (List.map Thm.concl prems, target)
-      val thm = SmtArrayProve.array_prove implication
     in
-      List.foldl (fn (premise, accumulated) => Thm.MP accumulated premise)
-        thm prems
+      prove_from_prems SmtArrayProve.array_prove prems target
     end
 
   fun replay_ite_not_cond args =
@@ -2956,15 +2956,6 @@ local
         boolSyntax.mk_neg conjunction
       else boolSyntax.mk_imp (conjunction, scope_result)
       val conjunction_thm = Thm.ASSUME conjunction
-      fun prove_scoped_bridge left right =
-        prove_trans_bridge left right
-        handle Feedback.HOL_ERR _ =>
-          let
-            val bridge = boolSyntax.mk_eq (left, right)
-            val conditional = boolSyntax.mk_imp (conjunction, bridge)
-          in
-            Thm.MP (SmtArrayProve.array_prove conditional) conjunction_thm
-          end
       val applied = List.foldl
         (fn (antecedent, implication) =>
           Thm.MP implication (Library.conj_elim
@@ -2973,7 +2964,7 @@ local
       val normalized = case normalized_result of
           NONE => applied
         | SOME tm => Thm.EQ_MP
-            (prove_scoped_bridge tm scope_result) applied
+            (prove_bridge [conjunction] tm scope_result) applied
       val discharged = Thm.DISCH conjunction normalized
       val result =
         if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged

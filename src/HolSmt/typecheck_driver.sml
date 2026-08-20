@@ -28,9 +28,6 @@ val _ =
 
 val _ = SmtLib_Datatypes.empty_name_map
 
-fun typecheck_datatype_options elaborate =
-  {dict_logic = NONE, solver = NONE, elaborate_datatypes = elaborate}
-
 fun typecheck_count_assertions
     (state: SmtLib_Parser.command_state_snapshot) =
   List.length (#assertions state)
@@ -71,7 +68,8 @@ let
   val _ = Library.trace := 0
   val state: SmtLib_Parser.command_state_snapshot =
     SmtLib_Parser.parse_file_state_with_options
-      (typecheck_datatype_options elaborate_datatypes) path
+      {dict_logic = NONE, solver = NONE,
+       elaborate_datatypes = elaborate_datatypes} path
   val observed_logic = #logic state
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic

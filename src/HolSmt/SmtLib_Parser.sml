@@ -3254,6 +3254,34 @@ local
     surface_sort_compatible left right orelse
     surface_sort_compatible right left
 
+  (* Z3 identifies [(Array D R)] with the lambda sort [D -> R]. *)
+  fun function_components (ArraySort (domain, range)) = SOME (domain, range)
+    | function_components (MapSort (domain, range)) = SOME (domain, range)
+    | function_components _ = NONE
+
+  fun z3_array_map_equivalent left right =
+    case (function_components left, function_components right) of
+      (SOME (left_domain, left_range), SOME (right_domain, right_range)) =>
+        surface_sorts_equivalent left_domain right_domain andalso
+        surface_sorts_equivalent left_range right_range
+    | _ => false
+
+  (* Surface equality as the target dialect sees it.  In Z3 a lambda *is* an
+     array, so the alias holds wherever two surfaces must agree, not only at
+     [=] and [select]. *)
+  fun dialect_sorts_equivalent (context : typecheck_context) left right =
+    surface_sorts_equivalent left right orelse
+    (#solver context = SOME "Z3" andalso z3_array_map_equivalent left right)
+
+  (* The index/element pair of anything the target dialect treats as an
+     array. *)
+  fun array_index_element (context : typecheck_context) surface =
+    case surface of
+      ArraySort (index, element) => SOME (index, element)
+    | MapSort (domain, range) =>
+        if #solver context = SOME "Z3" then SOME (domain, range) else NONE
+    | _ => NONE
+
   fun surface_bindings (expected, actual) =
     case (expected, actual) of
       (PolySort ty, _) => [(ty, actual)]
@@ -3932,7 +3960,7 @@ local
       (name, Term.mk_var (name, ty), surface_sort)
     end
 
-  and instantiate_signature arg_sorts arg_surface
+  and instantiate_signature context arg_sorts arg_surface
       ({tm, domain, domain_surface, range, range_surface}
          : function_signature) =
     let
@@ -3948,7 +3976,7 @@ local
             List.all
               (fn (other_template, other_actual) =>
                 not (same_sort template other_template) orelse
-                surface_sorts_equivalent actual other_actual)
+                dialect_sorts_equivalent context actual other_actual)
               surface_subst)
           surface_subst orelse raise Match
       fun match_one ((expected, actual), subst) =
@@ -4054,7 +4082,7 @@ local
             List.length domain = List.length arg_sorts)
           signatures
       val exact = Lib.get_first
-        (instantiate_signature arg_sorts arg_surface) arity_matches
+        (instantiate_signature context arg_sorts arg_surface) arity_matches
       fun map_signature ({domain, range_surface, ...}: function_signature) =
         List.null domain andalso
         (case range_surface of MapSort _ => true | _ => false)
@@ -4156,21 +4184,8 @@ local
           | _ => ()
       fun check_surface_builtin () =
         let
-          fun z3_array_map_equivalent left right =
-            case (left, right) of
-              (ArraySort (left_domain, left_range),
-               MapSort (right_domain, right_range)) =>
-                surface_sorts_equivalent left_domain right_domain andalso
-                surface_sorts_equivalent left_range right_range
-            | (MapSort (left_domain, left_range),
-               ArraySort (right_domain, right_range)) =>
-                surface_sorts_equivalent left_domain right_domain andalso
-                surface_sorts_equivalent left_range right_range
-            | _ => false
-          fun dialect_sorts_equivalent left right =
-            surface_sorts_equivalent left right orelse
-            (#solver context = SOME "Z3" andalso
-             z3_array_map_equivalent left right)
+          val dialect_sorts_equivalent = dialect_sorts_equivalent context
+          val array_index_element = array_index_element context
           fun require_set operator surface =
             if is_set_surface surface then ()
             else type_error fn_name context loc NONE NONE
@@ -4250,37 +4265,41 @@ local
                     "Z3 Set select is unavailable in the cvc5 dialect"
                 else ()
               else
-                (case set_surface of
-                 ArraySort (index, _) =>
-                     if surface_sort_compatible index actual_index then ()
-                     else type_error fn_name context loc NONE NONE
-                       "ArraysEx select surface sort mismatch"
-                 | MapSort (index, _) =>
-                     if #solver context = SOME "Z3" andalso
-                        surface_sort_compatible index actual_index then ()
-                     else type_error fn_name context loc NONE NONE
-                       "ArraysEx select requires an Array sort"
-                 | _ => type_error fn_name context loc NONE NONE
-                     "ArraysEx select requires an Array sort")
-          | ("store", [ArraySort (index, element), actual_index,
-                        actual_element]) =>
-              if surface_sort_compatible index actual_index andalso
-                 surface_sort_compatible element actual_element then ()
-              else type_error fn_name context loc NONE NONE
-                "ArraysEx store surface sort mismatch"
-          | ("store", [set_surface, _, _]) =>
-              if is_bag_surface set_surface then
-                type_error fn_name context loc NONE NONE
-                  "ArraysEx store requires an Array sort, not a Bag"
-              else if is_set_surface set_surface then
-                if #solver context = SOME "cvc5" then
-                  type_error fn_name context loc NONE NONE
-                    "Z3 Set store is unavailable in the cvc5 dialect"
-                else ()
-              else type_error fn_name context loc NONE NONE
-                "ArraysEx store requires an Array sort"
+                let
+                  fun require_index index =
+                    if surface_sort_compatible index actual_index then ()
+                    else type_error fn_name context loc NONE NONE
+                      "ArraysEx select surface sort mismatch"
+                  fun not_an_array () =
+                    type_error fn_name context loc NONE NONE
+                      "ArraysEx select requires an Array sort"
+                in
+                  case array_index_element set_surface of
+                    SOME (index, _) => require_index index
+                  | NONE => not_an_array ()
+                end
+          | ("store", [set_surface, actual_index, actual_element]) =>
+              (case array_index_element set_surface of
+                 SOME (index, element) =>
+                   if surface_sort_compatible index actual_index andalso
+                      surface_sort_compatible element actual_element then ()
+                   else type_error fn_name context loc NONE NONE
+                     "ArraysEx store surface sort mismatch"
+               | NONE =>
+                 (* A Set or Bag surface is a ConstructorSort, so it can
+                    never be the array surface matched above. *)
+                 if is_bag_surface set_surface then
+                   type_error fn_name context loc NONE NONE
+                     "ArraysEx store requires an Array sort, not a Bag"
+                 else if is_set_surface set_surface then
+                   if #solver context = SOME "cvc5" then
+                     type_error fn_name context loc NONE NONE
+                       "Z3 Set store is unavailable in the cvc5 dialect"
+                   else ()
+                 else type_error fn_name context loc NONE NONE
+                   "ArraysEx store requires an Array sort")
           | ("ite", _ :: then_sort :: else_sort :: _) =>
-              if surface_sorts_equivalent then_sort else_sort then ()
+              if dialect_sorts_equivalent then_sort else_sort then ()
               else type_error fn_name context loc NONE NONE
                 "ite branch surface sort mismatch"
           | ("set.complement", [set_surface]) =>
@@ -4695,7 +4714,7 @@ local
         List.app
           (fn branch =>
             if body_sort branch = result_sort andalso
-               surface_sorts_equivalent (branch_surface_sort branch)
+               dialect_sorts_equivalent context (branch_surface_sort branch)
                  result_surface_sort then ()
             else type_error "typecheck_match" context (body_loc branch)
               (SOME result_sort) (SOME (body_sort branch))

@@ -1849,18 +1849,25 @@ local
     (* Congruence one level below a Boolean equality.  Lambda definitions
        often appear as [(f = lhs) = (f = rhs)]; prove [lhs = rhs] through
        the ordinary rewrite ladder, then lift that checked theorem through
-       the shared equality context. *)
+       the shared equality context with a kernel congruence step. *)
     profile "rewrite(11.15)(equality-congruence)" (fn () =>
       let
         val (ll, lr) = boolSyntax.dest_eq l
         val (rl, rr) = boolSyntax.dest_eq r
-        val (sub_l, sub_r) =
-          if ll ~~ rl then (lr, rr)
-          else if lr ~~ rr then (ll, rl)
+        (* [lift] rebuilds the equality around the proved argument; the
+           partial applications of [=] come from [l] itself, so they are
+           already instantiated at the argument type. *)
+        val (sub_l, sub_r, lift) =
+          if ll ~~ rl then
+            (lr, rr, Thm.AP_TERM (Term.rator l))
+          else if lr ~~ rr then
+            (ll, rl, fn sub_thm =>
+              Thm.AP_THM (Thm.AP_TERM (Term.rator (Term.rator l)) sub_thm) lr)
           else raise ERR "z3_rewrite" "no shared equality argument"
         val (state', sub_thm) = z3_rewrite
           (state, boolSyntax.mk_eq (sub_l, sub_r))
-        val thm = simpLib.SIMP_PROVE bossLib.bool_ss [sub_thm] t
+        val lifted = lift sub_thm
+        val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl lifted) t) lifted
       in
         (state_cache_thm state' thm, thm)
       end) ()

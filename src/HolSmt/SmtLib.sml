@@ -906,6 +906,13 @@ local
      native surface. *)
   val current_native_sequence_emission = ref true
 
+  (* Snapshot a translation-context cell now; the returned thunk puts it
+     back.  Each cell then costs one list entry rather than a declaration,
+     a save and a restore that must be kept in step. *)
+  fun save_cell r = let val saved = !r in fn () => r := saved end
+
+  fun restore_cells restorers = List.app (fn f => f ()) restorers
+
   fun sequence_element_type tm =
     if is_native_sequence_type (Term.type_of tm) then
       listSyntax.dest_list_type (Term.type_of tm)
@@ -982,10 +989,7 @@ local
     ref ([] : (Term.term * Term.term) list)
 
   fun contextual_collection_argument function =
-    case List.find (fn (candidate, _) => Term.aconv function candidate)
-        (!current_collection_function_arguments) of
-      SOME (_, argument) => SOME argument
-    | NONE => NONE
+    Lib.op_assoc1 Term.aconv function (!current_collection_function_arguments)
 
   val native_set_heads = [
     pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
@@ -3098,6 +3102,30 @@ local
         selected_bag_sort tydict var
       else
         translate_type regime (tydict, Term.type_of var)
+    (* Emit [(head ((v0 T0) ...) body)].  [nest_errors] re-raises a body
+       failure as NestedTranslation, which stops an enclosing
+       [handle Feedback.HOL_ERR _] fallback from swallowing it silently. *)
+    fun emit_binder {head, nest_errors} (acc as (tydict, tmdict)) vars body =
+      let
+        val (binder_bounds, smtvars) =
+          Lib.foldl_map create_bound_name (bounds, vars)
+        fun variable_type (tydict, var) = bound_variable_sort tydict var
+        val (tydict, vardecltys) =
+          Lib.foldl_map variable_type (tydict, vars)
+        val (vardeclss, vartys) = Lib.split vardecltys
+        val binders = ListPair.mapEq
+          (fn (smtvar, ty) => "(" ^ smtvar ^ " " ^ ty ^ ")")
+          (smtvars, vartys)
+        val (acc, (bodydecls, bodyname)) =
+          translate_term regime apply_operator
+            ((tydict, tmdict), (binder_bounds, body))
+          handle e as Feedback.HOL_ERR _ =>
+            if nest_errors then raise NestedTranslation e else raise e
+      in
+        (acc, (List.concat vardeclss @ bodydecls,
+          "(" ^ head ^ " (" ^ String.concatWith " " binders ^ ") " ^
+          bodyname ^ ")"))
+      end
     fun fallback_dependencies expression =
       let
         val free_vars = Term.free_vars expression
@@ -3210,40 +3238,19 @@ local
             (acc, (List.concat declss, names))
           end
         fun translate_args args = translate_args_from acc args
-        fun translate_fold_function start function =
-          let
-            val (all_vars, stripped_body) = Term.strip_abs function
-            fun add_bound (v, (tydict, current_bounds, decls, binders)) =
-              let
-                val (next_bounds, smtvar) =
-                  create_bound_name (current_bounds, v)
-                val (tydict, (typedecls, tyname)) =
-                  bound_variable_sort tydict v
-              in
-                (tydict, next_bounds, decls @ typedecls,
-                 binders @ ["(" ^ smtvar ^ " " ^ tyname ^ ")"])
-              end
-          in
-            if List.length all_vars < 2 then
-              translate_term regime apply_operator
-                (start, (bounds, function))
-            else
-              let
-                val vars = List.take (all_vars, 2)
-                val body = Term.list_mk_abs
-                  (List.drop (all_vars, 2), stripped_body)
-                val (tydict, lambda_bounds, typedecls, binders) =
-                  List.foldl add_bound
-                    (Lib.fst start, bounds, [], []) vars
-                val (next, (bodydecls, bodyname)) =
-                  translate_term regime apply_operator
-                    ((tydict, Lib.snd start), (lambda_bounds, body))
-              in
-                (next, (typedecls @ bodydecls,
-                  "(lambda (" ^ String.concatWith " " binders ^ ") " ^
-                  bodyname ^ ")"))
-              end
-          end
+        (* A function-valued fold callback must keep its own binders
+           separate from the accumulator it returns, so the two callback
+           arguments cannot be left to the single-binder lowering.  Unlike
+           the two lambda sites, this one leaves a body failure as a plain
+           HOL_ERR, so the enclosing fallback chain still gets to try the
+           uninterpreted lowering. *)
+        fun translate_fold_function function =
+          case Term.strip_abs function of
+            (element :: accumulator :: rest, body) =>
+              emit_binder {head = "lambda", nest_errors = false} acc
+                [element, accumulator] (Term.list_mk_abs (rest, body))
+          | _ =>
+              translate_term regime apply_operator (acc, (bounds, function))
         fun emit name args =
           let val (acc, (decls, names)) = translate_args args
           in (acc, (decls, sexpr name names)) end
@@ -3252,7 +3259,7 @@ local
             function :: rest =>
               let
                 val (acc, (function_decls, function_name)) =
-                  translate_fold_function acc function
+                  translate_fold_function function
                 val (acc, (rest_decls, rest_names)) =
                   translate_args_from acc rest
               in
@@ -3807,19 +3814,8 @@ local
         let val {Thy, Name, ...} = Term.dest_thy_const c
         in Redblackset.member (builtin_const_names, (Thy, Name)) end)
     fun translate_lambda acc =
-      let
-        val (v, body) = Term.dest_abs tm
-        val (bounds, smtvar) = create_bound_name (bounds, v)
-        val (tydict, (typedecls, tyname)) =
-          bound_variable_sort (Lib.fst acc) v
-        val (acc, (bodydecls, bodyname)) =
-          translate_term regime apply_operator
-            ((tydict, Lib.snd acc), (bounds, body))
-          handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
-      in
-        (acc, (typedecls @ bodydecls,
-          "(lambda ((" ^ smtvar ^ " " ^ tyname ^ ")) " ^
-          bodyname ^ ")"))
+      let val (v, body) = Term.dest_abs tm in
+        emit_binder {head = "lambda", nest_errors = true} acc [v] body
       end
     fun eta_expand_ranked_constant acc applied rator rank rands_count =
       let
@@ -4106,22 +4102,8 @@ local
           in ("exists", vars, body) end
         else
           raise ERR "translate_term" "not a binder"
-      val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
-      fun variable_type (tydict, var) =
-        bound_variable_sort tydict var
-      val (tydict, vardecltys) =
-        Lib.foldl_map variable_type (tydict, vars)
-      val (vardeclss, vartys) = Lib.split vardecltys
-      val vardecls = List.concat vardeclss
-      val smtvars = ListPair.mapEq (fn (v, ty) => "(" ^ v ^ " " ^ ty ^ ")")
-        (smtvars, vartys)
-      val (acc, (bodydecls, body)) =
-        translate_term regime apply_operator
-          ((tydict, tmdict), (bounds, body))
-        handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
     in
-      (acc, (vardecls @ bodydecls, "(" ^ binder ^ " (" ^
-        String.concatWith " " smtvars ^ ") " ^ body ^ ")"))
+      emit_binder {head = binder, nest_errors = true} acc vars body
     end
     handle Feedback.HOL_ERR _ =>
 
@@ -4817,33 +4799,31 @@ local
     val subterms = List.concat (List.map Library.subterms (t :: original_ts))
     fun ordinary_symbol_application function =
       let val (head, applied) = boolSyntax.strip_comb function in
-        if Term.is_var head then true
-        else if Term.is_const head then
-          let
-            val {Thy, Name, ...} = Term.dest_thy_const head
-            val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
-            val (domains, _) = boolSyntax.strip_fun (Term.type_of generic)
-          in
-            List.length applied < List.length domains
-          end
-        else false
+        Term.is_var head orelse
+        (Term.is_const head andalso
+         List.length applied < declared_const_arity head)
       end
     fun compatible_collection_variable argument variable =
       case Lib.total Type.dom_rng (Term.type_of variable) of
         SOME (domain, _) =>
           Type.compare (domain, Term.type_of argument) = EQUAL
       | NONE => false
+    (* The (variable, argument) pairs by which [tm] applies a computed
+       function to a native collection. *)
+    fun computed_collection_pairs collection_terms tm =
+      case Lib.total Term.dest_comb tm of
+        SOME (function, argument) =>
+          if mem_aconv argument collection_terms andalso
+             not (ordinary_symbol_application function) then
+            List.map (fn variable => (variable, argument))
+              (List.filter (compatible_collection_variable argument)
+                (Term.free_vars function))
+          else []
+      | NONE => []
     fun computed_collection_applications collection_terms =
-      List.concat (List.map (fn subterm =>
-        case Lib.total Term.dest_comb subterm of
-          SOME (function, argument) =>
-            if mem_aconv argument collection_terms andalso
-               not (ordinary_symbol_application function) then
-              List.map (fn variable => (variable, argument))
-                (List.filter (compatible_collection_variable argument)
-                  (Term.free_vars function))
-            else []
-        | NONE => []) subterms)
+      if List.null collection_terms then []
+      else List.concat
+        (List.map (computed_collection_pairs collection_terms) subterms)
     val computed_set_applications =
       computed_collection_applications set_terms
     val computed_bag_applications =
@@ -4886,21 +4866,13 @@ local
               val has_collection_argument =
                 List.exists (fn argument => mem_aconv argument collection_terms)
                   arguments
-              val computed_applies_bound =
-                case Lib.total Term.dest_comb tm of
-                  SOME (rator, argument) =>
-                    mem_aconv argument collection_terms andalso
-                    not (ordinary_symbol_application rator) andalso
-                    List.exists (fn variable =>
-                      compatible_collection_variable argument variable andalso
-                      List.exists (fn binder => Term.aconv variable binder)
-                        bound) (Term.free_vars rator)
-                | NONE => false
-              val (_, rands) = boolSyntax.strip_comb tm
+              fun computed_applies_bound () =
+                List.exists (fn (variable, _) => mem_aconv variable bound)
+                  (computed_collection_pairs collection_terms tm)
             in
               (applies_bound andalso has_collection_argument) orelse
-              computed_applies_bound orelse
-              List.exists (visit bound) rands
+              computed_applies_bound () orelse
+              List.exists (visit bound) arguments
             end
       in
         List.exists (visit []) (t :: original_ts)
@@ -5036,10 +5008,12 @@ local
     val record_emitted_term_sorts = !emitted_term_sorts
     fun records () =
       let
-        val saved_sequence_emission = !current_native_sequence_emission
-        val saved_set_backend = !current_set_backend
-        val saved_bag_backend = !current_bag_backend
-        val saved_emitted_term_sorts = !emitted_term_sorts
+        val restorers = [
+          save_cell current_native_sequence_emission,
+          save_cell current_set_backend,
+          save_cell current_bag_backend,
+          save_cell emitted_term_sorts
+        ]
         fun work () =
           (current_native_sequence_emission := record_sequence_emission;
            current_set_backend := record_set_backend;
@@ -5047,11 +5021,7 @@ local
            emitted_term_sorts := record_emitted_term_sorts;
            build_translation_records regime regime_reason terms
              selected_logic reason features tydict tmdict)
-        fun restore () =
-          (current_native_sequence_emission := saved_sequence_emission;
-           current_set_backend := saved_set_backend;
-           current_bag_backend := saved_bag_backend;
-           emitted_term_sorts := saved_emitted_term_sorts)
+        fun restore () = restore_cells restorers
       in
         Portable.finally restore work ()
       end
@@ -5090,30 +5060,21 @@ local
   fun goal_to_SmtLib_aux request apply_operator policy target
       emit_sequences goal =
   let
-    val saved_sequence_emission = !current_native_sequence_emission
-    val saved_emitted_term_sorts = !emitted_term_sorts
-    val saved_backend = !current_set_backend
-    val saved_set_terms = !current_set_terms
-    val saved_raw_num_terms = !current_raw_num_terms
-    val saved_bag_backend = !current_bag_backend
-    val saved_bag_terms = !current_bag_terms
-    val saved_bag_helpers = !current_bag_helpers
-    val saved_collection_function_arguments =
-      !current_collection_function_arguments
+    val restorers = [
+      save_cell current_native_sequence_emission,
+      save_cell emitted_term_sorts,
+      save_cell current_set_backend,
+      save_cell current_set_terms,
+      save_cell current_raw_num_terms,
+      save_cell current_bag_backend,
+      save_cell current_bag_terms,
+      save_cell current_bag_helpers,
+      save_cell current_collection_function_arguments
+    ]
     fun work () =
       goal_to_SmtLib_aux_inner request apply_operator policy target
         (emit_sequences andalso native_sequence_goal goal) goal
-    fun restore () =
-      (current_native_sequence_emission := saved_sequence_emission;
-       emitted_term_sorts := saved_emitted_term_sorts;
-       current_set_backend := saved_backend;
-       current_set_terms := saved_set_terms;
-       current_raw_num_terms := saved_raw_num_terms;
-       current_bag_backend := saved_bag_backend;
-       current_bag_terms := saved_bag_terms;
-       current_bag_helpers := saved_bag_helpers;
-       current_collection_function_arguments :=
-         saved_collection_function_arguments)
+    fun restore () = restore_cells restorers
   in
     Portable.finally restore work ()
   end

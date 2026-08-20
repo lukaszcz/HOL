@@ -91,6 +91,12 @@ in
     Library.dict_from_list (List.map
       (fn ({name, parse, ...}: 'a symbol_entry) => (name, parse)) entries)
 
+  (* An operator is higher-order exactly when it takes a function argument,
+     which its declared signature spells as a nested [(-> ...)]. *)
+  fun first_order_entries entries = List.filter
+    (fn ({declarations, ...}: 'a symbol_entry) =>
+      not (List.exists (String.isSubstring "(-> ") declarations)) entries
+
   fun metadata_of_entries theory kind entries =
     List.map (fn ({name, source, attributes, declarations, ...}: 'a symbol_entry) =>
       {theory = theory, kind = kind, name = name, source = source,
@@ -1454,18 +1460,8 @@ in
     fun mk_set_is_singleton s = pred_setSyntax.mk_sing s
 
     fun mk_set_fold (f, init, s) =
-      let
-        val element = pred_setSyntax.eltype s
-        val accumulator = Term.type_of init
-        val set = Term.type_of s
-        val fold_ty = Type.-->
-          (Type.--> (element, Type.--> (accumulator, accumulator)),
-           Type.--> (set, Type.--> (accumulator, accumulator)))
-        val fold = Term.mk_thy_const {
-          Thy = "pred_set", Name = "ITSET", Ty = fold_ty}
-      in
-        Term.list_mk_comb (fold, [f, s, init])
-      end
+      apply_native_const
+        (Term.prim_mk_const {Thy = "pred_set", Name = "ITSET"}) [f, s, init]
 
     (* Match cvc5's default carrier for unqualified polymorphic literals.
        Explicitly ascribed Set literals are handled by the parser. *)
@@ -1530,10 +1526,8 @@ in
 
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
-    val first_order_tmdict = dictionary_of_entries (List.filter
-      (fn {name, ...} => not (List.exists (Lib.equal name)
-        ["set.map", "set.filter", "set.all", "set.some", "set.fold"]))
-      tmentries)
+    val first_order_tmdict =
+      dictionary_of_entries (first_order_entries tmentries)
     val metadata =
       metadata_of_entries "CVC5_Set" "sort" tyentries @
       metadata_of_entries "CVC5_Set" "term" tmentries
@@ -1628,18 +1622,8 @@ in
       mk_bag_of_set (mk_set_of_bag b)
 
     fun mk_bag_fold (f, init, b) =
-      let
-        val element = bagSyntax.base_type b
-        val accumulator = Term.type_of init
-        val bag = Term.type_of b
-        val fold_ty = Type.-->
-          (Type.--> (element, Type.--> (accumulator, accumulator)),
-           Type.--> (bag, Type.--> (accumulator, accumulator)))
-        val fold = Term.mk_thy_const {
-          Thy = "bag", Name = "ITBAG", Ty = fold_ty}
-      in
-        Term.list_mk_comb (fold, [f, b, init])
-      end
+      apply_native_const
+        (Term.prim_mk_const {Thy = "bag", Name = "ITBAG"}) [f, b, init]
 
     fun mk_bag_partition (relation, b) =
       let
@@ -1733,10 +1717,8 @@ in
 
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
-    val first_order_tmdict = dictionary_of_entries (List.filter
-      (fn {name, ...} => not (List.exists (Lib.equal name)
-        ["bag.map", "bag.filter", "bag.all", "bag.some", "bag.fold",
-         "bag.partition"])) tmentries)
+    val first_order_tmdict =
+      dictionary_of_entries (first_order_entries tmentries)
     val metadata =
       metadata_of_entries "CVC5_Bag" "sort" tyentries @
       metadata_of_entries "CVC5_Bag" "term" tmentries

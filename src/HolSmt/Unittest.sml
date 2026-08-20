@@ -3598,6 +3598,47 @@ fun smtlib_command_malformed_diagnostics () =
       (parse_state "(set-logic QF_UF)\n(pop 1)\n")
   end
 
+(* [assertion_mentions_datatype_sort] descends into list elements only when
+   native sequences are being ignored.  Pin the classification of the types
+   where that conditional descent could matter. *)
+fun smtlib_datatype_sort_visibility_success () =
+let
+  val smtstr_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
+  val ordering_ty = ``:ordering``
+  fun list_of ty = listSyntax.mk_list_type ty
+  val types = [
+    ("num", numSyntax.num),
+    ("num list", list_of numSyntax.num),
+    ("num list list", list_of (list_of numSyntax.num)),
+    ("string", stringSyntax.string_ty),
+    ("string list", list_of stringSyntax.string_ty),
+    ("smtstr", smtstr_ty),
+    ("smtstr list", list_of smtstr_ty),
+    ("ordering", ordering_ty),
+    ("ordering list", list_of ordering_ty),
+    ("num -> ordering", Type.--> (numSyntax.num, ordering_ty)),
+    ("string list list", list_of (list_of stringSyntax.string_ty)),
+    ("char", stringSyntax.char_ty),
+    ("(num -> string) list",
+      list_of (Type.--> (numSyntax.num, stringSyntax.string_ty))),
+    ("(string -> ordering) list",
+      list_of (Type.--> (stringSyntax.string_ty, ordering_ty))),
+    ("smtstr list list", list_of (list_of smtstr_ty))
+  ]
+  fun answer ignore_native_sequences (_, ty) =
+    if SmtLib_Logics.assertion_mentions_datatype_sort ignore_native_sequences
+        (Term.mk_var ("v", ty)) then "1" else "0"
+  fun vector ignore_native_sequences =
+    String.concat (List.map (answer ignore_native_sequences) types)
+  val labels = String.concatWith ", " (List.map Lib.fst types)
+in
+  assert (vector false = "011010111110111",
+    "keeping native sequences: " ^ vector false ^ " over " ^ labels);
+  assert (vector true = "000000011100010",
+    "ignoring native sequences: " ^ vector true ^ " over " ^ labels)
+end
+
 fun smtlib_logic_fragment_diagnostics () =
   let
     fun fragment logic text =
@@ -3830,6 +3871,17 @@ fun smtlib_logic_fragment_diagnostics () =
       (script "QF_UFLIAFS"
        "(declare-const s (Set Int))\n" ^
        "(assert (set.member 0 (set.union s (set.singleton 1))))\n");
+    (* The FS family is derived from its base stem, not enumerated. *)
+    expect_fragment "second finite-set logic excludes strings" "QF_UFLIRAFS"
+      (script_for_checker "ALL"
+       "(assert (= \"a\" \"a\"))\n")
+      "string term sort";
+    expect_no_fragment "second finite-set logic includes UF and LIRA"
+      "QF_UFLIRAFS"
+      (script "QF_UFLIRAFS"
+       "(declare-fun f (Int) Real)\n" ^
+       "(declare-const x Int)\n" ^
+       "(assert (= (f x) (+ 1.0 2.0)))\n");
     expect_hol_error_contains "finite-set logic excludes arrays" "Array"
       (fn () => ignore (parse_smtlib_state
         (script "QF_UFLIAFS"
@@ -4197,6 +4249,37 @@ in
     "sequence/set/bag metadata was not marked as extension")
 end
 
+(* Higher-order operators are derived from their declared signatures, so a
+   typo in a declaration would silently publish one as first-order into the
+   dictionaries that ALL and the FS logics hand to the parser.  Pin the
+   derived split against the full dictionary. *)
+fun smtlib_first_order_dictionary_guard () =
+let
+  fun names dict = List.map Lib.fst (Redblackmap.listItems dict)
+  fun higher_order_names (tmdict, first_order_tmdict) =
+    let val first_order = names first_order_tmdict in
+      List.filter (fn name => not (Lib.mem name first_order)) (names tmdict)
+    end
+  fun same_names actual expected =
+    List.length actual = List.length expected andalso
+    List.all (fn name => Lib.mem name expected) actual
+  fun check label actual expected =
+    assert (same_names actual expected,
+      label ^ " higher-order operators are " ^
+      String.concatWith ", " actual ^ "; expected " ^
+      String.concatWith ", " expected)
+in
+  check "CVC5_Set"
+    (higher_order_names (SmtLib_Theories.CVC5_Set.tmdict,
+       SmtLib_Theories.CVC5_Set.first_order_tmdict))
+    ["set.map", "set.filter", "set.all", "set.some", "set.fold"];
+  check "CVC5_Bag"
+    (higher_order_names (SmtLib_Theories.CVC5_Bag.tmdict,
+       SmtLib_Theories.CVC5_Bag.first_order_tmdict))
+    ["bag.map", "bag.filter", "bag.all", "bag.some", "bag.fold",
+     "bag.partition"]
+end
+
 fun smtlib_arith_array_parse_signatures_success () =
 let
   val assertions =
@@ -4508,14 +4591,41 @@ let
     solver = SOME "Z3",
     elaborate_datatypes = false
   }
+  val cvc5_options = {
+    dict_logic = NONE,
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
+  val declarations =
+    "(set-logic ALL)\n" ^
+    "(declare-const f (Array Int Int))\n" ^
+    "(declare-const c Bool)\n"
   val state = SmtLib_Parser.typecheck_script_string_with_options options
-    ("(set-logic ALL)\n" ^
-     "(declare-const f (Array Int Int))\n" ^
+    (declarations ^
      "(assert (= f (lambda ((x Int)) (+ x 1))))\n" ^
-     "(assert (= (select (lambda ((x Int)) (+ x 1)) 2) 3))\n")
+     "(assert (= (select (lambda ((x Int)) (+ x 1)) 2) 3))\n" ^
+     (* A lambda is an array in Z3, so store and ite accept one too. *)
+     "(assert (= (store (lambda ((x Int)) (+ x 1)) 0 5) f))\n" ^
+     "(assert (= (ite c f (lambda ((x Int)) (+ x 1))) f))\n")
+  fun cvc5_rejects label body =
+    let
+      val rejected =
+        ((ignore (SmtLib_Parser.typecheck_script_string_with_options
+            cvc5_options (declarations ^ "(assert " ^ body ^ ")\n"));
+          false)
+         handle Feedback.HOL_ERR _ => true)
+    in
+      assert (rejected,
+        "cvc5 accepted the Z3-only array/lambda alias at " ^ label)
+    end
 in
-  assert (List.length (#assertions state) = 2,
-    "Z3 array/lambda compatibility script lost assertions")
+  assert (List.length (#assertions state) = 4,
+    "Z3 array/lambda compatibility script lost assertions");
+  (* The alias is dialect-scoped: cvc5 keeps arrays and lambdas apart. *)
+  cvc5_rejects "=" "(= f (lambda ((x Int)) (+ x 1)))";
+  cvc5_rejects "select" "(= (select (lambda ((x Int)) (+ x 1)) 2) 3)";
+  cvc5_rejects "store" "(= (store (lambda ((x Int)) (+ x 1)) 0 5) f)";
+  cvc5_rejects "ite" "(= (ite c f (lambda ((x Int)) (+ x 1))) f)"
 end
 
 fun smtlib_seq_dialect_builders_success () =
@@ -5136,6 +5246,25 @@ let
     in
       bag_of_set (set_of_bag classes)
     end
+  (* mk_bag_partition freshens its two binders against the free variables
+     of its arguments.  The plain builder above never reaches that path
+     because its arguments cannot collide; this one does. *)
+  fun bag_partition_fresh (predicate, bag) =
+    let
+      val element_ty = bagSyntax.base_type bag
+      val avoid = Term.all_varsl [predicate, bag]
+      val partition_x =
+        Term.variant avoid (Term.mk_var ("bag_partition_x", element_ty))
+      val partition_y = Term.variant (partition_x :: avoid)
+        (Term.mk_var ("bag_partition_y", element_ty))
+      val related = Term.list_mk_comb
+        (predicate, [partition_x, partition_y])
+      val class = bag_filter (Term.mk_abs (partition_y, related), bag)
+      val classes = bagSyntax.mk_image
+        (Term.mk_abs (partition_x, class), bag_of_set (set_of_bag bag))
+    in
+      bag_of_set (set_of_bag classes)
+    end
   fun bag_count (element, bag) =
     Term.mk_comb (intSyntax.int_injection, Term.mk_comb (bag, element))
   fun typecheck options text =
@@ -5151,6 +5280,7 @@ let
          "(declare-const f (-> Int Int))\n" ^
          "(declare-const fold (-> Int (-> Int Int)))\n" ^
          "(declare-const relation (-> Int (-> Int Bool)))\n" ^
+         "(declare-const bag_partition_x Int)\n" ^
          "(assert " ^ body ^ ")\n")
     in
       case #assertions state of
@@ -5206,6 +5336,10 @@ let
     Term.mk_abs (literal_x, boolSyntax.mk_cond
       (boolSyntax.mk_eq (literal_x, zero), literal_count count,
        numSyntax.zero_tm))
+  val colliding_element = Term.mk_var ("bag_partition_x", intSyntax.int_ty)
+  val colliding_bag = Term.mk_abs (literal_x, boolSyntax.mk_cond
+    (boolSyntax.mk_eq (literal_x, colliding_element), literal_count two,
+     numSyntax.zero_tm))
   val literal_two_at_zero = literal_at_zero two
   val literal_three_at_zero = literal_at_zero three
   val remove_in = bag_in (remove_x, c)
@@ -5331,6 +5465,12 @@ in
     "(= (bag.partition relation b) (bag.partition relation b))"
     (boolSyntax.mk_eq
       (bag_partition (relation, b), bag_partition (relation, b)));
+  assert_ho_builder "cvc5 bag.partition avoids free variable capture"
+    "(= (bag.partition relation (bag bag_partition_x 2)) \
+       \(bag.partition relation (bag bag_partition_x 2)))"
+    (boolSyntax.mk_eq
+      (bag_partition_fresh (relation, colliding_bag),
+       bag_partition_fresh (relation, colliding_bag)));
   assert_builder "cvc5 forall Bag binder"
     "(forall ((u (Bag Int))) (= (bag.card u) 0))"
     (boolSyntax.mk_forall (quantified_bag, boolSyntax.mk_imp
@@ -6387,6 +6527,87 @@ in
       "SMT-LIB operator 'set.card' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",
     "set.card availability diagnostic changed: " ^ card_message)
+end
+
+(* The translation context lives in mutable cells (Set/Bag backends, the
+   collected collection terms, the emitted sorts).  goal_to_SmtLib_aux
+   restores every cell after each goal, so neither a translation's text nor
+   its lazily built records may depend on what was translated before. *)
+fun smtlib_translation_context_isolation_success () =
+let
+  fun cvc goal = CVC.goal_to_SmtLib_translation goal
+  fun text result = String.concat (Lib.snd result)
+  fun record_summary record =
+    case record of
+      SmtLib.RegimeSelection {reason, ...} => "regime:" ^ reason
+    | SmtLib.LogicSelection {logic, reason, ...} =>
+        "logic:" ^ logic ^ ":" ^ reason
+    | SmtLib.TypeDeclaration {smt_name, declaration, ...} =>
+        "type:" ^ smt_name ^ ":" ^ declaration
+    | SmtLib.DatatypeDeclaration {smt_names, declaration, ...} =>
+        "datatype:" ^ String.concatWith "," smt_names ^ ":" ^ declaration
+    | SmtLib.TermDeclaration {smt_name, arity, domain_sorts, range_sort,
+        declaration, ...} =>
+        "term:" ^ smt_name ^ ":" ^ Int.toString arity ^ ":" ^
+        String.concatWith "," domain_sorts ^ ":" ^ range_sort ^ ":" ^
+        declaration
+    | SmtLib.DefinitionRecord {smt_name, sort, definition, ...} =>
+        "def:" ^ smt_name ^ ":" ^ sort ^ ":" ^ definition
+    | SmtLib.EncodedSymbol {smt_symbol, arity, ...} =>
+        "sym:" ^ smt_symbol ^ ":" ^ Int.toString arity
+    | SmtLib.HOLTheoryEncoding {feature, smt_theory, notes, ...} =>
+        "encoding:" ^ feature ^ ":" ^ smt_theory ^ ":" ^ notes
+  fun summary translation =
+    String.concatWith "\n"
+      (List.map record_summary (SmtLib.translation_records translation))
+  val x = ``x:int``
+  val b = ``b:int -> num``
+  val c = ``c:int -> num``
+  val union = ``BAG_UNION (b:int -> num) c``
+  val bag_in =
+    Term.list_mk_comb (Term.mk_thy_const {Thy = "bag", Name = "BAG_IN",
+      Ty = Type.--> (intSyntax.int_ty,
+        Type.--> (Term.type_of union, Type.bool))}, [x, union])
+  val bag_goal =
+    ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``], bag_in)
+  val set_goal = ([``FINITE (s:int -> bool)``],
+    ``(x:int) IN (s:int -> bool) UNION t``)
+  val plain_goal = ([], ``(x:int) + 1 = 1 + x``)
+  val seq_goal = ([], ``APPEND (xs:int list) ys = zs``)
+  val bag_alone = text (cvc bag_goal)
+  val set_alone = text (cvc set_goal)
+  val plain_alone = text (cvc plain_goal)
+  val bag_after_set = (ignore (cvc set_goal); text (cvc bag_goal))
+  val set_after_bag = (ignore (cvc bag_goal); text (cvc set_goal))
+  val plain_after_bag = (ignore (cvc bag_goal); text (cvc plain_goal))
+  val seq_after_plain = (ignore (cvc plain_goal); text (cvc seq_goal))
+  (* Records are built lazily, so they are forced only once an unrelated
+     goal has been translated in between. *)
+  val (deferred_translation, _) = cvc bag_goal
+  val _ = cvc plain_goal
+  val _ = cvc set_goal
+  val deferred_summary = summary deferred_translation
+  val (immediate_translation, _) = cvc bag_goal
+  val immediate_summary = summary immediate_translation
+in
+  assert (bag_alone = bag_after_set,
+    "bag translation changed after an intervening Set goal:\n" ^
+    bag_alone ^ "\nversus\n" ^ bag_after_set);
+  assert (set_alone = set_after_bag,
+    "Set translation changed after an intervening Bag goal:\n" ^
+    set_alone ^ "\nversus\n" ^ set_after_bag);
+  assert (plain_alone = plain_after_bag,
+    "plain translation changed after an intervening Bag goal:\n" ^
+    plain_alone ^ "\nversus\n" ^ plain_after_bag);
+  (* The native Seq surface is selected per goal, so an intervening
+     sequence-free goal must not demote the next sequence goal to the
+     datatype encoding. *)
+  assert (contains "seq.++" seq_after_plain,
+    "sequence goal lost its native surface after a non-sequence goal:\n" ^
+    seq_after_plain);
+  assert (deferred_summary = immediate_summary,
+    "deferred translation records changed after intervening goals:\n" ^
+    deferred_summary ^ "\nversus\n" ^ immediate_summary)
 end
 
 fun smtlib_native_bag_translation_success () =
@@ -13589,6 +13810,8 @@ let
       smtlib_ranked_partial_application_diagnostic),
     ("smtlib_command_malformed_diagnostics",
       smtlib_command_malformed_diagnostics),
+    ("smtlib_datatype_sort_visibility_success",
+      smtlib_datatype_sort_visibility_success),
     ("smtlib_logic_fragment_diagnostics",
       smtlib_logic_fragment_diagnostics),
     ("smtlib_floatingpoint_recognizer_gates_success",
@@ -13607,6 +13830,8 @@ let
       smtlib_core_arith_array_bv_symbol_coverage_success),
     ("smtlib_advanced_symbol_coverage_success",
       smtlib_advanced_symbol_coverage_success),
+    ("smtlib_first_order_dictionary_guard",
+      smtlib_first_order_dictionary_guard),
     ("smtlib_arith_array_parse_signatures_success",
       smtlib_arith_array_parse_signatures_success),
     ("smtlib_bitvector_parse_signatures_success",
@@ -13653,6 +13878,8 @@ let
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
+    ("smtlib_translation_context_isolation_success",
+      smtlib_translation_context_isolation_success),
     ("smtlib_native_bag_translation_success",
       smtlib_native_bag_translation_success),
     ("smtlib_native_sequence_translation_success",

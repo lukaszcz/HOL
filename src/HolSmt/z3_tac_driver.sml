@@ -373,20 +373,29 @@ fun z3_tac_raw_result path =
     fun quote path =
       "'" ^ String.translate
         (fn #"'" => "'\\''" | character => str character) path ^ "'"
-    fun error_precedes_result path =
+    (* A nonzero exit still carries a verdict when Z3 reported it before
+       failing.  Return that verdict together with whether an [(error ...)]
+       line preceded it; [Z3.is_sat_stream] cannot say, because it stops at
+       the first error and does not recognise a bare [unknown]. *)
+    fun scan_raw_result path =
       let
         val stream = TextIO.openIn path
+        fun verdict "sat" = SOME (SolverSpec.SAT NONE)
+          | verdict "unsat" = SOME (SolverSpec.UNSAT NONE)
+          | verdict "unknown" = SOME (SolverSpec.UNKNOWN NONE)
+          | verdict _ = NONE
         fun scan saw_error =
           case TextIO.inputLine stream of
             NONE => NONE
           | SOME line =>
               (case String.tokens Char.isSpace line of
-                 ["sat"] => SOME saw_error
-               | ["unsat"] => SOME saw_error
-               | ["unknown"] => SOME saw_error
-               | first :: _ =>
-                   scan (saw_error orelse String.isPrefix "(error" first)
-               | [] => scan saw_error)
+                 [] => scan saw_error
+               | word :: rest =>
+                   case (if List.null rest then verdict word else NONE) of
+                     SOME result => SOME (saw_error, result)
+                   | NONE =>
+                       scan (saw_error orelse
+                         String.isPrefix "(error" word))
       in
         Portable.finally (fn () => TextIO.closeIn stream) scan false
       end
@@ -406,11 +415,11 @@ fun z3_tac_raw_result path =
         if OS.Process.isSuccess status then Z3.is_sat_file output
         else if z3_tac_timed_out status then raise Z3_Tac_Raw_Timeout
         else
-          case error_precedes_result output of
-            SOME true => raise Feedback.mk_HOL_ERR
+          case scan_raw_result output of
+            SOME (true, _) => raise Feedback.mk_HOL_ERR
               "Z3_TAC_Driver" "z3_tac_raw_result"
               "raw Z3 invocation reported an error before producing a result"
-          | SOME false => Z3.is_sat_file output
+          | SOME (false, result) => result
           | NONE => raise Feedback.mk_HOL_ERR
               "Z3_TAC_Driver" "z3_tac_raw_result"
               "raw Z3 invocation failed before producing a result"

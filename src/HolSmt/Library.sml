@@ -595,12 +595,11 @@ struct
      word widths and similar phantom parameters are not SMT value sorts. *)
   fun type_contains pred ty =
     pred ty orelse
-    (case Lib.total Type.dom_rng ty of
-       SOME (dom, rng) =>
+    (case Lib.total Type.dest_type ty of
+       SOME ("fun", [dom, rng]) =>
          type_contains pred dom orelse type_contains pred rng
-     | NONE =>
-         (type_contains pred (listSyntax.dest_list_type ty)
-          handle Feedback.HOL_ERR _ => false))
+     | SOME ("list", [element]) => type_contains pred element
+     | _ => false)
 
   fun type_contains_int ty =
     type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
