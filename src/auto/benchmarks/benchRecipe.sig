@@ -17,8 +17,6 @@ sig
     | Elim of benchLib.rule_strength * string list
     | Dest of benchLib.rule_strength * string list
     | Cong of string list
-    (* [algebra add: ...]: facts for a method with no simpset. *)
-    | FactsAdd of string list
 
   type method = {name : string, modifiers : modifier list}
 
@@ -53,16 +51,23 @@ sig
      carries as a hypothesis -- and holds more than one theorem where
      the Isabelle name abbreviates a fact list, as [option.splits]
      does.  An unknown citation is the resolver's error to raise, not
-     a silent empty list. *)
+     a silent empty list.
+
+     [ambient] is the context the source theory had in scope without
+     anyone naming it.  It is one list for the whole corpus, not a
+     per-goal field, which is what keeps it from becoming a hint. *)
   type resolver = {
     theorems : string -> benchLib.named_thm list,
-    tactic : string -> Term.term -> benchLib.tactic_id
+    tactics : string -> Term.term -> benchLib.tactic_id list,
+    ambient : benchLib.method_arg list
   }
 
   (* The recipe the method denotes.  [resolver] supplies the HOL4 theorem
-     for an Isabelle name and the HOL4 tactic for a method name at this
+     for an Isabelle name and the HOL4 tactics for a method name at this
      goal; the goal is passed because Isabelle's [algebra] and [arith] are
-     polymorphic where HOL4's counterparts are carrier-indexed. *)
+     polymorphic where HOL4's counterparts are carrier-indexed.  A method
+     naming more than one tactic becomes an [Otherwise] chain in the
+     order the resolver gives them. *)
   val to_recipe :
     resolver -> Term.term -> parsed -> benchLib.method_recipe
 end

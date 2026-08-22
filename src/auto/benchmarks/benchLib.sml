@@ -46,14 +46,22 @@ datatype method_arg =
   | CongruenceAdd of named_thm
   | FactAdd of named_thm
   | DefinitionAdd of named_thm
-  | SimpFragmentAdd of string * simpLib.ssfrag
 
 datatype method_recipe =
     Invoke of tactic_id * method_arg list
   | Then of method_recipe * method_recipe
   | AllGoals of method_recipe * method_recipe
+  | Otherwise of method_recipe * method_recipe
 
 type exclusion = {name : string, theorem : thm}
+
+type source_goal = {
+  id : string,
+  goal : term,
+  source_method : string,
+  provenance : provenance,
+  representative : bool
+}
 
 type corpus_goal = {
   id : string,
@@ -82,6 +90,7 @@ type shortfall = {
 
 type family_result = {
   gated : (string * outcome) list,
+  work : (string * searchWork.work) list,
   battery : (string * tactic_id * outcome) list
 }
 
@@ -140,8 +149,6 @@ fun method_arg_name (RewriteAdd theorem) = named_arg "rewrite" theorem
   | method_arg_name (CongruenceAdd theorem) = named_arg "cong" theorem
   | method_arg_name (FactAdd theorem) = named_arg "fact" theorem
   | method_arg_name (DefinitionAdd theorem) = named_arg "definition" theorem
-  | method_arg_name (SimpFragmentAdd (name, _)) =
-      "simp-fragment(" ^ name ^ ")"
 
 fun recipe_name recipe =
   let
@@ -154,6 +161,8 @@ fun recipe_name recipe =
           "then(" ^ render left ^ ", " ^ render right ^ ")"
       | render (AllGoals (left, right)) =
           "all-goals(" ^ render left ^ ", " ^ render right ^ ")"
+      | render (Otherwise (left, right)) =
+          "otherwise(" ^ render left ^ ", " ^ render right ^ ")"
   in
     render recipe
   end
@@ -162,6 +171,8 @@ fun recipe_has_tactic wanted (Invoke (tactic_id, _)) = wanted = tactic_id
   | recipe_has_tactic wanted (Then (left, right)) =
       recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
   | recipe_has_tactic wanted (AllGoals (left, right)) =
+      recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
+  | recipe_has_tactic wanted (Otherwise (left, right)) =
       recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
 
 fun linarith_stats_text () =
@@ -257,6 +268,81 @@ fun strip_truth_equivalence term =
       normal
   end
 
+(* A statement is unchanged when a conjunction or a disjunction is
+   reordered, when an equation or an equivalence is turned round, and
+   when its free variables are renamed.  A supplied theorem that is
+   the goal under those three symmetries is the goal, and comparing
+   the two terms as written misses it: a translation lemma whose
+   conjuncts happen to stand in the other order would close its own
+   goal with nothing to report.
+
+   The quotient is by symmetries only, so two terms with the same
+   normal form do state the same thing.  It is incomplete in the other
+   direction: the renaming is read off the term before the reordering,
+   so two statements whose free variables first occur in different
+   orders are not identified.  That direction is the safe one -- a
+   missed identification leaves the pre-existing comparison in charge,
+   and an identification that fires drops a citation, which can only
+   ask HOL4 for more. *)
+fun occurrence_order term =
+  let
+    fun walk bound (term, seen) =
+      case Term.dest_term term of
+          VAR _ =>
+            if List.exists (Term.aconv term) bound orelse
+               List.exists (Term.aconv term) seen
+            then seen else seen @ [term]
+        | CONST _ => seen
+        | COMB (rator, rand) => walk bound (rand, walk bound (rator, seen))
+        | LAMB (variable, body) => walk (variable :: bound) (body, seen)
+  in
+    walk [] (term, [])
+  end
+
+fun rename_free term =
+  let
+    fun numbered (variable, (index, substitution)) =
+      (index + 1,
+       (variable |->
+          Term.mk_var
+            ("%bench" ^ Int.toString index, Term.type_of variable)) ::
+       substitution)
+    val (_, substitution) =
+      List.foldl numbered (0, []) (occurrence_order term)
+  in
+    Term.subst substitution term
+  end
+
+fun symmetry_normalise term =
+  if boolSyntax.is_conj term then
+    boolSyntax.list_mk_conj
+      (Listsort.sort Term.compare
+        (map symmetry_normalise (boolSyntax.strip_conj term)))
+  else if boolSyntax.is_disj term then
+    boolSyntax.list_mk_disj
+      (Listsort.sort Term.compare
+        (map symmetry_normalise (boolSyntax.strip_disj term)))
+  else if boolSyntax.is_eq term then
+    let
+      val (left, right) = boolSyntax.dest_eq term
+      val left = symmetry_normalise left
+      val right = symmetry_normalise right
+    in
+      if Term.compare (left, right) = GREATER then
+        boolSyntax.mk_eq (right, left)
+      else boolSyntax.mk_eq (left, right)
+    end
+  else
+    case Term.dest_term term of
+        COMB (rator, rand) =>
+          Term.mk_comb (symmetry_normalise rator, symmetry_normalise rand)
+      | LAMB (variable, body) =>
+          Term.mk_abs (variable, symmetry_normalise body)
+      | _ => term
+
+fun statement_normal_form term =
+  symmetry_normalise (rename_free (beta_eta_normalise term))
+
 fun theorem_is_goal goal theorem =
   let
     val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
@@ -267,10 +353,11 @@ fun theorem_is_goal goal theorem =
       strip_truth_equivalence (Thm.concl theorem)
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
+    fun same left right =
+      Term.aconv left right orelse variants left right orelse
+      Term.aconv (statement_normal_form left) (statement_normal_form right)
   in
-    Term.aconv conclusion goal orelse
-    Term.aconv theorem_conclusion goal orelse
-    variants conclusion goal orelse variants theorem_conclusion goal
+    same conclusion goal orelse same theorem_conclusion goal
   end
 
 fun named_theorem (RewriteAdd theorem) = SOME theorem
@@ -281,7 +368,6 @@ fun named_theorem (RewriteAdd theorem) = SOME theorem
   | named_theorem (CongruenceAdd theorem) = SOME theorem
   | named_theorem (FactAdd theorem) = SOME theorem
   | named_theorem (DefinitionAdd theorem) = SOME theorem
-  | named_theorem (SimpFragmentAdd _) = NONE
   | named_theorem (RewriteDelete _) = NONE
 
 (* A direct analogue is excluded by theorem shape as well as by its
@@ -309,10 +395,20 @@ fun permitted_for goal (DefinitionAdd {theorem, ...}) =
 
 fun permitted_arg ({goal, ...} : corpus_goal) = permitted_for goal
 
+fun consults_simpset Simp = true
+  | consults_simpset Auto = true
+  | consults_simpset Force = true
+  | consults_simpset Fastforce = true
+  | consults_simpset Clarsimp = true
+  | consults_simpset Aesop = true
+  | consults_simpset _ = false
+
 fun recipe_arguments (Invoke (_, arguments)) = arguments
   | recipe_arguments (Then (left, right)) =
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (AllGoals (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (Otherwise (left, right)) =
       recipe_arguments left @ recipe_arguments right
 
 fun direct_recipe_arguments ({goal, recipe, ...} : corpus_goal) =
@@ -322,6 +418,8 @@ fun direct_argument_name argument =
   case named_theorem argument of
       SOME {name, ...} => name
     | NONE => method_arg_name argument
+
+val argument_name = direct_argument_name
 
 fun raw_goal_diagnostic ({id, ...} : corpus_goal) arguments =
   id ^ "=[" ^
@@ -408,31 +506,22 @@ fun preserve_target tactic (original as (_, target)) =
     (goals, restore)
   end
 
-fun processed_clasimp goal body method_arguments arguments =
-  let
-    val simpset =
-      List.foldl
-        (fn (SimpFragmentAdd (_, fragment), current) =>
-              simpLib.force_add current fragment
-          | (_, current) => current)
-        (clean_simpset goal) method_arguments
-  in
-    clasimpLib.process_clasimp_args
-      (fn claset => fn processed_simpset => fn _ =>
-        preserve_target (body claset processed_simpset))
-      (clasetLib.the_claset ()) simpset arguments
-  end
+fun processed_clasimp goal body arguments =
+  clasimpLib.process_clasimp_args
+    (fn claset => fn processed_simpset => fn _ =>
+      preserve_target (body claset processed_simpset))
+    (clasetLib.the_claset ()) (clean_simpset goal) arguments
 
 (* Preparation derives only the clean invocation-local context.  Raw recipe
    validation happens before any ambient declarations are inspected, so a
    forbidden argument is an error rather than something preparation hides. *)
-fun prepare_goal
-      ({id, goal, source_method, recipe, excl, provenance,
-        representative} : corpus_goal) : corpus_goal =
+fun prepare_goal recipe
+      ({id, goal, source_method, provenance,
+        representative} : source_goal) : corpus_goal =
   let
     val _ = validate_raw_goal
       {id = id, goal = goal, source_method = source_method,
-       recipe = recipe, excl = excl, provenance = provenance,
+       recipe = recipe, excl = [], provenance = provenance,
        representative = representative}
     fun is_analogue ({thm, ...} : clasetLib.aesop_rule) =
       theorem_is_goal goal thm
@@ -449,7 +538,9 @@ fun prepare_goal
         exclusions
       else
         exclusions @ [candidate]
-    val exclusions = List.foldl add_exclusion excl candidates
+    (* Every exclusion is derived: the fold starts from nothing, so an
+       entry cannot seed the list with a name of its own choosing. *)
+    val exclusions = List.foldl add_exclusion [] candidates
   in
     {id = id, goal = goal, source_method = source_method,
      recipe = recipe, excl = exclusions,
@@ -476,7 +567,6 @@ fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
   | class_args (FactAdd _) = []
   | class_args (DefinitionAdd {theorem, ...}) =
       [clasetLib.Simp theorem]
-  | class_args (SimpFragmentAdd _) = []
 
 fun all_class_args args = List.concat (map class_args args)
 
@@ -532,13 +622,6 @@ fun simp_arg (RewriteAdd {theorem, ...}) = SOME theorem
   | simp_arg (CongruenceAdd {theorem, ...}) = SOME (simpLib.Cong theorem)
   | simp_arg (DefinitionAdd {theorem, ...}) = SOME theorem
   | simp_arg _ = NONE
-
-fun add_simp_fragments args simpset =
-  List.foldl
-    (fn (SimpFragmentAdd (_, fragment), current) =>
-          simpLib.force_add current fragment
-      | (_, current) => current)
-    simpset args
 
 fun fact_arg (FactAdd {theorem, ...}) = SOME theorem
   | fact_arg _ = NONE
@@ -659,7 +742,7 @@ fun tactic_for goal Simp args exclusions =
         val simps = List.mapPartial simp_arg args
         val simplify =
           simpLib.FULL_SIMP_TAC
-            (add_simp_fragments args (clean_simpset goal))
+            (clean_simpset goal)
             (simps @ simp_controls exclusions)
       in
         Tactical.THEN
@@ -670,7 +753,6 @@ fun tactic_for goal Simp args exclusions =
         val automatic =
           processed_clasimp goal
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
-            args
             (all_class_args args @ simp_controls exclusions)
         val prepare =
           Tactical.THEN
@@ -695,8 +777,7 @@ fun tactic_for goal Simp args exclusions =
   | tactic_for goal Blast args exclusions =
       let
         val simps = List.mapPartial simp_arg args
-        val benchmark_simpset =
-          add_simp_fragments args (clean_simpset goal)
+        val benchmark_simpset = clean_simpset goal
         val supplied_rules = List.mapPartial supplied_rule args
         val accept_supplied =
           Tactical.FIRST
@@ -763,14 +844,14 @@ fun tactic_for goal Simp args exclusions =
         with_facts args
           (Tactical.THEN
             (prepare,
-             processed_clasimp goal clasimpLib.CS_FORCE_TAC args
+             processed_clasimp goal clasimpLib.CS_FORCE_TAC
                (all_class_args args @ simp_controls exclusions)))
       end
   | tactic_for goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
           (Tactical.TRY hurdUtils.SET_EQ_TAC,
-           processed_clasimp goal clasimpLib.CS_FASTFORCE_TAC args
+           processed_clasimp goal clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls exclusions)))
   | tactic_for _ Safe args exclusions =
       with_facts args
@@ -782,13 +863,12 @@ fun tactic_for goal Simp args exclusions =
           (all_classical_args args @ classical_controls exclusions))
   | tactic_for goal Clarsimp args exclusions =
       with_facts args
-        (processed_clasimp goal clasimpLib.CS_CLARSIMP_TAC args
+        (processed_clasimp goal clasimpLib.CS_CLARSIMP_TAC
           (all_class_args args @ simp_controls exclusions))
   | tactic_for goal Aesop args exclusions =
       with_facts args
         (processed_clasimp goal
           (aesopLib.CS_AESOP_TAC aesopLib.default_config)
-          args
           (all_class_args args @ simp_controls exclusions))
   | tactic_for _ Metis args _ =
       metisLib.METIS_TAC (List.mapPartial fact_arg args)
@@ -839,6 +919,11 @@ fun compile_recipe entry recipe =
           (compile_recipe entry left, compile_recipe entry right)
     | AllGoals (left, right) =>
         Tactical.THEN
+          (compile_recipe entry left, compile_recipe entry right)
+    (* [Tactical.ORELSE] catches [HOL_ERR] and nothing else, so a
+       budget interrupt still passes through the alternation. *)
+    | Otherwise (left, right) =>
+        Tactical.ORELSE
           (compile_recipe entry left, compile_recipe entry right)
 
 fun exclusions_effective claset ({goal, excl, ...} : corpus_goal) =
@@ -912,6 +997,18 @@ fun exclusion_diagnostic claset ({goal, excl, ...} : corpus_goal) =
     String.concatWith ", " remaining_rewrites ^ "]"
   end
 
+(* Runs [work] under [budget], NONE if the budget expired.
+
+   [Timeout.apply] runs its payload under the caller's thread
+   attributes, which here admit asynchronous interrupts: a runaway
+   computation really is cut off, as the selftest checks directly.  A
+   tactic can still overrun its budget by a wide margin, but not for
+   want of an interrupt -- see the note on swallowed interrupts in the
+   benchmark harness documentation. *)
+fun within_budget budget work =
+  SOME (Timeout.apply budget work ())
+  handle Timeout.TIMEOUT _ => NONE
+
 fun run_goal budget recipe (entry : corpus_goal) =
   let
     val started = Time.now ()
@@ -932,15 +1029,16 @@ fun run_goal budget recipe (entry : corpus_goal) =
              false)
     val timed_out = ref false
     val solved =
-      Timeout.apply budget run ()
-      handle Timeout.TIMEOUT _ =>
-        (if recipe_has_tactic Linarith recipe andalso
-            OS.Process.getEnv "HOLBENCHPROGRESS" = SOME "1"
-         then TextIO.print (linarith_stats_text () ^ "\n")
-         else ();
-         timed_out := true;
-         false)
-           | Portable.Interrupt => raise Portable.Interrupt
+      (case within_budget budget run of
+           SOME outcome => outcome
+         | NONE =>
+             (if recipe_has_tactic Linarith recipe andalso
+                 OS.Process.getEnv "HOLBENCHPROGRESS" = SOME "1"
+              then TextIO.print (linarith_stats_text () ^ "\n")
+              else ();
+              timed_out := true;
+              false))
+      handle Portable.Interrupt => raise Portable.Interrupt
            | exn =>
                raise ERR "run_goal"
                  (recipe_name recipe ^ " on " ^ #id entry ^ ": " ^
@@ -1113,7 +1211,9 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
           else
             ()
         val started = Time.now ()
-        val result = run_goal budget (#recipe goal) goal
+        val (result, work) =
+          searchWork.measure
+            (fn () => run_goal budget (#recipe goal) goal)
         val elapsed = Time.- (Time.now (), started)
         val exclusion_names = map #name (#excl goal)
         fun is_excluded name =
@@ -1143,7 +1243,7 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
           if recipe_has_tactic Linarith (#recipe goal) then
             linarith_stats_text ()
           else
-            "not exposed by assigned backend"
+            searchWork.render work
         val _ =
           if diagnostics_enabled () then
             diagnostic_output
@@ -1174,9 +1274,11 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
           else
             ()
       in
-        (#id goal, result)
+        (#id goal, result, work)
       end
-    val gated = map run_gated selected_goals
+    val measured = map run_gated selected_goals
+    val gated = map (fn (id, result, _) => (id, result)) measured
+    val work_done = map (fn (id, _, work) => (id, work)) measured
     val _ =
       assert_accounting
         {family = family, goals = selected_goals,
@@ -1223,7 +1325,7 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
                    battery))
             selected_goals)
   in
-    {gated = gated, battery = battery_results}
+    {gated = gated, work = work_done, battery = battery_results}
   end
 
 end

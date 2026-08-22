@@ -125,6 +125,8 @@ belongs to the parallel build band.
   solved registered goal is a failing test until its record is removed.  An
   `UnderIteration` record means a source result is not yet represented or
   otherwise accounted for; any such record blocks a parity claim.
+- Corpus recipes are derived from the Isabelle method string; a goal is
+  never given a fact its method does not name.
 - Every safe seed declaration is covered by `seedAudit`; an exception is a
   dated, reasoned waiver consumed by the selftest, and stale waivers fail.
   Seed rules must not duplicate TypeBase contributions.

@@ -1,6 +1,6 @@
 (*
   Whole-corpus detector sweep.  Writes the findings list named by
-  HOLGUARDSOUT, or ../../../.agent-files/parity1_phaseA_findings.md.
+  HOLGUARDSOUT, or guards-findings.md here.
 
   HOLGUARDSSKIP takes a comma-separated detector list, HOLGUARDSFAMILY one
   family name, and HOLGUARDSLIMIT a per-family goal cap; each makes the
@@ -11,7 +11,7 @@
 val output_path =
   case OS.Process.getEnv "HOLGUARDSOUT" of
       SOME path => path
-    | NONE => "../../../.agent-files/parity1_phaseA_findings.md"
+    | NONE => "guards-findings.md"
 
 val skipped =
   case OS.Process.getEnv "HOLGUARDSSKIP" of

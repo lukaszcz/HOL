@@ -369,7 +369,10 @@ val table : (string * (unit -> resolution)) list =
   ("scomp_unfold", inlined),
   ("simp_implies_def", inlined),
   ("split_def", inlined),
-  ("sq_def", inlined),
+  (* Groebner_Examples.thy defines [sq]; the translation keeps it as a
+     constant, so the citation resolves to its equation. *)
+  ("sq_def",
+   library "parityAlgebraTranslation" "source_ring_sq_def"),
 
   (* ---- Rules a HOL4 engine or the ambient context supplies
          without an argument ---- *)
@@ -389,8 +392,8 @@ val table : (string * (unit -> resolution)) list =
   ("bit_take_bit_iff", unrepresented),
   ("distinct_zipI1", library "list" "ALL_DISTINCT_ZIP"),
   ("div_mult2_numeral_eq", library "arithmetic" "DIV_DIV_DIV_MULT"),
-  ("dropWhile_append3", unrepresented),
-  ("dropWhile_eq_drop", unrepresented),
+  ("dropWhile_append3", library "list" "dropWhile_APPEND_NOT"),
+  ("dropWhile_eq_drop", library "list" "dropWhile_eq_DROP"),
   ("drop_bit_eq_div", unrepresented),
   ("drop_bit_of_nat", unrepresented),
   ("fold_insort_key.remove", unrepresented),
@@ -408,7 +411,11 @@ val table : (string * (unit -> resolution)) list =
   ("rel_set_def", unrepresented),
   ("rotate_drop_take", unrepresented),
   ("set_nths", unrepresented),
-  ("set_takeWhileD", unrepresented),
+  (* One Isabelle lemma, two HOL4 theorems: set_takeWhileD concludes
+     a conjunction that HOL4 states as separate facts. *)
+  ("set_takeWhileD",
+   bundle [library "list" "MEM_takeWhile_IMP",
+           library "list" "EVERY_takeWhile"]),
   ("sorted_distinct_set_unique", unrepresented),
   ("sorted_iff_nth_mono", unrepresented),
   ("sorted_insort_insert_key[of \"\\<lambda>x. x\"]", unrepresented),
@@ -424,7 +431,7 @@ val table : (string * (unit -> resolution)) list =
   ("sorted_wrt_mono_rel[OF _ sorted_wrt_upt]", unrepresented),
   ("sorted_wrt_mono_rel[OF _ sorted_wrt_upto]", unrepresented),
   ("strict_sorted_equal", unrepresented),
-  ("takeWhile_nth", unrepresented),
+  ("takeWhile_nth", library "list" "EL_takeWhile"),
   ("wf_iff_acc", library "relation" "WF_EQ_WFP"),
 
   (* ---- Names resolved to a HOL4 theorem ---- *)

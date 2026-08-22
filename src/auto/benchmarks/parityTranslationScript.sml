@@ -2452,15 +2452,17 @@ Proof
   >> simp[source_el_zip_min]
 QED
 
+(* Stated as membership rather than as the set applied to a point.
+   Isabelle's [set_conv_nth] is a rewrite the source proofs hand to
+   [auto]; a set-applied statement matches nothing in a goal that says
+   [MEM], so the citation would be carried and never fire. *)
 Theorem source_set_conv_nth:
   !xs value.
-    LIST_TO_SET xs value <=>
+    MEM value xs <=>
     ?index. value = EL index xs /\ index < LENGTH xs
 Proof
   ACCEPT_TAC
-    (PURE_ONCE_REWRITE_RULE [boolTheory.CONJ_COMM]
-       (SIMP_RULE bool_ss [pred_setTheory.IN_APP]
-       listTheory.MEM_EL))
+    (PURE_ONCE_REWRITE_RULE [boolTheory.CONJ_COMM] listTheory.MEM_EL)
 QED
 
 Theorem source_update_zip:
@@ -2481,7 +2483,7 @@ Theorem source_set_zip_leftD:
     (left, right) IN LIST_TO_SET (ZIP (xs, ys)) ==>
     left IN LIST_TO_SET xs
 Proof
-  simp[pred_setTheory.IN_APP, source_set_conv_nth]
+  simp[source_set_conv_nth]
   >> rpt gen_tac
   >> strip_tac
   >> qexists_tac `index`
@@ -2497,7 +2499,7 @@ Theorem source_set_zip_rightD:
     (left, right) IN LIST_TO_SET (ZIP (xs, ys)) ==>
     right IN LIST_TO_SET ys
 Proof
-  simp[pred_setTheory.IN_APP, source_set_conv_nth]
+  simp[source_set_conv_nth]
   >> rpt gen_tac
   >> strip_tac
   >> qexists_tac `index`
@@ -6826,7 +6828,7 @@ Theorem source_set_zip:
          index < MIN (LENGTH xs) (LENGTH ys))
 Proof
   simpLib.SIMP_TAC (clasimpLib.clasimp_ss ())
-    [FUN_EQ_THM, pred_setTheory.SPECIFICATION,
+    [pred_setTheory.EXTENSION, pred_setTheory.IN_ABS,
      pairTheory.FORALL_PROD, source_set_conv_nth,
      listTheory.LENGTH_ZIP_MIN, source_el_zip_min,
      source_fst_el_zip_min, source_snd_el_zip_min,

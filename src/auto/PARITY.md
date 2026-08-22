@@ -4,7 +4,35 @@
 
 Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used for the corresponding source result, and the HOL4 tactic chosen as that method's closest counterpart. This report calls that HOL4 tactic the **assigned tactic**.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-16 with a 30-second limit for each tactic attempt.
+The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: every equational definition the translation introduces, as a rewrite, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. It is more generous than Isabelle in one direction -- Isabelle adds a `fun` definition to its simpset by default but not a plain `definition` -- and the numbers below should be read with that in mind.
+
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-21 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
+
+## Scope
+
+The corpus covers six Isabelle theories at one commit -- `Set.thy`, `List.thy`, `Product_Type.thy`, `Map.thy`, `Option.thy` and `String.thy` -- plus a handful of `ex/` files. That is Isabelle's base library, not Isabelle/HOL. What follows says what these HOL4 tactics do on those goals at that budget. It is not a claim about Isabelle automation in general, and it is not a claim about goals outside the six theories.
+
+## Facts the measurement withheld
+
+Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof citing one of them then reads as if it assumed what it proves. The citation is dropped rather than the goal, so HOL4 is asked to close the goal without a fact the Isabelle proof had. That can only under-credit HOL4, and it is named here rather than left for the reader to discover.
+
+- `set_L105_set_eq_iff (pred_set$EXTENSION)`
+- `set_L563_empty_def (pred_set$EMPTY_DEF)`
+- `set_L595_UNIV_def (pred_set$UNIV_DEF)`
+- `list_L1921_in_set_conv_nth (parityTranslation$source_set_conv_nth)`
+- `list_L8167_list_all_iff (list$EVERY_MEM)`
+- `list_L8660_card_set (list$CARD_LIST_TO_SET_EQN[symmetric])`
+- `list_L6690_distinct_if_distinct_map (list$ALL_DISTINCT_MAP)`
+- `list_L8683_can_select_set_list_ex1 (source_list_ex1_def)`
+- `list_L7387_lexord_same_pref_if_irrefl (parityTranslation$source_lexord_append_prefix_iff)`
+- `list_L7508_lexord_trans (parityTranslation$source_lexord_partial_trans)`
+- `list_L7537_lexord_irrefl (parityTranslation$source_lexord_irreflexive)`
+- `list_L7716_lexordp_conv_lexord (source_lexordp_def)`
+- `list_L7752_lexordp_eq_conv_lexord (source_lexordp_eq_def)`
+- `list_L8259_anon_L8259 (source_listrel1p_def)`
+- `list_L8273_anon_L8273 (source_lexordp_code_def)`
+- `string_L728_anon_L728 (source_Literal_prime_def)`
+- `product_type_L785_curry_conv (pair$CURRY_DEF)`
 
 ## Source accounting
 
@@ -18,7 +46,7 @@ The selftest checks this accounting in both directions. An unexpected failure is
 
 ## Results from the assigned tactics
 
-**Executable goals** is the number of runnable HOL4 statements. **Solved by assigned tactic** counts statements proved by the HOL4 counterpart selected for their Isabelle method. **Routine selftest goals** is a fixed, explicitly marked subset run when `HOLSELFTESTLEVEL=1`; it is not a random sample. At level 2 or higher, all executable goals run.
+**Executable goals** is the number of runnable HOL4 statements. **Solved by assigned tactic** counts statements proved by the HOL4 counterpart selected for their Isabelle method, with the ambient context described above. **Solved under Isabelle's own ambient set** is the same measurement with that context cut back to the definitions Isabelle would have made ambient by itself. Isabelle puts a `fun` definition in the default simpset and a plain `definition` not, and the corpus does not record which of the two introduced each constant, so recursion stands in for the distinction: a definition whose right-hand side mentions the constant it defines is one no plain `definition` could have made. The proxy errs strict, which is the direction that cannot flatter HOL4. Both numbers are given because choosing one would mean guessing which side of that distinction each constant fell on. **Routine selftest goals** is a fixed, explicitly marked subset run when `HOLSELFTESTLEVEL=1`; it is not a random sample. At level 2 or higher, all executable goals run.
 
 A **family** is a subject-area group:
 
@@ -29,48 +57,62 @@ A **family** is a subject-area group:
 - **Presburger** contains quantified additive arithmetic over natural numbers and integers.
 - **Algebra** contains polynomial, ring, and field identities.
 
-| Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
-|---|---:|---:|---:|
-| Classical | 25 | 25 | 4 |
-| Sets | 353 | 353 | 4 |
-| List/map | 604 | 604 | 5 |
-| Linarith | 46 | 46 | 4 |
-| Presburger | 34 | 34 | 8 |
-| Algebra | 10 | 10 | 3 |
-| **Total** | **1072** | **1072** | **28** |
+| Family | Executable goals | Solved by assigned tactic | Solved under Isabelle's own ambient set | Routine selftest goals |
+|---|---:|---:|---:|---:|
+| Classical | 25 | 25 | 25 | 4 |
+| Sets | 353 | 275 | 274 | 4 |
+| List/map | 604 | 346 | 314 | 5 |
+| Linarith | 46 | 46 | 46 | 4 |
+| Presburger | 34 | 34 | 34 | 8 |
+| Algebra | 10 | 8 | 8 | 3 |
+| **Total** | **1072** | **734** | **701** | **28** |
+
+## Cost of the solutions
+
+A solve at 28 seconds is not the same result as a solve in milliseconds, and the count above cannot tell them apart. The columns below split the solved goals by elapsed time and report the search work the engines metered while solving them: node expansions, tableau branches, inferences and rule applications, summed. Zero search work means the goal was closed by rewriting rather than by search. Goals that overran the budget are counted as limitations, not here, so this distribution is bounded by the budget by construction.
+
+| Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Classical | 25 | 7 | 18 | 0 | 0 | 0.8 | 45 | 516 |
+| Sets | 275 | 143 | 129 | 3 | 0 | 3.7 | 0 | 2430 |
+| List/map | 346 | 130 | 213 | 3 | 0 | 6.3 | 0 | 455 |
+| Linarith | 46 | 43 | 3 | 0 | 0 | 0.2 | 0 | 0 |
+| Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
+| Algebra | 8 | 7 | 1 | 0 | 0 | 0.8 | 0 | 0 |
+| **Total** | **734** | **361** | **366** | **7** | **0** | **6.3** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
 - **Accepted scope exclusions** are executable goals deliberately outside the supported tactic scope, with a recorded reason.
-- **Assigned-tactic limitations** are executable goals for which the assigned tactic failed or exceeded 30 seconds.
+- **Assigned-tactic limitations** are executable goals for which the assigned tactic failed or exceeded 30 seconds. Each one has a dated record naming its root cause, in `benchmarks/benchSetShortfalls.sml`, `benchmarks/benchLibraryShortfalls.sml` or `benchmarks/benchAlgebra.sml`.
 - **Unavailable translations** are source results that could not be represented faithfully as HOL4 goals. They are not included in the executable-goal count.
 - **Unaccounted source results** would be source results that are neither executable nor documented as unavailable. This number must remain zero.
 
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 0 | 0 | 0 |
-| List/map | 0 | 0 | 0 | 0 |
+| Sets | 0 | 78 | 0 | 0 |
+| List/map | 0 | 258 | 0 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
-| Algebra | 0 | 0 | 0 | 0 |
-| **Total** | **0** | **0** | **0** | **0** |
+| Algebra | 0 | 2 | 0 | 0 |
+| **Total** | **0** | **338** | **0** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
-## Additional tactic observations
+## Goals another tactic would have closed
 
-For context, the exhaustive run also tries three general-purpose HOL4 tactics when they are not already the assigned tactic. The numbers below count these additional solutions. They do not affect whether the benchmark selftest passes and are not total strength scores for the tactics.
+The exhaustive run also tries three general-purpose HOL4 tactics on every goal whose recipe does not already use them. A goal is counted below when that tactic closed it and the assigned tactic did not, so each column measures what the method-to-tactic mapping cost rather than what HOL4 cannot do. The columns overlap one another and are disjoint from the solved count. They are not strength scores: a tactic is never counted on a goal it was assigned. They do not affect whether the benchmark selftest passes.
 
-| Family | Additional `AUTO_TAC` solutions | Additional `BLAST_TAC` solutions | Additional `AESOP_TAC` solutions |
+| Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |
 |---|---:|---:|---:|
-| Classical | 20 | 0 | 6 |
-| Sets | 0 | 125 | 231 |
-| List/map | 133 | 0 | 97 |
-| Linarith | 28 | 0 | 21 |
-| Presburger | 10 | 0 | 8 |
-| Algebra | 1 | 0 | 1 |
-| **Total** | **192** | **125** | **364** |
+| Classical | 0 | 0 | 0 |
+| Sets | 0 | 8 | 29 |
+| List/map | 24 | 0 | 18 |
+| Linarith | 0 | 0 | 0 |
+| Presburger | 0 | 0 | 0 |
+| Algebra | 0 | 0 | 0 |
+| **Total** | **24** | **8** | **47** |
 
 ## Seed-rule safety check
 
@@ -87,4 +129,4 @@ HOLSELFTESTLEVEL=2 ./selftest.exe
 ./genparity.exe
 ```
 
-The first selftest command runs the fixed routine subset. The second runs every executable goal and the additional tactic observations. The final command regenerates `../PARITY.md`.
+The first selftest command runs the fixed routine subset. The second runs every executable goal and the other-tactic observations. The final command regenerates `../PARITY.md`.

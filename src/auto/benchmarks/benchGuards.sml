@@ -28,8 +28,9 @@ fun registered_definition theorem =
 fun goal_constants goal =
   map (#1 o dest_const) (find_terms is_const goal)
 
-(* A [Then] or [AllGoals] recipe repeats its common arguments in every
-   component, so the raw argument list names one theorem several times. *)
+(* A recipe with more than one component -- [Then], [AllGoals] or
+   [Otherwise] -- repeats its common arguments in each, so the raw
+   argument list names one theorem several times. *)
 fun distinct_by_name [] = []
   | distinct_by_name (({name, theorem} : benchLib.named_thm) :: rest) =
       {name = name, theorem = theorem} ::

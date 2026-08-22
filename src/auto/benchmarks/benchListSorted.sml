@@ -5,43 +5,15 @@ open HolKernel
 
 val commit = "f7e02b7e"
 
-fun named name theorem : benchLib.named_thm =
-  {name = name, theorem = theorem}
-
-val order_context =
-  [benchLib.DefinitionAdd
-     (named "parityTranslation$source_sorted_def"
-        parityTranslationTheory.source_sorted_def),
-   benchLib.DefinitionAdd
-     (named "parityTranslation$source_strict_sorted_def"
-        parityTranslationTheory.source_strict_sorted_def),
-   benchLib.RewriteAdd
-     (named "sorting$SORTED_EQ" sortingTheory.SORTED_EQ),
-   benchLib.RewriteAdd
-     (named "parityTranslation$source_weak_linear_transitive"
-        parityTranslationTheory.source_weak_linear_transitive),
-   benchLib.RewriteAdd
-     (named "parityTranslation$source_strord_transitive"
-        parityTranslationTheory.source_strord_transitive)]
-
-fun entry id line method goal : benchLib.corpus_goal =
+fun entry id line method goal : benchLib.source_goal =
   {id = id, goal = goal, source_method = method,
-   recipe = benchLib.Invoke (benchLib.Auto, order_context),
-   excl = [], provenance =
+   provenance =
      {file = "src/HOL/List.thy", line = line, commit = commit},
    representative = false}
 
-fun strict_entry id line method goal : benchLib.corpus_goal =
+fun strict_entry id line method goal : benchLib.source_goal =
   {id = id, goal = goal, source_method = method,
-   recipe = benchLib.Invoke
-     (benchLib.Auto,
-      [benchLib.RewriteAdd
-         (named "parityTranslation$source_strict_sorted_iff"
-            parityTranslationTheory.source_strict_sorted_iff),
-       benchLib.DefinitionAdd
-         (named "parityTranslation$source_sorted_def"
-            parityTranslationTheory.source_sorted_def)]),
-   excl = [], provenance =
+   provenance =
      {file = "src/HOL/List.thy", line = line, commit = commit},
    representative = false}
 

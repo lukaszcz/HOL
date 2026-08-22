@@ -22,8 +22,7 @@ val raw_goals =
      benchStringCorpus.goals @
      benchProductCorpus.goals
 
-val _ = benchLib.validate_raw_goals "listmap" raw_goals
-val goals = map benchLib.prepare_goal raw_goals
+val goals = benchDerive.prepare "listmap" raw_goals
 
 val shortfalls : benchLib.shortfall list =
   benchLibraryShortfalls.translation @ benchLibraryShortfalls.execution

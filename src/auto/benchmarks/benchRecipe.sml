@@ -11,7 +11,6 @@ datatype modifier =
   | Elim of benchLib.rule_strength * string list
   | Dest of benchLib.rule_strength * string list
   | Cong of string list
-  | FactsAdd of string list
 
 type method = {name : string, modifiers : modifier list}
 
@@ -137,13 +136,13 @@ fun words tokens =
     go tokens []
   end
 
-(* [add:] means different things to different methods: a simpset entry
-   for the simplifier-based ones, a fact for [algebra], which has no
-   simpset. *)
+(* [add:] is a simpset entry for every method that spells it,
+   [algebra] included: its [add:] theorems seed the simpset it
+   presimplifies the goal with before it normalizes, so an added
+   definition unfolds rather than arriving as a hypothesis. *)
 fun modifier_of source head key names =
   case key of
-      "add:" =>
-        if head = "algebra" then FactsAdd names else SimpAdd names
+      "add:" => SimpAdd names
     | "del:" => SimpDelete names
     | "simp:" => SimpAdd names
     | "split:" => Split names
@@ -253,7 +252,6 @@ fun render_modifier head modifier =
       | Dest (benchLib.UnsafeRule, names) => spelled "dest:" names
       | Dest (benchLib.SafeRule, names) => spelled "dest!:" names
       | Cong names => spelled "cong:" names
-      | FactsAdd names => spelled "add:" names
   end
 
 fun render_method ({name, modifiers} : method) =
@@ -286,7 +284,6 @@ fun modifier_names modifier =
     | Elim (_, names) => names
     | Dest (_, names) => names
     | Cong names => names
-    | FactsAdd names => names
 
 fun distinct [] = []
   | distinct (item :: rest) =
@@ -306,7 +303,8 @@ fun method_heads ({methods, ...} : parsed) = map #name methods
 
 type resolver = {
   theorems : string -> benchLib.named_thm list,
-  tactic : string -> term -> benchLib.tactic_id
+  tactics : string -> term -> benchLib.tactic_id list,
+  ambient : benchLib.method_arg list
 }
 
 (* A deletion names a simpset entry, not a theorem: the display name of
@@ -334,10 +332,9 @@ fun argument_of resolve modifier =
       | Dest (strength, names) =>
           each (fn thm => benchLib.DestAdd (strength, thm)) names
       | Cong names => each benchLib.CongruenceAdd names
-      | FactsAdd names => each benchLib.FactAdd names
   end
 
-fun to_recipe ({theorems, tactic} : resolver) goal
+fun to_recipe ({theorems, tactics, ambient} : resolver) goal
               ({facts, unfolded, methods} : parsed) =
   let
     (* [using] premises enter as facts, [unfolding] names as rewrites.
@@ -349,10 +346,32 @@ fun to_recipe ({theorems, tactic} : resolver) goal
     val common =
       resolved benchLib.FactAdd facts @
       resolved benchLib.RewriteAdd unfolded
+    (* The ambient context stands in for the simpset an Isabelle method
+       reads without naming it, so it reaches only the methods that
+       consult one.  Giving it to [blast] or to a decision procedure
+       would hand the HOL4 tactic a simplification pass the Isabelle
+       proof never had. *)
+    fun step modifiers identifier =
+      let
+        val context =
+          if benchLib.consults_simpset identifier then ambient else []
+      in
+        benchLib.Invoke
+          (identifier,
+           context @ common @
+           List.concat (map (argument_of theorems) modifiers))
+      end
     fun invoke ({name, modifiers} : method) =
-      benchLib.Invoke
-        (tactic name goal,
-         common @ List.concat (map (argument_of theorems) modifiers))
+      let
+        fun alternatives [] =
+              raise Unparseable (name, "names no HOL4 tactic")
+          | alternatives [identifier] = step modifiers identifier
+          | alternatives (identifier :: rest) =
+              benchLib.Otherwise (step modifiers identifier,
+                                  alternatives rest)
+      in
+        alternatives (tactics name goal)
+      end
     fun compose [] =
           raise Unparseable (render {facts = facts, unfolded = unfolded,
                                      methods = methods},

@@ -14,9 +14,11 @@ sig
      fact. *)
 
   datatype resolution =
-      (* More than one theorem only where the Isabelle name abbreviates
-         a fact list -- [option.splits], [ac_simps] -- in which case the
-         entry lists what that abbreviation stands for. *)
+      (* More than one theorem in two cases only: the Isabelle name
+         abbreviates a fact list -- [option.splits], [ac_simps] -- in
+         which case the entry lists what that abbreviation stands for;
+         or one Isabelle lemma's content is spread over several HOL4
+         theorems, as [set_takeWhileD]'s conjunctive conclusion is. *)
       Theorems of benchLib.named_thm list
     (* An Isar context fact -- [assms], [that], or a label bound by the
        enclosing lemma's [assumes].  The translated goal already carries

@@ -5,22 +5,9 @@ open HolKernel
 
 val commit = "f7e02b7e"
 
-fun named name theorem : benchLib.named_thm =
-  {name = name, theorem = theorem}
-
-fun entry id line method goal : benchLib.corpus_goal =
+fun entry id line method goal : benchLib.source_goal =
   {id = id, goal = goal, source_method = method,
-   recipe = benchLib.Invoke
-     (benchLib.Auto,
-      [benchLib.RewriteAdd
-         (named "parityTranslation$source_interval_membership"
-            parityTranslationTheory.source_interval_membership),
-       benchLib.RewriteAdd
-         (named "parityTranslation$source_bounded_interval_membership"
-            parityTranslationTheory.source_bounded_interval_membership),
-       benchLib.DefinitionAdd
-         (named "pred_set$EXTENSION" pred_setTheory.EXTENSION)]),
-   excl = [], provenance =
+   provenance =
      {file = "src/HOL/List.thy", line = line, commit = commit},
    representative = false}
 

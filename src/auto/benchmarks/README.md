@@ -20,23 +20,42 @@ The SML interfaces call the complete collection a `corpus`.  A `shortfall`
 is a dated record saying that a goal is outside the accepted scope, exposes
 a current tactic limitation, or could not be translated faithfully.  The
 selftest compares actual results with those records in both directions.
-The current execution and translation shortfall ledgers are empty: every
-assigned recipe succeeds.
+`benchSetShortfalls`, `benchLibraryShortfalls` and `benchAlgebra` hold the
+current ledgers; each record names a root cause, not just an identifier.
 
-Corpus recipes are stored as literal structured values.  The source method,
-goal text, identifier, and provenance are reporting and accounting data only;
-they are never parsed to choose recipe arguments or tactic behavior.
+Recipes are not authored.  `benchRecipe` parses the entry's Isabelle method
+string and `benchTactics` maps each method name to the HOL4 tactics it
+stands for, so a goal cannot be given an argument its source proof did not
+name.  A method that is itself a disjunction becomes one -- Isabelle's
+`algebra` is `ring_tac ORELSE ideal_tac`, and the recipe offers both in
+that order rather than reading the goal to pick a side.  A method string
+the parser does not understand is a hard error, never a silent fallback to
+a bare tactic.  `benchNames` is a single global table from
+Isabelle theorem name to HOL4 theorem; it is keyed by name only and knows
+nothing about which goal is asking.  `benchAmbient` supplies every
+equational definition the translation introduces, as a rewrite, identically
+for every goal, and only to the methods that consult a simpset -- Isabelle's
+`blast`, `safe`, `clarify`, `metis` and its decision procedures do not.  It
+stands in for the ambient simpset an Isabelle method reads without naming
+it, and is more generous than Isabelle in one direction: Isabelle adds a
+`fun` definition to its simpset by default but not a plain `definition`.
+The corpus does not record which of the two introduced a constant, so
+`benchAmbient.recursive_definitions` uses self-reference as a proxy for
+`fun` and the report measures the corpus under both sets, giving both
+counts rather than guessing.
 
 `HOLSELFTESTLEVEL=1` runs the explicitly marked representative goals.  This
 is a fixed subset, not random sampling.  Level 2 or higher runs every
-executable goal and also tries selected alternative tactics for
-informational counts.  Alternative-tactic results never decide whether
-the test passes.
+executable goal, measures it a second time under the stricter ambient
+set, and also tries selected alternative tactics -- counting a goal only
+where the alternative closed it and the assigned tactic did not.
+Alternative-tactic results never decide whether the test passes.
 
 Source mining produced 1,061 distinct executable Isabelle results after
 deduplicating translated statements up to bound-variable renaming.  Eleven
 existing HOL4 integer regression goals are added, for 1,072 executable goals
-in total.
+in total.  They come from six Isabelle theories plus a handful of `ex/`
+files: this is Isabelle's base library, not Isabelle/HOL.
 
 To build and run both test levels from this directory:
 
@@ -60,8 +79,12 @@ whether a finding is fatal.
   simplification, `MATCH_MP_TAC` followed by safe steps, or a
   minimum-budget `METIS_TAC`.  A route counts only when the same route
   without the theorem fails, so an ambient tautology is not mistaken for
-  recognition.  The syntactic `benchLib.theorem_is_goal` test is kept as a
-  cheap accepting pre-filter.
+  recognition.  `benchLib.theorem_is_goal` is the cheap accepting
+  pre-filter, and it is also what decides at measurement time whether a
+  citation is dropped.  It compares the two statements up to reordering of
+  conjunctions and disjunctions, orientation of equations and
+  equivalences, and renaming of free variables, so a lemma that is the
+  goal spelled differently is still the goal.
 - **A2 provenance** — every `parityTranslation$source_X` argument must be
   named by the entry's Isabelle method, modulo a closed suffix list, or be
   a registered definition of a constant occurring in the goal.
@@ -81,8 +104,9 @@ whether a finding is fatal.
 Detector logic, thresholds and pins are owner-signed.  Widening one to make
 a run green is the defect they exist to catch.
 
-`./guards.exe` sweeps the whole corpus and writes the findings list.
-`HOLGUARDSOUT` names the output file, `HOLGUARDSSKIP` leaves detectors out,
+`./guards.exe` sweeps the whole corpus and writes the findings list to
+`guards-findings.md`.  `HOLGUARDSOUT` names another output file,
+`HOLGUARDSSKIP` leaves detectors out,
 `HOLGUARDSFAMILY` restricts the sweep to one family, `HOLGUARDSLIMIT` caps
 the goals per family, and `HOLGUARDSPROGRESS=1` names each goal as it is
 swept.  Each restriction is recorded in the generated header.

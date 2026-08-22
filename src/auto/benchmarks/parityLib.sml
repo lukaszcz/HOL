@@ -10,12 +10,27 @@ fun count_cause cause shortfalls =
       (fn ({cause = item, ...} : benchLib.shortfall) => item = cause)
       shortfalls)
 
-fun battery_count tactic_id battery =
-  length
-    (List.filter
-      (fn (_, item, outcome) =>
-        item = tactic_id andalso benchLib.outcome_solved outcome)
-      battery)
+(* A battery tactic is run on every goal whose recipe does not already
+   use it, solved goals included, so most of what it closes the
+   assigned tactic closed too.  Reporting that total under the word
+   "additional" invites the reader to add the columns to the
+   assigned-tactic count.  Counted here instead are the goals the
+   battery tactic closed and the assigned tactic did not: the goals
+   where the choice of tactic, not HOL4, is what the corpus measured. *)
+fun battery_count tactic_id gated battery =
+  let
+    fun assigned_solved id =
+      case List.find (fn (item, _) => item = id) gated of
+          SOME (_, outcome) => benchLib.outcome_solved outcome
+        | NONE => false
+  in
+    length
+      (List.filter
+        (fn (id, item, outcome) =>
+          item = tactic_id andalso benchLib.outcome_solved outcome andalso
+          not (assigned_solved id))
+        battery)
+  end
 
 type family = {
   name : string,
@@ -32,7 +47,9 @@ type measured_family = {
   slice : int,
   shortfalls : benchLib.shortfall list,
   gated : (string * benchLib.outcome) list,
-  battery : (string * benchLib.tactic_id * benchLib.outcome) list
+  work : (string * searchWork.work) list,
+  battery : (string * benchLib.tactic_id * benchLib.outcome) list,
+  strict : int
 }
 
 fun representative_count goals =
@@ -70,23 +87,109 @@ val families : family list =
     shortfalls = benchAlgebra.shortfalls,
     run = benchAlgebra.run}]
 
-fun measure_family ({name, size, slice, shortfalls, run, ...} : family) =
+(* The corpus again, with the ambient context cut back to what
+   Isabelle would have made ambient by itself.  Only the count is
+   taken: the accounting, the exclusion checks and the battery all
+   belong to the measurement proper, and repeating them here would
+   assert a ledger written against the other ambient set.  Goals are
+   run at the same budget, so the two numbers differ in one thing. *)
+fun strict_solved ({goals, ...} : family) =
+  let
+    fun solved_goal (entry : benchLib.corpus_goal) =
+      benchLib.outcome_solved
+        (benchLib.run_goal benchLib.default_budget (#recipe entry) entry)
+  in
+    length
+      (List.filter solved_goal
+        (benchDerive.restrict_ambient benchAmbient.recursive_arguments
+          goals))
+  end
+
+fun measure_family (entry as {name, size, slice, shortfalls, run, ...}
+                      : family) =
   let
     val _ = PolyML.fullGC ()
     val result = run 2
+    val _ = PolyML.fullGC ()
+    val strict = strict_solved entry
   in
     {name = name, size = size, slice = slice,
      shortfalls = shortfalls, gated = #gated result,
-     battery = #battery result}
+     work = #work result, battery = #battery result,
+     strict = strict}
+  end
+
+(* Milliseconds each solved goal took.  A goal that overran the budget
+   is not here: [benchLib.run_goal] reports it as a timeout, so the
+   distribution below is bounded by the budget by construction and the
+   tail sits in the limitations table instead. *)
+fun solved_milliseconds outcomes =
+  List.mapPartial
+    (fn (_, benchLib.SOLVED elapsed) =>
+          SOME (Int.fromLarge (Time.toMilliseconds elapsed))
+      | _ => NONE)
+    outcomes
+
+fun insert value [] = [value]
+  | insert value (head :: rest) =
+      if value <= head then value :: head :: rest
+      else head :: insert value rest
+
+fun sorted values = List.foldl (fn (value, seen) => insert value seen) []
+                      values
+
+fun median [] = 0
+  | median values =
+      let val ordered = sorted values
+      in List.nth (ordered, length ordered div 2) end
+
+fun largest [] = 0
+  | largest values = List.last (sorted values)
+
+fun within lower upper values =
+  length (List.filter (fn value => lower <= value andalso value < upper)
+           values)
+
+fun seconds milliseconds =
+  Real.fmt (StringCvt.FIX (SOME 1)) (Real.fromInt milliseconds / 1000.0)
+
+(* Search work for the goals that solved.  A goal that failed did work
+   too, but reporting it would mix "this took a lot of search" with
+   "this searched the whole space and found nothing". *)
+fun solved_work ({gated, work, ...} : measured_family) =
+  List.mapPartial
+    (fn (id, item) =>
+      if List.exists
+           (fn (other, outcome) =>
+             other = id andalso benchLib.outcome_solved outcome)
+           gated
+      then SOME (searchWork.total item)
+      else NONE)
+    work
+
+fun cost_row (row as {name, gated, ...} : measured_family) =
+  let
+    val times = solved_milliseconds gated
+    fun number value = Int.toString value
+  in
+    "| " ^ name ^ " | " ^ number (length times) ^ " | " ^
+    number (within 0 100 times) ^ " | " ^
+    number (within 100 1000 times) ^ " | " ^
+    number (within 1000 10000 times) ^ " | " ^
+    number (within 10000 1000000000 times) ^ " | " ^
+    seconds (largest times) ^ " | " ^
+    number (median (solved_work row)) ^ " | " ^
+    number (largest (solved_work row)) ^ " |\n"
   end
 
 fun primary_row
-      ({name, size, slice, gated, ...} : measured_family) =
+      ({name, size, slice, gated, strict, ...} : measured_family) =
   let
     fun number value = Int.toString value
   in
     "| " ^ name ^ " | " ^ number size ^ " | " ^
-    number (solved gated) ^ " | " ^ number slice ^ " |\n"
+    number (solved gated) ^ " | " ^ number strict ^ " | " ^
+    number slice ^ " |\n"
   end
 
 fun accounting_row
@@ -104,14 +207,14 @@ fun accounting_row
   end
 
 fun observation_row
-      ({name, battery, ...} : measured_family) =
+      ({name, gated, battery, ...} : measured_family) =
   let
     fun number value = Int.toString value
   in
     "| " ^ name ^ " | " ^
-    number (battery_count benchLib.Auto battery) ^ " | " ^
-    number (battery_count benchLib.Blast battery) ^ " | " ^
-    number (battery_count benchLib.Aesop battery) ^ " |\n"
+    number (battery_count benchLib.Auto gated battery) ^ " | " ^
+    number (battery_count benchLib.Blast gated battery) ^ " | " ^
+    number (battery_count benchLib.Aesop gated battery) ^ " |\n"
   end
 
 fun total_size rows =
@@ -125,6 +228,11 @@ fun total_solved rows =
       solved gated + total)
     0 rows
 
+fun total_strict rows =
+  List.foldl
+    (fn ({strict, ...} : measured_family, total) => strict + total)
+    0 rows
+
 fun total_slice rows =
   List.foldl
     (fn ({slice, ...} : measured_family, total) => slice + total)
@@ -136,11 +244,73 @@ fun total_cause cause rows =
       count_cause cause shortfalls + total)
     0 rows
 
+fun all_times rows =
+  List.concat
+    (map (fn ({gated, ...} : measured_family) => solved_milliseconds gated)
+      rows)
+
+fun all_work rows = List.concat (map solved_work rows)
+
 fun total_battery tactic_id rows =
   List.foldl
-    (fn ({battery, ...} : measured_family, total) =>
-      battery_count tactic_id battery + total)
+    (fn ({gated, battery, ...} : measured_family, total) =>
+      battery_count tactic_id gated battery + total)
     0 rows
+
+(* A goal whose Isabelle method names a fact that translates onto the
+   goal's own HOL4 statement is measured without that fact.  Naming
+   those goals is the report's job: the alternative is a solved count
+   that rests on a citation no reader could check. *)
+fun dropped_citations ({goals, ...} : family) =
+  List.mapPartial
+    (fn ({id, goal, source_method, provenance, ...}
+           : benchLib.corpus_goal) =>
+      if not (String.isPrefix "src/HOL/" (#file provenance)) then NONE
+      else
+        case benchDerive.self_supplied_of goal source_method of
+            [] => NONE
+          | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
+    goals
+
+fun withheld_section () =
+  let
+    val dropped = List.concat (map dropped_citations families)
+  in
+    ["## Facts the measurement withheld\n\n",
+     "Two distinct Isabelle facts can translate onto one HOL4 theorem, ",
+     "and a proof citing one of them then reads as if it assumed what ",
+     "it proves. The citation is dropped rather than the goal, so HOL4 ",
+     "is asked to close the goal without a fact the Isabelle proof had. ",
+     "That can only under-credit HOL4, and it is named here rather ",
+     "than left for the reader to discover.\n\n"] @
+    (if null dropped then ["No goal was measured that way.\n\n"]
+     else map (fn text => "- `" ^ text ^ "`\n") dropped @ ["\n"])
+  end
+
+(* The report carries measured elapsed times, and two runs of the same
+   corpus do not agree on them to the digit.  A committed report is
+   still checked against a fresh one, but with that one section cut
+   out of both: what the check is for is drift between the corpus and
+   the report, and a solve that took 0.31 s rather than 0.28 s is not
+   drift.  Every claim about the corpus -- counts, accounting, scope,
+   the withheld citations -- is made outside the cut and stays checked;
+   the cut section's own solved column repeats the table above it. *)
+val cost_heading = "## Cost of the solutions"
+
+fun without_costs text =
+  let
+    val (kept, rest) =
+      Substring.position cost_heading (Substring.full text)
+  in
+    if Substring.isEmpty rest then text
+    else
+      let
+        val after = Substring.triml (size cost_heading) rest
+        val (_, tail) = Substring.position "\n## " after
+      in
+        Substring.concat [kept, tail]
+      end
+  end
 
 fun render () =
   let
@@ -164,11 +334,35 @@ fun render () =
       "Isabelle method used for the corresponding source result, and ",
       "the HOL4 tactic chosen as that method's closest counterpart. ",
       "This report calls that HOL4 tactic the **assigned tactic**.\n\n",
+      "The assigned tactic and its arguments are derived from the ",
+      "recorded Isabelle method string rather than authored per goal, ",
+      "so a goal cannot be handed a fact its source proof did not name. ",
+      "One context is added on top of that: every equational definition ",
+      "the translation introduces, as a rewrite, identically for every ",
+      "goal, and only to the methods that consult a simpset. This ",
+      "stands in for the ambient simpset an Isabelle method reads ",
+      "without naming it. It is more generous than Isabelle in one ",
+      "direction -- Isabelle adds a `fun` definition to its simpset by ",
+      "default but not a plain `definition` -- and the numbers below ",
+      "should be read with that in mind.\n\n",
       "The comparison data was mined from Isabelle/HOL commit ",
       "`f7e02b7e`. Each in-repository benchmark entry records its source ",
       "file, line, method, and commit. The report was generated on ",
-      "2026-08-16 with a 30-second limit for each tactic attempt.\n\n",
-      "## Source accounting\n\n",
+      "2026-08-21 with a 30-second limit for each tactic attempt. The ",
+      "limit is an asynchronous interrupt, so a goal can overrun it by ",
+      "the time its search takes to reach an interruptible point; the ",
+      "times below are wall-clock and record the overrun where it ",
+      "happened.\n\n",
+      "## Scope\n\n",
+      "The corpus covers six Isabelle theories at one commit -- ",
+      "`Set.thy`, `List.thy`, `Product_Type.thy`, `Map.thy`, ",
+      "`Option.thy` and `String.thy` -- plus a handful of `ex/` files. ",
+      "That is Isabelle's base library, not Isabelle/HOL. What follows ",
+      "says what these HOL4 tactics do on those goals at that budget. ",
+      "It is not a claim about Isabelle automation in general, and it ",
+      "is not a claim about goals outside the six theories.\n\n"] @
+     withheld_section () @
+     ["## Source accounting\n\n",
       "Source mining identified 1,070 relevant Isabelle results. Nine ",
       "pairs translated to the same HOL4 statement except for bound ",
       "variable names, so they are tested once. This leaves 1,061 ",
@@ -185,10 +379,22 @@ fun render () =
       "## Results from the assigned tactics\n\n",
       "**Executable goals** is the number of runnable HOL4 statements. ",
       "**Solved by assigned tactic** counts statements proved by the ",
-      "HOL4 counterpart selected for their Isabelle method. ",
-      "**Routine selftest goals** is a fixed, explicitly marked subset ",
-      "run when `HOLSELFTESTLEVEL=1`; it is not a random sample. At ",
-      "level 2 or higher, all executable goals run.\n\n",
+      "HOL4 counterpart selected for their Isabelle method, with the ",
+      "ambient context described above. **Solved under Isabelle's own ",
+      "ambient set** is the same measurement with that context cut back ",
+      "to the definitions Isabelle would have made ambient by itself. ",
+      "Isabelle puts a `fun` definition in the default simpset and a ",
+      "plain `definition` not, and the corpus does not record which of ",
+      "the two introduced each constant, so recursion stands in for the ",
+      "distinction: a definition whose right-hand side mentions the ",
+      "constant it defines is one no plain `definition` could have "
+      ^ "made. ",
+      "The proxy errs strict, which is the direction that cannot ",
+      "flatter HOL4. Both numbers are given because choosing one would ",
+      "mean guessing which side of that distinction each constant fell ",
+      "on. **Routine selftest goals** is a fixed, explicitly marked ",
+      "subset run when `HOLSELFTESTLEVEL=1`; it is not a random ",
+      "sample. At level 2 or higher, all executable goals run.\n\n",
       "A **family** is a subject-area group:\n\n",
       "- **Classical** contains propositional and first-order logic.\n",
       "- **Sets** contains set and relation reasoning.\n",
@@ -200,16 +406,44 @@ fun render () =
       "natural numbers and integers.\n",
       "- **Algebra** contains polynomial, ring, and field identities.\n\n",
       "| Family | Executable goals | Solved by assigned tactic | ",
+      "Solved under Isabelle's own ambient set | ",
       "Routine selftest goals |\n",
-      "|---|---:|---:|---:|\n"] @
+      "|---|---:|---:|---:|---:|\n"] @
      map primary_row rows @
      ["| **Total** | **", executable, "** | **", assigned_solved,
+      "** | **", number (total_strict rows),
       "** | **", routine, "** |\n\n",
+      "## Cost of the solutions\n\n",
+      "A solve at 28 seconds is not the same result as a solve in ",
+      "milliseconds, and the count above cannot tell them apart. The ",
+      "columns below split the solved goals by elapsed time and report ",
+      "the search work the engines metered while solving them: node ",
+      "expansions, tableau branches, inferences and rule applications, ",
+      "summed. Zero search work means the goal was closed by rewriting ",
+      "rather than by search. Goals that overran the budget are ",
+      "counted as limitations, not here, so this distribution is ",
+      "bounded by the budget by construction.\n\n",
+      "| Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | ",
+      "Slowest | Median search work | Largest search work |\n",
+      "|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"] @
+     map cost_row rows @
+     ["| **Total** | **", number (length (all_times rows)), "** | **",
+      number (within 0 100 (all_times rows)), "** | **",
+      number (within 100 1000 (all_times rows)), "** | **",
+      number (within 1000 10000 (all_times rows)), "** | **",
+      number (within 10000 1000000000 (all_times rows)), "** | **",
+      seconds (largest (all_times rows)), "** | **",
+      number (median (all_work rows)), "** | **",
+      number (largest (all_work rows)), "** |\n\n",
       "## Documented results not solved by the assigned tactic\n\n",
       "- **Accepted scope exclusions** are executable goals deliberately ",
       "outside the supported tactic scope, with a recorded reason.\n",
       "- **Assigned-tactic limitations** are executable goals for which ",
-      "the assigned tactic failed or exceeded 30 seconds.\n",
+      "the assigned tactic failed or exceeded 30 seconds. Each one has ",
+      "a dated record naming its root cause, in ",
+      "`benchmarks/benchSetShortfalls.sml`, ",
+      "`benchmarks/benchLibraryShortfalls.sml` or ",
+      "`benchmarks/benchAlgebra.sml`.\n",
       "- **Unavailable translations** are source results that could not ",
       "be represented faithfully as HOL4 goals. They are not included ",
       "in the executable-goal count.\n",
@@ -226,14 +460,17 @@ fun render () =
       "For every family, executable goals equal assigned-tactic ",
       "solutions plus accepted scope exclusions plus assigned-tactic ",
       "limitations.\n\n",
-      "## Additional tactic observations\n\n",
-      "For context, the exhaustive run also tries three general-purpose ",
-      "HOL4 tactics when they are not already the assigned tactic. The ",
-      "numbers below count these additional solutions. They do not ",
-      "affect whether the benchmark selftest passes and are not total ",
-      "strength scores for the tactics.\n\n",
-      "| Family | Additional `AUTO_TAC` solutions | Additional ",
-      "`BLAST_TAC` solutions | Additional `AESOP_TAC` solutions |\n",
+      "## Goals another tactic would have closed\n\n",
+      "The exhaustive run also tries three general-purpose HOL4 ",
+      "tactics on every goal whose recipe does not already use them. A ",
+      "goal is counted below when that tactic closed it and the ",
+      "assigned tactic did not, so each column measures what the ",
+      "method-to-tactic mapping cost rather than what HOL4 cannot do. ",
+      "The columns overlap one another and are disjoint from the ",
+      "solved count. They are not strength scores: a tactic is never ",
+      "counted on a goal it was assigned. They do not affect whether ",
+      "the benchmark selftest passes.\n\n",
+      "| Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |\n",
       "|---|---:|---:|---:|\n"] @
      map observation_row rows @
      ["| **Total** | **",
@@ -254,14 +491,18 @@ fun render () =
       "./genparity.exe\n",
       "```\n\n",
       "The first selftest command runs the fixed routine subset. The ",
-      "second runs every executable goal and the additional tactic ",
+      "second runs every executable goal and the other-tactic ",
       "observations. The final command regenerates `../PARITY.md`.\n"])
   end
 
+(* [render] measures the whole corpus and takes hours, so it runs to
+   completion before the file is opened.  Opening first truncates the
+   committed report, and a run that dies then leaves an empty one. *)
 fun write path =
   let
+    val text = render ()
     val stream = TextIO.openOut path
-    val _ = TextIO.output (stream, render ())
+    val _ = TextIO.output (stream, text)
   in
     TextIO.closeOut stream
   end

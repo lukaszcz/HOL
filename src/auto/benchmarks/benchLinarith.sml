@@ -44,11 +44,9 @@ fun goal number =
       SOME (_, result) => result
     | NONE => lookup number linarithCorpus.core_arith_examples
 
-fun entry number line representative : benchLib.corpus_goal =
+fun entry number line representative : benchLib.source_goal =
   {id = "linarith_L" ^ Int.toString line, goal = goal number,
    source_method = "by linarith",
-   recipe = benchLib.Invoke (benchLib.Linarith, []),
-   excl = [],
    provenance =
      {file = "src/HOL/ex/Arith_Examples.thy", line = line,
       commit = commit},
@@ -77,8 +75,7 @@ val raw_goals =
     (fn (number, line) => entry number line (representative number))
     source_index
 
-val _ = benchLib.validate_raw_goals "linarith" raw_goals
-val goals = map benchLib.prepare_goal raw_goals
+val goals = benchDerive.prepare "linarith" raw_goals
 
 val shortfalls : benchLib.shortfall list = []
 
