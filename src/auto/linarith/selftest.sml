@@ -2931,6 +2931,94 @@ val _ =
      fn () =>
        with_broken_cache solver_reports_instance_failure)
 
+(* An interrupt is the caller asking the search to stop, not a
+   diagnosis of anything, so no part of the cached channel may record
+   it, replace it, or answer it with a refusal.  The failure this
+   guards against is not hypothetical.  The slot that carries a
+   malformed instance's error past RCACHE was consulted for every
+   exception, so an interrupt raised anywhere the slot had not been
+   filled came back out as [decline ""] -- a refusal.  A simplifier
+   reads a refusal as "side condition not provable" and carries on,
+   which left a budget unable to stop any search whose side conditions
+   reach this solver.
+
+   The instance below interrupts only on atoms mentioning one
+   variable, and that variable sits in a context component of its own.
+   RCACHE splits the context by connected component and tries them in
+   turn, so the goal's component is decided first and declines --
+   filling the slot -- and the interrupt then arrives with the slot
+   already occupied.  That is the order the failure needs. *)
+val interrupting_variable =
+  Term.mk_var ("linarith_public_interrupting", numSyntax.num)
+
+fun interrupting_dest () =
+  let
+    val inner = #dest num_instance
+  in
+    {dest_plus = #dest_plus inner, dest_minus = #dest_minus inner,
+     dest_neg = #dest_neg inner, dest_mult = #dest_mult inner,
+     dest_div = #dest_div inner, dest_suc = #dest_suc inner,
+     dest_lit = #dest_lit inner, mk_lit = #mk_lit inner,
+     dest_leq = #dest_leq inner,
+     dest_less =
+       fn tm =>
+         if Term.free_in interrupting_variable tm then
+           raise Portable.Interrupt
+         else #dest_less inner tm}
+  end
+
+val interrupting_instance =
+  {ty = #ty num_instance,
+   discrete = #discrete num_instance,
+   dest = interrupting_dest (),
+   kit = #kit num_instance,
+   norm_conv = #norm_conv num_instance,
+   nnf_rules = #nnf_rules num_instance,
+   pre_split = #pre_split num_instance,
+   atom_facts = #atom_facts num_instance} :
+     linarithData.linarith_instance
+
+(* [x < y] does not decide [y <= x], so the goal's component declines
+   before the interrupting component is reached. *)
+val interrupt_context =
+  [Thm.ASSUME public_x_lt_y,
+   Thm.ASSUME (num_less interrupting_variable public_z)]
+
+val interrupt_goal = num_leq public_y public_x
+
+fun stops_on_interrupt call () =
+  ((linarithLib.clear_linarith_caches ();
+    call ();
+    false)
+   handle Portable.Interrupt => true
+        | Feedback.HOL_ERR _ => false)
+
+val _ =
+  check
+    ("the cached channel does not answer an interrupt with a refusal",
+     fn () =>
+       with_num_instances
+         [(interrupting_instance,
+           stops_on_interrupt
+             (fn () =>
+                ignore
+                  (linarithLib.CACHED_LINARITH interrupt_context
+                     interrupt_goal)))])
+
+val _ =
+  check
+    ("the lin_arith solver does not answer an interrupt with a refusal",
+     fn () =>
+       with_num_instances
+         [(interrupting_instance,
+           stops_on_interrupt
+             (fn () =>
+                ignore
+                  (#solve linarithLib.linarith_solver
+                     {stack = [], context_thms = interrupt_context,
+                      recurse = Conv.NO_CONV}
+                     interrupt_goal)))])
+
 (* The [arith] table refutes nothing on its own, so a context with no
    arithmetic in it cannot be refuted with the table's help either, and
    the guard has to say so however many [arith] facts a session has

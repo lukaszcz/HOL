@@ -982,6 +982,12 @@ fun cached_procedure theorems tm =
    caller's diagnostic. *)
 val cached_error_slots = ref ([] : exn option ref list)
 
+(* An interrupt is not a diagnosis.  It never enters a slot, and it is
+   never what a slot replays: the slot exists to carry a malformed
+   extension's error past RCACHE, and a caller asking the search to
+   stop is not that.  Recording one would also lose it, because a slot
+   keeps its first occupant and the search has usually declined
+   something already by the time the interrupt lands. *)
 fun remember_cached_error error =
   case !cached_error_slots of
       [] => ()
@@ -992,7 +998,8 @@ fun remember_cached_error error =
 
 fun cache_visible_procedure theorems tm =
   cached_procedure theorems tm
-  handle error as Declined _ => raise error
+  handle Portable.Interrupt => raise Portable.Interrupt
+       | error as Declined _ => raise error
        | error => (remember_cached_error error; raise error)
 
 (* The atoms in order of first occurrence, the bound variables aside.
@@ -1072,7 +1079,8 @@ fun cached_prove context tm =
     val _ = cached_error_slots := slot :: outer_slots
     val result =
       unguarded_cached_linarith context tm
-      handle error => (leave (); raise_recorded error)
+      handle Portable.Interrupt => (leave (); raise Portable.Interrupt)
+           | error => (leave (); raise_recorded error)
     val _ = leave ()
   in
     case !slot of
