@@ -2682,6 +2682,43 @@ val _ =
           true)
        end)
 
+(* A branch that closes only by contradicting a goal it had already parked
+   as a literal: one of two conjunctions is proved from an assumption
+   sharing a conjunct with both.  The parked goal is negated when an
+   elimination rule whose premises carry a goal fires on the branch, and a
+   goal negated without being contraposed leaves that negation no
+   assumption occurrence, so the contradiction it forms is refused and the
+   branch stays open on a complementary pair.  The atoms are constant
+   applications because a variable-headed atom matches candidate rules and
+   never parks. *)
+val _ =
+  test
+    ("a parked goal's negation can close a branch",
+     fn () =>
+       let
+         val member =
+           pred_setSyntax.mk_in
+             (mk_var ("parked_goal_x", Type.alpha),
+              mk_var ("parked_goal_A", Type.alpha --> bool))
+         val b = mk_var ("parked_goal_b", bool)
+         val c = mk_var ("parked_goal_c", bool)
+         val goal =
+           ([mk_conj (member, mk_disj (b, c))],
+            mk_disj (mk_conj (member, b), mk_conj (member, c)))
+         val cs =
+           clasetLib.add_selims
+             [("parked-goal-conjunction", CONJ_ELIM_THM),
+              ("parked-goal-disjunction", boolTheory.OR_ELIM_THM)]
+             (clasetLib.add_sintros
+                [("parked-goal-and", boolTheory.AND_INTRO_THM),
+                 ("parked-goal-or", DISJ_CINTRO_THM)]
+                clasetLib.empty_cs)
+       in
+         case blastReconstruct.searchGoal cs 5 goal of
+             SOME (_, ([], validation)) => (ignore (validation []); true)
+           | _ => false
+       end)
+
 val _ =
   test
     ("hidden elimination antecedent shifts exact child selectors",

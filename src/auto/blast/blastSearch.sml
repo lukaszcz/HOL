@@ -204,6 +204,51 @@ fun negOfTracked formula =
 
 fun negOfTrackedPair (formula, md) = (negOfTracked formula, md)
 
+(* A goal formula is the branch's conclusion, not one of its assumptions,
+   so its negation has no occurrence to cite.  A rule whose premises carry
+   a goal negates the goals the branch already holds, and contraposing
+   those goals first is what gives the negations an occurrence.  Only the
+   branch's own conclusion can be moved this way, so the formula the rule
+   is about to consume is left alone. *)
+fun tokenlessGoal (Tracked {term = term, token = NONE}) = isGoal term
+  | tokenlessGoal _ = false
+
+fun tokenlessGoalPair (formula, _) = tokenlessGoal formula
+
+fun branchHasTokenlessGoal checkpoint (lits, pairs) =
+  let
+    fun inLevel (safe, unsafe) =
+      existsMeasured checkpoint tokenlessGoalPair safe orelse
+      existsMeasured checkpoint tokenlessGoalPair unsafe
+  in
+    existsMeasured checkpoint tokenlessGoal lits orelse
+    existsMeasured checkpoint inLevel pairs
+  end
+
+fun contraposeGoals checkpoint fresh (lits, pairs, assumptions) =
+  let
+    val added = ref ([] : (assumption_token * pterm) list)
+    fun contrapose formula =
+      if tokenlessGoal formula then
+        let
+          val token = fresh ()
+          val term = negOfGoal (trackedTerm formula)
+        in
+          added := (token, term) :: !added;
+          Tracked {term = term, token = SOME token}
+        end
+      else formula
+    fun contraposePair (formula, md) = (contrapose formula, md)
+    fun contraposeLevel (safe, unsafe) =
+      (mapMeasured checkpoint contraposePair safe,
+       mapMeasured checkpoint contraposePair unsafe)
+    val lits' = mapMeasured checkpoint contrapose lits
+    val pairs' = mapMeasured checkpoint contraposeLevel pairs
+  in
+    (lits', pairs',
+     foldl (fn (entry, model) => entry :: model) assumptions (!added))
+  end
+
 (* Every search worker below has one checkpoint-parameterized body.  The
    plain entry point instantiates it with a no-op callback, while the
    measured entry point passes the run's checkpoint. *)
@@ -1291,6 +1336,40 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                             SafeRule
                               {rule = rule, updated = updated,
                                major = major} :: tacs
+                          val checkpoint = fn () => checkpointAt mark
+                          val contraposing =
+                            not (isGoal (trackedTerm formula)) andalso
+                            existsMeasured checkpoint (existsGoalAt mark)
+                              prems andalso
+                            branchHasTokenlessGoal checkpoint
+                              (lits, (safe, unsafe) :: pairs)
+
+                          (* Contrapose before the rule fires rather than
+                             after: ccontr moves the conclusion, and the
+                             conclusion is this branch's goal only until
+                             the rule replaces it.  Restarting on the
+                             contraposed branch re-selects this same
+                             rule. *)
+                          fun contraposeFirst () =
+                            let
+                              val (lits', levels, assumptions') =
+                                contraposeGoals checkpoint freshToken
+                                  (lits, (safe, unsafe) :: pairs,
+                                   assumptions)
+                              val pairs' =
+                                case levels of
+                                    (safe', unsafe') :: rest =>
+                                      ((formula, md) :: safe', unsafe')
+                                        :: rest
+                                  | [] => []
+                              val _ = rollbackAt mark
+                            in
+                              prv
+                                (DeferGoal :: tacs, brs0 :: trace, choices,
+                                 {pairs = pairs', lits = lits',
+                                  vars = vars, lim = lim,
+                                  assumptions = assumptions'} :: brs)
+                            end
 
                           fun descend () =
                             if null prems then
@@ -1311,11 +1390,13 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                                  (tacs', brs0 :: trace, choices',
                                   newBranches rule (vars', lim') prems))
                         in
-                          descend ()
-                          handle PRV =>
-                            if updated then
-                              (rollbackAt mark; deeper other)
-                            else backtrack choices
+                          if contraposing then contraposeFirst ()
+                          else
+                            descend ()
+                            handle PRV =>
+                              if updated then
+                                (rollbackAt mark; deeper other)
+                              else backtrack choices
                         end
                     end
 
@@ -1524,6 +1605,29 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                             UnsafeRule
                               {rule = rule, updated = updated,
                                duplicate = duplicate, major = major}
+                          val checkpoint = fn () => checkpointAt mark
+                          val contraposing =
+                            not (isGoal (trackedTerm formula)) andalso
+                            existsMeasured checkpoint (existsGoalAt mark)
+                              prems andalso
+                            branchHasTokenlessGoal checkpoint (lits, [])
+
+                          (* As on the safe side: the goals this rule would
+                             negate are the branch's conclusion, and only a
+                             conclusion can be contraposed. *)
+                          fun contraposeFirst () =
+                            let
+                              val (lits', _, assumptions') =
+                                contraposeGoals checkpoint freshToken
+                                  (lits, [], assumptions)
+                              val _ = rollbackAt mark
+                            in
+                              prv
+                                (DeferGoal :: tacs, brs0 :: trace, choices,
+                                 {pairs = [([], (formula, md) :: unsafe)],
+                                  lits = lits', vars = vars, lim = lim,
+                                  assumptions = assumptions'} :: brs)
+                            end
 
                           fun descend () =
                             if killsAllAlternatives lim' prems then
@@ -1543,11 +1647,13 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                                      lim')
                                     prems))
                         in
-                          descend ()
-                          handle PRV =>
-                            if undo then
-                              (rollbackAt mark; deeper other)
-                            else backtrack choices
+                          if contraposing then contraposeFirst ()
+                          else
+                            descend ()
+                            handle PRV =>
+                              if undo then
+                                (rollbackAt mark; deeper other)
+                              else backtrack choices
                         end
                     end
 
