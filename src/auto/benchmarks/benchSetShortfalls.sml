@@ -41,16 +41,6 @@ val excluded_characterisation =
     ["set_L572_empty_subsetI", "set_L690_Int_iff", "set_L717_Un_iff",
      "set_L769_insert_iff"]
 
-val set_comprehension_rule_forms =
-  classified "set comprehension rule forms"
-    ("the claset carries no rule for set comprehension: Isabelle's "
-     ^ "Set.thy declares mem_Collect_eq [iff] and the pred_set "
-     ^ "seeds declare no analogue of GSPECIFICATION, so the search "
-     ^ "cannot get from a comprehension to its membership condition")
-    ["set_L1192_Collect_empty_eq", "set_L1195_empty_Collect_eq",
-     "set_L1213_Collect_mono_iff", "set_L1321_Int_Collect",
-     "set_L1722_Collect_mono", "set_L1725_Int_Collect_mono"]
-
 val blast_set_rule_forms =
   classified "blast set rule forms"
     ("BLAST_TAC reports no proof and the obstruction is not "
@@ -66,12 +56,19 @@ val blast_set_rule_forms =
      "set_theory_L36", "set_theory_L44", "set_theory_L48",
      "set_theory_L164", "set_theory_L168", "set_theory_L184"]
 
+(* Isabelle states these with an explicit Collect, which its
+   mem_Collect_eq [iff] keys on.  The translation of a set former to a
+   HOL4 predicate leaves no such marker, so what the goal needs is the
+   general crossing, and pred_set's SPECIFICATION is not seeded. *)
 val membership_against_predicate_application =
   classified "membership against predicate application"
     ("neither the claset nor BLAST_TAC's preprocessing crosses "
      ^ "SPECIFICATION, which separates x IN P from P x")
-    ["set_L108_Collect_eqI", "set_L1245_insert_Collect",
-     "set_L1646_ball_simps_8", "set_L1659_bex_simps_6"]
+    ["set_L108_Collect_eqI", "set_L1192_Collect_empty_eq",
+     "set_L1195_empty_Collect_eq", "set_L1213_Collect_mono_iff",
+     "set_L1245_insert_Collect", "set_L1321_Int_Collect",
+     "set_L1646_ball_simps_8", "set_L1659_bex_simps_6",
+     "set_L1722_Collect_mono", "set_L1725_Int_Collect_mono"]
 
 val isabelle_lattice_instance =
   classified "Isabelle lattice instance"
@@ -138,7 +135,6 @@ val instantiated_fact_citation =
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
   excluded_characterisation @
-  set_comprehension_rule_forms @
   membership_against_predicate_application @
   isabelle_lattice_instance @
   disjnt @
