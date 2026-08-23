@@ -2,30 +2,24 @@ structure benchSetShortfalls =
 struct
 
 (* Every record here is an executable Set.thy or Set_Theory.thy goal
-   that the assigned tactic did not close in the 2026-08-20
+   that the assigned tactic did not close in the 2026-08-22
    measurement.  The classification names the root cause and the note
    says what stands in the way.  A goal listed in [over_budget] was
    still searching when the budget expired, so its classification is
    the family it belongs to rather than an observed residual. *)
 
 val over_budget =
-  ["set_L1088_psubsetE", "set_L1091_psubset_insert_iff",
-   "set_L1113_psubset_imp_ex_mem", "set_L1122_image_Pow_mono",
-   "set_L1172_Diff_subset_conv", "set_L1540_Diff_partition",
-   "set_L1604_Pow_singleton_iff", "set_L1607_Pow_insert",
-   "set_L1610_Pow_Compl", "set_L1637_subset_iff_psubset_eq",
-   "set_L1725_Int_Collect_mono", "set_L1790_vimage_image_eq",
-   "set_L1799_image_subset_iff_subset_vimage",
-   "set_L1847_is_singleton_the_elem", "set_L1976_disjnt_commute",
-   "set_L1979_disjnt_iff", "set_L1994_disjnt_subset1",
-   "set_L1997_disjnt_subset2", "set_L2003_disjnt_Un2",
-   "set_L910_image_subsetI", "set_L915_image_subset_iff",
-   "set_L928_subset_image_iff", "set_L994_image_add_0",
-   "set_theory_L164", "set_theory_L168", "set_theory_L184",
-   "set_theory_L36", "set_theory_L44", "set_theory_L48"]
+  ["set_L1091_psubset_insert_iff", "set_L1604_Pow_singleton_iff",
+   "set_L1607_Pow_insert", "set_L1725_Int_Collect_mono",
+   "set_L1790_vimage_image_eq", "set_L1847_is_singleton_the_elem",
+   "set_L1976_disjnt_commute", "set_L1979_disjnt_iff",
+   "set_L1994_disjnt_subset1", "set_L1997_disjnt_subset2",
+   "set_L2003_disjnt_Un2", "set_L928_subset_image_iff",
+   "set_L994_image_add_0", "set_theory_L164", "set_theory_L168",
+   "set_theory_L184", "set_theory_L36", "set_theory_L44", "set_theory_L48"]
 
 fun record note id : benchLib.shortfall =
-  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-20",
+  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-22",
    note =
      if List.exists (fn other => other = id) over_budget then
        note ^ " (the search exceeded the budget rather than " ^
@@ -36,28 +30,38 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
+(* The four goals below are the only ones in this family whose
+   assigned tactic is denied a fact it would otherwise have: each goal
+   is itself an ambient characterisation, and rule A1 withholds it. *)
+val excluded_characterisation =
+  classified "excluded characterisation"
+    ("the goal is the ambient characterisation itself, so the "
+     ^ "measurement withholds the one fact that closes it and there "
+     ^ "is no second route to search for")
+    ["set_L572_empty_subsetI", "set_L690_Int_iff", "set_L717_Un_iff",
+     "set_L769_insert_iff"]
+
+val set_comprehension_rule_forms =
+  classified "set comprehension rule forms"
+    ("the claset carries no rule for set comprehension: Isabelle's "
+     ^ "Set.thy declares mem_Collect_eq [iff] and the pred_set "
+     ^ "seeds declare no analogue of GSPECIFICATION, so the search "
+     ^ "cannot get from a comprehension to its membership condition")
+    ["set_L1192_Collect_empty_eq", "set_L1195_empty_Collect_eq",
+     "set_L1213_Collect_mono_iff", "set_L1321_Int_Collect",
+     "set_L1722_Collect_mono", "set_L1725_Int_Collect_mono"]
+
 val blast_set_rule_forms =
   classified "blast set rule forms"
-    ("BLAST_TAC has no Isabelle-style set introduction and "
-     ^ "elimination rules, so excluding the characterisation that "
-     ^ "is the goal leaves it no second route")
-    ["set_L1088_psubsetE", "set_L1091_psubset_insert_iff",
-     "set_L1113_psubset_imp_ex_mem", "set_L1122_image_Pow_mono",
-     "set_L1125_image_Pow_surj", "set_L1172_Diff_subset_conv",
-     "set_L1192_Collect_empty_eq", "set_L1195_empty_Collect_eq",
-     "set_L1213_Collect_mono_iff", "set_L1321_Int_Collect",
-     "set_L1366_Un_insert_right", "set_L1393_Un_Int_crazy",
-     "set_L1499_Diff_triv", "set_L1540_Diff_partition",
-     "set_L1546_Un_Diff_cancel", "set_L1555_Diff_Int",
-     "set_L1561_Un_Diff", "set_L1604_Pow_singleton_iff",
-     "set_L1607_Pow_insert", "set_L1610_Pow_Compl",
-     "set_L1628_Int_Diff_Un", "set_L1637_subset_iff_psubset_eq",
-     "set_L1722_Collect_mono", "set_L1725_Int_Collect_mono",
-     "set_L1982_disjnt_sym", "set_L572_empty_subsetI",
-     "set_L690_Int_iff", "set_L717_Un_iff", "set_L769_insert_iff",
+    ("BLAST_TAC reports no proof and the obstruction is not "
+     ^ "isolated: these goals withhold no ambient analogue at all, "
+     ^ "so the earlier reading -- that excluding the goal's own "
+     ^ "characterisation left no second route -- was wrong for them")
+    ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
+     "set_L1499_Diff_triv", "set_L1604_Pow_singleton_iff",
+     "set_L1607_Pow_insert", "set_L1982_disjnt_sym",
      "set_L796_insert_ident", "set_L869_doubleton_eq_iff",
      "set_L872_Un_singleton_iff", "set_L875_singleton_Un_iff",
-     "set_L910_image_subsetI", "set_L915_image_subset_iff",
      "set_L928_subset_image_iff", "set_L994_image_add_0",
      "set_theory_L36", "set_theory_L44", "set_theory_L48",
      "set_theory_L164", "set_theory_L168", "set_theory_L184"]
@@ -84,24 +88,20 @@ val disjnt =
     ["set_L1976_disjnt_commute", "set_L1979_disjnt_iff",
      "set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2",
      "set_L1994_disjnt_subset1", "set_L1997_disjnt_subset2",
-     "set_L2003_disjnt_Un2", "set_L2012_pairwise_disjnt_iff"]
+     "set_L2003_disjnt_Un2"]
 
 val bounded_quantifier_one_point =
   classified "bounded-quantifier one-point"
     ("the goal states bounded quantification with IN rather than "
      ^ "with RES_FORALL, so the one-point rewrite never fires")
-    ["set_L421_ball_triv", "set_L425_bex_triv",
-     "set_L429_bex_triv_one_point1", "set_L432_bex_triv_one_point2",
-     "set_L435_bex_one_point1", "set_L438_bex_one_point2"]
+    ["set_L421_ball_triv", "set_L425_bex_triv"]
 
 val vimage =
   classified "vimage"
     ("PREIMAGE reasoning is downstream of the missing set rule "
      ^ "forms")
     ["set_L1740_vimage_eq", "set_L1770_vimage_Collect_eq",
-     "set_L1773_vimage_Collect", "set_L1790_vimage_image_eq",
-     "set_L1793_image_vimage_subset", "set_L1796_image_vimage_eq",
-     "set_L1799_image_subset_iff_subset_vimage"]
+     "set_L1773_vimage_Collect", "set_L1790_vimage_image_eq"]
 
 val definite_description =
   classified "definite description"
@@ -137,6 +137,8 @@ val instantiated_fact_citation =
 
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
+  excluded_characterisation @
+  set_comprehension_rule_forms @
   membership_against_predicate_application @
   isabelle_lattice_instance @
   disjnt @

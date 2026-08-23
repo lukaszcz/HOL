@@ -384,9 +384,6 @@ val sigma_and_times_rule_forms =
      "product_type_L1088_Collect_case_prod_Sigma",
      "product_type_L1109_split_paired_Ball_Sigma",
      "product_type_L1112_split_paired_Bex_Sigma",
-     "product_type_L1115_Sigma_Un_distrib1",
-     "product_type_L1118_Sigma_Un_distrib2",
-     "product_type_L1180_insert_Times_insert",
      "product_type_L688_The_split_eq"]
 
 val execution : benchLib.shortfall list =
