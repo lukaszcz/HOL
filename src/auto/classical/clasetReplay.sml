@@ -80,7 +80,11 @@ fun nth1 function_name =
 fun delete_nth function_name =
   clasetNorm.delete_nth ("clasetReplay", function_name)
 
-val normalize_conv = clasetNorm.normalize_conv
+(* Replay reproduces what the search did, so it shapes terms exactly as the
+   search shaped them: beta and eta, and no membership crossing.  Where the
+   search crossed [x IN P] against [P x] it did so to compare two forms, and
+   replay meets that with [clasetNorm.align_conclusion] at the same places. *)
+val normalize_conv = clasetNorm.reduce_conv
 val normalize_thm = clasetNorm.normalize_thm
 
 fun restore_target function_name target normalized_target theorem =
@@ -92,18 +96,11 @@ fun restore_target function_name target normalized_target theorem =
       else
         raise mk_HOL_ERR "clasetReplay" function_name
           "the produced theorem misses the normalized target"
-    val target_equality = normalize_conv target
-    val normalized_input_target = rhs (concl target_equality)
   in
-    if aconv normalized_target target then
-      EQ_MP (ALPHA normalized_target target) aligned
-    else if aconv normalized_target normalized_input_target then
-      EQ_MP (SYM target_equality)
-        (EQ_MP
-          (ALPHA normalized_target normalized_input_target) aligned)
-    else
-      raise mk_HOL_ERR "clasetReplay" function_name
-        "the normalized target cannot be restored exactly"
+    clasetNorm.align_conclusion target aligned
+      handle HOL_ERR _ =>
+        raise mk_HOL_ERR "clasetReplay" function_name
+          "the normalized target cannot be restored exactly"
   end
 
 val normalize_rule_thm = clasetNorm.normalize_rule_thm
@@ -125,12 +122,13 @@ fun assumption_thm store asm target =
         raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
           "the normalized assumption cannot be restored exactly"
     val normalized = normalize_thm assumption
+    val closing =
+      clasetNorm.align_conclusion target' normalized
+        handle HOL_ERR _ =>
+          raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
+            "the selected assumption does not close the goal"
   in
-    if aconv (concl normalized) target' then
-      restore_target "ASSUMPTION_TAC" target target' normalized
-    else
-      raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
-        "the selected assumption does not close the goal"
+    restore_target "ASSUMPTION_TAC" target target' closing
   end
 
 fun ASSUMPTION_TAC store pos (asl, w) =
@@ -336,14 +334,27 @@ fun rule_tac_with function_name make_children
     {theorem, elim, consumed, parameters, eigenvariables} (asl, w) =
   let
     val rule0 = normalize_rule_thm theorem
-    val target_equality = normalize_conv w
-    val normalized_target = rhs (concl target_equality)
+    val reduced_target = rhs (concl (normalize_conv w))
     val recorded_arity =
       length eigenvariables + (if elim then 1 else 0)
     val (_, initial_conclusion) =
       split_imp_prefix function_name recorded_arity (concl rule0)
-    val (term_substitution, type_substitution) =
-      Term.match_term initial_conclusion normalized_target
+    (* The search may have matched this rule across the membership crossing,
+       in which case only the form the rule was stated in matches here.  The
+       goal as it stands is tried first, so an ordinary replay is untouched;
+       [restore_target] carries the result back to [w] either way. *)
+    val (normalized_target, term_substitution, type_substitution) =
+      case total (Term.match_term initial_conclusion) reduced_target of
+          SOME (terms, types) => (reduced_target, terms, types)
+        | NONE =>
+            let
+              val crossed =
+                rhs (concl (clasetNorm.membership_conv reduced_target))
+              val (terms, types) =
+                Term.match_term initial_conclusion crossed
+            in
+              (crossed, terms, types)
+            end
     fun allowed_parameter {redex, residue} =
       is_var redex andalso is_var residue andalso
       List.exists (Term.aconv redex) parameters
@@ -382,13 +393,13 @@ fun rule_tac_with function_name make_children
                     "an elimination record has no consumed assumption"
           val major = nth1 function_name asl major_pos
           val rule_major = hd premises0
-          val (normalized_major, major_thm) =
+          val (_, major_thm) =
             normalize_assumption major
           val major_thm =
-            if aconv normalized_major rule_major then major_thm
-            else
-              raise mk_HOL_ERR "clasetReplay" function_name
-                "the selected assumption misses the major premise"
+            clasetNorm.align_conclusion rule_major major_thm
+              handle HOL_ERR _ =>
+                raise mk_HOL_ERR "clasetReplay" function_name
+                  "the selected assumption misses the major premise"
         in
           ([major_thm], tl premises0,
            delete_nth function_name asl major_pos)
@@ -415,10 +426,8 @@ fun rule_tac_with function_name make_children
                 rebuild_exact_prefix data theorem)
               (rebuild_data, child_thms)
           val result0 = Drule.LIST_MP (supplied @ premise_thms) rule
-          val result =
-            EQ_MP (ALPHA (concl result0) normalized_target) result0
         in
-          EQ_MP (SYM target_equality) result
+          restore_target function_name w normalized_target result0
         end
   in
     (child_goals, validation)

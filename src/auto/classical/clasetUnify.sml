@@ -83,6 +83,26 @@ fun pattern_binding store config (head, args) target =
   then Pattern (Term.list_mk_abs (args, target))
   else NoPattern
 
+(* [IN] is a boolTheory constant, [IN = \x f. f x], so [x IN P] and [P x]
+   are one proposition written two ways, and a rule stated with one has to
+   meet a goal stated with the other.  The crossing is made here, by
+   unfolding a membership that faces an application, rather than by
+   rewriting the terms beforehand: what a metavariable binds to has to stay
+   a subterm the other side actually contains, so that a residual goal
+   comes back written the way it was posed. *)
+fun uncross tm =
+  case strip_comb tm of
+      (head, [item, set]) =>
+        (case total dest_thy_const head of
+             SOME {Thy = "bool", Name = "IN", ...} =>
+               let
+                 val applied = mk_comb (set, item)
+               in
+                 SOME (if is_abs set then beta_conv applied else applied)
+               end
+           | _ => NONE)
+    | _ => NONE
+
 fun unify store config pair =
   let
     fun bind_term current (left, right) =
@@ -175,8 +195,19 @@ fun unify store config pair =
                    of
                      NONE => try_right_pattern ()
                    | success => success)
+            (* Only the membership side moves, so the other keeps the shape
+               its author gave it. *)
+            fun crossed () =
+              case (uncross left, uncross right) of
+                  (SOME left', NONE) => recurse typed_store (left', right)
+                | (NONE, SOME right') => recurse typed_store (left, right')
+                | _ => NONE
           in
-            if aconv left right then SOME typed_store else try_patterns ()
+            if aconv left right then SOME typed_store
+            else
+              case try_patterns () of
+                  NONE => crossed ()
+                | success => success
           end
   in
     recurse store pair

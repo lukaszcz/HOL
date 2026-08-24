@@ -294,6 +294,21 @@ fun translatorMeasured checkpoint
 
 fun translator fields = translatorMeasured (fn () => ()) fields
 
+(* [IN] is a boolTheory constant, [IN = \x f. f x], so [x IN P] and [P x] are
+   one proposition.  A tableau cannot re-derive the crossing the way the
+   classical engine does -- it compares pterms it has already built -- so the
+   membership spelling is the form blast holds: everything that becomes a
+   pterm crosses on the way in, goal and rule alike, and the two then meet.
+   Membership is the stable spelling under instantiation: a set inside
+   [x IN A] stays inside it however [A] is instantiated, where [A x] with [A]
+   a set former is an atom no rule can see.  Reconstruction replays on the
+   classical engine, which crosses wherever it compares two forms. *)
+fun crossed_with is_hole tm =
+  boolSyntax.rhs (Thm.concl (clasetNorm.membership_conv_with is_hole tm))
+
+(* A goal carries no holes; a rule's schematic variables are its own. *)
+fun crossed tm = crossed_with (fn _ => false) tm
+
 fun fromGoalTerm tm =
   translator
     {rigid_types = true, goal_frees = true, rule_vars = []} tm
@@ -304,10 +319,11 @@ fun initialBranchMeasured checkpoint (assumptions, conclusion) =
       translatorMeasured checkpoint
         {rigid_types = true, goal_frees = true, rule_vars = []}
     val _ = checkpoint ()
-    val conclusion' = from conclusion
+    val conclusion' = from (crossed conclusion)
   in
     (mkGoal conclusion', true) ::
-      mapMeasured checkpoint (fn formula => (from formula, true)) assumptions
+      mapMeasured checkpoint
+        (fn formula => (from (crossed formula), true)) assumptions
   end
 
 fun initialBranch goal = initialBranchMeasured (fn () => ()) goal
@@ -383,12 +399,18 @@ fun canonical_dataMeasured checkpoint is_elim theorem =
            NONE => []
          | SOME (variable, body) => variable :: outer_vars body)
     val outer = outer_vars (concl (#thm form))
+    (* A rule variable in head position is a hole, not a set: [?P x] is how
+       the tableau asks for a predicate, and a membership there would leave a
+       first-order problem no instantiation can solve. *)
+    fun hole variable = List.exists (Term.aconv variable) outer
+    val cross = crossed_with hole
     val from =
       translatorMeasured checkpoint
         {rigid_types = false, goal_frees = false, rule_vars = outer}
-    val premises = mapMeasured checkpoint from (#prems form)
+    val premises =
+      mapMeasured checkpoint (from o cross) (#prems form)
     val _ = checkpoint ()
-    val conclusion = from (#concl form)
+    val conclusion = from (cross (#concl form))
   in
     {outer = outer, hol_conclusion = #concl form,
      premises = premises, conclusion = conclusion}

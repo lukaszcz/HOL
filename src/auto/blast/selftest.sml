@@ -2136,8 +2136,14 @@ val _ =
          #literal_close_attempts (#phase equality) = 3 andalso
          #literal_close_successes (#phase equality) = 1 andalso
          #cooperative_checkpoints (#phase unsafe) > 0 andalso
-         #candidate_rules_enumerated (#phase unsafe) = 4 andalso
-         #candidate_conversions_attempted (#phase unsafe) = 4 andalso
+         (* Three, not four: the witness goal is [x IN phase_exact_ep], and
+            an existential-introduction rule is no longer offered to it.  A
+            var-headed application was a wildcard in the index and matched
+            every intro rule; in the membership spelling the atom carries a
+            head the index can discriminate on, and the enumeration that is
+            dropped is one whose conclusion could never unify. *)
+         #candidate_rules_enumerated (#phase unsafe) = 3 andalso
+         #candidate_conversions_attempted (#phase unsafe) = 3 andalso
          #safe_rule_attempts (#phase unsafe) = 0 andalso
          #unsafe_rule_attempts (#phase unsafe) = 1 andalso
          #rule_unification_attempts (#phase unsafe) = 1 andalso
@@ -3332,7 +3338,13 @@ val _ =
              SOME ([], validation) =>
                let val theorem = validation []
                in
-                 length (#script proof) = 5 andalso
+                 (* Four, not five: in the membership spelling the goal
+                    after the delta step is the first-order literal
+                    [sk IN quantified_reconstruct_S], which closes against
+                    the derived assumption directly.  The applied spelling
+                    left a Skolem-headed application that the search had to
+                    defer and close by contradiction. *)
+                 length (#script proof) = 4 andalso
                  Term.aconv (concl theorem) target andalso
                  HOLset.equal
                    (Thm.hypset theorem,

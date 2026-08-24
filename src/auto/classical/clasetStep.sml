@@ -39,15 +39,16 @@ fun split_imp_prefix function_name arity tm =
 val normalize_assumption_thm = clasetNorm.normalize_assumption_thm
 val normalize_assumption = clasetNorm.normalize_assumption
 
+val align_conclusion = clasetNorm.align_conclusion
+
 fun assumption_thm asm target =
   let
-    val (normalized, theorem) = normalize_assumption asm
+    val (_, theorem) = normalize_assumption asm
   in
-    if aconv normalized target then
-      EQ_MP (ALPHA normalized target) theorem
-    else
-      raise mk_HOL_ERR "clasetStep" "assumption_thm"
-        "the assumption does not close the target"
+    align_conclusion target theorem
+      handle HOL_ERR _ =>
+        raise mk_HOL_ERR "clasetStep" "assumption_thm"
+          "the assumption does not close the target"
   end
 
 fun supplied_major_thm store major target =
@@ -57,22 +58,20 @@ fun supplied_major_thm store major target =
     val instantiated =
       Drule.INST_TY_TERM
         (term_substitution, type_substitution) (ASSUME major)
-    val (normalized, theorem) =
-      normalize_assumption_thm instantiated
+    val (_, theorem) = normalize_assumption_thm instantiated
   in
-    if aconv normalized target then
-      EQ_MP (ALPHA normalized target) theorem
-    else
-      let
-        val major' = normalize_term store major
-        val (normalized', theorem') = normalize_assumption major'
-      in
-        if aconv normalized' target then
-          EQ_MP (ALPHA normalized' target) theorem'
-        else
-          raise mk_HOL_ERR "clasetStep" "supplied_major_thm"
-            "the selected assumption misses the instantiated major premise"
-      end
+    case total (align_conclusion target) theorem of
+        SOME result => result
+      | NONE =>
+          let
+            val major' = normalize_term store major
+            val (_, theorem') = normalize_assumption major'
+          in
+            align_conclusion target theorem'
+              handle HOL_ERR _ =>
+                raise mk_HOL_ERR "clasetStep" "supplied_major_thm"
+                  "the selected assumption misses the major premise"
+          end
   end
 
 val nth1 = clasetNorm.nth1 ("clasetStep", "nth1")
@@ -374,8 +373,27 @@ fun candidates mode part (asl, w) =
         | clasetUnify.Unify =>
             (clasetLib.unify_intro_candidates,
              clasetLib.unify_elim_candidates)
-    val intros = intro_lookup part w
-    val elims = List.concat (map (elim_lookup part) asl)
+    (* The index is keyed on the rules as stated, and [x IN P] and [P x] are
+       one proposition indexed two ways: a rule stated about [IN] sits under
+       that constant, where an applied goal atom never reaches it, and a rule
+       stated applied sits under its own head, where a membership goal atom
+       never reaches it.  So each lookup is made in both spellings as well as
+       as posed; the unifier decides what actually matches, and
+       [candidate_order] sorts the answers together.  A rule that mixes the
+       two spellings in one conclusion is still reached only as it is
+       written. *)
+    fun spelling conversion tm = rhs (concl (conversion tm))
+    fun lookup which tm =
+      let
+        val forms =
+          Lib.op_mk_set aconv
+            [tm, spelling clasetNorm.membership_conv tm,
+             spelling clasetNorm.applied_conv tm]
+      in
+        List.concat (map (which part) forms)
+      end
+    val intros = lookup intro_lookup w
+    val elims = List.concat (map (lookup elim_lookup) asl)
   in
     dedup_tagged (clasetRules.candidate_order (intros @ elims))
   end
@@ -559,7 +577,7 @@ fun rule_validation normalized_rule supplied children premises target =
           val result =
             Drule.LIST_MP (supplied @ premise_thms) normalized_rule
         in
-          EQ_MP (ALPHA (concl result) target) result
+          align_conclusion target result
         end
   in
     validate
@@ -581,7 +599,7 @@ fun exact_rule_validation normalized_rule supplied rebuilds target =
           val result =
             Drule.LIST_MP (supplied @ premise_thms) normalized_rule
         in
-          EQ_MP (ALPHA (concl result) target) result
+          align_conclusion target result
         end
   in
     validate
@@ -856,7 +874,7 @@ fun try_forward mode {source, form} immediate node pos
 
         fun validation [child_thm] =
               let val result = Drule.PROVE_HYP forward child_thm
-              in EQ_MP (ALPHA (concl result) target) result end
+              in align_conclusion target result end
           | validation _ =
               raise mk_HOL_ERR "clasetStep" "try_forward"
                 "forward validation arity"

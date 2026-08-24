@@ -6120,3 +6120,63 @@ val _ =
        in
          solved andalso #expansions work > 0
        end)
+
+(* [IN] is a boolTheory constant, [IN = \x f. f x], so [x IN P] and [P x] are
+   one proposition written two ways.  A rule stated in either spelling has to
+   reach a goal stated in the other.  These goals are not benchmark goals. *)
+
+val member_a = Term.mk_var ("member_a", Type.ind)
+val member_x = Term.mk_var ("member_x", Type.ind)
+val member_p = Term.mk_var ("member_p", Type.ind --> bool_ty)
+val member_q = Term.mk_var ("member_q", Type.ind --> bool_ty)
+
+fun member_in item set =
+  Term.list_mk_comb
+    (Term.inst [Type.alpha |-> Type.ind] boolSyntax.IN_tm, [item, set])
+
+fun member_step implication goal expected =
+  let
+    val cs =
+      clasetLib.add_sintros [("member-crossing", ASSUME implication)]
+        clasetLib.empty_cs
+  in
+    case first_step clasetStep.safe_step cs goal of
+        NONE => false
+      | SOME (record, node) =>
+          same_goals (rendered_goals node) [expected] andalso
+          valid_step goal (record, node)
+  end
+
+val _ =
+  test
+    ("a rule stated with IN reaches an applied goal atom",
+     fn () =>
+       let
+         val implication =
+           boolSyntax.mk_forall
+             (member_x,
+              boolSyntax.mk_imp
+                (mk_comb (member_q, member_x),
+                 member_in member_x member_p))
+         val goal = ([implication], mk_comb (member_p, member_a))
+       in
+         member_step implication goal
+           ([implication], mk_comb (member_q, member_a))
+       end)
+
+val _ =
+  test
+    ("an applied rule reaches a goal atom stated with IN",
+     fn () =>
+       let
+         val implication =
+           boolSyntax.mk_forall
+             (member_x,
+              boolSyntax.mk_imp
+                (member_in member_x member_q,
+                 mk_comb (member_p, member_x)))
+         val goal = ([implication], member_in member_a member_p)
+       in
+         member_step implication goal
+           ([implication], member_in member_a member_q)
+       end)

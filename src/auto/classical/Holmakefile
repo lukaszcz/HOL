@@ -4,6 +4,7 @@ INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/metis
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
+clasetNorm.uo: clasetMeta.uo
 clasetUnify.uo: clasetNorm.uo clasetMeta.uo
 clasetReplay.uo: clasetNorm.uo clasetMeta.uo
 clasetGoal.uo: clasetNorm.uo clasetMeta.uo clasetReplay.uo
