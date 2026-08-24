@@ -2845,7 +2845,8 @@ QED
 
 Theorem fmap_EQ_UPTO___EQ[simp]:
   !vs f. (fmap_EQ_UPTO f f vs)
-ProofSIMP_TAC std_ss [fmap_EQ_UPTO_def]
+Proof
+  SIMP_TAC std_ss [fmap_EQ_UPTO_def]
 QED
 
 Theorem fmap_EQ_UPTO___FUPDATE_BOTH:
@@ -3557,6 +3558,49 @@ Proof
   rw[fmap_eq_flookup, FLOOKUP_FDIFF, FLOOKUP_FMAP_MAP2] >> rw[]
 QED
 
+(* ----------------------------------------------------------------------
+    FMINUS : ('a |-> 'b) -> ('a |-> 'c) -> ('a |-> 'b)
+
+    a variation on FDIFF where the set of keys to be removed from the
+    first argument is the domain (i.e., FDOM) of the second argument.
+  ---------------------------------------------------------------------- *)
+
+Definition FMINUS_def:
+  FMINUS fm1 fm2 = FDIFF fm1 (FDOM fm2)
+End
+
+Theorem FLOOKUP_FMINUS:
+  FLOOKUP (FMINUS f1 f2) k =
+  case FLOOKUP f2 k of
+    NONE => FLOOKUP f1 k
+  | SOME v => NONE
+Proof
+  rw[FMINUS_def, FDIFF_def, FLOOKUP_DRESTRICT] >>
+  Cases_on ‘FLOOKUP f2 k’ >> gvs[FLOOKUP_DEF]
+QED
+
+(* ----------------------------------------------------------------------
+    FINTER : ('a |-> 'b) -> ('a |-> 'c) -> ('a |-> 'b)
+
+    Keeps the entries of the first map whose keys are in the domain of
+    the second map.
+  ----------------------------------------------------------------------- *)
+
+Definition FINTER_def:
+  FINTER f1 f2 = DRESTRICT f1 (FDOM f2)
+End
+
+Theorem FLOOKUP_FINTER:
+  FLOOKUP (FINTER f1 f2) k =
+  case FLOOKUP f2 k of
+    NONE => NONE
+  | SOME v => FLOOKUP f1 k
+Proof
+  rw[FINTER_def, FLOOKUP_DRESTRICT] >>
+  Cases_on ‘FLOOKUP f2 k’ >> gvs[FLOOKUP_DEF]
+QED
+
+
 Theorem FMERGE_WITH_KEY_FUNION_ALT:
   FMERGE_WITH_KEY f (FUNION m1 m2) m3 =
     FUNION
@@ -3907,7 +3951,7 @@ QED
 Theorem FLOOKUP_SIMP =
   [FLOOKUP_EMPTY, FLOOKUP_UPDATE, FDIFF_def, FLOOKUP_FMAP_MAP2,
    FLOOKUP_DRESTRICT, FLOOKUP_FDIFF, FLOOKUP_FUNION, FLOOKUP_FUN_FMAP,
-   FLOOKUP_FMAP_MAP2, FLOOKUP_FMERGE]
+   FLOOKUP_FMAP_MAP2, FLOOKUP_FMERGE, FLOOKUP_FMINUS, FLOOKUP_FINTER]
   |> map SPEC_ALL |> LIST_CONJ;
 
 (*---------------------------------------------------------------------------*)

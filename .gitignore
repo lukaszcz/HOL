@@ -76,6 +76,7 @@ tools/build-logs
 
 help/Docfiles/*.txt
 help/Docfiles/HTML/*
+help/generated-alias-docs/
 help/HOLindex.html
 help/HOL.Help
 help/HOL.LanderFragment.html
@@ -141,8 +142,9 @@ examples/l3-machine-code/**/*-heap
 *Script_ttt.sml
 *.tttsave
 /TAGS
-.claude
-.codex
-.pi
+/.claude/*
+!/.claude/skills/
+/.codex/
+/.pi/
 CLAUDE.local.md
 .agent-files

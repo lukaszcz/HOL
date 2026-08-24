@@ -29,7 +29,8 @@ val sml_thml_glob = ref []
 
 fun quse_string s =
   let
-    val stream = TextIO.openString (HOLSource.fromString {quietOpen = false, print = K()} s)
+    val stream = TextIO.openString
+                   (HOLSource.fromString {quietOpen = false, print = K()} s)
     fun infn () = TextIO.input1 stream
   in
     (
@@ -129,6 +130,20 @@ fun tactic_of_sml tim s =
     val b = quse_string program
   in
     if b then !sml_tactic_glob else raise ERR "tactic_of_sml" s
+  end
+
+(* Recording runs a previously successful source proof in a disposable HOL
+   subprocess.  Do not introduce a Poly/ML timeout thread while constructing
+   its instrumented tactic: a worker that fails to stop can outlive the
+   timeout and wedge the otherwise valid theory recording. *)
+fun tactic_of_sml_no_timeout s =
+  let
+    val tactic = mk_valid s
+    val b = quse_string
+      ("smlExecute.sml_tactic_glob := (" ^ tactic ^ ")")
+  in
+    if b then !sml_tactic_glob
+    else raise ERR "tactic_of_sml_no_timeout" s
   end
 
 fun string_of_sml s =

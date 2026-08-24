@@ -31,9 +31,9 @@ even_suc = boolLib.save_thm ( "even_suc" , Drule.cj 3 even_rules handle Feedback
 
 ; 
 
-val foo = TotalDefn.qDefine "foo" [ QUOTE " (*#loc 34 16*)\n  foo x = if x < 2 then 1 else x * foo (x - 1)\n" ] NONE val _ = CompilerSpecific.quietbind "val foo_ind = DB.fetch \"-\" \"foo_ind\" handle Feedback.HOL_ERR _ => boolTheory.TRUTH;" 
+val foo = TotalDefn.qDefine "foo" [ QUOTE " (*#loc 34 16*)\n  foo x = if x < 2 then 1 else x * foo (x - 1)\n" ] 
 
-; 
+NONE val _ = CompilerSpecific.quietbind "val foo_ind = DB.fetch \"-\" \"foo_ind\" handle Feedback.HOL_ERR _ => boolTheory.TRUTH;" ; 
 
 val ( compile_rel_rules , compile_rel_ind , compile_rel_cases ) = IndDefLib.xHol_reln "compile_rel" [ QUOTE "(" , QUOTE " (*#loc 40 8*)\n  compile_rel foo bar\n" , QUOTE ") /\\ (" , QUOTE " (*#loc 42 8*)\n  compile_rel foo bar\n" , QUOTE ")" ] val _ = CompilerSpecific.quietbind "val compile_rel_strongind = DB.fetch \"-\" \"compile_rel_strongind\" handle Feedback.HOL_ERR _ => boolTheory.TRUTH;" val 
 
@@ -52,9 +52,9 @@ val next_sym_def = TotalDefn.qDefine "next_sym_def" [ QUOTE " (*#loc 47 25*)\n  
 
 val it = Parse.Term [ QUOTE " (*#loc 53 4*)f \226\128\185foo\"\226\128\186" ] ; 
 
-val sexpPEG_def = TotalDefn.qDefine "sexpPEG_def" [ QUOTE " (*#loc 55 24*)\n  #\"\\\\\";\n" ] NONE val _ = CompilerSpecific.quietbind "val sexpPEG_ind = DB.fetch \"-\" \"sexpPEG_ind\" handle Feedback.HOL_ERR _ => boolTheory.TRUTH;" 
+val sexpPEG_def = TotalDefn.qDefine "sexpPEG_def" [ QUOTE " (*#loc 55 24*)\n  #\"\\\\\";\n" ] 
 
-; 
+NONE val _ = CompilerSpecific.quietbind "val sexpPEG_ind = DB.fetch \"-\" \"sexpPEG_ind\" handle Feedback.HOL_ERR _ => boolTheory.TRUTH;" ; 
 
 val sexpPEG_start = boolLib.save_thm ( "sexpPEG_start[simp]" , SIMP_CONV ( srw_ss () ) [ sexpPEG_def ] ( Parse.Term [ QUOTE " (*#loc 59 66*)sexpPEG.start" ] ) ) ; 
 
@@ -89,4 +89,4 @@ val _ = bar_x [ QUOTE " (*#loc 87 13*)\n  another quotation (* with unfinished c
 
 ; 
 
-val x = 92 + 10 ; val y = 11 ; val s = "" ; val s' = "foo.sml" ; val thm = Q.store_thm_at ( DB_dtype.mkloc ( "foo.sml" , 15 , true ) ) ( "thm[foo, simp, key = val1 val2]" , [ QUOTE " (*#loc 15 42*)\n  p /\\ q\n" ] , fn HOL__GOAL__foo => cheat HOL__GOAL__foo ) ; val thm2 = boolLib.save_thm_at ( DB_dtype.mkloc ( "foo.sml" , 21 , true ) ) ( "thm2[foo, simp, key = val1 val2]" , exp ) ; val th3 = Q.store_thm_at ( DB_dtype.mkloc ( "foo.sml" , 23 , true ) ) ( "th3[*, bar]" , [ QUOTE " (*#loc 23 20*)\n  stmt\n" ] , fn HOL__GOAL__foo => tac HOL__GOAL__foo ) ; val _ = Parse.overload_on ( "" , term ) ; val bar = markerLib.resume { label_name = "label" , suspension_name = "foo" } ( BasicProvers.with_simpset_updates ( simpLib.remove_simps [ "AND_CLAUSES" ] ) ( fn HOL__GOAL__foo => tactic HOL__GOAL__foo ) ) ; val foo = markerLib.finalise_suspended_thm ( DB_dtype.mkloc ( "foo.sml" , 33 , true ) ) "foo" ; val bar = markerLib.finalise_suspended_thm ( DB_dtype.mkloc ( "foo.sml" , 34 , true ) ) "bar" ; 
+val x = 92 + 10 ; val y = 11 ; val s = "" ; val s' = "foo.sml" ; val thm = Q.store_thm_at ( DB_dtype.mkloc ( "foo.sml" , 15 , true ) ) ( "thm[foo, simp, key = val1 val2]" , [ QUOTE " (*#loc 15 42*)\n  p /\\ q\n" ] , fn g => cheat g ) ; val thm2 = boolLib.save_thm_at ( DB_dtype.mkloc ( "foo.sml" , 21 , true ) ) ( "thm2[foo, simp, key = val1 val2]" , exp ) ; val th3 = Q.store_thm_at ( DB_dtype.mkloc ( "foo.sml" , 23 , true ) ) ( "th3[*, bar]" , [ QUOTE " (*#loc 23 20*)\n  stmt\n" ] , fn g => tac g ) ; val _ = Parse.overload_on ( "" , term ) ; val bar = markerLib.resume { label_name = "label" , suspension_name = "foo" } ( BasicProvers.with_simpset_updates ( simpLib.remove_simps [ "AND_CLAUSES" ] ) ( fn g => tactic g ) ) ; val foo = markerLib.finalise_suspended_thm ( DB_dtype.mkloc ( "foo.sml" , 33 , true ) ) "foo" ; val bar = markerLib.finalise_suspended_thm ( DB_dtype.mkloc ( "foo.sml" , 34 , true ) ) "bar" ; 

@@ -190,6 +190,9 @@ val op by             = BasicProvers.by; (* infix 8 by *)
 val op suffices_by    = BasicProvers.suffices_by
 val sg                = BasicProvers.sg
 val subgoal           = BasicProvers.subgoal
+val have              = BasicProvers.sg
+val suff              = qsuff_tac
+val contr             = SPOSE_NOT_THEN STRIP_ASSUME_TAC
 val op >~             = Q.>~
 val op >>~            = Q.>>~
 val op >>~-           = Q.>>~-
@@ -379,7 +382,7 @@ val let_arith_frags = [boolSimps.LET_ss, ARITH_ss]
 fun boss_augment ss old = addfrags let_arith_frags ss
 val {get = boss_ss, set = set_boss_ss} =
     Feedback.quiet_messages
-      (BasicProvers.make_simpset_derived_value boss_augment)
+      (BasicProvers.make_simpset_derived_value "bossLib.boss_ss" boss_augment)
       bool_ss
 
 fun stateful f ssfl thms : tactic =

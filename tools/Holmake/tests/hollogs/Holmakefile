@@ -5,17 +5,24 @@ EXTRA_CLEANS = ls-base-output ls-child-output
 ifdef HOL_NUMJOBS
 ifneq ($(HOL_NUMJOBS), 1)
 
-CMP = $(HOLDIR)/tools/cmp/cmp.exe
+# diff rather than tools/cmp/cmp.exe, as in the repl test: cmp.exe exits
+# non-zero and says nothing, which leaves a mismatch that only shows up
+# under CI's scheduling with no trace of which log file was unexpected.
+CMP = diff -a
 
 .PHONY: all check
 
 all: $(DEFAULT_TARGETS) check
 
-check: $(dprot $(CMP)) ls-child-expected ls-base-expected childTheory.uo
-	/bin/ls -1 $(LOGDIR) 2>&1 > ls-child-output && \
-          $(protect $(CMP)) ls-child-expected ls-child-output
-	/bin/ls -1 base/$(LOGDIR) 2>&1 > ls-base-output && \
-          $(protect $(CMP)) ls-base-expected ls-base-output
+# Filter `check' from the child listing: the parallel-build monitor creates
+# each target's log file on StartJob, but the recipe process may run the
+# `ls' before that happens, so `check' is not reliably present.  The
+# base/$(LOGDIR) listing is unaffected -- `check' does not run in base.
+check: ls-child-expected ls-base-expected childTheory.uo
+	/bin/ls -1 $(LOGDIR) 2>&1 | grep -v '^check$$' > ls-child-output && \
+          $(CMP) ls-child-expected ls-child-output
+	/bin/ls -1 base/$(LOGDIR) > ls-base-output 2>&1 && \
+          $(CMP) ls-base-expected ls-base-output
 
 endif
 endif

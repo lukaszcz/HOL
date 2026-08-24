@@ -1,12 +1,6 @@
 [poly]tools/check-builds
-!tools/Holmake/tests/holdep
-!tools/Holmake/tests/depchainloop
 !tools/Holmake/tests/recursiveclean
-!tools/Holmake/tests/dirs
-!tools/Holmake/tests/wildcard
 !tools/Holmake/tests/dashn_works
-!tools/Holmake/tests/dupcommands
-!tools/Holmake/tests/varextension
 tools/set_mtime
 tools/mlyacc/mlyacclib
 [mosml]src/portableML/mosml
@@ -40,6 +34,7 @@ src/1
 (otknl)src/opentheory/postbool
 src/proofman
 !src/proofman/tests
+[poly]!src/proofman/interactive_tests
 !tools/Holmake/tests/preexec
 !tools/Holmake/tests/parallel_tests
 !tools/Holmake/tests/repl

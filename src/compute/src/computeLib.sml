@@ -125,7 +125,8 @@ fun initial_state rws t =
    - `Cbv_abs`: The continuation after descending into the body of an
      abstraction.
 
-   `rws` is the compset, threaded through for use in wrapping conversion results.
+   `rws` is the compset, threaded through for use in wrapping conversion
+   results.
 *)
 fun cbv_wk rws ((th,CLOS{Env, Term=App(a,args)}), stk) =
   (* *Combination.* Descend into operator immediately. Descend into operand in
@@ -197,15 +198,19 @@ and cbv_up rws (hcl, Cbv_rator{Rand=(mka,clos), Ctx}) =
           the stack. *)
           case Const_info of
             {Head, Args, Rws=Try{Hcst,Rws=Rewrite rls,Tail},Skip} =>
-              cbv_wk rws ((thm, CST {Head=Head,Args=Args,Rws=Tail,Skip=Skip}),Ctx)
+              cbv_wk
+                rws
+                ((thm, CST {Head=Head,Args=Args,Rws=Tail,Skip=Skip}),Ctx)
           | _ => raise DEAD_CODE "cbv_wk"
       in
         case Ctx of
            Cbv_top =>
              (if aconv T (rhs (concl current_thm)) then
                 (* This antecedent proved. Add it to the accumulator and try to
-                prove next antecedent. *)
-                prove_ants rws (thm,Cl,current_thm::Proved,Pending,Mk_thm,Const_info,Ctx)
+                   prove next antecedent. *)
+                prove_ants
+                  rws
+                  (thm,Cl,current_thm::Proved,Pending,Mk_thm,Const_info,Ctx)
               else
                 (* The current antecedent did not reduce to `T`; abandon this
                 rewrite rule. *)
@@ -239,7 +244,8 @@ and strong_up _ (th, Cbv_top) = th
   | strong_up _ (th, Cbv_rand{Rator=(mka,false,clos), Ctx}) =
       raise DEAD_CODE "strong_up"
   | strong_up rws (th, Cbv_rator{Rand=(mka,clos), Ctx}) =
-      strong rws (cbv_wk rws (clos, Cbv_rand{Rator=(mka,true,(th,NEUTR)), Ctx=Ctx}))
+      strong rws
+             (cbv_wk rws (clos, Cbv_rand{Rator=(mka,true,(th,NEUTR)), Ctx=Ctx}))
   | strong_up rws (th, Cbv_rand{Rator=(mka,true,(tha,_)), Ctx}) =
       strong_up rws (mka tha th, Ctx)
   | strong_up rws (th, Cbv_abs{Bvar=mkl, Ctx}) = strong_up rws (mkl th, Ctx)
@@ -309,18 +315,28 @@ val bool_compset =
      branches before the guard is fully true or false *)
   seal (set_skip (from_list bool_redns) boolSyntax.conditional NONE);
 
-val the_compset = ref (copy bool_compset);
+local
+  val compset_slot : compset Context.Data.slot =
+      Context.Data.new
+        {name = "computeLib.compset",
+         empty = copy bool_compset,
+         pp = fn _ => "<compset>"}
+in
+  fun the_compset () = Context.Data.get compset_slot (Context.snapshot())
+  val put_compset = Context.Data.write compset_slot
+  val upd_compset = Context.Data.modify compset_slot
+end
 
-fun add_funs thms = the_compset := add_thms thms (!the_compset);
+fun add_funs thms = upd_compset (add_thms thms)
 fun add_convs convs =
-  the_compset := foldl (fn (c, cs) => add_conv c cs) (!the_compset) convs;
+    upd_compset (fn cs => foldl (fn (c, cs) => add_conv c cs) cs convs)
 
 fun del_consts cs =
-  the_compset := foldl (fn (c, cset) => scrub_const cset c) (!the_compset) cs;
-fun del_funs thms = the_compset := scrub_thms thms (!the_compset);
+    upd_compset (fn cset => foldl (fn (c, cset) => scrub_const cset c) cset cs)
+fun del_funs thms = upd_compset (scrub_thms thms)
 
-fun EVAL_CONV t = CBV_CONV (!the_compset) t;
-fun EVALn_CONV n t = CBVn_CONV n (!the_compset) t
+fun EVAL_CONV t = CBV_CONV (the_compset()) t;
+fun EVALn_CONV n t = CBVn_CONV n (the_compset()) t
 val EVAL_RULE = Conv.CONV_RULE EVAL_CONV;
 val EVAL_TAC  = Tactic.CONV_TAC EVAL_CONV;
 
@@ -374,12 +390,13 @@ in
            List.partition (fn thm => tmopt_eq (Lib.total get_f thm) case_const)
                           simpls
         val case_thm = List.map lazyfy_thm case_thm
-        val cs' = foldl (fn (c, cset) => add_conv c cset) cs (translate_convs convs)
+        val cs' =
+            foldl (fn (c, cset) => add_conv c cset) cs (translate_convs convs)
     in
         add_thms (size_opt @ boolify_opt @ case_thm @ simpls) cs'
     end
     fun write_datatype_info tyi =
-        the_compset := add_datatype_info (!the_compset) tyi
+        upd_compset (fn cs => add_datatype_info cs tyi)
 end
 
 val _ = TypeBase.register_update_fn (fn tyi => (write_datatype_info tyi; tyi))
@@ -427,7 +444,7 @@ fun decdelta d =
 fun apply_delta cld () =
     case cld of
         CLD_set_skip (t, iopt) =>
-          the_compset := set_skip (!the_compset) t iopt
+          upd_compset (fn cs => set_skip cs t iopt)
       | CLD_delconst t => del_consts [t]
 
 val {record_delta,get_deltas=thy_updates,...} =
@@ -444,7 +461,7 @@ val {record_delta,get_deltas=thy_updates,...} =
 
 fun set_EVAL_skip t i = record_delta (CLD_set_skip(t,i))
 fun temp_set_EVAL_skip t i =
-    the_compset := set_skip (!the_compset) t i
+    upd_compset (fn cs => set_skip cs t i)
 fun del_persistent_consts cs = app (fn c => record_delta(CLD_delconst c)) cs
 
 (* ----------------------------------------------------------------------
