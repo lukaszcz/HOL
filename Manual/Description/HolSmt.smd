@@ -255,9 +255,9 @@ of the Yices executable, e.g., `/bin/yices`, before you invoke
 HOL.
 
 Z3 is available for various platforms from
-<https://github.com/Z3Prover/z3>.  After installation, you must
-set the environment variable `$HOL4_Z3_EXECUTABLE` to the pathname
-of the Z3 executable, e.g., `/bin/z3`, before you invoke HOL.
+<https://github.com/Z3Prover/z3>.  HolSmt uses
+`$HOL4_Z3_EXECUTABLE` when set, otherwise `$Z3`, and otherwise `z3`
+found on `$PATH`.
 
 It should be relatively straightforward to integrate other SMT
 solvers that support the SMT-LIB 2 input format as oracles.

@@ -97,8 +97,9 @@ Supported Z3 proof dialect and tested anchors:
   Proof dialect      Proof options used by HolSmt                  Support status
   Z3 4.x             proof=true pp.simplify_implies=false          v4 proof path
 
-The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
-replay diagnostics include the discovered Z3 version and command stem.
+The configured executable comes from `HOL4_Z3_EXECUTABLE` when set, then
+`Z3`, and otherwise `z3` on `PATH`.  Proof parse and replay diagnostics
+include the discovered Z3 version and command stem.
 The checked-in proof corpus, local contract, and version verifier use the
 exact tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The
 verifier writes its five-version report to

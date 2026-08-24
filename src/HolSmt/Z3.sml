@@ -40,17 +40,29 @@ structure Z3 = struct
         before TextIO.closeIn instream
     end
 
-  fun is_configured () =
-      let val v = OS.Process.getEnv "HOL4_Z3_EXECUTABLE" in
-          (Option.isSome v) andalso (Option.valOf v <> "")
-      end;
-
-  val error_msg = "Z3 not configured: set the HOL4_Z3_EXECUTABLE environment variable to point to the Z3 executable file.";
-
-  fun configured_executable () =
-    case OS.Process.getEnv "HOL4_Z3_EXECUTABLE" of
+  fun get_nonempty_env name =
+    case OS.Process.getEnv name of
       SOME file => if file = "" then NONE else SOME file
     | NONE => NONE
+
+  fun command_available name =
+    OS.Process.isSuccess
+      (OS.Process.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
+    handle _ => false
+
+  fun configured_executable () =
+    case get_nonempty_env "HOL4_Z3_EXECUTABLE" of
+      SOME file => SOME file
+    | NONE =>
+        (case get_nonempty_env "Z3" of
+          SOME file => SOME file
+        | NONE => if command_available "z3" then SOME "z3" else NONE)
+
+  fun is_configured () = Option.isSome (configured_executable ());
+
+  val error_msg =
+    "Z3 not configured: install z3 on PATH or set the " ^
+    "HOL4_Z3_EXECUTABLE environment variable to point to the Z3 executable.";
 
   fun executable_string () =
     case configured_executable () of
