@@ -12,6 +12,7 @@ Holmakefile             Makefile for Holmake (to build selftest.exe).
 HolSmtLib.{sig,sml}     Entry point into HolSmtLib. Provides GENERIC_SMT_TAC
                         and derived tactics to call SMT solvers.
 HolSmtScript.sml        Various theorems for HolSmtLib.
+examples/               Runnable, end-user-oriented HolSmt examples.
 Library.sml             Common auxiliary functions, tracing.
 README                  This file.
 selftest.sml            HolSmtLib tests.
