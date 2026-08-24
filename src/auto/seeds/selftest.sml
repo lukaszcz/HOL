@@ -337,3 +337,58 @@ val _ =
          (ignore (seedCollections.algebra_ss ()); true) andalso
          (ignore (seedCollections.field_ss ()); true)
        end)
+
+(* A set written as an abstraction is a membership only after beta.  This
+   is the shape a set-of-keys obligation has when the set former was
+   unfolded before the goal reached the engine; the names are this file's
+   own.  The bound is here because the failure this pins is a search that
+   does not come back, not one that reports no proof. *)
+val abstraction_subset_goal : Abbrev.goal =
+  ([],
+   ``(!seed_dom_key seed_dom_value.
+        seed_dom_left seed_dom_key = SOME seed_dom_value ==>
+        seed_dom_right seed_dom_key = SOME seed_dom_value) ==>
+     (\seed_dom_key. seed_dom_left seed_dom_key <> NONE) SUBSET
+     (\seed_dom_key. seed_dom_right seed_dom_key <> NONE)``)
+
+(* A tactic that reports no proof has come back, which is what the bound is
+   about; only the timeout distinguishes the two outcomes below. *)
+fun within seconds interpret tactic goal =
+  interpret
+    (Timeout.apply (Time.fromSeconds seconds)
+      (fn () =>
+        SOME (Tactical.VALID tactic goal) handle HOL_ERR _ => NONE) ())
+  handle Timeout.TIMEOUT _ => false
+
+fun closes_within seconds =
+  within seconds
+    (fn SOME (remaining, _) => List.null remaining | NONE => false)
+
+fun terminates_within seconds = within seconds (fn _ => true)
+
+val _ =
+  check
+    ("FASTFORCE closes a subset between two abstractions",
+     fn () =>
+       closes_within 20 (clasimpLib.FASTFORCE_TAC []) abstraction_subset_goal)
+
+(* The state the search above reaches once it has a witness: a negated
+   equation to prove against a stored implication and a contradicting
+   value.  A depth-first search used not to come back from here at all --
+   the unsafe simp wrapper rebuilt the negation that the classical [~]
+   introduction had just taken apart, and the two alternated for ever.
+   Whether FAST search closes it is a question of strength and is left a
+   pass either way; that it terminates and reports what it found is not. *)
+val negated_equation_goal : Abbrev.goal =
+  ([``!seed_neg_key seed_neg_value.
+        seed_neg_left seed_neg_key = SOME seed_neg_value ==>
+        seed_neg_right seed_neg_key = SOME seed_neg_value``,
+    ``seed_neg_right seed_neg_x = NONE``],
+   ``seed_neg_left seed_neg_x <> SOME seed_neg_y``)
+
+val _ =
+  check
+    ("FASTFORCE terminates on a negated equation with a stored implication",
+     fn () =>
+       terminates_within 20 (clasimpLib.FASTFORCE_TAC [])
+         negated_equation_goal)

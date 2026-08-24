@@ -246,6 +246,20 @@ fun discard_subtree child frames =
     discard 0 frames
   end
 
+(* A state identical to one of its own ancestors adds nothing: [expand] is a
+   function of the node, so the subtree below the repetition is the subtree
+   below the ancestor, which the same search reaches there by a shorter path.
+   Without this an unsafe wrapper and the rule it undoes alternate for ever.
+   The frame stack is the ancestor chain: a frame's [source] is the node whose
+   expansion it holds. *)
+fun repeats_ancestor node frames =
+  List.exists
+    (fn frame : frame =>
+      case #source frame of
+          NONE => false
+        | SOME source => clasetGoal.equal (node, source))
+    frames
+
 fun DEPTH_SOLVE expand initial =
   let
     fun frame_for source =
@@ -292,6 +306,12 @@ fun DEPTH_SOLVE expand initial =
                       then
                         seq.cons current
                           (depth (current :: used) rest1)
+                      else if repeats_ancestor current rest0 then
+                        (trace 2
+                           (fn () =>
+                             "depth-solve dropped a state repeating an \
+                             \ancestor");
+                         depth used rest1)
                       else
                         (expansion_trace "depth-solve"
                            (length used + 1) current;
