@@ -24,6 +24,7 @@ fun set_trace_from_environment environment trace =
                raise Fail (environment ^ " must be an integer"))
 
 val _ = set_trace_from_environment "HOLBENCHBLASTTRACE" "blast"
+val _ = set_trace_from_environment "HOLBENCHCLASSICALTRACE" "classical"
 val _ = set_trace_from_environment "HOLBENCHLINARITHTRACE" "linarith"
 
 fun family_goals () =

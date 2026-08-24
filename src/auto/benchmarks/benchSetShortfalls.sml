@@ -2,7 +2,7 @@ structure benchSetShortfalls =
 struct
 
 (* Every record here is an executable Set.thy or Set_Theory.thy goal
-   that the assigned tactic did not close in the 2026-08-22
+   that the assigned tactic did not close in the 2026-08-24
    measurement.  The classification names the root cause and the note
    says what stands in the way.  A goal listed in [over_budget] was
    still searching when the budget expired, so its classification is
@@ -10,16 +10,16 @@ struct
 
 val over_budget =
   ["set_L1091_psubset_insert_iff", "set_L1604_Pow_singleton_iff",
-   "set_L1607_Pow_insert", "set_L1725_Int_Collect_mono",
-   "set_L1790_vimage_image_eq", "set_L1847_is_singleton_the_elem",
-   "set_L1976_disjnt_commute", "set_L1979_disjnt_iff",
-   "set_L1994_disjnt_subset1", "set_L1997_disjnt_subset2",
-   "set_L2003_disjnt_Un2", "set_L928_subset_image_iff",
-   "set_L994_image_add_0", "set_theory_L164", "set_theory_L168",
-   "set_theory_L184", "set_theory_L36", "set_theory_L44", "set_theory_L48"]
+   "set_L1607_Pow_insert", "set_L1790_vimage_image_eq",
+   "set_L1847_is_singleton_the_elem", "set_L1976_disjnt_commute",
+   "set_L1979_disjnt_iff", "set_L1994_disjnt_subset1",
+   "set_L1997_disjnt_subset2", "set_L2003_disjnt_Un2",
+   "set_L928_subset_image_iff", "set_L994_image_add_0",
+   "set_theory_L168", "set_theory_L184", "set_theory_L36",
+   "set_theory_L44", "set_theory_L48"]
 
 fun record note id : benchLib.shortfall =
-  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-22",
+  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-24",
    note =
      if List.exists (fn other => other = id) over_budget then
        note ^ " (the search exceeded the budget rather than " ^
@@ -54,21 +54,7 @@ val blast_set_rule_forms =
      "set_L872_Un_singleton_iff", "set_L875_singleton_Un_iff",
      "set_L928_subset_image_iff", "set_L994_image_add_0",
      "set_theory_L36", "set_theory_L44", "set_theory_L48",
-     "set_theory_L164", "set_theory_L168", "set_theory_L184"]
-
-(* Isabelle states these with an explicit Collect, which its
-   mem_Collect_eq [iff] keys on.  The translation of a set former to a
-   HOL4 predicate leaves no such marker, so what the goal needs is the
-   general crossing, and pred_set's SPECIFICATION is not seeded. *)
-val membership_against_predicate_application =
-  classified "membership against predicate application"
-    ("neither the claset nor BLAST_TAC's preprocessing crosses "
-     ^ "SPECIFICATION, which separates x IN P from P x")
-    ["set_L108_Collect_eqI", "set_L1192_Collect_empty_eq",
-     "set_L1195_empty_Collect_eq", "set_L1213_Collect_mono_iff",
-     "set_L1245_insert_Collect", "set_L1321_Int_Collect",
-     "set_L1646_ball_simps_8", "set_L1659_bex_simps_6",
-     "set_L1722_Collect_mono", "set_L1725_Int_Collect_mono"]
+     "set_theory_L168", "set_theory_L184"]
 
 val isabelle_lattice_instance =
   classified "Isabelle lattice instance"
@@ -97,8 +83,7 @@ val vimage =
   classified "vimage"
     ("PREIMAGE reasoning is downstream of the missing set rule "
      ^ "forms")
-    ["set_L1740_vimage_eq", "set_L1770_vimage_Collect_eq",
-     "set_L1773_vimage_Collect", "set_L1790_vimage_image_eq"]
+    ["set_L1740_vimage_eq", "set_L1790_vimage_image_eq"]
 
 val definite_description =
   classified "definite description"
@@ -135,7 +120,6 @@ val instantiated_fact_citation =
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
   excluded_characterisation @
-  membership_against_predicate_application @
   isabelle_lattice_instance @
   disjnt @
   bounded_quantifier_one_point @
