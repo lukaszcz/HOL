@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtCollections";
+Theory HolSmtCollections
+Ancestors
+  integer list pred_set
+Libs
+  HolSmtLib
 
 (* HOL lists use the SMT sequence encoding. *)
 Theorem append_length:
@@ -29,5 +30,3 @@ Theorem union_commutative_at_element:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

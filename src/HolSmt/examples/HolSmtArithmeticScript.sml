@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtArithmetic";
+Theory HolSmtArithmetic
+Ancestors
+  integer real
+Libs
+  HolSmtLib
 
 (* Linear integer arithmetic is a core SMT use case. *)
 Theorem integer_bounds:
@@ -31,5 +32,3 @@ Theorem square_nonnegative:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

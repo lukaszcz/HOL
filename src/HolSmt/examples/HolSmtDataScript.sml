@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtData";
+Theory HolSmtData
+Ancestors
+  integer
+Libs
+  HolSmtLib
 
 Datatype:
   traffic_light = Red | Amber | Green
@@ -46,5 +47,3 @@ Theorem option_shape:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

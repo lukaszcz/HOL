@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtFunctions";
+Theory HolSmtFunctions
+Ancestors
+  integer combin
+Libs
+  HolSmtLib
 
 (* Functions without a supported definition are treated as uninterpreted. *)
 Theorem congruence_example:
@@ -39,5 +40,3 @@ Theorem lambda_example:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

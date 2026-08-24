@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtWords";
+Theory HolSmtWords
+Ancestors
+  words
+Libs
+  HolSmtLib
 
 (* Fixed-width HOL words are translated to SMT bit vectors. *)
 Theorem bitwise_example:
@@ -27,5 +28,3 @@ Theorem extract_example:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

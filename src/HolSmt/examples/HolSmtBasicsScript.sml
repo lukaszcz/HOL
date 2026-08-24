@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtBasics";
+Theory HolSmtBasics
+Ancestors
+  integer
+Libs
+  HolSmtLib
 
 (* Z3_TAC is the usual entry point: Z3 produces a proof and HOL replays it. *)
 Theorem propositional_example:
@@ -37,5 +38,3 @@ Theorem supplied_lemma_example:
 Proof
   z3_tac [add_nonnegative]
 QED
-
-val _ = export_theory ();

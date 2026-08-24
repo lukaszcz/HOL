@@ -1,8 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-open smtstringTheory;
-
-val _ = new_theory "HolSmtStrings";
+Theory HolSmtStrings
+Ancestors
+  smtstring
+Libs
+  HolSmtLib
 
 (* smtstr is HolSmt's native SMT-LIB Unicode-string carrier.  Code points are
    represented by natural numbers; 97 and 98 are "a" and "b". *)
@@ -31,5 +31,3 @@ Theorem string_to_integer:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

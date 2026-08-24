@@ -1,8 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-open smtfloatTheory;
-
-val _ = new_theory "HolSmtFloatingPoint";
+Theory HolSmtFloatingPoint
+Ancestors
+  smtfloat
+Libs
+  HolSmtLib
 
 (* smtfp is the canonical-NaN carrier for SMT FloatingPoint.  Its two type
    parameters determine the significand and exponent widths. *)
@@ -26,5 +26,3 @@ Theorem canonical_nan:
 Proof
   Z3_TAC
 QED
-
-val _ = export_theory ();

@@ -1,7 +1,8 @@
-open HolKernel Parse boolLib bossLib;
-open HolSmtLib;
-
-val _ = new_theory "HolSmtCvc5";
+Theory HolSmtCvc5
+Ancestors
+  HolSmtBasics bag
+Libs
+  HolSmtLib
 
 (* CVC_TAC is the checked cvc5 counterpart of Z3_TAC. *)
 Theorem cvc_integer_example:
@@ -22,9 +23,5 @@ Proof
   cvc_tac [HolSmtBasicsTheory.add_nonnegative]
 QED
 
-val cvc_checked_thm =
-  CVC_PROVE ``!x : int. x <= x + 1``;
-
-val _ = save_thm ("cvc_prove_example", cvc_checked_thm);
-
-val _ = export_theory ();
+Theorem cvc_prove_example =
+  CVC_PROVE ``!x : int. x <= x + 1``
