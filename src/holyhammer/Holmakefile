@@ -10,7 +10,7 @@ hhStature.uo: hhStature.sml hhStature.ui
 
 hhMePo.uo: hhMePo.sml hhMePo.ui
 
-hhLearn.uo: hhLearn.sml hhLearn.ui hhStature.uo
+hhLearn.uo: hhLearn.sml hhLearn.ui hhStature.uo hhMePo.uo
 
 hhTypeEnc.uo: hhTypeEnc.sml hhTypeEnc.ui hhTptpProblem.uo
 

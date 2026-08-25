@@ -6,7 +6,27 @@ sig
      def_val : real,
      tau : real,
      def_prior_weight : int,
-     max_dependencies : int}
+     max_dependencies : int,
+     log_base : real,
+     unit_weight : real,
+     steep_base : real,
+     smooth_base : real,
+     smooth_exponent : real,
+     smooth_rank_factor : real,
+     smooth_offset : real,
+     scaled_avg_factor : real,
+     nb_mesh_weight : real,
+     knn_mesh_weight : real,
+     chained_weight : real,
+     proximity_weight : real,
+     learner_weight : real,
+     final_mepo_weight : real,
+     final_mash_weight : real,
+     max_proximity_facts : int,
+     over_request_numerator : int,
+     over_request_denominator : int,
+     max_suggestions_factor : int,
+     max_suggestions_extra : int}
 
   val default_constants : constants
 
@@ -69,4 +89,46 @@ sig
     nb_model -> {pool : mlThmData.thmid list,
                  goal_features : (int * real) list,
                  n : int} -> mlThmData.thmid list
+
+  type scored_facts = (mlThmData.thmid * real) list
+  type mesh_channel = real * (scored_facts * mlThmData.thmid list)
+
+  val steep_weight : int -> real
+  val smooth_weight : int -> real
+  val weight_facts_steeply : mlThmData.thmid list -> scored_facts
+  val weight_facts_smoothly : mlThmData.thmid list -> scored_facts
+
+  (* Each channel is (global weight, (ranked facts, unknown facts)). *)
+  val mesh_facts : int -> mesh_channel list -> mlThmData.thmid list
+  val merge_mash_channels :
+    {max_facts : int, suggestions : mlThmData.thmid list,
+     facts : mlThmData.thmid list, chained : mlThmData.thmid list,
+     unknown : mlThmData.thmid list} ->
+    mlThmData.thmid list * mlThmData.thmid list
+
+  val over_request : int -> int
+  val exclude_and_take : (mlThmData.thmid -> bool) -> int ->
+    mlThmData.thmid list -> mlThmData.thmid list
+
+  type context
+  type mash_result =
+    {ranking : mlThmData.thmid list,
+     unknown : mlThmData.thmid list,
+     learner : mlThmData.thmid list,
+     max_suggestions : int}
+  val clean_context_cache : unit -> unit
+  (* The explicit constructor supports a lagging persistent model and is also
+     useful for checking partial-model behavior hermetically. *)
+  val make_context :
+    {thmdata : mlThmData.thmdata,
+     model_thmdata : mlThmData.thmdata,
+     dependencies : dep_table} -> context
+  val create_context : mlThmData.thmdata -> context
+  val context_thmids : context -> mlThmData.thmid list
+  val mash_details : context ->
+    {pool : mlThmData.thmid list option, goal : Abbrev.goal,
+     max_facts : int} -> mash_result
+  val rank : context ->
+    {filter : string, pool : mlThmData.thmid list option,
+     goal : Abbrev.goal, n : int} -> mlThmData.thmid list
 end

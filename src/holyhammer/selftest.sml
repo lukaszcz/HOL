@@ -3645,6 +3645,228 @@ fun test_hhLearn_training_filters () =
 
 val _ = test_hhLearn_training_filters ()
 
+fun test_hhLearn_curves_and_mesh () =
+  let
+    val normalized = hhLearn.mesh_facts 2
+      [(0.5, (ListPair.zip (["a", "b"], [100.0, 90.0]), [])),
+       (0.5, (ListPair.zip (["b", "a"], [10.0, 1.0]), []))]
+    val unknown_excluded = hhLearn.mesh_facts 2
+      [(0.5, (ListPair.zip (["a", "b"], [1.0, 0.9]), [])),
+       (0.5, ([("b", 1.0)], ["a"]))]
+    val zero_penalty = hhLearn.mesh_facts 2
+      [(0.5, ([("a", 1.0)], [])),
+       (0.5, ([("c", 1.0)], ["a"]))]
+    val insertion_order = hhLearn.mesh_facts 3
+      [(0.5, (ListPair.zip (["a", "b"], [1.0, 1.0]), [])),
+       (0.5, (ListPair.zip (["b", "c"], [1.0, 1.0]), []))]
+    val fall_out_known = hhLearn.mesh_facts 3
+      [(0.5, (hhLearn.weight_facts_steeply ["other", "fallout"], [])),
+       (0.5, ([("recent", 1.0)], ["far_unknown"]))]
+  in
+    expect "hhLearn ports the steep and smooth rank curves exactly"
+      (learn_real_close 1.0 (hhLearn.steep_weight 0) andalso
+       learn_real_close (0.62 * 0.62) (hhLearn.steep_weight 3) andalso
+       learn_real_close (Math.pow (1.3, 15.5) + 15.0)
+         (hhLearn.smooth_weight 0));
+    expect "hhLearn mesh normalizes every channel by its top-N mean"
+      (normalized = ["b", "a"]);
+    expect "hhLearn mesh excludes unknowns from the score denominator"
+      (unknown_excluded = ["a", "b"]);
+    expect "hhLearn mesh penalizes known but unranked facts with zero"
+      (zero_penalty = ["a", "c"]);
+    expect "hhLearn mesh ports fold-union tie and dedup insertion order"
+      (insertion_order = ["b", "c", "a"]);
+    expect "hhLearn final mesh zero-penalizes proximity-channel fall-out"
+      (fall_out_known = ["other", "recent", "fallout"])
+  end
+
+val _ = test_hhLearn_curves_and_mesh ()
+
+fun test_hhLearn_mash_channels () =
+  let
+    val filler = List.tabulate (100, fn index =>
+      "known" ^ Int.toString index)
+    val facts = "recent" :: filler @ ["chained"]
+    val (ranking, remaining) = hhLearn.merge_mash_channels
+      {max_facts = 4, suggestions = ["learner"], facts = facts,
+       chained = ["chained"], unknown = ["recent", "chained"]}
+  in
+    expect "hhLearn channel merge keeps chained and proximity mechanisms"
+      (ranking = ["chained", "recent", "learner"] andalso
+       remaining = [])
+  end
+
+val _ = test_hhLearn_mash_channels ()
+
+fun test_hhLearn_dispatch_cache_and_knn_anchor () =
+  let
+    val primary = "arithmeticTheory.ADD1"
+    val secondary = "arithmeticTheory.ADD"
+    val goal = ([], Thm.concl (DB.fetch "arithmetic" "ADD1"))
+    val goal_features = mlFeature.fea_of_goal true goal
+    val weights = Redblackmap.insertList
+      (Redblackmap.mkDict Int.compare,
+       map (fn feature => (feature, 1.0)) goal_features)
+    val thmdata : mlThmData.thmdata =
+      (weights, [(primary, goal_features), (secondary, [])])
+    val _ = hhLearn.clean_context_cache ()
+    val context = hhLearn.create_context thmdata
+    val expected_knn = mlNearestNeighbor.thmknn_wdep thmdata 2
+      goal_features
+    val actual_knn = hhLearn.rank context
+      {filter = "knn", pool = NONE, goal = goal, n = 2}
+    val restricted_data : mlThmData.thmdata =
+      (weights, [(secondary, [])])
+    val expected_restricted_knn = mlNearestNeighbor.thmknn_wdep
+      restricted_data 1 goal_features
+    val restricted_knn = hhLearn.rank context
+      {filter = "knn", pool = SOME [secondary], goal = goal, n = 1}
+    val none = hhLearn.rank context
+      {filter = "none", pool = NONE, goal = goal, n = 1}
+    val mepo = hhLearn.rank context
+      {filter = "mepo", pool = NONE, goal = goal, n = 1}
+    val mash = hhLearn.rank context
+      {filter = "mash", pool = NONE, goal = goal, n = 1}
+    val mesh = hhLearn.rank context
+      {filter = "mesh", pool = NONE, goal = goal, n = 1}
+    val same_key_data : mlThmData.thmdata =
+      (#1 mlThmData.empty_thmdata, [(secondary, [])])
+    val cached = hhLearn.create_context same_key_data
+    val local_name =
+      "hhStatureTestTheory.hh_stature_registered_fixture"
+    val changed_key_data : mlThmData.thmdata =
+      (#1 mlThmData.empty_thmdata, [(local_name, [])])
+    val changed = hhLearn.create_context changed_key_data
+    val replaced = hhLearn.create_context same_key_data
+    fun from_fixture names =
+      List.all (fn name => name = primary orelse name = secondary) names
+  in
+    expect "hhLearn knn dispatch is byte-equal to thmknn_wdep"
+      (actual_knn = expected_knn andalso
+       restricted_knn = expected_restricted_knn);
+    expect "hhLearn none dispatch preserves the full thmdata order"
+      (none = [primary, secondary]);
+    expect "hhLearn dispatches all three new filters on a live fixture"
+      (mepo = [primary] andalso mash = [primary] andalso
+       mesh = [primary] andalso from_fixture (mepo @ mash @ mesh));
+    expect "hhLearn context cache uses ancestry and current-fact count"
+      (hhLearn.context_thmids cached = [primary, secondary] andalso
+       hhLearn.context_thmids changed = [local_name] andalso
+       hhLearn.context_thmids replaced = [secondary]);
+    expect "hhLearn uses exact 51/50 induction slack before exclusion"
+      (hhLearn.over_request 50 = 51 andalso
+       hhLearn.exclude_and_take (fn name => name = "induct") 50
+         ("induct" :: List.tabulate (50, Int.toString)) =
+       List.tabulate (50, Int.toString))
+  end
+
+val _ = test_hhLearn_dispatch_cache_and_knn_anchor ()
+
+fun test_hhLearn_production_exclusion_and_mash () =
+  let
+    val induction = DB.fetch "list" "list_induction"
+    val induction_base = "hhLearn_real_induction"
+    val regular_conclusion = boolSyntax.mk_conj
+      (Thm.concl induction, boolSyntax.T)
+    val regular_theorem = Thm.ASSUME regular_conclusion
+    val regular_bases = List.tabulate (101, fn index =>
+      "hhLearn_regular_" ^ Int.toString index)
+    fun save name =
+      Feedback.quiet_messages Theory.save_thm (name, regular_theorem)
+    val _ = Feedback.quiet_messages Theory.save_thm
+      (induction_base, Thm.ASSUME (Thm.concl induction))
+    val _ = List.app (ignore o save) regular_bases
+    val prefix = Theory.current_theory () ^ "Theory."
+    val induction_name = prefix ^ induction_base
+    val regular_names = map (fn name => prefix ^ name) regular_bases
+    val all_names = induction_name :: regular_names
+    val direct_names = induction_name :: List.take (regular_names, 50)
+    val goal = ([], regular_conclusion)
+    val features = mlFeature.fea_of_goal true goal
+    val rows = map (fn name => (name, features)) all_names
+    val thmdata : mlThmData.thmdata =
+      (mlFeature.learn_tfidf rows, rows)
+    val _ = hhLearn.clean_context_cache ()
+    val context = hhLearn.create_context thmdata
+    fun ranked filter = hhLearn.rank context
+      {filter = filter, pool = SOME direct_names, goal = goal, n = 50}
+    val mepo = ranked "mepo"
+    val mash = ranked "mash"
+    val mesh = ranked "mesh"
+    val knn = ranked "knn"
+    val direct_rows = List.take (rows, 51)
+    val direct_data : mlThmData.thmdata = (#1 thmdata, direct_rows)
+    val expected_knn = mlNearestNeighbor.thmknn_wdep direct_data 50
+      features
+    val none = ranked "none"
+    fun exact_regular ranking =
+      length ranking = 50 andalso
+      not (List.exists (fn name => name = induction_name) ranking) andalso
+      Listsort.sort String.compare ranking =
+        Listsort.sort String.compare (List.take (regular_names, 50))
+
+    val model_rows = List.take (List.drop (rows, 1), 3)
+    val model_data : mlThmData.thmdata =
+      (mlFeature.learn_tfidf model_rows, model_rows)
+    val dep_head = List.nth (regular_names, 3)
+    val dep_one = List.nth (regular_names, 4)
+    val dep_two = List.nth (regular_names, 5)
+    val dependencies = hhLearn.dep_table_of (map
+      (fn name =>
+        (name, if name = dep_head then [dep_one, dep_two] else []))
+      regular_names)
+    val partial = hhLearn.make_context
+      {thmdata = (mlFeature.learn_tfidf (tl rows), tl rows),
+       model_thmdata = model_data, dependencies = dependencies}
+    val details = hhLearn.mash_details partial
+      {pool = NONE, goal = goal, max_facts = 2}
+    val restricted_names = List.take (regular_names, 5)
+    val restricted = hhLearn.mash_details partial
+      {pool = SOME restricted_names, goal = goal, max_facts = 2}
+    val partial_mesh = hhLearn.rank partial
+      {filter = "mesh", pool = NONE, goal = goal, n = 2}
+    val invalid_filter =
+      (ignore (hhLearn.rank context
+        {filter = "bogus", pool = NONE, goal = goal, n = 1}); false)
+      handle Feedback.HOL_ERR _ => true
+  in
+    expect "hhLearn mepo rank excludes induction with refill"
+      (exact_regular mepo);
+    expect "hhLearn mash rank excludes induction with refill"
+      (exact_regular mash);
+    expect "hhLearn mesh rank excludes induction with refill"
+      (exact_regular mesh);
+    expect "hhLearn production rank leaves knn and none untouched"
+      (knn = expected_knn andalso
+       List.exists (fn name => name = induction_name) knn andalso
+       none = direct_names);
+    expect "hhLearn mash uses observable 2n+25 learner depth"
+      (#max_suggestions details = 29 andalso
+       length (#learner details) = 29);
+    expect "hhLearn mash meshes NB with pool kNN"
+      (List.take (#learner details, 5) =
+       [List.nth (regular_names, 0), List.nth (regular_names, 100),
+        List.nth (regular_names, 99), List.nth (regular_names, 98),
+        List.nth (regular_names, 97)]);
+    expect "hhLearn mash expands dependencies in order before cutting"
+      (#ranking details = [dep_head, dep_one] andalso
+       #unknown details = [List.last regular_names]);
+    expect "hhLearn mash restricts both learner engines to the pool"
+      (#max_suggestions restricted = 29 andalso
+       length (#learner restricted) = 5 andalso
+       List.all
+         (fn name => List.exists (fn allowed => allowed = name)
+           restricted_names)
+         (#learner restricted) andalso
+       #ranking restricted = [dep_head, dep_one]);
+    expect "hhLearn final mesh uses the partial-model unknown remainder"
+      (partial_mesh = [List.last regular_names, dep_head]);
+    expect "hhLearn rank rejects unknown filter names"
+      invalid_filter
+  end
+
+val _ = test_hhLearn_production_exclusion_and_mash ()
+
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
   hhCache hhSchedule hhStature hhMePo hhLearn
