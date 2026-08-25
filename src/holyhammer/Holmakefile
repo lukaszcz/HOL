@@ -1,8 +1,11 @@
-all: $(DEFAULT_TARGETS) hhTptpProblem.uo hhTypeEnc.uo hhLamTrans.uo \
-     hhMonomorph.uo hhProblemGen.uo hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
+all: $(DEFAULT_TARGETS) hhStature.uo hhTptpProblem.uo hhTypeEnc.uo \
+     hhLamTrans.uo hhMonomorph.uo hhProblemGen.uo hhConfig.uo \
+     hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
      hhEval.uo selftest.exe smoke.exe
 
 hhTptpProblem.uo: hhTptpProblem.sml hhTptpProblem.ui
+
+hhStature.uo: hhStature.sml hhStature.ui
 
 hhTypeEnc.uo: hhTypeEnc.sml hhTypeEnc.ui hhTptpProblem.uo
 
@@ -31,8 +34,9 @@ hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo hhSlice.uo \
 holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhSchedule.uo
 
-selftest.uo: selftest.sml hhTptpProblem.uo hhTypeEnc.uo hhLamTrans.uo \
-             hhMonomorph.uo hhProblemGen.uo hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
+selftest.uo: selftest.sml hhStature.uo hhTptpProblem.uo hhTypeEnc.uo \
+             hhLamTrans.uo hhMonomorph.uo hhProblemGen.uo hhConfig.uo \
+             hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
              hhEval.uo holyHammer.uo
 
 smoke.uo: smoke.sml hhEval.uo
@@ -50,7 +54,8 @@ ifdef HOLSELFTESTLEVEL
 all: selftest.log
 
 selftest.log: selftest.exe
-	@d=$$(mktemp -d); HOL4_HAMMER_DIR=$$d ./selftest.exe > $@ 2>&1; \
+	@d=$$(mktemp -d); HOL4_HAMMER_DIR=$$d HOL4_SCRATCH=$$d/scratch \
+	  ./selftest.exe > $@ 2>&1; \
 	  s=$$?; rm -rf $$d; exit $$s
 
 endif

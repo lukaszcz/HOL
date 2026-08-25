@@ -418,7 +418,8 @@ fun journal_json
                        | SOME slice => json_slice slice),
                     ("slices", JSON.ARRAY (map json_journal_slice slices))]
                | _ => raise Fail
-                   "invalid hhEval Sched journal entry: stop and t_total are required")
+                   ("invalid hhEval Sched journal entry: stop and " ^
+                    "t_total are required"))
   in
     case engine of
         Prover _ => JSON.OBJECT (common @ engine_fields @ winning)
@@ -758,7 +759,9 @@ fun make_metrics entries : metrics =
       case #engine entry of
           Prover _ => #t_prover entry
         | Sched _ =>
-            (case #t_total entry of SOME total => total | NONE => #t_prover entry)
+            (case #t_total entry of
+                 SOME total => total
+               | NONE => #t_prover entry)
     val times = map cell_time (List.filter proven_cell entries)
     val (p50, p90, maximum) = quantiles times
   in
@@ -1731,14 +1734,15 @@ fun run_eval {expname, ncore, thyl, conditions} =
           (map (fn state => (work_size state, state)) pending_states))
       val queued = map (fn thy =>
         (thy, write_evalscript expdir thy conditions sample)) queued_names
-      val _ = smlExecScripts.buildheap_dir := join expdir "out"
       fun cleanup_scripts () = app (fn (_, script) =>
         OS.FileSys.remove script handle OS.SysErr _ => ()) queued
-      val _ =
+      fun run_workers () =
         ((smlParallel.parapp_queue ncore
             (fn (_, script) => smlExecScripts.exec_script script) queued;
           cleanup_scripts ())
          handle error => (cleanup_scripts (); raise error))
+      val _ = with_flag (aiLib.scratch_dir, join expdir "out")
+        run_workers ()
       fun note_unfinished (thy, NONE) = ()
         | note_unfinished (thy, SOME cells) =
             if journal_complete (journal_path expdir thy) cells then ()
@@ -1818,7 +1822,9 @@ fun run_format_smoke expdir timeout options (config, slice) =
        debug_dir = #debug_dir options}
     val (recon_ok, _, _, _) = reconstruct condition result goal
     val parsed_axioms =
-      case #used_axioms result of SOME axioms => not (null axioms) | NONE => false
+      case #used_axioms result of
+          SOME axioms => not (null axioms)
+        | NONE => false
   in
     if #szs result = hhProver.SzsTheorem andalso parsed_axioms andalso
        recon_ok = SOME true then ()
@@ -1909,7 +1915,8 @@ fun with_smoke_hh_options timeout action =
         | NONE => NONE
     val previous = List.mapPartial (saved o #1) settings
     fun restore () =
-      (List.app (hhConfig.hh_unset o #1) settings; List.app hhConfig.hh_set previous)
+      (List.app (hhConfig.hh_unset o #1) settings;
+       List.app hhConfig.hh_set previous)
     val _ = List.app hhConfig.hh_set settings
   in
     (action () before restore ()) handle error => (restore (); raise error)

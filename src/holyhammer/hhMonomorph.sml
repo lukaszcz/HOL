@@ -282,7 +282,8 @@ struct
           else
             let
               val (old, fresh, require_new) =
-                if round = initial_round then ([], merge_grounds known new, false)
+                if round = initial_round then
+                  ([], merge_grounds known new, false)
                 else (known, new, true)
               val room = Int.min (max_thm_instances - length (!instances),
                 !remaining)

@@ -52,7 +52,8 @@ fun validate_slice (config : hhProver.prover_config)
     val _ = ignore (hhTypeEnc.adjust_type_enc
       (hhTypeEnc.format_of_string format) (hhTypeEnc.of_string type_enc))
     val _ =
-      if List.exists (fn supported => supported = format) (#supported_formats config)
+      if List.exists (fn supported => supported = format)
+          (#supported_formats config)
       then ()
       else raise Fail ("HolyHammer prover '" ^ #name config ^
         "' does not support format '" ^ format ^ "'")
@@ -105,7 +106,8 @@ fun mk_schedule (options : hhConfig.hh_options) =
               NONE => walk tables seen rest result
             | SOME (config, slice, tables') =>
                 let
-                  val adjusted = validate_slice config (adjust_slice options slice)
+                  val adjusted =
+                    validate_slice config (adjust_slice options slice)
                 in
                   if List.exists (same_slice adjusted) seen then
                     walk tables' seen rest result

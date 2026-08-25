@@ -64,7 +64,9 @@ struct
             else mk_abs (var, matrix')
           end
         else if unfold_let andalso is_let body then
-          let val (func, arg) = dest_let body in recurse (mk_comb (func, arg)) end
+          let val (func, arg) = dest_let body in
+            recurse (mk_comb (func, arg))
+          end
         else if is_comb body then
           let
             val left = recurse (rator body)
@@ -110,9 +112,13 @@ struct
 
   fun skeleton tm =
     if is_forall tm then
-      let val (var, body) = dest_forall tm in HQuant (true, [var], skeleton body) end
+      let val (var, body) = dest_forall tm in
+        HQuant (true, [var], skeleton body)
+      end
     else if is_exists tm then
-      let val (var, body) = dest_exists tm in HQuant (false, [var], skeleton body) end
+      let val (var, body) = dest_exists tm in
+        HQuant (false, [var], skeleton body)
+      end
     else if is_neg tm then HConn (hhTptpProblem.Not, [skeleton (dest_neg tm)])
     else if is_conj tm then
       HConn (hhTptpProblem.And, [skeleton (lhand tm), skeleton (rand tm)])
@@ -197,7 +203,8 @@ struct
           {max_iters = mono_iters, max_new_instances = mono_instances}
           (pass_lambda format lam_trans (presimp format terms))))
 
-  fun type_is_fun ty = (ignore (Type.dom_rng ty); true) handle HOL_ERR _ => false
+  fun type_is_fun ty =
+    (ignore (Type.dom_rng ty); true) handle HOL_ERR _ => false
   fun dom_rng ty = SOME (Type.dom_rng ty) handle HOL_ERR _ => NONE
 
   fun term_head tm = fst (strip_comb tm)
@@ -291,12 +298,15 @@ struct
       let
         fun term in_position tm =
           if is_abs tm then
-            let val (var, body) = dest_abs tm in FOAbs (var, term false body) end
+            let val (var, body) = dest_abs tm in
+              FOAbs (var, term false body)
+            end
           else
             let val (head, args) = strip_comb tm in
               FOHead (head, map (term true) args)
             end
-        fun formula (HQuant (all, vars, body)) = FOQuant (all, vars, formula body)
+        fun formula (HQuant (all, vars, body)) =
+              FOQuant (all, vars, formula body)
           | formula (HConn (conn, bodies)) = FOConn (conn, map formula bodies)
           | formula (HAtom tm) = FOAtom (term false tm)
       in
@@ -307,10 +317,14 @@ struct
     else
       let
         val table = heads_of_formula conjecture
-          (List.foldl (fn ((_, formula), result) => heads_of_formula formula result)
+          (List.foldl
+            (fn ((_, formula), result) =>
+              heads_of_formula formula result)
             [] facts)
         val variables = vars_of_formula conjecture
-          (List.foldl (fn ((_, formula), result) => vars_of_formula formula result)
+          (List.foldl
+            (fn ((_, formula), result) =>
+              vars_of_formula formula result)
             [] facts)
         val arities = app_arities encoding (length facts) variables table
         val used_app = ref false
@@ -350,7 +364,8 @@ struct
                 (used_pp := true; FOPred applied)
               else applied
             end
-        fun formula (HQuant (all, vars, body)) = FOQuant (all, vars, formula body)
+        fun formula (HQuant (all, vars, body)) =
+              FOQuant (all, vars, formula body)
           | formula (HConn (conn, bodies)) = FOConn (conn, map formula bodies)
           | formula (HAtom tm) = FOAtom (term false tm)
         fun named_formula (name, body) =
@@ -369,12 +384,16 @@ struct
   fun same_value left right = left = right
   fun types_of_type ty =
     if is_vartype ty then [ty]
-    else let val {Args, ...} = Type.dest_thy_type ty in ty :: List.concat (map types_of_type Args) end
+    else
+      let val {Args, ...} = Type.dest_thy_type ty in
+        ty :: List.concat (map types_of_type Args)
+      end
   fun types_of_term tm = types_of_type (type_of tm) @
     List.concat (map types_of_term (snd (strip_comb tm)))
   fun types_of_formula (FOQuant (_, vars, body)) =
         List.concat (map (types_of_type o type_of) vars) @ types_of_formula body
-    | types_of_formula (FOConn (_, bodies)) = List.concat (map types_of_formula bodies)
+    | types_of_formula (FOConn (_, bodies)) =
+        List.concat (map types_of_formula bodies)
     | types_of_formula (FOAtom tm) = types_of_fo_term tm
   and types_of_fo_term (FOHead (head, args)) =
         types_of_type (type_of head) @ List.concat (map types_of_fo_term args)
@@ -399,7 +418,8 @@ struct
   fun mangle_type ty = aiLib.escape ("ty." ^ raw_mangle_type ty)
 
   fun native_type ty =
-    if is_vartype ty then hhTptpProblem.TyVar ("A" ^ aiLib.escape (dest_vartype ty))
+    if is_vartype ty then
+      hhTptpProblem.TyVar ("A" ^ aiLib.escape (dest_vartype ty))
     else
       let
         val {Thy, Tyop, Args} = Type.dest_thy_type ty
@@ -453,7 +473,9 @@ struct
 
   fun raw_symbol head =
     if is_const head then
-      let val {Thy, Name, ...} = dest_thy_const head in "c." ^ Thy ^ "." ^ Name end
+      let val {Thy, Name, ...} = dest_thy_const head in
+        "c." ^ Thy ^ "." ^ Name
+      end
     else if is_var head then fst (dest_var head)
     else fail "term head is neither a constant nor a variable"
 
@@ -540,7 +562,8 @@ struct
         hhTptpProblem.Tm (((if raw_symbol head = "$ite" andalso
           length args = 3 then "$ite" else encoded_symbol encoding head),
           (case encoding of
-             hhTypeEnc.Native {poly = true, ...} => map native_type (type_args_of_head head)
+             hhTypeEnc.Native {poly = true, ...} =>
+               map native_type (type_args_of_head head)
            | _ => [])), map (encode_term encoding) args)
     | encode_term encoding (FOValue head) =
         hhTptpProblem.Tm ((value_symbol encoding head, []), [])
@@ -586,7 +609,8 @@ struct
   fun guard_atom encoding ty tm =
     hhTptpProblem.Atom (hhTptpProblem.Tm ((guard_name ty, []), [tm]))
 
-  fun guarded_type (hhTypeEnc.Guards {level = hhTypeEnc.AllTypes, ...}) _ _ = true
+  fun guarded_type
+      (hhTypeEnc.Guards {level = hhTypeEnc.AllTypes, ...}) _ _ = true
     | guarded_type (hhTypeEnc.Guards {level = hhTypeEnc.NonmonoNonUniform, ...})
         needs ty = List.exists (fn other => other = ty) needs
     | guarded_type _ _ _ = false
@@ -741,8 +765,10 @@ struct
             (map (fn index => "G" ^ Int.toString index)
                (List.tabulate (length domains, fn index => index)),
              map (type_for encoding) domains)
-          val application = hhTptpProblem.Tm ((encoded_symbol encoding head, []),
-            map (fn (name, _) => hhTptpProblem.Tm ((name, []), [])) variables)
+          val application = hhTptpProblem.Tm
+            ((encoded_symbol encoding head, []),
+             map (fn (name, _) =>
+               hhTptpProblem.Tm ((name, []), [])) variables)
           val body = guard_atom encoding result application
           val formula = if null variables then body else hhTptpProblem.Quant
             (true, map (fn (name, ty) => (name, SOME ty)) variables, body)
@@ -1000,8 +1026,8 @@ struct
     | value_heads_formula (FOAtom tm, result) =
         value_heads_term (tm, result)
 
-  fun generated_problem format encoding needs ({conjecture, facts, used_app,
-                                                used_pp} : fo_ir) direct_helpers =
+  fun generated_problem format encoding needs
+      ({conjecture, facts, used_app, used_pp} : fo_ir) direct_helpers =
     let
       val all_formulas = conjecture :: map #2 facts
       val app_signatures = List.foldl app_signatures_formula [] all_formulas
@@ -1013,7 +1039,9 @@ struct
           | NONE => 0
       val base_heads = List.foldl heads_of_fo_formula [] all_formulas
       val bool_proxies = if used_pp then
-        [mk_var ("pxy.true", Type.bool), mk_var ("pxy.false", Type.bool)] else []
+        [mk_var ("pxy.true", Type.bool),
+         mk_var ("pxy.false", Type.bool)]
+        else []
       val heads = List.foldl
         (fn (head, result) => add_once same_head head result)
         base_heads bool_proxies
@@ -1066,7 +1094,8 @@ struct
                  type_for encoding (type_of head))) value_heads
             val pp_decls = if used_pp then [hhTptpProblem.SymDecl
               ("sy_2Epp", "pp_2E", hhTptpProblem.TyFun
-                (hhTptpProblem.TyCon ("$i", []), hhTptpProblem.TyCon ("$o", [])))]
+                (hhTptpProblem.TyCon ("$i", []),
+                 hhTptpProblem.TyCon ("$o", [])))]
               else []
           in
             type_declarations encoding all_types @ sym_decls @ app_decls @
@@ -1074,7 +1103,9 @@ struct
           end
       val gsy = List.mapPartial (gsy_line encoding needs) declaration_heads
       val guard_types = List.foldl (fn (ty, result) =>
-        if guarded_type encoding needs ty then add_once same_value ty result else result)
+        if guarded_type encoding needs ty then
+          add_once same_value ty result
+        else result)
         [] all_types
       val witnesses = map (witness_line encoding) guard_types
       val helpers = List.filter (is_helper_name o #1) facts
@@ -1099,7 +1130,8 @@ struct
           loop facts [] []
         end
       val conjecture' = hhTptpProblem.FormLine ("conjecture",
-        hhTptpProblem.Conjecture, encode_formula format encoding needs conjecture)
+        hhTptpProblem.Conjecture,
+        encode_formula format encoding needs conjecture)
     in
       [("Declarations", decls @ gsy @ witnesses),
        ("Helpers", helper_lines helpers @ direct_helpers),
@@ -1189,7 +1221,8 @@ struct
       val final_fo = firstorder (combined helper_terms)
       val needs = needs_of type_enc (combined helper_terms)
     in
-      generated_problem format type_enc needs final_fo (pp_helpers (#used_pp final_fo))
+      generated_problem format type_enc needs final_fo
+        (pp_helpers (#used_pp final_fo))
     end
 
   fun generate_problem options terms =
@@ -1219,7 +1252,9 @@ struct
       (#facts left, #facts right)
 
   fun effective_mode format mode =
-    if mode = "keep_lams" andalso not (is_full_ho format) then "lifting" else mode
+    if mode = "keep_lams" andalso not (is_full_ho format) then
+      "lifting"
+    else mode
 
   fun memoized_lambda ({entries, runs} : export_memo) format mode terms =
     let val key = effective_mode format mode in
@@ -1242,7 +1277,9 @@ struct
         (if higher then "_higher" else "") ^ (if fool then "_fool" else "")
     | encoding_name (hhTypeEnc.Guards {poly, level}) =
         (if poly then "poly_guards" else "mono_guards") ^
-        (case level of hhTypeEnc.AllTypes => "" | hhTypeEnc.NonmonoNonUniform => "??")
+        (case level of
+             hhTypeEnc.AllTypes => ""
+           | hhTypeEnc.NonmonoNonUniform => "??")
     | encoding_name hhTypeEnc.LegacySP = "legacy"
 
   fun header {format, type_enc, lam_trans, mono_iters, mono_instances} =
@@ -1260,8 +1297,8 @@ struct
   fun export_pb_in memo options file (conjecture, named) =
     let
       val input = presimp (#format options) {conjecture = conjecture,
-                                              facts = map (fn (name, theorem) =>
-                                                (name, Thm.concl theorem)) named}
+        facts = map (fn (name, theorem) =>
+          (name, Thm.concl theorem)) named}
       val {type_enc, lam_trans, mono_iters, mono_instances, ...} = options
       val pre_mono = lam_trans = "combs" andalso is_monomorphic type_enc
       val lambda_input = if pre_mono then
