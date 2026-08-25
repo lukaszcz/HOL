@@ -731,18 +731,6 @@ Updating the Z3 version matrix:
      manifest, regenerate the matrix, and adjust the "Supported Z3 versions"
      table above.
 
-Pull-request CI retains PolyML expk Docker lanes for Z3 4.12.4 and 4.13.0.
-These selected image lanes are not the full support contract; that contract is
-the five-version verifier above.  The equivalent local hook is:
-
-  docker buildx build \
-    --build-arg SML=poly \
-    --build-arg Z3_VERSION=<4.12.4|4.13.0> \
-    --build-arg CVC_VERSION=5 \
-    --build-arg CSDP_VERSION=1 \
-    --build-arg 'BUILDOPTS=--no-cache --expk -j4 -t' \
-    -f developers/docker-ci/Dockerfile .
-
 The HolSmt selftest is part of that build.  `Z3_SMT_Prover` and selftest
 theorem checks reject unexpected oracle/axiom tags on `Z3_TAC` outputs; `sat`
 and `unknown` solver results are negative outcomes and must not produce HOL
