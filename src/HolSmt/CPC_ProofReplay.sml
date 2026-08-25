@@ -1400,6 +1400,28 @@ local
          [left, right])
       fun int_literal n =
         intSyntax.term_of_int (Arbint.fromInt n)
+      fun arith_leq (left, right) =
+        intSyntax.mk_leq (left, right)
+        handle Feedback.HOL_ERR _ => realSyntax.mk_leq (left, right)
+      fun arith_geq (left, right) =
+        intSyntax.mk_geq (left, right)
+        handle Feedback.HOL_ERR _ => realSyntax.mk_geq (left, right)
+      fun arith_ite_lift relation
+          [condition, then_term, else_term, right] =
+        let
+          val target = boolSyntax.mk_eq
+            (relation
+               (boolSyntax.mk_cond (condition, then_term, else_term), right),
+             boolSyntax.mk_cond
+               (condition, relation (then_term, right),
+                relation (else_term, right)))
+        in
+          Tactical.TAC_PROOF (([], target),
+            Tactical.THEN (Tactic.COND_CASES_TAC,
+              bossLib.SIMP_TAC boolSimps.bool_ss []))
+        end
+        | arith_ite_lift _ _ =
+            raise ERR name "expected condition, branches, and right operand"
       fun guard_not_zero term = boolSyntax.mk_neg
         (boolSyntax.mk_eq (term, intSyntax.zero_tm))
       fun guarded name guard target tactic =
@@ -1550,6 +1572,10 @@ local
             Tactical.THEN (Tactic.COND_CASES_TAC,
               bossLib.SIMP_TAC boolSimps.bool_ss []))
         end
+    | ("arith-leq-ite-lift", operands) =>
+        arith_ite_lift arith_leq operands
+    | ("arith-geq-ite-lift", operands) =>
+        arith_ite_lift arith_geq operands
     | ("bool-or-de-morgan", [left, right, _]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_disj (left, right)),
@@ -2587,6 +2613,10 @@ local
           handle Feedback.HOL_ERR _ =>
             profile "CPC(rung:arith/poly_norm_general)" arith_prove target
         end
+      else if name = "arith-leq-norm" then
+        simpLib.SIMP_PROVE (bossLib.srw_ss())
+          [integerTheory.int_ge, integerTheory.INT_NOT_LE,
+           integerTheory.INT_NOT_LT, integerTheory.INT_LE_LT1] target
       else arith_prove target
     end
 
@@ -3630,6 +3660,24 @@ local
           (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)))
     | _ => raise ERR "datatype" "expected two constructor values"
 
+  fun replay_dt_split args =
+    case args of
+      [scrutinee] =>
+        let
+          val ty = Term.type_of scrutinee
+          val constructors = SmtDatatypeProve.constructors_of ty
+          val testers = List.map
+            (fn constructor =>
+              SmtDatatypeProve.datatype_tester_term
+                ty constructor scrutinee)
+            constructors
+          val target = mk_disj_terms testers
+        in
+          profile "CPC(rung:datatype/split)"
+            SmtDatatypeProve.datatype_prove target
+        end
+    | _ => raise ERR "dt_split" "expected one datatype scrutinee"
+
   fun replay_datatype_eq args =
     profile "CPC(rung:datatype/prove_eq)" SmtDatatypeProve.datatype_prove
       (expect_one_arg "datatype_eq" args)
@@ -4207,6 +4255,7 @@ local
                replay_sets state (#name rule) prems conclusion args
            | "rewrite" => replay_rare_rewrite (#name rule) args
            | "datatype" => replay_datatype args
+           | "dt_split" => replay_dt_split args
            | "datatype_eq" => replay_datatype_eq args
            | "resolution" => replay_resolution prems conclusion args
            | "bool" => replay_bool prems conclusion
@@ -4312,6 +4361,10 @@ local
                 smtfloatTheory.smtfp_pzero_bits,
                 smtfloatTheory.smtfp_bits_nzero,
                 smtfloatTheory.smtfp_nzero_bits])
+        handle Feedback.HOL_ERR _ =>
+          profile "CPC(remove_extra_hyps:datatype)"
+            SmtDatatypeProve.datatype_consequence_prove
+            (boolSyntax.mk_neg g :: asl, hyp)
         handle Feedback.HOL_ERR _ =>
           if Library.contains_conditional hyp then
             profile "CPC(remove_extra_hyps:conditional_arith)"

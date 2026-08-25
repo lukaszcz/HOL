@@ -254,6 +254,9 @@ val _ = Hol_datatype
   `smt_tri = SmtTriA | SmtTriB of int | SmtTriC of bool`
 
 val _ = Hol_datatype
+  `smt_light = SmtRed | SmtAmber | SmtGreen`
+
+val _ = Hol_datatype
   `smt_fun_rec = <| smt_fun : int -> bool -> int |>`
 
 val _ = Hol_datatype
@@ -8844,6 +8847,33 @@ in
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
 end
 
+fun cpc_proof_parser_parameterized_datatype_tester_success () =
+let
+  fun parse goal contents =
+    let
+      val (translation, _) =
+        SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+      val dicts = SmtLib.parser_dicts_for_translation translation
+      val instream = TextIO.openString contents
+      val proof = CPC_ProofParser.parse_stream_with_version
+        dicts "1.3.4" instream
+    in
+      case CPC_Proof.proof_commands proof of
+        [CPC_Proof.ASSUME (_, tm)] =>
+          assert (Term.type_of tm = Type.bool,
+            "parameterized CPC datatype tester was not Boolean")
+      | _ => die "FAIL: parameterized CPC datatype tester did not parse"
+    end
+in
+  (* The constructor is tester metadata, not a nullary term.  Exercise both
+     a nullary constructor and a record constructor with fields. *)
+  parse ``SOME (x:int) = SOME y``
+    "((assume @p1 (is ctor_Option_Int_NONE ctor_Option_Int_NONE)))";
+  parse ``(r:smt_rec) = s``
+    "((assume @p1 (is ctor_Smt_rec_recordtype_smt_rec \
+    \(ctor_Smt_rec_recordtype_smt_rec 0 false))))"
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -10017,6 +10047,65 @@ fun cpc_live_checked_replay_selector_success () =
   | SolverSpec.UNSAT NONE => die "FAIL: live CPC selector replay returned no theorem"
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for selector theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for selector test"
+
+fun cpc_live_checked_replay_record_extensionality_success () =
+  let
+    val goal =
+      ``(r:smt_rec) = s <=>
+        r.smt_count = s.smt_count /\ (r.smt_flag <=> s.smt_flag)``
+  in
+    case CVC.CVC_SMT_CPC_Prover ([], goal) of
+      SolverSpec.UNSAT (SOME thm) =>
+        (assert (Thm.concl thm ~~ goal,
+          "live CPC record extensionality replay returned an unexpected " ^
+          "theorem");
+         check_oracle_tags "CPC live record extensionality unit test" thm)
+    | SolverSpec.UNSAT NONE =>
+        die "FAIL: live CPC record extensionality replay returned no theorem"
+    | SolverSpec.SAT _ =>
+        die "FAIL: cvc5 reported sat for record extensionality"
+    | SolverSpec.UNKNOWN _ =>
+        die "FAIL: cvc5 returned unknown for record extensionality"
+  end
+
+fun cpc_live_checked_replay_enum_case_success () =
+  let
+    val goal =
+      ``(case light of
+           SmtRed => (0:int)
+         | SmtAmber => 1
+         | SmtGreen => 2) <= 2``
+  in
+    case CVC.CVC_SMT_CPC_Prover ([], goal) of
+      SolverSpec.UNSAT (SOME thm) =>
+        (assert (Thm.concl thm ~~ goal,
+          "live CPC enum case replay returned an unexpected theorem");
+         check_oracle_tags "CPC live enum case unit test" thm)
+    | SolverSpec.UNSAT NONE =>
+        die "FAIL: live CPC enum case replay returned no theorem"
+    | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for enum case bound"
+    | SolverSpec.UNKNOWN _ =>
+        die "FAIL: cvc5 returned unknown for enum case bound"
+  end
+
+fun cpc_live_checked_replay_option_exhaustiveness_success () =
+  let
+    val goal =
+      ``(option_CASE (value:int option) n s <=> n) ==>
+        value = NONE \/ ?x. value = SOME x``
+  in
+    case CVC.CVC_SMT_CPC_Prover ([], goal) of
+      SolverSpec.UNSAT (SOME thm) =>
+        (assert (Thm.concl thm ~~ goal,
+          "live CPC option replay returned an unexpected theorem");
+         check_oracle_tags "CPC live option exhaustiveness unit test" thm)
+    | SolverSpec.UNSAT NONE =>
+        die "FAIL: live CPC option replay returned no theorem"
+    | SolverSpec.SAT _ =>
+        die "FAIL: cvc5 reported sat for option exhaustiveness"
+    | SolverSpec.UNKNOWN _ =>
+        die "FAIL: cvc5 returned unknown for option exhaustiveness"
+  end
 
 fun cpc_live_checked_replay_bv_xor_success () =
   case CVC.CVC_SMT_CPC_Prover ([], ``(x : word32) ?? x = 0w``) of
@@ -14097,6 +14186,8 @@ let
       smtlib_roundtrip_known_gap_matrix_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
+    ("cpc_proof_parser_parameterized_datatype_tester_success",
+      cpc_proof_parser_parameterized_datatype_tester_success),
     ("cpc_proof_parser_ascribed_seq_empty_success",
       cpc_proof_parser_ascribed_seq_empty_success),
     ("cpc_proof_parser_ascribed_bag_empty_success",
@@ -14188,6 +14279,12 @@ let
       cpc_live_checked_replay_datatype_success),
     ("cpc_live_checked_replay_selector_success",
       cpc_live_checked_replay_selector_success),
+    ("cpc_live_checked_replay_record_extensionality_success",
+      cpc_live_checked_replay_record_extensionality_success),
+    ("cpc_live_checked_replay_enum_case_success",
+      cpc_live_checked_replay_enum_case_success),
+    ("cpc_live_checked_replay_option_exhaustiveness_success",
+      cpc_live_checked_replay_option_exhaustiveness_success),
     ("cpc_live_checked_replay_bv_xor_success",
       cpc_live_checked_replay_bv_xor_success),
     ("cpc_live_checked_replay_bv_bitblast_success",

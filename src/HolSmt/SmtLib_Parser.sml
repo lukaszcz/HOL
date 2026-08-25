@@ -6452,6 +6452,10 @@ in
   val parse_type = parse_type
   val parse_type_list = parse_type_list
 
+  (* Apply a dictionary symbol when a client parser has already separated
+     its indices and term arguments according to its own concrete syntax. *)
+  val apply_term = t_with_term_args
+
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term
   val parse_term_list = parse_term_list

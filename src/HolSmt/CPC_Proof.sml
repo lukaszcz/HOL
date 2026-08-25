@@ -53,7 +53,7 @@ struct
     mk_rule ProofRule ("false_intro", "false_intro"),
     mk_rule ProofRule ("false_elim", "false_elim"),
     mk_rule ProofRule ("distinct_values", "datatype"),
-    mk_rule ProofRule ("dt_split", "datatype"),
+    mk_rule ProofRule ("dt_split", "dt_split"),
     mk_rule ProofRule ("dt-cycle", "datatype_eq"),
     mk_rule ProofRule ("dt", "datatype"),
     mk_rule ProofRule ("resolution", "resolution"),
@@ -116,6 +116,8 @@ struct
     mk_rule RareRewrite ("arith-divisible-elim", "rewrite"),
     mk_rule RareRewrite ("arith-abs-eq", "arith_abs_eq"),
     mk_rule RareRewrite ("arith-abs-int-gt", "arith_abs_int_gt"),
+    mk_rule RareRewrite ("arith-geq-ite-lift", "rewrite"),
+    mk_rule RareRewrite ("arith-leq-ite-lift", "rewrite"),
     mk_rule RareRewrite ("arith-div-total-zero-real", "rewrite"),
     mk_rule RareRewrite ("arith-div-total-zero-int", "rewrite"),
     mk_rule RareRewrite ("arith-int-div-total", "rewrite"),
@@ -261,7 +263,17 @@ struct
     mk_rule RareRewrite ("bv-ule-eliminate", "rewrite"),
     mk_rule RareRewrite ("distinct-false", "rewrite"),
     mk_rule RareRewrite ("distinct-binary-elim", "rewrite"),
-    mk_rule RareRewrite ("dt-collapse-selector", "datatype_eq")
+    (* Complete cvc5 1.3.4 datatype rewrite family from Datatypes.eo.  Each
+       certificate is a closed datatype equality discharged by the shared
+       checked datatype prover. *)
+    mk_rule RareRewrite ("dt-inst", "datatype_eq"),
+    mk_rule RareRewrite ("dt-collapse-selector", "datatype_eq"),
+    mk_rule RareRewrite ("dt-collapse-tester", "datatype_eq"),
+    mk_rule RareRewrite ("dt-collapse-tester-singleton", "datatype_eq"),
+    mk_rule RareRewrite ("dt-cons-eq", "datatype_eq"),
+    mk_rule RareRewrite ("dt-cons-eq-clash", "datatype_eq"),
+    mk_rule RareRewrite ("dt-collapse-updater", "datatype_eq"),
+    mk_rule RareRewrite ("dt-updater-elim", "datatype_eq")
   ]
 
   val unknown_cvc_version = "<unknown>"

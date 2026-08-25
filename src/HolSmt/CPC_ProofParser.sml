@@ -560,6 +560,28 @@ local
               | [] => raise ERR "parse_term"
                   "CPC `_` application expects a function"
             end
+          (* CPC declares [is] as a parameterized constant whose first
+             explicit argument is a constructor symbol, rather than as the
+             indexed identifier used by SMT-LIB.  Keep that symbol opaque
+             until the datatype scrutinee has been typed; in particular, do
+             not elaborate it as a nullary constructor application. *)
+          else if head = "is" then
+            let
+              val constructor = get_token ()
+              val _ =
+                if constructor = "(" orelse constructor = ")" then
+                  raise ERR "parse_term"
+                    "CPC datatype tester expects a constructor symbol"
+                else ()
+              val scrutinee = parse_term dicts_ref get_token
+              val _ = Library.expect_token ")" (get_token ())
+              val constructor_parameter = Term.mk_var
+                (constructor, Type.gen_tyvar ())
+              val (_, tmdict) = !dicts_ref
+            in
+              SmtLib_Parser.apply_term tmdict "is"
+                [constructor_parameter] [scrutinee]
+            end
           else if head = "@var" then
             let
               val var_name = get_token ()

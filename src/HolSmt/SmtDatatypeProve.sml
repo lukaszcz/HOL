@@ -43,6 +43,32 @@ struct
       NONE => false
     | SOME tyi => not (List.null (TypeBasePure.constructors_of tyi))
 
+  fun constructors_of ty =
+    case TypeBase.fetch ty of
+      NONE => raise ERR "constructors_of" "type is not a datatype"
+    | SOME tyinfo => List.map (TypeBasePure.cinst ty)
+        (TypeBasePure.constructors_of tyinfo)
+
+  (* HOL has no primitive tester constant.  The checked SMT encoding of a
+     tester is its canonical TypeBase case expression. *)
+  fun datatype_tester_term ty constructor scrutinee =
+    let
+      fun clause constructor' =
+        let
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
+          val vars = List.map Term.genvar doms
+          val pattern = Term.list_mk_comb (constructor', vars)
+          val result =
+            if Term.same_const constructor constructor' then boolSyntax.T
+            else boolSyntax.F
+        in
+          (pattern, result)
+        end
+    in
+      TypeBase.mk_case
+        (scrutinee, List.map clause (constructors_of ty))
+    end
+
   fun datatype_types t =
     List.filter has_constructors (term_types t)
 
@@ -64,10 +90,14 @@ struct
       val one_one = List.mapPartial (Lib.total TypeBase.one_one_of) [ty]
       val distinct = List.mapPartial (Lib.total TypeBase.distinct_of) [ty]
       val case_defs = List.mapPartial (Lib.total TypeBase.case_def_of) [ty]
+      val accessors =
+        Option.getOpt (Lib.total TypeBase.accessors_of ty, [])
+      val updates = Option.getOpt (Lib.total TypeBase.updates_of ty, [])
       val one_one_expanded = List.concat (List.map conjuncts one_one)
       val distinct_expanded = List.concat (List.map conjuncts distinct)
     in
-      one_one_expanded @ with_gsym distinct_expanded @ case_defs
+      one_one_expanded @ with_gsym distinct_expanded @ case_defs @
+      accessors @ updates
     end
 
   fun datatype_rewrite_thms t =
@@ -197,5 +227,18 @@ struct
     metis_datatype_prove t
     handle Feedback.HOL_ERR _ =>
     unsupported t
+
+  (* Establish a datatype consequence under its actual HOL assumptions.  The
+     closed implication is proved from TypeBase facts and then instantiated
+     with ASSUME, so callers never discard or manufacture hypotheses. *)
+  fun datatype_consequence_prove (assumptions, conclusion) =
+    let
+      val implication = List.foldr boolSyntax.mk_imp conclusion assumptions
+      val theorem = datatype_prove implication
+    in
+      List.foldl
+        (fn (assumption, thm) => Thm.MP thm (Thm.ASSUME assumption))
+        theorem assumptions
+    end
 
 end
