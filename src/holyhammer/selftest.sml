@@ -3490,7 +3490,162 @@ fun test_hhMePo_live_context_constructor () =
 
 val _ = test_hhMePo_live_context_constructor ()
 
+fun learn_real_close expected actual =
+  Real.abs (expected - actual) < 0.000000001
+
+fun test_hhLearn_constants_idf_and_dependencies () =
+  let
+    val constants = hhLearn.default_constants
+    val facts =
+      [("FixtureTheory.a", [1, 1, 2]),
+       ("FixtureTheory.b", [2, 3]),
+       ("FixtureTheory.c", [2])]
+    val idf = hhLearn.create_idf_table facts
+    val calls = ref ([] : string list)
+    fun dependencies thmid =
+      (calls := thmid :: !calls;
+       if thmid = "FixtureTheory.a" then ["FixtureTheory.base"] else [])
+    val dep_table = hhLearn.build_dep_table dependencies
+      (facts @ [("FixtureTheory.a", [9])])
+  in
+    expect "hhLearn centralizes the verbatim sparse-NB constants"
+      (learn_real_close 30.0 (#init_val constants) andalso
+       learn_real_close 5.0 (#pos_weight constants) andalso
+       learn_real_close ~18.0 (#def_val constants) andalso
+       learn_real_close 0.2 (#tau constants) andalso
+       #def_prior_weight constants = 1000 andalso
+       #max_dependencies constants = 20);
+    expect "hhLearn computes plain IDF in one fact-list fold"
+      (hhLearn.idf_nfacts idf = 3 andalso
+       hhLearn.document_frequency idf 1 = SOME 1 andalso
+       hhLearn.document_frequency idf 2 = SOME 3 andalso
+       hhLearn.document_frequency idf 3 = SOME 1 andalso
+       case (hhLearn.idf_of idf 1, hhLearn.idf_of idf 2,
+             hhLearn.idf_of idf 3) of
+           (SOME one, SOME two, SOME three) =>
+             learn_real_close (Math.ln 3.0) one andalso
+             learn_real_close 0.0 two andalso
+             learn_real_close (Math.ln 3.0) three
+         | _ => false);
+    expect "hhLearn builds each dependency-table entry once"
+      (length (!calls) = 3 andalso
+       hhLearn.dependencies_of dep_table "FixtureTheory.a" =
+         SOME ["FixtureTheory.base"] andalso
+       hhLearn.dependencies_of dep_table "FixtureTheory.missing" = NONE)
+  end
+
+val _ = test_hhLearn_constants_idf_and_dependencies ()
+
+fun learn_fact thmid features def concl : hhLearn.fact_info =
+  {thmid = thmid, features = features, def = def, concl = concl}
+
+fun learn_model facts dependencies =
+  let
+    val feature_facts = map (fn (fact : hhLearn.fact_info) =>
+      (#thmid fact, #features fact)) facts
+  in
+    hhLearn.train_nb hhLearn.default_constants
+      (hhLearn.create_idf_table feature_facts)
+      (hhLearn.dep_table_of dependencies) facts
+  end
+
+fun test_hhLearn_nb_counts_and_scores () =
+  let
+    val facts =
+      [learn_fact "A" [1, 2] false NONE,
+       learn_fact "B" [2, 3] false NONE,
+       learn_fact "C" [4] false NONE]
+    val model = learn_model facts
+      [("A", []), ("B", ["A"]), ("C", [])]
+    val goal_features = [(1, 1.0), (4, 0.5), (999, 1000000.0)]
+    val parts = valOf (hhLearn.nb_score_parts model goal_features "A")
+    val ln3 = Math.ln 3.0
+    val ln_three_halves = Math.ln 1.5
+    val expected_prior = 30.0 * Math.ln 1001.0
+    val expected_positive = ln3 * Math.ln (5.0 * 1000.0 / 1001.0)
+    val expected_absent = 0.5 * ln3 * ~18.0
+    val expected_negative = 0.2 * ln_three_halves * Math.ln
+      (1.0 - 1000.0 / 1001.0)
+    val scores = hhLearn.nb_scores model
+      {pool = ["A", "not-in-model"], goal_features = goal_features}
+  in
+    expect "hhLearn trains exact self-prior and dependency counts"
+      (hhLearn.nb_tfreq model "A" = SOME 1001 andalso
+       hhLearn.nb_tfreq model "B" = SOME 1000 andalso
+       hhLearn.nb_sfreq model "A" 1 = SOME 1000 andalso
+       hhLearn.nb_sfreq model "A" 2 = SOME 1001 andalso
+       hhLearn.nb_sfreq model "A" 3 = SOME 1);
+    expect "hhLearn NB score has exact prior and positive terms"
+      (learn_real_close expected_prior (#prior parts) andalso
+       learn_real_close expected_positive (#positive parts));
+    expect "hhLearn NB score has exact absent and negative terms"
+      (learn_real_close expected_absent (#absent parts) andalso
+       learn_real_close expected_negative (#negative parts) andalso
+       learn_real_close
+         (expected_prior + expected_positive + expected_absent +
+          expected_negative) (#total parts));
+    expect "hhLearn drops model-unknown goal features and scores pool only"
+      (length scores = 1 andalso #1 (hd scores) = "A" andalso
+       learn_real_close (#total parts) (#2 (hd scores)) andalso
+       hhLearn.nb_rank model
+         {pool = ["not-in-model", "A"], goal_features = goal_features,
+          n = 2} = ["A"])
+  end
+
+val _ = test_hhLearn_nb_counts_and_scores ()
+
+fun test_hhLearn_training_filters () =
+  let
+    val targets = List.tabulate (21, fn index =>
+      learn_fact ("target" ^ Int.toString index) [index] false NONE)
+    val target_names = map (fn (fact : hhLearn.fact_info) => #thmid fact)
+      targets
+    val source_twenty = learn_fact "source20" [100] false NONE
+    val source_twenty_one = learn_fact "source21" [101] false NONE
+    val size_model = learn_model
+      (targets @ [source_twenty, source_twenty_one])
+      (map (fn name => (name, [])) target_names @
+       [("source20", List.take (target_names, 20)),
+        ("source21", target_names)])
+    val definition_model = learn_model
+      [learn_fact "definition_target" [1] false NONE,
+       learn_fact "definition_source" [2] true NONE]
+      [("definition_target", []),
+       ("definition_source", ["definition_target"])]
+    val pure_conclusion = boolSyntax.mk_imp (boolSyntax.T, boolSyntax.T)
+    val nonpure_conclusion = ``([] : bool list) = []``
+    val pure_model = learn_model
+      [learn_fact "pure" [1] false (SOME pure_conclusion),
+       learn_fact "nonpure" [2] false (SOME nonpure_conclusion),
+       learn_fact "uses" [3] false (SOME boolSyntax.T)]
+      [("pure", []), ("nonpure", []),
+       ("uses", ["pure", "nonpure"])]
+    val broken_model = learn_model
+      [learn_fact "intact_target" [1] false NONE,
+       learn_fact "broken_source" [2] false NONE]
+      [("intact_target", []),
+       ("broken_source", ["intact_target", "missing"])]
+  in
+    expect "hhLearn trains 20 dependencies but self-trains over-20 proofs"
+      (hhLearn.nb_tfreq size_model "target0" = SOME 1001 andalso
+       hhLearn.nb_tfreq size_model "target19" = SOME 1001 andalso
+       hhLearn.nb_tfreq size_model "target20" = SOME 1000 andalso
+       hhLearn.nb_tfreq size_model "source21" = SOME 1000);
+    expect "hhLearn def-stature facts train empty dependency lists"
+      (hhLearn.nb_tfreq definition_model "definition_target" = SOME 1000);
+    expect "hhLearn drops pure min/bool dependencies only"
+      (hhLearn.pure_logic_concl pure_conclusion andalso
+       not (hhLearn.pure_logic_concl nonpure_conclusion) andalso
+       hhLearn.nb_tfreq pure_model "pure" = SOME 1000 andalso
+       hhLearn.nb_tfreq pure_model "nonpure" = SOME 1001 andalso
+       hhLearn.nb_sfreq pure_model "nonpure" 3 = SOME 1);
+    expect "hhLearn dependency training requires an intact model path"
+      (hhLearn.nb_tfreq broken_model "intact_target" = SOME 1000)
+  end
+
+val _ = test_hhLearn_training_filters ()
+
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
-  hhCache hhSchedule hhStature hhMePo
+  hhCache hhSchedule hhStature hhMePo hhLearn
 in end

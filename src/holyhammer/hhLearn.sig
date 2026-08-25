@@ -1,0 +1,72 @@
+signature hhLearn =
+sig
+  type constants =
+    {init_val : real,
+     pos_weight : real,
+     def_val : real,
+     tau : real,
+     def_prior_weight : int,
+     max_dependencies : int}
+
+  val default_constants : constants
+
+  type idf_table
+  val create_idf_table :
+    (mlThmData.thmid * mlFeature.fea) list -> idf_table
+  val idf_nfacts : idf_table -> int
+  val document_frequency : idf_table -> int -> int option
+  val idf_of : idf_table -> int -> real option
+  val idf_entries : idf_table -> (int * real) list
+
+  type dep_table
+  val dep_table_of : (mlThmData.thmid * mlThmData.thmid list) list ->
+    dep_table
+  val build_dep_table :
+    (mlThmData.thmid -> mlThmData.thmid list) ->
+    (mlThmData.thmid * mlFeature.fea) list -> dep_table
+  val create_dep_table : mlThmData.thmdata -> dep_table
+  val dependencies_of : dep_table -> mlThmData.thmid ->
+    mlThmData.thmid list option
+  val dependency_entries : dep_table ->
+    (mlThmData.thmid * mlThmData.thmid list) list
+
+  val pure_logic_concl : Term.term -> bool
+
+  type fact_info =
+    {thmid : mlThmData.thmid,
+     features : mlFeature.fea,
+     def : bool,
+     concl : Term.term option}
+
+  type nb_model
+  type score_parts =
+    {prior : real,
+     positive : real,
+     absent : real,
+     negative : real,
+     total : real}
+
+  val train_nb :
+    constants -> idf_table -> dep_table -> fact_info list -> nb_model
+  val train_nb_from_thmdata :
+    constants -> idf_table -> dep_table -> hhStature.statures ->
+    mlThmData.thmdata -> nb_model
+  val nb_thmids : nb_model -> mlThmData.thmid list
+  val nb_tfreq : nb_model -> mlThmData.thmid -> int option
+  val nb_sfreq : nb_model -> mlThmData.thmid -> int -> int option
+  val nb_knows_feature : nb_model -> int -> bool
+
+  (* Goal-feature weights multiply the positive and absent-feature terms.
+     Features unknown to the model are discarded before scoring. *)
+  val nb_score_parts :
+    nb_model -> (int * real) list -> mlThmData.thmid ->
+    score_parts option
+  val nb_scores :
+    nb_model -> {pool : mlThmData.thmid list,
+                 goal_features : (int * real) list} ->
+    (mlThmData.thmid * real) list
+  val nb_rank :
+    nb_model -> {pool : mlThmData.thmid list,
+                 goal_features : (int * real) list,
+                 n : int} -> mlThmData.thmid list
+end
