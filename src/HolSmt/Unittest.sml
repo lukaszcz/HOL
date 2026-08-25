@@ -13099,14 +13099,67 @@ in
 end
 
 fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
-  (check_oracle_tags "Z3_SMT_Prover"
-     (Thm.mk_oracle_thm "HolSmtLib" ([], boolSyntax.T));
-   die "FAIL: oracle-tagged theorem passed the Z3_TAC oracle gate")
+let
+  val old_accepted = !Sanity.accepted_oracles
+  fun restore () = Sanity.accepted_oracles := old_accepted
+  fun run () =
+    let
+      val oracle_thm =
+        Thm.mk_oracle_thm "HolSmtLib" ([], boolSyntax.T)
+      (* The checked boundary must not inherit Sanity's mutable policy. *)
+      val () = Sanity.accepted_oracles :=
+        "HolSmtLib" :: !Sanity.accepted_oracles
+    in
+      (ignore (Z3.check_reconstructed_theorem "Z3_SMT_Prover"
+         (([], boolSyntax.T), oracle_thm));
+       die "FAIL: oracle-tagged theorem passed the Z3_TAC oracle gate")
+      handle Feedback.HOL_ERR holerr =>
+        let val msg = Feedback.message_of holerr
+        in
+          assert (String.isSubstring "unexpected oracle/axiom tags" msg,
+            "oracle gate diagnostic did not mention unexpected tags: " ^ msg)
+        end
+    end
+in
+  Portable.finally restore run ()
+end
+
+fun z3_tac_oracle_tag_gate_rejects_accepted_axiom () =
+let
+  val old_accepted = !Sanity.accepted_axioms
+  val (_, axiom_tags) = Tag.dest_tag (Thm.tag smt_nonfree_ind)
+  fun restore () = Sanity.accepted_axioms := old_accepted
+  fun run () =
+    let
+      (* Even explicitly accepting this axiom through Sanity must not weaken
+         the checked solver boundary. *)
+      val () = Sanity.accepted_axioms :=
+        axiom_tags @ !Sanity.accepted_axioms
+    in
+      (ignore (Z3.check_reconstructed_theorem "Z3_SMT_Prover"
+         ((Thm.hyp smt_nonfree_ind, Thm.concl smt_nonfree_ind),
+          smt_nonfree_ind));
+       die "FAIL: axiom-tagged theorem passed the Z3_TAC oracle gate")
+      handle Feedback.HOL_ERR holerr =>
+        let val msg = Feedback.message_of holerr
+        in
+          assert (String.isSubstring "unexpected oracle/axiom tags" msg,
+            "axiom gate diagnostic did not mention unexpected tags: " ^ msg)
+        end
+    end
+in
+  Portable.finally restore run ()
+end
+
+fun checked_smt_tac_rejects_unsat_without_theorem () =
+  (ignore (HolSmtLib.GENERIC_SMT_TAC
+     (fn _ => SolverSpec.UNSAT NONE) ([], boolSyntax.T));
+   die "FAIL: checked SMT tactic accepted UNSAT without a theorem")
   handle Feedback.HOL_ERR holerr =>
     let val msg = Feedback.message_of holerr
     in
-      assert (String.isSubstring "unexpected oracle/axiom tags" msg,
-        "oracle gate diagnostic did not mention unexpected tags: " ^ msg)
+      assert (String.isSubstring "without a checked theorem" msg,
+        "proofless UNSAT diagnostic did not explain the failure: " ^ msg)
     end
 
 fun smt_resource_diagnostic_contract () =
@@ -13661,6 +13714,12 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
+      z3_tac_oracle_tag_gate_rejects_oracle_thm),
+    ("z3_tac_oracle_tag_gate_rejects_accepted_axiom",
+      z3_tac_oracle_tag_gate_rejects_accepted_axiom),
+    ("checked_smt_tac_rejects_unsat_without_theorem",
+      checked_smt_tac_rejects_unsat_without_theorem),
     ("library_type_contains_nested_arguments_success",
       library_type_contains_nested_arguments_success),
     ("smtlib_string_literal_codec_success",
@@ -14241,8 +14300,6 @@ let
       z3_proof_replay_failure_diagnostic),
     ("z3_proof_replay_malformed_premise_diagnostics",
       z3_proof_replay_malformed_premise_diagnostics),
-    ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
-      z3_tac_oracle_tag_gate_rejects_oracle_thm),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",

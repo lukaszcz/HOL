@@ -20,10 +20,38 @@ structure HolSmtLib :> HolSmtLib = struct
       raise ERR
         "solver reports negated term to be 'satisfiable' (model returned)"
     | SolverSpec.UNSAT NONE =>
-      ([], fn _ => Thm.mk_oracle_thm "HolSmtLib" goal)
+      raise ERR "checked solver returned UNSAT without a checked theorem"
     | SolverSpec.UNSAT (SOME thm) =>
       (* 'thm' should be of the form "A' |- concl", where A' \subseteq A, and
          (A, concl) is the input goal (cf. SolverSpec.sml) *)
+      let
+        val () = Library.check_oracle_tags
+          "HolSmtLib" "GENERIC_SMT_TAC" thm
+      in
+        ([], fn _ => thm)
+      end
+    | SolverSpec.UNKNOWN NONE =>
+      raise ERR
+        "solver reports 'unknown' (solver not installed/problem too hard?)"
+    | SolverSpec.UNKNOWN (SOME message) =>
+      raise ERR ("solver reports 'unknown' (" ^ message ^ ")")
+  end
+
+  (* Keep the oracle-producing path disjoint from GENERIC_SMT_TAC, so a
+     checked tactic's call graph contains no mk_oracle_thm branch. *)
+  fun ORACLE_SMT_TAC solver goal =
+  let
+    val ERR = Feedback.mk_HOL_ERR "HolSmtLib" "ORACLE_SMT_TAC"
+  in
+    case solver goal of
+      SolverSpec.SAT NONE =>
+      raise ERR "solver reports negated term to be 'satisfiable'"
+    | SolverSpec.SAT (SOME _) =>
+      raise ERR
+        "solver reports negated term to be 'satisfiable' (model returned)"
+    | SolverSpec.UNSAT NONE =>
+      ([], fn _ => Thm.mk_oracle_thm "HolSmtLib" goal)
+    | SolverSpec.UNSAT (SOME thm) =>
       ([], fn _ => thm)
     | SolverSpec.UNKNOWN NONE =>
       raise ERR
@@ -32,10 +60,10 @@ structure HolSmtLib :> HolSmtLib = struct
       raise ERR ("solver reports 'unknown' (" ^ message ^ ")")
   end
 
-  val CVC_ORACLE_TAC = GENERIC_SMT_TAC CVC.CVC_SMT_Oracle
+  val CVC_ORACLE_TAC = ORACLE_SMT_TAC CVC.CVC_SMT_Oracle
   val CVC_TAC = GENERIC_SMT_TAC CVC.CVC_SMT_Prover
-  val YICES_TAC = GENERIC_SMT_TAC Yices.Yices_Oracle
-  val Z3_ORACLE_TAC = GENERIC_SMT_TAC Z3.Z3_SMT_Oracle
+  val YICES_TAC = ORACLE_SMT_TAC Yices.Yices_Oracle
+  val Z3_ORACLE_TAC = ORACLE_SMT_TAC Z3.Z3_SMT_Oracle
   val Z3_TAC = GENERIC_SMT_TAC Z3.Z3_SMT_Prover
 
   fun assume_thms thms =

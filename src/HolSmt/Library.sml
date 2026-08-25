@@ -348,16 +348,28 @@ struct
     " [" ^ hyps_contents ^ "] |- " ^ term_to_string (Thm.concl thm)
   end
 
-  (* srcname is only a label for Sanity's report; the caller supplies it
-     because there need not be a current theory to name --- HolSmtLib
-     probes the solvers as it loads, before any segment is open *)
-  fun check_oracle_tags srcname name thm =
-    if Sanity.check_tags ((srcname, name), thm) then
-      raise Feedback.mk_HOL_ERR "HolSmtLib" "check_oracle_tags"
-        ("solver '" ^ name ^ "' produced unexpected oracle/axiom tags: " ^
-         thm_to_string thm)
-    else
-      ()
+  (* Checked solver replay may use theorems loaded from a theory file, whose
+     unavoidable HOL4 tag is DISK_THM.  It may not use any other oracle or
+     any axiom.  In particular, do not delegate this security boundary to
+     Sanity.check_tags: its accepted-oracle and accepted-axiom lists are
+     mutable process-wide policy. *)
+  fun check_oracle_tags _ name thm =
+    let
+      val (oracles, axioms) = Tag.dest_tag (Thm.tag thm)
+      val unexpected_oracles =
+        List.filter (fn oracle => oracle <> "DISK_THM") oracles
+      fun tags_to_string tags =
+        "[" ^ String.concatWith ", " tags ^ "]"
+    in
+      if null unexpected_oracles andalso null axioms then
+        ()
+      else
+        raise Feedback.mk_HOL_ERR "HolSmtLib" "check_oracle_tags"
+          ("solver '" ^ name ^
+           "' produced unexpected oracle/axiom tags; oracles=" ^
+           tags_to_string unexpected_oracles ^ "; axioms=" ^
+           tags_to_string axioms ^ "; theorem: " ^ thm_to_string thm)
+    end
 
   (* `is_def_oriented` must return false when:
      1. `lhs` is not a variable in `var_set` but `rhs` is, or

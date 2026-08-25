@@ -4,6 +4,8 @@ signature HolSmtLib = sig
 
   include Abbrev
 
+  (* Fail-closed: UNSAT must carry a theorem with no runtime-oracle or axiom
+     tags. *)
   val GENERIC_SMT_TAC : (goal -> SolverSpec.result) -> tactic
 
   val CVC_ORACLE_TAC : tactic

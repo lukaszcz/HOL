@@ -329,7 +329,10 @@ For a theorem-producing result, the trusted path is:
   datatypes and builds selector/tester case expressions.
 - `Z3.sml`: invokes the configured Z3 executable, requests proof output,
   parses only `unsat` proof-producing results and calls
-  `Library.check_oracle_tags` on the reconstructed theorem.
+  `Library.check_oracle_tags` on the reconstructed theorem.  That check uses
+  a fixed local policy: only HOL4's unavoidable `DISK_THM` tag is accepted;
+  all other oracle tags and every axiom tag are rejected independently of
+  the mutable `Sanity.accepted_oracles` and `Sanity.accepted_axioms` lists.
 - `Z3_ProofParser.sml`: parses Z3 proof terms through the versioned proof-rule
   registry and rejects unknown rules.
 - `Z3_ProofReplay.sml`: replays supported proof rules in HOL and reports
@@ -344,8 +347,9 @@ For a theorem-producing result, the trusted path is:
   external process execution are part of the surrounding HOL4 TCB.
 
 `Z3_ORACLE_TAC` and `Z3.Z3_SMT_Oracle` are outside this checked boundary. The
-generic tactic's `UNSAT NONE` oracle branch is not an acceptable result for
-`Z3_TAC`; `Z3.Z3_SMT_Prover` must return `UNSAT (SOME thm)` after proof replay.
+private oracle-tactic wrapper is the only wrapper that accepts `UNSAT NONE`.
+The public `GENERIC_SMT_TAC`, and therefore `Z3_TAC`, rejects it;
+`Z3.Z3_SMT_Prover` must return `UNSAT (SOME thm)` after proof replay.
 
 Checked `CVC_TAC` path:
 
