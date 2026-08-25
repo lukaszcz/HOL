@@ -14,7 +14,13 @@ struct
 open HolKernel boolLib aiLib
 
 datatype regime = Bushy | Chainy
-datatype selector = Deps | Knn of int
+datatype selector =
+    Deps
+  | Knn of int
+  | Mepo of int
+  | Mash of int
+  | Mesh of int
+  | PerSlice
 datatype engine =
     Prover of string
   | Sched of {provers : string list, slices : int,
@@ -30,7 +36,7 @@ type journal_slice =
 type journal_entry =
   {run : string, thy : string, thm : string, goal_id : string,
    cond : string, regime : regime, selector : selector,
-   engine : engine, ho : bool option, prover : string,
+   engine : engine, ho : bool option, fresh : bool option, prover : string,
    prover_version : string option, nfacts : int,
    timeout : int, szs : string, t_prover : real,
    axioms_used : string list option, recon_ok : bool option,
@@ -77,18 +83,55 @@ fun string_of_regime Bushy = "bushy"
 
 fun string_of_selector Deps = "deps"
   | string_of_selector (Knn count) = "knn" ^ Int.toString count
+  | string_of_selector (Mepo count) = "mepo" ^ Int.toString count
+  | string_of_selector (Mash count) = "mash" ^ Int.toString count
+  | string_of_selector (Mesh count) = "mesh" ^ Int.toString count
+  | string_of_selector PerSlice = "perslice"
+
+fun filter_of_selector Deps = "deps"
+  | filter_of_selector (Knn _) = "knn"
+  | filter_of_selector (Mepo _) = "mepo"
+  | filter_of_selector (Mash _) = "mash"
+  | filter_of_selector (Mesh _) = "mesh"
+  | filter_of_selector PerSlice = "per-slice"
 
 fun regime_of_string "bushy" = Bushy
   | regime_of_string "chainy" = Chainy
   | regime_of_string text = raise Fail ("unknown evaluation regime: " ^ text)
 
 fun selector_of_string "deps" = Deps
+  | selector_of_string "perslice" = PerSlice
   | selector_of_string text =
-      if String.isPrefix "knn" text then
-        (case Int.fromString (String.extract (text, 3, NONE)) of
-             SOME count => Knn count
-           | NONE => raise Fail ("bad evaluation selector: " ^ text))
-      else raise Fail ("unknown evaluation selector: " ^ text)
+      let
+        fun counted prefix make =
+          if String.isPrefix prefix text then
+            let
+              val digits = String.extract (text, String.size prefix, NONE)
+            in
+              if digits <> "" andalso
+                 List.all Char.isDigit (String.explode digits) then
+                (case Int.fromString digits of
+                     SOME count => SOME (make count)
+                   | NONE => raise Fail
+                       ("bad evaluation selector: " ^ text))
+              else raise Fail ("bad evaluation selector: " ^ text)
+            end
+          else NONE
+      in
+        case counted "knn" Knn of
+            SOME selector => selector
+          | NONE =>
+              (case counted "mepo" Mepo of
+                   SOME selector => selector
+                 | NONE =>
+                     (case counted "mash" Mash of
+                          SOME selector => selector
+                        | NONE =>
+                            (case counted "mesh" Mesh of
+                                 SOME selector => selector
+                               | NONE => raise Fail
+                                   ("unknown evaluation selector: " ^ text))))
+      end
 
 (* This deliberately examines only the normalized goal, never a translation.
    Quantifier abstractions are consumed by their binder representation;
@@ -156,11 +199,26 @@ fun is_higher_order_goal tm =
     scan [] true (hhProblemGen.beta_eta_contract false tm)
   end
 
+(* [thy] is explicit so this classifier is pure and usable on a recorded
+   theorem independently of Theory.current_theory().  Contracting first
+   matches the normalized statement inspected by the other goal classifier. *)
+fun is_fresh_goal thy tm =
+  List.exists (fn constant => #Thy (dest_thy_const constant) = thy)
+    (find_terms is_const (hhProblemGen.beta_eta_contract false tm))
+
 fun validate_condition (condition : condition) =
-  case (#engine condition, #reconstruct condition) of
-      (Sched _, false) => raise Fail
+  case (#selector condition, #engine condition, #reconstruct condition) of
+      (PerSlice, Prover _, _) => raise Fail
+        "invalid hhEval Prover condition: perslice requires Sched"
+    | (Mepo _, Sched _, _) => raise Fail
+        "invalid hhEval Sched condition: mepo selectors require Prover"
+    | (Mash _, Sched _, _) => raise Fail
+        "invalid hhEval Sched condition: mash selectors require Prover"
+    | (Mesh _, Sched _, _) => raise Fail
+        "invalid hhEval Sched condition: mesh selectors require Prover"
+    | (_, Sched _, false) => raise Fail
         "invalid hhEval Sched condition: reconstruct must be true"
-    | (Sched {provers, slices, cores, max_proofs}, _) =>
+    | (_, Sched {provers, slices, cores, max_proofs}, _) =>
         if null provers then raise Fail
           "invalid hhEval Sched condition: provers must not be empty"
         else if slices < 1 then raise Fail
@@ -373,7 +431,7 @@ fun json_engine_params {provers, slices, cores, max_proofs} =
      ("max_proofs", JSON.INT (IntInf.fromInt max_proofs))]
 
 fun journal_json
-    {run, thy, thm, goal_id, cond, regime, selector, engine, ho, prover,
+    {run, thy, thm, goal_id, cond, regime, selector, engine, ho, fresh, prover,
      prover_version, nfacts, timeout, szs, t_prover, axioms_used,
      recon_ok, recon_method, t_recon, stac, error, stop, t_total, winner,
      slices} =
@@ -385,8 +443,12 @@ fun journal_json
        ("regime", JSON.STRING (string_of_regime regime)),
        ("selector", JSON.STRING (string_of_selector selector)),
        (* A missing flag is only possible after parsing an old journal;
-          rewrites still produce a valid v3 boolean cell field. *)
-       ("ho", JSON.BOOL (case ho of SOME value => value | NONE => false))]
+          rewrites still produce a valid boolean cell field. *)
+       ("ho", JSON.BOOL (case ho of SOME value => value | NONE => false)),
+       (* Likewise, parsing v1--v3 preserves the missing v4 classification
+          internally, while any newly written line has the v4 bool field. *)
+       ("fresh", JSON.BOOL
+          (case fresh of SOME value => value | NONE => false))]
     val winning =
       [("prover", JSON.STRING prover),
        ("prover_version", json_string_option prover_version),
@@ -494,7 +556,9 @@ fun parse_journal_value value : journal_entry =
      regime = regime_of_string (string_field "regime" value),
      selector = selector_of_string (string_field "selector" value),
      engine = engine,
-     ho = nullable_optional JSONUtil.asBool "ho" value, prover = prover,
+     ho = nullable_optional JSONUtil.asBool "ho" value,
+     fresh = nullable_optional JSONUtil.asBool "fresh" value,
+     prover = prover,
      prover_version = option_field JSONUtil.asString "prover_version" value,
      nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
      szs = string_field "szs" value, t_prover = real_field "t_prover" value,
@@ -648,7 +712,7 @@ fun header_json
     {expname, date, host, hol_commit, provers, corpus, added_from_dat,
      conditions, sample} =
   JSON.OBJECT
-    [("schema", JSON.INT 3),
+    [("schema", JSON.INT 4),
      ("expname", JSON.STRING expname), ("date", JSON.STRING date),
      ("host", JSON.STRING host), ("hol_commit", JSON.STRING hol_commit),
      ("provers", JSON.ARRAY (map json_prover provers)),
@@ -794,6 +858,11 @@ fun subset_metrics want entries =
   else SOME (make_metrics (List.filter (fn entry => #ho entry = SOME want)
     entries))
 
+fun fresh_subset_metrics want entries =
+  if List.exists (fn entry => #fresh entry = NONE) entries then NONE
+  else SOME (make_metrics (List.filter
+    (fn entry => #fresh entry = SOME want) entries))
+
 fun subset_json label metrics =
   JSON.OBJECT
     [("subset", JSON.STRING label),
@@ -813,61 +882,70 @@ fun condition_json name entries =
              ("cores", json_int cores), ("max_proofs", json_int max_proofs)]
   in
     JSON.OBJECT
-      ([("cond", JSON.STRING name), ("regime",
+       ([("cond", JSON.STRING name), ("regime",
         JSON.STRING (string_of_regime (#regime first))),
        ("selector", JSON.STRING (string_of_selector (#selector first))),
+       ("filter", JSON.STRING (filter_of_selector (#selector first))),
        ("prover", JSON.STRING (#prover first)),
        ("timeout", json_int (#timeout first)),
        ("metrics", json_metrics (make_metrics entries)),
        ("subsets", JSON.ARRAY
          [subset_json "HO" (subset_metrics true entries),
-          subset_json "non-HO" (subset_metrics false entries)])] @
+          subset_json "non-HO" (subset_metrics false entries)]),
+       ("fresh_subsets", JSON.ARRAY
+         [subset_json "seen" (fresh_subset_metrics false entries),
+          subset_json "fresh" (fresh_subset_metrics true entries)])] @
        schedule_fields)
   end
 
 type slice_contribution =
   {format : string, type_enc : string, lam_trans : string, prover : string,
-   nfacts : int, wins : int, reconstructed : int}
+   filter : string, nfacts : int, wins : int, reconstructed : int}
 
 fun winning_slice_fields entry =
   case #engine entry of
-      Prover _ => SOME ("fof", "", "", #prover entry, #nfacts entry)
+      Prover _ => SOME ("fof", "", "", #prover entry,
+        filter_of_selector (#selector entry), #nfacts entry)
     | Sched _ =>
         (case #winner entry of
              NONE => NONE
            | SOME slice =>
                SOME (#format slice, #type_enc slice, #lam_trans slice,
-                 #prover slice, #nfacts slice))
+                 #prover slice, #filter slice, #nfacts slice))
 
 fun slice_contributions entries : slice_contribution list =
   let
     fun add entry rows =
       case winning_slice_fields entry of
           NONE => rows
-        | SOME (format, type_enc, lam_trans, prover, nfacts) =>
+        | SOME (format, type_enc, lam_trans, prover, filter, nfacts) =>
             let
               fun same {format = old_format, type_enc = old_enc,
                         lam_trans = old_lam, prover = old_prover,
-                        nfacts = old_nfacts, ...} =
+                        filter = old_filter, nfacts = old_nfacts, ...} =
                 format = old_format andalso type_enc = old_enc andalso
                 lam_trans = old_lam andalso prover = old_prover andalso
+                filter = old_filter andalso
                 nfacts = old_nfacts
               val reconstructed = if reconstructed_cell entry then 1 else 0
             in
               case List.partition same rows of
                   ([], rest) =>
                     {format = format, type_enc = type_enc,
-                     lam_trans = lam_trans, prover = prover, nfacts = nfacts,
+                     lam_trans = lam_trans, prover = prover, filter = filter,
+                     nfacts = nfacts,
                      wins = 1, reconstructed = reconstructed} :: rest
                 | (old :: _, rest) =>
                     {format = #format old, type_enc = #type_enc old,
                      lam_trans = #lam_trans old, prover = #prover old,
-                     nfacts = #nfacts old, wins = #wins old + 1,
+                     filter = #filter old, nfacts = #nfacts old,
+                     wins = #wins old + 1,
                      reconstructed = #reconstructed old + reconstructed} :: rest
             end
     fun key row =
       #format row ^ "\000" ^ #type_enc row ^ "\000" ^ #lam_trans row ^
-      "\000" ^ #prover row ^ "\000" ^ Int.toString (#nfacts row)
+      "\000" ^ #prover row ^ "\000" ^ #filter row ^ "\000" ^
+      Int.toString (#nfacts row)
   in
     dict_sort (fn (left, right) => String.compare (key left, key right))
       (List.foldl (fn (entry, rows) => add entry rows) []
@@ -880,6 +958,7 @@ fun contribution_json row =
      ("type_enc", JSON.STRING (#type_enc row)),
      ("lam_trans", JSON.STRING (#lam_trans row)),
      ("prover", JSON.STRING (#prover row)), ("nfacts", json_int (#nfacts row)),
+     ("filter", JSON.STRING (#filter row)),
      ("wins", json_int (#wins row)),
      ("reconstructed", json_int (#reconstructed row))]
 
@@ -889,7 +968,8 @@ fun encoding_text "" = "legacy"
 fun contribution_markdown row =
   "| " ^ #format row ^ " | " ^ encoding_text (#type_enc row) ^ " | " ^
   (if #lam_trans row = "" then "legacy" else #lam_trans row) ^ " | " ^
-  #prover row ^ " | " ^ Int.toString (#nfacts row) ^ " | " ^
+  #prover row ^ " | " ^ #filter row ^ " | " ^
+  Int.toString (#nfacts row) ^ " | " ^
   Int.toString (#wins row) ^ " | " ^ Int.toString (#reconstructed row) ^
   " |\n"
 
@@ -1011,6 +1091,7 @@ fun condition_markdown name entries =
       case #engine first of Prover _ => #prover first | Sched _ => "schedule"
   in
     "| " ^ name ^ " | " ^ engine ^ " | " ^
+    filter_of_selector (#selector first) ^ " | " ^
     metrics_markdown (make_metrics entries) ^ " |\n"
   end
 
@@ -1083,9 +1164,9 @@ fun write_report_markdown expdir entries =
       "runs, size `ncore` to `machine_cores div cores_per_cell`; peak prover " ^
       "load is `ncore × cores_per_cell`.\n\n")
     val _ = TextIO.output (output,
-      "## Conditions\n\n| condition | prover | G | A | P | P% | R | R% | " ^
-      "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
-      "---:|---:|---:|\n")
+      "## Conditions\n\n| condition | prover | filter | G | A | P | P% | " ^
+      "R | R% | p50 | p90 | max |\n|---|---|---|---:|---:|---:|" ^
+      "---:|---:|---:|---:|---:|---:|\n")
     val _ = app (fn name => TextIO.output (output,
       condition_markdown name (entries_for_condition name entries))) conditions
     val _ = TextIO.output (output,
@@ -1100,8 +1181,27 @@ fun write_report_markdown expdir entries =
           (subset_metrics false cells))
       end) conditions
     val _ = TextIO.output (output,
+      "\n## Seen/fresh subsets\n\n| condition | filter | subset | G | A | " ^
+      "P | P% | R | R% | p50 | p90 | max |\n|---|---|---|---:|---:|" ^
+      "---:|---:|---:|---:|---:|---:|---:|\n")
+    val _ = app (fn name =>
+      let
+        val cells = entries_for_condition name entries
+        val filter = filter_of_selector (#selector (hd cells))
+        fun row label metrics =
+          case metrics of
+              NONE => "| " ^ name ^ " | " ^ filter ^ " | " ^ label ^
+                " | n/a |\n"
+            | SOME value => "| " ^ name ^ " | " ^ filter ^ " | " ^
+                label ^ " | " ^ metrics_markdown value ^ " |\n"
+      in
+        TextIO.output (output, row "seen" (fresh_subset_metrics false cells));
+        TextIO.output (output, row "fresh" (fresh_subset_metrics true cells))
+      end) conditions
+    val _ = TextIO.output (output,
       "\n## Slice contributions\n\n| format | encoding | lambda | prover | " ^
-      "facts | wins | reconstructed |\n|---|---|---|---|---:|---:|---:|\n")
+      "filter | facts | wins | reconstructed |\n" ^
+      "|---|---|---|---|---|---:|---:|---:|\n")
     val _ = app (fn row => TextIO.output (output, contribution_markdown row))
       contributions
     val _ = TextIO.output (output,
@@ -1272,11 +1372,12 @@ fun failed message : outcome =
   {recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
    error = SOME message}
 
-fun base_entry expdir thy name condition ho nfacts szs t_prover axioms version
-    (outcome : outcome) =
+fun base_entry expdir thy name condition ho fresh nfacts szs t_prover axioms
+    version (outcome : outcome) =
   {run = run_name expdir, thy = thy, thm = name, goal_id = goal_id thy name,
    cond = #cond_id condition, regime = #regime condition,
    selector = #selector condition, engine = #engine condition, ho = ho,
+   fresh = fresh,
    prover = (case #engine condition of Prover name => name | Sched _ => ""),
    prover_version = version, nfacts = nfacts, timeout = #timeout condition,
    szs = szs, t_prover = t_prover, axioms_used = axioms,
@@ -1298,8 +1399,8 @@ fun journal_theory_error expdir thy message =
        engine = Prover "", timeout = 0, reconstruct = false}
   in
     append_journal (journal_path expdir thy)
-      (base_entry expdir thy "__load__" condition NONE 0 "LoadFailure" 0.0
-         NONE NONE (failed message))
+      (base_entry expdir thy "__load__" condition NONE NONE 0 "LoadFailure"
+         0.0 NONE NONE (failed message))
   end
 
 fun pool_ids (thyl, thmidl) =
@@ -1340,6 +1441,15 @@ fun select_knn pool count goal =
       (mlFeature.fea_of_goal true goal)
   end
 
+fun select_filter filter pool count goal =
+  let
+    val thmdata = mlThmData.create_thmdata ()
+    val context = hhLearn.create_context thmdata
+  in
+    hhLearn.rank context
+      {filter = filter, pool = SOME pool, goal = goal, n = count}
+  end
+
 fun selected_premises_at condition pool thm goal knn_count =
   case #selector condition of
       Deps =>
@@ -1351,6 +1461,11 @@ fun selected_premises_at condition pool thm goal knn_count =
         end
     | Knn count => select_knn pool
         (case knn_count of NONE => count | SOME maximum => maximum) goal
+    | Mepo count => select_filter "mepo" pool count goal
+    | Mash count => select_filter "mash" pool count goal
+    | Mesh count => select_filter "mesh" pool count goal
+    | PerSlice => raise Fail
+        "invalid hhEval premise selection: perslice requires Sched"
 
 fun selected_premises condition pool thm goal =
   selected_premises_at condition pool thm goal NONE
@@ -1408,6 +1523,28 @@ fun rankings_for_schedule schedule premises =
     foldl add [] schedule
   end
 
+fun filter_maxima schedule =
+  let
+    fun add slice [] = [(#filter slice, #nfacts slice)]
+      | add slice ((filter, maximum) :: rest) =
+          if #filter slice = filter then
+            (filter, Int.max (maximum, #nfacts slice)) :: rest
+          else
+            (filter, maximum) :: add slice rest
+  in
+    foldl (fn ((_, slice), maxima) => add slice maxima) [] schedule
+  end
+
+fun per_slice_rankings schedule pool goal =
+  let
+    val context = hhLearn.create_context (mlThmData.create_thmdata ())
+    fun rank (filter, maximum) =
+      (filter, hhLearn.rank context
+        {filter = filter, pool = SOME pool, goal = goal, n = maximum})
+  in
+    map rank (filter_maxima schedule)
+  end
+
 fun version_of_prover name =
   case hhProver.lookup name of
       NONE => NONE
@@ -1422,17 +1559,25 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
     val options = schedule_options condition parameters
     val schedule = hhSlice.mk_schedule options
     val maximum = max_schedule_facts schedule
-    (* Schedule slices share one longest-first ranking and consume prefixes.
-       In particular, chainy kNN uses its chainy pool at the schedule's
-       maximum fact count, matching the v1 premise regime. *)
-    val premises = selected_premises_at condition pool thm goal (SOME maximum)
+    val rankings =
+      case #selector condition of
+          PerSlice => per_slice_rankings schedule pool goal
+        | _ =>
+            let
+              (* Legacy schedule selectors share one longest-first ranking.
+                 In particular, chainy kNN uses the schedule maximum. *)
+              val premises = selected_premises_at condition pool thm goal
+                (SOME maximum)
+            in
+              rankings_for_schedule schedule premises
+            end
     val proofs = ref
       ([] : (hhProver.slice * string list) list)
     fun progress (hhSchedule.ProofFound proof) = proofs := !proofs @ [proof]
       | progress _ = ()
     val result = hhSchedule.run
       {options = options, goal = goal,
-       rankings = rankings_for_schedule schedule premises,
+       rankings = rankings,
        progress = SOME progress}
     val slices = map (fn (slice, status, elapsed, cached) =>
       {slice = slice, szs = szs_name status, time = elapsed,
@@ -1447,6 +1592,7 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
        regime = #regime condition, selector = #selector condition,
        engine = #engine condition,
        ho = SOME (is_higher_order_goal (list_mk_imp goal)),
+       fresh = SOME (is_fresh_goal thy (list_mk_imp goal)),
        prover = prover, prover_version = version_of_prover prover,
        nfacts = nfacts,
        timeout = #timeout condition, szs = szs, t_prover = t_prover,
@@ -1501,7 +1647,8 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
   in
     case hhProver.lookup prover_name of
         NONE => base_entry expdir thy name condition
-          (SOME (is_higher_order_goal (list_mk_imp goal))) nfacts
+          (SOME (is_higher_order_goal (list_mk_imp goal)))
+          (SOME (is_fresh_goal thy (list_mk_imp goal))) nfacts
           "RunFailure" 0.0 NONE
           NONE (failed ("unknown HolyHammer prover: " ^ prover_name))
       | SOME prover =>
@@ -1524,7 +1671,8 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
                          | NONE => run_failure_error (#szs result)}
           in
             base_entry expdir thy name condition
-              (SOME (is_higher_order_goal (list_mk_imp goal))) nfacts
+              (SOME (is_higher_order_goal (list_mk_imp goal)))
+              (SOME (is_fresh_goal thy (list_mk_imp goal))) nfacts
               (szs_name (#szs result)) (#time result)
               (#used_axioms result) (#version result) outcome
           end
@@ -1547,17 +1695,21 @@ fun run_cell expdir thy theorem pool condition =
              (base_entry expdir thy (#1 theorem) condition
                 (SOME (is_higher_order_goal
                   (list_mk_imp (dest_thm (#2 theorem)))))
+                (SOME (is_fresh_goal thy
+                  (list_mk_imp (dest_thm (#2 theorem)))))
                 0 "Error" 0.0 NONE NONE (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name goal condition =
   append_journal (journal_path expdir thy)
     (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
-       0 "BrokenDeps" 0.0 NONE NONE no_outcome)
+       (SOME (is_fresh_goal thy goal)) 0 "BrokenDeps" 0.0 NONE NONE
+       no_outcome)
 
 fun evaluation_error_cell expdir thy name goal condition message =
   append_journal (journal_path expdir thy)
     (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
-       0 "Error" 0.0 NONE NONE (failed message))
+       (SOME (is_fresh_goal thy goal)) 0 "Error" 0.0 NONE NONE
+       (failed message))
 
 fun eval_loaded_theory expdir thy =
   let

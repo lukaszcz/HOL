@@ -1,7 +1,13 @@
 signature hhEval =
 sig
   datatype regime = Bushy | Chainy
-  datatype selector = Deps | Knn of int
+  datatype selector =
+      Deps
+    | Knn of int
+    | Mepo of int
+    | Mash of int
+    | Mesh of int
+    | PerSlice
   datatype engine =
       Prover of string
     | Sched of {provers : string list, slices : int,
@@ -17,7 +23,7 @@ sig
   type journal_entry =
     {run : string, thy : string, thm : string, goal_id : string,
      cond : string, regime : regime, selector : selector,
-     engine : engine, ho : bool option, prover : string,
+     engine : engine, ho : bool option, fresh : bool option, prover : string,
      prover_version : string option, nfacts : int,
      timeout : int, szs : string, t_prover : real,
      axioms_used : string list option, recon_ok : bool option,
@@ -47,6 +53,7 @@ sig
   val string_of_regime : regime -> string
   val string_of_selector : selector -> string
   val is_higher_order_goal : Term.term -> bool
+  val is_fresh_goal : string -> Term.term -> bool
   val validate_condition : condition -> unit
   val encode_condition : condition -> string
   val parse_condition : string -> condition
