@@ -1561,8 +1561,7 @@ QED
 
 Theorem RAT_LE:  bool (a <= b) = not (less (rat b) (rat a))
 Proof
-  RW_TAC std_ss [bool_def,TRUTH_REWRITES,not_def,ite_def,GSYM RAT_LT,
-    RAT_LEQ_LES]
+  RW_TAC std_ss [bool_def,TRUTH_REWRITES,not_def,ite_def,GSYM RAT_LT,RAT_LEQ_LES]
 QED
 
 Theorem COM_LE:  bool (a <= b) = not (less (num b) (num a))

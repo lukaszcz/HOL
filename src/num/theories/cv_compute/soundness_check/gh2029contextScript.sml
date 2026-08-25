@@ -209,3 +209,4 @@ Proof
   simp [demo_num_def] >>
   METIS_TAC [demo_choice_good, demo_good_def]
 QED
+
