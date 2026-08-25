@@ -46,18 +46,6 @@ fun extend_db {vname, path} =
 
 fun db_vnames() = #dom (!holpath_db)
 fun db_dirs() = #rng (!holpath_db)
-fun entries () = fold (fn entry => fn acc => entry :: acc) []
-fun restore_entries saved =
-  let
-    val db = List.foldl (fn ({vname, path}, db) =>
-      {mapf = Binarymap.insert (#mapf db, vname, path),
-       dom = Binaryset.add (#dom db, vname),
-       rng = Binaryset.add (#rng db, path)})
-      {mapf = Binarymap.mkDict String.compare, dom = empty_strset,
-       rng = empty_strset} saved
-  in
-    holpath_db := db
-  end
 
 fun warn s = TextIO.output(TextIO.stdErr, "WARNING: " ^ s ^ "\n")
 
@@ -327,19 +315,5 @@ fun search_for_extensions gen {skip,starter_dirs = dlist} =
     walk (initial_visited, self_results, List.map #2 seeds)
   end
 
-(* Project suppression must not discard the older .holpath mechanism. *)
-fun search_for_holpath_extensions_with_includes gen {skip, starter_dirs} =
-  let
-    val files = files_upward_in_hierarchy gen {diag = fn _ => ()}
-      {filenames = [holpath_file], starter_dirs = starter_dirs, skip = skip}
-  in
-    Binarymap.foldl
-      (fn (path, (_, contents), results) =>
-        {vname = extract_from_holpath_file contents, path = path} :: results)
-      [] files
-  end
-
-fun search_for_holpath_extensions args =
-  search_for_holpath_extensions_with_includes (fn _ => []) args
 
 end (* struct *)

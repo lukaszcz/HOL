@@ -12,8 +12,6 @@ sig
   val find_includes : string -> string list
   val extend_path_with_includes :
       {verbosity : int, lpref : string list ref} -> unit
-  val extend_path_with_holpath_includes :
-      {verbosity : int, lpref : string list ref} -> unit
 
 end;
 

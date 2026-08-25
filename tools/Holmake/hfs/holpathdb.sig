@@ -8,8 +8,6 @@ sig
   val extend_db : {vname: string, path : string} -> unit
   val db_vnames : unit -> string Binaryset.set (* domain of map *)
   val db_dirs : unit -> string Binaryset.set (* range of map *)
-  val entries : unit -> {vname : string, path : string} list
-  val restore_entries : {vname : string, path : string} list -> unit
   val fold : ({vname:string,path:string} -> 'a -> 'a) -> 'a -> 'a
   val owning_var : {path : string} -> {vname : string, rest : string} option
                   (* the registration whose directory contains the
@@ -44,17 +42,6 @@ sig
 
   (* uses the above *)
   val search_for_extensions :
-      (string -> string list) ->
-      {starter_dirs : string list, skip : string Binaryset.set} ->
-      {vname:string, path:string} list
-
-  (* Like [search_for_extensions], but consults legacy .holpath files only. *)
-  val search_for_holpath_extensions :
-      {starter_dirs : string list, skip : string Binaryset.set} ->
-      {vname:string, path:string} list
-
-  (* Like [search_for_holpath_extensions], also walking explicit includes. *)
-  val search_for_holpath_extensions_with_includes :
       (string -> string list) ->
       {starter_dirs : string list, skip : string Binaryset.set} ->
       {vname:string, path:string} list

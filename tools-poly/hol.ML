@@ -74,21 +74,18 @@ fun parse_subcommand args =
          | _ => (REPL, args)) (* default to REPL, keep all args *)
 
 (* Get heap name from Holmakefile or return default *)
-fun get_heap_name no_project =
+fun get_heap_name () =
   let
     val default = Systeml.DEFAULT_STATE
     val heap =
         if OS.FileSys.access ("Holmakefile", [OS.FileSys.A_READ]) then
           let
             open Holmake_types
-            val _ =
-                List.app holpathdb.extend_db
-                  ((if no_project then
-                       holpathdb.search_for_holpath_extensions_with_includes
-                         ReadHMF.find_includes
-                    else holpathdb.search_for_extensions ReadHMF.find_includes)
-                    {starter_dirs = [OS.FileSys.getDir()],
-                     skip = holpathdb.db_dirs()})
+            val holpathdb_extensions =
+                holpathdb.search_for_extensions ReadHMF.find_includes
+                  {starter_dirs = [OS.FileSys.getDir()],
+                   skip = holpathdb.db_dirs()}
+            val _ = List.app holpathdb.extend_db holpathdb_extensions
             fun foldthis {vname,path} env = env_extend (vname, [LIT path]) env
             val env0 = holpathdb.fold foldthis (base_environment())
             val (env, _, _, _) = ReadHMF.read "Holmakefile" env0
@@ -208,8 +205,6 @@ val cline_opts = [
    desc = OptArg (set_threadcount, "c")},
   {help = "Don't use user config file in HOL repl", long = ["noconfig"], short = "",
    desc = NoArg (fn () => fn r => r)}, (* checked for and acted on by HOL repl *)
-  {help = "ignore holproject.toml and project include paths",
-   long = ["no-project"], short = "", desc = NoArg (fn () => fn r => r)},
   {help = "output heap/munger name", long = [], short = "o",
    desc = setStringOpt "filename" #output},
   {help = "use poly as base (no HOL state)", long = ["poly"], short = "",
@@ -283,8 +278,7 @@ fun fix s =
       | _ => s
   end
 
-fun create_heap diag qp findMod saved_load_path saved_holpathdb
-    (objs, outputheap) = let
+fun create_heap diag qp findMod (objs, outputheap) = let
   open Systeml TextIO
   val p = if qp then fn _ => () else fn s => print (s ^ "\n")
   fun hload obj = (p ("Loading "^obj); load (fix obj))
@@ -294,8 +288,6 @@ in
   p "Sharing common data";
   PolyML.shareCommonData PolyML.rootFunction;
   p ("Writing heap: "^outputheap);
-  Meta.loadPath := saved_load_path;
-  holpathdb.restore_entries saved_holpathdb;
   PolyML.SaveState.saveChild
     (outputheap, length (PolyML.SaveState.showHierarchy()));
   p ("Exported "^outputheap^"\n");
@@ -387,9 +379,6 @@ fun main() = let
     else ()
   val _ = List.app check_unknown_opt objs0
   val OR options = List.foldl (fn (f, opts) => f opts) initial_cline cline_upds
-  val no_project = List.exists
-    (fn arg => String.size arg > 2 andalso
-               String.isPrefix arg "--no-project") remaining_args
   val {quietp = qp, output, base_state, all_forced, forced_objs,
        bare, z_repl, help, debug, extra_data, defaultout, exe, ...} = options
   (* Determine base_state:
@@ -402,8 +391,7 @@ fun main() = let
       if bare then SOME (OS.Path.concat(Systeml.HOLDIR, "bin/hol.state0"))
       else if (subcmd = REPL orelse subcmd = LSP)
               andalso base_state = SOME Systeml.DEFAULT_STATE then
-        (* Auto-detect heap when no explicit --holstate was given. *)
-        SOME (get_heap_name no_project)
+        SOME (get_heap_name())
       else
         (* Use explicitly specified state (including NONE for --poly) *)
         base_state
@@ -411,7 +399,7 @@ fun main() = let
   val _ = not help orelse (print usage; OS.Process.exit OS.Process.success)
   (* For HEAPNAME subcommand, just print and exit immediately *)
   val _ = if subcmd = HEAPNAME then
-            (print (get_heap_name no_project);
+            (print (get_heap_name());
              print "\n";
              OS.Process.exit OS.Process.success)
           else ()
@@ -431,19 +419,17 @@ fun main() = let
      .uo search (via `allincs`) and `Meta.loadPath` (used by
      interactive `load`/`open`) both need these visible. *)
   val project_incs =
-      if no_project then []
-      else
-        case HMProject.find_root {start = OS.FileSys.getDir()} of
-            NONE => []
-          | SOME root =>
-              (let val cfg = HMProject.load {root = root}
-                   val dirs = if #holmake cfg then HMProject.discover_dirs cfg
-                              else []
-               in dirs @ #external_includes cfg end
-               handle Fail msg =>
-                 (warn ("holproject.toml at " ^ root ^ " ignored: " ^ msg);
-                  []))
-  val allincs = cwd_incs @ project_incs
+      case HMProject.find_root {start = OS.FileSys.getDir()} of
+          NONE => []
+        | SOME root =>
+            (let val cfg = HMProject.load {root = root}
+                 val dirs = if #holmake cfg then HMProject.discover_dirs cfg
+                            else []
+             in dirs @ #external_includes cfg end
+             handle Fail msg =>
+               (warn ("holproject.toml at " ^ root ^ " ignored: " ^ msg);
+                []))
+  val allincs = project_incs @ cwd_incs
   val _ = diag ("allincs = ["^String.concatWith ", " allincs ^"]")
   val base_state = Option.map mkAbs base_state
   val output = Option.map mkAbs output
@@ -461,32 +447,23 @@ fun main() = let
                      PolyML.SaveState.loadState f
                      handle e => die ("Couldn't load HOL base-state "^f^": "^
                                       General.exnMessage e))
-  val saved_load_path = !Meta.loadPath
-  val saved_holpathdb = holpathdb.entries ()
   (* AFTER loadState — the saved state restores refs to their save-
      time values and would otherwise wipe any earlier extension.
      Owns Meta.loadPath extension so prelude.ML doesn't have to,
      and every subcommand (REPL, LSP, BUILDHEAP, ...) sees the
      same paths. *)
-  val _ =
-    (if no_project then ReadHMF.extend_path_with_holpath_includes
-     else ReadHMF.extend_path_with_includes)
-      {verbosity = 1 + (if debug then 1 else 0), lpref = Meta.loadPath}
-  val _ = Meta.loadPath := !Meta.loadPath @ project_incs
+  val _ = ReadHMF.extend_path_with_includes
+            {verbosity = 1 + (if debug then 1 else 0),
+             lpref = Meta.loadPath}
+  val _ = Meta.loadPath := project_incs @ !Meta.loadPath
   val _ = buildheap_extra_data := extra_data
   val _ = diag ("Buildheap extra now = " ^
                 (case !buildheap_extra_data of
                      NONE => "NONE"
                    | SOME s => "SOME(\"" ^ s ^"\")"))
-  val exts =
-      if no_project then
-        holpathdb.search_for_holpath_extensions_with_includes
-          ReadHMF.find_includes
-          {skip = Binaryset.empty String.compare,
-           starter_dirs = [OS.FileSys.getDir()]}
-      else holpathdb.search_for_extensions ReadHMF.find_includes
-        {skip = Binaryset.empty String.compare,
-         starter_dirs = [OS.FileSys.getDir()]}
+  val exts = holpathdb.search_for_extensions ReadHMF.find_includes
+               {skip = Binaryset.empty String.compare,
+                starter_dirs = [OS.FileSys.getDir()]}
   fun print_ext{vname,path} = vname ^ " |-> " ^ path
   val _ = diag ("holpathdb extensions: "^
                 String.concatWith ", " (map print_ext exts))
@@ -551,8 +528,7 @@ in
             (* No --exe: create heap, expects .uo files.
                check_objpath validates paths are in sigobj or includes *)
             (List.app (check_objpath die (absPath "." :: allincs)) objs;
-             create_heap diag qp findmod saved_load_path saved_holpathdb
-               (map #1 objs, s))
+             create_heap diag qp findmod (map #1 objs, s))
           | SOME fnname =>
             (* --exe specified: use maybe_check_load for .sml/.ML support,
                then export executable *)

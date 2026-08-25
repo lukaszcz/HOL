@@ -641,8 +641,7 @@ fun canonicalise d1 d2 = OS.Path.mkAbsolute{path = d2, relativeTo = d1}
 fun fromList l = Binaryset.addList (Binaryset.empty String.compare, l)
 
 (* returns updated accumulator and list of new places to visit *)
-fun extend_path_with_includes0 legacy_only
-    (A as (visited,prem,postm)) dir verbosity =
+fun extend_path_with_includes0 (A as (visited,prem,postm)) dir verbosity =
     if Binaryset.member(visited, dir) then (A,[])
     else
       if OS.FileSys.access (dir ++ "Holmakefile", [OS.FileSys.A_READ]) then
@@ -654,11 +653,7 @@ fun extend_path_with_includes0 legacy_only
                      TextIO.flushOut TextIO.stdErr)
                   else ()
           val extensions =
-              (if legacy_only then
-                 holpathdb.search_for_holpath_extensions_with_includes
-                   find_includes
-               else
-                 holpathdb.search_for_extensions find_includes)
+              holpathdb.search_for_extensions find_includes
                 {starter_dirs = [dir], skip = Binaryset.empty String.compare}
           fun register {vname,path} =
               case holpathdb.lookup_holpath {vname = vname} of
@@ -730,25 +725,24 @@ fun extend_path_with_includes0 legacy_only
                          else (A, []))
       else (A, [])
 
-fun extend_paths legacy_only A cfg worklist =
+fun extend_paths A cfg worklist =
     case worklist of
         [] => A
       | d::ds =>
         let
-          val (A',new) = extend_path_with_includes0 legacy_only A d cfg
+          val (A',new) = extend_path_with_includes0 A d cfg
         in
-          extend_paths legacy_only A' cfg (ds @ new)
+          extend_paths A' cfg (ds @ new)
         end
 
 
 val empty_strset = Binaryset.empty String.compare
 val empty_strmap = Binarymap.mkDict String.compare
-fun extend_path_with_includes_mode legacy_only (cfg as {lpref,verbosity=v}) =
+fun extend_path_with_includes (cfg as {lpref,verbosity=v}) =
     let
       val wlist = [OS.FileSys.getDir()]
       val (_, prem, postm) =
-          extend_paths legacy_only (empty_strset, empty_strmap, empty_strmap)
-            v wlist
+          extend_paths (empty_strset, empty_strmap, empty_strmap) v wlist
       fun m s = holpathdb.reverse_lookup {path = s}
       fun foldthis nm (dirname,incs,acc) = (
         if v > 1 then
@@ -765,11 +759,5 @@ fun extend_path_with_includes_mode legacy_only (cfg as {lpref,verbosity=v}) =
     in
       lpref := all_preincs @ !lpref @ all_incs
     end
-
-fun extend_path_with_includes cfg =
-    extend_path_with_includes_mode false cfg
-
-fun extend_path_with_holpath_includes cfg =
-    extend_path_with_includes_mode true cfg
 
 end (* struct *)
