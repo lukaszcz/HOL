@@ -1,0 +1,63 @@
+signature hhMePo =
+sig
+  type ptype = int * Type.hol_type list
+  type pconst = string * ptype
+  type pconst_table
+  type frequency_table
+
+  type fudge =
+    {local_const_multiplier : real,
+     worse_irrel_freq : real,
+     higher_order_irrel_weight : real,
+     abs_rel_weight : real,
+     abs_irrel_weight : real,
+     theory_const_rel_weight : real,
+     theory_const_irrel_weight : real,
+     chained_const_irrel_weight : real,
+     intro_bonus : real,
+     elim_bonus : real,
+     simp_bonus : real,
+     local_bonus : real,
+     assum_bonus : real,
+     chained_bonus : real,
+     max_imperfect : real,
+     max_imperfect_exp : real,
+     threshold_divisor : real,
+     ridiculous_threshold : real,
+     fact_threshold0 : real,
+     fact_threshold1 : real,
+     perfect_threshold : real,
+     hopeless_threshold : real,
+     special_fact_index : int,
+     hopeless_iter : int}
+
+  val default_fudge : fudge
+  val default_relevance_fudge : fudge
+  val pseudo_abs_name : string
+  val pseudo_theory_name : string -> string
+
+  val order_of_type : Type.hol_type -> int
+  val ptype_eq : ptype * ptype -> bool
+  (* The second argument is an instance of the first.  In particular, an
+     exhausted instance list matches a nonempty pattern list. *)
+  val match_patternT : Type.hol_type * Type.hol_type -> bool
+  val match_ptype : ptype * ptype -> bool
+
+  (* The string argument is the owning theory.  Each call also inserts its
+     [%thy%...] pseudo-constant. *)
+  val empty_pconst_table : unit -> pconst_table
+  val add_pconst_to_table : pconst -> pconst_table -> pconst_table
+  val add_pconsts_in_term :
+    string -> Term.term -> pconst_table -> pconst_table
+  val pconsts_of_table : pconst_table -> pconst list
+  val pconsts_in_term : string -> Term.term -> pconst list
+  val pconst_hyper_mem :
+    (ptype * ptype -> bool) -> pconst_table -> pconst -> bool
+
+  (* Inputs are (owning theory, conclusion).  This traversal is deliberately
+     raw: logical and set constants are counted rather than stripped. *)
+  val count_fact_consts : (string * Term.term) list -> frequency_table
+  val pconst_freq :
+    (ptype * ptype -> bool) -> frequency_table -> pconst -> int
+  val frequency_entries : frequency_table -> (pconst * int) list
+end

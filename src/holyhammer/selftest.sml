@@ -3108,7 +3108,185 @@ fun test_hhStature_registered_definition () =
 
 val _ = test_hhStature_registered_definition ()
 
+fun mepo_has_pconst name ptype pconsts =
+  List.exists (fn (name', ptype') =>
+    name = name' andalso hhMePo.ptype_eq (ptype, ptype')) pconsts
+
+fun mepo_has_name name pconsts =
+  List.exists (fn (name', _) => name = name') pconsts
+
+fun test_hhMePo_matching_and_defaults () =
+  let
+    val alpha = Term.type_of ``x : 'a``
+    val beta = Term.type_of ``x : 'b``
+    val bool_list = Term.type_of ``[T]``
+    val alpha_list = Term.type_of ``[] : 'a list``
+    val bool_type = Type.bool
+    val num_type = Term.type_of ``0``
+    val fudge = hhMePo.default_fudge
+    fun real_eq left right = Real.compare (left, right) = EQUAL
+  in
+    expect "hhMePo keeps all Isabelle defaults in its fudge record"
+      (real_eq (#local_const_multiplier fudge) 1.5 andalso
+       real_eq (#worse_irrel_freq fudge) 100.0 andalso
+       real_eq (#higher_order_irrel_weight fudge) 1.05 andalso
+       real_eq (#abs_rel_weight fudge) 0.5 andalso
+       real_eq (#abs_irrel_weight fudge) 2.0 andalso
+       real_eq (#theory_const_rel_weight fudge) 0.5 andalso
+       real_eq (#theory_const_irrel_weight fudge) 0.25 andalso
+       real_eq (#chained_const_irrel_weight fudge) 0.25 andalso
+       real_eq (#intro_bonus fudge) 0.15 andalso
+       real_eq (#elim_bonus fudge) 0.15 andalso
+       real_eq (#simp_bonus fudge) 0.15 andalso
+       real_eq (#local_bonus fudge) 0.55 andalso
+       real_eq (#assum_bonus fudge) 1.05 andalso
+       real_eq (#chained_bonus fudge) 1.5 andalso
+       real_eq (#max_imperfect fudge) 11.5 andalso
+       real_eq (#max_imperfect_exp fudge) 1.0 andalso
+       real_eq (#threshold_divisor fudge) 2.0 andalso
+       real_eq (#ridiculous_threshold fudge) 0.1 andalso
+       real_eq (#fact_threshold0 fudge) 0.45 andalso
+       real_eq (#fact_threshold1 fudge) 0.85 andalso
+       real_eq (#perfect_threshold fudge) 0.99999 andalso
+       real_eq (#hopeless_threshold fudge) 0.001 andalso
+       #special_fact_index fudge = 45 andalso #hopeless_iter fudge = 5);
+    expect "hhMePo type variables match arbitrary instances"
+      (hhMePo.match_patternT (alpha, bool_type) andalso
+       hhMePo.match_patternT (beta, bool_list));
+    expect "hhMePo concrete type matching is structural"
+      (hhMePo.match_patternT (alpha_list, bool_list) andalso
+       not (hhMePo.match_patternT (bool_list, alpha_list)) andalso
+       not (hhMePo.match_patternT (bool_type, num_type)));
+    expect "hhMePo match_ptype ignores order in the I direction"
+      (hhMePo.match_ptype ((0, [alpha]), (7, [bool_type])));
+    expect "hhMePo match_ptype distinguishes the swap direction"
+      (not (hhMePo.match_ptype ((7, [bool_type]), (0, [alpha]))));
+    expect "hhMePo match_ptype accepts a shorter instance list only"
+      (hhMePo.match_ptype ((0, [alpha, bool_type]),
+                           (0, [bool_type])) andalso
+       not (hhMePo.match_ptype ((0, [bool_type]),
+                                (0, [alpha, bool_type]))))
+  end
+
+val _ = test_hhMePo_matching_and_defaults ()
+
+fun test_hhMePo_extraction () =
+  let
+    val bool_type = Type.bool
+    val instantiated = hhMePo.pconsts_in_term "fixture"
+      ``CONS T [] = [T]``
+    val skeleton = hhMePo.pconsts_in_term "fixture"
+      ``!x : bool. ?y : bool. ?!z : bool.
+          (p x /\ q y) \/ ~r z ==>
+          (s x = if c then t y else u z)``
+    val restricted =
+      let
+        val function_type = Type.mk_type ("fun", [Type.bool, Type.bool])
+        val x = Term.mk_var ("x", Type.bool)
+        val restriction = Term.mk_var ("restriction", function_type)
+        val body = Term.mk_comb (Term.mk_var ("body", function_type), x)
+      in
+        hhMePo.pconsts_in_term "fixture"
+          (boolSyntax.mk_res_forall (x, restriction, body))
+      end
+    val restricted_exists =
+      let
+        val function_type = Type.mk_type ("fun", [Type.bool, Type.bool])
+        val x = Term.mk_var ("x", Type.bool)
+        val restriction = Term.mk_var ("exists_restriction", function_type)
+        val body = Term.mk_comb
+          (Term.mk_var ("exists_body", function_type), x)
+      in
+        hhMePo.pconsts_in_term "fixture"
+          (boolSyntax.mk_res_exists (x, restriction, body))
+      end
+    val set_term = hhMePo.pconsts_in_term "fixture"
+      ``x IN {y | p y}``
+    val bare_abs = hhMePo.pconsts_in_term "fixture"
+      ``\x : bool. p x``
+    val equality_rhs = hhMePo.pconsts_in_term "fixture"
+      ``(f : bool -> bool) = (\x. p x)``
+    val applied_abs = hhMePo.pconsts_in_term "fixture"
+      ``h (\x : bool. p x)``
+    val skeleton_names = ["p", "q", "r", "s", "c", "t", "u"]
+    val skeleton_consts =
+      ["min$=", "min$==>", "bool$T", "bool$F", "bool$~",
+       "bool$/\\", "bool$\\/", "bool$COND", "bool$LET", "bool$!",
+       "bool$?", "bool$?!"]
+  in
+    expect "hhMePo extracts polymorphic constant type arguments"
+      (mepo_has_pconst "list$CONS" (1, [bool_type]) instantiated andalso
+       mepo_has_pconst "list$NIL" (0, [bool_type]) instantiated);
+    expect "hhMePo adds one collision-free theory pseudo-constant"
+      (mepo_has_pconst "%thy%fixture" (0, []) instantiated);
+    expect "hhMePo strips the complete formula skeleton"
+      (List.all (fn name => mepo_has_name name skeleton) skeleton_names andalso
+       List.all (fn name => not (mepo_has_name name skeleton))
+         skeleton_consts);
+    expect "hhMePo traverses restricted quantifier predicates and bodies"
+      (mepo_has_name "restriction" restricted andalso
+       mepo_has_name "body" restricted andalso
+       not (mepo_has_name "bool$RES_FORALL" restricted) andalso
+       mepo_has_name "exists_restriction" restricted_exists andalso
+       mepo_has_name "exists_body" restricted_exists andalso
+       not (mepo_has_name "bool$RES_EXISTS" restricted_exists));
+    expect "hhMePo skips set constants but traverses their arguments"
+      (mepo_has_name "x" set_term andalso mepo_has_name "p" set_term andalso
+       not (mepo_has_name "bool$IN" set_term) andalso
+       not (mepo_has_name "pred_set$GSPEC" set_term));
+    expect "hhMePo records unapplied abstractions"
+      (mepo_has_pconst "%abs" (1, []) bare_abs andalso
+       mepo_has_pconst "%abs" (1, []) applied_abs andalso
+       not (mepo_has_name "x" bare_abs));
+    expect "hhMePo suppresses an equality RHS abstraction"
+      (not (mepo_has_name "%abs" equality_rhs))
+  end
+
+val _ = test_hhMePo_extraction ()
+
+fun test_hhMePo_frequency () =
+  let
+    val bool_type = Type.bool
+    val alpha = Term.type_of ``x : 'a``
+    val table = hhMePo.count_fact_consts
+      [("A", ``(f : bool -> bool) x /\ f x``),
+       ("B", ``(f : bool -> bool) x = x``)]
+    val typed_table = hhMePo.count_fact_consts
+      [("C", ``MEM T [T]``), ("D", ``MEM 0 [0]``)]
+    val abstraction_table = hhMePo.count_fact_consts
+      [("E", ``\bound : bool. predicate bound``)]
+    fun exact table pconst =
+      hhMePo.pconst_freq (fn (left, right) =>
+        hhMePo.ptype_eq (left, right)) table pconst
+  in
+    expect "hhMePo raw frequency counts repeated function occurrences"
+      (exact table ("f", (1, [])) = 3);
+    expect "hhMePo raw frequency counts repeated arguments"
+      (exact table ("x", (0, [])) = 4);
+    expect "hhMePo raw frequency retains conjunction"
+      (exact table ("bool$/\\", (1, [])) = 1);
+    expect "hhMePo raw frequency retains polymorphic equality"
+      (exact table ("min$=", (1, [bool_type])) = 1);
+    expect "hhMePo raw frequency counts each fact's theory once"
+      (exact table ("%thy%A", (0, [])) = 1 andalso
+       exact table ("%thy%B", (0, [])) = 1);
+    expect "hhMePo frequency matching sums polymorphic instances"
+      (hhMePo.pconst_freq hhMePo.match_ptype typed_table
+         ("list$CONS", (0, [alpha])) = 2);
+    expect "hhMePo frequency matching keeps concrete instances distinct"
+      (hhMePo.pconst_freq hhMePo.match_ptype typed_table
+         ("list$CONS", (0, [bool_type])) = 1);
+    expect "hhMePo absent frequencies are total and zero"
+      (exact table ("missing", (0, [])) = 0);
+    expect "hhMePo raw frequencies ignore binders and abs pseudo-constants"
+      (exact abstraction_table ("predicate", (1, [])) = 1 andalso
+       exact abstraction_table ("bound", (0, [])) = 0 andalso
+       exact abstraction_table ("%abs", (1, [])) = 0)
+  end
+
+val _ = test_hhMePo_frequency ()
+
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
-  hhCache hhSchedule hhStature
+  hhCache hhSchedule hhStature hhMePo
 in end
