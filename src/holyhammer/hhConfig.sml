@@ -243,6 +243,9 @@ fun valid_lam_trans value =
 fun one_of choices value =
   List.exists (fn choice => trim value = choice) choices
 
+fun valid_filter value =
+  one_of ["", "knn", "mepo", "mash", "mesh", "none"] value
+
 val builtin_prover =
   fn name =>
     List.exists (fn item => name = item)
@@ -276,9 +279,10 @@ val option_specs : option_spec list =
     expected = "a non-negative integer",
     doc = "worker count (0 means detected processor count)",
     valid = nonnegative_int},
-   {name = "filter", default = fn () => "knn",
-    expected = "knn or none", doc = "premise filter",
-    valid = one_of ["knn", "none"]},
+   {name = "filter", default = fn () => "",
+    expected = "empty, knn, mepo, mash, mesh, or none",
+    doc = "schedule-wide premise filter override (empty means per-slice)",
+    valid = valid_filter},
    {name = "max_facts", default = fn () => "",
     expected = "empty or a positive integer",
     doc = "fact cap (empty means the per-slice default)",

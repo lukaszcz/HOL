@@ -28,6 +28,7 @@ sig
   val trim : string -> string
   val trim_left : string -> string
   val first_some : ('a -> 'b option) -> 'a list -> 'b option
+  val valid_filter : string -> bool
 
   val state_dir : unit -> string
 

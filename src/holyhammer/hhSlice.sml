@@ -6,13 +6,16 @@
 structure hhSlice :> hhSlice =
 struct
 
-(* The first eight entries are the frozen Phase 1 gate anchors.  The final
-   eight consume the Phase 2 table order in hhProver exactly. *)
+(* The first eight entries are the frozen Phase 1 gate anchors.  The next
+   eight consume the Phase 2 table order in hhProver exactly.  The final
+   eight consume the Phase 3 ensemble entries. *)
 val rotation =
   ["vampire", "e", "zipperposition", "vampire", "e", "vampire",
    "zipperposition", "vampire",
    "vampire", "e", "zipperposition", "e", "vampire", "e", "vampire",
-   "zipperposition"]
+   "zipperposition",
+   "vampire", "e", "zipperposition", "vampire", "e", "vampire", "e",
+   "vampire"]
 
 val distinct = aiLib.mk_sameorder_set String.compare
 
@@ -49,6 +52,7 @@ fun validate_slice (config : hhProver.prover_config)
     val format = #format slice
     val type_enc = #type_enc slice
     val lam_trans = #lam_trans slice
+    val filter = #filter slice
     val _ = ignore (hhTypeEnc.adjust_type_enc
       (hhTypeEnc.format_of_string format) (hhTypeEnc.of_string type_enc))
     val _ =
@@ -63,6 +67,10 @@ fun validate_slice (config : hhProver.prover_config)
          not legacy andalso hhLamTrans.valid_mode lam_trans then ()
       else raise Fail ("invalid HolyHammer lambda translation '" ^ lam_trans ^
         "' for (" ^ format ^ ", " ^ type_enc ^ ")")
+    val _ =
+      if filter <> "" andalso filter = hhConfig.trim filter andalso
+         hhConfig.valid_filter filter then ()
+      else raise Fail ("invalid HolyHammer premise filter '" ^ filter ^ "'")
   in
     slice
   end
@@ -74,7 +82,8 @@ fun adjust_slice (options : hhConfig.hh_options)
    type_enc = overridden (#type_enc options) (#type_enc slice),
    lam_trans = overridden (#lam_trans options) (#lam_trans slice),
    nfacts = cap (#max_facts options) (#nfacts slice),
-   filter = #filter options, extra_opts = #extra_opts slice,
+   filter = overridden (#filter options) (#filter slice),
+   extra_opts = #extra_opts slice,
    slice_size = #slice_size slice}
 
 val same_slice = hhProver.same_slice

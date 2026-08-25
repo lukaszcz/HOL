@@ -171,6 +171,16 @@ fun test_child root =
     val _ = hhConfig.hh_set ("preplay_timeout", "2.5")
     val _ = hhConfig.hh_set ("minimize_timeout", "3.5")
     val _ = hhConfig.hh_set ("max_facts", "17")
+    val _ = List.app
+      (fn filter =>
+        (hhConfig.hh_set ("filter", filter);
+         expect ("filter vocabulary accepts '" ^ filter ^ "'")
+           (#filter (hhConfig.snapshot ()) = filter)))
+      ["", "knn", "mepo", "mash", "mesh", "none"]
+    val _ = expect "filter vocabulary rejects unknown names"
+      (option_error ["filter", "knn", "mepo", "mash", "mesh", "none"]
+        (fn () => hhConfig.hh_set ("filter", "not-a-filter")))
+    val _ = hhConfig.hh_unset "filter"
     val _ = expect "format vocabulary is validated at set time"
       (option_error ["format", "supported TPTP format"]
         (fn () => hhConfig.hh_set ("format", "bad-format")))
@@ -236,7 +246,8 @@ fun test_child root =
       ["format", "type_enc", "lam_trans", "mono_iters", "mono_instances"]
     val default_options : hhConfig.hh_options = hhConfig.snapshot ()
     val _ = expect "new option defaults preserve per-slice values"
-      (#format default_options = "" andalso
+      (#filter default_options = "none" andalso
+       #format default_options = "" andalso
        #type_enc default_options = "" andalso
        #lam_trans default_options = "" andalso
        #mono_iters default_options = 3 andalso
@@ -343,6 +354,8 @@ fun test_environment_default value =
       (#cores options > 0 andalso #slices options = 24 * #cores options)
     val _ = expect "empty option defaults map to NONE"
       (#max_facts options = NONE andalso #debug_dir options = NONE)
+    val _ = expect "empty filter default keeps per-slice filters"
+      (#filter options = "")
   in
     ()
   end
@@ -1339,8 +1352,10 @@ fun schedule_summary
 
 fun test_hhSlice () =
   let
+    fun expected_filter prover format type_enc lam_trans filter nfacts =
+      (prover, format, type_enc, lam_trans, nfacts, filter, [], 1)
     fun expected prover format type_enc lam_trans nfacts =
-      (prover, format, type_enc, lam_trans, nfacts, "knn", [], 1)
+      expected_filter prover format type_enc lam_trans "knn" nfacts
     val phase1 =
       [expected "vampire" "fof" "" "" 96,
        expected "e" "fof" "" "" 128,
@@ -1360,7 +1375,20 @@ fun test_hhSlice () =
        expected "e" "tx0-" "mono_native_fool" "combs_and_lifting" 1024,
        expected "vampire" "tx0" "mono_native_fool" "combs" 512,
        expected "zipperposition" "fof" "" "" 32]
-    val expected_default = phase1 @ phase2
+    val ensemble =
+      [expected_filter "vampire" "fof" "" "" "mesh" 96,
+       expected_filter "e" "fof" "" "" "mesh" 128,
+       expected_filter "zipperposition" "th1"
+         "mono_native_higher_fool" "keep_lams" "mesh" 128,
+       expected_filter "vampire" "tx0" "mono_native_fool" "lifting"
+         "mesh" 512,
+       expected_filter "e" "fof" "" "" "mepo" 512,
+       expected_filter "vampire" "fof" "" "" "mepo" 1024,
+       expected_filter "e" "tx0-" "mono_native_fool" "lifting"
+         "mash" 128,
+       expected_filter "vampire" "fof" "" "" "mash" 256]
+    val phase2_golden = phase1 @ phase2
+    val expected_default = phase2_golden @ ensemble
     val e_slices = map slice_summary (#slices (prover "e") ())
     val vampire_slices = map slice_summary (#slices (prover "vampire") ())
     val zipperposition_slices =
@@ -1368,15 +1396,19 @@ fun test_hhSlice () =
     val _ = expect_equal "E slice table"
       [List.nth (phase1, 1), List.nth (phase1, 4),
        List.nth (phase2, 1), List.nth (phase2, 3),
-       List.nth (phase2, 5)] e_slices
+       List.nth (phase2, 5), List.nth (ensemble, 1),
+       List.nth (ensemble, 4), List.nth (ensemble, 6)] e_slices
     val _ = expect_equal "Vampire slice table"
       [List.nth (phase1, 0), List.nth (phase1, 3),
        List.nth (phase1, 5), List.nth (phase1, 7),
        List.nth (phase2, 0), List.nth (phase2, 4),
-       List.nth (phase2, 6)] vampire_slices
+       List.nth (phase2, 6), List.nth (ensemble, 0),
+       List.nth (ensemble, 3), List.nth (ensemble, 5),
+       List.nth (ensemble, 7)] vampire_slices
     val _ = expect_equal "Zipperposition slice table"
       [List.nth (phase1, 2), List.nth (phase1, 6),
-       List.nth (phase2, 2), List.nth (phase2, 7)] zipperposition_slices
+       List.nth (phase2, 2), List.nth (phase2, 7),
+       List.nth (ensemble, 2)] zipperposition_slices
     val _ = expect "Z3 stays callable without scheduler slices"
       (List.all (null o (fn config => #slices config ()))
        (map prover ["z3"]))
@@ -1384,15 +1416,26 @@ fun test_hhSlice () =
       ["vampire", "e", "zipperposition", "vampire", "e"]
       (hhSlice.schedule_of_provers
         ["e", "vampire", "zipperposition"] 5)
+    val _ = expect_equal "golden 24-slice rotation"
+      ["vampire", "e", "zipperposition", "vampire", "e", "vampire",
+       "zipperposition", "vampire", "vampire", "e", "zipperposition",
+       "e", "vampire", "e", "vampire", "zipperposition", "vampire",
+       "e", "zipperposition", "vampire", "e", "vampire", "e",
+       "vampire"]
+      (hhSlice.schedule_of_provers
+        ["e", "vampire", "zipperposition"] 24)
     val _ = expect_equal "rotation filters and extends in requested order"
       ["e", "zipperposition", "e", "zipperposition", "e",
        "zipperposition", "e"]
       (hhSlice.schedule_of_provers ["zipperposition", "e"] 7)
     val defaults = slice_options ["e", "vampire", "zipperposition"]
-      (24 * 32) 32 30 "knn" NONE
+      (24 * 32) 32 30 "" NONE
     val default_schedule = hhSlice.mk_schedule defaults
-    val _ = expect_equal "golden 16-slice Phase 2 schedule"
+    val _ = expect_equal "golden 24-slice Phase 3 schedule"
       expected_default (map (slice_summary o #2) default_schedule)
+    val _ = expect_equal "frozen 16-slice Phase 2 schedule prefix"
+      phase2_golden
+      (List.take (map (slice_summary o #2) default_schedule, 16))
     val _ = expect_equal "Phase 1 eight-slice prefix is frozen verbatim"
       phase1 (List.take (map (slice_summary o #2) default_schedule, 8))
     val gate30 = slice_options ["e", "vampire", "zipperposition"]
@@ -1453,11 +1496,17 @@ fun test_hhSlice () =
        ("e", 40, "none", []),
        ("e", 40, "none", [])]
       (schedule_summary overridden)
+    val filter_override = hhSlice.mk_schedule
+      (slice_options ["e", "vampire", "zipperposition"] 24 24 30
+        "none" NONE)
+    val _ = expect "set filter overrides every per-slice table value"
+      (not (null filter_override) andalso
+       List.all (fn (_, slice) => #filter slice = "none") filter_override)
     val exhausted = hhSlice.mk_schedule
-      (slice_options ["e", "vampire", "zipperposition"] 100 8 30 "knn"
+      (slice_options ["e", "vampire", "zipperposition"] 100 8 30 ""
         NONE)
-    val _ = expect "rotation exhaustion stops at sixteen unique slices"
-      (length exhausted = 16)
+    val _ = expect "rotation exhaustion stops at twenty-four slices"
+      (length exhausted = 24)
     val _ = expect "Z3 remains outside the slice scheduler"
       (null (hhSlice.mk_schedule
         (slice_options ["z3"] 100 8 30 "knn" NONE)))
@@ -1507,6 +1556,31 @@ fun test_hhSlice () =
       (invalid_triple "tf0" "" "lifting" andalso
        invalid_triple "th1" "mono_native_higher" "keep_lams" andalso
        invalid_triple "tf0" "mono_native" "")
+    fun filter_test_config name filter : hhProver.prover_config =
+      let
+        val slice : hhProver.slice =
+          {prover = name, format = "fof", type_enc = "", lam_trans = "",
+           nfacts = 1, filter = filter, extra_opts = [], slice_size = 1}
+      in
+        {name = name, exec_names = [], env_var = "", version_args = [],
+         parse_version = fn _ => NONE, tested_versions = [],
+         supported_formats = ["fof"],
+         mk_command = fn executable => fn _ => (executable, []),
+         parse_output = fn _ => (hhProver.SzsUnknown "selftest", NONE),
+         mono_instances = NONE, slices = fn () => [slice], legacy = true}
+      end
+    val invalid_filters =
+      [("selftest-empty-filter", ""),
+       ("selftest-unknown-filter", "not-a-filter")]
+    val _ = List.app
+      (hhProver.register o (fn (name, filter) =>
+        filter_test_config name filter)) invalid_filters
+    fun rejects_filter (name, _) =
+      (ignore (hhSlice.mk_schedule
+        (slice_options [name] 1 1 30 "" NONE)); false)
+      handle Fail _ => true
+    val _ = expect "slice construction validates the filter vocabulary"
+      (List.all rejects_filter invalid_filters)
   in
     ()
   end
