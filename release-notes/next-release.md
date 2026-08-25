@@ -226,7 +226,7 @@ Bugs fixed
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
-    the Z3 boundary, and solver `(error ...)` output can no longer be skipped
+    the Z3 boundary, and Z3 `(error ...)` output can no longer be skipped
     and misreported as a later `sat` verdict.  The checked support matrix now
     passes Z3 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.
 
@@ -301,8 +301,8 @@ Incompatibilities
     supported collection goals; lists now use native `Seq` syntax and the
     widened `ALL` logic where required.
 
--   The transparent `SmtLib.logic_features` and
-    `SmtLib_Parser.typecheck_options` records have new mandatory fields,
+-   The `SmtLib.logic_features` and `SmtLib_Parser.typecheck_options`
+    types have new mandatory record fields,
     `SmtLib_Parser.parser_cfg` has the new mandatory `lookup_binder_list`
     field, and `SmtLib_Parser.QueryCheckSat` has a changed payload.  External
     clients constructing or matching these values must be updated.

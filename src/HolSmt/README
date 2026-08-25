@@ -8,7 +8,10 @@ CVC.sml                 Functions to invoke the cvc5 SMT solver.
 CPC_Proof.sml           Version-gated cvc5 CPC proof-rule registry.
 CPC_ProofParser.sml     Parser for untrusted cvc5 CPC proof text.
 CPC_ProofReplay.sml     Kernel-checked replay of supported CPC rules.
-Holmakefile             Makefile for Holmake (to build selftest.exe).
+Holmakefile             Makefile for Holmake.  Also builds the smtheap HOL
+                        heap, selftest.exe, smtfloat-diff.exe, and the
+                        conformance driver wrappers holsmt-typecheck,
+                        holsmt-z3-tac, and holsmt-cvc-cpc-tac.
 HolSmtLib.{sig,sml}     Entry point into HolSmtLib. Provides GENERIC_SMT_TAC
                         and derived tactics to call SMT solvers.
 HolSmtScript.sml        Various theorems for HolSmtLib.
@@ -40,7 +43,9 @@ Z3_ProofParser.sml      Proof reconstruction for Z3: parsing of Z3's proofs.
 Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
                         HOL.
 cvc_cpc_tac_driver.sml  cvc5 CPC conformance driver.
-smtfloat{Lib,Script}.sml Floating-point syntax and theory support.
+smtfloatLib.{sig,sml}   Floating-point syntax and evaluation support.
+smtfloatScript.sml      Floating-point theory (smtfloatTheory).
+smtfloat_diff_driver.sml HOL half of the ground FP differential battery.
 smtstring{,z3}Script.sml String and Z3-string theory support.
 typecheck_driver.sml    SMT-LIB typechecking conformance driver.
 z3_tac_driver.sml       Z3 conformance driver.
@@ -111,7 +116,8 @@ theories.  The coverage matrix at
 supported operator, solver, and version: Z3 4.11.2--4.15.x has array-based
 Sets and Z3-only sequence higher-order operators; cvc5 1.3.4 has native
 finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
-`seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4.
+`seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4 (it is
+a parser-side alias only: the printer always emits `seq.foldl`).
 
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
@@ -148,10 +154,12 @@ Unsupported or deprecated Z3 versions:
 
 None of these classes is a replay failure.  An unsupported or undiscoverable
 version is never rejected: `Z3_Proof.resolve_version`, and its cvc5
-counterpart `CPC_Proof.resolve_version`, warn once and then replay under the
-tested version nearest the discovered one -- the anchor sharing its
-major.minor series where there is one, otherwise the nearest anchor by version
-order, or the latest anchor when the version could not be discovered at all.
+counterpart `CPC_Proof.resolve_version`, warn once per solver/version
+(visible unless `HolSmtLib` tracing is disabled) and then replay under a
+tested anchor -- the anchor sharing the discovered version's major.minor
+series where there is one, otherwise the next newer anchor, falling back to
+the latest anchor for versions beyond every anchor and for versions that
+could not be discovered at all.
 Resolution happens once, as the proof is parsed, so rule gating and
 diagnostics downstream always see a tested version.  The anchor set it draws
 on is `Z3_Proof.supported_z3_versions` (`CPC_Proof.supported_cvc_versions` for
@@ -191,8 +199,9 @@ Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
 solver only as a `str_inj` image, and Z3 then answers it with seq th-lemmas
 over that image while cvc5 uses the `trust` and `str-substr-full-eq` CPC
-rules; none of those replay, so such goals are supported on the oracle
-tactics only.
+rules; those proof steps do not replay on the injected images (although the
+rules themselves replay on native `smtstr` shapes), so such goals are
+supported on the oracle tactics only.
 
 FloatingPoint replay covers goals stated over the canonical-NaN `smtfp`
 carrier.  Native `binary_ieee` goals reach the SMT FloatingPoint sort only
@@ -410,14 +419,17 @@ preprocessing theorem that relates the HOL and SMT-LIB meanings, or an explicit
 unsupported diagnostic before replay. Silent acceptance or oracle fallback is
 outside the audited boundary.
 
-HOL-to-SMT translation has two regimes, selected by the P3.4 failure trigger
-after preprocessing.  The byte-identical FirstOrder path encodes function
-values as nested Array sorts, with select/store for application/update; terms
-such as (P:'a -> bool) x remain supported there.  Shapes that path cannot
-preserve, including surviving lambdas and non-symbol operators, select
-HigherOrder.  Standard27 emits native SMT-LIB 2.7 HO-Core syntax, while
-Z3LambdaArray lowers maps and application to nested Array/select and
-eta-expands partially applied ranked constants.
+HOL-to-SMT translation has two regimes, selected after preprocessing by the
+P3.4 trigger: a single up-front syntactic scan for shapes the first-order
+path cannot preserve (there is no try-FO-then-retry loop).  The
+byte-identical FirstOrder path encodes function values as nested Array
+sorts, with select/store for application/update; terms such as
+(P:'a -> bool) x remain supported there.  Shapes that path cannot preserve,
+including surviving lambdas and non-symbol operators, select HigherOrder.
+Standard27 emits native SMT-LIB 2.7 HO-Core syntax, while Z3LambdaArray
+lowers maps and application to nested Array/select.  Both dialects
+eta-expand partially applied ranked constants whose omission would lose a
+built-in's semantics.
 
 The Z3 lowering is part of the trusted translation surface.  SMT-LIB 2.7
 section 3.9 interprets map sorts as total maps, so a map `A -> B` and an
@@ -443,9 +455,12 @@ hypotheses, definition hypotheses and Z3-created variables.  Unknown proof
 rules are reported by Z3_ProofParser.sml with the missing rule name and local
 proof subterm.
 
-SmtResource.sml is the single source of truth for the checked FloatingPoint
-bit-blast budget.  Z3 proof text is size-gated before Z3_ProofParser runs;
-the checked add/sub and Float16 multiplication-identity circuit rungs use the
+SmtResource.sml is the single source of truth for the checked-replay
+resource budget; the FloatingPoint bit-blast limits below are its D12 case,
+and the same term-size and step-time caps also gate the Seq, Set, Bag,
+String, and Array replay provers (with per-category `resource-gated:`
+diagnostics).  Z3 proof text is size-gated before Z3_ProofParser runs; the
+checked add/sub and Float16 multiplication-identity circuit rungs use the
 same module's term-size and per-step time caps.  The direct Float16
 `fp.mul x 1.0 = x` atom closes through the checked symbolic-arithmetic rung;
 the generated fpa2bv replay currently reaches that rung and step-time gates.

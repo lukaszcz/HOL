@@ -171,7 +171,7 @@ struct
 
   (* Rung 4 is intentionally guarded before either resource check.  An
      unrelated, even very large, FP rewrite belongs to rung 6 rather than to
-     the D1 resource family. *)
+     the D12 resource family. *)
   val tier2_atom_names =
     Redblackset.addList
       (Redblackset.empty (Lib.pair_compare

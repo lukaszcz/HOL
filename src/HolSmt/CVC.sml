@@ -68,7 +68,10 @@ structure CVC = struct
       SOME file => file
     | NONE => "<unconfigured>"
 
-  val error_msg = "CVC not configured: set the HOL4_CVC_EXECUTABLE environment variable to point to the cvc5 executable file.";
+  val error_msg =
+    "CVC not configured: install cvc5 on PATH or set the " ^
+    "HOL4_CVC_EXECUTABLE environment variable to point to the cvc5 " ^
+    "executable.";
 
   fun is_version_token token =
     token <> "" andalso Char.isDigit (String.sub (token, 0))

@@ -396,7 +396,7 @@ in
     (``((x:num) - y = 0) \/ (y - x = 0)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
-    (* cvc5 Alethe proof replay unsupported: METIS resolution fails for num multiplication with variables *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(x:num) * 0 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``0 * (x:num) = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) * 1 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
@@ -404,7 +404,8 @@ in
     (``(x:num) * 42 = 42 * x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
-    (* cvc5 Alethe proof replay unsupported: ediv/emod operations for num *)
+    (* thm_CVCp omissions predate CPC replay; checked replay of
+       ``(0:num) DIV 1 = 0`` still fails to finish within minutes. *)
     (``(0:num) DIV 1 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(1:num) DIV 1 = 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(42:num) DIV 1 = 42``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
@@ -413,8 +414,8 @@ in
     (``(42:num) DIV 42 = 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``((v:num) = v DIV 1 * 1 + v MOD 1) /\ v MOD 1 < 1``,
       [thm_Z3p]),
-    (* cvc5 can't handle variable DIV/MOD with non-zero divisor:
-       "Proof unsupported by Alethe: contains Skolem (kind int_div_by_zero)" *)
+    (* cvc5 omissions (oracle and checked) predate CPC replay;
+       checked spot checks now succeed. *)
     (``(x:num) DIV 1 = x``,
       [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) DIV 42 <= x``,
@@ -427,7 +428,7 @@ in
     (``(0:num) DIV 0 = 1``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) DIV 0 = x DIV 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
 
-    (* cvc5 Alethe proof replay unsupported: ediv/emod operations for num *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(0:num) MOD 1 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(1:num) MOD 1 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(42:num) MOD 1 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
@@ -451,7 +452,7 @@ in
     (``((x:num) = x DIV 42 * 42 + x MOD 42) /\ x MOD 42 < 42``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
-    (* cvc5 Alethe proof replay unsupported: EXP hole steps fail for num exponentiation *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(x:num) ** 0 = 1``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(x:num) ** 0 = 0``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) ** 1 = x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
@@ -514,7 +515,7 @@ in
     (``((x:int) - y = 0) \/ (y - x = 0)``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:int) - y = x + ~y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
-    (* cvc5 Alethe proof replay unsupported: METIS resolution fails for int multiplication with variables *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(x:int) * 0 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``0 * (x:int) = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(x:int) * 1 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
@@ -541,7 +542,7 @@ in
     (``emod (~7) (~2) = (1:int)``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
 
-    (* cvc5 Alethe replay coverage for ground Euclidean division. *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(~42:int) / ~42 = 1``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(~1:int) / ~42 = 0``,
@@ -609,7 +610,7 @@ in
     (``(x:int) < 0 ==> (x / ~1 = ~x / 1)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
-    (* cvc5 Alethe proof replay unsupported: ediv operations for int (quot) *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(~42:int) quot ~42 = 1``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(~1:int) quot ~42 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(0:int) quot ~42 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
@@ -645,7 +646,8 @@ in
     (``(0:int) quot 0 = 1 quot 0``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:int) quot 0 = x quot 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p]),
 
-    (* cf. integerTheory.int_quot *)
+    (* cf. integerTheory.int_quot; thm_CVCp omitted: CPC proof parse
+       still fails on a spot check. *)
     (``(x:int) < 0 ==> (x quot 1 = ~(~x quot 1))``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(x:int) < 0 ==> (x quot 42 = ~(~x quot 42))``,
@@ -659,7 +661,7 @@ in
     (``(x:int) < 0 ==> (x quot ~1 = ~x quot 1)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
-    (* cvc5 Alethe proof replay unsupported: emod operations for int *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(~42:int) % ~42 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(~1:int) % ~42 = ~1``,
@@ -722,7 +724,7 @@ in
     (``(x:int) % 42 = x - x / 42 * 42``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
-    (* cvc5 Alethe proof replay unsupported: emod operations for int (rem) *)
+    (* thm_CVCp omissions predate CPC replay; spot checks now succeed. *)
     (``(~42:int) rem ~42 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(~1:int) rem ~42 = ~1``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(0:int) rem ~42 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),

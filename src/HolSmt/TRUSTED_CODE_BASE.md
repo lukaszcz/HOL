@@ -4,7 +4,7 @@ The canonical trusted-code-base and soundness audit is maintained in the
 `Trusted-code-base boundary and soundness audit` section of `README`.  This
 focused note records the higher-order translation boundary.
 
-HolSmt's failure-triggered higher-order regime has two printers.  Standard27
+HolSmt's trigger-selected higher-order regime has two printers.  Standard27
 emits SMT-LIB 2.7 HO-Core arrows, lambdas, and application for cvc5.
 Z3LambdaArray lowers a map `A -> B` to `Array A B`, map application to
 `select`, and nested maps to nested arrays.  This lowering is trusted
@@ -12,8 +12,9 @@ translation code.
 
 The lowering preserves the relevant semantics because SMT-LIB 2.7 section
 3.9 maps and Z3 arrays are both total, extensional maps: application is
-selection and map equality is extensional equality.  Partially applied
-ranked constants are eta-expanded.  That expansion is independently
+selection and map equality is extensional equality.  Both printers
+eta-expand partially applied ranked constants when omitting the arguments
+would lose a built-in's semantics.  That expansion is independently
 HOL-side-provable by the eta theorem `f = (\x. f x)`; it is not a solver
 axiom.
 
@@ -52,11 +53,13 @@ axioms.  The transfer kit covers the enumerated invariant operation surface;
 a residual raw `float`, including raw record equality, is emitted using an
 uninterpreted sort and is never treated as an SMT FloatingPoint value.
 
-`SmtResource.sml` is the single budget module for checked FP replay.  It
-defines the fixed D12 limits: 16 MiB of proof text before parsing, 10 seconds
-per bit-blast step, and 200,000 term nodes.  A limit breach is an explicit
-`resource-gated: fp-bitblast;` outcome, distinct from the D2 unsupported-
-shape diagnostic; neither outcome accepts a theorem.
+`SmtResource.sml` is the single budget module for checked replay; the FP
+bit-blast case and the Seq/Set/Bag/String/Array replay provers share its
+caps.  It defines the fixed D12 limits: 16 MiB of proof text before parsing,
+10 seconds per bit-blast step, and 200,000 term nodes.  A limit breach is an
+explicit `resource-gated: fp-bitblast;` outcome (other categories use their
+own `resource-gated:` prefixes), distinct from the D2 unsupported-shape
+diagnostic; neither outcome accepts a theorem.
 
 Replay uses the certifying `binary_ieeeLib`/Arbrat evaluation path.
 `native_ieeeLib`, `fp64_machineLib`, and hardware evaluation are never

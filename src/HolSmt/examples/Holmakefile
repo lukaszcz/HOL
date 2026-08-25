@@ -1,2 +1,2 @@
-INCLUDES = .. ../../integer ../../n-bit ../../real ../../string \
+INCLUDES = .. ../../bag ../../integer ../../n-bit ../../real ../../string \
            ../../floating-point

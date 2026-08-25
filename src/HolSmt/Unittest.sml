@@ -12536,7 +12536,7 @@ in
     (assert (SmtResource.is_resource_gate holerr,
        "Float32 add circuit raised a non-resource diagnostic");
      assert (Feedback.message_of holerr = expected,
-       "Float32 add circuit changed its D1 diagnostic"))
+       "Float32 add circuit changed its D12 diagnostic"))
 end
 
 fun smtfp_mul_circuit_rung_success () =
@@ -12692,7 +12692,7 @@ in
     (assert (SmtResource.is_resource_gate holerr,
        "corpus symbolic-add proof raised a non-resource diagnostic");
      assert (Feedback.message_of holerr = expected,
-       "corpus symbolic-add proof changed its pinned D1 diagnostic"))
+       "corpus symbolic-add proof changed its pinned D12 diagnostic"))
 end
 
 fun smtfp_tier2_atom_classes_success () =
@@ -12735,7 +12735,7 @@ in
     (assert (SmtResource.is_resource_gate holerr,
        "oversized FP Tier-2 atom raised a non-resource diagnostic");
      assert (Feedback.message_of holerr = expected,
-       "oversized FP Tier-2 atom changed its D1 diagnostic");
+       "oversized FP Tier-2 atom changed its D12 diagnostic");
      assert (not (String.isSubstring "unsupported rewrite shape"
        (Feedback.message_of holerr)),
        "oversized FP Tier-2 atom fell through to rung 6"))

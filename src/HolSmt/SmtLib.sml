@@ -2587,7 +2587,7 @@ local
             "binary_ieee transfer.  Checked Z3 4.x and cvc5 CPC replay " ^
             "cover the native smtfp surface and transferred " ^
             "classification/comparison goals; " ^
-            "over-budget bit-blasts use the reserved D1 diagnostic, while " ^
+            "over-budget bit-blasts use the reserved D12 diagnostic, while " ^
             "unsupported symbolic arithmetic uses the structured D2 rung."
         }
       val z3_ext_record =
