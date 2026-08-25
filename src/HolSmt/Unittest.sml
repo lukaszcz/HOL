@@ -13124,6 +13124,81 @@ in
   Portable.finally restore run ()
 end
 
+fun cvc_tac_oracle_tag_gate_rejects_oracle_thm () =
+let
+  val old_accepted = !Sanity.accepted_oracles
+  fun restore () = Sanity.accepted_oracles := old_accepted
+  fun run () =
+    let
+      val oracle_thm =
+        Thm.mk_oracle_thm "HolSmtLib" ([], boolSyntax.T)
+      (* The checked boundary must not inherit Sanity's mutable policy. *)
+      val () = Sanity.accepted_oracles :=
+        "HolSmtLib" :: !Sanity.accepted_oracles
+    in
+      (ignore (CVC.check_reconstructed_theorem "CVC_SMT_Prover"
+         (([], boolSyntax.T), oracle_thm));
+       die "FAIL: oracle-tagged theorem passed the CVC_TAC oracle gate")
+      handle Feedback.HOL_ERR holerr =>
+        let val msg = Feedback.message_of holerr
+        in
+          assert (String.isSubstring "unexpected oracle/axiom tags" msg,
+            "CVC oracle gate diagnostic did not mention unexpected tags: " ^
+            msg)
+        end
+    end
+in
+  Portable.finally restore run ()
+end
+
+fun yices_tac_is_fail_closed_without_reconstruction () =
+  (ignore (Tactical.TAC_PROOF
+     (([], boolSyntax.T), HolSmtLib.YICES_TAC));
+   die "FAIL: YICES_TAC produced a theorem without proof reconstruction")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (Feedback.top_structure_of holerr = "HolSmtLib" andalso
+              Feedback.top_function_of holerr = "GENERIC_SMT_TAC",
+        "YICES_TAC failure came from the wrong checked boundary: " ^ msg);
+      assert (String.isSubstring
+        "checked Yices proof reconstruction is not implemented" msg,
+        "YICES_TAC did not explain its fail-closed behavior: " ^ msg)
+    end
+
+fun cvc_replay_suppresses_tool_chatter () =
+let
+  exception ReplayFailure
+  val old_metis = Feedback.current_trace "metis"
+  val old_grobner = !Grobner.verbose
+  fun restore () =
+    (Feedback.set_trace "metis" old_metis;
+     Grobner.verbose := old_grobner)
+  fun run () =
+    let
+      val () = Feedback.set_trace "metis" 3
+      val () = Grobner.verbose := true
+      val (metis_during, grobner_during) = CVC.quiet_replay
+        (fn () =>
+          (Feedback.current_trace "metis", !Grobner.verbose)) ()
+      val () = assert (metis_during = 0 andalso not grobner_during,
+        "CVC replay did not suppress Metis and Grobner chatter")
+      val () = assert (Feedback.current_trace "metis" = 3 andalso
+                       !Grobner.verbose,
+        "CVC replay did not restore chatter settings after success")
+      val () =
+        ((CVC.quiet_replay (fn () => raise ReplayFailure) ();
+          die "FAIL: quiet CVC replay swallowed an exception")
+         handle ReplayFailure => ())
+    in
+      assert (Feedback.current_trace "metis" = 3 andalso
+              !Grobner.verbose,
+        "CVC replay did not restore chatter settings after an exception")
+    end
+in
+  Portable.finally restore run ()
+end
+
 fun z3_tac_oracle_tag_gate_rejects_accepted_axiom () =
 let
   val old_accepted = !Sanity.accepted_axioms
@@ -13714,6 +13789,12 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("cvc_tac_oracle_tag_gate_rejects_oracle_thm",
+      cvc_tac_oracle_tag_gate_rejects_oracle_thm),
+    ("yices_tac_is_fail_closed_without_reconstruction",
+      yices_tac_is_fail_closed_without_reconstruction),
+    ("cvc_replay_suppresses_tool_chatter",
+      cvc_replay_suppresses_tool_chatter),
     ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
       z3_tac_oracle_tag_gate_rejects_oracle_thm),
     ("z3_tac_oracle_tag_gate_rejects_accepted_axiom",

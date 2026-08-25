@@ -264,6 +264,14 @@ structure CVC = struct
         (translation, arrays_exp)), strings)
     end
 
+  (* CPC replay calls Metis and Grobner internally.  Their default interactive
+     output is useful when those tools are invoked directly, but it makes a
+     routine CVC_TAC proof unnecessarily noisy.  Keep the suppression local
+     to replay, and let both wrappers restore their settings on exceptions. *)
+  fun quiet_replay replay input =
+    Lib.with_flag (Grobner.verbose, false)
+      (Feedback.trace ("metis", 0) replay) input
+
   fun checked_post proof_name command_stem parse replay
       (data as ((original_goal, goal, validation, finite_hyps),
         (translation, _))) outfile =
@@ -288,7 +296,7 @@ structure CVC = struct
                    (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
-          val thm = replay (finite_hyps @ As, g, proof)
+          val thm = quiet_replay replay (finite_hyps @ As, g, proof)
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr

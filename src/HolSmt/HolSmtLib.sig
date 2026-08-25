@@ -10,6 +10,7 @@ signature HolSmtLib = sig
 
   val CVC_ORACLE_TAC : tactic
   val CVC_TAC : tactic
+  val YICES_ORACLE_TAC : tactic
   val YICES_TAC : tactic
   val Z3_ORACLE_TAC : tactic
   val Z3_TAC : tactic
@@ -22,6 +23,7 @@ signature HolSmtLib = sig
 
   val CVC_ORACLE_PROVE : term -> thm
   val CVC_PROVE : term -> thm
+  val YICES_ORACLE_PROVE : term -> thm
   val YICES_PROVE : term -> thm
   val Z3_ORACLE_PROVE : term -> thm
   val Z3_PROVE : term -> thm

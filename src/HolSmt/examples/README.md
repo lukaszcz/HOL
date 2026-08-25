@@ -83,9 +83,10 @@ trust boundary is visible.
 | cvc5 theorem function | `CVC_PROVE tm` | — |
 
 The oracle equivalents are `Z3_ORACLE_TAC`, `z3o_tac [thms]`,
-`Z3_ORACLE_PROVE`, `CVC_ORACLE_TAC`, `cvco_tac [thms]`, and
-`CVC_ORACLE_PROVE`.  `YICES_TAC` and `YICES_PROVE` also use Yices as an
-oracle, but the interface requires legacy Yices 1 rather than Yices 2.  The
+`Z3_ORACLE_PROVE`, `CVC_ORACLE_TAC`, `cvco_tac [thms]`,
+`CVC_ORACLE_PROVE`, `YICES_ORACLE_TAC`, and `YICES_ORACLE_PROVE`.  The Yices
+interface requires legacy Yices 1 rather than Yices 2, and has no proof
+reconstruction: `YICES_TAC` and `YICES_PROVE` therefore fail closed.  The
 checked Z3 and cvc5 paths are the recommended starting point.
 
 `GENERIC_SMT_TAC` is the low-level adapter for integrating another solver;

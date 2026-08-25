@@ -20,6 +20,15 @@ Contents
 
 New features
 ------------
+-   The checked `CVC_TAC`, `Z3_TAC`, and `YICES_TAC` interfaces now share a
+    fail-closed boundary that accepts only reconstructed theorems without
+    runtime-oracle or axiom tags.  Because the legacy Yices integration has
+    no proof reconstruction, `YICES_TAC` and `YICES_PROVE` now fail safely;
+    its former trust-based behavior is available only through the explicit
+    `YICES_ORACLE_TAC` and `YICES_ORACLE_PROVE` names.  `CVC_TAC` also
+    suppresses Metis and Grobner progress chatter during proof replay while
+    preserving errors and restoring both tools' trace settings.
+
 -   `CVC_TAC` now uses cvc5's native CPC proof format by default.  CPC proof
     text is untrusted input: HOL parses the version-gated rule vocabulary,
     reconstructs the proof, and checks the resulting theorem has no oracle

@@ -798,4 +798,12 @@ structure Yices = struct
     | NONE =>
         raise Feedback.mk_HOL_ERR "Yices" "Yices_Oracle" error_msg
 
+  (* Yices's native proof format is not reconstructed in HOL.  Keep the
+     checked entry point fail-closed until a proof-producing integration is
+     implemented; oracle use is exposed separately by HolSmtLib. *)
+  fun Yices_Prover _ =
+    SolverSpec.UNKNOWN
+      (SOME ("checked Yices proof reconstruction is not implemented; " ^
+       "use YICES_ORACLE_TAC explicitly to trust Yices"))
+
 end

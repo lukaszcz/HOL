@@ -182,7 +182,8 @@ val thm_CVC = mk_CVC (expect_thm false)
 val sat_CVC = mk_CVC expect_sat
 
 fun mk_Yices expect_fun =
-  mk_test_fun (Yices.is_configured ()) expect_fun "Yices" HolSmtLib.YICES_TAC
+  mk_test_fun (Yices.is_configured ()) expect_fun "Yices"
+    HolSmtLib.YICES_ORACLE_TAC
 
 val thm_YO = mk_Yices (expect_thm false)
 val sat_YO = mk_Yices expect_sat
