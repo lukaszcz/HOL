@@ -3286,6 +3286,210 @@ fun test_hhMePo_frequency () =
 
 val _ = test_hhMePo_frequency ()
 
+fun mepo_real_close expected actual =
+  Real.abs (expected - actual) < 0.000000001
+
+val mepo_plain_stature : hhStature.stature =
+  {simp = false, local_ = false, def = false, induction = false}
+
+val mepo_local_stature : hhStature.stature =
+  {simp = false, local_ = true, def = false, induction = false}
+
+fun test_hhMePo_weight_arithmetic () =
+  let
+    val fudge = hhMePo.default_fudge
+    val function_type = Type.mk_type ("fun", [Type.bool, Type.bool])
+    val f = Term.mk_var ("f", function_type)
+    val x = Term.mk_var ("x", Type.bool)
+    val frequency = hhMePo.count_fact_consts
+      [("Fixture", Term.mk_comb (f, x))]
+    val f_pconst = ("f", (1, []))
+    val x_pconst = ("x", (0, []))
+    val rel_table = hhMePo.add_pconst_to_table f_pconst
+      (hhMePo.empty_pconst_table ())
+    val chained_table = hhMePo.add_pconst_to_table x_pconst
+      (hhMePo.empty_pconst_table ())
+    val rel = 1.5 * (1.0 + 2.0 / Math.ln 2.0)
+    val irrel =
+      1.5 * (Math.ln 2.0 / Math.ln 100.0) / 1.05 * 0.25
+    val score = hhMePo.fact_weight fudge mepo_plain_stature frequency
+      rel_table chained_table [f_pconst, x_pconst]
+    val simp_local : hhStature.stature =
+      {simp = true, local_ = true, def = false, induction = false}
+    val candidates =
+      ("perfect-a", 1.1) :: ("perfect-b", 1.0) ::
+      List.tabulate (20, fn index =>
+        ("imperfect-" ^ Int.toString index,
+         0.9 - Real.fromInt index / 100.0))
+    val (accepted, left) = hhMePo.take_most_relevant fudge
+      {max_facts = 20, remaining_max = 20, candidates = candidates}
+    val before_purge = [("low", 0.0009), ("boundary", 0.001)]
+  in
+    expect "hhMePo relevant rarity weight is verbatim"
+      (mepo_real_close (1.0 + 2.0 / Math.ln 2.0)
+        (hhMePo.rel_weight_for 7 1));
+    expect "hhMePo irrelevant frequency and order curve is verbatim"
+      (mepo_real_close (Math.ln 2.0 / Math.ln 100.0 / 1.05)
+        (hhMePo.irrel_weight_for fudge 0 1));
+    expect "hhMePo applies free and chained multipliers in fact_weight"
+      (mepo_real_close (rel / (rel + irrel)) score);
+    expect "hhMePo uses fixed abstraction and theory weights"
+      (mepo_real_close 0.5
+         (hhMePo.rel_pconst_weight fudge frequency ("%abs", (3, [])))
+       andalso
+       mepo_real_close 0.25
+         (hhMePo.irrel_pconst_weight fudge frequency chained_table
+           ("%thy%Fixture", (0, []))));
+    expect "hhMePo simp status shadows the local stature bonus"
+      (mepo_real_close 0.15
+        (hhMePo.stature_bonus fudge simp_local) andalso
+       mepo_real_close 0.55
+        (hhMePo.stature_bonus fudge mepo_local_stature));
+    expect "hhMePo accepts all perfect and at most twelve imperfect facts"
+      (length accepted = 14 andalso length left = 8 andalso
+       map #1 (List.take (accepted, 2)) = ["perfect-a", "perfect-b"]);
+    expect "hhMePo purges only sub-0.001 hopeless facts at iteration five"
+      (map #1 (hhMePo.purge_hopeless fudge 4 before_purge) =
+         ["low", "boundary"] andalso
+       case hhMePo.purge_hopeless fudge 5 before_purge of
+           [(name, weight)] =>
+             name = "boundary" andalso mepo_real_close 0.001 weight
+         | _ => false)
+  end
+
+val _ = test_hhMePo_weight_arithmetic ()
+
+fun mepo_context current facts =
+  hhMePo.make_context {current_theory = current, facts = facts}
+
+fun mepo_fixture thmid theory concl stature =
+  {thmid = thmid, theory = theory, concl = concl, stature = stature}
+
+fun test_hhMePo_loop_thresholds_and_goal_context () =
+  let
+    val p = Term.mk_var ("mepo_p", Type.bool)
+    val q = Term.mk_var ("mepo_q", Type.bool)
+    val noise = List.tabulate (50, fn index =>
+      Term.mk_var ("mepo_noise_" ^ Int.toString index, Type.bool))
+    val threshold_fact = boolSyntax.list_mk_conj (p :: noise)
+    val threshold_context = mepo_context "Fixture"
+      [mepo_fixture "FixtureTheory.threshold_halved" "Fixture"
+        threshold_fact mepo_plain_stature]
+    val fallback_context = mepo_context "Fixture"
+      [mepo_fixture "FixtureTheory.local_fallback" "Fixture" p
+         mepo_local_stature,
+       mepo_fixture "OtherTheory.not_local" "Other" q
+         mepo_plain_stature]
+    val assumption_context = mepo_context "Fixture"
+      [mepo_fixture "FixtureTheory.from_asl" "Fixture" q
+         mepo_plain_stature]
+    val dirty_context = mepo_context "Fixture"
+      [mepo_fixture "FixtureTheory.first_round" "Fixture"
+         (boolSyntax.mk_conj (p, q)) mepo_plain_stature,
+       mepo_fixture "OtherTheory.dirty_rescore" "Other" q
+         mepo_plain_stature]
+    val duplicate_context = mepo_context "Fixture"
+      [mepo_fixture "FixtureTheory.duplicate" "Fixture"
+         (boolSyntax.mk_conj (p, q)) mepo_plain_stature,
+       mepo_fixture "FixtureTheory.duplicate" "Fixture"
+         (boolSyntax.mk_conj (p,
+           Term.mk_var ("mepo_duplicate_other", Type.bool)))
+         mepo_plain_stature,
+       mepo_fixture "OtherTheory.after_duplicate" "Other" q
+         mepo_plain_stature]
+    val chain_symbols = List.tabulate (7, fn index =>
+      Term.mk_var ("mepo_chain_" ^ Int.toString index, Type.bool))
+    val chain_facts = List.tabulate (6, fn index =>
+      mepo_fixture ("ChainTheory.step_" ^ Int.toString index)
+        ("Chain" ^ Int.toString index)
+        (boolSyntax.mk_conj (List.nth (chain_symbols, index),
+          List.nth (chain_symbols, index + 1))) mepo_plain_stature)
+    val purge_context = mepo_context "Fixture"
+      (chain_facts @
+       [mepo_fixture "HopelessTheory.never_relevant" "Hopeless"
+          (Term.mk_var ("mepo_hopeless", Type.bool))
+          mepo_plain_stature])
+    val restricted = hhMePo.restrict_context fallback_context
+      ["OtherTheory.not_local"]
+  in
+    expect "hhMePo retries an empty first iteration at half threshold"
+      (hhMePo.mepo_rank threshold_context ([], p) 1 =
+       ["FixtureTheory.threshold_halved"]);
+    expect "hhMePo falls back from a constant-free goal to local facts"
+      (hhMePo.mepo_rank fallback_context ([], boolSyntax.T) 1 =
+       ["FixtureTheory.local_fallback"]);
+    expect "hhMePo adds assumptions to the goal and chained tables"
+      (hhMePo.mepo_rank assumption_context ([q], boolSyntax.T) 1 =
+       ["FixtureTheory.from_asl"]);
+    expect "hhMePo invalidates cached weights for newly relevant constants"
+      (hhMePo.mepo_rank dirty_context ([], p) 2 =
+       ["FixtureTheory.first_round", "OtherTheory.dirty_rescore"]);
+    expect "hhMePo keeps duplicate-thmid candidate payloads distinct"
+      (hhMePo.mepo_rank duplicate_context ([], p) 3 =
+       ["FixtureTheory.duplicate", "FixtureTheory.duplicate",
+        "OtherTheory.after_duplicate"]);
+    expect "hhMePo full loop reaches iteration-five hopeless purging"
+      (hhMePo.mepo_rank purge_context
+         ([], hd chain_symbols) 6 = map #thmid chain_facts);
+    expect "hhMePo context restriction preserves requested pool order"
+      (hhMePo.context_thmids restricted = ["OtherTheory.not_local"])
+  end
+
+val _ = test_hhMePo_loop_thresholds_and_goal_context ()
+
+fun test_hhMePo_special_facts () =
+  let
+    val p = Term.mk_var ("mepo_special_p", Type.bool)
+    val arity_zero =
+      ``(CONS : bool -> bool list -> bool list) = CONS``
+    val arity_one = ``CONS T = CONS T``
+    val goal =
+      ``mepo_special_p /\
+        ((CONS : bool -> bool list -> bool list) = CONS) /\
+        mepo_special_x IN (mepo_special_s : bool set)``
+    val regular =
+      mepo_fixture "FixtureTheory.arity_zero" "Fixture" arity_zero
+        mepo_plain_stature ::
+      mepo_fixture "FixtureTheory.arity_one" "Fixture" arity_one
+        mepo_plain_stature ::
+      List.tabulate (48, fn index =>
+        mepo_fixture ("FixtureTheory.regular_" ^ Int.toString index)
+          "Fixture" p mepo_plain_stature)
+    val specials =
+      [mepo_fixture "boolTheory.EQ_EXT" "bool" p mepo_plain_stature,
+       mepo_fixture "pred_setTheory.SPECIFICATION" "pred_set" p
+         mepo_plain_stature,
+       mepo_fixture "pred_setTheory.GSPECIFICATION" "pred_set" p
+         mepo_plain_stature,
+       mepo_fixture "boolTheory.IN_DEF" "bool" p mepo_plain_stature]
+    val context = mepo_context "Fixture" (regular @ specials)
+    val ranking = hhMePo.mepo_rank context ([], goal) 54
+  in
+    expect "hhMePo inserts set and arity-extensionality facts at index 45"
+      (length ranking = 54 andalso
+       List.take (List.drop (ranking, 45), 4) =
+         ["boolTheory.EQ_EXT", "pred_setTheory.SPECIFICATION",
+          "pred_setTheory.GSPECIFICATION", "boolTheory.IN_DEF"])
+  end
+
+val _ = test_hhMePo_special_facts ()
+
+fun test_hhMePo_live_context_constructor () =
+  let
+    val thmid = "arithmeticTheory.ADD1"
+    val theorem = DB.fetch "arithmetic" "ADD1"
+    val thmdata : mlThmData.thmdata =
+      (#1 mlThmData.empty_thmdata, [(thmid, [])])
+    val context = hhMePo.create_context thmdata
+      (hhStature.create_statures ())
+  in
+    expect "hhMePo live context fetches and ranks named theorem conclusions"
+      (hhMePo.context_thmids context = [thmid] andalso
+       hhMePo.mepo_rank context ([], Thm.concl theorem) 1 = [thmid])
+  end
+
+val _ = test_hhMePo_live_context_constructor ()
+
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
   hhCache hhSchedule hhStature hhMePo

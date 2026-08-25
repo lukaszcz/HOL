@@ -60,4 +60,37 @@ sig
   val pconst_freq :
     (ptype * ptype -> bool) -> frequency_table -> pconst -> int
   val frequency_entries : frequency_table -> (pconst * int) list
+
+  (* These are the mathematical parts of MePo's score.  They are exposed so
+     that the port can be checked against hand calculations without exposing
+     the representation of a cached fact. *)
+  val rel_weight_for : int -> int -> real
+  val irrel_weight_for : fudge -> int -> int -> real
+  val rel_pconst_weight : fudge -> frequency_table -> pconst -> real
+  val irrel_pconst_weight :
+    fudge -> frequency_table -> pconst_table -> pconst -> real
+  val stature_bonus : fudge -> hhStature.stature -> real
+  val fact_weight :
+    fudge -> hhStature.stature -> frequency_table -> pconst_table ->
+    pconst_table -> pconst list -> real
+
+  (* Return the accepted candidates, followed by those left for later. *)
+  val take_most_relevant :
+    fudge -> {max_facts : int, remaining_max : int,
+              candidates : ('a * real) list} ->
+    ('a * real) list * ('a * real) list
+  val purge_hopeless :
+    fudge -> int -> ('a * real) list -> ('a * real) list
+
+  type context
+  val make_context :
+    {current_theory : string,
+     facts : {thmid : string, theory : string, concl : Term.term,
+              stature : hhStature.stature} list} -> context
+  val create_context : mlThmData.thmdata -> hhStature.statures -> context
+  val restrict_context : context -> string list -> context
+  val context_thmids : context -> string list
+  val mepo_rank_with_fudge : fudge -> context -> Abbrev.goal -> int ->
+    string list
+  val mepo_rank : context -> Abbrev.goal -> int -> string list
 end

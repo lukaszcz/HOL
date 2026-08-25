@@ -367,4 +367,431 @@ fun frequency_entries table =
         ((name, ptype), count) :: entries) result counts)
     [] table
 
+fun pow_int _ 0 = 1.0
+  | pow_int base exponent =
+      if exponent > 0 then base * pow_int base (exponent - 1)
+      else pow_int base (exponent + 1) / base
+
+fun rel_weight_for _ frequency =
+  1.0 + 2.0 / Math.ln (Real.fromInt frequency + 1.0)
+
+fun irrel_weight_for
+      ({worse_irrel_freq, higher_order_irrel_weight, ...} : fudge)
+      order frequency =
+  let
+    val k = Real.ceil worse_irrel_freq
+    val weight =
+      if frequency < k then
+        Math.ln (Real.fromInt (frequency + 1)) /
+        Math.ln worse_irrel_freq
+      else
+        rel_weight_for order frequency / rel_weight_for order k
+  in
+    weight * pow_int higher_order_irrel_weight (order - 1)
+  end
+
+fun is_global_const name = String.isSubstring "$" name
+
+fun generic_pconst_weight local_multiplier abs_weight theory_weight
+      chained_weight weight_for match frequency_table chained_table
+      (pconst as (name, (order, _))) =
+  if name = pseudo_abs_name then abs_weight
+  else if String.isPrefix "%thy%" name then theory_weight
+  else
+    let
+      val locality = if is_global_const name then 1.0 else local_multiplier
+      val frequency = pconst_freq match frequency_table pconst
+      val chained =
+        if chained_weight < 1.0 andalso
+           pconst_hyper_mem match_ptype chained_table pconst
+        then chained_weight
+        else 1.0
+    in
+      locality * weight_for order frequency * chained
+    end
+
+fun rel_pconst_weight
+      ({local_const_multiplier, abs_rel_weight,
+        theory_const_rel_weight, ...} : fudge) frequency_table pconst =
+  generic_pconst_weight local_const_multiplier abs_rel_weight
+    theory_const_rel_weight 0.0 rel_weight_for match_ptype
+    frequency_table (empty_pconst_table ()) pconst
+
+fun swapped_match (left, right) = match_ptype (right, left)
+
+fun irrel_pconst_weight
+      (fudge as
+       {local_const_multiplier, abs_irrel_weight,
+        theory_const_irrel_weight, chained_const_irrel_weight, ...})
+      frequency_table chained_table pconst =
+  generic_pconst_weight local_const_multiplier abs_irrel_weight
+    theory_const_irrel_weight chained_const_irrel_weight
+    (irrel_weight_for fudge) swapped_match frequency_table chained_table
+    pconst
+
+(* HOL4 exposes simp and locality statures.  The archived Intro, Elim, Assum,
+   and Chained bonus cases have no corresponding fact source here. *)
+fun stature_bonus ({simp_bonus, local_bonus, ...} : fudge)
+      ({simp, local_, ...} : hhStature.stature) =
+  if simp then simp_bonus else if local_ then local_bonus else 0.0
+
+fun pconst_mem match pconsts (name, ptype) =
+  List.exists
+    (fn (other_name, other_ptype) =>
+      name = other_name andalso match (ptype, other_ptype))
+    pconsts
+
+fun odd_const_name name =
+  name = pseudo_abs_name orelse String.isPrefix "%thy%" name
+
+fun fact_weight fudge stature frequency_table rel_table chained_table
+      fact_pconsts =
+  let
+    val (relevant, rest) =
+      List.partition (pconst_hyper_mem match_ptype rel_table) fact_pconsts
+    val irrelevant =
+      List.filter
+        (not o pconst_hyper_mem swapped_match rel_table) rest
+  in
+    if null relevant then 0.0
+    else if List.all (odd_const_name o fst) (relevant @ irrelevant) then 0.0
+    else
+      let
+        val irrelevant' =
+          List.filter (not o pconst_mem swapped_match relevant) irrelevant
+        val rel_weight =
+          foldl
+            (fn (pconst, total) =>
+              total + rel_pconst_weight fudge frequency_table pconst)
+            0.0 relevant
+        val irrel_weight =
+          foldl
+            (fn (pconst, total) =>
+              total + irrel_pconst_weight fudge frequency_table
+                chained_table pconst)
+            (~ (stature_bonus fudge stature)) irrelevant'
+        val result = rel_weight / (rel_weight + irrel_weight)
+      in
+        if Real.isFinite result then result else 0.0
+      end
+  end
+
+fun split_at count items =
+  let
+    fun loop 0 prefix after = (rev prefix, after)
+      | loop _ prefix [] = (rev prefix, [])
+      | loop n prefix (item :: rest) =
+          loop (n - 1) (item :: prefix) rest
+  in
+    loop (Int.max (count, 0)) [] items
+  end
+
+fun take count items = #1 (split_at count items)
+
+fun take_most_relevant (fudge : fudge)
+      {max_facts, remaining_max, candidates} =
+  let
+    val ratio =
+      Real.fromInt remaining_max / Real.fromInt max_facts
+    val imperfect_limit =
+      Real.ceil (Math.pow (#max_imperfect fudge,
+        Math.pow (ratio, #max_imperfect_exp fudge)))
+    val sorted = Listsort.sort
+      (fn ((_, left), (_, right)) => Real.compare (right, left))
+      candidates
+    fun split_perfect (prefix, []) = (rev prefix, [])
+      | split_perfect (prefix, items as (item as (_, weight)) :: rest) =
+          if weight > #perfect_threshold fudge then
+            split_perfect (item :: prefix, rest)
+          else (rev prefix, items)
+    val (perfect, imperfect) = split_perfect ([], sorted)
+    val (best_imperfect, later_imperfect) =
+      split_at imperfect_limit imperfect
+    val (accepted, overflow) =
+      split_at remaining_max (perfect @ best_imperfect)
+  in
+    (accepted, overflow @ later_imperfect)
+  end
+
+fun purge_hopeless (fudge : fudge) iteration weighted =
+  if iteration = #hopeless_iter fudge then
+    List.filter
+      (fn (_, weight) => weight >= #hopeless_threshold fudge) weighted
+  else weighted
+
+type cached_fact =
+  {thmid : string, theory : string, concl : term,
+   pconsts : pconst list, stature : hhStature.stature}
+
+type context =
+  {current_theory : string, facts : cached_fact list,
+   frequency_table : frequency_table}
+
+fun cache_fact {thmid, theory, concl, stature} =
+  {thmid = thmid, theory = theory, concl = concl,
+   pconsts = pconsts_in_term theory concl, stature = stature}
+
+fun frequency_of_facts facts =
+  count_fact_consts (map (fn fact => (#theory fact, #concl fact)) facts)
+
+fun make_context {current_theory, facts} =
+  let val cached = map cache_fact facts in
+    {current_theory = current_theory, facts = cached,
+     frequency_table = frequency_of_facts cached}
+  end
+
+fun theory_of_thmid thmid =
+  case total (split_string "Theory.") thmid of
+      SOME (theory, _) => theory
+    | NONE => Theory.current_theory ()
+
+fun create_context (_, thm_features) statures =
+  let
+    fun fetch (thmid, _) =
+      case total mlThmData.thm_of_name thmid of
+          SOME (SOME (_, theorem)) =>
+            SOME
+              {thmid = thmid, theory = theory_of_thmid thmid,
+               concl = Thm.concl theorem,
+               stature = hhStature.stature_of statures thmid}
+        | _ => NONE
+  in
+    make_context
+      {current_theory = Theory.current_theory (),
+       facts = List.mapPartial fetch thm_features}
+  end
+
+fun context_thmids ({facts, ...} : context) = map #thmid facts
+
+fun restrict_context ({current_theory, facts, ...} : context) thmids =
+  let
+    val wanted =
+      foldl (fn (thmid, set) => dadd thmid () set)
+        (dempty String.compare) thmids
+    val restricted =
+      List.filter (fn fact => dmem (#thmid fact) wanted) facts
+  in
+    {current_theory = current_theory, facts = restricted,
+     frequency_table = frequency_of_facts restricted}
+  end
+
+fun add_fact_pconsts fact table =
+  foldl (fn (pconst, result) => add_pconst_to_table pconst result)
+    table (#pconsts fact)
+
+fun table_name_changed old_table new_table name =
+  case (Redblackmap.peek (old_table, name),
+        Redblackmap.peek (new_table, name)) of
+      (NONE, NONE) => false
+    | (SOME left, SOME right) =>
+        not (length left = length right andalso
+          List.all
+            (fn entry => List.exists
+              (fn entry' => ptype_eq (entry, entry')) right) left)
+    | _ => true
+
+fun widely_irrelevant name =
+  irrelevant_const name orelse
+  List.exists (fn logical => name = logical)
+    ["bool$!", "bool$?", "bool$?!", "bool$RES_FORALL",
+     "bool$RES_EXISTS"]
+
+fun could_benefit_from_ext facts =
+  let
+    fun consider term table =
+      let
+        fun walk tm result =
+          case result of
+              NONE => NONE
+            | SOME arities =>
+                let val (head, operands) = strip_comb tm in
+                  if is_const head then
+                    let
+                      val name = #Thy (dest_thy_const head) ^ "$" ^
+                        #Name (dest_thy_const head)
+                      val arity = length operands
+                      val arities' =
+                        if widely_irrelevant name then SOME arities
+                        else
+                          (case Redblackmap.peek (arities, name) of
+                               NONE => SOME (dadd name arity arities)
+                             | SOME old =>
+                                 if old = arity then SOME arities else NONE)
+                    in
+                      foldl
+                        (fn (operand, state) => walk operand state)
+                        arities' operands
+                    end
+                  else
+                    foldl
+                      (fn (operand, state) => walk operand state)
+                      (SOME arities) operands
+                end
+      in
+        walk term table
+      end
+  in
+    case foldl
+      (fn (fact, table) => consider (#concl fact) table)
+      (SOME (dempty String.compare)) facts of
+        NONE => true
+      | SOME _ => false
+  end
+
+fun term_uses_const wanted term =
+  let
+    fun uses tm =
+      let val (head, arguments) = strip_comb tm in
+        (is_const head andalso
+         let val {Thy, Name, ...} = dest_thy_const head in
+           Thy ^ "$" ^ Name = wanted
+         end) orelse List.exists uses arguments orelse
+        (is_abs head andalso uses (#2 (dest_abs head)))
+      end
+  in
+    uses term
+  end
+
+val special_set_thmids =
+  ["pred_setTheory.SPECIFICATION",
+   "pred_setTheory.GSPECIFICATION", "boolTheory.IN_DEF"]
+val ext_thmid = "boolTheory.EQ_EXT"
+
+fun insert_special_facts (fudge : fudge) max_facts all_facts goal_terms
+      accepted =
+  let
+    val uses_set =
+      List.exists
+        (fn term => term_uses_const "bool$IN" term orelse
+                    term_uses_const "pred_set$GSPEC" term)
+        (goal_terms @ map #concl accepted)
+    val wanted =
+      (if could_benefit_from_ext accepted then [ext_thmid] else []) @
+      (if uses_set then special_set_thmids else [])
+    fun wanted_thmid thmid = List.exists (fn item => item = thmid) wanted
+    val add = take max_facts
+      (List.filter (wanted_thmid o #thmid) all_facts)
+    val without = List.filter (not o wanted_thmid o #thmid) accepted
+    val trimmed = take (max_facts - length add) without
+    val (prefix, after) = split_at (#special_fact_index fudge) trimmed
+  in
+    prefix @ add @ after
+  end
+
+fun mepo_rank_with_fudge (fudge : fudge)
+      ({current_theory, facts, frequency_table} : context)
+      (assumptions, conclusion) max_facts =
+  if max_facts <= 0 orelse null facts then []
+  else
+    let
+      val chained_table =
+        foldl
+          (fn (term, table) =>
+            add_pconsts_in_term current_theory term table)
+          (empty_pconst_table ()) assumptions
+      val goal_table0 =
+        foldl
+          (fn (term, table) =>
+            add_pconsts_in_term current_theory term table)
+          (empty_pconst_table ()) (assumptions @ [conclusion])
+      fun has_significant_pconst table =
+        List.exists (not o odd_const_name o fst) (pconsts_of_table table)
+      val goal_table =
+        if not (has_significant_pconst goal_table0) then
+          foldl
+            (fn (fact, table) =>
+              if #theory fact = current_theory then
+                add_fact_pconsts fact table
+              else table)
+            (empty_pconst_table ()) facts
+        else goal_table0
+      val hopeful =
+        List.mapPartial
+          (fn fact =>
+            if null (#pconsts fact) then NONE
+            else SOME (fact, NONE : real option)) facts
+      val decay = Math.pow
+        ((1.0 - #fact_threshold1 fudge) /
+         (1.0 - #fact_threshold0 fudge),
+         1.0 / Real.fromInt (max_facts + 1))
+
+      fun iter iteration remaining threshold rel_table hopeless hopeful =
+        let
+          val hopeless' =
+            purge_hopeless fudge iteration hopeless
+          fun scan candidates rejects [] =
+                if null candidates then
+                  if iteration = 0 andalso
+                     threshold >= #ridiculous_threshold fudge
+                  then
+                    iter 0 max_facts
+                      (threshold / #threshold_divisor fudge)
+                      rel_table hopeless' hopeful
+                  else []
+                else
+                  let
+                    val (accepted_candidates, unaccepted) =
+                      take_most_relevant fudge
+                        {max_facts = max_facts,
+                         remaining_max = remaining,
+                         candidates = candidates}
+                    val accepted = map (#1 o #1) accepted_candidates
+                    val rel_table' =
+                      foldl
+                        (fn (fact, table) => add_fact_pconsts fact table)
+                        rel_table accepted
+                    fun dirty fact =
+                      List.exists
+                        (fn (name, _) =>
+                          table_name_changed rel_table rel_table' name)
+                        (#pconsts fact)
+                    fun reconsider ((fact, weight), (hope, lost)) =
+                      if dirty fact then ((fact, NONE) :: hope, lost)
+                      else (hope, (fact, weight) :: lost)
+                    val (dirty_rejects, clean_rejects) =
+                      foldl reconsider ([], []) (rejects @ hopeless')
+                    val overflow = map
+                      (fn ((fact, _), weight) =>
+                        (fact, if dirty fact then NONE else SOME weight))
+                      unaccepted
+                    val next_hopeful = overflow @ dirty_rejects
+                    val threshold' =
+                      1.0 - (1.0 - threshold) *
+                        Math.pow (decay, Real.fromInt (length accepted))
+                    val remaining' = remaining - length accepted
+                  in
+                    accepted @
+                    (if remaining' = 0 then []
+                     else iter (iteration + 1) remaining' threshold'
+                       rel_table' clean_rejects next_hopeful)
+                  end
+            | scan candidates rejects ((fact, cached) :: rest) =
+                let
+                  val weight =
+                    case cached of
+                        SOME value => value
+                      | NONE => fact_weight fudge (#stature fact)
+                          frequency_table rel_table chained_table
+                          (#pconsts fact)
+                in
+                  if weight >= threshold then
+                    scan (((fact, #pconsts fact), weight) :: candidates)
+                      rejects rest
+                  else scan candidates ((fact, weight) :: rejects) rest
+                end
+        in
+          scan [] [] hopeful
+        end
+
+      val accepted = iter 0 max_facts (#fact_threshold0 fudge)
+        goal_table [] hopeful
+      val with_specials = insert_special_facts fudge max_facts facts
+        (conclusion :: assumptions) accepted
+    in
+      map #thmid (take max_facts with_specials)
+    end
+
+fun mepo_rank context goal max_facts =
+  mepo_rank_with_fudge default_fudge context goal max_facts
+
 end
