@@ -37,7 +37,7 @@ hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo hhSlice.uo \
            hhSchedule.uo holyHammer.uo
 
 holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
-               hhSlice.uo hhSchedule.uo
+               hhSlice.uo hhSchedule.uo hhLearn.uo
 
 selftest.uo: selftest.sml hhStature.uo hhMePo.uo hhLearn.uo \
              hhTptpProblem.uo hhTypeEnc.uo \

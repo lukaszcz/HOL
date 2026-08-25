@@ -57,8 +57,9 @@ fun default_progress (SliceStarted slice) =
 
 fun problem_key (slice : hhProver.slice) =
   String.concatWith "."
-    (map aiLib.escape [#prover slice, #format slice, #type_enc slice,
-                       #lam_trans slice, Int.toString (#nfacts slice)])
+    (map aiLib.escape [#prover slice, #filter slice, #format slice,
+                       #type_enc slice, #lam_trans slice,
+                       Int.toString (#nfacts slice)])
 
 fun problem_dir (slice : hhProver.slice) =
   join (join (hhConfig.state_dir ()) "problems") (problem_key slice)
@@ -66,7 +67,8 @@ fun problem_dir (slice : hhProver.slice) =
 fun problem_path (slice : hhProver.slice) = join (problem_dir slice) "atp_in"
 
 fun same_problem_key (left : hhProver.slice) (right : hhProver.slice) =
-  #prover left = #prover right andalso #format left = #format right andalso
+  #prover left = #prover right andalso #filter left = #filter right andalso
+  #format left = #format right andalso
   #type_enc left = #type_enc right andalso
   #lam_trans left = #lam_trans right andalso #nfacts left = #nfacts right
 
@@ -88,22 +90,32 @@ fun mono_instances options config =
 
 (* This function is called before any scheduler thread is created.  Both
    thml_of_namel and the exporters touch HOL process-global state. *)
-fun export_problems options goal premises schedule =
+fun export_problems options goal rankings schedule =
   let
     val slices = distinct_problem_slices (map #2 schedule)
     val conjecture = list_mk_imp goal
     val memo = hhProblemGen.new_export_memo ()
     val named_memo = ref []
-    fun named_for nfacts =
+    fun ranking_for filter =
+      case List.find (fn (name, _) => name = filter) rankings of
+          SOME (_, ranking) => ranking
+        | NONE => raise Fail
+            ("HolyHammer: missing premise ranking for filter '" ^
+             filter ^ "'")
+    (* Check every ranking before creating a directory or problem file. *)
+    val _ = List.app (ignore o ranking_for o #filter) slices
+    fun named_for filter nfacts =
       let
+        val premises = ranking_for filter
         val count =
-          if #filter options = "none" then
+          if filter = "none" then
             (case #max_facts options of
                  NONE => length premises
                | SOME maximum => Int.min (maximum, length premises))
           else nfacts
       in
-      case List.find (fn (old_nfacts, _) => old_nfacts = count)
+      case List.find (fn ((old_filter, old_nfacts), _) =>
+          old_filter = filter andalso old_nfacts = nfacts)
           (!named_memo) of
           SOME (_, named) => named
         | NONE =>
@@ -111,7 +123,7 @@ fun export_problems options goal premises schedule =
               val selected = first_n count premises
               val named = smlRedirect.hidef mlThmData.thml_of_namel selected
             in
-              named_memo := (count, named) :: !named_memo;
+              named_memo := ((filter, nfacts), named) :: !named_memo;
               named
             end
       end
@@ -124,7 +136,7 @@ fun export_problems options goal premises schedule =
       let
         val config = config_for slice
         val directory = problem_dir slice
-        val named = named_for (#nfacts slice)
+        val named = named_for (#filter slice) (#nfacts slice)
         val _ = hhConfig.ensure_dir directory
       in
         if #format slice = "fof" andalso #type_enc slice = "" then
@@ -163,7 +175,7 @@ fun distinct_configs schedule =
     collect [] schedule
   end
 
-fun run {options, goal, premises, progress} =
+fun run {options, goal, rankings, progress} =
   let
     val started = Time.now ()
     val schedule = hhSlice.mk_schedule options
@@ -176,7 +188,7 @@ fun run {options, goal, premises, progress} =
          TextIO.output (TextIO.stdErr,
            "HolyHammer progress callback failed: " ^
            General.exnMessage error ^ "\n"))
-    val _ = export_problems options goal premises schedule
+    val _ = export_problems options goal rankings schedule
     val _ = if #cache options then hhCache.prune options else ()
     (* Probe once on the calling thread.  Besides keeping version probes out
        of the worker pool, this avoids concurrent access to hhProver's probe

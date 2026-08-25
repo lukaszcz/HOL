@@ -128,11 +128,11 @@ fun failed caller options found =
       raise ERR caller message
     end
 
-fun run_schedule caller options premises goal =
+fun run_schedule caller options rankings goal =
   let
     val found = ref ([] : unverified list)
     val result = hhSchedule.run
-      {options = options, goal = goal, premises = premises,
+      {options = options, goal = goal, rankings = rankings,
        progress = SOME (progress found)}
   in
     case #suggestions result of
@@ -140,12 +140,21 @@ fun run_schedule caller options premises goal =
       | [] => failed caller options (!found)
   end
 
-fun max_schedule_facts schedule =
-  foldl Int.max 0 (map (#nfacts o #2) schedule)
+fun distinct_filter_maxima schedule =
+  let
+    fun add slice [] = [(#filter slice, #nfacts slice)]
+      | add slice ((filter, maximum) :: rest) =
+          if #filter slice = filter then
+            (filter, Int.max (maximum, #nfacts slice)) :: rest
+          else
+            (filter, maximum) :: add slice rest
+  in
+    foldl (fn ((_, slice), maxima) => add slice maxima) [] schedule
+  end
 
-fun premise_order (options : hhConfig.hh_options) thmdata n goal =
-  if #filter options = "none" then map #1 (#2 thmdata)
-  else thmknn_wdep thmdata n (fea_of_goal true goal)
+fun explicit_rankings schedule premises =
+  map (fn (filter, _) => (filter, premises))
+    (distinct_filter_maxima schedule)
 
 fun options_for caller wanted_atps =
   let
@@ -155,8 +164,13 @@ fun options_for caller wanted_atps =
   end
 
 fun hh_pb _ wanted_atps premises goal =
-  #tac (run_schedule "hh_pb" (options_for "hh_pb" wanted_atps)
-    premises goal)
+  let
+    val options = options_for "hh_pb" wanted_atps
+    val schedule = hhSlice.mk_schedule options
+  in
+    #tac (run_schedule "hh_pb" options
+      (explicit_rankings schedule premises) goal)
+  end
 
 fun main_hh_result caller thmdata goal =
   let
@@ -165,10 +179,13 @@ fun main_hh_result caller thmdata goal =
       (configs_of caller (#provers snapshot))
     val options = interactive_options (map #name configs) snapshot
     val schedule = hhSlice.mk_schedule options
-    val premises = premise_order options thmdata
-      (max_schedule_facts schedule) goal
+    val context = hhLearn.create_context thmdata
+    fun rank (filter, maximum) =
+      (filter, hhLearn.rank context
+        {filter = filter, pool = NONE, goal = goal, n = maximum})
+    val rankings = map rank (distinct_filter_maxima schedule)
   in
-    run_schedule caller options premises goal
+    run_schedule caller options rankings goal
   end
 
 fun main_hh _ thmdata goal = #tac (main_hh_result "main_hh" thmdata goal)

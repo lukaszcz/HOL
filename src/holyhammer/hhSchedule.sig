@@ -21,9 +21,11 @@ sig
 
   val problem_path : hhProver.slice -> string
   val default_progress : event -> unit
-  val export_problems : hhConfig.hh_options -> goal -> string list ->
+  val export_problems : hhConfig.hh_options -> goal ->
+    (string * string list) list ->
     (hhProver.prover_config * hhProver.slice) list -> unit
   val run :
-    {options : hhConfig.hh_options, goal : goal, premises : string list,
+    {options : hhConfig.hh_options, goal : goal,
+     rankings : (string * string list) list,
      progress : (event -> unit) option} -> result
 end

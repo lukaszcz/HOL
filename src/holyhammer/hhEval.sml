@@ -1397,6 +1397,17 @@ fun schedule_options condition
 fun max_schedule_facts schedule =
   foldl Int.max 0 (map (#nfacts o #2) schedule)
 
+fun rankings_for_schedule schedule premises =
+  let
+    fun add ((_, slice), rankings) =
+      if List.exists (fn (filter, _) => filter = #filter slice) rankings then
+        rankings
+      else
+        rankings @ [(#filter slice, premises)]
+  in
+    foldl add [] schedule
+  end
+
 fun version_of_prover name =
   case hhProver.lookup name of
       NONE => NONE
@@ -1420,7 +1431,8 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
     fun progress (hhSchedule.ProofFound proof) = proofs := !proofs @ [proof]
       | progress _ = ()
     val result = hhSchedule.run
-      {options = options, goal = goal, premises = premises,
+      {options = options, goal = goal,
+       rankings = rankings_for_schedule schedule premises,
        progress = SOME progress}
     val slices = map (fn (slice, status, elapsed, cached) =>
       {slice = slice, szs = szs_name status, time = elapsed,
@@ -1815,7 +1827,8 @@ fun run_format_smoke expdir timeout options (config, slice) =
       {cond_id = "smoke-format-" ^ #prover slice, regime = Bushy,
        selector = Deps, engine = Prover (#prover slice), timeout = timeout,
        reconstruct = true}
-    val _ = hhSchedule.export_problems options goal premises [(config, slice)]
+    val _ = hhSchedule.export_problems options goal
+      [(#filter slice, premises)] [(config, slice)]
     val result = hhProver.run config
       {timeout = timeout, format = #format slice,
        problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
@@ -1849,8 +1862,11 @@ val soundness_fixtures =
    pigeonhole_fixture "bool-four-pigeonhole" 4]
 
 fun soundness_schedule options goal =
-  hhSchedule.run {options = options, goal = ([], goal), premises = [],
-                  progress = NONE}
+  let val schedule = hhSlice.mk_schedule options in
+    hhSchedule.run
+      {options = options, goal = ([], goal),
+       rankings = rankings_for_schedule schedule [], progress = NONE}
+  end
 
 fun has_theorem (_, status, _, _) = status = hhProver.SzsTheorem
 
@@ -1892,7 +1908,8 @@ fun soundness_case options timeout goal (config, slice) =
     (* A short query is enough to catch an unsound immediate theorem while
        keeping the deliberately parser-rejected candidates smoke-friendly. *)
     val query_timeout = Int.min (timeout, 3)
-    val _ = hhSchedule.export_problems options ([], goal) [] [(config, slice)]
+    val _ = hhSchedule.export_problems options ([], goal)
+      [(#filter slice, [])] [(config, slice)]
     val result = hhProver.run config
       {timeout = query_timeout, format = #format slice,
        problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
