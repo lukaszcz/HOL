@@ -310,34 +310,43 @@ struct
       profile "string-symbolic(1)(bounded-concat-split)"
         bounded_concat_split_refute t
       handle Feedback.HOL_ERR _ =>
-      (* No E1 class: a single-lemma shortcut before the general symbolic
-         prover; retained unchanged for TASK_09 ablation. *)
-      profile "string-symbolic(2)(shared-singleton)"
-        (fn target => with_metis_limit (fn () =>
-          metisLib.METIS_PROVE
-            [smtstringz3Theory.seq_head_shared_singleton_prefix_right]
-            target) ()) t
-      handle Feedback.HOL_ERR _ =>
-      (* Before normalizing: the middle-singleton lemmas are stated over
-         'seq_unit', which the rewrite rung below unfolds away.  A narrow
-         lemma set keeps this within the shared replay budget, which the
-         full symbolic set does not. *)
-      (* No E1 class: a narrow lemma shortcut before the general symbolic
-         prover; retained unchanged for TASK_09 ablation. *)
-      profile "string-symbolic(3)(middle-singleton)"
-        (fn target => with_metis_limit (fn () =>
-          metisLib.METIS_PROVE middle_singleton_lemmas target) ()) t
+      (* E1(c): redundant middle-singleton cache.  The general symbolic rung
+         below searches the same rules when fast paths are disabled. *)
+      (Library.require_fastpath "symbolic string middle-singleton";
+       profile "string-symbolic(2)(middle-singleton)"
+         (fn target => with_metis_limit (fn () =>
+           metisLib.METIS_PROVE middle_singleton_lemmas target) ()) t)
       handle Feedback.HOL_ERR _ =>
       (* E1(b): normalization plus bounded first-order search is the general
          symbolic String-family procedure and has a loud failure boundary. *)
-      profile "string-symbolic(4)(general)"
-        (fn target => with_metis_limit (fn () =>
-          Tactical.prove (target,
-            Tactical.THEN
-              (bossLib.RW_TAC
-                 (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-                 symbolic_normalizations,
-               bossLib.METIS_TAC symbolic_lemmas))) ()) t
+      profile "string-symbolic(3)(general)"
+        (fn target =>
+          (* Some parametric constructor rules match before normalization;
+             others need the normalized representation.  Both searches use
+             members of the same general lemma set and shared bound.  Try the
+             cheapest single-rule search before the full set. *)
+          with_metis_limit
+            (fn () => metisLib.METIS_PROVE
+              [smtstringz3Theory.seq_head_shared_singleton_prefix_right]
+              target) ()
+          handle Feedback.HOL_ERR _ =>
+          (* The middle-singleton rules are stated over 'seq_unit', which
+             normalization unfolds.  Keep their ordered search within this
+             general symbolic rung, before the normalized representation. *)
+          with_metis_limit
+            (fn () => metisLib.METIS_PROVE middle_singleton_lemmas target) ()
+          handle Feedback.HOL_ERR _ =>
+          with_metis_limit
+            (fn () => metisLib.METIS_PROVE symbolic_lemmas target) ()
+          handle Feedback.HOL_ERR _ =>
+            with_metis_limit (fn () =>
+              Tactical.prove (target,
+                Tactical.THEN
+                  (bossLib.RW_TAC
+                     (simpLib.++
+                       (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                     symbolic_normalizations,
+                   bossLib.METIS_TAC symbolic_lemmas))) ()) t
 
   (* General automaton rules only.  Literal states and loop bounds are
      specialized from these at replay time below. *)

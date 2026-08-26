@@ -52,8 +52,6 @@ local
   val AND_IMP_INTRO_SYM = HolSmtTheory.AND_IMP_INTRO_SYM
   val VALID_IFF_TRUE = HolSmtTheory.VALID_IFF_TRUE
 
-  val SIMP_PROVE_UPDATE = SmtArrayProve.simp_prove_update
-
   (* Instantiate `thm` (types and free variables) so its conclusion becomes
      `t`.  Fails if no such instantiation exists. *)
   fun exact_inst thm t =
@@ -1694,13 +1692,6 @@ local
     (state, Thm.ALPHA lhs rhs)
   end
 
-  fun word_dp_prove target =
-    wordsLib.WORD_DP
-      (bossLib.SIMP_CONV (bossLib.++ (bossLib.++ (bossLib.arith_ss,
-        wordsLib.WORD_ss), wordsLib.WORD_EXTRACT_ss)) [])
-      (Drule.EQT_ELIM o
-        (bossLib.SIMP_CONV bossLib.arith_ss [])) target
-
   fun word_arith_prove target =
     Drule.EQT_ELIM (wordsLib.WORD_ARITH_CONV target)
       handle Conv.UNCHANGED => raise ERR "word_arith_prove" "unchanged"
@@ -1715,20 +1706,11 @@ local
         raise ERR name "word decision procedure found a counterexample"
 
   fun word_decide target =
-    (* TASK_09 deletion candidate: WORD_DP precedes complete BBLAST. *)
-    profile "word-decide(1)(WORD_DP)"
-      (word_decider_attempt "word_decide(WORD_DP)" word_dp_prove) target
-    handle Feedback.HOL_ERR _ =>
-      (* TASK_09 deletion candidate: WORD_ARITH precedes complete BBLAST. *)
-      profile "word-decide(2)(WORD_ARITH)"
-        (word_decider_attempt "word_decide(WORD_ARITH)" word_arith_prove)
-        target
-    handle Feedback.HOL_ERR _ =>
-      (* E1(a): BBLAST decides the finite bit-vector fragment. *)
-      profile "word-decide(3)(BBLAST)"
-        (word_decider_attempt "word_decide(BBLAST)"
-          (Feedback.trace ("print blast counterexamples", 0)
-            blastLib.BBLAST_PROVE)) target
+    (* E1(a): BBLAST decides the finite bit-vector fragment. *)
+    profile "word-decide(1)(BBLAST)"
+      (word_decider_attempt "word_decide(BBLAST)"
+        (Feedback.trace ("print blast counterexamples", 0)
+          blastLib.BBLAST_PROVE)) target
 
   (* Unfold only definitions selected by this translation's EncodedSymbol
      records, then retry the complete word decision procedures.  Requiring an
@@ -1906,6 +1888,54 @@ local
            "set: " ^ Library.term_to_string definition)
       end) definitions
 
+  (* Canonicalize Boolean polarity before the proof-local unifier.  Even
+     negation prefixes are eliminated with NOT_NOT_INTRO; if the remaining
+     sides have opposite polarity, NOT_REVERSE reduces the obligation to a
+     checked complementary definition.  No proposition is assumed. *)
+  fun boolean_normalized_unification (lhs, rhs, var_set) =
+    let
+      fun normalize tm =
+        let
+          val body = boolSyntax.dest_neg (boolSyntax.dest_neg tm)
+          val step = Thm.SYM (Thm.SPEC body NOT_NOT_INTRO)
+        in
+          Thm.TRANS step (normalize body)
+        end
+        handle Feedback.HOL_ERR _ => Thm.REFL tm
+      val lhs_normalized = normalize lhs
+      val rhs_normalized = normalize rhs
+      val lhs' = boolSyntax.rhs (Thm.concl lhs_normalized)
+      val rhs' = boolSyntax.rhs (Thm.concl rhs_normalized)
+      fun complementary_unification () =
+        let
+          val rhs_body = boolSyntax.dest_neg rhs'
+          val premise = Library.gen_instantiation
+            (rhs_body, boolSyntax.mk_neg lhs', var_set)
+          val p = Term.mk_var ("p", Type.bool)
+          val q = Term.mk_var ("q", Type.bool)
+        in
+          Thm.MP (Thm.INST [p |-> rhs_body, q |-> lhs'] NOT_REVERSE)
+            premise
+        end
+        handle Feedback.HOL_ERR _ =>
+          let
+            val lhs_body = boolSyntax.dest_neg lhs'
+            val premise = Library.gen_instantiation
+              (lhs_body, boolSyntax.mk_neg rhs', var_set)
+            val p = Term.mk_var ("p", Type.bool)
+            val q = Term.mk_var ("q", Type.bool)
+          in
+            Thm.SYM
+              (Thm.MP (Thm.INST [p |-> lhs_body, q |-> rhs'] NOT_REVERSE)
+                premise)
+          end
+      val unified = Library.gen_instantiation (lhs', rhs', var_set)
+        handle Feedback.HOL_ERR _ => complementary_unification ()
+    in
+      Thm.TRANS lhs_normalized
+        (Thm.TRANS unified (Thm.SYM rhs_normalized))
+    end
+
   fun linear_arithmetic_rewrite_prove target =
     let
       fun arithmetic_variable variable =
@@ -1939,6 +1969,7 @@ local
   let
     val (l, r) = boolSyntax.dest_eq t
     val attempts = ref ([] : string list)
+    val deferred_unification = ref (NONE : (thm * term list) option)
     fun record_attempt fragment =
       if List.exists (Lib.equal fragment) (!attempts) then ()
       else attempts := !attempts @ [fragment]
@@ -2092,22 +2123,28 @@ local
        arithmetic tautologies until the fresh Z3 variable is recorded as a
        definition, and nonlinear fallback can otherwise spend a long time on
        the deliberately underconstrained formula. *)
-    (* TASK_09 deletion candidate: this duplicates restricted unification. *)
+    (* E1(a): one checked unifier decides proof-local definitions.  Safe
+       definitions return immediately; bare aliases are saved for the end so
+       semantic theory procedures retain their established priority. *)
     let
       val thm = rewrite_profile "proof-local-definitions"
-        "rewrite(14)(unification-early)"
-        Library.gen_instantiation (l, r, #var_set state)
+        "rewrite(14)(unification)"
+        (fn input => Library.gen_instantiation input
+          handle Feedback.HOL_ERR _ => boolean_normalized_unification input)
+        (l, r, #var_set state)
       val asl = Thm.hyp thm
       val _ = assert_rewrite_definitions state asl
       fun is_safe_early_definition tm =
         let val (name, residue) = boolSyntax.dest_eq tm
         in Term.type_of name = Type.bool orelse not (Term.is_var residue) end
-      val _ = if not (List.null asl) andalso
-          List.all is_safe_early_definition asl then ()
-        else raise ERR "z3_rewrite"
-          "early unification rejected a variable alias"
+      val safe = not (List.null asl) andalso
+        List.all is_safe_early_definition asl
     in
-      (state_define (state_cache_thm state thm) asl, thm)
+      if safe then
+        (state_define (state_cache_thm state thm) asl, thm)
+      else
+        (deferred_unification := SOME (thm, asl);
+         raise ERR "z3_rewrite" "deferred proof-local variable alias")
     end
 
     handle Feedback.HOL_ERR _ =>
@@ -2142,41 +2179,33 @@ local
     handle Feedback.HOL_ERR _ =>
 
     let
-      (* Both exception routes below need this semantic bridge: the ordinary
-         HOL_ERR route tries it before arithmetic, while the SAT_cex route
-         reaches it after arithmetic has failed.  Keep one prover so the two
-         routes cannot drift apart. *)
+      (* This semantic bridge is shared before and after arithmetic.  Word
+         counterexamples are normalized to the ladder's ordinary failure, so
+         they cannot bypass either occurrence or the later general rungs. *)
       fun smt_rdiv_prove () =
         (* E1(a): proved normalization decides side-condition-closed rdiv. *)
-        rewrite_profile "linear-real-division" "rewrite(21)(smt-rdiv)"
+        rewrite_profile "linear-real-division" "rewrite(19)(smt-rdiv)"
           (simpLib.SIMP_PROVE (bossLib.srw_ss())
             [HolSmtTheory.smt_rdiv_eq_div]) t
-      (* No E1 class: duplicates the earlier SmtArrayProve internal update
-         prover; retained unchanged for TASK_09 ablation. *)
-      val thm = rewrite_profile "arrays" "rewrite(16)(SIMP_PROVE_UPDATE)"
-        SIMP_PROVE_UPDATE t
-        handle Feedback.HOL_ERR _ =>
-
-        (* No E1 class: shortcut before the terminal complete BBLAST route;
-           retained unchanged for TASK_09 ablation. *)
-        rewrite_profile "bit-vectors" "rewrite(17)(WORD_DP)" word_dp_prove t
-        handle Feedback.HOL_ERR _ =>
-
-        (* No E1 class: shortcut before the terminal complete BBLAST route;
-           retained unchanged for TASK_09 ablation. *)
-        rewrite_profile "bit-vectors" "rewrite(18)(WORD_ARITH_CONV)"
-          word_arith_prove t
+      val thm =
+        (* E1(c): redundant word-arithmetic cache; terminal BBLAST remains
+           the complete coverage path when fast paths are disabled. *)
+        (Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV";
+         rewrite_profile "bit-vectors" "rewrite(16)(WORD_ARITH_CONV)"
+           (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
+             word_arith_prove) t)
         handle Feedback.HOL_ERR _ =>
 
         (* E1(a): emitted-definition unfolding ends in complete BV blast. *)
-        rewrite_profile "bit-vectors" "rewrite(19)(translator-definitions+word)"
+        rewrite_profile "bit-vectors" "rewrite(17)(translator-definitions+word)"
           (unfold_translation_definitions_then_word state) t
         handle Feedback.HOL_ERR _ =>
 
         (* E1(a): BBLAST decides the finite bit-vector fragment. *)
-        (rewrite_profile "bit-vectors" "rewrite(20)(BBLAST)"
-          (Feedback.trace("print blast counterexamples", 0)
-            blastLib.BBLAST_PROVE) t
+        (rewrite_profile "bit-vectors" "rewrite(18)(BBLAST)"
+          (word_decider_attempt "z3_rewrite(BBLAST)"
+            (Feedback.trace("print blast counterexamples", 0)
+              blastLib.BBLAST_PROVE)) t
 
         handle Feedback.HOL_ERR _ =>
 
@@ -2186,14 +2215,10 @@ local
         handle Feedback.HOL_ERR _ =>
 
         (* E1(b): arithmetic combines complete linear and loud NLA routes. *)
-        rewrite_profile "linear/nonlinear-arithmetic" "rewrite(22)(arith)"
+        rewrite_profile "linear/nonlinear-arithmetic" "rewrite(20)(arith)"
           arith_prove t
 
-        | HolSatLib.SAT_cex _ =>
-            (rewrite_profile "linear/nonlinear-arithmetic"
-               "rewrite(22)(arith)" arith_prove t
-             handle HolSatLib.SAT_cex _ =>
-               raise ERR "z3_rewrite" "rewrite has a counterexample"))
+        )
         handle Feedback.HOL_ERR _ =>
 
         smt_rdiv_prove ()
@@ -2202,7 +2227,7 @@ local
         (* E1(b): the TypeBase-driven simplification/cases/exhaustiveness/
            acyclicity procedure is general for selected registered datatype
            facts and fails loudly outside those shapes. *)
-        rewrite_profile "datatypes" "rewrite(23)(datatype)"
+        rewrite_profile "datatypes" "rewrite(21)(datatype)"
           SmtDatatypeProve.datatype_prove t
 
     in
@@ -2217,7 +2242,7 @@ local
        the shared equality context with a kernel congruence step. *)
     (* E1(a): recursive kernel congruence decides shared Boolean equality. *)
     rewrite_profile "higher-order-congruence/beta/eta"
-      "rewrite(24)(equality-congruence)" (fn () =>
+      "rewrite(22)(equality-congruence)" (fn () =>
       let
         val (ll, lr) = boolSyntax.dest_eq l
         val (rl, rr) = boolSyntax.dest_eq r
@@ -2245,7 +2270,7 @@ local
        `z3_rewrite` (threading the state via `state_ref`). *)
     (* E1(a): kernel abstraction congruence decides lambda bodies. *)
     rewrite_profile "higher-order-congruence/beta/eta"
-      "rewrite(25)(abs-congruence)" (fn () =>
+      "rewrite(23)(abs-congruence)" (fn () =>
       let
         val state_ref = ref state
         val thm = abs_congruence (fn (lbody, rbody) =>
@@ -2262,15 +2287,17 @@ local
 
     (* E1(a): kernel beta conversion decides beta equality. *)
     (state, rewrite_profile "higher-order-congruence/beta/eta"
-      "rewrite(26)(beta)" beta_equal (l, r))
+      "rewrite(24)(beta)" beta_equal (l, r))
     handle Feedback.HOL_ERR _ =>
 
     (* E1(a): kernel eta conversion decides eta equality. *)
     (state, rewrite_profile "higher-order-congruence/beta/eta"
-      "rewrite(27)(eta)" eta_equal (l, r))
+      "rewrite(25)(eta)" eta_equal (l, r))
     handle Feedback.HOL_ERR _ =>
 
-    (* If nothing worked, let's try unifying terms.
+    (* Proof-local terms have already reached the general unifier before the
+       theory-specific procedures above.  The examples below document why
+       that semantic path exists.
        As a motivating example, when proving `(if x < y then x else y) <= x`,
        Z3 v4.12.4 asks us to prove the following rewrite as one of the proof
        steps:
@@ -2295,69 +2322,24 @@ local
        definitions (as in the `z3_intro_def` handler), to make sure it gets
        removed from the set of hypotheses of the final theorem. *)
 
-    (* General unification fallback.  The earlier rewrite(14) attempt runs
-       before arithmetic but deliberately declines a bare variable alias
-       (`v1 = v2`) so as not to commit an underconstrained proof-local
-       definition prematurely.  Once the arithmetic and word rungs have had
-       their chance, record such an alias here — this preserves the
-       pre-existing replay behaviour for rewrites whose only reconstruction is
-       a variable alias. *)
-    let
-      val (lhs, rhs) = boolSyntax.dest_eq t
-      (* E1(a): checked unification decides proof-local definitions. *)
-      val thm = rewrite_profile "proof-local-definitions"
-        "rewrite(28)(unification)" Library.gen_instantiation
-        (lhs, rhs, #var_set state)
-      val asl = Thm.hyp thm
-      val _ = assert_rewrite_definitions state asl
-    in
-      (state_define (state_cache_thm state thm) asl, thm)
-    end
+    (case !deferred_unification of
+       SOME (thm, asl) =>
+         profile "rewrite(14)(unification:deferred-alias-return)"
+           (fn () =>
+             (state_define (state_cache_thm state thm) asl, thm)) ()
+     | NONE => raise ERR "z3_rewrite" "no deferred proof-local definition")
 
     handle Feedback.HOL_ERR _ =>
 
-    (* TASK_09 deletion candidate: this is a double-negation transcription. *)
-    let
-      val (lhs, rhs) = boolSyntax.dest_eq t
-      val rhs = boolSyntax.dest_neg (boolSyntax.dest_neg rhs)
-      val thm = rewrite_profile "proof-local-definitions"
-        "rewrite(29)(double-negation-unification)"
-        Library.gen_instantiation
-        (lhs, rhs, #var_set state)
-      fun not_not_conv tm = Thm.SPEC tm NOT_NOT_INTRO
-      val thm = Conv.CONV_RULE (Conv.RHS_CONV not_not_conv) thm
-      val asl = Thm.hyp thm
-      val _ = assert_rewrite_definitions state asl
-    in
-      (state_define (state_cache_thm state thm) asl, thm)
-    end
-
-    handle Feedback.HOL_ERR _ =>
-
-    (* TASK_09 deletion candidate: this is one NOT_REVERSE transcription. *)
-    let
-      val (lhs, rhs) = boolSyntax.dest_eq t
-      val neg_lhs = boolSyntax.mk_neg lhs
-      val var = boolSyntax.dest_neg rhs
-      val def = boolSyntax.mk_eq (var, neg_lhs)
-      val p = Term.mk_var ("p", Type.bool)
-      val q = Term.mk_var ("q", Type.bool)
-      val thm' = Thm.INST [p |-> var, q |-> lhs] NOT_REVERSE
-      val thm = rewrite_profile "proof-local-definitions"
-        "rewrite(30)(not-reverse)"
-        (fn () => Drule.UNDISCH thm') ()
-    in
-      (* `var` is a proof-local definition only when Z3 introduced it; for
-         any other proposition this rewrite is context-dependent, so record
-         the step itself as the hypothesis that `remove_hyps` must then
-         discharge from the goal's assumptions. *)
-      if HOLset.member (#var_set state, var) then
-        (state_define (state_cache_thm state thm) [def], thm)
-      else
-        (state, Thm.ASSUME t)
-    end
-    handle Feedback.HOL_ERR _ =>
+    (* E1(b): a rewrite may be valid only under earlier asserted facts.
+       Defer such an obligation as a hypothesis only when a proof context
+       exists; final checked hypothesis removal must derive it from that
+       context and fails loudly otherwise. *)
+    if HOLset.isEmpty (#asserted_hyps state) then
       raise rewrite_ladder_exhausted (!attempts) t
+    else
+      (state, rewrite_profile "contextual-entailment"
+        "rewrite(26)(contextual-entailment)" Thm.ASSUME t)
   end
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
@@ -3030,7 +3012,7 @@ local
       (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
       : (state * proof) * Thm.thm =
   let
-    val (state, thm) = profile name z3_rule_fn (state, concl)
+       val (state, thm) = profile name z3_rule_fn (state, concl)
       handle Feedback.HOL_ERR holerr =>
         raise_replay_error name state name [] concl [] holerr
            | HolSatLib.SAT_cex cex =>
@@ -3836,6 +3818,16 @@ in
 
   fun replay_root_for_test proof : Thm.thm =
     replay_root_with_definitions_for_test [] proof
+
+  fun replay_root_with_state_for_test proof =
+  let
+    val state = initial_replay_state [] proof
+    val ((state, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
+  in
+    {asserted_hyps = HOLset.listItems (#asserted_hyps state),
+     definition_hyps = HOLset.listItems (#definition_hyps state),
+     thm = thm}
+  end
 
   (* returns a theorem that concludes ``F``, with its hypotheses (a
      subset of) those asserted in the proof *)

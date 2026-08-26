@@ -502,17 +502,20 @@ Setting `HOL4_HOLSMT_NO_FASTPATH=1` disables every fast path classified
 E1(c).  This D-mode is a checked-replay CI configuration: the general replay
 procedures remain enabled, so a D-mode failure identifies an E1(c) path that
 has accidentally become coverage-bearing.  It does not disable every retained
-shortcut: ten currently unclassifiable candidates remain present and ungated
-pending TASK_09 ablation, with their rationales recorded in
-`.agent-files/tasks_2/T8_deletions.md`.
+shortcut.  TASK_09 ablated the ten residual candidates recorded in
+`.agent-files/tasks_2/T8_deletions.md`; only the measured word-arithmetic and
+symbolic-String middle-singleton caches survived, and both are E1(c)-gated.
 
 The Z3 rewrite and th-lemma ladders use integer-sequential profile rungs.
 Each classified rung is recorded in the replay source as an E1(a) complete
 procedure for a named decidable fragment, an E1(b) general-family procedure
 with a loud boundary, or an E1(c) redundant performance cache.  Every E1(c)
 rung consults the D-mode switch above.  The ten TASK_09 candidates named in
-`T8_deletions.md` fit none of those classes yet; they remain deliberately
-ungated and undeleted so TASK_08 does not change coverage.  The nested
+`T8_deletions.md` have recorded one-by-one ablation outcomes: redundant fixed
+shapes were deleted or folded into general unification/String procedures, and
+the two measured survivors are E1(c) caches.  Context-dependent rewrites use
+an asserted-context gate and remain hypotheses only until final checked
+entailment discharges them.  The nested
 arithmetic/linear, word-decision, String/regex/symbolic, character and
 FloatingPoint sub-ladders follow the same integer-sequential convention.
 Proof-local theorem reuse for an otherwise unsupported advanced family is not

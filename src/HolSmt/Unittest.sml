@@ -11505,14 +11505,8 @@ let
       val theorem = Z3_ProofReplay.replay_root_with_definitions_for_test
         definitions proof
       val general =
-        profile_call_count "rewrite(19)(translator-definitions+word)"
-      val deciders =
-        profile_call_count
-          "word-decide(1)(WORD_DP)" +
-        profile_call_count
-          "word-decide(2)(WORD_ARITH)" +
-        profile_call_count
-          "word-decide(3)(BBLAST)"
+        profile_call_count "rewrite(17)(translator-definitions+word)"
+      val bblast = profile_call_count "word-decide(1)(BBLAST)_OK"
     in
       assert (rejected_without_provenance,
         name ^ " replay succeeded without emitted-symbol provenance");
@@ -11521,8 +11515,9 @@ let
         name ^ " definition was not keyed by its emitted-symbol record");
       assert (Thm.concl theorem ~~ expected,
         name ^ " replay returned the wrong conclusion");
-      assert (general > 0 andalso deciders > 0,
-        name ^ " did not consume the general unfold-then-word decider");
+      assert (general > 0 andalso bblast = 1,
+        name ^ " did not consume exactly one general unfold-then-BBLAST " ^
+        "decision");
       assert_no_hyps (name, theorem);
       check_oracle_tags name theorem
     end
@@ -11534,7 +11529,7 @@ let
          handle Feedback.HOL_ERR _ => true
               | _ => false)
       val bblast = profile_call_count
-        "word-decide(3)(BBLAST)"
+        "word-decide(1)(BBLAST)"
     in
       assert (rejected andalso bblast > 0,
         "word-decider BBLAST counterexample escaped its fallback ladder")
@@ -11795,10 +11790,15 @@ let
      handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
   (* Each class assertion is conditional on evidence that its routed profile
      actually ran.  This prevents the diagnostic test from passing merely
-     because source and test repeat the same fixed list. *)
+     because source and test repeat the same fixed list.  Contextual
+     entailment requires an asserted proof context, so its mandatory route is
+     pinned end-to-end by z3_contextual_entailment_end_to_end_success rather
+     than being a silently skipped entry in this no-context diagnostic. *)
   val routed_profiles = [
     ("rewrite(1)(conj/disj)", "propositional-AC"),
     ("rewrite(2)(nnf)", "propositional-NNF"),
+    ("rewrite(3)(cache-fp)", "cached-checked-theorems"),
+    ("rewrite(4)(fp)", "floating-point"),
     ("rewrite(5)(bag)", "bags"),
     ("rewrite(6)(seq)", "sequences"),
     ("rewrite(7)(poly-normal-form)", "polynomial-normal-form"),
@@ -11808,25 +11808,20 @@ let
     ("rewrite(11)(cache)", "cached-checked-theorems"),
     ("rewrite(12)(string)", "strings/regex"),
     ("rewrite(13)(all_distinct)", "datatype-literal-distinctness"),
-    ("rewrite(14)(unification-early)", "proof-local-definitions"),
-    ("rewrite(16)(SIMP_PROVE_UPDATE)", "arrays"),
-    ("rewrite(17)(WORD_DP)", "bit-vectors"),
-    ("rewrite(18)(WORD_ARITH_CONV)", "bit-vectors"),
-    ("rewrite(19)(translator-definitions+word)", "bit-vectors"),
-    ("rewrite(20)(BBLAST)", "bit-vectors"),
-    ("rewrite(21)(smt-rdiv)", "linear-real-division"),
-    ("rewrite(22)(arith)", "linear/nonlinear-arithmetic"),
-    ("rewrite(23)(datatype)", "datatypes"),
-    ("rewrite(24)(equality-congruence)",
+    ("rewrite(14)(unification)", "proof-local-definitions"),
+    ("rewrite(15)(fp-packed-bits)", "floating-point/bit-vectors"),
+    ("rewrite(16)(WORD_ARITH_CONV)", "bit-vectors"),
+    ("rewrite(17)(translator-definitions+word)", "bit-vectors"),
+    ("rewrite(18)(BBLAST)", "bit-vectors"),
+    ("rewrite(19)(smt-rdiv)", "linear-real-division"),
+    ("rewrite(20)(arith)", "linear/nonlinear-arithmetic"),
+    ("rewrite(21)(datatype)", "datatypes"),
+    ("rewrite(22)(equality-congruence)",
       "higher-order-congruence/beta/eta"),
-    ("rewrite(25)(abs-congruence)",
+    ("rewrite(23)(abs-congruence)",
       "higher-order-congruence/beta/eta"),
-    ("rewrite(26)(beta)", "higher-order-congruence/beta/eta"),
-    ("rewrite(27)(eta)", "higher-order-congruence/beta/eta"),
-    ("rewrite(28)(unification)", "proof-local-definitions"),
-    ("rewrite(29)(double-negation-unification)",
-      "proof-local-definitions"),
-    ("rewrite(30)(not-reverse)", "proof-local-definitions")
+    ("rewrite(24)(beta)", "higher-order-congruence/beta/eta"),
+    ("rewrite(25)(eta)", "higher-order-congruence/beta/eta")
   ]
   fun assert_profile_class (profile_name, fragment) =
     if profile_call_count profile_name = 0 then ()
@@ -11840,11 +11835,137 @@ in
     "rewrite terminal diagnostic omitted fragment classes: " ^ msg);
   assert (profile_call_count "rewrite(10)(array-set)" > 0,
     "terminal diagnostic probe did not route through Set/Array replay");
-  assert (profile_call_count "rewrite(24)(equality-congruence)" > 0 andalso
-      profile_call_count "rewrite(26)(beta)" > 0 andalso
-      profile_call_count "rewrite(27)(eta)" > 0,
+  assert (profile_call_count "rewrite(22)(equality-congruence)" > 0 andalso
+      profile_call_count "rewrite(24)(beta)" > 0 andalso
+      profile_call_count "rewrite(25)(eta)" > 0,
     "terminal diagnostic probe did not route through HO/beta/eta replay");
   List.app assert_profile_class routed_profiles
+end
+
+fun z3_rewrite_double_negation_unification_success () =
+let
+  val () = Profile.reset_all ()
+  val twice = replay_z3_proof_string
+    "((declare-fun a () Bool) (declare-fun b () Bool) \
+    \(declare-fun z () Bool) \
+    \(proof (rewrite (= (and a b) (not (not z)))))))"
+  val four = replay_z3_proof_string
+    "((declare-fun a () Bool) (declare-fun b () Bool) \
+    \(declare-fun z () Bool) \
+    \(proof (rewrite (= (and a b) \
+    \(not (not (not (not z)))))))))"
+in
+  assert (profile_call_count "rewrite(14)(unification)_OK" = 2,
+    "even-negation rewrites did not consume the general unifier");
+  assert (List.length (Thm.hyp twice) = 1 andalso
+      List.length (Thm.hyp four) = 1,
+    "even-negation rewrites did not return checked definitions");
+  check_oracle_tags "double-negation rewrite" twice;
+  check_oracle_tags "four-negation rewrite" four
+end
+
+fun z3_rewrite_negation_reverse_unification_success () =
+let
+  val () = Profile.reset_all ()
+  val thm = replay_z3_proof_string
+    "((declare-fun a () Bool) (declare-fun b () Bool) \
+    \(declare-fun z () Bool) \
+    \(proof (rewrite (= (and a b) (not z))))))"
+in
+  assert (profile_call_count "rewrite(14)(unification)_OK" = 1,
+    "negation-reverse rewrites did not consume the general unifier");
+  assert (List.length (Thm.hyp thm) = 1,
+    "negation-reverse rewrite did not return its checked definition");
+  check_oracle_tags "negation-reverse rewrite" thm
+end
+
+fun z3_rewrite_deferred_alias_return_success () =
+let
+  val () = Profile.reset_all ()
+  val proof = parse_z3_proof_string "4.12.4"
+    "((declare-fun x () Int) (declare-fun z () Int) \
+    \(proof (rewrite (= z x)))))"
+  val {asserted_hyps, definition_hyps, thm} =
+    Z3_ProofReplay.replay_root_with_state_for_test proof
+  val theorem_hyps = HOLset.listItems (Thm.hypset thm)
+in
+  assert (Thm.concl thm ~~ ``(z:int) = x``,
+    "deferred alias rewrite returned the wrong conclusion");
+  assert (List.null asserted_hyps andalso
+      List.length definition_hyps = 1 andalso
+      List.length theorem_hyps = 1 andalso
+      List.exists (fn definition =>
+        Term.aconv definition (List.hd theorem_hyps)) definition_hyps,
+    "deferred alias rewrite did not save exactly its checked definition");
+  assert (profile_call_count "rewrite(14)(unification)_OK" = 1 andalso
+      profile_call_count "rewrite(20)(arith)" = 1 andalso
+      profile_call_count
+        "rewrite(14)(unification:deferred-alias-return)_OK" = 1,
+    "deferred alias did not yield to semantic replay before returning");
+  check_oracle_tags "deferred proof-local alias rewrite" thm
+end
+
+fun z3_contextual_entailment_end_to_end_success () =
+let
+  val declarations =
+    "(set-logic ALL)\n" ^
+    "(declare-fun a () Bool)\n" ^
+    "(declare-fun b () Bool)\n" ^
+    "(declare-fun c () Bool)\n" ^
+    "(declare-fun d () Bool)\n"
+  val rewrite_text = "(= (and a b) (not (or c d)))"
+  val proof = parse_z3_proof_string "4.12.4"
+    ("(" ^ declarations ^
+     "(proof (unit-resolution (asserted (not " ^ rewrite_text ^ ")) " ^
+     "(rewrite " ^ rewrite_text ^ ") false))))")
+  val expected = List.hd (parse_smtlib_assertions
+    (declarations ^ "(assert " ^ rewrite_text ^ ")\n"))
+  val guard = Term.mk_var ("context_guard", Type.bool)
+  val relation = Term.mk_var ("context_relation",
+    Type.--> (intSyntax.int_ty,
+      Type.--> (intSyntax.int_ty, Type.bool)))
+  val x = Term.mk_var ("context_x", intSyntax.int_ty)
+  val y = Term.mk_var ("context_y", intSyntax.int_ty)
+  val z = Term.mk_var ("context_z", intSyntax.int_ty)
+  val u = Term.mk_var ("context_u", intSyntax.int_ty)
+  val v = Term.mk_var ("context_v", intSyntax.int_ty)
+  val w = Term.mk_var ("context_w", intSyntax.int_ty)
+  fun related left right = Term.list_mk_comb (relation, [left, right])
+  val transitive = boolSyntax.list_mk_forall ([u, v, w],
+    boolSyntax.mk_imp
+      (boolSyntax.mk_conj (related u v, related v w), related u w))
+  val entailing_context =
+    [transitive, related x y, related y z,
+     boolSyntax.mk_imp (related x z, expected)]
+  val () = Profile.reset_all ()
+  val thm = Z3_ProofReplay.check_proof
+    (entailing_context, expected, proof)
+  val assertion_set = HOLset.addList
+    (Term.empty_tmset, boolSyntax.mk_neg expected :: entailing_context)
+  val _ = assert
+    (profile_call_count "rewrite(26)(contextual-entailment)_OK" = 1 andalso
+     profile_call_count
+       "check_proof(hyp_removal:entailment)_OK" = 1,
+     "contextual rewrite was not discharged by final checked entailment")
+  val _ = assert (Thm.concl thm ~~ boolSyntax.F andalso
+      HOLset.isSubset (Thm.hypset thm, assertion_set),
+    "contextual replay violated its final conclusion/hypothesis contract")
+  val () = check_oracle_tags "contextual rewrite end-to-end replay" thm
+  val () = Profile.reset_all ()
+  val failure =
+    ((ignore (Z3_ProofReplay.check_proof
+        ([guard], expected, proof));
+      die "FAIL: non-entailing context leaked a theorem")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+in
+  assert (String.isSubstring "extra hypothesis is not entailed" failure,
+    "non-entailing contextual replay reported the wrong failure: " ^ failure);
+  assert (profile_call_count
+      "rewrite(26)(contextual-entailment)_OK" = 1 andalso
+      profile_call_count
+        "check_proof(hyp_removal:entailment)_HOL_ERR" = 1 andalso
+      profile_call_count "check_proof(hyp_removal)_HOL_ERR" = 1,
+    "non-entailing contextual replay did not fail at checked entailment")
 end
 
 fun z3_nonlinear_missing_csdp_diagnostic () =
@@ -12805,9 +12926,15 @@ fun string_prove_ladder_rungs_success () =
 
 fun string_prove_symbolic_rung_success () =
   let
-    fun direct name tm =
-      assert_string_prover name
-        SmtStringProve.symbolic_string_prove tm
+    val bounded = "string-symbolic(1)(bounded-concat-split)_OK"
+    val middle = "string-symbolic(2)(middle-singleton)_OK"
+    val general = "string-symbolic(3)(general)_OK"
+    fun direct expected name tm =
+      (Profile.reset_all ();
+       assert_string_prover name SmtStringProve.symbolic_string_prove tm;
+       assert (List.foldl (fn (profile, total) =>
+           profile_call_count profile + total) 0 expected = 1,
+         name ^ " did not consume exactly one expected symbolic rung"))
     (* Character variables carry the SMT-LIB code-point bound: ':smtstr' is
        a bounded carrier, so 'seq_unit c' only denotes a one-character
        string when 'c' is a code point.  On the replay path the bound comes
@@ -12817,12 +12944,12 @@ fun string_prove_symbolic_rung_success () =
         smtstr_concat p (smtstr_concat (seq_unit c) q) =
           seq_unit d ==> d = c``
   in
-    direct "string symbolic concat" concat_goal;
-    direct "string symbolic concat singleton-left"
+    direct [middle, general] "string symbolic concat" concat_goal;
+    direct [middle, general] "string symbolic concat singleton-left"
       ``c <= 196607 /\ d <= 196607 /\
         seq_unit d =
           smtstr_concat p (smtstr_concat (seq_unit c) q) ==> d = c``;
-    direct "string symbolic concat applied witnesses"
+    direct [middle, general] "string symbolic concat applied witnesses"
       ``(97:num) <= 196607 /\
         middle_char x (seq_unit 97) <= 196607 /\
         seq_unit 97 =
@@ -12831,7 +12958,7 @@ fun string_prove_symbolic_rung_success () =
               (seq_unit (middle_char x (seq_unit 97)))
               (suffix_part x (seq_unit 97))) ==>
         97 = middle_char x (seq_unit 97)``;
-    direct "string symbolic shared concat prefix"
+    direct [general] "string symbolic shared concat prefix"
       ``c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
         seq_eq s
           (smtstr_concat
@@ -12839,7 +12966,7 @@ fun string_prove_symbolic_rung_success () =
         s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
         smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
         seq_nth_i s 0 = c``;
-    direct "string bounded concat split refuter"
+    direct [bounded] "string bounded concat split refuter"
       ``seq_eq
           (smtstr_concat (seq_unit (seq_nth_i x 0))
             (smtstr_concat (seq_unit (seq_nth_i x 1))
@@ -12854,17 +12981,17 @@ fun string_prove_symbolic_rung_success () =
               (smtstr_concat (seq_unit 100) (seq_unit 101)))) =
           smtstr_concat x y ==>
         F``;
-    direct "string symbolic prefix"
+    direct [general] "string symbolic prefix"
       ``c <= 196607 /\
         seq_eq s
           (smtstr_concat
             (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
         smtstr_prefixof s (seq_unit c) ==>
         c = seq_nth_i s 0``;
-    direct "string symbolic suffix"
+    direct [general] "string symbolic suffix"
       ``smtstr_suffixof s t /\ smtstr_suffixof t u ==>
         smtstr_suffixof s u``;
-    direct "string symbolic contains"
+    direct [general] "string symbolic contains"
       ``smtstr_contains s t /\ smtstr_contains t u ==>
         smtstr_contains s u``;
     Profile.reset_all ();
@@ -13128,7 +13255,7 @@ in
   assert (Thm.concl thm ~~ boolSyntax.mk_eq (acyclic_eq, boolSyntax.F),
     "datatype rewrite replayed to unexpected conclusion: " ^
     Library.thm_to_string thm);
-  assert (profile_call_count "rewrite(23)(datatype)" > 0,
+  assert (profile_call_count "rewrite(21)(datatype)" > 0,
     "datatype rewrite did not use the rewrite datatype rung");
   check_oracle_tags "datatype rewrite replay" thm
 end
@@ -15168,6 +15295,14 @@ let
       z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_rewrite_ladder_exhausted_diagnostic",
       z3_rewrite_ladder_exhausted_diagnostic),
+    ("z3_rewrite_double_negation_unification_success",
+      z3_rewrite_double_negation_unification_success),
+    ("z3_rewrite_negation_reverse_unification_success",
+      z3_rewrite_negation_reverse_unification_success),
+    ("z3_rewrite_deferred_alias_return_success",
+      z3_rewrite_deferred_alias_return_success),
+    ("z3_contextual_entailment_end_to_end_success",
+      z3_contextual_entailment_end_to_end_success),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",

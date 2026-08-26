@@ -220,6 +220,11 @@ struct
   fun array_prove_unbounded t =
     trivial_prove t
     handle Feedback.HOL_ERR _ =>
+    (* UPDATE simplification is itself the semantic array-family admission:
+       translated ground select/store rewrites may simplify to a base-typed
+       conclusion with no surviving function variable. *)
+    simp_prove_update t
+    handle Feedback.HOL_ERR _ =>
     if is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
        has_set_variable t then
       beta_prove t
@@ -227,8 +232,6 @@ struct
       set_simp_prove t
       handle Feedback.HOL_ERR _ =>
       set_extensional_prove t
-      handle Feedback.HOL_ERR _ =>
-      simp_prove_update t
       handle Feedback.HOL_ERR _ =>
       symbolic_index_prove t
       handle Feedback.HOL_ERR _ =>
