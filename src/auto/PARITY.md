@@ -6,7 +6,7 @@ Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used
 
 The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: every equational definition the translation introduces, as a rewrite, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. It is more generous than Isabelle in one direction -- Isabelle adds a `fun` definition to its simpset by default but not a plain `definition` -- and the numbers below should be read with that in mind.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-21 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-25 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
 
 ## Scope
 
@@ -20,17 +20,12 @@ Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof cit
 - `set_L563_empty_def (pred_set$EMPTY_DEF)`
 - `set_L595_UNIV_def (pred_set$UNIV_DEF)`
 - `list_L1921_in_set_conv_nth (parityTranslation$source_set_conv_nth)`
+- `list_L3400_foldr_conv_foldl (parityTranslation$source_foldr_conv_fold)`
 - `list_L8167_list_all_iff (list$EVERY_MEM)`
 - `list_L8660_card_set (list$CARD_LIST_TO_SET_EQN[symmetric])`
+- `list_L6444_stable_sort_key_sort_key (parityTranslation$source_sort_key_stable)`
 - `list_L6690_distinct_if_distinct_map (list$ALL_DISTINCT_MAP)`
-- `list_L8683_can_select_set_list_ex1 (source_list_ex1_def)`
-- `list_L7387_lexord_same_pref_if_irrefl (parityTranslation$source_lexord_append_prefix_iff)`
-- `list_L7508_lexord_trans (parityTranslation$source_lexord_partial_trans)`
-- `list_L7537_lexord_irrefl (parityTranslation$source_lexord_irreflexive)`
-- `list_L7716_lexordp_conv_lexord (source_lexordp_def)`
-- `list_L7752_lexordp_eq_conv_lexord (source_lexordp_eq_def)`
-- `list_L8259_anon_L8259 (source_listrel1p_def)`
-- `list_L8273_anon_L8273 (source_lexordp_code_def)`
+- `list_L8683_can_select_set_list_ex1 (parityTranslation$source_list_ex1_def)`
 - `string_L728_anon_L728 (source_Literal_prime_def)`
 - `product_type_L785_curry_conv (pair$CURRY_DEF)`
 
@@ -38,8 +33,8 @@ Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof cit
 
 Source mining identified 1,070 relevant Isabelle results. Nine pairs translated to the same HOL4 statement except for bound variable names, so they are tested once. This leaves 1,061 distinct source-derived results. Eleven existing HOL4 integer regression goals are also included, giving 1,072 accounted results in total:
 
-- 1072 are executable HOL4 benchmark goals.
-- 0 could not be translated faithfully and are listed by identifier and reason in the benchmark files.
+- 1070 are executable HOL4 benchmark goals.
+- 2 could not be translated faithfully and are listed by identifier and reason in the benchmark files.
 - 0 source results are missing from both groups.
 
 The selftest checks this accounting in both directions. An unexpected failure is an error, but so is an expected failure that starts succeeding without its record being updated.
@@ -61,11 +56,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 311 | 310 | 4 |
-| List/map | 604 | 349 | 317 | 5 |
+| List/map | 602 | 356 | 321 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1072** | **773** | **740** | **28** |
+| **Total** | **1070** | **780** | **744** | **28** |
 
 ## Cost of the solutions
 
@@ -73,13 +68,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 12 | 13 | 0 | 0 | 0.5 | 45 | 516 |
-| Sets | 311 | 149 | 158 | 4 | 0 | 3.3 | 6 | 2430 |
-| List/map | 349 | 136 | 204 | 9 | 0 | 2.7 | 0 | 455 |
+| Classical | 25 | 13 | 12 | 0 | 0 | 0.6 | 45 | 516 |
+| Sets | 311 | 122 | 185 | 4 | 0 | 3.2 | 6 | 2430 |
+| List/map | 356 | 5 | 338 | 13 | 0 | 5.7 | 0 | 455 |
 | Linarith | 46 | 43 | 3 | 0 | 0 | 0.6 | 0 | 0 |
-| Presburger | 34 | 29 | 4 | 1 | 0 | 4.9 | 0 | 0 |
+| Presburger | 34 | 29 | 4 | 1 | 0 | 5.0 | 0 | 0 |
 | Algebra | 8 | 7 | 0 | 1 | 0 | 3.0 | 0 | 0 |
-| **Total** | **773** | **376** | **382** | **15** | **0** | **4.9** | **0** | **2430** |
+| **Total** | **780** | **219** | **542** | **19** | **0** | **5.7** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -92,11 +87,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 42 | 0 | 0 |
-| List/map | 0 | 255 | 0 | 0 |
+| List/map | 0 | 246 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **299** | **0** | **0** |
+| **Total** | **0** | **290** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 

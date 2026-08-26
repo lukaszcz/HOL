@@ -348,7 +348,7 @@ fun render () =
       "The comparison data was mined from Isabelle/HOL commit ",
       "`f7e02b7e`. Each in-repository benchmark entry records its source ",
       "file, line, method, and commit. The report was generated on ",
-      "2026-08-21 with a 30-second limit for each tactic attempt. The ",
+      "2026-08-25 with a 30-second limit for each tactic attempt. The ",
       "limit is an asynchronous interrupt, so a goal can overrun it by ",
       "the time its search takes to reach an interruptible point; the ",
       "times below are wall-clock and record the overrun where it ",
