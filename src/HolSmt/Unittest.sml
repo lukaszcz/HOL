@@ -11522,6 +11522,51 @@ in
       end))
 end
 
+fun nonlinear_power_detection_success () =
+let
+  val cases = [
+    ("int pow-only goal", ``0 <= (x:int) ** 2``, true),
+    ("real pow-only goal", ``0 <= (x:real) pow 2``, true),
+    ("num exponent four", ``0 <= (x:num) ** 4``, true),
+    ("int symbolic exponent", ``(x:int) ** n``, true),
+    ("real symbolic exponent", ``(x:real) pow n``, true),
+    ("num symbolic exponent", ``(x:num) ** n``, true),
+    ("quantified int power", ``!x:int. 0 <= x ** 2``, true),
+    ("let-bound real power",
+      ``let y = (x:real) in 0 <= y pow 3``, true),
+    ("quantified int multiplication", ``!x:int. 0 <= x * x``, true),
+    ("int exponent zero", ``(x:int) ** 0``, false),
+    ("real exponent one", ``(x:real) pow 1``, false),
+    ("num exponent one", ``(x:num) ** 1``, false),
+    ("int literal base", ``(2:int) ** 2``, false),
+    ("real literal base", ``(2:real) pow 2``, false),
+    ("num literal base", ``(2:num) ** 2``, false),
+    ("int literal base symbolic exponent", ``(2:int) ** n``, false),
+    ("real literal base symbolic exponent", ``(2:real) pow n``, false),
+    ("num literal base symbolic exponent", ``(2:num) ** n``, false)
+  ]
+  fun check (name, term, expected) =
+    assert (Library.is_nonlinear term = expected,
+      name ^ " nonlinear classification was " ^
+      Bool.toString (not expected))
+in
+  List.app check cases
+end
+
+fun nonlinear_power_nla_route_success () =
+let
+  val goal = ``(x:real) pow 2 >= 0``
+  val () = Profile.reset_all ()
+  val theorem = Z3_ProofReplay.arith_prove_for_test goal
+  val nla_calls = profile_call_count "arith_prove(nla)"
+in
+  assert (Thm.concl theorem ~~ goal,
+    "real nonlinear power replay returned the wrong theorem");
+  check_oracle_tags "real nonlinear power replay" theorem;
+  assert (nla_calls > 0,
+    "real pow-only goal did not route to nla_prove")
+end
+
 fun nonlinear_real_constant_divisor_replay_success () =
 let
   val goal = ``0r <= (x:real) * x / 2r``
@@ -14575,6 +14620,10 @@ let
       z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
+    ("nonlinear_power_detection_success",
+      nonlinear_power_detection_success),
+    ("nonlinear_power_nla_route_success",
+      nonlinear_power_nla_route_success),
     ("nonlinear_real_constant_divisor_replay_success",
       nonlinear_real_constant_divisor_replay_success),
     ("array_prove_ladder_rungs_success",

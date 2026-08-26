@@ -733,25 +733,35 @@ struct
      handle Feedback.HOL_ERR _ => false)
 
   (* Does 'tm' contain a nonlinear arithmetic subterm?
-     A subterm is nonlinear if it is a multiplication of two non-literal
-     terms, or an exponentiation/power with exponent > 1. *)
+     A multiplication is nonlinear when both operands are non-literal.  A
+     num, int, or real power is nonlinear when its base is non-literal and
+     its exponent is symbolic or a literal at least 2.  Exponents 0 and 1,
+     and powers with literal bases, stay on the linear/evaluation side. *)
   fun is_nonlinear tm =
   let
     fun is_nl_mult dest_mult t =
       (let val (l, r) = dest_mult t
        in not (is_numeric_literal l) andalso not (is_numeric_literal r) end)
       handle Feedback.HOL_ERR _ => false
+    fun is_nl_power dest_power t =
+      (let
+         val (base, exponent) = dest_power t
+       in
+         not (is_numeric_literal base) andalso
+         (case Lib.total numSyntax.dest_numeral exponent of
+            SOME n => Arbnum.<= (Arbnum.two, n)
+          | NONE => true)
+       end)
+      handle Feedback.HOL_ERR _ => false
     fun check t =
       is_nl_mult realSyntax.dest_mult t orelse
       is_nl_mult intSyntax.dest_mult t orelse
-      is_nl_mult numSyntax.dest_mult t
-    fun walk t =
-      check t orelse
-      (let val (f, x) = Term.dest_comb t
-       in walk f orelse walk x end
-       handle Feedback.HOL_ERR _ => false)
+      is_nl_mult numSyntax.dest_mult t orelse
+      is_nl_power realSyntax.dest_pow t orelse
+      is_nl_power intSyntax.dest_exp t orelse
+      is_nl_power numSyntax.dest_exp t
   in
-    walk tm
+    List.exists check (subterms tm)
   end
 
   (* e.g., "(A --> B) --> C --> D" acc  ==>  [A, B, C, D] @ acc *)
