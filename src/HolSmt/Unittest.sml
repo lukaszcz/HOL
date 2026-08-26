@@ -11282,7 +11282,7 @@ fun profile_call_count name =
 
 fun ground_subterm_evaluation_budget_success () =
 let
-  val profile_name = "arith_prove_linear(ground-subterm-eval)_OK"
+  val profile_name = "arith-linear(5)(ground-subterm-eval)_OK"
   val convert = Z3_ProofReplay.ground_subterm_eval_conv_for_test
   val changed_target = ``IS_SUBLIST ([1i] ++ [2i]) [2i]``
   val unchanged_target = ``SOME (ARB:num)``
@@ -11505,14 +11505,14 @@ let
       val theorem = Z3_ProofReplay.replay_root_with_definitions_for_test
         definitions proof
       val general =
-        profile_call_count "rewrite(translator-definitions+word)"
+        profile_call_count "rewrite(19)(translator-definitions+word)"
       val deciders =
         profile_call_count
-          "rewrite(translator-definitions+word:WORD_DP)" +
+          "word-decide(1)(WORD_DP)" +
         profile_call_count
-          "rewrite(translator-definitions+word:WORD_ARITH)" +
+          "word-decide(2)(WORD_ARITH)" +
         profile_call_count
-          "rewrite(translator-definitions+word:BBLAST)"
+          "word-decide(3)(BBLAST)"
     in
       assert (rejected_without_provenance,
         name ^ " replay succeeded without emitted-symbol provenance");
@@ -11534,7 +11534,7 @@ let
          handle Feedback.HOL_ERR _ => true
               | _ => false)
       val bblast = profile_call_count
-        "rewrite(translator-definitions+word:BBLAST)"
+        "word-decide(3)(BBLAST)"
     in
       assert (rejected andalso bblast > 0,
         "word-decider BBLAST counterexample escaped its fallback ladder")
@@ -11730,14 +11730,14 @@ end
 
 fun z3_th_lemma_basic_dispatch_replay_success () =
 let
-  val arith_profile = "th_lemma[basic](4)(arith)"
-  val bv_profile = "th_lemma[basic](5)(bv)"
-  val array_profile = "th_lemma[basic](6)(array)"
-  val metis_profile = "th_lemma[basic](7)(METIS)"
+  val arith_profile = "th_lemma[basic](3)(arith)"
+  val bv_profile = "th_lemma[basic](4)(bv)"
+  val array_profile = "th_lemma[basic](5)(array)"
+  val metis_profile = "th_lemma[basic](6)(METIS)"
   val cases = [
     ("pure-boolean",
       "((proof ((_ th-lemma basic eq-propagate 0) true)))",
-      "th_lemma[basic](3)(TAUT_PROVE)",
+      "th_lemma[basic](2)(TAUT_PROVE)",
       [arith_profile, bv_profile, array_profile, metis_profile]),
     ("arith",
       "((declare-fun x () Int) (declare-fun y () Int) \
@@ -11779,9 +11779,73 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
         "basic th-lemma diagnostic did not include conclusion: " ^ msg);
       assert (String.isSubstring "unsupported th-lemma shape" msg,
         "basic th-lemma diagnostic did not report unsupported shape: " ^ msg);
-      assert (String.isSubstring "attempted theories=[boolean, metis]" msg,
-        "basic th-lemma diagnostic did not include attempted theories: " ^ msg)
+      assert (String.isSubstring
+          "attempted fragment classes=[boolean, first-order-proof-search]"
+          msg,
+        "basic th-lemma diagnostic did not list fragment classes: " ^ msg)
     end
+
+fun z3_rewrite_ladder_exhausted_diagnostic () =
+let
+  val () = Profile.reset_all ()
+  val msg =
+    ((ignore (replay_z3_proof_string
+       "((proof (rewrite (= false true))))");
+      die "FAIL: unsupported rewrite replayed successfully")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+  (* Each class assertion is conditional on evidence that its routed profile
+     actually ran.  This prevents the diagnostic test from passing merely
+     because source and test repeat the same fixed list. *)
+  val routed_profiles = [
+    ("rewrite(1)(conj/disj)", "propositional-AC"),
+    ("rewrite(2)(nnf)", "propositional-NNF"),
+    ("rewrite(5)(bag)", "bags"),
+    ("rewrite(6)(seq)", "sequences"),
+    ("rewrite(7)(poly-normal-form)", "polynomial-normal-form"),
+    ("rewrite(8)(quantified-boolean)", "quantified-propositional"),
+    ("rewrite(9)(proforma)", "proforma-fastpaths"),
+    ("rewrite(10)(array-set)", "arrays/set"),
+    ("rewrite(11)(cache)", "cached-checked-theorems"),
+    ("rewrite(12)(string)", "strings/regex"),
+    ("rewrite(13)(all_distinct)", "datatype-literal-distinctness"),
+    ("rewrite(14)(unification-early)", "proof-local-definitions"),
+    ("rewrite(16)(SIMP_PROVE_UPDATE)", "arrays"),
+    ("rewrite(17)(WORD_DP)", "bit-vectors"),
+    ("rewrite(18)(WORD_ARITH_CONV)", "bit-vectors"),
+    ("rewrite(19)(translator-definitions+word)", "bit-vectors"),
+    ("rewrite(20)(BBLAST)", "bit-vectors"),
+    ("rewrite(21)(smt-rdiv)", "linear-real-division"),
+    ("rewrite(22)(arith)", "linear/nonlinear-arithmetic"),
+    ("rewrite(23)(datatype)", "datatypes"),
+    ("rewrite(24)(equality-congruence)",
+      "higher-order-congruence/beta/eta"),
+    ("rewrite(25)(abs-congruence)",
+      "higher-order-congruence/beta/eta"),
+    ("rewrite(26)(beta)", "higher-order-congruence/beta/eta"),
+    ("rewrite(27)(eta)", "higher-order-congruence/beta/eta"),
+    ("rewrite(28)(unification)", "proof-local-definitions"),
+    ("rewrite(29)(double-negation-unification)",
+      "proof-local-definitions"),
+    ("rewrite(30)(not-reverse)", "proof-local-definitions")
+  ]
+  fun assert_profile_class (profile_name, fragment) =
+    if profile_call_count profile_name = 0 then ()
+    else assert (String.isSubstring fragment msg,
+      "rewrite terminal diagnostic omitted routed class " ^ fragment ^
+      " for profile " ^ profile_name ^ ": " ^ msg)
+in
+  assert (String.isSubstring "rewrite ladder exhausted" msg,
+    "rewrite terminal diagnostic did not identify exhaustion: " ^ msg);
+  assert (String.isSubstring "attempted fragment classes=" msg,
+    "rewrite terminal diagnostic omitted fragment classes: " ^ msg);
+  assert (profile_call_count "rewrite(10)(array-set)" > 0,
+    "terminal diagnostic probe did not route through Set/Array replay");
+  assert (profile_call_count "rewrite(24)(equality-congruence)" > 0 andalso
+      profile_call_count "rewrite(26)(beta)" > 0 andalso
+      profile_call_count "rewrite(27)(eta)" > 0,
+    "terminal diagnostic probe did not route through HO/beta/eta replay");
+  List.app assert_profile_class routed_profiles
+end
 
 fun z3_nonlinear_missing_csdp_diagnostic () =
 let
@@ -11912,7 +11976,7 @@ let
   val goal = ``(x:real) pow 2 >= 0``
   val () = Profile.reset_all ()
   val theorem = Z3_ProofReplay.arith_prove_for_test goal
-  val nla_calls = profile_call_count "arith_prove(nla)"
+  val nla_calls = profile_call_count "arith(8)(nla)"
 in
   assert (Thm.concl theorem ~~ goal,
     "real nonlinear power replay returned the wrong theorem");
@@ -11980,7 +12044,7 @@ let
     let
       val () = Profile.reset_all ()
       val () = check Z3_ProofReplay.arith_prove_for_test case_
-      val consumed = profile_call_count "arith_prove(ediv-emod)_OK"
+      val consumed = profile_call_count "arith(5)(ediv-emod)_OK"
     in
       assert (consumed = 1,
         name ^ " did not consume the general ediv/emod replay path")
@@ -12259,7 +12323,7 @@ let
 in
   Profile.reset_all ();
   List.app (fn version => List.app (check version) captures) versions;
-  assert (profile_call_count "rewrite(01)(bag)" > 0,
+  assert (profile_call_count "rewrite(5)(bag)" > 0,
     "Z3 bag map rewrite did not route to SmtBagProve");
   assert (profile_call_count "th_lemma[array](3)(array_prove)" > 0,
     "generic ArrayEx map th-lemmas did not route to SmtArrayProve")
@@ -12543,18 +12607,18 @@ in
   Profile.reset_all ();
   List.app (fn version => List.app (check version) captures) versions;
   List.app (fn version => List.app (check version) rewrite_captures) versions;
-  assert (profile_call_count "th_lemma[seq](3)(seq_prove)" > 0,
+  assert (profile_call_count "th_lemma[seq](2)(seq_prove)" > 0,
     "genuine Seq th-lemmas did not route to SmtSeqProve");
-  assert (profile_call_count "rewrite(01)(seq)" > 0,
+  assert (profile_call_count "rewrite(6)(seq)" > 0,
     "native Seq constructor rewrites did not route to SmtSeqProve");
   Profile.reset_all ();
   List.app (fn version =>
     let
       val before = profile_call_count
-        "arith_prove_linear(ground-subterm-eval)_OK"
+        "arith-linear(5)(ground-subterm-eval)_OK"
       val () = check version contains_capture
       val after = profile_call_count
-        "arith_prove_linear(ground-subterm-eval)_OK"
+        "arith-linear(5)(ground-subterm-eval)_OK"
     in
       assert (after = before + 1,
         "captured Seq contains rewrite did not consume exactly one changed " ^
@@ -12562,7 +12626,7 @@ in
     end) versions;
   assert
     (profile_call_count
-       "arith_prove_linear(ground-subterm-eval)_OK" = List.length versions,
+       "arith-linear(5)(ground-subterm-eval)_OK" = List.length versions,
      "isolated Seq contains consumption count did not match version anchors")
 end
 
@@ -12806,9 +12870,9 @@ fun string_prove_symbolic_rung_success () =
     Profile.reset_all ();
     assert_string_prover "string symbolic full ladder"
       (SmtStringProve.string_prove intLib.ARITH_PROVE) concat_goal;
-    assert (profile_call_count "string(rung:4/symbolic)" > 0,
-      "symbolic string goal did not reach rung 4");
-    assert (profile_call_count "string(rung:7/unsupported)" = 0,
+    assert (profile_call_count "string(3)(symbolic)" > 0,
+      "symbolic string goal did not reach string(3)(symbolic)");
+    assert (profile_call_count "string(5)(unsupported)" = 0,
       "symbolic string goal fell through to the unsupported rung")
   end
 
@@ -12926,9 +12990,9 @@ fun string_prove_regex_rung_success () =
     assert_string_prover "regex full ladder"
       (SmtStringProve.string_prove intLib.ARITH_PROVE)
       ``~smt_in_re x ^range \/ aut_accept x 0 ^range``;
-    assert (profile_call_count "string(rung:5/regex)" > 0,
-      "regex goal did not reach rung 5");
-    assert (profile_call_count "string(rung:7/unsupported)" = 0,
+    assert (profile_call_count "string(4)(regex)" > 0,
+      "regex goal did not reach string(4)(regex)");
+    assert (profile_call_count "string(5)(unsupported)" = 0,
       "regex goal fell through to the unsupported rung")
   end
 
@@ -13016,9 +13080,9 @@ let
   val () = List.app check_boundary [0, 127, 196607]
   val digit_thm = replay_z3_proof_string digit_proof
 in
-  assert (profile_call_count "string(rung:6/char-bitblast)" = 4,
-    "char decomposition proofs did not use rung 6 exactly four times");
-  assert (profile_call_count "string(rung:7/unsupported)" = 0,
+  assert (profile_call_count "char(1)(bitblast)" = 4,
+    "char decomposition proofs did not use char(1)(bitblast) four times");
+  assert (profile_call_count "char(2)(unsupported)" = 0,
     "char decomposition proofs fell through to unsupported");
   check_oracle_tags "Z3 char.is_digit decomposition" digit_thm
 end
@@ -13064,7 +13128,7 @@ in
   assert (Thm.concl thm ~~ boolSyntax.mk_eq (acyclic_eq, boolSyntax.F),
     "datatype rewrite replayed to unexpected conclusion: " ^
     Library.thm_to_string thm);
-  assert (profile_call_count "rewrite(11.1)(datatype)" > 0,
+  assert (profile_call_count "rewrite(23)(datatype)" > 0,
     "datatype rewrite did not use the rewrite datatype rung");
   check_oracle_tags "datatype rewrite replay" thm
 end
@@ -13099,7 +13163,7 @@ in
       ``smtstr_len (SmtStr [97; 98; 99]) = 3``,
     "string ground rewrite returned the wrong equality: " ^
     Library.thm_to_string length);
-  assert (profile_call_count "rewrite(03.1)(string-ground-eval)" > 0,
+  assert (profile_call_count "string-rewrite(1)(ground-eval)" > 0,
     "string rewrite ladder did not use ground evaluation");
   assert (Thm.concl regex_literal ~~
       ``reglan_to_re
@@ -13170,14 +13234,14 @@ let
     end
 in
   (if Library.no_fastpath () then
-     expect_hol_error_contains "disabled FP proforma" "fast path disabled"
+   expect_hol_error_contains "disabled FP proforma" "fast path disabled"
        (fn () => ignore (SmtFpProve.proforma_prove literal))
    else
-     check "FP rung 1 literal" SmtFpProve.proforma_prove literal);
-  check "FP rung 2 literal evaluation"
+     check "FP fp(1) literal" SmtFpProve.proforma_prove literal);
+  check "FP fp(2) literal evaluation"
     SmtFpProve.ground_eval_prove literal;
   List.app (fn (label, tm) =>
-      check ("FP rung 2 " ^ label) SmtFpProve.ground_eval_prove tm)
+      check ("FP fp(2) " ^ label) SmtFpProve.ground_eval_prove tm)
     [("ground_add", add), ("ground_rem", rem),
      ("ground_round_to_integral_rna", round_to_integral),
      ("convert_to_ubv", conversion)]
@@ -13197,25 +13261,26 @@ let
     end
 in
   Profile.reset_all ();
-  List.app check [("FP rung 5 tiny add", add),
-                  ("FP rung 5 tiny sub", sub)];
-  assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 2,
-    "tiny add/sub rewrites did not use rung 5");
-  assert (profile_call_count "fp(rung:6/unsupported)" = 0,
-    "tiny add/sub rewrites fell through to rung 6")
+  List.app check [("FP fp(6) tiny add", add),
+                  ("FP fp(6) tiny sub", sub)];
+  assert (profile_call_count "fp(6)(symbolic-arithmetic)" = 2,
+    "tiny add/sub rewrites did not use fp(6)(symbolic-arithmetic)");
+  assert (profile_call_count "fp(7)(unsupported)" = 0,
+    "tiny add/sub rewrites fell through to fp(7)(unsupported)")
 end
 
 fun smtfp_addsub_circuit_mutation_rejected () =
 let
   (* Mutate one operand of a tiny commutativity equation.  This remains
      a tiny two-operand circuit goal, but is false (take y = +0 and x
-     nonzero), so rung 5 must not manufacture a theorem for it. *)
+     nonzero), so fp(6)(symbolic-arithmetic) must not manufacture a theorem
+     for it. *)
   val mutated =
     ``smtfp_add RNE (x : (1,2) smtfp) y =
       smtfp_add RNE y (smtfp_neg x)``
 in
   (ignore (SmtFpProve.symbolic_arithmetic_prove mutated);
-   die "FAIL: rung 5 proved a mutated add-circuit equation")
+   die "FAIL: fp(6) proved a mutated add-circuit equation")
   handle Feedback.HOL_ERR holerr =>
     assert (not (SmtResource.is_resource_gate holerr),
       "mutated tiny add-circuit equation resource-gated instead of failing")
@@ -13322,13 +13387,13 @@ let
       val _ = Profile.reset_all ()
       val thm = SmtFpProve.fp_prove goal
     in
-      assert_no_hyps ("FP rung 5 generic mul", thm);
-      assert_concl_alpha ("FP rung 5 generic mul", thm, goal);
-      check_oracle_tags "FP rung 5 generic mul" thm;
-      assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 1,
-        "mul identity did not use rung 5");
-      assert (profile_call_count "fp(rung:6/unsupported)" = 0,
-        "mul identity fell through to rung 6")
+      assert_no_hyps ("FP fp(6) generic mul", thm);
+      assert_concl_alpha ("FP fp(6) generic mul", thm, goal);
+      check_oracle_tags "FP fp(6) generic mul" thm;
+      assert (profile_call_count "fp(6)(symbolic-arithmetic)" = 1,
+        "mul identity did not use fp(6)(symbolic-arithmetic)");
+      assert (profile_call_count "fp(7)(unsupported)" = 0,
+        "mul identity fell through to fp(7)(unsupported)")
     end
 in
   List.app check goals
@@ -13341,7 +13406,7 @@ let
     ``smtfp_mul RNE (x : (10,5) smtfp) ^one = smtfp_neg x``
 in
   (ignore (SmtFpProve.symbolic_arithmetic_prove mutated);
-   die "FAIL: rung 5 proved a mutated mul-circuit equation")
+   die "FAIL: fp(6) proved a mutated mul-circuit equation")
   handle Feedback.HOL_ERR holerr =>
     assert (not (SmtResource.is_resource_gate holerr),
       "mutated Float16 mul equation resource-gated instead of failing")
@@ -13506,7 +13571,7 @@ in
        "oversized FP Tier-2 atom changed its D12 diagnostic");
      assert (not (String.isSubstring "unsupported rewrite shape"
        (Feedback.message_of holerr)),
-       "oversized FP Tier-2 atom fell through to rung 6"))
+       "oversized FP Tier-2 atom fell through to fp(7)(unsupported)"))
 end
 
 fun smtfp_bit_decomposition_rung_success () =
@@ -13711,10 +13776,10 @@ let
 in
   assert (SmtFpProve.has_fp_theory_term type_only,
     "FP rewrite detection missed type-only FP variables");
-  expect_hol_error_contains "FP rung 6 direct"
+  expect_hol_error_contains "FP fp(7) direct"
     "unsupported rewrite shape: theory=fp;"
     (fn () => ignore (SmtFpProve.fp_prove unsupported));
-  expect_hol_error_contains "FP rung 6 rewrite dispatch"
+  expect_hol_error_contains "FP fp(7) rewrite dispatch"
     "unsupported rewrite shape: theory=fp;"
     (fn () => ignore (replay_z3_proof_string operation_proof));
   expect_hol_error_contains "FP type-only rewrite dispatch"
@@ -13805,6 +13870,35 @@ in
      "theory=nonlinear-arith",
      "proof-rule:th-lemma-nonlinear-arith");
   List.app expect_string_diagnostic string_cases
+end
+
+fun z3_th_lemma_advanced_semantic_cache_routing () =
+let
+  val cache_profile =
+    "th_lemma[advanced:nonlinear-arith](1)(cache)"
+  val refusal_profile =
+    "th_lemma[advanced:nonlinear-arith](2)(unsupported)"
+  val () = Profile.reset_all ()
+  val reused = Z3_ProofReplay.replay_advanced_with_cached_for_test
+    boolTheory.TRUTH boolSyntax.T
+  val () = assert (Thm.concl reused ~~ boolSyntax.T,
+    "advanced semantic cache returned the wrong checked theorem")
+  val () = check_oracle_tags "advanced semantic proof-local cache" reused
+  val () = assert (profile_call_count cache_profile = 1,
+    "advanced semantic cache was not routed exactly once")
+  val () = assert (profile_call_count refusal_profile = 0,
+    "advanced semantic cache hit continued to the unsupported boundary")
+  val () = Profile.reset_all ()
+  val () = expect_hol_error_contains "uncached advanced semantic target"
+    "proof-format limitation"
+    (fn () => ignore
+      (Z3_ProofReplay.replay_advanced_with_cached_for_test
+        boolTheory.TRUTH boolSyntax.F))
+in
+  assert (profile_call_count cache_profile = 1,
+    "uncached advanced target did not attempt semantic lookup");
+  assert (profile_call_count refusal_profile = 1,
+    "uncached advanced target did not reach the loud boundary")
 end
 
 fun z3_proof_replay_failure_diagnostic () =
@@ -15072,6 +15166,8 @@ let
       z3_th_lemma_basic_dispatch_replay_success),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
+    ("z3_rewrite_ladder_exhausted_diagnostic",
+      z3_rewrite_ladder_exhausted_diagnostic),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
@@ -15183,6 +15279,8 @@ let
       z3_fp_th_lemma_defensive_route_success),
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
+    ("z3_th_lemma_advanced_semantic_cache_routing",
+      z3_th_lemma_advanced_semantic_cache_routing),
     ("z3_proof_replay_failure_diagnostic",
       z3_proof_replay_failure_diagnostic),
     ("z3_proof_replay_malformed_premise_diagnostics",

@@ -77,8 +77,8 @@ local
     (* contains all of the variables that Z3 has defined *)
     var_set : Term.term HOLset.set,
     (* Parser-discovered FP decomposition associations.  These are hints, not
-       hypotheses: rung 3 must prove a definition before adding it through
-       [state_define]. *)
+       hypotheses: fp(3)(bit-decomposition) must prove a definition before
+       adding it through [state_define]. *)
     bit_decompositions : bit_decomposition list,
     (* Exact per-translation operator provenance.  Only definitions selected
        by SmtLib's EncodedSymbol records may be unfolded during replay. *)
@@ -890,30 +890,39 @@ local
     end
 
   fun profiled_ground_subterm_eval_conv target =
-    profile "arith_prove_linear(ground-subterm-eval)"
+    profile "arith-linear(5)(ground-subterm-eval)"
       ground_subterm_eval_conv target
 
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
   fun arith_prove t =
-    exact_inst SMT_RDIV_INTRO_CANCEL_CLAUSE t
+    (* E1(a): exact instantiation decides the rdiv intro-cancel clause. *)
+    profile "arith(1)(rdiv-intro-cancel)"
+      (exact_inst SMT_RDIV_INTRO_CANCEL_CLAUSE) t
     handle Feedback.HOL_ERR _ =>
-    exact_inst SMT_RDIV_CANCEL_CLAUSE t
+    (* E1(a): exact instantiation decides the rdiv cancel clause. *)
+    profile "arith(2)(rdiv-cancel)" (exact_inst SMT_RDIV_CANCEL_CLAUSE) t
     handle Feedback.HOL_ERR _ =>
-    arith_prove_smt_rdiv t
+    (* E1(a): proved rdiv normalization ends in linear real arithmetic. *)
+    profile "arith(3)(rdiv-normalize)" arith_prove_smt_rdiv t
     handle Feedback.HOL_ERR _ =>
-    arith_prove_linear t
+    (* E1(a): the nested procedure decides linear int/real arithmetic. *)
+    profile "arith(4)(linear)" arith_prove_linear t
     handle Feedback.HOL_ERR _ =>
-    profile "arith_prove(ediv-emod)" arith_prove_ediv_emod t
+    (* E1(b): div/mod replay is general with a loud two-divisor boundary. *)
+    profile "arith(5)(ediv-emod)" arith_prove_ediv_emod t
     handle Feedback.HOL_ERR _ =>
-    int_product_prove t
+    (* E1(b): this handles general matched nonlinear integer products. *)
+    profile "arith(6)(integer-product-bounds)" int_product_prove t
     handle Feedback.HOL_ERR _ =>
-    real_zero_factor_clause_prove t
+    (* E1(b): this handles the real zero-factor clause family. *)
+    profile "arith(7)(real-zero-factor)" real_zero_factor_clause_prove t
     handle Feedback.HOL_ERR _ =>
       (* nonlinear fallback: only after linear tactics fail, to avoid
          expensive SOS certificate search on goals linear tactics handle *)
       if Library.is_nonlinear t then
-        profile "arith_prove(nla)" Library.nla_prove t
+        (* E1(b): the general NLA procedure fails loudly at its boundary. *)
+        profile "arith(8)(nla)" Library.nla_prove t
       else raise ERR "arith_prove" (Hol_pp.term_to_string t)
 
   and arith_prove_smt_rdiv t =
@@ -992,26 +1001,38 @@ local
 
   and arith_prove_linear t =
     let
-      fun arith_tactic (goal as (_, term)) =
+      fun arith_tactic rung (goal as (_, term)) =
         if term_contains_real_ty term then
-          profile "arith_prove(real)" RealField.REAL_ARITH_TAC goal
+          profile ("arith-linear(" ^ rung ^ ")(real)")
+            RealField.REAL_ARITH_TAC goal
         else
-          profile "arith_prove(int)" intLib.ARITH_TAC goal
+          profile ("arith-linear(" ^ rung ^ ")(int)") intLib.ARITH_TAC goal
       val TRY = Tactical.TRY
     in
       Tactical.TAC_PROOF (([], t),
+        (* E1(a): proved unfolding normalizes the integer div/mod syntax. *)
         (* rewrite the `ediv` and `emod` symbols so that the arithmetic
            decision procedures can solve terms containing these functions *)
-        PURE_REWRITE_TAC[integerTheory.EDIV_DEF, integerTheory.EMOD_DEF]
+        profile "arith-linear(1)(unfold-div-mod)"
+          (PURE_REWRITE_TAC[integerTheory.EDIV_DEF, integerTheory.EMOD_DEF])
         (* the next rewrites are a workaround for this issue:
            https://github.com/HOL-Theorem-Prover/HOL/issues/1207 *)
-        >> PURE_REWRITE_TAC[integerTheory.INT_ABS, integerTheory.NUM_OF_INT]
-        >> TRY arith_tactic
-        >> bossLib.RW_TAC (bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
+        (* E1(a): proved alias rewriting preserves the linear fragment. *)
+        >> profile "arith-linear(2)(normalize-aliases)"
+          (PURE_REWRITE_TAC
+            [integerTheory.INT_ABS, integerTheory.NUM_OF_INT])
+        (* E1(a): ARITH decides the normalized linear int/real fragment. *)
+        >> TRY (arith_tactic "3")
+        (* E1(a): the arithmetic simpsets decide polynomial normalization. *)
+        >> profile "arith-linear(4)(polynomial-normalize)"
+          (bossLib.RW_TAC
+            (bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
              intSimps.INT_ARITH_ss ++ realSimps.REAL_ARITH_ss)
-               [Conv.GSYM integerTheory.INT_NEG_MINUS1]
+            [Conv.GSYM integerTheory.INT_NEG_MINUS1])
+        (* E1(a): bounded evaluation decides closed arithmetic subterms. *)
         >> TRY (Tactic.CONV_TAC profiled_ground_subterm_eval_conv)
-        >> TRY arith_tactic)
+        (* E1(a): the final ARITH pass decides the remaining linear goal. *)
+        >> TRY (arith_tactic "6"))
     end
 
   (***************************************************************************)
@@ -1694,14 +1715,17 @@ local
         raise ERR name "word decision procedure found a counterexample"
 
   fun word_decide target =
-    profile "rewrite(translator-definitions+word:WORD_DP)"
+    (* TASK_09 deletion candidate: WORD_DP precedes complete BBLAST. *)
+    profile "word-decide(1)(WORD_DP)"
       (word_decider_attempt "word_decide(WORD_DP)" word_dp_prove) target
     handle Feedback.HOL_ERR _ =>
-      profile "rewrite(translator-definitions+word:WORD_ARITH)"
+      (* TASK_09 deletion candidate: WORD_ARITH precedes complete BBLAST. *)
+      profile "word-decide(2)(WORD_ARITH)"
         (word_decider_attempt "word_decide(WORD_ARITH)" word_arith_prove)
         target
     handle Feedback.HOL_ERR _ =>
-      profile "rewrite(translator-definitions+word:BBLAST)"
+      (* E1(a): BBLAST decides the finite bit-vector fragment. *)
+      profile "word-decide(3)(BBLAST)"
         (word_decider_attempt "word_decide(BBLAST)"
           (Feedback.trace ("print blast counterexamples", 0)
             blastLib.BBLAST_PROVE)) target
@@ -1905,25 +1929,42 @@ local
       SmtReplayCanon.arith_poly_norm_prove target
     end
 
+  fun rewrite_ladder_exhausted attempts target =
+    ERR "z3_rewrite"
+      ("rewrite ladder exhausted; attempted fragment classes=" ^
+       "[" ^ String.concatWith ", " attempts ^ "]; conclusion=" ^
+       Library.term_to_string target)
+
   fun z3_rewrite (state, t) =
   let
     val (l, r) = boolSyntax.dest_eq t
+    val attempts = ref ([] : string list)
+    fun record_attempt fragment =
+      if List.exists (Lib.equal fragment) (!attempts) then ()
+      else attempts := !attempts @ [fragment]
+    fun rewrite_profile fragment name prove input =
+      (record_attempt fragment; profile name prove input)
   in
+    (* E1(a): kernel reflexivity decides the reflexive-equality fragment. *)
     if l ~~ r then
       (state, Thm.REFL l)
     else
-      (* re-ordering conjunctions and disjunctions *)
-      profile "rewrite(04)(conj/disj)" (fn () =>
+      (* E1(a): this decides Boolean AC-idempotent conjunction/disjunction. *)
+      rewrite_profile "propositional-AC" "rewrite(1)(conj/disj)" (fn () =>
       if boolSyntax.is_conj l then
-        (state, profile "rewrite(04.1)(conj)" rewrite_conj (l, r))
+        (state, rewrite_conj (l, r))
       else if boolSyntax.is_disj l then
-        (state, profile "rewrite(04.2)(disj)" rewrite_disj (l, r))
+        (state, rewrite_disj (l, r))
       else
         raise ERR "" "") ()
     handle Feedback.HOL_ERR _ =>
 
     (* |- r1 /\ ... /\ rn = ~(s1 \/ ... \/ sn) *)
-    (state, profile "rewrite(05)(nnf)" rewrite_nnf (l, r))
+    (* E1(a): resolution decides the exact Z3 NNF shape implemented here:
+       a conjunction of literals/equivalences equals the negation of a
+       disjunction, including the two checked negated-equivalence variants. *)
+    (state, rewrite_profile "propositional-NNF" "rewrite(2)(nnf)"
+      rewrite_nnf (l, r))
     handle Feedback.HOL_ERR _ =>
 
     (* at this point, we should have dealt with all propositional
@@ -1935,14 +1976,21 @@ local
        FP_REWRITE_ERROR crosses the handlers below and is converted back to a
        structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
-      ((state, profile "rewrite(02)(cache-fp)"
-          (state_exact_cached_thm state) t)
+      ((* E1(c): exact FP theorem reuse is a redundant performance cache. *)
+       (state, rewrite_profile "cached-checked-theorems"
+          "rewrite(3)(cache-fp)"
+          (fn target =>
+            (Library.require_fastpath "Z3 rewrite FP theorem cache";
+             state_exact_cached_thm state target)) t)
         handle Feedback.HOL_ERR _ =>
           let
             val eligible_decompositions =
               eligible_fp_bit_decompositions state
             val all_decompositions = fp_bit_decompositions state
-            val thm = profile "rewrite(03)(fp)"
+            (* E1(b): checked lowering is the general selected FP rewrite
+               procedure and fails loudly at its unsupported/D4 boundary. *)
+            val thm = rewrite_profile "floating-point"
+              "rewrite(4)(fp)"
               (SmtFpProve.fp_prove_with_context arith_prove
                 eligible_decompositions all_decompositions) t
               handle Feedback.HOL_ERR holerr =>
@@ -1958,7 +2006,8 @@ local
          pointwise Int lambdas.  Native Seq follows with its bounded list
          ladder. *)
       (let
-         val thm = profile "rewrite(01)(bag)"
+         (* E1(b): the general Bag prover fails loudly outside its family. *)
+         val thm = rewrite_profile "bags" "rewrite(5)(bag)"
            (SmtBagProve.bag_prove_with_arith arith_prove) t
        in
          (state_cache_thm state thm, thm)
@@ -1968,7 +2017,9 @@ local
            raise BAG_REWRITE_ERROR (Feedback.HOL_ERR holerr)
          else
          (let
-            val thm = profile "rewrite(01)(seq)" SmtSeqProve.seq_prove t
+            (* E1(b): the general Seq prover has an explicit family gate. *)
+            val thm = rewrite_profile "sequences" "rewrite(6)(seq)"
+              SmtSeqProve.seq_prove t
           in
             (state_cache_thm state thm, thm)
           end
@@ -1976,20 +2027,30 @@ local
             if SmtResource.is_resource_gate holerr then
               raise Feedback.HOL_ERR holerr
             else
-              (state, profile "rewrite(01.25)(poly-normal-form)"
+              (* E1(a): canonicalization decides polynomial normal forms. *)
+              (state, rewrite_profile "polynomial-normal-form"
+                "rewrite(7)(poly-normal-form)"
                 linear_arithmetic_rewrite_prove t)
               handle Feedback.HOL_ERR _ =>
-              (state, profile "rewrite(01.4)(quantified-boolean)"
+              (* E1(a): simplification decides quantified Boolean normality. *)
+              (state, rewrite_profile "quantified-propositional"
+                "rewrite(8)(quantified-boolean)"
                 quantified_boolean_rewrite_prove t)
               handle Feedback.HOL_ERR _ =>
-              (state, profile "rewrite(01.5)(proforma)"
+              (* E1(c): rewrite proformas are redundant performance caches. *)
+              (state, rewrite_profile "proforma-fastpaths"
+                "rewrite(9)(proforma)"
                 (fn target =>
                   (Library.require_fastpath "Z3 rewrite proforma";
                    Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms target))
                 t)
               handle Feedback.HOL_ERR _ =>
                 let
-                val thm = profile "rewrite(01.75)(array-set)"
+                (* E1(b): the budgeted array/set procedure covers selected
+                   beta, update, symbolic-index and extensional shapes and
+                   fails loudly outside them or at its D4 boundary. *)
+                val thm = rewrite_profile "arrays/set"
+                  "rewrite(10)(array-set)"
                   SmtArrayProve.array_prove t
               in
                 (state_cache_thm state thm, thm)
@@ -1999,14 +2060,20 @@ local
     if SmtResource.is_resource_gate holerr then
       raise Feedback.HOL_ERR holerr
     else
-      (state, profile "rewrite(02)(cache)" (state_inst_cached_thm state) t)
+      (* E1(c): theorem reuse is a redundant performance cache. *)
+      (state, rewrite_profile "cached-checked-theorems"
+        "rewrite(11)(cache)"
+        (fn target =>
+          (Library.require_fastpath "Z3 rewrite theorem cache";
+           state_inst_cached_thm state target)) t)
 
     handle Feedback.HOL_ERR _ =>
 
     (* Z3's String theory emits rewrite steps for literal normalization,
        ground `str.*` evaluation, and regex normalization. *)
     let
-      val thm = profile "rewrite(03)(string)"
+      (* E1(b): the general String/regex procedure has a loud boundary. *)
+      val thm = rewrite_profile "strings/regex" "rewrite(12)(string)"
         SmtStringProve.string_rewrite_prove t
     in
       (state_cache_thm state thm, thm)
@@ -2015,15 +2082,20 @@ local
     handle Feedback.HOL_ERR _ =>
 
     (* |- ALL_DISTINCT ... /\ T = ... *)
-    (state, profile "rewrite(06)(all_distinct)" rewrite_all_distinct (l, r))
+    (* E1(a): recursive expansion decides literal-list distinctness. *)
+    (state, rewrite_profile "datatype-literal-distinctness"
+      "rewrite(13)(all_distinct)"
+      rewrite_all_distinct (l, r))
     handle Feedback.HOL_ERR _ =>
 
     (* Resolve proof-local names before arithmetic.  These rewrites are not
        arithmetic tautologies until the fresh Z3 variable is recorded as a
        definition, and nonlinear fallback can otherwise spend a long time on
        the deliberately underconstrained formula. *)
+    (* TASK_09 deletion candidate: this duplicates restricted unification. *)
     let
-      val thm = profile "rewrite(06.5)(unification-early)"
+      val thm = rewrite_profile "proof-local-definitions"
+        "rewrite(14)(unification-early)"
         Library.gen_instantiation (l, r, #var_set state)
       val asl = Thm.hyp thm
       val _ = assert_rewrite_definitions state asl
@@ -2041,9 +2113,9 @@ local
     handle Feedback.HOL_ERR _ =>
 
     (* Relate Z3's per-bit Boolean skolems to the packed BV skolem recorded
-       by rung 3 or inferred by the exact-allocation fallback above.  The
-       resulting theorem retains only checked definitional hypotheses, which
-       final replay eliminates as usual. *)
+       by rewrite(4)(fp) or inferred by the exact-allocation fallback above.
+       The resulting theorem retains only checked definitional hypotheses,
+       which final replay eliminates as usual. *)
     (let
        val free_vars = HOLset.addList
          (Term.empty_tmset, Term.free_vars t)
@@ -2053,7 +2125,9 @@ local
          raise ERR "z3_rewrite" "no FP packed word in rewrite"
        val definitions = fp_per_bit_definitions state @
          HOLset.listItems (#definition_hyps state)
-       val thm = profile "rewrite(06.6)(fp-packed-bits)"
+       (* E1(a): checked definitions reduce this fragment to BV blasting. *)
+       val thm = rewrite_profile "floating-point/bit-vectors"
+         "rewrite(15)(fp-packed-bits)"
          (SmtFpProve.definition_bitblast_prove definitions) t
        val state = state_define (state_cache_thm state thm) (Thm.hyp thm)
      in
@@ -2073,23 +2147,36 @@ local
          reaches it after arithmetic has failed.  Keep one prover so the two
          routes cannot drift apart. *)
       fun smt_rdiv_prove () =
-        profile "rewrite(10.5)(smt-rdiv)"
+        (* E1(a): proved normalization decides side-condition-closed rdiv. *)
+        rewrite_profile "linear-real-division" "rewrite(21)(smt-rdiv)"
           (simpLib.SIMP_PROVE (bossLib.srw_ss())
             [HolSmtTheory.smt_rdiv_eq_div]) t
-      val thm = profile "rewrite(07)(SIMP_PROVE_UPDATE)" SIMP_PROVE_UPDATE t
+      (* No E1 class: duplicates the earlier SmtArrayProve internal update
+         prover; retained unchanged for TASK_09 ablation. *)
+      val thm = rewrite_profile "arrays" "rewrite(16)(SIMP_PROVE_UPDATE)"
+        SIMP_PROVE_UPDATE t
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(08)(WORD_DP)" word_dp_prove t
+        (* No E1 class: shortcut before the terminal complete BBLAST route;
+           retained unchanged for TASK_09 ablation. *)
+        rewrite_profile "bit-vectors" "rewrite(17)(WORD_DP)" word_dp_prove t
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(09)(WORD_ARITH_CONV)" word_arith_prove t
+        (* No E1 class: shortcut before the terminal complete BBLAST route;
+           retained unchanged for TASK_09 ablation. *)
+        rewrite_profile "bit-vectors" "rewrite(18)(WORD_ARITH_CONV)"
+          word_arith_prove t
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(translator-definitions+word)"
+        (* E1(a): emitted-definition unfolding ends in complete BV blast. *)
+        rewrite_profile "bit-vectors" "rewrite(19)(translator-definitions+word)"
           (unfold_translation_definitions_then_word state) t
         handle Feedback.HOL_ERR _ =>
 
-        (profile "rewrite(10)(BBLAST)" (Feedback.trace("print blast counterexamples", 0) blastLib.BBLAST_PROVE) t
+        (* E1(a): BBLAST decides the finite bit-vector fragment. *)
+        (rewrite_profile "bit-vectors" "rewrite(20)(BBLAST)"
+          (Feedback.trace("print blast counterexamples", 0)
+            blastLib.BBLAST_PROVE) t
 
         handle Feedback.HOL_ERR _ =>
 
@@ -2098,10 +2185,13 @@ local
         smt_rdiv_prove ()
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(11)(arith)" arith_prove t
+        (* E1(b): arithmetic combines complete linear and loud NLA routes. *)
+        rewrite_profile "linear/nonlinear-arithmetic" "rewrite(22)(arith)"
+          arith_prove t
 
         | HolSatLib.SAT_cex _ =>
-            (profile "rewrite(11)(arith)" arith_prove t
+            (rewrite_profile "linear/nonlinear-arithmetic"
+               "rewrite(22)(arith)" arith_prove t
              handle HolSatLib.SAT_cex _ =>
                raise ERR "z3_rewrite" "rewrite has a counterexample"))
         handle Feedback.HOL_ERR _ =>
@@ -2109,7 +2199,11 @@ local
         smt_rdiv_prove ()
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(11.1)(datatype)" SmtDatatypeProve.datatype_prove t
+        (* E1(b): the TypeBase-driven simplification/cases/exhaustiveness/
+           acyclicity procedure is general for selected registered datatype
+           facts and fails loudly outside those shapes. *)
+        rewrite_profile "datatypes" "rewrite(23)(datatype)"
+          SmtDatatypeProve.datatype_prove t
 
     in
       (state_cache_thm state thm, thm)
@@ -2121,7 +2215,9 @@ local
        often appear as [(f = lhs) = (f = rhs)]; prove [lhs = rhs] through
        the ordinary rewrite ladder, then lift that checked theorem through
        the shared equality context with a kernel congruence step. *)
-    profile "rewrite(11.15)(equality-congruence)" (fn () =>
+    (* E1(a): recursive kernel congruence decides shared Boolean equality. *)
+    rewrite_profile "higher-order-congruence/beta/eta"
+      "rewrite(24)(equality-congruence)" (fn () =>
       let
         val (ll, lr) = boolSyntax.dest_eq l
         val (rl, rr) = boolSyntax.dest_eq r
@@ -2147,7 +2243,9 @@ local
     (* Congruence below a lambda; the shared `abs_congruence` handles the
        capture-avoiding binder alignment, while the body is replayed through
        `z3_rewrite` (threading the state via `state_ref`). *)
-    profile "rewrite(11.2)(abs-congruence)" (fn () =>
+    (* E1(a): kernel abstraction congruence decides lambda bodies. *)
+    rewrite_profile "higher-order-congruence/beta/eta"
+      "rewrite(25)(abs-congruence)" (fn () =>
       let
         val state_ref = ref state
         val thm = abs_congruence (fn (lbody, rbody) =>
@@ -2162,10 +2260,14 @@ local
       end) ()
     handle Feedback.HOL_ERR _ =>
 
-    (state, profile "rewrite(11.3)(beta)" beta_equal (l, r))
+    (* E1(a): kernel beta conversion decides beta equality. *)
+    (state, rewrite_profile "higher-order-congruence/beta/eta"
+      "rewrite(26)(beta)" beta_equal (l, r))
     handle Feedback.HOL_ERR _ =>
 
-    (state, profile "rewrite(11.4)(eta)" eta_equal (l, r))
+    (* E1(a): kernel eta conversion decides eta equality. *)
+    (state, rewrite_profile "higher-order-congruence/beta/eta"
+      "rewrite(27)(eta)" eta_equal (l, r))
     handle Feedback.HOL_ERR _ =>
 
     (* If nothing worked, let's try unifying terms.
@@ -2193,7 +2295,7 @@ local
        definitions (as in the `z3_intro_def` handler), to make sure it gets
        removed from the set of hypotheses of the final theorem. *)
 
-    (* General unification fallback.  The earlier `rewrite(06.5)` attempt runs
+    (* General unification fallback.  The earlier rewrite(14) attempt runs
        before arithmetic but deliberately declines a bare variable alias
        (`v1 = v2`) so as not to commit an underconstrained proof-local
        definition prematurely.  Once the arithmetic and word rungs have had
@@ -2202,7 +2304,9 @@ local
        a variable alias. *)
     let
       val (lhs, rhs) = boolSyntax.dest_eq t
-      val thm = profile "rewrite(12.1)(unification)" Library.gen_instantiation
+      (* E1(a): checked unification decides proof-local definitions. *)
+      val thm = rewrite_profile "proof-local-definitions"
+        "rewrite(28)(unification)" Library.gen_instantiation
         (lhs, rhs, #var_set state)
       val asl = Thm.hyp thm
       val _ = assert_rewrite_definitions state asl
@@ -2212,10 +2316,13 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* TASK_09 deletion candidate: this is a double-negation transcription. *)
     let
       val (lhs, rhs) = boolSyntax.dest_eq t
       val rhs = boolSyntax.dest_neg (boolSyntax.dest_neg rhs)
-      val thm = profile "rewrite(12.2)(unification)" Library.gen_instantiation
+      val thm = rewrite_profile "proof-local-definitions"
+        "rewrite(29)(double-negation-unification)"
+        Library.gen_instantiation
         (lhs, rhs, #var_set state)
       fun not_not_conv tm = Thm.SPEC tm NOT_NOT_INTRO
       val thm = Conv.CONV_RULE (Conv.RHS_CONV not_not_conv) thm
@@ -2227,6 +2334,7 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* TASK_09 deletion candidate: this is one NOT_REVERSE transcription. *)
     let
       val (lhs, rhs) = boolSyntax.dest_eq t
       val neg_lhs = boolSyntax.mk_neg lhs
@@ -2235,7 +2343,9 @@ local
       val p = Term.mk_var ("p", Type.bool)
       val q = Term.mk_var ("q", Type.bool)
       val thm' = Thm.INST [p |-> var, q |-> lhs] NOT_REVERSE
-      val thm = Drule.UNDISCH thm'
+      val thm = rewrite_profile "proof-local-definitions"
+        "rewrite(30)(not-reverse)"
+        (fn () => Drule.UNDISCH thm') ()
     in
       (* `var` is a proof-local definition only when Z3 introduced it; for
          any other proposition this rewrite is context-dependent, so record
@@ -2246,6 +2356,8 @@ local
       else
         (state, Thm.ASSUME t)
     end
+    handle Feedback.HOL_ERR _ =>
+      raise rewrite_ladder_exhausted (!attempts) t
   end
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
@@ -2276,22 +2388,37 @@ local
   fun z3_symm (state, thm, t) =
     (state, Thm.SYM thm)
 
-  fun th_lemma_wrapper (name : string)
+  datatype th_lemma_cache_policy =
+      D1PerformanceCache
+    | SemanticProofLocalLookup
+
+  fun th_lemma_wrapper cache_policy (name : string)
     (th_lemma_implementation : state * Term.term -> state * Thm.thm)
     (state, thms, t) : state * Thm.thm =
   let
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    val has_proforma = name = "arith" orelse name = "array"
+    val cache_rung = if has_proforma then "2" else "1"
+    fun cached target =
+      case cache_policy of
+        D1PerformanceCache =>
+          (* E1(c): fallback re-proves this redundant cache's family. *)
+          (Library.require_fastpath "Z3 th-lemma theorem cache";
+           state_inst_cached_thm state target)
+      | SemanticProofLocalLookup =>
+          (* E1(a): finite checked-state lookup and instantiation is complete. *)
+          state_inst_cached_thm state target
     fun general () =
       ((state,
-        (* cached theorems *)
-        profile ("th_lemma[" ^ name ^ "](2)(cache)")
-          (state_inst_cached_thm state) t')
+        profile ("th_lemma[" ^ name ^ "](" ^ cache_rung ^ ")(cache)")
+          cached t')
       handle Feedback.HOL_ERR _ =>
         (* do actual work to derive the theorem *)
         th_lemma_implementation (state, t'))
     val (state, thm) =
-      if name = "arith" orelse name = "array" then
+      if has_proforma then
         ((state,
+          (* E1(c): th-lemma proformas are redundant performance caches. *)
           profile ("th_lemma[" ^ name ^ "](1)(proforma)")
             (fn target =>
               (Library.require_fastpath "Z3 th-lemma proforma";
@@ -2307,24 +2434,32 @@ local
      the arith or array registry entries below.  Retain a dedicated wrapper
      nevertheless so the bag route has the same cache/proforma discipline and
      profile identity as every other checked theory re-prover. *)
-  val z3_th_lemma_bag = th_lemma_wrapper "bag" (fn (state, t) =>
+  val z3_th_lemma_bag =
+    th_lemma_wrapper D1PerformanceCache "bag" (fn (state, t) =>
     let
-      val thm = profile "th_lemma[bag](3)(bag_prove)"
+      (* E1(b): the general Bag prover fails loudly outside its family. *)
+      val thm = profile "th_lemma[bag](2)(bag_prove)"
         (SmtBagProve.bag_prove_with_arith arith_prove) t
     in
       (state_cache_thm state thm, thm)
     end)
 
-  val z3_th_lemma_arith_generic = th_lemma_wrapper "arith" (fn (state, t) =>
+  val z3_th_lemma_arith_generic =
+    th_lemma_wrapper D1PerformanceCache "arith" (fn (state, t) =>
     let
+      (* E1(b): arithmetic combines complete linear and loud NLA routes. *)
       val thm = profile "th_lemma[arith](3)" arith_prove t
     in
       (* cache 'thm' *)
       (state_cache_thm state thm, thm)
     end)
 
-  val z3_th_lemma_array_generic = th_lemma_wrapper "array" (fn (state, t) =>
+  val z3_th_lemma_array_generic =
+    th_lemma_wrapper D1PerformanceCache "array" (fn (state, t) =>
     (let
+       (* E1(b): the budgeted array procedure covers selected beta, update,
+          symbolic-index and extensional shapes and fails loudly outside
+          them or at its D4 boundary. *)
        val thm = profile "th_lemma[array](3)(array_prove)"
          SmtArrayProve.array_prove t
      in
@@ -2365,35 +2500,41 @@ local
       simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
   in
     fn t =>
-      profile "th_lemma[bv](3)(WORD_BIT_EQ)" (fn () =>
-        Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
-          (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
-          wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t)) ()
+      (* E1(c): WORD_BIT_EQ is a shortcut before complete BV blasting. *)
+      profile "th_lemma[bv](2)(WORD_BIT_EQ)" (fn () =>
+        (Library.require_fastpath "Z3 th-lemma WORD_BIT_EQ";
+         Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
+           (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
+           wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t))) ()
       handle Feedback.HOL_ERR _ =>
-        profile "th_lemma[bv](4)(COND_BBLAST)" Tactical.prove (t,
-          Tactical.THEN (profile "th_lemma[bv](4.1)(COND_REWRITE_TAC)"
-            COND_REWRITE_TAC, profile "th_lemma[bv](4.2)(BBLAST_TAC)"
-            blastLib.BBLAST_TAC))
+        (* E1(a): conditional normalization plus BBLAST decides BV. *)
+        profile "th_lemma[bv](3)(COND_BBLAST)" Tactical.prove (t,
+          Tactical.THEN (COND_REWRITE_TAC, blastLib.BBLAST_TAC))
   end
 
-  val z3_th_lemma_basic = th_lemma_wrapper "basic" (fn (state, t) =>
+  val z3_th_lemma_basic =
+    th_lemma_wrapper D1PerformanceCache "basic" (fn (state, t) =>
     let
       fun unsupported attempts =
         raise ERR "z3_th_lemma_basic"
           ("unsupported th-lemma shape: theory=basic; " ^
-           "attempted theories=[" ^
+           "attempted fragment classes=[" ^
            String.concatWith ", " (List.rev attempts) ^
            "]; checked replay is implemented for Boolean, arithmetic, " ^
            "bit-vector and array equality simplification lemmas; " ^
            "conclusion=" ^ Library.term_to_string t)
 
       fun metis attempts =
-        profile "th_lemma[basic](7)(METIS)" metis_prove ([], t)
-        handle Feedback.HOL_ERR _ => unsupported ("metis" :: attempts)
+        (* E1(b): METIS is general proof search with a loud boundary. *)
+        profile "th_lemma[basic](6)(METIS)" metis_prove ([], t)
+        handle Feedback.HOL_ERR _ => unsupported
+          ("first-order-proof-search" :: attempts)
 
       fun array attempts =
         if has_array_atom t then
-          (profile "th_lemma[basic](6)(array)" SmtArrayProve.array_prove t
+          ((* E1(b): the budgeted selected array/set procedure has a loud
+               unsupported/resource boundary. *)
+           profile "th_lemma[basic](5)(array)" SmtArrayProve.array_prove t
            handle Feedback.HOL_ERR holerr =>
              if SmtResource.is_resource_gate holerr then
                raise Feedback.HOL_ERR holerr
@@ -2402,17 +2543,20 @@ local
 
       fun bv attempts =
         if has_word_atom t then
-          (profile "th_lemma[basic](5)(bv)" bv_th_lemma_prove t
+          ((* E1(a): the terminal BBLAST route decides bit-vectors. *)
+           profile "th_lemma[basic](4)(bv)" bv_th_lemma_prove t
            handle Feedback.HOL_ERR _ => array ("bv" :: attempts))
         else array attempts
 
       fun arith attempts =
         if has_arith_atom t then
-          (profile "th_lemma[basic](4)(arith)" arith_prove t
+          ((* E1(b): arithmetic has complete linear and loud NLA routes. *)
+           profile "th_lemma[basic](3)(arith)" arith_prove t
            handle Feedback.HOL_ERR _ => bv ("arith" :: attempts))
         else bv attempts
 
-      val thm = profile "th_lemma[basic](3)(TAUT_PROVE)"
+      (* E1(a): TAUT_PROVE decides the propositional fragment. *)
+      val thm = profile "th_lemma[basic](2)(TAUT_PROVE)"
         tautLib.TAUT_PROVE t
         handle Feedback.HOL_ERR _ => arith ["boolean"]
     in
@@ -2421,7 +2565,7 @@ local
     end)
 
   val z3_th_lemma_bv =
-    th_lemma_wrapper "bv" (fn (state, t) =>
+    th_lemma_wrapper D1PerformanceCache "bv" (fn (state, t) =>
       let
         val thm = bv_th_lemma_prove t
       in
@@ -2430,9 +2574,11 @@ local
       end)
 
   val z3_th_lemma_datatype =
-    th_lemma_wrapper "datatype" (fn (state, t) =>
+    th_lemma_wrapper D1PerformanceCache "datatype" (fn (state, t) =>
       let
-        val thm = profile "th_lemma[datatype](3)"
+        (* E1(b): TypeBase-driven reconstruction is general for selected
+           registered datatype facts and fails loudly outside those shapes. *)
+        val thm = profile "th_lemma[datatype](2)"
           SmtDatatypeProve.datatype_prove t
       in
         (* cache 'thm' *)
@@ -2485,9 +2631,14 @@ local
   end
 
   fun z3_th_lemma_advanced_unsupported metadata =
-    th_lemma_wrapper ("advanced:" ^ #theory metadata) (fn (state, t) =>
-      raise ERR "z3_th_lemma_advanced_unsupported"
-        (unsupported_advanced_th_lemma_message state metadata t))
+    th_lemma_wrapper SemanticProofLocalLookup
+      ("advanced:" ^ #theory metadata) (fn (state, t) =>
+      (* E1(b): an uncached advanced family reaches this loud boundary. *)
+      profile ("th_lemma[advanced:" ^ #theory metadata ^
+        "](2)(unsupported)")
+        (fn target =>
+          raise ERR "z3_th_lemma_advanced_unsupported"
+            (unsupported_advanced_th_lemma_message state metadata target)) t)
 
   (* Defensive only: no th-lemma-fp occurrence was observed in any of the
      TASK_02 proofs from supported Z3 4.11.2--4.15.3.  Keep the route checked
@@ -2498,7 +2649,9 @@ local
     val () =
       if SmtFpProve.has_fp_theory_term t' then ()
       else SmtFpProve.unsupported t'
-    val thm = profile "th_lemma[fp]"
+    (* E1(b): checked lowering is the general selected FP th-lemma procedure
+       and fails loudly at its unsupported/D4 boundary. *)
+    val thm = profile "th_lemma[fp](1)"
       (SmtFpProve.fp_prove_with_decompositions_and_arith
         arith_prove []) t'
   in
@@ -2538,9 +2691,11 @@ local
     val context = HOLset.listItems (#asserted_hyps state)
     val () = gate t'
     val thm =
-      prover t'
+      ((* E1(b): the general String/regex procedure gates its family. *)
+       profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)") prover t')
       handle Feedback.HOL_ERR _ =>
-        (profile ("Z3(rung:string/contextual:" ^ dispatch_theory ^ ")")
+        ((* E1(b): contextual String/regex replay fails loudly at exit. *)
+         profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
           (SmtStringProve.string_contextual_prove context) t'
           handle Feedback.HOL_ERR _ =>
           raise ERR ("z3_th_lemma_" ^ dispatch_theory)
@@ -2550,15 +2705,18 @@ local
     (state_cache_thm state thm, Drule.LIST_MP thms thm)
   end
 
-  val z3_th_lemma_native_seq = th_lemma_wrapper "seq" (fn (state, t) =>
+  val z3_th_lemma_native_seq =
+    th_lemma_wrapper D1PerformanceCache "seq" (fn (state, t) =>
     let
       val thm =
-        profile "th_lemma[seq](3)(seq_prove)" SmtSeqProve.seq_prove t
+        (* E1(b): the general Seq procedure gates its supported family. *)
+        profile "th_lemma[seq](2)(seq_prove)" SmtSeqProve.seq_prove t
         handle Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else
-            profile "Z3(rung:seq/contextual)"
+            (* E1(b): contextual Seq replay fails loudly at its boundary. *)
+            profile "th_lemma[seq](3)(contextual)"
             (SmtSeqProve.seq_contextual_prove
               (HOLset.listItems (#asserted_hyps state))) t
     in
@@ -3653,6 +3811,20 @@ in
     translation_definitions = definitions,
     z3_version = proof_version proof
   }
+
+  (* Exercise the semantic advanced-family cache policy without manufacturing
+     an otherwise unsupported Z3 proof node.  The same finite checked-state
+     lookup must remain available when D-mode disables performance caches. *)
+  fun replay_advanced_with_cached_for_test cached target =
+  let
+    val metadata = mk_th_lemma_metadata
+      ("nonlinear-arith", SOME "lemma", ["1"])
+    val state = state_cache_thm
+      (initial_replay_state [] (empty_proof "4.12.4")) cached
+    val (_, thm) = z3_th_lemma_advanced metadata (state, [], target)
+  in
+    thm
+  end
 
   fun replay_root_with_definitions_for_test definitions proof : Thm.thm =
   let

@@ -170,9 +170,9 @@ struct
     thm
   end
 
-  (* Rung 4 is intentionally guarded before either resource check.  An
-     unrelated, even very large, FP rewrite belongs to rung 6 rather than to
-     the D12 resource family. *)
+  (* fp(5)(tier2-bitblast) is intentionally guarded before either resource
+     check.  An unrelated, even very large, FP rewrite belongs to the
+     fp(7)(unsupported) boundary rather than to the D12 resource family. *)
   val tier2_atom_names =
     Redblackset.addList
       (Redblackset.empty (Lib.pair_compare
@@ -239,9 +239,13 @@ struct
         [boolTheory.COND_RAND, boolTheory.COND_RATOR]
     in
       fn t =>
+        (* E1(a): direct BBLAST decides the finite fixed-width BV residue. *)
         (blastLib.BBLAST_PROVE t
          handle Feedback.HOL_ERR _ =>
            let
+             (* E1(a): semantics-preserving word normalization followed by
+                TAUT or BBLAST remains a decision procedure for that same
+                finite fixed-width Boolean/word fragment. *)
              val normalized = simpLib.SIMP_CONV word_ss [] t
                handle Conv.UNCHANGED => Thm.REFL t
              val residue = boolSyntax.rhs (Thm.concl normalized)
@@ -273,9 +277,10 @@ struct
     handle Feedback.HOL_ERR _ => false
 
   (* Z3 rewrites Tier-2 word formulas over its packed BV skolems into
-     formulas over per-bit Boolean skolems.  Rung 3 already defines each
-     packed word as the FP representative; checked per-bit definitions below
-     connect Z3's later Boolean formula to that word formula. *)
+     formulas over per-bit Boolean skolems.  fp(3)(bit-decomposition) already
+     defines each packed word as the FP representative; checked per-bit
+     definitions below connect Z3's later Boolean formula to that word
+     formula. *)
   fun definition_bitblast_uncapped definitions t =
   let
     val _ = Lib.can (HolKernel.find_term
@@ -569,23 +574,34 @@ struct
       unsupported t
     else
       next_rung
-        (profile "fp(rung:1/proforma)" proforma_prove) t (fn () =>
+        (* E1(c): redundant proforma cache; [proforma_prove] is D1-gated. *)
+        (profile "fp(1)(proforma)" proforma_prove) t (fn () =>
       next_rung
-        (profile "fp(rung:2/ground-eval)" ground_eval_prove) t (fn () =>
+        (* E1(a): CBV decides closed executable SMT floating-point terms. *)
+        (profile "fp(2)(ground-eval)" ground_eval_prove) t (fn () =>
       next_rung
-        (profile "fp(rung:3/bit-decomposition)"
+        (* E1(a): exact lookup in the finite parser-recorded decomposition
+           set plus the checked packed-fields theorem is complete. *)
+        (profile "fp(3)(bit-decomposition)"
           (bit_decomposition_prove eligible_decompositions)) t (fn () =>
       next_rung
-        (profile "fp(rung:4/to-real-arith)"
+        (* E1(b): the supplied arithmetic procedure is general for selected
+           fp.to_real residues and fails loudly outside that family. *)
+        (profile "fp(4)(to-real-arith)"
           (to_real_arith_prove arith_prove)) t (fn () =>
       next_rung
-        (profile "fp(rung:4/tier2-bitblast)"
+        (* E1(a): checked lowering plus BBLAST decides the selected finite
+           Tier-2 atom/decomposition fragment, subject to the D4 cap. *)
+        (profile "fp(5)(tier2-bitblast)"
           (tier2_bitblast_prove_with_decompositions all_decompositions)) t
         (fn () =>
       next_rung
-        (profile "fp(rung:5/symbolic-arithmetic)"
+        (* E1(b): checked circuit lowering and terminal BV decision is the
+           general selected add/sub/mul family, with a loud D4 boundary. *)
+        (profile "fp(6)(symbolic-arithmetic)"
           symbolic_prover) t (fn () =>
-      profile "fp(rung:6/unsupported)" unsupported t))))))
+      (* E1(b): terminal loud floating-point family boundary. *)
+      profile "fp(7)(unsupported)" unsupported t))))))
 
   fun fp_prove_with_context arith_prove eligible_decompositions
       all_decompositions =

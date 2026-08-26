@@ -498,10 +498,33 @@ support row above.  A breach starts with `resource-gated: fp-bitblast;`,
 carries a `resource-gate:FloatingPoint:<case>` feature, and the command-line
 driver reports `Z3_TAC_RESOURCE_GATED` rather than a replay failure.
 
-Setting `HOL4_HOLSMT_NO_FASTPATH=1` disables every retained proforma or
-instance fast path.  This D-mode is a checked-replay CI configuration: the
-general replay procedures remain enabled, so a D-mode failure identifies a
-fast path that has accidentally become coverage-bearing.
+Setting `HOL4_HOLSMT_NO_FASTPATH=1` disables every fast path classified
+E1(c).  This D-mode is a checked-replay CI configuration: the general replay
+procedures remain enabled, so a D-mode failure identifies an E1(c) path that
+has accidentally become coverage-bearing.  It does not disable every retained
+shortcut: ten currently unclassifiable candidates remain present and ungated
+pending TASK_09 ablation, with their rationales recorded in
+`.agent-files/tasks_2/T8_deletions.md`.
+
+The Z3 rewrite and th-lemma ladders use integer-sequential profile rungs.
+Each classified rung is recorded in the replay source as an E1(a) complete
+procedure for a named decidable fragment, an E1(b) general-family procedure
+with a loud boundary, or an E1(c) redundant performance cache.  Every E1(c)
+rung consults the D-mode switch above.  The ten TASK_09 candidates named in
+`T8_deletions.md` fit none of those classes yet; they remain deliberately
+ungated and undeleted so TASK_08 does not change coverage.  The nested
+arithmetic/linear, word-decision, String/regex/symbolic, character and
+FloatingPoint sub-ladders follow the same integer-sequential convention.
+Proof-local theorem reuse for an otherwise unsupported advanced family is not
+a performance cache: it is an ungated semantic E1(a) lookup/instantiation over
+the finite set of already checked theorems in the current proof.  An uncached
+advanced target still reaches its explicit proof-format boundary.
+
+A rewrite that exhausts the ladder reports the fragment classes actually
+routed for that target, accumulated by the same wrapper that records each
+profile attempt.  Thus Set/Array and higher-order congruence/beta/eta appear
+when attempted, while a family rejected by an earlier shape guard is not
+invented in the terminal diagnostic.
 
 Z3 th-lemma replay coverage:
 

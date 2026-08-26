@@ -305,26 +305,39 @@ struct
       raise ERR "symbolic_string_prove"
         "no symbolic concat/prefix/suffix/contains term"
     else
-      bounded_concat_split_refute t
+      (* E1(b): bounded constructor splitting is general for the literal
+         concat-refutation shape and fails loudly outside that family. *)
+      profile "string-symbolic(1)(bounded-concat-split)"
+        bounded_concat_split_refute t
       handle Feedback.HOL_ERR _ =>
-      with_metis_limit (fn () =>
-        metisLib.METIS_PROVE
-          [smtstringz3Theory.seq_head_shared_singleton_prefix_right] t) ()
+      (* No E1 class: a single-lemma shortcut before the general symbolic
+         prover; retained unchanged for TASK_09 ablation. *)
+      profile "string-symbolic(2)(shared-singleton)"
+        (fn target => with_metis_limit (fn () =>
+          metisLib.METIS_PROVE
+            [smtstringz3Theory.seq_head_shared_singleton_prefix_right]
+            target) ()) t
       handle Feedback.HOL_ERR _ =>
       (* Before normalizing: the middle-singleton lemmas are stated over
          'seq_unit', which the rewrite rung below unfolds away.  A narrow
          lemma set keeps this within the shared replay budget, which the
          full symbolic set does not. *)
-      with_metis_limit (fn () =>
-        metisLib.METIS_PROVE middle_singleton_lemmas t) ()
+      (* No E1 class: a narrow lemma shortcut before the general symbolic
+         prover; retained unchanged for TASK_09 ablation. *)
+      profile "string-symbolic(3)(middle-singleton)"
+        (fn target => with_metis_limit (fn () =>
+          metisLib.METIS_PROVE middle_singleton_lemmas target) ()) t
       handle Feedback.HOL_ERR _ =>
-      with_metis_limit (fn () =>
-        Tactical.prove (t,
-          Tactical.THEN
-            (bossLib.RW_TAC
-               (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-               symbolic_normalizations,
-             bossLib.METIS_TAC symbolic_lemmas))) ()
+      (* E1(b): normalization plus bounded first-order search is the general
+         symbolic String-family procedure and has a loud failure boundary. *)
+      profile "string-symbolic(4)(general)"
+        (fn target => with_metis_limit (fn () =>
+          Tactical.prove (target,
+            Tactical.THEN
+              (bossLib.RW_TAC
+                 (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                 symbolic_normalizations,
+               bossLib.METIS_TAC symbolic_lemmas))) ()) t
 
   (* General automaton rules only.  Literal states and loop bounds are
      specialized from these at replay time below. *)
@@ -520,20 +533,32 @@ struct
     if not (is_regex_goal t) then
       raise ERR "regex_prove" "no regex membership or aut.accept term"
     else
-      replay_parametric_regex_length_prove t
+      (* E1(b): general instantiation for the named parametric regex-length
+         schemas, with a loud shape boundary. *)
+      profile "regex(1)(parametric-length)"
+        replay_parametric_regex_length_prove t
       handle Feedback.HOL_ERR _ =>
-      replay_specialized_automaton_prove t
+      (* E1(b): finite specialization of the named automaton schemas over
+         numerals present in the target, with a loud boundary. *)
+      profile "regex(2)(specialized-automaton)"
+        replay_specialized_automaton_prove t
       handle Feedback.HOL_ERR _ =>
-      with_metis_limit
-        (fn () => metisLib.METIS_PROVE regex_lemmas t) ()
+      (* E1(b): bounded first-order search over the complete named regex
+         lemma set used by this replay family. *)
+      profile "regex(3)(bounded-metis)"
+        (fn target => with_metis_limit
+          (fn () => metisLib.METIS_PROVE regex_lemmas target) ()) t
       handle Feedback.HOL_ERR _ =>
-      with_metis_limit (fn () =>
-        Tactical.prove (t,
-          Tactical.THEN
-            (bossLib.RW_TAC
-               (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-               regex_normalizations,
-            bossLib.METIS_TAC regex_lemmas))) ()
+      (* E1(b): the general normalized regex/automaton procedure is terminal
+         for the family and fails loudly when it cannot reconstruct a fact. *)
+      profile "regex(4)(normalized-metis)"
+        (fn target => with_metis_limit (fn () =>
+          Tactical.prove (target,
+            Tactical.THEN
+              (bossLib.RW_TAC
+                 (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                 regex_normalizations,
+              bossLib.METIS_TAC regex_lemmas))) ()) t
 
   (* `rewrite` steps are a separate customer of the string theory.  Keep
      their entry point narrow: a failed string attempt must not turn an
@@ -643,29 +668,42 @@ struct
       if not (has_string_theory_term t) then
         raise ERR "string_rewrite_prove" "no Unicode-string term"
       else
-        profile "rewrite(03.1)(string-ground-eval)"
+        (* E1(a): executable evaluation is complete for closed String/regex
+           constructor equalities (and structural regex constructors). *)
+        profile "string-rewrite(1)(ground-eval)"
           rewrite_evaluation_prove t
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
-         profile "rewrite(03.2)(string-normalization)" rewrite_simp_prove t)) t
+         (* E1(b): the named semantic String normalization family is general
+            for its rewrite set and fails loudly outside it. *)
+         profile "string-rewrite(2)(normalization)"
+           rewrite_simp_prove t)) t
 
   fun string_prove arith_prove t =
     with_string_budget "replay" (fn t =>
       let val () = check_seq_type t in
-        profile "string(rung:2/ground-eval)" ground_eval_prove t
+        (* E1(a): CBV decides the closed executable String fragment. *)
+        profile "string(1)(ground-eval)" ground_eval_prove t
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
-         profile "string(rung:3/length-arith)"
+         (* E1(b): length normalization followed by the supplied arithmetic
+            procedure is general for the selected length family. *)
+         profile "string(2)(length-arith)"
            (length_arith_prove arith_prove) t)
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
-         profile "string(rung:4/symbolic)" symbolic_string_prove t)
+         (* E1(b): the symbolic sub-ladder is general for selected concat,
+            prefix, suffix and contains clauses, with loud refusal. *)
+         profile "string(3)(symbolic)" symbolic_string_prove t)
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
-         profile "string(rung:5/regex)" regex_prove t)
+         (* E1(b): the regex sub-ladder is general for selected membership
+            and aut.accept clauses, with loud refusal. *)
+         profile "string(4)(regex)" regex_prove t)
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
-         profile "string(rung:7/unsupported)" (unsupported "seq") t)
+         (* E1(b): terminal loud String/regex family boundary. *)
+         profile "string(5)(unsupported)" (unsupported "seq") t)
       end) t
 
   (* Z3 shares each tail of its bitwise comparison through proof lets.
@@ -708,9 +746,12 @@ struct
 
   fun char_prove t =
     with_string_budget "char-bitblast" (fn t =>
-      profile "string(rung:6/char-bitblast)" char_bitblast_prove t
+      (* E1(a): normalization plus BBLAST decides the selected 18-bit
+         character-decomposition formula fragment. *)
+      profile "char(1)(bitblast)" char_bitblast_prove t
       handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
-         profile "string(rung:7/unsupported)" (unsupported "char") t)) t
+         (* E1(b): terminal loud character-family boundary. *)
+         profile "char(2)(unsupported)" (unsupported "char") t)) t
 
 end
