@@ -3067,36 +3067,42 @@ local
   fun replay_arith_mult_neg args =
     case args of
       [coefficient, equality] =>
-        ((let
-           val (left, right) = boolSyntax.dest_eq equality
-           val target = boolSyntax.mk_imp
-             (boolSyntax.mk_conj
-              (arith_less (coefficient, arith_zero coefficient), equality),
-              boolSyntax.mk_eq
-                (arith_mult (coefficient, left), arith_mult (coefficient, right)))
-         in arith_prove target end
-         handle Feedback.HOL_ERR _ =>
-         let
-           val (left, right) = arith_dest_greater equality
-           val target = boolSyntax.mk_imp
-             (boolSyntax.mk_conj
-              (arith_less (coefficient, arith_zero coefficient), equality),
-              arith_less
-               (arith_mult (coefficient, left),
-                arith_mult (coefficient, right)))
-         in arith_prove target end)
-        handle Feedback.HOL_ERR _ =>
         let
-          val (left, right) = arith_dest_geq equality
+          datatype relation = Eq | Lt | Le | Gt | Ge
+          val (relation, left, right) =
+            (let val (left, right) = boolSyntax.dest_eq equality
+             in (Eq, left, right) end
+             handle Feedback.HOL_ERR _ =>
+            let val (left, right) = arith_dest_less equality
+             in (Lt, left, right) end
+             handle Feedback.HOL_ERR _ =>
+            let val (left, right) = arith_dest_leq equality
+             in (Le, left, right) end
+             handle Feedback.HOL_ERR _ =>
+            let val (left, right) = arith_dest_greater equality
+             in (Gt, left, right) end
+             handle Feedback.HOL_ERR _ =>
+            let val (left, right) = arith_dest_geq equality
+             in (Ge, left, right) end
+             handle Feedback.HOL_ERR _ =>
+            raise ERR "arith_mult_neg"
+              "expected relation (=, <, <=, >, or >=)")
+          val product_left = arith_mult (coefficient, left)
+          val product_right = arith_mult (coefficient, right)
+          val result =
+            case relation of
+              Eq => boolSyntax.mk_eq (product_left, product_right)
+            | Lt => arith_greater (product_left, product_right)
+            | Le => arith_geq (product_left, product_right)
+            | Gt => arith_less (product_left, product_right)
+            | Ge => arith_leq (product_left, product_right)
           val target = boolSyntax.mk_imp
             (boolSyntax.mk_conj
              (arith_less (coefficient, arith_zero coefficient), equality),
-             arith_leq
-              (arith_mult (coefficient, left),
-               arith_mult (coefficient, right)))
-        in arith_prove target end)
+             result)
+        in arith_prove target end
     | _ => raise ERR "arith_mult_neg"
-      "expected a coefficient and a non-negative arithmetic literal"
+      "expected a coefficient and an arithmetic relation"
 
   fun replay_arith_mult_pos args =
     case args of
@@ -5020,6 +5026,12 @@ in
 
   fun replay_arith_mult_abs_comparison_for_test prems conclusion =
     replay_arith_mult_abs_comparison prems (SOME conclusion)
+
+  fun replay_arith_mult_neg_for_test args =
+    replay_arith_mult_neg args
+
+  fun replay_arith_mult_pos_for_test args =
+    replay_arith_mult_pos args
 
   fun check_proof_impl (asl, g, proof : proof) =
     let

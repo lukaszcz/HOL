@@ -11553,6 +11553,67 @@ in
   List.app check cases
 end
 
+fun cpc_arith_mult_relation_replay_success () =
+let
+  fun check (name, replay, coefficient, relation, expected) =
+    let val theorem = replay [coefficient, relation]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+  val neg = CPC_ProofReplay.replay_arith_mult_neg_for_test
+  val pos = CPC_ProofReplay.replay_arith_mult_pos_for_test
+  val cases = [
+    ("negative int equality", neg, ``-2i``, ``(x:int) = y``,
+      ``(-2i < 0i /\ (x:int) = y) ==> -2i * x = -2i * y``),
+    ("negative int less", neg, ``-2i``, ``(x:int) < y``,
+      ``(-2i < 0i /\ (x:int) < y) ==> -2i * x > -2i * y``),
+    ("negative int less-or-equal", neg, ``-2i``, ``(x:int) <= y``,
+      ``(-2i < 0i /\ (x:int) <= y) ==> -2i * x >= -2i * y``),
+    ("negative int greater", neg, ``-2i``, ``(x:int) > y``,
+      ``(-2i < 0i /\ (x:int) > y) ==> -2i * x < -2i * y``),
+    ("negative int greater-or-equal", neg, ``-2i``, ``(x:int) >= y``,
+      ``(-2i < 0i /\ (x:int) >= y) ==> -2i * x <= -2i * y``),
+    ("negative real equality", neg, ``-2r``, ``(x:real) = y``,
+      ``(-2r < 0r /\ (x:real) = y) ==> -2r * x = -2r * y``),
+    ("negative real less", neg, ``-2r``, ``(x:real) < y``,
+      ``(-2r < 0r /\ (x:real) < y) ==> -2r * x > -2r * y``),
+    ("negative real less-or-equal", neg, ``-2r``, ``(x:real) <= y``,
+      ``(-2r < 0r /\ (x:real) <= y) ==> -2r * x >= -2r * y``),
+    ("negative real greater", neg, ``-2r``, ``(x:real) > y``,
+      ``(-2r < 0r /\ (x:real) > y) ==> -2r * x < -2r * y``),
+    ("negative real greater-or-equal", neg, ``-2r``, ``(x:real) >= y``,
+      ``(-2r < 0r /\ (x:real) >= y) ==> -2r * x <= -2r * y``),
+    ("positive int equality", pos, ``2i``, ``(x:int) = y``,
+      ``(2i > 0i /\ (x:int) = y) ==> 2i * x = 2i * y``),
+    ("positive int less", pos, ``2i``, ``(x:int) < y``,
+      ``(2i > 0i /\ (x:int) < y) ==> 2i * x < 2i * y``),
+    ("positive int less-or-equal", pos, ``2i``, ``(x:int) <= y``,
+      ``(2i > 0i /\ (x:int) <= y) ==> 2i * x <= 2i * y``),
+    ("positive int greater", pos, ``2i``, ``(x:int) > y``,
+      ``(2i > 0i /\ (x:int) > y) ==> 2i * x > 2i * y``),
+    ("positive int greater-or-equal", pos, ``2i``, ``(x:int) >= y``,
+      ``(2i > 0i /\ (x:int) >= y) ==> 2i * x >= 2i * y``),
+    ("positive real equality", pos, ``2r``, ``(x:real) = y``,
+      ``(2r > 0r /\ (x:real) = y) ==> 2r * x = 2r * y``),
+    ("positive real less", pos, ``2r``, ``(x:real) < y``,
+      ``(2r > 0r /\ (x:real) < y) ==> 2r * x < 2r * y``),
+    ("positive real less-or-equal", pos, ``2r``, ``(x:real) <= y``,
+      ``(2r > 0r /\ (x:real) <= y) ==> 2r * x <= 2r * y``),
+    ("positive real greater", pos, ``2r``, ``(x:real) > y``,
+      ``(2r > 0r /\ (x:real) > y) ==> 2r * x > 2r * y``),
+    ("positive real greater-or-equal", pos, ``2r``, ``(x:real) >= y``,
+      ``(2r > 0r /\ (x:real) >= y) ==> 2r * x >= 2r * y``)
+  ]
+in
+  List.app check cases;
+  expect_hol_error_contains "arith_mult_neg unsupported relation"
+    "expected relation (=, <, <=, >, or >=)"
+    (fn () => ignore (neg [``-2i``, ``(x:int) <> y``]))
+end
+
 fun nonlinear_power_nla_route_success () =
 let
   val goal = ``(x:real) pow 2 >= 0``
@@ -14622,6 +14683,8 @@ let
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
       nonlinear_power_detection_success),
+    ("cpc_arith_mult_relation_replay_success",
+      cpc_arith_mult_relation_replay_success),
     ("nonlinear_power_nla_route_success",
       nonlinear_power_nla_route_success),
     ("nonlinear_real_constant_divisor_replay_success",
