@@ -14,6 +14,10 @@ struct
   val max_z3_proof_bytes = max_proof_bytes
   val max_bitblast_step_time = Time.fromSeconds 10
   val max_bitblast_term_nodes = 200000
+  (* Discharging a deferred proof hypothesis runs a general first-order
+     search, so bound it: an undischargeable hypothesis must fail with a
+     diagnostic rather than hang the replay. *)
+  val max_hypothesis_entailment_time = Time.fromSeconds 10
 
   val diagnostic_prefix = "resource-gated: fp-bitblast; "
   val feature_prefix = "resource-gate:FloatingPoint:"

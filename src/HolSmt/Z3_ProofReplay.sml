@@ -2095,7 +2095,14 @@ local
       val thm' = Thm.INST [p |-> var, q |-> lhs] NOT_REVERSE
       val thm = Drule.UNDISCH thm'
     in
-      (state_define (state_cache_thm state thm) [def], thm)
+      (* `var` is a proof-local definition only when Z3 introduced it; for
+         any other proposition this rewrite is context-dependent, so record
+         the step itself as the hypothesis that `remove_hyps` must then
+         discharge from the goal's assumptions. *)
+      if HOLset.member (#var_set state, var) then
+        (state_define (state_cache_thm state thm) [def], thm)
+      else
+        (state, Thm.ASSUME t)
     end
   end
   handle FP_REWRITE_ERROR error => raise error
@@ -3365,6 +3372,14 @@ local
          intrealTheory.is_int_alt ::
          intrealTheory.is_int_thm ::
          thms)
+    (* Z3 preprocesses with `solve-eqs`, so a `rewrite` step can hold only
+       under the asserted equalities; replay defers such a step as a
+       hypothesis.  Discharging it needs congruence from an assumption
+       rather than a further rewrite set, which is what no normalization
+       rung above can reach. *)
+    fun entailment_tac goal =
+      Timeout.apply SmtResource.max_hypothesis_entailment_time
+        (Feedback.trace ("metis", 0) (bossLib.METIS_TAC [])) goal
     fun datatype_normalize_tac thms (asl, hyp) =
       let
         val combined = boolSyntax.list_mk_conj (hyp :: asl)
@@ -3432,13 +3447,15 @@ local
            ("check_proof(hyp_removal:full_normalize)",
               smt_full_normalize_tac datatype_thms),
            ("check_proof(hyp_removal:datatype_normalize)",
-              datatype_normalize_tac datatype_thms)] of
+              datatype_normalize_tac datatype_thms),
+           ("check_proof(hyp_removal:entailment)", entailment_tac)] of
           SOME th => th
         | NONE => raise ERR "remove_hyps"
-            ("extra hypothesis is not one of the enumerated Z3 semantic " ^
-             "bridges; hypothesis=" ^ Library.term_to_string hyp ^
+            ("extra hypothesis is not entailed by the goal's assumptions; " ^
+             "hypothesis=" ^ Library.term_to_string hyp ^
              "; attempted=[numeral division, semantic division, total " ^
-             "division, arithmetic normalization, datatype normalization]"))
+             "division, arithmetic normalization, datatype normalization, " ^
+             "context entailment]"))
     in
       Drule.PROVE_HYP hyp_thm thm
     end
