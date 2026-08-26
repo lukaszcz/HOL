@@ -50,6 +50,40 @@ sig
 
   type completed
 
+  type anchor_row =
+    {goal_id : string, slice_index : int, prover : string, filter : string,
+     format : string, type_enc : string, lam_trans : string, nfacts : int,
+     extra_opts : string list, slice_size : int, premise_digest : string,
+     normalized_command : string list option, request_key : string}
+
+  type anchor_manifest_header =
+    {behavior_source_commit : string, gate_run_source_commit : string,
+     task13_key_source : string, accepted_run_header : string,
+     accepted_run_header_sha256 : string, accepted_journal : string,
+     accepted_journal_sha256 : string, input_run_header_sha256 : string,
+     input_journal : string, input_journal_sha256 : string,
+     task13_paired_rows_sha256 : string,
+     task13_command_rows_sha256 : string,
+     task13_paired_driver_sha256 : string,
+     task13_paired_controller_sha256 : string, task13_rows_checked : int,
+     task13_internal_key_pair_mismatches : int,
+     task13_premise_mismatches : int,
+     task13_request_key_mismatches : int, goals : int, profiles : int,
+     row_count : int, prover_spawns : int}
+
+  type anchor_manifest =
+    {header : anchor_manifest_header, rows : anchor_row list}
+
+  type anchor_certificate_entry =
+    {theory : string, path : string, sha256 : string}
+
+  type anchor_mismatch =
+    {goal_id : string, slice_index : int, field : string,
+     expected : string, actual : string}
+
+  type anchor_derivation =
+    {current : anchor_row list, prover_spawns : int}
+
   val string_of_regime : regime -> string
   val string_of_selector : selector -> string
   val is_higher_order_goal : Term.term -> bool
@@ -79,6 +113,26 @@ sig
   val journal_complete : string -> (string * string) list -> bool
 
   val report : string -> unit
+
+  val restrict_features_to_pool :
+    string list -> (string * 'a) list -> (string * 'a) list
+  val encode_anchor_row : anchor_row -> string
+  val parse_anchor_row : string -> anchor_row
+  val read_anchor_manifest : string -> anchor_manifest
+  val parse_anchor_certificate_lines : string list ->
+    anchor_certificate_entry list
+  val read_anchor_certificate : string -> anchor_certificate_entry list
+  val compare_anchor_rows :
+    anchor_row list -> anchor_row list -> anchor_mismatch list
+  val derive_anchor_rows :
+    {thy : string, theorem_names : string list, timeout : int,
+     prover_versions : (string * string option) list} -> anchor_derivation
+  val run_anchor_derivation :
+    {thy : string, baseline_manifest : string,
+     output_tsv : string, mismatch_report : string, timeout : int,
+     theorem_names : string list option,
+     prover_versions : (string * string option) list} ->
+    {rows : int, mismatches : int, prover_spawns : int}
 
   val loaded_corpus_entry : string -> corpus_entry
   val current_prover_identities : condition list -> prover_identity list

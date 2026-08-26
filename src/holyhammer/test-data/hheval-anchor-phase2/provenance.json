@@ -1,0 +1,64 @@
+{
+  "schema": "hheval-anchor-fixture-provenance-v2",
+  "behavior_source_commit": "788f0b8817901c57206e56495367f27b0351dd68",
+  "gate_run_source_commit": "f25871c404016d4368a0927ba0a868860fc82c70",
+  "task13_artifact_source": "uncommitted-phase2-task13-artifact-state",
+  "accepted_run_header": {
+    "path": "src/holyhammer/eval/phase2-s30-v3/run.json",
+    "sha256": "d50c414547280480105ea6286e395cc4b4e428885748d866008887c746466b87"
+  },
+  "accepted_journal": {
+    "path": "src/holyhammer/eval/phase2-s30-v3/journal/*.jsonl",
+    "aggregate_sha256": "d2b145c9a16710611dcb61acdfc8e0635fd8acc46259e9ac2bddda7ca50c3318",
+    "list_jsonl_sha256": "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766",
+    "aggregate_algorithm": "From the canonical journal directory: find . -type f -name '*.jsonl' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum."
+  },
+  "accepted_journal_certificate": {
+    "path": "src/holyhammer/test-data/hheval-anchor-phase2/phase2-s30-v3-journal.sha256",
+    "sha256": "d2b145c9a16710611dcb61acdfc8e0635fd8acc46259e9ac2bddda7ca50c3318",
+    "rows": 229,
+    "claim": "This tracked file is the exact sorted sha256sum listing used as the accepted journal aggregate preimage. Its list.jsonl entry supplies the hermetic manifest member digest; production additionally verifies the live canonical directory and member."
+  },
+  "task13_audit": {
+    "paired_rows_sha256": "fa3cf7cb3efdd8da8c27145ab8112e3a702b11d6ed82f2af0dbc562e89b93000",
+    "command_rows_sha256": "6973a9241be97aee6c3aa6cc39b0ed17232d2ecd16efe1c56e8947ad343bea24",
+    "paired_driver_sha256": "2fd0a344574906d38a59774f5e293fc673cb1fca28bcab07664dcb52779bf430",
+    "paired_controller_sha256": "fb98abd78825ca7e4e15c64bfe6d7ffcc3cee34dca8c6e59fe78828552968141",
+    "key_claim": "The historical baseline/gate key columns are equal internally. They are not claimed to be keys produced by a clean recorded commit. The accepted journal records profiles and results, not request keys."
+  },
+  "known_nonreproducibility": {
+    "goal_slice": "list.ALL_DISTINCT_APPEND/4",
+    "historical_premise_digest": "56e4af26192149fb10c432754f41b46b583866ca",
+    "historical_request_key": "24eccfe479cd5c437c06ea3f089a4636c21d874c",
+    "clean_f258_request_key": "896e8a225b12ca6bd4cdb4156504105ac3879115",
+    "clean_f751_request_key": "896e8a225b12ca6bd4cdb4156504105ac3879115",
+    "clean_788_premise_digest": "d2cbf95aa8177c93125de6ec85a410e13eb589c0",
+    "clean_788_request_key": "499c277256007e03ce8d0ba7cbfa75ad03ef8581",
+    "cause": "The old f258 scheduler problem key omitted prover identity; f751 added it. Later machine-learning Context migration also changed clean kNN ranking before the Phase 2-complete branch point. The historical Task13 files were produced from an uncommitted state and cannot truthfully be attributed to any of these clean commits."
+  },
+  "fixture": {
+    "goals": ["list.APPEND", "list.APPEND_ASSOC"],
+    "profiles": 16,
+    "rows": 32,
+    "prover_spawns": 0,
+    "manifest_sha256": "dd00546061f4f22cfb261f21a83765ad6c1b3e6dabd63889b1a684e864023793",
+    "golden_input_member": "src/holyhammer/eval/phase2-s30-v3/journal/list.jsonl",
+    "golden_input_member_sha256": "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766",
+    "journal_excerpt_sha256": "4bdb4de75295921dc1700b62c1e4b8b51900b18a003598de9a2f4b9a1b623b6d",
+    "journal_excerpt_claim": "The two-line file is an exact excerpt used only by hermetic parser and inventory tests; the golden was generated from the canonical full list.jsonl member.",
+    "paired_excerpt_sha256": "2f6aa92f4b68fe932b923afae97ad5b6edc4a4dc86474fd8a01e138391bcbe1a",
+    "command_excerpt_sha256": "5ab178d088cd9b318ff1a872c88efcd48a1bb15c2d33576de6a88507e7bca93f",
+    "invalid_historical_fixture_sha256": "bff8c21406926e193ca3ef4b67e730b2cce8e2c7ed4a9eec11feb2216b802728",
+    "duplicate_index_fixture_sha256": "8322ad1d0e49f31d7f518c0555f41c7ab29e29327331f85cdb4380fba1c1b580",
+    "malformed_index_fixture_sha256": "067068375f92bd9f5177e049c76900c21df5d5064bad96eb2dfcb15f76d425d5"
+  },
+  "generator_measurement": {
+    "scope": "Exact clean 788 worktree, list.APPEND and list.APPEND_ASSOC, canonical full historical TSVs and list journal member.",
+    "before_wall_seconds": 17.93,
+    "before_max_rss_kb": 1739800,
+    "after_wall_seconds": 6.99,
+    "after_max_rss_kb": 1027868,
+    "rows": 32,
+    "prover_spawns": 0
+  }
+}

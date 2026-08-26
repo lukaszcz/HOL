@@ -65,6 +65,37 @@ type run_header =
 
 type completed = (string * string) Binaryset.set
 
+type anchor_row =
+  {goal_id : string, slice_index : int, prover : string, filter : string,
+   format : string, type_enc : string, lam_trans : string, nfacts : int,
+   extra_opts : string list, slice_size : int, premise_digest : string,
+   normalized_command : string list option, request_key : string}
+
+type anchor_manifest_header =
+  {behavior_source_commit : string, gate_run_source_commit : string,
+   task13_key_source : string, accepted_run_header : string,
+   accepted_run_header_sha256 : string, accepted_journal : string,
+   accepted_journal_sha256 : string, input_run_header_sha256 : string,
+   input_journal : string, input_journal_sha256 : string,
+   task13_paired_rows_sha256 : string,
+   task13_command_rows_sha256 : string,
+   task13_paired_driver_sha256 : string,
+   task13_paired_controller_sha256 : string, task13_rows_checked : int,
+   task13_internal_key_pair_mismatches : int,
+   task13_premise_mismatches : int,
+   task13_request_key_mismatches : int, goals : int, profiles : int,
+   row_count : int, prover_spawns : int}
+
+type anchor_manifest =
+  {header : anchor_manifest_header, rows : anchor_row list}
+
+type anchor_mismatch =
+  {goal_id : string, slice_index : int, field : string,
+   expected : string, actual : string}
+
+type anchor_derivation =
+  {current : anchor_row list, prover_spawns : int}
+
 fun cell_key_compare ((goal1, cond1), (goal2, cond2)) =
   case String.compare (goal1, goal2) of
       EQUAL => String.compare (cond1, cond2)
@@ -1431,11 +1462,16 @@ fun lookup_pool name pools =
       SOME (_, pool) => pool
     | NONE => []
 
+fun restrict_features_to_pool pool features =
+  let val permitted = Redblackset.fromList String.compare pool in
+    List.filter (fn (name, _) => Redblackset.member (permitted, name))
+      features
+  end
+
 fun select_knn pool count goal =
   let
     val (weights, features) = mlThmData.create_thmdata ()
-    val permitted = List.filter (fn (name, _) =>
-      List.exists (fn allowed => allowed = name) pool) features
+    val permitted = restrict_features_to_pool pool features
   in
     mlNearestNeighbor.thmknn_wdep (weights, permitted) count
       (mlFeature.fea_of_goal true goal)
@@ -1469,6 +1505,567 @@ fun selected_premises_at condition pool thm goal knn_count =
 
 fun selected_premises condition pool thm goal =
   selected_premises_at condition pool thm goal NONE
+
+(* -------------------------------------------------------------------------
+   Prover-free Phase 2/Phase 3 anchor derivation
+
+   A row records a premise-prefix digest, the complete normalized command,
+   and the production cache key.  The immutable baseline is generated only
+   by tools/phase2-anchor-manifest.sml at the exact Phase 2 source commit.
+   This module constructs only the current side and compares it
+   bidirectionally against that versioned manifest.
+   ------------------------------------------------------------------------- *)
+
+fun sha1_text text =
+  let
+    val bytes = Byte.stringToBytes text
+    val size = Word8Vector.length bytes
+    fun read (offset, wanted) =
+      let
+        val count = Int.min (wanted, size - offset)
+        val chunk = Word8Vector.tabulate
+          (count, fn index => Word8Vector.sub (bytes, offset + index))
+      in
+        (chunk, offset + count)
+      end
+  in
+    SHA1.sha1String read 0
+  end
+
+fun frame text = Int.toString (String.size text) ^ ":" ^ text
+
+fun take_up_to count items =
+  if count <= 0 then []
+  else
+    case items of
+        [] => []
+      | item :: rest => item :: take_up_to (count - 1) rest
+
+fun premise_digest count premises =
+  sha1_text (String.concat (map frame (take_up_to count premises)))
+
+fun normalized_argument problem argument =
+  if argument = problem then "<problem>"
+  else
+    let val prefix = "-file:" in
+      if String.isPrefix prefix argument andalso
+         String.extract (argument, String.size prefix, NONE) = problem
+      then prefix ^ "<problem>"
+      else argument
+    end
+
+fun normalized_argv problem argv = map (normalized_argument problem) argv
+
+fun json_string_list values =
+  JSONPrinter.valueToString (JSON.ARRAY (map JSON.STRING values))
+
+fun encode_anchor_row
+    ({goal_id, slice_index, prover, filter, format, type_enc, lam_trans,
+      nfacts, extra_opts, slice_size, premise_digest, normalized_command,
+      request_key} : anchor_row) =
+  String.concatWith "\t"
+    [goal_id, Int.toString slice_index, prover, filter, format, type_enc,
+     lam_trans, Int.toString nfacts, Int.toString slice_size,
+     json_string_list extra_opts, premise_digest,
+     (case normalized_command of
+          SOME command => json_string_list command
+        | NONE => raise Fail "cannot encode anchor row without command"),
+     request_key]
+
+fun anchor_int field text =
+  case Int.fromString text of
+      SOME value => value
+    | NONE => raise Fail ("invalid anchor " ^ field ^ ": " ^ text)
+
+fun parse_anchor_row line : anchor_row =
+  case String.fields (fn character => character = #"\t") (trim line) of
+      [goal, index, prover, filter, format, type_enc, lam_trans, nfacts,
+       slice_size, extra, premises, command, key] =>
+        {goal_id = goal, slice_index = anchor_int "slice index" index,
+         prover = prover, filter = filter, format = format,
+         type_enc = type_enc, lam_trans = lam_trans,
+         nfacts = anchor_int "nfacts" nfacts,
+         extra_opts = string_list (parse_json extra),
+         slice_size = anchor_int "slice size" slice_size,
+         premise_digest = premises,
+         normalized_command = SOME (string_list (parse_json command)),
+         request_key = key}
+    | [goal, index, prover, format, type_enc, lam_trans, nfacts,
+       premises, argv_or_key, key] =>
+        let
+          val (command, request_key) =
+            if String.isPrefix "[" argv_or_key then
+              (SOME (string_list (parse_json argv_or_key)), key)
+            else if argv_or_key = key then (NONE, key)
+            else raise Fail
+              ("historical anchor row contains unequal paired keys for " ^
+               goal ^ "/" ^ index)
+        in
+          {goal_id = goal, slice_index = anchor_int "slice index" index,
+           prover = prover, filter = "knn", format = format,
+           type_enc = type_enc,
+           lam_trans = lam_trans, nfacts = anchor_int "nfacts" nfacts,
+           extra_opts = [], slice_size = 0, premise_digest = premises,
+           normalized_command = command, request_key = request_key}
+        end
+    | _ => raise Fail "invalid anchor TSV row"
+
+val phase2_anchor_behavior_commit =
+  "788f0b8817901c57206e56495367f27b0351dd68"
+val phase2_anchor_gate_commit =
+  "f25871c404016d4368a0927ba0a868860fc82c70"
+val phase2_anchor_run_header_sha =
+  "d50c414547280480105ea6286e395cc4b4e428885748d866008887c746466b87"
+val phase2_anchor_journal_sha =
+  "d2b145c9a16710611dcb61acdfc8e0635fd8acc46259e9ac2bddda7ca50c3318"
+val phase2_anchor_run_path =
+  "src/holyhammer/eval/phase2-s30-v3/run.json"
+val phase2_anchor_journal_path =
+  "src/holyhammer/eval/phase2-s30-v3/journal/*.jsonl"
+val phase2_anchor_journal_dir =
+  "src/holyhammer/eval/phase2-s30-v3/journal/"
+val phase2_anchor_certificate_path =
+  "src/holyhammer/test-data/hheval-anchor-phase2/" ^
+  "phase2-s30-v3-journal.sha256"
+val phase2_anchor_certificate_rows = 229
+val phase2_anchor_paired_rows_sha =
+  "fa3cf7cb3efdd8da8c27145ab8112e3a702b11d6ed82f2af0dbc562e89b93000"
+val phase2_anchor_command_rows_sha =
+  "6973a9241be97aee6c3aa6cc39b0ed17232d2ecd16efe1c56e8947ad343bea24"
+val phase2_anchor_paired_driver_sha =
+  "2fd0a344574906d38a59774f5e293fc673cb1fca28bcab07664dcb52779bf430"
+val phase2_anchor_paired_controller_sha =
+  "fb98abd78825ca7e4e15c64bfe6d7ffcc3cee34dca8c6e59fe78828552968141"
+
+fun parse_anchor_header text : anchor_manifest_header =
+  let
+    val value = parse_json text
+    val schema = string_field "schema" value
+    val _ = if schema = "hh-anchor-manifest-v2" then ()
+      else raise Fail ("unsupported anchor manifest schema: " ^ schema)
+  in
+    {behavior_source_commit = string_field "behavior_source_commit" value,
+     gate_run_source_commit = string_field "gate_run_source_commit" value,
+     task13_key_source = string_field "task13_key_source" value,
+     accepted_run_header = string_field "accepted_run_header" value,
+     accepted_run_header_sha256 =
+       string_field "accepted_run_header_sha256" value,
+     accepted_journal = string_field "accepted_journal" value,
+     accepted_journal_sha256 =
+       string_field "accepted_journal_sha256" value,
+     input_run_header_sha256 =
+       string_field "input_run_header_sha256" value,
+     input_journal = string_field "input_journal" value,
+     input_journal_sha256 = string_field "input_journal_sha256" value,
+     task13_paired_rows_sha256 =
+       string_field "task13_paired_rows_sha256" value,
+     task13_command_rows_sha256 =
+       string_field "task13_command_rows_sha256" value,
+     task13_paired_driver_sha256 =
+       string_field "task13_paired_driver_sha256" value,
+     task13_paired_controller_sha256 =
+       string_field "task13_paired_controller_sha256" value,
+     task13_rows_checked = int_field "task13_rows_checked" value,
+     task13_internal_key_pair_mismatches =
+       int_field "task13_internal_key_pair_mismatches" value,
+     task13_premise_mismatches =
+       int_field "task13_premise_mismatches" value,
+     task13_request_key_mismatches =
+       int_field "task13_request_key_mismatches" value,
+     goals = int_field "goals" value, profiles = int_field "profiles" value,
+     row_count = int_field "row_count" value,
+     prover_spawns = int_field "prover_spawns" value}
+  end
+
+fun hex_digest size text =
+  String.size text = size andalso List.all (fn character =>
+    Char.isDigit character orelse
+    (#"a" <= character andalso character <= #"f")) (String.explode text)
+
+type anchor_certificate_entry =
+  {theory : string, path : string, sha256 : string}
+
+fun parse_anchor_certificate_line line : anchor_certificate_entry =
+  let
+    val _ = if String.size line > 72 then ()
+      else raise Fail "short anchor journal certificate row"
+    val digest = String.substring (line, 0, 64)
+    fun lower_hex character =
+      (#"0" <= character andalso character <= #"9") orelse
+      (#"a" <= character andalso character <= #"f")
+    val _ = if String.size digest = 64 andalso
+      List.all lower_hex (String.explode digest) andalso
+      String.substring (line, 64, 2) = "  " then ()
+      else raise Fail "malformed anchor journal certificate digest"
+    val path = String.extract (line, 66, NONE)
+    val _ = if String.isPrefix "./" path andalso
+      String.isSuffix ".jsonl" path then ()
+      else raise Fail "non-canonical anchor journal certificate path"
+    val theory = String.substring (path, 2, String.size path - 8)
+    val safe = theory <> "" andalso List.all (fn character =>
+      (#"0" <= character andalso character <= #"9") orelse
+      (#"A" <= character andalso character <= #"Z") orelse
+      (#"a" <= character andalso character <= #"z") orelse
+      character = #"_")
+      (String.explode theory)
+    val _ = if safe andalso path = "./" ^ theory ^ ".jsonl" then ()
+      else raise Fail "unsafe anchor journal certificate theory"
+  in
+    {theory = theory, path = path, sha256 = digest}
+  end
+
+fun parse_anchor_certificate_lines lines =
+  let
+    val entries = map parse_anchor_certificate_line lines
+    val theories = map #theory entries
+    val paths = map #path entries
+    val sorted_paths = Listsort.sort String.compare paths
+    val complete = length entries = phase2_anchor_certificate_rows
+    val unique = length (sorted_unique theories) = length entries andalso
+      length (sorted_unique paths) = length entries
+  in
+    if complete andalso unique andalso paths = sorted_paths then entries
+    else raise Fail "invalid anchor journal certificate inventory"
+  end
+
+fun read_anchor_certificate path =
+  let
+    fun chomp line =
+      if String.isSuffix "\n" line then
+        String.substring (line, 0, String.size line - 1)
+      else line
+  in
+  if sha256 path = SOME phase2_anchor_journal_sha then
+    parse_anchor_certificate_lines (map chomp (read_lines path))
+  else raise Fail "anchor journal certificate SHA-256 mismatch"
+  end
+
+fun same_anchor_profile (left : anchor_row, right : anchor_row) =
+  #slice_index left = #slice_index right andalso
+  #prover left = #prover right andalso #filter left = #filter right andalso
+  #format left = #format right andalso
+  #type_enc left = #type_enc right andalso
+  #lam_trans left = #lam_trans right andalso
+  #nfacts left = #nfacts right andalso
+  #extra_opts left = #extra_opts right andalso
+  #slice_size left = #slice_size right
+
+fun validate_anchor_manifest
+    ({header, rows} : anchor_manifest) : anchor_manifest =
+  let
+    val goal_ids = sorted_unique (map #goal_id rows)
+    fun goal_theory goal =
+      case String.fields (fn character => character = #".") goal of
+          theory :: _ => theory
+        | [] => ""
+    val theories = sorted_unique (map goal_theory goal_ids)
+    val certificate = read_anchor_certificate
+      (OS.Path.concat (Globals.HOLDIR, phase2_anchor_certificate_path))
+    val expected_member = case theories of
+        [theory] =>
+          (case List.find (fn entry => #theory entry = theory) certificate of
+               SOME entry => SOME
+                 (phase2_anchor_journal_dir ^
+                    String.extract (#path entry, 2, NONE),
+                  #sha256 entry)
+             | NONE => NONE)
+      | _ => NONE
+    fun rows_for goal = List.filter (fn row => #goal_id row = goal) rows
+    fun complete_goal goal =
+      map #slice_index (Listsort.sort (fn (left, right) =>
+        Int.compare (#slice_index left, #slice_index right))
+        (rows_for goal)) = List.tabulate (16, fn index => index + 1)
+    fun reference index =
+      List.find (fn row => #slice_index row = index) rows
+    fun stable_profile row =
+      case reference (#slice_index row) of
+          SOME first => same_anchor_profile (first, row)
+        | NONE => false
+    fun add_profile (row, profiles) =
+      if List.exists (fn old => same_anchor_profile (old, row)) profiles then
+        profiles
+      else row :: profiles
+    val profiles = foldl add_profile [] rows
+    val row_keys = map (fn row =>
+      #goal_id row ^ "\t" ^ Int.toString (#slice_index row)) rows
+    fun canonical_command row =
+      case #normalized_command row of
+          SOME ("anchor-prover" :: _) => true
+        | _ => false
+    val header_ok =
+      #behavior_source_commit header = phase2_anchor_behavior_commit andalso
+      #gate_run_source_commit header = phase2_anchor_gate_commit andalso
+      #task13_key_source header =
+        "uncommitted-phase2-task13-artifact-state" andalso
+      #accepted_run_header header = phase2_anchor_run_path andalso
+      #accepted_run_header_sha256 header = phase2_anchor_run_header_sha andalso
+      #accepted_journal header = phase2_anchor_journal_path andalso
+      #accepted_journal_sha256 header = phase2_anchor_journal_sha andalso
+      #input_run_header_sha256 header = phase2_anchor_run_header_sha andalso
+      expected_member = SOME
+        (#input_journal header, #input_journal_sha256 header) andalso
+      #task13_paired_rows_sha256 header =
+        phase2_anchor_paired_rows_sha andalso
+      #task13_command_rows_sha256 header =
+        phase2_anchor_command_rows_sha andalso
+      #task13_paired_driver_sha256 header =
+        phase2_anchor_paired_driver_sha andalso
+      #task13_paired_controller_sha256 header =
+        phase2_anchor_paired_controller_sha andalso
+      #task13_rows_checked header = 8 * #goals header andalso
+      #task13_internal_key_pair_mismatches header = 0 andalso
+      #task13_premise_mismatches header >= 0 andalso
+      #task13_premise_mismatches header <=
+        #task13_rows_checked header andalso
+      #task13_request_key_mismatches header >= 0 andalso
+      #task13_request_key_mismatches header <=
+        #task13_rows_checked header andalso
+      #profiles header = 16 andalso #prover_spawns header = 0 andalso
+      #row_count header = length rows andalso
+      #goals header = length goal_ids
+    val rows_ok =
+      not (null rows) andalso List.all complete_goal goal_ids andalso
+      length (sorted_unique row_keys) = length rows andalso
+      length profiles = 16 andalso List.all stable_profile rows andalso
+      List.all canonical_command rows andalso
+      List.all (fn row => #filter row = "knn" andalso #slice_size row > 0)
+        rows andalso
+      List.all (hex_digest 40 o #premise_digest) rows andalso
+      List.all (hex_digest 40 o #request_key) rows
+  in
+    if header_ok andalso rows_ok then {header = header, rows = rows}
+    else raise Fail "invalid or incompletely proven anchor manifest"
+  end
+
+fun read_anchor_manifest path =
+  case List.filter (fn line => trim line <> "") (read_lines path) of
+      [] => raise Fail "empty anchor manifest"
+    | first :: rest =>
+        let
+          val marker = "#hh-anchor-manifest-v2\t"
+          val _ = if String.isPrefix marker (trim first) then ()
+            else raise Fail "anchor manifest has no versioned header"
+          val json = String.extract
+            (trim first, String.size marker, NONE)
+          val manifest : anchor_manifest =
+            {header = parse_anchor_header json,
+             rows = map parse_anchor_row rest}
+        in
+          validate_anchor_manifest manifest
+        end
+
+fun anchor_row_compare (left : anchor_row, right : anchor_row) =
+  case String.compare (#goal_id left, #goal_id right) of
+      EQUAL => Int.compare (#slice_index left, #slice_index right)
+    | order => order
+
+fun mismatch (row : anchor_row) field expected actual : anchor_mismatch =
+  {goal_id = #goal_id row, slice_index = #slice_index row, field = field,
+   expected = expected, actual = actual}
+
+fun compare_anchor_rows expected actual =
+  let
+    val expected = Listsort.sort anchor_row_compare expected
+    val actual = Listsort.sort anchor_row_compare actual
+    fun compare_field row name render projection =
+      let
+        val wanted = projection (#1 row)
+        val got = projection (#2 row)
+      in
+        if wanted = got then []
+        else [mismatch (#1 row) name (render wanted) (render got)]
+      end
+    fun text value = value
+    fun number value = Int.toString value
+    fun command NONE = "<not recorded>"
+      | command (SOME values) = json_string_list values
+    fun fields pair =
+      compare_field pair "prover" text #prover @
+      compare_field pair "filter" text #filter @
+      compare_field pair "format" text #format @
+      compare_field pair "type_enc" text #type_enc @
+      compare_field pair "lam_trans" text #lam_trans @
+      compare_field pair "nfacts" number #nfacts @
+      compare_field pair "slice_size" number #slice_size @
+      compare_field pair "extra_opts" json_string_list #extra_opts @
+      compare_field pair "premises" text #premise_digest @
+      (case #normalized_command (#1 pair) of
+           NONE => []
+         | SOME _ => compare_field pair "command" command
+             #normalized_command) @
+      compare_field pair "cache_key" text #request_key
+    fun loop [] [] = []
+      | loop (wanted :: wants) [] =
+          mismatch wanted "row" "present" "missing" :: loop wants []
+      | loop [] (got :: rest) =
+          mismatch got "row" "missing" "present" :: loop [] rest
+      | loop (wanted :: wants) (got :: rest) =
+          (case anchor_row_compare (wanted, got) of
+               LESS => mismatch wanted "row" "present" "missing" ::
+                 loop wants (got :: rest)
+             | GREATER => mismatch got "row" "missing" "present" ::
+                 loop (wanted :: wants) rest
+             | EQUAL => fields (wanted, got) @ loop wants rest)
+  in
+    loop expected actual
+  end
+
+fun anchor_options timeout slices cores filter : hhConfig.hh_options =
+  let val snapshot = hhConfig.snapshot () in
+    {timeout = timeout, max_proofs = 4,
+     provers = ["e", "vampire", "zipperposition"], slices = slices,
+     cores = cores, filter = filter, max_facts = NONE, format = "",
+     type_enc = "", lam_trans = "", mono_iters = 3,
+     mono_instances = NONE, minimize = true, preplay_timeout = 1.0,
+     minimize_timeout = 1.0, cache = false,
+     cache_dir = #cache_dir snapshot, cache_max_entries = 100000,
+     debug_dir = NONE}
+  end
+
+fun maximum_facts schedule =
+  foldl Int.max 0 (map (#nfacts o #2) schedule)
+
+fun alist_lookup what name entries =
+  case List.find (fn (other, _) => name = other) entries of
+      SOME (_, value) => value
+    | NONE => raise Fail ("anchor derivation has no " ^ what ^ " for " ^ name)
+
+fun indexed items =
+  let
+    fun loop _ [] = []
+      | loop index (item :: rest) =
+          (index, item) :: loop (index + 1) rest
+  in
+    loop 1 items
+  end
+
+fun anchor_row_of goal_id premises timeout prover_versions
+    (index, (config : hhProver.prover_config, slice : hhProver.slice)) =
+  let
+    val problem = hhSchedule.problem_path slice
+    val request : hhProver.run_request =
+      {timeout = timeout, format = #format slice, problem = problem,
+       extra = #extra_opts slice, debug_dir = NONE}
+    val version = alist_lookup "version" (#name config) prover_versions
+    val (_, raw_argv) = #mk_command config "anchor-prover" request
+    val key = hhCache.key_of
+      {prover = #name config, version = version, argv = raw_argv,
+       problem = problem}
+  in
+    {goal_id = goal_id, slice_index = index, prover = #name config,
+     filter = #filter slice, format = #format slice,
+     type_enc = #type_enc slice,
+     lam_trans = #lam_trans slice, nfacts = #nfacts slice,
+     extra_opts = #extra_opts slice, slice_size = #slice_size slice,
+     premise_digest = premise_digest (#nfacts slice) premises,
+     normalized_command = SOME
+       ("anchor-prover" :: normalized_argv problem raw_argv),
+     request_key = key} : anchor_row
+  end
+
+fun derive_anchor_rows
+    {thy, theorem_names, timeout, prover_versions} =
+  let
+    val current_options = anchor_options timeout 24 24 ""
+    val current_schedule = List.take
+      (hhSlice.mk_schedule current_options, 16)
+    val _ =
+      if length current_schedule = 16 then ()
+      else raise Fail "Phase 3 schedule has fewer than 16 anchor slices"
+    val current_maximum = maximum_facts current_schedule
+    val pools = chainy_pools thy
+    val current_chunks = ref ([] : anchor_row list list)
+    fun rows goal_id premises schedule =
+      map (anchor_row_of goal_id premises timeout prover_versions)
+        (indexed schedule)
+    fun one name =
+      let
+        val theorem = DB.fetch thy name
+        val goal = dest_thm theorem
+        val pool = lookup_pool name pools
+        val current_premises = select_knn pool current_maximum goal
+        val goal_id = thy ^ "." ^ name
+        val _ = hhSchedule.export_problems current_options goal
+          [("knn", current_premises)] current_schedule
+        val after_rows = rows goal_id current_premises current_schedule
+        val _ = current_chunks := after_rows :: !current_chunks
+      in
+        ()
+      end
+    val _ = hhProver.reset_spawn_count ()
+    val _ = List.app one theorem_names
+    val spawns = hhProver.spawn_count ()
+    val _ = if spawns = 0 then ()
+      else raise Fail "anchor derivation spawned a prover"
+  in
+    {current = List.concat (List.rev (!current_chunks)),
+     prover_spawns = spawns}
+  end
+
+fun write_lines path lines =
+  let
+    val directory = OS.Path.dir path
+    val _ = if directory = "" then () else ensure_dir directory
+    val output = TextIO.openOut path
+    val _ = List.app (fn line => TextIO.output (output, line ^ "\n")) lines
+  in
+    TextIO.closeOut output
+  end
+
+fun mismatch_json
+    ({goal_id, slice_index, field, expected, actual} : anchor_mismatch) =
+  JSONPrinter.valueToString (JSON.OBJECT
+    [("goal_id", JSON.STRING goal_id),
+     ("slice", JSON.INT (IntInf.fromInt slice_index)),
+     ("field", JSON.STRING field), ("expected", JSON.STRING expected),
+     ("actual", JSON.STRING actual)])
+
+fun inventory_mismatches field expected actual =
+  let
+    val wanted = Redblackset.fromList String.compare expected
+    val got = Redblackset.fromList String.compare actual
+    fun absent_expected goal =
+      {goal_id = goal, slice_index = 0, field = field,
+       expected = "present", actual = "missing"} : anchor_mismatch
+    fun extra_actual goal =
+      {goal_id = goal, slice_index = 0, field = field,
+       expected = "missing", actual = "present"} : anchor_mismatch
+  in
+    map absent_expected (Redblackset.listItems
+      (Redblackset.difference (wanted, got))) @
+    map extra_actual (Redblackset.listItems
+      (Redblackset.difference (got, wanted)))
+  end
+
+fun run_anchor_derivation
+    {thy, baseline_manifest, output_tsv, mismatch_report,
+     timeout, theorem_names, prover_versions} =
+  let
+    val manifest = read_anchor_manifest baseline_manifest
+    val expected_rows = #rows manifest
+    val expected_goals = sorted_unique (map #goal_id expected_rows)
+    val prefix = thy ^ "."
+    val _ =
+      if List.all (String.isPrefix prefix) expected_goals then ()
+      else raise Fail ("anchor manifest contains goals outside " ^ thy)
+    val theorem_names =
+      case theorem_names of
+          NONE => map #1 (DB.theorems thy)
+        | SOME names => names
+    val derivation = derive_anchor_rows
+      {thy = thy, theorem_names = theorem_names, timeout = timeout,
+       prover_versions = prover_versions}
+    val current_goals = sorted_unique (map #goal_id (#current derivation))
+    val mismatches =
+      compare_anchor_rows expected_rows (#current derivation) @
+      inventory_mismatches "current_corpus" expected_goals current_goals
+    val _ = write_lines output_tsv (map encode_anchor_row
+      (#current derivation))
+    val _ = write_lines mismatch_report (map mismatch_json mismatches)
+  in
+    {rows = length (#current derivation), mismatches = length mismatches,
+     prover_spawns = #prover_spawns derivation}
+  end
 
 fun reconstruct condition result goal =
   if not (#reconstruct condition) orelse
@@ -1934,7 +2531,10 @@ val smoke_goals =
    ("pair", "CLOSED_PAIR_EQ", "e"),
    ("arithmetic", "SUC_NOT_ZERO", "vampire"),
    ("arithmetic", "SUC_ADD_SYM", "zipperposition"),
-   ("arithmetic", "ADD1", "sched")]
+   ("arithmetic", "ADD1", "sched"),
+   ("bool", "TRUTH", "mepo"),
+   ("bool", "EQ_REFL", "mash"),
+   ("bool", "IMP_CLAUSES", "mesh")]
 
 fun smoke_condition timeout "sched" : condition =
       {cond_id = "smoke-sched", regime = Bushy, selector = Deps,
@@ -1942,6 +2542,16 @@ fun smoke_condition timeout "sched" : condition =
          {provers = ["e", "vampire", "zipperposition"], slices = 3,
           cores = 3, max_proofs = 1},
        timeout = timeout, reconstruct = true}
+  | smoke_condition timeout "mepo" =
+      {cond_id = "smoke-mepo", regime = Chainy, selector = Mepo 96,
+       engine = Prover "e", timeout = timeout, reconstruct = true}
+  | smoke_condition timeout "mash" =
+      {cond_id = "smoke-mash", regime = Chainy, selector = Mash 96,
+       engine = Prover "vampire", timeout = timeout, reconstruct = true}
+  | smoke_condition timeout "mesh" =
+      {cond_id = "smoke-mesh", regime = Chainy, selector = Mesh 128,
+       engine = Prover "zipperposition", timeout = timeout,
+       reconstruct = true}
   | smoke_condition timeout prover =
       {cond_id = "smoke-" ^ prover, regime = Bushy, selector = Deps,
        engine = Prover prover, timeout = timeout, reconstruct = true}
@@ -1985,7 +2595,7 @@ fun run_format_smoke expdir timeout options (config, slice) =
       {timeout = timeout, format = #format slice,
        problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
        debug_dir = #debug_dir options}
-    val (recon_ok, _, _, _) = reconstruct condition result goal
+    val (recon_ok, _, _, recon_detail) = reconstruct condition result goal
     val parsed_axioms =
       case #used_axioms result of
           SOME axioms => not (null axioms)
@@ -1995,7 +2605,15 @@ fun run_format_smoke expdir timeout options (config, slice) =
        recon_ok = SOME true then ()
     else raise Fail
       ("HolyHammer format smoke failed for " ^ #prover slice ^ "/" ^
-       #format slice ^ "/" ^ #type_enc slice ^ "/" ^ #lam_trans slice)
+       #format slice ^ "/" ^ #type_enc slice ^ "/" ^ #lam_trans slice ^
+       ": status=" ^ szs_name (#szs result) ^ ", axioms=" ^
+       (case #used_axioms result of
+            NONE => "none"
+          | SOME axioms => json_string_list axioms) ^ ", recon=" ^
+       (case recon_ok of
+            NONE => "none"
+          | SOME value => Bool.toString value) ^ ", detail=" ^
+       (case recon_detail of NONE => "none" | SOME text => text))
   end
 
 fun pigeonhole_fixture name count =
@@ -2119,7 +2737,8 @@ fun run_smoke {expdir, timeout} =
     let
       val theories = sorted_unique (map #1 smoke_goals)
       val conditions = map (smoke_condition timeout)
-        ["e", "vampire", "zipperposition", "sched"]
+        ["e", "vampire", "zipperposition", "sched", "mepo", "mash",
+         "mesh"]
       val journals = map (journal_path expdir) theories
       val _ =
         if List.exists exists_file journals then

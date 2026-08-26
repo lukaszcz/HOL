@@ -3379,8 +3379,8 @@ fun test_hhEval_integration () =
 val _ = test_hhEval_integration ()
 
 val _ = expect
-  "hhEval legacy smoke has twelve prover goals and one schedule goal"
-  (length hhEval.smoke_goals = 13 andalso
+  "hhEval smoke retains twelve legacy prover goals and one schedule goal"
+  (length hhEval.smoke_goals = 16 andalso
    length (List.filter (fn (_, _, engine) => engine = "sched")
      hhEval.smoke_goals) = 1)
 
@@ -3389,6 +3389,249 @@ val _ = expect "hhEval smoke covers every pinned prover four times"
      length (List.filter (fn (_, _, item) => item = prover)
        hhEval.smoke_goals) = 4)
    ["e", "vampire", "zipperposition"])
+
+val _ = expect "hhEval smoke adds one goal for every ensemble filter"
+  (List.all (fn filter =>
+     length (List.filter (fn (_, _, item) => item = filter)
+       hhEval.smoke_goals) = 1) ["mepo", "mash", "mesh"])
+
+fun test_hhEval_pool_restriction () =
+  let
+    val pool = ["kept", "other", "kept"]
+    val features =
+      [("absent", [0]), ("kept", [1]), ("other", [2]), ("tail", [3])]
+    fun old_restrict rows = List.filter (fn (name, _) =>
+      List.exists (fn allowed => allowed = name) pool) rows
+  in
+    expect "hhEval set pool restriction preserves old rows and order"
+      (hhEval.restrict_features_to_pool pool features = old_restrict features)
+  end
+
+val _ = test_hhEval_pool_restriction ()
+
+fun fixture_anchor_row goal index premises key : hhEval.anchor_row =
+  {goal_id = goal, slice_index = index, prover = "e", filter = "knn",
+   format = "fof", type_enc = "", lam_trans = "", nfacts = 96,
+   extra_opts = [], slice_size = 1, premise_digest = premises,
+   normalized_command =
+     SOME ["anchor-prover", "--cpu-limit=30", "<problem>"],
+   request_key = key}
+
+fun fixture_anchor_row_command goal index premises command key
+    : hhEval.anchor_row =
+  {goal_id = goal, slice_index = index, prover = "e", filter = "knn",
+   format = "fof", type_enc = "", lam_trans = "", nfacts = 96,
+   extra_opts = [], slice_size = 1, premise_digest = premises,
+   normalized_command = SOME command,
+   request_key = key}
+
+fun test_hhEval_anchor_comparison () =
+  let
+    val row = fixture_anchor_row "fixture.goal" 1 "premises" "key"
+    val changed_premise =
+      fixture_anchor_row "fixture.goal" 1 "changed" "key"
+    val changed_command = fixture_anchor_row_command "fixture.goal" 1
+      "premises" ["anchor-prover", "--changed", "<problem>"] "key"
+    val changed_key =
+      fixture_anchor_row "fixture.goal" 1 "premises" "changed"
+    val legacy = hhEval.parse_anchor_row
+      "fixture.goal\t1\te\tfof\t\t\t96\tpremises\tkey\tkey"
+  in
+    expect "hhEval anchor rows compare equal"
+      (null (hhEval.compare_anchor_rows [row] [row]));
+    expect "hhEval anchor comparison reports a changed premise digest"
+      (List.exists (fn issue => #field issue = "premises")
+        (hhEval.compare_anchor_rows [row] [changed_premise]));
+    expect "hhEval anchor comparison reports a changed command"
+      (List.exists (fn issue => #field issue = "command")
+        (hhEval.compare_anchor_rows [row] [changed_command]));
+    expect "hhEval anchor comparison reports a changed production key"
+      (List.exists (fn issue => #field issue = "cache_key")
+        (hhEval.compare_anchor_rows [row] [changed_key]));
+    expect "hhEval anchor comparison reports a missing derived row"
+      (List.exists (fn issue => #actual issue = "missing")
+        (hhEval.compare_anchor_rows [row] []));
+    expect "hhEval anchor comparison reports an unexpected derived row"
+      (List.exists (fn issue => #expected issue = "missing")
+        (hhEval.compare_anchor_rows [] [row]));
+    expect "hhEval reads the historical paired-key TSV format"
+      (#normalized_command legacy = NONE andalso #request_key legacy = "key")
+  end
+
+val _ = test_hhEval_anchor_comparison ()
+
+fun test_hhEval_anchor_derivation root =
+  let
+    val directory = join root "anchor-derivation"
+    val _ = remove_tree directory
+    val _ = mkdirs directory
+    val fixture = join "test-data" "hheval-anchor-phase2"
+    val manifest_path = join fixture "manifest-v2.tsv"
+    val journal_path = join fixture "journal-list-two-goals.jsonl"
+    val provenance_path = join fixture "provenance.json"
+    val paired_path = join fixture "task13-paired-first8.tsv"
+    val command_path = join fixture "task13-command-first8.tsv"
+    val historical_path = join fixture "legacy-eight-plus-extra.tsv"
+    val certificate_path = join fixture
+      "phase2-s30-v3-journal.sha256"
+    val manifest_lines = read_lines manifest_path
+    val historical_lines = read_lines historical_path
+    val certificate_lines = map hhConfig.trim (read_lines certificate_path)
+    val certificate = hhEval.read_anchor_certificate certificate_path
+    val versions =
+      [("e", SOME "3.2.5-ho"), ("vampire", SOME "5.0.1"),
+       ("zipperposition", SOME "2.1")]
+    val manifest = hhEval.read_anchor_manifest manifest_path
+    val entries = hhEval.read_journal journal_path
+    val paired = map hhEval.parse_anchor_row (read_lines paired_path)
+    val commands = read_lines command_path
+    val provenance = String.concat (read_lines provenance_path)
+    fun fields line = String.fields (fn character => character = #"\t") line
+    fun parse_command text =
+      let
+        val source = JSONParser.openString text
+        val value = JSONParser.parse source
+        val _ = JSONParser.close source
+      in
+        JSONUtil.arrayMap JSONUtil.asString value
+      end
+    fun matching goal prover nfacts format type_enc lam_trans =
+      List.find (fn (row : hhEval.anchor_row) =>
+        #goal_id row = goal andalso #slice_index row <= 8 andalso
+        #prover row = prover andalso #nfacts row = nfacts andalso
+        #format row = format andalso #type_enc row = type_enc andalso
+        #lam_trans row = lam_trans) (#rows manifest)
+    fun paired_profile_matches (old : hhEval.anchor_row) =
+      case List.find (fn (row : hhEval.anchor_row) =>
+        #goal_id row = #goal_id old andalso
+        #slice_index row = #slice_index old) (#rows manifest) of
+          NONE => false
+        | SOME row =>
+            #prover row = #prover old andalso #format row = #format old andalso
+            #filter row = #filter old andalso
+            #type_enc row = #type_enc old andalso
+            #lam_trans row = #lam_trans old andalso
+            #nfacts row = #nfacts old
+    fun command_matches line =
+      case fields line of
+          [goal, prover, _, nfacts, format, type_enc, lam_trans, _, command] =>
+            (case Int.fromString nfacts of
+                 NONE => false
+               | SOME count =>
+                   (case matching goal prover count format type_enc lam_trans of
+                        NONE => false
+                      | SOME row =>
+                          (case #normalized_command row of
+                               NONE => false
+                             | SOME argv =>
+                                 argv = parse_command command)))
+        | _ => false
+    fun rejects path =
+      ((ignore (hhEval.read_anchor_manifest path); false)
+       handle Fail _ => true | _ => false)
+    fun rejects_certificate_lines lines =
+      ((ignore (hhEval.parse_anchor_certificate_lines lines); false)
+       handle Fail _ => true | _ => false)
+    fun rejects_certificate_file name lines =
+      let
+        val path = join directory name
+        val _ = write_file path
+          (String.concat (map (fn line => line ^ "\n") lines))
+      in
+        (ignore (hhEval.read_anchor_certificate path); false)
+        handle Fail _ => true | _ => false
+      end
+    val first_certificate_line = hd certificate_lines
+    val first_digest = String.substring (first_certificate_line, 0, 64)
+    val first_path = String.extract (first_certificate_line, 66, NONE)
+    val altered_digest =
+      (if String.sub (first_digest, 0) = #"0" then "1" else "0") ^
+      String.extract (first_digest, 1, NONE) ^ "  " ^ first_path
+    val unsafe_path = first_digest ^ "  ./../list.jsonl"
+    val malformed_separator = first_digest ^ " ./list.jsonl"
+    val duplicate_entry = first_certificate_line ::
+      first_certificate_line :: List.drop (certificate_lines, 2)
+    val output = join directory "current.tsv"
+    val report = join directory "mismatches.jsonl"
+    val equal = hhEval.run_anchor_derivation
+      {thy = "list", theorem_names =
+         SOME ["APPEND", "APPEND_ASSOC"],
+       baseline_manifest = manifest_path, output_tsv = output,
+       mismatch_report = report, timeout = 30,
+       prover_versions = versions}
+    val _ = if #mismatches equal = 0 then () else
+      List.app (fn line => print ("hhEval anchor mismatch: " ^ line ^ "\n"))
+        (read_lines report)
+  in
+    expect "hhEval reads a complete immutable Phase 2 anchor manifest"
+      (#goals (#header manifest) = 2 andalso
+       #profiles (#header manifest) = 16 andalso
+       #row_count (#header manifest) = 32 andalso
+       #prover_spawns (#header manifest) = 0 andalso
+       #input_journal (#header manifest) =
+         "src/holyhammer/eval/phase2-s30-v3/journal/list.jsonl" andalso
+       #input_journal_sha256 (#header manifest) =
+         "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766" andalso
+       length (#rows manifest) = 32);
+    expect "hhEval validates the exact tracked journal certificate"
+      (length certificate = 229 andalso
+       List.exists (fn entry =>
+         #theory entry = "list" andalso #path entry = "./list.jsonl" andalso
+         #sha256 entry =
+           "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766")
+         certificate);
+    expect "hhEval rejects an altered certificate member digest"
+      (rejects_certificate_file "altered-certificate.sha256"
+        (altered_digest :: tl certificate_lines));
+    expect "hhEval rejects an unsafe certificate member path"
+      (rejects_certificate_lines
+        (unsafe_path :: tl certificate_lines));
+    expect "hhEval rejects a duplicate certificate member"
+      (rejects_certificate_lines duplicate_entry);
+    expect "hhEval rejects a malformed certificate separator"
+      (rejects_certificate_lines
+        (malformed_separator :: tl certificate_lines));
+    expect "hhEval anchor fixture retains faithful accepted journal rows"
+      (length entries = 2 andalso
+       List.all (fn entry => length (#slices entry) = 16) entries);
+    expect "hhEval anchor fixture records exact historical provenance"
+      (String.isSubstring
+         "788f0b8817901c57206e56495367f27b0351dd68" provenance andalso
+       String.isSubstring
+         "f25871c404016d4368a0927ba0a868860fc82c70" provenance andalso
+       String.isSubstring
+         "d50c414547280480105ea6286e395cc4b4e428885748d866008887c746466b87"
+         provenance andalso
+       String.isSubstring
+         "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766"
+         provenance);
+    expect "hhEval manifest profiles match Task13 internally paired rows"
+      (length paired = 16 andalso
+       List.all paired_profile_matches paired andalso
+       #task13_rows_checked (#header manifest) = 16 andalso
+       #task13_internal_key_pair_mismatches (#header manifest) = 0);
+    expect "hhEval records Task13 dirty-state premise and key divergence"
+      (#task13_premise_mismatches (#header manifest) = 12 andalso
+       #task13_request_key_mismatches (#header manifest) = 12 andalso
+       String.isSubstring "known_nonreproducibility" provenance);
+    expect "hhEval manifest first eight rows match Task13 full commands"
+      (length commands = 16 andalso List.all command_matches commands);
+    expect "hhEval rejects an unproven extra historical anchor"
+      (length historical_lines = length manifest_lines + 1 andalso
+       List.take (historical_lines, length manifest_lines) = manifest_lines andalso
+       length (fields (List.last historical_lines)) = 10 andalso
+       rejects historical_path);
+    expect "hhEval current derivation matches all immutable anchors"
+      (#rows equal = 32 andalso #mismatches equal = 0 andalso
+       #prover_spawns equal = 0 andalso null (read_lines report));
+    remove_tree directory
+  end
+
+val _ =
+  case (OS.Process.getEnv "HHCONFIG_TEST_ROOT",
+        OS.Process.getEnv "HHCONFIG_ENV_DEFAULT_TEST") of
+      (SOME root, NONE) => test_hhEval_anchor_derivation root
+    | _ => ()
 
 fun test_hhStature_pure () =
   let

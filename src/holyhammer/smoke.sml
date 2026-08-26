@@ -20,6 +20,13 @@ fun show_result (entry : hhEval.journal_entry) =
 
 fun main () =
   let
+    (* The standalone executable has no script-owned theory by default.
+       Reconstruction evaluates a tactic and therefore needs initialized
+       kernel theory state, just as an interactive HOL session has. *)
+    val _ =
+      (ignore (Theory.current_theory ()); ())
+      handle Feedback.HOL_ERR _ =>
+        Feedback.quiet_messages Theory.new_theory "hhSmoke"
     val expdir = fresh_output ()
     val entries = hhEval.run_smoke {expdir = expdir, timeout = 30}
     val _ = app show_result entries
