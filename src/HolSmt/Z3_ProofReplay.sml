@@ -814,6 +814,85 @@ local
       y = 0 \/ y * k = x``,
     bossLib.METIS_TAC [SMT_RDIV_CANCEL_CLAUSE])
 
+  val ground_subterm_eval_max_nodes = 4096
+  val ground_subterm_eval_max_calls = 8
+  val ground_subterm_eval_steps_per_call = 100000
+
+  (* One bounded pass over an arithmetic obligation.  At an open node the
+     conversion visits each immediate child once.  At a closed compound it
+     spends one EVAL budget: a changed compound is selected and its children
+     are not visited; an unchanged compound is not selected and the pass
+     continues once through its children.  Thus every node is attempted at
+     most once and maximal closed compounds changed by bounded EVAL are never
+     revisited.  The 4096-node preflight and eight-attempt guard are hard:
+     exceeding either raises without returning a rewrite.  Each EVAL call
+     instead has a soft 100000-step stopper.  Reaching it may return a
+     partially changed kernel theorem, and the conversion accepts that proved
+     partial rewrite.  Wholly unchanged inputs raise without manufacturing a
+     rewrite. *)
+  fun ground_subterm_eval_conv target =
+    let
+      val nodes = SmtResource.term_nodes_up_to
+        ground_subterm_eval_max_nodes target
+      val _ = nodes <= ground_subterm_eval_max_nodes orelse
+        raise ERR "ground_subterm_eval_conv"
+          ("resource limit: input exceeds " ^
+           Int.toString ground_subterm_eval_max_nodes ^
+           " syntax nodes")
+      val calls = ref 0
+      fun eval_closed tm =
+        let
+          val _ = !calls < ground_subterm_eval_max_calls orelse
+            raise ERR "ground_subterm_eval_conv"
+              ("resource limit: more than " ^
+               Int.toString ground_subterm_eval_max_calls ^
+               " closed-compound attempts")
+          val _ = calls := !calls + 1
+          val th = bossLib.EVALn ground_subterm_eval_steps_per_call tm
+          val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl th)
+        in
+          if lhs ~~ rhs then raise Conv.UNCHANGED else th
+        end
+      fun one_pass tm =
+        if List.null (Term.free_vars tm) then
+          if Term.is_comb tm orelse Term.is_abs tm then
+            (eval_closed tm
+             handle Conv.UNCHANGED =>
+               descend tm)
+          else raise Conv.UNCHANGED
+        else
+          descend tm
+      and descend tm =
+        if Term.is_comb tm then
+          let
+            val (rator, rand) = Term.dest_comb tm
+            val rator_thm = SOME (one_pass rator)
+              handle Conv.UNCHANGED => NONE
+            val rand_thm = SOME (one_pass rand)
+              handle Conv.UNCHANGED => NONE
+          in
+            case (rator_thm, rand_thm) of
+              (SOME rator_thm, SOME rand_thm) =>
+                Thm.MK_COMB (rator_thm, rand_thm)
+            | (SOME rator_thm, NONE) => Thm.AP_THM rator_thm rand
+            | (NONE, SOME rand_thm) => Thm.AP_TERM rator rand_thm
+            | (NONE, NONE) => raise Conv.UNCHANGED
+          end
+        else if Term.is_abs tm then
+          let
+            val (binder, body) = Term.dest_abs tm
+          in
+            Thm.ABS binder (one_pass body)
+          end
+        else raise Conv.UNCHANGED
+    in
+      Conv.CHANGED_CONV one_pass target
+    end
+
+  fun profiled_ground_subterm_eval_conv target =
+    profile "arith_prove_linear(ground-subterm-eval)"
+      ground_subterm_eval_conv target
+
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
   fun arith_prove t =
@@ -919,9 +998,6 @@ local
         else
           profile "arith_prove(int)" intLib.ARITH_TAC goal
       val TRY = Tactical.TRY
-      val ap_tactic =
-        TRY AP_TERM_TAC >> TRY arith_tactic
-        >> TRY AP_THM_TAC >> TRY arith_tactic
     in
       Tactical.TAC_PROOF (([], t),
         (* rewrite the `ediv` and `emod` symbols so that the arithmetic
@@ -934,9 +1010,7 @@ local
         >> bossLib.RW_TAC (bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
              intSimps.INT_ARITH_ss ++ realSimps.REAL_ARITH_ss)
                [Conv.GSYM integerTheory.INT_NEG_MINUS1]
-        >> TRY arith_tactic
-        >> Tactical.rpt (Tactical.CHANGED_TAC ap_tactic)
-        >> Tactic.CONV_TAC (bossLib.EVALn 1000000)
+        >> TRY (Tactic.CONV_TAC profiled_ground_subterm_eval_conv)
         >> TRY arith_tactic)
     end
 
@@ -3562,6 +3636,12 @@ in
   val monotonicity_prove_for_test = monotonicity_prove
   val arith_prove_for_test = arith_prove
   val arith_prove_ediv_emod_for_test = arith_prove_ediv_emod
+  val ground_subterm_eval_conv_for_test =
+    profiled_ground_subterm_eval_conv
+  val ground_subterm_eval_max_nodes_for_test =
+    ground_subterm_eval_max_nodes
+  val ground_subterm_eval_max_calls_for_test =
+    ground_subterm_eval_max_calls
   val word_decide_for_test = word_decide
 
   fun initial_replay_state definitions proof : state = {

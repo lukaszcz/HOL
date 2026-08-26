@@ -11280,6 +11280,56 @@ fun profile_call_count name =
     SOME (_, info) => #n info
   | NONE => 0
 
+fun ground_subterm_evaluation_budget_success () =
+let
+  val profile_name = "arith_prove_linear(ground-subterm-eval)_OK"
+  val convert = Z3_ProofReplay.ground_subterm_eval_conv_for_test
+  val changed_target = ``IS_SUBLIST ([1i] ++ [2i]) [2i]``
+  val unchanged_target = ``SOME (ARB:num)``
+  val node_limit =
+    Z3_ProofReplay.ground_subterm_eval_max_nodes_for_test
+  val call_limit =
+    Z3_ProofReplay.ground_subterm_eval_max_calls_for_test
+  val exhaustion_args =
+    List.tabulate (call_limit + 1, fn _ => unchanged_target)
+  val exhaustion_head_type = List.foldr
+    (fn (_, result_type) =>
+      Type.--> (Term.type_of unchanged_target, result_type))
+    Type.bool exhaustion_args
+  val too_many_closed = Term.list_mk_comb
+    (Term.mk_var ("open_exhaustion_head", exhaustion_head_type),
+     exhaustion_args)
+  val oversized = List.foldl
+    (fn (_, term) => intSyntax.mk_plus (term, intSyntax.zero_tm))
+    ``x:int`` (List.tabulate (node_limit + 1, Lib.I))
+  val () = Profile.reset_all ()
+  val changed = convert changed_target
+  val () = assert
+    (boolSyntax.lhs (Thm.concl changed) ~~ changed_target andalso
+     not (boolSyntax.rhs (Thm.concl changed) ~~ changed_target),
+     "ground-subterm evaluation did not change the closed contains target")
+  val () = assert (profile_call_count profile_name = 1,
+    "changed ground-subterm conversion did not record exactly one success")
+  val () = expect_hol_error_contains "unchanged ground-subterm evaluation"
+    "Input term unchanged"
+    (fn () => ignore (convert unchanged_target))
+  val () = assert (profile_call_count profile_name = 1,
+    "unchanged closed term was recorded as consumed")
+  val () = expect_hol_error_contains "ground-subterm call budget"
+    ("more than " ^ Int.toString call_limit ^
+     " closed-compound attempts")
+    (fn () => ignore (convert too_many_closed))
+  val () = assert (profile_call_count profile_name = 1,
+    "call-budget-refused term was recorded as consumed")
+  val () = expect_hol_error_contains "ground-subterm node budget"
+    ("input exceeds " ^ Int.toString node_limit ^ " syntax nodes")
+    (fn () => ignore (convert oversized))
+in
+  assert (profile_call_count profile_name = 1,
+    "resource-refused term was recorded as consumed");
+  check_oracle_tags "bounded ground-subterm evaluation" changed
+end
+
 fun assert_nnf_replays_without_metis (name, proof_text, expected) =
 let
   val () = Profile.reset_all ()
@@ -12461,9 +12511,6 @@ let
     ("suffix rewrite",
      "((proof (rewrite (= (seq.suffixof (seq.unit 2) " ^
      "(seq.++ (seq.unit 1) (seq.unit 2))) true))))"),
-    ("contains rewrite",
-     "((proof (rewrite (= (seq.contains (seq.++ (seq.unit 1) " ^
-     "(seq.unit 2)) (seq.unit 2)) true))))"),
     ("indexof rewrite",
      "((proof (rewrite (= (seq.indexof (seq.unit 2) (seq.unit 2) 0) 0))))"),
     ("indexof leading-unit rewrite",
@@ -12473,6 +12520,10 @@ let
      "((proof (rewrite (= (seq.replace (seq.unit 1) (seq.unit 1) " ^
      "(seq.unit 2)) (seq.unit 2)))))")
   ]
+  val contains_capture =
+    ("contains rewrite",
+     "((proof (rewrite (= (seq.contains (seq.++ (seq.unit 1) " ^
+     "(seq.unit 2)) (seq.unit 2)) true))))")
   fun check version (name, proof_text) =
     let
       val proof = parse_z3_proof_string version
@@ -12495,7 +12546,24 @@ in
   assert (profile_call_count "th_lemma[seq](3)(seq_prove)" > 0,
     "genuine Seq th-lemmas did not route to SmtSeqProve");
   assert (profile_call_count "rewrite(01)(seq)" > 0,
-    "native Seq constructor rewrites did not route to SmtSeqProve")
+    "native Seq constructor rewrites did not route to SmtSeqProve");
+  Profile.reset_all ();
+  List.app (fn version =>
+    let
+      val before = profile_call_count
+        "arith_prove_linear(ground-subterm-eval)_OK"
+      val () = check version contains_capture
+      val after = profile_call_count
+        "arith_prove_linear(ground-subterm-eval)_OK"
+    in
+      assert (after = before + 1,
+        "captured Seq contains rewrite did not consume exactly one changed " ^
+        "ground-subterm conversion for Z3 " ^ version)
+    end) versions;
+  assert
+    (profile_call_count
+       "arith_prove_linear(ground-subterm-eval)_OK" = List.length versions,
+     "isolated Seq contains consumption count did not match version anchors")
 end
 
 (* Kept behind an environment variable: this exercises the full frozen raw
@@ -14984,6 +15052,8 @@ let
       replay_canonicalization_success),
     ("replay_polynomial_normal_form_success",
       replay_polynomial_normal_form_success),
+    ("ground_subterm_evaluation_budget_success",
+      ground_subterm_evaluation_budget_success),
     ("quantified_boolean_rewrite_n_binders_success",
       quantified_boolean_rewrite_n_binders_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",

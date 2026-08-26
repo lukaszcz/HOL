@@ -197,10 +197,20 @@ SMT-LIB support matrix:
 
 Coverage within these rows is mechanism-based rather than a list of
 recorded proof shapes.  Core CPC terms cross one proved canonical-form
-boundary and arithmetic rewrites use polynomial normal forms.  String and
-regex replay specializes parametric transition theorems for the state in
-the proof and bounds concat-split refutation by literal length.  Sequence
-replay normalizes numeral spellings and searches append-boundary witnesses.
+boundary and arithmetic rewrites use polynomial normal forms.  Before linear
+arithmetic decision, a proof-producing one-pass conversion covers closed
+compounds for which resource-bounded EVAL produces a changed theorem.  The
+hard guards refuse inputs above 4096 syntax nodes or a traversal requiring a
+ninth closed-compound attempt; neither refusal returns a rewrite.  Each EVAL
+call instead has a soft 100000-step stopper.  At that boundary EVAL may return
+a partially changed, kernel-proved theorem, and replay accepts that partial
+rewrite.  A changed compound is not traversed again; an unchanged compound is
+traversed once to find nested EVAL-reducible compounds.  Wholly unsupported or
+unchanged terms produce no rewrite and remain for the other checked replay
+procedures, which may fail closed.  String and regex replay specializes
+parametric transition theorems for the state in the proof and bounds
+concat-split refutation by literal length.  Sequence replay normalizes numeral
+spellings and searches append-boundary witnesses.
 Set and bag replay harvests facts from operator-keyed tables whose keys are
 checked against every operator the translation can emit.
 The totalized integer div/mod replay rung accepts arbitrary dividend and
