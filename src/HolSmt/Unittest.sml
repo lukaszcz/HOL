@@ -9488,6 +9488,167 @@ in
     "arith_mult_abs_comparison strict replay produced the wrong conclusion")
 end
 
+fun cpc_arith_mult_abs_nary_success () =
+let
+  fun int_abs term = intSyntax.mk_absval term
+  fun real_abs term = realSyntax.mk_absval term
+  fun int_mult (left, right) = intSyntax.mk_mult (left, right)
+  fun real_mult (left, right) = realSyntax.mk_mult (left, right)
+  fun equality (left, right) = boolSyntax.mk_eq (left, right)
+  fun check (name, premises, target) =
+    let
+      val theorem =
+        CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+          premises target
+    in
+      assert (Thm.concl theorem ~~ target,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+  val ia = ``ia:int``
+  val ib = ``ib:int``
+  val ic = ``ic:int``
+  val id = ``id:int``
+  val ie = ``ie:int``
+  val iF = ``iF:int``
+  val int_collision = Term.mk_var ("abs_factor", intSyntax.int_ty)
+  val ra = ``ra:real``
+  val rb = ``rb:real``
+  val rc = ``rc:real``
+  val rd = ``rd:real``
+  val re = ``re:real``
+  val rF = ``rF:real``
+  val real_collision = Term.mk_var ("abs_factor", realSyntax.real_ty)
+  val int_eq1 = Thm.ASSUME (equality (int_abs ia, int_abs ib))
+  val int_eq2 = Thm.ASSUME (equality (int_abs ic, int_abs id))
+  val int_eq3 = Thm.ASSUME (equality (int_abs ie, int_abs iF))
+  val int_gt1 = Thm.ASSUME
+    (intSyntax.mk_greater (int_abs ia, int_abs ib))
+  val int_gt2 = Thm.ASSUME
+    (intSyntax.mk_greater (int_abs ic, int_abs id))
+  val int_eq3_nonzero = Thm.CONJ int_eq3
+    (Thm.ASSUME (boolSyntax.mk_neg
+      (equality (ie, intSyntax.zero_tm))))
+  val int_collision_eq = Thm.ASSUME
+    (equality (int_abs int_collision, int_abs id))
+  val int_collision_gt = Thm.ASSUME
+    (intSyntax.mk_greater (int_abs ia, int_abs int_collision))
+  val int_eq_target = equality
+    (int_abs (int_mult (int_mult (ia, ic), ie)),
+     int_abs (int_mult (int_mult (ib, id), iF)))
+  val int_gt_target = intSyntax.mk_greater
+    (int_abs (int_mult (int_mult (ia, ic), ie)),
+     int_abs (int_mult (int_mult (ib, id), iF)))
+  val int_collision_eq_target = equality
+    (int_abs (int_mult (ia, int_collision)),
+     int_abs (int_mult (ib, id)))
+  val int_collision_gt_target = intSyntax.mk_greater
+    (int_abs (int_mult (ia, ic)),
+     int_abs (int_mult (int_collision, id)))
+  val real_eq1 = Thm.ASSUME (equality (real_abs ra, real_abs rb))
+  val real_eq2 = Thm.ASSUME (equality (real_abs rc, real_abs rd))
+  val real_eq3 = Thm.ASSUME (equality (real_abs re, real_abs rF))
+  val real_gt1 = Thm.ASSUME
+    (realSyntax.mk_greater (real_abs ra, real_abs rb))
+  val real_gt2 = Thm.ASSUME
+    (realSyntax.mk_greater (real_abs re, real_abs rF))
+  val real_eq2_nonzero = Thm.CONJ real_eq2
+    (Thm.ASSUME (boolSyntax.mk_neg
+      (equality (rc, realSyntax.zero_tm))))
+  val real_collision_eq = Thm.ASSUME
+    (equality (real_abs real_collision, real_abs rd))
+  val real_collision_gt = Thm.ASSUME
+    (realSyntax.mk_greater (real_abs ra, real_abs real_collision))
+  val real_eq_target = equality
+    (real_abs (real_mult (ra, rc)),
+     real_abs (real_mult (rb, rd)))
+  val real_eq3_target = equality
+    (real_abs (real_mult (real_mult (ra, rc), re)),
+     real_abs (real_mult (real_mult (rb, rd), rF)))
+  val real_gt2_target = realSyntax.mk_greater
+    (real_abs (real_mult (ra, rc)),
+     real_abs (real_mult (rb, rd)))
+  val real_gt3_target = realSyntax.mk_greater
+    (real_abs (real_mult (real_mult (ra, rc), re)),
+     real_abs (real_mult (real_mult (rb, rd), rF)))
+  val real_collision_eq_target = equality
+    (real_abs (real_mult (ra, real_collision)),
+     real_abs (real_mult (rb, rd)))
+  val real_collision_gt_target = realSyntax.mk_greater
+    (real_abs (real_mult (ra, re)),
+     real_abs (real_mult (real_collision, rF)))
+  val mismatched_nonzero = Thm.CONJ int_eq2
+    (Thm.ASSUME (boolSyntax.mk_neg
+      (equality (ia, intSyntax.zero_tm))))
+  val int_eq2_reversed_nonzero = Thm.CONJ int_eq2
+    (Thm.ASSUME (boolSyntax.mk_neg
+      (equality (intSyntax.zero_tm, ic))))
+  val real_eq2_reversed_nonzero = Thm.CONJ real_eq2
+    (Thm.ASSUME (boolSyntax.mk_neg
+      (equality (realSyntax.zero_tm, rc))))
+in
+  check ("unary integer absolute equality", [int_eq1], Thm.concl int_eq1);
+  check ("unary real strict absolute comparison",
+    [real_gt1], Thm.concl real_gt1);
+  check ("n-ary integer absolute equality",
+    [int_eq1, int_eq2, int_eq3], int_eq_target);
+  check ("n-ary integer mixed strict absolute comparison",
+    [int_gt1, int_gt2, int_eq3_nonzero], int_gt_target);
+  check ("integer context variable collision in equality",
+    [int_eq1, int_collision_eq], int_collision_eq_target);
+  check ("integer context variable collision in strict composition",
+    [int_collision_gt, int_gt2], int_collision_gt_target);
+  check ("binary real absolute equality compatibility",
+    [real_eq1, real_eq2], real_eq_target);
+  check ("n-ary real absolute equality",
+    [real_eq1, real_eq2, real_eq3], real_eq3_target);
+  check ("real context variable collision in equality",
+    [real_eq1, real_collision_eq], real_collision_eq_target);
+  check ("real context variable collision in strict composition",
+    [real_collision_gt, real_gt2], real_collision_gt_target);
+  check ("binary real strict absolute compatibility",
+    [real_gt1, real_eq2_nonzero], real_gt2_target);
+  check ("binary integer reversed nonzero guard",
+    [int_gt1, int_eq2_reversed_nonzero],
+    intSyntax.mk_greater
+      (int_abs (int_mult (ia, ic)), int_abs (int_mult (ib, id))));
+  check ("binary real reversed nonzero guard",
+    [real_gt1, real_eq2_reversed_nonzero], real_gt2_target);
+  check ("n-ary real mixed strict absolute comparison",
+    [real_gt1, real_eq2_nonzero, real_gt2], real_gt3_target);
+  expect_hol_error_contains "empty absolute comparison premises"
+    "expected at least one absolute-value factor premise"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+        [] boolSyntax.T));
+  expect_hol_error_contains "strict factor in equality mode"
+    "expected an absolute-value equality"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+        [int_eq1, int_gt2] int_eq_target));
+  expect_hol_error_contains "equal strict factor without nonzero premise"
+    "strict mode requires a nonzero side condition"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+        [int_gt1, int_eq2] int_gt_target));
+  expect_hol_error_contains "mismatched strict nonzero side condition"
+    "nonzero side condition does not match its left factor"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+        [int_gt1, mismatched_nonzero] int_gt_target));
+  expect_hol_error_contains "non-strict first conjunction"
+    "first premise must be |t1| = |s1| or |t1| > |s1|"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+        [int_eq3_nonzero] (Thm.concl int_eq3)));
+  expect_hol_error_contains "mixed absolute factor types"
+    "all absolute-value factors must have the same arithmetic type"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+        [int_eq1, real_eq2] int_eq_target))
+end
+
 fun cpc_proof_parser_singleton_premise_success () =
 let
   val proof = parse_cpc_proof_string
@@ -14515,6 +14676,8 @@ let
     ("cpc_totalized_outbound_exclusions_success",
       cpc_totalized_outbound_exclusions_success),
     ("cpc_totalized_replay_success", cpc_totalized_replay_success),
+    ("cpc_arith_mult_abs_nary_success",
+      cpc_arith_mult_abs_nary_success),
     ("cpc_proof_parser_singleton_premise_success",
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",

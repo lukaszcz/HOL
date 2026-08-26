@@ -2308,79 +2308,6 @@ local
     | _ => raise ERR "arith-abs-int-gt"
         "expected two integer arguments"
 
-  fun replay_arith_mult_abs_comparison prems conclusion =
-    let
-      fun dest_abs term = intSyntax.dest_absval term
-        handle Feedback.HOL_ERR _ => realSyntax.dest_absval term
-      fun mult (left, right) = intSyntax.mk_mult (left, right)
-        handle Feedback.HOL_ERR _ => realSyntax.mk_mult (left, right)
-      fun dest_abs_equality theorem =
-        let
-          val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
-        in (dest_abs left, dest_abs right) end
-      fun apply_context body theorem =
-        let
-          val variable = Term.mk_var
-            ("abs_factor", Term.type_of (#1 (boolSyntax.dest_eq
-              (Thm.concl theorem))))
-          val context = Term.mk_abs (variable, body variable)
-        in Conv.BETA_RULE (Thm.AP_TERM context theorem) end
-      fun finish result =
-        case conclusion of
-          NONE => result
-        | SOME target =>
-            if Term.aconv (Thm.concl result) target then result
-            else raise ERR "arith_mult_abs_comparison"
-              "reconstructed absolute-product relation does not match"
-      fun strict_comparison first second =
-        let
-          val (left_abs, right_abs) =
-            intSyntax.dest_greater (Thm.concl first)
-          val left = dest_abs left_abs
-          val right = dest_abs right_abs
-          val abs_equality = Thm.CONJUNCT1 second
-          val nonzero = Thm.CONJUNCT2 second
-          val (factor, matching_factor) =
-            dest_abs_equality abs_equality
-          val assumptions = Thm.CONJ first
-            (Thm.CONJ abs_equality nonzero)
-          val rule = Drule.SPECL
-            [left, right, factor, matching_factor]
-            HolSmtTheory.smt_int_abs_mul_gt
-        in finish (Thm.MP rule assumptions) end
-      fun equality_comparison first second =
-        let
-          val (left1, right1) = dest_abs_equality first
-          val (left2, right2) = dest_abs_equality second
-          val abs_right1 = #2 (boolSyntax.dest_eq (Thm.concl first))
-          val abs_left2 = #1 (boolSyntax.dest_eq (Thm.concl second))
-          val first_product = apply_context
-            (fn factor => mult (factor, abs_left2)) first
-          val second_product = apply_context
-            (fn factor => mult (abs_right1, factor)) second
-          val product_equality = Thm.TRANS first_product second_product
-          val (left_bridge, right_bridge) =
-            if Lib.equal (Term.type_of left1) intSyntax.int_ty then
-              (Thm.SYM (Drule.SPECL [left1, left2]
-                 integerTheory.INT_ABS_MUL),
-               Drule.SPECL [right1, right2] integerTheory.INT_ABS_MUL)
-            else
-              (Drule.SPECL [left1, left2] realTheory.ABS_MUL,
-               Thm.SYM (Drule.SPECL [right1, right2]
-                 realTheory.ABS_MUL))
-          val result = Thm.TRANS left_bridge
-            (Thm.TRANS product_equality right_bridge)
-        in finish result end
-    in
-      case prems of
-        [first, second] =>
-          if Lib.can intSyntax.dest_greater (Thm.concl first) then
-            strict_comparison first second
-          else equality_comparison first second
-      | _ => raise ERR "arith_mult_abs_comparison"
-          "expected two absolute-value equality premises"
-    end
-
   (* cvc5 uses the same CPC arithmetic rules over Int and Real.  The HOL
      constructors are type-specific, so select the integer form first and
      fall back to the real form while retaining the certificate's shape. *)
@@ -2419,6 +2346,308 @@ local
   fun arith_dest_geq tm =
     intSyntax.dest_geq tm
     handle Feedback.HOL_ERR _ => realSyntax.dest_geq tm
+
+  fun replay_arith_mult_abs_comparison prems conclusion =
+    let
+      datatype direct_factor_relation =
+          DirectAbsEq of
+            {theorem : Thm.thm, left : Term.term, right : Term.term}
+        | DirectAbsGt of
+            {theorem : Thm.thm, left : Term.term, right : Term.term}
+      datatype strict_factor_relation =
+          StrictAbsGt of
+            {theorem : Thm.thm, left : Term.term, right : Term.term}
+        | StrictAbsEqNonzero of
+            {equality : Thm.thm, nonzero : Thm.thm,
+             left : Term.term, right : Term.term}
+      fun dest_abs term = intSyntax.dest_absval term
+        handle Feedback.HOL_ERR _ => realSyntax.dest_absval term
+      fun absval term = intSyntax.mk_absval term
+        handle Feedback.HOL_ERR _ => realSyntax.mk_absval term
+      fun zero term =
+        if Lib.equal (Term.type_of term) intSyntax.int_ty then
+          intSyntax.zero_tm
+        else if Lib.equal (Term.type_of term) realSyntax.real_ty then
+          realSyntax.zero_tm
+        else raise ERR "arith_mult_abs_comparison"
+          "expected integer or real absolute-value factors"
+      fun dest_abs_equality theorem =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+        in (dest_abs left, dest_abs right) end
+        handle Feedback.HOL_ERR _ =>
+          raise ERR "arith_mult_abs_comparison"
+            "expected an absolute-value equality"
+      fun dest_abs_greater theorem =
+        let
+          val (left, right) = arith_dest_greater (Thm.concl theorem)
+        in (dest_abs left, dest_abs right) end
+        handle Feedback.HOL_ERR _ =>
+          raise ERR "arith_mult_abs_comparison"
+            "expected a strict absolute-value comparison"
+      fun apply_context body theorem =
+        let
+          val variable = Term.genvar
+            (Term.type_of (#1 (boolSyntax.dest_eq (Thm.concl theorem))))
+          val context = Term.mk_abs (variable, body variable)
+        in Conv.BETA_RULE (Thm.AP_TERM context theorem) end
+      fun transport label equivalence theorem =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl equivalence)
+          val source = Thm.concl theorem
+        in
+          if Term.aconv source left then Thm.EQ_MP equivalence theorem
+          else if Term.aconv source right then
+            Thm.EQ_MP (Thm.SYM equivalence) theorem
+          else raise ERR "arith_mult_abs_comparison"
+            (label ^ " equivalence does not match the pairwise result")
+        end
+      fun finish result =
+        case conclusion of
+          NONE => result
+        | SOME target =>
+            if Term.aconv (Thm.concl result) target then result
+            else raise ERR "arith_mult_abs_comparison"
+              "reconstructed absolute-product relation does not match"
+      fun require_same_type (left, right) =
+        Lib.equal (Term.type_of left) (Term.type_of right) orelse
+        raise ERR "arith_mult_abs_comparison"
+          "all absolute-value factors must have the same arithmetic type"
+      fun abs_mult_theorem (left, right) =
+        if Lib.equal (Term.type_of left) intSyntax.int_ty then
+          Drule.SPECL [left, right] integerTheory.INT_ABS_MUL
+        else
+          Drule.SPECL [left, right] realTheory.ABS_MUL
+      fun abs_nonnegative term =
+        if Lib.equal (Term.type_of term) intSyntax.int_ty then
+          Drule.SPECL [term] integerTheory.INT_ABS_POS
+        else
+          Drule.SPECL [term] realTheory.ABS_POS
+      fun greater_definition (left, right) =
+        let
+          val theorem =
+            if Lib.equal (Term.type_of left) intSyntax.int_ty then
+              integerTheory.INT_GT
+            else realTheory.real_gt
+        in
+          Drule.SPECL [left, right] theorem
+        end
+      fun greater_as_less (left, right) theorem =
+        transport "greater-to-less"
+          (greater_definition (absval left, absval right)) theorem
+      fun less_as_greater (left, right) theorem =
+        transport "less-to-greater"
+          (greater_definition (left, right)) theorem
+      fun wrap_strict_products
+          (left, right, factor, matching_factor, inner_relation) =
+        let
+          val left_bridge = abs_mult_theorem (left, factor)
+          val right_bridge = abs_mult_theorem (right, matching_factor)
+          val inner_right =
+            arith_mult (absval right, absval matching_factor)
+          val outer_left = absval (arith_mult (left, factor))
+          val left_relation = apply_context
+            (fn product => arith_greater (product, inner_right)) left_bridge
+          val with_outer_left = transport
+            "left absolute-product bridge" left_relation inner_relation
+          val right_relation = apply_context
+            (fn product => arith_greater (outer_left, product)) right_bridge
+        in
+          transport "right absolute-product bridge"
+            right_relation with_outer_left
+        end
+      fun equality_pair first second =
+        let
+          val (left1, right1) = dest_abs_equality first
+          val (left2, right2) = dest_abs_equality second
+          val _ = require_same_type (left1, left2)
+          val abs_right1 = #2 (boolSyntax.dest_eq (Thm.concl first))
+          val abs_left2 = #1 (boolSyntax.dest_eq (Thm.concl second))
+          val first_product = apply_context
+            (fn factor => arith_mult (factor, abs_left2)) first
+          val second_product = apply_context
+            (fn factor => arith_mult (abs_right1, factor)) second
+          val product_equality = Thm.TRANS first_product second_product
+          val (left_bridge, right_bridge) =
+            if Lib.equal (Term.type_of left1) intSyntax.int_ty then
+              (Thm.SYM (Drule.SPECL [left1, left2]
+                 integerTheory.INT_ABS_MUL),
+               Drule.SPECL [right1, right2] integerTheory.INT_ABS_MUL)
+            else
+              (Drule.SPECL [left1, left2] realTheory.ABS_MUL,
+               Thm.SYM (Drule.SPECL [right1, right2]
+                 realTheory.ABS_MUL))
+          val result = Thm.TRANS left_bridge
+            (Thm.TRANS product_equality right_bridge)
+        in result end
+      fun strict_equal_pair
+          (strict, left, right, equality, nonzero, factor,
+           matching_factor) =
+        (require_same_type (left, factor);
+        if Lib.equal (Term.type_of left) intSyntax.int_ty then
+          let
+            val assumptions = Thm.CONJ strict
+              (Thm.CONJ equality nonzero)
+            val rule = Drule.SPECL
+              [left, right, factor, matching_factor]
+              HolSmtTheory.smt_int_abs_mul_gt
+          in
+            Thm.MP rule assumptions
+          end
+        else
+          let
+            val positive = transport "real absolute nonzero"
+              (Drule.SPECL [factor] realTheory.ABS_NZ) nonzero
+            val scaled_equivalence = Thm.MP
+              (Drule.SPECL
+                [absval right, absval left, absval factor]
+                realTheory.REAL_LT_RMUL)
+              positive
+            val scaled_less = transport "positive real scaling"
+              scaled_equivalence
+              (greater_as_less (left, right) strict)
+            val scaled = less_as_greater
+              (arith_mult (absval left, absval factor),
+               arith_mult (absval right, absval factor)) scaled_less
+            val replace_right_factor = apply_context
+              (fn right_factor =>
+                arith_greater
+                  (arith_mult (absval left, absval factor),
+                   arith_mult (absval right, right_factor)))
+              equality
+            val inner = transport "equal real factor"
+              replace_right_factor scaled
+          in
+            wrap_strict_products
+              (left, right, factor, matching_factor, inner)
+          end)
+      fun strict_strict_pair
+          (first, left, right, second, factor, matching_factor) =
+        let
+          val _ = require_same_type (left, factor)
+          val first_less = greater_as_less (left, right) first
+          val second_less = greater_as_less
+            (factor, matching_factor) second
+          val assumptions = Thm.CONJ (abs_nonnegative right)
+            (Thm.CONJ (abs_nonnegative matching_factor)
+              (Thm.CONJ first_less second_less))
+          val rule =
+            if Lib.equal (Term.type_of left) intSyntax.int_ty then
+              Drule.SPECL
+                [absval right, absval left, absval matching_factor,
+                 absval factor]
+                integerTheory.INT_LT_MUL2
+            else
+              Drule.SPECL
+                [absval right, absval left, absval matching_factor,
+                 absval factor]
+                realTheory.REAL_LT_MUL2
+          val inner_less = Thm.MP rule assumptions
+          val inner = less_as_greater
+            (arith_mult (absval left, absval factor),
+             arith_mult (absval right, absval matching_factor)) inner_less
+        in
+          wrap_strict_products
+            (left, right, factor, matching_factor, inner)
+        end
+      fun direct_relation theorem =
+        if Lib.can dest_abs_greater theorem then
+          let val (left, right) = dest_abs_greater theorem
+          in DirectAbsGt
+            {theorem = theorem, left = left, right = right}
+          end
+        else
+          let val (left, right) = dest_abs_equality theorem
+          in DirectAbsEq
+            {theorem = theorem, left = left, right = right}
+          end
+      fun malformed_strict_tail () =
+        raise ERR "arith_mult_abs_comparison"
+          "expected |t| > |s| or (|t| = |s| and t <> 0)"
+      fun dest_guarded_equality theorem =
+        let
+          val _ = boolSyntax.dest_conj (Thm.concl theorem)
+          val equality = Thm.CONJUNCT1 theorem
+          val nonzero = Thm.CONJUNCT2 theorem
+          val (left, right) = dest_abs_equality equality
+          val expected_zero = zero left
+          val (guard_left, guard_right) =
+            boolSyntax.dest_eq (boolSyntax.dest_neg (Thm.concl nonzero))
+        in
+          (equality, nonzero, left, right, expected_zero,
+           guard_left, guard_right)
+        end
+        handle Feedback.HOL_ERR _ => malformed_strict_tail ()
+      fun strict_tail_relation theorem =
+        if Lib.can dest_abs_greater theorem then
+          let val (left, right) = dest_abs_greater theorem
+          in StrictAbsGt
+            {theorem = theorem, left = left, right = right}
+          end
+        else if Lib.can dest_abs_equality theorem then
+          raise ERR "arith_mult_abs_comparison"
+            "strict mode requires a nonzero side condition on equal factors"
+        else
+          let
+            val (equality, nonzero, left, right, expected_zero,
+                 guard_left, guard_right) = dest_guarded_equality theorem
+            val oriented_nonzero =
+              if Term.aconv guard_left left andalso
+                 Term.aconv guard_right expected_zero
+              then nonzero
+              else if Term.aconv guard_left expected_zero andalso
+                      Term.aconv guard_right left
+              then
+                let
+                  val expected = boolSyntax.mk_eq (left, expected_zero)
+                  val symmetry = Thm.SYM (Thm.ASSUME expected)
+                  val contradiction = Thm.MP (Thm.NOT_ELIM nonzero)
+                    symmetry
+                in
+                  Thm.NOT_INTRO (Thm.DISCH expected contradiction)
+                end
+              else raise ERR "arith_mult_abs_comparison"
+                "nonzero side condition does not match its left factor"
+          in
+            StrictAbsEqNonzero
+              {equality = equality, nonzero = oriented_nonzero,
+               left = left, right = right}
+          end
+      fun equality_fold (theorem, result) = equality_pair result theorem
+      fun strict_fold (theorem, (result, left, right)) =
+        case strict_tail_relation theorem of
+          StrictAbsGt
+            {theorem, left = factor, right = matching_factor} =>
+            (strict_strict_pair
+               (result, left, right, theorem, factor, matching_factor),
+             arith_mult (left, factor),
+             arith_mult (right, matching_factor))
+        | StrictAbsEqNonzero
+            {equality, nonzero, left = factor,
+             right = matching_factor} =>
+            (strict_equal_pair
+               (result, left, right, equality, nonzero, factor,
+                matching_factor),
+             arith_mult (left, factor),
+             arith_mult (right, matching_factor))
+    in
+      case prems of
+        [] => raise ERR "arith_mult_abs_comparison"
+          "expected at least one absolute-value factor premise"
+      | first :: rest =>
+          let
+            val first_relation = direct_relation first
+              handle Feedback.HOL_ERR _ =>
+                raise ERR "arith_mult_abs_comparison"
+                  "first premise must be |t1| = |s1| or |t1| > |s1|"
+          in
+            case first_relation of
+              DirectAbsEq _ => finish (List.foldl equality_fold first rest)
+            | DirectAbsGt {left, right, ...} =>
+                finish (#1 (List.foldl strict_fold
+                  (first, left, right) rest))
+          end
+    end
 
   fun arith_list_mk_plus terms =
     intSyntax.list_mk_plus terms
