@@ -11522,6 +11522,16 @@ in
       end))
 end
 
+fun nonlinear_real_constant_divisor_replay_success () =
+let
+  val goal = ``0r <= (x:real) * x / 2r``
+  val theorem = Library.arith_prove_with_cases goal
+in
+  assert (Thm.concl theorem ~~ goal,
+    "constant real divisor replay returned the wrong theorem");
+  check_oracle_tags "constant real divisor arithmetic replay" theorem
+end
+
 fun assert_array_prover name prover tm =
   (let
      val thm = prover tm
@@ -14565,6 +14575,8 @@ let
       z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
+    ("nonlinear_real_constant_divisor_replay_success",
+      nonlinear_real_constant_divisor_replay_success),
     ("array_prove_ladder_rungs_success",
       array_prove_ladder_rungs_success),
     ("array_prove_set_ladder_rungs_success",

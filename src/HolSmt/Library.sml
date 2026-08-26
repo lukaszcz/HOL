@@ -805,23 +805,32 @@ struct
     let
       fun same_const left right =
         Term.same_const left right handle Feedback.HOL_ERR _ => false
-      fun is_division_head head =
+      fun is_real_division_head head =
+        same_const head realSyntax.div_tm
+      fun is_nonpolynomial_head head =
         List.exists (same_const head)
           [numSyntax.div_tm, numSyntax.mod_tm,
            intSyntax.div_tm, intSyntax.mod_tm,
-           intSyntax.quot_tm, intSyntax.rem_tm,
-           realSyntax.div_tm] orelse
+           intSyntax.quot_tm, intSyntax.rem_tm] orelse
         (case Lib.total Term.dest_thy_const head of
            SOME {Thy = "HolSmt", Name, ...} =>
              List.exists (Lib.equal Name)
                ["smt_ediv_total", "smt_emod_total", "smt_rdiv"]
          | _ => false)
+      fun is_nonpolynomial_application head arguments =
+        if is_real_division_head head then
+          (case arguments of
+             [_, denominator] => not (is_numeric_literal denominator)
+           | _ => true)
+        else
+          is_nonpolynomial_head head
       fun search term =
         case Lib.total Term.dest_abs term of
           SOME (_, body) => search body
         | NONE =>
             let val (head, arguments) = boolSyntax.strip_comb term in
-              is_division_head head orelse List.exists search arguments
+              is_nonpolynomial_application head arguments orelse
+              List.exists search arguments
             end
     in search tm end
 

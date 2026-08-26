@@ -1007,12 +1007,11 @@ local
     pred_setSyntax.univ_tm, pred_setSyntax.card_tm
   ]
 
-  (* Mirrored by SmtArrayProve's goal-directed fact table.  The unit test
-     checks the printer cannot gain a native operator without replay facts. *)
-  val native_set_operator_names_for_test = [
-    "IN", "INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL",
-    "SUBSET", "EMPTY", "UNIV", "CARD"
-  ]
+  (* SmtArrayProve's goal-directed fact table mirrors these emitted heads.
+     Derive the audit input from the heads themselves, so extending the
+     printer necessarily extends the replay-completeness check. *)
+  val native_set_operator_names = List.map
+    (fn head => #Name (Term.dest_thy_const head)) native_set_heads
 
   fun is_native_set_head tm =
     List.exists (fn head => same_const head tm) native_set_heads
@@ -1278,10 +1277,8 @@ local
     bagSyntax.SUB_BAG_tm, bagSyntax.BAG_CARD_tm, bagSyntax.EMPTY_BAG_tm
   ]
 
-  val native_bag_operator_names_for_test = [
-    "BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
-    "BAG_INTER", "SUB_BAG", "BAG_CARD", "EMPTY_BAG"
-  ]
+  val native_bag_operator_names = List.map
+    (fn head => #Name (Term.dest_thy_const head)) native_bag_heads
 
   fun is_native_bag_head tm =
     List.exists (fn head => same_const head tm) native_bag_heads
@@ -6168,14 +6165,9 @@ in
   (* Kept public for Unittest's outbound-scope audit. *)
   val builtin_encoding_for_test = builtin_encoding
 
-  (* Keep these beside the public translation entry points so changes to the
-     native collection surface are checked against replay's fact tables. *)
-  val native_set_operator_names_for_test =
-    ["IN", "INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL",
-     "SUBSET", "EMPTY", "UNIV", "CARD"]
-  val native_bag_operator_names_for_test =
-    ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
-     "BAG_INTER", "SUB_BAG", "BAG_CARD", "EMPTY_BAG"]
+  (* Kept public for Unittest's replay-table completeness audit. *)
+  val native_set_operator_names_for_test = native_set_operator_names
+  val native_bag_operator_names_for_test = native_bag_operator_names
 end  (* local *)
 
 end
