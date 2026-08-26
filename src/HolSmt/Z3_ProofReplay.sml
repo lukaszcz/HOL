@@ -1964,6 +1964,14 @@ local
     handle Feedback.HOL_ERR _ =>
 
     let
+      (* Both exception routes below need this semantic bridge: the ordinary
+         HOL_ERR route tries it before arithmetic, while the SAT_cex route
+         reaches it after arithmetic has failed.  Keep one prover so the two
+         routes cannot drift apart. *)
+      fun smt_rdiv_prove () =
+        profile "rewrite(10.5)(smt-rdiv)"
+          (simpLib.SIMP_PROVE (bossLib.srw_ss())
+            [HolSmtTheory.smt_rdiv_eq_div]) t
       val thm = profile "rewrite(07)(SIMP_PROVE_UPDATE)" SIMP_PROVE_UPDATE t
         handle Feedback.HOL_ERR _ =>
 
@@ -1981,12 +1989,9 @@ local
 
         handle Feedback.HOL_ERR _ =>
 
-        (* Z3 emits algebraic rewrites over its totalized division.  Before
-           invoking nonlinear arithmetic, use the semantic bridge whenever
-           simp can discharge the non-zero divisor condition. *)
-        profile "rewrite(10.5)(smt-rdiv)"
-          (simpLib.SIMP_PROVE (bossLib.srw_ss())
-            [HolSmtTheory.smt_rdiv_eq_div]) t
+        (* Before arithmetic, use the semantic bridge whenever simp can
+           discharge the non-zero divisor condition. *)
+        smt_rdiv_prove ()
         handle Feedback.HOL_ERR _ =>
 
         profile "rewrite(11)(arith)" arith_prove t
@@ -1997,13 +2002,7 @@ local
                raise ERR "z3_rewrite" "rewrite has a counterexample"))
         handle Feedback.HOL_ERR _ =>
 
-        (* Rewrites emitted by Z3 may contain the solver's totalized real
-           division.  Re-enter HOL division only after the non-zero side
-           condition has been discharged by simp; this preserves the
-           intentionally unconstrained zero-divisor case. *)
-        profile "rewrite(11.05)(smt-rdiv)"
-          (simpLib.SIMP_PROVE (bossLib.srw_ss())
-            [HolSmtTheory.smt_rdiv_eq_div]) t
+        smt_rdiv_prove ()
         handle Feedback.HOL_ERR _ =>
 
         profile "rewrite(11.1)(datatype)" SmtDatatypeProve.datatype_prove t
