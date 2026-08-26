@@ -2,15 +2,16 @@ structure benchSetShortfalls =
 struct
 
 (* Every record here is an executable Set.thy or Set_Theory.thy goal
-   that the assigned tactic did not close in the 2026-08-24
+   that the assigned tactic did not close in the 2026-08-25
    measurement.  The classification names the root cause and the note
    says what stands in the way.  A goal listed in [over_budget] was
    still searching when the budget expired, so its classification is
    the family it belongs to rather than an observed residual. *)
 
 val over_budget =
-  ["set_L1091_psubset_insert_iff", "set_L1604_Pow_singleton_iff",
-   "set_L1607_Pow_insert", "set_L1790_vimage_image_eq",
+  ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
+   "set_L1604_Pow_singleton_iff", "set_L1607_Pow_insert",
+   "set_L1790_vimage_image_eq",
    "set_L1847_is_singleton_the_elem", "set_L1976_disjnt_commute",
    "set_L1979_disjnt_iff", "set_L1994_disjnt_subset1",
    "set_L1997_disjnt_subset2", "set_L2003_disjnt_Un2",
@@ -19,7 +20,7 @@ val over_budget =
    "set_theory_L44", "set_theory_L48"]
 
 fun record note id : benchLib.shortfall =
-  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-24",
+  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-25",
    note =
      if List.exists (fn other => other = id) over_budget then
        note ^ " (the search exceeded the budget rather than " ^

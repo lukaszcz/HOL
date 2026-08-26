@@ -2,14 +2,31 @@ structure benchLibraryShortfalls =
 struct
 
 (* Records for the list, map, option, string and product-type goals
-   that the assigned tactic did not close in the 2026-08-21
+   that the assigned tactic did not close in the 2026-08-25
    measurement.  The classification names the root cause and the note
    says what stands in the way.  A goal listed in [over_budget] was
    cut off by the budget rather than reporting no proof, so its
    classification is the family it belongs to rather than an observed
    residual. *)
 
-val translation : benchLib.shortfall list = []
+(* Isabelle's [code_unfold] lemmas at List.thy:8259 and 8273 state that
+   a set-encoded relation and its predicate encoding agree:
+   [(xs, ys) : lexord r <-> lexordp (%x y. (x, y) : r) xs ys], and the
+   same for [listrel1].  HOL4 encodes a relation one way only, so both
+   sides of each translate to the same term and the source result has
+   no HOL4 statement.  They carry no goal, and the corpus accounts for
+   them here instead. *)
+fun encoding_gap id line : benchLib.shortfall =
+  {id = id, cause = benchLib.TranslationGap, date = "2026-08-25",
+   note =
+     "predicate and set encodings: the source result at List.thy:" ^
+     Int.toString line ^ " relates Isabelle's set encoding of a " ^
+     "relation to its predicate encoding, a distinction HOL4 does " ^
+     "not make, so the translated statement is not the source result"}
+
+val translation : benchLib.shortfall list =
+  [encoding_gap "list_L8259_anon_L8259" 8259,
+   encoding_gap "list_L8273_anon_L8273" 8273]
 
 val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
@@ -32,8 +49,8 @@ val over_budget =
    "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
    "list_L6847_sorted_list_of_set_nonempty", "list_L8705_set_relcomp",
    "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
-   "map_L899_map_add_subsumed1",
-   "product_type_L1100_Collect_split_mono_strong",
+   "map_L899_map_add_subsumed1", "product_type_L1031_SigmaE",
+   "product_type_L1109_split_paired_Ball_Sigma",
    "product_type_L1133_Sigma_Union",
    "product_type_L1364_disjnt_Times1_iff",
    "product_type_L1367_disjnt_Times2_iff",
@@ -41,7 +58,7 @@ val over_budget =
    "string_L357_integer_of_char_code"]
 
 fun record note id : benchLib.shortfall =
-  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-21",
+  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-25",
    note =
      if List.exists (fn other => other = id) over_budget then
        note ^ " (the search did not return within the budget rather " ^
@@ -171,7 +188,6 @@ val indexing_through_list_constructors =
      "list_L2834_set_zip", "list_L3128_list_all2_map1",
      "list_L3132_list_all2_map2", "list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth", "list_L3925_set_update_distinct",
-     "list_L4322_distinct_adj_conv_nth",
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost",
      "list_L7954_listrel_iff_nth", "list_L7978_listrel_sym"]
@@ -206,14 +222,8 @@ val list_relation_lifting =
      "list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
      "list_L7300_Nil_lenlex_iff1", "list_L7304_Cons_lenlex_iff",
      "list_L7318_lenlex_length",
-     "list_L7387_lexord_same_pref_if_irrefl",
-     "list_L7394_lexord_append_left_rightI",
-     "list_L7398_lexord_append_leftI",
      "list_L7401_lexord_append_leftD", "list_L7508_lexord_trans",
-     "list_L7537_lexord_irrefl", "list_L7570_asym_lenlex",
-     "list_L7716_lexordp_conv_lexord",
-     "list_L7752_lexordp_eq_conv_lexord", "list_L7922_wf_listrel1_iff",
-     "list_L8259_anon_L8259", "list_L8273_anon_L8273",
+     "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff",
      "list_L9009_null_transfer"]
 
 val fold_direction =
@@ -246,7 +256,6 @@ val sorted_against_sorted_wrt =
      ^ "SORTED is the adjacent-pairs predicate and the bridge "
      ^ "needs transitivity, a step the source method never names")
     ["list_L412_sorted_simps_2", "list_L415_strict_sorted_simps_2",
-     "list_L441_strict_sorted_imp_sorted",
      "list_L5946_sorted_wrt_dropWhile", "list_L5964_sorted_wrt01",
      "list_L6034_sorted_append", "list_L6038_sorted_map",
      "list_L6042_sorted01", "list_L6049_sorted_iff_nth_mono_less",
@@ -259,10 +268,12 @@ val characterisation_is_the_goal =
   classified "characterisation is the goal"
     ("the HOL4 theorem that is this goal -- the one the Isabelle "
      ^ "method cites, or one the simpset carries -- is excluded by "
-     ^ "A1, up to the orientation of an equation or an equivalence, "
+     ^ "A1, up to the orientation of an equation or an equivalence "
+     ^ "or the unfolding of a constant the translation introduces, "
      ^ "and the assigned tactic has no second route")
-    ["list_L8167_list_all_iff", "list_L8642_image_set",
-     "list_L8660_card_set", "list_L8683_can_select_set_list_ex1",
+    ["list_L6444_stable_sort_key_sort_key", "list_L8167_list_all_iff",
+     "list_L8642_image_set", "list_L8660_card_set",
+     "list_L8683_can_select_set_list_ex1",
      "option_L361_equal_None_code_unfold_1", "string_L728_anon_L728"]
 
 val predicate_and_set_representation =

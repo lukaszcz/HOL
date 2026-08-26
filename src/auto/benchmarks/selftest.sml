@@ -654,6 +654,130 @@ val _ =
          (boolSyntax.mk_disj (p, boolSyntax.mk_neg p))
          boolTheory.CONJ_COMM = NONE)
 
+(* ---- the comparison reads through a translation wrapper --------- *)
+
+(* A corpus goal wears the translation's constant while an ambient rule
+   wears HOL4's, and [source_lenlex] *is* [SHORTLEX] by definition.  A
+   comparison of the two terms as written cannot see the analogy, so a
+   rule that states such a goal would be handed to it undetected.  Both
+   statements here are synthetic; neither is a corpus goal. *)
+val wrapped_goal =
+  ``!R xs ys.
+      source_lenlex R xs ys /\ source_lenlex R ys xs ==>
+      source_lenlex R xs ys``
+
+val unwrapped_rule =
+  Tactical.prove
+    (``!R xs ys. SHORTLEX R xs ys /\ SHORTLEX R ys xs ==> SHORTLEX R xs ys``,
+     bossLib.metis_tac [])
+
+fun without_definitions body =
+  let
+    val installed = benchLib.definitional_theorems ()
+    val value = body () handle exception_raised =>
+      (benchLib.set_definitional_context installed; raise exception_raised)
+  in
+    benchLib.set_definitional_context installed; value
+  end
+
+val _ =
+  check
+    ("A1 catches an ambient rule that is the goal under its wrapper",
+     fn () =>
+       let
+         val plain =
+           without_definitions
+             (fn () =>
+               (benchLib.set_definitional_context [];
+                benchLib.theorem_is_goal wrapped_goal unwrapped_rule))
+       in
+         not plain andalso
+         benchLib.theorem_is_goal wrapped_goal unwrapped_rule
+       end)
+
+val _ =
+  check
+    ("A1 leaves an ambient rule about the same constant alone",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal wrapped_goal listTheory.SHORTLEX_NIL2))
+
+(* Unfolding a definition against itself leaves [t = t], which matches
+   every other vacuous statement.  The wrapper's own definition must not
+   be read as stating an arbitrary goal. *)
+val _ =
+  check
+    ("A1 does not read a wrapper definition as stating the goal",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal wrapped_goal
+            parityTranslationTheory.source_lenlex_def))
+
+(* A [define_new_type_bijections] theorem is registered as a definition
+   and is equational, so it reaches the ambient rewrite set; reading it
+   as an unfolding would make [source_literal_implode_valid] and the
+   round-trip goal the same term. *)
+val _ =
+  check
+    ("A1 does not read a type-bijection characterisation as an unfolding",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal
+            (Thm.concl
+               parityTranslationTheory.source_literal_explode_implode)
+            parityTranslationTheory.source_literal_implode_valid))
+
+val _ =
+  check
+    ("the ambient sweep collects the definitions the goal's wrapper needs",
+     fn () =>
+       List.exists
+         (fn theorem =>
+           Term.aconv (Thm.concl theorem)
+             (Thm.concl parityTranslationTheory.source_lenlex_def))
+         (benchGuards.relevant_definitions wrapped_goal))
+
+(* Collecting the candidates is not the same as consulting them: A1 has
+   to run the sweep, or a rule the corpus declares for every goal is
+   never judged at all.  The witness is taken from the live claset --
+   the set the sweep reads -- so the test does not depend on which
+   rules the seeds happen to declare. *)
+val ambient_rule =
+  let
+    val logical =
+      ["/\\", "\\/", "~", "==>", "=", "!", "?", "?!", "T", "F",
+       "COND", "@"]
+    fun ordinary constant =
+      not (List.exists (equal (#1 (Term.dest_const constant))) logical)
+    fun translated constant =
+      String.isPrefix "source_" (#1 (Term.dest_const constant))
+    (* A rule in the translation's own constants would be filtered out
+       of the candidates by the goal's unfolded reading, so the witness
+       is one written in HOL4's. *)
+    fun substantial ({thm, ...} : clasetLib.aesop_rule) =
+      let val constants = find_terms Term.is_const (Thm.concl thm)
+      in
+        List.exists ordinary constants andalso
+        not (List.exists translated constants)
+      end
+  in
+    case List.filter substantial
+           (clasetLib.all_rules (clasetLib.the_claset ())) of
+        [] => raise Fail "the benchmark claset declares no ordinary rule"
+      | rule :: _ => #thm rule
+  end
+
+val _ =
+  check
+    ("A1 reports an ambient rule that states the goal",
+     fn () =>
+       List.exists
+         (fn ({detector, detail, ...} : benchGuards.finding) =>
+           detector = "A1" andalso String.isPrefix "ambient " detail)
+         (benchGuards.recognition_findings
+            [guard_entry "unit-a1-ambient" "by simp" []
+               (Thm.concl ambient_rule)]))
+
 val translation_fact =
   benchLib.FactAdd
     {name = "parityTranslation$source_widget_iff",
@@ -1973,10 +2097,28 @@ val all_shortfalls =
 (* The registers are not empty and are not meant to be: they carry the
    measured non-solutions.  What has to hold is that every record says
    something.  [UnderIteration] is a working marker, not a diagnosis,
-   so no committed record may carry it; a [TranslationGap] belongs to
-   a source result the corpus does not carry as a goal, so no
-   executable family may claim one; and a record with no date or no
-   note is not a diagnosis either. *)
+   so no committed record may carry it; and a record with no date or no
+   note is not a diagnosis either.
+
+   A [TranslationGap] is the one classification that takes a source
+   result out of the measurement, so the set is pinned by identifier
+   rather than counted: declaring a new one is a failing test until it
+   is signed here.  That such a record carries no executable goal is
+   [benchLib.validate_corpus]'s check, not this one. *)
+val translation_gaps =
+  ["list_L8259_anon_L8259", "list_L8273_anon_L8273"]
+
+fun translation_gap_ids shortfalls =
+  map (#id : benchLib.shortfall -> string)
+    (List.filter
+      (fn ({cause, ...} : benchLib.shortfall) =>
+        cause = benchLib.TranslationGap)
+      shortfalls)
+
+fun same_identifiers left right =
+  length left = length right andalso
+  List.all (fn id => List.exists (fn other => other = id) right) left
+
 fun dated_and_explained (shortfall : benchLib.shortfall) =
   size (#date shortfall) = size "2026-08-20" andalso
   String.isPrefix "20" (#date shortfall) andalso
@@ -1987,9 +2129,8 @@ val _ =
     ("every shortfall record names a cause, a date and a reason",
      fn () =>
        count_cause benchLib.UnderIteration all_shortfalls = 0 andalso
-       count_cause benchLib.TranslationGap benchSets.shortfalls = 0 andalso
-       count_cause benchLib.TranslationGap benchListMap.shortfalls = 0 andalso
-       count_cause benchLib.TranslationGap benchAlgebra.shortfalls = 0 andalso
+       same_identifiers (translation_gap_ids all_shortfalls)
+         translation_gaps andalso
        List.all dated_and_explained all_shortfalls)
 
 val _ =
@@ -2047,7 +2188,7 @@ val _ =
    updated pin. *)
 val goal_term_pins =
   [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "38B4820A"), ("Linarith", "E9DDA580"),
+   ("List/map", "5BCE22FA"), ("Linarith", "E9DDA580"),
    ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
 
 val _ =

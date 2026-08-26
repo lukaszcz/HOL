@@ -350,7 +350,15 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
        reads without naming it, so it reaches only the methods that
        consult one.  Giving it to [blast] or to a decision procedure
        would hand the HOL4 tactic a simplification pass the Isabelle
-       proof never had. *)
+       proof never had.
+
+       It goes last.  Where two arguments rewrite the same constant
+       the earlier one wins, and the translation's own wrapper for a
+       constant would otherwise override the fact the source method
+       named about it -- [source_lexord_def] unfolding [source_lexord]
+       to [LLEX] before the cited characterisation of [source_lexord]
+       can fire.  A method that names a fact has said which one
+       applies; the ambient set is what it did not name. *)
     fun step modifiers identifier =
       let
         val context =
@@ -358,8 +366,9 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
       in
         benchLib.Invoke
           (identifier,
-           context @ common @
-           List.concat (map (argument_of theorems) modifiers))
+           common @
+           List.concat (map (argument_of theorems) modifiers) @
+           context)
       end
     fun invoke ({name, modifiers} : method) =
       let

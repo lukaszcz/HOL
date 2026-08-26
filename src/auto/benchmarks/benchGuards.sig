@@ -23,6 +23,16 @@ sig
   val recognition_budget : Time.time ref
   val recognition_route : term -> thm -> string option
   val recognises : term -> thm -> bool
+
+  (* The sweep runs over the entry's own arguments and over the ambient
+     context alike: a seed declared for every goal is not a recipe
+     argument, but a seed that states a goal closes it by recognition
+     just as a cited fact would.  An ambient candidate is judged against
+     a control that already has the translation's definitions, so what
+     is reported is the rule that turns the goal into a triviality, not
+     the unfolding that lets it apply. *)
+  val relevant_definitions : term -> thm list
+  val ambient_candidates : benchLib.corpus_goal -> benchLib.named_thm list
   val recognition_findings : benchLib.corpus_goal list -> finding list
 
   (* A2.  Every parityTranslation$source_X argument must be named by the

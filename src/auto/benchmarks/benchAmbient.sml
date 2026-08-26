@@ -47,4 +47,38 @@ val recursive_definitions =
 
 val recursive_arguments = map benchLib.RewriteAdd recursive_definitions
 
+(* A definition unfolds one constant; a characterisation relates
+   several.  [define_new_type_bijections] yields a single theorem whose
+   clauses head on two different constants -- one of them stating
+   [source_literal_valid r <=> source_literal_explode (source_literal_abs
+   r) = r] -- and reading that as a definition would make every fact one
+   ambient rewrite away from a goal count as stating it.  Clauses that
+   all define the same head are what a wrapper and a [fun] definition
+   look like, and the wrapper is what the comparison has to see
+   through. *)
+fun clausal term =
+  let
+    fun head clause =
+      case Lib.total dest_eq (snd (strip_forall clause)) of
+          NONE => NONE
+        | SOME (left, _) =>
+            Lib.total (#1 o dest_const) (fst (strip_comb left))
+    val heads = map head (strip_conj (snd (strip_forall term)))
+  in
+    case heads of
+        [] => false
+      | first :: rest =>
+          Option.isSome first andalso List.all (fn other => other = first) rest
+  end
+
+val wrapper_definitions =
+  List.filter (clausal o concl o #theorem) definitions
+
+(* The comparison that withholds a rule stating the goal reads these,
+   and it lives in a module built below the translation theory.  The
+   generous ambient set is the one filtered: a goal measured under the
+   strict set is measured under fewer definitions, but the rule it must
+   not be handed is the same rule either way. *)
+val _ = benchLib.set_definitional_context (map #theorem wrapper_definitions)
+
 end

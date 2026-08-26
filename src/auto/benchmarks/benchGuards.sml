@@ -130,22 +130,149 @@ fun recognition_route goal theorem =
 
 fun recognises goal theorem = Option.isSome (recognition_route goal theorem)
 
+fun supplied_findings entry =
+  let val controls = controls_for ()
+  in
+    List.mapPartial
+      (fn ({name, theorem} : benchLib.named_thm) =>
+        case recognition_route_with controls (#goal entry) theorem of
+            NONE => NONE
+          | SOME route =>
+              SOME
+                {id = #id entry, detector = "A1",
+                 detail = name ^ " closes the goal via " ^ route})
+      (supplied_theorems entry)
+  end
+
+(* A rule the corpus declares for every goal is not a recipe argument,
+   so [supplied_theorems] never sees it -- and a seed that states a goal
+   closes it by recognition exactly as a cited fact would.  This is the
+   same detector over the ambient context.
+
+   The translation's definitions are ambient too, and a goal wearing
+   [source_lenlex] needs them before a rule about [SHORTLEX] can reach
+   it, so they are supplied to the candidate run and to its control
+   alike: what is measured is whether this one further rule turns the
+   goal into a triviality. *)
+fun defined_head theorem =
+  let
+    val body = snd (boolSyntax.strip_forall (concl theorem))
+    val clause = hd (boolSyntax.strip_conj body)
+    val (left, _) = boolSyntax.dest_eq (snd (boolSyntax.strip_forall clause))
+  in
+    SOME (#1 (dest_const (fst (strip_comb left))))
+  end
+  handle HOL_ERR _ => NONE | Empty => NONE
+
+fun term_constants term =
+  HOLset.addList
+    (HOLset.empty String.compare,
+     map (#1 o dest_const) (find_terms is_const term))
+
+fun relevant_definitions goal =
+  let
+    val definitions =
+      List.mapPartial
+        (fn theorem =>
+          Option.map (fn head => (head, theorem)) (defined_head theorem))
+        (benchLib.definitional_theorems ())
+    (* A wrapper over a wrapper needs the inner definition as well, so
+       the set is closed under the constants the kept definitions
+       introduce. *)
+    fun close names kept 0 = kept
+      | close names kept fuel =
+          let
+            val heads = map #1 kept
+            val fresh =
+              List.filter
+                (fn (head, _) =>
+                  HOLset.member (names, head) andalso
+                  not (List.exists (equal head) heads))
+                definitions
+          in
+            if null fresh then kept
+            else
+              close
+                (List.foldl
+                  (fn ((_, theorem), set) =>
+                    HOLset.union (set, term_constants (concl theorem)))
+                  names fresh)
+                (kept @ fresh) (fuel - 1)
+          end
+  in
+    map #2 (close (term_constants goal) [] 5)
+  end
+
+(* Recognition is a rule matching the goal, so the rule's own constants
+   are the goal's.  Reading that off is what keeps a sweep over the
+   whole ambient context affordable; like the syntactic test above it
+   only ever accepts more candidates than it needs to. *)
+fun ambient_candidates entry =
+  let
+    val goal = benchLib.unfolded (#goal entry)
+    val logical =
+      HOLset.addList
+        (HOLset.empty String.compare,
+         ["/\\", "\\/", "~", "==>", "=", "!", "?", "?!", "T", "F",
+          "COND", "@"])
+    val available = HOLset.union (term_constants goal, logical)
+    val excluded = map #name (#excl entry)
+    fun within theorem =
+      List.all
+        (fn constant =>
+          HOLset.member (available, #1 (dest_const constant)))
+        (find_terms is_const (concl theorem))
+    val rules =
+      map
+        (fn ({name, thm, ...} : clasetLib.aesop_rule) =>
+          {name = name, theorem = thm})
+        (clasetLib.all_rules (clasetLib.the_claset ()))
+    val rewrites =
+      List.concat
+        (map
+          (fn theorem =>
+            map
+              (fn location =>
+                {name = location_name location, theorem = theorem})
+              (DB.revlookup theorem))
+          (List.concat
+            (map simpLib.frag_rewrites
+              (simpLib.ssfrags_of (clasimpLib.clasimp_ss ())))))
+  in
+    distinct_by_name
+      (List.filter
+        (fn {name, theorem} =>
+          not (List.exists (equal name) excluded) andalso within theorem)
+        (rules @ rewrites))
+  end
+
+fun ambient_findings entry =
+  let
+    val definitions = relevant_definitions (#goal entry)
+    fun with_definitions theorems = definitions @ theorems
+    val controls =
+      map
+        (fn (name, route) =>
+          (name, fn theorems => route (with_definitions theorems), ref NONE))
+        routes
+  in
+    List.mapPartial
+      (fn ({name, theorem} : benchLib.named_thm) =>
+        case recognition_route_with controls (#goal entry) theorem of
+            NONE => NONE
+          | SOME route =>
+              SOME
+                {id = #id entry, detector = "A1",
+                 detail =
+                   "ambient " ^ name ^ " closes the goal via " ^ route})
+      (ambient_candidates entry)
+  end
+
 fun recognition_findings goals =
   List.concat
     (map
       (fn (entry : benchLib.corpus_goal) =>
-        let val controls = controls_for ()
-        in
-          List.mapPartial
-            (fn ({name, theorem} : benchLib.named_thm) =>
-              case recognition_route_with controls (#goal entry) theorem of
-                  NONE => NONE
-                | SOME route =>
-                    SOME
-                      {id = #id entry, detector = "A1",
-                       detail = name ^ " closes the goal via " ^ route})
-            (supplied_theorems entry)
-        end)
+        supplied_findings entry @ ambient_findings entry)
       goals)
 
 (* ------------------------------------------------------------------ *)

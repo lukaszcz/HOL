@@ -9,6 +9,12 @@ fun entry id line method goal : benchLib.source_goal =
      {file = "src/HOL/List.thy", line = line, commit = "f7e02b7e"},
    representative = false}
 
+(* The [code_unfold] lemmas at List.thy:8259 and 8273 are not here.
+   Each states that a set-encoded relation and its predicate encoding
+   agree -- [(xs, ys) : lexord r <-> lexordp (%x y. (x, y) : r) xs ys]
+   -- and HOL4 has only the predicate encoding, so nothing of the
+   source result survives the translation.  They are recorded as
+   translation gaps in [benchLibraryShortfalls.translation]. *)
 val goals =
   [entry "list_L7054_set_trans_list_step_subset_trancl" 7054
      "unfolding trans_list_step_def by auto"
@@ -71,16 +77,6 @@ val goals =
          (\ys.
             parityTranslation$source_list_all
               (\value. MEM value xs) ys)``,
-   entry "list_L8259_anon_L8259" 8259
-     "by (simp add: listrel1p_def)"
-     ``!relation xs ys.
-         (parityTranslation$source_listrel1p relation xs ys <=>
-          parityTranslation$source_listrel1 relation xs ys)``,
-   entry "list_L8273_anon_L8273" 8273
-     "by (simp add: lexordp_def)"
-     ``!relation xs ys.
-         (parityTranslation$source_lexordp_code relation xs ys <=>
-          parityTranslation$source_lexord relation xs ys)``,
    entry "list_L8709_wf_set" 8709
      "by (simp add: wf_iff_acyclic_if_finite)"
      ``!pairs.

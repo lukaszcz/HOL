@@ -73,7 +73,7 @@ val goals = benchDerive.prepare "algebra" raw_goals
    one closes in 0.3 s once its two abbreviations are unfolded. *)
 val shortfalls : benchLib.shortfall list =
   [{id = "groebner_L61", cause = benchLib.EngineLimitation,
-    date = "2026-08-21",
+    date = "2026-08-25",
     note =
       "ringLib.RING_TAC proves ring equations, and this goal is an "
       ^ "equivalence between a conjunction of equations and a "
@@ -83,7 +83,7 @@ val shortfalls : benchLib.shortfall list =
       ^ "HOL4 ring normalizer does not; it declines in a "
       ^ "millisecond without attempting the goal"},
    {id = "groebner_L82", cause = benchLib.EngineLimitation,
-    date = "2026-08-21",
+    date = "2026-08-25",
     note =
       "the translation states the eight-square identity through two "
       ^ "abbreviations, source_ring_sum8 and source_ring_neg, that "

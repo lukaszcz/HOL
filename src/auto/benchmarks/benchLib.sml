@@ -343,14 +343,122 @@ fun symmetry_normalise term =
 fun statement_normal_form term =
   symmetry_normalise (rename_free (beta_eta_normalise term))
 
-fun theorem_is_goal goal theorem =
+(* A rule and the goal can state the same thing and still not look
+   alike.  A corpus goal wears the translation's constants and a library
+   rule wears HOL4's: [source_lenlex] is [SHORTLEX] by definition, so a
+   rule about SHORTLEX is the goal of a source_lenlex statement, and a
+   comparison that reads only the two terms cannot see it.  The
+   translation's definitions are ambient for every goal already, so
+   comparing under them grants the measurement nothing new; what it
+   catches is a rule that closes a goal by recognition through the
+   wrapper.
+
+   The context is installed rather than read here, because the
+   translation theory is built above this module.  Nothing installed
+   means the plain syntactic comparison, which is what this was. *)
+val definitional_context : thm list ref = ref []
+
+(* The names the context defines.  A term mentioning none of them
+   unfolds to itself, and the comparison below is called once per
+   ambient rule per goal, so recognising that case by a constant scan is
+   what keeps the sweep affordable. *)
+val definitional_heads : string HOLset.set ref =
+  ref (HOLset.empty String.compare)
+
+fun defined_head theorem =
   let
     val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+    val (_, equation) = boolSyntax.strip_imp_only body
+    val (left, _) = boolSyntax.dest_eq equation
+    val (head, _) = boolSyntax.strip_comb left
+  in
+    SOME (#1 (Term.dest_const head))
+  end
+  handle HOL_ERR _ => NONE
+
+fun set_definitional_context theorems =
+  (definitional_context := theorems;
+   definitional_heads :=
+     HOLset.addList
+       (HOLset.empty String.compare, List.mapPartial defined_head theorems))
+
+fun mentions_definition term =
+  List.exists
+    (fn constant =>
+      HOLset.member (!definitional_heads, #1 (Term.dest_const constant)))
+    (find_terms Term.is_const term)
+
+(* Bounded rather than exhaustive: one pass strips one wrapper, and a
+   wrapper over a wrapper needs as many passes as it has layers.  A
+   fixed fuel cannot diverge on a recursive equation, which an
+   unbounded rewrite could. *)
+val unfolding_passes = 5
+
+fun unfold term =
+  let
+    fun pass current 0 = current
+      | pass current fuel =
+          let
+            val next =
+              boolSyntax.rhs (Thm.concl
+                (Conv.QCONV
+                  (Rewrite.ONCE_REWRITE_CONV (!definitional_context))
+                  current))
+          in
+            if Term.aconv next current then current
+            else pass next (fuel - 1)
+          end
+  in
+    pass term unfolding_passes handle HOL_ERR _ => term
+  end
+
+fun unfolded term =
+  if List.null (!definitional_context) orelse
+     not (mentions_definition term)
+  then term
+  else unfold term
+
+fun definitional_theorems () = !definitional_context
+
+(* One goal is compared against every ambient rule in turn, so the
+   goal's unfolded reading is computed once and reused. *)
+val unfolded_goal : (term * term) option ref = ref NONE
+
+fun unfolded_for_goal goal =
+  case !unfolded_goal of
+      SOME (previous, value) =>
+        if Term.aconv previous goal then value
+        else
+          let val value = unfolded goal
+          in unfolded_goal := SOME (goal, value); value
+          end
+    | NONE =>
+        let val value = unfolded goal
+        in unfolded_goal := SOME (goal, value); value
+        end
+
+(* Unfolding a definition against itself leaves [t = t], and every
+   vacuous statement matches every other.  A comparison of two of them
+   says nothing, so the unfolded reading is only consulted when it still
+   has content. *)
+fun contentless term =
+  let
+    val (_, body) = boolSyntax.strip_forall term
+    val (_, conclusion) = boolSyntax.strip_imp_only body
+  in
+    Term.aconv conclusion boolSyntax.T orelse
+    (case total boolSyntax.dest_eq conclusion of
+         SOME (left, right) => Term.aconv left right
+       | NONE => false)
+  end
+
+fun statement_is_goal goal statement =
+  let
+    val (_, body) = boolSyntax.strip_forall statement
     val (_, conclusion) = boolSyntax.strip_imp_only body
     val goal = strip_truth_equivalence goal
     val conclusion = strip_truth_equivalence conclusion
-    val theorem_conclusion =
-      strip_truth_equivalence (Thm.concl theorem)
+    val theorem_conclusion = strip_truth_equivalence statement
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
     fun same left right =
@@ -358,6 +466,23 @@ fun theorem_is_goal goal theorem =
       Term.aconv (statement_normal_form left) (statement_normal_form right)
   in
     same conclusion goal orelse same theorem_conclusion goal
+  end
+
+fun theorem_is_goal goal theorem =
+  let
+    val statement = Thm.concl theorem
+  in
+    statement_is_goal goal statement orelse
+    (not (List.null (!definitional_context)) andalso
+     let
+       val unfolded_statement = unfolded statement
+       val unfolded_goal = unfolded_for_goal goal
+     in
+       not (Term.aconv unfolded_statement statement andalso
+            Term.aconv unfolded_goal goal) andalso
+       not (contentless unfolded_statement) andalso
+       statement_is_goal unfolded_goal unfolded_statement
+     end)
   end
 
 fun named_theorem (RewriteAdd theorem) = SOME theorem

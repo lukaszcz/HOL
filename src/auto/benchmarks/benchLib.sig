@@ -115,6 +115,20 @@ sig
      form state the same thing. *)
   val statement_normal_form : term -> term
 
+  (* The translation's definitional equations.  [benchAmbient] installs
+     them, because the theory that holds them is built above this
+     module, and [theorem_is_goal] compares under them: a corpus goal
+     wears the translation's constants where an ambient rule wears
+     HOL4's, and without the unfolding the two never look alike.  With
+     nothing installed the comparison is the plain syntactic one. *)
+  val set_definitional_context : thm list -> unit
+  val definitional_theorems : unit -> thm list
+
+  (* [term] with the installed definitions unfolded, to a fixed depth. *)
+  val unfolded : term -> term
+
+  (* True when the theorem states the goal -- as written, or under the
+     installed definitions. *)
   val theorem_is_goal : term -> thm -> bool
 
   val method_arg_name : method_arg -> string

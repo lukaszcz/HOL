@@ -6,12 +6,13 @@ fun required_environment name =
     | NONE => raise Fail (name ^ " must be set")
 
 val family = required_environment "HOLBENCHFAMILY"
+
+(* Only the HOLBENCHOVERRIDE path needs a single goal named; without it
+   this runs the family, which HOLBENCHGOAL then narrows if it is set. *)
 val goal_id =
   case OS.Process.getEnv "HOLBENCHGOAL" of
       SOME id => id
-    | NONE =>
-        if OS.Process.getEnv "HOLBENCHSHORTFALLSONLY" = SOME "1" then ""
-        else required_environment "HOLBENCHGOAL"
+    | NONE => ""
 val level = benchLib.selftest_level ()
 fun set_trace_from_environment environment trace =
   case OS.Process.getEnv environment of
@@ -39,10 +40,14 @@ fun family_goals () =
 
 fun selected_goal () =
   case List.filter
-         (fn (goal : benchLib.corpus_goal) => #id goal = goal_id)
+         (fn (goal : benchLib.corpus_goal) =>
+           goal_id <> "" andalso #id goal = goal_id)
          (family_goals ()) of
       [goal] => goal
-    | [] => raise Fail ("unknown HOLBENCHGOAL: " ^ goal_id)
+    | [] =>
+        raise Fail
+          (if goal_id = "" then "HOLBENCHGOAL must be set"
+           else "unknown HOLBENCHGOAL: " ^ goal_id)
     | _ => raise Fail ("duplicate HOLBENCHGOAL: " ^ goal_id)
 
 fun first_arguments recipe =

@@ -3525,86 +3525,160 @@ Definition source_lexord_def:
   source_lexord relation xs ys <=> list$LLEX relation xs ys
 End
 
-Theorem source_llex_equal_length_prefix:
+(* Isabelle/HOL src/HOL/List.thy:7361.  Isabelle introduces [lexord] by
+   this comprehension; HOL4 already has the relation as [LLEX], so the
+   closed form is a theorem here rather than the definition. *)
+Theorem source_lexord_conv:
   !relation xs ys.
-    LENGTH xs = LENGTH ys ==>
-    (list$LLEX relation xs ys <=>
-     ?prefix left right xs' ys'.
-       xs = prefix ++ left::xs' /\
-       ys = prefix ++ right::ys' /\
-       relation left right)
+    (source_lexord relation xs ys <=>
+     (?item rest. ys = xs ++ item::rest) \/
+     (?prefix left right xs' ys'.
+        relation left right /\
+        xs = prefix ++ left::xs' /\
+        ys = prefix ++ right::ys'))
+Proof
+  simp[source_lexord_def]
+  >> gen_tac
+  >> Induct
+  >- (Cases >> rw[listTheory.LLEX_def] >> metis_tac[listTheory.APPEND])
+  >> rpt gen_tac
+  >> Cases_on `ys`
+  >> rw[listTheory.LLEX_def, listTheory.APPEND_EQ_CONS]
+  >> metis_tac[listTheory.APPEND, listTheory.CONS_11]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7478, by Rene Thiemann.  Transitivity
+   is required only at the elements of [xs].  The form with a global
+   [transitive] premise is the corpus goal at line 7508. *)
+Theorem source_lexord_partial_trans:
+  !relation xs ys zs.
+    (!x y z. MEM x xs /\ relation x y /\ relation y z ==> relation x z) ==>
+    source_lexord relation xs ys ==>
+    source_lexord relation ys zs ==>
+    source_lexord relation xs zs
+Proof
+  simp[source_lexord_def]
+  >> gen_tac
+  >> Induct
+  >- (rw[]
+      >> Cases_on `ys`
+      >> Cases_on `zs`
+      >> fs[listTheory.LLEX_def])
+  >> rpt gen_tac
+  >> Cases_on `ys`
+  >> Cases_on `zs`
+  >> rw[listTheory.LLEX_def]
+  >> gvs[]
+  >> metis_tac[listTheory.MEM]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7612, by Andreas Lochbihler.  The
+   predicate form of the lexicographic order, defined inductively; the
+   equations below are Isabelle's [lexordp_simps], which it marks [simp].
+   Where the set form compares equal heads with [x = y], this one asks
+   [~relation y x]; the two agree only in the linear order this is
+   stated in, so results relating the two carry that premise. *)
+Definition source_lexordp_def:
+  (source_lexordp relation [] ys <=> ys <> []) /\
+  (source_lexordp relation (x::xs) [] <=> F) /\
+  (source_lexordp relation (x::xs) (y::ys) <=>
+     relation x y \/ (~relation y x /\ source_lexordp relation xs ys))
+End
+
+(* Isabelle/HOL src/HOL/List.thy:7627.  The reflexive closure, likewise
+   inductive rather than [xs = ys \/ source_lexordp relation xs ys]. *)
+Definition source_lexordp_eq_def:
+  (source_lexordp_eq relation [] ys <=> T) /\
+  (source_lexordp_eq relation (x::xs) [] <=> F) /\
+  (source_lexordp_eq relation (x::xs) (y::ys) <=>
+     relation x y \/ (~relation y x /\ source_lexordp_eq relation xs ys))
+End
+
+(* Isabelle/HOL src/HOL/List.thy:7703.  The closed form of the predicate
+   order.  Isabelle proves it inside [context linorder]; the premise here
+   is what that context supplies. *)
+Theorem source_lexordp_iff:
+  !relation xs ys.
+    relation$StrongLinearOrder relation ==>
+    (source_lexordp relation xs ys <=>
+     (?item rest. ys = xs ++ item::rest) \/
+     (?prefix left right xs' ys'.
+        relation left right /\
+        xs = prefix ++ left::xs' /\
+        ys = prefix ++ right::ys'))
 Proof
   rpt gen_tac
   >> strip_tac
-  >> eq_tac
-  >- (rw[listTheory.LLEX_EL_THM]
-      >> `n < LENGTH xs` by fs[]
-      >> map_every qexists_tac
-           [`TAKE n xs`, `EL n xs`, `EL n ys`,
-            `DROP (SUC n) xs`, `DROP (SUC n) ys`]
-      >> simp[rich_listTheory.TAKE_DROP_SUC])
-  >> rw[listTheory.LLEX_EL_THM]
-  >> qexists_tac `LENGTH prefix`
-  >> simp[listTheory.EL_APPEND_EQN,
-          rich_listTheory.TAKE_APPEND1,
-          rich_listTheory.TAKE_LENGTH_APPEND]
+  >> `!x y. ~relation x y /\ ~relation y x <=> x = y`
+       by (fs[relationTheory.StrongLinearOrder, relationTheory.StrongOrder,
+              relationTheory.irreflexive_def, relationTheory.trichotomous]
+           >> metis_tac[])
+  >> qid_spec_tac `ys`
+  >> Induct_on `xs`
+  >- (Cases >> rw[source_lexordp_def] >> metis_tac[listTheory.APPEND])
+  >> rpt gen_tac
+  >> Cases_on `ys`
+  >> rw[source_lexordp_def, listTheory.APPEND_EQ_CONS]
+  >> metis_tac[listTheory.APPEND, listTheory.CONS_11]
 QED
 
-Theorem source_llex_equal_length_prefix_conj:
+(* Isabelle/HOL src/HOL/List.thy:7644.  No order is needed: the equal-heads
+   clause of [source_lexordp_eq] holds whatever [relation] does at [x]. *)
+Theorem source_lexordp_eq_refl:
+  !relation xs. source_lexordp_eq relation xs xs
+Proof
+  gen_tac >> Induct >> rw[source_lexordp_eq_def]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7719. *)
+Theorem source_lexordp_eq_antisym:
   !relation xs ys.
-    (LENGTH xs = LENGTH ys /\ list$LLEX relation xs ys <=>
-     LENGTH xs = LENGTH ys /\
-     ?prefix left right xs' ys'.
-       xs = prefix ++ left::xs' /\
-       ys = prefix ++ right::ys' /\
-       relation left right)
+    relation$StrongLinearOrder relation ==>
+    source_lexordp_eq relation xs ys ==>
+    source_lexordp_eq relation ys xs ==>
+    xs = ys
 Proof
-  metis_tac[source_llex_equal_length_prefix]
+  rpt gen_tac
+  >> strip_tac
+  >> `(!x y. ~relation x y /\ ~relation y x <=> x = y) /\
+      (!x y. relation x y ==> ~relation y x)`
+       by (fs[relationTheory.StrongLinearOrder, relationTheory.StrongOrder,
+              relationTheory.irreflexive_def, relationTheory.trichotomous,
+              relationTheory.transitive_def]
+           >> metis_tac[])
+  >> qid_spec_tac `ys`
+  >> Induct_on `xs`
+  >- (Cases >> rw[source_lexordp_eq_def])
+  >> rpt gen_tac
+  >> Cases_on `ys`
+  >> rw[source_lexordp_eq_def]
+  >> metis_tac[]
 QED
 
-Theorem source_llex_append_prefix_iff:
-  !relation.
-    relation$irreflexive relation ==>
-    !prefix xs ys.
-      (list$LLEX relation (prefix ++ xs) (prefix ++ ys) <=>
-       list$LLEX relation xs ys)
+(* Isabelle/HOL src/HOL/List.thy:7740. *)
+Theorem source_lexordp_conv_lexordp_eq:
+  !relation xs ys.
+    relation$StrongLinearOrder relation ==>
+    (source_lexordp relation xs ys <=>
+     source_lexordp_eq relation xs ys /\
+     ~source_lexordp_eq relation ys xs)
 Proof
-  simp[relationTheory.irreflexive_def]
-  >> rpt strip_tac
-  >> Induct_on `prefix`
-  >> fs[listTheory.LLEX_def]
+  rpt gen_tac
+  >> strip_tac
+  >> `(!x y. ~relation x y /\ ~relation y x <=> x = y) /\
+      (!x y. relation x y ==> ~relation y x)`
+       by (fs[relationTheory.StrongLinearOrder, relationTheory.StrongOrder,
+              relationTheory.irreflexive_def, relationTheory.trichotomous,
+              relationTheory.transitive_def]
+           >> metis_tac[])
+  >> qid_spec_tac `ys`
+  >> Induct_on `xs`
+  >- (Cases >> rw[source_lexordp_def, source_lexordp_eq_def])
+  >> rpt gen_tac
+  >> Cases_on `ys`
+  >> rw[source_lexordp_def, source_lexordp_eq_def]
+  >> metis_tac[]
 QED
-
-Theorem source_llex_irreflexive:
-  !relation.
-    relation$irreflexive relation ==>
-    relation$irreflexive (list$LLEX relation)
-Proof
-  simp[relationTheory.irreflexive_def]
-  >> rpt strip_tac
-  >> Induct_on `x`
-  >> simp[listTheory.LLEX_def]
-QED
-
-Theorem source_lexord_partial_trans:
-  !relation xs ys zs.
-    source_lexord relation xs ys ==>
-    source_lexord relation ys zs ==>
-    relation$transitive relation ==>
-    source_lexord relation xs zs
-Proof
-  metis_tac[source_lexord_def, listTheory.LLEX_transitive,
-            relationTheory.transitive_def]
-QED
-
-Definition source_lexordp_def:
-  source_lexordp relation xs ys <=> source_lexord relation xs ys
-End
-
-Definition source_lexordp_eq_def:
-  source_lexordp_eq relation xs ys <=>
-    xs = ys \/ source_lexordp relation xs ys
-End
 
 Theorem source_lex_conv:
   !relation xs ys.
@@ -3704,66 +3778,34 @@ Proof
   >> metis_tac[]
 QED
 
-Theorem source_lex_append_right:
-  !relation xs ys.
-    source_lex relation xs ys ==>
-    !us vs.
-      LENGTH us = LENGTH vs ==>
-      source_lex relation (xs ++ us) (ys ++ vs)
+(* Isabelle/HOL src/HOL/List.thy:7385.  Unconditional: reflexivity of
+   [relation] somewhere in the prefix is a disjunct, not a premise.  The
+   form that assumes irreflexivity is the corpus goal at line 7387. *)
+Theorem source_lexord_same_prefix_iff:
+  !relation prefix xs ys.
+    (source_lexord relation (prefix ++ xs) (prefix ++ ys) <=>
+     (?item. MEM item prefix /\ relation item item) \/
+     source_lexord relation xs ys)
 Proof
-  rpt strip_tac
-  >> fs[source_lex_def, listTheory.LLEX_EL_THM]
-  >> qexists_tac `n`
-  >> simp[listTheory.TAKE_APPEND1,
-          listTheory.EL_APPEND_EQN]
+  simp[source_lexord_def]
+  >> gen_tac
+  >> Induct
+  >> rw[listTheory.LLEX_def]
+  >> metis_tac[]
 QED
 
-Theorem source_lexord_append_leftI:
-  !relation xs ys.
-    source_lexord relation xs ys ==>
-    !prefix.
-      source_lexord relation (prefix ++ xs) (prefix ++ ys)
-Proof
-  rpt strip_tac
-  >> Induct_on `prefix`
-  >> fs[source_lexord_def, listTheory.LLEX_def]
-QED
-
-Theorem source_lexord_append_left_rightI:
-  !relation left right.
-    relation left right ==>
-    !prefix xs ys.
-      source_lexord relation
-        (prefix ++ left::xs) (prefix ++ right::ys)
-Proof
-  rpt strip_tac
-  >> Induct_on `prefix`
-  >> fs[source_lexord_def, listTheory.LLEX_def]
-QED
-
-Theorem source_lexord_append_prefix_iff:
-  !relation.
-    relation$irreflexive relation ==>
-    !prefix xs ys.
-      (source_lexord relation
-         (prefix ++ xs) (prefix ++ ys) <=>
-       source_lexord relation xs ys)
-Proof
-  simp[relationTheory.irreflexive_def]
-  >> rpt strip_tac
-  >> Induct_on `prefix`
-  >> fs[source_lexord_def, listTheory.LLEX_def]
-QED
-
+(* Isabelle/HOL src/HOL/List.thy:7474.  Pointwise: no list is below
+   itself when no element is.  That [source_lexord] preserves
+   irreflexivity is the corpus goal at line 7537. *)
 Theorem source_lexord_irreflexive:
-  !relation.
-    relation$irreflexive relation ==>
-    relation$irreflexive (source_lexord relation)
+  !relation xs.
+    (!x. ~relation x x) ==> ~source_lexord relation xs xs
 Proof
-  simp[relationTheory.irreflexive_def, source_lexord_def]
-  >> rpt strip_tac
-  >> Induct_on `x`
-  >> simp[listTheory.LLEX_def]
+  simp[source_lexord_def]
+  >> gen_tac
+  >> Induct
+  >> rw[listTheory.LLEX_def]
+  >> metis_tac[]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:7954-8275. *)
@@ -3782,16 +3824,6 @@ End
 Definition source_superset_def:
   source_superset xs ys <=>
     LIST_TO_SET ys SUBSET LIST_TO_SET xs
-End
-
-Definition source_listrel1p_def:
-  source_listrel1p relation xs ys <=>
-    source_listrel1 relation xs ys
-End
-
-Definition source_lexordp_code_def:
-  source_lexordp_code relation xs ys <=>
-    source_lexord relation xs ys
 End
 
 Theorem source_listrel1_subset_LIST_REL:

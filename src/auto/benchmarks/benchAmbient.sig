@@ -33,4 +33,16 @@ sig
      distinction each constant fell on. *)
   val recursive_definitions : benchLib.named_thm list
   val recursive_arguments : benchLib.method_arg list
+
+  (* The entries of [definitions] that define one constant: every
+     clause heads on the same one.  A [define_new_type_bijections]
+     theorem is not one of them -- its clauses relate two constants,
+     and it is a characterisation rather than an unfolding. *)
+  val wrapper_definitions : benchLib.named_thm list
+
+  (* Loading this structure installs [wrapper_definitions] as benchLib's
+     definitional context, so that a rule stating a goal under the
+     translation's constants is recognised as stating it.  The
+     characterisations stay out: being one ambient rewrite away from a
+     goal is not stating it. *)
 end

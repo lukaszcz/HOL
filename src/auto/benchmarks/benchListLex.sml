@@ -112,11 +112,14 @@ val goals =
    entry "list_L7716_lexordp_conv_lexord" 7716
      "by (simp add: lexordp_iff lexord_def)"
      ``!relation xs ys.
+         relation$StrongLinearOrder relation ==>
          (parityTranslation$source_lexordp relation xs ys <=>
           parityTranslation$source_lexord relation xs ys)``,
    entry "list_L7752_lexordp_eq_conv_lexord" 7752
-     "by (auto simp add: lexordp_conv_lexordp_eq)"
+     "by (auto simp add: lexordp_conv_lexordp_eq lexordp_eq_refl \
+      \dest: lexordp_eq_antisym)"
      ``!relation xs ys.
+         relation$StrongLinearOrder relation ==>
          (parityTranslation$source_lexordp_eq relation xs ys <=>
           xs = ys \/
           parityTranslation$source_lexordp relation xs ys)``]
