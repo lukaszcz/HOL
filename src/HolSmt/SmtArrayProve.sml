@@ -77,19 +77,13 @@ struct
   val supported_set_operator_names_for_test =
     List.map (fn (name, _, _) => name) set_fact_table
 
-  fun occurs head t =
-    Lib.can (HolKernel.find_term (fn tm =>
-      Term.is_const tm andalso Library.same_const head tm)) t
-
   fun set_rewrites_for t =
     [pred_setTheory.EXTENSION,
      pred_setTheory.SPECIFICATION,
      pred_setTheory.EMPTY_applied,
      pred_setTheory.NOT_IN_EMPTY,
      boolTheory.FUN_EQ_THM] @
-    List.concat
-      (List.map (fn (_, _, facts) => facts)
-        (List.filter (fn (_, head, _) => occurs head t) set_fact_table))
+    Library.goal_directed_rewrites set_fact_table t
 
   fun set_simp_prove t =
     simpLib.SIMP_PROVE boolSimps.bool_ss (set_rewrites_for t) t

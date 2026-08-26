@@ -7,20 +7,15 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
 
-  fun unchanged conv tm = conv tm handle Conv.UNCHANGED => Thm.REFL tm
+  (* Left-to-right conversion chain, total: an all-unchanged chain yields
+     REFL rather than raising. *)
+  fun compose conversions =
+    Conv.QCONV (List.foldr Conv.THENC Conv.ALL_CONV conversions)
 
-  fun compose conversions tm =
-    let
-      fun step (conv, theorem) =
-        let
-          val current = boolSyntax.rhs (Thm.concl theorem)
-          val next = unchanged conv current
-        in
-          Thm.TRANS theorem next
-        end
-    in
-      List.foldl step (Thm.REFL tm) conversions
-    end
+  (* The SMT arithmetic sorts: Int and Real. *)
+  fun is_arith_type ty =
+    Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
+    Type.compare (ty, realSyntax.real_ty) = EQUAL
 
   val smt_ediv_total_tm = Term.prim_mk_const
     {Thy = "HolSmt", Name = "smt_ediv_total"}
@@ -28,10 +23,6 @@ struct
     {Thy = "HolSmt", Name = "smt_emod_total"}
   val smt_rdiv_tm = Term.prim_mk_const
     {Thy = "HolSmt", Name = "smt_rdiv"}
-
-  fun contains_const constant tm =
-    Lib.can (HolKernel.find_term (fn subterm =>
-      Term.is_const subterm andalso Term.same_const subterm constant)) tm
 
   fun smt_rdiv_nonzero_conv tm =
     let
@@ -83,6 +74,16 @@ struct
     HolSmtTheory.smt_rdiv_rneg
   ]
 
+  (* Built once: PURE_REWRITE_CONV constructs its net when applied to the
+     theorem list, so a per-call occurrence rebuilds it at every step. *)
+  val cpc_alias_conv = Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites
+
+  val not_clauses_conv = Rewrite.PURE_REWRITE_CONV
+    [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
+     Thm.CONJUNCT2 boolTheory.NOT_CLAUSES]
+
+  val real_div_conv = Rewrite.PURE_REWRITE_CONV [realTheory.real_div]
+
   fun reorient_equality_conv tm =
     let
       val reversed = boolSyntax.mk_eq (Lib.swap (boolSyntax.dest_eq tm))
@@ -101,15 +102,14 @@ struct
 
   (* Normalization below propositions: relation aliases, pushed real_of_int,
      totalized integer arithmetic, ground total computation, and eta. *)
-  fun cpc_term_canon_conv tm =
+  val cpc_term_canon_conv =
     compose
-      [Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites,
+      [cpc_alias_conv,
        Conv.TOP_DEPTH_CONV ground_total_conv,
-       Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites,
+       cpc_alias_conv,
        Conv.TOP_DEPTH_CONV Drule.ETA_CONV]
-      tm
 
-  fun cpc_operand_canon_conv tm =
+  val cpc_operand_canon_conv =
     compose
       [cpc_term_canon_conv,
        Conv.TOP_DEPTH_CONV reflexive_equality_conv,
@@ -117,12 +117,9 @@ struct
        (* Reflexive reduction only replaces a Boolean equality by T.  Of the
           term canonicalizer's rules, this can expose only ~T/~F; avoid a
           second ground-arithmetic and eta traversal at every CPC step. *)
-       Rewrite.PURE_REWRITE_CONV
-         [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
-          Thm.CONJUNCT2 boolTheory.NOT_CLAUSES],
+       not_clauses_conv,
        Conv.TOP_DEPTH_CONV reflexive_equality_conv,
        Conv.TOP_DEPTH_CONV reorient_equality_conv]
-      tm
 
   (* Preserve the outer equality needed by TRANS and EQ_MP.  Its operands use
      the same recursive orientation as CPC congruence sources, but only the
@@ -167,8 +164,7 @@ struct
 
   fun polynomial_subterm_conv tm =
     let val ty = Term.type_of tm in
-      if (Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
-          Type.compare (ty, realSyntax.real_ty) = EQUAL) andalso
+      if is_arith_type ty andalso
          not (List.null (Term.free_vars tm)) then
         polynomial_conv ty tm
       else
@@ -177,13 +173,12 @@ struct
 
   fun arith_poly_norm_conversion target =
     let val ty = Term.type_of target in
-      if Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
-         Type.compare (ty, realSyntax.real_ty) = EQUAL then
+      if is_arith_type ty then
         polynomial_conv ty target
       else if Lib.can Type.dom_rng ty then
         normalize_polynomial_function target
       else
-        unchanged (Conv.TOP_DEPTH_CONV polynomial_subterm_conv) target
+        Conv.QCONV (Conv.TOP_DEPTH_CONV polynomial_subterm_conv) target
     end
 
   fun prove_polynomial_equality target =
@@ -214,13 +209,11 @@ struct
      not on a catalogue of recorded proof shapes. *)
   fun arith_poly_norm_prove target =
     let val ty = Term.type_of target in
-    if Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
-       Type.compare (ty, realSyntax.real_ty) = EQUAL then
+    if is_arith_type ty then
       polynomial_conv ty target
     else case Lib.total Type.dom_rng ty of
       SOME (_, range) =>
-        if Type.compare (range, intSyntax.int_ty) = EQUAL orelse
-           Type.compare (range, realSyntax.real_ty) = EQUAL then
+        if is_arith_type range then
           normalize_polynomial_function target
         else
           raise ERR "arith_poly_norm_prove"
@@ -231,11 +224,11 @@ struct
          simplifier discharges only proved nonzero side conditions (notably
          numerals), so the underspecified zero branch remains untouched. *)
       val target_norm =
-        if contains_const smt_rdiv_tm target then
+        if Library.contains_const smt_rdiv_tm target then
           compose
             [cpc_term_canon_conv,
              Conv.TOP_DEPTH_CONV smt_rdiv_nonzero_conv,
-             Rewrite.PURE_REWRITE_CONV [realTheory.real_div]] target
+             real_div_conv] target
         else cpc_term_canon_conv target
       val normalized = boolSyntax.rhs (Thm.concl target_norm)
       val proof =

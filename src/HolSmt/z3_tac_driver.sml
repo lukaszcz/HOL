@@ -524,26 +524,24 @@ in
           (case raw_observation of
              Z3_Tac_Raw_Result _ => []
            | Z3_Tac_Raw_Unavailable => ["raw_result=unavailable"])
+        (* A pass reports the same payload whether or not the raw Z3
+           observation was available; only 'common_fields' records that. *)
+        fun pass_unsat thm =
+          z3_tac_emit "Z3_TAC_PASS"
+            (common_fields @
+             ["result=unsat",
+              "theorem=" ^ Library.thm_to_string thm] @
+             z3_tac_unsat_response_fields thm queries assumptions
+               (#named_assertions state))
+        fun pass_sat () =
+          z3_tac_emit "Z3_TAC_PASS" (common_fields @ ["result=sat"])
       in
         case (raw_observation, result) of
           (Z3_Tac_Raw_Result (SolverSpec.UNSAT _), Z3_TAC_UNSAT thm) =>
-            z3_tac_emit "Z3_TAC_PASS"
-              (common_fields @
-               ["result=unsat",
-                "theorem=" ^ Library.thm_to_string thm] @
-               z3_tac_unsat_response_fields thm queries assumptions
-                 (#named_assertions state))
-        | (Z3_Tac_Raw_Result (SolverSpec.SAT _), Z3_TAC_SAT) =>
-            z3_tac_emit "Z3_TAC_PASS" (common_fields @ ["result=sat"])
-        | (Z3_Tac_Raw_Unavailable, Z3_TAC_UNSAT thm) =>
-            z3_tac_emit "Z3_TAC_PASS"
-              (common_fields @
-               ["result=unsat",
-                "theorem=" ^ Library.thm_to_string thm] @
-               z3_tac_unsat_response_fields thm queries assumptions
-                 (#named_assertions state))
-        | (Z3_Tac_Raw_Unavailable, Z3_TAC_SAT) =>
-            z3_tac_emit "Z3_TAC_PASS" (common_fields @ ["result=sat"])
+            pass_unsat thm
+        | (Z3_Tac_Raw_Result (SolverSpec.SAT _), Z3_TAC_SAT) => pass_sat ()
+        | (Z3_Tac_Raw_Unavailable, Z3_TAC_UNSAT thm) => pass_unsat thm
+        | (Z3_Tac_Raw_Unavailable, Z3_TAC_SAT) => pass_sat ()
         | (Z3_Tac_Raw_Result (SolverSpec.UNKNOWN NONE), _) =>
             z3_tac_die "Z3_TAC_UNSUPPORTED"
               (common_fields @

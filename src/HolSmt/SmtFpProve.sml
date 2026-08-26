@@ -569,9 +569,7 @@ struct
       unsupported t
     else
       next_rung
-        (profile "fp(rung:1/proforma)" (fn target =>
-          (Library.require_fastpath "FP proforma";
-           proforma_prove target))) t (fn () =>
+        (profile "fp(rung:1/proforma)" proforma_prove) t (fn () =>
       next_rung
         (profile "fp(rung:2/ground-eval)" ground_eval_prove) t (fn () =>
       next_rung

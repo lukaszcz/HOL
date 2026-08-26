@@ -669,6 +669,9 @@ struct
   (* 'tm' is exactly the constant 'c' (same name and theory) *)
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
 
+  (* the constant 'c' occurs somewhere in 'tm' *)
+  fun contains_const c tm = Lib.can (HolKernel.find_term (same_const c)) tm
+
   (* every subterm of 'tm' (including 'tm' itself), in pre-order; threading an
      accumulator keeps the walk linear rather than quadratic in the size of
      the application spine *)
@@ -684,6 +687,29 @@ struct
             handle Feedback.HOL_ERR _ => acc))
     in
       walk (tm, [])
+    end
+
+  (* Rewrites contributed by the rows of a goal-directed fact table whose
+     head constant occurs in 'tm'.  The goal is traversed once, rather than
+     once per row: constants are identified by theory and name, exactly as
+     'same_const' compares them. *)
+  fun goal_directed_rewrites table tm =
+    let
+      val name_compare = Lib.pair_compare (String.compare, String.compare)
+      fun add (subterm, names) =
+        case Lib.total Term.dest_thy_const subterm of
+          SOME {Thy, Name, ...} => HOLset.add (names, (Thy, Name))
+        | NONE => names
+      val names =
+        List.foldl add (HOLset.empty name_compare) (subterms tm)
+      fun occurs head =
+        case Lib.total Term.dest_thy_const head of
+          SOME {Thy, Name, ...} => HOLset.member (names, (Thy, Name))
+        | NONE => false
+    in
+      List.concat
+        (List.map (fn (_, _, facts) => facts)
+          (List.filter (fn (_, head, _) => occurs head) table))
     end
 
   fun has_quantifier tm =
@@ -803,12 +829,10 @@ struct
      both fruitless and very expensive. *)
   fun contains_nonpolynomial_arithmetic tm =
     let
-      fun same_const left right =
-        Term.same_const left right handle Feedback.HOL_ERR _ => false
       fun is_real_division_head head =
-        same_const head realSyntax.div_tm
+        Term.same_const head realSyntax.div_tm
       fun is_nonpolynomial_head head =
-        List.exists (same_const head)
+        List.exists (Term.same_const head)
           [numSyntax.div_tm, numSyntax.mod_tm,
            intSyntax.div_tm, intSyntax.mod_tm,
            intSyntax.quot_tm, intSyntax.rem_tm] orelse

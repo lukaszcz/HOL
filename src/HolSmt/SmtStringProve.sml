@@ -408,15 +408,19 @@ struct
     smtstringz3Theory.aut_accept_plus_allchar_length_one
   ]
 
+  (* Numeral reduction shared by the regex-length and automaton rungs; the
+     simpset is built once rather than per replay step. *)
+  val regex_reduce_ss = simpLib.++
+    (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
+     intSimps.INT_REDUCE_ss)
+
+  fun regex_normalize term = Conv.QCONV
+    (simpLib.SIMP_CONV regex_reduce_ss [smtstringz3Theory.seq_unit_def])
+    term
+
   fun replay_parametric_regex_length_prove target =
     let
-      val reduce_ss = simpLib.++
-        (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
-         intSimps.INT_REDUCE_ss)
-      fun normalize term = SmtReplayCanon.unchanged
-        (simpLib.SIMP_CONV reduce_ss [smtstringz3Theory.seq_unit_def])
-        term
-      val target_normalization = normalize target
+      val target_normalization = regex_normalize target
       val normalized_target =
         boolSyntax.rhs (Thm.concl target_normalization)
       val target_premise =
@@ -428,14 +432,14 @@ struct
           fun match_premise premise =
             let
               val normalized_premise =
-                boolSyntax.rhs (Thm.concl (normalize premise))
+                boolSyntax.rhs (Thm.concl (regex_normalize premise))
             in
               Term.match_term normalized_premise target_premise
             end
           val substitution =
             Lib.tryfind match_premise (boolSyntax.strip_conj rule_premise)
           val instance = Drule.INST_TY_TERM substitution rule
-          val instance = simpLib.SIMP_RULE reduce_ss
+          val instance = simpLib.SIMP_RULE regex_reduce_ss
             [smtstringz3Theory.seq_unit_def] instance
           val _ = Term.aconv (Thm.concl instance) normalized_target orelse
             raise ERR "replay_parametric_regex_length_prove"
@@ -475,12 +479,7 @@ struct
             List.concat (List.map (fn numeral =>
               List.map (fn rest => Lib.|-> (variable, numeral) :: rest)
                 (substitutions variables)) numerals)
-      val reduce_ss = simpLib.++
-        (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
-         intSimps.INT_REDUCE_ss)
-      val target_normalization = SmtReplayCanon.unchanged
-        (simpLib.SIMP_CONV reduce_ss [smtstringz3Theory.seq_unit_def])
-        target
+      val target_normalization = regex_normalize target
       val normalized_target =
         boolSyntax.rhs (Thm.concl target_normalization)
       fun instantiate theorem =
@@ -490,7 +489,7 @@ struct
             handle Feedback.HOL_ERR _ => Thm.concl theorem
           val instance = Drule.INST_TY_TERM
             (Term.match_term schema normalized_target) theorem
-          val instance = simpLib.SIMP_RULE reduce_ss
+          val instance = simpLib.SIMP_RULE regex_reduce_ss
             [smtstringz3Theory.seq_unit_def,
              smtstringz3Theory.aut_accept_loop_empty] instance
           val _ = Term.aconv (Thm.concl instance) normalized_target orelse
@@ -499,15 +498,18 @@ struct
         in
           instance
         end
+      (* Candidates are thunks: the control-variable instances are
+         combinatorial in the numerals, and at most one is ever used. *)
       fun control_instances theorem =
-        theorem :: List.map (fn substitution =>
-          simpLib.SIMP_RULE reduce_ss
+        (fn () => theorem) :: List.map (fn substitution => fn () =>
+          simpLib.SIMP_RULE regex_reduce_ss
             [smtstringz3Theory.aut_accept_loop_empty]
             (Thm.INST substitution theorem))
           (substitutions (control_vars theorem))
       val candidates =
         List.concat (List.map control_instances aut_transition_rules)
-      val theorem = Lib.tryfind instantiate candidates
+      val theorem =
+        Lib.tryfind (fn candidate => instantiate (candidate ())) candidates
     in
       Thm.EQ_MP (Thm.SYM target_normalization) theorem
     end

@@ -81,25 +81,17 @@ struct
     List.map (fn (name, _, _) => name) bag_fact_table
 
   fun bag_rewrites_for t =
-    let
-      fun occurs head = mentions (fn tm =>
-        Term.is_const tm andalso Library.same_const head tm) t
-    in
-      List.concat
-        (List.map (fn (_, _, facts) => facts)
-          (List.filter (fn (_, head, _) => occurs head) bag_fact_table)) @ [
-    integerTheory.INT_GE,
-    integerTheory.INT_OF_NUM,
-    integerTheory.NUM_OF_INT,
-    integerTheory.INT_LE,
-    integerTheory.INT_OF_NUM_LE,
-    integerTheory.INT_OF_NUM_LT,
-    integerTheory.INT_OF_NUM_ADD,
-    combinTheory.UPDATE_def,
-    combinTheory.APPLY_UPDATE_THM,
-    boolTheory.FUN_EQ_THM
-      ]
-    end
+    Library.goal_directed_rewrites bag_fact_table t @
+    [integerTheory.INT_GE,
+     integerTheory.INT_OF_NUM,
+     integerTheory.NUM_OF_INT,
+     integerTheory.INT_LE,
+     integerTheory.INT_OF_NUM_LE,
+     integerTheory.INT_OF_NUM_LT,
+     integerTheory.INT_OF_NUM_ADD,
+     combinTheory.UPDATE_def,
+     combinTheory.APPLY_UPDATE_THM,
+     boolTheory.FUN_EQ_THM]
 
   fun simp_prove t =
     simpLib.SIMP_PROVE (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))

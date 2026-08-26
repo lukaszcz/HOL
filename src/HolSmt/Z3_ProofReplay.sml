@@ -1732,10 +1732,7 @@ local
   fun linear_arithmetic_rewrite_prove target =
     let
       fun arithmetic_variable variable =
-        let val ty = Term.type_of variable in
-          Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
-          Type.compare (ty, realSyntax.real_ty) = EQUAL
-        end
+        SmtReplayCanon.is_arith_type (Term.type_of variable)
       fun arithmetic_constant tm =
         Term.is_const tm andalso
         let val {Thy, ...} = Term.dest_thy_const tm in
@@ -3378,6 +3375,23 @@ local
           (Tactical.EVERY (List.map Tactic.FULL_STRUCT_CASES_TAC cases),
            smt_full_normalize_tac thms) (asl, hyp)
       end
+    val beta_eta_conv = SmtReplayCanon.compose
+      [Conv.TOP_DEPTH_CONV Thm.BETA_CONV,
+       Conv.TOP_DEPTH_CONV Drule.ETA_CONV]
+    (* 'asl' is fixed across the fold below, so normalize it at most once
+       rather than once per removed hypothesis.  Most checked proofs have no
+       extra hypothesis at all, so the work stays deferred until needed. *)
+    val normalized_asl = ref NONE
+    fun canonical_assumptions () =
+      case !normalized_asl of
+        SOME pairs => pairs
+      | NONE =>
+          let
+            val pairs =
+              List.map (fn a => (a, beta_eta_conv a)) asl
+          in
+            normalized_asl := SOME pairs; pairs
+          end
     fun remove_hyp (hyp, thm) : Thm.thm =
     let
       val combined = boolSyntax.list_mk_conj (hyp :: asl)
@@ -3395,24 +3409,17 @@ local
             case try_tac name tac of
               SOME th => SOME th
             | NONE => first_success tacs
-      fun beta_eta_conv tm = SmtReplayCanon.compose
-        [Conv.TOP_DEPTH_CONV Thm.BETA_CONV,
-         Conv.TOP_DEPTH_CONV Drule.ETA_CONV] tm
       val hyp_normalization = beta_eta_conv hyp
       val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_normalization)
       fun canonical_assumption [] = NONE
-        | canonical_assumption (assumption :: rest) =
-            let
-              val normalization = beta_eta_conv assumption
-              val normalized = boolSyntax.rhs (Thm.concl normalization)
-            in
-              if Term.aconv normalized normalized_hyp then
-                SOME (Thm.EQ_MP (Thm.SYM hyp_normalization)
-                  (Thm.EQ_MP normalization (Thm.ASSUME assumption)))
-              else canonical_assumption rest
-            end
+        | canonical_assumption ((assumption, normalization) :: rest) =
+            if Term.aconv (boolSyntax.rhs (Thm.concl normalization))
+                 normalized_hyp then
+              SOME (Thm.EQ_MP (Thm.SYM hyp_normalization)
+                (Thm.EQ_MP normalization (Thm.ASSUME assumption)))
+            else canonical_assumption rest
       val hyp_thm =
-        case canonical_assumption asl of
+        case canonical_assumption (canonical_assumptions ()) of
           SOME th => th
         | NONE => (case first_success
           [("check_proof(hyp_removal:numeral_normalize)",
@@ -3442,14 +3449,9 @@ local
   (* A reflexive equality is independently derivable by the kernel, whatever
      spelling Z3 chose for its sides. *)
   fun is_reflexive_equality hyp =
-    if boolSyntax.is_eq hyp then
-      let
-        val (lhs, rhs) = boolSyntax.dest_eq hyp
-      in
-        Term.aconv lhs rhs
-      end
-    else
-      false
+    case Lib.total boolSyntax.dest_eq hyp of
+      SOME (lhs, rhs) => Term.aconv lhs rhs
+    | NONE => false
 
   fun remove_extra_hyps (asserted, thm) =
   let
