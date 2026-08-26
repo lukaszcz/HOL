@@ -214,8 +214,6 @@ struct
     end
 
   fun datatype_prove t =
-    Z3_ProformaThms.prove Z3_ProformaThms.datatype_thms t
-    handle Feedback.HOL_ERR _ =>
     datatype_simp_prove t
     handle Feedback.HOL_ERR _ =>
     datatype_cases_prove t

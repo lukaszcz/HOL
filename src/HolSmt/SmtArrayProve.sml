@@ -43,33 +43,56 @@ struct
     boolTheory.EQ_SYM_EQ
   ]
 
-  (* The Z3 Set encoding is an array with Bool range.  The parser's D13
-     model makes it a HOL set, so these are the pointwise characterizations
-     of the map/select and const-array terms recorded in the set corpus. *)
-  val set_rewrites = [
-    pred_setTheory.IN_UNION,
-    pred_setTheory.IN_INTER,
-    pred_setTheory.IN_DIFF,
-    pred_setTheory.IN_COMPL,
-    pred_setTheory.IN_SING,
-    pred_setTheory.IN_INSERT,
-    pred_setTheory.NOT_IN_EMPTY,
-    pred_setTheory.SUBSET_DEF,
-    pred_setTheory.EXTENSION,
-    pred_setTheory.SPECIFICATION,
-    pred_setTheory.EMPTY_applied,
-    pred_setTheory.UNIV_applied,
-    pred_setTheory.CHOICE_SING,
-    pred_setTheory.CARD_SING,
-    pred_setTheory.SING_DEF,
-    pred_setTheory.DIFF_EQ_EMPTY,
-    pred_setTheory.UNION_COMM,
-    pred_setTheory.INSERT_UNION,
-    pred_setTheory.IMAGE_INSERT
+  (* Keep replay support indexed by the operator that occurs in the goal.
+     Besides avoiding an ever-growing global simp set, this table is an
+     executable statement of which native Set operators checked replay
+     supports. *)
+  val set_fact_table = [
+    ("IN", pred_setSyntax.in_tm, [pred_setTheory.SPECIFICATION]),
+    ("INSERT", pred_setSyntax.insert_tm,
+      [pred_setTheory.IN_INSERT, pred_setTheory.IN_SING,
+       pred_setTheory.SING_DEF]),
+    ("DELETE", pred_setSyntax.delete_tm,
+      [pred_setTheory.IN_DELETE, pred_setTheory.DELETE_DEF]),
+    ("UNION", pred_setSyntax.union_tm,
+      [pred_setTheory.IN_UNION, pred_setTheory.UNION_COMM,
+       pred_setTheory.INSERT_UNION]),
+    ("INTER", pred_setSyntax.inter_tm, [pred_setTheory.IN_INTER]),
+    ("DIFF", pred_setSyntax.diff_tm,
+      [pred_setTheory.IN_DIFF, pred_setTheory.DIFF_EQ_EMPTY]),
+    ("COMPL", pred_setSyntax.compl_tm, [pred_setTheory.IN_COMPL]),
+    ("SUBSET", pred_setSyntax.subset_tm, [pred_setTheory.SUBSET_DEF]),
+    ("EMPTY", pred_setSyntax.empty_tm,
+      [pred_setTheory.NOT_IN_EMPTY, pred_setTheory.EMPTY_applied]),
+    ("UNIV", pred_setSyntax.univ_tm, [pred_setTheory.UNIV_applied]),
+    ("CARD", pred_setSyntax.card_tm,
+      [pred_setTheory.CARD_SING, pred_setTheory.CARD_EMPTY,
+       pred_setTheory.CARD_INSERT, pred_setTheory.CARD_UNION]),
+    ("CHOICE", pred_setSyntax.choice_tm, [pred_setTheory.CHOICE_SING]),
+    ("FINITE", pred_setSyntax.finite_tm,
+      [pred_setTheory.FINITE_EMPTY, pred_setTheory.FINITE_INSERT,
+       pred_setTheory.FINITE_UNION, pred_setTheory.FINITE_DELETE])
   ]
 
+  val supported_set_operator_names_for_test =
+    List.map (fn (name, _, _) => name) set_fact_table
+
+  fun occurs head t =
+    Lib.can (HolKernel.find_term (fn tm =>
+      Term.is_const tm andalso Library.same_const head tm)) t
+
+  fun set_rewrites_for t =
+    [pred_setTheory.EXTENSION,
+     pred_setTheory.SPECIFICATION,
+     pred_setTheory.EMPTY_applied,
+     pred_setTheory.NOT_IN_EMPTY,
+     boolTheory.FUN_EQ_THM] @
+    List.concat
+      (List.map (fn (_, _, facts) => facts)
+        (List.filter (fn (_, head, _) => occurs head t) set_fact_table))
+
   fun set_simp_prove t =
-    simpLib.SIMP_PROVE boolSimps.bool_ss set_rewrites t
+    simpLib.SIMP_PROVE boolSimps.bool_ss (set_rewrites_for t) t
 
   fun with_replay_budget label prove t =
     SmtResource.with_resource_step_time "Array" label
@@ -83,7 +106,8 @@ struct
   fun set_extensional_prove t =
     with_metis_limit (fn () =>
       Tactical.prove (t,
-        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) set_rewrites,
+        Tactical.THEN
+          (bossLib.RW_TAC (bossLib.srw_ss()) (set_rewrites_for t),
           bossLib.METIS_TAC []))) ()
 
   fun has_set_term t =
@@ -139,7 +163,7 @@ struct
 
   fun extensionality_prove t =
     Tactical.prove (t,
-      bossLib.RW_TAC array_ss (set_rewrites @ [
+      bossLib.RW_TAC array_ss (set_rewrites_for t @ [
         boolTheory.FUN_EQ_THM,
         combinTheory.APPLY_UPDATE_THM,
         combinTheory.UPDATE_APPLY_IMP_ID,
@@ -205,10 +229,6 @@ struct
     if is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
        has_set_variable t then
       beta_prove t
-      handle Feedback.HOL_ERR _ =>
-      Z3_ProformaThms.prove Z3_ProformaThms.array_thms t
-      handle Feedback.HOL_ERR _ =>
-      Z3_ProformaThms.prove Z3_ProformaThms.set_thms t
       handle Feedback.HOL_ERR _ =>
       set_simp_prove t
       handle Feedback.HOL_ERR _ =>

@@ -1007,6 +1007,13 @@ local
     pred_setSyntax.univ_tm, pred_setSyntax.card_tm
   ]
 
+  (* Mirrored by SmtArrayProve's goal-directed fact table.  The unit test
+     checks the printer cannot gain a native operator without replay facts. *)
+  val native_set_operator_names_for_test = [
+    "IN", "INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL",
+    "SUBSET", "EMPTY", "UNIV", "CARD"
+  ]
+
   fun is_native_set_head tm =
     List.exists (fn head => same_const head tm) native_set_heads
 
@@ -1269,6 +1276,11 @@ local
     bag_in_tm, bagSyntax.BAG_INSERT_tm, bagSyntax.BAG_UNION_tm,
     bagSyntax.BAG_DIFF_tm, bag_merge_tm, bag_inter_tm,
     bagSyntax.SUB_BAG_tm, bagSyntax.BAG_CARD_tm, bagSyntax.EMPTY_BAG_tm
+  ]
+
+  val native_bag_operator_names_for_test = [
+    "BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
+    "BAG_INTER", "SUB_BAG", "BAG_CARD", "EMPTY_BAG"
   ]
 
   fun is_native_bag_head tm =
@@ -6155,6 +6167,15 @@ in
 
   (* Kept public for Unittest's outbound-scope audit. *)
   val builtin_encoding_for_test = builtin_encoding
+
+  (* Keep these beside the public translation entry points so changes to the
+     native collection surface are checked against replay's fact tables. *)
+  val native_set_operator_names_for_test =
+    ["IN", "INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL",
+     "SUBSET", "EMPTY", "UNIV", "CARD"]
+  val native_bag_operator_names_for_test =
+    ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
+     "BAG_INTER", "SUB_BAG", "BAG_CARD", "EMPTY_BAG"]
 end  (* local *)
 
 end

@@ -115,39 +115,56 @@ struct
      Tactical.THEN (bossLib.Cases_on `s`,
        bossLib.RW_TAC (bossLib.srw_ss()) []))
 
-  val head_tail_zero_thm = Tactical.prove
-    (``0 = (&(LENGTH (s : 'a list)):int) \/
-        s = [EL 0 s] ++ DROP 1 s``,
-     bossLib.METIS_TAC [head_tail_thm])
-
-  val head_tail_zero_add_thm = Tactical.prove
-    (``0 = (&(LENGTH (s : 'a list)):int) \/
-        s = [EL 0 s] ++ DROP (0 + 1) s``,
-     Tactical.THEN (bossLib.Cases_on `s`,
-       bossLib.RW_TAC (bossLib.srw_ss()) [listTheory.EL, listTheory.HD]))
-
   val nth_of_unit_thm = Tactical.prove
     (``[x] = (s : 'a list) ==> EL 0 s = x``,
      bossLib.METIS_TAC [listTheory.EL, listTheory.HD])
 
   fun nth_decomposition_prove t =
     if mentions is_access t then
-      with_metis_limit (fn () => metisLib.METIS_PROVE
-        [head_tail_thm, head_tail_zero_thm, head_tail_zero_add_thm,
-         nth_of_unit_thm] t) ()
-      handle Feedback.HOL_ERR _ =>
-        let
-          val normalized = simpLib.SIMP_CONV seq_ss list_rewrites t
-            handle Conv.UNCHANGED =>
-              raise ERR "nth_decomposition_prove"
-                "normalization did not change the conclusion"
-          val target = boolSyntax.rhs (Thm.concl normalized)
-          val thm = with_metis_limit (fn () => metisLib.METIS_PROVE
-            [head_tail_thm, head_tail_zero_thm, head_tail_zero_add_thm,
-             nth_of_unit_thm] target) ()
-        in
-          Thm.EQ_MP (Thm.SYM normalized) thm
-        end
+      (Drule.INST_TY_TERM
+         (Term.match_term (Thm.concl head_tail_thm) t) head_tail_thm
+       handle Feedback.HOL_ERR _ =>
+         let
+           fun witness_consequence () =
+             let
+               val (decomposition, rest) = boolSyntax.dest_imp t
+               val (unit_equality, expected) = boolSyntax.dest_imp rest
+               val (schema_premise, _) = boolSyntax.dest_imp
+                 (Thm.concl nth_of_unit_thm)
+               val schema = Drule.INST_TY_TERM
+                 (Term.match_term schema_premise unit_equality)
+                 nth_of_unit_thm
+               val consequence = Thm.MP schema (Thm.ASSUME unit_equality)
+               val consequence =
+                 if Term.aconv (Thm.concl consequence) expected then
+                   consequence
+                 else
+                   let val symmetric = Thm.SYM consequence in
+                     if Term.aconv (Thm.concl symmetric) expected then
+                       symmetric
+                     else raise ERR "nth_decomposition_prove"
+                       "singleton witness has the wrong conclusion"
+                   end
+             in
+               Thm.DISCH decomposition
+                 (Thm.DISCH unit_equality consequence)
+             end
+         in
+           witness_consequence ()
+         end
+         handle Feedback.HOL_ERR _ =>
+         let
+           val normalized = simpLib.SIMP_CONV
+             (simpLib.++ (seq_ss, numSimps.REDUCE_ss)) list_rewrites t
+             handle Conv.UNCHANGED => Thm.REFL t
+           val target = boolSyntax.rhs (Thm.concl normalized)
+           val thm =
+             if Term.aconv target boolSyntax.T then boolTheory.TRUTH
+             else with_metis_limit (fn () => metisLib.METIS_PROVE
+               [head_tail_thm, nth_of_unit_thm] target) ()
+         in
+           Thm.EQ_MP (Thm.SYM normalized) thm
+         end)
     else
       raise ERR "nth_decomposition_prove" "not a Seq nth decomposition"
 
@@ -163,27 +180,54 @@ struct
     named "HolSmt" ["smt_seq_update"] tm orelse
     named "list" ["REVERSE", "LUPDATE"] tm
 
-  (* Keep recursive unfolding off the core ladder: these rungs run only after
-     recognising their operator, and use the constructor equations exposed by
-     the native list model.  This makes symbolic residue fail loudly instead
-     of accidentally expanding without a structural bound. *)
-  (* Keep the append witness explicit.  Unfolding IS_SUBLIST_APPEND first
-     leaves an existential that neither simplification nor tautology chooses. *)
-  val contains_append_left_thm = Tactical.prove
-    (``IS_SUBLIST ((xs : 'a list) ++ ys) xs``,
-     Tactical.THEN
-       (bossLib.RW_TAC (bossLib.srw_ss()) [rich_listTheory.IS_SUBLIST_APPEND],
-        Tactical.THEN (Tactic.EXISTS_TAC ``[] : 'a list``,
-          Tactical.THEN (Tactic.EXISTS_TAC ``ys : 'a list``,
-            bossLib.RW_TAC (bossLib.srw_ss()) [listTheory.APPEND]))))
-
-  val contains_append_right_thm = Tactical.prove
-    (``IS_SUBLIST ((xs : 'a list) ++ ys) ys``,
-     Tactical.THEN
-       (bossLib.RW_TAC (bossLib.srw_ss()) [rich_listTheory.IS_SUBLIST_APPEND],
-        Tactical.THEN (Tactic.EXISTS_TAC ``xs : 'a list``,
-          Tactical.THEN (Tactic.EXISTS_TAC ``[] : 'a list``,
-            bossLib.RW_TAC (bossLib.srw_ss()) [listTheory.APPEND]))))
+  (* Search witnesses at every append boundary.  Literal lists contribute one
+     segment per element, so the search is bounded by the input list length;
+     symbolic append trees contribute only their explicit leaves. *)
+  fun contains_append_witness_prove t =
+    let
+      val (head, args) = boolSyntax.strip_comb t
+      val _ = named "rich_list" ["IS_SUBLIST"] head orelse
+        raise ERR "contains_append_witness_prove" "not a positive IS_SUBLIST"
+      val (whole, part) = case args of
+          [whole, part] => (whole, part)
+        | _ => raise ERR "contains_append_witness_prove"
+            "IS_SUBLIST expects two arguments"
+      val element_type = valOf (list_element_type whole)
+      val empty = listSyntax.mk_list ([], element_type)
+      fun segments tm =
+        case Lib.total listSyntax.dest_append tm of
+          SOME (left, right) => segments left @ segments right
+        | NONE =>
+            (case Lib.total listSyntax.dest_list tm of
+               SOME (elements, _) => List.map (fn element =>
+                 listSyntax.mk_list ([element], element_type)) elements
+             | NONE => [tm])
+      fun append [] = empty
+        | append (first :: rest) =
+            List.foldl (fn (next, accumulated) =>
+              listSyntax.mk_append (accumulated, next)) first rest
+      val pieces = segments whole
+      val count = List.length pieces
+      fun prove_split (start, finish) =
+        let
+          val prefix = append (List.take (pieces, start))
+          val suffix = append (List.drop (pieces, finish))
+        in
+          Tactical.TAC_PROOF (([], t),
+            Tactical.THEN
+              (bossLib.RW_TAC (bossLib.srw_ss())
+                 [rich_listTheory.IS_SUBLIST_APPEND],
+               Tactical.THEN (Tactic.EXISTS_TAC prefix,
+                 Tactical.THEN (Tactic.EXISTS_TAC suffix,
+                   bossLib.RW_TAC (bossLib.srw_ss())
+                     [listTheory.APPEND_ASSOC]))))
+        end
+      val boundaries = List.concat (List.tabulate (count + 1, fn start =>
+        List.tabulate (count - start + 1, fn width =>
+          (start, start + width))))
+    in
+      Lib.tryfind prove_split boundaries
+    end
 
   val prefix_suffix_contains_rewrites = list_rewrites @ [
     listTheory.isPREFIX_THM,
@@ -230,10 +274,10 @@ struct
       "indexof-replace"
     else if mentions is_update_reverse t then
       "update-reverse"
-    else if mentions is_append t orelse mentions is_length t then
-      "concat-length"
     else if mentions is_access t then
       "extract-nth"
+    else if mentions is_append t orelse mentions is_length t then
+      "concat-length"
     else if mentions is_cons_or_nil t then
       "unit-empty"
     else
@@ -261,8 +305,7 @@ struct
 
   fun prefix_suffix_contains_prove t =
     if mentions is_prefix_suffix_contains t then
-      with_metis_limit (fn () => metisLib.METIS_PROVE
-        [contains_append_left_thm, contains_append_right_thm] t) ()
+      contains_append_witness_prove t
       handle Feedback.HOL_ERR _ =>
         simp_prove_with prefix_suffix_contains_rewrites t
     else
@@ -307,10 +350,10 @@ struct
       if not (has_seq_type t) then
         unsupported t
       else
+        next (fn () => nth_decomposition_prove t) (fn () =>
         next (fn () => concat_length_prove t) (fn () =>
         next (fn () => unit_empty_prove t) (fn () =>
         next (fn () => access_prove t) (fn () =>
-        next (fn () => nth_decomposition_prove t) (fn () =>
         next (fn () => prefix_suffix_contains_prove t) (fn () =>
         next (fn () => indexof_replace_prove t) (fn () =>
         next (fn () => update_reverse_prove t) (fn () => unsupported t)))))))

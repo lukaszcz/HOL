@@ -69,10 +69,11 @@ struct
   end
 
   fun proforma_prove t =
-    (Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
+    (Library.require_fastpath "FP proforma";
+     (Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
       handle Feedback.HOL_ERR _ =>
         Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms t
-      handle Feedback.HOL_ERR _ => reflexive_lt_prove t)
+      handle Feedback.HOL_ERR _ => reflexive_lt_prove t))
     handle Feedback.HOL_ERR holerr =>
       raise ERR "proforma_prove"
         ("proforma lookup failed: " ^ Feedback.message_of holerr)
@@ -431,9 +432,9 @@ struct
     in
       [smtfp_add_circuit_correspondence,
        smtfp_sub_circuit_correspondence,
+       smtfp_add_circuit_RNE_comm,
        smtfp_add_circuit_RTN_pzero,
        smtfp_add_circuit_RTN_right_zero_bits,
-       smtfp_add_circuit_RNE_comm_tiny,
        smtfp_add_circuit_nan, smtfp_sub_circuit_nan,
        smtfp_bits_pzero, smtfp_pzero_bits,
        smtfp_bits_nzero, smtfp_nzero_bits]
@@ -442,12 +443,34 @@ struct
   val mul_rewrites =
     let open smtfloatTheory
     in
-      [smtfp_mul_circuit_correspondence,
-       smtfp_mul_circuit_one_float16,
-       smtfp_mul_one_float16]
+      [smtfp_mul_one]
     end
 
-  fun symbolic_arithmetic_uncapped t =
+  fun mul_one_prove t =
+  let
+    val theorem = smtfloatTheory.smtfp_mul_one
+    val (_, consequent) = boolSyntax.dest_imp (Thm.concl theorem)
+    val theorem = Drule.INST_TY_TERM (Term.match_term consequent t) theorem
+    val (premise, _) = boolSyntax.dest_imp (Thm.concl theorem)
+    val premise_thm = simpLib.SIMP_PROVE (bossLib.srw_ss())
+      [binary_ieeeTheory.float_value_def,
+       binary_ieeeTheory.float_to_real_def,
+       smtfloatTheory.canon_def, smtfloatTheory.smtfp_nan_pattern_def,
+       wordsTheory.UINT_MAX_def, wordsTheory.INT_MAX_def]
+      premise
+  in
+    Thm.MP theorem premise_thm
+  end
+
+  fun is_mul_one_shape t =
+    let
+      val (_, consequent) =
+        boolSyntax.dest_imp (Thm.concl smtfloatTheory.smtfp_mul_one)
+    in
+      Lib.can (Term.match_term consequent) t
+    end
+
+  fun symbolic_arithmetic_uncapped allow_direct_mul t =
   let
     val has_addsub = Lib.can (HolKernel.find_term is_addsub_const) t
     val has_mul = Lib.can (HolKernel.find_term is_mul_const) t
@@ -463,9 +486,16 @@ struct
     val () = if width < 32 then () else
       SmtResource.check_term_size case_id
         (SmtResource.max_bitblast_term_nodes + 1)
+    val direct_mul =
+      if allow_direct_mul andalso has_mul andalso is_mul_one_shape t then
+        SOME (mul_one_prove t)
+      else NONE
     val normalized =
-      simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites t
-      handle Conv.UNCHANGED => Thm.REFL t
+      case direct_mul of
+        SOME theorem => Drule.EQT_INTRO theorem
+      | NONE =>
+          (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites t
+           handle Conv.UNCHANGED => Thm.REFL t)
     val residue = boolSyntax.rhs (Thm.concl normalized)
     val () = SmtResource.check_bitblast_goal case_id residue
     val residue_thm =
@@ -475,7 +505,7 @@ struct
     Thm.EQ_MP (Thm.SYM normalized) residue_thm
   end
 
-  fun symbolic_arithmetic_prove t =
+  fun symbolic_arithmetic_prove_mode allow_direct_mul t =
     let
       val case_id =
         if Lib.can (HolKernel.find_term is_mul_const) t then
@@ -483,41 +513,47 @@ struct
         else addsub_case_id
     in
       SmtResource.with_bitblast_step_time case_id
-        symbolic_arithmetic_uncapped t
+        (symbolic_arithmetic_uncapped allow_direct_mul) t
     end
 
-  val add_commutativity_case_id =
-    "symbolic-add-commutativity-corpus-minimum"
-  val add_commutativity_proof_bytes = 25803339
+  val symbolic_arithmetic_prove = symbolic_arithmetic_prove_mode true
 
-  fun is_add_commutativity tm =
-    let
-      fun dest_add tm =
-        case boolSyntax.strip_comb tm of
-          (head, [rm, x, y]) =>
-            if is_addsub_const head andalso
-                #Name (Term.dest_thy_const head) = "smtfp_add" then
-              (rm, x, y)
-            else raise ERR "is_add_commutativity" "smtfp_add expected"
-        | _ => raise ERR "is_add_commutativity" "wrong add arity"
-      val equality = boolSyntax.dest_neg tm
-      val (lhs, rhs) = boolSyntax.dest_eq equality
-      val (lrm, lx, ly) = dest_add lhs
-      val (rrm, rx, ry) = dest_add rhs
-    in
-      Term.aconv lrm rrm andalso Term.aconv lx ry andalso
-      Term.aconv ly rx andalso not (List.null (Term.free_vars equality))
-      andalso addsub_format_dimensions equality = (4, 3)
-    end
-    handle Feedback.HOL_ERR _ => false
+  val symbolic_arithmetic_replay_prove =
+    symbolic_arithmetic_prove_mode false
 
+  val symbolic_arithmetic_preflight_case_id =
+    "symbolic-arithmetic-cost"
+
+  (* A format-independent preflight: charge every symbolic add/sub/mul term
+     by its syntax size times packed width.  This is deliberately oblivious
+     to operand names and dimensions; equal-width formats receive identical
+     treatment.  The standing width>=32 refusal remains in the replay rung. *)
   fun preflight_resource_gate terms =
-    if List.exists is_add_commutativity terms then
-      SmtResource.raise_gate "preflight_resource_gate"
-        (SmtResource.proof_size_diagnostic add_commutativity_case_id
-          add_commutativity_proof_bytes)
-    else
-      ()
+    let
+      val limit = SmtResource.max_bitblast_term_nodes
+      fun check term =
+        let
+          val has_addsub = Lib.can (HolKernel.find_term is_addsub_const) term
+          val has_mul = Lib.can (HolKernel.find_term is_mul_const) term
+        in
+          if not (has_addsub orelse has_mul) orelse
+             List.null (Term.free_vars term) then ()
+          else
+            let
+              val width = if has_mul then mul_format_width term
+                else addsub_format_width term
+              val nodes = SmtResource.term_nodes_up_to limit term
+              val cost = if width <= 0 orelse nodes > limit div width then
+                  limit + 1
+                else nodes * width
+            in
+              SmtResource.check_term_size
+                symbolic_arithmetic_preflight_case_id cost
+            end
+        end
+    in
+      List.app check terms
+    end
 
   fun next_rung prover t continuation =
     prover t
@@ -527,13 +563,15 @@ struct
       else
         continuation ()
 
-  fun fp_prove_with_context arith_prove eligible_decompositions
-      all_decompositions t =
+  fun fp_prove_with_context_mode symbolic_prover arith_prove
+      eligible_decompositions all_decompositions t =
     if not (has_fp_theory_term t) then
       unsupported t
     else
       next_rung
-        (profile "fp(rung:1/proforma)" proforma_prove) t (fn () =>
+        (profile "fp(rung:1/proforma)" (fn target =>
+          (Library.require_fastpath "FP proforma";
+           proforma_prove target))) t (fn () =>
       next_rung
         (profile "fp(rung:2/ground-eval)" ground_eval_prove) t (fn () =>
       next_rung
@@ -548,11 +586,17 @@ struct
         (fn () =>
       next_rung
         (profile "fp(rung:5/symbolic-arithmetic)"
-          symbolic_arithmetic_prove) t (fn () =>
+          symbolic_prover) t (fn () =>
       profile "fp(rung:6/unsupported)" unsupported t))))))
 
+  fun fp_prove_with_context arith_prove eligible_decompositions
+      all_decompositions =
+    fp_prove_with_context_mode symbolic_arithmetic_replay_prove arith_prove
+      eligible_decompositions all_decompositions
+
   fun fp_prove_with_decompositions_and_arith arith_prove decompositions =
-    fp_prove_with_context arith_prove decompositions decompositions
+    fp_prove_with_context_mode symbolic_arithmetic_prove arith_prove
+      decompositions decompositions
 
   fun no_arith_prove _ =
     raise ERR "no_arith_prove" "no arithmetic prover was supplied"

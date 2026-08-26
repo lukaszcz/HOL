@@ -47,6 +47,7 @@ local
     asserted_hyps : Term.term HOLset.set,
     scope_hyps : Term.term list,
     steps : (string, Thm.thm) Redblackmap.dict,
+    step_rules : (string, string) Redblackmap.dict,
     (* The read side is intentional: CPC commonly repeats normalized facts. *)
     thm_cache : cached_theorem Net.net,
     cache_stats : cache_stats
@@ -56,6 +57,7 @@ local
     asserted_hyps = HOLset.addList (Term.empty_tmset, asserted_hyps),
     scope_hyps = [],
     steps = Redblackmap.mkDict String.compare,
+    step_rules = Redblackmap.mkDict String.compare,
     thm_cache = Net.empty,
     cache_stats = new_cache_stats ()
   }
@@ -75,13 +77,14 @@ local
       asserted_hyps = #asserted_hyps state,
       scope_hyps = #scope_hyps state,
       steps = #steps state,
+      step_rules = #step_rules state,
       thm_cache = Net.insert (Thm.concl thm,
         {thm = thm})
         (#thm_cache state),
       cache_stats = stats
     } end
 
-  fun cache_step state id thm =
+  fun cache_step state id rule_name thm =
   let
     val stats = #cache_stats state
     val () = #step_cardinality stats := !(#step_cardinality stats) + 1
@@ -89,6 +92,7 @@ local
     asserted_hyps = #asserted_hyps state,
     scope_hyps = #scope_hyps state,
     steps = Redblackmap.insert (#steps state, id, thm),
+    step_rules = Redblackmap.insert (#step_rules state, id, rule_name),
     thm_cache = #thm_cache state,
     cache_stats = stats
   } end
@@ -97,6 +101,7 @@ local
     asserted_hyps = HOLset.add (#asserted_hyps state, tm),
     scope_hyps = #scope_hyps state,
     steps = #steps state,
+    step_rules = #step_rules state,
     thm_cache = #thm_cache state,
     cache_stats = #cache_stats state
   }
@@ -105,6 +110,7 @@ local
     asserted_hyps = #asserted_hyps state,
     scope_hyps = tm :: #scope_hyps state,
     steps = #steps state,
+    step_rules = #step_rules state,
     thm_cache = #thm_cache state,
     cache_stats = #cache_stats state
   }
@@ -115,6 +121,7 @@ local
         asserted_hyps = #asserted_hyps state,
         scope_hyps = rest,
         steps = #steps state,
+        step_rules = #step_rules state,
         thm_cache = #thm_cache state,
         cache_stats = #cache_stats state
       })
@@ -126,6 +133,11 @@ local
       raise ERR "lookup_step" ("CPC premise step '" ^ id ^ "' was not found")
 
   fun lookup_premises state ids = List.map (lookup_step state) ids
+
+  fun lookup_rule state id =
+    Redblackmap.find (#step_rules state, id)
+    handle Redblackmap.NotFound =>
+      raise ERR "lookup_rule" ("CPC premise step '" ^ id ^ "' was not found")
 
   fun cached_thm state tm =
     profile "CPC(cache:probe)" (fn () => let
@@ -288,14 +300,35 @@ local
         (([], target), metisLib.METIS_TAC [])
     end
 
+  fun expose_true_equality premise =
+    let
+      val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+    in
+      if Term.aconv left boolSyntax.T then
+        Thm.EQ_MP premise boolTheory.TRUTH
+      else if Term.aconv right boolSyntax.T then
+        Thm.EQ_MP (Thm.SYM premise) boolTheory.TRUTH
+      else premise
+    end
+    handle Feedback.HOL_ERR _ => premise
+
   fun replay_cong conclusion args prems =
     let
       val source = expect_one_arg "cong" args
+      fun expose_congruence premise =
+        let val exposed = expose_true_equality premise in
+          if boolSyntax.is_eq (Thm.concl exposed) then exposed
+          else premise
+        end
       fun nontrivial premise =
-        let val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
-        in not (Term.aconv left right) end
-        handle Feedback.HOL_ERR _ => true
-      val prems = List.filter nontrivial prems
+        if Term.aconv (Thm.concl premise) boolSyntax.T then
+          false
+        else
+          let val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+          in not (Term.aconv left right) end
+          handle Feedback.HOL_ERR _ => true
+      val prems = List.filter nontrivial
+        (List.map expose_congruence prems)
       fun apply premise current =
         let
           val premise =
@@ -537,56 +570,153 @@ local
     Drule.LIST_MP prems
       (prove (boolSyntax.list_mk_imp (List.map Thm.concl prems, target)))
 
-  (* Prove [left = right] under [hyps]: the one ladder every "these two
-     terms are interchangeable here" site uses.  Each rung may assume
-     [hyps], which the returned theorem carries for the caller to
-     discharge.  The rung order is load-bearing, not just a cost
-     heuristic: each simp-based rung diverges on goals an earlier one
-     closes, so [symmetry_simp] must stay behind [hypothesis_cases] and
-     [hypothesis_cases] behind the [smt_rdiv_eq_div] rewrite. *)
-  fun prove_bridge hyps left right =
+  (* Arithmetic procedures normally regard free variables as their atoms, but
+     reject some compound terms even when those terms are semantically opaque
+     to the certificate step.  Abstract every maximal selected atom uniformly
+     across premises and target, prove the resulting implication, and then
+     instantiate the fresh variables back.  INST and LIST_MP keep this wholly
+     proof-producing; the selector describes a term class, not recorded proof
+     shapes. *)
+  fun prove_from_prems_abstracting prove is_atom prems target =
     let
-      val target = boolSyntax.mk_eq (left, right)
-      val rewrites = [integerTheory.INT_GE, realTheory.real_ge]
-      fun normalize tm =
-        Rewrite.PURE_REWRITE_CONV rewrites tm
-        handle Conv.UNCHANGED => Thm.REFL tm
-      fun relation_alias () =
-        let
-          val left_norm = normalize left
-          val right_norm = normalize right
-          val (_, normalized_left) = boolSyntax.dest_eq (Thm.concl left_norm)
-          val (_, normalized_right) =
-            boolSyntax.dest_eq (Thm.concl right_norm)
-          val _ = Term.aconv normalized_left normalized_right orelse
-            raise ERR "trans" "relation-alias bridge does not match"
-        in
-          Thm.TRANS left_norm (Thm.SYM right_norm)
-        end
-      fun hypothesis_cases () =
-        Tactical.TAC_PROOF ((hyps, target),
-          Tactical.THEN
-            (Tactical.REPEAT
-               (Tactical.THEN (Tactic.COND_CASES_TAC,
-                  bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [])),
-             bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) []))
-      fun symmetry_simp () =
-        simpLib.SIMP_PROVE (bossLib.srw_ss()) [boolTheory.EQ_SYM_EQ] target
+      fun insert tm atoms =
+        if List.exists (Term.aconv tm) atoms then atoms else tm :: atoms
+      fun collect tm atoms =
+        if is_atom tm then insert tm atoms
+        else
+          (case Lib.total Term.dest_comb tm of
+             SOME (operator, operand) =>
+               collect operand (collect operator atoms)
+           | NONE =>
+               (case Lib.total Term.dest_abs tm of
+                  SOME (_, body) => collect body atoms
+                | NONE => atoms))
+      val atoms = List.foldl
+        (fn (theorem, accumulated) =>
+          collect (Thm.concl theorem) accumulated)
+        (collect target []) prems
+      val _ = List.null atoms andalso
+        raise ERR "prove_from_prems_abstracting" "no selected atoms"
+      val replacements = List.map
+        (fn atom => (Term.genvar (Term.type_of atom), atom)) atoms
+      val abstraction = List.map
+        (fn (variable, atom) => {redex = atom, residue = variable})
+        replacements
+      fun abstract tm = Term.subst abstraction tm
+      val abstract_implication = boolSyntax.list_mk_imp
+        (List.map (abstract o Thm.concl) prems, abstract target)
+      val abstract_theorem = prove abstract_implication
+        handle Feedback.HOL_ERR holerr =>
+          raise ERR "prove_from_prems_abstracting"
+            ("could not prove abstract implication " ^
+             Library.term_to_string abstract_implication ^ "; " ^
+             Feedback.message_of holerr)
+      val concrete_theorem = Thm.INST
+        (List.map (fn (variable, atom) =>
+          {redex = variable, residue = atom}) replacements)
+        abstract_theorem
     in
-      relation_alias ()
-      handle Feedback.HOL_ERR _ =>
-      simpLib.SIMP_PROVE (bossLib.srw_ss()) [HolSmtTheory.smt_rdiv_eq_div]
-        target
-      handle Feedback.HOL_ERR _ =>
-      hypothesis_cases ()
-      handle Feedback.HOL_ERR _ =>
-      profile "CPC(bridge:symmetry_simp)" symmetry_simp ()
-      handle Feedback.HOL_ERR _ =>
-      Library.arith_prove_with_cases target
-      handle Feedback.HOL_ERR _ =>
-      prove_from_prems SmtArrayProve.array_prove
-        (List.map Thm.ASSUME hyps) target
+      Drule.LIST_MP prems concrete_theorem
     end
+
+  fun canonical_term target =
+    boolSyntax.rhs (Thm.concl (SmtReplayCanon.cpc_canon_conv target))
+
+  fun canonical_operand target = boolSyntax.rhs
+    (Thm.concl (SmtReplayCanon.cpc_operand_canon_conv target))
+
+  fun canonical_conclusion conclusion = Option.map canonical_term conclusion
+
+  fun restore_canonical_conclusion name conclusion theorem =
+    case conclusion of
+      NONE => theorem
+    | SOME target =>
+        let
+          val target_norm = SmtReplayCanon.cpc_canon_conv target
+          val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
+          val _ = Term.aconv (Thm.concl theorem) normalized_target orelse
+            raise ERR name
+              ("canonical result differs from the certificate conclusion; " ^
+               "result=" ^ Library.term_to_string (Thm.concl theorem) ^
+               "; target=" ^ Library.term_to_string normalized_target)
+        in
+          Thm.EQ_MP (Thm.SYM target_norm) theorem
+        end
+
+  fun canonical_premises prems =
+    List.map SmtReplayCanon.cpc_canon_rule prems
+
+  fun prove_cast_arithmetic prems target =
+    let
+      (* Push casts through integer arithmetic first, so algebraically related
+         casts share one abstract real atom.  Real linear arithmetic then sees
+         the polynomial shell, and INST restores the exact division/floor
+         terms without assuming anything about them. *)
+      val target_normalization = SmtReplayCanon.cpc_term_canon_conv target
+      val normalized_target =
+        boolSyntax.rhs (Thm.concl target_normalization)
+      val normalized_prems = List.map SmtReplayCanon.cpc_canon_rule prems
+      val normalized_proof = prove_from_prems_abstracting
+        RealField.REAL_ARITH intrealSyntax.is_real_of_int
+        normalized_prems normalized_target
+    in
+      Thm.EQ_MP (Thm.SYM target_normalization) normalized_proof
+    end
+
+  fun strong_cpc_canon_conv tm =
+    let
+      val arithmetic_identities =
+        [integerTheory.INT_DIV_1, integerTheory.INT_MOD_1,
+         integerTheory.EDIV_DEF, integerTheory.EMOD_DEF,
+         integerTheory.INT_DIVISION]
+      fun finish current =
+        if List.null (Term.free_vars current) then
+          bossLib.SIMP_CONV (bossLib.srw_ss ())
+            (arithmetic_identities @
+             [HolSmtTheory.smt_rdiv_eq_div,
+             intrealTheory.INT_FLOOR]) current
+        else bossLib.SIMP_CONV (bossLib.srw_ss ())
+          arithmetic_identities current
+      fun arithmetic_decision current =
+        let
+          val normalization =
+            SmtReplayCanon.arith_poly_norm_conversion current
+          val normalized = boolSyntax.rhs (Thm.concl normalization)
+          val decision =
+            Drule.EQT_INTRO
+              (simpLib.SIMP_PROVE (bossLib.srw_ss ())
+                arithmetic_identities normalized)
+            handle Feedback.HOL_ERR _ =>
+              Drule.EQF_INTRO
+                (simpLib.SIMP_PROVE (bossLib.srw_ss ())
+                  arithmetic_identities
+                  (boolSyntax.mk_neg normalized))
+        in
+          Thm.TRANS normalization decision
+        end
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+             | Conv.UNCHANGED => raise Conv.UNCHANGED
+    in
+      SmtReplayCanon.compose
+        [SmtReplayCanon.cpc_operand_canon_conv,
+         wordsLib.WORD_LOGIC_CONV,
+         finish, arithmetic_decision] tm
+    end
+
+  fun restore_strong_canonical_conclusion name conclusion theorem =
+    case conclusion of
+      NONE => theorem
+    | SOME target =>
+        let
+          val theorem = Conv.CONV_RULE strong_cpc_canon_conv theorem
+          val target_norm = strong_cpc_canon_conv target
+          val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
+          val _ = Term.aconv (Thm.concl theorem) normalized_target orelse
+            raise ERR name
+              "strong canonical result differs from the certificate conclusion"
+        in
+          Thm.EQ_MP (Thm.SYM target_norm) theorem
+        end
 
   fun replay_trans prems =
     case prems of
@@ -594,269 +724,225 @@ local
     | first :: rest =>
         let
           fun attempt work = SOME (work ()) handle Feedback.HOL_ERR _ => NONE
-          fun compose th acc =
-            case attempt (fn () => Thm.TRANS acc th) of
+          (* Canonicalization can discharge an equality premise completely.
+             Such a proof of T is neutral in the remaining equality chain,
+             but its hypotheses must still contribute to the result. *)
+          fun retain_hypotheses kept support =
+            Thm.CONJUNCT1 (Thm.CONJ kept support)
+          fun is_reflexive theorem =
+            let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+            in Term.aconv left right end
+            handle Feedback.HOL_ERR _ => false
+          fun compose th accumulated =
+            if Term.aconv (Thm.concl accumulated) boolSyntax.T then
+              retain_hypotheses accumulated th
+            else if Term.aconv (Thm.concl th) boolSyntax.T then
+              retain_hypotheses th accumulated
+            else if is_reflexive accumulated then
+              retain_hypotheses th accumulated
+            else if is_reflexive th then
+              retain_hypotheses accumulated th
+            else case attempt (fn () => Thm.TRANS accumulated th) of
               SOME result => result
             | NONE =>
-              (case attempt (fn () => Thm.TRANS acc (Thm.SYM th)) of
+              (case attempt (fn () => Thm.TRANS accumulated (Thm.SYM th)) of
                  SOME result => result
                | NONE =>
-                 (case attempt (fn () => Thm.TRANS (Thm.SYM acc) th) of
+                 (case attempt (fn () => Thm.TRANS (Thm.SYM accumulated) th) of
                     SOME result => result
                   | NONE =>
-                    (case attempt (fn () => Thm.TRANS (Thm.SYM acc) (Thm.SYM th)) of
+                    (case attempt
+                        (fn () =>
+                          Thm.TRANS (Thm.SYM accumulated) (Thm.SYM th)) of
                        SOME result => result
-                     | NONE =>
-                         let
-                           val (_, acc_right) = boolSyntax.dest_eq (Thm.concl acc)
-                           val (th_left, th_right) =
-                             boolSyntax.dest_eq (Thm.concl th)
-                           val bridge_hyps = HOLset.listItems
-                             (HOLset.union
-                               (Thm.hypset acc, Thm.hypset th))
-                           fun symmetry_bridge target =
-                             let
-                               fun align source target =
-                                 if Term.aconv source target then Thm.REFL source
-                                 else
-                                   (let
-                                      val (left, right) =
-                                        boolSyntax.dest_eq source
-                                      val (target_left, target_right) =
-                                        boolSyntax.dest_eq target
-                                      val _ =
-                                        (Term.aconv left target_right andalso
-                                         Term.aconv right target_left) orelse
-                                        raise ERR "trans"
-                                          "equality atoms are not symmetric"
-                                    in
-                                      Drule.ISPECL [left, right]
-                                        boolTheory.EQ_SYM_EQ
-                                    end
-                                    handle Feedback.HOL_ERR _ =>
-                                      let
-                                        val (source_rator, source_rand) =
-                                          Term.dest_comb source
-                                        val (target_rator, target_rand) =
-                                          Term.dest_comb target
-                                      in
-                                        Thm.MK_COMB
-                                          (align source_rator target_rator,
-                                           align source_rand target_rand)
-                                      end)
-                             in
-                               align acc_right target
-                             end
-                           fun totalized_arith_bridge target =
-                             let
-                               val bridge_target =
-                                 boolSyntax.mk_eq (acc_right, target)
-                               val smt_ediv_total = Term.prim_mk_const
-                                 {Thy = "HolSmt", Name = "smt_ediv_total"}
-                               val smt_emod_total = Term.prim_mk_const
-                                 {Thy = "HolSmt", Name = "smt_emod_total"}
-                               fun is_total_constant tm =
-                                 Term.is_const tm andalso
-                                 (Term.same_const tm smt_ediv_total orelse
-                                  Term.same_const tm smt_emod_total)
-                               val _ = Lib.can
-                                 (HolKernel.find_term is_total_constant)
-                                 bridge_target orelse
-                                 raise ERR "trans"
-                                   "totalized arithmetic bridge has no total term"
-                               fun normalize_emod () =
-                                 let
-                                   val normalization =
-                                     Rewrite.PURE_REWRITE_CONV
-                                       [HolSmtTheory.smt_emod_total_ediv_negone]
-                                       target
-                                   val (_, normalized) = boolSyntax.dest_eq
-                                     (Thm.concl normalization)
-                                   val _ = Term.aconv acc_right normalized
-                                     orelse raise ERR "trans"
-                                       "totalized modulus bridge does not match"
-                                 in Thm.SYM normalization end
-                               fun normalize_def term =
-                                 simpLib.SIMP_CONV intLib.int_ss
-                                   [HolSmtTheory.smt_ediv_total_def,
-                                    HolSmtTheory.smt_emod_total_def]
-                                   term
-                                 handle Conv.UNCHANGED => Thm.REFL term
-                               fun bridge_with normalize =
-                                 let
-                                   val left_norm = normalize acc_right
-                                   val right_norm = normalize target
-                                   val (_, normalized_left) =
-                                     boolSyntax.dest_eq (Thm.concl left_norm)
-                                   val (_, normalized_right) =
-                                     boolSyntax.dest_eq (Thm.concl right_norm)
-                                   val _ = Term.aconv normalized_left
-                                     normalized_right orelse
-                                     raise ERR "trans"
-                                       "totalized arithmetic bridge does not match"
-                                 in
-                                   Thm.TRANS left_norm (Thm.SYM right_norm)
-                                 end
-                               fun after_def () =
-                                 normalize_emod ()
-                                 handle Conv.UNCHANGED =>
-                                   raise ERR "trans"
-                                     "no totalized arithmetic rewrite"
-                             in
-                               bridge_with normalize_def
-                               handle Conv.UNCHANGED =>
-                                 after_def ()
-                               handle Feedback.HOL_ERR _ =>
-                                 after_def ()
-                             end
-                           fun ground_totalized_compute_bridge target =
-                             let
-                               val bridge_target =
-                                 boolSyntax.mk_eq (acc_right, target)
-                               val smt_ediv_total = Term.prim_mk_const
-                                 {Thy = "HolSmt", Name = "smt_ediv_total"}
-                               val smt_emod_total = Term.prim_mk_const
-                                 {Thy = "HolSmt", Name = "smt_emod_total"}
-                               fun is_total_constant tm =
-                                 Term.is_const tm andalso
-                                 (Term.same_const tm smt_ediv_total orelse
-                                  Term.same_const tm smt_emod_total)
-                               val _ = Lib.can
-                                 (HolKernel.find_term is_total_constant)
-                                 bridge_target orelse
-                                 raise ERR "trans"
-                                   "totalized compute bridge has no total term"
-                               val _ =
-                                 if List.null (Term.free_vars bridge_target)
-                                 then ()
-                                 else raise ERR "trans"
-                                   "totalized compute bridge is not ground"
-                             in
-                               simpLib.SIMP_PROVE intLib.int_ss
-                                 [HolSmtTheory.smt_ediv_total_compute,
-                                  HolSmtTheory.smt_emod_total_compute]
-                                 bridge_target
-                             end
-                           fun orientation_bridge target =
-                             let
-                               val (left, right) =
-                                 boolSyntax.dest_eq acc_right
-                               val theorem = Drule.ISPECL [left, right]
-                                 boolTheory.EQ_SYM_EQ
-                               val (_, reversed) = boolSyntax.dest_eq
-                                 (Thm.concl theorem)
-                               val _ = Term.aconv reversed target orelse
-                                 raise ERR "trans"
-                                   "middle equality is not a symmetry"
-                             in
-                               theorem
-                             end
-                           fun bridge target next =
-                             let
-                               val middle = orientation_bridge target
-                                 handle Feedback.HOL_ERR _ =>
-                                   totalized_arith_bridge target
-                                 handle Feedback.HOL_ERR _ =>
-                                   ground_totalized_compute_bridge target
-                                 handle Feedback.HOL_ERR _ =>
-                                   profile "CPC(trans:middle_symmetry)"
-                                     (fn () => symmetry_bridge target) ()
-                                 handle Feedback.HOL_ERR _ =>
-                                   prove_bridge bridge_hyps acc_right target
-                             in
-                               Thm.TRANS (Thm.TRANS acc middle) next
-                             end
-                         in
-                           case attempt (fn () => bridge th_left th) of
-                             SOME result => result
-                           | NONE =>
-                               (case attempt (fn () =>
-                                  bridge th_right (Thm.SYM th)) of
-                                  SOME result => result
-                                | NONE => raise ERR "trans"
-                                  ("CPC equality premises do not compose; first=" ^
-                                   Library.thm_to_string acc ^ "; next=" ^
-                                   Library.thm_to_string th))
-                         end)))
-        in List.foldl (fn (th, acc) => compose th acc) first rest end
+                     | NONE => raise ERR "trans"
+                         ("canonical CPC equality premises do not compose; " ^
+                          "first=" ^ Library.thm_to_string accumulated ^
+                          "; next=" ^ Library.thm_to_string th))))
+        in
+          List.foldl (fn (th, accumulated) => compose th accumulated)
+            first rest
+        end
+
+  (* Use canonical forms to recognize tautological support premises without
+     replacing the theorem stored for the CPC step.  Later rules can depend
+     on its exact shape (notably TRUE_ELIM consuming [T = p]). *)
+  fun replay_canonical_trans prems =
+    let
+      val arithmetic_identities =
+        [integerTheory.INT_MUL_LZERO,
+         integerTheory.INT_MUL_RZERO,
+         integerTheory.INT_ADD_LID,
+         integerTheory.INT_ADD_RID]
+      fun arithmetic_operand_conv tm =
+        if List.null (Term.free_vars tm) then
+          bossLib.EVAL tm
+        else
+          SmtReplayCanon.arith_poly_norm_conversion tm
+      fun polynomial_view theorem = expose_true_equality
+        (Conv.CONV_RULE
+          (Conv.BINOP_CONV arithmetic_operand_conv)
+          theorem)
+        handle Feedback.HOL_ERR _ => theorem
+             | Conv.UNCHANGED => theorem
+      fun view theorem = expose_true_equality
+        (Conv.CONV_RULE
+          (SmtReplayCanon.unchanged
+            (Rewrite.PURE_REWRITE_CONV arithmetic_identities))
+          (SmtReplayCanon.cpc_canon_rule theorem))
+      fun strong_view theorem = expose_true_equality
+        (Conv.CONV_RULE strong_cpc_canon_conv theorem)
+        handle Feedback.HOL_ERR _ => theorem
+             | Conv.UNCHANGED => theorem
+      (* Scoped CPC equalities are often used immediately as rewrite
+         assumptions.  Normalize a bridge theorem with those exact kernel
+         hypotheses before composing it; the reverse orientation is
+         important when cvc5 has purified a compound arithmetic term into a
+         scope variable. *)
+      fun hypothesis_view reverse theorem =
+        let
+          val equalities = List.mapPartial (fn hypothesis =>
+            if boolSyntax.is_eq hypothesis then
+              SOME (Thm.ASSUME hypothesis)
+            else NONE) (Thm.hyp theorem)
+          val rewrites =
+            if reverse then List.map Thm.SYM equalities else equalities
+        in
+          expose_true_equality
+            (Rewrite.PURE_REWRITE_RULE rewrites theorem)
+        end
+      fun is_reflexive theorem =
+        let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+        in Term.aconv left right end
+        handle Feedback.HOL_ERR _ => false
+      fun retain_hypotheses kept support =
+        Thm.CONJUNCT1 (Thm.CONJ kept support)
+      fun compose (next, accumulated) =
+        let
+          val accumulated_view = view accumulated
+          val next_view = view next
+        in
+          (* A non-reflexive equality may normalize to [T] or [x = x], but
+             it is still the bridge to the next endpoint in a TRANS chain.
+             Only an originally reflexive theorem is neutral.  Discarding a
+             normalized bridge here loses facts such as [p = F] and leaves a
+             later EQ_RESOLVE with the preceding equivalence instead. *)
+          if is_reflexive accumulated then
+            retain_hypotheses next accumulated
+          else if is_reflexive next then
+            retain_hypotheses accumulated next
+          else
+            (replay_trans [accumulated, next]
+             handle Feedback.HOL_ERR _ =>
+               (replay_trans [accumulated_view, next_view]
+                handle Feedback.HOL_ERR _ =>
+                  (replay_trans
+                     [polynomial_view accumulated_view,
+                      polynomial_view next_view]
+                   handle Feedback.HOL_ERR _ =>
+                     (replay_trans
+                        [strong_view accumulated_view,
+                         strong_view next_view]
+                      handle Feedback.HOL_ERR _ =>
+                        (replay_trans
+                           [hypothesis_view true accumulated_view,
+                            hypothesis_view true next_view]
+                         handle Feedback.HOL_ERR _ =>
+                           replay_trans
+                             [hypothesis_view false accumulated_view,
+                              hypothesis_view false next_view])))))
+        end
+    in
+      case prems of
+        [] => raise ERR "trans" "expected CPC equality premises"
+      | first :: rest => List.foldl compose first rest
+    end
 
   fun replay_eq_resolve prems =
-    case prems of
-      [left, right] =>
-        let
-          fun is_refl th =
-            let val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl th)
-            in Term.aconv lhs rhs end
-            handle Feedback.HOL_ERR _ => false
+    let
+      fun is_reflexive_equality theorem =
+        let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
         in
+          Type.compare (Term.type_of left, Type.bool) = EQUAL andalso
+          Term.aconv left right
+        end
+        handle Feedback.HOL_ERR _ => false
+      fun retain_support proposition support =
+        Thm.CONJUNCT1 (Thm.CONJ proposition support)
+    in case prems of
+      [left, right] =>
         if Term.aconv (Thm.concl left) boolSyntax.F then left
         else if Term.aconv (Thm.concl right) boolSyntax.F then right
-        (* cvc5 retains reflexive proof arguments around a resolution after
-           congruence.  They carry no rewrite information. *)
-        else if is_refl left then right
-        else if is_refl right then left
+        else if is_reflexive_equality right then retain_support left right
+        else if is_reflexive_equality left then retain_support right left
         else
           (Thm.EQ_MP right left
            handle Feedback.HOL_ERR _ =>
-             (Thm.EQ_MP left right
+             (Thm.EQ_MP (Thm.SYM right) left
               handle Feedback.HOL_ERR _ =>
-                let
-                  fun relation_alias_rewrite () =
-                    let
-                      val rewrites =
-                        [integerTheory.INT_GT, integerTheory.INT_GE,
-                         integerTheory.int_sub, realTheory.real_ge,
-                         integerTheory.INT_SUB_LZERO,
-                         intrealTheory.real_of_int_neg,
-                         intrealTheory.real_of_int_num]
-                      val left' = Rewrite.PURE_REWRITE_RULE rewrites left
-                      val right' = Rewrite.PURE_REWRITE_RULE rewrites right
-                    in
-                      Thm.EQ_MP right' left'
-                      handle Feedback.HOL_ERR _ => Thm.EQ_MP left' right'
-                    end
-                  fun normalized_rewrite () =
-                    let
-                      val left' = simpLib.SIMP_RULE (bossLib.srw_ss()) [] left
-                      val right' = simpLib.SIMP_RULE (bossLib.srw_ss()) [] right
-                    in
-                      Thm.EQ_MP right' left'
-                      handle Feedback.HOL_ERR _ => Thm.EQ_MP left' right'
-                    end
-                  fun resolve_by_equivalence equality premise =
-                    let val (_, result) = boolSyntax.dest_eq (Thm.concl equality)
-                    in metis_prove [equality, premise] result end
-                in
-                  relation_alias_rewrite ()
-                  handle Feedback.HOL_ERR _ =>
-                    (let
-                       val implication = boolSyntax.list_mk_imp
-                         ([Thm.concl left, Thm.concl right], boolSyntax.F)
-                       val implication_thm = Tactical.TAC_PROOF
-                         (([], implication), intLib.ARITH_TAC)
-                     in Thm.MP (Thm.MP implication_thm left) right end
-                     handle Feedback.HOL_ERR _ =>
-                    (normalized_rewrite ()
-                     handle Feedback.HOL_ERR _ =>
-                       (resolve_by_equivalence right left
-                        handle Feedback.HOL_ERR _ =>
-                          (resolve_by_equivalence left right
-                           handle Feedback.HOL_ERR _ =>
-                          (Thm.MP (Library.arith_prove_with_cases
-                             (boolSyntax.mk_imp (Thm.concl left, boolSyntax.F))) left
-                           handle Feedback.HOL_ERR _ =>
-                             (Thm.MP (Library.arith_prove_with_cases
-                                (boolSyntax.mk_imp (Thm.concl right, boolSyntax.F))) right
-                              handle Feedback.HOL_ERR _ =>
-                                raise ERR "eq_resolve"
-                                  ("neither premise rewrites the other; left=" ^
-                                   Library.term_to_string (Thm.concl left) ^
-                                   "; right=" ^
-                                   Library.term_to_string (Thm.concl right))))))))
-                end))
-        end
+                (Thm.EQ_MP left right
+                handle Feedback.HOL_ERR _ =>
+                  (Thm.EQ_MP (Thm.SYM left) right
+                   handle Feedback.HOL_ERR _ =>
+                     raise ERR "eq_resolve"
+                       ("canonical premises do not rewrite one another; " ^
+                        "left=" ^
+                       Library.term_to_string (Thm.concl left) ^
+                       "; right=" ^
+                       Library.term_to_string (Thm.concl right))))))
     | _ => raise ERR "eq_resolve" "expected two CPC premises"
+    end
 
+  (* EQ_RESOLVE sometimes connects propositions only after datatype/record
+     canonicalization.  Keep the conversion equalities so the normalized
+     proposition can be transported back to the exact side consumed by
+     EQ_MP; normalizing both premise theorems would discard that link. *)
+  fun replay_canonical_eq_resolve prems =
+    let
+      fun attempt work = SOME (work ()) handle Feedback.HOL_ERR _ => NONE
+      fun stage name work =
+        work () handle Feedback.HOL_ERR holerr =>
+          raise ERR "eq_resolve"
+            (name ^ " failed: " ^ Feedback.message_of holerr)
+      fun resolve canon proposition equality =
+        let
+          val (left, right) = stage "equality decomposition"
+            (fn () => boolSyntax.dest_eq (Thm.concl equality))
+          val proposition_norm =
+            stage "proposition canonicalization" (fn () =>
+              canon (Thm.concl proposition))
+          val normalized_proposition =
+            stage "normalized proposition extraction" (fn () =>
+              boolSyntax.rhs (Thm.concl proposition_norm))
+          val normalized_proof = stage "proposition transport" (fn () =>
+            Thm.EQ_MP proposition_norm proposition)
+          fun prove_side side =
+            let
+              val side_norm = canon side
+              val normalized_side = boolSyntax.rhs (Thm.concl side_norm)
+              val _ = Term.aconv normalized_proposition normalized_side orelse
+                raise ERR "eq_resolve"
+                  ("canonical proposition does not match equality side; " ^
+                   "proposition=" ^
+                   Library.term_to_string normalized_proposition ^
+                   "; side=" ^ Library.term_to_string normalized_side)
+            in
+              Thm.EQ_MP (Thm.SYM side_norm) normalized_proof
+            end
+        in
+          case attempt (fn () => Thm.EQ_MP equality (prove_side left)) of
+            SOME theorem => theorem
+          | NONE => Thm.EQ_MP (Thm.SYM equality) (prove_side right)
+        end
+    in
+      case prems of
+        [proposition, equality] =>
+          (resolve SmtReplayCanon.cpc_operand_canon_conv
+           proposition equality
+           handle Feedback.HOL_ERR _ =>
+             resolve strong_cpc_canon_conv proposition equality)
+      | _ => raise ERR "eq_resolve" "expected two CPC premises"
+    end
   (* cvc5's SYMM rule also preserves the negation of an equality.  HOL's
      Thm.SYM covers the equality form directly; derive the disequality form
      from the same premise rather than treating it as a trusted rewrite. *)
@@ -876,35 +962,10 @@ local
   fun replay_contra prems =
     case prems of
       [left, right] =>
-        (Library.gen_contradiction (Thm.CONJ left right)
-         handle Feedback.HOL_ERR _ =>
-           let
-             fun eta_normalize theorem =
-               Conv.CONV_RULE
-                 (Conv.TOP_DEPTH_CONV Drule.ETA_CONV) theorem
-               handle Conv.UNCHANGED => theorem
-           in
-             Library.gen_contradiction
-               (Thm.CONJ (eta_normalize left) (eta_normalize right))
-           end
-         handle Feedback.HOL_ERR _ =>
-           let
-             val rewrites = [integerTheory.INT_GE, realTheory.real_ge]
-             val left' = Rewrite.PURE_REWRITE_RULE rewrites left
-             val right' = Rewrite.PURE_REWRITE_RULE rewrites right
-           in
-             Library.gen_contradiction (Thm.CONJ left' right')
-           end
-         handle Feedback.HOL_ERR _ =>
-           let
-             val conjunction = Thm.CONJ left right
-             val contradiction = Library.arith_prove_with_cases
-               (boolSyntax.mk_imp (Thm.concl conjunction, boolSyntax.F))
-           in
-             Thm.MP contradiction conjunction
-           end)
+        if Term.aconv (Thm.concl left) boolSyntax.F then left
+        else if Term.aconv (Thm.concl right) boolSyntax.F then right
+        else Library.gen_contradiction (Thm.CONJ left right)
     | _ => raise ERR "contra" "expected a proposition and its negation"
-
   fun replay_false_intro prems =
     Drule.EQF_INTRO (expect_one_premise "false_intro" prems)
 
@@ -912,7 +973,10 @@ local
     Drule.EQF_ELIM (expect_one_premise "false_elim" prems)
 
   fun replay_true_elim prems =
-    Drule.EQT_ELIM (expect_one_premise "true_elim" prems)
+    let val premise = expect_one_premise "true_elim" prems in
+      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
+      else Drule.EQT_ELIM premise
+    end
 
   fun replay_true_intro prems =
     Drule.EQT_INTRO (expect_one_premise "true_intro" prems)
@@ -929,9 +993,10 @@ local
             "CPC evaluate result differs from its declared conclusion"
     end
 
-  fun replay_and_elim args prems =
+  fun replay_and_elim conclusion args prems premise_rules =
     let
-      val conjunction = Thm.concl (expect_one_premise "and_elim" prems)
+      val premise = expect_one_premise "and_elim" prems
+      val conjunction = Thm.concl premise
       fun strip_conjunction term =
         (let val (left, right) = boolSyntax.dest_conj term in
            strip_conjunction left @ strip_conjunction right
@@ -940,34 +1005,29 @@ local
       val index =
         Arbnum.toInt (numSyntax.dest_numeral (intSyntax.dest_injected
           (expect_one_arg "and_elim" args)))
-      fun is_refl tm =
-        let val (left, right) = boolSyntax.dest_eq tm
-        in Term.aconv left right end
-        handle Feedback.HOL_ERR _ => false
-      fun is_total_reduction_marker tm =
-        let
-          val (left, _) = boolSyntax.dest_eq tm
-          val (head, _) = boolSyntax.strip_comb left
-          val smt_ediv_total = Term.prim_mk_const
-            {Thy = "HolSmt", Name = "smt_ediv_total"}
-          val smt_emod_total = Term.prim_mk_const
-            {Thy = "HolSmt", Name = "smt_emod_total"}
-        in
-          Term.same_const head smt_ediv_total orelse
-          Term.same_const head smt_emod_total
-        end
-        handle Feedback.HOL_ERR _ => false
       val conjunct =
-        (case (index, SOME (boolSyntax.dest_conj conjunction)
-                       handle Feedback.HOL_ERR _ => NONE) of
-           (1, SOME (marker, bounds)) =>
-             if is_refl marker orelse is_total_reduction_marker marker
-             then bounds
-             else List.nth (strip_conjunction conjunction, index)
-         | _ => List.nth (strip_conjunction conjunction, index))
-        handle Subscript => raise ERR "and_elim"
-          "CPC conjunction index is outside the premise"
-    in Library.conj_elim (expect_one_premise "and_elim" prems, conjunct)
+        case conclusion of
+          SOME target => target
+        | NONE =>
+            if premise_rules = ["arith_reduction"] then
+              (case (index, Lib.total boolSyntax.dest_conj conjunction) of
+                 (0, SOME (left, _)) => left
+               | (1, SOME (_, right)) => right
+               | _ => raise ERR "and_elim"
+                   ("CPC arithmetic-reduction conjunct index is outside " ^
+                    "the premise"))
+            else
+              (List.nth (strip_conjunction conjunction, index)
+               handle Subscript => raise ERR "and_elim"
+                 ("CPC conjunction index " ^ Int.toString index ^
+                  " is outside premise " ^
+                  Library.term_to_string conjunction ^ "; premise rule=" ^
+                  String.concatWith "," premise_rules))
+      val _ = Lib.can (fn target => Library.conj_elim (premise, target))
+        conjunct orelse raise ERR "and_elim"
+          "declared CPC result is not a conjunct of its premise"
+    in
+      Library.conj_elim (premise, conjunct)
     end
 
   fun tautology name target =
@@ -1003,24 +1063,11 @@ local
       [disjunction_thm, negated_thm] =>
         let
           val (left, right) = boolSyntax.dest_disj (Thm.concl disjunction_thm)
-          fun normalize_negated expected thm =
-            if Term.aconv (Thm.concl thm) (boolSyntax.mk_neg expected) then thm
-            else
-              (let
-                 val swapped = boolSyntax.dest_neg (Thm.concl thm)
-                 val (expected_left, expected_right) = boolSyntax.dest_eq expected
-                 val (swapped_left, swapped_right) = boolSyntax.dest_eq swapped
-                 val _ = Term.aconv swapped_left expected_right andalso
-                         Term.aconv swapped_right expected_left orelse
-                   raise ERR "resolution" "not a symmetric equality literal"
-                 val eq_sym = Drule.ISPECL [expected_left, expected_right]
-                   boolTheory.EQ_SYM_EQ
-                 val neg_eq_sym = Thm.AP_TERM boolSyntax.negation eq_sym
-               in
-                 Thm.EQ_MP (Thm.SYM neg_eq_sym) thm
-               end
-               handle _ =>
-                 tautological_consequence thm (boolSyntax.mk_neg expected))
+          fun normalize_negated expected theorem =
+            if Term.aconv (Thm.concl theorem) (boolSyntax.mk_neg expected) then
+              theorem
+            else raise ERR "resolution"
+              "canonical negated literal does not match its pivot"
           fun resolve eliminated result =
             let
               val negated_thm = normalize_negated eliminated negated_thm
@@ -2157,22 +2204,44 @@ local
         else mk_disj_terms [boolSyntax.mk_neg left, boolSyntax.mk_neg right]
     in tautological_consequence premise conclusion end
 
-  fun replay_equiv_elim2 prems =
+  fun replay_equiv_elim2 conclusion prems =
     let
       val premise = expect_one_premise "equiv_elim2" prems
-      val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+      fun derived () =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+        in
+          tautological_consequence premise
+            (boolSyntax.mk_disj (left, boolSyntax.mk_neg right))
+        end
     in
-      tautological_consequence premise
-        (boolSyntax.mk_disj (left, boolSyntax.mk_neg right))
+      derived ()
+      handle Feedback.HOL_ERR _ =>
+        case conclusion of
+          SOME target => tautological_consequence premise target
+        | NONE => if Term.aconv (Thm.concl premise) boolSyntax.T then premise
+            else raise ERR "equiv_elim2"
+              "non-equality premise requires a declared conclusion"
     end
 
-  fun replay_equiv_elim1 prems =
+  fun replay_equiv_elim1 conclusion prems =
     let
       val premise = expect_one_premise "equiv_elim1" prems
-      val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+      fun derived () =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+        in
+          tautological_consequence premise
+            (boolSyntax.mk_disj (boolSyntax.mk_neg left, right))
+        end
     in
-      tautological_consequence premise
-        (boolSyntax.mk_disj (boolSyntax.mk_neg left, right))
+      derived ()
+      handle Feedback.HOL_ERR _ =>
+        case conclusion of
+          SOME target => tautological_consequence premise target
+        | NONE => if Term.aconv (Thm.concl premise) boolSyntax.T then premise
+            else raise ERR "equiv_elim1"
+              "non-equality premise requires a declared conclusion"
     end
 
   fun arith_prove target =
@@ -2467,7 +2536,7 @@ local
       raise ERR "arith-int-geq-tighten" (Feedback.message_of holerr)
     | exn => raise ERR "arith-int-geq-tighten" (General.exnMessage exn)
 
-  fun replay_arith_rule name args =
+  fun replay_arith_rule name conclusion args =
     if name = "arith-int-geq-tighten" then
       (case args of
          [integer, real_bound, rounded] =>
@@ -2519,100 +2588,8 @@ local
                 else realTheory.REAL_NOT_LE))
          | _ => raise ERR name "unsupported CPC arithmetic rule argument shape")
       else if name = "arith_poly_norm" then
-        let
-          fun smt_rdiv_norm () =
-            let
-              val target_eq_target' = simpLib.SIMP_CONV (bossLib.srw_ss())
-                [HolSmtTheory.smt_rdiv_eq_div] target
-                handle Conv.UNCHANGED =>
-                  raise ERR "arith_poly_norm" "no smt_rdiv in target"
-              val target' = boolSyntax.rhs (Thm.concl target_eq_target')
-              val proof = Tactical.TAC_PROOF (([], target'),
-                bossLib.SIMP_TAC (bossLib.srw_ss()) [realTheory.real_div])
-            in Thm.EQ_MP (Thm.SYM target_eq_target') proof
-            end
-          val target_eq_target' = simpLib.SIMP_CONV (bossLib.srw_ss())
-            [intrealTheory.real_of_int_neg, intrealTheory.real_of_int_mul] target
-            handle Conv.UNCHANGED => Thm.REFL target
-          val target' = boolSyntax.rhs (Thm.concl target_eq_target')
-          fun real_comm_norm () =
-            Thm.EQ_MP (Thm.SYM target_eq_target')
-              (Tactical.TAC_PROOF (([], target'),
-                Tactical.THEN
-                  (Tactic.CONV_TAC
-                     (Conv.LAND_CONV
-                       (Conv.REWR_CONV realTheory.REAL_MUL_COMM)),
-                   Tactic.REFL_TAC)))
-          fun real_factor_norm () =
-            Thm.EQ_MP (Thm.SYM target_eq_target')
-              (Tactical.TAC_PROOF (([], target'),
-                Tactical.THEN
-                  (bossLib.SIMP_TAC (bossLib.srw_ss())
-                     [realTheory.REAL_SUB_LDISTRIB, realTheory.REAL_MUL_ASSOC],
-                   Tactical.THEN
-                     (Tactic.CONV_TAC
-                        (Conv.LAND_CONV
-                          (Conv.LAND_CONV
-                            (Conv.REWR_CONV
-                              (Conv.GSYM realTheory.REAL_MUL_LID)))),
-                      Tactical.THEN
-                        (Tactic.CONV_TAC
-                           (Conv.LAND_CONV
-                             (Conv.REWR_CONV
-                               (Conv.GSYM realTheory.REAL_SUB_RDISTRIB))),
-                         Tactical.THEN
-                           (Tactic.CONV_TAC
-                              (Conv.LAND_CONV
-                                (Conv.RATOR_CONV
-                                  (Conv.RAND_CONV
-                                    RealField.REAL_RAT_REDUCE_CONV))),
-                            Tactic.REFL_TAC))))))
-          fun real_factor_norm_right () =
-            Thm.EQ_MP (Thm.SYM target_eq_target')
-              (Tactical.TAC_PROOF (([], target'),
-                Tactical.THEN
-                  (bossLib.SIMP_TAC (bossLib.srw_ss())
-                     [realTheory.REAL_SUB_LDISTRIB, realTheory.REAL_MUL_ASSOC],
-                   Tactical.THEN
-                     (Tactic.CONV_TAC
-                        (Conv.LAND_CONV
-                          (Conv.RAND_CONV
-                            (Conv.REWR_CONV
-                              (Conv.GSYM realTheory.REAL_MUL_LID)))),
-                      Tactical.THEN
-                        (Tactic.CONV_TAC
-                           (Conv.LAND_CONV
-                             (Conv.REWR_CONV
-                               (Conv.GSYM realTheory.REAL_SUB_RDISTRIB))),
-                         Tactical.THEN
-                           (Tactic.CONV_TAC
-                              (Conv.LAND_CONV
-                                (Conv.RATOR_CONV
-                                  (Conv.RAND_CONV
-                                    RealField.REAL_RAT_REDUCE_CONV))),
-                            Tactic.REFL_TAC))))))
-          fun real_linear_norm () =
-            Thm.EQ_MP (Thm.SYM target_eq_target')
-              (Tactical.TAC_PROOF (([], target'),
-                RealField.REAL_ARITH_TAC))
-        in
-          profile "CPC(rung:arith/poly_norm_ring)" (fn () =>
-            Thm.EQ_MP (Thm.SYM target_eq_target')
-              (RealField.REAL_RING target')) ()
-          handle Feedback.HOL_ERR _ =>
-            profile "CPC(rung:arith/poly_norm_comm)" real_comm_norm ()
-          handle Feedback.HOL_ERR _ =>
-            profile "CPC(rung:arith/poly_norm_factor)" real_factor_norm ()
-          handle Feedback.HOL_ERR _ =>
-            profile "CPC(rung:arith/poly_norm_factor_right)"
-              real_factor_norm_right ()
-          handle Feedback.HOL_ERR _ =>
-            profile "CPC(rung:arith/poly_norm_rdiv)" smt_rdiv_norm ()
-          handle Feedback.HOL_ERR _ =>
-            profile "CPC(rung:arith/poly_norm_linear)" real_linear_norm ()
-          handle Feedback.HOL_ERR _ =>
-            profile "CPC(rung:arith/poly_norm_general)" arith_prove target
-        end
+        profile "CPC(rung:arith/poly_norm_canonical)"
+          SmtReplayCanon.arith_poly_norm_prove target
       else if name = "arith-leq-norm" then
         simpLib.SIMP_PROVE (bossLib.srw_ss())
           [integerTheory.int_ge, integerTheory.INT_NOT_LE,
@@ -2937,6 +2914,15 @@ local
   fun replay_scope state prems =
     let
       val premise = expect_one_premise "scope" prems
+      (* Canonical replay can retain [T] as support when a syntactically
+         nontrivial equality reduces to truth inside a TRANS or resolution
+         chain.  It is not a CPC scope assumption: discharge it with the
+         kernel theorem [|- T] before auditing the hypotheses that survive
+         the pop. *)
+      val premise =
+        if HOLset.member (Thm.hypset premise, boolSyntax.T) then
+          Drule.PROVE_HYP boolTheory.TRUTH premise
+        else premise
       val (hyp, state) = pop_scope_hyp state
       val thm = Thm.DISCH hyp premise
       val allowed = HOLset.addList (#asserted_hyps state, #scope_hyps state)
@@ -2960,16 +2946,7 @@ local
         | _ => raise ERR "process_scope" "expected one CPC :args term"
       fun dest_scope tm acc =
         if Term.aconv tm scope_result then (List.rev acc, NONE)
-        else if
-          let
-            val rewrites = [integerTheory.INT_GE, realTheory.real_ge]
-            fun normalize term =
-              let
-                val theorem = Rewrite.PURE_REWRITE_CONV rewrites term
-                val (_, result) = boolSyntax.dest_eq (Thm.concl theorem)
-              in result end
-              handle Conv.UNCHANGED => term
-          in Term.aconv (normalize tm) (normalize scope_result) end
+        else if Term.aconv (canonical_term tm) (canonical_term scope_result)
         then (List.rev acc, SOME tm)
         else
           let val (antecedent, consequent) = boolSyntax.dest_imp tm
@@ -2993,8 +2970,40 @@ local
         premise antecedents
       val normalized = case normalized_result of
           NONE => applied
-        | SOME tm => Thm.EQ_MP
-            (prove_bridge [conjunction] tm scope_result) applied
+        | SOME tm =>
+            let
+              fun bridge canon =
+                let
+                  val tm_norm = canon tm
+                  val result_norm = canon scope_result
+                in Thm.TRANS tm_norm (Thm.SYM result_norm) end
+              fun arithmetic_bridge () =
+                let
+                  val tm_norm = SmtReplayCanon.cpc_canon_conv tm
+                  val result_norm =
+                    SmtReplayCanon.cpc_canon_conv scope_result
+                  val normalized_tm = boolSyntax.rhs (Thm.concl tm_norm)
+                  val normalized_result =
+                    boolSyntax.rhs (Thm.concl result_norm)
+                  val middle = arith_prove
+                    (boolSyntax.mk_eq (normalized_tm, normalized_result))
+                in
+                  Thm.TRANS tm_norm
+                    (Thm.TRANS middle (Thm.SYM result_norm))
+                end
+              val bridge =
+                bridge SmtReplayCanon.cpc_canon_conv
+                handle Feedback.HOL_ERR _ =>
+                  (arithmetic_bridge ()
+                   handle Feedback.HOL_ERR _ =>
+                     (bridge strong_cpc_canon_conv
+                      handle Feedback.HOL_ERR holerr =>
+                        raise ERR "process_scope"
+                          ("scope result canonicalization failed; local=" ^
+                           Library.term_to_string tm ^ "; expected=" ^
+                           Library.term_to_string scope_result ^ "; " ^
+                           Feedback.message_of holerr)))
+            in Thm.EQ_MP bridge applied end
       val discharged = Thm.DISCH conjunction normalized
       val result =
         if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
@@ -3143,7 +3152,7 @@ local
     | _ => raise ERR "arith_mult_sign"
       "expected a conjunction of positive factors and their product"
 
-  fun replay_arith_trichotomy prems =
+  fun replay_arith_trichotomy declared prems =
     let
       datatype relation = Eq | Lt | Le | Gt | Ge
       fun dest_relation tm =
@@ -3171,14 +3180,29 @@ local
           val (negated, atom) = strip true tm
           val result = dest_relation atom
         in if negated then negate_relation result else result end
+      fun relation_name Eq = "="
+        | relation_name Lt = "<"
+        | relation_name Le = "<="
+        | relation_name Gt = ">"
+        | relation_name Ge = ">="
+      fun reverse_relation Eq = Eq
+        | reverse_relation Lt = Gt
+        | reverse_relation Le = Ge
+        | reverse_relation Gt = Lt
+        | reverse_relation Ge = Le
       fun conclusion (Eq, Lt, left, right) = arith_greater (left, right)
         | conclusion (Eq, Gt, left, right) = arith_less (left, right)
         | conclusion (Gt, Eq, left, right) = arith_less (left, right)
         | conclusion (Lt, Eq, left, right) = arith_greater (left, right)
+        | conclusion (Ge, Le, left, right) = boolSyntax.mk_eq (left, right)
+        | conclusion (Le, Ge, left, right) = boolSyntax.mk_eq (left, right)
         | conclusion (Gt, Lt, left, right) = boolSyntax.mk_eq (left, right)
         | conclusion (Lt, Gt, left, right) = boolSyntax.mk_eq (left, right)
-        | conclusion _ = raise ERR "arith_trichotomy"
-            "normalized CPC relations do not form a supported trichotomy"
+        | conclusion (relation1, relation2, _, _) =
+            raise ERR "arith_trichotomy"
+              ("normalized CPC relations " ^ relation_name relation1 ^
+               " and " ^ relation_name relation2 ^
+               " do not form a supported trichotomy")
       val alias_rewrites = [integerTheory.INT_GE, realTheory.real_ge]
       fun normalize_aliases tm =
         boolSyntax.rhs (Thm.concl
@@ -3186,11 +3210,14 @@ local
         handle Conv.UNCHANGED => tm
       fun normalize_operand tm =
         let
-          val aliased = normalize_aliases tm
+          val aliased = boolSyntax.rhs
+            (Thm.concl (SmtReplayCanon.cpc_term_canon_conv
+              (normalize_aliases tm)))
         in
           boolSyntax.rhs (Thm.concl
-            (simpLib.SIMP_CONV intLib.int_ss [] aliased))
+            (SmtReplayCanon.arith_poly_norm_conversion aliased))
           handle Conv.UNCHANGED => aliased
+               | Feedback.HOL_ERR _ => aliased
         end
       fun antisym left right left_le_right right_le_left =
         let
@@ -3202,28 +3229,46 @@ local
           Thm.MP (Drule.SPECL [left, right] rule)
             (Thm.CONJ left_le_right right_le_left)
         end
+      fun prove_declared fallback =
+        case declared of
+          SOME target => arith_prove_from_prems prems target
+        | NONE => arith_prove_from_prems prems fallback
     in
       case prems of
         [premise1, premise2] =>
           let
             val (relation1, left, right) = normalize_not (Thm.concl premise1)
-            val (relation2, a, b) = normalize_not (Thm.concl premise2)
+            val (relation2_raw, a, b) =
+              normalize_not (Thm.concl premise2)
+            val normalized_left = normalize_operand left
+            val normalized_right = normalize_operand right
+            val normalized_a = normalize_operand a
+            val normalized_b = normalize_operand b
             val same_operands =
-              Term.aconv (normalize_operand left) (normalize_operand a) andalso
-              Term.aconv (normalize_operand right) (normalize_operand b)
+              Term.aconv normalized_left normalized_a andalso
+              Term.aconv normalized_right normalized_b
+            val reversed_operands =
+              Term.aconv normalized_left normalized_b andalso
+              Term.aconv normalized_right normalized_a
+            val relation2 =
+              if reversed_operands then reverse_relation relation2_raw
+              else relation2_raw
             val premise1' = Rewrite.PURE_REWRITE_RULE alias_rewrites premise1
             val premise2' = Rewrite.PURE_REWRITE_RULE alias_rewrites premise2
           in
-          if same_operands then
-            (case (relation1, relation2) of
+          if same_operands orelse reversed_operands then
+            ((case (relation1, relation2) of
                (Ge, Le) => antisym (normalize_aliases left)
                  (normalize_aliases right) premise2' premise1'
              | (Le, Ge) => antisym (normalize_aliases left)
                  (normalize_aliases right) premise1' premise2'
              | _ => arith_prove_from_prems prems
                  (conclusion (relation1, relation2, left, right)))
-          else raise ERR "arith_trichotomy"
-            "CPC arithmetic trichotomy premises use different operands"
+             handle Feedback.HOL_ERR _ =>
+               prove_declared
+                 (conclusion (relation1, relation2, left, right)))
+          else prove_declared
+            (conclusion (relation1, relation2, left, right))
           end
       | _ => raise ERR "arith_trichotomy" "expected two CPC premises"
     end
@@ -3233,7 +3278,10 @@ local
   fun replay_int_tight_ub prems =
     let
       val premise = expect_one_premise "int_tight_ub" prems
-      val (left, right) = intSyntax.dest_less (Thm.concl premise)
+      val (left, right) =
+        intSyntax.dest_less (Thm.concl premise)
+        handle Feedback.HOL_ERR _ =>
+          Lib.swap (intSyntax.dest_greater (Thm.concl premise))
       val target = intSyntax.mk_leq
         (left, if Term.aconv right intSyntax.one_tm then intSyntax.zero_tm
                else intSyntax.mk_minus (right, intSyntax.one_tm))
@@ -3248,8 +3296,16 @@ local
         (let val (left, right) = intSyntax.dest_greater (Thm.concl premise)
          in (left, right, true) end
          handle Feedback.HOL_ERR _ =>
-           let val (left, right) = intSyntax.dest_geq (Thm.concl premise)
-           in (left, right, false) end)
+           (let val (left, right) = intSyntax.dest_geq (Thm.concl premise)
+            in (left, right, false) end
+            handle Feedback.HOL_ERR _ =>
+              (let val (right, left) =
+                 intSyntax.dest_less (Thm.concl premise)
+               in (left, right, true) end
+               handle Feedback.HOL_ERR _ =>
+                 let val (right, left) =
+                   intSyntax.dest_leq (Thm.concl premise)
+                 in (left, right, false) end)))
       val target = intSyntax.mk_geq
         (left, if strict then intSyntax.mk_plus (right, intSyntax.one_tm)
                else right)
@@ -3403,36 +3459,47 @@ local
          handle Feedback.HOL_ERR _ =>
            (Thm.MP left right
             handle Feedback.HOL_ERR _ =>
-              let
-              fun by_implication implication premise =
-                let val (_, result) = boolSyntax.dest_imp (Thm.concl implication)
-                in metis_prove [implication, premise] result end
-              fun by_implication_with_aliases implication premise =
-                let
-                  val rewrites =
-                    [integerTheory.INT_GT, integerTheory.INT_GE,
-                     integerTheory.int_sub, realTheory.real_ge]
-                  val implication' =
-                    simpLib.SIMP_RULE intLib.int_ss rewrites implication
-                  val premise' =
-                    simpLib.SIMP_RULE intLib.int_ss rewrites premise
-                in Thm.MP implication' premise' end
-              in
-                by_implication right left
-                handle Feedback.HOL_ERR _ =>
-                  (by_implication left right
-                   handle Feedback.HOL_ERR _ =>
-                     (by_implication_with_aliases right left
-                      handle Feedback.HOL_ERR _ =>
-                        (by_implication_with_aliases left right
-                         handle Feedback.HOL_ERR _ =>
-                           raise ERR "modus_ponens"
-                             ("premises are not applicable; left=" ^
-                              Library.term_to_string (Thm.concl left) ^
-                              "; right=" ^
-                              Library.term_to_string (Thm.concl right)))))
-              end))
+              raise ERR "modus_ponens"
+                ("canonical premises are not applicable; left=" ^
+                 Library.term_to_string (Thm.concl left) ^ "; right=" ^
+                 Library.term_to_string (Thm.concl right))))
     | _ => raise ERR "modus_ponens" "expected two CPC premises"
+
+  (* Canonical matching must not replace an implication by its normalized
+     consequence: omitted CPC conclusions are inferred from the original
+     implication and later steps depend on that exact endpoint.  Normalize
+     only to establish that the proposition proves the antecedent, transport
+     it back, and apply the untouched implication. *)
+  fun replay_canonical_modus_ponens prems =
+    let
+      fun apply canon proposition implication =
+        let
+          val (antecedent, _) = boolSyntax.dest_imp (Thm.concl implication)
+          val proposition_norm = canon (Thm.concl proposition)
+          val antecedent_norm = canon antecedent
+          val normalized_proposition =
+            boolSyntax.rhs (Thm.concl proposition_norm)
+          val normalized_antecedent =
+            boolSyntax.rhs (Thm.concl antecedent_norm)
+          val _ = Term.aconv normalized_proposition normalized_antecedent orelse
+            raise ERR "modus_ponens"
+              "canonical proposition does not match the exact antecedent"
+          val proposition' = Thm.EQ_MP proposition_norm proposition
+          val antecedent' = Thm.EQ_MP (Thm.SYM antecedent_norm) proposition'
+        in
+          Thm.MP implication antecedent'
+        end
+      fun oriented canon left right =
+        apply canon left right
+        handle Feedback.HOL_ERR _ => apply canon right left
+    in
+      case prems of
+        [left, right] =>
+          (oriented SmtReplayCanon.cpc_operand_canon_conv left right
+           handle Feedback.HOL_ERR _ =>
+             oriented strong_cpc_canon_conv left right)
+      | _ => raise ERR "modus_ponens" "expected two CPC premises"
+    end
 
   fun replay_arith_sum_ub prems =
     let
@@ -3480,10 +3547,24 @@ local
           val combined = Thm.MP
             (Drule.SPECL [left_lhs, left_rhs, right_lhs, right_rhs] rule)
             (Thm.CONJ left_thm right_thm)
+          (* Normalize each partial sum before adding the next bound.  CPC
+             certificates use the polynomial normal form of the combined
+             relation; retaining the unreduced expression here duplicates
+             shared conditional terms exponentially and forces the following
+             EQ_RESOLVE to rediscover the same linear cancellation. *)
+          val combined = Conv.CONV_RULE
+            (SmtReplayCanon.compose
+              [SmtReplayCanon.cpc_operand_canon_conv,
+               Conv.BINOP_CONV
+                 (SmtReplayCanon.unchanged
+                   SmtReplayCanon.arith_poly_norm_conversion)]) combined
+          val (combined_lhs, combined_rhs) =
+            if left_strict orelse right_strict then
+              arith_dest_less (Thm.concl combined)
+            else arith_dest_leq (Thm.concl combined)
         in
           (left_strict orelse right_strict,
-           arith_list_mk_plus [left_lhs, right_lhs],
-           arith_list_mk_plus [left_rhs, right_rhs], combined)
+           combined_lhs, combined_rhs, combined)
         end
       val bounds = List.map dest_bound prems
       val (_, _, _, result) =
@@ -3621,6 +3702,8 @@ local
                 bossLib.ASM_SIMP_TAC (bossLib.srw_ss())
                   [Thm.SYM realTheory.REAL_SUB_LE, realTheory.REAL_NEG_SUB])
         in Thm.EQ_MP (Thm.SYM target_eq_target') thm end
+      fun abstract_cast_atoms () =
+        prove_cast_arithmetic prems target
     in
       if needs_real_normalization then
         (profile "CPC(rung:arith_rel/mixed_ge_lift)" mixed_ge_lift ()
@@ -3638,7 +3721,18 @@ local
              (([], target), bossLib.SIMP_TAC (bossLib.srw_ss()) [])
          handle Feedback.HOL_ERR _ =>
            profile "CPC(rung:arith_rel/from_prems)"
-             (arith_prove_from_prems prems) target)
+             (arith_prove_from_prems prems) target
+         handle Feedback.HOL_ERR _ =>
+           (profile "CPC(rung:arith_rel/abstract_cast_atoms)"
+              abstract_cast_atoms ()
+            handle Feedback.HOL_ERR abstract_error =>
+              raise ERR "arith_poly_norm_rel"
+                ("arithmetic atom abstraction failed for target " ^
+                 Library.term_to_string target ^ "; premises=" ^
+                 String.concatWith ", "
+                   (List.map (Library.term_to_string o Thm.concl) prems) ^
+                 "; underlying error=" ^
+                 Feedback.message_of abstract_error)))
       else
         (profile "CPC(rung:arith_rel/from_prems_direct)"
            (arith_prove_from_prems prems) target
@@ -3650,7 +3744,18 @@ local
            (profile "CPC(rung:arith_rel/ring)" RealField.REAL_RING target
             handle Feedback.HOL_ERR _ =>
               profile "CPC(rung:arith_rel/from_prems_retry)"
-                (arith_prove_from_prems prems) target))
+                (arith_prove_from_prems prems) target
+            handle Feedback.HOL_ERR _ =>
+              (profile "CPC(rung:arith_rel/abstract_cast_atoms)"
+                 abstract_cast_atoms ()
+               handle Feedback.HOL_ERR abstract_error =>
+                 raise ERR "arith_poly_norm_rel"
+                   ("arithmetic atom abstraction failed for target " ^
+                    Library.term_to_string target ^ "; premises=" ^
+                    String.concatWith ", "
+                      (List.map (Library.term_to_string o Thm.concl) prems) ^
+                    "; underlying error=" ^
+                    Feedback.message_of abstract_error))))
     end
 
   fun replay_datatype args =
@@ -3684,68 +3789,17 @@ local
 
   fun replay_resolution prems conclusion args =
     let
-      val literal_rewrites =
-        [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
-         integerTheory.INT_GT, integerTheory.INT_GE,
-         integerTheory.int_sub, realTheory.real_ge]
-      fun normalize_literal tm =
-        Rewrite.PURE_REWRITE_CONV literal_rewrites tm
-        handle Conv.UNCHANGED => Thm.REFL tm
-      fun normalize_not_not tm =
-        boolSyntax.rhs (Thm.concl (normalize_literal tm))
-      (* A clause may contain an OR formula as a literal.  HOL's standard
-         clause decomposition preserves that boundary; recursive flattening
-         would incorrectly open such a literal. *)
+      (* Premises, target and annotations enter this handler in the shared
+         CPC normal form, so literal identity is just alpha-equivalence. *)
+      fun literal_equal left right = Term.aconv left right
+      fun convert_literal theorem target =
+        if Term.aconv (Thm.concl theorem) target then theorem
+        else raise ERR "resolution" "incompatible canonical CPC literals"
       fun strip_clause term =
         (let val (left, right) = boolSyntax.dest_disj term in
            left :: strip_clause right
          end)
         handle Feedback.HOL_ERR _ => [term]
-      fun equality_equal left right =
-        let
-          val left = normalize_not_not left
-          val right = normalize_not_not right
-        in
-        Term.aconv left right orelse
-        ((let
-            val (left_lhs, left_rhs) = boolSyntax.dest_eq left
-            val (right_lhs, right_rhs) = boolSyntax.dest_eq right
-          in
-            (Term.aconv left_lhs right_lhs andalso
-             Term.aconv left_rhs right_rhs) orelse
-            (Term.aconv left_lhs right_rhs andalso
-             Term.aconv left_rhs right_lhs)
-          end)
-         handle Feedback.HOL_ERR _ => false)
-        end
-      fun literal_equal left right =
-        Term.aconv (normalize_not_not left) (normalize_not_not right) orelse
-        equality_equal left right orelse
-        ((let
-            val left' = boolSyntax.dest_neg left
-            val right' = boolSyntax.dest_neg right
-          in equality_equal left' right' end)
-         handle Feedback.HOL_ERR _ => false)
-      fun convert_literal theorem target =
-        if Term.aconv (Thm.concl theorem) target then theorem
-        else if literal_equal (Thm.concl theorem) target then
-          let
-            val source_norm = normalize_literal (Thm.concl theorem)
-            val target_norm = normalize_literal target
-            val normalized_theorem = Thm.EQ_MP source_norm theorem
-          in
-            if Term.aconv (Thm.concl normalized_theorem)
-                 (boolSyntax.rhs (Thm.concl target_norm)) then
-              Thm.EQ_MP (Thm.SYM target_norm) normalized_theorem
-            else
-              Thm.MP
-                (Tactical.TAC_PROOF (([], boolSyntax.mk_imp
-                    (Thm.concl theorem, target)),
-                  bossLib.SIMP_TAC (bossLib.srw_ss())
-                    (boolTheory.EQ_SYM_EQ :: literal_rewrites)))
-                theorem
-          end
-        else raise ERR "resolution" "incompatible CPC clause literals"
       fun remove_first literal [] = NONE
         | remove_first literal (candidate :: rest) =
             if literal_equal literal candidate then SOME rest
@@ -3763,9 +3817,6 @@ local
           val second_removed = remove_first second_pivot second_lits
           val first_rest = case first_removed of SOME rest => rest | NONE => first_lits
           val second_rest = case second_removed of SOME rest => rest | NONE => second_lits
-          val syntactic_pivots =
-            List.exists (Term.aconv first_pivot) first_lits andalso
-            List.exists (Term.aconv second_pivot) second_lits
           val first_tail = mk_disj_terms first_rest
           val second_tail = mk_disj_terms second_rest
           val result = mk_disj_terms (first_rest @ second_rest)
@@ -3831,11 +3882,15 @@ local
         in
           case (first_removed, second_removed) of
             (SOME _, SOME _) =>
-              if syntactic_pivots then tautological_consequences [first, second] result
-              else
-                (Thm.DISJ_CASES (first_normal ()) (resolve_pivot ()) (resolve_rest ())
-                 handle Feedback.HOL_ERR _ => raise ERR "resolution"
-                   "could not discharge the first resolution clause")
+              (let
+                 val first_normalized = first_normal ()
+                 val pivot_result = resolve_pivot ()
+                 val rest_result = resolve_rest ()
+               in
+                 Thm.DISJ_CASES first_normalized pivot_result rest_result
+               end
+               handle Feedback.HOL_ERR _ => raise ERR "resolution"
+                 "could not discharge the first resolution clause")
           (* cvc5 permits a missing pivot as a weakening: retain that
              uneliminated premise and inject it into the result clause. *)
           | (NONE, _) => inject_clause first result
@@ -3901,6 +3956,9 @@ local
                        ("chain result contains literal outside declared target: " ^
                         Library.term_to_string (Thm.concl theorem)))
             in branch theorem end
+          fun contextual_target theorem =
+            Tactical.TAC_PROOF ((Thm.hyp theorem, target),
+              bossLib.FULL_SIMP_TAC boolSimps.bool_ss [theorem])
           val result = case prems of
               first :: rest => List.foldl
                 (fn ((next, (polarity, pivot)), accumulated) =>
@@ -3914,8 +3972,32 @@ local
           if Term.aconv (Thm.concl result) target then result
           else
             (reorder_to_target result
-             handle Feedback.HOL_ERR _ => tautological_consequences prems target)
+             handle Feedback.HOL_ERR _ => contextual_target result
+             handle Feedback.HOL_ERR _ =>
+               tautological_consequences prems target)
         end
+      fun has_non_arithmetic_equality tm =
+        let
+          fun arithmetic_type ty =
+            Type.compare (ty, Type.bool) = EQUAL orelse
+            Type.compare (ty, numSyntax.num) = EQUAL orelse
+            Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
+            Type.compare (ty, realSyntax.real_ty) = EQUAL orelse
+            wordsSyntax.is_word_type ty
+          fun search term =
+            case Lib.total boolSyntax.dest_eq term of
+              SOME (left, right) =>
+                not (arithmetic_type (Term.type_of left)) orelse
+                search left orelse search right
+            | NONE =>
+                (case Lib.total Term.dest_comb term of
+                   SOME (operator, operand) =>
+                     search operator orelse search operand
+                 | NONE =>
+                     (case Lib.total Term.dest_abs term of
+                        SOME (_, body) => search body
+                      | NONE => false))
+        in search tm end
       fun resolution_result polarity pivot =
         case prems of
           [first, second] =>
@@ -3943,44 +4025,18 @@ local
                    Library.term_to_string (Thm.concl second))
             in mk_disj_terms (first_rest @ second_rest) end
         | _ => raise ERR "resolution" "expected two CPC resolution premises"
-      fun contextual_resolution target =
-        let
-          open simpLib
-          val hyps = HOLset.listItems (List.foldl
-            (fn (theorem, accumulated) =>
-              HOLset.union (Thm.hypset theorem, accumulated))
-            Term.empty_tmset prems)
-        in
-          Tactical.TAC_PROOF ((hyps, target),
-            Tactical.THEN
-              (Tactical.EVERY (List.map Tactic.ASSUME_TAC prems),
-               bossLib.ASM_SIMP_TAC
-               (intLib.int_ss ++ boolSimps.COND_elim_ss)
-                [HolSmtTheory.smt_emod_total_ediv_negone,
-                  integerTheory.INT_GT, integerTheory.INT_GE,
-                  integerTheory.int_sub, realTheory.real_ge]))
-        end
-      fun normalized_resolution target =
-        let
-          fun normalize_theorem theorem =
-            Rewrite.PURE_REWRITE_RULE literal_rewrites theorem
-            handle Conv.UNCHANGED => theorem
-          val normalized_prems = List.map normalize_theorem prems
-          val target_norm = normalize_literal target
-          val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
-          val normalized_result =
-            tautological_consequences normalized_prems normalized_target
-        in
-          Thm.EQ_MP (Thm.SYM target_norm) normalized_result
-        end
       fun prove target =
         (profile "CPC(rung:resolution/tautological)" (fn () =>
          if List.length prems > 2 then
            let val n = List.length prems - 1 in
              case args of
                _ :: annotation =>
-                 if List.length annotation = 2 * n then replay_chain target
-                   (List.take (annotation, n)) (List.drop (annotation, n))
+                 if List.length annotation = 2 * n then
+                   (replay_chain target
+                      (List.take (annotation, n))
+                      (List.drop (annotation, n))
+                    handle Feedback.HOL_ERR _ =>
+                      tautological_consequences prems target)
                  else tautological_consequences prems target
            | [] => raise ERR "resolution" "missing resolution-chain annotation"
            end
@@ -3994,18 +4050,21 @@ local
                   (fn () => resolve_binary_disjunction prems target) () of
                    SOME thm => thm
                  | NONE =>
-                     (normalized_resolution target
-                      handle Feedback.HOL_ERR _ => contextual_resolution target
-                      handle Feedback.HOL_ERR _ =>
-                        raise ERR "resolution"
-                          ("could not resolve target " ^
-                           Library.term_to_string target ^
-                           " from premises " ^ String.concatWith "; "
-                             (List.map (Library.term_to_string o Thm.concl)
-                               prems))))))
+                     (* HOL reconstruction can expose equality congruences
+                        between certificate literals (notably datatype and
+                        record constructor/selector terms).  These are beyond
+                        propositional TAUT but remain the semantics of
+                        resolution from the exact premise theorems. *)
+                     if List.exists has_non_arithmetic_equality
+                          (target :: List.map Thm.concl prems) then
+                       metis_prove prems target
+                     else raise ERR "resolution"
+                       "resolution requires no equality-congruence fallback")))
     in
       case (conclusion, args) of
         (SOME target, _) => prove target
+      | (NONE, [target, polarity, pivot]) =>
+          replay_chain target [polarity] [pivot]
       | (NONE, [polarity, pivot]) => prove (resolution_result polarity pivot)
       | (NONE, [target]) => prove target
       | (NONE, target :: _) => prove target
@@ -4133,6 +4192,606 @@ local
     let
       val {id, conclusion, rule, premises, args} = step
       val prems = lookup_premises state premises
+      val premise_rules = List.map (lookup_rule state) premises
+      fun require_declared name theorem =
+        case conclusion of
+          NONE => theorem
+        | SOME target =>
+            if Term.aconv (Thm.concl theorem) target then theorem
+            else raise ERR name
+              "direct result differs from the declared conclusion"
+      fun canonical_handler name replay =
+        let val exposed = List.map expose_true_equality prems in
+          require_declared name (replay exposed)
+        handle Feedback.HOL_ERR _ =>
+          (restore_canonical_conclusion name conclusion
+             (replay
+               (List.map expose_true_equality
+                 (canonical_premises exposed)))
+           handle Feedback.HOL_ERR _ =>
+             restore_strong_canonical_conclusion name conclusion
+               (replay
+                 (List.map expose_true_equality
+                   (List.map
+                     (Conv.CONV_RULE strong_cpc_canon_conv) exposed))))
+        end
+      fun arithmetic_bridge theorems target =
+        let
+          val hypotheses = HOLset.listItems
+            (HOLset.fromList Term.compare
+              (List.filter boolSyntax.is_eq
+                (List.concat (List.map Thm.hyp theorems))))
+          val assumptions = List.map Thm.ASSUME hypotheses
+          fun relation_bridge proposition =
+            let
+              fun arithmetic_type ty =
+                Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
+                Type.compare (ty, realSyntax.real_ty) = EQUAL
+              fun private_integer_division tm =
+                let
+                  val (head, _) = boolSyntax.strip_comb tm
+                  val {Thy, Name, ...} = Term.dest_thy_const head
+                in
+                  Thy = "integer" andalso
+                  (Name = "ediv" orelse Name = "emod")
+                end
+                handle Feedback.HOL_ERR _ => false
+              fun total_integer_division tm =
+                let val (head, _) = boolSyntax.strip_comb tm in
+                  Term.is_const head andalso
+                  (Term.same_const head SmtReplayCanon.smt_ediv_total_tm
+                   orelse Term.same_const head
+                     SmtReplayCanon.smt_emod_total_tm)
+                end
+                handle Feedback.HOL_ERR _ => false
+              fun opaque_arithmetic tm =
+                arithmetic_type (Term.type_of tm) andalso
+                (boolSyntax.is_cond tm orelse intSyntax.is_div tm orelse
+                 intSyntax.is_mod tm orelse private_integer_division tm orelse
+                 total_integer_division tm)
+              fun is_relation tm =
+                Lib.can arith_dest_less tm orelse
+                Lib.can arith_dest_leq tm orelse
+                Lib.can arith_dest_greater tm orelse
+                Lib.can arith_dest_geq tm
+              val neutral_arithmetic =
+                [integerTheory.INT_MUL_LZERO,
+                 integerTheory.INT_MUL_RZERO,
+                 integerTheory.INT_ADD_LID,
+                 integerTheory.INT_ADD_RID,
+                 realTheory.REAL_MUL_LZERO,
+                 realTheory.REAL_MUL_RZERO,
+                 realTheory.REAL_ADD_LID,
+                 realTheory.REAL_ADD_RID]
+              fun normalize_arithmetic_equality tm =
+                let
+                  val (left, right) = boolSyntax.dest_eq tm
+                  val _ = arithmetic_type (Term.type_of left) andalso
+                          arithmetic_type (Term.type_of right) orelse
+                    raise Conv.UNCHANGED
+                in
+                  Conv.CHANGED_CONV
+                    (Conv.BINOP_CONV
+                      (SmtReplayCanon.unchanged
+                        SmtReplayCanon.arith_poly_norm_conversion)) tm
+                end
+              fun normalize_endpoint tm =
+                if is_relation tm orelse
+                   arithmetic_type (Term.type_of tm) then
+                  SmtReplayCanon.compose
+                    [Rewrite.PURE_REWRITE_CONV neutral_arithmetic,
+                     Conv.DEPTH_CONV normalize_arithmetic_equality,
+                     SmtReplayCanon.cpc_operand_canon_conv,
+                     SmtReplayCanon.arith_poly_norm_conversion]
+                    tm
+                else raise ERR "trans"
+                  "middle endpoint is not arithmetic"
+              fun normalized_prove target =
+                let
+                  val (target_left, target_right) =
+                    boolSyntax.dest_eq target
+                  val left_norm = normalize_endpoint target_left
+                  val right_norm = normalize_endpoint target_right
+                  val normalized_left =
+                    boolSyntax.rhs (Thm.concl left_norm)
+                  val normalized_right =
+                    boolSyntax.rhs (Thm.concl right_norm)
+                  val same = Term.aconv normalized_left normalized_right
+                  val _ = same orelse
+                    raise ERR "trans"
+                      "polynomial relation endpoints differ"
+                  val theorem = Thm.TRANS left_norm (Thm.SYM right_norm)
+                in theorem end
+              fun abstract_bridge () =
+                prove_from_prems_abstracting normalized_prove
+                  opaque_arithmetic [] proposition
+            in
+              abstract_bridge ()
+              handle Feedback.HOL_ERR _ => normalized_prove proposition
+            end
+          fun division_prove proposition =
+            let
+              val total_div = Term.prim_mk_const
+                {Thy = "HolSmt", Name = "smt_ediv_total"}
+              fun dest_total term =
+                let val (head, operands) = boolSyntax.strip_comb term in
+                  case operands of
+                    [dividend, divisor] =>
+                      if Term.same_const head total_div then
+                        (dividend, divisor)
+                      else raise ERR "trans" "not a totalized division"
+                  | _ => raise ERR "trans" "not a totalized division"
+                end
+              val pairs =
+                List.map intSyntax.dest_div
+                  (HolKernel.find_terms intSyntax.is_div proposition) @
+                List.map intSyntax.dest_mod
+                  (HolKernel.find_terms intSyntax.is_mod proposition) @
+                List.map dest_total
+                  (HolKernel.find_terms (Lib.can dest_total) proposition)
+              fun division_identities (dividend, divisor) =
+                let
+                  val nonzero = simpLib.SIMP_PROVE (bossLib.srw_ss ()) []
+                    (boolSyntax.mk_neg
+                      (boolSyntax.mk_eq (divisor, intSyntax.zero_tm)))
+                  val division = Thm.SPEC dividend
+                    (Thm.MP (Thm.SPEC divisor integerTheory.INT_DIVISION)
+                      nonzero)
+                  val identity = Thm.CONJUNCT1 division
+                in
+                  [identity, Thm.SYM identity]
+                end
+                handle Feedback.HOL_ERR _ => []
+              val identities = List.concat
+                (List.map division_identities pairs)
+              fun adapt theorem =
+                let
+                  val (theorem_left, theorem_right) =
+                    boolSyntax.dest_eq (Thm.concl theorem)
+                  val (target_left, target_right) =
+                    boolSyntax.dest_eq proposition
+                  fun polynomial_bridge left right =
+                    SmtReplayCanon.prove_polynomial_equality
+                      (boolSyntax.mk_eq (left, right))
+                in
+                  if Term.aconv theorem_left target_left then
+                    Thm.TRANS theorem
+                      (polynomial_bridge theorem_right target_right)
+                  else if Term.aconv theorem_right target_left then
+                    Thm.TRANS (Thm.SYM theorem)
+                      (polynomial_bridge theorem_left target_right)
+                  else if Term.aconv theorem_left target_right then
+                    Thm.TRANS
+                      (polynomial_bridge target_left theorem_right)
+                      (Thm.SYM theorem)
+                  else if Term.aconv theorem_right target_right then
+                    Thm.TRANS
+                      (polynomial_bridge target_left theorem_left) theorem
+                  else raise ERR "trans"
+                    "division identity has different endpoints"
+                end
+            in
+              (Lib.tryfind adapt identities
+               handle Feedback.HOL_ERR _ =>
+                 Tactical.TAC_PROOF (([], proposition),
+                   bossLib.FULL_SIMP_TAC bossLib.arith_ss
+                     (identities @
+                      [HolSmtTheory.smt_ediv_total_def,
+                       integerTheory.EDIV_DEF])))
+              handle Feedback.HOL_ERR holerr =>
+                raise ERR "trans"
+                  ("division identity proof failed; proposition=" ^
+                   Library.term_to_string proposition ^
+                   "; pairs=" ^ Int.toString (List.length pairs) ^
+                   "; identities=" ^ String.concatWith "; "
+                     (List.map
+                       (Library.term_to_string o Thm.concl) identities) ^
+                   "; underlying=" ^ Feedback.message_of holerr)
+            end
+          fun contradiction theorem =
+            let
+              val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+              val (equality, proposition) =
+                if Term.aconv right boolSyntax.F then (theorem, left)
+                else if Term.aconv left boolSyntax.F then
+                  (Thm.SYM theorem, right)
+                else raise ERR "trans"
+                  "division contradiction premise is not false-valued"
+              val contradiction_thm = Thm.EQ_MP equality
+                (division_prove proposition)
+            in
+              Thm.MP (Thm.SPEC target boolTheory.FALSITY) contradiction_thm
+            end
+          fun false_valued theorem =
+            let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem) in
+              Term.aconv left boolSyntax.F orelse
+              Term.aconv right boolSyntax.F
+            end
+            handle Feedback.HOL_ERR _ => false
+          fun fallback () =
+            (prove_from_prems division_prove
+               (assumptions @ theorems) target
+             handle Feedback.HOL_ERR _ =>
+               arith_prove_from_prems assumptions target)
+        in
+          relation_bridge target
+          handle Feedback.HOL_ERR _ =>
+          case List.find false_valued theorems of
+            SOME theorem =>
+              (contradiction theorem
+               handle Feedback.HOL_ERR division_error =>
+                 (fallback ()
+                  handle Feedback.HOL_ERR _ =>
+                    raise Feedback.HOL_ERR division_error))
+          | NONE => fallback ()
+        end
+      fun arithmetic_trans () =
+        let
+          fun oriented theorem reverse =
+            if reverse then Thm.SYM theorem else theorem
+          fun compose (next, accumulated) =
+            let
+              fun attempt reverse_accumulated reverse_next =
+                let
+                  val accumulated' =
+                    oriented accumulated reverse_accumulated
+                  val next' = oriented next reverse_next
+                  val (_, middle_left) =
+                    boolSyntax.dest_eq (Thm.concl accumulated')
+                  val (middle_right, _) =
+                    boolSyntax.dest_eq (Thm.concl next')
+                  val bridge = arithmetic_bridge [accumulated', next']
+                    (boolSyntax.mk_eq (middle_left, middle_right))
+                in
+                  Thm.TRANS (Thm.TRANS accumulated' bridge) next'
+                end
+            in
+              attempt false false
+              handle Feedback.HOL_ERR _ => attempt false true
+              handle Feedback.HOL_ERR _ => attempt true false
+              handle Feedback.HOL_ERR _ => attempt true true
+            end
+        in
+          case prems of
+            [] => raise ERR "trans" "expected CPC equality premises"
+          | first :: rest => List.foldl compose first rest
+        end
+      fun arithmetic_eq_resolve_pair proposition equality =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl equality)
+        in
+          Thm.EQ_MP equality
+            (arith_prove_from_prems [proposition] left)
+          handle Feedback.HOL_ERR _ =>
+            Thm.EQ_MP (Thm.SYM equality)
+              (arith_prove_from_prems [proposition] right)
+        end
+      fun arithmetic_eq_resolve () =
+        (case prems of
+          [left, right] =>
+            (arithmetic_eq_resolve_pair left right
+             handle Feedback.HOL_ERR _ =>
+               arithmetic_eq_resolve_pair right left)
+        | _ => raise ERR "eq_resolve" "expected two CPC premises")
+      fun normalized_proposition_eq_resolve () =
+        let
+          fun normalize theorem =
+            Conv.CONV_RULE strong_cpc_canon_conv theorem
+        in
+          case prems of
+            [left, right] =>
+              (arithmetic_eq_resolve_pair (normalize left) right
+               handle Feedback.HOL_ERR _ =>
+                 arithmetic_eq_resolve_pair (normalize right) left)
+          | _ => raise ERR "eq_resolve" "expected two CPC premises"
+        end
+      fun eq_resolve_from_scope_hypotheses target =
+        let
+          val hypotheses = HOLset.listItems
+            (HOLset.fromList Term.compare
+              (List.concat (List.map Thm.hyp prems)))
+          val _ = List.null hypotheses andalso
+            raise ERR "eq_resolve" "premises have no scope hypotheses"
+          val assumptions = List.map Thm.ASSUME hypotheses
+        in
+          arith_prove_from_prems assumptions target
+          handle Feedback.HOL_ERR holerr =>
+            raise ERR "eq_resolve"
+              ("scope-hypothesis arithmetic failed for " ^
+               Library.term_to_string
+                 (boolSyntax.list_mk_imp (hypotheses, target)) ^ "; " ^
+               Feedback.message_of holerr)
+        end
+      fun canonical_trans () =
+        let
+          fun attempt work fallback =
+            work () handle Feedback.HOL_ERR _ => fallback ()
+          fun direct () = require_declared "trans" (replay_trans prems)
+          fun evaluated_arithmetic () =
+            let
+              fun is_total subterm =
+                Term.is_const subterm andalso
+                (Term.same_const subterm SmtReplayCanon.smt_ediv_total_tm
+                 orelse Term.same_const subterm
+                   SmtReplayCanon.smt_emod_total_tm)
+              fun has_total theorem =
+                not (List.null
+                  (HolKernel.find_terms is_total (Thm.concl theorem)))
+              fun arithmetic_expression_equality theorem =
+                let
+                  val (left, right) =
+                    boolSyntax.dest_eq (Thm.concl theorem)
+                  fun arithmetic_type tm =
+                    Type.compare (Term.type_of tm,
+                      intSyntax.int_ty) = EQUAL orelse
+                    Type.compare (Term.type_of tm,
+                      realSyntax.real_ty) = EQUAL
+                in
+                  arithmetic_type left andalso arithmetic_type right
+                end
+                handle Feedback.HOL_ERR _ => false
+              val evaluate_chain =
+                List.exists (fn name => name = "evaluate") premise_rules
+              val expression_chain =
+                List.all arithmetic_expression_equality prems
+            in
+            if not (Option.isSome conclusion) andalso
+                (evaluate_chain orelse expression_chain) andalso
+                List.exists has_total prems then
+              arithmetic_trans ()
+            else raise ERR "trans"
+              "no omitted evaluate endpoint for arithmetic preflight"
+            end
+          fun canonical () =
+            let val theorem = replay_canonical_trans prems in
+              require_declared "trans" theorem
+              handle Feedback.HOL_ERR _ =>
+                (restore_canonical_conclusion "trans" conclusion
+                   (SmtReplayCanon.cpc_canon_rule theorem)
+                 handle Feedback.HOL_ERR _ =>
+                   restore_strong_canonical_conclusion
+                     "trans" conclusion theorem)
+            end
+          fun fallback () =
+            case conclusion of
+              SOME target => arith_prove_from_prems prems target
+            | NONE =>
+                (arithmetic_trans ()
+                 handle Feedback.HOL_ERR holerr =>
+                   raise ERR "trans"
+                     ("checked middle-equality reconstruction failed; " ^
+                      "premises=" ^ String.concatWith "; "
+                        (List.map Library.thm_to_string prems) ^
+                      "; underlying=" ^ Feedback.message_of holerr))
+        in
+          attempt direct (fn () =>
+            attempt evaluated_arithmetic (fn () =>
+              attempt canonical fallback))
+        end
+      fun canonical_eq_resolve () =
+        let
+          fun attempt work fallback =
+            work () handle Feedback.HOL_ERR _ => fallback ()
+          fun direct () =
+            require_declared "eq_resolve" (replay_eq_resolve prems)
+          fun ground_false () =
+            let
+              fun prove_false theorem =
+                let
+                  val proposition = Thm.concl theorem
+                  val _ = List.null (Term.free_vars proposition) orelse
+                    raise ERR "eq_resolve"
+                      "ground contradiction premise has free variables"
+                  val evaluation = bossLib.EVAL proposition
+                  val normalized = boolSyntax.rhs (Thm.concl evaluation)
+                  val _ = Term.aconv normalized boolSyntax.F orelse
+                    raise ERR "eq_resolve"
+                      "closed premise does not evaluate to false"
+                in
+                  Thm.EQ_MP evaluation theorem
+                end
+              val contradiction = Lib.tryfind prove_false prems
+              val with_support = List.foldl
+                (fn (support, kept) =>
+                  Thm.CONJUNCT1 (Thm.CONJ kept support))
+                contradiction prems
+            in
+              require_declared "eq_resolve" with_support
+            end
+          fun arithmetic () =
+            case conclusion of
+              SOME _ =>
+                if List.exists (fn theorem =>
+                     SmtResource.term_nodes_up_to 1000
+                       (Thm.concl theorem) > 1000) prems
+                then raise ERR "eq_resolve"
+                  "large arithmetic equality uses canonical replay first"
+                else if List.exists (fn theorem =>
+                     HOLset.member (Thm.hypset theorem, boolSyntax.T)) prems
+                then raise ERR "eq_resolve"
+                  "arithmetic preflight retains a trivial scope hypothesis"
+                else if List.exists (fn theorem =>
+                     not (List.null (HolKernel.find_terms (fn tm =>
+                       Type.compare (Term.type_of tm,
+                         realSyntax.real_ty) = EQUAL)
+                       (Thm.concl theorem)))) prems
+                then raise ERR "eq_resolve"
+                  "mixed real arithmetic uses canonical replay first"
+                else
+                  require_declared "eq_resolve" (arithmetic_eq_resolve ())
+            | NONE => raise ERR "eq_resolve"
+                "arithmetic preflight requires a declared conclusion"
+          fun canonical () =
+            let val theorem = replay_canonical_eq_resolve prems in
+              require_declared "eq_resolve" theorem
+              handle Feedback.HOL_ERR _ =>
+                (restore_canonical_conclusion "eq_resolve" conclusion
+                   (SmtReplayCanon.cpc_canon_rule theorem)
+                 handle Feedback.HOL_ERR _ =>
+                   restore_strong_canonical_conclusion
+                     "eq_resolve" conclusion theorem)
+            end
+          fun normalized () =
+            require_declared "eq_resolve"
+              (normalized_proposition_eq_resolve ())
+          fun fallbacks () =
+            case conclusion of
+              SOME target =>
+                (arith_prove_from_prems prems target
+                 handle Feedback.HOL_ERR _ =>
+                   (eq_resolve_from_scope_hypotheses target
+                    handle Feedback.HOL_ERR scope_error =>
+                      (prove_cast_arithmetic prems target
+                       handle Feedback.HOL_ERR cast_error =>
+                         raise ERR "eq_resolve"
+                           ("scope fallback: " ^
+                            Feedback.message_of scope_error ^
+                            "; cast fallback: " ^
+                            Feedback.message_of cast_error))))
+            | NONE => raise ERR "eq_resolve"
+                ("canonical premises do not rewrite one another; " ^
+                 "premises=" ^ String.concatWith "; "
+                   (List.map (Library.term_to_string o Thm.concl) prems))
+        in
+          attempt direct (fn () =>
+            attempt ground_false (fn () =>
+              attempt arithmetic (fn () =>
+                attempt canonical (fn () =>
+                  attempt normalized fallbacks))))
+        end
+      fun canonical_resolution () =
+        let
+          (* Compact chain resolution may omit the conclusion while recording
+             it as the first argument.  Keep that inferred endpoint available
+             for restoration; a two-argument binary resolution instead
+             records polarity and pivot, so its result is premise-derived. *)
+          val replay_target =
+            case (conclusion, args) of
+              (SOME target, _) => SOME target
+            | (NONE, [_, _]) => NONE
+            | (NONE, target :: _) => SOME target
+            | (NONE, []) => NONE
+          val normalized_prems = List.map
+            (Conv.CONV_RULE SmtReplayCanon.cpc_operand_canon_conv) prems
+          val normalized_conclusion = Option.map canonical_operand conclusion
+          val normalized_args = List.map canonical_operand args
+          fun restore theorem =
+            case replay_target of
+              NONE => theorem
+            | SOME target =>
+                Thm.EQ_MP
+                  (Thm.SYM (SmtReplayCanon.cpc_operand_canon_conv target))
+                  theorem
+          fun restore_strong theorem =
+            case replay_target of
+              NONE => theorem
+            | SOME target =>
+                let
+                  val target_norm = strong_cpc_canon_conv target
+                  val normalized_target =
+                    boolSyntax.rhs (Thm.concl target_norm)
+                  val _ = Term.aconv (Thm.concl theorem) normalized_target
+                    orelse raise ERR "resolution"
+                      "strong result differs from the inferred conclusion"
+                in Thm.EQ_MP (Thm.SYM target_norm) theorem end
+        in
+        (require_declared "resolution"
+           (replay_resolution prems conclusion args)
+         handle Feedback.HOL_ERR _ =>
+           (restore (replay_resolution normalized_prems
+                normalized_conclusion normalized_args)
+            handle Feedback.HOL_ERR _ =>
+              let
+                val strong_prems =
+                  List.map (Conv.CONV_RULE strong_cpc_canon_conv) prems
+                val strong_args = List.map (fn arg =>
+                  boolSyntax.rhs
+                    (Thm.concl (strong_cpc_canon_conv arg))) args
+                val strong_conclusion = Option.map (fn target =>
+                  boolSyntax.rhs
+                    (Thm.concl (strong_cpc_canon_conv target))) conclusion
+                val theorem =
+                  case strong_conclusion of
+                    SOME target =>
+                      if Term.aconv target boolSyntax.T then
+                        List.foldl
+                          (fn (support, kept) =>
+                            Thm.CONJUNCT1 (Thm.CONJ kept support))
+                          boolTheory.TRUTH strong_prems
+                      else replay_resolution strong_prems
+                        strong_conclusion strong_args
+                  | NONE => replay_resolution strong_prems
+                      strong_conclusion strong_args
+              in
+                restore_strong theorem
+              end))
+        handle Feedback.HOL_ERR _ =>
+         (case conclusion of
+             SOME target => arith_prove_from_prems prems target
+           | NONE => raise ERR "resolution"
+               ("canonical CPC clauses do not resolve; premises=" ^
+                String.concatWith "; "
+                  (List.map (Library.term_to_string o Thm.concl) prems) ^
+                "; arguments=" ^ String.concatWith "; "
+                  (List.map Library.term_to_string args)))
+        end
+      fun canonical_reordering () =
+        let
+          val target = expect_one_arg "reordering" args
+          val normalized_prems =
+            List.map (Conv.CONV_RULE strong_cpc_canon_conv) prems
+          val target_norm = strong_cpc_canon_conv target
+          val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
+          val theorem =
+            if Term.aconv normalized_target boolSyntax.T then
+              List.foldl
+                (fn (support, kept) =>
+                  Thm.CONJUNCT1 (Thm.CONJ kept support))
+                boolTheory.TRUTH normalized_prems
+            else replay_reordering normalized_prems [normalized_target]
+        in
+          Thm.EQ_MP (Thm.SYM target_norm) theorem
+        end
+      fun canonical_cong () =
+        restore_canonical_conclusion "cong" conclusion
+          (replay_cong (canonical_conclusion conclusion)
+            (List.map canonical_term args) (canonical_premises prems))
+      fun reducing_cong () =
+        let
+          val source = expect_one_arg "cong" args
+          val polynomial_normalization = SmtReplayCanon.unchanged
+            SmtReplayCanon.arith_poly_norm_conversion source
+          val polynomial_source =
+            boolSyntax.rhs (Thm.concl polynomial_normalization)
+          val ground_normalization = SmtReplayCanon.unchanged
+            (Rewrite.PURE_REWRITE_CONV
+              [integerTheory.INT_MUL_RZERO,
+               integerTheory.INT_ADD_LID,
+               integerTheory.INT_ADD_RID])
+            polynomial_source
+          val normalization =
+            Thm.TRANS polynomial_normalization ground_normalization
+          val normalized_source =
+            boolSyntax.rhs (Thm.concl normalization)
+          fun retain_support () =
+            (* Once [normalization] is exactly the declared conclusion, an
+               unused premise is logically irrelevant.  Retain its
+               hypotheses through a kernel conjunction projection without
+               depending on the premise's solver-specific spelling. *)
+            List.foldl
+              (fn (support, kept) =>
+                Thm.CONJUNCT1 (Thm.CONJ kept support))
+              normalization prems
+          val theorem =
+            (Thm.TRANS normalization
+              (replay_cong NONE [normalized_source] prems)
+             handle Feedback.HOL_ERR _ => retain_support ())
+        in
+          require_declared "cong" theorem
+          handle Feedback.HOL_ERR _ =>
+            restore_canonical_conclusion "cong" conclusion
+              (SmtReplayCanon.cpc_canon_rule theorem)
+        end
       (* Kernel inferences retain every hypothesis; the final checked root
          validates its hypotheses against the original assertion context.
          Rechecking the same large arithmetic hypotheses on every use is
@@ -4171,32 +4830,39 @@ local
            "refl" => replay_refl conclusion args
            | "eq_refl" => replay_eq_refl args
            | "symm" => replay_symm prems
-           | "trans" => replay_trans prems
-           | "cong" => replay_cong conclusion args prems
+           | "trans" => canonical_trans ()
+           | "cong" =>
+               (require_declared "cong" (replay_cong conclusion args prems)
+                handle Feedback.HOL_ERR _ => canonical_cong ()
+                handle Feedback.HOL_ERR _ => reducing_cong ())
            | "ho_cong" => replay_ho_cong prems
            | "beta_reduce" => replay_beta_reduce args
            | "lambda_elim" => replay_lambda_elim args
-           | "eq_resolve" => replay_eq_resolve prems
-           | "contra" => replay_contra prems
+           | "eq_resolve" =>
+               canonical_eq_resolve ()
+           | "contra" => canonical_handler "contra" replay_contra
            | "false_intro" => replay_false_intro prems
            | "false_elim" => replay_false_elim prems
            | "true_elim" => replay_true_elim prems
            | "true_intro" => replay_true_intro prems
            | "evaluate" => replay_evaluate conclusion args
-           | "and_elim" => replay_and_elim args prems
+           | "and_elim" =>
+               replay_and_elim conclusion args prems premise_rules
            | "instantiate" => replay_instantiate args prems
            | "not_implies_elim2" => replay_not_implies_elim2 prems
            | "not_implies_elim1" => replay_not_implies_elim1 prems
            | "implies_elim" => replay_implies_elim prems
            | "factoring" => replay_factoring prems
-           | "reordering" => replay_reordering prems args
+           | "reordering" =>
+               (replay_reordering prems args
+                handle Feedback.HOL_ERR _ => canonical_reordering ())
            | "exists_elim" => replay_rare_rewrite "exists-elim" args
            | "cnf" => replay_cnf (#name rule) args
            | "not_equiv_elim1" => replay_not_equiv_elim "not_equiv_elim1" prems
            | "not_equiv_elim2" => replay_not_equiv_elim "not_equiv_elim2" prems
-           | "equiv_elim2" => replay_equiv_elim2 prems
-           | "equiv_elim1" => replay_equiv_elim1 prems
-           | "arith_rule" => replay_arith_rule (#name rule) args
+           | "equiv_elim2" => replay_equiv_elim2 conclusion prems
+           | "equiv_elim1" => replay_equiv_elim1 conclusion prems
+           | "arith_rule" => replay_arith_rule (#name rule) conclusion args
            | "arith_rel" => replay_arith_rel prems args
            | "arith_abs_eq" => replay_arith_abs_eq args
            | "arith_abs_int_gt" => replay_arith_abs_int_gt args
@@ -4224,13 +4890,17 @@ local
            | "arith_mult_neg" => replay_arith_mult_neg args
            | "arith_mult_pos" => replay_arith_mult_pos args
            | "arith_mult_sign" => replay_arith_mult_sign args
-           | "arith_trichotomy" => replay_arith_trichotomy prems
+           | "arith_trichotomy" => replay_arith_trichotomy conclusion prems
            | "arith_reduction" => replay_arith_reduction args
            | "arith_max_geq1" => replay_arith_max_geq1 args
            | "arith_min_lt2" => replay_arith_min_lt2 args
            | "int_tight_lb" => replay_int_tight_lb prems
            | "int_tight_ub" => replay_int_tight_ub prems
-           | "modus_ponens" => replay_modus_ponens prems
+           | "modus_ponens" =>
+               (require_declared "modus_ponens" (replay_modus_ponens prems)
+                handle Feedback.HOL_ERR _ =>
+                  require_declared "modus_ponens"
+                    (replay_canonical_modus_ponens prems))
            | "arith_sum_ub" => replay_arith_sum_ub prems
            | "arith_mult_abs_comparison" =>
                replay_arith_mult_abs_comparison prems conclusion
@@ -4257,13 +4927,17 @@ local
            | "datatype" => replay_datatype args
            | "dt_split" => replay_dt_split args
            | "datatype_eq" => replay_datatype_eq args
-           | "resolution" => replay_resolution prems conclusion args
+           | "resolution" => canonical_resolution ()
            | "bool" => replay_bool prems conclusion
            | "arith" => replay_arith prems conclusion
            | "string" =>
                replay_string state (#name rule) prems conclusion args
            | _ => unsupported_step step)) ()
-           handle Feedback.HOL_ERR holerr =>
+           handle Conv.UNCHANGED =>
+             raise ERR "replay_step"
+               ("CPC step " ^ id ^ " (rule " ^ #name rule ^
+                ") failed: proof-producing conversion reported unchanged")
+                | Feedback.HOL_ERR holerr =>
              if SmtResource.is_resource_gate holerr then
                raise Feedback.HOL_ERR holerr
              else
@@ -4277,7 +4951,7 @@ local
         | SOME target => if Term.aconv (Thm.concl thm) target then () else
             raise ERR "replay_step" ("CPC rule " ^ #name rule ^
               " produced a conclusion different from its certificate")) ()
-      val state = cache_step state id thm
+      val state = cache_step state id (#name rule) thm
     in
       (if Option.isSome cached then state else cache_thm state thm, thm)
     end
@@ -4287,19 +4961,21 @@ local
       [] => raise ERR "replay_commands" "empty CPC proof"
     | [ASSUME (id, tm)] =>
         let val thm = Thm.ASSUME tm
-            val state = cache_step (assert_hyp state tm) id thm
+            val state = cache_step (assert_hyp state tm) id "assume" thm
         in (cache_thm state thm, thm) end
     | ASSUME (id, tm) :: rest =>
         let val thm = Thm.ASSUME tm
-            val state = cache_step (assert_hyp state tm) id thm
+            val state = cache_step (assert_hyp state tm) id "assume" thm
         in replay_commands (cache_thm state thm) rest end
     | [ASSUME_PUSH (id, tm)] =>
         let val thm = Thm.ASSUME tm
-            val state = cache_step (push_scope_hyp state tm) id thm
+            val state = cache_step (push_scope_hyp state tm) id
+              "assume-push" thm
         in (cache_thm state thm, thm) end
     | ASSUME_PUSH (id, tm) :: rest =>
         let val thm = Thm.ASSUME tm
-            val state = cache_step (push_scope_hyp state tm) id thm
+            val state = cache_step (push_scope_hyp state tm) id
+              "assume-push" thm
         in replay_commands (cache_thm state thm) rest end
     | [STEP step] => replay_step state step
     | STEP step :: rest =>
@@ -4373,7 +5049,13 @@ local
             "extra hypothesis is not a conditional arithmetic consequence"
       fun remove_hyp (hyp, result) =
         Drule.PROVE_HYP (prove_hyp hyp) result
-        handle Feedback.HOL_ERR _ => result
+        handle Feedback.HOL_ERR holerr =>
+          raise ERR "remove_extra_hyps"
+            ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
+             "bridges; hypothesis=" ^ Library.term_to_string hyp ^
+             "; attempted=[ceiling/floor, FP special values, floor/ceiling " ^
+             "negation, datatype normalization, conditional arithmetic]; " ^
+             "underlying=" ^ Feedback.message_of holerr)
     in
       HOLset.foldl remove_hyp thm bad_hyps
     end

@@ -98,11 +98,6 @@ struct
       if contains_sequence t then nonstring_seq_error t else ()
     end
 
-  fun proforma_prove t =
-    Z3_ProformaThms.prove Z3_ProformaThms.string_thms t
-    handle Fail message =>
-      raise ERR "proforma_prove" ("proforma lookup failed: " ^ message)
-
   (* ':smtstr' is a type definition rather than a datatype, so evaluation
      goes through the representation: 'smtstr_rep_compute' unfolds a
      wellformed literal and 'SmtStr_eq_compute' supplies the equality test
@@ -213,7 +208,6 @@ struct
     smtstringz3Theory.seq_head_shared_singleton_prefix,
     smtstringz3Theory.seq_head_shared_singleton_prefix_right,
     smtstringz3Theory.seq_length_two,
-    smtstringz3Theory.seq_two_two_concat_not_three,
     smtstringz3Theory.seq_tail_zero_step
   ]
 
@@ -258,9 +252,6 @@ struct
         ["smtstr_concat", "smtstr_update", "smtstr_prefixof",
          "smtstr_suffixof", "smtstr_contains"])
 
-  val symbolic_thms =
-    Z3_ProformaThms.thm_net_from_list symbolic_lemmas
-
   val middle_singleton_lemmas = [
     smtstringz3Theory.seq_concat_middle_singleton,
     smtstringz3Theory.seq_concat_middle_singleton_result,
@@ -270,12 +261,51 @@ struct
 
   fun is_symbolic_string_goal t = mentions_any symbolic_string_names t
 
+  (* Refute inconsistent concat decompositions by exposing their finite list
+     representations.  The simplifier considers exactly the constructor
+     splits present in the literal/unit lists in the goal, so the work is
+     bounded by those input lengths rather than a recorded 2+2-versus-3
+     theorem. *)
+  fun bounded_concat_split_refute t =
+    let
+      val (antecedent, consequence) = boolSyntax.dest_imp t
+      val _ = Term.aconv consequence boolSyntax.F orelse
+        raise ERR "bounded_concat_split_refute"
+          "concat split goal does not conclude false"
+      val antecedent_thm = Thm.ASSUME antecedent
+      val length_tm = Term.prim_mk_const
+        {Thy = "smtstring", Name = "smtstr_len"}
+      fun length_equality conjunct =
+        let
+          val equality = simpLib.SIMP_RULE boolSimps.bool_ss
+            [smtstringz3Theory.seq_eq_def]
+            (Library.conj_elim (antecedent_thm, conjunct))
+          val length_equality = Thm.AP_TERM length_tm equality
+        in
+          simpLib.SIMP_RULE
+            (simpLib.++ (bossLib.srw_ss(), numSimps.REDUCE_ss))
+            [smtstringz3Theory.seq_unit_length,
+             smtstringTheory.smtstr_len_concat]
+            length_equality
+        end
+      val length_equalities =
+        List.map length_equality (boolSyntax.strip_conj antecedent)
+      val contradiction = Tactical.TAC_PROOF
+        ((List.map Thm.concl length_equalities, boolSyntax.F),
+         intLib.ARITH_TAC)
+      val contradiction = List.foldl
+        (fn (premise, proof) => Drule.PROVE_HYP premise proof)
+        contradiction length_equalities
+    in
+      Thm.DISCH antecedent contradiction
+    end
+
   fun symbolic_string_prove t =
     if not (is_symbolic_string_goal t) then
       raise ERR "symbolic_string_prove"
         "no symbolic concat/prefix/suffix/contains term"
     else
-      Z3_ProformaThms.prove symbolic_thms t
+      bounded_concat_split_refute t
       handle Feedback.HOL_ERR _ =>
       with_metis_limit (fn () =>
         metisLib.METIS_PROVE
@@ -296,10 +326,8 @@ struct
                symbolic_normalizations,
              bossLib.METIS_TAC symbolic_lemmas))) ()
 
-  (* The general rules close whole classes of automaton steps: any code-point
-     range, any loop bounds, any state.  The corpus-shaped instances stay
-     because the proforma net matches conclusions syntactically, and a
-     ground step at state 0 does not match a 'SUC k' conclusion. *)
+  (* General automaton rules only.  Literal states and loop bounds are
+     specialized from these at replay time below. *)
   val aut_transition_rules = [
     smtstringz3Theory.aut_accept_range_deriv,
     smtstringz3Theory.aut_accept_loop_deriv,
@@ -308,20 +336,9 @@ struct
     smtstringz3Theory.aut_accept_loop_transition,
     smtstringz3Theory.aut_accept_loop_nullable_transition,
     smtstringz3Theory.aut_accept_comp_transition,
-    smtstringz3Theory.aut_accept_loop_empty,
-    smtstringz3Theory.aut_accept_loop_deriv_1_3,
-    smtstringz3Theory.aut_accept_loop_deriv_0_2,
-    smtstringz3Theory.aut_accept_loop_deriv_0_1,
-    smtstringz3Theory.aut_accept_loop_nullable_deriv_1_2,
-    smtstringz3Theory.aut_accept_loop_nullable_deriv_0_1,
-    smtstringz3Theory.aut_accept_range_transition_zero,
-    smtstringz3Theory.aut_accept_loop_transition_zero,
-    smtstringz3Theory.aut_accept_loop_transition_one,
-    smtstringz3Theory.aut_accept_loop_transition_two,
-    smtstringz3Theory.aut_accept_range_transition_seq_unit,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_zero,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_one,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_two
+    smtstringz3Theory.aut_accept_comp_range_transition,
+    smtstringz3Theory.aut_accept_inter_range_comp_transition,
+    smtstringz3Theory.aut_accept_loop_empty
   ]
 
   val regex_normalizations = [
@@ -335,11 +352,6 @@ struct
     smtstringTheory.smt_in_re_loop_empty,
     smtstringTheory.re_deriv_loop_singleton,
     smtstringTheory.re_deriv_loop_nullable_singleton,
-    smtstringTheory.smt_in_re_loop_singleton_0_1,
-    smtstringTheory.smt_in_re_loop_singleton_0_2,
-    smtstringTheory.smt_in_re_loop_singleton_1_3,
-    smtstringTheory.smt_in_re_loop_nullable_singleton_0_1,
-    smtstringTheory.smt_in_re_loop_nullable_singleton_1_2,
     smtstringTheory.smt_in_re_star_allchar,
     smtstringTheory.smt_in_re_plus_allchar,
     smtstringTheory.smt_in_re_def,
@@ -362,11 +374,6 @@ struct
     smtstringTheory.smt_in_re_loop_empty,
     smtstringTheory.re_deriv_loop_singleton,
     smtstringTheory.re_deriv_loop_nullable_singleton,
-    smtstringTheory.smt_in_re_loop_singleton_0_1,
-    smtstringTheory.smt_in_re_loop_singleton_0_2,
-    smtstringTheory.smt_in_re_loop_singleton_1_3,
-    smtstringTheory.smt_in_re_loop_nullable_singleton_0_1,
-    smtstringTheory.smt_in_re_loop_nullable_singleton_1_2,
     smtstringTheory.smt_in_re_star_allchar,
     smtstringTheory.smt_in_re_plus_allchar,
     smtstringTheory.re_deriv_correct,
@@ -382,16 +389,6 @@ struct
     smtstringz3Theory.aut_accept_transition,
     smtstringz3Theory.aut_accept_transition_int
   ] @ aut_transition_rules @ [
-    smtstringz3Theory.aut_accept_comp_singleton_transition,
-    smtstringz3Theory.aut_accept_comp_range_transition,
-    smtstringz3Theory.aut_accept_inter_range_comp_transition,
-    smtstringz3Theory.aut_accept_loop_nullable_transition_zero,
-    smtstringz3Theory.aut_accept_loop_nullable_transition_one,
-    smtstringz3Theory.aut_accept_comp_transition_seq_unit,
-    smtstringz3Theory.aut_accept_comp_range_transition_seq_unit,
-    smtstringz3Theory.aut_accept_inter_transition_seq_unit,
-    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_zero,
-    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_one,
     smtstringz3Theory.aut_accept_empty,
     smtstringz3Theory.aut_accept_empty_terminal_int
   ]
@@ -401,8 +398,119 @@ struct
       (smtstring_consts "smtstring" ["smt_in_re"] @
        smtstring_consts "smtstringz3" ["aut_accept"])
 
-  val regex_thms =
-    Z3_ProformaThms.thm_net_from_list regex_lemmas
+  (* Length facts are implications whose automaton premise already occurs in
+     the goal.  Match the parametric theorem after introducing that premise,
+     then reduce only its concrete numeral/code-point side conditions. *)
+  val parametric_regex_length_rules = [
+    smtstringz3Theory.aut_accept_range_length_int,
+    smtstringz3Theory.aut_accept_loop_positive_length_zero,
+    smtstringz3Theory.aut_accept_loop_positive_length_seq_unit,
+    smtstringz3Theory.aut_accept_plus_allchar_length_one
+  ]
+
+  fun replay_parametric_regex_length_prove target =
+    let
+      val reduce_ss = simpLib.++
+        (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
+         intSimps.INT_REDUCE_ss)
+      fun normalize term = SmtReplayCanon.unchanged
+        (simpLib.SIMP_CONV reduce_ss [smtstringz3Theory.seq_unit_def])
+        term
+      val target_normalization = normalize target
+      val normalized_target =
+        boolSyntax.rhs (Thm.concl target_normalization)
+      val target_premise =
+        Lib.fst (boolSyntax.dest_imp normalized_target)
+      fun instantiate rule =
+        let
+          val rule_premise =
+            Lib.fst (boolSyntax.dest_imp (Thm.concl rule))
+          fun match_premise premise =
+            let
+              val normalized_premise =
+                boolSyntax.rhs (Thm.concl (normalize premise))
+            in
+              Term.match_term normalized_premise target_premise
+            end
+          val substitution =
+            Lib.tryfind match_premise (boolSyntax.strip_conj rule_premise)
+          val instance = Drule.INST_TY_TERM substitution rule
+          val instance = simpLib.SIMP_RULE reduce_ss
+            [smtstringz3Theory.seq_unit_def] instance
+          val _ = Term.aconv (Thm.concl instance) normalized_target orelse
+            raise ERR "replay_parametric_regex_length_prove"
+              "specialized length rule has the wrong conclusion"
+        in
+          Thm.EQ_MP (Thm.SYM target_normalization) instance
+        end
+    in
+      Lib.tryfind instantiate parametric_regex_length_rules
+    end
+
+  fun replay_specialized_automaton_prove target =
+    let
+      val numerals = HOLset.listItems
+        (HOLset.addList (Term.empty_tmset,
+          HolKernel.find_terms numSyntax.is_numeral target))
+      fun controls_arithmetic variable tm =
+        let
+          val (head, args) = boolSyntax.strip_comb tm
+          val controlling =
+            (Library.same_const head numSyntax.suc_tm orelse
+             Library.same_const head numSyntax.minus_tm) andalso
+            List.exists (fn arg =>
+              List.exists (Term.aconv variable) (Term.free_vars arg)) args
+        in
+          controlling orelse
+          List.exists (controls_arithmetic variable) args
+        end
+        handle Feedback.HOL_ERR _ => false
+      fun control_vars theorem =
+        List.filter (fn variable =>
+          Type.compare (Term.type_of variable, numSyntax.num) = EQUAL andalso
+          controls_arithmetic variable (Thm.concl theorem))
+          (Term.free_vars (Thm.concl theorem))
+      fun substitutions [] = [[]]
+        | substitutions (variable :: variables) =
+            List.concat (List.map (fn numeral =>
+              List.map (fn rest => Lib.|-> (variable, numeral) :: rest)
+                (substitutions variables)) numerals)
+      val reduce_ss = simpLib.++
+        (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
+         intSimps.INT_REDUCE_ss)
+      val target_normalization = SmtReplayCanon.unchanged
+        (simpLib.SIMP_CONV reduce_ss [smtstringz3Theory.seq_unit_def])
+        target
+      val normalized_target =
+        boolSyntax.rhs (Thm.concl target_normalization)
+      fun instantiate theorem =
+        let
+          val schema =
+            Lib.snd (boolSyntax.dest_imp (Thm.concl theorem))
+            handle Feedback.HOL_ERR _ => Thm.concl theorem
+          val instance = Drule.INST_TY_TERM
+            (Term.match_term schema normalized_target) theorem
+          val instance = simpLib.SIMP_RULE reduce_ss
+            [smtstringz3Theory.seq_unit_def,
+             smtstringz3Theory.aut_accept_loop_empty] instance
+          val _ = Term.aconv (Thm.concl instance) normalized_target orelse
+            raise ERR "replay_specialized_automaton_prove"
+              "specialized transition has the wrong conclusion"
+        in
+          instance
+        end
+      fun control_instances theorem =
+        theorem :: List.map (fn substitution =>
+          simpLib.SIMP_RULE reduce_ss
+            [smtstringz3Theory.aut_accept_loop_empty]
+            (Thm.INST substitution theorem))
+          (substitutions (control_vars theorem))
+      val candidates =
+        List.concat (List.map control_instances aut_transition_rules)
+      val theorem = Lib.tryfind instantiate candidates
+    in
+      Thm.EQ_MP (Thm.SYM target_normalization) theorem
+    end
 
   fun is_regex_goal t = mentions_any regex_names t
 
@@ -410,7 +518,9 @@ struct
     if not (is_regex_goal t) then
       raise ERR "regex_prove" "no regex membership or aut.accept term"
     else
-      Z3_ProformaThms.prove regex_thms t
+      replay_parametric_regex_length_prove t
+      handle Feedback.HOL_ERR _ =>
+      replay_specialized_automaton_prove t
       handle Feedback.HOL_ERR _ =>
       with_metis_limit
         (fn () => metisLib.METIS_PROVE regex_lemmas t) ()
@@ -524,19 +634,15 @@ struct
       raise ERR "rewrite_ground_eval_prove"
         "ground evaluation requires a closed conclusion"
 
-  (* The ordering is intentional and mirrors `string_prove`: the recorded
-     proforma net gets first refusal, then the executable compute set, then
-     only the small, named normalization set above. *)
+  (* The ordering is intentional and mirrors `string_prove`: executable
+     evaluation precedes the small, named normalization set above. *)
   fun string_rewrite_prove t =
     with_string_budget "rewrite" (fn t =>
       if not (has_string_theory_term t) then
         raise ERR "string_rewrite_prove" "no Unicode-string term"
       else
-        profile "rewrite(03.0)(string-proforma)" proforma_prove t
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
-         profile "rewrite(03.1)(string-ground-eval)"
-           rewrite_evaluation_prove t)
+        profile "rewrite(03.1)(string-ground-eval)"
+          rewrite_evaluation_prove t
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "rewrite(03.2)(string-normalization)" rewrite_simp_prove t)) t
@@ -544,10 +650,7 @@ struct
   fun string_prove arith_prove t =
     with_string_budget "replay" (fn t =>
       let val () = check_seq_type t in
-        profile "string(rung:1/proforma)" proforma_prove t
-        handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
-         profile "string(rung:2/ground-eval)" ground_eval_prove t)
+        profile "string(rung:2/ground-eval)" ground_eval_prove t
         handle Feedback.HOL_ERR holerr =>
         (rethrow_resource holerr;
          profile "string(rung:3/length-arith)"

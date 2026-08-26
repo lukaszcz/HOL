@@ -195,6 +195,15 @@ SMT-LIB support matrix:
                                                                        cvc5 finite `bag.*`
                                                                        guard; checked
 
+Coverage within these rows is mechanism-based rather than a list of
+recorded proof shapes.  Core CPC terms cross one proved canonical-form
+boundary and arithmetic rewrites use polynomial normal forms.  String and
+regex replay specializes parametric transition theorems for the state in
+the proof and bounds concat-split refutation by literal length.  Sequence
+replay normalizes numeral spellings and searches append-boundary witnesses.
+Set and bag replay harvests facts from operator-keyed tables whose keys are
+checked against every operator the translation can emit.
+
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
 solver only as a `str_inj` image, and Z3 then answers it with seq th-lemmas
@@ -460,15 +469,22 @@ resource budget; the FloatingPoint bit-blast limits below are its D12 case,
 and the same term-size and step-time caps also gate the Seq, Set, Bag,
 String, and Array replay provers (with per-category `resource-gated:`
 diagnostics).  Z3 proof text is size-gated before Z3_ProofParser runs; the
-checked add/sub and Float16 multiplication-identity circuit rungs use the
-same module's term-size and per-step time caps.  The direct Float16
-`fp.mul x 1.0 = x` atom closes through the checked symbolic-arithmetic rung;
-the generated fpa2bv replay currently reaches that rung and step-time gates.
-Float32 symbolic multiplication term-size gates before circuit expansion.
+checked add/sub circuit and format-parametric multiplication-identity rungs
+use the same module's term-size and per-step time caps.  Direct
+`fp.mul x 1.0 = x` atoms close through a single theorem over arbitrary
+formats (with the SMT exponent-width side condition); unrelated symbolic
+multiplication still uses the format-independent syntax-size times packed-
+width estimate.  Float32 symbolic multiplication term-size gates before
+circuit expansion.
 These incremental cases do not change the manifest-level FloatingPoint
 support row above.  A breach starts with `resource-gated: fp-bitblast;`,
 carries a `resource-gate:FloatingPoint:<case>` feature, and the command-line
 driver reports `Z3_TAC_RESOURCE_GATED` rather than a replay failure.
+
+Setting `HOL4_HOLSMT_NO_FASTPATH=1` disables every retained proforma or
+instance fast path.  This D-mode is a checked-replay CI configuration: the
+general replay procedures remain enabled, so a D-mode failure identifies a
+fast path that has accidentally become coverage-bearing.
 
 Z3 th-lemma replay coverage:
 

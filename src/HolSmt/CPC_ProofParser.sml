@@ -892,6 +892,16 @@ local
                             (Library.undo_look_ahead [token] get_token) :: acc)
                         end
                     in entries [] end
+                  fun parse_list token =
+                    if token = "(" then
+                      let
+                        val _ = Library.expect_token "@list" (get_token ())
+                      in parse_list_after_open () end
+                    else
+                      case lookup_cpc_list token of
+                        SOME terms => terms
+                      | NONE => raise ERR "parse_step"
+                          ("undefined CPC resolution @list alias " ^ token)
                 in
                   if first = ")" then []
                   else
@@ -900,20 +910,13 @@ local
                         (Library.undo_look_ahead [first] get_token)
                       val next = get_token ()
                     in
-                      if next <> "(" then (ignore_terms (); [target])
+                      if next = ")" then [target]
                       else
-                        let val head = get_token () in
-                          if head <> "@list" then
-                            (skip_sexp get_token; ignore_terms (); [target])
-                          else
-                            let
-                              val polarities = parse_list_after_open ()
-                              val _ = Library.expect_token "(" (get_token ())
-                              val _ = Library.expect_token "@list" (get_token ())
-                              val pivots = parse_list_after_open ()
-                              val _ = Library.expect_token ")" (get_token ())
-                            in target :: polarities @ pivots end
-                        end
+                        let
+                          val polarities = parse_list next
+                          val pivots = parse_list (get_token ())
+                          val _ = Library.expect_token ")" (get_token ())
+                        in target :: polarities @ pivots end
                     end
                 end
               fun and_elim_index () =

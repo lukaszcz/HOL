@@ -1130,16 +1130,19 @@ local
   (* discovering FloatingPoint bit-decomposition rewrites                    *)
   (***************************************************************************)
 
-  fun is_k_skolem tm =
+  fun is_k_skolem version tm =
     Term.is_var tm andalso
     let
       val name = Lib.fst (Term.dest_var tm)
+      val {prefix, ...} = fp_skolem_naming version
       val n = String.size name
+      val prefix_size = String.size prefix
       fun digits i =
         i >= n orelse
         (Char.isDigit (String.sub (name, i)) andalso digits (i + 1))
     in
-      n > 2 andalso String.isPrefix "k!" name andalso digits 2
+      n > prefix_size andalso String.isPrefix prefix name andalso
+      digits prefix_size
     end
 
   fun dest_smtfp_bits tm =
@@ -1155,32 +1158,49 @@ local
       raise ERR "dest_smtfp_bits" "smtfp_bits expected"
   end
 
-  fun bit_decomposition_of_rewrite vars equation =
-  let
-    val (fp_var, fields) = boolSyntax.dest_eq equation
-    val _ = SmtFpProve.type_mentions_fp (Term.type_of fp_var) orelse
-      raise ERR "bit_decomposition_of_rewrite" "FP term expected"
-    val (sign, exponent, significand) = dest_smtfp_bits fields
-    fun extract_source field =
-      let val (_, _, source, _) = wordsSyntax.dest_word_extract field
-      in source end
-    val sources = List.map extract_source [sign, exponent, significand]
-    val bv_var = List.hd sources
-    val _ = List.all (Term.aconv bv_var) (List.tl sources) orelse
-      raise ERR "bit_decomposition_of_rewrite"
-        "extracts do not share a source"
-    val _ = is_k_skolem bv_var orelse
-      raise ERR "bit_decomposition_of_rewrite" "k! skolem expected"
-    val _ = HOLset.member (vars, bv_var) orelse
-      raise ERR "bit_decomposition_of_rewrite" "undeclared k! skolem"
-  in
-    SOME {fp_var = fp_var, bv_var = bv_var, equation = equation}
-  end
-  handle Feedback.HOL_ERR _ => NONE
+  fun bit_decomposition_of_rewrite version vars equation =
+    let
+      fun decomposition_shape () =
+        let
+          val (fp_var, fields) = boolSyntax.dest_eq equation
+          val _ = SmtFpProve.type_mentions_fp (Term.type_of fp_var) orelse
+            raise ERR "bit_decomposition_of_rewrite" "FP term expected"
+          val (sign, exponent, significand) = dest_smtfp_bits fields
+          fun extract_source field =
+            let val (_, _, source, _) = wordsSyntax.dest_word_extract field
+            in source end
+          val sources = List.map extract_source [sign, exponent, significand]
+          val bv_var = List.hd sources
+          val _ = List.all (Term.aconv bv_var) (List.tl sources) orelse
+            raise ERR "bit_decomposition_of_rewrite"
+              "extracts do not share a source"
+        in
+          (fp_var, bv_var)
+        end
+    in
+      case Lib.total decomposition_shape () of
+        NONE => NONE
+      | SOME (fp_var, bv_var) =>
+          let
+            (* This registry lookup deliberately sits outside the shape
+               probe: once a private fpa2bv decomposition is recognized, a
+               new Z3 anchor must declare its naming contract explicitly. *)
+            val _ = is_k_skolem version bv_var orelse
+              raise ERR "bit_decomposition_of_rewrite"
+                ("fpa2bv skolem does not match the naming contract for " ^
+                 "Z3 anchor " ^ version)
+            val _ = HOLset.member (vars, bv_var) orelse
+              raise ERR "bit_decomposition_of_rewrite"
+                "undeclared k! skolem"
+          in
+            SOME {fp_var = fp_var, bv_var = bv_var, equation = equation}
+          end
+    end
 
   fun discover_bit_decompositions proof =
   let
     val vars = proof_vars proof
+    val version = proof_version proof
     fun add_decomposition decomposition decompositions =
       if List.exists (fn {bv_var, equation, ...} =>
           Term.aconv bv_var (#bv_var decomposition) andalso
@@ -1193,7 +1213,7 @@ local
         val decompositions =
           case pt of
             REWRITE equation =>
-              (case bit_decomposition_of_rewrite vars equation of
+              (case bit_decomposition_of_rewrite version vars equation of
                  SOME decomposition =>
                    add_decomposition decomposition decompositions
                | NONE => decompositions)

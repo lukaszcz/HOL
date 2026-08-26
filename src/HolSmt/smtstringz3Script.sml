@@ -1081,40 +1081,6 @@ Proof
   metis_tac [smtstringTheory.SmtStr_smtstr_rep]
 QED
 
-Theorem seq_two_two_concat_not_three:
-  a <= 196607 /\ b <= 196607 /\ c <= 196607 /\
-  seq_eq
-      (smtstr_concat
-        (seq_unit (seq_nth_i y 0)) (seq_unit (seq_nth_i y 1))) y /\
-    seq_eq
-      (smtstr_concat
-        (seq_unit (seq_nth_i x 0)) (seq_unit (seq_nth_i x 1))) x /\
-    smtstr_concat (seq_unit a)
-      (smtstr_concat (seq_unit b) (seq_unit c)) =
-      smtstr_concat x y ==>
-  F
-Proof
-  rpt strip_tac >>
-  fs [seq_eq_def] >>
-  `smtstr_len
-      (smtstr_concat
-        (seq_unit (seq_nth_i y 0)) (seq_unit (seq_nth_i y 1))) =
-    smtstr_len y` by (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
-  `smtstr_len
-      (smtstr_concat
-        (seq_unit (seq_nth_i x 0)) (seq_unit (seq_nth_i x 1))) =
-    smtstr_len x` by (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
-  `smtstr_len
-      (smtstr_concat (seq_unit a)
-        (smtstr_concat (seq_unit b) (seq_unit c))) =
-    smtstr_len (smtstr_concat x y)` by
-      (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
-  `smtstr_len (seq_unit a) = 1 /\ smtstr_len (seq_unit b) = 1 /\
-   smtstr_len (seq_unit c) = 1` by simp [seq_unit_length] >>
-  fs [seq_unit_length, smtstringTheory.smtstr_len_concat] >>
-  intLib.ARITH_TAC
-QED
-
 Theorem seq_tail_step:
   SUC i < LENGTH (smtstr_rep s) ==>
     seq_tail s i =

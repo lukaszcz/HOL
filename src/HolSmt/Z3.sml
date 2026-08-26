@@ -278,31 +278,51 @@ structure Z3 = struct
             case result of
               SolverSpec.UNSAT NONE =>
               let
-                val (ty_dict, tm_dict) =
-                  SmtLib.parser_dicts_for_solver_translation "Z3" translation
-                (* Reject oversized proof text before the untrusted proof
-                   parser reads even its first token. *)
-                val proof =
-                  SmtResource.with_z3_proof_size_gate "z3-proof-text"
-                    outfile proof_start instream
-                    (Z3_ProofParser.parse_stream_with_version
-                      (ty_dict, tm_dict) (version_string ()))
-                  handle Feedback.HOL_ERR holerr =>
-                    (TextIO.closeIn instream;
-                     if SmtResource.is_resource_gate holerr then
-                       raise Feedback.HOL_ERR holerr
-                     else
-                       raise_with_context "Z3_SMT_Prover" "proof parse"
-                         (current_proof_cmd_stem ()) holerr)
-                val _ = TextIO.closeIn instream
                 val (As, g) = goal
-                val thm = Z3_ProofReplay.check_proof (As, g, proof)
-                  handle Feedback.HOL_ERR holerr =>
-                    if SmtResource.is_resource_gate holerr then
-                      raise Feedback.HOL_ERR holerr
-                    else
-                      raise_with_context "Z3_SMT_Prover" "proof replay"
-                        (current_proof_cmd_stem ()) holerr
+                (* Some FP goals have a small format-parametric HOL proof but
+                   induce a very large solver certificate.  Prefer that
+                   checked proof when it applies; it is independent of the
+                   UNSAT claim and avoids parsing/replaying irrelevant proof
+                   bulk.  All other goals retain the ordinary proof path. *)
+                val direct_fp =
+                  if SmtFpProve.has_fp_theory_term g then
+                    Lib.total SmtFpProve.fp_prove g
+                  else NONE
+                fun replay_proof () =
+                  let
+                    val (ty_dict, tm_dict) =
+                      SmtLib.parser_dicts_for_solver_translation
+                        "Z3" translation
+                    (* Reject oversized proof text before the untrusted proof
+                       parser reads even its first token. *)
+                    val proof =
+                      SmtResource.with_z3_proof_size_gate "z3-proof-text"
+                        outfile proof_start instream
+                        (Z3_ProofParser.parse_stream_with_version
+                          (ty_dict, tm_dict) (version_string ()))
+                      handle Feedback.HOL_ERR holerr =>
+                        (TextIO.closeIn instream;
+                         if SmtResource.is_resource_gate holerr then
+                           raise Feedback.HOL_ERR holerr
+                         else
+                           raise_with_context "Z3_SMT_Prover" "proof parse"
+                             (current_proof_cmd_stem ()) holerr)
+                    val _ = TextIO.closeIn instream
+                  in
+                    Z3_ProofReplay.check_proof (As, g, proof)
+                    handle Feedback.HOL_ERR holerr =>
+                      if SmtResource.is_resource_gate holerr then
+                        raise Feedback.HOL_ERR holerr
+                      else
+                        raise_with_context "Z3_SMT_Prover" "proof replay"
+                          (current_proof_cmd_stem ()) holerr
+                  end
+                val thm =
+                  case direct_fp of
+                    SOME theorem =>
+                      (TextIO.closeIn instream;
+                       Thm.MP (Thm.ASSUME (boolSyntax.mk_neg g)) theorem)
+                  | NONE => replay_proof ()
                 val thm = Thm.CCONTR g thm
                 val thm = validation [thm]
                 val thm = check_reconstructed_theorem "Z3_SMT_Prover"

@@ -44,34 +44,79 @@ struct
 
   fun has_native_bag_encoding t = mentions is_bag_constant t
 
-  val bag_rewrites = [
-    bagTheory.BAG_UNION,
-    bagTheory.BAG_DIFF,
-    bagTheory.BAG_MERGE,
-    bagTheory.BAG_INTER,
-    bagTheory.BAG_INSERT,
-    bagTheory.BAG_IN,
-    bagTheory.BAG_INN,
-    bagTheory.SUB_BAG,
+  fun bag_const name = Term.prim_mk_const {Thy = "bag", Name = name}
+
+  (* Each admitted bag head has its own count/pointwise characterization.
+     In particular CARD, FILTER, IMAGE and ITBAG are not admitted merely
+     because the recognizer can name them. *)
+  val bag_fact_table = [
+    ("BAG_IN", bag_const "BAG_IN",
+      [bagTheory.BAG_IN, bagTheory.BAG_INN]),
+    ("BAG_INN", bag_const "BAG_INN", [bagTheory.BAG_INN]),
+    ("BAG_INSERT", bag_const "BAG_INSERT", [bagTheory.BAG_INSERT]),
+    ("BAG_UNION", bag_const "BAG_UNION", [bagTheory.BAG_UNION]),
+    ("BAG_DIFF", bag_const "BAG_DIFF", [bagTheory.BAG_DIFF]),
+    ("BAG_MERGE", bag_const "BAG_MERGE", [bagTheory.BAG_MERGE]),
+    ("BAG_INTER", bag_const "BAG_INTER", [bagTheory.BAG_INTER]),
+    ("SUB_BAG", bag_const "SUB_BAG", [bagTheory.SUB_BAG]),
+    ("EMPTY_BAG", bag_const "EMPTY_BAG", [bagTheory.EMPTY_BAG]),
+    ("BAG_CARD", bag_const "BAG_CARD",
+      [bagTheory.BAG_CARD_THM, bagTheory.BAG_CARD_EMPTY,
+       bagTheory.BAG_CARD_UNION, bagTheory.BAG_CARD_DIFF,
+       bagTheory.BAG_CARD_BAG_INN]),
+    ("BAG_FILTER", bag_const "BAG_FILTER",
+      [bagTheory.BAG_FILTER_DEF, bagTheory.BAG_INN_BAG_FILTER,
+       bagTheory.BAG_IN_BAG_FILTER]),
+    ("BAG_IMAGE", bag_const "BAG_IMAGE",
+      [bagTheory.BAG_IMAGE_DEF, bagTheory.BAG_IN_FINITE_BAG_IMAGE]),
+    ("ITBAG", bag_const "ITBAG",
+      [bagTheory.ITBAG_THM, bagTheory.ITBAG_EMPTY, bagTheory.ITBAG_INSERT]),
+    ("BAG_CHOICE", bag_const "BAG_CHOICE", [bagTheory.BAG_CHOICE_DEF]),
+    ("BAG_EVERY", bag_const "BAG_EVERY", [bagTheory.BAG_EVERY_THM]),
+    ("SET_OF_BAG", bag_const "SET_OF_BAG", [bagTheory.SET_OF_BAG]),
+    ("BAG_OF_SET", bag_const "BAG_OF_SET", [bagTheory.BAG_OF_SET])
+  ]
+
+  val supported_bag_operator_names_for_test =
+    List.map (fn (name, _, _) => name) bag_fact_table
+
+  fun bag_rewrites_for t =
+    let
+      fun occurs head = mentions (fn tm =>
+        Term.is_const tm andalso Library.same_const head tm) t
+    in
+      List.concat
+        (List.map (fn (_, _, facts) => facts)
+          (List.filter (fn (_, head, _) => occurs head) bag_fact_table)) @ [
+    integerTheory.INT_GE,
+    integerTheory.INT_OF_NUM,
+    integerTheory.NUM_OF_INT,
+    integerTheory.INT_LE,
+    integerTheory.INT_OF_NUM_LE,
+    integerTheory.INT_OF_NUM_LT,
     integerTheory.INT_OF_NUM_ADD,
     combinTheory.UPDATE_def,
     combinTheory.APPLY_UPDATE_THM,
     boolTheory.FUN_EQ_THM
-  ]
+      ]
+    end
 
   fun simp_prove t =
     simpLib.SIMP_PROVE (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
-      bag_rewrites t
+      (bag_rewrites_for t) t
 
   fun pointwise_prove t =
     SmtResource.with_resource_step_time "Bag" "bag-condition-splitting"
       (fn t => Tactical.prove (t,
+        let val rewrites = bag_rewrites_for t in
         Tactical.THEN (bossLib.RW_TAC
-          (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)) bag_rewrites,
+          (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)) rewrites,
           Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
-            bossLib.RW_TAC
-              (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
-              bag_rewrites)))) t
+            Tactical.THEN
+              (bossLib.FULL_SIMP_TAC
+                (simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss))
+                rewrites,
+               intLib.ARITH_TAC))) end)) t
 
   fun unsupported t =
     raise ERR "bag_prove"

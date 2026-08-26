@@ -29,6 +29,18 @@ struct
 
   val _ = Feedback.register_trace ("HolSmtLib", trace, 4)
 
+  (* Permanent coverage-ablation switch.  Replay fast paths consult this
+     single predicate; complete rule procedures remain enabled. *)
+  fun no_fastpath () =
+    OS.Process.getEnv "HOL4_HOLSMT_NO_FASTPATH" = SOME "1"
+
+  fun require_fastpath component =
+    if no_fastpath () then
+      raise Feedback.mk_HOL_ERR "Library" "require_fastpath"
+        ("fast path disabled by HOL4_HOLSMT_NO_FASTPATH=1: " ^ component)
+    else
+      ()
+
   (***************************************************************************)
   (* I/O, parsing                                                            *)
   (***************************************************************************)
@@ -499,9 +511,24 @@ struct
      and another instantiating `z2 = z1`). *)
   fun gen_instantiation (lhs, rhs, var_set) =
   let
-    val substs = Unify.simp_unify_terms [] lhs rhs
+    (* Only proof-local names may be solved by replay unification.  Treat
+       every other free variable in the goal as a rigid constant; otherwise
+       a syntactic mismatch can be hidden by "defining" a user variable. *)
+    val goal_vars = Term.FVL [lhs, rhs] Term.empty_tmset
+    val protected = HOLset.listItems (HOLset.difference (goal_vars, var_set))
+    val substs = Unify.simp_unify_terms protected lhs rhs
+      handle Feedback.HOL_ERR holerr =>
+        raise Feedback.mk_HOL_ERR "Library" "gen_instantiation"
+          ("simp_unify_terms rejected protected goal variables: " ^
+           Feedback.message_of holerr ^ "; lhs=" ^ term_to_string lhs ^
+           "; rhs=" ^ term_to_string rhs ^ "; protected=" ^
+           String.concatWith ", " (List.map term_to_string protected))
     fun orient {redex, residue} = orient_def var_set (redex, residue)
     val oriented_substs = List.map orient substs
+    val _ = List.all (fn (name, _) => HOLset.member (var_set, name))
+      oriented_substs orelse
+      raise Feedback.mk_HOL_ERR "Library" "gen_instantiation"
+        "unification produced a definition for a non-Z3 variable"
     val asl = List.map boolSyntax.mk_eq oriented_substs
     val thms = List.map Thm.ASSUME asl
     val concl = boolSyntax.mk_eq (lhs, rhs)
@@ -770,6 +797,34 @@ struct
   fun contains_conditional tm =
     List.exists (Lib.can boolSyntax.dest_cond) (subterms tm)
 
+  (* SOS procedures accept polynomial arithmetic.  A totalized division or
+     remainder encoding can contain syntactic products, but those products do
+     not make the surrounding term polynomial; sending such a goal to CSDP is
+     both fruitless and very expensive. *)
+  fun contains_nonpolynomial_arithmetic tm =
+    let
+      fun same_const left right =
+        Term.same_const left right handle Feedback.HOL_ERR _ => false
+      fun is_division_head head =
+        List.exists (same_const head)
+          [numSyntax.div_tm, numSyntax.mod_tm,
+           intSyntax.div_tm, intSyntax.mod_tm,
+           intSyntax.quot_tm, intSyntax.rem_tm,
+           realSyntax.div_tm] orelse
+        (case Lib.total Term.dest_thy_const head of
+           SOME {Thy = "HolSmt", Name, ...} =>
+             List.exists (Lib.equal Name)
+               ["smt_ediv_total", "smt_emod_total", "smt_rdiv"]
+         | _ => false)
+      fun search term =
+        case Lib.total Term.dest_abs term of
+          SOME (_, body) => search body
+        | NONE =>
+            let val (head, arguments) = boolSyntax.strip_comb term in
+              is_division_head head orelse List.exists search arguments
+            end
+    in search tm end
+
   (* cvc5 and Z3 may lower MIN/MAX or natural subtraction to conditionals.
      Normalize just that shape before arithmetic, rather than broadening the
      ordinary arithmetic path to case-split every goal. *)
@@ -800,7 +855,8 @@ struct
     handle Feedback.HOL_ERR _ =>
     arith_prove_conditional tm
     handle Feedback.HOL_ERR _ =>
-    if is_nonlinear tm then nla_prove tm
+    if is_nonlinear tm andalso not (contains_nonpolynomial_arithmetic tm) then
+      nla_prove tm
     else raise Feedback.mk_HOL_ERR "Library" "arith_prove_with_cases"
       ("failed: " ^ term_to_string tm)
 

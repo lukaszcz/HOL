@@ -965,7 +965,8 @@ local
      implementation below, however, is considerably faster.
   *)
   fun z3_def_axiom (state, t) =
-    (state, Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms t)
+    (Library.require_fastpath "Z3 def-axiom proforma";
+     (state, Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms t))
     handle Feedback.HOL_ERR _ =>
     (* Array-encoded Set literals appear in Z3's Tseitin clauses as a
        select of the parsed EMPTY/UNIV predicate.  Normalize those recorded
@@ -1006,6 +1007,14 @@ local
     in
       (state, Drule.IMP_ELIM (Lib.fst (Thm.EQ_IMP_RULE l_eq_r)))
     end
+    handle Feedback.HOL_ERR _ =>
+      (state, Tactical.TAC_PROOF (([], t),
+        Tactical.THEN
+          (Tactical.REPEAT Tactic.COND_CASES_TAC,
+           bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+             [boolTheory.EQ_SYM_EQ])))
+    handle Feedback.HOL_ERR _ =>
+      (state, tautLib.TAUT_PROVE t)
 
   (* (!x. ?y. !z. P) = P *)
   fun z3_elim_unused (state, t) =
@@ -1124,51 +1133,17 @@ local
      This is done to avoid ending up with circular definitions in the final
      theorem. *)
 
-  fun z3_intro_def_proforma (state, t) =
-  let
-    val thm =
-      case Net.match t Z3_ProformaThms.intro_def_thms of
-        thm :: _ => thm
-      | [] => raise ERR "z3_intro_def_proforma"
-          "unsupported intro-def shape"
-    val substs = Term.match_term (Thm.concl thm) t
-    val term_substs = Lib.fst substs
-    (* Check if the hypothesis should be changed from `name = term` to
-       `term = name`. Note that `name` and `term` are actually called `n` and
-       `t` in `intro_def_thms`, except for the 4th schematic form which doesn't
-       have `t` (nor does it need to be oriented). *)
-    fun is_varname s tm = Lib.fst (Term.dest_var tm) = s
-    val name = Option.valOf (Lib.subst_assoc (is_varname "n") term_substs)
-    val term_opt = Lib.subst_assoc (is_varname "t") term_substs
-    val is_oriented =
-      case term_opt of
-        NONE => true (* `term_opt` will be NONE in the 4th schematic form *)
-      | SOME term => Library.is_def_oriented (#var_set state) (name, term)
-    (* Orient the hypothesis if necessary *)
-    val thm = if is_oriented then thm else
-      Conv.HYP_CONV_RULE (fn _ => true) Conv.SYM_CONV thm
-    val inst_thm = Drule.INST_TY_TERM substs thm
-    val asl = Thm.hyp inst_thm
-  in
-    (state_define state asl, inst_thm)
-  end
-
   (* A :lambda-def axiom is printed pointwise, while replay records the
      underlying function definition.  HOL's first-order matcher deliberately
      refuses to instantiate a schematic function with a term containing the
-     matched binder, so derive these C1-observed one- and two-binder forms
-     explicitly.  Repeated AP_THM followed by beta is the kernel derivation
-     underlying the corresponding FUN_EQ_THM instance. *)
+     matched binders, so derive every binder arity by iteration.  Repeated
+     AP_THM followed by beta is the kernel derivation underlying the
+     corresponding FUN_EQ_THM instance. *)
   fun z3_intro_def_lambda (state, t) =
   let
-    val _ = if List.null (Net.match t Z3_ProformaThms.intro_def_thms)
-      then raise ERR "z3_intro_def_lambda"
-        "unsupported :lambda-def intro-def shape"
-      else ()
     val (vars, body) = boolSyntax.strip_forall t
-    val _ = if List.length vars = 1 orelse List.length vars = 2 then ()
-      else raise ERR "z3_intro_def_lambda"
-        "unsupported :lambda-def binder count"
+    val _ = if List.null vars then raise ERR "z3_intro_def_lambda"
+      "pointwise axiom has no binders" else ()
     val (lhs, rhs) = boolSyntax.dest_eq body
     fun named_application side =
       let
@@ -1185,7 +1160,8 @@ local
         (SOME name, _) => (name, rhs, true)
       | (_, SOME name) => (name, lhs, false)
       | _ => raise ERR "z3_intro_def_lambda"
-          "pointwise axiom does not define a Z3 name"
+          ("unsupported :lambda-def intro-def shape: " ^
+           "pointwise axiom does not define a Z3 name")
     val residue = Term.list_mk_abs (vars, term)
     val def = boolSyntax.mk_eq (name, residue)
     val def_thm = Thm.ASSUME def
@@ -1204,9 +1180,87 @@ local
     (state_define state [def], inst_thm)
   end
 
+  fun z3_intro_def_general (state, target) =
+  let
+    val names = List.filter (fn variable =>
+      HOLset.member (#var_set state, variable)) (Term.free_vars target)
+    fun contains variable term =
+      List.exists (Term.aconv variable) (Term.free_vars term)
+    fun orient (name, residue) =
+      if Library.is_def_oriented (#var_set state) (name, residue) then
+        boolSyntax.mk_eq (name, residue)
+      else
+        boolSyntax.mk_eq (residue, name)
+    fun prove_definition (name, residue) =
+      let
+        val definition = orient (name, residue)
+        val condition =
+          let
+            val (left, right) = boolSyntax.dest_eq definition
+          in
+            case Lib.total boolSyntax.dest_cond right of
+              SOME (condition, _, _) => SOME condition
+            | NONE =>
+                case Lib.total boolSyntax.dest_cond left of
+                  SOME (condition, _, _) => SOME condition
+                | NONE => NONE
+          end
+        val tactic =
+          case condition of
+            SOME condition =>
+              Tactical.THEN
+                (Tactic.ASM_CASES_TAC condition,
+                 bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+                   [boolTheory.EQ_SYM_EQ])
+          | NONE =>
+              Tactical.THEN
+                (Tactical.REPEAT Tactic.COND_CASES_TAC,
+                 bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+                   [boolTheory.EQ_SYM_EQ])
+        val theorem = Tactical.TAC_PROOF (([definition], target),
+          tactic)
+      in
+        (state_define state [definition], theorem)
+      end
+    fun ordinary_candidates name =
+      List.map (fn residue => (name, residue))
+        (List.filter (fn residue =>
+          Type.compare (Term.type_of residue, Term.type_of name) = EQUAL andalso
+          not (Term.aconv residue name) andalso not (contains name residue))
+          (Library.subterms target))
+    fun equality_with_name name equation =
+      let val (left, right) = boolSyntax.dest_eq equation in
+        if Term.aconv left name andalso not (contains name right) then right
+        else if Term.aconv right name andalso not (contains name left) then left
+        else raise ERR "z3_intro_def_general" "equality has another name"
+      end
+    fun conditional_candidate name =
+      let
+        val (first, second) = boolSyntax.dest_conj target
+        val (first_guard, first_equality) = boolSyntax.dest_disj first
+        val (second_guard, second_equality) = boolSyntax.dest_disj second
+        val condition = boolSyntax.dest_neg first_guard
+        val _ = Term.aconv condition second_guard orelse
+          raise ERR "z3_intro_def_general" "conditional guards differ"
+        val then_value = equality_with_name name first_equality
+        val else_value = equality_with_name name second_equality
+      in
+        (name, boolSyntax.mk_cond (condition, then_value, else_value))
+      end
+    val candidates = List.concat (List.map (fn name =>
+      (conditional_candidate name :: ordinary_candidates name)
+      handle Feedback.HOL_ERR _ => ordinary_candidates name) names)
+  in
+    Lib.tryfind prove_definition candidates
+  end
+
   fun z3_intro_def (args as (_, t)) =
     if boolSyntax.is_forall t then z3_intro_def_lambda args
-    else z3_intro_def_proforma args
+    else z3_intro_def_general args
+      handle Feedback.HOL_ERR holerr =>
+        raise ERR "z3_intro_def"
+          ("general intro-def reconstruction failed: " ^
+           Feedback.message_of holerr)
 
   (*  [l1, ..., ln] |- F
      --------------------
@@ -1564,14 +1618,21 @@ local
       List.filter eligible (fp_bit_decompositions state)
     end
 
-  fun fp_k_index var =
+  fun fp_k_index version var =
     let
       val name = Lib.fst (Term.dest_var var)
-      val _ = String.isPrefix "k!" name orelse raise Fail "not k!"
-      val digits = String.extract (name, 2, NONE)
+      val {prefix, packed_suffix} = fp_skolem_naming version
+      val prefix_size = String.size prefix
+      val _ = String.isPrefix prefix name orelse
+        raise ERR "fp_k_index"
+          ("fpa2bv symbol violates the naming contract for Z3 anchor " ^
+           version)
+      val digits = String.extract (name, prefix_size, NONE)
       val n = String.size digits
-      val _ = n > 0 andalso String.sub (digits, n - 1) = #"0" orelse
-        raise Fail "not a trailing-zero k! name"
+      val _ = n > 0 andalso String.sub (digits, n - 1) = packed_suffix orelse
+        raise ERR "fp_k_index"
+          ("fpa2bv packed symbol violates the suffix contract for Z3 " ^
+           "anchor " ^ version)
     in
       Option.valOf (Int.fromString (String.substring (digits, 0, n - 1)))
     end
@@ -1579,7 +1640,7 @@ local
   fun fp_inferred_packed_vars (state : state) =
     List.filter
       (fn var => wordsSyntax.is_word_type (Term.type_of var) andalso
-        Lib.can fp_k_index var)
+        Lib.can (fp_k_index (#z3_version state)) var)
       (HOLset.listItems (#var_set state))
 
   fun fp_packed_vars (state : state) =
@@ -1596,13 +1657,15 @@ local
   fun fp_per_bit_definitions (state : state) =
   let
     fun compare_index (left, right) =
-      Int.compare (fp_k_index left, fp_k_index right)
+      Int.compare
+        (fp_k_index (#z3_version state) left,
+         fp_k_index (#z3_version state) right)
     val bv_vars = Listsort.sort compare_index
       (fp_packed_vars state)
     val bool_vars = Listsort.sort compare_index
       (List.filter
         (fn var => Term.type_of var = Type.bool andalso
-          Lib.can fp_k_index var)
+          Lib.can (fp_k_index (#z3_version state)) var)
         (HOLset.listItems (#var_set state)))
     fun allocate ([], remaining, definitions) =
           if List.null remaining then List.rev definitions
@@ -1632,6 +1695,65 @@ local
   handle Fail _ => []
        | Option.Option => []
        | Overflow => []
+
+  (* The r033--r036 family is Boolean normalization underneath a negated
+     existential.  HOL's simplifier descends through every quantifier, so
+     this one procedure covers any binder count instead of matching a
+     one-binder proforma. *)
+  fun quantified_boolean_rewrite_prove target =
+    let
+      fun dest_negated_exists tm =
+        let
+          val existential = boolSyntax.dest_neg tm
+          val (variables, body) = boolSyntax.strip_exists existential
+          val _ = List.null variables andalso
+            raise ERR "quantified_boolean_rewrite_prove"
+              "negated existential has no binders"
+        in body end
+      val (left, right) = boolSyntax.dest_eq target
+      val _ = (dest_negated_exists left; dest_negated_exists right)
+        handle Feedback.HOL_ERR _ =>
+        raise ERR "quantified_boolean_rewrite_prove"
+          "rewrite is not between negated existential formulas"
+    in
+      Tactical.TAC_PROOF (([], target),
+        bossLib.SIMP_TAC boolSimps.bool_ss [boolTheory.IMP_DISJ_THM])
+    end
+
+  fun assert_rewrite_definitions state definitions =
+    List.app (fn definition =>
+      let val (lhs, _) = boolSyntax.dest_eq definition in
+        if HOLset.member (#var_set state, lhs) then ()
+        else raise ERR "z3_rewrite"
+          ("unification produced a definition outside the proof variable " ^
+           "set: " ^ Library.term_to_string definition)
+      end) definitions
+
+  fun linear_arithmetic_rewrite_prove target =
+    let
+      fun arithmetic_variable variable =
+        let val ty = Term.type_of variable in
+          Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
+          Type.compare (ty, realSyntax.real_ty) = EQUAL
+        end
+      fun arithmetic_constant tm =
+        Term.is_const tm andalso
+        let val {Thy, ...} = Term.dest_thy_const tm in
+          Thy = "integer" orelse Thy = "real" orelse Thy = "intreal"
+        end
+      val _ = List.all arithmetic_variable (Term.free_vars target) orelse
+        raise ERR "linear_arithmetic_rewrite_prove"
+          "rewrite has a non-arithmetic variable"
+      val _ = Lib.can (HolKernel.find_term arithmetic_constant) target orelse
+        raise ERR "linear_arithmetic_rewrite_prove"
+          "rewrite has no integer or real operator"
+      val _ = not (Lib.can
+        (HolKernel.find_term (Lib.can boolSyntax.dest_cond)) target) orelse
+        raise ERR "linear_arithmetic_rewrite_prove"
+          "conditional rewrite is outside polynomial normal form"
+    in
+      SmtReplayCanon.arith_poly_norm_prove target
+    end
 
   fun z3_rewrite (state, t) =
   let
@@ -1704,8 +1826,17 @@ local
             if SmtResource.is_resource_gate holerr then
               raise Feedback.HOL_ERR holerr
             else
+              (state, profile "rewrite(01.25)(poly-normal-form)"
+                linear_arithmetic_rewrite_prove t)
+              handle Feedback.HOL_ERR _ =>
+              (state, profile "rewrite(01.4)(quantified-boolean)"
+                quantified_boolean_rewrite_prove t)
+              handle Feedback.HOL_ERR _ =>
               (state, profile "rewrite(01.5)(proforma)"
-                (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
+                (fn target =>
+                  (Library.require_fastpath "Z3 rewrite proforma";
+                   Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms target))
+                t)
               handle Feedback.HOL_ERR _ =>
                 let
                 val thm = profile "rewrite(01.75)(array-set)"
@@ -1745,6 +1876,7 @@ local
       val thm = profile "rewrite(06.5)(unification-early)"
         Library.gen_instantiation (l, r, #var_set state)
       val asl = Thm.hyp thm
+      val _ = assert_rewrite_definitions state asl
       fun is_safe_early_definition tm =
         let val (name, residue) = boolSyntax.dest_eq tm
         in Term.type_of name = Type.bool orelse not (Term.is_var residue) end
@@ -1934,6 +2066,7 @@ local
       val thm = profile "rewrite(12.1)(unification)" Library.gen_instantiation
         (lhs, rhs, #var_set state)
       val asl = Thm.hyp thm
+      val _ = assert_rewrite_definitions state asl
     in
       (state_define (state_cache_thm state thm) asl, thm)
     end
@@ -1948,6 +2081,7 @@ local
       fun not_not_conv tm = Thm.SPEC tm NOT_NOT_INTRO
       val thm = Conv.CONV_RULE (Conv.RHS_CONV not_not_conv) thm
       val asl = Thm.hyp thm
+      val _ = assert_rewrite_definitions state asl
     in
       (state_define (state_cache_thm state thm) asl, thm)
     end
@@ -2001,17 +2135,24 @@ local
     (state, thms, t) : state * Thm.thm =
   let
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
-    val (state, thm) = (state,
-      (* proforma theorems *)
-      profile ("th_lemma[" ^ name ^ "](1)(proforma)")
-        (Z3_ProformaThms.prove Z3_ProformaThms.th_lemma_thms) t'
-      handle Feedback.HOL_ERR _ =>
+    fun general () =
+      ((state,
         (* cached theorems *)
         profile ("th_lemma[" ^ name ^ "](2)(cache)")
           (state_inst_cached_thm state) t')
       handle Feedback.HOL_ERR _ =>
         (* do actual work to derive the theorem *)
-        th_lemma_implementation (state, t')
+        th_lemma_implementation (state, t'))
+    val (state, thm) =
+      if name = "arith" orelse name = "array" then
+        ((state,
+          profile ("th_lemma[" ^ name ^ "](1)(proforma)")
+            (fn target =>
+              (Library.require_fastpath "Z3 th-lemma proforma";
+               Z3_ProformaThms.prove Z3_ProformaThms.th_lemma_thms target))
+            t')
+         handle Feedback.HOL_ERR _ => general ())
+      else general ()
   in
     (state, Drule.LIST_MP thms thm)
   end
@@ -3254,8 +3395,26 @@ local
             case try_tac name tac of
               SOME th => SOME th
             | NONE => first_success tacs
+      fun beta_eta_conv tm = SmtReplayCanon.compose
+        [Conv.TOP_DEPTH_CONV Thm.BETA_CONV,
+         Conv.TOP_DEPTH_CONV Drule.ETA_CONV] tm
+      val hyp_normalization = beta_eta_conv hyp
+      val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_normalization)
+      fun canonical_assumption [] = NONE
+        | canonical_assumption (assumption :: rest) =
+            let
+              val normalization = beta_eta_conv assumption
+              val normalized = boolSyntax.rhs (Thm.concl normalization)
+            in
+              if Term.aconv normalized normalized_hyp then
+                SOME (Thm.EQ_MP (Thm.SYM hyp_normalization)
+                  (Thm.EQ_MP normalization (Thm.ASSUME assumption)))
+              else canonical_assumption rest
+            end
       val hyp_thm =
-        case first_success
+        case canonical_assumption asl of
+          SOME th => th
+        | NONE => (case first_success
           [("check_proof(hyp_removal:numeral_normalize)",
               smt_numeral_normalize_tac rdiv_bridges),
            ("check_proof(hyp_removal:semantic_normalize)",
@@ -3268,8 +3427,11 @@ local
            ("check_proof(hyp_removal:datatype_normalize)",
               datatype_normalize_tac datatype_thms)] of
           SOME th => th
-        | NONE => profile "check_proof(hyp_removal:METIS)"
-            Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
+        | NONE => raise ERR "remove_hyps"
+            ("extra hypothesis is not one of the enumerated Z3 semantic " ^
+             "bridges; hypothesis=" ^ Library.term_to_string hyp ^
+             "; attempted=[numeral division, semantic division, total " ^
+             "division, arithmetic normalization, datatype normalization]"))
     in
       Drule.PROVE_HYP hyp_thm thm
     end
@@ -3277,19 +3439,14 @@ local
     HOLset.foldl remove_hyp thm bad_hyps
   end
 
-  (* Workaround for a Z3 proof issue where a `hypothesis` rule introduces the
-     literal tautology `p = p` and no later `lemma` rule discharges it.  Keep
-     this intentionally narrow: other reflexive equalities are not known Z3
-     artifacts and should not be silently removed. *)
-  fun is_spurious_p_eq_p hyp =
+  (* A reflexive equality is independently derivable by the kernel, whatever
+     spelling Z3 chose for its sides. *)
+  fun is_reflexive_equality hyp =
     if boolSyntax.is_eq hyp then
       let
         val (lhs, rhs) = boolSyntax.dest_eq hyp
       in
-        Term.term_eq lhs rhs andalso
-        (case Lib.total Term.dest_var lhs of
-           SOME ("p", ty) => ty = Type.bool
-         | _ => false)
+        Term.aconv lhs rhs
       end
     else
       false
@@ -3298,7 +3455,7 @@ local
   let
     val extra_hyps = HOLset.difference (Thm.hypset thm, asserted)
     fun remove_hyp (hyp, thm) =
-      if is_spurious_p_eq_p hyp then
+      if is_reflexive_equality hyp then
         Drule.PROVE_HYP (Thm.REFL (Lib.fst (boolSyntax.dest_eq hyp))) thm
       else
         thm
@@ -3309,6 +3466,8 @@ in
   (* For unit tests *)
   val remove_definitions = remove_definitions
   val remove_extra_hyps = remove_extra_hyps
+  val quantified_boolean_rewrite_prove_for_test =
+    quantified_boolean_rewrite_prove
   val beta_equal_for_test = beta_equal
   val eta_equal_for_test = eta_equal
   val monotonicity_prove_for_test = monotonicity_prove

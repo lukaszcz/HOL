@@ -130,6 +130,26 @@ struct
   val supported_z3_versions =
     ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
 
+  (* Private fpa2bv symbols are part of the measured proof dialect, not a
+     globally valid parser convention.  All current anchors use [k!<digits>]
+     and packed words end in zero; a new anchor must explicitly register its
+     contract here before replay may infer bit allocations from names. *)
+  type fp_skolem_naming = {prefix : string, packed_suffix : char}
+
+  val fp_skolem_naming_registry : (string * fp_skolem_naming) list =
+    [("4.11.2", {prefix = "k!", packed_suffix = #"0"}),
+     ("4.12.4", {prefix = "k!", packed_suffix = #"0"}),
+     ("4.13.0", {prefix = "k!", packed_suffix = #"0"}),
+     ("4.14.1", {prefix = "k!", packed_suffix = #"0"}),
+     ("4.15.3", {prefix = "k!", packed_suffix = #"0"})]
+
+  fun fp_skolem_naming version : fp_skolem_naming =
+    case List.find (fn (anchor, _) => anchor = version)
+        fp_skolem_naming_registry of
+      SOME (_, naming) => naming
+    | NONE => raise Feedback.mk_HOL_ERR "Z3_Proof" "fp_skolem_naming"
+        ("no fpa2bv skolem naming contract for Z3 anchor " ^ version)
+
   fun mk_rule_with_version version_support
       (name, aliases, premise_shape, replay_handler) : proof_rule = {
     name = name,

@@ -9559,6 +9559,17 @@ in
     "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false")
 end
 
+fun cpc_proof_replay_omitted_arith_poly_norm_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) \
+    \(step @p1 :rule arith_poly_norm :args ((= (+ x 0) x))))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``(x : int) + 0 = x``,
+    "omitted CPC arith_poly_norm produced a Boolean conversion theorem")
+end
+
 fun cpc_proof_replay_cong_consumes_premises_success () =
 let
   val proof = parse_cpc_proof_string
@@ -10448,6 +10459,11 @@ in
       Feedback.message_of holerr)
 end
 
+fun z3_fp_skolem_naming_registry_diagnostic () =
+  expect_hol_error_contains "unregistered Z3 FP skolem contract"
+    "Z3 anchor 4.16.0"
+    (fn () => ignore (Z3_Proof.fp_skolem_naming "4.16.0"))
+
 fun z3_proof_parser_rule_name_term_boundary () =
   (ignore (parse_z3_proof_string "4.12.4"
     "((proof (asserted (rewrite (= false false)))))");
@@ -10837,6 +10853,14 @@ let
   val binary_expected =
     ``!x y:int. x + y = (z2:int->int->int) x y``
   val binary_def = ``(z2:int->int->int) = (\x y. x + y)``
+  val ternary = replay_z3_proof_string
+    "((declare-fun z3 () (Array Int (Array Int (Array Int Int)))) \
+    \(proof (intro-def (forall ((x Int) (y Int) (w Int)) \
+    \(= (+ x (+ y w)) (select (select (select z3 x) y) w))))))"
+  val ternary_expected =
+    ``!x y w:int. x + (y + w) = (z3:int->int->int->int) x y w``
+  val ternary_def =
+    ``(z3:int->int->int->int) = (\x y w. x + (y + w))``
 in
   assert (Thm.concl thm ~~ expected,
     ":lambda-def intro-def replay returned the wrong conclusion");
@@ -10852,9 +10876,14 @@ in
     "two-binder :lambda-def did not record its function definition: " ^
     String.concatWith ", "
       (List.map term_with_types (HOLset.listItems (Thm.hypset binary))));
+  assert (Thm.concl ternary ~~ ternary_expected,
+    "three-binder :lambda-def returned the wrong conclusion");
+  assert (HOLset.member (Thm.hypset ternary, ternary_def),
+    "three-binder :lambda-def did not record its function definition");
   check_oracle_tags "Z3 :lambda-def intro-def" thm;
   check_oracle_tags "Z3 left-oriented :lambda-def" left;
-  check_oracle_tags "Z3 two-binder :lambda-def" binary
+  check_oracle_tags "Z3 two-binder :lambda-def" binary;
+  check_oracle_tags "Z3 three-binder :lambda-def" ternary
 end
 
 fun z3_lambda_intro_def_replay_shaped_failure () =
@@ -10963,20 +10992,125 @@ in
   check_oracle_tags "Z3 unliftable proof-bind nnf-pos premise" thm
 end
 
-fun z3_remove_extra_hyps_only_p_eq_p_success () =
+fun z3_remove_extra_hyps_reflexive_equality_success () =
 let
   val asserted = Term.empty_tmset
   val p_eq_p = ``(p:bool) = p``
   val q_eq_q = ``(q:bool) = q``
+  val expression = ``((x:int) + 1) = x + 1``
   val p_clean = Z3_ProofReplay.remove_extra_hyps
     (asserted, Thm.ASSUME p_eq_p)
-  val q_kept = Z3_ProofReplay.remove_extra_hyps
+  val q_clean = Z3_ProofReplay.remove_extra_hyps
     (asserted, Thm.ASSUME q_eq_q)
+  val expression_clean = Z3_ProofReplay.remove_extra_hyps
+    (asserted, Thm.ASSUME expression)
 in
   assert (HOLset.isEmpty (Thm.hypset p_clean),
     "remove_extra_hyps did not discharge literal p = p");
-  assert (HOLset.member (Thm.hypset q_kept, q_eq_q),
-    "remove_extra_hyps discharged a non-p reflexive equality")
+  assert (HOLset.isEmpty (Thm.hypset q_clean),
+    "remove_extra_hyps did not discharge arbitrary q = q");
+  assert (HOLset.isEmpty (Thm.hypset expression_clean),
+    "remove_extra_hyps did not discharge a compound reflexive equality")
+end
+
+fun gen_instantiation_protects_goal_variables_success () =
+let
+  val z = ``z:int``
+  val vars = HOLset.add (Term.empty_tmset, z)
+  val theorem = Library.gen_instantiation
+    (``(x:int) + z``, ``(x:int) + 1``, vars)
+  val expected_hyp = ``z = 1i``
+  val _ = expect_hol_error_contains "protected goal variable"
+    "simp_unify_terms"
+    (fn () => ignore (Library.gen_instantiation
+      (``x:int``, ``1i``, Term.empty_tmset)))
+in
+  assert (HOLset.member (Thm.hypset theorem, expected_hyp),
+    "gen_instantiation did not define the proof-local variable");
+  assert (not (HOLset.member (Thm.hypset theorem, ``x = 1i``)),
+    "gen_instantiation defined a protected goal variable")
+end
+
+fun replay_canonicalization_success () =
+let
+  val alias_source =
+    ``((x:int) >= y) = (x - y >= 0)``
+  val alias_normalized = SmtReplayCanon.cpc_canon_conv alias_source
+  val alias_target = boolSyntax.rhs (Thm.concl alias_normalized)
+  val alias_again = SmtReplayCanon.cpc_canon_conv alias_target
+  val total_source =
+    ``HolSmt$smt_emod_total (x:int) y``
+  val total_normalized = SmtReplayCanon.cpc_canon_conv total_source
+  val total_target = boolSyntax.rhs (Thm.concl total_normalized)
+  fun has_named thy name tm =
+    Lib.can (HolKernel.find_term (fn subterm =>
+      Term.is_const subterm andalso
+      let val {Thy, Name, ...} = Term.dest_thy_const subterm
+      in Thy = thy andalso Name = name end)) tm
+in
+  assert (Term.aconv alias_target
+      (boolSyntax.rhs (Thm.concl alias_again)),
+    "CPC alias canonicalization is not idempotent");
+  assert (not (has_named "integer" "int_ge" alias_target) andalso
+      not (has_named "integer" "int_sub" alias_target),
+    "CPC canonical form retained an integer relation alias");
+  assert (not (has_named "HolSmt" "smt_emod_total" total_target),
+    "CPC canonical form retained smt_emod_total");
+  assert (not (has_named "HolSmt" "smt_ediv_total" total_target),
+    "CPC canonical form retained smt_ediv_total")
+end
+
+fun replay_polynomial_normal_form_success () =
+let
+  val integer_goal =
+    ``(a:int) - b + c + d + e = e + (a + (c + d)) + -b``
+  val real_goal =
+    ``(x:real) * (y + z) - x * y = z * x``
+  val rdiv_goal =
+    ``HolSmt$smt_rdiv (x:real) 42 = x * (1 / 42)``
+  val integer_thm = SmtReplayCanon.arith_poly_norm_prove integer_goal
+  val real_thm = SmtReplayCanon.arith_poly_norm_prove real_goal
+  val rdiv_thm = SmtReplayCanon.arith_poly_norm_prove rdiv_goal
+  fun padded n = if n < 100 then "0" ^ Int.toString n else Int.toString n
+  fun check_series n =
+    let
+      val name = "r" ^ padded n
+      val goal = Thm.concl (DB.fetch "HolSmt" name)
+      val theorem = SmtReplayCanon.arith_poly_norm_prove goal
+    in
+      assert (Thm.concl theorem ~~ goal,
+        "polynomial normalizer returned the wrong " ^ name ^ " theorem");
+      check_oracle_tags ("polynomial normal form " ^ name) theorem
+    end
+in
+  assert (Thm.concl integer_thm ~~ integer_goal,
+    "integer polynomial normalizer returned the wrong theorem");
+  assert (Thm.concl real_thm ~~ real_goal,
+    "real polynomial normalizer returned the wrong theorem");
+  assert (Thm.concl rdiv_thm ~~ rdiv_goal,
+    "real polynomial normalizer did not discharge nonzero total division");
+  check_oracle_tags "integer polynomial normal form" integer_thm;
+  check_oracle_tags "real polynomial normal form" real_thm;
+  check_oracle_tags "total real division polynomial normal form" rdiv_thm;
+  List.app check_series (List.tabulate (148, fn index => index + 71))
+end
+
+fun quantified_boolean_rewrite_n_binders_success () =
+let
+  val target =
+    ``~(?x y z:int. P x y z ==> q) <=>
+      ~?x y z. ~P x y z \/ q``
+  val theorem =
+    Z3_ProofReplay.quantified_boolean_rewrite_prove_for_test target
+  val _ = expect_hol_error_contains "non-family quantified rewrite"
+    "not between negated existential formulas"
+    (fn () => ignore
+      (Z3_ProofReplay.quantified_boolean_rewrite_prove_for_test
+        ``((?x:int. P x) \/ q) = q``))
+in
+  assert (Thm.concl theorem ~~ target,
+    "n-binder quantified Boolean normalization returned the wrong theorem");
+  check_oracle_tags "n-binder quantified Boolean normalization" theorem
 end
 
 fun profile_call_count name =
@@ -11443,6 +11577,24 @@ fun array_prove_set_ladder_rungs_success () =
      SmtArrayProve.array_prove
      ``((x:'a) IN (UNIV:'a set)) = T``)
 
+fun collection_replay_table_completeness_success () =
+let
+  fun missing emitted supported =
+    List.filter (fn name => not (List.exists (Lib.equal name) supported))
+      emitted
+  val missing_sets = missing SmtLib.native_set_operator_names_for_test
+    SmtArrayProve.supported_set_operator_names_for_test
+  val missing_bags = missing SmtLib.native_bag_operator_names_for_test
+    SmtBagProve.supported_bag_operator_names_for_test
+in
+  assert (List.null missing_sets,
+    "native Set operators lack replay facts: " ^
+    String.concatWith ", " missing_sets);
+  assert (List.null missing_bags,
+    "native Bag operators lack replay facts: " ^
+    String.concatWith ", " missing_bags)
+end
+
 (* Pins for the post-parser forms of the Z3 captures in
    tools/proof-corpus/seq_set_bag/z3-*/proofs/{z3_set_subset,
    theory_z3_extensions_z3_set_{union,intersection,minus,complement,
@@ -11708,6 +11860,11 @@ fun seq_prove_core_rungs_success () =
    assert_seq_prover "seq contains rung"
      SmtSeqProve.prefix_suffix_contains_prove
      ``IS_SUBLIST (([x] ++ ys):'a list) [x]``;
+   assert_seq_prover "seq contains arbitrary append boundary witness"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``IS_SUBLIST
+         (([a;b] ++ middle ++ [c;d]):'a list)
+         ([b] ++ middle ++ [c])``;
    assert_seq_prover "seq indexof rung" SmtSeqProve.indexof_replace_prove
      ``smt_seq_indexof ([1;2]:int list) [2] 0 = 1``;
    assert_seq_prover "seq replace rung" SmtSeqProve.indexof_replace_prove
@@ -12014,8 +12171,6 @@ fun datatype_prove_ladder_rungs_success () =
            smt_tri_tester "SmtTriC" c])
         boolSyntax.F
   in
-    assert (List.null Z3_ProformaThms.datatype_thm_list,
-      "datatype proforma list should stay empty until shared schemata exist");
     assert_datatype_prover "datatype_prove harvest disjointness rung"
       SmtDatatypeProve.datatype_prove
       ``SmtTriA <> SmtTriB 1i``;
@@ -12066,10 +12221,8 @@ fun assert_string_prover name prover tm =
       die ("FAIL: " ^ name ^ " raised " ^ General.exnMessage exn))
 
 fun string_prove_ladder_rungs_success () =
-  (assert (not (List.null Z3_ProformaThms.string_thm_list),
-     "string proforma list was not installed");
-   assert_string_prover "string_prove proforma rung"
-     SmtStringProve.proforma_prove
+  (assert_string_prover "string_prove symbolic associativity"
+     (SmtStringProve.string_prove intLib.ARITH_PROVE)
      ``smtstr_concat (smtstr_concat s t) u =
        smtstr_concat s (smtstr_concat t u)``;
    assert_string_prover "string_prove ground evaluation rung"
@@ -12119,6 +12272,21 @@ fun string_prove_symbolic_rung_success () =
         s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
         smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
         seq_nth_i s 0 = c``;
+    direct "string bounded concat split refuter"
+      ``seq_eq
+          (smtstr_concat (seq_unit (seq_nth_i x 0))
+            (smtstr_concat (seq_unit (seq_nth_i x 1))
+              (seq_unit (seq_nth_i x 2)))) x /\
+        seq_eq
+          (smtstr_concat (seq_unit (seq_nth_i y 0))
+            (smtstr_concat (seq_unit (seq_nth_i y 1))
+              (seq_unit (seq_nth_i y 2)))) y /\
+        smtstr_concat (seq_unit 97)
+          (smtstr_concat (seq_unit 98)
+            (smtstr_concat (seq_unit 99)
+              (smtstr_concat (seq_unit 100) (seq_unit 101)))) =
+          smtstr_concat x y ==>
+        F``;
     direct "string symbolic prefix"
       ``c <= 196607 /\
         seq_eq s
@@ -12192,6 +12360,13 @@ fun string_prove_regex_rung_success () =
         smtstr_len x <= 2 \/
         (seq_nth_i x 2 = 97 /\
          aut_accept x 3 (reglan_to_re (SmtStr [])))``;
+    direct "regex bounded-loop transition arbitrary state"
+      ``~aut_accept x 4
+          (reglan_loop (reglan_to_re (seq_unit 97)) 0 2) \/
+        smtstr_len x <= 4 \/
+        (seq_nth_i x 4 = 97 /\
+         aut_accept x 5
+           (reglan_loop (reglan_to_re (seq_unit 97)) 0 1))``;
     direct "regex empty terminal"
       ``~aut_accept x 3 (reglan_to_re (SmtStr [])) \/
         smtstr_len x <= 3 \/ F``;
@@ -12491,7 +12666,11 @@ let
       check_oracle_tags label thm
     end
 in
-  check "FP rung 1 literal" SmtFpProve.proforma_prove literal;
+  (if Library.no_fastpath () then
+     expect_hol_error_contains "disabled FP proforma" "fast path disabled"
+       (fn () => ignore (SmtFpProve.proforma_prove literal))
+   else
+     check "FP rung 1 literal" SmtFpProve.proforma_prove literal);
   check "FP rung 2 literal evaluation"
     SmtFpProve.ground_eval_prove literal;
   List.app (fn (label, tm) =>
@@ -12630,18 +12809,26 @@ end
 
 fun smtfp_mul_circuit_rung_success () =
 let
-  val one = ``smtfp_bits 0w (15w : word5) (0w : word10)``
-  val goal = ``smtfp_mul RNE (x : (10,5) smtfp) ^one = x``
-  val _ = Profile.reset_all ()
-  val thm = SmtFpProve.fp_prove goal
+  val goals =
+    [``smtfp_mul RNE (x : (10,5) smtfp)
+        (smtfp_bits 0w (15w : word5) (0w : word10)) = x``,
+     ``smtfp_mul RNE (x : (4,3) smtfp)
+        (smtfp_bits 0w (3w : word3) (0w : word4)) = x``]
+  fun check goal =
+    let
+      val _ = Profile.reset_all ()
+      val thm = SmtFpProve.fp_prove goal
+    in
+      assert_no_hyps ("FP rung 5 generic mul", thm);
+      assert_concl_alpha ("FP rung 5 generic mul", thm, goal);
+      check_oracle_tags "FP rung 5 generic mul" thm;
+      assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 1,
+        "mul identity did not use rung 5");
+      assert (profile_call_count "fp(rung:6/unsupported)" = 0,
+        "mul identity fell through to rung 6")
+    end
 in
-  assert_no_hyps ("FP rung 5 Float16 mul", thm);
-  assert_concl_alpha ("FP rung 5 Float16 mul", thm, goal);
-  check_oracle_tags "FP rung 5 Float16 mul" thm;
-  assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 1,
-    "Float16 mul identity did not use rung 5");
-  assert (profile_call_count "fp(rung:6/unsupported)" = 0,
-    "Float16 mul identity fell through to rung 6")
+  List.app check goals
 end
 
 fun smtfp_mul_circuit_mutation_rejected () =
@@ -12693,21 +12880,20 @@ in
   check_oracle_tags "finite RNE mul circuit" thm
 end
 
-fun smtfp_mul_circuit_replay_resource_diagnostic () =
+fun smtfp_mul_circuit_direct_replay_success () =
   if not (Z3.is_configured ()) then ()
   else
     let
       val one = ``smtfp_bits 0w (15w : word5) (0w : word10)``
       val goal = ``smtfp_mul RNE (x : (10,5) smtfp) ^one = x``
-      val expected = SmtResource.step_time_diagnostic "mul-circuit"
+      val thm =
+        case Z3.Z3_SMT_Prover ([], goal) of
+          SolverSpec.UNSAT (SOME theorem) => theorem
+        | _ => die "FAIL: Float16 symbolic mul was not proved"
     in
-      (ignore (Z3.Z3_SMT_Prover ([], goal));
-       die "FAIL: Float16 symbolic mul did not resource-gate")
-      handle Feedback.HOL_ERR holerr =>
-        (assert (SmtResource.is_resource_gate holerr,
-           "Float16 generated replay raised a non-resource diagnostic");
-         assert (Feedback.message_of holerr = expected,
-           "Float16 generated replay changed its D12 diagnostic"))
+      assert_no_hyps ("Float16 direct generated replay", thm);
+      assert_concl_alpha ("Float16 direct generated replay", thm, goal);
+      check_oracle_tags "Float16 direct generated replay" thm
     end
 
 fun smtfp_mul_circuit_resource_diagnostic () =
@@ -12758,30 +12944,20 @@ in
   List.app check cases
 end
 
-fun smtfp_add_commutativity_corpus_gate () =
+fun smtfp_format_agnostic_preflight_success () =
 let
   val x = ``x : (4,3) smtfp``
   val y = ``y : (4,3) smtfp``
-  val equality =
+  val swapped_x = ``swapped_x : (3,4) smtfp``
+  val swapped_y = ``swapped_y : (3,4) smtfp``
+  val first = boolSyntax.mk_neg
     ``smtfp_add RNE ^x ^y = smtfp_add RNE ^y ^x``
-  val assertion = boolSyntax.mk_neg equality
-  val nearby_x = ``nearby_x : (3,4) smtfp``
-  val nearby_y = ``nearby_y : (3,4) smtfp``
-  val nearby_assertion = boolSyntax.mk_neg
-    ``smtfp_add RNE ^nearby_x ^nearby_y =
-      smtfp_add RNE ^nearby_y ^nearby_x``
-  val expected = SmtResource.proof_size_diagnostic
-    SmtFpProve.add_commutativity_case_id
-    SmtFpProve.add_commutativity_proof_bytes
-  val _ = SmtFpProve.preflight_resource_gate [nearby_assertion]
+  val swapped = boolSyntax.mk_neg
+    ``smtfp_add RNE ^swapped_x ^swapped_y =
+      smtfp_add RNE ^swapped_y ^swapped_x``
 in
-  (SmtFpProve.preflight_resource_gate [assertion];
-   die "FAIL: corpus symbolic-add proof did not pre-gate")
-  handle Feedback.HOL_ERR holerr =>
-    (assert (SmtResource.is_resource_gate holerr,
-       "corpus symbolic-add proof raised a non-resource diagnostic");
-     assert (Feedback.message_of holerr = expected,
-       "corpus symbolic-add proof changed its pinned D12 diagnostic"))
+  SmtFpProve.preflight_resource_gate [first];
+  SmtFpProve.preflight_resource_gate [swapped]
 end
 
 fun smtfp_tier2_atom_classes_success () =
@@ -14231,6 +14407,8 @@ let
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
       cpc_proof_replay_eq_refl_cong_chain_success),
+    ("cpc_proof_replay_omitted_arith_poly_norm_success",
+      cpc_proof_replay_omitted_arith_poly_norm_success),
     ("cpc_proof_replay_cong_consumes_premises_success",
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
@@ -14325,6 +14503,8 @@ let
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_proof_parser_version_resolution_success",
       z3_proof_parser_version_resolution_success),
+    ("z3_fp_skolem_naming_registry_diagnostic",
+      z3_fp_skolem_naming_registry_diagnostic),
     ("z3_proof_parser_rule_name_term_boundary",
       z3_proof_parser_rule_name_term_boundary),
     ("z3_proof_parser_is_int_translation_collision_success",
@@ -14359,8 +14539,16 @@ let
       z3_proof_bind_quant_intro_binder_annotation_ignored),
     ("z3_proof_bind_nnf_pos_unliftable_premise_success",
       z3_proof_bind_nnf_pos_unliftable_premise_success),
-    ("z3_remove_extra_hyps_only_p_eq_p_success",
-      z3_remove_extra_hyps_only_p_eq_p_success),
+    ("z3_remove_extra_hyps_reflexive_equality_success",
+      z3_remove_extra_hyps_reflexive_equality_success),
+    ("gen_instantiation_protects_goal_variables_success",
+      gen_instantiation_protects_goal_variables_success),
+    ("replay_canonicalization_success",
+      replay_canonicalization_success),
+    ("replay_polynomial_normal_form_success",
+      replay_polynomial_normal_form_success),
+    ("quantified_boolean_rewrite_n_binders_success",
+      quantified_boolean_rewrite_n_binders_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",
@@ -14381,6 +14569,8 @@ let
       array_prove_ladder_rungs_success),
     ("array_prove_set_ladder_rungs_success",
       array_prove_set_ladder_rungs_success),
+    ("collection_replay_table_completeness_success",
+      collection_replay_table_completeness_success),
     ("z3_set_captured_shapes_replay_success",
       z3_set_captured_shapes_replay_success),
     ("z3_set_raw_captures_replay_success",
@@ -14446,14 +14636,14 @@ let
       smtfp_mul_circuit_mutation_rejected),
     ("smtfp_mul_circuit_independent_finite",
       smtfp_mul_circuit_independent_finite),
-    ("smtfp_mul_circuit_replay_resource_diagnostic",
-      smtfp_mul_circuit_replay_resource_diagnostic),
+    ("smtfp_mul_circuit_direct_replay_success",
+      smtfp_mul_circuit_direct_replay_success),
     ("smtfp_mul_circuit_resource_diagnostic",
       smtfp_mul_circuit_resource_diagnostic),
     ("smtfp_deferred_gate_residue_diagnostics",
       smtfp_deferred_gate_residue_diagnostics),
-    ("smtfp_add_commutativity_corpus_gate",
-      smtfp_add_commutativity_corpus_gate),
+    ("smtfp_format_agnostic_preflight_success",
+      smtfp_format_agnostic_preflight_success),
     ("smtfp_tier2_atom_classes_success",
       smtfp_tier2_atom_classes_success),
     ("smtfp_tier2_resource_diagnostic",
