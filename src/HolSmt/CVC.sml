@@ -299,7 +299,9 @@ structure CVC = struct
                    (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
-          val thm = quiet_replay replay (finite_hyps @ As, g, proof)
+          val thm = quiet_replay
+            (replay (SmtLib.translation_definitions translation))
+            (finite_hyps @ As, g, proof)
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
@@ -329,7 +331,7 @@ structure CVC = struct
       (checked_post "CVC_SMT_CPC_Prover" cpc_command
         (fn dicts => CPC_ProofParser.parse_stream_with_version dicts
           (version_string ()))
-        CPC_ProofReplay.check_proof)
+        CPC_ProofReplay.check_proof_with_definitions)
 
   (* cvc5, SMT-LIB file format, checked proofs. *)
   val CVC_SMT_Prover = CVC_SMT_CPC_Prover

@@ -11384,10 +11384,6 @@ let
     ("rewrite",
       "((proof (rewrite (= false false))))",
       ``F = F``),
-    ("rewrite/bvcomp",
-      "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
-        \(proof (rewrite (= (bvcomp a b) (ite (= a b) #b1 #b0)))))",
-      ``word_compare (a:word8) b = if a = b then 1w else 0w:word1``),
     ("rewrite/bvsmod_i",
       "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
         \(proof (rewrite (= (bvsmod a b) (bvsmod_i a b)))))",
@@ -11416,6 +11412,92 @@ let
   ]
 in
   List.app assert_replays_raw_z3_proof_rule cases
+end
+
+fun z3_emitted_definition_word_replay_success () =
+let
+  val direct_expected =
+    ``word_compare (a:word8) b = if a = b then 1w else 0w:word1``
+  val direct_proof_text =
+    "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
+    \(proof (rewrite (= (bvcomp a b) (ite (= a b) #b1 #b0)))))"
+  val nested_expected = boolSyntax.mk_eq (direct_expected, boolSyntax.T)
+  val nested_proof_text =
+    "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
+    \(proof (rewrite (= (= (bvcomp a b) \
+    \(ite (= a b) #b1 #b0)) true))))"
+  val (plain_translation, _) =
+    Z3.goal_to_SmtLib_translation_for_version (SOME "4.12.4")
+      ([], ``(a:word8) = a``)
+  val plain_definitions =
+    SmtLib.translation_definitions plain_translation
+  fun is_word_compare_key record =
+    case record of
+      SmtLib.EncodedSymbol {hol_term, arity, ...} =>
+        arity = 2 andalso
+        Term.same_const hol_term wordsSyntax.word_compare_tm
+    | _ => false
+  fun replay_case (name, expected, proof_text) =
+    let
+      val (translation, _) =
+        Z3.goal_to_SmtLib_translation_for_version (SOME "4.12.4")
+          ([], expected)
+      val definitions = SmtLib.translation_definitions translation
+      val keys = List.map SmtLib.emitted_definition_key definitions
+      val proof = parse_z3_proof_string "4.12.4" proof_text
+      val rejected_without_provenance =
+        ((ignore
+            (Z3_ProofReplay.replay_root_with_definitions_for_test [] proof);
+          false)
+         handle Feedback.HOL_ERR _ => true
+              | _ => false)
+      val () = Profile.reset_all ()
+      val theorem = Z3_ProofReplay.replay_root_with_definitions_for_test
+        definitions proof
+      val general =
+        profile_call_count "rewrite(translator-definitions+word)"
+      val deciders =
+        profile_call_count
+          "rewrite(translator-definitions+word:WORD_DP)" +
+        profile_call_count
+          "rewrite(translator-definitions+word:WORD_ARITH)" +
+        profile_call_count
+          "rewrite(translator-definitions+word:BBLAST)"
+    in
+      assert (rejected_without_provenance,
+        name ^ " replay succeeded without emitted-symbol provenance");
+      assert (List.length definitions = 1 andalso
+          List.all is_word_compare_key keys,
+        name ^ " definition was not keyed by its emitted-symbol record");
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " replay returned the wrong conclusion");
+      assert (general > 0 andalso deciders > 0,
+        name ^ " did not consume the general unfold-then-word decider");
+      assert_no_hyps (name, theorem);
+      check_oracle_tags name theorem
+    end
+  fun bblast_counterexample_is_structured_failure () =
+    let
+      val () = Profile.reset_all ()
+      val rejected =
+        ((ignore (Z3_ProofReplay.word_decide_for_test ``p:bool``); false)
+         handle Feedback.HOL_ERR _ => true
+              | _ => false)
+      val bblast = profile_call_count
+        "rewrite(translator-definitions+word:BBLAST)"
+    in
+      assert (rejected andalso bblast > 0,
+        "word-decider BBLAST counterexample escaped its fallback ladder")
+    end
+in
+  assert (List.null plain_definitions,
+    "non-bvcomp translation acquired an un-emitted definition");
+  List.app replay_case
+    [("direct emitted-definition word replay", direct_expected,
+      direct_proof_text),
+     ("nested emitted-definition word replay", nested_expected,
+      nested_proof_text)];
+  bblast_counterexample_is_structured_failure ()
 end
 
 fun z3_trans_star_chain_search_replay_no_metis_success () =
@@ -14830,6 +14912,8 @@ let
       quantified_boolean_rewrite_n_binders_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
+    ("z3_emitted_definition_word_replay_success",
+      z3_emitted_definition_word_replay_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",
       z3_trans_star_chain_search_replay_no_metis_success),
     ("z3_trans_star_chain_search_no_path_diagnostic",

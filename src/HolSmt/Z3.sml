@@ -309,7 +309,9 @@ structure Z3 = struct
                              (current_proof_cmd_stem ()) holerr)
                     val _ = TextIO.closeIn instream
                   in
-                    Z3_ProofReplay.check_proof (As, g, proof)
+                    Z3_ProofReplay.check_proof_with_definitions
+                      (SmtLib.translation_definitions translation)
+                      (As, g, proof)
                     handle Feedback.HOL_ERR holerr =>
                       if SmtResource.is_resource_gate holerr then
                         raise Feedback.HOL_ERR holerr

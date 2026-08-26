@@ -80,6 +80,9 @@ local
        hypotheses: rung 3 must prove a definition before adding it through
        [state_define]. *)
     bit_decompositions : bit_decomposition list,
+    (* Exact per-translation operator provenance.  Only definitions selected
+       by SmtLib's EncodedSymbol records may be unfolded during replay. *)
+    translation_definitions : SmtLib.emitted_definition list,
     z3_version : string
   }
 
@@ -90,6 +93,7 @@ local
       thm_cache = #thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      translation_definitions = #translation_definitions s,
       z3_version = #z3_version s
     }
 
@@ -100,6 +104,7 @@ local
       thm_cache = #thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      translation_definitions = #translation_definitions s,
       z3_version = #z3_version s
     }
 
@@ -110,6 +115,7 @@ local
       thm_cache = Net.insert (Thm.concl thm, thm) (#thm_cache s),
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      translation_definitions = #translation_definitions s,
       z3_version = #z3_version s
     }
 
@@ -1563,18 +1569,61 @@ local
     (state, Thm.ALPHA lhs rhs)
   end
 
-  fun rewrite_word_compare (l, r) =
-    if wordsSyntax.is_word_compare l then
-      let
-        val thm = Conv.REWR_CONV wordsTheory.word_compare_def l
-        val (_, rhs) = boolSyntax.dest_eq (Thm.concl thm)
-      in
-        if rhs ~~ r then thm else raise ERR "rewrite_word_compare" ""
-      end
-    else if wordsSyntax.is_word_compare r then
-      Thm.SYM (rewrite_word_compare (r, l))
-    else
-      raise ERR "rewrite_word_compare" ""
+  fun word_dp_prove target =
+    wordsLib.WORD_DP
+      (bossLib.SIMP_CONV (bossLib.++ (bossLib.++ (bossLib.arith_ss,
+        wordsLib.WORD_ss), wordsLib.WORD_EXTRACT_ss)) [])
+      (Drule.EQT_ELIM o
+        (bossLib.SIMP_CONV bossLib.arith_ss [])) target
+
+  fun word_arith_prove target =
+    Drule.EQT_ELIM (wordsLib.WORD_ARITH_CONV target)
+      handle Conv.UNCHANGED => raise ERR "word_arith_prove" "unchanged"
+
+  (* A counterexample means only that this decision procedure cannot prove
+     the current rewrite.  Normalize that signal to the ladder's ordinary
+     HOL_ERR failure so the next procedure (and, after BBLAST, the existing
+     arithmetic route) still gets a chance. *)
+  fun word_decider_attempt name prove target =
+    prove target
+      handle HolSatLib.SAT_cex _ =>
+        raise ERR name "word decision procedure found a counterexample"
+
+  fun word_decide target =
+    profile "rewrite(translator-definitions+word:WORD_DP)"
+      (word_decider_attempt "word_decide(WORD_DP)" word_dp_prove) target
+    handle Feedback.HOL_ERR _ =>
+      profile "rewrite(translator-definitions+word:WORD_ARITH)"
+        (word_decider_attempt "word_decide(WORD_ARITH)" word_arith_prove)
+        target
+    handle Feedback.HOL_ERR _ =>
+      profile "rewrite(translator-definitions+word:BBLAST)"
+        (word_decider_attempt "word_decide(BBLAST)"
+          (Feedback.trace ("print blast counterexamples", 0)
+            blastLib.BBLAST_PROVE)) target
+
+  (* Unfold only definitions selected by this translation's EncodedSymbol
+     records, then retry the complete word decision procedures.  Requiring an
+     actual rewrite keeps the rung fail-closed for unrelated proof terms. *)
+  fun unfold_translation_definitions_then_word state target =
+    let
+      val definitions = List.map SmtLib.emitted_definition_theorem
+        (#translation_definitions state)
+      val _ = not (List.null definitions) orelse
+        raise ERR "unfold_translation_definitions_then_word"
+          "translation emitted no definitional symbols"
+      val normalization = Rewrite.PURE_REWRITE_CONV definitions target
+      val normalized = boolSyntax.rhs (Thm.concl normalization)
+      val _ = not (Term.aconv target normalized) orelse
+        raise ERR "unfold_translation_definitions_then_word"
+          "translation definitions did not occur in rewrite"
+      val decision = word_decide normalized
+    in
+      Thm.EQ_MP (Thm.SYM normalization) decision
+    end
+    handle Conv.UNCHANGED =>
+      raise ERR "unfold_translation_definitions_then_word"
+        "translation definitions did not occur in rewrite"
 
   fun fp_bit_decompositions (state : state) =
     List.map
@@ -1918,24 +1967,14 @@ local
       val thm = profile "rewrite(07)(SIMP_PROVE_UPDATE)" SIMP_PROVE_UPDATE t
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(08)(WORD_DP)" (wordsLib.WORD_DP
-          (bossLib.SIMP_CONV (bossLib.++ (bossLib.++ (bossLib.arith_ss,
-            wordsLib.WORD_ss), wordsLib.WORD_EXTRACT_ss)) [])
-          (Drule.EQT_ELIM o (bossLib.SIMP_CONV bossLib.arith_ss []))) t
+        profile "rewrite(08)(WORD_DP)" word_dp_prove t
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(09)(WORD_ARITH_CONV)" (fn () =>
-          Drule.EQT_ELIM (wordsLib.WORD_ARITH_CONV t)
-            handle Conv.UNCHANGED => raise ERR "" "") ()
+        profile "rewrite(09)(WORD_ARITH_CONV)" word_arith_prove t
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(09.1)(word_compare)" rewrite_word_compare (l, r)
-        handle Feedback.HOL_ERR _ =>
-
-        profile "rewrite(09.2)(word_compare_def)"
-          (simpLib.SIMP_PROVE
-            (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss))
-            [wordsTheory.word_compare_def]) t
+        profile "rewrite(translator-definitions+word)"
+          (unfold_translation_definitions_then_word state) t
         handle Feedback.HOL_ERR _ =>
 
         (profile "rewrite(10)(BBLAST)" (Feedback.trace("print blast counterexamples", 0) blastLib.BBLAST_PROVE) t
@@ -2560,6 +2599,8 @@ local
       term_set_summary "z3_vars" (#var_set state),
       "bit_decompositions=" ^ Int.toString
         (List.length (#bit_decompositions state)),
+      "translation_definitions=" ^ Int.toString
+        (List.length (#translation_definitions state)),
       "z3_version=" ^ #z3_version state
     ]
 
@@ -3491,39 +3532,39 @@ in
   val eta_equal_for_test = eta_equal
   val monotonicity_prove_for_test = monotonicity_prove
   val arith_prove_for_test = arith_prove
+  val word_decide_for_test = word_decide
 
-  fun replay_root_for_test proof : Thm.thm =
+  fun initial_replay_state definitions proof : state = {
+    asserted_hyps = Term.empty_tmset,
+    definition_hyps = Term.empty_tmset,
+    thm_cache = Net.empty,
+    var_set = proof_vars proof,
+    bit_decompositions = proof_bit_decompositions proof,
+    translation_definitions = definitions,
+    z3_version = proof_version proof
+  }
+
+  fun replay_root_with_definitions_for_test definitions proof : Thm.thm =
   let
-    val state = {
-      asserted_hyps = Term.empty_tmset,
-      definition_hyps = Term.empty_tmset,
-      thm_cache = Net.empty,
-      var_set = proof_vars proof,
-      bit_decompositions = proof_bit_decompositions proof,
-      z3_version = proof_version proof
-    }
+    val state = initial_replay_state definitions proof
     val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
   in
     thm
   end
 
+  fun replay_root_for_test proof : Thm.thm =
+    replay_root_with_definitions_for_test [] proof
+
   (* returns a theorem that concludes ``F``, with its hypotheses (a
      subset of) those asserted in the proof *)
-  fun check_proof_impl (asl, g, proof) : Thm.thm =
+  fun check_proof_impl definitions (asl, g, proof) : Thm.thm =
   let
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG "HolSmtLib: checking Z3 proof"
       else ()
 
     (* initial state *)
-    val state = {
-      asserted_hyps = Term.empty_tmset,
-      definition_hyps = Term.empty_tmset,
-      thm_cache = Net.empty,
-      var_set = proof_vars proof,
-      bit_decompositions = proof_bit_decompositions proof,
-      z3_version = proof_version proof
-    }
+    val state = initial_replay_state definitions proof
 
     (* ID 0 denotes the proof's root node *)
     val ((state, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
@@ -3565,8 +3606,10 @@ in
   end
 
 
-  fun check_proof args : Thm.thm =
-    profile "check_proof(total)" check_proof_impl args
+  fun check_proof_with_definitions definitions args : Thm.thm =
+    profile "check_proof(total)" (check_proof_impl definitions) args
+
+  fun check_proof args : Thm.thm = check_proof_with_definitions [] args
 
 end  (* local *)
 

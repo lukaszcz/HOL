@@ -53,13 +53,23 @@ datatype translation_record =
                           replay : bool, notes : string,
                           proof_obligation : string}
 
+(* A proved HOL definition attached to the exact EncodedSymbol record that
+   caused the corresponding SMT operator to be emitted in one translation.
+   Replay consumers must obtain these through [translation_definitions], not
+   from a constant-name inventory: the record is the per-run provenance key. *)
+datatype emitted_definition = EmittedDefinition of {
+  emitted_symbol : translation_record,
+  replay_head : Term.term,
+  unfolding : Thm.thm
+}
+
 type translation = {
   logic : string,
   regime : regime,
   tydict : (Type.hol_type, string) Redblackmap.dict,
   tmdict : (Term.term * int, string) Redblackmap.dict,
-  (* built lazily: only the Unittest diagnostics force this, never the
-     production solve path (see 'translation_records') *)
+  (* Built lazily.  Diagnostics and checked replay force this through
+     [translation_records] and [translation_definitions], respectively. *)
   records : unit -> translation_record list
 }
 
@@ -5626,6 +5636,75 @@ in
   fun translation_logic ({logic, ...} : translation) = logic
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
+
+  (* This is the closed registry of unconditional definitions for HOL heads
+     that checked proof parsers use to represent emitted SMT operators.  An
+     entry is enabled only by an EncodedSymbol from the current translation.
+     Matching uses HOL constant identity and arity, never an SMT or HOL name.
+
+     Integer div/mod illustrate why [emitted_head] and [replay_head] may
+     differ: translation emits HOL ediv/emod as SMT div/mod, while CPC parses
+     their specified total semantics as smt_ediv_total/smt_emod_total.  Real
+     smt_rdiv is deliberately absent because its zero-divisor value is
+     underspecified and therefore has no sound unconditional unfolding. *)
+  type emitted_definition_spec = {
+    emitted_head : Term.term,
+    arity : int,
+    replay_head : Term.term,
+    unfolding : Thm.thm
+  }
+
+  val emitted_definition_specs : emitted_definition_spec list = [
+    {emitted_head = wordsSyntax.word_compare_tm, arity = 2,
+     replay_head = wordsSyntax.word_compare_tm,
+     unfolding = wordsTheory.word_compare_def},
+    {emitted_head = int_ediv_tm, arity = 2,
+     replay_head = Term.prim_mk_const
+       {Thy = "HolSmt", Name = "smt_ediv_total"},
+     unfolding = HolSmtTheory.smt_ediv_total_def},
+    {emitted_head = int_emod_tm, arity = 2,
+     replay_head = Term.prim_mk_const
+       {Thy = "HolSmt", Name = "smt_emod_total"},
+     unfolding = HolSmtTheory.smt_emod_total_def}
+  ]
+
+  fun definition_for_record record =
+    let
+      fun matches ({emitted_head, arity, ...} : emitted_definition_spec) =
+        case record of
+          EncodedSymbol {hol_term, arity = emitted_arity, ...} =>
+            arity = emitted_arity andalso
+            Term.same_const emitted_head hol_term
+        | _ => false
+      fun attach ({replay_head, unfolding, ...} : emitted_definition_spec) =
+        EmittedDefinition {emitted_symbol = record,
+          replay_head = replay_head, unfolding = unfolding}
+    in
+      case List.filter matches emitted_definition_specs of
+        [] => NONE
+      | [spec] => SOME (attach spec)
+      | _ => raise ERR "definition_for_record"
+          "duplicate emitted-definition registry entry"
+    end
+
+  fun emitted_definitions_for_records records =
+    List.mapPartial definition_for_record records
+
+  fun translation_definitions translation =
+    emitted_definitions_for_records (translation_records translation)
+
+  fun emitted_definition_key (EmittedDefinition {emitted_symbol, ...}) =
+    emitted_symbol
+  fun emitted_definition_head (EmittedDefinition {replay_head, ...}) =
+    replay_head
+  fun emitted_definition_theorem (EmittedDefinition {unfolding, ...}) =
+    unfolding
+
+  (* TASK_12's completeness audit may inspect the closed registry, but replay
+     must use [translation_definitions] so an absent per-run emission cannot
+     enable an unfolding. *)
+  fun all_emitted_definition_specs () = emitted_definition_specs
+
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
   val parser_dicts_for_translation = parser_dicts_for_translation_aux NONE
   fun parser_dicts_for_solver_translation solver =

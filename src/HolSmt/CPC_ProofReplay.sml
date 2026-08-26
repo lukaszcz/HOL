@@ -46,6 +46,9 @@ local
   type state = {
     asserted_hyps : Term.term HOLset.set,
     scope_hyps : Term.term list,
+    (* Retained for shared canonicalization: TASK_12 consumes these exact
+       per-translation emitted-definition records. *)
+    translation_definitions : SmtLib.emitted_definition list,
     (* Each step keeps the name of the rule that produced it. *)
     steps : (string, string * Thm.thm) Redblackmap.dict,
     (* The read side is intentional: CPC commonly repeats normalized facts. *)
@@ -53,9 +56,10 @@ local
     cache_stats : cache_stats
   }
 
-  fun initial_state asserted_hyps : state = {
+  fun initial_state definitions asserted_hyps : state = {
     asserted_hyps = HOLset.addList (Term.empty_tmset, asserted_hyps),
     scope_hyps = [],
+    translation_definitions = definitions,
     steps = Redblackmap.mkDict String.compare,
     thm_cache = Net.empty,
     cache_stats = new_cache_stats ()
@@ -75,6 +79,7 @@ local
     in {
       asserted_hyps = #asserted_hyps state,
       scope_hyps = #scope_hyps state,
+      translation_definitions = #translation_definitions state,
       steps = #steps state,
       thm_cache = Net.insert (Thm.concl thm,
         {thm = thm})
@@ -89,6 +94,7 @@ local
   in {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = #scope_hyps state,
+    translation_definitions = #translation_definitions state,
     steps = Redblackmap.insert (#steps state, id, (rule_name, thm)),
     thm_cache = #thm_cache state,
     cache_stats = stats
@@ -97,6 +103,7 @@ local
   fun assert_hyp state tm = {
     asserted_hyps = HOLset.add (#asserted_hyps state, tm),
     scope_hyps = #scope_hyps state,
+    translation_definitions = #translation_definitions state,
     steps = #steps state,
     thm_cache = #thm_cache state,
     cache_stats = #cache_stats state
@@ -105,6 +112,7 @@ local
   fun push_scope_hyp state tm = {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = tm :: #scope_hyps state,
+    translation_definitions = #translation_definitions state,
     steps = #steps state,
     thm_cache = #thm_cache state,
     cache_stats = #cache_stats state
@@ -115,6 +123,7 @@ local
       tm :: rest => (tm, {
         asserted_hyps = #asserted_hyps state,
         scope_hyps = rest,
+        translation_definitions = #translation_definitions state,
         steps = #steps state,
         thm_cache = #thm_cache state,
         cache_stats = #cache_stats state
@@ -5262,9 +5271,9 @@ in
   fun replay_arith_mult_pos_for_test args =
     replay_arith_mult_pos args
 
-  fun check_proof_impl (asl, g, proof : proof) =
+  fun check_proof_impl definitions (asl, g, proof : proof) =
     let
-      val (state, thm) = replay_commands (initial_state asl)
+      val (state, thm) = replay_commands (initial_state definitions asl)
         (proof_commands proof)
       val _ = profile_cardinalities state
       val _ = profile "CPC(check:conclusion)"
@@ -5287,19 +5296,21 @@ in
       thm
     end
 
-  fun check_proof args =
-    profile "CPC(check_proof:total)" check_proof_impl args
+  fun check_proof_with_definitions definitions args =
+    profile "CPC(check_proof:total)" (check_proof_impl definitions) args
+
+  fun check_proof args = check_proof_with_definitions [] args
 
   fun replay_root_for_test proof =
     let
-      val (state, thm) = replay_commands (initial_state [])
+      val (state, thm) = replay_commands (initial_state [] [])
         (proof_commands proof)
       val _ = profile_cardinalities state
     in thm end
 
   fun replay_root_with_cache_stats_for_test proof =
     let
-      val (state, thm) = replay_commands (initial_state [])
+      val (state, thm) = replay_commands (initial_state [] [])
         (proof_commands proof)
       val _ = profile_cardinalities state
     in (thm, cache_stats state) end

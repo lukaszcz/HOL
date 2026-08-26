@@ -203,6 +203,10 @@ the proof and bounds concat-split refutation by literal length.  Sequence
 replay normalizes numeral spellings and searches append-boundary witnesses.
 Set and bag replay harvests facts from operator-keyed tables whose keys are
 checked against every operator the translation can emit.
+Definitions for translator-emitted operators are selected from the exact
+`EncodedSymbol` records of the current translation, never from constant
+names.  In particular, `bvcomp` replay unfolds its recorded definition and
+then uses the general word decision procedures.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
