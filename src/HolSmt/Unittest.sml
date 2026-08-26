@@ -11871,6 +11871,82 @@ in
     "real pow-only goal did not route to nla_prove")
 end
 
+fun z3_ediv_emod_general_replay_success () =
+let
+  val raw_cases =
+    [("ediv positive-divisor clause",
+      ``(b:int) >= 0 \/ ediv 0 b <= 0``),
+     ("ediv positive-divisor nonnegative clause",
+      ``(b:int) >= 0 \/ ediv 0 b >= 0``),
+     ("ediv nonpositive-divisor clause",
+      ``(b:int) <= 0 \/ ediv 0 b <= 0``),
+     ("ediv nonpositive-divisor nonnegative clause",
+      ``(b:int) <= 0 \/ ediv 0 b >= 0``),
+     ("emod nonpositive-divisor nonnegative clause",
+      ``(b:int) <= 0 \/ emod 0 b >= 0``),
+     ("emod nonpositive-divisor clause",
+      ``(b:int) <= 0 \/ emod 0 b <= 0``)]
+  val consumed_cases =
+    [
+     ("symbolic nonzero dividend ediv totalization",
+      ``(b:int) = 0 \/ HolSmt$smt_ediv_total a b = ediv a b``),
+     ("symbolic nonzero dividend emod totalization",
+      ``(b:int) = 0 \/ HolSmt$smt_emod_total a b = emod a b``),
+     ("nonlinear symbolic dividend ediv totalization",
+      ``(b:int) = 0 \/
+        HolSmt$smt_ediv_total (x * y) b = ediv (x * y) b``),
+     ("nonlinear symbolic dividend emod totalization",
+      ``(b:int) = 0 \/
+        HolSmt$smt_emod_total (x * y) b = emod (x * y) b``),
+     ("nonlinear symbolic denominator ediv totalization",
+      ``(x:int) * y = 0 \/
+        HolSmt$smt_ediv_total a (x * y) = ediv a (x * y)``),
+     ("nonlinear symbolic denominator emod totalization",
+      ``(x:int) * y = 0 \/
+        HolSmt$smt_emod_total a (x * y) = emod a (x * y)``)]
+  val other_total_cases =
+    [
+     ("positive nonzero dividend ediv totalization",
+      ``(b:int) = 0 \/ HolSmt$smt_ediv_total 7 b = ediv 7 b``),
+     ("negative nonzero dividend emod totalization",
+      ``(d:int) = 0 ==> HolSmt$smt_emod_total (-7) d = -7``),
+     ("multiple symbolic divisors",
+      ``((b:int) = 0 ==> HolSmt$smt_ediv_total a b = 0) /\
+        ((d:int) = 0 ==> HolSmt$smt_emod_total c d = c)``)]
+  val cases = raw_cases @ consumed_cases @ other_total_cases
+  fun check prover (name, goal) =
+    let
+      val theorem = prover goal
+        handle Feedback.HOL_ERR _ =>
+          die ("FAIL: " ^ name ^ " general replay raised HOL_ERR")
+    in
+      assert (Thm.concl theorem ~~ goal,
+        name ^ " returned the wrong theorem");
+      check_oracle_tags name theorem
+    end
+  val () = List.app
+    (check Z3_ProofReplay.arith_prove_ediv_emod_for_test) cases
+  fun check_consumed (case_ as (name, _)) =
+    let
+      val () = Profile.reset_all ()
+      val () = check Z3_ProofReplay.arith_prove_for_test case_
+      val consumed = profile_call_count "arith_prove(ediv-emod)_OK"
+    in
+      assert (consumed = 1,
+        name ^ " did not consume the general ediv/emod replay path")
+    end
+  val outside_fragment =
+    ``((b:int) = 0 \/ HolSmt$smt_ediv_total a b = ediv a b) /\
+      ((d:int) = 0 \/ HolSmt$smt_emod_total c d = emod c d) /\
+      ((e:int) = 0 \/ HolSmt$smt_ediv_total f e = ediv f e)``
+  val () = expect_hol_error_contains "three-divisor div/mod replay"
+    "outside bounded two-divisor integer div/mod arithmetic"
+    (fn () => ignore
+      (Z3_ProofReplay.arith_prove_ediv_emod_for_test outside_fragment))
+in
+  List.app check_consumed consumed_cases
+end
+
 fun nonlinear_real_constant_divisor_replay_success () =
 let
   val goal = ``0r <= (x:real) * x / 2r``
@@ -14934,6 +15010,8 @@ let
       cpc_arith_mult_relation_replay_success),
     ("nonlinear_power_nla_route_success",
       nonlinear_power_nla_route_success),
+    ("z3_ediv_emod_general_replay_success",
+      z3_ediv_emod_general_replay_success),
     ("nonlinear_real_constant_divisor_replay_success",
       nonlinear_real_constant_divisor_replay_success),
     ("array_prove_ladder_rungs_success",

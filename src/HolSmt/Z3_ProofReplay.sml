@@ -775,59 +775,31 @@ local
     Lib.tryfind prove_from_lit lits
   end
 
-  (* `ediv 0 j` sign facts.  The `0i < j` split proves the two `j >= 0`
-     clauses; the `j <= 0i` split with the positive-`j` subgoal proves the
-     two `j <= 0` clauses. *)
-  val ediv_pos_split_tac =
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``0i < j`` THENL [
-      intLib.ARITH_TAC,
-      Tactic.ASM_CASES_TAC ``j = 0i`` THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
-      ]
-    ]
+  val ediv_tm = Term.prim_mk_const {Thy = "integer", Name = "ediv"}
+  val emod_tm = Term.prim_mk_const {Thy = "integer", Name = "emod"}
 
-  val ediv_nonpos_split_tac =
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
-      intLib.ARITH_TAC,
-      SUBGOAL_THEN ``0i < j /\ j <> 0i`` STRIP_ASSUME_TAC THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
-      ]
-    ]
-
-  (* `emod 0 j` sign facts; both clauses share the same case split. *)
-  val emod_split_tac =
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
-      intLib.ARITH_TAC,
-      SUBGOAL_THEN ``0i < j /\ ~(j < 0i) /\ j <> 0i``
-        STRIP_ASSUME_TAC THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EMOD_DEF, integerTheory.INT_ABS,
-           integerTheory.INT_MOD0]
-      ]
-    ]
-
-  val EDIV_ZERO_SIGN_CLAUSE = Tactical.prove(
-    ``!j:int. j >= 0 \/ ediv 0 j <= 0``, ediv_pos_split_tac)
-
-  val EDIV_ZERO_GE_CLAUSE = Tactical.prove(
-    ``!j:int. j >= 0 \/ ediv 0 j >= 0``, ediv_pos_split_tac)
-
-  val EDIV_ZERO_NONPOS_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ ediv 0 j <= 0``, ediv_nonpos_split_tac)
-
-  val EDIV_ZERO_NONNEG_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ ediv 0 j >= 0``, ediv_nonpos_split_tac)
-
-  val EMOD_ZERO_SIGN_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ emod 0 j >= 0``, emod_split_tac)
-
-  val EMOD_ZERO_NONPOS_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ emod 0 j <= 0``, emod_split_tac)
+  (* Collect divisors from the whole integer div/mod family.  Canonical
+     totalization may expose raw [ediv]/[emod], so this is deliberately keyed
+     by operation identity and arity rather than by a recorded clause shape. *)
+  fun ediv_emod_divisors target =
+    let
+      fun divisor term =
+        case boolSyntax.strip_comb term of
+          (head, [_, denominator]) =>
+            if List.exists (Term.same_const head)
+                 [ediv_tm, emod_tm,
+                  SmtReplayCanon.smt_ediv_total_tm,
+                  SmtReplayCanon.smt_emod_total_tm] then
+              SOME denominator
+            else NONE
+        | _ => NONE
+      fun add (denominator, denominators) =
+        if List.exists (Term.aconv denominator) denominators then denominators
+        else denominator :: denominators
+    in
+      List.foldl add []
+        (List.mapPartial divisor (Library.subterms target))
+    end
 
   val SMT_RDIV_CANCEL_CLAUSE = Tactical.prove(
     ``(y:real) = 0 \/ x = y * HolSmt$smt_rdiv x y``,
@@ -853,6 +825,8 @@ local
     handle Feedback.HOL_ERR _ =>
     arith_prove_linear t
     handle Feedback.HOL_ERR _ =>
+    profile "arith_prove(ediv-emod)" arith_prove_ediv_emod t
+    handle Feedback.HOL_ERR _ =>
     int_product_prove t
     handle Feedback.HOL_ERR _ =>
     real_zero_factor_clause_prove t
@@ -877,6 +851,66 @@ local
         Thm.EQ_MP (Thm.SYM t_eq_t') (arith_prove_linear t')
     end
 
+  and arith_prove_ediv_emod t =
+    let
+      (* Unfold totalized div/mod before the shared alias canonicalizer: its
+         canonical emod spelling is an ediv polynomial, while Z3 conclusions
+         can compare a totalized operation with the corresponding raw one.
+         Keeping both raw operations aligned after the proved zero/nonzero
+         definition split lets the arithmetic ladder handle any dividend. *)
+      val unfold_total_conv = Rewrite.PURE_REWRITE_CONV
+        [HolSmtTheory.smt_ediv_total_def,
+         HolSmtTheory.smt_emod_total_def]
+      val totalization = unfold_total_conv t
+        handle Conv.UNCHANGED => Thm.REFL t
+      val unfolded = boolSyntax.rhs (Thm.concl totalization)
+      val aliases = SmtReplayCanon.cpc_term_canon_conv unfolded
+      val normalization = Thm.TRANS totalization aliases
+      val normalized = boolSyntax.rhs (Thm.concl normalization)
+      val divisors = ediv_emod_divisors normalized
+      val _ = not (List.null divisors) orelse
+        raise ERR "arith_prove_ediv_emod" "no integer div/mod operation"
+      (* Three sign branches are complete for each divisor but multiply
+         across unrelated divisors.  This rung is the bounded two-divisor
+         fragment; larger formulas fail closed and continue down the replay
+         ladder instead of starting exponential case expansion.  Dividend
+         and denominator expressions themselves remain unrestricted. *)
+      val _ = List.length divisors <= 2 orelse
+        raise ERR "arith_prove_ediv_emod"
+          "outside bounded two-divisor integer div/mod arithmetic"
+      val simplify = bossLib.ASM_SIMP_TAC intLib.int_ss
+        [integerTheory.EDIV_DEF, integerTheory.EMOD_DEF,
+         integerTheory.INT_ABS, integerTheory.INT_DIV_0,
+         integerTheory.INT_MOD0]
+      fun finish () =
+        Tactical.TRY intLib.ARITH_TAC
+        THEN simplify
+        THEN Tactical.TRY intLib.ARITH_TAC
+      fun split [] = finish ()
+        | split (denominator :: rest) =
+            let
+              val zero = boolSyntax.mk_eq
+                (denominator, intSyntax.zero_tm)
+              val positive = intSyntax.mk_less
+                (intSyntax.zero_tm, denominator)
+              val negative = intSyntax.mk_less
+                (denominator, intSyntax.zero_tm)
+            in
+              (* Split zero first so both sign branches retain the explicit
+                 nonzero fact needed by INT_DIV_0 and INT_MOD0. *)
+              Tactic.ASM_CASES_TAC zero THENL
+                [Tactical.TRY intLib.ARITH_TAC THEN split rest,
+                 Tactic.ASM_CASES_TAC positive THENL
+                   [Tactical.TRY intLib.ARITH_TAC THEN split rest,
+                    SUBGOAL_THEN negative ASSUME_TAC THENL
+                      [intLib.ARITH_TAC,
+                       Tactical.TRY intLib.ARITH_TAC THEN split rest]]]
+            end
+      val proof = Tactical.TAC_PROOF (([], normalized), split divisors)
+    in
+      Thm.EQ_MP (Thm.SYM normalization) proof
+    end
+
   and arith_prove_linear t =
     let
       fun arith_tactic (goal as (_, term)) =
@@ -892,11 +926,7 @@ local
       Tactical.TAC_PROOF (([], t),
         (* rewrite the `ediv` and `emod` symbols so that the arithmetic
            decision procedures can solve terms containing these functions *)
-        PURE_REWRITE_TAC[EDIV_ZERO_SIGN_CLAUSE, EDIV_ZERO_GE_CLAUSE,
-          EDIV_ZERO_NONPOS_CLAUSE, EDIV_ZERO_NONNEG_CLAUSE,
-          EMOD_ZERO_SIGN_CLAUSE,
-          EMOD_ZERO_NONPOS_CLAUSE, integerTheory.EDIV_DEF,
-          integerTheory.EMOD_DEF]
+        PURE_REWRITE_TAC[integerTheory.EDIV_DEF, integerTheory.EMOD_DEF]
         (* the next rewrites are a workaround for this issue:
            https://github.com/HOL-Theorem-Prover/HOL/issues/1207 *)
         >> PURE_REWRITE_TAC[integerTheory.INT_ABS, integerTheory.NUM_OF_INT]
@@ -3531,6 +3561,7 @@ in
   val eta_equal_for_test = eta_equal
   val monotonicity_prove_for_test = monotonicity_prove
   val arith_prove_for_test = arith_prove
+  val arith_prove_ediv_emod_for_test = arith_prove_ediv_emod
   val word_decide_for_test = word_decide
 
   fun initial_replay_state definitions proof : state = {
