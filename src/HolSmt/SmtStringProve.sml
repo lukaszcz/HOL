@@ -220,9 +220,14 @@ struct
     smtstringTheory.smtstr_len_def
   ]
 
-  val symbolic_lemmas = [
+  (* These two semantic theorems cover both equality orientations of the
+     general middle-singleton concat family. *)
+  val symbolic_concat_lemmas = [
     smtstringTheory.smtstr_concat_middle_singleton,
-    smtstringTheory.smtstr_singleton_concat_middle,
+    smtstringTheory.smtstr_singleton_concat_middle
+  ]
+
+  val symbolic_lemmas = symbolic_concat_lemmas @ [
     smtstringTheory.smtstr_len_eq_zero,
     smtstringTheory.smtstr_prefixof_decompose,
     smtstringTheory.smtstr_suffixof_decompose,
@@ -466,11 +471,13 @@ struct
          symbolic String-family procedure and has a loud failure boundary. *)
       profile "string-symbolic(3)(general)"
         (fn target =>
-          prove_alias_metis
-            [smtstringTheory.smtstr_concat_middle_singleton,
-             smtstringTheory.smtstr_singleton_concat_middle] target
+          (* The two-orientation concat procedure is part of this general
+             rung; it is not a one-theorem, certificate-shape cache. *)
+          profile "string-symbolic(general:concat-family)"
+            (prove_alias_metis symbolic_concat_lemmas) target
           handle Feedback.HOL_ERR _ =>
-          prove_alias_metis symbolic_lemmas target
+          profile "string-symbolic(general:lemma-set)"
+            (prove_alias_metis symbolic_lemmas) target
           handle Feedback.HOL_ERR _ =>
             with_metis_limit (fn () =>
               Tactical.prove (target,

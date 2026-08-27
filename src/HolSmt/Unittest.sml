@@ -14048,6 +14048,7 @@ fun string_prove_symbolic_rung_success () =
     val bounded = "string-symbolic(1)(bounded-concat-split)_OK"
     val parametric = "string-symbolic(2)(parametric-seq)_OK"
     val general = "string-symbolic(3)(general)_OK"
+    val concat_family = "string-symbolic(general:concat-family)_OK"
     fun direct expected name tm =
       (Profile.reset_all ();
        assert_string_prover name
@@ -14055,6 +14056,10 @@ fun string_prove_symbolic_rung_success () =
        assert (List.foldl (fn (profile, total) =>
            profile_call_count profile + total) 0 expected = 1,
          name ^ " did not consume exactly one expected symbolic rung"))
+    fun folded name tm =
+      (direct [general] name tm;
+       assert (profile_call_count concat_family = 1,
+         name ^ " did not consume the folded general concat family"))
     (* Character variables carry the SMT-LIB code-point bound: ':smtstr' is
        a bounded carrier, so 'seq_unit c' only denotes a one-character
        string when 'c' is a code point.  On the replay path the bound comes
@@ -14064,26 +14069,26 @@ fun string_prove_symbolic_rung_success () =
         smtstr_concat p (smtstr_concat (seq_unit c) q) =
           seq_unit d ==> d = c``
   in
-    direct [general] "string symbolic concat" concat_goal;
+    folded "string symbolic concat" concat_goal;
     assert
       (profile_call_count
          "string(entry)(equality-orientation)_OK" = 1,
        "non-canonical concat family did not consume entry orientation");
-    direct [general] "string symbolic concat singleton-left"
+    folded "string symbolic concat singleton-left"
       ``c <= 196607 /\ d <= 196607 /\
         seq_unit d =
           smtstr_concat p (smtstr_concat (seq_unit c) q) ==> d = c``;
-    direct [general] "string symbolic concat seq-eq canonical result"
+    folded "string symbolic concat seq-eq canonical result"
       ``c <= 196607 /\ d <= 196607 /\
         seq_eq (seq_unit d)
           (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
         c = d``;
-    direct [general] "string symbolic concat seq-eq reversed result"
+    folded "string symbolic concat seq-eq reversed result"
       ``c <= 196607 /\ d <= 196607 /\
         seq_eq (seq_unit d)
           (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
         d = c``;
-    direct [general] "string symbolic concat applied witnesses"
+    folded "string symbolic concat applied witnesses"
       ``(97:num) <= 196607 /\
         middle_char x (seq_unit 97) <= 196607 /\
         seq_unit 97 =
