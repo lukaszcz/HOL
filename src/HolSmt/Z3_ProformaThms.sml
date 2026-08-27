@@ -205,7 +205,7 @@ in
       t034, t035] @ array_thm_list @ set_thm_list)
 
   val prove_hyp_thms = thm_net_from_list
-    [p001, p002, p003, p004, p005, p006, p007, p008, p009]
+    [p001, p002]
 end  (* local *)
 
   (* finds a matching theorem, instantiates it, attempts to prove all

@@ -12864,6 +12864,119 @@ in
   List.app assert_basic_th_lemma_dispatch cases
 end
 
+fun z3_width_proforma_public_replay_success () =
+let
+  fun mk_proof root =
+    let
+      val initial = Z3_Proof.empty_proof "4.12.4"
+      val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0, root)
+    in
+      Z3_Proof.update_proof_steps initial steps
+    end
+  fun replay_rewrite (name, goal) =
+    let
+      val thm = Z3_ProofReplay.replay_root_for_test
+        (mk_proof (Z3_Proof.REWRITE goal))
+    in
+      assert_no_hyps ("width proforma rewrite " ^ name, thm);
+      assert_concl_alpha ("width proforma rewrite " ^ name, thm, goal);
+      check_oracle_tags ("width proforma rewrite " ^ name) thm
+    end
+  fun replay_th_lemma (name, goal) =
+    let
+      val metadata = Z3_Proof.mk_th_lemma_metadata
+        ("arith", SOME "eq-propagate", [name])
+      val thm = Z3_ProofReplay.replay_root_for_test
+        (mk_proof (Z3_Proof.TH_LEMMA_ARITH (metadata, [], goal)))
+    in
+      assert_no_hyps ("width proforma th-lemma " ^ name, thm);
+      assert_concl_alpha ("width proforma th-lemma " ^ name, thm, goal);
+      check_oracle_tags ("width proforma th-lemma " ^ name) thm
+    end
+  val rewrite_cases = [
+    ("r245/255-bound/finite-1", ``(0w :word1) @@ (n2w 255 :word8) =
+      (n2w 255 :word9)``),
+    ("r245/255-bound/finite-16", ``(0w :word16) @@ (n2w 255 :word8) =
+      (n2w 255 :word24)``),
+    ("r245/255-bound/finite-24", ``(0w :word24) @@ (n2w 255 :word8) =
+      (n2w 255 :word32)``),
+    ("r245/255-bound/finite-30", ``(0w :30 word) @@ (n2w 255 :word8) =
+      (n2w 255 :38 word)``),
+    ("r245/255-bound/finite-31", ``(0w :31 word) @@ (n2w 255 :word8) =
+      (n2w 255 :39 word)``),
+    ("r246/255-bound", ``w2w (n2w 255 :word8) =
+      (n2w 255 :word32)``),
+    ("r247/255-bound/finite-24/8-le-32",
+      ``(((0w :word24) @@ (x :word8) = (n2w 255 :word32)) <=>
+        (x = n2w 255))``),
+    ("r248/255-bound/finite-24/8-le-32",
+      ``(((0w :word24) @@ (x :word8) = (n2w 255 :word32)) <=>
+        (n2w 255 = x))``),
+    ("r249/255-bound/finite-24/8-le-32",
+      ``(((n2w 255 :word32) = (0w :word24) @@ (x :word8)) <=>
+        (x = n2w 255))``),
+    ("r250/255-bound/finite-24/8-le-32",
+      ``(((n2w 255 :word32) = (0w :word24) @@ (x :word8)) <=>
+        (n2w 255 = x))``),
+    ("r256", ``(7 >< 0) (x :word8) = x``)]
+  val th_lemma_cases = [
+    ("t026", ``(0w = (x :word8)) \/ x ' 0 \/ x ' 1 \/ x ' 2 \/
+      x ' 3 \/ x ' 4 \/ x ' 5 \/ x ' 6 \/ x ' 7``),
+    ("t031", ``(0w:word32 = 0xFFFFFFFFw * sw2sw (x :word8)) ==>
+      ~(x ' 0)``),
+    ("t032", ``(0w:word32 = 0xFFFFFFFFw * sw2sw (x :word8)) ==>
+      ~(x ' 1 <=> ~(x ' 0))``),
+    ("t033", ``(0w:word32 = 0xFFFFFFFFw * sw2sw (x :word8)) ==>
+      ~(x ' 2 <=> ~(x ' 0) /\ ~(x ' 1))``)]
+in
+  Profile.reset_all ();
+  List.app replay_rewrite rewrite_cases;
+  List.app replay_th_lemma th_lemma_cases;
+  if Library.no_fastpath () then
+    (assert (profile_call_count "rewrite(9)(proforma)_OK" = 0 andalso
+        profile_call_count "rewrite(18)(BBLAST)_OK" = 11,
+      "disabled width rewrite caches did not fall back to 11 BBLAST proofs");
+     assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 0 andalso
+        profile_call_count "th_lemma[arith](4)(bv)_OK" = 4 andalso
+        profile_call_count "th_lemma[bv](3)(COND_BBLAST)_OK" = 4,
+      "disabled width th-lemma caches did not fall back to four BV proofs"))
+  else
+    (assert (profile_call_count "rewrite(9)(proforma)_OK" = 11 andalso
+        profile_call_count "rewrite(18)(BBLAST)_OK" = 0,
+      "width rewrite caches were not consumed exactly 11 times");
+     assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 4 andalso
+        profile_call_count "th_lemma[arith](4)(bv)_OK" = 0,
+      "width th-lemma caches were not consumed exactly four times"))
+end
+
+fun z3_arith_bv_fallback_resource_gate_propagates () =
+let
+  val fallback_called = ref false
+  val expected = SmtResource.term_size_diagnostic_for
+    "BitVector" "arith-tagged-bv" 200001
+  val gate =
+    (SmtResource.check_term_size_for
+       "BitVector" "arith-tagged-bv" 200001;
+     die "FAIL: arith-tagged BV resource probe did not gate")
+    handle Feedback.HOL_ERR holerr => holerr
+  val propagated =
+    ((ignore (Z3_ProofReplay.arith_bv_fallback_for_test
+       ``(x :word8) = x``
+       (fn _ => (fallback_called := true; boolTheory.TRUTH)) gate);
+      NONE)
+     handle Feedback.HOL_ERR holerr => SOME holerr)
+in
+  case propagated of
+    NONE => die "FAIL: arith-tagged BV router swallowed a resource gate"
+  | SOME holerr =>
+      (assert (SmtResource.is_resource_gate holerr,
+        "arith-tagged BV router changed the resource error class");
+       assert (Feedback.message_of holerr = expected,
+        "arith-tagged BV router changed the resource diagnostic");
+       assert (not (!fallback_called),
+        "arith-tagged BV router called BBLAST after a resource gate"))
+end
+
 fun z3_th_lemma_basic_unsupported_diagnostic () =
   (ignore (replay_z3_proof_string
     "((proof ((_ th-lemma basic eq-propagate 7) false)))");
@@ -16609,6 +16722,10 @@ let
       z3_th_lemma_existing_theory_replay_minimal_success),
     ("z3_th_lemma_basic_dispatch_replay_success",
       z3_th_lemma_basic_dispatch_replay_success),
+    ("z3_width_proforma_public_replay_success",
+      z3_width_proforma_public_replay_success),
+    ("z3_arith_bv_fallback_resource_gate_propagates",
+      z3_arith_bv_fallback_resource_gate_propagates),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_rewrite_ladder_exhausted_diagnostic",

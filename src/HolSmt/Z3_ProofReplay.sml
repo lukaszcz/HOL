@@ -2425,11 +2425,46 @@ local
       (state_cache_thm state thm, thm)
     end)
 
+  val bv_th_lemma_prove =
+  let
+    (* Keep SIMP_TAC for conditional rewrites.  A 2026-07-08 Poly/ML 5.9.2
+       retry with PURE_REWRITE_TAC did not reproduce the old segfault in the
+       unit phase, but the full selftest run did not finish promptly after
+       entering functional tests. *)
+    val COND_REWRITE_TAC = simpLib.SIMP_TAC
+      simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
+  in
+    fn t =>
+      (* E1(c): WORD_BIT_EQ is a shortcut before complete BV blasting. *)
+      profile "th_lemma[bv](2)(WORD_BIT_EQ)" (fn () =>
+        (Library.require_fastpath "Z3 th-lemma WORD_BIT_EQ";
+         Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
+           (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
+           wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t))) ()
+      handle Feedback.HOL_ERR _ =>
+        (* E1(a): conditional normalization plus BBLAST decides BV. *)
+        profile "th_lemma[bv](3)(COND_BBLAST)" Tactical.prove (t,
+          Tactical.THEN (COND_REWRITE_TAC, blastLib.BBLAST_TAC))
+  end
+
+  fun arith_bv_fallback t fallback holerr =
+    if SmtResource.is_resource_gate holerr then
+      raise Feedback.HOL_ERR holerr
+    else if has_word_atom t then
+      fallback t
+    else
+      raise Feedback.HOL_ERR holerr
+
   val z3_th_lemma_arith_generic =
     th_lemma_wrapper D1PerformanceCache "arith" (fn (state, t) =>
     let
       (* E1(b): arithmetic combines complete linear and loud NLA routes. *)
       val thm = profile "th_lemma[arith](3)" arith_prove t
+        handle Feedback.HOL_ERR holerr =>
+          (* E1(a): ordinary legacy arith-tagged BV failures end in complete
+             BBLAST. Resource refusals must terminate this ladder. *)
+          arith_bv_fallback t
+            (profile "th_lemma[arith](4)(bv)" bv_th_lemma_prove) holerr
     in
       (* cache 'thm' *)
       (state_cache_thm state thm, thm)
@@ -2470,28 +2505,6 @@ local
       z3_th_lemma_bag args
     else
       z3_th_lemma_array_generic args
-
-  val bv_th_lemma_prove =
-  let
-    (* Keep SIMP_TAC for conditional rewrites.  A 2026-07-08 Poly/ML 5.9.2
-       retry with PURE_REWRITE_TAC did not reproduce the old segfault in the
-       unit phase, but the full selftest run did not finish promptly after
-       entering functional tests. *)
-    val COND_REWRITE_TAC = simpLib.SIMP_TAC
-      simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
-  in
-    fn t =>
-      (* E1(c): WORD_BIT_EQ is a shortcut before complete BV blasting. *)
-      profile "th_lemma[bv](2)(WORD_BIT_EQ)" (fn () =>
-        (Library.require_fastpath "Z3 th-lemma WORD_BIT_EQ";
-         Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
-           (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
-           wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t))) ()
-      handle Feedback.HOL_ERR _ =>
-        (* E1(a): conditional normalization plus BBLAST decides BV. *)
-        profile "th_lemma[bv](3)(COND_BBLAST)" Tactical.prove (t,
-          Tactical.THEN (COND_REWRITE_TAC, blastLib.BBLAST_TAC))
-  end
 
   val z3_th_lemma_basic =
     th_lemma_wrapper D1PerformanceCache "basic" (fn (state, t) =>
@@ -3782,6 +3795,7 @@ in
   val ground_subterm_eval_max_calls_for_test =
     ground_subterm_eval_max_calls
   val word_decide_for_test = word_decide
+  val arith_bv_fallback_for_test = arith_bv_fallback
 
   fun initial_replay_state definitions proof : state = {
     asserted_hyps = Term.empty_tmset,
