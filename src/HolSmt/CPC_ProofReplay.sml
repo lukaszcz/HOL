@@ -1824,79 +1824,26 @@ local
      on its exact shape (notably TRUE_ELIM consuming [T = p]). *)
   fun replay_canonical_trans strong_canon prems =
     let
-      fun arithmetic_operand_conv tm =
-        if List.null (Term.free_vars tm) then
-          bossLib.EVAL tm
-        else
-          SmtReplayCanon.arith_poly_norm_conversion tm
-      fun polynomial_view theorem = expose_true_equality
-        (Conv.CONV_RULE
-          (Conv.BINOP_CONV arithmetic_operand_conv)
-          theorem)
-        handle Feedback.HOL_ERR _ => theorem
-             | Conv.UNCHANGED => theorem
-      fun view theorem = expose_true_equality
-        (Conv.CONV_RULE
-          (Conv.BINOP_CONV (Conv.QCONV int_neutral_arithmetic_conv))
-          (Conv.CONV_RULE
-            (Conv.BINOP_CONV SmtReplayCanon.cpc_operand_canon_conv)
-            theorem))
-      fun strong_view theorem = expose_true_equality
+      (* E1(b): this terminal is the general canonical-form procedure for
+         CPC trans.  It derives totalization identities from this proof's
+         emitted-symbol table and otherwise uses only general canonical
+         conversions.  It is coverage-bearing, so it is never a fast path. *)
+      fun canonical_view theorem = expose_true_equality
         (Conv.CONV_RULE (Conv.BINOP_CONV strong_canon) theorem)
         handle Feedback.HOL_ERR _ => theorem
              | Conv.UNCHANGED => theorem
-      (* Scoped CPC equalities are often used immediately as rewrite
-         assumptions.  Normalize a bridge theorem with those exact kernel
-         hypotheses before composing it; the reverse orientation is
-         important when cvc5 has purified a compound arithmetic term into a
-         scope variable. *)
-      fun hypothesis_view reverse theorem =
-        let
-          val equalities = List.mapPartial (fn hypothesis =>
-            if boolSyntax.is_eq hypothesis then
-              SOME (Thm.ASSUME hypothesis)
-            else NONE) (Thm.hyp theorem)
-          val rewrites =
-            if reverse then List.map Thm.SYM equalities else equalities
-        in
-          expose_true_equality
-            (Rewrite.PURE_REWRITE_RULE rewrites theorem)
-        end
       fun compose (next, accumulated) =
-        let
-          val accumulated_view = view accumulated
-          val next_view = view next
-        in
-          (* A non-reflexive equality may normalize to [T] or [x = x], but
-             it is still the bridge to the next endpoint in a TRANS chain.
-             Only an originally reflexive theorem is neutral.  Discarding a
-             normalized bridge here loses facts such as [p = F] and leaves a
-             later EQ_RESOLVE with the preceding equivalence instead. *)
-          if is_reflexive_equality accumulated then
-            retain_support next accumulated
-          else if is_reflexive_equality next then
-            retain_support accumulated next
-          else
-            (replay_trans [accumulated, next]
-             handle Feedback.HOL_ERR _ =>
-               (replay_trans [accumulated_view, next_view]
-                handle Feedback.HOL_ERR _ =>
-                  (replay_trans
-                     [polynomial_view accumulated_view,
-                      polynomial_view next_view]
-                   handle Feedback.HOL_ERR _ =>
-                     (replay_trans
-                        [strong_view accumulated_view,
-                         strong_view next_view]
-                      handle Feedback.HOL_ERR _ =>
-                        (replay_trans
-                           [hypothesis_view true accumulated_view,
-                            hypothesis_view true next_view]
-                         handle Feedback.HOL_ERR _ =>
-                           replay_trans
-                             [hypothesis_view false accumulated_view,
-                              hypothesis_view false next_view])))))
-        end
+        (* A non-reflexive equality may normalize to [T] or [x = x], but
+           it is still the bridge to the next endpoint in a TRANS chain.
+           Only an originally reflexive theorem is neutral. *)
+        if is_reflexive_equality accumulated then
+          retain_support next accumulated
+        else if is_reflexive_equality next then
+          retain_support accumulated next
+        else
+          profile "CPC(rung:canonical_trans/canonical)" (fn () =>
+            replay_trans
+              [canonical_view accumulated, canonical_view next]) ()
     in
       case prems of
         [] => raise ERR "trans" "expected CPC equality premises"
@@ -1906,74 +1853,6 @@ local
   fun replay_canonical_trans_with_provenance strong_canon
       (premise_steps : replayed_step list) =
     let
-      fun arithmetic_operand_conv tm =
-        if List.null (Term.free_vars tm) then bossLib.EVAL tm
-        else SmtReplayCanon.arith_poly_norm_conversion tm
-      fun converted conv (theorem, provenance) =
-        let
-          val theorem' = Conv.CONV_RULE conv theorem
-            handle Conv.UNCHANGED => theorem
-          val provenance' = align_canonical_provenance conv
-            (Thm.concl theorem) (Thm.concl theorem') provenance
-        in
-          (theorem', provenance')
-        end
-      fun exposed (theorem, provenance) =
-        let val theorem' = expose_true_equality theorem in
-          if Term.aconv (Thm.concl theorem) (Thm.concl theorem') then
-            (theorem, provenance)
-          else
-            let
-              val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
-              val selected =
-                case provenance of
-                  EqualityProvenance
-                    (left_provenance, right_provenance) =>
-                      if Term.aconv left boolSyntax.T then right_provenance
-                      else if Term.aconv right boolSyntax.T then
-                        left_provenance
-                      else UnavailableProvenance
-                        "canonical exposure changed an unknown endpoint"
-                | _ => UnavailableProvenance
-                    "canonical exposure lacks exact equality provenance"
-            in
-              (theorem', selected)
-            end
-        end
-      fun polynomial_view result = exposed
-        (converted (Conv.BINOP_CONV arithmetic_operand_conv) result)
-        handle Feedback.HOL_ERR _ => result
-             | Conv.UNCHANGED => result
-      fun view result = exposed
-        (converted
-          (Conv.BINOP_CONV (Conv.QCONV int_neutral_arithmetic_conv))
-          (converted
-            (Conv.BINOP_CONV SmtReplayCanon.cpc_operand_canon_conv)
-            result))
-      fun strong_view result = exposed
-        (converted (Conv.BINOP_CONV strong_canon) result)
-        handle Feedback.HOL_ERR _ => result
-             | Conv.UNCHANGED => result
-      fun hypothesis_view reverse (theorem, provenance) =
-        let
-          val equalities = List.mapPartial (fn hypothesis =>
-            if boolSyntax.is_eq hypothesis then
-              SOME (Thm.ASSUME hypothesis)
-            else NONE) (Thm.hyp theorem)
-          val rewrites = if reverse then List.map Thm.SYM equalities
-            else equalities
-          val theorem' = Rewrite.PURE_REWRITE_RULE rewrites theorem
-          val provenance' =
-            if Term.aconv (Thm.concl theorem) (Thm.concl theorem') then
-              provenance
-            else UnavailableProvenance
-              "hypothesis canonicalization changed an unaligned endpoint"
-        in
-          exposed (theorem', provenance')
-        end
-      fun entry (theorem, provenance) : replayed_step =
-        {rule_name = "trans-provenance",
-         result = exact_result provenance theorem}
       fun try work fallback =
         work () handle Feedback.HOL_ERR _ => fallback ()
                       | Conv.UNCHANGED => fallback ()
@@ -1983,15 +1862,12 @@ local
           val next_result =
             (step_theorem next_step, step_provenance next_step)
           val (next, next_provenance) = next_result
-          fun replay accumulated_view next_view =
-            replay_trans_with_provenance
-              [entry accumulated_view, entry next_view]
           (* Canonicalize only the two candidate middle endpoints, prove the
              bridge between those exact terms, and compose the unmodified
              oriented premise theorems around it.  Whole-equality conversion
              can collapse a non-reflexive CPC bridge to T and lose which
              outer endpoint this TRANS route selected. *)
-          fun bridged conv accumulated_side next_side =
+          fun canonical_bridge accumulated_side next_side =
             let
               val accumulated' = if accumulated_side = 1 then accumulated
                 else Thm.SYM accumulated
@@ -1999,59 +1875,69 @@ local
               val (_, middle_left) = boolSyntax.dest_eq
                 (Thm.concl accumulated')
               val (middle_right, _) = boolSyntax.dest_eq (Thm.concl next')
-              val left_norm = conv middle_left
-              val right_norm = conv middle_right
-              val normalized_left = boolSyntax.rhs (Thm.concl left_norm)
-              val normalized_right = boolSyntax.rhs (Thm.concl right_norm)
-              val _ = Term.aconv normalized_left normalized_right orelse
-                raise ERR "trans"
-                  "canonical middle endpoints have distinct normal forms"
-              val bridge = Thm.TRANS left_norm (Thm.SYM right_norm)
-              val theorem = Thm.TRANS accumulated'
-                (Thm.TRANS bridge next')
-              val provenance = EqualityProvenance
-                (equality_endpoint (1 - accumulated_side)
-                   accumulated_provenance,
-                 equality_endpoint (1 - next_side) next_provenance)
+              fun extend conv theorem =
+                let
+                  val current = boolSyntax.rhs (Thm.concl theorem)
+                  val refinement = Conv.QCONV conv current
+                in
+                  Thm.TRANS theorem refinement
+                end
+              fun finish left_norm right_norm =
+                let
+                  val bridge = Thm.TRANS left_norm (Thm.SYM right_norm)
+                  val theorem = Thm.TRANS accumulated'
+                    (Thm.TRANS bridge next')
+                  val provenance = EqualityProvenance
+                    (equality_endpoint (1 - accumulated_side)
+                       accumulated_provenance,
+                     equality_endpoint (1 - next_side) next_provenance)
+                in
+                  (theorem, provenance)
+                end
+              fun refine [] _ = raise ERR "trans"
+                    "canonical middle endpoints have distinct normal forms"
+                | refine (conv :: rest) (left_norm, right_norm) =
+                    let
+                      val left_norm' = extend conv left_norm
+                      val right_norm' = extend conv right_norm
+                      val normalized_left = boolSyntax.rhs
+                        (Thm.concl left_norm')
+                      val normalized_right = boolSyntax.rhs
+                        (Thm.concl right_norm')
+                    in
+                      if Term.aconv normalized_left normalized_right then
+                        finish left_norm' right_norm'
+                      else refine rest (left_norm', right_norm')
+                    end
             in
-              (theorem, provenance)
+              refine
+                [SmtReplayCanon.cpc_canon_conv,
+                 cpc_integer_spelling_conv,
+                 strong_canon,
+                 SmtReplayCanon.reorient_equality_conv]
+                (Thm.REFL middle_left, Thm.REFL middle_right)
             end
-          fun bridged_orientations conv =
-            try (fn () => bridged conv 1 0) (fn () =>
-              try (fn () => bridged conv 1 1) (fn () =>
-                try (fn () => bridged conv 0 0) (fn () =>
-                  bridged conv 0 1)))
+          fun canonical_orientations () =
+            try (fn () => canonical_bridge 1 0) (fn () =>
+              try (fn () => canonical_bridge 1 1) (fn () =>
+                try (fn () => canonical_bridge 0 0) (fn () =>
+                  canonical_bridge 0 1)))
         in
           if is_reflexive_equality accumulated then
             (retain_support next accumulated, next_provenance)
           else if is_reflexive_equality next then
             (retain_support accumulated next, accumulated_provenance)
           else
-            try (fn () => replay accumulated_result next_result) (fn () =>
-              try (fn () => bridged_orientations
-                SmtReplayCanon.cpc_operand_canon_conv) (fn () =>
-                try (fn () => bridged_orientations
-                  cpc_integer_normal_form_conv) (fn () =>
-                try (fn () => bridged_orientations
-                  strong_canon) (fn () =>
-                  let
-                    val accumulated_view = view accumulated_result
-                    val next_view = view next_result
-                  in
-                    try (fn () => replay accumulated_view next_view) (fn () =>
-                      try (fn () => replay
-                        (polynomial_view accumulated_view)
-                        (polynomial_view next_view)) (fn () =>
-                          try (fn () => replay
-                            (strong_view accumulated_view)
-                            (strong_view next_view)) (fn () =>
-                              try (fn () => replay
-                                (hypothesis_view true accumulated_view)
-                                (hypothesis_view true next_view)) (fn () =>
-                                  replay
-                                    (hypothesis_view false accumulated_view)
-                                    (hypothesis_view false next_view)))))
-                  end))))
+            (* E1(b) general terminal.  Its deterministic normal-form
+               procedure accumulates kernel equalities through the shared
+               CPC and integer-spelling phases, the table-derived strong
+               phase, and a final equality orientation.  An earlier match is
+               a completed canonical comparison, not an optional cache route.
+               The original endpoint theorems and provenance remain
+               unchanged. *)
+            profile
+              "CPC(rung:canonical_trans/provenance-canonical)"
+              canonical_orientations ()
         end
     in
       case premise_steps of
@@ -6322,7 +6208,11 @@ local
             (replay_canonical_trans strong_canon)
           fun fallback () =
             case conclusion of
-              SOME target => arith_prove_from_prems prems target
+              (* E1(b): general arithmetic implication proving is the
+                 coverage terminal after canonical composition. *)
+              SOME target =>
+                profile "CPC(rung:canonical_trans/general-arithmetic)"
+                  (fn () => arith_prove_from_prems prems target) ()
             | NONE =>
                 (arithmetic_trans ()
                  handle Feedback.HOL_ERR holerr =>

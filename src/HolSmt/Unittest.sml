@@ -9734,6 +9734,47 @@ in
     "omitted CPC arith_poly_norm produced a Boolean conversion theorem")
 end
 
+fun cpc_proof_replay_canonical_trans_terminal_success () =
+let
+  fun profile_count name =
+    case List.find (fn (candidate, _) => candidate = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun replay proof = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string proof)
+  val proofs =
+    ["((declare-const a Int) (declare-const b Int) \
+     \(declare-const x Int) (assume @p1 (= a (+ x 0))) \
+     \(assume @p2 (= x b)) \
+     \(step @out (= a b) :rule trans :premises (@p1 @p2)))",
+     "((declare-const a Bool) (declare-const b Bool) \
+     \(declare-const x Int) (declare-const y Int) \
+     \(assume @p1 (= a (> x y))) \
+     \(assume @p2 (= (< y x) b)) \
+     \(step @out (= a b) :rule trans :premises (@p1 @p2)))",
+     "((declare-const a Int) (declare-const b Int) \
+     \(declare-const x Int) (assume @p1 (= a (+ x x))) \
+     \(assume @p2 (= (* 2 x) b)) \
+     \(step @out (= a b) :rule trans :premises (@p1 @p2)))"]
+  val () = Profile.reset_all ()
+  val theorems = List.map replay proofs
+  val consumed =
+    profile_count "CPC(rung:canonical_trans/canonical)_OK"
+  val general =
+    profile_count "CPC(rung:canonical_trans/general-arithmetic)_OK"
+in
+  assert
+    (consumed = 2,
+     "CPC canonical trans terminal consumed " ^ Int.toString consumed ^
+     " instead of two canonical families");
+  assert
+    (general = 1,
+     "CPC canonical trans arithmetic terminal consumed " ^
+     Int.toString general ^ " instead of one polynomial family");
+  List.app (check_oracle_tags "CPC canonical trans terminal") theorems
+end
+
 fun cpc_proof_replay_bv_xor_rotation_general_success () =
 let
   fun profile_count name results =
@@ -10332,9 +10373,26 @@ let
     \(assume @left (= (and p q r) (> x y))) \
     \(assume @right (= (< y x) (and (not p) (and q r)))) \
     \(step @trans :rule trans :premises (@left @right)))"
+  val canonical_trans_proof = parse_cpc_proof_string
+    canonical_trans_prefix
+  val _ = Profile.reset_all ()
+  val canonical_trans_theorem =
+    CPC_ProofReplay.replay_root_for_test canonical_trans_proof
+  val _ = assert
+    (Thm.concl canonical_trans_theorem ~~
+       ``((p:bool) /\ q /\ r) = (~p /\ (q /\ r))``,
+     "omitted canonical trans reconstructed the wrong exact endpoints")
+  val _ = assert
+    (profile_count
+       "CPC(rung:canonical_trans/provenance-canonical)_OK"
+       (Profile.results ()) = 1,
+     "omitted canonical trans did not consume its provenance terminal")
+  val _ = check_oracle_tags
+    "CPC omitted canonical trans provenance terminal"
+    canonical_trans_theorem
   val _ =
     (case CPC_ProofReplay.replay_step_provenance_for_test
-        (parse_cpc_proof_string canonical_trans_prefix) "@trans" of
+        canonical_trans_proof "@trans" of
        CPC_Proof.EqualityProvenance _ => ()
      | CPC_Proof.UnavailableProvenance reason => die
          ("FAIL: canonical trans endpoint alignment unavailable: " ^ reason)
@@ -16127,6 +16185,8 @@ let
       cpc_proof_replay_eq_refl_cong_chain_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
+    ("cpc_proof_replay_canonical_trans_terminal_success",
+      cpc_proof_replay_canonical_trans_terminal_success),
     ("cpc_proof_replay_bv_xor_rotation_general_success",
       cpc_proof_replay_bv_xor_rotation_general_success),
     ("cpc_proof_replay_cong_consumes_premises_success",
