@@ -14195,6 +14195,17 @@ fun string_prove_regex_rung_success () =
   let
     fun direct name tm =
       assert_string_prover name SmtStringProve.regex_prove tm
+    val parametric = "regex(2)(parametric-automaton)_OK"
+    fun public_parametric name tm =
+      (Profile.reset_all ();
+       assert_string_prover name
+         (SmtStringProve.string_prove intLib.ARITH_PROVE) tm;
+       assert (profile_call_count parametric = 1,
+         name ^ " did not consume parametric automaton exactly once");
+       assert (profile_call_count "string(4)(regex)_OK" = 1,
+         name ^ " did not return through the public regex rung");
+       assert (profile_call_count "string(5)(unsupported)_OK" = 0,
+         name ^ " reached the unsupported String boundary"))
     val range = ``reglan_range (seq_unit 97) (seq_unit 122)``
     val loop13 =
       ``reglan_loop (reglan_to_re (seq_unit 97)) 1 3``
@@ -14210,6 +14221,71 @@ fun string_prove_regex_rung_success () =
             (reglan_to_re (seq_unit 97)) (reglan_to_re (SmtStr [])))
           1 2``
   in
+    public_parametric "regex parametric old complement pin"
+      ``~aut_accept x 0 ^comp \/
+        smtstr_len x <= 0 \/
+        (seq_nth_i x 0 <> 97 \/
+         aut_accept x 1 (reglan_plus reglan_allchar))``;
+    public_parametric "regex parametric old intersection pin"
+      ``~aut_accept x 0 ^inter \/
+        smtstr_len x <= 0 \/
+        (97 <= seq_nth_i x 0 /\ seq_nth_i x 0 <= 122 /\
+         seq_nth_i x 0 <> 109 /\
+         aut_accept x 1 (reglan_to_re (SmtStr [])))``;
+    public_parametric "regex parametric old nullable zero pin"
+      ``~aut_accept x 0 ^nullable \/
+        smtstr_len x <= 0 \/
+        (seq_nth_i x 0 = 97 /\
+         aut_accept x 1
+           (reglan_loop
+             (reglan_union
+               (reglan_to_re (seq_unit 97))
+               (reglan_to_re (SmtStr []))) 0 1))``;
+    public_parametric "regex parametric old nullable one pin"
+      ``~aut_accept x 1
+          (reglan_loop
+            (reglan_union
+              (reglan_to_re (seq_unit 97))
+              (reglan_to_re (SmtStr []))) 0 1) \/
+        smtstr_len x <= 1 \/
+        (seq_nth_i x 1 = 97 /\
+         aut_accept x 2 (reglan_to_re (SmtStr [])))``;
+    public_parametric "regex parametric new range state and endpoints"
+      ``~aut_accept x 7
+          (reglan_range (seq_unit 31) (seq_unit 211)) \/
+        smtstr_len x <= 7 \/
+        (seq_nth_i x 7 <= 211 /\ 31 <= seq_nth_i x 7 /\
+         aut_accept x 8 (reglan_to_re (SmtStr [])))``;
+    public_parametric "regex parametric mixed SUC state bounds and codepoint"
+      ``~aut_accept x (SUC 6)
+          (reglan_loop
+            (reglan_to_re (seq_unit 8364)) (SUC 3) (SUC 8)) \/
+        smtstr_len x <= 7 \/
+        (seq_nth_i x (SUC 6) = 8364 /\
+         aut_accept x 8
+           (reglan_loop (reglan_to_re (seq_unit 8364)) 3 8))``;
+    public_parametric "regex parametric new nullable state bounds codepoint"
+      ``~aut_accept x 5
+          (reglan_loop
+            (reglan_union
+              (reglan_to_re (seq_unit 128578))
+              (reglan_to_re (SmtStr []))) 3 7) \/
+        smtstr_len x <= 5 \/
+        (seq_nth_i x 5 = 128578 /\
+         aut_accept x 6
+           (reglan_loop
+             (reglan_union
+               (reglan_to_re (seq_unit 128578))
+               (reglan_to_re (SmtStr []))) 0 6))``;
+    public_parametric "regex parametric new intersection values"
+      ``~aut_accept x 4
+          (reglan_inter
+            (reglan_range (seq_unit 65) (seq_unit 90))
+            (reglan_comp (reglan_to_re (seq_unit 81)))) \/
+        smtstr_len x <= 4 \/
+        (65 <= seq_nth_i x 4 /\ seq_nth_i x 4 <= 90 /\
+         seq_nth_i x 4 <> 81 /\
+         aut_accept x 5 (reglan_to_re (SmtStr [])))``;
     direct "regex membership bridge"
       ``~smt_in_re x ^range \/ aut_accept x 0 ^range``;
     direct "regex range length"

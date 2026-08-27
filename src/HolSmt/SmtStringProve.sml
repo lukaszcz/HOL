@@ -514,10 +514,6 @@ struct
     smtstringz3Theory.aut_accept_zero,
     smtstringz3Theory.aut_accept_transition_int
   ] @ aut_transition_rules @ [
-    smtstringz3Theory.aut_accept_comp_transition_seq_unit,
-    smtstringz3Theory.aut_accept_inter_transition_seq_unit,
-    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_zero,
-    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_one,
     smtstringz3Theory.aut_accept_empty,
     smtstringz3Theory.aut_accept_empty_terminal_int
   ]
@@ -606,65 +602,103 @@ struct
       Lib.tryfind instantiate parametric_regex_length_rules
     end
 
-  fun replay_specialized_automaton_prove target =
+  val automaton_state_names =
+    const_name_set
+      (smtstring_consts "smtstringz3" ["aut_accept", "seq_nth_i"])
+
+  val automaton_loop_names =
+    const_name_set (smtstring_consts "smtstring" ["reglan_loop"])
+
+  fun combination_arg_conv index arity conversion =
+    if index = arity - 1 then Conv.RAND_CONV conversion
+    else Conv.RATOR_CONV
+      (combination_arg_conv index (arity - 1) conversion)
+
+  (* State and loop-bound numerals have one canonical spelling at the replay
+     boundary.  In particular, REDUCE_CONV proves SUC k = k+1 after a schema
+     is instantiated.  The conversion is deliberately scoped to aut.accept,
+     seq.nth_i and re.loop control arguments: Unicode payload numerals are
+     neither expanded into Peano form nor otherwise treated as states. *)
+  fun automaton_control_atom_conv term =
     let
-      val numerals = HOLset.listItems
-        (HOLset.addList (Term.empty_tmset,
-          HolKernel.find_terms numSyntax.is_numeral target))
-      fun controls_arithmetic variable tm =
+      val (head, args) = boolSyntax.strip_comb term
+      val arity = List.length args
+      val reduce = Conv.QCONV reduceLib.REDUCE_CONV
+      fun changed conversion =
         let
-          val (head, args) = boolSyntax.strip_comb tm
-          val controlling =
-            (Library.same_const head numSyntax.suc_tm orelse
-             Library.same_const head numSyntax.minus_tm) andalso
-            List.exists (fn arg =>
-              List.exists (Term.aconv variable) (Term.free_vars arg)) args
+          val theorem = conversion term
+          val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
         in
-          controlling orelse
-          List.exists (controls_arithmetic variable) args
+          if Term.aconv left right then raise Conv.UNCHANGED else theorem
+        end
+    in
+      if is_named_const automaton_state_names head andalso arity >= 2 then
+        changed (combination_arg_conv 1 arity reduce)
+      else if is_named_const automaton_loop_names head andalso arity = 3 then
+        changed (Conv.THENC
+          (combination_arg_conv 1 arity reduce,
+           combination_arg_conv 2 arity reduce))
+      else
+        raise Conv.UNCHANGED
+    end
+
+  fun automaton_control_conv term =
+    Conv.QCONV
+      (Conv.TOP_DEPTH_CONV automaton_control_atom_conv) term
+
+  fun replay_parametric_automaton_prove target =
+    let
+      fun is_aut_accept term =
+        let
+          val (head, args) = boolSyntax.strip_comb term
+        in
+          is_named_const automaton_state_names head andalso
+          List.length args = 3 andalso
+          let val {Name, ...} = Term.dest_thy_const head
+          in Name = "aut_accept" end
         end
         handle Feedback.HOL_ERR _ => false
-      fun control_vars theorem =
-        List.filter (fn variable =>
-          Type.compare (Term.type_of variable, numSyntax.num) = EQUAL andalso
-          controls_arithmetic variable (Thm.concl theorem))
-          (Term.free_vars (Thm.concl theorem))
-      fun substitutions [] = [[]]
-        | substitutions (variable :: variables) =
-            List.concat (List.map (fn numeral =>
-              List.map (fn rest => Lib.|-> (variable, numeral) :: rest)
-                (substitutions variables)) numerals)
-      val target_normalization = regex_normalize target
-      val normalized_target =
-        boolSyntax.rhs (Thm.concl target_normalization)
-      fun instantiate theorem =
+      fun anchors term = HolKernel.find_terms is_aut_accept term
+      val control_normalization = automaton_control_conv target
+      val control_target = boolSyntax.rhs (Thm.concl control_normalization)
+      val regex_normalization = regex_normalize control_target
+      val target_normalization =
+        Thm.TRANS control_normalization regex_normalization
+      val normalized_target = boolSyntax.rhs (Thm.concl regex_normalization)
+      val target_anchors = anchors normalized_target
+      fun instantiate theorem (schema_anchor, target_anchor) =
         let
-          val schema =
-            Lib.snd (boolSyntax.dest_imp (Thm.concl theorem))
-            handle Feedback.HOL_ERR _ => Thm.concl theorem
-          val instance = Drule.INST_TY_TERM
-            (Term.match_term schema normalized_target) theorem
+          val substitution =
+            Term.match_term schema_anchor target_anchor
+          val instance = Drule.INST_TY_TERM substitution theorem
+          val instance = Conv.CONV_RULE automaton_control_conv instance
           val instance = simpLib.SIMP_RULE regex_reduce_ss
             [smtstringz3Theory.seq_unit_def,
              smtstringz3Theory.aut_accept_loop_empty] instance
-          val _ = Term.aconv (Thm.concl instance) normalized_target orelse
-            raise ERR "replay_specialized_automaton_prove"
-              "specialized transition has the wrong conclusion"
+          val oriented = Conv.CONV_RULE
+            (Conv.QCONV (Conv.TOP_DEPTH_CONV
+              SmtReplayCanon.reorient_equality_conv)) instance
+          val instance =
+            if Term.aconv (Thm.concl instance) normalized_target then instance
+            else if Term.aconv (Thm.concl oriented) normalized_target then
+              oriented
+            else with_metis_limit (fn () =>
+              metisLib.METIS_PROVE [oriented] normalized_target) ()
         in
           instance
         end
-      (* Candidates are thunks: the control-variable instances are
-         combinatorial in the numerals, and at most one is ever used. *)
-      fun control_instances theorem =
-        (fn () => theorem) :: List.map (fn substitution => fn () =>
-          simpLib.SIMP_RULE regex_reduce_ss
-            [smtstringz3Theory.aut_accept_loop_empty]
-            (Thm.INST substitution theorem))
-          (substitutions (control_vars theorem))
-      val candidates =
-        List.concat (List.map control_instances aut_transition_rules)
-      val theorem =
-        Lib.tryfind (fn candidate => instantiate (candidate ())) candidates
+      fun theorem_instances theorem =
+        let val schema_anchors = anchors (Thm.concl theorem)
+        in
+          List.concat (List.map (fn schema_anchor =>
+            List.map (fn target_anchor =>
+              (theorem, (schema_anchor, target_anchor))) target_anchors)
+            schema_anchors)
+        end
+      val candidates = List.concat
+        (List.map theorem_instances aut_transition_rules)
+      val theorem = Lib.tryfind
+        (fn (schema, anchors) => instantiate schema anchors) candidates
     in
       Thm.EQ_MP (Thm.SYM target_normalization) theorem
     end
@@ -680,10 +714,10 @@ struct
       profile "regex(1)(parametric-length)"
         replay_parametric_regex_length_prove t
       handle Feedback.HOL_ERR _ =>
-      (* E1(b): finite specialization of the named automaton schemas over
-         numerals present in the target, with a loud boundary. *)
-      profile "regex(2)(specialized-automaton)"
-        replay_specialized_automaton_prove t
+      (* E1(b): structural instantiation plus proof-producing control-numeral
+         normalization for the named parametric automaton schemas. *)
+      profile "regex(2)(parametric-automaton)"
+        replay_parametric_automaton_prove t
       handle Feedback.HOL_ERR _ =>
       (* E1(b): bounded first-order search over the complete named regex
          lemma set used by this replay family. *)
