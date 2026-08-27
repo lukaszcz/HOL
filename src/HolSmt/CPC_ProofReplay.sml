@@ -1522,16 +1522,31 @@ local
       ("canonical occurrence alignment failed: " ^
        Feedback.message_of holerr)
 
+  (* Relate integer and real atoms before abstracting casts.  The three
+     parametric embedding theorems cover equality and both order relations;
+     greater-than spellings are already canonicalized to reversed less-than
+     relations.  This replaces per-shape relation lifts and works for
+     arbitrary linear integer expressions.  Build the rewrite net once. *)
+  val cast_arithmetic_canon_conv = SmtReplayCanon.compose
+    [SmtReplayCanon.cpc_term_canon_conv,
+     Conv.TOP_DEPTH_CONV
+       (Rewrite.PURE_REWRITE_CONV
+         [Conv.GSYM intrealTheory.real_of_int_11,
+          Conv.GSYM intrealTheory.real_of_int_lt,
+          Conv.GSYM intrealTheory.real_of_int_le]),
+     SmtReplayCanon.cpc_term_canon_conv]
+
   fun prove_cast_arithmetic prems target =
     let
       (* Push casts through integer arithmetic first, so algebraically related
          casts share one abstract real atom.  Real linear arithmetic then sees
          the polynomial shell, and INST restores the exact division/floor
          terms without assuming anything about them. *)
-      val target_normalization = SmtReplayCanon.cpc_term_canon_conv target
+      val target_normalization = cast_arithmetic_canon_conv target
       val normalized_target =
         boolSyntax.rhs (Thm.concl target_normalization)
-      val normalized_prems = List.map SmtReplayCanon.cpc_canon_rule prems
+      val normalized_prems = List.map
+        (Conv.CONV_RULE cast_arithmetic_canon_conv) prems
       val normalized_proof = prove_from_prems_abstracting
         RealField.REAL_ARITH intrealSyntax.is_real_of_int
         normalized_prems normalized_target
@@ -5209,175 +5224,29 @@ local
            handle _ => false))
       val needs_real_normalization = has_real_of_int target orelse
         List.exists (has_real_of_int o Thm.concl) prems
-      fun mixed_ge_lift () =
-        let
-          val (real_relation, int_relation) = boolSyntax.dest_eq target
-          val _ = realSyntax.dest_geq real_relation
-          val (int_left, int_right) = intSyntax.dest_geq int_relation
-          val lifted_target = boolSyntax.mk_eq
-            (realSyntax.mk_leq (intrealSyntax.mk_real_of_int int_right,
-               intrealSyntax.mk_real_of_int int_left),
-             intSyntax.mk_leq (int_right, int_left))
-          val lifted_raw = Drule.INST_TY_TERM
-            (Term.match_term (Thm.concl intrealTheory.real_of_int_le)
-              lifted_target) intrealTheory.real_of_int_le
-          val lifted = Rewrite.PURE_REWRITE_RULE
-            [intrealTheory.real_of_int_neg, intrealTheory.real_of_int_num,
-             integerTheory.INT_GE, realTheory.real_ge] lifted_raw
-            handle Conv.UNCHANGED => lifted_raw
-          val target_eq_normalized = simpLib.SIMP_CONV (bossLib.srw_ss())
-            [integerTheory.int_ge, realTheory.real_ge,
-             realTheory.real_div] target
-        in
-          Thm.EQ_MP (Thm.SYM target_eq_normalized) lifted
-        end
-      fun int_real_geq_tighten () =
-        let
-          val (int_relation, real_relation) = boolSyntax.dest_eq target
-          val (real_integer, real_bound) = realSyntax.dest_geq real_relation
-          val integer = intrealSyntax.dest_real_of_int real_integer
-          val ceiling = intrealSyntax.mk_INT_CEILING real_bound
-          val ceiling_eval = bossLib.EVAL ceiling
-          val (_, rounded) = boolSyntax.dest_eq (Thm.concl ceiling_eval)
-          val tightened_relation = intSyntax.mk_geq (integer, rounded)
-          val int_normalization = Tactical.TAC_PROOF
-            (([], boolSyntax.mk_eq (int_relation, tightened_relation)),
-             intLib.ARITH_TAC)
-          val real_normalization =
-            replay_arith_int_geq_tighten (integer, real_bound, rounded)
-        in Thm.TRANS int_normalization (Thm.SYM real_normalization) end
-      fun direct () =
-        let
-          val (left, right) = boolSyntax.dest_eq target
-          fun lift_leq x y =
-            Tactical.TAC_PROOF (([], boolSyntax.mk_eq
-              (intSyntax.mk_leq (x, y),
-               realSyntax.mk_leq (intrealSyntax.mk_real_of_int x,
-                 intrealSyntax.mk_real_of_int y))),
-              bossLib.SIMP_TAC (bossLib.srw_ss()) [])
-          fun lift_int_relation tm =
-            (let
-              val (a, b) = intSyntax.dest_leq tm
-             in lift_leq a b end)
-            handle Feedback.HOL_ERR leq_error =>
-              ((let
-                 val (a, b) = intSyntax.dest_geq tm
-                 val int_ge_eq_le = simpLib.SIMP_CONV (bossLib.srw_ss())
-                   [integerTheory.int_ge] tm
-                 val leq_eq = lift_leq b a
-                 val real_le_eq_ge = simpLib.SIMP_CONV (bossLib.srw_ss())
-                   [realTheory.real_ge]
-                   (boolSyntax.rhs (Thm.concl leq_eq))
-               in Thm.TRANS int_ge_eq_le
-                 (Thm.TRANS leq_eq real_le_eq_ge)
-               end)
-               handle Feedback.HOL_ERR geq_error =>
-                 raise ERR "arith_poly_norm_rel"
-                   ("could not lift integer relation " ^
-                    Library.term_to_string tm ^ "; leq error=" ^
-                    Feedback.message_of leq_error ^ "; geq error=" ^
-                    Feedback.message_of geq_error))
-          fun lift_target () =
-            let
-              val variable = Term.mk_var ("rel", Type.bool)
-              val left_context = Term.mk_abs (variable,
-                boolSyntax.mk_eq (variable, right))
-              val right_context = Term.mk_abs (variable,
-                boolSyntax.mk_eq (left, variable))
-            in
-              Thm.AP_TERM left_context (lift_int_relation left)
-              handle Feedback.HOL_ERR left_error =>
-                (Thm.AP_TERM right_context (lift_int_relation right)
-                 handle Feedback.HOL_ERR right_error =>
-                   raise ERR "arith_poly_norm_rel"
-                     ("could not lift either relation; left=" ^
-                      Library.term_to_string left ^ "; right=" ^
-                      Library.term_to_string right ^ "; left error=" ^
-                      Feedback.message_of left_error ^ "; right error=" ^
-                      Feedback.message_of right_error))
-            end
-          val target_eq_target' =
-            ((realSyntax.dest_leq left; realSyntax.dest_leq right;
-              Thm.REFL target)
-             handle Feedback.HOL_ERR _ =>
-              ((realSyntax.dest_geq left; realSyntax.dest_geq right;
-                simpLib.SIMP_CONV (bossLib.srw_ss()) [realTheory.real_ge]
-                  target)
-               handle Feedback.HOL_ERR _ => lift_target ()))
-          val target' = boolSyntax.rhs (Thm.concl target_eq_target')
-          val normalized_prems = List.map
-            (simpLib.SIMP_RULE (bossLib.srw_ss())
-              [intrealTheory.real_of_int_sub, intrealTheory.real_of_int_neg,
-               intrealTheory.real_of_int_add, intrealTheory.real_of_int_mul])
-            prems
-          val difference = case normalized_prems of
-              [premise] => premise
-            | _ => raise ERR "arith_poly_norm_rel"
-                "real/int relational normalization expected one equality premise"
-          val negated_difference = simpLib.SIMP_RULE (bossLib.srw_ss())
-            [realTheory.REAL_NEG_SUB]
-            (Thm.AP_TERM realSyntax.negate_tm difference)
-          val thm = Tactical.TAC_PROOF (([], target'),
-            bossLib.SIMP_TAC (bossLib.srw_ss()) [])
-            handle Feedback.HOL_ERR _ =>
-              Tactical.TAC_PROOF (([Thm.concl negated_difference], target'),
-                bossLib.ASM_SIMP_TAC (bossLib.srw_ss())
-                  [Thm.SYM realTheory.REAL_SUB_LE, realTheory.REAL_NEG_SUB])
-        in Thm.EQ_MP (Thm.SYM target_eq_target') thm end
-      fun abstract_cast_atoms () =
-        prove_cast_arithmetic prems target
+      (* E1(a): one coverage terminal for the complete linear Int/Real
+         fragment of arith_poly_norm_rel.  Mixed formulas first use the
+         canonical cast-abstraction procedure; formulas without casts use
+         the general arithmetic prover directly.  This is semantic fragment
+         dispatch, not an optional cache, so it remains enabled in D-mode. *)
+      fun general () =
+        if needs_real_normalization then
+          profile "CPC(arith_rel:fragment/cast)"
+            (prove_cast_arithmetic prems) target
+        else
+          profile "CPC(arith_rel:fragment/plain)"
+            (arith_prove_from_prems prems) target
+      val () = profile_event
+        ("CPC(arith_rel:premises=" ^ Int.toString (List.length prems) ^ ")")
     in
-      if needs_real_normalization then
-        (profile "CPC(rung:arith_rel/mixed_ge_lift)" mixed_ge_lift ()
-         handle Feedback.HOL_ERR _ =>
-           profile "CPC(rung:arith_rel/relation_simp)" Tactical.TAC_PROOF
-             (([], target), bossLib.SIMP_TAC (bossLib.srw_ss())
-               [integerTheory.int_ge, realTheory.real_ge])
-         handle Feedback.HOL_ERR _ =>
-           profile "CPC(rung:arith_rel/geq_tighten)"
-             int_real_geq_tighten ()
-         handle Feedback.HOL_ERR _ =>
-           profile "CPC(rung:arith_rel/direct)" direct ()
-         handle Feedback.HOL_ERR _ =>
-           profile "CPC(rung:arith_rel/target_simp)" Tactical.TAC_PROOF
-             (([], target), bossLib.SIMP_TAC (bossLib.srw_ss()) [])
-         handle Feedback.HOL_ERR _ =>
-           profile "CPC(rung:arith_rel/from_prems)"
-             (arith_prove_from_prems prems) target
-         handle Feedback.HOL_ERR _ =>
-           (profile "CPC(rung:arith_rel/abstract_cast_atoms)"
-              abstract_cast_atoms ()
-            handle Feedback.HOL_ERR abstract_error =>
-              raise ERR "arith_poly_norm_rel"
-                ("arithmetic atom abstraction failed for target " ^
-                 Library.term_to_string target ^ "; premises=" ^
-                 String.concatWith ", "
-                   (List.map (Library.term_to_string o Thm.concl) prems) ^
-                 "; underlying error=" ^
-                 Feedback.message_of abstract_error)))
-      else
-        (profile "CPC(rung:arith_rel/from_prems_direct)"
-           (arith_prove_from_prems prems) target
-         handle Feedback.HOL_ERR _ =>
-           profile "CPC(rung:arith_rel/neg_eq_simp)" Tactical.TAC_PROOF
-             (([], target), bossLib.SIMP_TAC (bossLib.srw_ss())
-               [realTheory.REAL_NEG_EQ, boolTheory.EQ_SYM_EQ])
-         handle Feedback.HOL_ERR _ =>
-           (profile "CPC(rung:arith_rel/ring)" RealField.REAL_RING target
-            handle Feedback.HOL_ERR _ =>
-              profile "CPC(rung:arith_rel/from_prems_retry)"
-                (arith_prove_from_prems prems) target
-            handle Feedback.HOL_ERR _ =>
-              (profile "CPC(rung:arith_rel/abstract_cast_atoms)"
-                 abstract_cast_atoms ()
-               handle Feedback.HOL_ERR abstract_error =>
-                 raise ERR "arith_poly_norm_rel"
-                   ("arithmetic atom abstraction failed for target " ^
-                    Library.term_to_string target ^ "; premises=" ^
-                    String.concatWith ", "
-                      (List.map (Library.term_to_string o Thm.concl) prems) ^
-                    "; underlying error=" ^
-                    Feedback.message_of abstract_error))))
+      profile "CPC(rung:arith_rel/general)" general ()
+      handle Feedback.HOL_ERR general_error =>
+        raise ERR "arith_poly_norm_rel"
+          ("general linear arithmetic reconstruction failed for target " ^
+           Library.term_to_string target ^ "; premises=" ^
+           String.concatWith ", "
+             (List.map (Library.term_to_string o Thm.concl) prems) ^
+           "; underlying error=" ^ Feedback.message_of general_error)
     end
 
   fun replay_datatype args =
@@ -6848,7 +6717,13 @@ local
            | "equiv_elim1" => opaque ( replay_equiv_elim1 conclusion prems)
            | "arith_rule" =>
                replay_arith_rule_result (#name rule) located_args
-           | "arith_rel" => opaque ( replay_arith_rel prems args)
+           | "arith_rel" =>
+               let
+                 val () = profile_event
+                   (case conclusion of
+                      SOME _ => "CPC(arith_rel:dispatch/declared)"
+                    | NONE => "CPC(arith_rel:dispatch/omitted)")
+               in opaque (replay_arith_rel prems args) end
            | "arith_abs_eq" => opaque ( replay_arith_abs_eq args)
            | "arith_abs_int_gt" => opaque ( replay_arith_abs_int_gt args)
            | "arrays_select_const" => opaque ( replay_arrays_select_const args)

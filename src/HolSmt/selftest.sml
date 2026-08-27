@@ -1999,6 +1999,37 @@ val () =
        List.app (fn test_fun => run_test term test_fun) test_funs)
     sharded_tests
 
+(* arith_poly_norm_rel has one E1 coverage terminal.  Keep aggregate handler
+   accounting exact so a green suite cannot hide a bypass or a lost family;
+   this assertion runs in both normal and no-fastpath modes. *)
+fun functional_profile_count name =
+  case List.find (fn (candidate, _) => candidate = name)
+      (Profile.results ()) of
+    SOME (_, info) => #n info
+  | NONE => 0
+
+val () =
+  let
+    val handlers = functional_profile_count
+      "CPC(handler:ProofRule/arith_poly_norm_rel)_OK"
+    val terminals = functional_profile_count
+      "CPC(rung:arith_rel/general)_OK"
+    val fragments = functional_profile_count
+        "CPC(arith_rel:fragment/cast)_OK" +
+      functional_profile_count "CPC(arith_rel:fragment/plain)_OK"
+    val dispatches = functional_profile_count
+        "CPC(arith_rel:dispatch/declared)" +
+      functional_profile_count "CPC(arith_rel:dispatch/omitted)"
+  in
+    Unittest.assert
+      (handlers = terminals andalso handlers = fragments andalso
+       handlers = dispatches,
+       "arith_poly_norm_rel terminal coverage mismatch: handlers=" ^
+       Int.toString handlers ^ ", terminals=" ^ Int.toString terminals ^
+       ", fragments=" ^ Int.toString fragments ^ ", dispatches=" ^
+       Int.toString dispatches)
+  end
+
 fun json_escape s =
   let
     fun escape #"\"" = "\\\""
