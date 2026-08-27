@@ -9734,6 +9734,36 @@ in
     "omitted CPC arith_poly_norm produced a Boolean conversion theorem")
 end
 
+fun cpc_proof_replay_bv_xor_rotation_general_success () =
+let
+  fun profile_count name results =
+    case List.find (fn (candidate, _) => candidate = name) results of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun proof width =
+    parse_cpc_proof_string
+      ("((declare-const a (_ BitVec " ^ width ^ ")) " ^
+       "(declare-const b (_ BitVec " ^ width ^ ")) " ^
+       "(declare-const c (_ BitVec " ^ width ^ ")) " ^
+       "(step @p1 :rule bv_bitblast_step :args " ^
+       "((= (= (bvxor a (bvxor b c)) " ^
+       "(bvxor c (bvxor a b))) true))))")
+  fun replay width =
+    let val theorem = CPC_ProofReplay.replay_root_for_test (proof width)
+    in
+      assert (null (Thm.hyp theorem),
+        "CPC XOR rotation replay retained hypotheses");
+      check_oracle_tags ("CPC XOR rotation word" ^ width) theorem
+    end
+  val () = Profile.reset_all ()
+  val () = List.app replay ["4", "8", "16", "32"]
+  val results = Profile.results ()
+in
+  assert
+    (profile_count "CPC(rung:word/bitblast_word_arith)" results = 4,
+     "CPC XOR rotation family did not consume the general word route")
+end
+
 fun cpc_proof_replay_cong_consumes_premises_success () =
 let
   val proof = parse_cpc_proof_string
@@ -15915,6 +15945,8 @@ let
       cpc_proof_replay_eq_refl_cong_chain_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
+    ("cpc_proof_replay_bv_xor_rotation_general_success",
+      cpc_proof_replay_bv_xor_rotation_general_success),
     ("cpc_proof_replay_cong_consumes_premises_success",
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",

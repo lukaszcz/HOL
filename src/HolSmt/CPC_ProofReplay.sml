@@ -3172,27 +3172,8 @@ local
           val (word_equality, bit_conjunction) = boolSyntax.dest_eq target
           val _ = Term.type_of word_equality = Type.bool orelse
             raise ERR "bv_poly_norm" "expected a Boolean word equality"
-          fun xor_rotation () =
-            let
-              val (left, right) = boolSyntax.dest_eq word_equality
-              val (a, bc) = wordsSyntax.dest_word_xor left
-              val (b, c) = wordsSyntax.dest_word_xor bc
-              val (c', ab) = wordsSyntax.dest_word_xor right
-              val _ = Term.aconv c c' andalso
-                Term.aconv ab (wordsSyntax.mk_word_xor (a, b)) orelse
-                raise ERR "bv_poly_norm" "not a three-word XOR rotation"
-              val assoc = Drule.SPECL [a, b, c] wordsTheory.WORD_XOR_ASSOC
-              val comm = Drule.SPECL [wordsSyntax.mk_word_xor (a, b), c]
-                wordsTheory.WORD_XOR_COMM
-              val thm = Thm.TRANS (Thm.SYM assoc) comm
-            in
-              if Term.aconv (Thm.concl thm) word_equality then thm else
-                raise ERR "bv_poly_norm" "XOR rotation theorem shape mismatch"
-            end
-          val word_thm = profile "CPC(rung:word/xor_rotation)" xor_rotation ()
-            handle Feedback.HOL_ERR _ =>
-              profile "CPC(rung:word/xor_rotation_arith)"
-                wordsLib.WORD_ARITH_PROVE word_equality
+          val word_thm = profile "CPC(rung:word/bitblast_word_arith)"
+            wordsLib.WORD_ARITH_PROVE word_equality
           fun prove_bit tm = Tactical.TAC_PROOF (([], tm),
             Tactical.THEN
               (bossLib.SIMP_TAC (bossLib.srw_ss())
