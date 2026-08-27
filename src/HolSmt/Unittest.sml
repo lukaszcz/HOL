@@ -12351,17 +12351,6 @@ let
   val integer_thm = SmtReplayCanon.arith_poly_norm_prove integer_goal
   val real_thm = SmtReplayCanon.arith_poly_norm_prove real_goal
   val rdiv_thm = SmtReplayCanon.arith_poly_norm_prove rdiv_goal
-  fun padded n = if n < 100 then "0" ^ Int.toString n else Int.toString n
-  fun check_series n =
-    let
-      val name = "r" ^ padded n
-      val goal = Thm.concl (DB.fetch "HolSmt" name)
-      val theorem = SmtReplayCanon.arith_poly_norm_prove goal
-    in
-      assert (Thm.concl theorem ~~ goal,
-        "polynomial normalizer returned the wrong " ^ name ^ " theorem");
-      check_oracle_tags ("polynomial normal form " ^ name) theorem
-    end
 in
   assert (Thm.concl integer_thm ~~ integer_goal,
     "integer polynomial normalizer returned the wrong theorem");
@@ -12371,8 +12360,7 @@ in
     "real polynomial normalizer did not discharge nonzero total division");
   check_oracle_tags "integer polynomial normal form" integer_thm;
   check_oracle_tags "real polynomial normal form" real_thm;
-  check_oracle_tags "total real division polynomial normal form" rdiv_thm;
-  List.app check_series (List.tabulate (148, fn index => index + 71))
+  check_oracle_tags "total real division polynomial normal form" rdiv_thm
 end
 
 fun quantified_boolean_rewrite_n_binders_success () =

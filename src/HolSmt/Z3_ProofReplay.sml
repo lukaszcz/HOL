@@ -1855,10 +1855,9 @@ local
        | Option.Option => []
        | Overflow => []
 
-  (* The r033--r036 family is Boolean normalization underneath a negated
-     existential.  HOL's simplifier descends through every quantifier, so
-     this one procedure covers any binder count instead of matching a
-     one-binder proforma. *)
+  (* This is Boolean normalization underneath a negated existential.
+     HOL's simplifier descends through every quantifier, so this procedure
+     covers any binder count without a one-binder proforma. *)
   fun quantified_boolean_rewrite_prove target =
     let
       fun dest_negated_exists tm =
