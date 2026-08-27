@@ -68,6 +68,9 @@ struct
     intrealTheory.real_of_int_mul,
     intrealTheory.real_of_int_neg,
     intrealTheory.real_of_int_num,
+    (* The SMT-LIB encoding spells to_int ceiling through negated to_int
+       floor.  Canonicalize HOL's surface ceiling to that emitted form. *)
+    HolSmtTheory.int_ceiling_floor,
     HolSmtTheory.smt_rdiv_lneg,
     HolSmtTheory.smt_rdiv_rneg
   ]

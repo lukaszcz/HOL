@@ -6937,61 +6937,75 @@ local
         let val (state, _) = replay_step state step
         in replay_commands state rest end
 
-  (* cvc5's preprocessing can expose record and datatype eliminators in a
-     proof assumption while the HOL goal retains its surface selector/update
-     form.  Discharge only hypotheses that follow from the original replay
-     context; this is a checked normalization bridge, never an assumption
-     drop. *)
+  (* cvc5's preprocessing can expose canonical arithmetic spellings, record
+     and datatype eliminators, and FP bit representations in a proof
+     assumption while the HOL goal retains its surface form.  Discharge only
+     hypotheses that follow from the original replay context; this is a
+     checked normalization bridge, never an assumption drop. *)
   fun remove_extra_hyps (asl, g, thm) =
     let
       val expected = HOLset.addList (Term.empty_tmset,
         boolSyntax.mk_neg g :: asl)
       val bad_hyps = HOLset.difference (Thm.hypset thm, expected)
-      fun prove_from_context hyp =
+      val context = boolSyntax.mk_neg g :: asl
+      (* Match assumptions only after both sides pass through the same proved
+         canonical conversion.  In particular, this absorbs cvc5's SMT-LIB
+         ceiling-as-negated-floor spelling without a dedicated bridge rung. *)
+      fun prove_canonical_hyp hyp =
         let
-          val context = boolSyntax.mk_neg g :: asl
-        in
-          Tactical.TAC_PROOF ((context, hyp),
-            Tactical.THEN
-              (Tactical.REPEAT Tactic.COND_CASES_TAC,
-               Tactical.THEN
-                 (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
-                  intLib.ARITH_TAC)))
-        end
-      fun prove_hyp hyp =
-        profile "CPC(remove_extra_hyps:ceiling_floor)" Lib.tryfind
-          (fn assumption =>
+          val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
+          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_canon)
+          fun match assumption =
             let
-              val rewritten = Rewrite.PURE_REWRITE_RULE
-                [HolSmtTheory.int_ceiling_floor] (Thm.ASSUME assumption)
-            in
-              if Term.aconv (Thm.concl rewritten) hyp then rewritten
-              else raise ERR "remove_extra_hyps"
-                "ceiling/floor rewrite did not match extra hypothesis"
-            end)
-          (boolSyntax.mk_neg g :: asl)
+              val normalized_assumption =
+                SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)
+              val _ = Term.aconv (Thm.concl normalized_assumption)
+                normalized_hyp orelse
+                raise ERR "remove_extra_hyps"
+                  "canonical assumption did not match extra hypothesis"
+              val theorem = Thm.EQ_MP (Thm.SYM hyp_canon)
+                normalized_assumption
+              val () = profile_event "CPC(canon:assumption-interface)"
+            in theorem end
+        in
+          Lib.tryfind match context
+        end
+      fun prove_from_context hyp =
+        Tactical.TAC_PROOF ((context, hyp),
+          Tactical.THEN
+            (Tactical.REPEAT Tactic.COND_CASES_TAC,
+             Tactical.THEN
+               (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                intLib.ARITH_TAC)))
+      fun prove_hyp hyp =
+        profile "CPC(remove_extra_hyps:canonical_assumption)"
+          prove_canonical_hyp hyp
         handle Feedback.HOL_ERR _ =>
-          profile "CPC(remove_extra_hyps:full_simp)" Tactical.TAC_PROOF
+          profile "CPC(remove_extra_hyps:fp_special_values)"
+            Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-               [smtfloatTheory.smtfp_nan_bits,
+               [(* cvc5 expands canonical NaN to an FP bit triple. *)
+                smtfloatTheory.smtfp_nan_bits,
+                (* cvc5 expands positive zero to the all-zero bit triple. *)
                 smtfloatTheory.smtfp_pzero_bits,
+                (* cvc5 expands negative zero to sign-one, zero payload. *)
                 smtfloatTheory.smtfp_nzero_bits,
+                (* cvc5 expands positive infinity to its FP bit triple. *)
                 smtfloatTheory.smtfp_pinf_bits,
+                (* cvc5 expands negative infinity to its FP bit triple. *)
                 smtfloatTheory.smtfp_ninf_bits])
         handle Feedback.HOL_ERR _ =>
           profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-               [intrealTheory.INT_FLOOR_NEG, intrealTheory.INT_CEILING_NEG])
-        handle Feedback.HOL_ERR _ =>
-          profile "CPC(remove_extra_hyps:METIS)" Tactical.TAC_PROOF
-            ((boolSyntax.mk_neg g :: asl, hyp), metisLib.METIS_TAC
-               [smtfloatTheory.smtfp_bits_pzero,
-                smtfloatTheory.smtfp_pzero_bits,
-                smtfloatTheory.smtfp_bits_nzero,
-                smtfloatTheory.smtfp_nzero_bits])
+               [(* cvc5 pushes real negation through to_int floor and
+                   exposes the equivalent negated ceiling. *)
+                intrealTheory.INT_FLOOR_NEG,
+                (* cvc5 pushes real negation through encoded ceiling and
+                   exposes the equivalent negated floor. *)
+                intrealTheory.INT_CEILING_NEG])
         handle Feedback.HOL_ERR _ =>
           profile "CPC(remove_extra_hyps:datatype)"
             SmtDatatypeProve.datatype_consequence_prove
@@ -7008,8 +7022,9 @@ local
           raise ERR "remove_extra_hyps"
             ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
              "bridges; hypothesis=" ^ Library.term_to_string hyp ^
-             "; attempted=[ceiling/floor, FP special values, floor/ceiling " ^
-             "negation, datatype normalization, conditional arithmetic]; " ^
+             "; attempted=[canonical assumption, FP special values, " ^
+             "floor/ceiling negation, datatype normalization, conditional " ^
+             "arithmetic]; " ^
              "underlying=" ^ Feedback.message_of holerr)
     in
       HOLset.foldl remove_hyp thm bad_hyps

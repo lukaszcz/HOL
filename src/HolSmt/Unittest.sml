@@ -12145,6 +12145,10 @@ let
     ``HolSmt$smt_emod_total (x:int) y``
   val total_normalized = SmtReplayCanon.cpc_canon_conv total_source
   val total_target = boolSyntax.rhs (Thm.concl total_normalized)
+  val ceiling_source = ``intreal$INT_CEILING (r:real)``
+  val ceiling_normalized = SmtReplayCanon.cpc_canon_conv ceiling_source
+  val ceiling_target = boolSyntax.rhs (Thm.concl ceiling_normalized)
+  val ceiling_again = SmtReplayCanon.cpc_canon_conv ceiling_target
   fun has_named thy name tm =
     Lib.can (HolKernel.find_term (fn subterm =>
       Term.is_const subterm andalso
@@ -12158,7 +12162,13 @@ in
       not (has_named "integer" "int_sub" alias_target),
     "CPC canonical form retained an integer relation alias");
   assert (has_named "HolSmt" "smt_emod_total" total_target,
-    "weak CPC canonical form unfolded an unkeyed totalization")
+    "weak CPC canonical form unfolded an unkeyed totalization");
+  assert (not (has_named "intreal" "INT_CEILING" ceiling_target),
+    "CPC canonical form retained the surface ceiling spelling");
+  assert (Term.aconv ceiling_target
+      (boolSyntax.rhs (Thm.concl ceiling_again)),
+    "CPC ceiling canonicalization is not idempotent");
+  check_oracle_tags "CPC ceiling canonicalization" ceiling_normalized
 end
 
 fun cpc_emitted_definition_identity_table_success () =
