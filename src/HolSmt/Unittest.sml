@@ -14046,11 +14046,12 @@ fun string_prove_ladder_rungs_success () =
 fun string_prove_symbolic_rung_success () =
   let
     val bounded = "string-symbolic(1)(bounded-concat-split)_OK"
-    val middle = "string-symbolic(2)(middle-singleton)_OK"
+    val canonical = "string-symbolic(2)(canonical-orientation)_OK"
     val general = "string-symbolic(3)(general)_OK"
     fun direct expected name tm =
       (Profile.reset_all ();
-       assert_string_prover name SmtStringProve.symbolic_string_prove tm;
+       assert_string_prover name
+         (SmtStringProve.string_prove intLib.ARITH_PROVE) tm;
        assert (List.foldl (fn (profile, total) =>
            profile_call_count profile + total) 0 expected = 1,
          name ^ " did not consume exactly one expected symbolic rung"))
@@ -14063,12 +14064,26 @@ fun string_prove_symbolic_rung_success () =
         smtstr_concat p (smtstr_concat (seq_unit c) q) =
           seq_unit d ==> d = c``
   in
-    direct [middle, general] "string symbolic concat" concat_goal;
-    direct [middle, general] "string symbolic concat singleton-left"
+    direct [canonical] "string symbolic concat" concat_goal;
+    assert
+      (profile_call_count
+         "string(entry)(equality-orientation)_OK" = 1,
+       "non-canonical concat family did not consume entry orientation");
+    direct [canonical] "string symbolic concat singleton-left"
       ``c <= 196607 /\ d <= 196607 /\
         seq_unit d =
           smtstr_concat p (smtstr_concat (seq_unit c) q) ==> d = c``;
-    direct [middle, general] "string symbolic concat applied witnesses"
+    direct [canonical] "string symbolic concat seq-eq canonical result"
+      ``c <= 196607 /\ d <= 196607 /\
+        seq_eq (seq_unit d)
+          (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
+        c = d``;
+    direct [canonical] "string symbolic concat seq-eq reversed result"
+      ``c <= 196607 /\ d <= 196607 /\
+        seq_eq (seq_unit d)
+          (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
+        d = c``;
+    direct [canonical] "string symbolic concat applied witnesses"
       ``(97:num) <= 196607 /\
         middle_char x (seq_unit 97) <= 196607 /\
         seq_unit 97 =
@@ -14077,13 +14092,21 @@ fun string_prove_symbolic_rung_success () =
               (seq_unit (middle_char x (seq_unit 97)))
               (suffix_part x (seq_unit 97))) ==>
         97 = middle_char x (seq_unit 97)``;
-    direct [general] "string symbolic shared concat prefix"
+    direct [canonical] "string symbolic shared concat prefix"
       ``c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
         seq_eq s
           (smtstr_concat
             (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
         s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
         smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
+        seq_nth_i s 0 = c``;
+    direct [canonical] "string symbolic shared concat direct prefix"
+      ``c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
+        s = smtstr_concat
+          (seq_unit (seq_nth_i s 0)) (seq_tail s 0) /\
+        s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
+        seq_unit d =
+          smtstr_concat p (smtstr_concat (seq_unit e) r) ==>
         seq_nth_i s 0 = c``;
     direct [bounded] "string bounded concat split refuter"
       ``seq_eq

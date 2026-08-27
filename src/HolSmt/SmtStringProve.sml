@@ -201,12 +201,8 @@ struct
     smtstringz3Theory.seq_head_tail_int_zero_left,
     smtstringz3Theory.seq_prefixof_singleton,
     smtstringz3Theory.seq_prefixof_head,
-    smtstringz3Theory.seq_concat_middle_singleton,
-    smtstringz3Theory.seq_concat_middle_singleton_result,
-    smtstringz3Theory.seq_concat_middle_singleton_right,
-    smtstringz3Theory.seq_concat_middle_singleton_left,
-    smtstringz3Theory.seq_head_shared_singleton_prefix,
-    smtstringz3Theory.seq_head_shared_singleton_prefix_right,
+    smtstringz3Theory.seq_middle_unit_canonical,
+    smtstringz3Theory.seq_shared_prefix_canonical,
     smtstringz3Theory.seq_length_two,
     smtstringz3Theory.seq_tail_zero_step
   ]
@@ -246,18 +242,19 @@ struct
     smtstringTheory.smtstr_contains_trans
   ] @ seq_shape_rules
 
+  (* Equality orientation leaves one theorem per formerly duplicated
+     sequence family.  Keep their small search separate from the broader
+     symbolic set so its fixed METIS budget is independent of list size. *)
+  val canonical_seq_lemmas = [
+    smtstringz3Theory.seq_middle_unit_canonical,
+    smtstringz3Theory.seq_shared_prefix_canonical
+  ]
+
   val symbolic_string_names =
     const_name_set
       (smtstring_consts "smtstring"
         ["smtstr_concat", "smtstr_update", "smtstr_prefixof",
          "smtstr_suffixof", "smtstr_contains"])
-
-  val middle_singleton_lemmas = [
-    smtstringz3Theory.seq_concat_middle_singleton,
-    smtstringz3Theory.seq_concat_middle_singleton_result,
-    smtstringz3Theory.seq_concat_middle_singleton_right,
-    smtstringz3Theory.seq_concat_middle_singleton_left
-  ]
 
   fun is_symbolic_string_goal t = mentions_any symbolic_string_names t
 
@@ -310,32 +307,14 @@ struct
       profile "string-symbolic(1)(bounded-concat-split)"
         bounded_concat_split_refute t
       handle Feedback.HOL_ERR _ =>
-      (* E1(c): redundant middle-singleton cache.  The general symbolic rung
-         below searches the same rules when fast paths are disabled. *)
-      (Library.require_fastpath "symbolic string middle-singleton";
-       profile "string-symbolic(2)(middle-singleton)"
-         (fn target => with_metis_limit (fn () =>
-           metisLib.METIS_PROVE middle_singleton_lemmas target) ()) t)
+      profile "string-symbolic(2)(canonical-orientation)"
+        (fn target => with_metis_limit (fn () =>
+          metisLib.METIS_PROVE canonical_seq_lemmas target) ()) t
       handle Feedback.HOL_ERR _ =>
       (* E1(b): normalization plus bounded first-order search is the general
          symbolic String-family procedure and has a loud failure boundary. *)
       profile "string-symbolic(3)(general)"
         (fn target =>
-          (* Some parametric constructor rules match before normalization;
-             others need the normalized representation.  Both searches use
-             members of the same general lemma set and shared bound.  Try the
-             cheapest single-rule search before the full set. *)
-          with_metis_limit
-            (fn () => metisLib.METIS_PROVE
-              [smtstringz3Theory.seq_head_shared_singleton_prefix_right]
-              target) ()
-          handle Feedback.HOL_ERR _ =>
-          (* The middle-singleton rules are stated over 'seq_unit', which
-             normalization unfolds.  Keep their ordered search within this
-             general symbolic rung, before the normalized representation. *)
-          with_metis_limit
-            (fn () => metisLib.METIS_PROVE middle_singleton_lemmas target) ()
-          handle Feedback.HOL_ERR _ =>
           with_metis_limit
             (fn () => metisLib.METIS_PROVE symbolic_lemmas target) ()
           handle Feedback.HOL_ERR _ =>
@@ -688,9 +667,8 @@ struct
          profile "string-rewrite(2)(normalization)"
            rewrite_simp_prove t)) t
 
-  fun string_prove arith_prove t =
-    with_string_budget "replay" (fn t =>
-      let val () = check_seq_type t in
+  fun string_prove_canonical arith_prove t =
+    let val () = check_seq_type t in
         (* E1(a): CBV decides the closed executable String fragment. *)
         profile "string(1)(ground-eval)" ground_eval_prove t
         handle Feedback.HOL_ERR holerr =>
@@ -713,7 +691,31 @@ struct
         (rethrow_resource holerr;
          (* E1(b): terminal loud String/regex family boundary. *)
          profile "string(5)(unsupported)" (unsupported "seq") t)
-      end) t
+    end
+
+  (* Normalize the solver's 'seq_eq' equality alias, then orient every
+     equality before selecting a prover rung.  Both conversions prove their
+     equivalences; after replaying the canonical proposition, EQ_MP transports
+     the theorem back to the exact proposition declared by the caller. *)
+  fun string_prove arith_prove target =
+    with_string_budget "replay" (fn target =>
+      let
+        val seq_equality = Conv.QCONV
+          (Rewrite.PURE_REWRITE_CONV
+            [smtstringz3Theory.seq_eq_def]) target
+        val equality_target = boolSyntax.rhs (Thm.concl seq_equality)
+        val orientation = Conv.QCONV
+          (Conv.TOP_DEPTH_CONV
+            SmtReplayCanon.reorient_equality_conv) equality_target
+        val normalization = Thm.TRANS seq_equality orientation
+        val canonical = boolSyntax.rhs (Thm.concl orientation)
+        val _ = if Term.aconv equality_target canonical then ()
+          else profile "string(entry)(equality-orientation)"
+            (fn () => ()) ()
+        val theorem = string_prove_canonical arith_prove canonical
+      in
+        Thm.EQ_MP (Thm.SYM normalization) theorem
+      end) target
 
   (* Z3 shares each tail of its bitwise comparison through proof lets.
      Parsing expands those lets, so compact the Boolean recurrence

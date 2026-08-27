@@ -968,80 +968,30 @@ Proof
         smtstringTheory.smtstr_rep_def]
 QED
 
-Theorem seq_concat_middle_singleton:
-  c <= 196607 /\ d <= 196607 /\
-  seq_eq (seq_unit d)
-    (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
-  c = d
-Proof
-  rw [seq_eq_def] >>
-  metis_tac [seq_unit_def,
-             smtstringTheory.smtstr_concat_middle_singleton]
-QED
+(* Equality orientation at the String-prover boundary makes one spelling per
+   family sufficient.  TASK_18 replaces these remaining instances with
+   replay-time specialization of parametric decomposition theorems. *)
 
-Theorem seq_concat_middle_singleton_result:
-  c <= 196607 /\ d <= 196607 /\
-  seq_eq (seq_unit d)
-    (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
-  d = c
-Proof
-  metis_tac [seq_concat_middle_singleton]
-QED
-
-Theorem seq_concat_middle_singleton_right:
-  c <= 196607 /\ d <= 196607 /\
-  smtstr_concat p (smtstr_concat (seq_unit c) q) = seq_unit d ==>
-  d = c
-Proof
-  metis_tac [seq_unit_def,
-             smtstringTheory.smtstr_concat_middle_singleton]
-QED
-
-Theorem seq_concat_middle_singleton_left:
+Theorem seq_middle_unit_canonical:
   c <= 196607 /\ d <= 196607 /\
   seq_unit d = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
-  d = c
+  c = d
 Proof
-  metis_tac [seq_concat_middle_singleton_right]
+  metis_tac [seq_unit_def,
+             smtstringTheory.smtstr_concat_middle_singleton]
 QED
 
-Theorem seq_head_shared_singleton_prefix:
-  c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
-  s =
-      smtstr_concat
-        (seq_unit (seq_nth_i s 0)) (seq_tail s 0) /\
-    s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
-    seq_unit d = smtstr_concat p (smtstr_concat (seq_unit e) r) ==>
-  seq_nth_i s 0 = c
-Proof
-  rpt strip_tac >>
-  `smtstr_rep p ++ [e] ++ smtstr_rep r = [d]` by
-    (qpat_x_assum `seq_unit d = _` mp_tac >>
-     simp [seq_unit_def, smtstringTheory.smtstr_concat_def,
-           smtstringTheory.smtstr_rep_def, smtstringTheory.SmtStr_11] >>
-     metis_tac []) >>
-  `smtstr_rep p = []` by (Cases_on `smtstr_rep p` >> fs []) >>
-  `smtstr_rep s = c::smtstr_rep q` by
-    (qpat_x_assum `s = smtstr_concat p _` mp_tac >>
-     simp [seq_unit_def, smtstringTheory.smtstr_concat_def,
-           smtstringTheory.smtstr_rep_def] >>
-     rw [] >>
-     simp []) >>
-  simp [seq_nth_i_def]
-QED
-
-Theorem seq_head_shared_singleton_prefix_right:
+Theorem seq_shared_prefix_canonical:
   c <= 196607 /\ d <= 196607 /\ e <= 196607 ==>
-  seq_eq s
-      (smtstr_concat
-        (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
+  s = smtstr_concat
+      (seq_unit (seq_nth_i s 0)) (seq_tail s 0) ==>
     s = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
-    smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
-  seq_nth_i s 0 = c
+    seq_unit e = smtstr_concat p (smtstr_concat (seq_unit d) r) ==>
+  c = seq_nth_i s 0
 Proof
   rpt strip_tac >>
   `smtstr_rep p ++ [d] ++ smtstr_rep r = [e]` by
-    (qpat_x_assum `smtstr_concat p _ = seq_unit e` mp_tac >>
+    (qpat_x_assum `seq_unit e = _` mp_tac >>
      simp [seq_unit_def, smtstringTheory.smtstr_concat_def,
            smtstringTheory.smtstr_rep_def, smtstringTheory.SmtStr_11] >>
      metis_tac []) >>
