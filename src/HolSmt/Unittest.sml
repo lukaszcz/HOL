@@ -10384,7 +10384,22 @@ let
     "omitted arithmetic resolution lost premise hypotheses")
   val _ = check_oracle_tags
     "CPC omitted arithmetic resolution target" arithmetic_resolution
-  val integer_spelling_resolution = CPC_ProofReplay.replay_root_for_test
+  val smt_ediv_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val ediv_definition_records = List.mapPartial
+    (fn ({emitted_head, arity, replay_head, ...} :
+          SmtLib.emitted_definition_spec) =>
+      if Term.same_const replay_head smt_ediv_total then
+        SOME (SmtLib.EncodedSymbol {hol_term = emitted_head,
+          smt_symbol = "direct-cpc-ediv-test", arity = arity})
+      else NONE)
+    (SmtLib.all_emitted_definition_specs ())
+  val ediv_definitions =
+    SmtLib.emitted_definitions_for_records ediv_definition_records
+  val _ = assert (List.length ediv_definitions = 1,
+    "direct CPC ediv test did not synthesize exactly one authorization")
+  val integer_spelling_resolution =
+    CPC_ProofReplay.replay_root_with_definitions_for_test ediv_definitions
     (parse_cpc_proof_string
       "((declare-const x Int) (declare-const guard Bool) \
       \(assume @clause \
@@ -12025,10 +12040,177 @@ in
   assert (not (has_named "integer" "int_ge" alias_target) andalso
       not (has_named "integer" "int_sub" alias_target),
     "CPC canonical form retained an integer relation alias");
-  assert (not (has_named "HolSmt" "smt_emod_total" total_target),
-    "CPC canonical form retained smt_emod_total");
-  assert (not (has_named "HolSmt" "smt_ediv_total" total_target),
-    "CPC canonical form retained smt_ediv_total")
+  assert (has_named "HolSmt" "smt_emod_total" total_target,
+    "weak CPC canonical form unfolded an unkeyed totalization")
+end
+
+fun cpc_emitted_definition_identity_table_success () =
+let
+  val specs = SmtLib.all_emitted_definition_specs ()
+  fun record_of
+      ({emitted_head, arity, ...} : SmtLib.emitted_definition_spec) =
+    SmtLib.EncodedSymbol {hol_term = emitted_head,
+      smt_symbol = "completeness-audit", arity = arity}
+  val records = List.map record_of specs
+  val complete = SmtLib.emitted_definitions_for_records records
+  fun matches_spec
+      ({replay_head, unfolding, ...} : SmtLib.emitted_definition_spec)
+      definition =
+    Term.same_const replay_head
+      (SmtLib.emitted_definition_head definition) andalso
+    Term.aconv (Thm.concl unfolding)
+      (Thm.concl (SmtLib.emitted_definition_theorem definition))
+  fun covered spec = List.exists (matches_spec spec) complete
+  val goal = ([],
+    ``word_compare (a:word8) b = (0w:word1) /\
+      integer$ediv (x:int) y = x /\ integer$emod x y = x``)
+  val (translation, _) = SmtLib.goal_to_SmtLib_translation NONE goal
+  val emitted = SmtLib.translation_definitions translation
+  val replay_heads = List.map SmtLib.emitted_definition_head emitted
+  fun has_head expected =
+    List.exists (Term.same_const expected) replay_heads
+  val smt_ediv_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val plain_translation = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation NONE ([], ``(p:bool) = p``))
+  val plain = SmtLib.translation_definitions plain_translation
+  fun cvc_replay_definitions goal =
+    let
+      val (simplified, _) =
+        SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true) ([], goal)
+      val (cvc_translation, _) =
+        CVC.goal_to_SmtLib_with_get_proof_translation simplified
+    in
+      SmtLib.translation_definitions cvc_translation
+    end
+  val bound_definition_sets = List.map cvc_replay_definitions
+    [``(x:num) MOD 42 < 42``,
+     ``(x:int) % 2 < 2``,
+     ``(x:int) % 42 < 42``]
+  fun has_only_emod_definition definitions =
+    case definitions of
+      [definition] => Term.same_const smt_emod_total
+        (SmtLib.emitted_definition_head definition)
+    | _ => false
+  val canon = CPC_ProofReplay.strong_cpc_canon_conv_for_test emitted
+  val terms = [
+    ``word_compare (a:word8) b``,
+    ``HolSmt$smt_ediv_total (x:int) y``,
+    ``HolSmt$smt_emod_total (x:int) y``
+  ]
+  fun converted term =
+    let
+      val theorem = canon term
+      val normalized = boolSyntax.rhs (Thm.concl theorem)
+    in
+      assert (not (Term.aconv term normalized),
+        "emitted definition identity did not change its replay term");
+      check_oracle_tags "CPC emitted definition identity" theorem;
+      normalized
+    end
+  val () = Profile.reset_all ()
+  val normalized = List.map converted terms
+  val consumed = cpc_profile_call_count
+    "CPC(canon:translator-definition)"
+  fun has_constant constant term =
+    Lib.can (HolKernel.find_term (fn candidate =>
+      Term.is_const candidate andalso
+      Term.same_const candidate constant)) term
+  fun count_constant constant term =
+    List.length (HolKernel.find_terms (fn candidate =>
+      Term.is_const candidate andalso
+      Term.same_const candidate constant) term)
+  val no_provenance =
+    CPC_ProofReplay.strong_cpc_canon_conv_for_test []
+  val () = Profile.reset_all ()
+  fun intended_unkeyed_rejection work =
+    (work (); false)
+    handle Feedback.HOL_ERR holerr =>
+      String.isSubstring "conversion changed an un-emitted replay head"
+        (Feedback.message_of holerr)
+  fun preserves_or_rejects_unemitted term =
+    let
+      fun preserves () =
+        let
+        val theorem = no_provenance term
+        val normalized = boolSyntax.rhs (Thm.concl theorem)
+        val (head, _) = boolSyntax.strip_comb term
+        in
+          count_constant head normalized = count_constant head term
+        end
+    in
+      preserves ()
+      handle Feedback.HOL_ERR holerr =>
+        String.isSubstring "conversion changed an un-emitted replay head"
+          (Feedback.message_of holerr)
+    end
+  val provenance_safe = List.map preserves_or_rejects_unemitted terms
+  val duplicate_unkeyed =
+    ``(HolSmt$smt_ediv_total (x:int) y = x) /\
+      (F ==> HolSmt$smt_ediv_total x y = y)``
+  val duplicate_rejected = intended_unkeyed_rejection
+    (fn () => ignore (no_provenance duplicate_unkeyed))
+  val unkeyed = cpc_profile_call_count
+    "CPC(canon:translator-definition)"
+  val already_canonical = canon ``(p:bool)``
+  val div_one = boolSyntax.rhs
+    (Thm.concl (no_provenance ``(x:int) / 1``))
+  val mod_one = CPC_ProofReplay.replay_rare_rewrite_for_test
+    "arith-int-mod-total-one" [``x:int``]
+  val total_mod_reduction =
+    CPC_ProofReplay.replay_arith_reduction_for_test
+      [``HolSmt$smt_emod_total (x:int) y``]
+  val total_mod_identity = Thm.CONJUNCT1 total_mod_reduction
+  val expected_mod_one =
+    ``HolSmt$smt_emod_total (x:int) 1 = 0``
+  val expected_total_mod_identity =
+    ``HolSmt$smt_emod_total (x:int) y =
+      x - y * HolSmt$smt_ediv_total x y``
+  val int_ediv = Term.prim_mk_const
+    {Thy = "integer", Name = "ediv"}
+  val int_emod = Term.prim_mk_const
+    {Thy = "integer", Name = "emod"}
+in
+  assert (List.length complete = List.length specs andalso
+      List.all covered specs,
+    "translator-introduced constant lacks its unfolding identity");
+  assert (List.length emitted = List.length specs andalso
+      has_head wordsSyntax.word_compare_tm andalso
+      has_head smt_ediv_total andalso has_head smt_emod_total,
+    "combined translation did not emit the closed definition table");
+  assert (List.null plain,
+    "unrelated translation acquired an emitted definition identity");
+  assert (List.all has_only_emod_definition bound_definition_sets,
+    "CVC MOD-bound translation lacks its total-mod definition record");
+  assert (consumed = List.length terms,
+    "strong CPC canonicalization did not consume each derived identity");
+  assert (unkeyed = 0,
+    "strong CPC canonicalization consumed an un-emitted identity");
+  assert (List.all Lib.I provenance_safe,
+    "strong CPC canonicalization changed an un-emitted replay head");
+  assert (duplicate_rejected,
+    "strong CPC canonicalization partially eliminated an un-emitted head");
+  assert (Term.aconv (Thm.concl already_canonical)
+      ``(p:bool) = p``,
+    "strong CPC canonicalization rejected an already-canonical term");
+  check_oracle_tags "CPC already-canonical reflexivity" already_canonical;
+  assert (Term.aconv div_one ``x:int``,
+    "INT_DIV_1 is no longer covered by the standard simplifier");
+  assert (Term.aconv (Thm.concl mod_one) expected_mod_one,
+    "INT_MOD_1 is no longer covered by the total-mod-one handler");
+  assert (Term.aconv (Thm.concl total_mod_identity)
+      expected_total_mod_identity,
+    "INT_DIVISION is no longer covered by total-mod reduction");
+  check_oracle_tags "CPC total-mod-one identity" mod_one;
+  check_oracle_tags "CPC total-mod division identity" total_mod_identity;
+  assert (not (has_constant smt_ediv_total (List.nth (normalized, 1)))
+      andalso
+      not (has_constant smt_emod_total (List.nth (normalized, 2)))
+      andalso not (has_constant int_ediv (List.nth (normalized, 1)))
+      andalso not (has_constant int_emod (List.nth (normalized, 2))),
+    "derived totalization identity retained EDIV_DEF/EMOD_DEF work")
 end
 
 fun replay_polynomial_normal_form_success () =
@@ -16083,6 +16265,8 @@ let
       gen_instantiation_protects_goal_variables_success),
     ("replay_canonicalization_success",
       replay_canonicalization_success),
+    ("cpc_emitted_definition_identity_table_success",
+      cpc_emitted_definition_identity_table_success),
     ("replay_polynomial_normal_form_success",
       replay_polynomial_normal_form_success),
     ("ground_subterm_evaluation_budget_success",

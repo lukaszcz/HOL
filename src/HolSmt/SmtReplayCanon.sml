@@ -68,8 +68,6 @@ struct
     intrealTheory.real_of_int_mul,
     intrealTheory.real_of_int_neg,
     intrealTheory.real_of_int_num,
-    HolSmtTheory.smt_emod_total_ediv_negone,
-    HolSmtTheory.smt_ediv_total_def,
     HolSmtTheory.smt_rdiv_lneg,
     HolSmtTheory.smt_rdiv_rneg
   ]
@@ -101,7 +99,9 @@ struct
     end
 
   (* Normalization below propositions: relation aliases, pushed real_of_int,
-     totalized integer arithmetic, ground total computation, and eta. *)
+     ground total computation, and eta.  Symbolic totalized integer
+     arithmetic requires per-translation provenance and is unfolded by the
+     CPC strong canonicalizer instead. *)
   val cpc_term_canon_conv =
     compose
       [cpc_alias_conv,

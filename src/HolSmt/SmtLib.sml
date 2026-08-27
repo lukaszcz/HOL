@@ -5644,9 +5644,12 @@ in
 
      Integer div/mod illustrate why [emitted_head] and [replay_head] may
      differ: translation emits HOL ediv/emod as SMT div/mod, while CPC parses
-     their specified total semantics as smt_ediv_total/smt_emod_total.  Real
-     smt_rdiv is deliberately absent because its zero-divisor value is
-     underspecified and therefore has no sound unconditional unfolding. *)
+     their specified total semantics as smt_ediv_total/smt_emod_total.  Their
+     compute theorems are the unconditional unfolding identities: they also
+     expose the underlying HOL div/mod operation in one mechanically selected
+     rewrite.  Real smt_rdiv is deliberately absent because its zero-divisor
+     value is underspecified and therefore has no sound unconditional
+     unfolding. *)
   type emitted_definition_spec = {
     emitted_head : Term.term,
     arity : int,
@@ -5661,11 +5664,11 @@ in
     {emitted_head = int_ediv_tm, arity = 2,
      replay_head = Term.prim_mk_const
        {Thy = "HolSmt", Name = "smt_ediv_total"},
-     unfolding = HolSmtTheory.smt_ediv_total_def},
+     unfolding = HolSmtTheory.smt_ediv_total_compute},
     {emitted_head = int_emod_tm, arity = 2,
      replay_head = Term.prim_mk_const
        {Thy = "HolSmt", Name = "smt_emod_total"},
-     unfolding = HolSmtTheory.smt_emod_total_def}
+     unfolding = HolSmtTheory.smt_emod_total_compute}
   ]
 
   fun definition_for_record record =

@@ -1571,7 +1571,12 @@ local
        integerTheory.INT_MUL_LID,
        integerTheory.INT_LT_LE1,
        integerTheory.INT_GE,
-       integerTheory.INT_ADD_LID])
+       integerTheory.INT_ADD_LID,
+       (* CPC rules may expose HOL's Euclidean operators after the
+          translation-derived totalization identity has been consumed.
+          These are representation aliases, not emitted constants. *)
+       integerTheory.EDIV_DEF,
+       integerTheory.EMOD_DEF])
 
   fun compose_normal_form_conv first second tm =
     let
@@ -1585,20 +1590,61 @@ local
   val cpc_integer_normal_form_conv = compose_normal_form_conv
     SmtReplayCanon.cpc_canon_conv cpc_integer_spelling_conv
 
-  fun strong_cpc_canon_conv tm =
+  (* CPC's total-division bounds theorem contains positive- and
+     negative-divisor implications.  Ground divisor guards are semantic
+     arithmetic, not definition unfolding; normalize them in their own rung
+     so an omitted-conclusion EQ_RESOLVE need not weaken strong provenance. *)
+  val cpc_ground_arithmetic_guard_conv = Conv.QCONV
+    (bossLib.SIMP_CONV (bossLib.srw_ss ()) [])
+
+  (* The only definition identities in the strong canonicalizer come from
+     this proof's emitted-symbol records.  Build the rewrite net from that
+     closed table, and record consumption only when one of its definitions
+     actually changes the term. *)
+  fun strong_cpc_canon_conv definitions =
     let
-      val arithmetic_identities =
-        [integerTheory.INT_DIV_1, integerTheory.INT_MOD_1,
-         integerTheory.EDIV_DEF, integerTheory.EMOD_DEF,
-         integerTheory.INT_DIVISION]
+      val definition_identities =
+        List.map SmtLib.emitted_definition_theorem definitions
+      val definition_heads =
+        List.map SmtLib.emitted_definition_head definitions
+      val definition_conv =
+        Rewrite.PURE_REWRITE_CONV definition_identities
+      fun is_enabled head =
+        List.exists (Term.same_const head) definition_heads
+      fun contains_head head term =
+        Lib.can (HolKernel.find_term (fn candidate =>
+          Term.is_const candidate andalso
+          Term.same_const candidate head)) term
+      fun count_head head term =
+        List.length (HolKernel.find_terms (fn candidate =>
+          Term.is_const candidate andalso
+          Term.same_const candidate head) term)
+      fun unkeyed_heads term = List.mapPartial
+        (fn ({replay_head, ...} : SmtLib.emitted_definition_spec) =>
+          if not (is_enabled replay_head) andalso
+             contains_head replay_head term then
+            SOME (replay_head, count_head replay_head term)
+          else NONE)
+        (SmtLib.all_emitted_definition_specs ())
+      fun require_unkeyed_heads_preserved heads term =
+        if List.all (fn (head, count) => count_head head term = count)
+            heads then ()
+        else raise ERR "strong_cpc_canon_conv"
+          "conversion changed an un-emitted replay head"
+      fun unfold_emitted_definition current =
+        let
+          val theorem = definition_conv current
+          val normalized = boolSyntax.rhs (Thm.concl theorem)
+          val _ = not (Term.aconv current normalized) orelse
+            raise Conv.UNCHANGED
+          val () = profile_event "CPC(canon:translator-definition)"
+        in theorem end
       fun finish current =
         if List.null (Term.free_vars current) then
           bossLib.SIMP_CONV (bossLib.srw_ss ())
-            (arithmetic_identities @
-             [HolSmtTheory.smt_rdiv_eq_div,
-             intrealTheory.INT_FLOOR]) current
-        else bossLib.SIMP_CONV (bossLib.srw_ss ())
-          arithmetic_identities current
+            [HolSmtTheory.smt_rdiv_eq_div,
+             intrealTheory.INT_FLOOR] current
+        else bossLib.SIMP_CONV (bossLib.srw_ss ()) [] current
       fun arithmetic_decision current =
         let
           val normalization =
@@ -1607,27 +1653,44 @@ local
           val decision =
             Drule.EQT_INTRO
               (simpLib.SIMP_PROVE (bossLib.srw_ss ())
-                arithmetic_identities normalized)
+                [] normalized)
             handle Feedback.HOL_ERR _ =>
               Drule.EQF_INTRO
                 (simpLib.SIMP_PROVE (bossLib.srw_ss ())
-                  arithmetic_identities
+                  []
                   (boolSyntax.mk_neg normalized))
         in
           Thm.TRANS normalization decision
         end
         handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
              | Conv.UNCHANGED => raise Conv.UNCHANGED
+      fun convert tm =
+        let
+          (* A CPC rule may introduce an auxiliary total operator (notably
+             div_total in mod_total bounds) that the original translation
+             did not emit.  Without the matching record, canonicalization
+             must preserve its exact occurrence count. *)
+          val unkeyed = unkeyed_heads tm
+          (* This is a canonicalizer, so an already-canonical term is a
+             successful reflexive result. *)
+          val theorem = Conv.QCONV (SmtReplayCanon.compose
+              [unfold_emitted_definition,
+               SmtReplayCanon.cpc_operand_canon_conv,
+               cpc_integer_spelling_conv,
+               wordsLib.WORD_LOGIC_CONV,
+               finish, arithmetic_decision]) tm
+          val normalized = boolSyntax.rhs (Thm.concl theorem)
+          val () = require_unkeyed_heads_preserved unkeyed normalized
+        in
+          theorem
+        end
     in
-      SmtReplayCanon.compose
-        [SmtReplayCanon.cpc_operand_canon_conv,
-         wordsLib.WORD_LOGIC_CONV,
-         finish, arithmetic_decision] tm
+      convert
     end
 
-  fun restore_strong_canonical_conclusion name conclusion theorem =
-    restore_with strong_cpc_canon_conv "strong canonical" name conclusion
-      (Conv.CONV_RULE strong_cpc_canon_conv theorem)
+  fun restore_strong_canonical_conclusion canon name conclusion theorem =
+    restore_with canon "strong canonical" name conclusion
+      (Conv.CONV_RULE canon theorem)
 
   (* Canonicalization can discharge a premise completely.  Such a proof is
      logically neutral in the surrounding chain, but its hypotheses must
@@ -1759,7 +1822,7 @@ local
   (* Use canonical forms to recognize tautological support premises without
      replacing the theorem stored for the CPC step.  Later rules can depend
      on its exact shape (notably TRUE_ELIM consuming [T = p]). *)
-  fun replay_canonical_trans prems =
+  fun replay_canonical_trans strong_canon prems =
     let
       fun arithmetic_operand_conv tm =
         if List.null (Term.free_vars tm) then
@@ -1779,7 +1842,7 @@ local
             (Conv.BINOP_CONV SmtReplayCanon.cpc_operand_canon_conv)
             theorem))
       fun strong_view theorem = expose_true_equality
-        (Conv.CONV_RULE (Conv.BINOP_CONV strong_cpc_canon_conv) theorem)
+        (Conv.CONV_RULE (Conv.BINOP_CONV strong_canon) theorem)
         handle Feedback.HOL_ERR _ => theorem
              | Conv.UNCHANGED => theorem
       (* Scoped CPC equalities are often used immediately as rewrite
@@ -1840,7 +1903,7 @@ local
       | first :: rest => List.foldl compose first rest
     end
 
-  fun replay_canonical_trans_with_provenance
+  fun replay_canonical_trans_with_provenance strong_canon
       (premise_steps : replayed_step list) =
     let
       fun arithmetic_operand_conv tm =
@@ -1888,7 +1951,7 @@ local
             (Conv.BINOP_CONV SmtReplayCanon.cpc_operand_canon_conv)
             result))
       fun strong_view result = exposed
-        (converted (Conv.BINOP_CONV strong_cpc_canon_conv) result)
+        (converted (Conv.BINOP_CONV strong_canon) result)
         handle Feedback.HOL_ERR _ => result
              | Conv.UNCHANGED => result
       fun hypothesis_view reverse (theorem, provenance) =
@@ -1970,7 +2033,7 @@ local
                 try (fn () => bridged_orientations
                   cpc_integer_normal_form_conv) (fn () =>
                 try (fn () => bridged_orientations
-                  strong_cpc_canon_conv) (fn () =>
+                  strong_canon) (fn () =>
                   let
                     val accumulated_view = view accumulated_result
                     val next_view = view next_result
@@ -2087,7 +2150,7 @@ local
      canonicalization.  Keep the conversion equalities so the normalized
      proposition can be transported back to the exact side consumed by
      EQ_MP; normalizing both premise theorems would discard that link. *)
-  fun replay_canonical_eq_resolve prems =
+  fun replay_canonical_eq_resolve strong_canon prems =
     let
       fun attempt work = SOME (work ()) handle Feedback.HOL_ERR _ => NONE
       fun stage name work =
@@ -2132,7 +2195,10 @@ local
            handle Feedback.HOL_ERR _ =>
              (resolve cpc_integer_normal_form_conv proposition equality
               handle Feedback.HOL_ERR _ =>
-                resolve strong_cpc_canon_conv proposition equality))
+                (resolve cpc_ground_arithmetic_guard_conv
+                   proposition equality
+                 handle Feedback.HOL_ERR _ =>
+                   resolve strong_canon proposition equality)))
       | _ => raise ERR "eq_resolve" "expected two CPC premises"
     end
 
@@ -3367,8 +3433,8 @@ local
   val expand_real_div_conv = Conv.QCONV
     (Conv.TOP_DEPTH_CONV SmtReplayCanon.real_div_conv)
 
-  val real_div_reordering_conv = compose_normal_form_conv
-    expand_real_div_conv strong_cpc_canon_conv
+  fun real_div_reordering_conv strong_canon = compose_normal_form_conv
+    expand_real_div_conv strong_canon
 
   fun replay_cnf name args =
     let
@@ -4510,7 +4576,7 @@ local
       (state, thm)
     end
 
-  fun replay_process_scope args prems =
+  fun replay_process_scope strong_canon args prems =
     let
       val premise = expect_one_premise "process_scope" prems
       (* The CPC printer records the original body conclusion as its sole
@@ -4570,7 +4636,7 @@ local
                 handle Feedback.HOL_ERR _ =>
                   (arithmetic_bridge ()
                    handle Feedback.HOL_ERR _ =>
-                     (bridge strong_cpc_canon_conv
+                     (bridge strong_canon
                       handle Feedback.HOL_ERR holerr =>
                         raise ERR "process_scope"
                           ("scope result canonicalization failed; local=" ^
@@ -5116,7 +5182,7 @@ local
      implication and later steps depend on that exact endpoint.  Normalize
      only to establish that the proposition proves the antecedent, transport
      it back, and apply the untouched implication. *)
-  fun replay_canonical_modus_ponens prems =
+  fun replay_canonical_modus_ponens strong_canon prems =
     let
       fun apply canon proposition implication =
         let
@@ -5143,7 +5209,7 @@ local
         [left, right] =>
           (oriented SmtReplayCanon.cpc_operand_canon_conv left right
            handle Feedback.HOL_ERR _ =>
-             oriented strong_cpc_canon_conv left right)
+             oriented strong_canon left right)
       | _ => raise ERR "modus_ponens" "expected two CPC premises"
     end
 
@@ -5870,6 +5936,8 @@ local
         (find_step "replay_step" state) premises
       val prems = List.map step_theorem premise_steps
       val premise_rules = List.map (lookup_rule state) premises
+      val strong_canon =
+        strong_cpc_canon_conv (#translation_definitions state)
       fun opaque theorem = exact_result
         (conjunction_free_semantic_provenance
           ("CPC rule " ^ #name rule ^
@@ -5905,7 +5973,8 @@ local
             (restore_canonical_conclusion name conclusion
                (SmtReplayCanon.cpc_canon_rule theorem)
              handle Feedback.HOL_ERR _ =>
-               restore_strong_canonical_conclusion name conclusion theorem)
+               restore_strong_canonical_conclusion strong_canon
+                 name conclusion theorem)
         end
       fun canonical_handler name replay =
         let val exposed = List.map expose_true_equality prems in
@@ -5916,11 +5985,12 @@ local
                (List.map expose_true_equality
                  (canonical_premises exposed)))
            handle Feedback.HOL_ERR _ =>
-             restore_strong_canonical_conclusion name conclusion
+             restore_strong_canonical_conclusion strong_canon
+               name conclusion
                (replay
                  (List.map expose_true_equality
                    (List.map
-                     (Conv.CONV_RULE strong_cpc_canon_conv) exposed))))
+                     (Conv.CONV_RULE strong_canon) exposed))))
         end
       fun arithmetic_bridge theorems target =
         let
@@ -6154,12 +6224,28 @@ local
       fun arithmetic_eq_resolve_pair proposition equality =
         let
           val (left, right) = boolSyntax.dest_eq (Thm.concl equality)
+          fun prove_side premise side =
+            arith_prove_from_prems [premise] side
+          val simplified =
+            bossLib.SIMP_RULE (bossLib.srw_ss ()) [] proposition
+          fun resolve_simplified () =
+            Thm.EQ_MP equality simplified
+            handle Feedback.HOL_ERR _ =>
+              Thm.EQ_MP (Thm.SYM equality) simplified
+          fun prove side =
+            prove_side proposition side
+            handle Feedback.HOL_ERR _ =>
+              (* arith_reduction states both positive- and negative-divisor
+                 bounds as guarded implications.  Discharge literal guards
+                 in this semantic arithmetic rung, independently of strong
+                 definition canonicalization. *)
+              prove_side
+                simplified side
         in
-          Thm.EQ_MP equality
-            (arith_prove_from_prems [proposition] left)
+          resolve_simplified ()
+          handle Feedback.HOL_ERR _ => Thm.EQ_MP equality (prove left)
           handle Feedback.HOL_ERR _ =>
-            Thm.EQ_MP (Thm.SYM equality)
-              (arith_prove_from_prems [proposition] right)
+            Thm.EQ_MP (Thm.SYM equality) (prove right)
         end
       fun arithmetic_eq_resolve () =
         (case prems of
@@ -6171,7 +6257,7 @@ local
       fun normalized_proposition_eq_resolve () =
         let
           fun normalize theorem =
-            Conv.CONV_RULE strong_cpc_canon_conv theorem
+            Conv.CONV_RULE strong_canon theorem
         in
           case prems of
             [left, right] =>
@@ -6232,7 +6318,8 @@ local
             else raise ERR "trans"
               "no omitted evaluate endpoint for arithmetic preflight"
             end
-          fun canonical () = canonical_rung "trans" replay_canonical_trans
+          fun canonical () = canonical_rung "trans"
+            (replay_canonical_trans strong_canon)
           fun fallback () =
             case conclusion of
               SOME target => arith_prove_from_prems prems target
@@ -6298,7 +6385,8 @@ local
             | NONE => raise ERR "eq_resolve"
                 "arithmetic preflight requires a declared conclusion"
           fun canonical () =
-            canonical_rung "eq_resolve" replay_canonical_eq_resolve
+            canonical_rung "eq_resolve"
+              (replay_canonical_eq_resolve strong_canon)
           fun normalized () =
             require_declared "eq_resolve"
               (normalized_proposition_eq_resolve ())
@@ -6351,7 +6439,7 @@ local
                   (Thm.SYM (SmtReplayCanon.cpc_operand_canon_conv target))
                   theorem
           fun restore_strong theorem =
-            restore_with strong_cpc_canon_conv "strong" "resolution"
+            restore_with strong_canon "strong" "resolution"
               replay_target theorem
           fun integer_resolution () =
             let
@@ -6381,13 +6469,13 @@ local
                handle Feedback.HOL_ERR _ =>
                let
                 val strong_prems =
-                  List.map (Conv.CONV_RULE strong_cpc_canon_conv) prems
+                  List.map (Conv.CONV_RULE strong_canon) prems
                 val strong_args = List.map (fn arg =>
                   boolSyntax.rhs
-                    (Thm.concl (strong_cpc_canon_conv arg))) args
+                    (Thm.concl (strong_canon arg))) args
                 val strong_conclusion = Option.map (fn target =>
                   boolSyntax.rhs
-                    (Thm.concl (strong_cpc_canon_conv target))) conclusion
+                    (Thm.concl (strong_canon target))) conclusion
                 val theorem =
                   case strong_conclusion of
                     SOME target =>
@@ -6434,7 +6522,7 @@ local
             if uses_real_div then
               profile "CPC(rung:reordering/real_div)"
                 (fn () => replay_normalized_reordering
-                  real_div_reordering_conv prems target) ()
+                  (real_div_reordering_conv strong_canon) prems target) ()
             else
               raise ERR "reordering"
                 "real-division normalization is inapplicable"
@@ -6444,7 +6532,7 @@ local
           handle Feedback.HOL_ERR _ =>
             real_div_reordering ()
           handle Feedback.HOL_ERR _ =>
-            replay_normalized_reordering strong_cpc_canon_conv prems target
+            replay_normalized_reordering strong_canon prems target
         end
       fun canonical_cong () =
         restore_canonical_conclusion "cong" conclusion
@@ -6512,7 +6600,7 @@ local
         canonical_cong_result_with SmtReplayCanon.cpc_canon_conv
           "canonical"
       fun strong_canonical_cong_result () =
-        canonical_cong_result_with strong_cpc_canon_conv
+        canonical_cong_result_with strong_canon
           "strong canonical"
       fun integer_spelling_cong_result () =
         canonical_cong_result_with cpc_integer_normal_form_conv
@@ -6700,6 +6788,7 @@ local
                            let
                              val canonical =
                                replay_canonical_trans_with_provenance
+                                 strong_canon
                                  premise_steps
                            in
                              canonical
@@ -6782,14 +6871,19 @@ local
                                  cpc_integer_normal_form_conv premise_steps
                                handle Feedback.HOL_ERR _ =>
                                  (replay_canonical_eq_resolve_with_provenance
-                                    strong_cpc_canon_conv premise_steps
+                                    cpc_ground_arithmetic_guard_conv
+                                    premise_steps
                                   handle Feedback.HOL_ERR _ =>
-                                    let
-                                      val fallback = canonical_eq_resolve ()
-                                    in
-                                      (fallback, UnavailableProvenance
-                                        "eq_resolve used reconstruction without an exact equality-side occurrence")
-                                    end))))
+                                    (replay_canonical_eq_resolve_with_provenance
+                                       strong_canon premise_steps
+                                     handle Feedback.HOL_ERR _ =>
+                                       let
+                                         val fallback =
+                                           canonical_eq_resolve ()
+                                       in
+                                         (fallback, UnavailableProvenance
+                                           "eq_resolve used reconstruction without an exact equality-side occurrence")
+                                       end)))))
                     in exact_result provenance theorem end)
            | "contra" => opaque ( canonical_handler "contra" replay_contra)
            | "false_intro" => opaque ( replay_false_intro prems)
@@ -6892,7 +6986,8 @@ local
                      theorem
                end
            | "alpha_equiv" => opaque ( replay_alpha_equiv args)
-           | "process_scope" => opaque ( replay_process_scope args prems)
+           | "process_scope" => opaque (
+               replay_process_scope strong_canon args prems)
            | "not_and" => opaque ( replay_not_and prems)
            | "not_or_elim" => opaque ( replay_not_or_elim args prems)
            | "not_not_elim" =>
@@ -6938,7 +7033,7 @@ local
                (require_declared "modus_ponens" (replay_modus_ponens prems)
                  handle Feedback.HOL_ERR _ =>
                    require_declared "modus_ponens"
-                    (replay_canonical_modus_ponens prems)
+                    (replay_canonical_modus_ponens strong_canon prems)
                  handle Feedback.HOL_ERR _ =>
                    require_declared "modus_ponens"
                      (replay_arithmetic_modus_ponens prems)))
@@ -7130,6 +7225,8 @@ local
 in
   val theorem_cache_enabled_for_test = theorem_cache_enabled
 
+  val strong_cpc_canon_conv_for_test = strong_cpc_canon_conv
+
   fun replay_rare_rewrite_for_test name args =
     replay_rare_rewrite name args
 
@@ -7198,27 +7295,38 @@ in
 
   fun check_proof args = check_proof_with_definitions [] args
 
-  fun replay_root_for_test proof =
+  fun replay_root_with_definitions_for_test definitions proof =
     let
-      val (state, thm) = replay_commands (initial_state [] [])
+      val (state, thm) = replay_commands (initial_state definitions [])
         (proof_commands proof)
       val _ = profile_cardinalities state
     in thm end
 
-  fun replay_step_provenance_for_test proof id =
+  fun replay_root_for_test proof =
+    replay_root_with_definitions_for_test [] proof
+
+  fun replay_step_provenance_with_definitions_for_test definitions proof id =
     let
-      val (state, _) = replay_commands (initial_state [] [])
+      val (state, _) = replay_commands
+        (initial_state definitions [])
         (proof_commands proof)
     in
       step_provenance (find_step "test provenance" state id)
     end
 
-  fun replay_root_with_cache_stats_for_test proof =
+  fun replay_step_provenance_for_test proof id =
+    replay_step_provenance_with_definitions_for_test [] proof id
+
+  fun replay_root_with_cache_stats_and_definitions_for_test definitions proof =
     let
-      val (state, thm) = replay_commands (initial_state [] [])
+      val (state, thm) = replay_commands
+        (initial_state definitions [])
         (proof_commands proof)
       val _ = profile_cardinalities state
     in (thm, cache_stats state) end
+
+  fun replay_root_with_cache_stats_for_test proof =
+    replay_root_with_cache_stats_and_definitions_for_test [] proof
 end
 
 end
