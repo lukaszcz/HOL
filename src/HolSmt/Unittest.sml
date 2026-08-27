@@ -9723,6 +9723,65 @@ in
     "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false")
 end
 
+fun assert_cpc_eq_resolve_route_pin label expected_route prems expected =
+let
+  val {route, arithmetic, canonical} =
+    CPC_ProofReplay.replay_eq_resolve_routes_for_test prems
+in
+  assert (route = expected_route,
+    label ^ " selected " ^ route ^ " instead of " ^ expected_route);
+  assert (Thm.concl arithmetic ~~ expected,
+    label ^ " failed on the forced arithmetic route");
+  assert (Thm.concl canonical ~~ expected,
+    label ^ " failed on the forced canonical route");
+  List.app (check_oracle_tags label) [arithmetic, canonical]
+end
+
+fun cpc_eq_resolve_arithmetic_route_independent_success () =
+let
+  val proposition = ``(x:int) + 0 < y``
+  val equality = ``(((x:int) < y) = (q:bool))``
+in
+  assert_cpc_eq_resolve_route_pin "CPC eq_resolve arithmetic preflight"
+    "arithmetic" [Thm.ASSUME proposition, Thm.ASSUME equality] ``q:bool``
+end
+
+fun cpc_eq_resolve_large_route_independent_success () =
+let
+  val expanded = List.foldl
+    (fn (_, term) => intSyntax.mk_plus (term, intSyntax.zero_tm))
+    ``x:int`` (List.tabulate (400, Lib.I))
+  val proposition = intSyntax.mk_less (expanded, ``y:int``)
+  val normalized = ``(x:int) < y``
+  val equality = boolSyntax.mk_eq (normalized, ``q:bool``)
+in
+  assert_cpc_eq_resolve_route_pin "CPC eq_resolve large preflight"
+    "canonical-large" [Thm.ASSUME proposition, Thm.ASSUME equality]
+    ``q:bool``
+end
+
+fun cpc_eq_resolve_true_hyp_route_independent_success () =
+let
+  val proposition = ``(x:int) + 0 < y``
+  val equality = ``(((x:int) < y) = (q:bool))``
+  val proposition_theorem =
+    Drule.ADD_ASSUM boolSyntax.T (Thm.ASSUME proposition)
+in
+  assert_cpc_eq_resolve_route_pin "CPC eq_resolve T-hyp preflight"
+    "canonical-true-hyp" [proposition_theorem, Thm.ASSUME equality]
+    ``q:bool``
+end
+
+fun cpc_eq_resolve_real_route_independent_success () =
+let
+  val proposition = ``(x:real) + 0 < y``
+  val equality = ``(((x:real) < y) = (q:bool))``
+in
+  assert_cpc_eq_resolve_route_pin "CPC eq_resolve real preflight"
+    "canonical-real" [Thm.ASSUME proposition, Thm.ASSUME equality]
+    ``q:bool``
+end
+
 fun cpc_proof_replay_omitted_arith_poly_norm_success () =
 let
   val proof = parse_cpc_proof_string
@@ -16183,6 +16242,14 @@ let
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
       cpc_proof_replay_eq_refl_cong_chain_success),
+    ("cpc_eq_resolve_arithmetic_route_independent_success",
+      cpc_eq_resolve_arithmetic_route_independent_success),
+    ("cpc_eq_resolve_large_route_independent_success",
+      cpc_eq_resolve_large_route_independent_success),
+    ("cpc_eq_resolve_true_hyp_route_independent_success",
+      cpc_eq_resolve_true_hyp_route_independent_success),
+    ("cpc_eq_resolve_real_route_independent_success",
+      cpc_eq_resolve_real_route_independent_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
     ("cpc_proof_replay_canonical_trans_terminal_success",

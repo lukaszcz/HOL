@@ -427,15 +427,6 @@ local
        contains_abs rator orelse contains_abs rand
      end handle _ => false)
 
-  fun equality_orientation left =
-    let
-      val (a, b) = boolSyntax.dest_eq left
-      val target = boolSyntax.mk_eq (boolSyntax.mk_eq (b, a), left)
-    in
-      profile "CPC(rung:congruence/METIS)" Tactical.TAC_PROOF
-        (([], target), metisLib.METIS_TAC [])
-    end
-
   fun expose_true_equality premise =
     let
       val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
@@ -3517,6 +3508,82 @@ local
 
   val arith_prove_from_prems = prove_from_prems arith_prove
 
+  fun replay_arithmetic_eq_resolve_pair proposition equality =
+    let
+      val (left, right) = boolSyntax.dest_eq (Thm.concl equality)
+      fun prove_side premise side =
+        arith_prove_from_prems [premise] side
+      val simplified =
+        bossLib.SIMP_RULE (bossLib.srw_ss ()) [] proposition
+      fun resolve_simplified () =
+        Thm.EQ_MP equality simplified
+        handle Feedback.HOL_ERR _ =>
+          Thm.EQ_MP (Thm.SYM equality) simplified
+      fun prove side =
+        prove_side proposition side
+        handle Feedback.HOL_ERR _ =>
+          (* arith_reduction states both positive- and negative-divisor
+             bounds as guarded implications.  Discharge literal guards in
+             this semantic arithmetic rung, independently of strong
+             definition canonicalization. *)
+          prove_side simplified side
+    in
+      resolve_simplified ()
+      handle Feedback.HOL_ERR _ => Thm.EQ_MP equality (prove left)
+      handle Feedback.HOL_ERR _ =>
+        Thm.EQ_MP (Thm.SYM equality) (prove right)
+    end
+
+  fun replay_arithmetic_eq_resolve prems =
+    case prems of
+      [left, right] =>
+        (replay_arithmetic_eq_resolve_pair left right
+         handle Feedback.HOL_ERR _ =>
+           replay_arithmetic_eq_resolve_pair right left)
+    | _ => raise ERR "eq_resolve" "expected two CPC premises"
+
+  datatype eq_resolve_preflight_route =
+      EqResolveCanonicalLarge
+    | EqResolveCanonicalTrueHyp
+    | EqResolveCanonicalReal
+    | EqResolveArithmetic
+
+  (* This preflight chooses only the cheaper route to try first.  The unit
+     pins exercise both reconstruction procedures for every branch, so none
+     of these syntactic cost checks is allowed to decide coverage. *)
+  fun eq_resolve_preflight_route prems =
+    if List.exists (fn theorem =>
+         SmtResource.term_nodes_up_to 1000 (Thm.concl theorem) > 1000)
+         prems then
+      EqResolveCanonicalLarge
+    else if List.exists (fn theorem =>
+         HOLset.member (Thm.hypset theorem, boolSyntax.T)) prems then
+      EqResolveCanonicalTrueHyp
+    else if List.exists (fn theorem =>
+         not (List.null (HolKernel.find_terms (fn tm =>
+           Type.compare (Term.type_of tm, realSyntax.real_ty) = EQUAL)
+           (Thm.concl theorem)))) prems then
+      EqResolveCanonicalReal
+    else EqResolveArithmetic
+
+  fun eq_resolve_preflight_name route =
+    case route of
+      EqResolveCanonicalLarge => "canonical-large"
+    | EqResolveCanonicalTrueHyp => "canonical-true-hyp"
+    | EqResolveCanonicalReal => "canonical-real"
+    | EqResolveArithmetic => "arithmetic"
+
+  fun eq_resolve_preflight_diagnostic route =
+    case route of
+      EqResolveCanonicalLarge =>
+        "large arithmetic equality uses canonical replay first"
+    | EqResolveCanonicalTrueHyp =>
+        "arithmetic preflight retains a trivial scope hypothesis"
+    | EqResolveCanonicalReal =>
+        "mixed real arithmetic uses canonical replay first"
+    | EqResolveArithmetic =>
+        "arithmetic eq_resolve route selected"
+
   fun replay_arith_abs_eq args =
     case args of
       [left, right] =>
@@ -5976,39 +6043,6 @@ local
             [] => raise ERR "trans" "expected CPC equality premises"
           | first :: rest => List.foldl compose first rest
         end
-      fun arithmetic_eq_resolve_pair proposition equality =
-        let
-          val (left, right) = boolSyntax.dest_eq (Thm.concl equality)
-          fun prove_side premise side =
-            arith_prove_from_prems [premise] side
-          val simplified =
-            bossLib.SIMP_RULE (bossLib.srw_ss ()) [] proposition
-          fun resolve_simplified () =
-            Thm.EQ_MP equality simplified
-            handle Feedback.HOL_ERR _ =>
-              Thm.EQ_MP (Thm.SYM equality) simplified
-          fun prove side =
-            prove_side proposition side
-            handle Feedback.HOL_ERR _ =>
-              (* arith_reduction states both positive- and negative-divisor
-                 bounds as guarded implications.  Discharge literal guards
-                 in this semantic arithmetic rung, independently of strong
-                 definition canonicalization. *)
-              prove_side
-                simplified side
-        in
-          resolve_simplified ()
-          handle Feedback.HOL_ERR _ => Thm.EQ_MP equality (prove left)
-          handle Feedback.HOL_ERR _ =>
-            Thm.EQ_MP (Thm.SYM equality) (prove right)
-        end
-      fun arithmetic_eq_resolve () =
-        (case prems of
-          [left, right] =>
-            (arithmetic_eq_resolve_pair left right
-             handle Feedback.HOL_ERR _ =>
-               arithmetic_eq_resolve_pair right left)
-        | _ => raise ERR "eq_resolve" "expected two CPC premises")
       fun normalized_proposition_eq_resolve () =
         let
           fun normalize theorem =
@@ -6016,9 +6050,9 @@ local
         in
           case prems of
             [left, right] =>
-              (arithmetic_eq_resolve_pair (normalize left) right
+              (replay_arithmetic_eq_resolve_pair (normalize left) right
                handle Feedback.HOL_ERR _ =>
-                 arithmetic_eq_resolve_pair (normalize right) left)
+                 replay_arithmetic_eq_resolve_pair (normalize right) left)
           | _ => raise ERR "eq_resolve" "expected two CPC premises"
         end
       fun eq_resolve_from_scope_hypotheses target =
@@ -6123,24 +6157,18 @@ local
           fun arithmetic () =
             case conclusion of
               SOME _ =>
-                if List.exists (fn theorem =>
-                     SmtResource.term_nodes_up_to 1000
-                       (Thm.concl theorem) > 1000) prems
-                then raise ERR "eq_resolve"
-                  "large arithmetic equality uses canonical replay first"
-                else if List.exists (fn theorem =>
-                     HOLset.member (Thm.hypset theorem, boolSyntax.T)) prems
-                then raise ERR "eq_resolve"
-                  "arithmetic preflight retains a trivial scope hypothesis"
-                else if List.exists (fn theorem =>
-                     not (List.null (HolKernel.find_terms (fn tm =>
-                       Type.compare (Term.type_of tm,
-                         realSyntax.real_ty) = EQUAL)
-                       (Thm.concl theorem)))) prems
-                then raise ERR "eq_resolve"
-                  "mixed real arithmetic uses canonical replay first"
-                else
-                  require_declared "eq_resolve" (arithmetic_eq_resolve ())
+                let
+                  val route = eq_resolve_preflight_route prems
+                  val () = profile_event
+                    ("CPC(eq_resolve:preflight/" ^
+                     eq_resolve_preflight_name route ^ ")")
+                in
+                  case route of
+                    EqResolveArithmetic => require_declared "eq_resolve"
+                      (replay_arithmetic_eq_resolve prems)
+                  | _ => raise ERR "eq_resolve"
+                      (eq_resolve_preflight_diagnostic route)
+                end
             | NONE => raise ERR "eq_resolve"
                 "arithmetic preflight requires a declared conclusion"
           fun canonical () =
@@ -6991,6 +7019,16 @@ in
   val theorem_cache_enabled_for_test = theorem_cache_enabled
 
   val strong_cpc_canon_conv_for_test = strong_cpc_canon_conv
+
+  fun replay_eq_resolve_routes_for_test prems =
+    let
+      val route = eq_resolve_preflight_route prems
+    in
+      {route = eq_resolve_preflight_name route,
+       arithmetic = replay_arithmetic_eq_resolve prems,
+       canonical = replay_canonical_eq_resolve
+         (strong_cpc_canon_conv []) prems}
+    end
 
   fun replay_rare_rewrite_for_test name args =
     replay_rare_rewrite name args
