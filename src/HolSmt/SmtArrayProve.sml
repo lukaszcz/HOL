@@ -7,6 +7,12 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtArrayProve"
 
+  fun profile name f x = Profile.profile_with_exn_name name f x
+
+  fun array_fastpath name component prove t =
+    (Library.require_fastpath component;
+     profile name prove t)
+
   (* METIS on the array-replay path runs with a time/inference bound so that
      a hard or ultimately-unprovable goal cannot hang proof reconstruction
      (shared by checked proof replay). *)
@@ -33,15 +39,6 @@ struct
       pats = [pat], conv = wordsLib.word_EQ_CONV}),
     [combinTheory.UPDATE_def, boolTheory.EQ_SYM_EQ])) []
   end
-
-  val array_rewrites = [
-    combinTheory.UPDATE_def,
-    combinTheory.APPLY_UPDATE_THM,
-    combinTheory.UPDATE_APPLY_IMP_ID,
-    combinTheory.UPDATE_EQ,
-    boolTheory.FUN_EQ_THM,
-    boolTheory.EQ_SYM_EQ
-  ]
 
   (* Keep replay support indexed by the operator that occurs in the goal.
      Besides avoiding an ever-growing global simp set, this table is an
@@ -94,9 +91,8 @@ struct
         (SmtResource.check_resource_goal "Array" label t;
          prove t)) t
 
-  (* The recorded subset map/const rewrite has an extensional equality of
-     predicates below a Boolean equality.  Its quantified pointwise form
-     needs one small checked METIS close after the Set rewrites. *)
+  (* Set extensionality reduces pointwise through keyed Set rewrites and then
+     closes with bounded checked METIS. *)
   fun set_extensional_prove t =
     with_metis_limit (fn () =>
       Tactical.prove (t,
@@ -146,7 +142,7 @@ struct
         pats = [pat], conv = wordsLib.word_EQ_CONV})
   end
 
-  fun symbolic_index_prove t =
+  fun general_array_prove t =
     with_metis_limit (fn () =>
       Tactical.prove (t,
         Tactical.THEN (bossLib.RW_TAC array_ss [
@@ -154,26 +150,6 @@ struct
             combinTheory.APPLY_UPDATE_THM,
             boolTheory.EQ_SYM_EQ
           ], bossLib.METIS_TAC []))) ()
-
-  fun extensionality_prove t =
-    Tactical.prove (t,
-      bossLib.RW_TAC array_ss (set_rewrites_for t @ [
-        boolTheory.FUN_EQ_THM,
-        combinTheory.APPLY_UPDATE_THM,
-        combinTheory.UPDATE_APPLY_IMP_ID,
-        combinTheory.UPDATE_EQ,
-        boolTheory.EQ_SYM_EQ
-      ]))
-
-  fun choice_extensionality_prove t =
-    with_metis_limit (fn () =>
-      Tactical.prove (t,
-        Tactical.THEN
-          (bossLib.RW_TAC array_ss array_rewrites,
-           bossLib.METIS_TAC [boolTheory.SELECT_AX]))) ()
-
-  fun metis_array_prove t =
-    with_metis_limit (fn () => metisLib.METIS_PROVE array_rewrites t) ()
 
   fun has_update_comb t =
     Lib.can (HolKernel.find_term combinSyntax.is_update_comb) t
@@ -201,11 +177,8 @@ struct
        SOME (_, range) => Type.compare (range, Type.bool) <> EQUAL
      | NONE => false))) t
 
-  (* Degenerate/trivial conclusions - e.g. the minimal th-lemma placeholders
-     `false = false` / `true = true` that the replay unit tests feed through the
-     array dispatch, or a reflexive `l = l` - are proved directly and cheaply.
-     This runs before the `is_array_goal` gate so such trivial goals still
-     succeed even though they carry no array structure. *)
+  (* Reflexive Boolean or equality conclusions close by kernel truth or
+     reflexivity before array-shape admission. *)
   fun trivial_prove t =
     if Term.aconv t boolSyntax.T then boolTheory.TRUTH
     else
@@ -217,33 +190,42 @@ struct
     Tactical.TAC_PROOF (([], t),
       bossLib.SIMP_TAC boolSimps.bool_ss [])
 
-  fun array_prove_unbounded t =
-    trivial_prove t
-    handle Feedback.HOL_ERR _ =>
-    (* UPDATE simplification is itself the semantic array-family admission:
-       translated ground select/store rewrites may simplify to a base-typed
-       conclusion with no surviving function variable. *)
-    simp_prove_update t
-    handle Feedback.HOL_ERR _ =>
+  fun admitted_array_prove t =
     if is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
        has_set_variable t then
-      beta_prove t
+      (* E1(a): Boolean simplification decides admitted beta-redex goals. *)
+      profile "array(2)(beta)" beta_prove t
       handle Feedback.HOL_ERR _ =>
-      set_simp_prove t
-      handle Feedback.HOL_ERR _ =>
-      set_extensional_prove t
-      handle Feedback.HOL_ERR _ =>
-      symbolic_index_prove t
-      handle Feedback.HOL_ERR _ =>
-      extensionality_prove t
-      handle Feedback.HOL_ERR _ =>
-      choice_extensionality_prove t
-      handle Feedback.HOL_ERR _ =>
-      (if has_update_comb t then metis_array_prove t else unsupported t)
-      handle Feedback.HOL_ERR _ =>
-      unsupported t
+      if has_set_term t orelse has_set_variable t then
+        (* E1(c): keyed simplification is a redundant measured cache for the
+           general Set extensionality procedure. *)
+        array_fastpath "array(3)(set-simp)"
+          "Array keyed Set simplification" set_simp_prove t
+        handle Feedback.HOL_ERR _ =>
+        (* E1(b): translated Boolean arrays first use the general proved
+           UPDATE/Boolean procedure before the Set-specific METIS close. *)
+        profile "array(5)(general)" general_array_prove t
+        handle Feedback.HOL_ERR _ =>
+        (* E1(b): keyed extensional rewriting plus bounded METIS handles the
+           admitted native Set family and fails loudly outside it. *)
+        profile "array(4)(set-extensional)" set_extensional_prove t
+        handle Feedback.HOL_ERR _ => unsupported t
+      else
+        (* E1(b): proved UPDATE/Boolean rewriting plus bounded METIS handles
+           the admitted general array family and fails loudly outside it. *)
+        profile "array(5)(general)" general_array_prove t
+        handle Feedback.HOL_ERR _ => unsupported t
     else
       unsupported t
+
+  fun array_prove_unbounded t =
+    profile "array(0)(reflexive)" trivial_prove t
+    handle Feedback.HOL_ERR _ =>
+    (* E1(c): this redundant cache keeps its pre-admission position so
+       base-typed translated store conclusions remain fast and covered. *)
+    array_fastpath "array(1)(update-simp)"
+      "Array UPDATE simplification" simp_prove_update t
+    handle Feedback.HOL_ERR _ => admitted_array_prove t
 
   fun array_prove t =
     with_replay_budget "array-replay" array_prove_unbounded t

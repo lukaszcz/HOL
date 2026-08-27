@@ -13323,48 +13323,58 @@ fun assert_array_prover name prover tm =
      die ("FAIL: " ^ name ^ " did not prove array goal: " ^
        Feedback.message_of holerr))
 
+fun assert_array_public_rung expected name tm =
+  (Profile.reset_all ();
+   assert_array_prover name SmtArrayProve.array_prove tm;
+   assert (profile_call_count (expected ^ "_OK") = 1,
+     name ^ " did not consume " ^ expected))
+
 fun array_prove_ladder_rungs_success () =
-  (assert_array_prover "array_prove proforma rung"
-     SmtArrayProve.array_prove
-     ``((i =+ e) (a :'i -> 'v)) i = e``;
-   assert_array_prover "array_prove literal update rung"
-     SmtArrayProve.simp_prove_update
-     ``((1i =+ T) (a :int -> bool)) 1i``;
-   assert_array_prover "array_prove symbolic select/store rung"
-     SmtArrayProve.symbolic_index_prove
-     ``i <> j ==> ((i =+ e) (a :'i -> 'v)) j = a j``;
-   assert_array_prover "array_prove extensionality rung"
-     SmtArrayProve.extensionality_prove
-     ``(!i. (a :'i -> 'v) i = b i) ==> (a = b)``;
-   assert_array_prover "array_prove explicit metis rung"
-     SmtArrayProve.metis_array_prove
-     ``(i =+ e) ((i =+ e) (a :'i -> 'v)) = (i =+ e) a``)
+let
+  val no_fastpath = Library.no_fastpath ()
+  val update = if no_fastpath then "array(5)(general)"
+    else "array(1)(update-simp)"
+  val beta = if no_fastpath then "array(2)(beta)"
+    else "array(1)(update-simp)"
+in
+  assert_array_public_rung "array(0)(reflexive)" "array reflexivity"
+    ``(a:'i -> 'v) = a``;
+  assert_array_public_rung beta "array beta map"
+    ``(\i:int. (a:int -> int) i + b i) 3 = a 3 + b 3``;
+  assert_array_public_rung update "array update same index"
+    ``((i =+ e) (a :'i -> 'v)) i = e``;
+  assert_array_public_rung update "array symbolic select/store"
+    ``i <> j ==> ((i =+ e) (a :'i -> 'v)) j = a j``;
+  assert_array_public_rung "array(5)(general)" "array extensionality"
+    ``(!i. (a :'i -> 'v) i = b i) ==> (a = b)``;
+  assert_array_public_rung "array(5)(general)" "array choice witness"
+    ``(a:'i -> 'v) <> b ==>
+      a (@i. a i <> b i) <> b (@i. a i <> b i)``;
+  assert_array_public_rung update "array update idempotence"
+    ``(i =+ e) ((i =+ e) (a :'i -> 'v)) = (i =+ e) a``
+end
 
 fun array_prove_set_ladder_rungs_success () =
-  (assert_array_prover "set union pointwise rung"
-     SmtArrayProve.array_prove
-     ``(x:'a) IN (s UNION t) <=> x IN s \/ x IN t``;
-   assert_array_prover "set intersection pointwise rung"
-     SmtArrayProve.array_prove
-     ``(x:'a) IN (s INTER t) <=> x IN s /\ x IN t``;
-   assert_array_prover "set difference pointwise rung"
-     SmtArrayProve.array_prove
-     ``(x:'a) IN (s DIFF t) <=> x IN s /\ x NOTIN t``;
-   assert_array_prover "set complement pointwise rung"
-     SmtArrayProve.array_prove
-     ``(x:'a) IN COMPL s <=> x NOTIN s``;
-   assert_array_prover "set subset pointwise rung"
-     SmtArrayProve.array_prove
-     ``((s:'a set) SUBSET t) = !x. x IN s ==> x IN t``;
-   assert_array_prover "set extensionality rung"
-     SmtArrayProve.array_prove
-     ``(!x:'a. x IN s <=> x IN t) ==> (s = t)``;
-   assert_array_prover "set empty const-array rung"
-     SmtArrayProve.array_prove
-     ``F = ((x:'a) IN (EMPTY:'a set))``;
-   assert_array_prover "set universe const-array rung"
-     SmtArrayProve.array_prove
-     ``((x:'a) IN (UNIV:'a set)) = T``)
+let
+  val simple = if Library.no_fastpath () then "array(4)(set-extensional)"
+    else "array(3)(set-simp)"
+  fun direct name tm = assert_array_public_rung simple name tm
+in
+  direct "set union pointwise" ``(x:'a) IN (s UNION t) <=> x IN s \/ x IN t``;
+  direct "set intersection pointwise"
+    ``(x:'a) IN (s INTER t) <=> x IN s /\ x IN t``;
+  direct "set difference pointwise"
+    ``(x:'a) IN (s DIFF t) <=> x IN s /\ x NOTIN t``;
+  direct "set complement pointwise" ``(x:'a) IN COMPL s <=> x NOTIN s``;
+  direct "set subset pointwise"
+    ``((s:'a set) SUBSET t) = !x. x IN s ==> x IN t``;
+  direct "set extensionality" ``(!x:'a. x IN s <=> x IN t) ==> (s = t)``;
+  direct "set empty const-array" ``F = ((x:'a) IN (EMPTY:'a set))``;
+  direct "set universe const-array" ``((x:'a) IN (UNIV:'a set)) = T``;
+  assert_array_public_rung "array(4)(set-extensional)" "set subset map"
+    ``((s:'a set) SUBSET t) =
+      ((\x. x IN s /\ x NOTIN t) = (EMPTY:'a set))``
+end
 
 fun collection_replay_table_completeness_success () =
 let
