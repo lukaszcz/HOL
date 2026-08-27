@@ -35,17 +35,26 @@ struct
 
   fun unsupported t =
     raise ERR "unsupported"
-      ("unsupported rewrite shape: theory=fp; checked replay is only " ^
-       "implemented for proforma, ground-evaluation, bit-decomposition, " ^
-       "Tier-2 atom, fp.to_real arithmetic, and add/sub/mul circuit " ^
-       "rewrites; " ^
+      ("unsupported rewrite shape: theory=fp; supported fragment: proved " ^
+       "proforma rewrites, closed executable FP terms, parser-recorded " ^
+       "packed decompositions, selected symbolic FP predicates, " ^
+       "comparisons, and abs/neg conversions, fp.to_real arithmetic, " ^
+       "and symbolic add/sub/mul circuits below packed width 32; " ^
+       "capability refusal: symbolic FP operations outside those named " ^
+       "families or identities outside the proved schemas have no " ^
+       "checked reconstruction procedure; resource refusal: selected " ^
+       "symbolic predicates, comparisons, and abs/neg conversions and " ^
+       "add/sub/mul circuits can exceed the term-size or time caps, and " ^
+       "symbolic add/sub/mul at packed width 32 or greater is refused; " ^
        "conclusion=" ^ Library.term_to_string t)
 
   (* The arbitrary-format classification probes compare [abs x] with itself.
-     Z3 still prints a Boolean word formula for that false atom.  This is a
-     proforma irreflexivity case, not the general Tier-2 bit-blast rung. *)
+     Z3 still prints a Boolean word formula for that false atom.  The general
+     Tier-2 bit-blast rung closes this family; this direct irreflexivity proof
+     is only its D1-gated performance cache. *)
   fun reflexive_lt_prove t =
   let
+    val () = Library.require_fastpath "FP reflexive less-than"
     val (lhs, rhs) = boolSyntax.dest_eq t
     val (head, args) = boolSyntax.strip_comb lhs
     val {Thy, Name, ...} = Term.dest_thy_const head
@@ -73,7 +82,8 @@ struct
      (Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
       handle Feedback.HOL_ERR _ =>
         Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms t
-      handle Feedback.HOL_ERR _ => reflexive_lt_prove t))
+      handle Feedback.HOL_ERR _ =>
+        profile "fp(1)(reflexive-lt)" reflexive_lt_prove t))
     handle Feedback.HOL_ERR holerr =>
       raise ERR "proforma_prove"
         ("proforma lookup failed: " ^ Feedback.message_of holerr)

@@ -14653,6 +14653,28 @@ in
      ("convert_to_ubv", conversion)]
 end
 
+fun smtfp_reflexive_lt_cache_coverage_success () =
+let
+  val goal =
+    ``smtfp_lt (smtfp_abs (x : (4,3) smtfp)) (smtfp_abs x) = F``
+  val () = Profile.reset_all ()
+  val thm = SmtFpProve.fp_prove goal
+in
+  assert_no_hyps ("FP reflexive lt cache", thm);
+  assert_concl_alpha ("FP reflexive lt cache", thm, goal);
+  check_oracle_tags "FP reflexive lt cache" thm;
+  if Library.no_fastpath () then
+    (assert (profile_call_count "fp(1)(reflexive-lt)" = 0,
+       "disabled FP reflexive-lt cache was called");
+     assert (profile_call_count "fp(5)(tier2-bitblast)_OK" = 1,
+       "reflexive lt did not consume the general Tier-2 rung"))
+  else
+    (assert (profile_call_count "fp(1)(proforma)_OK" = 1,
+       "reflexive lt did not consume the proforma rung");
+     assert (profile_call_count "fp(1)(reflexive-lt)_OK" = 1,
+       "reflexive lt did not consume its gated cache"))
+end
+
 fun smtfp_addsub_circuit_rung_success () =
 let
   val add =
@@ -15184,6 +15206,21 @@ in
     "FP rewrite detection missed type-only FP variables");
   expect_hol_error_contains "FP fp(7) direct"
     "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (SmtFpProve.fp_prove unsupported));
+  expect_hol_error_contains "FP fp(7) supported fragment"
+    "supported fragment: proved proforma rewrites, closed executable FP terms"
+    (fn () => ignore (SmtFpProve.fp_prove unsupported));
+  expect_hol_error_contains "FP fp(7) Tier-2 conversion fragment"
+    "comparisons, and abs/neg conversions, fp.to_real arithmetic"
+    (fn () => ignore (SmtFpProve.fp_prove unsupported));
+  expect_hol_error_contains "FP fp(7) capability refusal"
+    "symbolic FP operations outside those named families or identities"
+    (fn () => ignore (SmtFpProve.fp_prove unsupported));
+  expect_hol_error_contains "FP fp(7) resource refusal"
+    "symbolic predicates, comparisons, and abs/neg conversions"
+    (fn () => ignore (SmtFpProve.fp_prove unsupported));
+  expect_hol_error_contains "FP fp(7) packed-width refusal"
+    "symbolic add/sub/mul at packed width 32 or greater is refused"
     (fn () => ignore (SmtFpProve.fp_prove unsupported));
   expect_hol_error_contains "FP fp(7) rewrite dispatch"
     "unsupported rewrite shape: theory=fp;"
@@ -16663,6 +16700,8 @@ let
       z3_rewrite_string_rung_shaped_failure),
     ("smtfp_prove_core_rungs_success",
       smtfp_prove_core_rungs_success),
+    ("smtfp_reflexive_lt_cache_coverage_success",
+      smtfp_reflexive_lt_cache_coverage_success),
     ("smtfp_addsub_circuit_rung_success",
       smtfp_addsub_circuit_rung_success),
     ("smtfp_addsub_circuit_mutation_rejected",
