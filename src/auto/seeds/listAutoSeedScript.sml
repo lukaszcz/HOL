@@ -96,3 +96,32 @@ QED
 val _ =
   export_at "intro"
     ("SHORTLEX_TRANSITIVE_AUTO", listTheory.SHORTLEX_transitive)
+
+(* src/HOL/List.thy:7256,7318 @ f7e02b7e.  These two carry no Isabelle
+   attribute, and are declared here anyway because they compensate for a
+   definitional mismatch rather than add strength Isabelle lacks.
+
+   Isabelle *defines* lenlex as the disjunction
+
+     length xs < length ys \/ length xs = length ys /\ (xs,ys) : lex r
+
+   so lenlex_conv is free by unfolding and the length facts never need an
+   attribute: any Isabelle method that has the definition has them.  HOL4's
+   SHORTLEX_def is primitive-recursive, so the same facts are theorems that
+   no claset carries, and a search that unfolds SHORTLEX gets the recursion
+   rather than the length comparison.  Declaring them restores what the
+   Isabelle definition supplies for free; it does not go past it.
+
+   Both are unsafe.  Read backwards, LENGTH_LT_SHORTLEX turns a SHORTLEX
+   goal into a strict length comparison and loses the equal-length
+   solutions, so it must not be a safe intro rule.  SHORTLEX_LENGTH_LE
+   reads a SHORTLEX hypothesis, so it is a destruction rule; [forward]
+   would not serve, because a forward declaration leaves the classical
+   netpairs untouched and these goals are handed auto.
+   SHORTLEX_LENGTH_LE is itself a corpus goal, which A1 withholds it
+   from; that is the mechanism working, not an exemption. *)
+val _ =
+  export_at "intro" ("LENGTH_LT_SHORTLEX_AUTO", listTheory.LENGTH_LT_SHORTLEX)
+
+val _ =
+  export_at "dest" ("SHORTLEX_LENGTH_LE_AUTO", listTheory.SHORTLEX_LENGTH_LE)
