@@ -3205,10 +3205,17 @@ fun exact_transition_variants cs specification goal =
 
 fun valid_open_replay goal (record, node) =
   let
-    val expected = rendered_goals node
-    val grounded =
-      clasetReplay.ground (clasetGoal.store node)
-        (clasetGoal.replay node)
+    val store = clasetGoal.store node
+    (* Replay grounds the store, so a rule parameter still unresolved at
+       this node reaches the replayed goal grounded.  Compare the
+       rendering after the same grounding; where every metavariable is
+       already bound this changes nothing. *)
+    val grounded_store = clasetMeta.ground store
+    fun ground_goal (asl, w) =
+      (map (clasetMeta.instantiate grounded_store) asl,
+       clasetMeta.instantiate grounded_store w)
+    val expected = map ground_goal (rendered_goals node)
+    val grounded = clasetReplay.ground store (clasetGoal.replay node)
     val (actual, _) =
       Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
   in
@@ -4230,6 +4237,14 @@ val _ =
                end
        end)
 
+(* A rule parameter that no hypothesis pins is instantiable wherever it
+   occurs; one occurring in a premise alone is left as a metavariable. *)
+fun meta_applied_to argument assumption =
+  case Lib.total Term.dest_comb assumption of
+      SOME (head, arg) =>
+        clasetMeta.is_meta head andalso Term.aconv arg argument
+    | NONE => false
+
 val _ =
   test
     ("exact two-binder replay preserves fresh order and collisions",
@@ -4274,9 +4289,19 @@ val _ =
                         not (Term.aconv fresh_x sibling_x) andalso
                         type_of fresh_x = Type.ind andalso
                         type_of fresh_y = bool_ty andalso
-                        aconv_list asl
-                          [Term.mk_comb (q, fresh_y),
-                           Term.mk_comb (p, fresh_x)] andalso
+                        (* [P] and [Q] occur in the rule's premise only,
+                           so matching its conclusion leaves them
+                           unresolved.  What the rule fixes is the
+                           argument each is applied to, and their
+                           order. *)
+                        (case asl of
+                             [first, second] =>
+                               meta_applied_to fresh_y first andalso
+                               meta_applied_to fresh_x second andalso
+                               not (clasetMeta.same_meta
+                                      (Term.rator first)
+                                      (Term.rator second))
+                           | _ => false) andalso
                         Term.aconv w boolSyntax.T andalso
                         clasetStep.eigenvariables_of record = names andalso
                         valid_open_replay ([], boolSyntax.T) (record, next)
@@ -5474,11 +5499,17 @@ val _ =
     ("BEST driver expands the smaller child before an earlier large one",
      fn () =>
        let
-         val constant = Term.mk_var ("best_driver_c", Type.ind)
-         val predicate =
-           Term.mk_var ("best_driver_p", Type.ind --> Type.bool)
-         val small = mk_comb (predicate, constant)
-         val large = bool_function_chain 5 small
+         (* Two fixed propositions of different size, and fixed means
+            closed: a free variable in a rule is a parameter the matcher
+            may instantiate, never a particular proposition. *)
+         val opaque = Term.inst [Type.alpha |-> bool_ty] boolSyntax.arb
+         val opaque_pad =
+           Term.inst [Type.alpha |-> (bool_ty --> bool_ty)]
+             boolSyntax.arb
+         fun pad 0 tm = tm
+           | pad count tm = pad (count - 1) (mk_comb (opaque_pad, tm))
+         val small = opaque
+         val large = pad 5 small
          val large_rule = DISCH large boolTheory.TRUTH
          val small_rule = DISCH small boolTheory.TRUTH
          val visited = ref ([] : term list)

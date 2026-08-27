@@ -374,18 +374,50 @@ fun thm_nested_conj () =
   let val pqr = ``(p /\ q) /\ r``
   in DISCH pqr (CONJUNCT1 (CONJUNCT1 (ASSUME pqr))) end
 
+(* A rule whose parameter is stated free, as HOL4 states one and Isabelle
+   does not.  Without generalisation the parameter is rigid and the rule
+   matches only a goal that spells it [R]. *)
+fun thm_free_parameter () =
+  let val rxy = ``(R : num -> num -> bool) x y``
+  in DISCH rxy (ASSUME rxy) end
+
+val _ =
+  test
+    ("canonical_rule binds a rule's free parameters",
+     fn () =>
+       let
+         val rule = canonical_rule (thm_free_parameter ())
+       in
+         List.null (Term.free_vars (concl rule)) andalso
+         Term.aconv (concl (Drule.SPEC_ALL rule))
+           ``(R : num -> num -> bool) x y ==> R x y``
+       end)
+
+val _ =
+  test
+    ("a free parameter matches a goal that names it otherwise",
+     fn () =>
+       let
+         val {concl = pattern, patvars, ...} =
+           canonical_form (thm_free_parameter ())
+         val net = insert ({pat = pattern, patvars = patvars}, 1) empty
+       in
+         match ``(relation : num -> num -> bool) a b`` net = [1]
+       end)
+
 val _ =
   test
     ("canonical_rule curries top-level conjunction premises",
      fn () =>
-       Term.aconv (concl (canonical_rule (thm_prem_conj ())))
+       Term.aconv (concl (Drule.SPEC_ALL (canonical_rule (thm_prem_conj ()))))
          ``p ==> q ==> r ==> p``)
 
 val _ =
   test
     ("canonical_rule recursively curries nested conjunctions",
      fn () =>
-       Term.aconv (concl (canonical_rule (thm_nested_conj ())))
+       Term.aconv
+         (concl (Drule.SPEC_ALL (canonical_rule (thm_nested_conj ()))))
          ``p ==> q ==> r ==> p``)
 
 val _ =
@@ -398,7 +430,7 @@ val _ =
          val internal = ``!z : bool. P z ==> q``
          val th = DISCH internal (ASSUME internal)
        in
-         Term.aconv (concl (canonical_rule th))
+         Term.aconv (concl (Drule.SPEC_ALL (canonical_rule th)))
            ``(!z : bool. P z ==> q) ==> (!z : bool. P z ==> q)``
        end)
 
@@ -448,7 +480,7 @@ val _ =
          val th' = canonical_rule th
          val spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
        in
-         Term.aconv (concl th') ``!x : bool. p ==> q ==> p`` andalso
+         Term.aconv (concl (Drule.SPEC_ALL th')) ``p ==> q ==> p`` andalso
          List.exists (Term.aconv ``x : bool``) (hyp th') andalso
          can (ext_info spec) th andalso
          can (ext_info spec) (shadowed_canonical_rule ())
@@ -459,8 +491,11 @@ val _ =
     ("repeated canonicalization avoids kernel rebuilding for each kind",
      fn () =>
        let
-         fun unchanged canonicalize th =
+         fun unchanged canonicalize source =
            let
+             (* Measured from an already-canonical rule: the first pass
+                over a source theorem binds its free parameters. *)
+             val th = canonicalize source
              val once = canonicalize th
              val twice = canonicalize once
              fun binder_names theorem =
@@ -521,7 +556,8 @@ val _ =
              (DISCH side (CONJUNCT1 (ASSUME major)))
        in
          Term.aconv
-           (concl (canonical_rule_of clasetRules.Elim theorem))
+           (concl
+             (Drule.SPEC_ALL (canonical_rule_of clasetRules.Elim theorem)))
            ``p /\ q ==> q ==> r ==> p``
        end)
 
@@ -563,8 +599,8 @@ val _ =
            canonical_form_of_measured (fn () => ())
              clasetRules.Forward theorem
        in
-         Term.aconv (concl processed) ``p ==> q ==> q /\ r ==> q``
-           andalso
+         Term.aconv (concl (Drule.SPEC_ALL processed))
+           ``p ==> q ==> q /\ r ==> q`` andalso
          same_terms (#prems form) [p, q, major] andalso
          Term.aconv (rule_index clasetRules.Forward theorem) major
            andalso
@@ -585,9 +621,13 @@ fun add d ds =
       (SOME _, ds') => ds'
     | (NONE, _) => raise Fail "test declaration unexpectedly rejected"
 
+(* Four distinct propositions.  Rules differing only in the name of a
+   parameter are the same rule once the parameter is bound. *)
 val decl_a = decl "a" safe_intro (DISCH p (ASSUME p))
-val decl_b = decl "b" safe_intro (DISCH q (ASSUME q))
-val decl_c = decl "c" safe_elim (DISCH r (ASSUME r))
+val decl_b = decl "b" safe_intro (DISCH p (DISCH q (ASSUME p)))
+val decl_c =
+  decl "c" safe_elim
+    (DISCH ``p /\ q`` (CONJUNCT1 (ASSUME ``p /\ q``)))
 val decl_d = decl "d" safe_intro (DISCH ``p /\ q`` (ASSUME ``p /\ q``))
 
 val _ =
@@ -1107,7 +1147,9 @@ fun hand_rev_exists_elim () =
     val branch = MP (MP (SPEC x hminor) (ASSUME px)) hmajor
     val body = CHOOSE (x, hmajor) branch
   in
-    GEN q (DISCH major (DISCH minor body))
+    (* [P] is a free parameter of the specialised input, so the rule binds
+       it ahead of the theorem's own binders. *)
+    GENL [P, q] (DISCH major (DISCH minor body))
   end
 
 val _ =
@@ -1296,6 +1338,23 @@ val _ =
 
 fun refl_intro vars tm = GENL vars (DISCH tm (ASSUME tm))
 
+(* Six pairwise distinct two-premise intro rules whose conclusion matches
+   [p /\ p].  They cannot differ by variable name alone: binding a rule's
+   parameters makes name-only variants one rule. *)
+val p_imp_q = mk_imp (p, q)
+val q_imp_p = mk_imp (q, p)
+
+val intro_pp = DISCH p (DISCH p (CONJ (ASSUME p) (ASSUME p)))
+val intro_pq = DISCH p (DISCH q (CONJ (ASSUME p) (ASSUME q)))
+val intro_p_then_imp =
+  DISCH p (DISCH p_imp_q (CONJ (ASSUME p) (MP (ASSUME p_imp_q) (ASSUME p))))
+val intro_imp_then_p =
+  DISCH p_imp_q (DISCH p (CONJ (ASSUME p) (MP (ASSUME p_imp_q) (ASSUME p))))
+val intro_q_then_imp =
+  DISCH q (DISCH q_imp_p (CONJ (MP (ASSUME q_imp_p) (ASSUME q)) (ASSUME q)))
+val intro_imp_then_q =
+  DISCH q_imp_p (DISCH q (CONJ (MP (ASSUME q_imp_p) (ASSUME q)) (ASSUME q)))
+
 fun candidate_indices candidates =
   map (fn (({index, ...} : tag), _) => index) candidates
 
@@ -1307,19 +1366,13 @@ val _ =
     ("clasetLib orders six matching rules by subgoals then recency",
      fn () =>
        let
-         val a = ``p /\ p``
-         val b = ``p /\ q``
-         val c = ``q /\ p``
-         val d = ``x /\ x``
-         val e = ``x /\ y``
-         val f = ``y /\ x``
          val rules =
-           [("one", refl_intro [] a),
-            ("two", refl_intro [q] b),
-            ("three", refl_intro [q] c),
-            ("four", refl_intro [x] d),
-            ("five", refl_intro [x, y] e),
-            ("six", refl_intro [x, y] f)]
+           [("one", intro_pp),
+            ("two", intro_pq),
+            ("three", intro_p_then_imp),
+            ("four", intro_imp_then_p),
+            ("five", intro_q_then_imp),
+            ("six", intro_imp_then_q)]
          val cs = add_intros rules empty_cs
          val candidates =
            match_intro_candidates (unsafe_part cs) ``p /\ p``
@@ -1421,7 +1474,8 @@ val _ =
      \side",
      fn () =>
        let
-         val forward = DISCH p (ASSUME p)
+         (* Declared closed, so what the index stores is what was given. *)
+         val forward = GEN p (DISCH p (ASSUME p))
          val declarations =
            [({kind = clasetRules.Intro, safe = true, prio = NONE},
              ("aesop_intro", boolTheory.AND_INTRO_THM)),
@@ -1492,6 +1546,12 @@ fun disj_intro vars left right =
     (DISCH left
       (DISCH right (DISJ1 (ASSUME left) right)))
 
+(* Distinct single-premise introductions whose conclusion matches
+   [p \/ p].  Variants differing only in a variable's name would now be
+   one rule. *)
+val disj_from_right = DISCH q (DISJ2 p (ASSUME q))
+val disj_from_left = DISCH p (DISJ1 (ASSUME p) q)
+
 val _ =
   test
     ("aesop unsafe candidates use percent, weight, and recency order",
@@ -1499,8 +1559,8 @@ val _ =
        let
          val high_old = refl_intro [q] ``p \/ q``
          val high_heavy = disj_intro [q] q p
-         val high_new = refl_intro [x, y] ``x \/ y``
-         val default = refl_intro [x, y] ``y \/ x``
+         val high_new = disj_from_right
+         val default = disj_from_left
          val declarations =
            [({kind = clasetRules.Intro, safe = false, prio = SOME 25},
              ("low", refl_intro [] ``p \/ p``)),
@@ -1536,7 +1596,7 @@ val _ =
             ({kind = clasetRules.Intro, safe = true, prio = SOME 1},
              ("safe_old", refl_intro [q] ``p \/ q``)),
             ({kind = clasetRules.Intro, safe = true, prio = NONE},
-             ("safe_new", refl_intro [x, y] ``x \/ y``))]
+             ("safe_new", disj_from_right))]
          val cs =
            List.foldl
              (fn ((spec, named_th), acc) => add_rule spec named_th acc)
@@ -1561,7 +1621,7 @@ val _ =
             ({kind = clasetRules.Norm, safe = false, prio = NONE},
              ("norm_zero", refl_intro [q] ``p /\ q``)),
             ({kind = clasetRules.Norm, safe = false, prio = SOME ~3},
-             ("norm_early", refl_intro [x, y] ``x /\ y``))]
+             ("norm_early", intro_pq))]
          fun install cs =
            List.foldl
              (fn ((spec, named_th), acc) => add_rule spec named_th acc)
@@ -1902,14 +1962,24 @@ val _ =
 fun has_named_rule name cs =
   List.exists (fn (_, (name', _)) => name = name') (rules_of cs)
 
+(* Pairwise distinct propositions: two rules that differ only in the name
+   of a parameter are one rule once the parameter is bound. *)
 val state_rule = DISCH p (ASSUME p)
-val state_intro_rule = DISCH q (ASSUME q)
-val state_export_rule = DISCH r (ASSUME r)
+val state_intro_rule = DISCH p (DISCH q (ASSUME p))
+val state_export_rule = DISCH p (DISJ1 (ASSUME p) p)
 val state_temp_rule = DISCH ``p /\ q`` (ASSUME ``p /\ q``)
 val state_elim_rule = DISCH ``p \/ q`` (ASSUME ``p \/ q``)
 val state_dest_rule = DISCH ``~p`` (ASSUME ``~p``)
 val state_forward_rule = DISCH ``p ==> q`` (ASSUME ``p ==> q``)
-val state_sforward_rule = DISCH ``q ==> r`` (ASSUME ``q ==> r``)
+val state_sforward_rule =
+  let
+    val p_q = ``p ==> q``
+    val q_r = ``q ==> r``
+  in
+    DISCH p_q
+      (DISCH q_r
+        (DISCH p (MP (ASSUME q_r) (MP (ASSUME p_q) (ASSUME p)))))
+  end
 val state_norm_rule = ASSUME ``p <=> q``
 val state_pending_name = "claset_state_pending"
 val state_sintro_name = "claset_state_sintro"
@@ -2428,8 +2498,12 @@ val _ =
        end)
 
 val tyinfo_multispec_p = ``claset_tyinfo_multispec_p : bool``
+(* A dedicated variable name no longer isolates a fixture: the parameter is
+   bound, so the proposition itself has to be distinct. *)
+val tyinfo_multispec_conj =
+  boolSyntax.mk_conj (tyinfo_multispec_p, tyinfo_multispec_p)
 val tyinfo_multispec_rule =
-  DISCH tyinfo_multispec_p (ASSUME tyinfo_multispec_p)
+  DISCH tyinfo_multispec_conj (CONJUNCT1 (ASSUME tyinfo_multispec_conj))
 val tyinfo_multispec_intro =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
 val tyinfo_multispec_elim =

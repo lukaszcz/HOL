@@ -101,20 +101,41 @@ fun fresh_forall_vars_with checkpoint th vars =
     freshen avoids vars
   end
 
-fun canonical_rule_with checkpoint exemption th =
-  if is_canonical checkpoint exemption th then th
-  else
-    let
-      val _ = checkpoint ()
-      val (vars, _) = strip_forall (concl th)
-      val vars' = fresh_forall_vars_with checkpoint th vars
-      val _ = checkpoint ()
-      val body = Drule.SPECL vars' th
-      val body' = curry_spine checkpoint exemption body
-      val _ = checkpoint ()
-    in
-      GENL vars' body'
-    end
+(* Isabelle stores a rule's parameters as schematic variables; HOL4 states
+   them free, and a free variable is universally quantifiable whenever no
+   hypothesis pins it.  [form_of] draws its pattern variables from the outer
+   binders alone, so a parameter left free is rigid: the rule then matches
+   nothing but a goal spelling that parameter by the same name.  Bind them. *)
+fun generalise_parameters checkpoint th =
+  let
+    val _ = checkpoint ()
+    val (bound, body) = strip_forall (concl th)
+    val pinned = bound @ free_varsl (hyp th)
+    val rigid =
+      List.filter (fn v => not (List.exists (aconv v) pinned)) (free_vars body)
+    val _ = checkpoint ()
+  in
+    if List.null rigid then th else GENL rigid th
+  end
+
+fun canonical_rule_with checkpoint exemption th0 =
+  let
+    val th = generalise_parameters checkpoint th0
+  in
+    if is_canonical checkpoint exemption th then th
+    else
+      let
+        val _ = checkpoint ()
+        val (vars, _) = strip_forall (concl th)
+        val vars' = fresh_forall_vars_with checkpoint th vars
+        val _ = checkpoint ()
+        val body = Drule.SPECL vars' th
+        val body' = curry_spine checkpoint exemption body
+        val _ = checkpoint ()
+      in
+        GENL vars' body'
+      end
+  end
 
 fun canonical_rule_of_with checkpoint kind =
   canonical_rule_with checkpoint (exemption_of kind)

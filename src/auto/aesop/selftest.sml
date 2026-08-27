@@ -155,14 +155,22 @@ val _ =
 fun add_premise premise theorem =
   DISCH premise (Drule.ADD_ASSUM premise theorem)
 
-val assembly_p =
-  Term.mk_var ("aesop_assembly_p", Type.bool)
-val assembly_q =
-  Term.mk_var ("aesop_assembly_q", Type.bool)
-val assembly_r =
-  Term.mk_var ("aesop_assembly_r", Type.bool)
-val assembly_s =
-  Term.mk_var ("aesop_assembly_s", Type.bool)
+(* A rule's free variables are its parameters, so a rule stated over
+   variables matches any assumption whatever and two such rules differing
+   only in a variable's name are the same rule.  Fixtures that need
+   particular propositions -- distinct rules, or a premise with exactly
+   one match -- state them closed. *)
+val opaque_prop = Term.inst [Type.alpha |-> Type.bool] boolSyntax.arb
+val opaque_wrapper =
+  Term.inst [Type.alpha |-> (Type.bool --> Type.bool)] boolSyntax.arb
+fun distinct_prop count =
+  if count <= 0 then opaque_prop
+  else Term.mk_comb (opaque_wrapper, distinct_prop (count - 1))
+
+val assembly_p = distinct_prop 1
+val assembly_q = distinct_prop 2
+val assembly_r = distinct_prop 3
+val assembly_s = distinct_prop 4
 
 val assembly_cs =
   clasetLib.empty_cs
@@ -375,10 +383,9 @@ fun rendered_succeeds rule goal =
         not (seq.null (tactic goal))
     | _ => false
 
-val forward_p = Term.mk_var ("aesop_forward_p", Type.bool)
-val forward_q = Term.mk_var ("aesop_forward_q", Type.bool)
-val forward_target =
-  Term.mk_var ("aesop_forward_target", Type.bool)
+val forward_p = distinct_prop 5
+val forward_q = distinct_prop 6
+val forward_target = distinct_prop 7
 val forward_conclusion =
   boolSyntax.mk_conj (forward_p, forward_q)
 val forward_theorem =
