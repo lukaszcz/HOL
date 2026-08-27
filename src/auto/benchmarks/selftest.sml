@@ -2156,7 +2156,7 @@ val _ =
      fn () =>
        not (family_selected "listmap") orelse
        family_ok
-         (if benchLib.selftest_level () >= 2 then 604 else 5)
+         (if benchLib.selftest_level () >= 2 then 602 else 5)
          benchListMap.run)
 
 val _ =
