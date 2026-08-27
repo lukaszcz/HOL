@@ -200,11 +200,7 @@ struct
     smtstringz3Theory.seq_head_tail_int,
     smtstringz3Theory.seq_head_tail_int_zero_left,
     smtstringz3Theory.seq_prefixof_singleton,
-    smtstringz3Theory.seq_prefixof_head,
-    smtstringz3Theory.seq_middle_unit_canonical,
-    smtstringz3Theory.seq_shared_prefix_canonical,
-    smtstringz3Theory.seq_length_two,
-    smtstringz3Theory.seq_tail_zero_step
+    smtstringz3Theory.seq_prefixof_head
   ]
 
   val symbolic_normalizations = [
@@ -240,14 +236,9 @@ struct
     smtstringTheory.smtstr_prefixof_trans,
     smtstringTheory.smtstr_suffixof_trans,
     smtstringTheory.smtstr_contains_trans
-  ] @ seq_shape_rules
-
-  (* Equality orientation leaves one theorem per formerly duplicated
-     sequence family.  Keep their small search separate from the broader
-     symbolic set so its fixed METIS budget is independent of list size. *)
-  val canonical_seq_lemmas = [
-    smtstringz3Theory.seq_middle_unit_canonical,
-    smtstringz3Theory.seq_shared_prefix_canonical
+  ] @ seq_shape_rules @ [
+    smtstringz3Theory.seq_unit_def,
+    smtstringz3Theory.seq_eq_def
   ]
 
   val symbolic_string_names =
@@ -297,6 +288,167 @@ struct
       Thm.DISCH antecedent contradiction
     end
 
+  (* Certificate numerals select one length schema and four position schemas.
+     Code-point literals are deliberately ignored: expanding
+     GENLIST at (say) Unicode 196607 would be both irrelevant and unbounded.
+     SPECL fixes only the leading schema index; EVAL expands a concrete
+     GENLIST and REDUCE_CONV normalizes SUC/numeral side conditions. *)
+  val seq_position_names =
+    const_name_set
+      (smtstring_consts "smtstringz3" ["seq_nth_i", "seq_tail"])
+
+  val seq_length_names =
+    const_name_set (smtstring_consts "smtstring" ["smtstr_len"])
+
+  fun dest_seq_position_numeral tm =
+    let
+      val (head, args) = boolSyntax.strip_comb tm
+      val _ = is_named_const seq_position_names head orelse
+        raise ERR "dest_seq_position_numeral" "not a seq position"
+      val index = List.last args
+      val _ = numSyntax.is_numeral index orelse
+        raise ERR "dest_seq_position_numeral" "position is symbolic"
+    in
+      index
+    end
+
+  fun dest_seq_length_numeral tm =
+    let
+      val (left, right) = boolSyntax.dest_eq tm
+      fun dest (length, integer) =
+        let
+          val (head, args) = boolSyntax.strip_comb length
+          val _ = is_named_const seq_length_names head andalso
+            List.length args = 1 orelse
+            raise ERR "dest_seq_length_numeral" "not a length equality"
+          val numeral = intSyntax.dest_injected integer
+          val _ = numSyntax.is_numeral numeral orelse
+            raise ERR "dest_seq_length_numeral" "length is symbolic"
+        in
+          numeral
+        end
+    in
+      dest (left, right)
+      handle Feedback.HOL_ERR _ => dest (right, left)
+    end
+
+  fun distinct_numerals dest target =
+    HOLset.listItems
+      (HOLset.addList (Term.empty_tmset,
+        List.map dest (HolKernel.find_terms (Lib.can dest) target)))
+
+  val seq_instance_normalizations = [
+    smtstringz3Theory.seq_unit_def,
+    smtstringz3Theory.seq_eq_def,
+    smtstringTheory.smtstr_concat_def,
+    smtstringTheory.smtstr_rep_def
+  ]
+
+  val seq_alias_normalizations = [
+    smtstringz3Theory.seq_unit_def,
+    smtstringz3Theory.seq_eq_def,
+    smtstringTheory.smtstr_concat_nil_left
+  ]
+
+  fun seq_normalization rewrites target =
+    Conv.QCONV
+      (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites) target
+
+  fun seq_alias_normalization target =
+    Conv.QCONV
+      (simpLib.SIMP_CONV boolSimps.bool_ss
+        seq_alias_normalizations) target
+
+  fun prove_alias_metis lemmas target =
+    let
+      val normalization = seq_alias_normalization target
+      val normalized_target = boolSyntax.rhs (Thm.concl normalization)
+      val proof = with_metis_limit (fn () =>
+        metisLib.METIS_PROVE lemmas normalized_target) ()
+    in
+      Thm.EQ_MP (Thm.SYM normalization) proof
+    end
+
+  fun replay_parametric_seq_prove target =
+    let
+      val lengths = distinct_numerals dest_seq_length_numeral target
+      val positions = distinct_numerals dest_seq_position_numeral target
+      fun eval_genlist tm =
+        let
+          val (_, length) = listSyntax.dest_genlist tm
+          val _ = numSyntax.is_numeral length orelse
+            raise ERR "replay_parametric_seq_prove"
+              "GENLIST length is symbolic"
+        in
+          computeLib.EVAL_CONV tm
+        end
+      fun eval_rule theorem =
+        Conv.CONV_RULE (Conv.TOP_DEPTH_CONV eval_genlist) theorem
+        handle Conv.UNCHANGED => theorem
+      fun reduce_rule theorem =
+        reduceLib.REDUCE_RULE theorem
+        handle Conv.UNCHANGED => theorem
+      fun specialize theorem numeral =
+        reduce_rule (eval_rule (Drule.SPECL [numeral] theorem))
+      val length_instances =
+        List.map (specialize smtstringz3Theory.seq_length_decompose) lengths
+      val position_instances =
+        List.concat (List.map (fn numeral =>
+          List.map (fn theorem => specialize theorem numeral)
+            [smtstringz3Theory.seq_split_at,
+             smtstringz3Theory.seq_concat_position,
+             smtstringz3Theory.seq_tail_step_guard,
+             smtstringz3Theory.seq_tail_step]) positions)
+      fun canonicalize rewrites theorem =
+        let
+          val equality = simpLib.SIMP_RULE boolSimps.bool_ss
+            [smtstringz3Theory.seq_eq_def] theorem
+          val oriented = Conv.CONV_RULE
+            (Conv.QCONV (Conv.TOP_DEPTH_CONV
+              SmtReplayCanon.reorient_equality_conv)) equality
+        in
+          Drule.SPEC_ALL
+            (simpLib.SIMP_RULE (bossLib.srw_ss())
+              rewrites oriented)
+        end
+      val instances = List.map
+        (canonicalize seq_instance_normalizations)
+        (length_instances @ position_instances)
+      val fallback_instances = List.map
+        (canonicalize seq_alias_normalizations)
+        (length_instances @ position_instances)
+      val support = List.map (canonicalize seq_alias_normalizations) [
+        smtstringz3Theory.concat_singleton_prefix_length,
+        smtstringTheory.smtstr_concat_middle_singleton,
+        smtstringTheory.smtstr_singleton_concat_middle
+      ]
+      val _ = null instances andalso
+        raise ERR "replay_parametric_seq_prove"
+          "no concrete length or sequence-position numeral"
+      val normalization =
+        seq_normalization seq_instance_normalizations target
+      val normalized_target = boolSyntax.rhs (Thm.concl normalization)
+      val exact = Lib.total (Lib.tryfind (fn theorem =>
+        if Term.aconv (Thm.concl theorem) normalized_target then theorem
+        else raise ERR "replay_parametric_seq_prove"
+          "specialized schema has a different conclusion")) instances
+    in
+      case exact of
+        SOME proof => Thm.EQ_MP (Thm.SYM normalization) proof
+      | NONE =>
+          let
+            val fallback_normalization =
+              seq_alias_normalization target
+            val fallback_target =
+              boolSyntax.rhs (Thm.concl fallback_normalization)
+            val proof = with_metis_limit (fn () =>
+              metisLib.METIS_PROVE
+                (fallback_instances @ support) fallback_target) ()
+          in
+            Thm.EQ_MP (Thm.SYM fallback_normalization) proof
+          end
+    end
+
   fun symbolic_string_prove t =
     if not (is_symbolic_string_goal t) then
       raise ERR "symbolic_string_prove"
@@ -307,16 +459,18 @@ struct
       profile "string-symbolic(1)(bounded-concat-split)"
         bounded_concat_split_refute t
       handle Feedback.HOL_ERR _ =>
-      profile "string-symbolic(2)(canonical-orientation)"
-        (fn target => with_metis_limit (fn () =>
-          metisLib.METIS_PROVE canonical_seq_lemmas target) ()) t
+      profile "string-symbolic(2)(parametric-seq)"
+        replay_parametric_seq_prove t
       handle Feedback.HOL_ERR _ =>
       (* E1(b): normalization plus bounded first-order search is the general
          symbolic String-family procedure and has a loud failure boundary. *)
       profile "string-symbolic(3)(general)"
         (fn target =>
-          with_metis_limit
-            (fn () => metisLib.METIS_PROVE symbolic_lemmas target) ()
+          prove_alias_metis
+            [smtstringTheory.smtstr_concat_middle_singleton,
+             smtstringTheory.smtstr_singleton_concat_middle] target
+          handle Feedback.HOL_ERR _ =>
+          prove_alias_metis symbolic_lemmas target
           handle Feedback.HOL_ERR _ =>
             with_metis_limit (fn () =>
               Tactical.prove (target,

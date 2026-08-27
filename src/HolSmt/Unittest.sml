@@ -14046,7 +14046,7 @@ fun string_prove_ladder_rungs_success () =
 fun string_prove_symbolic_rung_success () =
   let
     val bounded = "string-symbolic(1)(bounded-concat-split)_OK"
-    val canonical = "string-symbolic(2)(canonical-orientation)_OK"
+    val parametric = "string-symbolic(2)(parametric-seq)_OK"
     val general = "string-symbolic(3)(general)_OK"
     fun direct expected name tm =
       (Profile.reset_all ();
@@ -14064,26 +14064,26 @@ fun string_prove_symbolic_rung_success () =
         smtstr_concat p (smtstr_concat (seq_unit c) q) =
           seq_unit d ==> d = c``
   in
-    direct [canonical] "string symbolic concat" concat_goal;
+    direct [general] "string symbolic concat" concat_goal;
     assert
       (profile_call_count
          "string(entry)(equality-orientation)_OK" = 1,
        "non-canonical concat family did not consume entry orientation");
-    direct [canonical] "string symbolic concat singleton-left"
+    direct [general] "string symbolic concat singleton-left"
       ``c <= 196607 /\ d <= 196607 /\
         seq_unit d =
           smtstr_concat p (smtstr_concat (seq_unit c) q) ==> d = c``;
-    direct [canonical] "string symbolic concat seq-eq canonical result"
+    direct [general] "string symbolic concat seq-eq canonical result"
       ``c <= 196607 /\ d <= 196607 /\
         seq_eq (seq_unit d)
           (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
         c = d``;
-    direct [canonical] "string symbolic concat seq-eq reversed result"
+    direct [general] "string symbolic concat seq-eq reversed result"
       ``c <= 196607 /\ d <= 196607 /\
         seq_eq (seq_unit d)
           (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
         d = c``;
-    direct [canonical] "string symbolic concat applied witnesses"
+    direct [general] "string symbolic concat applied witnesses"
       ``(97:num) <= 196607 /\
         middle_char x (seq_unit 97) <= 196607 /\
         seq_unit 97 =
@@ -14092,7 +14092,7 @@ fun string_prove_symbolic_rung_success () =
               (seq_unit (middle_char x (seq_unit 97)))
               (suffix_part x (seq_unit 97))) ==>
         97 = middle_char x (seq_unit 97)``;
-    direct [canonical] "string symbolic shared concat prefix"
+    direct [parametric] "string symbolic shared concat prefix"
       ``c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
         seq_eq s
           (smtstr_concat
@@ -14100,7 +14100,7 @@ fun string_prove_symbolic_rung_success () =
         s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
         smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
         seq_nth_i s 0 = c``;
-    direct [canonical] "string symbolic shared concat direct prefix"
+    direct [parametric] "string symbolic shared concat direct prefix"
       ``c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
         s = smtstr_concat
           (seq_unit (seq_nth_i s 0)) (seq_tail s 0) /\
@@ -14123,6 +14123,52 @@ fun string_prove_symbolic_rung_success () =
               (smtstr_concat (seq_unit 100) (seq_unit 101)))) =
           smtstr_concat x y ==>
         F``;
+    direct [parametric] "string parametric length old value two"
+      ``smtstr_len s = 2 ==>
+        seq_eq
+          (smtstr_concat
+            (seq_unit (seq_nth_i s 0))
+            (seq_unit (seq_nth_i s 1))) s``;
+    direct [parametric] "string parametric length new value three"
+      ``smtstr_len s = 3 ==>
+        seq_eq
+          (smtstr_concat (seq_unit (seq_nth_i s 0))
+            (smtstr_concat (seq_unit (seq_nth_i s 1))
+              (seq_unit (seq_nth_i s 2)))) s``;
+    direct [parametric] "string parametric length new value four"
+      ``smtstr_len s = 4 ==>
+        seq_eq
+          (smtstr_concat (seq_unit (seq_nth_i s 0))
+            (smtstr_concat (seq_unit (seq_nth_i s 1))
+              (smtstr_concat (seq_unit (seq_nth_i s 2))
+                (seq_unit (seq_nth_i s 3))))) s``;
+    direct [parametric] "string parametric concat old position zero"
+      ``c <= 196607 /\ smtstr_len p = 0 ==>
+        seq_nth_i
+          (smtstr_concat p (smtstr_concat (seq_unit c) q)) 0 = c``;
+    direct [parametric] "string parametric concat new position two"
+      ``c <= 196607 /\ smtstr_len p = 2 ==>
+        seq_nth_i
+          (smtstr_concat p (smtstr_concat (seq_unit c) q)) 2 = c``;
+    direct [parametric] "string parametric tail old position zero"
+      ``&(SUC 0) < smtstr_len s ==>
+        seq_tail s 0 =
+          smtstr_concat
+            (seq_unit (seq_nth_i s 1)) (seq_tail s 1)``;
+    direct [parametric] "string parametric tail old certificate schema"
+      ``s <> smtstr_at s 0 /\
+        seq_eq (seq_unit (seq_nth_i s 0)) (smtstr_at s 0) /\
+        seq_eq s
+          (smtstr_concat
+            (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
+        seq_tail s 0 =
+          smtstr_concat
+            (seq_unit (seq_nth_i s 1)) (seq_tail s 1)``;
+    direct [parametric] "string parametric tail new position two"
+      ``&(SUC 2) < smtstr_len s ==>
+        seq_tail s 2 =
+          smtstr_concat
+            (seq_unit (seq_nth_i s 3)) (seq_tail s 3)``;
     direct [general] "string symbolic prefix"
       ``c <= 196607 /\
         seq_eq s

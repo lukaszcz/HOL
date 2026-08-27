@@ -850,13 +850,14 @@ Proof
 QED
 
 Theorem seq_split_at:
-  i < LENGTH (smtstr_rep s) ==>
+  !i s. &i < smtstr_len s ==>
     s =
       smtstr_concat (SmtStr (TAKE i (smtstr_rep s)))
         (smtstr_concat
           (seq_unit (seq_nth_i s i)) (seq_tail s i))
 Proof
-  strip_tac >>
+  rpt strip_tac >>
+  fs [smtstringTheory.smtstr_len_def] >>
   `EL i (smtstr_rep s) <= 196607` by
     (`EVERY (\c. c <= 196607) (DROP i (smtstr_rep s))` by
        (irule rich_listTheory.EVERY_DROP >> simp []) >>
@@ -879,6 +880,43 @@ Proof
         smtstringTheory.smtstr_rep_def]
 QED
 
+(* A single position theorem replaces replay lemmas fixed at head position
+   zero.  Its numeral index is specialized and reduced by SmtStringProve. *)
+Theorem seq_concat_position:
+  !i p c q.
+    c <= 196607 /\ smtstr_len p = &i ==>
+    seq_nth_i
+      (smtstr_concat p (smtstr_concat (seq_unit c) q)) i = c
+Proof
+  rpt strip_tac >>
+  fs [smtstringTheory.smtstr_len_def] >>
+  simp [seq_nth_i_def, seq_unit_def,
+        smtstringTheory.smtstr_concat_def,
+        smtstringTheory.smtstr_rep_def,
+        rich_listTheory.EL_APPEND2]
+QED
+
+(* A singleton result forces every prefix before its displayed middle
+   character to be empty.  This structural fact has no fixed position; the
+   replay prover combines it with seq_concat_position specialized at the
+   position present in the certificate. *)
+Theorem concat_singleton_prefix_length:
+  !p c q d.
+    c <= 196607 /\ d <= 196607 /\
+    SmtStr [d] = smtstr_concat p (smtstr_concat (SmtStr [c]) q) ==>
+    smtstr_len p = 0
+Proof
+  rpt strip_tac >>
+  `smtstr_rep p ++ [c] ++ smtstr_rep q = [d]` by
+    (pop_assum mp_tac >>
+     simp [smtstringTheory.smtstr_concat_def,
+           smtstringTheory.smtstr_rep_def,
+           smtstringTheory.SmtStr_11]) >>
+  `smtstr_rep p = []` by
+    (Cases_on `smtstr_rep p` >> fs []) >>
+  simp [smtstringTheory.smtstr_len_def]
+QED
+
 Theorem seq_head_tail:
   s = SmtStr [] \/
   seq_eq s
@@ -889,8 +927,9 @@ Proof
   >> disj2_tac >>
   `smtstr_rep s <> []` by
     metis_tac [smtstringTheory.smtstr_rep_eq_nil] >>
-  `0 < LENGTH (smtstr_rep s)` by
-    (Cases_on `smtstr_rep s` >> fs []) >>
+  `&0 < smtstr_len s` by
+    (simp [smtstringTheory.smtstr_len_def] >>
+     Cases_on `smtstr_rep s` >> fs []) >>
   drule seq_split_at >>
   simp [seq_eq_def, smtstringTheory.smtstr_concat_nil_left]
 QED
@@ -972,72 +1011,65 @@ QED
    family sufficient.  TASK_18 replaces these remaining instances with
    replay-time specialization of parametric decomposition theorems. *)
 
-Theorem seq_middle_unit_canonical:
-  c <= 196607 /\ d <= 196607 /\
-  seq_unit d = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
-  c = d
-Proof
-  metis_tac [seq_unit_def,
-             smtstringTheory.smtstr_concat_middle_singleton]
-QED
-
-Theorem seq_shared_prefix_canonical:
-  c <= 196607 /\ d <= 196607 /\ e <= 196607 ==>
-  s = smtstr_concat
-      (seq_unit (seq_nth_i s 0)) (seq_tail s 0) ==>
-    s = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
-    seq_unit e = smtstr_concat p (smtstr_concat (seq_unit d) r) ==>
-  c = seq_nth_i s 0
+(* Reconstruct every sequence of numeral length n from its nth_i values.
+   Replay specializes n first, then EVAL expands GENLIST and REDUCE_CONV
+   discharges concrete numeral side conditions before bounded search. *)
+Theorem seq_length_decompose:
+  !n s.
+    smtstr_len s = &(n : num) ==>
+    seq_eq (SmtStr (GENLIST (seq_nth_i s) n)) s
 Proof
   rpt strip_tac >>
-  `smtstr_rep p ++ [d] ++ smtstr_rep r = [e]` by
-    (qpat_x_assum `seq_unit e = _` mp_tac >>
-     simp [seq_unit_def, smtstringTheory.smtstr_concat_def,
-           smtstringTheory.smtstr_rep_def, smtstringTheory.SmtStr_11] >>
-     metis_tac []) >>
-  `smtstr_rep p = []` by (Cases_on `smtstr_rep p` >> fs []) >>
-  `smtstr_rep s = c::smtstr_rep q` by
-    (qpat_x_assum `s = smtstr_concat p _` mp_tac >>
-     simp [seq_unit_def, smtstringTheory.smtstr_concat_def,
-           smtstringTheory.smtstr_rep_def] >>
-     rw [] >>
-     simp []) >>
-  simp [seq_nth_i_def]
+  fs [smtstringTheory.smtstr_len_def] >>
+  `GENLIST (seq_nth_i s) n = smtstr_rep s` by
+    (rw [listTheory.LIST_EQ_REWRITE] >>
+     simp [seq_nth_i_def]) >>
+  fs [seq_eq_def]
 QED
 
-(* TASK_02 draft_length emits the exact two-unit reconstruction after proving
-   a sequence has length two. *)
-
-Theorem seq_length_two:
-  smtstr_len s = 2 ==>
-  seq_eq
-    (smtstr_concat
-      (seq_unit (seq_nth_i s 0)) (seq_unit (seq_nth_i s 1))) s
+(* The old position-zero certificate established tail nonemptiness indirectly:
+   the sequence is its prefix, selected unit, and tail, but differs from the
+   same prefix ending at smtstr_at.  This index-parametric form exposes the
+   resulting guard needed by seq_tail_step. *)
+Theorem seq_tail_step_guard:
+  !i s.
+    s <>
+      smtstr_concat (SmtStr (TAKE i (smtstr_rep s)))
+        (smtstr_at s (&i)) /\
+    seq_eq (seq_unit (seq_nth_i s i)) (smtstr_at s (&i)) /\
+    seq_eq s
+      (smtstr_concat (SmtStr (TAKE i (smtstr_rep s)))
+        (smtstr_concat
+          (seq_unit (seq_nth_i s i)) (seq_tail s i))) ==>
+    &(SUC i) < smtstr_len s
 Proof
-  simp [smtstringTheory.smtstr_len_def] >>
-  strip_tac >>
-  `seq_nth_i s 0 = EL 0 (smtstr_rep s)` by
-    simp [seq_nth_i_def] >>
-  `seq_nth_i s 1 = EL 1 (smtstr_rep s)` by
-    simp [seq_nth_i_def] >>
-  `EVERY (\c. c <= 196607) (smtstr_rep s)` by simp [] >>
-  Cases_on `smtstr_rep s` >>
-  fs [] >>
-  Cases_on `t` >>
-  fs [] >>
-  simp [seq_eq_def, seq_unit_def,
-        smtstringTheory.smtstr_concat_def,
-        smtstringTheory.smtstr_rep_def] >>
-  metis_tac [smtstringTheory.SmtStr_smtstr_rep]
+  rpt strip_tac >>
+  fs [seq_eq_def] >>
+  `i < LENGTH (smtstr_rep s)` by
+    (qpat_x_assum `seq_unit _ = smtstr_at _ _`
+       (fn th => mp_tac (AP_TERM ``smtstr_len`` th)) >>
+     simp [seq_unit_length, smtstringTheory.smtstr_len_at] >>
+     Cases_on `LENGTH (smtstr_rep s) <= i` >> fs []) >>
+  `SUC i < LENGTH (smtstr_rep s)` by
+    (spose_not_then assume_tac >>
+     `LENGTH (smtstr_rep s) = SUC i` by decide_tac >>
+     `seq_tail s i = SmtStr []` by
+       (qpat_x_assum `LENGTH (smtstr_rep s) = SUC i`
+          (fn th => simp [seq_tail_def, GSYM th])) >>
+     fs [smtstringTheory.smtstr_concat_nil_right] >>
+     qpat_x_assum `seq_unit _ = smtstr_at _ _`
+       (fn th => fs [th])) >>
+  simp [smtstringTheory.smtstr_len_def]
 QED
 
 Theorem seq_tail_step:
-  SUC i < LENGTH (smtstr_rep s) ==>
+  !i s. &(SUC i) < smtstr_len s ==>
     seq_tail s i =
       smtstr_concat
         (seq_unit (seq_nth_i s (SUC i))) (seq_tail s (SUC i))
 Proof
-  strip_tac >>
+  rpt strip_tac >>
+  fs [smtstringTheory.smtstr_len_def] >>
   `EL (SUC i) (smtstr_rep s) <= 196607` by
     (`EVERY (\c. c <= 196607) (DROP (SUC i) (smtstr_rep s))` by
        (irule rich_listTheory.EVERY_DROP >> simp []) >>
@@ -1052,44 +1084,6 @@ Proof
   simp [seq_unit_def, seq_tail_def,
         smtstringTheory.smtstr_concat_def,
         smtstringTheory.smtstr_rep_def]
-QED
-
-Theorem seq_tail_zero_step:
-  s <> smtstr_at s 0 /\
-    seq_eq (seq_unit (seq_nth_i s 0)) (smtstr_at s 0) /\
-    seq_eq s
-      (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
-  seq_tail s 0 =
-    smtstr_concat (seq_unit (seq_nth_i s 1)) (seq_tail s 1)
-Proof
-  rpt strip_tac >>
-  fs [seq_eq_def] >>
-  `LENGTH (smtstr_rep s) <> 0` by
-    (strip_tac >>
-     `smtstr_rep s = []` by (Cases_on `smtstr_rep s` >> fs []) >>
-     `EVERY (\c. c <= 196607) (DROP 1 (smtstr_rep s))` by
-       (irule rich_listTheory.EVERY_DROP >> simp []) >>
-     `smtstr_rep
-        (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) =
-      smtstr_rep s` by (AP_TERM_TAC >> simp []) >>
-     rfs [seq_unit_def, seq_tail_def,
-          smtstringTheory.smtstr_concat_def,
-          smtstringTheory.smtstr_rep_def]) >>
-  `LENGTH (smtstr_rep s) <> 1` by
-    (strip_tac >>
-     qpat_x_assum `s <> smtstr_at s 0` mp_tac >>
-     simp [] >>
-     qpat_x_assum `seq_unit _ = smtstr_at s 0`
-       (fn th => REWRITE_TAC [GSYM th]) >>
-     `seq_nth_i s 0 = EL 0 (smtstr_rep s)` by
-       simp [seq_nth_i_def] >>
-     Cases_on `smtstr_rep s` >>
-     fs [] >>
-     simp [seq_unit_def] >>
-     metis_tac [smtstringTheory.SmtStr_smtstr_rep]) >>
-  `SUC 0 < LENGTH (smtstr_rep s)` by decide_tac >>
-  drule seq_tail_step >>
-  simp []
 QED
 
 Theorem seq_tail_length:
