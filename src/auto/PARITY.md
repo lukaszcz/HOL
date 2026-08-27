@@ -56,11 +56,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 311 | 310 | 4 |
-| List/map | 602 | 356 | 321 | 5 |
+| List/map | 602 | 358 | 323 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **780** | **744** | **28** |
+| **Total** | **1070** | **782** | **746** | **28** |
 
 ## Cost of the solutions
 
@@ -69,12 +69,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 13 | 12 | 0 | 0 | 0.6 | 45 | 516 |
-| Sets | 311 | 122 | 185 | 4 | 0 | 3.2 | 6 | 2430 |
-| List/map | 356 | 5 | 338 | 13 | 0 | 5.7 | 0 | 455 |
-| Linarith | 46 | 43 | 3 | 0 | 0 | 0.6 | 0 | 0 |
-| Presburger | 34 | 29 | 4 | 1 | 0 | 5.0 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 3.0 | 0 | 0 |
-| **Total** | **780** | **219** | **542** | **19** | **0** | **5.7** | **0** | **2430** |
+| Sets | 311 | 110 | 194 | 7 | 0 | 6.1 | 6 | 2430 |
+| List/map | 358 | 5 | 350 | 3 | 0 | 5.3 | 0 | 455 |
+| Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
+| Presburger | 34 | 30 | 3 | 1 | 0 | 2.4 | 0 | 0 |
+| Algebra | 8 | 7 | 0 | 1 | 0 | 1.4 | 0 | 0 |
+| **Total** | **782** | **209** | **561** | **12** | **0** | **6.1** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -87,11 +87,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 42 | 0 | 0 |
-| List/map | 0 | 246 | 2 | 0 |
+| List/map | 0 | 244 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **290** | **2** | **0** |
+| **Total** | **0** | **288** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 

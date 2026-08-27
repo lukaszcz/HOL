@@ -216,12 +216,10 @@ val take_and_drop_arithmetic =
 
 val list_relation_lifting =
   classified "list relation lifting"
-    ("LIST_REL, LLEX and SHORTLEX carry no claset rules, so the "
-     ^ "goal is never decomposed")
+    ("LIST_REL and LLEX carry no claset rules and SHORTLEX carries "
+     ^ "only its two length rules, so the goal is never decomposed")
     ["list_L3089_list_all2_appendI",
      "list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
-     "list_L7300_Nil_lenlex_iff1", "list_L7304_Cons_lenlex_iff",
-     "list_L7318_lenlex_length",
      "list_L7401_lexord_append_leftD", "list_L7508_lexord_trans",
      "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff",
      "list_L9009_null_transfer"]
@@ -267,11 +265,13 @@ val sorted_against_sorted_wrt =
 val characterisation_is_the_goal =
   classified "characterisation is the goal"
     ("the HOL4 theorem that is this goal -- the one the Isabelle "
-     ^ "method cites, or one the simpset carries -- is excluded by "
-     ^ "A1, up to the orientation of an equation or an equivalence "
-     ^ "or the unfolding of a constant the translation introduces, "
-     ^ "and the assigned tactic has no second route")
-    ["list_L6444_stable_sort_key_sort_key", "list_L8167_list_all_iff",
+     ^ "method cites, or one the simpset carries, or one a seed file "
+     ^ "declares -- is excluded by A1, up to the orientation of an "
+     ^ "equation or an equivalence or the unfolding of a constant the "
+     ^ "translation introduces, and the assigned tactic has no second "
+     ^ "route")
+    ["list_L6444_stable_sort_key_sort_key", "list_L7318_lenlex_length",
+     "list_L8167_list_all_iff",
      "list_L8642_image_set", "list_L8660_card_set",
      "list_L8683_can_select_set_list_ex1",
      "option_L361_equal_None_code_unfold_1", "string_L728_anon_L728"]
