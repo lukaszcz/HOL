@@ -16,6 +16,22 @@ local
   val cpc_list_definitions = ref (Redblackmap.mkDict String.compare)
   val cpc_list_names = ref ([] : string list)
 
+  (* Definitions are syntax aliases.  Keep their exact occurrence tree so an
+     alias use retains CPC's operand boundaries without consulting HOL-term
+     identity.  This dictionary is used only while parsing the current proof;
+     every command receives its own copied provenance value. *)
+  val cpc_term_provenances = ref
+    (Redblackmap.mkDict String.compare :
+      (string, term_provenance) Redblackmap.dict)
+
+  fun add_term_provenance name provenance =
+    cpc_term_provenances := Redblackmap.insert
+      (!cpc_term_provenances, name, provenance)
+
+  fun lookup_term_provenance name =
+    SOME (Redblackmap.find (!cpc_term_provenances, name))
+    handle Redblackmap.NotFound => NONE
+
   fun add_cpc_list name terms =
     (cpc_list_definitions := Redblackmap.insert
        (!cpc_list_definitions, name, terms);
@@ -642,6 +658,193 @@ local
         end
     end
 
+  datatype raw_term =
+      RawAtom of string
+    | RawList of raw_term list
+
+  fun read_raw_term get_token =
+    case get_token () of
+      "(" =>
+        let
+          fun entries acc =
+            case get_token () of
+              ")" => RawList (List.rev acc)
+            | token => entries
+                (read_raw_term
+                  (Library.undo_look_ahead [token] get_token) :: acc)
+        in
+          entries []
+        end
+    | ")" => raise ERR "read_raw_term" "unexpected closing parenthesis"
+    | token => RawAtom token
+
+  fun raw_tokens raw =
+    case raw of
+      RawAtom token => [token]
+    | RawList entries =>
+        "(" :: List.concat (List.map raw_tokens entries) @ [")"]
+
+  fun raw_contains_let raw =
+    case raw of
+      RawAtom _ => false
+    | RawList (RawAtom "let" :: _) => true
+    | RawList entries => List.exists raw_contains_let entries
+
+  fun exact_application head operands =
+    ApplicationProvenance (head, operands)
+
+  fun exact_binder head body =
+    BinderProvenance (head, body)
+
+  fun exact_binders head names body =
+    List.foldr (fn (_, nested) => exact_binder head nested) body names
+
+  (* Equality endpoints are semantic inputs to omitted SYM, TRANS,
+     EQ_RESOLVE, and CONG.  Retain their boundary even when both endpoints
+     are conjunction-free; AtomicProvenance for the whole equality would
+     erase which exact side an equality-consuming route selected. *)
+  fun sparse_equality left right = EqualityProvenance (left, right)
+
+  fun lookup_lexical_provenance [] _ = NONE
+    | lookup_lexical_provenance ((bound, provenance) :: rest) name =
+        if bound = name then SOME provenance
+        else lookup_lexical_provenance rest name
+
+  fun binder_names raw =
+    case raw of
+      RawList (RawAtom "@list" :: binders) =>
+        let
+          fun binder_name (RawAtom alias) = alias
+            | binder_name (RawList
+                [RawAtom "@var", RawAtom name, _]) = name
+            | binder_name _ = raise ERR "provenance_of_raw"
+                "unsupported CPC inline binder"
+        in
+          SOME (List.map binder_name binders)
+          handle Feedback.HOL_ERR _ => NONE
+        end
+    | RawList binders =>
+        let
+          fun binder_name (RawList [RawAtom name, _]) = name
+            | binder_name _ = raise ERR "provenance_of_raw"
+                "unsupported SMT-LIB binder declaration"
+        in
+          SOME (List.map binder_name binders)
+          handle Feedback.HOL_ERR _ => NONE
+        end
+    | RawAtom alias =>
+        (case lookup_cpc_list alias of
+           SOME variables =>
+             (SOME (List.map (Lib.fst o Term.dest_var) variables)
+              handle Feedback.HOL_ERR _ => NONE)
+         | NONE => NONE)
+
+  fun let_bindings environment raw =
+    case raw of
+      RawList bindings =>
+        let
+          fun binding (RawList [RawAtom name, rhs]) =
+                (name, provenance_of_raw_in environment rhs)
+            | binding _ = raise ERR "provenance_of_raw"
+                "unsupported SMT-LIB let binding"
+        in
+          SOME (List.map binding bindings)
+          handle Feedback.HOL_ERR _ => NONE
+        end
+    | _ => NONE
+
+  and provenance_of_raw_in environment raw =
+    case raw of
+      RawAtom token =>
+        (case lookup_lexical_provenance environment token of
+           SOME provenance => provenance
+         | NONE =>
+             (case lookup_term_provenance token of
+                SOME provenance => provenance
+              | NONE => AtomicProvenance))
+    | RawList (RawAtom "and" :: operands) =>
+        if List.length operands >= 2 then
+          ConjunctionProvenance
+            (ParsedConjunction,
+             List.map (provenance_of_raw_in environment) operands)
+        else UnavailableProvenance
+          "parsed CPC conjunction has fewer than two operands"
+    | RawList [RawAtom "=", left, right] =>
+        sparse_equality (provenance_of_raw_in environment left)
+          (provenance_of_raw_in environment right)
+    | RawList [RawAtom head, binders, body] =>
+        if head = "forall" orelse head = "exists" orelse
+           head = "lambda"
+         then
+          (case binder_names binders of
+             SOME names => exact_binders head names
+               (provenance_of_raw_in
+                 (List.map (fn name => (name, AtomicProvenance)) names @
+                  environment) body)
+           | NONE => UnavailableProvenance
+               ("unsupported " ^ head ^ " binder provenance"))
+        else if head = "let" then
+          (case let_bindings environment binders of
+             SOME bindings =>
+               provenance_of_raw_in (bindings @ environment) body
+           | NONE => UnavailableProvenance
+               "unsupported SMT-LIB let provenance")
+        else exact_application head
+          [provenance_of_raw_in environment binders,
+           provenance_of_raw_in environment body]
+    | RawList (RawAtom head :: operands) =>
+        if head = "match" orelse head = "par" then
+          UnavailableProvenance
+            ("unsupported binding form " ^ head)
+        else if head = "@var" then AtomicProvenance
+        else exact_application head
+          (List.map (provenance_of_raw_in environment) operands)
+    | RawList entries =>
+        exact_application "<computed-head>"
+          (List.map (provenance_of_raw_in environment) entries)
+
+  fun provenance_of_raw raw = provenance_of_raw_in [] raw
+
+  (* Read exactly one CPC occurrence before elaborating it to HOL.  The raw
+     occurrence tree retains every path to a nested conjunction and every
+     conjunction's exact operand boundaries.  Conjunction-free subtrees use
+     one atomic marker; no HOL-term equality participates in provenance
+     recovery. *)
+  fun parse_located_term dicts_ref get_token : located_term =
+    let
+      val raw = read_raw_term get_token
+      val tokens = ref (raw_tokens raw)
+      fun next_token () =
+        case !tokens of
+          token :: rest => (tokens := rest; token)
+        | [] => raise ERR "parse_located_term"
+            "internal CPC occurrence token stream exhausted"
+      val parsed_term = parse_term dicts_ref next_token
+      val _ = List.null (!tokens) orelse
+        raise ERR "parse_located_term"
+          "internal CPC occurrence parser left trailing tokens"
+      (* SMT-LIB lets elaborate to kernel LET applications, while the exact
+         lexical provenance above already describes their simultaneous,
+         capture-avoiding substitution.  Reduce precisely those occurrences
+         before pairing the HOL term with that substituted occurrence tree.
+         The conversion is proof-producing; aliases consequently store the
+         same normalized term/provenance pair as direct commands. *)
+      val term =
+        if raw_contains_let raw then
+          boolSyntax.rhs (Thm.concl
+            (Conv.DEPTH_CONV pairLib.let_CONV parsed_term))
+          handle Conv.UNCHANGED => parsed_term
+        else parsed_term
+    in
+      {term = term, provenance = provenance_of_raw raw}
+    end
+
+  fun parse_recorded_term dicts_ref get_token =
+    #term (parse_located_term dicts_ref get_token)
+
+  fun unavailable_term reason term : located_term =
+    {term = term, provenance = UnavailableProvenance reason}
+
   fun skip_sexp get_token =
     let
       fun skip depth =
@@ -796,7 +999,7 @@ local
               in NONE end
             else if head = "@purify" then
               let
-                val payload = parse_term dicts_ref get_token
+                val payload = parse_located_term dicts_ref get_token
                 val _ = Library.expect_token ")" (get_token ())
               in
                 (* CPC's purify definition names the payload and its
@@ -812,17 +1015,20 @@ local
                   (#1 (!dicts_ref))
                 val _ = Library.expect_token ")" (get_token ())
               in
-                SOME (Term.mk_var (var_name, var_type))
+                SOME {term = Term.mk_var (var_name, var_type),
+                  provenance = AtomicProvenance}
               end
             else
-              SOME (parse_term dicts_ref
+              SOME (parse_located_term dicts_ref
                 (Library.undo_look_ahead ["(", head] get_token))
           end
-        else SOME (parse_term dicts_ref
+        else SOME (parse_located_term dicts_ref
           (Library.undo_look_ahead [first] get_token))
       val _ = case defined_term of
-          SOME tm => (Library.expect_token ")" (get_token ());
-                      add_term dicts_ref name tm)
+          SOME ({term, provenance} : located_term) =>
+            (Library.expect_token ")" (get_token ());
+             add_term dicts_ref name term;
+             add_term_provenance name provenance)
         | NONE => ()
     in
       ()
@@ -835,8 +1041,9 @@ local
       val (conclusion, attr) =
         if first = ":rule" then (NONE, first)
         else
-          let val get_token' = Library.undo_look_ahead [first] get_token
-          in (SOME (parse_term dicts_ref get_token'), get_token ()) end
+          let val get_token' = Library.undo_look_ahead [first] get_token in
+            (SOME (parse_located_term dicts_ref get_token'), get_token ())
+          end
       val _ = if attr = ":rule" then () else
         raise ERR "parse_step" "expected :rule"
       val rule_name = get_token ()
@@ -847,7 +1054,7 @@ local
       fun attrs premises args =
         case get_token () of
           ")" => {id = id, conclusion = conclusion, rule = rule,
-                  premises = premises, args = args}
+                   premises = premises, args = args}
         | ":premises" => attrs (parse_paren_name_list get_token) args
         | ":args" =>
             let
@@ -874,9 +1081,9 @@ local
                          polarity of its pivot in the first premise and the
                          pivot itself.  These are required to reconstruct
                          the (otherwise omitted) resolvent. *)
-                      val polarity = parse_term dicts_ref
+                      val polarity = parse_located_term dicts_ref
                         (Library.undo_look_ahead [first] get_token)
-                      val pivot = parse_term dicts_ref get_token
+                      val pivot = parse_located_term dicts_ref get_token
                       val _ = ignore_terms ()
                     in [polarity, pivot] end
                 end
@@ -888,7 +1095,7 @@ local
                       fun entries acc =
                         let val token = get_token () in
                           if token = ")" then List.rev acc
-                          else entries (parse_term dicts_ref
+                          else entries (parse_located_term dicts_ref
                             (Library.undo_look_ahead [token] get_token) :: acc)
                         end
                     in entries [] end
@@ -899,14 +1106,16 @@ local
                       in parse_list_after_open () end
                     else
                       case lookup_cpc_list token of
-                        SOME terms => terms
+                        SOME terms => List.map
+                          (unavailable_term
+                            "expanded CPC resolution-list alias") terms
                       | NONE => raise ERR "parse_step"
                           ("undefined CPC resolution @list alias " ^ token)
                 in
                   if first = ")" then []
                   else
                     let
-                      val target = parse_term dicts_ref
+                      val target = parse_located_term dicts_ref
                         (Library.undo_look_ahead [first] get_token)
                       val next = get_token ()
                     in
@@ -930,8 +1139,9 @@ local
                         ("non-numeral CPC and_elim index '" ^ text ^ "'")
                   val _ = Library.expect_token ")" (get_token ())
                 in
-                  [intSyntax.mk_injected
-                    (numSyntax.mk_numeral (Arbnum.fromInt index))]
+                  [unavailable_term "CPC and_elim index metadata"
+                    (intSyntax.mk_injected
+                      (numSyntax.mk_numeral (Arbnum.fromInt index)))]
                 end
               fun not_or_elim_index () =
                 let
@@ -944,13 +1154,14 @@ local
                         ("non-numeral CPC not_or_elim index '" ^ text ^ "'")
                   val _ = Library.expect_token ")" (get_token ())
                 in
-                  [intSyntax.mk_injected
-                    (numSyntax.mk_numeral (Arbnum.fromInt index))]
+                  [unavailable_term "CPC not_or_elim index metadata"
+                    (intSyntax.mk_injected
+                      (numSyntax.mk_numeral (Arbnum.fromInt index)))]
                 end
               fun cnf_and_pos_args () =
                 let
                   val first = get_token ()
-                  val conjunction = parse_term dicts_ref
+                  val conjunction = parse_located_term dicts_ref
                     (Library.undo_look_ahead [first] get_token)
                   val text = get_token ()
                   val index =
@@ -961,13 +1172,15 @@ local
                         ("non-numeral CPC cnf_and_pos index '" ^ text ^ "'")
                   val _ = Library.expect_token ")" (get_token ())
                 in
-                  [conjunction, intSyntax.mk_injected
-                    (numSyntax.mk_numeral (Arbnum.fromInt index))]
+                  [conjunction,
+                   unavailable_term "CPC cnf_and_pos index metadata"
+                     (intSyntax.mk_injected
+                       (numSyntax.mk_numeral (Arbnum.fromInt index)))]
                 end
               fun cnf_or_neg_args () =
                 let
                   val first = get_token ()
-                  val disjunction = parse_term dicts_ref
+                  val disjunction = parse_located_term dicts_ref
                     (Library.undo_look_ahead [first] get_token)
                   val text = get_token ()
                   val index =
@@ -978,8 +1191,10 @@ local
                         ("non-numeral CPC cnf_or_neg index '" ^ text ^ "'")
                   val _ = Library.expect_token ")" (get_token ())
                 in
-                  [disjunction, intSyntax.mk_injected
-                    (numSyntax.mk_numeral (Arbnum.fromInt index))]
+                  [disjunction,
+                   unavailable_term "CPC cnf_or_neg index metadata"
+                     (intSyntax.mk_injected
+                       (numSyntax.mk_numeral (Arbnum.fromInt index)))]
                 end
               fun exists_elim_args () =
                 let
@@ -1009,13 +1224,15 @@ local
                   val _ = Library.expect_token ")" (get_token ())
                   val _ = Library.expect_token ")" (get_token ())
                 in
-                  [boolSyntax.mk_eq (lhs, rhs)]
+                  [unavailable_term
+                    "CPC exists-elim argument reconstructed from metadata"
+                    (boolSyntax.mk_eq (lhs, rhs))]
                 end
               fun quant_rewrite_args () =
                 let val first = get_token () in
                   if first <> "(" then
                     let
-                      val proposition = parse_term dicts_ref
+                      val proposition = parse_located_term dicts_ref
                         (Library.undo_look_ahead [first] get_token)
                       val _ = Library.expect_token ")" (get_token ())
                     in [proposition] end
@@ -1030,18 +1247,24 @@ local
                           SOME vars => vars
                         | NONE => raise ERR "parse_step"
                             ("undefined CPC @list alias " ^ binder_name)
-                      val body = parse_term dicts_ref get_token
+                      val body = parse_located_term dicts_ref get_token
                       val _ = Library.expect_token ")" (get_token ())
-                      val rhs = parse_term dicts_ref get_token
+                      val rhs = parse_located_term dicts_ref get_token
                       val _ = Library.expect_token ")" (get_token ())
                       val _ = Library.expect_token ")" (get_token ())
                       val lhs = if quantifier = "forall" then
-                        boolSyntax.list_mk_forall (binders, body)
+                        boolSyntax.list_mk_forall (binders, #term body)
                         else if quantifier = "exists" then
-                          boolSyntax.list_mk_exists (binders, body)
+                          boolSyntax.list_mk_exists (binders, #term body)
                         else raise ERR "parse_step"
                           "expected quantified left side for CPC quantifier rewrite"
-                    in [boolSyntax.mk_eq (lhs, rhs)] end
+                      val binder_provenance = exact_binders quantifier binders
+                        (#provenance body)
+                    in
+                      [{term = boolSyntax.mk_eq (lhs, #term rhs),
+                        provenance = EqualityProvenance
+                          (binder_provenance, #provenance rhs)}]
+                    end
                 end
               (* CPC Set rules carry their set sort as an argument, e.g.
                  [(Set Int)].  This is proof metadata, not a HOL term; retain
@@ -1067,7 +1290,10 @@ local
                         (* Lists in CPC arguments carry a homogeneous
                            sequence of object terms (not a HOL list term).
                            Flatten them for handlers such as instantiate. *)
-                        terms (List.revAppend (list_terms [], acc))
+                        terms (List.revAppend
+                          (List.map (unavailable_term
+                            "expanded CPC argument-list syntax")
+                            (list_terms []), acc))
                       else if head = "Set" andalso
                               is_set_sort_metadata (List.length acc + 1) then
                         let
@@ -1077,10 +1303,12 @@ local
                                 ("could not parse Set sort metadata for CPC " ^
                                  "step " ^ id ^ " (rule " ^ rule_name ^ "): " ^
                                  Feedback.message_of holerr)
-                        in terms (tm :: acc) end
+                        in terms
+                          (unavailable_term "CPC Set sort metadata" tm :: acc)
+                        end
                       else
                         let
-                          val tm = parse_term dicts_ref
+                          val tm = parse_located_term dicts_ref
                             (Library.undo_look_ahead ["(", head] get_token)
                             handle Feedback.HOL_ERR holerr =>
                               raise ERR "parse_step"
@@ -1092,10 +1320,13 @@ local
                   else
                     (case lookup_cpc_list token of
                        SOME listed_terms =>
-                         terms (List.revAppend (listed_terms, acc))
+                         terms (List.revAppend
+                           (List.map (unavailable_term
+                             "expanded CPC argument-list alias") listed_terms,
+                            acc))
                      | NONE =>
                          let
-                           val tm = parse_term dicts_ref
+                           val tm = parse_located_term dicts_ref
                              (Library.undo_look_ahead [token] get_token)
                              handle Feedback.HOL_ERR holerr =>
                                raise ERR "parse_step"
@@ -1107,7 +1338,7 @@ local
               and list_terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
-                  else list_terms (parse_term dicts_ref
+                  else list_terms (parse_recorded_term dicts_ref
                     (Library.undo_look_ahead [token] get_token) :: acc)
                 end
               fun cpc_list_term terms =
@@ -1141,10 +1372,11 @@ local
                     let val head = get_token () in
                       if head = "@list" then
                         structured_terms
-                          (cpc_list_term (list_terms []) :: acc)
+                          (unavailable_term "CPC structured-list metadata"
+                            (cpc_list_term (list_terms [])) :: acc)
                       else
                         let
-                          val tm = parse_term dicts_ref
+                          val tm = parse_located_term dicts_ref
                             (Library.undo_look_ahead ["(", head]
                               get_token)
                         in structured_terms (tm :: acc) end
@@ -1152,10 +1384,11 @@ local
                   else
                     (case lookup_cpc_list token of
                        SOME listed_terms => structured_terms
-                         (cpc_list_term listed_terms :: acc)
+                         (unavailable_term "CPC structured-list alias"
+                           (cpc_list_term listed_terms) :: acc)
                      | NONE =>
                          let
-                           val tm = parse_term dicts_ref
+                           val tm = parse_located_term dicts_ref
                              (Library.undo_look_ahead [token] get_token)
                          in structured_terms (tm :: acc) end)
                 end
@@ -1183,7 +1416,10 @@ local
                 attrs premises (structured_terms [])
               else
                 let val args = terms [] in
-                  (validate_set_sort_metadata args; attrs premises args)
+                  (validate_set_sort_metadata
+                    (List.map (fn (located : located_term) => #term located)
+                      args);
+                   attrs premises args)
                 end
             end
         | attribute => raise ERR "parse_step"
@@ -1226,13 +1462,13 @@ local
                             parse_commands dicts_ref version get_token stop acc)
             | "assume" =>
                 let val id = get_token ()
-                    val tm = parse_term dicts_ref get_token
+                    val tm = parse_located_term dicts_ref get_token
                     val _ = Library.expect_token ")" (get_token ())
                 in parse_commands dicts_ref version get_token stop
                      (ASSUME (id, tm) :: acc) end
             | "assume-push" =>
                 let val id = get_token ()
-                    val tm = parse_term dicts_ref get_token
+                    val tm = parse_located_term dicts_ref get_token
                     val _ = Library.expect_token ")" (get_token ())
                 in parse_commands dicts_ref version get_token stop
                      (ASSUME_PUSH (id, tm) :: acc) end
@@ -1257,6 +1493,7 @@ in
       val version = resolve_version version
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
+      val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
       (* CPC conclusions and arguments can contain SMT-LIB string literals.
          Preserve their token kind so the empty string is not confused with
          an empty atom by the legacy term parser. *)

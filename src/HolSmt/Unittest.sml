@@ -8859,7 +8859,7 @@ let
         dicts "1.3.4" instream
     in
       case CPC_Proof.proof_commands proof of
-        [CPC_Proof.ASSUME (_, tm)] =>
+        [CPC_Proof.ASSUME (_, {term = tm, ...})] =>
           assert (Term.type_of tm = Type.bool,
             "parameterized CPC datatype tester was not Boolean")
       | _ => die "FAIL: parameterized CPC datatype tester did not parse"
@@ -8882,12 +8882,13 @@ let
   val commands = CPC_Proof.proof_commands proof
 in
   case commands of
-    [CPC_Proof.ASSUME ("@p1", tm), CPC_Proof.STEP
+    [CPC_Proof.ASSUME ("@p1", {term = tm, ...}), CPC_Proof.STEP
       {id = "@p2", conclusion = SOME conclusion, rule, premises = [],
        args = [arg]}] =>
        (assert (tm ~~ ``F``, "CPC define reference did not resolve");
-        assert (conclusion ~~ ``F``, "CPC explicit conclusion did not parse");
-        assert (arg ~~ ``F``, "CPC :args term did not parse");
+        assert (#term conclusion ~~ ``F``,
+          "CPC explicit conclusion did not parse");
+        assert (#term arg ~~ ``F``, "CPC :args term did not parse");
         assert (#name rule = "refl", "CPC rule registry did not bind refl"))
   | _ => die "FAIL: CPC parser did not preserve define/assume/step commands"
 end
@@ -8900,7 +8901,7 @@ let
   val commands = CPC_Proof.proof_commands proof
 in
   case commands of
-    [CPC_Proof.ASSUME ("@p1", tm)] =>
+    [CPC_Proof.ASSUME ("@p1", {term = tm, ...})] =>
       assert (Term.type_of tm = Type.bool,
         "CPC ascribed seq.empty did not produce a Boolean equality")
   | _ => die "FAIL: CPC ascribed seq.empty proof did not parse"
@@ -8914,7 +8915,7 @@ let
   val commands = CPC_Proof.proof_commands proof
 in
   case commands of
-    [CPC_Proof.ASSUME ("@p1", tm)] =>
+    [CPC_Proof.ASSUME ("@p1", {term = tm, ...})] =>
       assert (Term.type_of tm = Type.bool,
         "CPC ascribed bag.empty did not produce a Boolean equality")
   | _ => die "FAIL: CPC ascribed bag.empty proof did not parse"
@@ -8999,7 +9000,7 @@ in
       ``smtstring$SmtStr [] = smtstring$SmtStr []``,
     "CPC empty string literal was not preserved");
   (case CPC_Proof.proof_commands concat_proof of
-     [CPC_Proof.ASSUME (_, equality)] =>
+     [CPC_Proof.ASSUME (_, {term = equality, ...})] =>
        assert (boolSyntax.lhs equality ~~ boolSyntax.rhs equality,
          "CPC unary str.++ annotation did not preserve its payload")
    | _ => die "FAIL: CPC unary str.++ annotation did not parse");
@@ -9031,7 +9032,7 @@ let
       "((step @p1 :rule str-is-digit-elim :args (\"7\")))")
   fun explicit_conclusion proof =
     case CPC_Proof.proof_commands proof of
-      [CPC_Proof.STEP {conclusion = SOME target, ...}] => target
+      [CPC_Proof.STEP {conclusion = SOME target, ...}] => #term target
     | _ => die "FAIL: CPC string test lost its explicit conclusion"
 in
   assert (Thm.concl lt ~~ explicit_conclusion lt_proof,
@@ -9071,7 +9072,8 @@ let
     List.foldl
       (fn (command, accumulated) =>
         case command of
-          CPC_Proof.ASSUME (_, tm) => HOLset.add (accumulated, tm)
+          CPC_Proof.ASSUME (_, {term = tm, ...}) =>
+            HOLset.add (accumulated, tm)
         | _ => accumulated)
       Term.empty_tmset (CPC_Proof.proof_commands proof)
   val leaked = HOLset.difference (Thm.hypset theorem, assumed)
@@ -9099,7 +9101,7 @@ let
     \(assume @p1 (= @t2 @t3)))"
 in
   case CPC_Proof.proof_commands proof of
-    [CPC_Proof.ASSUME (_, equality)] =>
+    [CPC_Proof.ASSUME (_, {term = equality, ...})] =>
       let val (lambda, partial) = boolSyntax.dest_eq equality in
         assert (Term.is_abs lambda,
           "CPC lambda definition did not preserve a HOL abstraction");
@@ -9159,8 +9161,8 @@ let
   val ho_cong = CPC_ProofReplay.replay_root_for_test ho_proof
   val expected_ho_cong =
     case CPC_Proof.proof_commands ho_proof of
-      [CPC_Proof.ASSUME (_, function_equality),
-       CPC_Proof.ASSUME (_, argument_equality), _] =>
+      [CPC_Proof.ASSUME (_, {term = function_equality, ...}),
+       CPC_Proof.ASSUME (_, {term = argument_equality, ...}), _] =>
         let
           val (left_function, right_function) =
             boolSyntax.dest_eq function_equality
@@ -9202,9 +9204,9 @@ let
   val theorem = CPC_ProofReplay.replay_root_for_test proof
   val expected =
     case CPC_Proof.proof_commands proof of
-      [CPC_Proof.ASSUME (_, function_equality),
-       CPC_Proof.ASSUME (_, first_equality),
-       CPC_Proof.ASSUME (_, second_equality), _] =>
+      [CPC_Proof.ASSUME (_, {term = function_equality, ...}),
+       CPC_Proof.ASSUME (_, {term = first_equality, ...}),
+       CPC_Proof.ASSUME (_, {term = second_equality, ...}), _] =>
         let
           val (left_function, right_function) =
             boolSyntax.dest_eq function_equality
@@ -9254,7 +9256,7 @@ let
   val commands = CPC_Proof.proof_commands proof
 in
   case commands of
-    [CPC_Proof.ASSUME ("@p1", tm)] =>
+    [CPC_Proof.ASSUME ("@p1", {term = tm, ...})] =>
       assert (Term.type_of tm = Type.bool,
         "CPC declaration parser did not make declared symbols available")
   | _ => die "FAIL: CPC declaration parser did not preserve the assumption"
@@ -9293,7 +9295,8 @@ let
   val nullary_rdiv = Term.mk_var ("@div_by_zero", realSyntax.real_ty)
   fun app (constant, terms) = Term.list_mk_comb (constant, terms)
   fun assumption_terms [] = []
-    | assumption_terms (CPC_Proof.ASSUME (_, tm) :: rest) =
+    | assumption_terms
+        (CPC_Proof.ASSUME (_, {term = tm, ...}) :: rest) =
         tm :: assumption_terms rest
     | assumption_terms (_ :: rest) = assumption_terms rest
   val terms = assumption_terms commands
@@ -9746,13 +9749,716 @@ end
 
 fun cpc_proof_replay_and_elim_success () =
 let
-  val proof = parse_cpc_proof_string
-    "((assume @p1 (and true false true)) \
-    \(step @p2 :rule and_elim :premises (@p1) :args (1)))"
-  val thm = CPC_ProofReplay.replay_root_for_test proof
+  fun profile_count name results =
+    case List.find (fn (candidate, _) => candidate = name) results of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun route_count results = List.foldl
+    (fn ((name, info), total) =>
+      if String.isPrefix "CPC(and_elim:provenance/" name then
+        total + #n info
+      else total) 0 results
+  fun route_summary results = String.concatWith ", "
+    (List.mapPartial
+      (fn (name, info) =>
+        if String.isPrefix "CPC(and_elim:provenance/" name then
+          SOME (name ^ "=" ^ Int.toString (#n info))
+        else NONE) results)
+  fun run_routes label routes proof expected =
+    let
+      val () = Profile.reset_all ()
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string proof)
+        handle Feedback.HOL_ERR holerr => die
+          ("FAIL: " ^ label ^ " replay failed: " ^
+           Feedback.message_of holerr)
+      val results = Profile.results ()
+      fun check_route (source, calls) =
+        let val route =
+          "CPC(and_elim:provenance/" ^ source ^ ")"
+        in
+          assert (profile_count route results = calls,
+            label ^ " did not consume its exact provenance route " ^
+            source ^ ": expected " ^ Int.toString calls ^ ", saw " ^
+            Int.toString (profile_count route results) ^ "; routes: " ^
+            route_summary results)
+        end
+      val calls = List.foldl (fn ((_, n), total) => n + total) 0 routes
+    in
+      assert (Thm.concl theorem ~~ expected,
+        label ^ " returned the wrong indexed occurrence");
+      List.app check_route routes;
+      assert (route_count results = calls,
+        label ^ " consumed another and_elim provenance route");
+      check_oracle_tags label theorem;
+      theorem
+    end
+  fun run_case label source calls proof expected =
+    run_routes label [(source, calls)] proof expected
+  fun assert_exact_hypotheses label expected theorem =
+    let
+      val actual = Thm.hyp theorem
+      fun present term = List.exists (fn candidate => candidate ~~ term) actual
+    in
+      assert (List.length actual = List.length expected andalso
+              List.all present expected,
+        label ^ " returned the wrong hypotheses: " ^
+        String.concatWith "; " (List.map Library.term_to_string actual))
+    end
+  fun assumed_provenance text =
+    case CPC_Proof.proof_commands (parse_cpc_proof_string text) of
+      [CPC_Proof.ASSUME (_, {provenance, ...})] => provenance
+    | _ => die "FAIL: CPC provenance parser test lost its assumption"
+  val _ =
+    (case assumed_provenance
+       "((declare-const p Bool) (declare-const q Bool) \
+       \(declare-const r Bool) (define x () (and p q r)) \
+       \(assume @shadow (forall ((x Bool)) x)))" of
+       CPC_Proof.BinderProvenance
+         ("forall", CPC_Proof.AtomicProvenance) => ()
+     | _ => die
+         "FAIL: quantified variable leaked a global conjunction alias")
+  val _ =
+    (case assumed_provenance
+       "((declare-const p Bool) (declare-const q Bool) \
+       \(declare-const r Bool) \
+       \(assume @let (let ((x (and p q r))) x)))" of
+       CPC_Proof.ConjunctionProvenance (_, operands) =>
+         assert (List.length operands = 3,
+           "CPC let body lost its exact conjunction arity")
+     | _ => die "FAIL: CPC let result lost conjunction provenance")
+  val _ =
+    (case assumed_provenance
+       "((declare-const p Bool) (declare-const q Bool) \
+       \(declare-const r Bool) (define x () (and p q r)) \
+       \(assume @nested \
+       \  (let ((x true) (y x)) (let ((x false)) y))))" of
+       CPC_Proof.ConjunctionProvenance (_, operands) =>
+         assert (List.length operands = 3,
+           "simultaneous let RHS did not use its outer lexical environment")
+     | _ => die "FAIL: nested simultaneous let lost outer substitution")
+  val _ =
+    (case assumed_provenance
+       "((declare-const p Bool) (declare-const q Bool) \
+       \(declare-const r Bool) \
+       \(assume @nested (not (let ((x (and p q r))) x))))" of
+       CPC_Proof.ApplicationProvenance
+         ("not", [CPC_Proof.ConjunctionProvenance (_, operands)]) =>
+           assert (List.length operands = 3,
+             "constructor-nested let lost exact conjunction arity")
+     | _ => die
+         "FAIL: arbitrary constructor did not retain nested let provenance")
+  val _ = run_case "CPC let result consumed by and_elim" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(assume @p (let ((x (and p q r))) x)) \
+    \(step @out :rule and_elim :premises (@p) :args (1)))"
+    ``q:bool``
+  val _ = run_case
+    "CPC nested simultaneous let consumed by and_elim" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (define x () (and p q r)) \
+    \(assume @p (let ((x true) (y x)) (let ((x false)) y))) \
+    \(step @out :rule and_elim :premises (@p) :args (1)))"
+    ``q:bool``
+  val _ = run_case "CPC shadowing let consumed by and_elim" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(assume @p (let ((x (and p q r))) \
+    \  (let ((x (and p (and q r)))) x))) \
+    \(step @out :rule and_elim :premises (@p) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = run_case "CPC same-term collision, three then two" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume @three (and p q r)) \
+    \(assume @two (and p (and q r))) \
+    \(step @out :rule and_elim :premises (@three) :args (1)))"
+    ``q:bool``
+  val _ = run_case "CPC same-term collision, two then three" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume @two (and p (and q r))) \
+    \(assume @three (and p q r)) \
+    \(step @out :rule and_elim :premises (@two) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = run_case "CPC alpha-equivalent occurrence collision" "parsed" 1
+    "((declare-const q Bool) (declare-const r Bool) \
+    \(assume @three (and (forall ((x Bool)) x) q r)) \
+    \(assume @two (and (forall ((y Bool)) y) (and q r))) \
+    \(step @out :rule and_elim :premises (@two) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = run_case "CPC conjunction alias chain" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (define @t1 () (and p q r)) \
+    \(define @t2 () @t1) (assume @p @t2) \
+    \(step @out :rule and_elim :premises (@p) :args (2)))"
+    ``r:bool``
+  val _ = run_case "CPC conjunction below arbitrary constructors"
+    "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(assume @neg (not (not (and p q r)))) \
+    \(step @conj :rule not_not_elim :premises (@neg)) \
+    \(step @out :rule and_elim :premises (@conj) :args (2)))"
+    ``r:bool``
+  val _ = run_case "CPC reused live step id" "parsed" 2
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume @same (and p q r)) \
+    \(step @early :rule and_elim :premises (@same) :args (2)) \
+    \(assume @same (and p (and q r))) \
+    \(step @out :rule and_elim :premises (@same) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = run_case "CPC scoped earlier and_elim" "parsed" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume-push @scope (and p q r)) \
+    \(step @selected :rule and_elim :premises (@scope) :args (2)) \
+    \(step-pop @closed :rule scope :premises (@selected)))"
+    ``(p:bool) /\ q /\ r ==> r``
+  val _ = run_case "CPC omitted and_intro provenance" "and_intro" 1
+    "((assume @p true) (assume @q false) (assume @r true) \
+    \(step @conj :rule and_intro :premises (@p @q @r)) \
+    \(step @out :rule and_elim :premises (@conj) :args (2)))"
+    ``T``
+  val a = ``a:int``
+  val b = ``b:int``
+  val expected_bounds = Thm.concl
+    (Drule.SPECL [a, b] HolSmtTheory.smt_ediv_total_bounds)
+  val _ = run_case "CPC omitted arith_reduction provenance"
+    "arith_reduction" 1
+    "((declare-const a Int) (declare-const b Int) \
+    \(step @conj :rule arith_reduction :args ((div_total a b))) \
+    \(step @out :rule and_elim :premises (@conj) :args (1)))"
+    expected_bounds
+  val _ = run_case "CPC omitted eq_resolve provenance" "eq_resolve" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume @conj (and p q r)) \
+    \(assume @eq (= (and p q r) (and true false true))) \
+    \(step @resolved :rule eq_resolve :premises (@conj @eq)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (2)))"
+    ``T``
+  val _ = run_routes
+    "CPC CONG skips incompatible earlier erased occurrence"
+    [("eq_resolve", 1), ("parsed", 1)]
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source (and a2 a3)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and a2 a3))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @outer :rule and_elim :premises (@resolved) :args (1)) \
+    \(step @inner :rule and_elim :premises (@outer) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = run_routes
+    "CPC CONG reverse erased-occurrence ordering"
+    [("eq_resolve", 1), ("parsed", 1)]
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source (and a3 a2)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and a3 a2))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @outer :rule and_elim :premises (@resolved) :args (0)) \
+    \(step @inner :rule and_elim :premises (@outer) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = run_routes
+    "CPC CONG rewrites only first compatible repeated occurrence"
+    [("eq_resolve", 1), ("parsed", 1)]
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source (and a3 a3)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and a3 a3))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @outer :rule and_elim :premises (@resolved) :args (1)) \
+    \(step @inner :rule and_elim :premises (@outer) :args (1)))"
+    ``q:bool``
+  val multiple_cong_text =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source (and a3 a3)) \
+    \(assume @eq1 (= a3 a2)) (assume @eq2 (= a3 a2)) \
+    \(step @cong :rule cong :premises (@eq1 @eq2) \
+    \  :args ((and a3 a3))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @outer :rule and_elim :premises (@resolved) :args (1)) \
+    \(step @inner :rule and_elim :premises (@outer) :args (1)))"
+  val multiple_cong_proof = parse_cpc_proof_string multiple_cong_text
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        multiple_cong_proof "@cong" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.ConjunctionProvenance (_, left1),
+                  CPC_Proof.ConjunctionProvenance (_, left2)]),
+          CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.ConjunctionProvenance (_, right1),
+                  CPC_Proof.ConjunctionProvenance (_, right2)])) =>
+           assert (List.length left1 = 3 andalso
+                   List.length left2 = 3 andalso
+                   List.length right1 = 2 andalso
+                   List.length right2 = 2,
+             "multiple CONG replacements lost their exact operand boundaries")
+     | _ => die
+         "FAIL: multiple CONG replacements lost exact endpoint provenance")
+  val multiple_cong_theorem = run_routes
+    "CPC CONG multiple repeated-shape replacements"
+    [("eq_resolve", 1), ("parsed", 1)]
+    multiple_cong_text ``(q:bool) /\ r``
+  val _ = assert
+    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 2,
+    "multiple CONG case did not consume exactly two occurrence rewrites")
+  val _ = assert_exact_hypotheses
+    "CPC CONG multiple repeated-shape replacements"
+    [``((p:bool) /\ q /\ r) /\ (p /\ q /\ r)``,
+     ``((p:bool) /\ q /\ r) = (p /\ (q /\ r))``]
+    multiple_cong_theorem
+  val _ = run_routes
+    "CPC CONG traverses every elaborated binder occurrence"
+    [("eq_resolve", 1), ("parsed", 1)]
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source \
+    \  (and (forall ((x Bool) (y Bool)) (= x y)) a3)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and (forall ((x Bool) (y Bool)) (= x y)) a3))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @outer :rule and_elim :premises (@resolved) :args (1)) \
+    \(step @inner :rule and_elim :premises (@outer) :args (1)))"
+    ``(q:bool) /\ r``
+  val forall_cong_text =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (declare-const u Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source \
+    \  (and (forall ((x Bool)) (and (= x u) a3)) true)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and (forall ((x Bool)) (and (= x u) a3)) true))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (0)))"
+  val forall_cong_proof = parse_cpc_proof_string forall_cong_text
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        forall_cong_proof "@cong" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderProvenance
+                   ("forall", CPC_Proof.ConjunctionProvenance
+                     (_, [_, CPC_Proof.ConjunctionProvenance
+                       (_, before_operands)])),
+                  _]),
+          CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderProvenance
+                   ("forall", CPC_Proof.ConjunctionProvenance
+                     (_, [_, CPC_Proof.ConjunctionProvenance
+                       (_, after_operands)])),
+                  _])) =>
+           assert (List.length before_operands = 3 andalso
+                   List.length after_operands = 2,
+             "FORALL_EQ congruence lost the rewritten conjunction boundary")
+     | _ => die
+         "FAIL: FORALL_EQ congruence lost exact binder provenance")
+  val forall_cong_theorem = run_routes
+    "CPC CONG replacement inside capture-sensitive forall"
+    [("eq_resolve", 1)] forall_cong_text
+    ``!x:bool. (x = u) /\ p /\ (q /\ r)``
+  val _ = assert
+    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
+     profile_count "CPC(cong:binder/forall)" (Profile.results ()) = 1,
+    "forall CONG did not consume exactly one FORALL_EQ occurrence route")
+  val _ = assert_exact_hypotheses
+    "CPC CONG replacement inside capture-sensitive forall"
+    [``(!x:bool. (x = u) /\ p /\ q /\ r) /\ T``,
+     ``((p:bool) /\ q /\ r) = (p /\ (q /\ r))``]
+    forall_cong_theorem
+  val exists_cong_text =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (declare-const u Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(assume @source \
+    \  (and (exists ((x Bool)) (and (= x u) a3)) true)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and (exists ((x Bool)) (and (= x u) a3)) true))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (0)))"
+  val exists_cong_proof = parse_cpc_proof_string exists_cong_text
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        exists_cong_proof "@cong" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderProvenance
+                   ("exists", CPC_Proof.ConjunctionProvenance
+                     (_, [_, CPC_Proof.ConjunctionProvenance
+                       (_, before_operands)])),
+                  _]),
+          CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderProvenance
+                   ("exists", CPC_Proof.ConjunctionProvenance
+                     (_, [_, CPC_Proof.ConjunctionProvenance
+                       (_, after_operands)])),
+                  _])) =>
+           assert (List.length before_operands = 3 andalso
+                   List.length after_operands = 2,
+             "EXISTS_EQ congruence lost the rewritten conjunction boundary")
+     | _ => die
+         "FAIL: EXISTS_EQ congruence lost exact binder provenance")
+  val exists_cong_theorem = run_routes
+    "CPC CONG replacement inside capture-sensitive exists"
+    [("eq_resolve", 1)] exists_cong_text
+    ``?x:bool. (x = u) /\ p /\ (q /\ r)``
+  val _ = assert
+    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
+     profile_count "CPC(cong:binder/exists)" (Profile.results ()) = 1,
+    "exists CONG did not consume exactly one EXISTS_EQ occurrence route")
+  val _ = assert_exact_hypotheses
+    "CPC CONG replacement inside capture-sensitive exists"
+    [``(?x:bool. (x = u) /\ p /\ q /\ r) /\ T``,
+     ``((p:bool) /\ q /\ r) = (p /\ (q /\ r))``]
+    exists_cong_theorem
+  val lambda_cong_text =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (declare-const u Bool) \
+    \(define a2 () (and p (and q r))) \
+    \(define a3 () (and p q r)) \
+    \(define @x () (@var \"x\" Bool)) \
+    \(define left () \
+    \  (lambda (@list @x) (and (= @x u) a3))) \
+    \(define right () (lambda (@list @x) u)) \
+    \(assume @source (= left right)) \
+    \(assume @equality (= a3 a2)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((= left right))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)))"
+  val lambda_cong_proof = parse_cpc_proof_string lambda_cong_text
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        lambda_cong_proof "@cong" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.EqualityProvenance
+            (CPC_Proof.BinderProvenance
+               ("lambda", CPC_Proof.ConjunctionProvenance
+                 (_, [_, CPC_Proof.ConjunctionProvenance
+                   (_, before_operands)])), _),
+          CPC_Proof.EqualityProvenance
+            (CPC_Proof.BinderProvenance
+               ("lambda", CPC_Proof.ConjunctionProvenance
+                 (_, [_, CPC_Proof.ConjunctionProvenance
+                   (_, after_operands)])), _)) =>
+           assert (List.length before_operands = 3 andalso
+                   List.length after_operands = 2,
+             "ABS congruence lost the rewritten conjunction boundary")
+     | _ => die "FAIL: ABS congruence lost exact binder provenance")
+  val lambda_cong_theorem = run_routes
+    "CPC CONG replacement inside capture-sensitive lambda" []
+    lambda_cong_text
+    ``(\x:bool. (x = u) /\ p /\ (q /\ r)) = (\x:bool. u)``
+  val _ = assert
+    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
+     profile_count "CPC(cong:binder/lambda)" (Profile.results ()) = 1,
+    "lambda CONG did not consume exactly one ABS occurrence route")
+  val _ = assert_exact_hypotheses
+    "CPC CONG replacement inside capture-sensitive lambda"
+    [``(\x:bool. (x = u) /\ p /\ q /\ r) = (\x:bool. u)``,
+     ``((p:bool) /\ q /\ r) = (p /\ (q /\ r))``]
+    lambda_cong_theorem
+  val canonical_cong_text =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (declare-const x Int) \
+    \(declare-const y Int) \
+    \(assume @source (and p q r)) \
+    \(assume @equality (= (< y x) p)) \
+    \(step @cong :rule cong :premises (@equality) \
+    \  :args ((and (> x y) q r))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (2)))"
+  val _ =
+    (case assumed_provenance
+        "((declare-const p Bool) (declare-const x Int) \
+        \(declare-const y Int) (assume @e (= (< y x) p)))" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.ApplicationProvenance
+            ("<", [CPC_Proof.AtomicProvenance,
+                    CPC_Proof.AtomicProvenance]),
+          CPC_Proof.AtomicProvenance) => ()
+     | _ => die "FAIL: parser erased conjunction-free equality endpoints")
+  val canonical_cong_proof = parse_cpc_proof_string canonical_cong_text
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        canonical_cong_proof "@equality" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.AtomicProvenance, CPC_Proof.AtomicProvenance) => ()
+     | _ => die "FAIL: replay erased conjunction-free equality endpoints")
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        canonical_cong_proof "@cong" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.ConjunctionProvenance (_, left),
+          CPC_Proof.ConjunctionProvenance (_, right)) =>
+           assert (List.length left = 3 andalso List.length right = 3,
+             "canonical CONG lost an exact three-operand endpoint")
+     | CPC_Proof.UnavailableProvenance reason => die
+         ("FAIL: canonical CONG lost exact endpoint provenance: " ^ reason)
+     | _ => die "FAIL: canonical CONG lost exact endpoint provenance")
+  val _ = run_case "CPC canonical CONG provenance consumed"
+    "eq_resolve" 1 canonical_cong_text
+    ``r:bool``
+  val _ = assert
+    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1,
+    "canonical CONG success did not consume its exact occurrence route")
+  val _ = Profile.reset_all ()
+  val _ = expect_hol_error_contains
+    "CPC canonical CONG mismatched child topology fails closed"
+    ("canonical: structural exact route: structural congruence left an " ^
+     "exact premise unused; sequential exact route: premise does not " ^
+     "rewrite an exact source occurrence")
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(declare-const r Bool) (declare-const x Int) \
+        \(declare-const y Int) \
+        \(define a2 () (and (> x y) (and q r))) \
+        \(define a3 () (and (< y x) q r)) \
+        \(assume @source (and a2 true)) \
+        \(assume @equality (= a3 p)) \
+        \(step @cong :rule cong :premises (@equality) \
+        \  :args ((and a2 true))) \
+        \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+        \(step @out :rule and_elim :premises (@resolved) :args (0)))")))
+  val _ = assert (route_count (Profile.results ()) = 0,
+    "canonical CONG topology mismatch consumed an and_elim route")
+  val _ = assert
+    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 0,
+    "canonical CONG topology mismatch consumed an exact occurrence route")
+  val root_replacement_text =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume @source (and p q r)) \
+    \(assume @equality (= (and p (and q r)) (and p q r))) \
+    \(step @symm :rule symm :premises (@equality)) \
+    \(step @cong :rule cong :premises (@symm) :args ((and p q r))) \
+    \(step @resolved :rule eq_resolve :premises (@source @cong)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (1)))"
+  val root_replacement_proof = parse_cpc_proof_string root_replacement_text
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        root_replacement_proof "@symm" of
+       CPC_Proof.EqualityProvenance
+         (CPC_Proof.ConjunctionProvenance (_, left),
+          CPC_Proof.ConjunctionProvenance (_, right)) =>
+           (assert (List.length left = 3,
+              "omitted symm did not swap its three-operand endpoint");
+            assert (List.length right = 2,
+              "omitted symm did not swap its binary endpoint"))
+     | _ => die "FAIL: omitted symm lost exact equality endpoints")
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        root_replacement_proof "@cong" of
+       CPC_Proof.EqualityProvenance
+         (_, CPC_Proof.ConjunctionProvenance (_, operands)) =>
+           assert (List.length operands = 2,
+             "root-replacing CONG copied the source conjunction shape")
+     | _ => die "FAIL: root-replacing CONG lost its replacement endpoint")
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        root_replacement_proof "@resolved" of
+       CPC_Proof.ConjunctionProvenance (_, operands) =>
+         assert (List.length operands = 2,
+           "omitted eq_resolve selected the wrong exact equality side")
+     | _ => die "FAIL: omitted eq_resolve lost selected-side provenance")
+  val _ = run_case
+    "CPC omitted symm/root CONG/eq_resolve exact replacement"
+    "eq_resolve" 1
+    root_replacement_text
+    ``(q:bool) /\ r``
+  val _ = run_case "CPC omitted direct trans provenance" "eq_resolve" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (assume @source (and p q r)) \
+    \(assume @equality (= (and p q r) (and p (and q r)))) \
+    \(step @trans :rule trans :premises (@equality)) \
+    \(step @resolved :rule eq_resolve :premises (@source @trans)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (1)))"
+    ``(q:bool) /\ r``
+  val canonical_trans_prefix =
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (declare-const x Int) \
+    \(declare-const y Int) \
+    \(assume @source (and p q r)) \
+    \(assume @left (= (and p q r) (> x y))) \
+    \(assume @right (= (< y x) (and (not p) (and q r)))) \
+    \(step @trans :rule trans :premises (@left @right)))"
+  val _ =
+    (case CPC_ProofReplay.replay_step_provenance_for_test
+        (parse_cpc_proof_string canonical_trans_prefix) "@trans" of
+       CPC_Proof.EqualityProvenance _ => ()
+     | CPC_Proof.UnavailableProvenance reason => die
+         ("FAIL: canonical trans endpoint alignment unavailable: " ^ reason)
+     | _ => die "FAIL: canonical trans lost equality endpoint provenance")
+  val _ = run_case "CPC canonical trans endpoint alignment"
+    "eq_resolve" 1
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) (declare-const x Int) \
+    \(declare-const y Int) \
+    \(assume @source (and p q r)) \
+    \(assume @left (= (and p q r) (> x y))) \
+    \(assume @right (= (< y x) (and (not p) (and q r)))) \
+    \(step @trans :rule trans :premises (@left @right)) \
+    \(step @resolved :rule eq_resolve :premises (@source @trans)) \
+    \(step @out :rule and_elim :premises (@resolved) :args (1)))"
+    ``(q:bool) /\ r``
+  val _ = Profile.reset_all ()
+  val _ = expect_hol_error_contains
+    "CPC omitted canonical trans unavailable provenance"
+    "CPC and_elim premise has no conjunction occurrence provenance"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(declare-const r Bool) (declare-const x Int) \
+        \(assume @source (and p q r)) \
+        \(assume @left (= (and p q r) (= (+ x 0) x))) \
+        \(assume @right (= true (and p (and q r)))) \
+        \(step @trans :rule trans :premises (@left @right)) \
+        \(step @resolved :rule eq_resolve :premises (@source @trans)) \
+        \(step @out :rule and_elim :premises (@resolved) :args (1)))")))
+  val _ = assert (route_count (Profile.results ()) = 0,
+    "canonical trans fail-closed case consumed an and_elim route")
+  val arithmetic_resolution = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const x Int) \
+      \(assume @clause \
+      \  (or (>= (+ x 1) 1) (>= (+ x 2) 2))) \
+      \(assume @negative (< x 0)) \
+      \(step @out :rule chain_m_resolution \
+      \  :premises (@clause @negative) \
+      \  :args ((>= (+ x 2) 2) \
+      \    (@list true) (@list (>= x 0)))))")
+  val _ = assert
+    (Thm.concl arithmetic_resolution ~~ ``(x:int) + 2 >= 2``,
+    "omitted arithmetic resolution returned the wrong explicit target")
+  val _ = assert (List.length (Thm.hyp arithmetic_resolution) = 2,
+    "omitted arithmetic resolution lost premise hypotheses")
+  val _ = check_oracle_tags
+    "CPC omitted arithmetic resolution target" arithmetic_resolution
+  val integer_spelling_resolution = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const x Int) (declare-const guard Bool) \
+      \(assume @clause \
+      \  (or (not guard) \
+      \    (= x (+ (* 42 (ite (= 42 0) 0 (div x 42))) \
+      \      (mod x 42))))) \
+      \(assume @guard guard) \
+      \(step @out :rule chain_m_resolution \
+      \  :premises (@clause @guard) \
+      \  :args ((= x (+ (* 42 (div_total x 42)) (mod x 42))) \
+      \    (@list false) (@list guard))))")
+  val _ = assert
+    (Thm.concl integer_spelling_resolution ~~
+       ``(x:int) = 42 * HolSmt$smt_ediv_total x 42 + emod x 42``,
+    "integer-spelling resolution returned the wrong explicit target: " ^
+    Library.term_to_string (Thm.concl integer_spelling_resolution))
+  val _ = assert (List.length (Thm.hyp integer_spelling_resolution) = 2,
+    "integer-spelling resolution lost premise hypotheses")
+  val _ = check_oracle_tags
+    "CPC integer-spelling resolution target" integer_spelling_resolution
+  fun check_neutral_ite rule =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string
+          ("((assume @truth true) " ^
+           "(step @out :rule " ^ rule ^
+           " :premises (@truth))))"))
+    in
+      assert (Thm.concl theorem ~~ ``T``,
+        rule ^ " did not retain its exact neutral-T premise");
+      (case Thm.hyp theorem of
+         [hypothesis] => assert (hypothesis ~~ ``T``,
+           rule ^ " did not preserve its premise hypothesis")
+       | _ => die ("FAIL: " ^ rule ^
+           " returned the wrong number of hypotheses"));
+      check_oracle_tags ("CPC " ^ rule ^ " neutral T") theorem
+    end
+  val _ = check_neutral_ite "ite_elim1"
+  val _ = check_neutral_ite "ite_elim2"
+  val neutral_resolution = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const p Bool) (assume @truth true) (assume @p p) \
+      \(step @neutral :rule ite_elim1 :premises (@truth)) \
+      \(step @out p :rule resolution :premises (@neutral @p)))")
+  val _ = assert (Thm.concl neutral_resolution ~~ ``p:bool``,
+    "resolution with neutral ite_elim did not prove its declared target")
+  val _ =
+    (case Thm.hyp neutral_resolution of
+       [hypothesis] => assert (hypothesis ~~ ``p:bool``,
+         "resolution with neutral ite_elim retained the wrong hypothesis")
+     | _ => die
+         "FAIL: resolution with neutral ite_elim returned the wrong hypotheses")
+  val _ = check_oracle_tags
+    "CPC neutral ite_elim downstream resolution" neutral_resolution
 in
-  assert (Thm.concl thm ~~ ``F``,
-    "CPC and_elim did not select the requested conjunct")
+  expect_hol_error_contains "CPC ite_elim1 non-conditional fail closed"
+    "premise is not a conditional: F"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((assume @false false) \
+        \(step @out :rule ite_elim1 :premises (@false)))")));
+  expect_hol_error_contains "CPC ite_elim2 non-conditional fail closed"
+    "premise is not a conditional: F"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((assume @false false) \
+        \(step @out :rule ite_elim2 :premises (@false)))")));
+  expect_hol_error_contains "CPC and_elim out-of-range provenance"
+    "outside parsed arity 3"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((assume @p (and true false true)) \
+        \(step @out :rule and_elim :premises (@p) :args (3)))")));
+  expect_hol_error_contains "CPC and_elim wrong declared conclusion"
+    "declared CPC result differs from its indexed conjunct"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((assume @p (and true false true)) \
+        \(step @out true :rule and_elim :premises (@p) :args (1)))")));
+  expect_hol_error_contains "CPC and_elim unavailable producer provenance"
+    "CPC and_elim provenance unavailable"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(assume @eq (= (and p q) true)) \
+        \(step @conj :rule true_elim :premises (@eq)) \
+        \(step @out :rule and_elim :premises (@conj) :args (0)))")));
+  expect_hol_error_contains "CPC and_elim explicitly missing provenance"
+    "CPC and_elim provenance unavailable: test missing occurrence"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_and_elim_provenance_for_test
+        (Thm.ASSUME ``T /\ F``)
+        (CPC_Proof.UnavailableProvenance "test missing occurrence") 0 NONE));
+  expect_hol_error_contains "CPC and_elim ambiguous provenance"
+    "CPC and_elim provenance ambiguous: test ambiguous occurrence"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_and_elim_provenance_for_test
+        (Thm.ASSUME ``T /\ F``)
+        (CPC_Proof.AmbiguousProvenance "test ambiguous occurrence") 0 NONE));
+  expect_hol_error_contains "CPC theorem/provenance result mismatch"
+    "CPC theorem/result provenance mismatch"
+    (fn () => CPC_ProofReplay.replay_result_alignment_for_test
+      (Thm.ASSUME ``T``)
+      {term = ``F``, provenance = CPC_Proof.AtomicProvenance})
 end
 
 fun cpc_proof_replay_boolean_rewrites_success () =
@@ -9770,11 +10476,85 @@ let
     \(step @p10 :rule bool-not-eq-elim2 :args (true false)))"
   val commands = CPC_Proof.proof_commands proof
   val thm = CPC_ProofReplay.replay_root_for_test proof
+  val not_and_implication = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const p Bool) (declare-const q Bool) \
+      \(assume @prem (=> (and p q) false)) \
+      \(step @out :rule not_and :premises (@prem))))")
+  val not_and_hypothesis = ``(p:bool) /\ q ==> F``
+  val real_div_hypothesis =
+    ``(guard:bool) ==> (x:real) * inv y = 0r``
+  val real_div_target = ``guard ==> (x:real) / y = 0r``
+  val reordering_rule =
+    case CPC_Proof.lookup_rule "1.3.4" "reordering" of
+      SOME rule => rule
+    | NONE => die "FAIL: CPC reordering rule is absent from 1.3.4"
+  fun atomic term : CPC_Proof.located_term =
+    {term = term, provenance = CPC_Proof.AtomicProvenance}
+  val real_div_proof : CPC_Proof.proof = {
+    cvc_version = "1.3.4",
+    commands = [
+      CPC_Proof.ASSUME ("@premise", atomic real_div_hypothesis),
+      CPC_Proof.STEP {
+        id = "@out", conclusion = NONE, rule = reordering_rule,
+        premises = ["@premise"], args = [atomic real_div_target]
+      }
+    ]
+  }
+  fun profile_count name =
+    case List.find (fn (candidate, _) => candidate = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val _ = Profile.reset_all ()
+  val real_div_reordering =
+    CPC_ProofReplay.replay_root_for_test real_div_proof
+  val _ = assert
+    (profile_count "CPC(rung:reordering/real_div)" = 1,
+    "handler-level real division reordering did not consume its guarded rung")
+  val _ = Profile.reset_all ()
+  val ordinary_reordering = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const p Bool) (declare-const q Bool) \
+      \(assume @premise (or p q)) \
+      \(step @out :rule reordering :premises (@premise) \
+      \  :args ((or q p))))")
+  val _ = assert
+    (profile_count "CPC(rung:reordering/real_div)" = 0,
+    "ordinary reordering entered the inapplicable real-division rung")
 in
   assert (List.length commands = 10,
     "CPC boolean rewrite proof did not parse all rewrite steps");
   assert (Thm.concl thm ~~ ``~(T = F) = (T = ~F)``,
-    "CPC boolean rewrite replay returned an unexpected final equality")
+    "CPC boolean rewrite replay returned an unexpected final equality");
+  assert (Thm.concl not_and_implication ~~ ``~(p:bool) \/ ~q``,
+    "CPC not_and implication-to-false returned the wrong conclusion");
+  assert (List.length (Thm.hyp not_and_implication) = 1 andalso
+          List.exists (fn hypothesis => hypothesis ~~ not_and_hypothesis)
+            (Thm.hyp not_and_implication),
+    "CPC not_and implication-to-false changed its hypothesis");
+  check_oracle_tags "CPC not_and implication-to-false" not_and_implication;
+  assert (Thm.concl real_div_reordering ~~ real_div_target,
+    "CPC real division reordering returned the wrong conclusion");
+  assert (List.length (Thm.hyp real_div_reordering) = 1 andalso
+          List.exists (fn hypothesis => hypothesis ~~ real_div_hypothesis)
+            (Thm.hyp real_div_reordering),
+    "CPC real division reordering changed its hypothesis");
+  check_oracle_tags "CPC real division reordering" real_div_reordering;
+  assert (Thm.concl ordinary_reordering ~~ ``(q:bool) \/ p``,
+    "ordinary handler-level reordering returned the wrong conclusion");
+  assert (List.length (Thm.hyp ordinary_reordering) = 1 andalso
+          List.exists (fn hypothesis => hypothesis ~~ ``(p:bool) \/ q``)
+            (Thm.hyp ordinary_reordering),
+    "ordinary handler-level reordering changed its hypothesis");
+  check_oracle_tags "CPC ordinary reordering guard" ordinary_reordering;
+  expect_hol_error_contains "CPC not_and non-false implication"
+    "premise is neither a negation nor an implication to false"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(assume @prem (=> (and p q) p)) \
+        \(step @out :rule not_and :premises (@prem))))")))
 end
 
 fun cpc_proof_replay_seq_rules_success () =

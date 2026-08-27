@@ -312,16 +312,38 @@ struct
     | NONE => "CPC proof rule registry lookup failed: unknown rule " ^ name ^
       " for cvc5 version " ^ version
 
-  type step = {
-    id : string,
-    conclusion : Term.term option,
-    rule : proof_rule,
-    premises : string list,
-    args : Term.term list
+  datatype conjunction_source =
+      ParsedConjunction
+    | AndIntroConjunction
+    | ArithReductionConjunction
+    | EqResolveConjunction
+    | CongruenceConjunction
+
+  datatype term_provenance =
+      AtomicProvenance
+    | ApplicationProvenance of string * term_provenance list
+    | BinderProvenance of string * term_provenance
+    | EqualityProvenance of term_provenance * term_provenance
+    | ConjunctionProvenance of
+        conjunction_source * term_provenance list
+    | UnavailableProvenance of string
+    | AmbiguousProvenance of string
+
+  type located_term = {
+    term : Term.term,
+    provenance : term_provenance
   }
 
-  datatype command = ASSUME of string * Term.term
-                   | ASSUME_PUSH of string * Term.term
+  type step = {
+    id : string,
+    conclusion : located_term option,
+    rule : proof_rule,
+    premises : string list,
+    args : located_term list
+  }
+
+  datatype command = ASSUME of string * located_term
+                   | ASSUME_PUSH of string * located_term
                    | STEP of step
 
   type proof = {

@@ -13,6 +13,79 @@ local
 
   fun profile_event name = Profile.profile name (fn () => ()) ()
 
+  fun provenance_shape AtomicProvenance = "atom"
+    | provenance_shape (ApplicationProvenance (head, operands)) =
+        "application(" ^ head ^ "," ^
+        String.concatWith "," (List.map provenance_shape operands) ^ ")"
+    | provenance_shape (BinderProvenance (head, body)) =
+        "binder(" ^ head ^ "," ^ provenance_shape body ^ ")"
+    | provenance_shape (EqualityProvenance (left, right)) =
+        "equality(" ^ provenance_shape left ^ "," ^
+        provenance_shape right ^ ")"
+    | provenance_shape (ConjunctionProvenance (_, operands)) =
+        "conjunction(" ^
+        String.concatWith "," (List.map provenance_shape operands) ^ ")"
+    | provenance_shape (UnavailableProvenance reason) =
+        "unavailable(" ^ reason ^ ")"
+    | provenance_shape (AmbiguousProvenance reason) =
+        "ambiguous(" ^ reason ^ ")"
+
+  (* Exact provenance that proves an occurrence contains no conjunction can
+     be represented by the atomic no-conjunction marker once it enters the
+     live step table.  Parsed command occurrences remain fully structured,
+     so a later CONG still has the exact source tree it must rewrite.  An
+     unavailable or ambiguous occurrence is deliberately not compacted: it
+     may contain a conjunction and must continue to fail closed. *)
+  fun definitely_no_conjunction AtomicProvenance = true
+    | definitely_no_conjunction (ApplicationProvenance (_, operands)) =
+        List.all definitely_no_conjunction operands
+    | definitely_no_conjunction (BinderProvenance (_, body)) =
+        definitely_no_conjunction body
+    | definitely_no_conjunction (EqualityProvenance (left, right)) =
+        definitely_no_conjunction left andalso
+        definitely_no_conjunction right
+    | definitely_no_conjunction (ConjunctionProvenance _) = false
+    | definitely_no_conjunction (UnavailableProvenance _) = false
+    | definitely_no_conjunction (AmbiguousProvenance _) = false
+
+  (* Live metadata retains equality endpoints because several semantic rules
+     select or rewrite one exact side even when neither side contains a
+     conjunction.  Recursively collapse only conjunction-irrelevant
+     application and binder shells; this keeps large arithmetic proofs
+     bounded without erasing the semantic boundaries those rules consume. *)
+  fun compact_live_provenance provenance =
+    case provenance of
+      EqualityProvenance (left, right) => EqualityProvenance
+        (compact_live_provenance left, compact_live_provenance right)
+    | ConjunctionProvenance (source, operands) =>
+        ConjunctionProvenance
+          (source, List.map compact_live_provenance operands)
+    | ApplicationProvenance (head, operands) =>
+        if definitely_no_conjunction provenance then AtomicProvenance
+        else ApplicationProvenance
+          (head, List.map compact_live_provenance operands)
+    | BinderProvenance (head, body) =>
+        if definitely_no_conjunction provenance then AtomicProvenance
+        else BinderProvenance (head, compact_live_provenance body)
+    | other => other
+
+  fun term_contains_conjunction term =
+    not (List.null (HolKernel.find_terms boolSyntax.is_conj term))
+
+  (* A successful kernel theorem proves when no conjunction occurrence is
+     present at all.  In that case Atomic is exact, while equality boundaries
+     remain visible in HOL and can be retained recursively.  Any theorem that
+     does contain a conjunction needs occurrence-specific parsed/semantic
+     provenance; never guess its erased n-ary grouping here. *)
+  fun conjunction_free_semantic_provenance reason term =
+    if term_contains_conjunction term then UnavailableProvenance reason
+    else
+      case Lib.total boolSyntax.dest_eq term of
+        SOME (left, right) => EqualityProvenance
+          (conjunction_free_semantic_provenance reason left,
+           conjunction_free_semantic_provenance reason right)
+      | NONE => AtomicProvenance
+
   (* Keep an instrumented form of the historical broken write side for
      same-binary baseline comparisons.  Normal replay always enables the
      cache; only an explicit benchmark environment setting disables it. *)
@@ -43,14 +116,64 @@ local
     thm : Thm.thm
   }
 
+  type replay_result = {
+    thm : Thm.thm,
+    located : located_term
+  }
+
+  type replayed_step = {
+    rule_name : string,
+    result : replay_result
+  }
+
+  fun result_theorem ({thm, ...} : replay_result) = thm
+
+  fun result_located ({located, ...} : replay_result) = located
+
+  fun result_provenance result = #provenance (result_located result)
+
+  fun step_theorem ({result, ...} : replayed_step) = result_theorem result
+
+  fun step_located ({result, ...} : replayed_step) = result_located result
+
+  fun step_provenance step = #provenance (step_located step)
+
+  fun exact_result provenance theorem : replay_result =
+    let
+      val term = Thm.concl theorem
+      val provenance =
+        case provenance of
+          UnavailableProvenance reason =>
+            conjunction_free_semantic_provenance reason term
+        | AmbiguousProvenance reason =>
+            if term_contains_conjunction term then
+              AmbiguousProvenance reason
+            else conjunction_free_semantic_provenance reason term
+        | exact => exact
+    in
+      {thm = theorem, located = {term = term, provenance = provenance}}
+    end
+
+  fun unavailable_result reason theorem =
+    exact_result (UnavailableProvenance reason) theorem
+
+  fun located_result where_ theorem (located : located_term) =
+    if Term.aconv (Thm.concl theorem) (#term located) then
+      {thm = theorem, located = located}
+    else raise ERR where_
+      ("CPC theorem/result provenance mismatch: theorem=" ^
+       Library.term_to_string (Thm.concl theorem) ^ "; located=" ^
+       Library.term_to_string (#term located))
+
   type state = {
     asserted_hyps : Term.term HOLset.set,
     scope_hyps : Term.term list,
     (* Retained for shared canonicalization: TASK_12 consumes these exact
        per-translation emitted-definition records. *)
     translation_definitions : SmtLib.emitted_definition list,
-    (* Each step keeps the name of the rule that produced it. *)
-    steps : (string, string * Thm.thm) Redblackmap.dict,
+    (* The theorem and its exact occurrence provenance are installed as one
+       live entry.  Reusing an id therefore replaces both synchronously. *)
+    steps : (string, replayed_step) Redblackmap.dict,
     (* The read side is intentional: CPC commonly repeats normalized facts. *)
     thm_cache : cached_theorem Net.net,
     cache_stats : cache_stats
@@ -87,15 +210,24 @@ local
       cache_stats = stats
     } end
 
-  fun cache_step state id rule_name thm =
+  fun cache_step state id rule_name (result : replay_result) =
   let
     val stats = #cache_stats state
     val () = #step_cardinality stats := !(#step_cardinality stats) + 1
+    val theorem = result_theorem result
+    val located = result_located result
+    val _ = Term.aconv (Thm.concl theorem) (#term located) orelse
+      raise ERR "cache_step"
+        ("CPC live theorem/result provenance mismatch for step " ^ id)
+    val result = {thm = theorem,
+      located = {term = #term located,
+        provenance = compact_live_provenance (#provenance located)}}
   in {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = #scope_hyps state,
     translation_definitions = #translation_definitions state,
-    steps = Redblackmap.insert (#steps state, id, (rule_name, thm)),
+    steps = Redblackmap.insert (#steps state, id,
+      {rule_name = rule_name, result = result}),
     thm_cache = #thm_cache state,
     cache_stats = stats
   } end
@@ -130,16 +262,18 @@ local
       })
     | [] => raise ERR "scope" "CPC scope step has no matching assume-push"
 
-  fun find_step what state id =
+  fun find_step what state id : replayed_step =
     Redblackmap.find (#steps state, id)
     handle Redblackmap.NotFound =>
       raise ERR what ("CPC premise step '" ^ id ^ "' was not found")
 
-  fun lookup_step state id = #2 (find_step "lookup_step" state id)
+  fun lookup_step state id = step_theorem
+    (find_step "lookup_step" state id)
 
   fun lookup_premises state ids = List.map (lookup_step state) ids
 
-  fun lookup_rule state id = #1 (find_step "lookup_rule" state id)
+  fun lookup_rule state id =
+    #rule_name (find_step "lookup_rule" state id)
 
   fun cached_thm state tm =
     profile "CPC(cache:probe)" (fn () => let
@@ -566,6 +700,640 @@ local
       handle Feedback.HOL_ERR _ => fallback_cong ()
     end
 
+  (* Exact compatibility is about the erased syntax topology, never the
+     diagnostic source label carried by a conjunction.  Atomic nodes match
+     only when both sides prove that no conjunction boundary was erased. *)
+  fun provenance_topology_compatible left right =
+    let
+      fun lists [] [] = true
+        | lists (x :: xs) (y :: ys) =
+            provenance_topology_compatible x y andalso lists xs ys
+        | lists _ _ = false
+    in
+      case (left, right) of
+        (AtomicProvenance, other) =>
+          definitely_no_conjunction other
+      | (other, AtomicProvenance) =>
+          definitely_no_conjunction other
+      | (ApplicationProvenance (_, left_operands),
+         ApplicationProvenance (_, right_operands)) =>
+          (* Term.aconv at the candidate occurrence already proves that the
+             elaborated HOL operators agree.  Raw CPC aliases and semantic
+             replay constructors can give that same operator different
+             diagnostic names, so occurrence compatibility is deliberately
+             about retained child topology, not those source labels. *)
+          lists left_operands right_operands
+      | (BinderProvenance (_, left_body),
+         BinderProvenance (_, right_body)) =>
+          provenance_topology_compatible left_body right_body
+      | (EqualityProvenance (left_lhs, left_rhs),
+         EqualityProvenance (right_lhs, right_rhs)) =>
+          provenance_topology_compatible left_lhs right_lhs andalso
+          provenance_topology_compatible left_rhs right_rhs
+      | (ConjunctionProvenance (_, left_operands),
+         ConjunctionProvenance (_, right_operands)) =>
+          lists left_operands right_operands
+      | _ => false
+    end
+
+  (* CPC congruence uses deterministic left-to-right preorder.  Resolve that
+     occurrence once over the exact located tree, and lift the selected
+     equality through the same path with kernel congruence.  Thus the theorem
+     and the replacement provenance cannot disagree about which
+     alpha-equivalent occurrence was rewritten. *)
+  fun replay_exact_cong_result conclusion
+      (source : located_term) (premise_steps : replayed_step list) =
+    let
+      (* Keep the parsed source's full occurrence tree.  Even a constructor
+         that is conjunction-free before rewriting can contain the exact
+         occurrence replaced by a conjunction-bearing endpoint.  Live step
+         results may compact proven conjunction-free shells, but parsed CONG
+         arguments must retain their constructor path to justify that lift. *)
+      datatype occurrence_rewrite =
+          OccurrenceAbsent
+        | OccurrenceBlocked of string
+        | OccurrenceRewritten of located_term * Thm.thm
+
+      fun split_conjunction n term =
+        if n = 1 then [term]
+        else if n > 1 then
+          let val (left, right) = boolSyntax.dest_conj term in
+            left :: split_conjunction (n - 1) right
+          end
+        else raise ERR "cong_provenance"
+          "conjunction provenance has no operands"
+
+      fun mk_conjunction terms =
+        case terms of
+          [] => raise ERR "cong_provenance"
+              "empty conjunction occurrence"
+        | [term] => term
+        | term :: rest => boolSyntax.mk_conj
+            (term, mk_conjunction rest)
+
+      fun binder_body head term =
+        if head = "forall" then #2 (boolSyntax.dest_forall term)
+        else if head = "exists" then #2 (boolSyntax.dest_exists term)
+        else #2 (Term.dest_abs term)
+
+      fun rebuild_binder head term body =
+        if head = "forall" then
+          boolSyntax.mk_forall (#1 (boolSyntax.dest_forall term), body)
+        else if head = "exists" then
+          boolSyntax.mk_exists (#1 (boolSyntax.dest_exists term), body)
+        else Term.mk_abs (#1 (Term.dest_abs term), body)
+
+      fun checked_endpoints where_ theorem old replacement =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+            handle Feedback.HOL_ERR holerr =>
+              raise ERR "cong_provenance"
+                (where_ ^ " did not produce an equality theorem; theorem=" ^
+                 Library.term_to_string (Thm.concl theorem) ^ "; " ^
+                 Feedback.message_of holerr)
+        in
+          if Term.aconv left old andalso Term.aconv right replacement then
+            theorem
+          else raise ERR "cong_provenance"
+            (where_ ^ " produced endpoints different from its exact path; " ^
+             "source=" ^ Library.term_to_string old ^
+             "; replacement=" ^ Library.term_to_string replacement ^
+             "; theorem=" ^ Library.term_to_string (Thm.concl theorem))
+        end
+
+      fun lift_context parent rebuild child_theorem =
+        let
+          val (old_child, new_child) =
+            boolSyntax.dest_eq (Thm.concl child_theorem)
+          val hole = Term.variant
+            (Term.free_vars parent @
+             Term.free_vars (Thm.concl child_theorem))
+            (Term.mk_var ("cpc_cong_hole", Term.type_of old_child))
+          val old_parent = rebuild old_child
+          val _ = Term.aconv old_parent parent orelse
+            raise ERR "cong_provenance"
+              "occurrence context does not rebuild its source"
+          val context = Term.mk_abs (hole, rebuild hole)
+          val lifted = Conv.CONV_RULE
+            (Conv.TOP_DEPTH_CONV Thm.BETA_CONV)
+            (Thm.AP_TERM context child_theorem)
+        in
+          checked_endpoints "lifted occurrence" lifted parent
+            (rebuild new_child)
+        end
+
+      fun term_has_occurrence candidate term =
+        Option.isSome (replace_first candidate candidate term)
+
+      fun rewrite_atomic term candidate replacement replacement_provenance
+          oriented =
+        if definitely_no_conjunction replacement_provenance then
+          let
+            fun search current =
+              if Term.aconv current candidate then
+                OccurrenceRewritten
+                  ({term = replacement, provenance = AtomicProvenance},
+                   checked_endpoints "atomic root occurrence" oriented
+                     current replacement)
+              else if Term.is_abs current then
+                let
+                  val (variable, body) = Term.dest_abs current
+                in
+                  case search body of
+                    OccurrenceAbsent => OccurrenceAbsent
+                  | OccurrenceBlocked reason => OccurrenceBlocked reason
+                  | OccurrenceRewritten
+                      ({term = body', ...}, body_theorem) =>
+                      let
+                        val term' = Term.mk_abs (variable, body')
+                        val theorem = Thm.ABS variable body_theorem
+                          handle Feedback.HOL_ERR holerr =>
+                            raise ERR "cong_provenance"
+                              ("atomic binder lift failed; body=" ^
+                               Library.term_to_string
+                                 (Thm.concl body_theorem) ^ "; " ^
+                               Feedback.message_of holerr)
+                      in
+                        OccurrenceRewritten
+                          ({term = term', provenance = AtomicProvenance},
+                           checked_endpoints "atomic binder occurrence"
+                             theorem current term')
+                      end
+                end
+              else
+                (case Lib.total Term.dest_comb current of
+                   NONE => OccurrenceAbsent
+                 | SOME (operator, argument) =>
+                  case search operator of
+                    OccurrenceBlocked reason => OccurrenceBlocked reason
+                  | OccurrenceRewritten
+                      ({term = operator', ...}, operator_theorem) =>
+                      let
+                        val term' = Term.mk_comb (operator', argument)
+                        val theorem = Thm.MK_COMB
+                          (operator_theorem, Thm.REFL argument)
+                          handle Feedback.HOL_ERR holerr =>
+                            raise ERR "cong_provenance"
+                              ("atomic operator lift failed; operator=" ^
+                               Library.term_to_string
+                                 (Thm.concl operator_theorem) ^
+                               "; argument=" ^
+                               Library.term_to_string argument ^ "; " ^
+                               Feedback.message_of holerr)
+                      in
+                        OccurrenceRewritten
+                          ({term = term', provenance = AtomicProvenance},
+                           checked_endpoints "atomic operator occurrence"
+                             theorem current term')
+                      end
+                  | OccurrenceAbsent =>
+                      (case search argument of
+                         OccurrenceAbsent => OccurrenceAbsent
+                       | OccurrenceBlocked reason =>
+                           OccurrenceBlocked reason
+                       | OccurrenceRewritten
+                           ({term = argument', ...}, argument_theorem) =>
+                           let
+                             val term' = Term.mk_comb (operator, argument')
+                             val theorem = Thm.MK_COMB
+                               (Thm.REFL operator, argument_theorem)
+                               handle Feedback.HOL_ERR holerr =>
+                                 raise ERR "cong_provenance"
+                                   ("atomic argument lift failed; operator=" ^
+                                    Library.term_to_string operator ^
+                                    "; argument=" ^
+                                    Library.term_to_string
+                                      (Thm.concl argument_theorem) ^ "; " ^
+                                    Feedback.message_of holerr)
+                           in
+                             OccurrenceRewritten
+                               ({term = term',
+                                 provenance = AtomicProvenance},
+                                checked_endpoints
+                                  "atomic argument occurrence" theorem
+                                  current term')
+                           end))
+                handle Feedback.HOL_ERR holerr =>
+                  OccurrenceBlocked
+                    ("atomic traversal failed at " ^
+                     Library.term_to_string current ^ "; " ^
+                     Feedback.message_of holerr)
+          in
+            search term
+          end
+        else if term_has_occurrence candidate term then
+          OccurrenceBlocked
+            "opaque conjunction-free occurrence would gain a conjunction"
+        else OccurrenceAbsent
+
+      fun rewrite_children parent terms provenances rebuild_term
+          rebuild_provenance candidate candidate_provenance replacement
+          replacement_provenance oriented =
+        let
+          fun scan _ _ [] [] = OccurrenceAbsent
+            | scan term_prefix provenance_prefix
+                (term :: term_rest) (provenance :: provenance_rest) =
+                (case rewrite_occurrence term provenance candidate
+                    candidate_provenance replacement replacement_provenance
+                    oriented of
+                   OccurrenceAbsent =>
+                     scan (term :: term_prefix)
+                       (provenance :: provenance_prefix)
+                       term_rest provenance_rest
+                 | OccurrenceBlocked reason => OccurrenceBlocked reason
+                 | OccurrenceRewritten
+                     ({term = term', provenance = provenance'}, theorem) =>
+                     let
+                       val terms' = List.rev term_prefix @
+                         term' :: term_rest
+                       val provenances' = List.rev provenance_prefix @
+                         provenance' :: provenance_rest
+                       val parent' = rebuild_term terms'
+                       val lifted = lift_context parent
+                         (fn child => rebuild_term
+                           (List.rev term_prefix @ child :: term_rest))
+                         theorem
+                     in
+                       OccurrenceRewritten
+                         ({term = parent',
+                           provenance =
+                             rebuild_provenance provenances'},
+                          checked_endpoints "child occurrence" lifted parent
+                            parent')
+                     end)
+            | scan _ _ _ _ = OccurrenceBlocked
+                "occurrence children do not align with the elaborated term"
+        in
+          scan [] [] terms provenances
+        end
+
+      and rewrite_occurrence term provenance candidate
+          candidate_provenance replacement replacement_provenance oriented =
+        if Term.aconv term candidate andalso
+           provenance_topology_compatible provenance candidate_provenance
+        then
+          OccurrenceRewritten
+            ({term = replacement, provenance = replacement_provenance},
+             checked_endpoints "root occurrence" oriented term replacement)
+        else
+          (case provenance of
+             ConjunctionProvenance (_, operands) =>
+               let
+                 val terms = split_conjunction
+                   (List.length operands) term
+               in
+                 rewrite_children term terms operands mk_conjunction
+                   (fn children =>
+                     ConjunctionProvenance
+                       (CongruenceConjunction, children))
+                   candidate candidate_provenance replacement
+                   replacement_provenance oriented
+               end
+           | EqualityProvenance (left, right) =>
+               let
+                 val (left_term, right_term) = boolSyntax.dest_eq term
+                 fun rebuild_term [left', right'] =
+                       boolSyntax.mk_eq (left', right')
+                   | rebuild_term _ = raise ERR "cong_provenance"
+                       "equality occurrence children are malformed"
+                 fun rebuild_provenance [left', right'] =
+                       EqualityProvenance (left', right')
+                   | rebuild_provenance _ =
+                       UnavailableProvenance
+                         "equality provenance children are malformed"
+               in
+                 rewrite_children term [left_term, right_term]
+                   [left, right] rebuild_term rebuild_provenance
+                   candidate candidate_provenance replacement
+                   replacement_provenance oriented
+               end
+           | ApplicationProvenance (head, operands) =>
+               let
+                 val (operator, arguments) = boolSyntax.strip_comb term
+                 fun rebuild_term children =
+                   Term.list_mk_comb (operator, children)
+                 fun rebuild_provenance children =
+                   ApplicationProvenance (head, children)
+                 fun arguments_result () =
+                     rewrite_children term arguments operands rebuild_term
+                       rebuild_provenance candidate candidate_provenance
+                       replacement replacement_provenance oriented
+               in
+                 if definitely_no_conjunction provenance andalso
+                    definitely_no_conjunction candidate_provenance andalso
+                    definitely_no_conjunction replacement_provenance
+                 then
+                   (* Raw CPC applications may be n-ary while their HOL
+                      elaboration is nested binary.  Once all three trees
+                      are proved conjunction-free, those erased boundaries
+                      are semantically irrelevant: use the kernel term's
+                      deterministic preorder and compact the rewritten
+                      application to Atomic.  A conjunction-bearing source
+                      or replacement still takes the exact structured path
+                      below, so this case cannot guess an and boundary. *)
+                   rewrite_atomic term candidate replacement
+                     replacement_provenance oriented
+                 else arguments_result ()
+               end
+           | BinderProvenance (head, body) =>
+               let
+                 val body_term = binder_body head term
+               in
+                 case rewrite_occurrence body_term body candidate
+                     candidate_provenance replacement
+                     replacement_provenance oriented of
+                   OccurrenceAbsent => OccurrenceAbsent
+                 | OccurrenceBlocked reason => OccurrenceBlocked reason
+                 | OccurrenceRewritten
+                     ({term = body', provenance = body_provenance}, theorem) =>
+                     let
+                       val term' = rebuild_binder head term body'
+                       val variable =
+                         if head = "forall" then
+                           #1 (boolSyntax.dest_forall term)
+                         else if head = "exists" then
+                           #1 (boolSyntax.dest_exists term)
+                         else #1 (Term.dest_abs term)
+                       (* Quantifier congruence must deliberately bind the
+                          free body variable on both sides.  A generic beta
+                          context is capture-avoiding and would rename the
+                          quantifier, leaving that variable free. *)
+                       val lifted =
+                         if head = "forall" then
+                           Drule.FORALL_EQ variable theorem
+                         else if head = "exists" then
+                           Drule.EXISTS_EQ variable theorem
+                         else Thm.ABS variable theorem
+                       val _ = profile_event
+                         ("CPC(cong:binder/" ^ head ^ ")")
+                     in
+                       OccurrenceRewritten
+                         ({term = term',
+                           provenance =
+                             BinderProvenance (head, body_provenance)},
+                          checked_endpoints "binder occurrence" lifted term
+                            term')
+                     end
+               end
+           | AtomicProvenance =>
+               if definitely_no_conjunction candidate_provenance then
+                 rewrite_atomic term candidate replacement
+                   replacement_provenance oriented
+               else OccurrenceAbsent
+           | UnavailableProvenance reason =>
+               if term_has_occurrence candidate term then
+                 OccurrenceBlocked
+                   ("source occurrence unavailable: " ^ reason)
+               else OccurrenceAbsent
+           | AmbiguousProvenance reason =>
+               if term_has_occurrence candidate term then
+                 OccurrenceBlocked
+                   ("source occurrence ambiguous: " ^ reason)
+               else OccurrenceAbsent)
+          handle Feedback.HOL_ERR holerr =>
+            OccurrenceBlocked
+              ("occurrence traversal failed at " ^
+               Library.term_to_string term ^ " [" ^
+               provenance_shape provenance ^ "]; " ^
+               Feedback.message_of holerr)
+
+      fun expose_step (premise_step : replayed_step) =
+        let
+          val theorem = step_theorem premise_step
+          val preserve_reflexive_occurrence =
+            case (Lib.total boolSyntax.dest_eq (Thm.concl theorem),
+                  step_provenance premise_step) of
+              (SOME (left, right),
+               EqualityProvenance
+                 (left_provenance, right_provenance)) =>
+                Term.aconv left right andalso
+                left_provenance <> right_provenance
+            | _ => false
+          val exposed = if preserve_reflexive_occurrence then theorem
+            else expose_true_equality theorem
+          val use_exposed = boolSyntax.is_eq (Thm.concl exposed)
+          val provenance =
+            if not use_exposed then step_provenance premise_step
+            else
+              (case (Lib.total boolSyntax.dest_eq (Thm.concl theorem),
+                     step_provenance premise_step) of
+                 (SOME (left, right), EqualityProvenance
+                    (left_provenance, right_provenance)) =>
+                   if Term.aconv left boolSyntax.T then right_provenance
+                   else if Term.aconv right boolSyntax.T then left_provenance
+                   else step_provenance premise_step
+               | _ => step_provenance premise_step)
+        in
+          if use_exposed then
+            {rule_name = #rule_name premise_step,
+             result = exact_result provenance exposed}
+          else premise_step
+        end
+
+      fun nontrivial (premise_step : replayed_step) =
+        if Term.aconv (Thm.concl (step_theorem premise_step))
+             boolSyntax.T then false
+        else
+          let val (left, right) = boolSyntax.dest_eq
+            (Thm.concl (step_theorem premise_step))
+          in
+            not (Term.aconv left right) orelse
+            (case step_provenance premise_step of
+               EqualityProvenance
+                 (left_provenance, right_provenance) =>
+                 left_provenance <> right_provenance
+             | _ => false)
+          end
+          handle Feedback.HOL_ERR _ => true
+
+      fun apply_premise
+          (premise_step : replayed_step, current : located_term) =
+        let
+          val theorem = step_theorem premise_step
+          val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+          val (left_provenance, right_provenance) =
+            case step_provenance premise_step of
+              EqualityProvenance pair => pair
+            | UnavailableProvenance reason =>
+                raise ERR "cong_provenance"
+                  ("congruence equality unavailable: " ^ reason)
+            | AmbiguousProvenance reason =>
+                raise ERR "cong_provenance"
+                  ("congruence equality ambiguous: " ^ reason)
+            | _ => raise ERR "cong_provenance"
+                "premise lacks equality occurrence provenance"
+          fun apply candidate candidate_provenance replacement
+              replacement_provenance oriented =
+            rewrite_occurrence (#term current) (#provenance current)
+              candidate candidate_provenance replacement
+              replacement_provenance oriented
+        in
+          case apply left left_provenance right right_provenance theorem of
+            OccurrenceRewritten result =>
+              (profile_event "CPC(cong:exact/rewrite)"; result)
+          | OccurrenceBlocked reason =>
+              raise ERR "cong_provenance"
+                ("left occurrence rewrite blocked for " ^
+                 Library.term_to_string (Thm.concl theorem) ^ "; " ^
+                 reason)
+          | OccurrenceAbsent =>
+              (case apply right right_provenance left left_provenance
+                  (Thm.SYM theorem) of
+                 OccurrenceRewritten result =>
+                   (profile_event "CPC(cong:exact/rewrite)"; result)
+               | OccurrenceBlocked reason =>
+                   raise ERR "cong_provenance"
+                     ("right occurrence rewrite blocked for " ^
+                      Library.term_to_string (Thm.concl theorem) ^ "; " ^
+                      reason)
+               | OccurrenceAbsent => raise ERR "cong_provenance"
+                   ("premise does not rewrite an exact source occurrence; " ^
+                    "source=" ^ Library.term_to_string (#term current) ^
+                    "; source-provenance=" ^
+                    provenance_shape (#provenance current) ^
+                    "; premise=" ^
+                    Library.term_to_string (Thm.concl theorem) ^
+                    "; premise-provenance=" ^
+                    provenance_shape (step_provenance premise_step)))
+        end
+
+      val rewrite_steps = List.filter nontrivial
+        (List.map expose_step premise_steps)
+      fun compose (premise_step, (current, accumulated)) =
+        let
+          val (next, rewrite_theorem) =
+            apply_premise (premise_step, current)
+          val theorem = Thm.TRANS accumulated rewrite_theorem
+            handle Feedback.HOL_ERR holerr =>
+              raise ERR "cong_provenance"
+                ("exact congruence rewrites do not compose: " ^
+                 Feedback.message_of holerr)
+        in
+          (next, theorem)
+        end
+
+      (* Structural CONG visits source occurrences in preorder and consumes
+         the first still-live premise matching each node.  Order the exact
+         premise applications by that same topology-aware traversal; the
+         subsequent rewrite and kernel lifting are still performed by the
+         single resolver above, so path selection cannot diverge. *)
+      fun structural_step current remaining =
+        let
+          fun root_match term provenance (_, premise_step) =
+            let
+              val (left, right) = boolSyntax.dest_eq
+                (Thm.concl (step_theorem premise_step))
+              val (left_provenance, right_provenance) =
+                case step_provenance premise_step of
+                  EqualityProvenance pair => pair
+                | _ => raise ERR "cong_provenance"
+                    "structural congruence premise lacks exact endpoints"
+            in
+              (Term.aconv term left andalso
+               provenance_topology_compatible provenance left_provenance)
+              orelse
+              (Term.aconv term right andalso
+               provenance_topology_compatible provenance right_provenance)
+            end
+            handle Feedback.HOL_ERR _ => false
+          fun atomic_match term (_, premise_step) =
+            let
+              val (left, right) = boolSyntax.dest_eq
+                (Thm.concl (step_theorem premise_step))
+              val (left_provenance, right_provenance) =
+                case step_provenance premise_step of
+                  EqualityProvenance pair => pair
+                | _ => raise ERR "cong_provenance"
+                    "structural congruence premise lacks exact endpoints"
+            in
+              (definitely_no_conjunction left_provenance andalso
+               definitely_no_conjunction right_provenance) andalso
+              (term_has_occurrence left term orelse
+               term_has_occurrence right term)
+            end
+            handle Feedback.HOL_ERR _ => false
+          fun first predicate = List.find predicate remaining
+          fun descend term provenance =
+            case first (root_match term provenance) of
+              SOME indexed => SOME indexed
+            | NONE =>
+                (case provenance of
+                   ConjunctionProvenance (_, operands) =>
+                     descend_list
+                       (split_conjunction (List.length operands) term)
+                       operands
+                 | EqualityProvenance (left, right) =>
+                     let val (left_term, right_term) = boolSyntax.dest_eq term
+                     in descend_list [left_term, right_term] [left, right] end
+                 | ApplicationProvenance (_, operands) =>
+                     let
+                       val (operator, arguments) = boolSyntax.strip_comb term
+                     in
+                       (case first (atomic_match operator) of
+                          SOME indexed => SOME indexed
+                        | NONE => descend_list arguments operands)
+                     end
+                 | BinderProvenance (head, body) =>
+                     descend (binder_body head term) body
+                 | AtomicProvenance => first (atomic_match term)
+                 | UnavailableProvenance _ => NONE
+                 | AmbiguousProvenance _ => NONE)
+          and descend_list [] [] = NONE
+            | descend_list (term :: terms)
+                (provenance :: provenances) =
+                (case descend term provenance of
+                   SOME indexed => SOME indexed
+                 | NONE => descend_list terms provenances)
+            | descend_list _ _ = NONE
+        in
+          descend (#term current) (#provenance current)
+        end
+
+      fun remove_index wanted entries =
+        List.filter (fn (index, _) => index <> wanted) entries
+
+      fun structural_fold current accumulated remaining =
+        case remaining of
+          [] => (current, accumulated)
+        | _ =>
+            (case structural_step current remaining of
+               NONE => raise ERR "cong_provenance"
+                 "structural congruence left an exact premise unused"
+             | SOME (index, premise_step) =>
+                 let
+                   val (next, rewrite_theorem) =
+                     apply_premise (premise_step, current)
+                   val theorem = Thm.TRANS accumulated rewrite_theorem
+                 in
+                   structural_fold next theorem
+                     (remove_index index remaining)
+                 end)
+
+      val indexed_steps = ListPair.zip
+        (List.tabulate (List.length rewrite_steps, Lib.I), rewrite_steps)
+      val (result, theorem) =
+        (structural_fold source (Thm.REFL (#term source)) indexed_steps
+         handle Feedback.HOL_ERR structural_error =>
+           (List.foldl compose
+              (source, Thm.REFL (#term source)) rewrite_steps
+            handle Feedback.HOL_ERR sequential_error =>
+              raise ERR "cong_provenance"
+                ("structural exact route: " ^
+                 Feedback.message_of structural_error ^
+                 "; sequential exact route: " ^
+                 Feedback.message_of sequential_error)))
+      val _ =
+        case conclusion of
+          NONE => ()
+        | SOME target =>
+            if Term.aconv (Thm.concl theorem) target then ()
+            else raise ERR "cong"
+              "exact congruence differs from the certificate conclusion"
+      val provenance = EqualityProvenance
+        (#provenance source, #provenance result)
+    in
+      exact_result provenance theorem
+    end
   (* Discharge [prems] against a theory prover by proving the implication
      they guard, then eliminating them. *)
   fun prove_from_prems prove prems target =
@@ -655,6 +1423,105 @@ local
   fun canonical_premises prems =
     List.map SmtReplayCanon.cpc_canon_rule prems
 
+  (* Transport an occurrence tree through the same canonical conversion used
+     by a semantic replay route.  A recorded boundary survives only when
+     canonicalizing each child independently produces the corresponding
+     child of the route's actual normalized term. *)
+  fun align_canonical_provenance canon original normalized provenance =
+    let
+      fun normalized_term term = boolSyntax.rhs (Thm.concl (canon term))
+      fun split_conjunction n term =
+        if n = 1 then [term]
+        else
+          let val (left, right) = boolSyntax.dest_conj term in
+            left :: split_conjunction (n - 1) right
+          end
+      fun aligned_children originals normalizeds provenances =
+        if List.length originals <> List.length normalizeds orelse
+           List.length originals <> List.length provenances
+        then raise ERR "canonical_provenance"
+          "canonical occurrence children do not align"
+        else ListPair.mapEq
+          (fn ((old_term, new_term), child_provenance) =>
+            let
+              val expected = normalized_term old_term
+              val _ = Term.aconv expected new_term orelse
+                raise ERR "canonical_provenance"
+                  "canonical child differs from the semantic route"
+            in
+              align_canonical_provenance canon old_term new_term
+                child_provenance
+            end)
+          (ListPair.zip (originals, normalizeds), provenances)
+    in
+      if Term.aconv original normalized then provenance
+      else
+        (case provenance of
+           ConjunctionProvenance (source, operands) =>
+             let
+               val n = List.length operands
+               val originals = split_conjunction n original
+               val normalizeds = split_conjunction n normalized
+             in
+               ConjunctionProvenance
+                 (source, aligned_children originals normalizeds operands)
+             end
+         | EqualityProvenance (left, right) =>
+             let
+               val (original_left, original_right) =
+                 boolSyntax.dest_eq original
+               val (normalized_left, normalized_right) =
+                 boolSyntax.dest_eq normalized
+               val children =
+                 (aligned_children [original_left, original_right]
+                    [normalized_left, normalized_right] [left, right]
+                  handle Feedback.HOL_ERR _ =>
+                    (* cpc_canon_conv may deterministically orient an
+                       equality.  Transport the endpoints through that same
+                       swap instead of attaching the old order to the new
+                       theorem. *)
+                    aligned_children [original_right, original_left]
+                      [normalized_left, normalized_right] [right, left])
+             in
+               case children of
+                 [left', right'] => EqualityProvenance (left', right')
+               | _ => raise ERR "canonical_provenance"
+                   "canonical equality children are malformed"
+             end
+         | ApplicationProvenance (head, operands) =>
+             if definitely_no_conjunction provenance andalso
+                not (term_contains_conjunction normalized)
+             then AtomicProvenance
+             else let
+               val (original_operator, originals) =
+                 boolSyntax.strip_comb original
+               val (normalized_operator, normalizeds) =
+                 boolSyntax.strip_comb normalized
+               val _ = Term.aconv original_operator normalized_operator orelse
+                 raise ERR "canonical_provenance"
+                   "canonical application operator changed"
+             in
+               ApplicationProvenance
+                 (head, aligned_children originals normalizeds operands)
+             end
+         | BinderProvenance _ =>
+             if definitely_no_conjunction provenance andalso
+                not (term_contains_conjunction normalized)
+             then AtomicProvenance
+             else UnavailableProvenance
+               "canonical binder transformation lacks exact child alignment"
+         | AtomicProvenance =>
+             if term_contains_conjunction normalized then
+               UnavailableProvenance
+                 "canonical atomic occurrence introduced a conjunction"
+             else AtomicProvenance
+         | UnavailableProvenance reason => UnavailableProvenance reason
+         | AmbiguousProvenance reason => AmbiguousProvenance reason)
+    end
+    handle Feedback.HOL_ERR holerr => UnavailableProvenance
+      ("canonical occurrence alignment failed: " ^
+       Feedback.message_of holerr)
+
   fun prove_cast_arithmetic prems target =
     let
       (* Push casts through integer arithmetic first, so algebraically related
@@ -694,6 +1561,29 @@ local
     [integerTheory.INT_MUL_RZERO,
      integerTheory.INT_ADD_LID,
      integerTheory.INT_ADD_RID]
+
+  (* cvc5 alternates between these definitionally equal integer spellings
+     inside congruence sources and equality endpoints.  Keep one recursive,
+     kernel-checked view so both terms follow the same semantic route. *)
+  val cpc_integer_spelling_conv = Conv.QCONV
+    (Rewrite.PURE_REWRITE_CONV
+      [Conv.GSYM integerTheory.INT_NEG_LMUL,
+       integerTheory.INT_MUL_LID,
+       integerTheory.INT_LT_LE1,
+       integerTheory.INT_GE,
+       integerTheory.INT_ADD_LID])
+
+  fun compose_normal_form_conv first second tm =
+    let
+      val canonical = first tm
+      val canonical_tm = boolSyntax.rhs (Thm.concl canonical)
+      val normalized = second canonical_tm
+    in
+      Thm.TRANS canonical normalized
+    end
+
+  val cpc_integer_normal_form_conv = compose_normal_form_conv
+    SmtReplayCanon.cpc_canon_conv cpc_integer_spelling_conv
 
   fun strong_cpc_canon_conv tm =
     let
@@ -798,6 +1688,74 @@ local
             first rest
         end
 
+  fun equality_endpoint side provenance =
+    case provenance of
+      EqualityProvenance (left, right) => if side = 0 then left else right
+    | UnavailableProvenance reason => UnavailableProvenance
+        ("trans equality endpoint unavailable: " ^ reason)
+    | AmbiguousProvenance reason => AmbiguousProvenance
+        ("trans equality endpoint ambiguous: " ^ reason)
+    | _ => UnavailableProvenance
+        "trans premise lacks equality occurrence provenance"
+
+  fun replay_trans_with_provenance
+      (premise_steps : replayed_step list) =
+    let
+      fun attempt work = SOME (work ()) handle Feedback.HOL_ERR _ => NONE
+      fun compose (next_step, (accumulated, accumulated_provenance)) =
+        let
+          val next = step_theorem next_step
+          val next_provenance = step_provenance next_step
+          fun endpoints accumulated_side next_side theorem =
+            let
+              val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+              fun exact_if_conjunction_free term provenance =
+                case provenance of
+                  UnavailableProvenance reason =>
+                    conjunction_free_semantic_provenance reason term
+                | AmbiguousProvenance reason =>
+                    conjunction_free_semantic_provenance reason term
+                | exact => exact
+            in
+              (theorem, EqualityProvenance
+                (exact_if_conjunction_free left
+                   (equality_endpoint accumulated_side
+                     accumulated_provenance),
+                 exact_if_conjunction_free right
+                   (equality_endpoint next_side next_provenance)))
+            end
+        in
+          if Term.aconv (Thm.concl accumulated) boolSyntax.T then
+            (retain_support accumulated next, next_provenance)
+          else if Term.aconv (Thm.concl next) boolSyntax.T then
+            (retain_support next accumulated, accumulated_provenance)
+          else if is_reflexive_equality accumulated then
+            (retain_support next accumulated, next_provenance)
+          else if is_reflexive_equality next then
+            (retain_support accumulated next, accumulated_provenance)
+          else
+            case attempt (fn () => endpoints 0 1
+                (Thm.TRANS accumulated next)) of
+              SOME result => result
+            | NONE =>
+                (case attempt (fn () => endpoints 0 0
+                    (Thm.TRANS accumulated (Thm.SYM next))) of
+                   SOME result => result
+                 | NONE =>
+                     (case attempt (fn () => endpoints 1 1
+                         (Thm.TRANS (Thm.SYM accumulated) next)) of
+                        SOME result => result
+                      | NONE => endpoints 1 0
+                          (Thm.TRANS (Thm.SYM accumulated)
+                            (Thm.SYM next))))
+        end
+    in
+      case premise_steps of
+        [] => raise ERR "trans" "expected CPC equality premises"
+      | first :: rest => List.foldl compose
+          (step_theorem first, step_provenance first) rest
+    end
+
   (* Use canonical forms to recognize tautological support premises without
      replacing the theorem stored for the CPC step.  Later rules can depend
      on its exact shape (notably TRUE_ELIM consuming [T = p]). *)
@@ -815,10 +1773,13 @@ local
         handle Feedback.HOL_ERR _ => theorem
              | Conv.UNCHANGED => theorem
       fun view theorem = expose_true_equality
-        (Conv.CONV_RULE (Conv.QCONV int_neutral_arithmetic_conv)
-          (SmtReplayCanon.cpc_canon_rule theorem))
+        (Conv.CONV_RULE
+          (Conv.BINOP_CONV (Conv.QCONV int_neutral_arithmetic_conv))
+          (Conv.CONV_RULE
+            (Conv.BINOP_CONV SmtReplayCanon.cpc_operand_canon_conv)
+            theorem))
       fun strong_view theorem = expose_true_equality
-        (Conv.CONV_RULE strong_cpc_canon_conv theorem)
+        (Conv.CONV_RULE (Conv.BINOP_CONV strong_cpc_canon_conv) theorem)
         handle Feedback.HOL_ERR _ => theorem
              | Conv.UNCHANGED => theorem
       (* Scoped CPC equalities are often used immediately as rewrite
@@ -879,6 +1840,163 @@ local
       | first :: rest => List.foldl compose first rest
     end
 
+  fun replay_canonical_trans_with_provenance
+      (premise_steps : replayed_step list) =
+    let
+      fun arithmetic_operand_conv tm =
+        if List.null (Term.free_vars tm) then bossLib.EVAL tm
+        else SmtReplayCanon.arith_poly_norm_conversion tm
+      fun converted conv (theorem, provenance) =
+        let
+          val theorem' = Conv.CONV_RULE conv theorem
+            handle Conv.UNCHANGED => theorem
+          val provenance' = align_canonical_provenance conv
+            (Thm.concl theorem) (Thm.concl theorem') provenance
+        in
+          (theorem', provenance')
+        end
+      fun exposed (theorem, provenance) =
+        let val theorem' = expose_true_equality theorem in
+          if Term.aconv (Thm.concl theorem) (Thm.concl theorem') then
+            (theorem, provenance)
+          else
+            let
+              val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+              val selected =
+                case provenance of
+                  EqualityProvenance
+                    (left_provenance, right_provenance) =>
+                      if Term.aconv left boolSyntax.T then right_provenance
+                      else if Term.aconv right boolSyntax.T then
+                        left_provenance
+                      else UnavailableProvenance
+                        "canonical exposure changed an unknown endpoint"
+                | _ => UnavailableProvenance
+                    "canonical exposure lacks exact equality provenance"
+            in
+              (theorem', selected)
+            end
+        end
+      fun polynomial_view result = exposed
+        (converted (Conv.BINOP_CONV arithmetic_operand_conv) result)
+        handle Feedback.HOL_ERR _ => result
+             | Conv.UNCHANGED => result
+      fun view result = exposed
+        (converted
+          (Conv.BINOP_CONV (Conv.QCONV int_neutral_arithmetic_conv))
+          (converted
+            (Conv.BINOP_CONV SmtReplayCanon.cpc_operand_canon_conv)
+            result))
+      fun strong_view result = exposed
+        (converted (Conv.BINOP_CONV strong_cpc_canon_conv) result)
+        handle Feedback.HOL_ERR _ => result
+             | Conv.UNCHANGED => result
+      fun hypothesis_view reverse (theorem, provenance) =
+        let
+          val equalities = List.mapPartial (fn hypothesis =>
+            if boolSyntax.is_eq hypothesis then
+              SOME (Thm.ASSUME hypothesis)
+            else NONE) (Thm.hyp theorem)
+          val rewrites = if reverse then List.map Thm.SYM equalities
+            else equalities
+          val theorem' = Rewrite.PURE_REWRITE_RULE rewrites theorem
+          val provenance' =
+            if Term.aconv (Thm.concl theorem) (Thm.concl theorem') then
+              provenance
+            else UnavailableProvenance
+              "hypothesis canonicalization changed an unaligned endpoint"
+        in
+          exposed (theorem', provenance')
+        end
+      fun entry (theorem, provenance) : replayed_step =
+        {rule_name = "trans-provenance",
+         result = exact_result provenance theorem}
+      fun try work fallback =
+        work () handle Feedback.HOL_ERR _ => fallback ()
+                      | Conv.UNCHANGED => fallback ()
+      fun compose (next_step, accumulated_result) =
+        let
+          val (accumulated, accumulated_provenance) = accumulated_result
+          val next_result =
+            (step_theorem next_step, step_provenance next_step)
+          val (next, next_provenance) = next_result
+          fun replay accumulated_view next_view =
+            replay_trans_with_provenance
+              [entry accumulated_view, entry next_view]
+          (* Canonicalize only the two candidate middle endpoints, prove the
+             bridge between those exact terms, and compose the unmodified
+             oriented premise theorems around it.  Whole-equality conversion
+             can collapse a non-reflexive CPC bridge to T and lose which
+             outer endpoint this TRANS route selected. *)
+          fun bridged conv accumulated_side next_side =
+            let
+              val accumulated' = if accumulated_side = 1 then accumulated
+                else Thm.SYM accumulated
+              val next' = if next_side = 0 then next else Thm.SYM next
+              val (_, middle_left) = boolSyntax.dest_eq
+                (Thm.concl accumulated')
+              val (middle_right, _) = boolSyntax.dest_eq (Thm.concl next')
+              val left_norm = conv middle_left
+              val right_norm = conv middle_right
+              val normalized_left = boolSyntax.rhs (Thm.concl left_norm)
+              val normalized_right = boolSyntax.rhs (Thm.concl right_norm)
+              val _ = Term.aconv normalized_left normalized_right orelse
+                raise ERR "trans"
+                  "canonical middle endpoints have distinct normal forms"
+              val bridge = Thm.TRANS left_norm (Thm.SYM right_norm)
+              val theorem = Thm.TRANS accumulated'
+                (Thm.TRANS bridge next')
+              val provenance = EqualityProvenance
+                (equality_endpoint (1 - accumulated_side)
+                   accumulated_provenance,
+                 equality_endpoint (1 - next_side) next_provenance)
+            in
+              (theorem, provenance)
+            end
+          fun bridged_orientations conv =
+            try (fn () => bridged conv 1 0) (fn () =>
+              try (fn () => bridged conv 1 1) (fn () =>
+                try (fn () => bridged conv 0 0) (fn () =>
+                  bridged conv 0 1)))
+        in
+          if is_reflexive_equality accumulated then
+            (retain_support next accumulated, next_provenance)
+          else if is_reflexive_equality next then
+            (retain_support accumulated next, accumulated_provenance)
+          else
+            try (fn () => replay accumulated_result next_result) (fn () =>
+              try (fn () => bridged_orientations
+                SmtReplayCanon.cpc_operand_canon_conv) (fn () =>
+                try (fn () => bridged_orientations
+                  cpc_integer_normal_form_conv) (fn () =>
+                try (fn () => bridged_orientations
+                  strong_cpc_canon_conv) (fn () =>
+                  let
+                    val accumulated_view = view accumulated_result
+                    val next_view = view next_result
+                  in
+                    try (fn () => replay accumulated_view next_view) (fn () =>
+                      try (fn () => replay
+                        (polynomial_view accumulated_view)
+                        (polynomial_view next_view)) (fn () =>
+                          try (fn () => replay
+                            (strong_view accumulated_view)
+                            (strong_view next_view)) (fn () =>
+                              try (fn () => replay
+                                (hypothesis_view true accumulated_view)
+                                (hypothesis_view true next_view)) (fn () =>
+                                  replay
+                                    (hypothesis_view false accumulated_view)
+                                    (hypothesis_view false next_view)))))
+                  end))))
+        end
+    in
+      case premise_steps of
+        [] => raise ERR "trans" "expected CPC equality premises"
+      | first :: rest => List.foldl compose
+          (step_theorem first, step_provenance first) rest
+    end
+
   fun replay_eq_resolve prems =
     let
     in case prems of
@@ -906,6 +2024,64 @@ local
                        Library.term_to_string (Thm.concl right))))))
     | _ => raise ERR "eq_resolve" "expected two CPC premises"
     end
+
+  fun eq_resolve_result_provenance provenance =
+    case provenance of
+      ConjunctionProvenance (_, operands) =>
+        ConjunctionProvenance (EqResolveConjunction, operands)
+    | other => other
+
+  fun equality_side_provenance side provenance =
+    case provenance of
+      EqualityProvenance (left, right) =>
+        eq_resolve_result_provenance
+          (if side = 0 then left else right)
+    | UnavailableProvenance reason => UnavailableProvenance
+        ("eq_resolve equality-side provenance unavailable: " ^ reason)
+    | AmbiguousProvenance reason => AmbiguousProvenance
+        ("eq_resolve equality-side provenance ambiguous: " ^ reason)
+    | _ => UnavailableProvenance
+        "eq_resolve premise lacks equality occurrence provenance"
+
+  (* Mirror the kernel EQ_MP orientation exactly.  This is semantic
+     propagation from the equality side actually selected, not a lookup by
+     the result term. *)
+  fun replay_eq_resolve_with_provenance
+      ([left_step, right_step] : replayed_step list) =
+    let
+      val left = step_theorem left_step
+      val right = step_theorem right_step
+      fun occurrence_reflexive step =
+        case step_provenance step of
+          EqualityProvenance (left, right) => left = right
+        | _ => true
+    in
+      if Term.aconv (Thm.concl left) boolSyntax.F then
+        (left, step_provenance left_step)
+      else if Term.aconv (Thm.concl right) boolSyntax.F then
+        (right, step_provenance right_step)
+      else if is_reflexive_boolean_equality right andalso
+              occurrence_reflexive right_step then
+        (retain_support left right, step_provenance left_step)
+      else if is_reflexive_boolean_equality left andalso
+              occurrence_reflexive left_step then
+        (retain_support right left, step_provenance right_step)
+      else
+        ((Thm.EQ_MP right left,
+          equality_side_provenance 1 (step_provenance right_step))
+         handle Feedback.HOL_ERR _ =>
+           ((Thm.EQ_MP (Thm.SYM right) left,
+             equality_side_provenance 0 (step_provenance right_step))
+            handle Feedback.HOL_ERR _ =>
+              ((Thm.EQ_MP left right,
+                equality_side_provenance 1 (step_provenance left_step))
+               handle Feedback.HOL_ERR _ =>
+                 (Thm.EQ_MP (Thm.SYM left) right,
+                  equality_side_provenance 0
+                    (step_provenance left_step)))))
+    end
+    | replay_eq_resolve_with_provenance _ =
+        raise ERR "eq_resolve" "expected two CPC premises"
 
   (* EQ_RESOLVE sometimes connects propositions only after datatype/record
      canonicalization.  Keep the conversion equalities so the normalized
@@ -954,9 +2130,41 @@ local
           (resolve SmtReplayCanon.cpc_operand_canon_conv
            proposition equality
            handle Feedback.HOL_ERR _ =>
-             resolve strong_cpc_canon_conv proposition equality)
+             (resolve cpc_integer_normal_form_conv proposition equality
+              handle Feedback.HOL_ERR _ =>
+                resolve strong_cpc_canon_conv proposition equality))
       | _ => raise ERR "eq_resolve" "expected two CPC premises"
     end
+
+  fun replay_canonical_eq_resolve_with_provenance canon
+      ([proposition_step, equality_step] : replayed_step list) =
+    let
+      val proposition = step_theorem proposition_step
+      val equality = step_theorem equality_step
+      val (left, right) = boolSyntax.dest_eq (Thm.concl equality)
+      val proposition_norm = canon (Thm.concl proposition)
+      val normalized_proposition = boolSyntax.rhs
+        (Thm.concl proposition_norm)
+      val normalized_proof = Thm.EQ_MP proposition_norm proposition
+      fun prove_side side =
+        let
+          val side_norm = canon side
+          val normalized_side = boolSyntax.rhs (Thm.concl side_norm)
+          val _ = Term.aconv normalized_proposition normalized_side orelse
+            raise ERR "eq_resolve"
+              "canonical proposition does not match equality side"
+        in
+          Thm.EQ_MP (Thm.SYM side_norm) normalized_proof
+        end
+    in
+      ((Thm.EQ_MP equality (prove_side left),
+        equality_side_provenance 1 (step_provenance equality_step))
+       handle Feedback.HOL_ERR _ =>
+         (Thm.EQ_MP (Thm.SYM equality) (prove_side right),
+          equality_side_provenance 0 (step_provenance equality_step)))
+    end
+    | replay_canonical_eq_resolve_with_provenance _ _ =
+        raise ERR "eq_resolve" "expected two CPC premises"
   (* cvc5's SYMM rule also preserves the negation of an equality.  HOL's
      Thm.SYM covers the equality form directly; derive the disequality form
      from the same premise rather than treating it as a trusted rewrite. *)
@@ -972,6 +2180,32 @@ local
         in metis_prove [premise]
           (boolSyntax.mk_neg (boolSyntax.mk_eq (right, left))) end
     end
+
+  fun replay_symm_result ([premise_step] : replayed_step list) =
+    let
+      val premise = step_theorem premise_step
+    in
+      (let
+         val theorem = Thm.SYM premise
+         val provenance =
+           case step_provenance premise_step of
+             EqualityProvenance (left, right) =>
+               EqualityProvenance (right, left)
+           | UnavailableProvenance reason => UnavailableProvenance
+               ("symm equality endpoints unavailable: " ^ reason)
+           | AmbiguousProvenance reason => AmbiguousProvenance
+               ("symm equality endpoints ambiguous: " ^ reason)
+           | _ => UnavailableProvenance
+               "symm premise lacks equality occurrence provenance"
+       in
+         exact_result provenance theorem
+       end
+       handle Feedback.HOL_ERR _ => unavailable_result
+         "symm used disequality reconstruction without equality endpoints"
+         (replay_symm [premise]))
+    end
+    | replay_symm_result _ =
+        raise ERR "symm" "expected exactly one CPC premise"
 
   fun replay_contra prems =
     case prems of
@@ -1007,39 +2241,65 @@ local
             "CPC evaluate result differs from its declared conclusion"
     end
 
-  fun replay_and_elim conclusion args prems premise_rules =
+  fun conjunction_source_name ParsedConjunction = "parsed"
+    | conjunction_source_name AndIntroConjunction = "and_intro"
+    | conjunction_source_name ArithReductionConjunction =
+        "arith_reduction"
+    | conjunction_source_name EqResolveConjunction = "eq_resolve"
+    | conjunction_source_name CongruenceConjunction = "congruence"
+
+  fun replay_and_elim conclusion args (premise_step : replayed_step) =
     let
-      val premise = expect_one_premise "and_elim" prems
+      val premise = step_theorem premise_step
       val conjunction = Thm.concl premise
-      fun strip_conjunction term =
-        (let val (left, right) = boolSyntax.dest_conj term in
-           strip_conjunction left @ strip_conjunction right
-         end)
-        handle Feedback.HOL_ERR _ => [term]
+      val (source, conjunct_provenances) =
+        case step_provenance premise_step of
+          ConjunctionProvenance (source, conjuncts) => (source, conjuncts)
+        | UnavailableProvenance reason => raise ERR "and_elim"
+            ("CPC and_elim provenance unavailable: " ^ reason)
+        | AmbiguousProvenance reason => raise ERR "and_elim"
+            ("CPC and_elim provenance ambiguous: " ^ reason)
+        | _ => raise ERR "and_elim"
+            "CPC and_elim premise has no conjunction occurrence provenance"
+      val arity = List.length conjunct_provenances
+      val _ = arity >= 2 orelse raise ERR "and_elim"
+        "CPC and_elim conjunction provenance has fewer than two operands"
+      fun split n term =
+        if n = 1 then [term]
+        else if n > 1 then
+            let val (left, right) = boolSyntax.dest_conj term in
+              left :: split (n - 1) right
+            end
+        else raise ERR "and_elim"
+            "CPC conjunction provenance arity must be positive"
+      val conjuncts = split arity conjunction
+        handle Feedback.HOL_ERR _ => raise ERR "and_elim"
+          ("CPC conjunction provenance arity " ^ Int.toString arity ^
+           " does not match premise " ^
+           Library.term_to_string conjunction)
       val index =
         Arbnum.toInt (numSyntax.dest_numeral (intSyntax.dest_injected
           (expect_one_arg "and_elim" args)))
-      val conjunct =
-        case conclusion of
-          SOME target => target
-        | NONE =>
-            if premise_rules = ["arith_reduction"] then
-              (case (index, Lib.total boolSyntax.dest_conj conjunction) of
-                 (0, SOME (left, _)) => left
-               | (1, SOME (_, right)) => right
-               | _ => raise ERR "and_elim"
-                   ("CPC arithmetic-reduction conjunct index is outside " ^
-                    "the premise"))
-            else
-              (List.nth (strip_conjunction conjunction, index)
-               handle Subscript => raise ERR "and_elim"
-                 ("CPC conjunction index " ^ Int.toString index ^
-                  " is outside premise " ^
-                  Library.term_to_string conjunction ^ "; premise rule=" ^
-                  String.concatWith "," premise_rules))
+      val conjunct = List.nth (conjuncts, index)
+        handle Subscript => raise ERR "and_elim"
+          ("CPC conjunction index " ^ Int.toString index ^
+           " is outside parsed arity " ^ Int.toString arity ^
+           " for premise " ^ Library.term_to_string conjunction)
+      val selected_provenance = List.nth (conjunct_provenances, index)
+        handle Subscript => raise ERR "and_elim"
+          ("CPC conjunction provenance index " ^ Int.toString index ^
+           " is outside arity " ^ Int.toString arity)
+      val _ = profile_event ("CPC(and_elim:provenance/" ^
+        conjunction_source_name source ^ ")")
+      val _ = case conclusion of
+          NONE => ()
+        | SOME target =>
+            if Term.aconv target conjunct then ()
+            else raise ERR "and_elim"
+              "declared CPC result differs from its indexed conjunct"
     in
       case Lib.total Library.conj_elim (premise, conjunct) of
-        SOME theorem => theorem
+        SOME theorem => (theorem, selected_provenance)
       | NONE => raise ERR "and_elim"
           "declared CPC result is not a conjunct of its premise"
     end
@@ -1763,6 +3023,38 @@ local
     | _ => raise ERR name "unsupported CPC RARE rewrite argument shape"
     end
 
+  fun replay_rare_rewrite_with_provenance name
+      (located_args : located_term list) =
+    let
+      val args = List.map (fn located => #term located) located_args
+      val theorem = replay_rare_rewrite name args
+      val provenance =
+        case (name, located_args) of
+          ("bool-double-not-elim", [located]) =>
+            let val operand = #provenance located in
+              EqualityProvenance
+                (ApplicationProvenance ("not",
+                   [ApplicationProvenance ("not", [operand])]), operand)
+            end
+        | ("eq-symm", [left, right]) =>
+            let
+              val left_provenance = #provenance left
+              val right_provenance = #provenance right
+            in
+              EqualityProvenance
+                (EqualityProvenance
+                   (left_provenance, right_provenance),
+                 EqualityProvenance
+                   (right_provenance, left_provenance))
+            end
+        | _ => conjunction_free_semantic_provenance
+            ("CPC RARE rewrite " ^ name ^
+             " produced a result containing an exact conjunction")
+            (Thm.concl theorem)
+    in
+      (theorem, provenance)
+    end
+
   fun replay_aci_norm args =
     let val target = expect_one_arg "aci_norm" args
     in
@@ -2077,6 +3369,25 @@ local
     in
       derive premise
     end
+
+  fun replay_normalized_reordering canon prems target =
+    let
+      val normalized_prems = List.map (Conv.CONV_RULE canon) prems
+      val target_norm = canon target
+      val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
+      val theorem =
+        if Term.aconv normalized_target boolSyntax.T then
+          retain_all boolTheory.TRUTH normalized_prems
+        else replay_reordering normalized_prems [normalized_target]
+    in
+      Thm.EQ_MP (Thm.SYM target_norm) theorem
+    end
+
+  val expand_real_div_conv = Conv.QCONV
+    (Conv.TOP_DEPTH_CONV SmtReplayCanon.real_div_conv)
+
+  val real_div_reordering_conv = compose_normal_form_conv
+    expand_real_div_conv strong_cpc_canon_conv
 
   fun replay_cnf name args =
     let
@@ -2829,6 +4140,37 @@ local
       else arith_prove target
     end
 
+  (* Couple arithmetic relation rewrites to the exact syntax constructed by
+     the successful semantic rule.  In particular, ARITH_EQ_ELIM_INT creates
+     a binary conjunction here; recording that boundary is construction, not
+     recovery from the erased HOL term or from a producer-name lookup. *)
+  fun replay_arith_rule_result name
+      (located_args : located_term list) =
+    let
+      val args = List.map (fn located => #term located) located_args
+      val theorem = replay_arith_rule name args
+      val provenance =
+        case (name, located_args) of
+          ("arith_poly_norm", [target]) => #provenance target
+        | ("arith-eq-elim-int", [left, right]) =>
+            let
+              val left_provenance = #provenance left
+              val right_provenance = #provenance right
+            in
+              EqualityProvenance
+                (EqualityProvenance
+                   (left_provenance, right_provenance),
+                 ConjunctionProvenance
+                   (ArithReductionConjunction,
+                    [AtomicProvenance, AtomicProvenance]))
+            end
+        | _ => conjunction_free_semantic_provenance
+            ("arithmetic relation rewrite contains an exact conjunction")
+            (Thm.concl theorem)
+    in
+      exact_result provenance theorem
+    end
+
   fun replay_arrays_select_const args =
     case args of
       [target] => Tactical.TAC_PROOF (([], target),
@@ -3133,15 +4475,34 @@ local
   fun replay_ite_elim1 prems =
     let
       val premise = expect_one_premise "ite_elim1" prems
-      val (condition, then_tm, _) = boolSyntax.dest_cond (Thm.concl premise)
-    in tautological_consequence premise
-      (mk_disj_terms [boolSyntax.mk_neg condition, then_tm]) end
+    in
+      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
+      else
+        let
+          val (condition, then_tm, _) =
+            boolSyntax.dest_cond (Thm.concl premise)
+            handle Feedback.HOL_ERR _ => raise ERR "ite_elim1"
+              ("premise is not a conditional: " ^
+               Library.term_to_string (Thm.concl premise))
+        in tautological_consequence premise
+          (mk_disj_terms [boolSyntax.mk_neg condition, then_tm]) end
+    end
 
   fun replay_ite_elim2 prems =
     let
       val premise = expect_one_premise "ite_elim2" prems
-      val (condition, _, else_tm) = boolSyntax.dest_cond (Thm.concl premise)
-    in tautological_consequence premise (mk_disj_terms [condition, else_tm]) end
+    in
+      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
+      else
+        let
+          val (condition, _, else_tm) =
+            boolSyntax.dest_cond (Thm.concl premise)
+            handle Feedback.HOL_ERR _ => raise ERR "ite_elim2"
+              ("premise is not a conditional: " ^
+               Library.term_to_string (Thm.concl premise))
+        in tautological_consequence premise
+          (mk_disj_terms [condition, else_tm]) end
+    end
 
   fun replay_scope state prems =
     let
@@ -3248,7 +4609,18 @@ local
   fun replay_not_and prems =
     let
       val premise = expect_one_premise "not_and" prems
-      val conjunction = boolSyntax.dest_neg (Thm.concl premise)
+      val conjunction =
+        (boolSyntax.dest_neg (Thm.concl premise)
+         handle Feedback.HOL_ERR _ =>
+           let
+             val (antecedent, consequent) =
+               boolSyntax.dest_imp (Thm.concl premise)
+             val _ = Term.aconv consequent boolSyntax.F orelse
+               raise ERR "not_and" "implication consequent is not false"
+           in antecedent end)
+        handle Feedback.HOL_ERR _ => raise ERR "not_and"
+          ("premise is neither a negation nor an implication to false: " ^
+           Library.term_to_string (Thm.concl premise))
       val target = mk_disj_terms
         (List.map boolSyntax.mk_neg (boolSyntax.strip_conj conjunction))
     in tautological_consequence premise target end
@@ -3277,11 +4649,23 @@ local
       tautological_consequence premise result
     end
 
-  fun replay_and_intro prems =
-    case prems of
-      [] => raise ERR "and_intro" "expected CPC premises"
-    | [premise] => premise
-    | premise :: rest => Thm.CONJ premise (replay_and_intro rest)
+  fun replay_and_intro (premise_steps : replayed_step list) =
+    let
+      val prems = List.map
+        step_theorem premise_steps
+      fun construct theorems =
+        case theorems of
+          [] => raise ERR "and_intro" "expected CPC premises"
+        | [premise] => premise
+        | premise :: rest => Thm.CONJ premise (construct rest)
+    in
+      case premise_steps of
+        [] => raise ERR "and_intro" "expected CPC premises"
+      | [premise] => (step_theorem premise, step_provenance premise)
+      | _ => (construct prems,
+          ConjunctionProvenance (AndIntroConjunction,
+            List.map step_provenance premise_steps))
+    end
 
   fun replay_skolemize prems =
     let
@@ -3565,6 +4949,24 @@ local
         {Thy = "HolSmt", Name = "smt_rdiv"}
       fun total (constant, a, b) = Term.list_mk_comb
         (constant, [a, b])
+      fun exact_nonconjunction detail term =
+        conjunction_free_semantic_provenance
+          ("arith_reduction " ^ detail ^ " unexpectedly contains a conjunction")
+          term
+      fun exact_theorem detail theorem =
+        exact_nonconjunction detail (Thm.concl theorem)
+      fun exact_binary_conjunction detail theorem =
+        let
+          val (left, right) = boolSyntax.dest_conj (Thm.concl theorem)
+        in
+          ConjunctionProvenance (ArithReductionConjunction,
+            [exact_nonconjunction (detail ^ " left conjunct") left,
+             exact_nonconjunction (detail ^ " right conjunct") right])
+        end
+      fun nonconjunction theorem =
+        (theorem, conjunction_free_semantic_provenance
+          "arith_reduction unexpectedly produced a conjunction"
+          (Thm.concl theorem))
       fun guarded_conditional (a, b, total_term, equality) =
         let
           val condition = boolSyntax.mk_eq (b, intSyntax.zero_tm)
@@ -3572,11 +4974,11 @@ local
             (reduction, boolSyntax.mk_cond
               (condition, equality, total_term))
         in
-          Tactical.TAC_PROOF (([], target),
-            Tactical.THEN (Tactic.COND_CASES_TAC,
-              bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                [HolSmtTheory.smt_ediv_total_def,
-                 HolSmtTheory.smt_emod_total_def]))
+          nonconjunction (Tactical.TAC_PROOF (([], target),
+             Tactical.THEN (Tactic.COND_CASES_TAC,
+               bossLib.ASM_SIMP_TAC bossLib.arith_ss
+                 [HolSmtTheory.smt_ediv_total_def,
+                  HolSmtTheory.smt_emod_total_def])))
         end
       fun div_reduction () =
         (case operands of
@@ -3597,10 +4999,10 @@ local
                       (a, intSyntax.zero_tm),
                     total (smt_emod_total_tm, a, b)))
              in
-               Tactical.TAC_PROOF (([], target),
-                 Tactical.THEN (Tactic.COND_CASES_TAC,
-                   bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                     [HolSmtTheory.smt_emod_total_def]))
+               nonconjunction (Tactical.TAC_PROOF (([], target),
+                  Tactical.THEN (Tactic.COND_CASES_TAC,
+                    bossLib.ASM_SIMP_TAC bossLib.arith_ss
+                      [HolSmtTheory.smt_emod_total_def])))
              end
          | _ => raise ERR "arith_reduction"
              "emod reduction expects two operands")
@@ -3615,17 +5017,25 @@ local
                     total (smt_rdiv_tm, a, realSyntax.zero_tm),
                     realSyntax.mk_div (a, b)))
              in
-               Tactical.TAC_PROOF (([], target),
-                 Tactical.THEN (Tactic.COND_CASES_TAC,
-                   bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                     [HolSmtTheory.smt_rdiv_eq_div]))
+               nonconjunction (Tactical.TAC_PROOF (([], target),
+                  Tactical.THEN (Tactic.COND_CASES_TAC,
+                    bossLib.ASM_SIMP_TAC bossLib.arith_ss
+                      [HolSmtTheory.smt_rdiv_eq_div])))
              end
          | _ => raise ERR "arith_reduction"
              "real division reduction expects two operands")
       fun total_div_reduction () =
         (case operands of
-           [a, b] => Thm.CONJ (Thm.REFL reduction)
-             (Drule.SPECL [a, b] HolSmtTheory.smt_ediv_total_bounds)
+           [a, b] => let
+             val equality = Thm.REFL reduction
+             val bounds = Drule.SPECL [a, b]
+               HolSmtTheory.smt_ediv_total_bounds
+           in
+             (Thm.CONJ equality bounds,
+              ConjunctionProvenance (ArithReductionConjunction,
+                [exact_theorem "equality conjunct" equality,
+                 exact_binary_conjunction "bounds" bounds]))
+           end
          | _ => raise ERR "arith_reduction"
              "div_total reduction expects two operands")
       fun total_mod_reduction () =
@@ -3640,8 +5050,13 @@ local
                      (intSyntax.mk_mult
                        (b, total (smt_ediv_total_tm, a, b)))))
              in
-               Thm.CONJ equality
-                 (Drule.SPECL [a, b] HolSmtTheory.smt_ediv_total_bounds)
+               (Thm.CONJ equality
+                  (Drule.SPECL [a, b] HolSmtTheory.smt_ediv_total_bounds),
+                ConjunctionProvenance (ArithReductionConjunction,
+                  [exact_theorem "equality conjunct" equality,
+                   exact_binary_conjunction "bounds"
+                     (Drule.SPECL [a, b]
+                       HolSmtTheory.smt_ediv_total_bounds)]))
              end
          | _ => raise ERR "arith_reduction"
              "mod_total reduction expects two operands")
@@ -3657,14 +5072,25 @@ local
                        (b, realSyntax.mk_div (a, b)), a))
                val side_thm = Tactical.TAC_PROOF (([], side),
                  metisLib.METIS_TAC [realTheory.REAL_DIV_LMUL])
-             in Thm.CONJ (Thm.REFL reduction) side_thm end
+             in
+               (Thm.CONJ (Thm.REFL reduction) side_thm,
+                ConjunctionProvenance (ArithReductionConjunction,
+                  [exact_theorem "equality conjunct"
+                     (Thm.REFL reduction),
+                   exact_theorem "nonzero-side conjunct" side_thm]))
+             end
          | _ => raise ERR "arith_reduction"
              "/_total reduction expects two operands")
       fun floor_reduction () =
         let
           val real = intrealSyntax.dest_INT_FLOOR reduction
           val bounds = Thm.SPEC real HolSmtTheory.int_floor_remainder_bounds
-        in Thm.CONJ (Thm.REFL reduction) bounds end
+        in
+          (Thm.CONJ (Thm.REFL reduction) bounds,
+           ConjunctionProvenance (ArithReductionConjunction,
+             [exact_theorem "equality conjunct" (Thm.REFL reduction),
+              exact_binary_conjunction "bounds" bounds]))
+        end
       fun abs_reduction () =
         let
           val value = intSyntax.dest_absval reduction
@@ -3672,9 +5098,10 @@ local
             boolSyntax.mk_cond (intSyntax.mk_less (value, intSyntax.zero_tm),
               intSyntax.mk_negated value, value))
         in
-          Tactical.TAC_PROOF (([], target),
-            Tactical.THEN (Tactic.COND_CASES_TAC,
-              bossLib.ASM_SIMP_TAC bossLib.arith_ss [integerTheory.INT_ABS]))
+          nonconjunction (Tactical.TAC_PROOF (([], target),
+             Tactical.THEN (Tactic.COND_CASES_TAC,
+               bossLib.ASM_SIMP_TAC bossLib.arith_ss
+                 [integerTheory.INT_ABS])))
         end
     in
       if Term.aconv head intrealSyntax.INT_FLOOR_tm then floor_reduction ()
@@ -3736,6 +5163,30 @@ local
           (oriented SmtReplayCanon.cpc_operand_canon_conv left right
            handle Feedback.HOL_ERR _ =>
              oriented strong_cpc_canon_conv left right)
+      | _ => raise ERR "modus_ponens" "expected two CPC premises"
+    end
+
+  (* Some arithmetic CPC certificates state an antecedent in an algebraically
+     equivalent, rather than canonically identical, form.  Derive only that
+     antecedent from the recorded proposition and then apply the untouched
+     implication.  The arithmetic prover and MP remain kernel checked, and
+     both premise hypothesis sets are retained. *)
+  fun replay_arithmetic_modus_ponens prems =
+    let
+      fun apply proposition implication =
+        let
+          val (antecedent, _) = boolSyntax.dest_imp (Thm.concl implication)
+          val antecedent_theorem =
+            arith_prove_from_prems [proposition] antecedent
+        in
+          Thm.MP implication antecedent_theorem
+        end
+      fun oriented left right =
+        apply left right
+        handle Feedback.HOL_ERR _ => apply right left
+    in
+      case prems of
+        [left, right] => oriented left right
       | _ => raise ERR "modus_ponens" "expected two CPC premises"
     end
 
@@ -4418,7 +5869,7 @@ local
     let
       val conclusion_text =
         case conclusion of NONE => "<omitted>"
-        | SOME tm => Library.term_to_string tm
+        | SOME located => Library.term_to_string (#term located)
     in
       raise ERR "replay_step"
         ("unsupported CPC step: rule=" ^ #name rule ^ "; namespace=" ^
@@ -4428,9 +5879,32 @@ local
 
   fun replay_step state (step : step) =
     let
-      val {id, conclusion, rule, premises, args} = step
-      val prems = lookup_premises state premises
+      val {id, conclusion = located_conclusion, rule, premises,
+        args = located_args} = step
+      val conclusion = Option.map
+        (fn (located : located_term) => #term located) located_conclusion
+      val args = List.map (fn (located : located_term) => #term located)
+        located_args
+      val premise_steps = List.map
+        (find_step "replay_step" state) premises
+      val prems = List.map step_theorem premise_steps
       val premise_rules = List.map (lookup_rule state) premises
+      fun opaque theorem = exact_result
+        (conjunction_free_semantic_provenance
+          ("CPC rule " ^ #name rule ^
+           " omitted a result containing an exact conjunction")
+          (Thm.concl theorem)) theorem
+      (* Arithmetic relation rewrites construct both equality endpoints from
+         their typed operands.  When the successful theorem contains no HOL
+         conjunction at either endpoint, Atomic is exact: there is no erased
+         conjunction boundary to recover or guess. *)
+      fun conjunction_free_equality_result reason theorem =
+        let val _ = boolSyntax.dest_eq (Thm.concl theorem) in
+          exact_result
+            (conjunction_free_semantic_provenance reason
+              (Thm.concl theorem)) theorem
+        end
+        handle Feedback.HOL_ERR _ => unavailable_result reason theorem
       fun require_declared name theorem =
         case conclusion of
           NONE => theorem
@@ -4898,6 +6372,23 @@ local
           fun restore_strong theorem =
             restore_with strong_cpc_canon_conv "strong" "resolution"
               replay_target theorem
+          fun integer_resolution () =
+            let
+              val integer_prems = List.map
+                (Conv.CONV_RULE cpc_integer_normal_form_conv) prems
+              val integer_conclusion = Option.map (fn target =>
+                boolSyntax.rhs
+                  (Thm.concl (cpc_integer_normal_form_conv target)))
+                conclusion
+              val integer_args = List.map (fn argument =>
+                boolSyntax.rhs
+                  (Thm.concl (cpc_integer_normal_form_conv argument))) args
+              val theorem = replay_resolution integer_prems
+                integer_conclusion integer_args
+            in
+              restore_with cpc_integer_normal_form_conv
+                "integer spelling" "resolution" replay_target theorem
+            end
         in
         (require_declared "resolution"
            (replay_resolution prems conclusion args)
@@ -4905,7 +6396,9 @@ local
            (restore (replay_resolution normalized_prems
                 normalized_conclusion normalized_args)
             handle Feedback.HOL_ERR _ =>
-              let
+              (integer_resolution ()
+               handle Feedback.HOL_ERR _ =>
+               let
                 val strong_prems =
                   List.map (Conv.CONV_RULE strong_cpc_canon_conv) prems
                 val strong_args = List.map (fn arg =>
@@ -4925,10 +6418,20 @@ local
                       strong_conclusion strong_args
               in
                 restore_strong theorem
-              end))
+              end)))
         handle Feedback.HOL_ERR _ =>
-         (case conclusion of
-             SOME target => arith_prove_from_prems prems target
+          (case replay_target of
+             SOME target =>
+               (arith_prove_from_prems prems target
+                handle Feedback.HOL_ERR holerr =>
+                  raise ERR "resolution"
+                    ("explicit target resolution failed; target=" ^
+                     Library.term_to_string target ^ "; premises=" ^
+                     String.concatWith "; "
+                       (List.map
+                         (Library.term_to_string o Thm.concl) prems) ^
+                     "; arithmetic fallback: " ^
+                     Feedback.message_of holerr))
            | NONE => raise ERR "resolution"
                ("canonical CPC clauses do not resolve; premises=" ^
                 String.concatWith "; "
@@ -4939,21 +6442,100 @@ local
       fun canonical_reordering () =
         let
           val target = expect_one_arg "reordering" args
-          val normalized_prems =
-            List.map (Conv.CONV_RULE strong_cpc_canon_conv) prems
-          val target_norm = strong_cpc_canon_conv target
-          val normalized_target = boolSyntax.rhs (Thm.concl target_norm)
-          val theorem =
-            if Term.aconv normalized_target boolSyntax.T then
-              retain_all boolTheory.TRUTH normalized_prems
-            else replay_reordering normalized_prems [normalized_target]
+          fun contains_real_div term =
+            Library.contains_const SmtReplayCanon.smt_rdiv_tm term orelse
+            not (List.null
+              (HolKernel.find_terms realSyntax.is_div term))
+          val uses_real_div =
+            List.exists contains_real_div
+              (target :: List.map Thm.concl prems)
+          fun real_div_reordering () =
+            if uses_real_div then
+              profile "CPC(rung:reordering/real_div)"
+                (fn () => replay_normalized_reordering
+                  real_div_reordering_conv prems target) ()
+            else
+              raise ERR "reordering"
+                "real-division normalization is inapplicable"
         in
-          Thm.EQ_MP (Thm.SYM target_norm) theorem
+          replay_normalized_reordering SmtReplayCanon.cpc_canon_conv
+            prems target
+          handle Feedback.HOL_ERR _ =>
+            real_div_reordering ()
+          handle Feedback.HOL_ERR _ =>
+            replay_normalized_reordering strong_cpc_canon_conv prems target
         end
       fun canonical_cong () =
         restore_canonical_conclusion "cong" conclusion
           (replay_cong (canonical_conclusion conclusion)
             (List.map canonical_term args) (canonical_premises prems))
+      fun canonical_cong_result_with canon description =
+        case conclusion of
+          SOME _ => unavailable_result
+            ("declared " ^ description ^
+             " congruence uses its exact conclusion")
+            (canonical_cong ())
+        | NONE =>
+            let
+              fun normalized_term term =
+                boolSyntax.rhs (Thm.concl (canon term))
+              val normalized_args = List.map normalized_term args
+              val normalized_prems =
+                List.map (Conv.CONV_RULE canon) prems
+            in
+              case (located_args, normalized_args) of
+                ([source], [normalized_source]) =>
+                  let
+                    val source_normalization = canon (#term source)
+                    val normalized_located = {
+                      term = normalized_source,
+                      provenance = align_canonical_provenance
+                        canon (#term source) normalized_source
+                        (#provenance source)
+                    }
+                    fun normalized_step
+                        ((premise_step : replayed_step), normalized_theorem) =
+                      let
+                        val original_theorem = step_theorem premise_step
+                        val normalized_provenance =
+                          align_canonical_provenance
+                            canon (Thm.concl original_theorem)
+                            (Thm.concl normalized_theorem)
+                            (step_provenance premise_step)
+                      in
+                        {rule_name = #rule_name premise_step,
+                         result = exact_result normalized_provenance
+                           normalized_theorem}
+                      end
+                    val normalized_steps = ListPair.mapEq normalized_step
+                      (premise_steps, normalized_prems)
+                    val exact = replay_exact_cong_result NONE
+                      normalized_located normalized_steps
+                    val theorem = Thm.TRANS source_normalization
+                      (result_theorem exact)
+                    val rewritten_provenance =
+                      case #provenance (result_located exact) of
+                        EqualityProvenance (_, right) => right
+                      | other => other
+                  in
+                    exact_result
+                      (EqualityProvenance
+                        (#provenance source, rewritten_provenance))
+                      theorem
+                  end
+              | _ => raise ERR "cong_provenance"
+                  (description ^
+                   " congruence lacks one exact source occurrence")
+            end
+      fun canonical_cong_result () =
+        canonical_cong_result_with SmtReplayCanon.cpc_canon_conv
+          "canonical"
+      fun strong_canonical_cong_result () =
+        canonical_cong_result_with strong_cpc_canon_conv
+          "strong canonical"
+      fun integer_spelling_cong_result () =
+        canonical_cong_result_with cpc_integer_normal_form_conv
+          "integer spelling canonical"
       fun reducing_cong () =
         let
           val source = expect_one_arg "cong" args
@@ -4981,6 +6563,90 @@ local
             restore_canonical_conclusion "cong" conclusion
               (SmtReplayCanon.cpc_canon_rule theorem)
         end
+      fun reducing_cong_result () =
+        let
+          val source =
+            case located_args of
+              [located] => located
+            | _ => raise ERR "cong_provenance"
+                "reducing congruence lacks one exact source occurrence"
+          val polynomial_conv = Conv.QCONV
+            SmtReplayCanon.arith_poly_norm_conversion
+          val polynomial_normalization = polynomial_conv (#term source)
+          val polynomial_source = boolSyntax.rhs
+            (Thm.concl polynomial_normalization)
+          val polynomial_provenance = align_canonical_provenance
+            polynomial_conv (#term source) polynomial_source
+            (#provenance source)
+          val ground_conv = Conv.QCONV ground_neutral_arithmetic_conv
+          val ground_normalization = ground_conv polynomial_source
+          val normalization = Thm.TRANS polynomial_normalization
+            ground_normalization
+          val normalized_source = boolSyntax.rhs (Thm.concl normalization)
+          val normalized_provenance = align_canonical_provenance
+            ground_conv polynomial_source normalized_source
+            polynomial_provenance
+          val normalized_located = {
+            term = normalized_source,
+            provenance = normalized_provenance
+          }
+          fun normalize_step (premise_step : replayed_step) =
+            let
+              val original_theorem = step_theorem premise_step
+              val polynomial_theorem =
+                Conv.CONV_RULE polynomial_conv original_theorem
+              val polynomial_premise_provenance =
+                align_canonical_provenance polynomial_conv
+                  (Thm.concl original_theorem)
+                  (Thm.concl polynomial_theorem)
+                  (step_provenance premise_step)
+              val normalized_theorem =
+                Conv.CONV_RULE ground_conv polynomial_theorem
+              val normalized_premise_provenance =
+                align_canonical_provenance ground_conv
+                  (Thm.concl polynomial_theorem)
+                  (Thm.concl normalized_theorem)
+                  polynomial_premise_provenance
+            in
+              {rule_name = #rule_name premise_step,
+               result = exact_result normalized_premise_provenance
+                 normalized_theorem}
+            end
+            handle Feedback.HOL_ERR holerr =>
+              raise ERR "cong_provenance"
+                ("reducing congruence could not normalize premise " ^
+                 Library.term_to_string
+                   (Thm.concl (step_theorem premise_step)) ^ "; " ^
+                 Feedback.message_of holerr)
+          val normalized_steps = List.map normalize_step premise_steps
+        in
+          let
+            val exact = replay_exact_cong_result NONE normalized_located
+              normalized_steps
+              handle Feedback.HOL_ERR holerr =>
+                raise ERR "cong_provenance"
+                  ("reducing congruence exact rewrite failed: " ^
+                   Feedback.message_of holerr ^ "; source=" ^
+                   Library.term_to_string normalized_source ^
+                   "; premises=" ^ String.concatWith "; "
+                     (List.map (fn premise =>
+                       Library.term_to_string
+                         (Thm.concl (step_theorem premise)) ^
+                       " [" ^ provenance_shape
+                         (step_provenance premise) ^ "]")
+                       normalized_steps))
+            val theorem = Thm.TRANS normalization (result_theorem exact)
+            val result = result_located exact
+          in
+            exact_result
+              (EqualityProvenance
+                (#provenance source,
+                 (case #provenance result of
+                    EqualityProvenance (_, right) => right
+                  | other => other)))
+              theorem
+          end
+        end
       (* Cache/proforma probe precedes general provers.  We can only probe a
          declared conclusion; omitted CPC conclusions are rule-derived. *)
       fun omitted_conclusion () =
@@ -4998,124 +6664,353 @@ local
           SOME target => (SOME (cached_thm state target)
             handle Feedback.HOL_ERR _ => NONE)
         | NONE => omitted_conclusion ()
-      val (state, thm) =
+      val (state, result) =
         if #replay_handler rule = "scope" then
-          profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
-            "/" ^ #name rule ^ ")")
-            (fn () => replay_scope state prems) ()
+          let
+            val (state, theorem) =
+              profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
+                "/" ^ #name rule ^ ")")
+                (fn () => replay_scope state prems) ()
+          in
+            (state, opaque theorem)
+          end
         else
           let
-            val thm = case cached of
-              SOME th => th
+            val result = case cached of
+              SOME theorem =>
+                (case located_conclusion of
+                   SOME located =>
+                     located_result "cached CPC step" theorem located
+                 | NONE => raise ERR "replay_step"
+                     "omitted CPC conclusion unexpectedly used theorem cache")
             | NONE =>
               (profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
                  "/" ^ #name rule ^ ")") (fn () =>
                (case #replay_handler rule of
-           "refl" => replay_refl conclusion args
-           | "eq_refl" => replay_eq_refl args
-           | "symm" => replay_symm prems
-           | "trans" => canonical_trans ()
+           "refl" =>
+               let
+                 val theorem = replay_refl conclusion args
+                 val provenance =
+                   case located_args of
+                     [located] => EqualityProvenance
+                       (#provenance located, #provenance located)
+                   | _ => UnavailableProvenance
+                       "refl lacks one exact operand occurrence"
+               in exact_result provenance theorem end
+           | "eq_refl" =>
+               let
+                 val theorem = replay_eq_refl args
+                 val provenance =
+                   case located_args of
+                     [located] => EqualityProvenance
+                       (#provenance located, #provenance located)
+                   | _ => UnavailableProvenance
+                       "eq_refl lacks one exact operand occurrence"
+               in exact_result provenance theorem end
+           | "symm" => replay_symm_result premise_steps
+           | "trans" =>
+               (case conclusion of
+                  SOME _ => opaque (canonical_trans ())
+                | NONE =>
+                    let
+                      val (theorem, provenance) =
+                        (replay_trans_with_provenance premise_steps
+                         handle Feedback.HOL_ERR direct_error =>
+                           let
+                             val canonical =
+                               replay_canonical_trans_with_provenance
+                                 premise_steps
+                           in
+                             canonical
+                           end
+                           handle Feedback.HOL_ERR canonical_error =>
+                             (canonical_trans (),
+                              UnavailableProvenance
+                                ("trans exact endpoint unavailable; direct: " ^
+                                 Feedback.message_of direct_error ^
+                                 "; canonical: " ^
+                                 Feedback.message_of canonical_error ^
+                                 "; premises: " ^
+                                 String.concatWith "; "
+                                   (List.map (fn premise =>
+                                     Library.term_to_string
+                                       (Thm.concl
+                                         (step_theorem premise)) ^
+                                     " [" ^ provenance_shape
+                                       (step_provenance premise) ^ "]")
+                                     premise_steps)))
+                           )
+                    in exact_result provenance theorem end)
            | "cong" =>
-               (require_declared "cong" (replay_cong conclusion args prems)
-                handle Feedback.HOL_ERR _ => canonical_cong ()
-                handle Feedback.HOL_ERR _ => reducing_cong ())
-           | "ho_cong" => replay_ho_cong prems
-           | "beta_reduce" => replay_beta_reduce args
-           | "lambda_elim" => replay_lambda_elim args
+               ((case (conclusion, located_args) of
+                   (NONE, [source]) =>
+                     replay_exact_cong_result NONE source premise_steps
+                | _ => unavailable_result
+                     "declared congruence uses its exact conclusion"
+                     (require_declared "cong"
+                       (replay_cong conclusion args prems)))
+                handle Feedback.HOL_ERR direct_error =>
+                  (canonical_cong_result ()
+                   handle Feedback.HOL_ERR canonical_error =>
+                     (integer_spelling_cong_result ()
+                      handle Feedback.HOL_ERR spelling_error =>
+                        (strong_canonical_cong_result ()
+                         handle Feedback.HOL_ERR strong_error =>
+                           (case conclusion of
+                              NONE =>
+                                (reducing_cong_result ()
+                                 handle Feedback.HOL_ERR reducing_error =>
+                                   raise ERR "cong_provenance"
+                                     ("direct: " ^
+                                      Feedback.message_of direct_error ^
+                                      "; canonical: " ^
+                                      Feedback.message_of canonical_error ^
+                                      "; integer spelling: " ^
+                                      Feedback.message_of spelling_error ^
+                                      "; strong: " ^
+                                      Feedback.message_of strong_error ^
+                                      "; reducing: " ^
+                                      Feedback.message_of reducing_error))
+                            | SOME _ => unavailable_result
+                                ("congruence exact occurrence unavailable; " ^
+                                 "direct: " ^
+                                 Feedback.message_of direct_error ^
+                                 "; canonical: " ^
+                                 Feedback.message_of canonical_error ^
+                                 "; integer spelling: " ^
+                                 Feedback.message_of spelling_error ^
+                                 "; strong: " ^
+                                 Feedback.message_of strong_error)
+                                (reducing_cong ()))))))
+           | "ho_cong" => opaque ( replay_ho_cong prems)
+           | "beta_reduce" => opaque ( replay_beta_reduce args)
+           | "lambda_elim" => opaque ( replay_lambda_elim args)
            | "eq_resolve" =>
-               canonical_eq_resolve ()
-           | "contra" => canonical_handler "contra" replay_contra
-           | "false_intro" => replay_false_intro prems
-           | "false_elim" => replay_false_elim prems
-           | "true_elim" => replay_true_elim prems
-           | "true_intro" => replay_true_intro prems
-           | "evaluate" => replay_evaluate conclusion args
+               (case conclusion of
+                  SOME _ => opaque (canonical_eq_resolve ())
+                | NONE =>
+                    let
+                      val (theorem, provenance) =
+                        (replay_eq_resolve_with_provenance premise_steps
+                         handle Feedback.HOL_ERR _ =>
+                           (replay_canonical_eq_resolve_with_provenance
+                              SmtReplayCanon.cpc_operand_canon_conv
+                              premise_steps
+                            handle Feedback.HOL_ERR _ =>
+                              (replay_canonical_eq_resolve_with_provenance
+                                 cpc_integer_normal_form_conv premise_steps
+                               handle Feedback.HOL_ERR _ =>
+                                 (replay_canonical_eq_resolve_with_provenance
+                                    strong_cpc_canon_conv premise_steps
+                                  handle Feedback.HOL_ERR _ =>
+                                    let
+                                      val fallback = canonical_eq_resolve ()
+                                    in
+                                      (fallback, UnavailableProvenance
+                                        "eq_resolve used reconstruction without an exact equality-side occurrence")
+                                    end))))
+                    in exact_result provenance theorem end)
+           | "contra" => opaque ( canonical_handler "contra" replay_contra)
+           | "false_intro" => opaque ( replay_false_intro prems)
+           | "false_elim" => opaque ( replay_false_elim prems)
+           | "true_elim" => opaque ( replay_true_elim prems)
+           | "true_intro" => opaque ( replay_true_intro prems)
+           | "evaluate" =>
+               conjunction_free_equality_result
+                 "evaluation result contains an exact conjunction"
+                 (replay_evaluate conclusion args)
            | "and_elim" =>
-               replay_and_elim conclusion args prems premise_rules
-           | "instantiate" => replay_instantiate args prems
-           | "not_implies_elim2" => replay_not_implies_elim2 prems
-           | "not_implies_elim1" => replay_not_implies_elim1 prems
-           | "implies_elim" => replay_implies_elim prems
-           | "factoring" => replay_factoring prems
-           | "reordering" =>
+               (case premise_steps of
+                  [premise_step] =>
+                    let
+                      val (theorem, provenance) =
+                        replay_and_elim conclusion args premise_step
+                    in exact_result provenance theorem end
+                | _ => raise ERR "and_elim"
+                    "expected exactly one CPC premise")
+           | "instantiate" => opaque ( replay_instantiate args prems)
+           | "not_implies_elim2" =>
+               let
+                 val theorem = replay_not_implies_elim2 prems
+                 val provenance =
+                   case premise_steps of
+                     [premise] =>
+                       (case step_provenance premise of
+                          ApplicationProvenance
+                            ("not", [ApplicationProvenance
+                              (_, [_, consequent])]) =>
+                            ApplicationProvenance ("not", [consequent])
+                        | _ => UnavailableProvenance
+                            ("not_implies_elim2 lacks exact implication syntax; " ^
+                             "premise=" ^ provenance_shape
+                               (step_provenance premise)))
+                   | _ => UnavailableProvenance
+                       "not_implies_elim2 has wrong premise count"
+               in exact_result provenance theorem end
+           | "not_implies_elim1" =>
+               let
+                 val theorem = replay_not_implies_elim1 prems
+                 val provenance =
+                   case premise_steps of
+                     [premise] =>
+                       (case step_provenance premise of
+                          ApplicationProvenance
+                            ("not", [ApplicationProvenance
+                              (_, [antecedent, _])]) => antecedent
+                        | _ => UnavailableProvenance
+                            ("not_implies_elim1 lacks exact implication syntax; " ^
+                             "premise=" ^ provenance_shape
+                               (step_provenance premise)))
+                   | _ => UnavailableProvenance
+                       "not_implies_elim1 has wrong premise count"
+                 val provenance =
+                   case provenance of
+                     UnavailableProvenance reason =>
+                       conjunction_free_semantic_provenance reason
+                         (Thm.concl theorem)
+                   | exact => exact
+               in exact_result provenance theorem end
+           | "implies_elim" => opaque ( replay_implies_elim prems)
+           | "factoring" => opaque ( replay_factoring prems)
+           | "reordering" => opaque (
                (replay_reordering prems args
-                handle Feedback.HOL_ERR _ => canonical_reordering ())
-           | "exists_elim" => replay_rare_rewrite "exists-elim" args
-           | "cnf" => replay_cnf (#name rule) args
-           | "not_equiv_elim1" => replay_not_equiv_elim "not_equiv_elim1" prems
-           | "not_equiv_elim2" => replay_not_equiv_elim "not_equiv_elim2" prems
-           | "equiv_elim2" => replay_equiv_elim2 conclusion prems
-           | "equiv_elim1" => replay_equiv_elim1 conclusion prems
-           | "arith_rule" => replay_arith_rule (#name rule) args
-           | "arith_rel" => replay_arith_rel prems args
-           | "arith_abs_eq" => replay_arith_abs_eq args
-           | "arith_abs_int_gt" => replay_arith_abs_int_gt args
-           | "arrays_select_const" => replay_arrays_select_const args
-           | "arrays_read_over_write" =>
-               replay_arrays_read_over_write (#name rule) prems conclusion args
-           | "ite_not_cond" => replay_ite_not_cond args
-           | "ite_true_cond" => replay_ite_true_cond args
-           | "ite_then_true" => replay_ite_then_true args
-           | "ite_false_cond" => replay_ite_false_cond args
-           | "ite_neg_branch" => replay_ite_neg_branch args prems
-           | "trust" => replay_trust state prems args
-           | "ite_eq" => replay_ite_eq args
-           | "ite_elim1" => replay_ite_elim1 prems
-           | "ite_elim2" => replay_ite_elim2 prems
-           | "quant_unused_vars" => replay_quant_unused_vars args
-           | "quant_rewrite" => replay_quant_rewrite (#name rule) args
-           | "alpha_equiv" => replay_alpha_equiv args
-           | "process_scope" => replay_process_scope args prems
-           | "not_and" => replay_not_and prems
-           | "not_or_elim" => replay_not_or_elim args prems
-           | "not_not_elim" => replay_not_not_elim prems
-           | "and_intro" => replay_and_intro prems
-           | "skolemize" => replay_skolemize prems
-           | "arith_mult_neg" => replay_arith_mult_neg args
-           | "arith_mult_pos" => replay_arith_mult_pos args
-           | "arith_mult_sign" => replay_arith_mult_sign args
-           | "arith_trichotomy" => replay_arith_trichotomy conclusion prems
-           | "arith_reduction" => replay_arith_reduction args
-           | "arith_max_geq1" => replay_arith_max_geq1 args
-           | "arith_min_lt2" => replay_arith_min_lt2 args
-           | "int_tight_lb" => replay_int_tight_lb prems
-           | "int_tight_ub" => replay_int_tight_ub prems
-           | "modus_ponens" =>
+                handle Feedback.HOL_ERR _ => canonical_reordering ()))
+           | "exists_elim" => opaque ( replay_rare_rewrite "exists-elim" args)
+           | "cnf" => opaque ( replay_cnf (#name rule) args)
+           | "not_equiv_elim1" => opaque ( replay_not_equiv_elim "not_equiv_elim1" prems)
+           | "not_equiv_elim2" => opaque ( replay_not_equiv_elim "not_equiv_elim2" prems)
+           | "equiv_elim2" => opaque ( replay_equiv_elim2 conclusion prems)
+           | "equiv_elim1" => opaque ( replay_equiv_elim1 conclusion prems)
+           | "arith_rule" =>
+               replay_arith_rule_result (#name rule) located_args
+           | "arith_rel" => opaque ( replay_arith_rel prems args)
+           | "arith_abs_eq" => opaque ( replay_arith_abs_eq args)
+           | "arith_abs_int_gt" => opaque ( replay_arith_abs_int_gt args)
+           | "arrays_select_const" => opaque ( replay_arrays_select_const args)
+           | "arrays_read_over_write" => opaque (
+               replay_arrays_read_over_write (#name rule) prems conclusion args)
+           | "ite_not_cond" => opaque ( replay_ite_not_cond args)
+           | "ite_true_cond" => opaque ( replay_ite_true_cond args)
+           | "ite_then_true" => opaque ( replay_ite_then_true args)
+           | "ite_false_cond" => opaque ( replay_ite_false_cond args)
+           | "ite_neg_branch" => opaque ( replay_ite_neg_branch args prems)
+           | "trust" => opaque ( replay_trust state prems args)
+           | "ite_eq" => opaque ( replay_ite_eq args)
+           | "ite_elim1" => opaque ( replay_ite_elim1 prems)
+           | "ite_elim2" => opaque ( replay_ite_elim2 prems)
+           | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
+           | "quant_rewrite" =>
+               let
+                 val theorem = replay_quant_rewrite (#name rule) args
+               in
+                 case located_args of
+                   [located] => located_result
+                     "quantifier rewrite exact argument" theorem located
+                 | _ => unavailable_result
+                     "quantifier rewrite lacks one exact equality argument"
+                     theorem
+               end
+           | "alpha_equiv" => opaque ( replay_alpha_equiv args)
+           | "process_scope" => opaque ( replay_process_scope args prems)
+           | "not_and" => opaque ( replay_not_and prems)
+           | "not_or_elim" => opaque ( replay_not_or_elim args prems)
+           | "not_not_elim" =>
+               let
+                 val theorem = replay_not_not_elim prems
+                 val provenance =
+                   case premise_steps of
+                     [premise] =>
+                       (case step_provenance premise of
+                          ApplicationProvenance
+                            ("not", [ApplicationProvenance
+                              ("not", [inner])]) => inner
+                        | UnavailableProvenance reason =>
+                            UnavailableProvenance
+                              ("not_not_elim operand unavailable: " ^ reason)
+                        | AmbiguousProvenance reason =>
+                            AmbiguousProvenance
+                              ("not_not_elim operand ambiguous: " ^ reason)
+                        | _ => UnavailableProvenance
+                            "not_not_elim premise lacks exact double-negation syntax")
+                   | _ => UnavailableProvenance
+                       "not_not_elim has wrong premise count"
+               in exact_result provenance theorem end
+           | "and_intro" =>
+               let
+                 val (theorem, provenance) =
+                   replay_and_intro premise_steps
+               in exact_result provenance theorem end
+           | "skolemize" => opaque ( replay_skolemize prems)
+           | "arith_mult_neg" => opaque ( replay_arith_mult_neg args)
+           | "arith_mult_pos" => opaque ( replay_arith_mult_pos args)
+           | "arith_mult_sign" => opaque ( replay_arith_mult_sign args)
+           | "arith_trichotomy" => opaque ( replay_arith_trichotomy conclusion prems)
+           | "arith_reduction" =>
+               let
+                 val (theorem, provenance) = replay_arith_reduction args
+               in exact_result provenance theorem end
+           | "arith_max_geq1" => opaque ( replay_arith_max_geq1 args)
+           | "arith_min_lt2" => opaque ( replay_arith_min_lt2 args)
+           | "int_tight_lb" => opaque ( replay_int_tight_lb prems)
+           | "int_tight_ub" => opaque ( replay_int_tight_ub prems)
+           | "modus_ponens" => opaque (
                (require_declared "modus_ponens" (replay_modus_ponens prems)
-                handle Feedback.HOL_ERR _ =>
-                  require_declared "modus_ponens"
-                    (replay_canonical_modus_ponens prems))
-           | "arith_sum_ub" => replay_arith_sum_ub prems
-           | "arith_mult_abs_comparison" =>
-               replay_arith_mult_abs_comparison prems conclusion
-           | "aci_norm" => replay_aci_norm args
-           | "bv_xor_duplicate" => replay_bv_xor_duplicate args
-           | "bv_not_idemp" => replay_bv_not_idemp args
-           | "bv_shl_by_const_0" => replay_bv_shl_by_const_0 args
-           | "bv_shl_by_const_2" => replay_bv_shl_by_const_2 args
-           | "bv_lshr_by_const_0" => replay_bv_lshr_by_const_0 args
-           | "bv_ashr_by_const_0" => replay_bv_ashr_by_const_0 args
-           | "bv_poly_norm" => replay_bv_poly_norm args
-           | "bv_poly_norm_eq" => replay_bv_poly_norm_eq args
-           | "seq_rewrite" =>
-               replay_seq_rewrite (#name rule) prems conclusion args
-           | "seq_rev_rev" => replay_seq_rev_rev args
-           | "str_contains_refl" => replay_str_contains_refl args
-           | "str_substr_full_eq" => replay_str_substr_full_eq args
-           | "seq_at_elim" => replay_seq_at_elim conclusion args
-           | "sets" => replay_sets state (#name rule) prems conclusion args
-           | "sets_ext" => replay_sets_ext prems
-           | "sets_rewrite" =>
-               replay_sets state (#name rule) prems conclusion args
-           | "rewrite" => replay_rare_rewrite (#name rule) args
-           | "datatype" => replay_datatype args
-           | "dt_split" => replay_dt_split args
-           | "datatype_eq" => replay_datatype_eq args
-           | "resolution" => canonical_resolution ()
-           | "bool" => replay_bool prems conclusion
-           | "arith" => replay_arith prems conclusion
-           | "string" =>
-               replay_string state (#name rule) prems conclusion args
+                 handle Feedback.HOL_ERR _ =>
+                   require_declared "modus_ponens"
+                    (replay_canonical_modus_ponens prems)
+                 handle Feedback.HOL_ERR _ =>
+                   require_declared "modus_ponens"
+                     (replay_arithmetic_modus_ponens prems)))
+           | "arith_sum_ub" => opaque ( replay_arith_sum_ub prems)
+           | "arith_mult_abs_comparison" => opaque (
+               replay_arith_mult_abs_comparison prems conclusion)
+           | "aci_norm" =>
+               (case located_args of
+                  [target] => located_result "aci_norm result"
+                    (replay_aci_norm args) target
+                | _ => unavailable_result
+                    "aci_norm lacks one exact target occurrence"
+                    (replay_aci_norm args))
+           | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
+           | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
+           | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
+           | "bv_shl_by_const_2" => opaque ( replay_bv_shl_by_const_2 args)
+           | "bv_lshr_by_const_0" => opaque ( replay_bv_lshr_by_const_0 args)
+           | "bv_ashr_by_const_0" => opaque ( replay_bv_ashr_by_const_0 args)
+           | "bv_poly_norm" => opaque ( replay_bv_poly_norm args)
+           | "bv_poly_norm_eq" => opaque ( replay_bv_poly_norm_eq args)
+           | "seq_rewrite" => opaque (
+               replay_seq_rewrite (#name rule) prems conclusion args)
+           | "seq_rev_rev" => opaque ( replay_seq_rev_rev args)
+           | "str_contains_refl" => opaque ( replay_str_contains_refl args)
+           | "str_substr_full_eq" => opaque ( replay_str_substr_full_eq args)
+           | "seq_at_elim" => opaque ( replay_seq_at_elim conclusion args)
+           | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
+           | "sets_ext" => opaque ( replay_sets_ext prems)
+           | "sets_rewrite" => opaque (
+               replay_sets state (#name rule) prems conclusion args)
+           | "rewrite" =>
+               let
+                 val (theorem, provenance) =
+                   replay_rare_rewrite_with_provenance
+                     (#name rule) located_args
+               in exact_result provenance theorem end
+           | "datatype" => opaque ( replay_datatype args)
+           | "dt_split" => opaque ( replay_dt_split args)
+           | "datatype_eq" =>
+               let
+                 val theorem = replay_datatype_eq args
+                 val provenance =
+                   case located_args of
+                     [located] => #provenance located
+                   | _ => UnavailableProvenance
+                       "datatype equality lacks its exact result argument"
+               in exact_result provenance theorem end
+           | "resolution" => opaque ( canonical_resolution ())
+           | "bool" => opaque ( replay_bool prems conclusion)
+           | "arith" => opaque ( replay_arith prems conclusion)
+           | "string" => opaque (
+               replay_string state (#name rule) prems conclusion args)
            | _ => unsupported_step step)) ()
            handle Conv.UNCHANGED =>
              raise ERR "replay_step"
@@ -5128,38 +7023,45 @@ local
                raise ERR "replay_step"
                  ("CPC step " ^ id ^ " (rule " ^ #name rule ^
                   ") failed: " ^ Feedback.message_of holerr))
-          in (state, thm) end
+          in (state, result) end
+      val theorem = result_theorem result
       val _ = profile "CPC(check:step_conclusion)" (fn () =>
         case conclusion of
           NONE => ()
-        | SOME target => if Term.aconv (Thm.concl thm) target then () else
+        | SOME target => if Term.aconv (Thm.concl theorem) target then () else
             raise ERR "replay_step" ("CPC rule " ^ #name rule ^
               " produced a conclusion different from its certificate")) ()
-      val state = cache_step state id (#name rule) thm
+      val result = case located_conclusion of
+          SOME located => located_result "replay_step" theorem located
+        | NONE => result
+      val state = cache_step state id (#name rule) result
     in
-      (if Option.isSome cached then state else cache_thm state thm, thm)
+      (if Option.isSome cached then state else cache_thm state theorem,
+       theorem)
     end
 
   fun replay_commands state commands =
     case commands of
       [] => raise ERR "replay_commands" "empty CPC proof"
-    | [ASSUME (id, tm)] =>
-        let val thm = Thm.ASSUME tm
-            val state = cache_step (assert_hyp state tm) id "assume" thm
+    | [ASSUME (id, {term, provenance})] =>
+        let val thm = Thm.ASSUME term
+            val state = cache_step (assert_hyp state term) id "assume"
+              (exact_result provenance thm)
         in (cache_thm state thm, thm) end
-    | ASSUME (id, tm) :: rest =>
-        let val thm = Thm.ASSUME tm
-            val state = cache_step (assert_hyp state tm) id "assume" thm
+    | ASSUME (id, {term, provenance}) :: rest =>
+        let val thm = Thm.ASSUME term
+            val state = cache_step (assert_hyp state term) id "assume"
+              (exact_result provenance thm)
         in replay_commands (cache_thm state thm) rest end
-    | [ASSUME_PUSH (id, tm)] =>
-        let val thm = Thm.ASSUME tm
-            val state = cache_step (push_scope_hyp state tm) id
-              "assume-push" thm
+    | [ASSUME_PUSH (id, {term, provenance})] =>
+        let val thm = Thm.ASSUME term
+            val state = cache_step (push_scope_hyp state term) id
+              "assume-push" (exact_result provenance thm)
         in (cache_thm state thm, thm) end
-    | ASSUME_PUSH (id, tm) :: rest =>
-        let val thm = Thm.ASSUME tm
-            val state = cache_step (push_scope_hyp state tm) id
-              "assume-push" thm
+    | ASSUME_PUSH (id, {term, provenance}) :: rest =>
+        let val thm = Thm.ASSUME term
+            val state = cache_step (push_scope_hyp state term) id
+              "assume-push" (exact_result provenance thm)
         in replay_commands (cache_thm state thm) rest end
     | [STEP step] => replay_step state step
     | STEP step :: rest =>
@@ -5251,7 +7153,21 @@ in
     replay_rare_rewrite name args
 
   fun replay_arith_reduction_for_test args =
-    replay_arith_reduction args
+    #1 (replay_arith_reduction args)
+
+  fun replay_and_elim_provenance_for_test premise provenance index
+      conclusion =
+    let
+      val index_term = intSyntax.mk_injected
+        (numSyntax.mk_numeral (Arbnum.fromInt index))
+      val step : replayed_step =
+        {rule_name = "test", result = exact_result provenance premise}
+    in
+      #1 (replay_and_elim conclusion [index_term] step)
+    end
+
+  fun replay_result_alignment_for_test theorem located =
+    ignore (located_result "test result alignment" theorem located)
 
   fun replay_cnf_for_test name args =
     replay_cnf name args
@@ -5307,6 +7223,14 @@ in
         (proof_commands proof)
       val _ = profile_cardinalities state
     in thm end
+
+  fun replay_step_provenance_for_test proof id =
+    let
+      val (state, _) = replay_commands (initial_state [] [])
+        (proof_commands proof)
+    in
+      step_provenance (find_step "test provenance" state id)
+    end
 
   fun replay_root_with_cache_stats_for_test proof =
     let
