@@ -4,13 +4,15 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_iff (name, theorem) =
+fun export_at attr (name, theorem) =
   let
     val saved = save_thm (name, theorem)
   in
     ThmAttribute.store_at_attribute
-      {name = name, attrname = "iff", args = [], thm = saved}
+      {name = name, attrname = attr, args = [], thm = saved}
   end
+
+fun export_iff entry = export_at "iff" entry
 
 (* src/HOL/List.thy:874-993 @ f7e02b7e *)
 val _ =
@@ -75,3 +77,22 @@ Proof
   >> `start + (finish - start) = finish` by decide_tac
   >> simp[listTheory.GENLIST]
 QED
+
+(* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
+   transitivity to the classical reasoner as [intro], where HOL4 states it
+   but declares it to no claset.  The rest of the lexicographic block needs
+   nothing: [simp] already covers lexord_Nil_left, lexord_Nil_right,
+   lexord_cons_cons and Nil_lenlex_iff1 and iff2 through LLEX_THM,
+   LLEX_NIL2, SHORTLEX_THM and SHORTLEX_NIL2, and lexord_transI carries no
+   attribute, so LLEX_transitive gets none.
+
+   wf_lenlex is [intro!] at 7253 and is deliberately not transplanted.
+   HOL4 carries WF_SHORTLEX as a [simp] rule, which already closes
+   WF (SHORTLEX R) from WF R, and declaring it a *safe* intro rule instead
+   owes seedAudit the invertibility obligation WF (SHORTLEX R) ==> WF R.
+   That obligation is true but the audit's fixed prover stack does not
+   close it, and an unproven safety claim is not worth the little the
+   declaration would add. *)
+val _ =
+  export_at "intro"
+    ("SHORTLEX_TRANSITIVE_AUTO", listTheory.SHORTLEX_transitive)
