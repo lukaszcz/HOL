@@ -943,6 +943,34 @@ val _ =
            ([], validation) => (ignore (validation []); true)
          | _ => false)
 
+(* Isabelle's higher-order patterns are matched modulo eta, so a rewrite
+   rule about a partial application fires on a goal spelled as its
+   eta-expansion.  HOL4 matches up to alpha and beta only, so the
+   clasimpset carries ETA_ss to contract the goal first.  The rule is
+   assumed here rather than taken from a seed, and it is handed to the
+   simpset rather than to a tactic, because a search that sees the rule
+   as an assumption closes such a goal without any eta step -- it is the
+   rewriting that stops at the mismatch. *)
+val eta_matching_rule =
+  Thm.ASSUME
+    ``!start count. EVERY eta_matching_p (GENLIST ($+ start) count)``
+
+val eta_matching_goal =
+  ``EVERY eta_matching_p (GENLIST (\offset. eta_matching_base + offset) len)``
+
+val _ =
+  check
+    ("the clasimpset matches a rule across an eta step",
+     fn () =>
+       let
+         val rewritten =
+           simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [eta_matching_rule]
+             eta_matching_goal
+       in
+         Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
+       end
+       handle Conv.UNCHANGED => false)
+
 val extensional_search_goals : Abbrev.goal list =
   [([],
     ``(\value : 'a. left value /\ right value) =

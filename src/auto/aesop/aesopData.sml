@@ -66,6 +66,10 @@ fun derive_aesop_ss ss _ : cached_simpset =
    simpset =
      ss
      |> simpLib.set_cond_depth 40
+     (* Matched modulo eta, as Isabelle's higher-order patterns are; see
+        clasimpLib.derive_clasimp_ss for why a rule and a goal otherwise
+        miss each other over an eta step. *)
+     |> (fn ss' => simpLib.++ (ss', boolSimps.ETA_ss))
      |> simpLib.set_safe_solvers [clasimpLib.safe_solver]
      |> simpLib.set_unsafe_solvers [linarithLib.linarith_solver]
      |> (fn ss' =>

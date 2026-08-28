@@ -3380,6 +3380,29 @@ val _ =
 fun closes_goal tactic goal =
   null (residual tactic goal) handle HOL_ERR _ => false
 
+(* The same eta-matching pin as clasimp/selftest.sml, on aesop's own
+   simpset: the two derive separately, so one carrying ETA_ss says
+   nothing about the other. *)
+val eta_matching_rule =
+  Thm.ASSUME
+    ``!start count. EVERY eta_matching_p (GENLIST ($+ start) count)``
+
+val eta_matching_goal =
+  ``EVERY eta_matching_p (GENLIST (\offset. eta_matching_base + offset) len)``
+
+val _ =
+  check
+    ("the aesop simpset matches a rule across an eta step",
+     fn () =>
+       let
+         val rewritten =
+           simpLib.SIMP_CONV (aesopData.aesop_ss ()) [eta_matching_rule]
+             eta_matching_goal
+       in
+         Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
+       end
+       handle Conv.UNCHANGED => false)
+
 val aesop_linarith_rewrite =
   hd (Drule.CONJUNCTS arithmeticTheory.MIN_EQ_LE)
 

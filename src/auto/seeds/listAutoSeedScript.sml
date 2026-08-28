@@ -65,18 +65,56 @@ QED
 
 (* src/HOL/List.thy:3475-3481 @ f7e02b7e.  The translated half-open
    interval [start..<finish] is GENLIST (\offset. start + offset)
-   (finish - start). *)
+   (finish - start), written here in the eta-contracted spelling the
+   src/auto simpsets normalise to. *)
 Theorem GENLIST_RANGE_SUC_AUTO[simp]:
   !start finish.
     start <= finish ==>
-    GENLIST (\offset. start + offset) (SUC finish - start) =
-    SNOC finish (GENLIST (\offset. start + offset) (finish - start))
+    GENLIST ($+ start) (SUC finish - start) =
+    SNOC finish (GENLIST ($+ start) (finish - start))
 Proof
   rpt strip_tac
   >> `SUC finish - start = SUC (finish - start)` by decide_tac
   >> `start + (finish - start) = finish` by decide_tac
   >> simp[listTheory.GENLIST]
 QED
+
+(* src/HOL/List.thy:1381 @ f7e02b7e.  [set_upt] rewrites the set of a
+   half-open interval to the interval itself, whose membership Isabelle's
+   ambient interval rules then decide; the translated interval is
+   GENLIST (\offset. start + offset) (finish - start), so here the same
+   consequence is one rewrite.
+
+   The zero-start spelling below is a HOL4 normalisation artefact rather
+   than a second Isabelle rule: Isabelle writes one term for every start,
+   while HOL4's simplifier cancels the [0 +] and leaves an abstraction
+   that no eta-instance of [$+ start] matches. *)
+Theorem MEM_GENLIST_INTERVAL_AUTO[simp]:
+  !start count item.
+    MEM item (GENLIST ($+ start) count) <=>
+    start <= item /\ item < start + count
+Proof
+  rpt gen_tac
+  >> simp[listTheory.MEM_GENLIST]
+  >> eq_tac
+  >- (strip_tac >> simp[])
+  >> strip_tac >> qexists_tac `item - start` >> simp[]
+QED
+
+Theorem MEM_GENLIST_FROM_ZERO_AUTO[simp]:
+  !count item. MEM item (GENLIST (\offset. offset) count) <=> item < count
+Proof
+  rpt gen_tac >> simp[listTheory.MEM_GENLIST]
+QED
+
+(* src/HOL/List.thy:1222-1228,2826-2827 @ f7e02b7e.  [map_fst_zip],
+   [map_snd_zip] and [nth_zip] are simp there and undeclared here; HOL4's
+   MAP_ZIP carries the two composed forms as well, which Isabelle reaches
+   by rewriting under the map. *)
+val _ =
+  List.app (export_at "simp")
+    [("MAP_ZIP_AUTO", listTheory.MAP_ZIP),
+     ("EL_ZIP_AUTO", listTheory.EL_ZIP)]
 
 (* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
    transitivity to the classical reasoner as [intro], where HOL4 states it

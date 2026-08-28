@@ -57,3 +57,13 @@ val _ =
     ["sorting.SORTED_ALL_DISTINCT", "sorting.PERM_TRANS",
      "sorting.MEM_PERM", "sorting.PERM_EVERY",
      "sorting.ALL_DISTINCT_PERM", "sorting.SORTED_PERM_EQ"]
+
+(* src/HOL/List.thy:6208 @ f7e02b7e.  [sorted_upt] is simp there.  HOL4
+   states the strict form, SORTED_GENLIST_PLUS, and declares it nowhere;
+   Isabelle's [sorted] is the reflexive order, which is the form a goal
+   about an interval of indices arrives in. *)
+Theorem SORTED_GENLIST_INTERVAL_AUTO[simp]:
+  !start count. SORTED $<= (GENLIST ($+ start) count)
+Proof
+  rw[sortingTheory.SORTED_EL_SUC] >> simp[]
+QED

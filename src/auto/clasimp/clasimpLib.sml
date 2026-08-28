@@ -31,6 +31,16 @@ fun derive_clasimp_ss ss _ =
   ss
   |> simpLib.set_cond_depth 40
   |> (fn ss' => simpLib.++ (ss', simpLib.split_ss))
+  (* ETA_ss is where Isabelle's matcher is and HOL4's is not.  Isabelle
+     rewrites under higher-order patterns, which are matched modulo eta,
+     so a rule about [$+ start] fires on a goal spelled
+     [\offset. start + offset] as well.  HOL4's rewriter matches up to
+     alpha and beta only, so without this the two silently fail to meet;
+     a translated term arrives in both spellings, since the translation
+     writes the abstraction and the simplifier contracts it only
+     sometimes.  The classical search does close some such goals on its
+     own -- it is the rewriting that stops at the mismatch. *)
+  |> (fn ss' => simpLib.++ (ss', boolSimps.ETA_ss))
   |> simpLib.set_safe_solvers [safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
 

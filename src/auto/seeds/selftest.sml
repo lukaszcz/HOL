@@ -256,6 +256,43 @@ val _ =
        solved (clasimpLib.AUTO_TAC [])
          ``PERM ([] : 'a list) xs <=> xs = []``)
 
+(* src/HOL/List.thy:1381,1222-1228,2826-2827,6208 @ f7e02b7e.  Isabelle
+   decides these ambiently: set_upt turns an interval list into the
+   interval set, map_fst_zip, map_snd_zip and nth_zip project a zip whose
+   sides have equal length, and sorted_upt sorts an interval.  None of
+   the goals below is a corpus entry; each is a consequence reached by a
+   seed and then arithmetic, and excluding the five seeds leaves every
+   one of them with a residual.  The last is the third eta-expanded,
+   which meets its rule only because the simpset matches modulo eta. *)
+val _ =
+  check
+    ("interval and zip seed views are usable",
+     fn () =>
+       List.all
+         (solved (clasimpLib.AUTO_TAC []))
+         [``!n item. MEM item (GENLIST (\offset. offset) (SUC n)) <=>
+                     item <= n``,
+          ``!lower upper item.
+              lower <= item /\ item < upper ==>
+              MEM item (GENLIST ($+ lower) (upper - lower))``,
+          ``!start xs item.
+              MEM item xs ==>
+              MEM item (MAP SND (ZIP (GENLIST ($+ start) (LENGTH xs),
+                                      xs)))``,
+          ``!start xs index.
+              index < LENGTH xs ==>
+              MEM (FST (EL index (ZIP (GENLIST ($+ start) (LENGTH xs),
+                                       xs))))
+                  (GENLIST ($+ start) (LENGTH xs))``,
+          ``!start count.
+              SORTED $<= (GENLIST ($+ start) count ++ [start + count])``,
+          ``!start xs item.
+              MEM item xs ==>
+              MEM item
+                (MAP SND (ZIP (GENLIST (\offset. start + offset)
+                                 (LENGTH xs),
+                               xs)))``])
+
 val _ =
   check
     ("universal image membership simplifies through an implication",
