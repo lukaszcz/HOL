@@ -86,11 +86,13 @@ local
            conjunction_free_semantic_provenance reason right)
       | NONE => AtomicProvenance
 
-  (* Keep an instrumented form of the historical broken write side for
-     same-binary baseline comparisons.  Normal replay always enables the
-     cache; only an explicit benchmark environment setting disables it. *)
+  (* E1(c): repeated-conclusion theorem reuse is a redundant performance
+     cache.  This one choke point controls both cache insertion and probing;
+     the historical benchmark switch can still disable it independently. *)
   val theorem_cache_enabled =
-    OS.Process.getEnv "HOL4_CPC_THEOREM_CACHE" <> SOME "0"
+    OS.Process.getEnv "HOL4_CPC_THEOREM_CACHE" <> SOME "0" andalso
+    ((Library.require_fastpath "CPC theorem cache"; true)
+     handle Feedback.HOL_ERR _ => false)
 
   type cache_stats = {
     hits : int ref,
@@ -276,7 +278,10 @@ local
     #rule_name (find_step "lookup_rule" state id)
 
   fun cached_thm state tm =
-    profile "CPC(cache:probe)" (fn () => let
+    if not theorem_cache_enabled then
+      (profile_event "CPC(cache:probe_disabled)";
+       raise ERR "cached_thm" "CPC theorem cache is disabled")
+    else profile "CPC(cache:probe)" (fn () => let
       val available = HOLset.addList (#asserted_hyps state, #scope_hyps state)
       val stats = #cache_stats state
       fun conclusion_matches cached =
@@ -3548,9 +3553,9 @@ local
     | EqResolveCanonicalReal
     | EqResolveArithmetic
 
-  (* This preflight chooses only the cheaper route to try first.  The unit
-     pins exercise both reconstruction procedures for every branch, so none
-     of these syntactic cost checks is allowed to decide coverage. *)
+  (* E1(c): this preflight chooses only the cheaper route to try first.  The
+     unit pins exercise both reconstruction procedures for every branch, so
+     none of these syntactic cost checks is allowed to decide coverage. *)
   fun eq_resolve_preflight_route prems =
     if List.exists (fn theorem =>
          SmtResource.term_nodes_up_to 1000 (Thm.concl theorem) > 1000)
@@ -3565,6 +3570,16 @@ local
            (Thm.concl theorem)))) prems then
       EqResolveCanonicalReal
     else EqResolveArithmetic
+
+  fun enabled_eq_resolve_preflight_route prems =
+    let
+      val enabled =
+        ((Library.require_fastpath "CPC eq_resolve arithmetic preflight";
+          true)
+         handle Feedback.HOL_ERR _ => false)
+    in
+      if enabled then SOME (eq_resolve_preflight_route prems) else NONE
+    end
 
   fun eq_resolve_preflight_name route =
     case route of
@@ -5347,6 +5362,13 @@ local
 
   fun replay_resolution prems conclusion args =
     let
+      (* A proof of T is a neutral resolution premise regardless of which
+         irrelevant assumptions were retained while producing it.  Rebuild
+         it as kernel TRUTH so the general route does not depend on a cache
+         hit to discard those assumptions. *)
+      val prems = List.map (fn theorem =>
+        if Term.aconv (Thm.concl theorem) boolSyntax.T then boolTheory.TRUTH
+        else theorem) prems
       (* Premises, target and annotations enter this handler in the shared
          CPC normal form, so literal identity is just alpha-equivalence. *)
       fun literal_equal left right = Term.aconv left right
@@ -6155,10 +6177,9 @@ local
               require_declared "eq_resolve" with_support
             end
           fun arithmetic () =
-            case conclusion of
-              SOME _ =>
+            case (conclusion, enabled_eq_resolve_preflight_route prems) of
+              (SOME _, SOME route) =>
                 let
-                  val route = eq_resolve_preflight_route prems
                   val () = profile_event
                     ("CPC(eq_resolve:preflight/" ^
                      eq_resolve_preflight_name route ^ ")")
@@ -6169,8 +6190,10 @@ local
                   | _ => raise ERR "eq_resolve"
                       (eq_resolve_preflight_diagnostic route)
                 end
-            | NONE => raise ERR "eq_resolve"
+            | (NONE, _) => raise ERR "eq_resolve"
                 "arithmetic preflight requires a declared conclusion"
+            | (_, NONE) => raise ERR "eq_resolve"
+                "arithmetic preflight fast path is disabled"
           fun canonical () =
             canonical_rung "eq_resolve"
               (replay_canonical_eq_resolve strong_canon)
@@ -7037,9 +7060,10 @@ in
 
   fun replay_eq_resolve_routes_for_test prems =
     let
-      val route = eq_resolve_preflight_route prems
+      val route = Option.map eq_resolve_preflight_name
+        (enabled_eq_resolve_preflight_route prems)
     in
-      {route = eq_resolve_preflight_name route,
+      {route = route,
        arithmetic = replay_arithmetic_eq_resolve prems,
        canonical = replay_canonical_eq_resolve
          (strong_cpc_canon_conv []) prems}

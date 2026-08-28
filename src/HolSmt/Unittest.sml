@@ -9728,8 +9728,13 @@ let
   val {route, arithmetic, canonical} =
     CPC_ProofReplay.replay_eq_resolve_routes_for_test prems
 in
-  assert (route = expected_route,
-    label ^ " selected " ^ route ^ " instead of " ^ expected_route);
+  if Library.no_fastpath () then
+    assert (not (Option.isSome route),
+      label ^ " remained enabled in no-fastpath mode")
+  else
+    assert (route = SOME expected_route,
+      label ^ " selected " ^ Option.getOpt (route, "<disabled>") ^
+      " instead of " ^ expected_route);
   assert (Thm.concl arithmetic ~~ expected,
     label ^ " failed on the forced arithmetic route");
   assert (Thm.concl canonical ~~ expected,
@@ -11013,7 +11018,30 @@ fun cpc_profile_call_count name =
   | NONE => 0
 
 fun cpc_cache_repeated_conclusion_bypasses_handler_success () =
-if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
+if Library.no_fastpath () then let
+  val proof = parse_cpc_proof_string
+    "((step @p1 (= true true) :rule refl :args (true)) \
+    \(step @p2 (= true true) :rule refl :args (true)))"
+  val () = Profile.reset_all ()
+  val (thm, stats) =
+    CPC_ProofReplay.replay_root_with_cache_stats_for_test proof
+in
+  assert (Thm.concl thm ~~ ``T = T``,
+    "CPC no-fastpath replay returned the wrong explicit conclusion");
+  assert (not CPC_ProofReplay.theorem_cache_enabled_for_test,
+    "CPC theorem cache remained enabled in no-fastpath mode");
+  assert (#hits stats = 0 andalso #misses stats = 0,
+    "disabled CPC theorem cache recorded a probe result");
+  assert (#cardinality stats = 0 andalso #peak_cardinality stats = 0,
+    "disabled CPC theorem cache retained a theorem");
+  assert (cpc_profile_call_count "CPC(cache:probe)" = 0,
+    "disabled CPC theorem cache entered its probe body");
+  assert (cpc_profile_call_count "CPC(cache:probe_disabled)" = 2,
+    "disabled CPC theorem cache did not reject both explicit probes");
+  assert (cpc_profile_call_count "CPC(handler:ProofRule/refl)" = 2,
+    "CPC no-fastpath replay did not reconstruct both repeated steps")
+end
+else if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
   val proof = parse_cpc_proof_string
     "((step @p1 (= true true) :rule refl :args (true)) \
     \(step @p2 (= true true) :rule contra))"
