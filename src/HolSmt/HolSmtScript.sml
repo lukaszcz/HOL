@@ -452,14 +452,6 @@ Proof
           (ASSUME ``(0:int) < b``))) ] ]
 QED
 
-Theorem smt_emod_total_ediv_negone:
-  !a b. smt_emod_total a b =
-    a + -1 * (b * smt_ediv_total a b)
-Proof
-  simp [smt_emod_total_ediv, integerTheory.int_sub,
-        GSYM integerTheory.INT_NEG_LMUL]
-QED
-
 Theorem smt_int_abs_gt:
   !x y : int.
     (ABS x > ABS y) =
@@ -580,12 +572,6 @@ Proof
       simp[boolTheory.FUN_EQ_THM])
   >> strip_tac >> qexists_tac `\x. Num (c x)` >>
      qpat_x_assum `P (\x. Num (c x))` ACCEPT_TAC
-QED
-
-Theorem BAG_COUNT_INT_NONNEG:
-  !b x. 0 <= integer$int_of_num (b x)
-Proof
-  simp[]
 QED
 
   (* NUM_FLOOR is the natural-valued floor.  Below zero it is definitionally
@@ -780,12 +766,6 @@ QED
   val _ = s ("d026", P ``(if p then q else ~r) \/ p \/ r``)
   val _ = s ("d027", P ``~(if p then q else r) \/ ~p \/ q``)
   val _ = s ("d028", P ``~(if p then q else r) \/ p \/ r``)
-
-  (* used for Z3's proof rule intro-def *)
-  val _ = s ("i001", Drule.UNDISCH (T ``(n = t) ==> (n = t)``))
-  val _ = s ("i002", Drule.UNDISCH (T ``(n = t) ==> ~n \/ t``))
-  val _ = s ("i003", Drule.UNDISCH (T ``(n = t) ==> (n \/ ~t) /\ (~n \/ t)``))
-  val _ = s ("i004", Drule.UNDISCH (P ``(n = if c then t1 else t2) ==> (~c \/ (n = t1)) /\ (c \/ (n = t2))``))
 
   (* used for Z3's proof rule rewrite *)
 

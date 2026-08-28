@@ -224,15 +224,30 @@ struct
   val tier2_rewrites =
     let open smtfloatTheory
     in
-      [smtfp_is_normal_bits, smtfp_is_subnormal_bits,
-       smtfp_is_zero_bits, smtfp_is_infinite_bits, smtfp_is_nan_bits,
-       smtfp_is_negative_bits, smtfp_is_positive_bits, smtfp_abs_bits,
-       smtfp_neg_bits, smtfp_equality_bits, smtfp_eq_bits,
-       smtfp_lt_bits, smtfp_le_bits, smtfp_gt_bits, smtfp_ge_bits,
-       smtfp_comparison_duals, smtfp_nan_pattern_def,
-       smtfp_mag_lt_def, smtfp_word_equal_def, smtfp_word_fp_eq_def,
-       smtfp_word_lt_def, smtfp_word_le_def, smtfp_word_gt_def,
-       smtfp_word_ge_def]
+      [smtfloatTheory.smtfp_is_normal_bits,
+       smtfloatTheory.smtfp_is_subnormal_bits,
+       smtfloatTheory.smtfp_is_zero_bits,
+       smtfloatTheory.smtfp_is_infinite_bits,
+       smtfloatTheory.smtfp_is_nan_bits,
+       smtfloatTheory.smtfp_is_negative_bits,
+       smtfloatTheory.smtfp_is_positive_bits,
+       smtfloatTheory.smtfp_abs_bits,
+       smtfloatTheory.smtfp_neg_bits,
+       smtfloatTheory.smtfp_equality_bits,
+       smtfloatTheory.smtfp_eq_bits,
+       smtfloatTheory.smtfp_lt_bits,
+       smtfloatTheory.smtfp_le_bits,
+       smtfloatTheory.smtfp_gt_bits,
+       smtfloatTheory.smtfp_ge_bits,
+       smtfloatTheory.smtfp_comparison_duals,
+       smtfloatTheory.smtfp_nan_pattern_def,
+       smtfloatTheory.smtfp_mag_lt_def,
+       smtfloatTheory.smtfp_word_equal_def,
+       smtfloatTheory.smtfp_word_fp_eq_def,
+       smtfloatTheory.smtfp_word_lt_def,
+       smtfloatTheory.smtfp_word_le_def,
+       smtfloatTheory.smtfp_word_gt_def,
+       smtfloatTheory.smtfp_word_ge_def]
     end
 
   (* This is the th-lemma-bv recipe specialized to the large fpa2bv
@@ -445,20 +460,23 @@ struct
   val addsub_rewrites =
     let open smtfloatTheory
     in
-      [smtfp_add_circuit_correspondence,
-       smtfp_sub_circuit_correspondence,
-       smtfp_add_circuit_RNE_comm,
-       smtfp_add_circuit_RTN_pzero,
-       smtfp_add_circuit_RTN_right_zero_bits,
-       smtfp_add_circuit_nan, smtfp_sub_circuit_nan,
-       smtfp_bits_pzero, smtfp_pzero_bits,
-       smtfp_bits_nzero, smtfp_nzero_bits]
+      [smtfloatTheory.smtfp_add_circuit_correspondence,
+       smtfloatTheory.smtfp_sub_circuit_correspondence,
+       smtfloatTheory.smtfp_add_circuit_RNE_comm,
+       smtfloatTheory.smtfp_add_circuit_RTN_pzero,
+       smtfloatTheory.smtfp_add_circuit_RTN_right_zero_bits,
+       smtfloatTheory.smtfp_add_circuit_nan,
+       smtfloatTheory.smtfp_sub_circuit_nan,
+       smtfloatTheory.smtfp_bits_pzero,
+       smtfloatTheory.smtfp_pzero_bits,
+       smtfloatTheory.smtfp_bits_nzero,
+       smtfloatTheory.smtfp_nzero_bits]
     end
 
   val mul_rewrites =
     let open smtfloatTheory
     in
-      [smtfp_mul_one]
+      [smtfloatTheory.smtfp_mul_one]
     end
 
   fun mul_one_prove t =

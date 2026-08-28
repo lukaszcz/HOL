@@ -152,13 +152,19 @@ struct
 
     val literal_normalization_thms =
       List.map Drule.UNDISCH
-        [smtfp_bits_pzero, smtfp_pzero_bits,
-         smtfp_bits_nzero, smtfp_nzero_bits,
-         smtfp_bits_pinf, smtfp_pinf_bits,
-         smtfp_bits_ninf, smtfp_ninf_bits,
-         smtfp_bits_nan, smtfp_nan_bits]
+        [smtfloatTheory.smtfp_bits_pzero,
+         smtfloatTheory.smtfp_pzero_bits,
+         smtfloatTheory.smtfp_bits_nzero,
+         smtfloatTheory.smtfp_nzero_bits,
+         smtfloatTheory.smtfp_bits_pinf,
+         smtfloatTheory.smtfp_pinf_bits,
+         smtfloatTheory.smtfp_bits_ninf,
+         smtfloatTheory.smtfp_ninf_bits,
+         smtfloatTheory.smtfp_bits_nan,
+         smtfloatTheory.smtfp_nan_bits]
 
-    val rounding_distinct_thms = Drule.CONJUNCTS smt_rounding_distinctness
+    val rounding_distinct_thms =
+      Drule.CONJUNCTS smtfloatTheory.smt_rounding_distinctness
   in
     val fp_thm_list =
       (* literal_positive/negative_zero, literal_positive/negative_infinity,
@@ -166,15 +172,22 @@ struct
       literal_normalization_thms @
       (* symbolic_classification_nan_positive and the arbitrary-format
          classification probes' abs normalization *)
-      [smtfp_is_nan_bits, smtfp_abs_bits, smtfp_neg_neg,
-       smtfp_abs_abs, smtfp_abs_neg] @
+      [smtfloatTheory.smtfp_is_nan_bits,
+       smtfloatTheory.smtfp_abs_bits,
+       smtfloatTheory.smtfp_neg_neg,
+       smtfloatTheory.smtfp_abs_abs,
+       smtfloatTheory.smtfp_abs_neg] @
       (* Ground rewrites use reflexivity; symbolic comparisons contain
          equality/symmetry transport and an fp.eq atom. *)
-      [smtfp_equality_refl, smtfp_equality_symm,
-       smtfp_eq_refl, smtfp_eq_of_equality, smtfp_eq_signed_zero] @
+      [smtfloatTheory.smtfp_equality_refl,
+       smtfloatTheory.smtfp_equality_symm,
+       smtfloatTheory.smtfp_eq_refl,
+       smtfloatTheory.smtfp_eq_of_equality,
+       smtfloatTheory.smtfp_eq_signed_zero] @
       (* ground_add/ground_div and conversions print RNE/RNA/RTZ literals;
          constructor distinctness and exhaustion are their enum boundary. *)
-      [smt_rounding_refl, Drule.SPEC_ALL smt_rounding_cases] @
+      [smtfloatTheory.smt_rounding_refl,
+       Drule.SPEC_ALL smtfloatTheory.smt_rounding_cases] @
       rounding_distinct_thms
 
     val fp_thms = thm_net_from_list fp_thm_list
@@ -184,21 +197,51 @@ local
   open HolSmtTheory
 in
   val def_axiom_thms = thm_net_from_list
-    [d001, d002, d003, d004, d005, d006, d007, d008, d009, d010, d011, d012,
-     d013, d014, d015, d016, d017, d018, d019, d020, d021, d022, d023, d024,
-     d025, d026, d027, d028]
+    [HolSmtTheory.d001, HolSmtTheory.d002, HolSmtTheory.d003,
+     HolSmtTheory.d004, HolSmtTheory.d005, HolSmtTheory.d006,
+     HolSmtTheory.d007, HolSmtTheory.d008, HolSmtTheory.d009,
+     HolSmtTheory.d010, HolSmtTheory.d011, HolSmtTheory.d012,
+     HolSmtTheory.d013, HolSmtTheory.d014, HolSmtTheory.d015,
+     HolSmtTheory.d016, HolSmtTheory.d017, HolSmtTheory.d018,
+     HolSmtTheory.d019, HolSmtTheory.d020, HolSmtTheory.d021,
+     HolSmtTheory.d022, HolSmtTheory.d023, HolSmtTheory.d024,
+     HolSmtTheory.d025, HolSmtTheory.d026, HolSmtTheory.d027,
+     HolSmtTheory.d028]
 
   val rewrite_thm_list =
-    [r001, r002, r003, r004, r005, r006, r007, r008, r009, r010, r011, r012,
-     r014, r015, r016, r017, r018, r019, r020, r022, r024,
-     r026, r027, r028, r029, r031, r032,
-     r037, r038, r039, r040, r041, r042, r043, r044, r045, r046, r047, r048,
-     r049, r050, r051, r052, r053, r054, r055, r056, r057, r058, r059, r060,
-     r061, r062, r067, r068,
-     r219, r220, r221, r222, r223, r224, r225, r226, r227, r228,
-     r229, r230, r231, r232, r233, r234, r235, r236, r237, r238, r239, r240,
-     r241, r242, r243, r244, r245, r246, r247, r248, r249, r250, r251, r252,
-     r253, r254, r255, r256, r257, r258, r259, r260, r261] @ set_thm_list
+    [HolSmtTheory.r001, HolSmtTheory.r002, HolSmtTheory.r003,
+     HolSmtTheory.r004, HolSmtTheory.r005, HolSmtTheory.r006,
+     HolSmtTheory.r007, HolSmtTheory.r008, HolSmtTheory.r009,
+     HolSmtTheory.r010, HolSmtTheory.r011, HolSmtTheory.r012,
+     HolSmtTheory.r014, HolSmtTheory.r015, HolSmtTheory.r016,
+     HolSmtTheory.r017, HolSmtTheory.r018, HolSmtTheory.r019,
+     HolSmtTheory.r020, HolSmtTheory.r022, HolSmtTheory.r024,
+     HolSmtTheory.r026, HolSmtTheory.r027, HolSmtTheory.r028,
+     HolSmtTheory.r029, HolSmtTheory.r031, HolSmtTheory.r032,
+     HolSmtTheory.r037, HolSmtTheory.r038, HolSmtTheory.r039,
+     HolSmtTheory.r040, HolSmtTheory.r041, HolSmtTheory.r042,
+     HolSmtTheory.r043, HolSmtTheory.r044, HolSmtTheory.r045,
+     HolSmtTheory.r046, HolSmtTheory.r047, HolSmtTheory.r048,
+     HolSmtTheory.r049, HolSmtTheory.r050, HolSmtTheory.r051,
+     HolSmtTheory.r052, HolSmtTheory.r053, HolSmtTheory.r054,
+     HolSmtTheory.r055, HolSmtTheory.r056, HolSmtTheory.r057,
+     HolSmtTheory.r058, HolSmtTheory.r059, HolSmtTheory.r060,
+     HolSmtTheory.r061, HolSmtTheory.r062, HolSmtTheory.r067,
+     HolSmtTheory.r068, HolSmtTheory.r219, HolSmtTheory.r220,
+     HolSmtTheory.r221, HolSmtTheory.r222, HolSmtTheory.r223,
+     HolSmtTheory.r224, HolSmtTheory.r225, HolSmtTheory.r226,
+     HolSmtTheory.r227, HolSmtTheory.r228, HolSmtTheory.r229,
+     HolSmtTheory.r230, HolSmtTheory.r231, HolSmtTheory.r232,
+     HolSmtTheory.r233, HolSmtTheory.r234, HolSmtTheory.r235,
+     HolSmtTheory.r236, HolSmtTheory.r237, HolSmtTheory.r238,
+     HolSmtTheory.r239, HolSmtTheory.r240, HolSmtTheory.r241,
+     HolSmtTheory.r242, HolSmtTheory.r243, HolSmtTheory.r244,
+     HolSmtTheory.r245, HolSmtTheory.r246, HolSmtTheory.r247,
+     HolSmtTheory.r248, HolSmtTheory.r249, HolSmtTheory.r250,
+     HolSmtTheory.r251, HolSmtTheory.r252, HolSmtTheory.r253,
+     HolSmtTheory.r254, HolSmtTheory.r255, HolSmtTheory.r256,
+     HolSmtTheory.r257, HolSmtTheory.r258, HolSmtTheory.r259,
+     HolSmtTheory.r260, HolSmtTheory.r261] @ set_thm_list
 
   val rewrite_thms = thm_net_from_list rewrite_thm_list
 
@@ -220,13 +263,22 @@ in
     end
 
   val th_lemma_thms = thm_net_from_list
-    ([t001, t002, t003, t004, t005, t006, t007, t008, t009, t010, t011,
-      t012, t013, t014, t015, t016, t017, t018, t019, t020, t021, t022,
-      t023, t024, t025, t026, t027, t028, t029, t030, t031, t032, t033,
-      t034, t035] @ array_thm_list @ set_thm_list)
+    ([HolSmtTheory.t001, HolSmtTheory.t002, HolSmtTheory.t003,
+      HolSmtTheory.t004, HolSmtTheory.t005, HolSmtTheory.t006,
+      HolSmtTheory.t007, HolSmtTheory.t008, HolSmtTheory.t009,
+      HolSmtTheory.t010, HolSmtTheory.t011, HolSmtTheory.t012,
+      HolSmtTheory.t013, HolSmtTheory.t014, HolSmtTheory.t015,
+      HolSmtTheory.t016, HolSmtTheory.t017, HolSmtTheory.t018,
+      HolSmtTheory.t019, HolSmtTheory.t020, HolSmtTheory.t021,
+      HolSmtTheory.t022, HolSmtTheory.t023, HolSmtTheory.t024,
+      HolSmtTheory.t025, HolSmtTheory.t026, HolSmtTheory.t027,
+      HolSmtTheory.t028, HolSmtTheory.t029, HolSmtTheory.t030,
+      HolSmtTheory.t031, HolSmtTheory.t032, HolSmtTheory.t033,
+      HolSmtTheory.t034, HolSmtTheory.t035] @
+     array_thm_list @ set_thm_list)
 
   val prove_hyp_thms = thm_net_from_list
-    [p001, p002]
+    [HolSmtTheory.p001, HolSmtTheory.p002]
 end  (* local *)
 
   (* finds a matching theorem, instantiates it, attempts to prove all

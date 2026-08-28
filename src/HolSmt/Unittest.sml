@@ -342,14 +342,9 @@ let
   val expected =
     ``!c : int -> int.
         (!x : int. 0 <= c x) ==> Num (c 0) = Num (c 0)``
-  val count_expected = ``!b x. (0 : int) <= (&(b x) : int)``
 in
   assert_num_binder_conv
-    ("bag count function relativization", input, expected);
-  assert_no_hyps ("BAG_COUNT_INT_NONNEG", HolSmtTheory.BAG_COUNT_INT_NONNEG);
-  assert_concl_alpha
-    ("BAG_COUNT_INT_NONNEG", HolSmtTheory.BAG_COUNT_INT_NONNEG,
-     count_expected)
+    ("bag count function relativization", input, expected)
 end
 
 fun num_to_int_under_abstraction_success () =
@@ -13611,6 +13606,9 @@ in
     String.concatWith ", " missing_bags)
 end
 
+fun replay_theorem_consumed_audit_success () =
+  ReplayTheoremAudit.check ()
+
 (* Pins for the post-parser forms of the Z3 captures in
    tools/proof-corpus/seq_set_bag/z3-*/proofs/{z3_set_subset,
    theory_z3_extensions_z3_set_{union,intersection,minus,complement,
@@ -16874,6 +16872,8 @@ let
       array_prove_set_ladder_rungs_success),
     ("collection_replay_table_completeness_success",
       collection_replay_table_completeness_success),
+    ("replay_theorem_consumed_audit_success",
+      replay_theorem_consumed_audit_success),
     ("z3_set_captured_shapes_replay_success",
       z3_set_captured_shapes_replay_success),
     ("z3_set_raw_captures_replay_success",
