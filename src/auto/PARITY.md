@@ -6,7 +6,7 @@ Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used
 
 The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: every equational definition the translation introduces, as a rewrite, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. It is more generous than Isabelle in one direction -- Isabelle adds a `fun` definition to its simpset by default but not a plain `definition` -- and the numbers below should be read with that in mind.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-25 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-08-28 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
 
 ## Scope
 
@@ -55,12 +55,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Solved under Isabelle's own ambient set | Routine selftest goals |
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
-| Sets | 353 | 311 | 310 | 4 |
-| List/map | 602 | 358 | 323 | 5 |
+| Sets | 353 | 310 | 309 | 4 |
+| List/map | 602 | 374 | 337 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **782** | **746** | **28** |
+| **Total** | **1070** | **797** | **759** | **28** |
 
 ## Cost of the solutions
 
@@ -68,13 +68,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 13 | 12 | 0 | 0 | 0.6 | 45 | 516 |
-| Sets | 311 | 110 | 194 | 7 | 0 | 6.1 | 6 | 2430 |
-| List/map | 358 | 5 | 350 | 3 | 0 | 5.3 | 0 | 455 |
-| Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
-| Presburger | 34 | 30 | 3 | 1 | 0 | 2.4 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 1.4 | 0 | 0 |
-| **Total** | **782** | **209** | **561** | **12** | **0** | **6.1** | **0** | **2430** |
+| Classical | 25 | 13 | 12 | 0 | 0 | 0.5 | 45 | 516 |
+| Sets | 310 | 113 | 189 | 8 | 0 | 3.5 | 6 | 2430 |
+| List/map | 374 | 5 | 364 | 5 | 0 | 3.8 | 0 | 769 |
+| Linarith | 46 | 43 | 3 | 0 | 0 | 0.5 | 0 | 0 |
+| Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
+| Algebra | 8 | 7 | 1 | 0 | 0 | 0.8 | 0 | 0 |
+| **Total** | **797** | **212** | **571** | **14** | **0** | **3.8** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -86,12 +86,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 42 | 0 | 0 |
-| List/map | 0 | 244 | 2 | 0 |
+| Sets | 0 | 43 | 0 | 0 |
+| List/map | 0 | 228 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **288** | **2** | **0** |
+| **Total** | **0** | **273** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -102,12 +102,12 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 | Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
-| Sets | 0 | 7 | 8 |
-| List/map | 21 | 0 | 17 |
+| Sets | 0 | 8 | 9 |
+| List/map | 19 | 0 | 16 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **21** | **7** | **25** |
+| **Total** | **19** | **8** | **25** |
 
 ## Seed-rule safety check
 

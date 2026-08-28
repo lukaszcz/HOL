@@ -3,10 +3,16 @@
   HOLGUARDSOUT, or guards-findings.md here.
 
   HOLGUARDSSKIP takes a comma-separated detector list, HOLGUARDSFAMILY one
-  family name, and HOLGUARDSLIMIT a per-family goal cap; each makes the
-  report partial, so the header records it.  HOLGUARDSPROGRESS=1 names each
-  goal as it is swept.  A3 runs every search-method goal, so it is the
-  expensive detector.
+  family name, HOLGUARDSGOAL a comma-separated goal id list, and
+  HOLGUARDSLIMIT a per-family goal cap; each makes the report partial, so
+  the header records it.  HOLGUARDSPROGRESS=1 names each goal as it is
+  swept.  A3 runs every search-method goal, so it is the expensive
+  detector; A1 costs upwards of a minute a goal, which is what
+  HOLGUARDSGOAL is for.
+
+  A family name that matches none is not an error: the sweep covers no
+  goal and every count is zero, which only the Goals column
+  distinguishes from a clean report.
 *)
 val output_path =
   case OS.Process.getEnv "HOLGUARDSOUT" of
@@ -27,10 +33,24 @@ fun selected ({name, ...} : parityLib.family) =
       NONE => true
     | SOME wanted => name = wanted
 
+val only_goals =
+  case OS.Process.getEnv "HOLGUARDSGOAL" of
+      NONE => NONE
+    | SOME text => SOME (String.tokens (fn c => c = #",") text)
+
 val goal_limit =
   Option.mapPartial Int.fromString (OS.Process.getEnv "HOLGUARDSLIMIT")
 
 val progress = OS.Process.getEnv "HOLGUARDSPROGRESS" = SOME "1"
+
+fun chosen goals =
+  case only_goals of
+      NONE => goals
+    | SOME wanted =>
+        List.filter
+          (fn (entry : benchLib.corpus_goal) =>
+            List.exists (fn id => id = #id entry) wanted)
+          goals
 
 fun truncated goals =
   case goal_limit of
@@ -74,7 +94,7 @@ type family_findings = {
 
 fun sweep ({name, goals, ...} : parityLib.family) : family_findings =
   let
-    val goals = truncated goals
+    val goals = truncated (chosen goals)
     val _ = TextIO.print ("sweeping " ^ name ^ "\n")
   in
     {name = name, goals = length goals,
@@ -139,6 +159,10 @@ val header =
   (case only_family of
        NONE => ""
      | SOME name => "; restricted to family " ^ name) ^
+  (case only_goals of
+       NONE => ""
+     | SOME wanted =>
+         "; restricted to goals " ^ String.concatWith ", " wanted) ^
   (case goal_limit of
        NONE => ""
      | SOME limit =>

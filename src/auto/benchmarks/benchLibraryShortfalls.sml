@@ -2,7 +2,7 @@ structure benchLibraryShortfalls =
 struct
 
 (* Records for the list, map, option, string and product-type goals
-   that the assigned tactic did not close in the 2026-08-25
+   that the assigned tactic did not close in the 2026-08-28
    measurement.  The classification names the root cause and the note
    says what stands in the way.  A goal listed in [over_budget] was
    cut off by the budget rather than reporting no proof, so its
@@ -17,7 +17,7 @@ struct
    no HOL4 statement.  They carry no goal, and the corpus accounts for
    them here instead. *)
 fun encoding_gap id line : benchLib.shortfall =
-  {id = id, cause = benchLib.TranslationGap, date = "2026-08-25",
+  {id = id, cause = benchLib.TranslationGap, date = "2026-08-28",
    note =
      "predicate and set encodings: the source result at List.thy:" ^
      Int.toString line ^ " relates Isabelle's set encoding of a " ^
@@ -58,7 +58,7 @@ val over_budget =
    "string_L357_integer_of_char_code"]
 
 fun record note id : benchLib.shortfall =
-  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-25",
+  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
    note =
      if List.exists (fn other => other = id) over_budget then
        note ^ " (the search did not return within the budget rather " ^
@@ -86,21 +86,34 @@ val congruence_rules =
     ["list_L1119_map_cong", "list_L3417_foldl_cong",
      "list_L8236_list_ex_cong"]
 
-val interval_membership =
-  classified "interval membership"
-    ("membership in a GENLIST is not reduced to an arithmetic "
-     ^ "bound")
-    ["list_L1384_atMost_upto", "list_L1388_atLeast_upt",
-     "list_L1392_greaterThanLessThan_upt",
-     "list_L1396_atLeastLessThan_upt",
-     "list_L1400_greaterThanAtMost_upt",
-     "list_L1404_atLeastAtMost_upt", "list_L3566_map_nth_upt0",
-     "list_L5140_map_fst_indexed_from",
-     "list_L5144_map_snd_indexed_from",
-     "list_L5163_nth_indexed_from_eq",
-     "list_L5176_distinct_indexed_from",
-     "list_L5180_indexed_from_append_eq",
-     "list_L6433_sorted_indexed_from", "list_L6453_sorted_transpose"]
+val prefix_from_its_indices =
+  classified "prefix from its indices"
+    ("the residual is [GENLIST (\\index. EL index xs) count = TAKE "
+     ^ "count xs]; rebuilding a prefix out of the indices it is "
+     ^ "read at is not a rewrite either simpset carries")
+    ["list_L3566_map_nth_upt0"]
+
+val distinctness_through_a_zip =
+  classified "distinctness through a zip"
+    ("the residual is ALL_DISTINCT of a ZIP whose first column is "
+     ^ "an interval; distinctness of the pairs does not reduce to "
+     ^ "distinctness of that column by rewriting")
+    ["list_L5176_distinct_indexed_from"]
+
+val zip_over_an_append =
+  classified "zip over an append"
+    ("the residual needs the interval of length [LENGTH xs + LENGTH "
+     ^ "ys] split into the two intervals the two ZIPs consume, a "
+     ^ "rewrite whose direction depends on the lengths")
+    ["list_L5180_indexed_from_append_eq"]
+
+val transpose_column_lengths =
+  classified "transpose column lengths"
+    ("the residual is that the column lengths of a transpose "
+     ^ "decrease; it holds because the number of rows reaching an "
+     ^ "index falls as the index grows, which is an induction "
+     ^ "rather than a rewrite")
+    ["list_L6453_sorted_transpose"]
 
 val emptiness_from_disjoint_membership =
   classified "emptiness from disjoint membership"
@@ -128,14 +141,13 @@ val instantiated_fact_citation =
      "list_L2806_zip_map1", "list_L2810_zip_map2",
      "list_L5301_nth_rotate1", "list_L6101_sorted_remove1",
      "list_L6202_sorted_same", "list_L6208_sorted_upt",
-     "list_L6211_sorted_upto", "list_L6292_sorted_insort",
+     "list_L6292_sorted_insort",
      "list_L6298_sorted_sort", "list_L6389_sorted_insort_insert"]
 
 val zip_against_map =
   classified "zip against map"
     ("ZIP against MAP is not normalised")
-    ["list_L1569_concat_injective", "list_L2751_zip_Cons1",
-     "list_L2904_zip_eq_conv"]
+    ["list_L1569_concat_injective", "list_L2751_zip_Cons1"]
 
 val over_budget_with_no_residual =
   classified "over budget with no residual"
@@ -190,7 +202,7 @@ val indexing_through_list_constructors =
      "list_L3919_bij_betw_nth", "list_L3925_set_update_distinct",
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost",
-     "list_L7954_listrel_iff_nth", "list_L7978_listrel_sym"]
+     "list_L7978_listrel_sym"]
 
 val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
@@ -281,15 +293,14 @@ val predicate_and_set_representation =
     ("the translation writes a set as a lambda and membership as "
      ^ "application; the assigned tactic does not identify (\x. F) "
      ^ "with EMPTY, (\x. t x) with t, or x IN P with P x")
-    ["list_L8638_filter_set", "map_L346_map_add_empty",
+    ["list_L8638_filter_set",
      "map_L578_dom_empty", "map_L786_graph_empty",
      "option_L288_these_empty",
      "product_type_L1094_Collect_case_prodD",
      "product_type_L1184_sing_Times_sing",
      "product_type_L469_cond_case_prod_eta",
      "product_type_L600_case_prodI2_", "product_type_L785_curry_conv",
-     "product_type_L797_curry_case_prod",
-     "product_type_L800_case_prod_curry"]
+     "product_type_L797_curry_case_prod"]
 
 val pair_membership_after_flattening =
   classified "pair membership after flattening"
@@ -402,7 +413,10 @@ val sigma_and_times_rule_forms =
 val execution : benchLib.shortfall list =
   conditional_list_rewrites @
   congruence_rules @
-  interval_membership @
+  prefix_from_its_indices @
+  distinctness_through_a_zip @
+  zip_over_an_append @
+  transpose_column_lengths @
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
   instantiated_fact_citation @

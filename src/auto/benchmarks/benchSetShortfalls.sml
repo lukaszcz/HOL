@@ -2,7 +2,7 @@ structure benchSetShortfalls =
 struct
 
 (* Every record here is an executable Set.thy or Set_Theory.thy goal
-   that the assigned tactic did not close in the 2026-08-25
+   that the assigned tactic did not close in the 2026-08-28
    measurement.  The classification names the root cause and the note
    says what stands in the way.  A goal listed in [over_budget] was
    still searching when the budget expired, so its classification is
@@ -20,7 +20,7 @@ val over_budget =
    "set_theory_L44", "set_theory_L48"]
 
 fun record note id : benchLib.shortfall =
-  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-25",
+  {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
    note =
      if List.exists (fn other => other = id) over_budget then
        note ^ " (the search exceeded the budget rather than " ^
@@ -118,6 +118,18 @@ val instantiated_fact_citation =
      ^ "citation but not its instantiation")
     ["set_theory_L79"]
 
+val equality_between_two_abstractions =
+  classified "equality between two abstractions"
+    ("the goal is an equation between two functions, which the "
+     ^ "simpset can only reach pointwise; the translation writes a "
+     ^ "set as a lambda, so [{x | P x} = {x | Q x}] arrives as "
+     ^ "[(\\x. P x) = (\\x. Q x)], the simpset's eta step contracts "
+     ^ "both sides before the antecedent can rewrite under the "
+     ^ "binder, and function extensionality -- which Isabelle's set "
+     ^ "type supplies and the predicate encoding drops -- is not an "
+     ^ "ambient rule")
+    ["set_L76_Collect_cong"]
+
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
   excluded_characterisation @
@@ -129,6 +141,7 @@ val entries : benchLib.shortfall list =
   set_monad_bind @
   image_comprehension @
   boolean_induction_rule @
-  instantiated_fact_citation
+  instantiated_fact_citation @
+  equality_between_two_abstractions
 
 end
