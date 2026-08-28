@@ -4571,6 +4571,22 @@ val blast_set_common_rules =
    clasetLib.SIntro SET_SINGLETON_I,
    clasetLib.SDest SET_SINGLETON_E]
 
+(* A set former reaches an engine only through a rule's variable, and the
+   crossing writes [P x] as [x IN P], so the beta redex an instantiation
+   creates is spelled [x IN (\y. b)].  blast's normaliser has to reduce it
+   as it reduces any other redex; without that the set former stays an atom
+   and the subset rule's premise can never be closed. *)
+val _ =
+  test
+    ("blast reduces a membership an instantiation put behind a set former",
+     fn () =>
+       blast_solves (tableauLib.BLAST_DEPTH_TAC 4 blast_set_common_rules)
+         ([], “(\x:'a. x IN A) SUBSET A”) andalso
+       blast_solves (tableauLib.BLAST_DEPTH_TAC 4 blast_set_common_rules)
+         ([], “A SUBSET (\x:'a. x IN A)”) andalso
+       blast_solves (tableauLib.BLAST_DEPTH_TAC 4 blast_set_common_rules)
+         ([], “(A:'a set) SUBSET C ==> (\x. x IN A) SUBSET (\x. x IN C)”))
+
 val blast_union_image_rules =
   blast_set_common_rules @
   [clasetLib.Intro SET_BIGUNION_IMAGE_I,

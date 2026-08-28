@@ -356,6 +356,16 @@ struct
       subst (term, 0)
     end
 
+  (* [IN] is a boolTheory constant, [IN = \x f. f x], so [item IN (\y. b)]
+     is the beta redex [(\y. b) item] written through that definition.  The
+     engines hold membership as the normal form of an application, which puts
+     that redex out of reach of the [f $ x] cases below: a set former an
+     instantiation puts behind a membership would stay an atom no rule can
+     see.  Every point that reduces one spelling reduces the other; [aconv]
+     reduces neither. *)
+  fun membership (Const ({Thy = "bool", Name = "IN"}, _)) = true
+    | membership _ = false
+
   fun norm term =
     case term of
         Skolem (name, args) => Skolem (name, vars_in_vars args)
@@ -367,7 +377,17 @@ struct
       | f $ x =>
           (case norm f of
                Abs (_, body) => norm (subst_bound (x, body))
-             | nf => nf $ norm x)
+             | nf =>
+                 let
+                   val nx = norm x
+                 in
+                   case (nf, nx) of
+                       (head $ item, Abs (_, body)) =>
+                         if membership head then
+                           norm (subst_bound (item, body))
+                         else nf $ nx
+                     | _ => nf $ nx
+                 end)
       | _ => term
 
   fun normMeasured checkpoint term =
@@ -392,7 +412,17 @@ struct
            | f $ x =>
                (case normalize f of
                     Abs (_, body) => normalize (substitute (x, body))
-                  | nf => nf $ normalize x)
+                  | nf =>
+                      let
+                        val nx = normalize x
+                      in
+                        case (nf, nx) of
+                            (head $ item, Abs (_, body)) =>
+                              if membership head then
+                                normalize (substitute (item, body))
+                              else nf $ nx
+                          | _ => nf $ nx
+                      end)
            | _ => item)
     in
       normalize term
@@ -419,13 +449,24 @@ struct
       | _ => term
 
   and wkNorm term =
-    case head_of term of
-        Const _ => term
-      | Skolem _ => term
-      | Fvar _ => term
-      | Goal => term
-      | False => term
-      | _ => wkNormAux term
+    case membership_redex term of
+        SOME reduced => wkNorm reduced
+      | NONE =>
+        (case head_of term of
+             Const _ => term
+           | Skolem _ => term
+           | Fvar _ => term
+           | Goal => term
+           | False => term
+           | _ => wkNormAux term)
+
+  and membership_redex ((head $ item) $ set) =
+        if membership head then
+          (case wkNorm set of
+               Abs (_, body) => SOME (subst_bound (item, body))
+             | _ => NONE)
+        else NONE
+    | membership_redex _ = NONE
 
   fun wkNormMeasured checkpoint term =
     let
@@ -458,13 +499,27 @@ struct
 
       and weak item =
         (checkpoint ();
-         case head item of
-             Const _ => item
-           | Skolem _ => item
-           | Fvar _ => item
-           | Goal => item
-           | False => item
-           | _ => weak_aux item)
+         case weak_membership_redex item of
+             SOME reduced => weak reduced
+           | NONE =>
+             (case head item of
+                  Const _ => item
+                | Skolem _ => item
+                | Fvar _ => item
+                | Goal => item
+                | False => item
+                | _ => weak_aux item))
+
+      and weak_membership_redex item =
+        (checkpoint ();
+         case item of
+             (head $ argument) $ set =>
+               if membership head then
+                 (case weak set of
+                      Abs (_, body) => SOME (substitute (argument, body))
+                    | _ => NONE)
+               else NONE
+           | _ => NONE)
     in
       weak term
     end
