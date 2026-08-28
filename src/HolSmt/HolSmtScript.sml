@@ -802,7 +802,6 @@ QED
 
   val _ = s ("r011", P ``(if T then x else y) = x``)
   val _ = s ("r012", P ``(if F then x else y) = y``)
-  val _ = s ("r013", T ``(if p then q else T) <=> (~p \/ q)``)
   val _ = s ("r014", T ``(if p then q else T) <=> (q \/ ~p)``)
   val _ = s ("r015", T ``(if p then q else ~q) <=> (p <=> q)``)
   val _ = s ("r016", T ``(if p then q else ~q) <=> (q <=> p)``)
@@ -811,16 +810,10 @@ QED
   val _ = s ("r019", P ``(if ~p then x else y) = (if p then y else x)``)
   val _ = s ("r020", P
     ``(if p then (if q then x else y) else x) = (if p /\ ~q then y else x)``)
-  val _ = s ("r021", P
-    ``(if p then (if q then x else y) else x) = (if ~q /\ p then y else x)``)
   val _ = s ("r022", P
     ``(if p then (if q then x else y) else y) = (if p /\ q then x else y)``)
-  val _ = s ("r023", P
-    ``(if p then (if q then x else y) else y) = (if q /\ p then x else y)``)
   val _ = s ("r024", P
     ``(if p then x else (if p then y else z)) = (if p then x else z)``)
-  val _ = s ("r025", P
-    ``(if p then x else (if q then x else y)) = (if p \/ q then x else y)``)
   val _ = s ("r026", P
     ``(if p then x else (if q then x else y)) = (if q \/ p then x else y)``)
   val _ = s ("r027", P
@@ -830,7 +823,6 @@ QED
   val _ = s ("r029", P
     ``(if p then x = y else z = y) <=> (y = if p then x else z)``)
 
-  val _ = s ("r030", T ``(~p ==> q) <=> (p \/ q)``)
   val _ = s ("r031", T ``(~p ==> q) <=> (q \/ p)``)
   val _ = s ("r032", T ``~(p ==> q) <=> ~(~p \/ q)``)
   val _ = s ("r037", T ``(p ==> q) <=> (~p \/ q)``)
@@ -862,16 +854,10 @@ QED
   val _ = s ("r060", T ``~p /\ q <=> ~(p \/ ~q)``)
   val _ = s ("r061", T ``p /\ ~q <=> ~(~p \/ q)``)
   val _ = s ("r062", T ``~p /\ ~q <=> ~(p \/ q)``)
-  val _ = s ("r063", T ``p /\ q <=> ~(~q \/ ~p)``)
-  val _ = s ("r064", T ``~p /\ q <=> ~(~q \/ p)``)
-  val _ = s ("r065", T ``p /\ ~q <=> ~(q \/ ~p)``)
-  val _ = s ("r066", T ``~p /\ ~q <=> ~(q \/ p)``)
 
   val _ = s ("r067", U [combinTheory.APPLY_UPDATE_ID] ``(x =+ f x) f = f``)
 
   val _ = s ("r068", S ``ALL_DISTINCT [x; x] <=> F``)
-  val _ = s ("r069", S ``ALL_DISTINCT [x; y] <=> x <> y``)
-  val _ = s ("r070", S ``ALL_DISTINCT [x; y] <=> y <> x``)
 
   val _ = s ("r219", R ``0 + (x :real) = x``)
   val _ = s ("r220", R ``(x :real) + 0 = x``)

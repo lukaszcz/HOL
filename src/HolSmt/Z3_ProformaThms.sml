@@ -5,6 +5,8 @@
 structure Z3_ProformaThms =
 struct
 
+  val ERR = Feedback.mk_HOL_ERR "Z3_ProformaThms"
+
   (* The Unicode-string carrier bounds every code point, so string lemmas
      about literal characters carry a '<= 196607' antecedent.  'prove'
      matches on the conclusion and discharges hypotheses, so such a lemma
@@ -54,17 +56,18 @@ struct
   (* Both forms are indexed: the original still matches a goal that carries
      the bound as its own antecedent, while the undischarged form matches a
      goal shaped like the bare conclusion. *)
+  fun thm_forms th =
+    let val undisched = undisch_code_point_bounds th
+    in
+      if Term.aconv (Thm.concl undisched) (Thm.concl th) then [th]
+      else [th, undisched]
+    end
+
   fun thm_net_from_list thms =
     let
       fun insert (th, net) = Net.insert (Thm.concl th, th) net
-      fun forms th =
-        let val undisched = undisch_code_point_bounds th
-        in
-          if Term.aconv (Thm.concl undisched) (Thm.concl th) then [th]
-          else [th, undisched]
-        end
     in
-      List.foldl insert Net.empty (List.concat (List.map forms thms))
+      List.foldl insert Net.empty (List.concat (List.map thm_forms thms))
     end
 
   val array_thm_list = [
@@ -185,18 +188,36 @@ in
      d013, d014, d015, d016, d017, d018, d019, d020, d021, d022, d023, d024,
      d025, d026, d027, d028]
 
-  val rewrite_thms = thm_net_from_list
-    ([r001, r002, r003, r004, r005, r006, r007, r008, r009, r010, r011, r012,
-     r013, r014, r015, r016, r017, r018, r019, r020, r021, r022, r023, r024,
-     r025, r026, r027, r028, r029, r030, r031, r032,
+  val rewrite_thm_list =
+    [r001, r002, r003, r004, r005, r006, r007, r008, r009, r010, r011, r012,
+     r014, r015, r016, r017, r018, r019, r020, r022, r024,
+     r026, r027, r028, r029, r031, r032,
      r037, r038, r039, r040, r041, r042, r043, r044, r045, r046, r047, r048,
      r049, r050, r051, r052, r053, r054, r055, r056, r057, r058, r059, r060,
-     r061, r062, r063, r064, r065, r066, r067, r068, r069, r070,
+     r061, r062, r067, r068,
      r219, r220, r221, r222, r223, r224, r225, r226, r227, r228,
      r229, r230, r231, r232, r233, r234, r235, r236, r237, r238, r239, r240,
      r241, r242, r243, r244, r245, r246, r247, r248, r249, r250, r251, r252,
-     r253, r254, r255, r256, r257, r258, r259, r260, r261] @
-    set_thm_list)
+     r253, r254, r255, r256, r257, r258, r259, r260, r261] @ set_thm_list
+
+  val rewrite_thms = thm_net_from_list rewrite_thm_list
+
+  val rewrite_side_thms =
+    let
+      fun insert (th, net) =
+        case Lib.total boolSyntax.dest_eq (Thm.concl th) of
+          NONE => net
+        | SOME (left, right) =>
+            let
+              fun insert_nonvar (term, net) =
+                if Term.is_var term then net else Net.insert (term, th) net
+            in
+              insert_nonvar (right, insert_nonvar (left, net))
+            end
+    in
+      List.foldl insert Net.empty
+        (List.concat (List.map thm_forms rewrite_thm_list))
+    end
 
   val th_lemma_thms = thm_net_from_list
     ([t001, t002, t003, t004, t005, t006, t007, t008, t009, t010, t011,
@@ -231,5 +252,54 @@ end  (* local *)
           HOLset.foldl prove_hyp th (Thm.hypset th)
         end)
       (Net.match t net)
+
+  (* Canonicalization is not substitution-stable: a schematic variable's
+     Term.compare order can change when it is instantiated.  If the direct
+     net lookup misses, infer an instance from either side of the rewrite,
+     then canonicalize that concrete theorem and compare its exact result.
+     This is generic theorem transport, not a list of commuted shapes. *)
+  fun prove_rewrite t =
+    prove rewrite_thms t
+    handle Feedback.HOL_ERR _ =>
+      let
+        val (target_left, target_right) = boolSyntax.dest_eq t
+
+        fun prove_hyp (hyp, th) =
+          let
+            val hyp_th = prove prove_hyp_thms hyp
+              handle Feedback.HOL_ERR _ =>
+                simpLib.SIMP_PROVE
+                  (simpLib.++
+                    (simpLib.++ (bossLib.std_ss, wordsLib.SIZES_ss),
+                     wordsLib.WORD_GROUND_ss)) [] hyp
+          in
+            Drule.PROVE_HYP hyp_th th
+          end
+
+        fun instantiate th (pattern, target) =
+          let
+            val th = Drule.INST_TY_TERM
+              (Term.match_term pattern target) th
+            val th = Conv.CONV_RULE
+              SmtReplayCanon.z3_rewrite_canon_conv th
+            val _ = Term.aconv (Thm.concl th) t orelse
+              raise ERR "prove_rewrite" "canonical conclusion does not match"
+          in
+            HOLset.foldl prove_hyp th (Thm.hypset th)
+          end
+
+        fun try_theorem th =
+          let
+            val (left, right) = boolSyntax.dest_eq (Thm.concl th)
+          in
+            Lib.tryfind (instantiate th)
+              [(left, target_left), (left, target_right),
+               (right, target_left), (right, target_right)]
+          end
+      in
+        Lib.tryfind try_theorem
+          (Net.match target_left rewrite_side_thms @
+           Net.match target_right rewrite_side_thms)
+      end
 
 end

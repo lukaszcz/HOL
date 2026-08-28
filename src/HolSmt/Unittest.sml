@@ -12949,6 +12949,94 @@ in
       "width th-lemma caches were not consumed exactly four times"))
 end
 
+fun z3_commuted_rewrite_orientation_replay_success () =
+let
+  fun mk_proof goal =
+    let
+      val initial = Z3_Proof.empty_proof "4.12.4"
+      val root = Z3_Proof.REWRITE goal
+      val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0, root)
+    in
+      Z3_Proof.update_proof_steps initial steps
+    end
+  fun check (name, through_seq, goal) =
+    let
+      val () = Profile.reset_all ()
+      val thm = Z3_ProofReplay.replay_root_for_test (mk_proof goal)
+      val canonical = boolSyntax.rhs (Thm.concl
+        (SmtReplayCanon.z3_rewrite_canon_conv goal))
+      val recanonical = boolSyntax.rhs (Thm.concl
+        (SmtReplayCanon.z3_rewrite_canon_conv canonical))
+      val orientation = profile_call_count
+        "rewrite(entry)(canonical-orientation)_OK"
+      val proforma = profile_call_count "rewrite(9)(proforma)_OK"
+      val seq = profile_call_count "rewrite(6)(seq)_OK"
+    in
+      assert_no_hyps ("commuted rewrite " ^ name, thm);
+      assert_concl_alpha ("commuted rewrite " ^ name, thm, goal);
+      check_oracle_tags ("commuted rewrite " ^ name) thm;
+      assert (Term.aconv canonical recanonical,
+        "rewrite canonical orientation was not idempotent");
+      assert (orientation = 1,
+        "commuted rewrite did not consume entry canonical orientation");
+      if through_seq then
+        assert (seq = 1 andalso proforma = 0,
+          "ALL_DISTINCT pair did not consume the general Seq/list rung")
+      else if Library.no_fastpath () then
+        assert (proforma = 0,
+          "commuted rewrite consumed a disabled proforma fastpath")
+      else
+        assert (proforma = 1,
+          "commuted rewrite did not consume the surviving proforma")
+    end
+  val cases = [
+    ("cond-true-left", false, ``(if p then q else T) <=> (~p \/ q)``),
+    ("r014", false, ``(if p then q else T) <=> (q \/ ~p)``),
+    ("r020", false, ``(if p then (if q then x:int else y) else x) =
+      (if p /\ ~q then y else x)``),
+    ("nested-cond-false-left", false,
+      ``(if p then (if q then x:int else y) else x) =
+      (if ~q /\ p then y else x)``),
+    ("r022", false, ``(if p then (if q then x:int else y) else y) =
+      (if p /\ q then x else y)``),
+    ("nested-cond-true-left", false,
+      ``(if p then (if q then x:int else y) else y) =
+      (if q /\ p then x else y)``),
+    ("nested-cond-disj-left", false,
+      ``(if p then x:int else (if q then x else y)) =
+      (if p \/ q then x else y)``),
+    ("r026", false, ``(if p then x:int else (if q then x else y)) =
+      (if q \/ p then x else y)``),
+    ("neg-implication-left", false, ``(~p ==> q) <=> (p \/ q)``),
+    ("r031", false, ``(~p ==> q) <=> (q \/ p)``),
+    ("r059", false, ``p /\ q <=> ~(~p \/ ~q)``),
+    ("demorgan-pp-reverse", false, ``p /\ q <=> ~(~q \/ ~p)``),
+    ("r060", false, ``~p /\ q <=> ~(p \/ ~q)``),
+    ("demorgan-np-reverse", false, ``~p /\ q <=> ~(~q \/ p)``),
+    ("r061", false, ``p /\ ~q <=> ~(~p \/ q)``),
+    ("demorgan-pn-reverse", false, ``p /\ ~q <=> ~(q \/ ~p)``),
+    ("r062", false, ``~p /\ ~q <=> ~(p \/ q)``),
+    ("demorgan-nn-reverse", false, ``~p /\ ~q <=> ~(q \/ p)``),
+    ("all-distinct-forward", true,
+      ``ALL_DISTINCT [x:int; y] <=> x <> y``),
+    ("all-distinct-reverse", true,
+      ``ALL_DISTINCT [x:int; y] <=> y <> x``),
+    ("composite-nested-cond", false,
+      ``(if p /\ r then (if ~q then x:int else y) else y) =
+        (if ~q /\ (p /\ r) then x else y)``),
+    ("composite-demorgan", false,
+      ``(p \/ r) /\ ~q <=> ~(q \/ ~(p \/ r))``),
+    ("composite-all-distinct", true,
+      ``ALL_DISTINCT [f (x:int); g y] <=> g y <> f x``)]
+  val active_cases =
+    if Library.no_fastpath () then
+      [List.nth (cases, 0), List.nth (cases, 18),
+       List.nth (cases, 20), List.nth (cases, 22)]
+    else cases
+in
+  List.app check active_cases
+end
+
 fun z3_arith_bv_fallback_resource_gate_propagates () =
 let
   val fallback_called = ref false
@@ -16724,6 +16812,8 @@ let
       z3_th_lemma_basic_dispatch_replay_success),
     ("z3_width_proforma_public_replay_success",
       z3_width_proforma_public_replay_success),
+    ("z3_commuted_rewrite_orientation_replay_success",
+      z3_commuted_rewrite_orientation_replay_success),
     ("z3_arith_bv_fallback_resource_gate_propagates",
       z3_arith_bv_fallback_resource_gate_propagates),
     ("z3_th_lemma_basic_unsupported_diagnostic",

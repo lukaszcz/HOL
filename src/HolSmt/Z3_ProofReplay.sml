@@ -2072,7 +2072,7 @@ local
                 "rewrite(9)(proforma)"
                 (fn target =>
                   (Library.require_fastpath "Z3 rewrite proforma";
-                   Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms target))
+                   Z3_ProformaThms.prove_rewrite target))
                 t)
               handle Feedback.HOL_ERR _ =>
                 let
@@ -2342,6 +2342,18 @@ local
   end
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
+
+  fun z3_rewrite_entry (state, target) =
+  let
+    val orientation =
+      profile "rewrite(entry)(canonical-orientation)"
+        (Conv.QCHANGED_CONV SmtReplayCanon.z3_rewrite_canon_conv) target
+      handle Conv.UNCHANGED => Thm.REFL target
+    val canonical = boolSyntax.rhs (Thm.concl orientation)
+    val (state, theorem) = z3_rewrite (state, canonical)
+  in
+    (state, Thm.EQ_MP (Thm.SYM orientation) theorem)
+  end
 
   (* |- ~(!x. P x y) <=> ~(P (sk y) y)
      |- (?x. P x y) <=> P (sk y) y *)
@@ -3225,7 +3237,7 @@ local
     | thm_of_proofterm (state_proof, REFL x) continuation =
         zero_prems state_proof "refl" z3_refl x continuation
     | thm_of_proofterm (state_proof, REWRITE x) continuation =
-        zero_prems state_proof "rewrite" z3_rewrite x continuation
+        zero_prems state_proof "rewrite" z3_rewrite_entry x continuation
     | thm_of_proofterm (state_proof, SKOLEM x) continuation =
         zero_prems state_proof "skolem" z3_skolem x continuation
     | thm_of_proofterm (state_proof, SYMM x) continuation =

@@ -93,6 +93,31 @@ struct
       else raise Conv.UNCHANGED
     end
 
+  (* Z3 emits propositionally identical rewrite conclusions with arbitrary
+     operand order.  Use one proof-producing key space for rewrite proformas:
+     equality atoms and binary Boolean operands are oriented deterministically
+     without simplifying, deleting, or reassociating operands.  Recursive
+     binary orientation stays linear on large solver-generated formulas. *)
+  fun reorient_binary_conv dest comm tm =
+    let
+      val (left, right) = dest tm
+    in
+      if Term.compare (right, left) = LESS then Conv.REWR_CONV comm tm
+      else raise Conv.UNCHANGED
+    end
+
+  fun boolean_commute_conv tm =
+    if boolSyntax.is_conj tm then
+      reorient_binary_conv boolSyntax.dest_conj boolTheory.CONJ_COMM tm
+    else if boolSyntax.is_disj tm then
+      reorient_binary_conv boolSyntax.dest_disj boolTheory.DISJ_COMM tm
+    else raise Conv.UNCHANGED
+
+  val z3_rewrite_canon_conv = compose
+    [Conv.TOP_DEPTH_CONV reorient_equality_conv,
+     Conv.TOP_DEPTH_CONV boolean_commute_conv,
+     Conv.TOP_DEPTH_CONV reorient_equality_conv]
+
   fun reflexive_equality_conv tm =
     let
       val (left, right) = boolSyntax.dest_eq tm
