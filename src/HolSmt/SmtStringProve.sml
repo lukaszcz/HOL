@@ -772,6 +772,7 @@ struct
      reconstruct the recorded equality by a targeted conversion. *)
   val rewrite_normalizations = [
     smtstringTheory.smtstr_concat_def,
+    smtstringTheory.smtstr_substr_def,
     smtstringTheory.smtstr_concat_assoc,
     smtstringTheory.smtstr_concat_nil_left,
     smtstringTheory.smtstr_concat_nil_right,

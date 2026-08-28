@@ -1997,8 +1997,10 @@ local
       rewrite_nnf (l, r))
     handle Feedback.HOL_ERR _ =>
 
-    (* at this point, we should have dealt with all propositional
-       tautologies (i.e., 'tautLib.TAUT_PROVE t' should fail here) *)
+    (* A Boolean tautology does not become an FP-specific obligation merely
+       because an atom has FP type.  Decide the complete propositional
+       fragment before entering the terminal FP ladder, while preserving the
+       established cost order for non-FP rewrite families. *)
 
     (* Once an FP-shaped rewrite enters its dedicated ladder, failure at its
        unsupported rung is terminal.  In particular, generic unification
@@ -2006,12 +2008,15 @@ local
        FP_REWRITE_ERROR crosses the handlers below and is converted back to a
        structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
-      ((* E1(c): exact FP theorem reuse is a redundant performance cache. *)
-       (state, rewrite_profile "cached-checked-theorems"
-          "rewrite(3)(cache-fp)"
-          (fn target =>
-            (Library.require_fastpath "Z3 rewrite FP theorem cache";
-             state_exact_cached_thm state target)) t)
+      ((state, rewrite_profile "propositional"
+          "rewrite(fp-preflight)(TAUT_PROVE)" tautLib.TAUT_PROVE t)
+        handle Feedback.HOL_ERR _ =>
+       ((* E1(c): exact FP theorem reuse is a redundant performance cache. *)
+        (state, rewrite_profile "cached-checked-theorems"
+           "rewrite(3)(cache-fp)"
+           (fn target =>
+             (Library.require_fastpath "Z3 rewrite FP theorem cache";
+              state_exact_cached_thm state target)) t)
         handle Feedback.HOL_ERR _ =>
           let
             val eligible_decompositions =
@@ -2029,7 +2034,7 @@ local
             val state = state_define (state_cache_thm state thm) definitions
           in
             (state, thm)
-          end)
+          end))
     else
       (* FP has first refusal.  Z3's bag encoding then gets the count-array
          ladder before generic proformas; its [(_ map +)] terms parse to
@@ -3741,29 +3746,55 @@ local
               SOME (Thm.EQ_MP (Thm.SYM hyp_normalization)
                 (Thm.EQ_MP normalization (Thm.ASSUME assumption)))
             else canonical_assumption rest
+      (* Z3 can leave a proved String normalization as an extra hypothesis
+         during solve-eqs finalization.  Discharge it through the same
+         general, proof-producing String rewrite procedure used by rewrite
+         replay.  Its resource refusal remains terminal; ordinary family
+         mismatch falls through to the other semantic procedures. *)
+      fun prove_string_hypothesis target =
+        SmtStringProve.string_rewrite_prove target
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else
+            let
+              val (left, right) = boolSyntax.dest_eq target
+              val reverse = boolSyntax.mk_eq (right, left)
+            in
+              Thm.SYM (SmtStringProve.string_rewrite_prove reverse)
+            end
+      fun string_hypothesis () =
+        SOME (profile "check_proof(hyp_removal:string)"
+          prove_string_hypothesis hyp)
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else NONE
       val hyp_thm =
         case canonical_assumption (canonical_assumptions ()) of
           SOME th => th
-        | NONE => (case first_success
-          [("check_proof(hyp_removal:numeral_normalize)",
-              smt_numeral_normalize_tac rdiv_bridges),
-           ("check_proof(hyp_removal:semantic_normalize)",
-              smt_semantic_normalize_tac),
-           ("check_proof(hyp_removal:total_real_normalize)",
-              smt_total_real_normalize_tac rdiv_bridges),
-           ("check_proof(hyp_removal:normalize)", smt_normalize_tac []),
-           ("check_proof(hyp_removal:full_normalize)",
-              smt_full_normalize_tac datatype_thms),
-           ("check_proof(hyp_removal:datatype_normalize)",
-              datatype_normalize_tac datatype_thms),
-           ("check_proof(hyp_removal:entailment)", entailment_tac)] of
+        | NONE => (case string_hypothesis () of
           SOME th => th
-        | NONE => raise ERR "remove_hyps"
-            ("extra hypothesis is not entailed by the goal's assumptions; " ^
-             "hypothesis=" ^ Library.term_to_string hyp ^
-             "; attempted=[numeral division, semantic division, total " ^
-             "division, arithmetic normalization, datatype normalization, " ^
-             "context entailment]"))
+        | NONE => (case first_success
+            [("check_proof(hyp_removal:numeral_normalize)",
+                smt_numeral_normalize_tac rdiv_bridges),
+             ("check_proof(hyp_removal:semantic_normalize)",
+                smt_semantic_normalize_tac),
+             ("check_proof(hyp_removal:total_real_normalize)",
+                smt_total_real_normalize_tac rdiv_bridges),
+             ("check_proof(hyp_removal:normalize)", smt_normalize_tac []),
+             ("check_proof(hyp_removal:full_normalize)",
+                smt_full_normalize_tac datatype_thms),
+             ("check_proof(hyp_removal:datatype_normalize)",
+                datatype_normalize_tac datatype_thms),
+             ("check_proof(hyp_removal:entailment)", entailment_tac)] of
+            SOME th => th
+          | NONE => raise ERR "remove_hyps"
+              ("extra hypothesis is not entailed by the goal's assumptions; " ^
+               "hypothesis=" ^ Library.term_to_string hyp ^
+               "; attempted=[String normalization, numeral division, " ^
+               "semantic division, total division, arithmetic normalization, " ^
+               "datatype normalization, context entailment]")))
     in
       Drule.PROVE_HYP hyp_thm thm
     end
@@ -3793,6 +3824,7 @@ in
   (* For unit tests *)
   val remove_definitions = remove_definitions
   val remove_extra_hyps = remove_extra_hyps
+  val remove_hyps_for_test = remove_hyps
   val quantified_boolean_rewrite_prove_for_test =
     quantified_boolean_rewrite_prove
   val beta_equal_for_test = beta_equal

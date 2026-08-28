@@ -13173,6 +13173,26 @@ in
   List.app assert_profile_class routed_profiles
 end
 
+fun z3_rewrite_propositional_precedes_fp_success () =
+let
+  val goal =
+    ``(((x : (4,3) smtfp) = smtfp_pzero ==> T) = T)``
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert
+    (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE goal)
+  val proof = Z3_Proof.update_proof_steps initial steps
+  val () = Profile.reset_all ()
+  val thm = Z3_ProofReplay.replay_root_for_test proof
+in
+  assert_no_hyps ("propositional rewrite before FP", thm);
+  assert_concl_alpha ("propositional rewrite before FP", thm, goal);
+  check_oracle_tags "propositional rewrite before FP" thm;
+  assert (profile_call_count
+      "rewrite(fp-preflight)(TAUT_PROVE)_OK" = 1 andalso
+      profile_call_count "rewrite(4)(fp)" = 0,
+    "FP-atom tautology did not use propositional replay before FP dispatch")
+end
+
 fun z3_rewrite_double_negation_unification_success () =
 let
   val () = Profile.reset_all ()
@@ -13297,6 +13317,28 @@ in
         "check_proof(hyp_removal:entailment)_HOL_ERR" = 1 andalso
       profile_call_count "check_proof(hyp_removal)_HOL_ERR" = 1,
     "non-entailing contextual replay did not fail at checked entailment")
+end
+
+fun z3_string_hypothesis_normalization_success () =
+let
+  val hyp =
+    ``smtstr_substr (SmtStr []) (z:int) (smtstr_to_int x) = SmtStr []``
+  val neg_hyp = boolSyntax.mk_neg hyp
+  val contradiction = Thm.MP
+    (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
+  val () = Profile.reset_all ()
+  val thm = Z3_ProofReplay.remove_hyps_for_test ([], hyp, contradiction)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F andalso
+      List.length (Thm.hyp thm) = 1 andalso
+      Term.aconv (List.hd (Thm.hyp thm)) neg_hyp,
+    "String normalization did not remove exactly the solver-added hypothesis");
+  check_oracle_tags "String hypothesis normalization" thm;
+  assert (profile_call_count
+      "check_proof(hyp_removal:string)_OK" = 1 andalso
+      profile_call_count
+        "check_proof(hyp_removal:numeral_normalize)" = 0,
+    "String extra hypothesis did not consume the general String prover first")
 end
 
 fun z3_nonlinear_missing_csdp_diagnostic () =
@@ -16844,6 +16886,8 @@ let
       z3_arith_bv_fallback_resource_gate_propagates),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
+    ("z3_rewrite_propositional_precedes_fp_success",
+      z3_rewrite_propositional_precedes_fp_success),
     ("z3_rewrite_ladder_exhausted_diagnostic",
       z3_rewrite_ladder_exhausted_diagnostic),
     ("z3_rewrite_double_negation_unification_success",
@@ -16854,6 +16898,8 @@ let
       z3_rewrite_deferred_alias_return_success),
     ("z3_contextual_entailment_end_to_end_success",
       z3_contextual_entailment_end_to_end_success),
+    ("z3_string_hypothesis_normalization_success",
+      z3_string_hypothesis_normalization_success),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
