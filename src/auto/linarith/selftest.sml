@@ -1191,32 +1191,6 @@ val _ =
        replay_is_false [num_eq num_one num_zero]
          (Multiplied (Arbint.~ two, Asm 0)))
 
-val _ =
-  check
-    ("replay generalizes and restores one shared complex atom",
-     fn () =>
-       let
-         val atom = numSyntax.mk_div (num_x, num_three)
-         val terms =
-           [num_leq (num_plus atom num_three) num_two,
-            num_leq num_zero atom]
-         val (generalized, restore) = linarithReplay.generalize terms
-         val (left_expression, _) =
-           numSyntax.dest_leq (List.nth (generalized, 0))
-         val (left_atom, _) = numSyntax.dest_plus left_expression
-         val (_, right_atom) =
-           numSyntax.dest_leq (List.nth (generalized, 1))
-         val shared =
-           Term.is_var left_atom andalso Term.aconv left_atom right_atom
-         val theorem =
-           restore (replay generalized (Added (Asm 0, Asm 1)))
-       in
-         shared andalso
-         Term.aconv (Thm.concl theorem) boolSyntax.F andalso
-         List.all
-           (fn tm => List.exists (Term.aconv tm) (Thm.hyp theorem)) terms
-       end)
-
 (* The injection add-fallback -- summing two assumptions stated in
    different carriers, which mkthm can only do by lifting one of them
    through the conversion closure -- is pinned in instances/, by the
@@ -1840,12 +1814,18 @@ val _ =
          (linarithLib.CFG_LINARITH_TAC full_neq_zero [])
          (neq_assumptions, neq_goal))
 
+(* One procedure, one strength.  The forward entries are the search
+   reached from a simplifier rather than from a goal, so a question the
+   tactic decides cannot be declined merely because a simplifier asked
+   it: the [-], MIN and MAX splits belong to the procedure, not to the
+   tactic that wraps it. *)
 val _ =
   check
-    ("LINARITH_PROVE performs no MIN preprocessing",
+    ("the forward entries split MIN like the tactic",
      fn () =>
-       ((ignore (linarithLib.LINARITH_PROVE min_le_left); false)
-        handle Feedback.HOL_ERR _ => true) andalso
+       ((Term.aconv (Thm.concl (linarithLib.LINARITH_PROVE min_le_left))
+           min_le_left)
+        handle Feedback.HOL_ERR _ => false) andalso
        valid_closes (linarithLib.LINARITH_TAC []) ([], min_le_left))
 
 val nonlinear_goal =
@@ -1958,6 +1938,35 @@ val _ =
        (linarithLib.clear_linarith_caches ();
         reducer_succeeds [Thm.ASSUME public_x_le_y] public_x_le_y andalso
         reducer_succeeds [Thm.ASSUME public_x_le_y] public_x_le_y))
+
+(* [SUC y] is subtracted and added back, so the goal is decidable only
+   once the truncated subtraction is split on its sign.  Stated with a
+   context rather than closed, because that is the shape a side
+   condition arrives in. *)
+val forward_split_context =
+  [num_less public_x public_z, num_less public_y public_x]
+val forward_split_goal =
+  num_less public_x
+    (numSyntax.mk_plus
+       (numSyntax.mk_suc public_y,
+        numSyntax.mk_minus (public_z, numSyntax.mk_suc public_y)))
+
+val _ =
+  check
+    ("the simplifier-facing entries split subtraction like the tactic",
+     fn () =>
+       (linarithLib.clear_linarith_caches ();
+        valid_closes (linarithLib.LINARITH_TAC [])
+          (forward_split_context, forward_split_goal) andalso
+        reducer_succeeds (map Thm.ASSUME forward_split_context)
+          forward_split_goal andalso
+        ((ignore
+            (#solve linarithLib.linarith_solver
+               {stack = [], recurse = Conv.NO_CONV,
+                context_thms = map Thm.ASSUME forward_split_context}
+               forward_split_goal);
+          true)
+         handle Feedback.HOL_ERR _ => false)))
 
 val conjunctive_context =
   HolKernel.CONJ

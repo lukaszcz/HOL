@@ -838,33 +838,67 @@ val LINARITH_TAC = CFG_LINARITH_TAC default_config
 fun atomized_assumptions premises =
   List.concat (map (CONJUNCTS o Thm.ASSUME) premises)
 
+(* The same search the tactic runs, on the terms as given.  A single
+   refutation attempt on generalized terms -- which is what this was --
+   decides strictly less in two ways that compound: generalization
+   abstracts every atom that is not a variable or a literal, so [x - y],
+   [MIN x y] and [x DIV 3] reach the refutation as opaque variables, and
+   the phases
+   that exist to eliminate them, the on-demand [-]/MIN/MAX splits and
+   the DIV/MOD augmentation, then have nothing to look at.  Every
+   consumer but LINARITH_TAC -- the side-condition solver, the
+   LINARITH_ss reducer, LINARITH_CONV and LINARITH_PROVE -- arrives
+   here, so the procedure answered one question as a tactic and a
+   smaller one everywhere else.
+
+   Nothing needed the generalization: the search calls the same
+   refutation on the assumptions of a real goal every time it is
+   reached as a tactic. *)
+val forward_search_name = "forward_search"
+
+fun forward_search conclusion =
+  let
+    val search =
+      split_on_demand forward_search_name linarithData.default_config
+        (cached_split_tac ())
+  in
+    Tactical.THEN
+      (Tactic.CCONTR_TAC,
+       Tactical.THEN
+         (Tactical.TRY opposite_tac,
+          Tactical.THEN
+            (filter_relevant, search (unregistered_hint conclusion))))
+  end
+
+(* A search that found nothing raises under its own name; anything else
+   -- a malformed instance, a replay that will not rebuild -- is a
+   defect the caller has to see rather than a declined question. *)
+fun exhausted_search exn =
+  case exn of
+      Feedback.HOL_ERR error =>
+        Feedback.top_structure_of error = "linarithLib" andalso
+        Feedback.top_function_of error = forward_search_name
+    | _ => false
+
 fun forward_prove premises conclusion =
   let
     val premise_theorems = atomized_assumptions premises
     val premise_terms = map Thm.concl premise_theorems
-    val (generalized, restore) =
-      linarithReplay.generalize (premise_terms @ [conclusion])
-    val (generalized_premises, generalized_conclusion) =
-      Lib.front_last generalized
-    val generalized_theorems = map Thm.ASSUME generalized_premises
-    val generalized_theorem =
-      case
-        linarithReplay.refute linarithData.default_config
-          generalized_premises generalized_conclusion
-      of
+    val outcome =
+      SOME (forward_search conclusion (premise_terms, conclusion))
+      handle exn =>
+        if exhausted_search exn then NONE else raise exn
+    val theorem =
+      case outcome of
           NONE => decline ""
-        | SOME tactic =>
+        | SOME (goals, validation) =>
             let
-              val (goals,validation) =
-                tactic (generalized_premises,generalized_conclusion)
               val _ =
                 if null goals then ()
                 else raise ERR "forward_prove" "replay left a subgoal open"
             in
-              Lib.rev_itlist PROVE_HYP generalized_theorems
-                (validation [])
+              validation []
             end
-    val theorem = restore generalized_theorem
   in
     Lib.rev_itlist PROVE_HYP premise_theorems theorem
   end

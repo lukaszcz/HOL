@@ -10,29 +10,6 @@ val same_type = linarithData.same_type
 
 type config = linarithData.linarith_config
 
-fun is_literal tm =
-  case linarithData.instance_for (Term.type_of tm) of
-      NONE => false
-    | SOME instance =>
-        Option.isSome (Lib.total (#dest_lit (#dest instance)) tm)
-
-fun generalize terms =
-  let
-    val atoms =
-      atoms_of_decomps (List.mapPartial linarithDecomp.decomp terms)
-    val abstracted =
-      List.filter (fn tm => not (Term.is_var tm) andalso
-                            not (is_literal tm)) atoms
-    val variables = List.map (genvar o Term.type_of) abstracted
-    val generalizing = ListPair.map (fn (tm, var) => tm |-> var)
-      (abstracted, variables)
-    val restoring = ListPair.map (fn (var, tm) => var |-> tm)
-      (variables, abstracted)
-    val generalized = List.map (Term.subst generalizing) terms
-  in
-    (generalized, Thm.INST restoring)
-  end
-
 val dest_binary = linarithDecomp.binary_parts
 
 fun relation_body tm =

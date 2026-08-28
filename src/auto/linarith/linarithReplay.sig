@@ -2,14 +2,6 @@ signature linarithReplay =
 sig
   type config = linarithData.linarith_config
 
-  (* generalize terms replaces the atoms of terms that are neither
-     variables nor literals by fresh variables, and returns the
-     generalized terms -- in the order given -- together with the
-     instantiation that puts the atoms back into a theorem proved about
-     them. *)
-  val generalize :
-    Term.term list -> Term.term list * (Thm.thm -> Thm.thm)
-
   (* Replays one certificate; the theorem list is what its Asm nodes
      index. *)
   val mkthm : Thm.thm list -> linarithSolve.injust -> Thm.thm
