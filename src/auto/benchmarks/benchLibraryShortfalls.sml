@@ -383,12 +383,14 @@ val character_arithmetic =
 
 val sigma_and_times_rule_forms =
   classified "Sigma and Times rule forms"
-    ("the claset has no introduction or elimination rules for "
-     ^ "Sigma and cross products, so BLAST_TAC has nothing to "
-     ^ "decompose the goal with")
+    ("Isabelle states these about the constant Sigma, whose claset "
+     ^ "carries SigmaI, SigmaE and mem_Sigma_iff; the translation "
+     ^ "inlines the definition, so the goal reaching HOL4 is about "
+     ^ "FST and SND of an explicit pair, and a claset rule is about "
+     ^ "a formula rather than a projection")
     ["product_type_L1028_SigmaI", "product_type_L1031_SigmaE",
      "product_type_L1040_SigmaD1", "product_type_L1043_SigmaD2",
-     "product_type_L1046_SigmaE2", "product_type_L1052_Sigma_mono",
+     "product_type_L1046_SigmaE2",
      "product_type_L1073_mem_Sigma_iff",
      "product_type_L1082_Times_subset_cancel2",
      "product_type_L1085_Times_eq_cancel2",
