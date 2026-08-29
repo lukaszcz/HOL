@@ -6238,3 +6238,20 @@ val _ =
          member_step implication goal
            ([implication], mk_comb (member_q, member_a))
        end)
+
+val _ =
+  test
+    ("a rule stated with IN over a compound set reaches an applied goal atom",
+     fn () =>
+       let
+         val implication =
+           boolSyntax.mk_forall
+             (member_x,
+              boolSyntax.mk_imp
+                (mk_comb (member_q, member_x),
+                 member_in member_x member_fp))
+         val goal = ([implication], mk_comb (member_fp, member_a))
+       in
+         member_step implication goal
+           ([implication], mk_comb (member_q, member_a))
+       end)

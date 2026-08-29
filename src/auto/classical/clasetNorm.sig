@@ -16,6 +16,12 @@ sig
   val membership_conv_with : (term -> bool) -> conv
   val membership_conv : conv
   val applied_conv : conv
+
+  (* Membership at every position: the mirror of [applied_conv], for a
+     lookup that must ask for both spellings of an application whose head
+     is compound, where neither is a normal form. *)
+  val crossed_conv : conv
+
   (* Carry a proof of a target's normal form back to the target. *)
   val align_conclusion : term -> thm -> thm
   val normalize_thm : thm -> thm

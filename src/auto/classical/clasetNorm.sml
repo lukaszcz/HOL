@@ -66,59 +66,77 @@ fun connective tm =
    than for a set.  [?P x] is how a search asks pattern unification to build
    a predicate, and writing it as a membership would leave a first-order
    problem that only another membership can solve.  Each engine names its own
-   holes: the classical engine's metavariables, blast's rule variables. *)
-fun formula is_hole tm =
-  Conv.ORELSEC
-    (Conv.THENC (head_beta_conv, formula is_hole), shape is_hole) tm
+   holes: the classical engine's metavariables, blast's rule variables.
 
-and shape is_hole tm =
+   [total] decides how much of an application counts as a set.  The crossing
+   proper answers only where the spelling is forced -- an application of a
+   variable -- and leaves a compound head alone, because a rule may be
+   stated either way over one and canonicalising would lose the other.  A
+   total crossing answers everywhere, and is a spelling rather than a normal
+   form for exactly that reason: it exists so a lookup can ask for the
+   membership form of a goal the way [applied_conv] asks for the applied
+   one. *)
+fun formula total is_hole tm =
+  Conv.ORELSEC
+    (Conv.THENC (head_beta_conv, formula total is_hole), shape total is_hole)
+    tm
+
+and shape total is_hole tm =
     let
-      val descend = formula is_hole
+      val descend = formula total is_hole
     in
       case connective tm of
-          SOME ("bool", "!", [_]) => binder is_hole tm
-        | SOME ("bool", "?", [_]) => binder is_hole tm
-        | SOME ("bool", "?!", [_]) => binder is_hole tm
+          SOME ("bool", "!", [_]) => binder total is_hole tm
+        | SOME ("bool", "?", [_]) => binder total is_hole tm
+        | SOME ("bool", "?!", [_]) => binder total is_hole tm
         | SOME ("bool", "~", [_]) => Conv.RAND_CONV descend tm
         | SOME ("bool", "/\\", [_, _]) => Conv.BINOP_CONV descend tm
         | SOME ("bool", "\\/", [_, _]) => Conv.BINOP_CONV descend tm
         | SOME ("min", "==>", [_, _]) => Conv.BINOP_CONV descend tm
         | SOME ("min", "=", [left, _]) =>
             if type_of left = Type.bool then Conv.BINOP_CONV descend tm
-            else atom is_hole tm
+            else atom total is_hole tm
         | SOME ("bool", "IN", [_, set]) =>
             if is_abs set then
               Conv.THENC
                 (Conv.REWR_CONV membership_thm,
                  Conv.THENC (BETA_CONV, descend)) tm
             else Conv.ALL_CONV tm
-        | _ => atom is_hole tm
+        | _ => atom total is_hole tm
     end
 
-and binder is_hole tm =
+and binder total is_hole tm =
     let
       val predicate = rand tm
     in
       if is_abs predicate then
-        Conv.RAND_CONV (Conv.ABS_CONV (formula is_hole)) tm
+        Conv.RAND_CONV (Conv.ABS_CONV (formula total is_hole)) tm
       else if is_var predicate andalso not (is_hole predicate) then
         (* [!x. P x] contracted to [$! P] would come back applied when a
            search instantiates it, so it is expanded and its body crossed. *)
-        Conv.THENC (Conv.RAND_CONV expand_conv, formula is_hole) tm
+        Conv.THENC (Conv.RAND_CONV expand_conv, formula total is_hole) tm
       else Conv.ALL_CONV tm
     end
 
-and atom is_hole tm =
+and atom total is_hole tm =
     (* The type test keeps the conversion total: a caller may hand it a term
-       position, where an application over a variable is not an atom at all. *)
-    if is_comb tm andalso is_var (rator tm) andalso
-       not (is_hole (rator tm)) andalso type_of tm = Type.bool
+       position, where an application over a variable is not an atom at all.
+       [head_beta_conv] has already fired, so the head is a variable or a
+       constant and never an abstraction. *)
+    if is_comb tm andalso type_of tm = Type.bool andalso
+       (if total then not (is_hole (fst (strip_comb tm)))
+        else is_var (rator tm) andalso not (is_hole (rator tm)))
     then Conv.REWR_CONV applied_thm tm
     else Conv.ALL_CONV tm
 
-fun membership_conv_with is_hole = Conv.QCONV (formula is_hole)
+fun membership_conv_with is_hole = Conv.QCONV (formula false is_hole)
 
 val membership_conv = membership_conv_with clasetMeta.is_meta
+
+(* Membership at every position, the mirror of [applied_conv]: where the two
+   spellings of an application are both normal forms, these two decide which
+   is which, and neither is where a term settles. *)
+val crossed_conv = Conv.QCONV (formula true clasetMeta.is_meta)
 
 (* The other direction: [IN] unfolded, which is its definition.  Unfolding is
    sound at every position, so this needs no notion of a formula position.
@@ -151,7 +169,7 @@ val reduction =
 val reduce_conv = Conv.QCONV reduction
 
 val normalize_conv =
-  Conv.QCONV (Conv.THENC (formula clasetMeta.is_meta, reduction))
+  Conv.QCONV (Conv.THENC (formula false clasetMeta.is_meta, reduction))
 
 (* A rule application proves a goal in the normal form; the goal is the
    user's, as written.  This carries the proof back to the statement the

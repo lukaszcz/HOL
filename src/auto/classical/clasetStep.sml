@@ -381,13 +381,21 @@ fun candidates mode part (asl, w) =
        as posed; the unifier decides what actually matches, and
        [candidate_order] sorts the answers together.  A rule that mixes the
        two spellings in one conclusion is still reached only as it is
-       written. *)
+       written.
+
+       The crossing answers only where the spelling is forced, an
+       application of a variable, so over a compound set -- [x IN f p]
+       against [f p x] -- it leaves both forms alone and neither of them
+       reaches the other.  [crossed_conv] and [applied_conv] are the two
+       total spellings; asking for both is what makes "both spellings" true
+       there. *)
     fun spelling conversion tm = rhs (concl (conversion tm))
     fun lookup which tm =
       let
         val forms =
           Lib.op_mk_set aconv
             [tm, spelling clasetNorm.membership_conv tm,
+             spelling clasetNorm.crossed_conv tm,
              spelling clasetNorm.applied_conv tm]
       in
         List.concat (map (which part) forms)
