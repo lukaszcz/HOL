@@ -43,12 +43,13 @@ val excluded_characterisation =
 
 val blast_set_rule_forms =
   classified "blast set rule forms"
-    ("BLAST_TAC reports no proof and the obstruction is not "
-     ^ "isolated: these goals withhold no ambient analogue at all, "
-     ^ "so the earlier reading -- that excluding the goal's own "
-     ^ "characterisation left no second route -- was wrong for them")
+    ("the obstruction is not isolated: these goals withhold no "
+     ^ "ambient analogue at all, so the earlier reading -- that "
+     ^ "excluding the goal's own characterisation left no second "
+     ^ "route -- was wrong for them.  The search reports no proof on "
+     ^ "some and does not return within the budget on the rest")
     ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
-     "set_L1499_Diff_triv", "set_L1604_Pow_singleton_iff",
+     "set_L1604_Pow_singleton_iff",
      "set_L1607_Pow_insert", "set_L1982_disjnt_sym",
      "set_L796_insert_ident", "set_L869_doubleton_eq_iff",
      "set_L872_Un_singleton_iff", "set_L875_singleton_Un_iff",
