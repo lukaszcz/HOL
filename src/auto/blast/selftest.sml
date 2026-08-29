@@ -4110,6 +4110,30 @@ val _ =
          before_depth = 20
        end)
 
+(* A universal assumption expands into a metavariable, and an equivalence
+   elimination then hands the same metavariable to both of its branches:
+   whichever branch is attempted first decides the variable and the other
+   inherits that decision.  Neither order dominates -- the two goals below
+   are mirror images and each is closed only by the order that loses the
+   other -- so the order is a choice the search has to be able to revisit.
+   Neither goal is a benchmark entry. *)
+val shared_metavariable_splits =
+  [("a universal equivalence over a disjunction",
+    “(!y:'a. y IN A \/ y IN B <=> y = c) ==> z IN A ==> c IN A”),
+   ("its mirror image",
+    “(!y:'a. y NOTIN A /\ y NOTIN B <=> y <> c) ==>
+      z IN A ==> c IN A”)]
+
+val _ =
+  List.app
+    (fn (name, proposition) =>
+      test
+        ("blast retries a shared-metavariable split: " ^ name,
+         fn () =>
+           blast_solves (tableauLib.BLAST_DEPTH_TAC 2 [])
+             ([], proposition)))
+    shared_metavariable_splits
+
 (* -------------------------------------------------------------------------
  * TASK_23: Pelletier 1--46, 52 and 62 (BEGIN corpus).
  *

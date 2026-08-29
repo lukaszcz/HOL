@@ -1300,6 +1300,29 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                   make (ListPair.zip (prems, #hidden_assumptions rule))
                 end
 
+              (* The lead positions worth retrying a split from.  Only a
+                 variable still unbound after the rule fired can carry one
+                 branch's decision into its siblings, so a split whose
+                 premises share none of them has no order to reconsider. *)
+              fun sharedLeads prems =
+                let
+                  fun premiseVars premise = foldPremVarsAt mark [premise] []
+                  fun meets seen [] = false
+                    | meets seen (variable :: rest) =
+                        (checkpointAt mark;
+                         mem_var (variable, seen) orelse meets seen rest)
+                  fun shared _ [] = false
+                    | shared seen (premise :: rest) =
+                        let val vars = premiseVars premise
+                        in
+                          meets seen vars orelse shared (vars @ seen) rest
+                        end
+                  val count = lengthPremsAt mark prems
+                in
+                  if count < 2 orelse not (shared [] prems) then []
+                  else List.tabulate (count - 1, fn lead => lead + 1)
+                end
+
               fun deeper [] = raise NEWBRANCHES
                 | deeper ((rule : tableau_rule) :: other) =
                     let
@@ -1321,21 +1344,17 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                           val _ = noteUnificationSuccess ()
                           val _ = checkpointAt mark
                           val updated = mark < trailSize state
+                          val unified = trailSize state
                           val lim' =
                             if updated then
                               lim - instantiationPenalty rule_count
                             else lim
                           val vars0 = varsInVarsAt mark vars
-                          val vars' = foldPremVarsAt mark prems vars0
                           val choices' =
                             Choice (mark, branches, PRV) :: choices
                           val major =
                             ruleMajor safeRuleOrigin rule formula
                               assumptions
-                          val tacs' =
-                            SafeRule
-                              {rule = rule, updated = updated,
-                               major = major} :: tacs
                           val checkpoint = fn () => checkpointAt mark
                           val contraposing =
                             not (isGoal (trackedTerm formula)) andalso
@@ -1371,32 +1390,71 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                                   assumptions = assumptions'} :: brs)
                             end
 
-                          fun descend () =
-                            if null prems then
-                              (closed := !closed + 1;
-                               noteRuleInference lim';
-                               prv
-                                 (tacs', brs0 :: trace,
-                                  pruneAt mark
-                                    (branches, next_vars, choices'),
-                                  brs))
-                            else if lim' < 0 then
-                              (rollbackAt mark; raise NEWBRANCHES)
-                            else
-                              (created :=
-                                 !created + lengthPremsAt mark prems - 1;
-                               noteRuleInference lim';
-                               prv
-                                 (tacs', brs0 :: trace, choices',
-                                  newBranches rule (vars', lim') prems))
+                          fun descend limit variant =
+                            let
+                              val prems' = #premises variant
+                              val vars' =
+                                foldPremVarsAt mark prems' vars0
+                              val tacs' =
+                                SafeRule
+                                  {rule = variant, updated = updated,
+                                   major = major} :: tacs
+                            in
+                              if null prems' then
+                                (closed := !closed + 1;
+                                 noteRuleInference limit;
+                                 prv
+                                   (tacs', brs0 :: trace,
+                                    pruneAt mark
+                                      (branches, next_vars, choices'),
+                                    brs))
+                              else if limit < 0 then
+                                (rollbackAt mark; raise NEWBRANCHES)
+                              else
+                                (created :=
+                                   !created + lengthPremsAt mark prems' - 1;
+                                 noteRuleInference limit;
+                                 prv
+                                   (tacs', brs0 :: trace, choices',
+                                    newBranches variant (vars', limit)
+                                      prems'))
+                            end
+
+                          fun exhausted () =
+                            if updated then
+                              (rollbackAt mark; deeper other)
+                            else backtrack choices
+
+                          (* Reordering is not free: it is the one part of
+                             a safe rule that commits, so it is priced
+                             like an instantiating safe rule and a branch
+                             can afford only as many reorderings as its
+                             remaining depth pays for. *)
+                          val retry_lim =
+                            lim' - instantiationPenalty rule_count
+
+                          (* Sibling branches that share an unbound
+                             variable are not independent: whichever is
+                             attempted first decides the variable and the
+                             other inherits that decision.  Both orders
+                             are equally safe, so which sibling leads is a
+                             genuine choice, and on failure the split is
+                             retried with each of the others leading. *)
+                          fun retry [] = exhausted ()
+                            | retry (index :: rest) =
+                                (case blastRule.rotatePremises index rule of
+                                     NONE => retry rest
+                                   | SOME variant =>
+                                       (rollbackAt unified;
+                                        descend retry_lim variant
+                                        handle PRV => retry rest))
                         in
                           if contraposing then contraposeFirst ()
                           else
-                            descend ()
+                            descend lim' rule
                             handle PRV =>
-                              if updated then
-                                (rollbackAt mark; deeper other)
-                              else backtrack choices
+                              if retry_lim < 0 then exhausted ()
+                              else retry (sharedLeads prems)
                         end
                     end
 

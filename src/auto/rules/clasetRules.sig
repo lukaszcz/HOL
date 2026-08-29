@@ -43,6 +43,15 @@ sig
   val DUP_INTRO_RULE : thm -> thm
   val DUP_ELIM_RULE : thm -> thm
   val REV_DUP_ELIM_RULE : thm -> thm
+
+  (* A rule's premises are independent antecedents, so any order of them
+     states the same rule.  [PERMUTE_PREMISES_RULE kind order th] restates
+     [th] with premise [List.nth (order, i)] of its canonical form in
+     position [i]; [order] must be a permutation of the premise positions.
+     Order is observable to a search that attempts the resulting subgoals
+     one after another. *)
+  val PERMUTE_PREMISES_RULE : rulekind -> int list -> thm -> thm
+
   val ext_info : rulespec -> thm -> info
 
   datatype safe_class = Safe0 | SafeP

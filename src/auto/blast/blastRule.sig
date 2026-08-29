@@ -64,6 +64,16 @@ sig
     monitor -> cache -> clasetLib.claset -> var list -> pterm ->
     tableau_rule list
 
+  (* Premises that share an unbound variable are not independent for a
+     search that attempts their branches in order: the branch attempted
+     first decides the shared variable and its sibling inherits that
+     decision.  [rotatePremises k rule] restates the rule with premise [k]
+     leading, relative order otherwise kept, so a search may attempt the
+     split the other way round.  The stored theorem is permuted with the
+     premises, which keeps a recorded application replayable subgoal by
+     subgoal.  NONE when the rule has no stored theorem to permute. *)
+  val rotatePremises : int -> tableau_rule -> tableau_rule option
+
   (* Introduction-rule duplication is deliberately absent: with delayed
      unsafe rules that arm is dead (Isabelle blast.ML:537-539). *)
   val replayTheorem : tableau_rule -> bool -> thm option

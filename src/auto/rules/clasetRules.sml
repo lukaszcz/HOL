@@ -410,6 +410,31 @@ fun REV_DUP_ELIM_RULE th =
           end
   end
 
+fun bad_permutation () =
+  raise mk_HOL_ERR "clasetRules" "PERMUTE_PREMISES_RULE"
+    "the order is not a permutation of the rule's premise positions"
+
+fun check_permutation count order =
+  let
+    val used = Array.array (count, false)
+    fun record index =
+      if index < 0 orelse index >= count orelse Array.sub (used, index)
+      then bad_permutation ()
+      else Array.update (used, index, true)
+  in
+    if length order = count then app record order else bad_permutation ()
+  end
+
+fun PERMUTE_PREMISES_RULE kind order th =
+  let
+    val {vars, core, prems, ...} =
+      rule_spine_with (canonical_rule_of kind) th
+    val _ = check_permutation (length prems) order
+  in
+    finish_rule vars [] (map (fn index => List.nth (prems, index)) order)
+      (apply_assumed core prems)
+  end
+
 fun ext_info ({kind, safe, ...} : rulespec) th =
   let
     val th' = canonical_rule_of kind th

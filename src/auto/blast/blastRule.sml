@@ -961,6 +961,41 @@ fun safeRulesMeasured monitor cache claset vars formula =
 fun unsafeRulesMeasured monitor cache claset vars formula =
   acquireMeasured monitor cache claset false vars formula
 
+(* The tableau premises are the stored rule's minor premises: conversion
+   takes the major premise of an elimination out of the list and leaves it
+   as the rule's pattern.  A rotation of the premises therefore fixes the
+   elimination's major premise and permutes the rest. *)
+fun rotate index items =
+  List.drop (items, index) @ List.take (items, index)
+
+fun rotatePremises index
+      (rule as {origin, pattern, premises, hidden_assumptions}
+         : tableau_rule) =
+  if index = 0 then SOME rule
+  else
+    case origin of
+        Stored {is_elim, theorem} =>
+          let
+            val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
+            val minors = List.length premises
+            val offset = if is_elim then 1 else 0
+            val order =
+              List.tabulate (offset, fn position => position) @
+              map (fn position => position + offset)
+                (rotate index (List.tabulate (minors, fn p => p)))
+          in
+            SOME
+              {origin =
+                 Stored
+                   {is_elim = is_elim,
+                    theorem =
+                      clasetRules.PERMUTE_PREMISES_RULE kind order theorem},
+               pattern = pattern,
+               premises = rotate index premises,
+               hidden_assumptions = rotate index hidden_assumptions}
+          end
+      | _ => NONE
+
 fun replayTheorem
       ({origin = Stored {is_elim, theorem}, ...} : tableau_rule) dup =
       if dup andalso is_elim then
