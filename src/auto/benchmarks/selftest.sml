@@ -1467,13 +1467,6 @@ fun without_argument_names names arguments =
         | NONE => true)
     arguments
 
-fun classical_rule_argument argument =
-  case argument of
-      benchLib.IntroAdd _ => true
-    | benchLib.ElimAdd _ => true
-    | benchLib.DestAdd _ => true
-    | _ => false
-
 val every_corpus_goal =
   benchClassical.goals @ benchSets.goals @ benchListMap.goals @
   benchLinarith.goals @ benchPresburger.goals @ benchAlgebra.goals
@@ -1518,6 +1511,64 @@ val _ =
                             arguments recipe
                           end))) ^ "]")
                  direct_recipe_goals) ^ "\n");
+          false))
+
+(* A rule argument only reaches the search if the claset accepts the
+   mapped theorem in the role the method gives it.  clasetRules rejects a
+   shape it cannot canonicalise -- an equivalence offered as an
+   elimination, say -- and the goal then fails before any search, which a
+   shortfall record would misread as an engine limitation.  Auditing
+   every corpus recipe keeps that a name-table error. *)
+fun classical_rule_spec argument =
+  let
+    fun spec kind strength =
+      SOME {kind = kind, safe = strength = benchLib.SafeRule, prio = NONE}
+  in
+    case argument of
+        benchLib.IntroAdd (strength, _) => spec clasetRules.Intro strength
+      | benchLib.ElimAdd (strength, _) => spec clasetRules.Elim strength
+      | benchLib.DestAdd (strength, _) => spec clasetRules.Dest strength
+      | _ => NONE
+  end
+
+fun recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
+  | recipe_arguments (benchLib.Then (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (benchLib.AllGoals (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (benchLib.Otherwise (left, right)) =
+      recipe_arguments left @ recipe_arguments right
+
+fun uninstallable_rule_arguments recipe =
+  List.mapPartial
+    (fn argument =>
+      case (classical_rule_spec argument, argument_name argument,
+            argument_theorem argument) of
+          (SOME spec, SOME name, SOME theorem) =>
+            if can (clasetLib.add_rule spec (name, theorem))
+                 clasetLib.empty_cs
+            then NONE
+            else SOME name
+        | _ => NONE)
+    (recipe_arguments recipe)
+
+val goals_with_uninstallable_rules =
+  List.mapPartial
+    (fn ({id, recipe, ...} : benchLib.corpus_goal) =>
+      case uninstallable_rule_arguments recipe of
+          [] => NONE
+        | names => SOME (id ^ "=[" ^ String.concatWith ", " names ^ "]"))
+    every_corpus_goal
+
+val _ =
+  check
+    ("every corpus rule argument is installable in its declared role",
+     fn () =>
+       if null goals_with_uninstallable_rules then true
+       else
+         (print
+            ("\nrules the claset refuses: " ^
+             String.concatWith ", " goals_with_uninstallable_rules ^ "\n");
           false))
 
 fun goal_named id goals =

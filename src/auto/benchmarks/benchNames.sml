@@ -62,7 +62,7 @@ val table : (string * (unit -> resolution)) list =
 
   (* ---- Set.thy ---------------------------------------------------- *)
   ("set_eqI", library "pred_set" "EXTENSION"),
-  ("equalityE", library "pred_set" "SET_EQ_SUBSET"),
+  ("equalityE", translated "source_equalityE"),
   ("less_eq_set_def", library "pred_set" "SUBSET_DEF"),
   ("bot_set_def", library "pred_set" "EMPTY_DEF"),
   ("empty_def", library "pred_set" "EMPTY_DEF"),
@@ -407,11 +407,8 @@ val table : (string * (unit -> resolution)) list =
   ("rel_set_def", unrepresented),
   ("rotate_drop_take", unrepresented),
   ("set_nths", unrepresented),
-  (* One Isabelle lemma, two HOL4 theorems: set_takeWhileD concludes
-     a conjunction that HOL4 states as separate facts. *)
   ("set_takeWhileD",
-   bundle [library "list" "MEM_takeWhile_IMP",
-           library "list" "EVERY_takeWhile"]),
+   translated "source_set_takeWhileD"),
   ("sorted_distinct_set_unique", unrepresented),
   ("sorted_iff_nth_mono", unrepresented),
   ("sorted_insort_insert_key[of \"\\<lambda>x. x\"]", unrepresented),
@@ -562,7 +559,7 @@ val table : (string * (unit -> resolution)) list =
   ("last_conv_nth",
    library "list" "LAST_EL"),
   ("le_funE",
-   library "pred_set" "SUBSET_DEF"),
+   translated "source_le_funE"),
   ("le_fun_def",
    library "pred_set" "SUBSET_DEF"),
   ("length_Suc_conv",
@@ -617,7 +614,7 @@ val table : (string * (unit -> resolution)) list =
    bundle [library "list" "LIST_REL_NIL",
            library "list" "LIST_REL_cons_I"]),
   ("listrel1E",
-   translated "source_listrel1_def"),
+   translated "source_listrel1E"),
   ("listrel_iff_nth",
    library "list" "LIST_REL_EL_EQN"),
   ("listrel_iff_zip",

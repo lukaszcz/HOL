@@ -3340,6 +3340,21 @@ Definition source_listrel1_def:
       ys = prefix ++ right::suffix
 End
 
+(* src/HOL/List.thy: listrel1E.  The definition is an equivalence, which
+   the claset cannot take as the elimination the method asks for. *)
+Theorem source_listrel1E:
+  !relation xs ys conclusion.
+    source_listrel1 relation xs ys ==>
+    (!prefix left right suffix.
+       xs = prefix ++ left::suffix ==>
+       ys = prefix ++ right::suffix ==>
+       relation left right ==>
+       conclusion) ==>
+    conclusion
+Proof
+  metis_tac[source_listrel1_def]
+QED
+
 Theorem source_listrel1_append_suffix:
   !relation xs ys suffix.
     source_listrel1 relation xs ys ==>
@@ -5461,6 +5476,17 @@ Proof
   >> simp[source_takeWhile_def, combinTheory.o_DEF]
 QED
 
+(* src/HOL/List.thy: set_takeWhileD.  HOL4 states the two conclusions
+   apart, and neither half has the shape of the destruction rule the
+   method names. *)
+Theorem source_set_takeWhileD:
+  !predicate xs item.
+    MEM item (takeWhile predicate xs) ==> MEM item xs /\ predicate item
+Proof
+  metis_tac[listTheory.MEM_takeWhile_IMP, listTheory.EVERY_takeWhile,
+            listTheory.EVERY_MEM]
+QED
+
 Theorem source_dropWhile_eq_self_iff:
   !predicate (items : 'a list).
     dropWhile predicate items = items <=>
@@ -6977,6 +7003,31 @@ Theorem source_subset_imageE:
     conclusion
 Proof
   metis_tac[pred_setTheory.SUBSET_IMAGE]
+QED
+
+(* src/HOL/Set.thy: equalityE.  SET_EQ_SUBSET states the same content as
+   an equivalence, which the claset cannot take as an elimination rule;
+   the corpus goals that name this fact need its rule shape. *)
+Theorem source_equalityE:
+  !left right conclusion.
+    left = right ==>
+    (left SUBSET right ==> right SUBSET left ==> conclusion) ==>
+    conclusion
+Proof
+  metis_tac[pred_setTheory.SUBSET_REFL]
+QED
+
+(* Isabelle's le_funE, named by the method of Product_Type.thy:1097.  The
+   order on a function into sets is pointwise, so the rule reads an
+   inclusion at one argument out of the pointwise hypothesis; SUBSET_DEF
+   is about membership and cannot serve as that elimination. *)
+Theorem source_le_funE:
+  !smaller larger item conclusion.
+    (!index. smaller index SUBSET larger index) ==>
+    (smaller item SUBSET larger item ==> conclusion) ==>
+    conclusion
+Proof
+  metis_tac[]
 QED
 
 (* Explicit, reusable preimage construction for subsets of an image. *)
