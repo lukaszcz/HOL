@@ -55,12 +55,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Solved under Isabelle's own ambient set | Routine selftest goals |
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
-| Sets | 353 | 310 | 309 | 4 |
+| Sets | 353 | 313 | 312 | 4 |
 | List/map | 602 | 377 | 340 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **800** | **762** | **28** |
+| **Total** | **1070** | **803** | **765** | **28** |
 
 ## Cost of the solutions
 
@@ -68,13 +68,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 11 | 14 | 0 | 0 | 0.6 | 45 | 516 |
-| Sets | 310 | 111 | 192 | 7 | 0 | 3.4 | 6 | 2430 |
-| List/map | 377 | 6 | 368 | 3 | 0 | 3.5 | 0 | 769 |
-| Linarith | 46 | 44 | 2 | 0 | 0 | 0.5 | 0 | 0 |
-| Presburger | 34 | 30 | 3 | 1 | 0 | 3.3 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 2.1 | 0 | 0 |
-| **Total** | **800** | **209** | **579** | **12** | **0** | **3.5** | **0** | **2430** |
+| Classical | 25 | 10 | 15 | 0 | 0 | 0.6 | 45 | 516 |
+| Sets | 313 | 120 | 189 | 4 | 0 | 3.2 | 6 | 2430 |
+| List/map | 377 | 5 | 368 | 4 | 0 | 3.4 | 0 | 769 |
+| Linarith | 46 | 43 | 3 | 0 | 0 | 0.2 | 0 | 0 |
+| Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
+| Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
+| **Total** | **803** | **216** | **578** | **9** | **0** | **3.4** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -86,12 +86,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 43 | 0 | 0 |
+| Sets | 0 | 40 | 0 | 0 |
 | List/map | 0 | 225 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **270** | **2** | **0** |
+| **Total** | **0** | **267** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -102,12 +102,12 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 | Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
-| Sets | 0 | 8 | 9 |
+| Sets | 0 | 8 | 10 |
 | List/map | 19 | 0 | 16 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **19** | **8** | **25** |
+| **Total** | **19** | **8** | **26** |
 
 ## Seed-rule safety check
 

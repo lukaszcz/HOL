@@ -13,8 +13,7 @@ val over_budget =
    "set_L1604_Pow_singleton_iff", "set_L1607_Pow_insert",
    "set_L1790_vimage_image_eq",
    "set_L1847_is_singleton_the_elem", "set_L1976_disjnt_commute",
-   "set_L1979_disjnt_iff", "set_L1994_disjnt_subset1",
-   "set_L1997_disjnt_subset2", "set_L2003_disjnt_Un2",
+   "set_L2003_disjnt_Un2",
    "set_L928_subset_image_iff", "set_L994_image_add_0",
    "set_theory_L168", "set_theory_L184", "set_theory_L36",
    "set_theory_L44", "set_theory_L48"]
@@ -67,12 +66,12 @@ val isabelle_lattice_instance =
 
 val disjnt =
   classified "disjnt"
-    ("DISJOINT_DEF reduces the goal to a set equality that then "
-     ^ "meets the membership-against-application gap")
-    ["set_L1976_disjnt_commute", "set_L1979_disjnt_iff",
-     "set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2",
-     "set_L1994_disjnt_subset1", "set_L1997_disjnt_subset2",
-     "set_L2003_disjnt_Un2"]
+    ("DISJOINT_DEF reduces the goal to an emptiness claim about an "
+     ^ "intersection, which the simpset then presents as a set "
+     ^ "former; the two sides of the equivalence reach different "
+     ^ "formers and neither is turned back into membership")
+    ["set_L1976_disjnt_commute", "set_L1988_disjnt_insert1",
+     "set_L1991_disjnt_insert2", "set_L2003_disjnt_Un2"]
 
 val bounded_quantifier_one_point =
   classified "bounded-quantifier one-point"
