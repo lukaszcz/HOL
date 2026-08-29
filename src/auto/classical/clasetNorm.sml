@@ -159,24 +159,41 @@ val normalize_conv =
 fun align_conclusion target theorem =
   let
     val conclusion = concl theorem
+
+    fun carry conversion =
+      let
+        val target_equality = conversion target
+        val target' = rhs (concl target_equality)
+        val conclusion_equality = conversion conclusion
+        val conclusion' = rhs (concl conclusion_equality)
+      in
+        if aconv conclusion' target' then
+          SOME
+            (EQ_MP (Thm.SYM target_equality)
+              (EQ_MP (ALPHA conclusion' target')
+                (EQ_MP conclusion_equality theorem)))
+        else NONE
+      end
   in
     if aconv conclusion target then
       EQ_MP (ALPHA conclusion target) theorem
     else
-      let
-        val target_equality = normalize_conv target
-        val target' = rhs (concl target_equality)
-        val conclusion_equality = normalize_conv conclusion
-        val conclusion' = rhs (concl conclusion_equality)
-      in
-        if aconv conclusion' target' then
-          EQ_MP (Thm.SYM target_equality)
-            (EQ_MP (ALPHA conclusion' target')
-              (EQ_MP conclusion_equality theorem))
-        else
-          error ("clasetNorm", "align_conclusion")
-            "the theorem does not prove the target in normal form"
-      end
+      case carry normalize_conv of
+          SOME result => result
+        | NONE =>
+            (* The crossing turns an application into a membership on a
+               variable function, so where the set is a compound -- the
+               [UNCURRY P] a set comprehension over a pair translates to --
+               it crosses neither way and both spellings are normal forms.
+               [applied_conv] unfolds [IN] at every position, so it decides
+               that case; it is a spelling and not a normal form, which is
+               why it settles a comparison the normal form leaves open
+               rather than replacing it. *)
+            (case carry applied_conv of
+                 SOME result => result
+               | NONE =>
+                   error ("clasetNorm", "align_conclusion")
+                     "the theorem does not prove the target in normal form")
   end
 
 fun normalize_thm theorem =

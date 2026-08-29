@@ -6165,6 +6165,16 @@ fun member_in item set =
   Term.list_mk_comb
     (Term.inst [Type.alpha |-> Type.ind] boolSyntax.IN_tm, [item, set])
 
+(* A set need not be a variable.  [member_fp] stands for the shape the
+   translation writes for a set comprehension over a pair, [UNCURRY P],
+   whose head is a constant and whose spelling therefore anchors on
+   neither side: it is the position where the two directions of the
+   crossing have to agree without a variable to agree on. *)
+val member_f =
+  Term.mk_var
+    ("member_f", (Type.ind --> bool_ty) --> (Type.ind --> bool_ty))
+val member_fp = mk_comb (member_f, member_p)
+
 fun member_step implication goal expected =
   let
     val cs =
@@ -6210,4 +6220,21 @@ val _ =
        in
          member_step implication goal
            ([implication], member_in member_a member_q)
+       end)
+
+val _ =
+  test
+    ("an applied rule over a compound set reaches a goal atom stated with IN",
+     fn () =>
+       let
+         val implication =
+           boolSyntax.mk_forall
+             (member_x,
+              boolSyntax.mk_imp
+                (mk_comb (member_q, member_x),
+                 mk_comb (member_fp, member_x)))
+         val goal = ([implication], member_in member_a member_fp)
+       in
+         member_step implication goal
+           ([implication], mk_comb (member_q, member_a))
        end)
