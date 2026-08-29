@@ -429,3 +429,17 @@ val _ =
      fn () =>
        terminates_within 20 (clasimpLib.FASTFORCE_TAC [])
          negated_equation_goal)
+
+(* src/HOL/Set.thy:551 @ f7e02b7e.  Neither goal is a corpus entry.  The
+   claset's set equality was introduction-only, so a search that had to
+   read an equality out of the hypotheses reported no proof without
+   engaging at all; withholding SET_EQUALITY_CASES_AUTO leaves both of
+   these unproved. *)
+val _ =
+  check
+    ("a set equality among the hypotheses is usable by the search",
+     fn () =>
+       List.all
+         (closes_within 20 (tableauLib.BLAST_TAC []))
+         [([], ``(left : 'a set) UNION right = {} ==> left = {}``),
+          ([], ``(left : 'a set) INTER right = left ==> left SUBSET right``)])

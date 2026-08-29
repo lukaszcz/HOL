@@ -63,6 +63,22 @@ val _ =
 val _ =
   clasetLib.export_rule sintro_spec "pred_set.SUBSET_ANTISYM"
 
+(* src/HOL/Set.thy:551 @ f7e02b7e.  SUBSET_ANTISYM is Isabelle's
+   equalityI; this is its elimination counterpart.  Without it the
+   claset reaches a set equality only by proving one, so an equality
+   among the hypotheses contributes nothing.  The case split is what
+   makes it usable in a search: the item is left to unification, and
+   both branches keep the equality's full content. *)
+Theorem SET_EQUALITY_CASES_AUTO[elim]:
+  !left right item conclusion.
+    left = right ==>
+    (item IN left ==> item IN right ==> conclusion) ==>
+    (item NOTIN left ==> item NOTIN right ==> conclusion) ==>
+    conclusion
+Proof
+  REPEAT GEN_TAC THEN DISCH_THEN SUBST_ALL_TAC THEN metis_tac[]
+QED
+
 (* src/HOL/Finite_Set.thy:158-532 @ f7e02b7e.  HOL4 COUNT k is
    Isabelle's set comprehension {n | n < k}. *)
 val _ =
