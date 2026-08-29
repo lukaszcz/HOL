@@ -172,7 +172,6 @@ val over_budget_with_no_residual =
      "list_L6847_sorted_list_of_set_nonempty",
      "list_L8705_set_relcomp", "map_L723_ran_map_upd",
      "map_L730_ran_map_upd_Some",
-     "product_type_L1100_Collect_split_mono_strong",
      "product_type_L1133_Sigma_Union",
      "product_type_L1364_disjnt_Times1_iff",
      "product_type_L1367_disjnt_Times2_iff",
@@ -216,7 +215,6 @@ val simplification_and_search_reports_no_proof =
      "list_L8044_listrel1_subset_listrel",
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
      "map_L565_dom_eq_empty_conv", "map_L810_graph_map_add",
-     "product_type_L1097_Collect_case_prod_mono",
      "string_L178_card_UNIV_char"]
 
 val take_and_drop_arithmetic =
@@ -296,7 +294,6 @@ val predicate_and_set_representation =
     ["list_L8638_filter_set",
      "map_L578_dom_empty", "map_L786_graph_empty",
      "option_L288_these_empty",
-     "product_type_L1094_Collect_case_prodD",
      "product_type_L1184_sing_Times_sing",
      "product_type_L469_cond_case_prod_eta",
      "product_type_L600_case_prodI2_", "product_type_L785_curry_conv",
