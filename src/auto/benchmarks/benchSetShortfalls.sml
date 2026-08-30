@@ -10,7 +10,7 @@ struct
 
 val over_budget =
   ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
-   "set_L1604_Pow_singleton_iff", "set_L1607_Pow_insert",
+   "set_L1607_Pow_insert",
    "set_L1790_vimage_image_eq",
    "set_L1847_is_singleton_the_elem",
    "set_L928_subset_image_iff", "set_L994_image_add_0",
@@ -29,7 +29,7 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-(* The four goals below are the only ones in this family whose
+(* The three goals below are the only ones in this family whose
    assigned tactic is denied a fact it would otherwise have: each goal
    is itself an ambient characterisation, and rule A1 withholds it. *)
 val excluded_characterisation =
@@ -37,8 +37,7 @@ val excluded_characterisation =
     ("the goal is the ambient characterisation itself, so the "
      ^ "measurement withholds the one fact that closes it and there "
      ^ "is no second route to search for")
-    ["set_L572_empty_subsetI", "set_L690_Int_iff", "set_L717_Un_iff",
-     "set_L769_insert_iff"]
+    ["set_L690_Int_iff", "set_L717_Un_iff", "set_L769_insert_iff"]
 
 val blast_set_rule_forms =
   classified "blast set rule forms"
