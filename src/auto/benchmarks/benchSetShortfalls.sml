@@ -61,12 +61,18 @@ val isabelle_lattice_instance =
 
 val disjnt =
   classified "disjnt"
-    ("the emptiness claim reaches membership form, and what stands "
-     ^ "is an equivalence between a quantification over an insertion "
-     ^ "and the conjunction of the inserted point with the "
-     ^ "quantification over the rest; closing it needs the "
-     ^ "quantification instantiated at that point, and the search "
-     ^ "reports no proof")
+    ("pred_set declares the goal itself, DISJOINT_INSERT, [simp], so "
+     ^ "rule A1 withholds it, and the assigned method is simp alone.  "
+     ^ "What the remaining rewrites leave is the same equivalence in "
+     ^ "membership form, which a rewriter cannot close -- though it is "
+     ^ "not out of first-order reach: AUTO_TAC and BLAST_TAC each "
+     ^ "close that residual.  The membership form is the obstacle: the "
+     ^ "ambient normalisation of an equation with the empty set "
+     ^ "dissolves the intersection before any rule stated on it can "
+     ^ "apply.  Withholding that normalisation while supplying "
+     ^ "pred_set's INSERT_INTER lets simp alone close the first of "
+     ^ "these; the second inserts on the right, and pred_set states "
+     ^ "no mirror of INSERT_INTER")
     ["set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2"]
 
 val bounded_quantifier_one_point =
