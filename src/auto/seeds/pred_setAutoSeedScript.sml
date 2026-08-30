@@ -79,6 +79,25 @@ Proof
   REPEAT GEN_TAC THEN DISCH_THEN SUBST_ALL_TAC THEN metis_tac[]
 QED
 
+(* src/HOL/Set.thy:1192-1195 @ f7e02b7e.  Collect_empty_eq and
+   empty_Collect_eq.  Sets are predicates here, so every set is a set
+   former and Isabelle's two rules are one schema stated on an arbitrary
+   set, in both orientations.  Without it an emptiness claim reached by
+   unfolding stays an equation between formers, and the search can only
+   attack it by splitting the equation on an undetermined item. *)
+Theorem SET_EQ_EMPTY_AUTO[iff]:
+  !collection. (collection = {}) <=> !item. item NOTIN collection
+Proof
+  REWRITE_TAC [pred_setTheory.EXTENSION, pred_setTheory.NOT_IN_EMPTY]
+QED
+
+Theorem EMPTY_EQ_SET_AUTO[iff]:
+  !collection. ({} = collection) <=> !item. item NOTIN collection
+Proof
+  ONCE_REWRITE_TAC [boolTheory.EQ_SYM_EQ] THEN
+  REWRITE_TAC [pred_setTheory.EXTENSION, pred_setTheory.NOT_IN_EMPTY]
+QED
+
 (* src/HOL/Finite_Set.thy:158-532 @ f7e02b7e.  HOL4 COUNT k is
    Isabelle's set comprehension {n | n < k}. *)
 val _ =

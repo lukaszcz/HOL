@@ -430,6 +430,22 @@ val _ =
        terminates_within 20 (clasimpLib.FASTFORCE_TAC [])
          negated_equation_goal)
 
+(* src/HOL/Set.thy:1192-1195 @ f7e02b7e.  Neither goal is a corpus
+   entry.  An emptiness claim reached by unfolding arrives as an equation
+   between set formers, and SET_EQ_EMPTY_AUTO is what turns it into
+   membership form; withheld, neither goal closes. *)
+val _ =
+  check
+    ("an emptiness claim between set formers is first-order",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``{item | seed_empty_p item} = {} ==>
+                 {item | seed_empty_p item /\ seed_empty_q item} = {}``),
+          ([], ``{item | seed_empty_p item /\ seed_empty_q item} = {} ==>
+                 (!item. seed_empty_r item ==> seed_empty_p item) ==>
+                 {item | seed_empty_r item /\ seed_empty_q item} = {}``)])
+
 (* src/HOL/Set.thy:551 @ f7e02b7e.  Neither goal is a corpus entry.  The
    claset's set equality was introduction-only, so a search that had to
    read an equality out of the hypotheses reported no proof without
