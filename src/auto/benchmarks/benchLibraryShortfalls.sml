@@ -35,10 +35,7 @@ val over_budget =
    "list_L2412_hd_drop_conv_nth", "list_L2576_dropWhile_id",
    "list_L3400_foldr_conv_foldl", "list_L3404_foldl_conv_foldr",
    "list_L3417_foldl_cong", "list_L3424_foldl_append",
-   "list_L3434_foldl_map", "list_L3485_upt_conv_Cons",
-   "list_L3506_hd_upt", "list_L3509_tl_upt", "list_L3635_upto_empty",
-   "list_L3638_upto_single", "list_L3641_upto_Nil",
-   "list_L3646_upto_rec1",
+   "list_L3434_foldl_map",
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons", "list_L4628_extract_None_iff",
    "list_L4632_extract_SomeE", "list_L4637_extract_Some_iff",
@@ -156,10 +153,6 @@ val over_budget_with_no_residual =
      "list_L7998_listrel_rtrancl_refl", "map_L899_map_add_subsumed1",
      "list_L3400_foldr_conv_foldl", "list_L3404_foldl_conv_foldr",
      "list_L3424_foldl_append", "list_L3434_foldl_map",
-     "list_L3485_upt_conv_Cons", "list_L3506_hd_upt",
-     "list_L3509_tl_upt", "list_L3635_upto_empty",
-     "list_L3638_upto_single", "list_L3641_upto_Nil",
-     "list_L3646_upto_rec1",
      "list_L4065_set_take_disj_set_drop_if_distinct",
      "list_L4406_distinct_adj_Cons_Cons",
      "list_L4628_extract_None_iff", "list_L4632_extract_SomeE",
@@ -173,6 +166,31 @@ val over_budget_with_no_residual =
      "map_L730_ran_map_upd_Some",
      "product_type_L1133_Sigma_Union", "string_L34_of_char_Char",
      "string_L357_integer_of_char_code"]
+
+val arithmetic_residual_after_unfolding =
+  classified "arithmetic residual after unfolding"
+    ("the interval equation unfolds now that the conditional "
+     ^ "congruence is the weak one, and what is left is a linear "
+     ^ "arithmetic fact about num -- [~(m < n) ==> ~(SUC m < n)] and "
+     ^ "[!i j. j < i ==> ~(i <= j)].  The assigned simp method carries "
+     ^ "linarith as a side-condition solver, which discharges the "
+     ^ "conditions of conditional rewrites and not the goal it is left "
+     ^ "with")
+    ["list_L3509_tl_upt", "list_L3646_upto_rec1"]
+
+(* Isabelle beta-normalises the instance of a rewrite's right-hand side,
+   so the shape below cannot arise there whatever its congruences do. *)
+val beta_redex_in_a_branch =
+  classified "beta redex in a branch"
+    ("unfolding the definition leaves [(\\k. if k IN D then "
+     ^ "(\\x. NONE) k else NONE) = (\\x. NONE)], whose then-branch "
+     ^ "holds an uncontracted redex.  The weak conditional congruence "
+     ^ "does not enter a branch, so the redex stays, and COND_ID never "
+     ^ "meets the [if c then NONE else NONE] it would close.  HOL4 "
+     ^ "contracts a redex where its traversal reaches one; recovering "
+     ^ "this would mean beta-normalising rewrite instantiation, which "
+     ^ "is the simplifier's own business rather than this layer's")
+    ["map_L420_restrict_map_empty"]
 
 val filter_normalisation =
   classified "filter normalisation"
@@ -412,6 +430,8 @@ val execution : benchLib.shortfall list =
   instantiated_fact_citation @
   zip_against_map @
   over_budget_with_no_residual @
+  arithmetic_residual_after_unfolding @
+  beta_redex_in_a_branch @
   filter_normalisation @
   indexing_through_list_constructors @
   simplification_and_search_reports_no_proof @
