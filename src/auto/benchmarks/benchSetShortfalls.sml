@@ -49,10 +49,7 @@ val blast_set_rule_forms =
      ^ "route -- was wrong for them.  The search reports no proof on "
      ^ "some and does not return within the budget on the rest")
     ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
-     "set_L1604_Pow_singleton_iff",
      "set_L1607_Pow_insert", "set_L1982_disjnt_sym",
-     "set_L796_insert_ident", "set_L869_doubleton_eq_iff",
-     "set_L872_Un_singleton_iff", "set_L875_singleton_Un_iff",
      "set_L928_subset_image_iff", "set_L994_image_add_0",
      "set_theory_L36", "set_theory_L44", "set_theory_L48",
      "set_theory_L168", "set_theory_L184"]
