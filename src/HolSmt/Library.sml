@@ -835,8 +835,9 @@ struct
 
   (* SOS procedures accept polynomial arithmetic.  A totalized division or
      remainder encoding can contain syntactic products, but those products do
-     not make the surrounding term polynomial; sending such a goal to CSDP is
-     both fruitless and very expensive. *)
+     not make the surrounding term polynomial.  Powers with symbolic
+     exponents are nonpolynomial too.  Sending either family to CSDP is both
+     fruitless and very expensive. *)
   fun contains_nonpolynomial_arithmetic tm =
     let
       fun is_real_division_head head =
@@ -851,13 +852,20 @@ struct
              List.exists (Lib.equal Name)
                ["smt_ediv_total", "smt_emod_total", "smt_rdiv"]
          | _ => false)
+      fun is_symbolic_power_application head arguments =
+        List.exists (Term.same_const head)
+          [numSyntax.exp_tm, intSyntax.exp_tm, realSyntax.exp_tm] andalso
+        (case arguments of
+           [_, exponent] => not (numSyntax.is_numeral exponent)
+         | _ => true)
       fun is_nonpolynomial_application head arguments =
         if is_real_division_head head then
           (case arguments of
              [_, denominator] => not (is_numeric_literal denominator)
            | _ => true)
         else
-          is_nonpolynomial_head head
+          is_nonpolynomial_head head orelse
+          is_symbolic_power_application head arguments
       fun search term =
         case Lib.total Term.dest_abs term of
           SOME (_, body) => search body

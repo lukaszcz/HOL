@@ -918,7 +918,8 @@ local
     handle Feedback.HOL_ERR _ =>
       (* nonlinear fallback: only after linear tactics fail, to avoid
          expensive SOS certificate search on goals linear tactics handle *)
-      if Library.is_nonlinear t then
+      if Library.is_nonlinear t andalso
+         not (Library.contains_nonpolynomial_arithmetic t) then
         (* E1(b): the general NLA procedure fails loudly at its boundary. *)
         profile "arith(8)(nla)" Library.nla_prove t
       else raise ERR "arith_prove" (Hol_pp.term_to_string t)
@@ -3770,10 +3771,33 @@ local
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else NONE
+      (* fpa2bv can leave a proved word normalization as an extra hypothesis
+         after solve-eqs.  Discharge it with the checked, resource-gated word
+         decision procedure used by ordinary replay. *)
+      fun prove_word_hypothesis target =
+        let
+          val _ = Lib.can (HolKernel.find_term
+            (wordsSyntax.is_word_type o Term.type_of)) target orelse
+            raise ERR "prove_word_hypothesis" "no word subterm"
+        in
+          SmtResource.with_bitblast_step_time "hyp-removal-word"
+            (fn term =>
+              (SmtResource.check_bitblast_goal "hyp-removal-word" term;
+               bv_th_lemma_prove term)) target
+        end
+      fun word_hypothesis () =
+        SOME (profile "check_proof(hyp_removal:word)"
+          prove_word_hypothesis hyp)
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else NONE
       val hyp_thm =
         case canonical_assumption (canonical_assumptions ()) of
           SOME th => th
         | NONE => (case string_hypothesis () of
+          SOME th => th
+        | NONE => (case word_hypothesis () of
           SOME th => th
         | NONE => (case first_success
             [("check_proof(hyp_removal:numeral_normalize)",
@@ -3792,9 +3816,10 @@ local
           | NONE => raise ERR "remove_hyps"
               ("extra hypothesis is not entailed by the goal's assumptions; " ^
                "hypothesis=" ^ Library.term_to_string hyp ^
-               "; attempted=[String normalization, numeral division, " ^
-               "semantic division, total division, arithmetic normalization, " ^
-               "datatype normalization, context entailment]")))
+               "; attempted=[String normalization, word decision, " ^
+               "numeral division, semantic division, total division, " ^
+               "arithmetic normalization, datatype normalization, " ^
+               "context entailment]"))))
     in
       Drule.PROVE_HYP hyp_thm thm
     end

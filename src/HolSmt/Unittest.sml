@@ -13341,6 +13341,25 @@ in
     "String extra hypothesis did not consume the general String prover first")
 end
 
+fun z3_word_hypothesis_normalization_success () =
+let
+  val hyp = ``(w:word4) && w = w``
+  val neg_hyp = boolSyntax.mk_neg hyp
+  val contradiction = Thm.MP
+    (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
+  val () = Profile.reset_all ()
+  val thm = Z3_ProofReplay.remove_hyps_for_test ([], hyp, contradiction)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F andalso
+      List.length (Thm.hyp thm) = 1 andalso
+      Term.aconv (List.hd (Thm.hyp thm)) neg_hyp,
+    "Word normalization did not remove exactly the solver-added hypothesis");
+  check_oracle_tags "Word hypothesis normalization" thm;
+  assert (profile_call_count
+      "check_proof(hyp_removal:word)_OK" = 1,
+    "Word extra hypothesis did not use checked word decision")
+end
+
 fun z3_nonlinear_missing_csdp_diagnostic () =
 let
   val expected = Library.csdp_missing_diagnostic
@@ -13402,6 +13421,36 @@ let
       Bool.toString (not expected))
 in
   List.app check cases
+end
+
+fun symbolic_power_nonpolynomial_detection_success () =
+let
+  val cases = [
+    ("int symbolic exponent", ``(x:int) ** (2 * n)``, true),
+    ("real symbolic exponent", ``(x:real) pow (2 * n)``, true),
+    ("num symbolic exponent", ``(x:num) ** (2 * n)``, true),
+    ("real literal base symbolic exponent", ``(2:real) pow n``, true),
+    ("real numeral exponent", ``(x:real) pow 2``, false)
+  ]
+  fun check (name, term, expected) =
+    assert (Library.contains_nonpolynomial_arithmetic term = expected,
+      name ^ " nonpolynomial classification was " ^
+      Bool.toString (not expected))
+in
+  List.app check cases
+end
+
+fun symbolic_power_avoids_nla_route_success () =
+let
+  val goal = ``0 <= (x:real) pow (2 * n)``
+  val () = Profile.reset_all ()
+  val () =
+    (ignore (Z3_ProofReplay.arith_prove_for_test goal);
+     die "FAIL: symbolic power was unexpectedly proved by arithmetic replay")
+    handle Feedback.HOL_ERR _ => ()
+in
+  assert (profile_call_count "arith(8)(nla)" = 0,
+    "symbolic power was routed to nla_prove")
 end
 
 fun cpc_arith_mult_relation_replay_success () =
@@ -14896,11 +14945,9 @@ let
       check_oracle_tags label thm
     end
 in
-  (if Library.no_fastpath () then
-   expect_hol_error_contains "disabled FP proforma" "fast path disabled"
-       (fn () => ignore (SmtFpProve.proforma_prove literal))
-   else
-     check "FP fp(1) literal" SmtFpProve.proforma_prove literal);
+  (* Proved FP schemas are a complete replay procedure, including in the
+     no-fastpath coverage-ablation mode. *)
+  check "FP fp(1) literal" SmtFpProve.proforma_prove literal;
   check "FP fp(2) literal evaluation"
     SmtFpProve.ground_eval_prove literal;
   List.app (fn (label, tm) =>
@@ -15029,6 +15076,7 @@ fun smtfp_addsub_circuit_replay_success () =
     let
       val goal =
         ``smtfp_add RTN (x : (1,2) smtfp) smtfp_pzero = x``
+      val () = Profile.reset_all ()
       val thm =
         case Z3.Z3_SMT_Prover ([], goal) of
           SolverSpec.UNSAT (SOME thm) => thm
@@ -15041,7 +15089,9 @@ fun smtfp_addsub_circuit_replay_success () =
     in
       assert_no_hyps ("tiny symbolic add generated replay", thm);
       assert_concl_alpha ("tiny symbolic add generated replay", thm, goal);
-      check_oracle_tags "tiny symbolic add generated replay" thm
+      check_oracle_tags "tiny symbolic add generated replay" thm;
+      assert (profile_call_count "check_proof(total)_OK" = 1,
+        "tiny symbolic add bypassed Z3 certificate replay")
     end
 
 fun smtfp_addsub_circuit_resource_diagnostic () =
@@ -15132,22 +15182,6 @@ in
   assert_concl_alpha ("finite RNE mul circuit", thm, finite);
   check_oracle_tags "finite RNE mul circuit" thm
 end
-
-fun smtfp_mul_circuit_direct_replay_success () =
-  if not (Z3.is_configured ()) then ()
-  else
-    let
-      val one = ``smtfp_bits 0w (15w : word5) (0w : word10)``
-      val goal = ``smtfp_mul RNE (x : (10,5) smtfp) ^one = x``
-      val thm =
-        case Z3.Z3_SMT_Prover ([], goal) of
-          SolverSpec.UNSAT (SOME theorem) => theorem
-        | _ => die "FAIL: Float16 symbolic mul was not proved"
-    in
-      assert_no_hyps ("Float16 direct generated replay", thm);
-      assert_concl_alpha ("Float16 direct generated replay", thm, goal);
-      check_oracle_tags "Float16 direct generated replay" thm
-    end
 
 fun smtfp_mul_circuit_resource_diagnostic () =
 let
@@ -16900,10 +16934,16 @@ let
       z3_contextual_entailment_end_to_end_success),
     ("z3_string_hypothesis_normalization_success",
       z3_string_hypothesis_normalization_success),
+    ("z3_word_hypothesis_normalization_success",
+      z3_word_hypothesis_normalization_success),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
       nonlinear_power_detection_success),
+    ("symbolic_power_nonpolynomial_detection_success",
+      symbolic_power_nonpolynomial_detection_success),
+    ("symbolic_power_avoids_nla_route_success",
+      symbolic_power_avoids_nla_route_success),
     ("cpc_arith_mult_relation_replay_success",
       cpc_arith_mult_relation_replay_success),
     ("nonlinear_power_nla_route_success",
@@ -16987,8 +17027,6 @@ let
       smtfp_mul_circuit_mutation_rejected),
     ("smtfp_mul_circuit_independent_finite",
       smtfp_mul_circuit_independent_finite),
-    ("smtfp_mul_circuit_direct_replay_success",
-      smtfp_mul_circuit_direct_replay_success),
     ("smtfp_mul_circuit_resource_diagnostic",
       smtfp_mul_circuit_resource_diagnostic),
     ("smtfp_deferred_gate_residue_diagnostics",

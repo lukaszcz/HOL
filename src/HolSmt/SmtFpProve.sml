@@ -78,12 +78,12 @@ struct
   end
 
   fun proforma_prove t =
-    (Library.require_fastpath "FP proforma";
-     (Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
+    ((Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
       handle Feedback.HOL_ERR _ =>
         Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms t
       handle Feedback.HOL_ERR _ =>
-        profile "fp(1)(reflexive-lt)" reflexive_lt_prove t))
+        (Library.require_fastpath "FP reflexive less-than";
+         profile "fp(1)(reflexive-lt)" reflexive_lt_prove t)))
     handle Feedback.HOL_ERR holerr =>
       raise ERR "proforma_prove"
         ("proforma lookup failed: " ^ Feedback.message_of holerr)
@@ -602,7 +602,9 @@ struct
       unsupported t
     else
       next_rung
-        (* E1(c): redundant proforma cache; [proforma_prove] is D1-gated. *)
+        (* E1(a): theorem-net instantiation is the checked procedure for the
+           proved FP rewrite schemas.  Its final reflexive-lt fallback is a
+           separately D1-gated E1(c) cache. *)
         (profile "fp(1)(proforma)" proforma_prove) t (fn () =>
       next_rung
         (* E1(a): CBV decides closed executable SMT floating-point terms. *)
