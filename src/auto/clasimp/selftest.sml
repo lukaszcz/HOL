@@ -1426,3 +1426,25 @@ val _ =
          failed andalso rules_before = rules_after andalso
          aconv (concl before_conv) (concl after_conv)
        end)
+
+(* An assumption the safe cascade has just stripped must not be rebuilt
+   into the conclusion.  The cascade's negation introduction turns a
+   goal [~p] into [p |- F], and a simplification that re-forms [p ==> F]
+   as [~p] hands the two steps a cycle; safe saturation repeats while
+   any step applies, so it never leaves that cycle.  The goal below is
+   unprovable -- what is asserted is that the tactic returns at all. *)
+val cascade_cycle_goal : goal =
+  ([] : term list, ``!x. cycle_q (x:'a) ==> ~cycle_p x``)
+
+val _ =
+  check
+    ("safe simplification does not undo the cascade's negation step",
+     fn () =>
+       let
+         fun run () =
+           (ignore (clasimpLib.AUTO_TAC [] cascade_cycle_goal); true)
+           handle HOL_ERR _ => true
+       in
+         Timeout.apply (Time.fromSeconds 30) run ()
+         handle Timeout.TIMEOUT _ => false
+       end)

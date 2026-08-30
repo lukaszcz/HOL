@@ -77,6 +77,21 @@ fun asm_full_simp ss =
 fun safe_asm_full_simp ss =
   simpLib.GEN_GLOBAL_SIMP_TAC {safe = true} asm_full_simp_config ss
 
+(* Inside the classical cascade the split between assumptions and
+   conclusion is the cascade's own: its negation introduction strips a
+   goal [~p] to [p |- F], and an implication rebuild re-forms [p ==> F]
+   as [~p].  Safe saturation repeats while any step applies, so a
+   wrapper that inverts one of its steps gives the two a cycle it never
+   leaves; simplification participating in the cascade therefore
+   normalises in place. *)
+val cascade_simp_config : simpLib.xsimptac_config =
+  {base = asm_full_simp_base,
+   concl_in_fixpoint = true,
+   imp_rebuild = false}
+
+fun cascade_safe_simp ss =
+  simpLib.GEN_GLOBAL_SIMP_TAC {safe = true} cascade_simp_config ss
+
 fun add_simp_wrapper ss simp_args =
   let
     fun wrapper step =
@@ -94,7 +109,7 @@ fun add_safe_simp_wrapper ss simp_args =
       NTactical.NORELSE
         (step,
          NTactical.NCHANGED
-           (NTactical.LIFT (safe_asm_full_simp ss simp_args)))
+           (NTactical.LIFT (cascade_safe_simp ss simp_args)))
   in
     clasetLib.add_safe_wrapper
       ("safe_asm_full_simp_tac", wrapper)
