@@ -72,7 +72,12 @@ val disjnt =
      ^ "apply.  Withholding that normalisation while supplying "
      ^ "pred_set's INSERT_INTER lets simp alone close the first of "
      ^ "these; the second inserts on the right, and pred_set states "
-     ^ "no mirror of INSERT_INTER")
+     ^ "no mirror of INSERT_INTER.  That route is not worth its cost: "
+     ^ "restricting the normalisation to a set former, as Isabelle "
+     ^ "states it, costs five goals whose left-hand side is not a "
+     ^ "former, and supplying INSERT_INTER alongside the unrestricted "
+     ^ "normalisation gains nothing, since the normalisation reaches "
+     ^ "the term first")
     ["set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2"]
 
 val bounded_quantifier_one_point =
