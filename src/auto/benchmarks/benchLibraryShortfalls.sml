@@ -53,9 +53,7 @@ val over_budget =
    "map_L899_map_add_subsumed1", "product_type_L1031_SigmaE",
    "product_type_L1109_split_paired_Ball_Sigma",
    "product_type_L1133_Sigma_Union",
-   "product_type_L1364_disjnt_Times1_iff",
-   "product_type_L1367_disjnt_Times2_iff",
-   "product_type_L1370_disjnt_Sigma_iff", "string_L34_of_char_Char",
+   "string_L34_of_char_Char",
    "string_L357_integer_of_char_code"]
 
 fun record note id : benchLib.shortfall =
@@ -173,10 +171,7 @@ val over_budget_with_no_residual =
      "list_L6847_sorted_list_of_set_nonempty",
      "list_L8705_set_relcomp", "map_L723_ran_map_upd",
      "map_L730_ran_map_upd_Some",
-     "product_type_L1133_Sigma_Union",
-     "product_type_L1364_disjnt_Times1_iff",
-     "product_type_L1367_disjnt_Times2_iff",
-     "product_type_L1370_disjnt_Sigma_iff", "string_L34_of_char_Char",
+     "product_type_L1133_Sigma_Union", "string_L34_of_char_Char",
      "string_L357_integer_of_char_code"]
 
 val filter_normalisation =
@@ -290,11 +285,9 @@ val characterisation_is_the_goal =
 val predicate_and_set_representation =
   classified "predicate and set representation"
     ("the translation writes a set as a lambda and membership as "
-     ^ "application; the assigned tactic does not identify (\x. F) "
-     ^ "with EMPTY, (\x. t x) with t, or x IN P with P x")
+     ^ "application; the assigned tactic does not identify (\x. t x) "
+     ^ "with t, or x IN P with P x")
     ["list_L8638_filter_set",
-     "map_L578_dom_empty", "map_L786_graph_empty",
-     "option_L288_these_empty",
      "product_type_L1184_sing_Times_sing",
      "product_type_L469_cond_case_prod_eta",
      "product_type_L600_case_prodI2_", "product_type_L785_curry_conv",

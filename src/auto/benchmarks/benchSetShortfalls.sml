@@ -12,8 +12,7 @@ val over_budget =
   ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
    "set_L1604_Pow_singleton_iff", "set_L1607_Pow_insert",
    "set_L1790_vimage_image_eq",
-   "set_L1847_is_singleton_the_elem", "set_L1976_disjnt_commute",
-   "set_L2003_disjnt_Un2",
+   "set_L1847_is_singleton_the_elem",
    "set_L928_subset_image_iff", "set_L994_image_add_0",
    "set_theory_L168", "set_theory_L184", "set_theory_L36",
    "set_theory_L44", "set_theory_L48"]
@@ -59,17 +58,17 @@ val isabelle_lattice_instance =
     ("the source proof unfolds the lattice instance for 'a set; "
      ^ "pred_set defines the operation directly and has no "
      ^ "instance to unfold")
-    ["set_L563_empty_def", "set_L595_UNIV_def", "set_L687_Int_def",
-     "set_L714_Un_def"]
+    ["set_L595_UNIV_def", "set_L687_Int_def", "set_L714_Un_def"]
 
 val disjnt =
   classified "disjnt"
-    ("DISJOINT_DEF reduces the goal to an emptiness claim about an "
-     ^ "intersection, which the simpset then presents as a set "
-     ^ "former; the two sides of the equivalence reach different "
-     ^ "formers and neither is turned back into membership")
-    ["set_L1976_disjnt_commute", "set_L1988_disjnt_insert1",
-     "set_L1991_disjnt_insert2", "set_L2003_disjnt_Un2"]
+    ("the emptiness claim reaches membership form, and what stands "
+     ^ "is an equivalence between a quantification over an insertion "
+     ^ "and the conjunction of the inserted point with the "
+     ^ "quantification over the rest; closing it needs the "
+     ^ "quantification instantiated at that point, and the search "
+     ^ "reports no proof")
+    ["set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2"]
 
 val bounded_quantifier_one_point =
   classified "bounded-quantifier one-point"
@@ -88,12 +87,6 @@ val definite_description =
     ("CHOICE over a singleton is not reduced by the assigned "
      ^ "tactic")
     ["set_L1844_the_elem_eq", "set_L1847_is_singleton_the_elem"]
-
-val set_monad_bind =
-  classified "set monad bind"
-    ("the set-monad bind has no pred_set counterpart the "
-     ^ "assigned tactic unfolds")
-    ["set_L1874_empty_bind"]
 
 val image_comprehension =
   classified "image comprehension"
@@ -135,7 +128,6 @@ val entries : benchLib.shortfall list =
   bounded_quantifier_one_point @
   vimage @
   definite_description @
-  set_monad_bind @
   image_comprehension @
   boolean_induction_rule @
   instantiated_fact_citation @
