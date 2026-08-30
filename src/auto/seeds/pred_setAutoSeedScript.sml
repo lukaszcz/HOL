@@ -36,6 +36,12 @@ QED
 val _ =
   List.app export_iff
     [("SUBSET_DEF_AUTO", pred_setTheory.SUBSET_DEF),
+     (* src/HOL/Set.thy:566-569 @ f7e02b7e.  This one declaration carries
+        both empty_iff and emptyE: stated as a negation, the [iff]
+        machinery derives the safe elimination that closes a branch on
+        a membership in the empty set.  The tableau leg has no simpset,
+        so without the rule it can only carry such a membership along. *)
+     ("NOT_IN_EMPTY_AUTO", pred_setTheory.NOT_IN_EMPTY),
      ("EMPTY_SUBSET_AUTO", pred_setTheory.EMPTY_SUBSET),
      ("IN_UNIV_AUTO", pred_setTheory.IN_UNIV),
      ("UNIV_NOT_EMPTY_AUTO", pred_setTheory.UNIV_NOT_EMPTY),

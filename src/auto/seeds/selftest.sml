@@ -430,6 +430,22 @@ val _ =
        terminates_within 20 (clasimpLib.FASTFORCE_TAC [])
          negated_equation_goal)
 
+(* src/HOL/Set.thy:566-569 @ f7e02b7e.  Neither goal is a corpus entry.
+   The tableau leg has no simpset, so a membership in the empty set is
+   just another literal there; without the safe elimination derived from
+   NOT_IN_EMPTY_AUTO the branch carrying it stays open and neither goal
+   closes. *)
+val _ =
+  check
+    ("a membership in the empty set closes a tableau branch",
+     fn () =>
+       List.all
+         (closes_within 20 (tableauLib.BLAST_TAC []))
+         [([], ``(seed_emptyE_s : 'a set) SUBSET {} ==>
+                 seed_emptyE_s SUBSET seed_emptyE_t``),
+          ([], ``(!item. item IN (seed_emptyE_s : 'a set) ==> item IN {}) ==>
+                 seed_emptyE_s = {}``)])
+
 (* src/HOL/Set.thy:1192-1195 @ f7e02b7e.  Neither goal is a corpus
    entry.  An emptiness claim reached by unfolding arrives as an equation
    between set formers, and SET_EQ_EMPTY_AUTO is what turns it into
