@@ -124,6 +124,53 @@ val _ =
        aconv (snd (boolSyntax.dest_eq (concl derived_restored)))
          derived_lhs)
 
+(* A recursive equation whose right-hand side is a conditional is the
+   ordinary way to state an interval or an iteration.  Under HOL4's
+   COND_CONG the simplifier enters the then-branch with the test
+   assumed, and the test is exactly what licenses the next unfolding, so
+   the rewriting never stops.  The weak congruence this layer installs
+   simplifies the test alone, so one unfolding is the normal form: the
+   expected right-hand side below still carries the recursive call.  The
+   budget is what keeps a regression a failure rather than a hang. *)
+val recursion =
+  ASSUME
+    ``!item.
+        clasimp_iterate item =
+          if clasimp_test item then clasimp_iterate (clasimp_step item)
+          else clasimp_base``
+
+val recursion_step = Drule.SPEC_ALL recursion
+
+val recursion_unfolded =
+  Lib.total
+    (Timeout.apply (Time.fromSeconds 30)
+       (Conv.QCONV
+          (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [recursion])))
+    (boolSyntax.lhs (concl recursion_step))
+
+val _ =
+  check
+    ("a conditional recursion unfolds once, not forever",
+     fn () =>
+       case recursion_unfolded of
+           NONE => false
+         | SOME theorem =>
+             aconv (boolSyntax.rhs (concl theorem))
+               (boolSyntax.rhs (concl recursion_step)))
+
+(* And it reports an absent CONG fragment rather than replacing nothing:
+   a simpset that kept the strong congruence under the weakened name
+   would unfold forever again, silently. *)
+val _ =
+  check
+    ("weakening reports a simpset with no conditional congruence",
+     fn () =>
+       (ignore (clasimpLib.weaken_cond_congruence simpLib.empty_ss);
+        false)
+       handle HOL_ERR error =>
+                Feedback.top_function_of error = "weaken_cond_congruence"
+            | Conv.UNCHANGED => false)
+
 val mutual_goal =
   ([``P (a:'a) : bool``, ``a:'a = b``], ``mutual_q:bool``)
 val mutual_expected =

@@ -65,6 +65,12 @@ fun derive_aesop_ss ss _ : cached_simpset =
   {generation = Sref.value aesop_simp_generation,
    simpset =
      ss
+     (* The conditional congruence is weakened here too; see
+        clasimpLib.weaken_cond_congruence for why a recursive equation
+        with a conditional right-hand side needs it.  The branch
+        reasoning this simpset gives up is the branch reasoning it
+        already leaves to the search. *)
+     |> clasimpLib.weaken_cond_congruence
      |> simpLib.set_cond_depth 40
      (* Matched modulo eta, as Isabelle's higher-order patterns are; see
         clasimpLib.derive_clasimp_ss for why a rule and a goal otherwise

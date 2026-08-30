@@ -22,6 +22,59 @@ val safe_solver =
         Tactic.ACCEPT_TAC boolTheory.TRUTH,
         Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
 
+(* HOL4's COND_CONG simplifies both branches of a conditional as well as
+   its condition.  A recursive equation whose right-hand side is a
+   conditional -- how an interval or an iteration is ordinarily stated --
+   then rewrites its own unfolding without end: the branch holds an
+   instance of the rule's own left-hand side, and rewriting it produces
+   another.  Isabelle states such equations and rewrites with them, which
+   its weak conditional congruence -- the condition simplified, the
+   branches left alone -- is what allows.  Nothing short of that helps:
+   the unfolding is licensed by the rule alone, so a congruence that
+   descends into the branches at all diverges, whether or not it carries
+   the condition down with it.  This layer follows Isabelle; the branch
+   reasoning comes back from the case split, split_ss below.
+
+   A congruence belongs to a fragment and a fragment is replaced whole,
+   so the three other congruences of CONG_ss are restated here. *)
+local
+  infix THEN
+  val op THEN = Tactical.THEN
+in
+val cond_weak_cong =
+  Tactical.prove
+    (``!condition simplified left right.
+         (condition = simplified) ==>
+         ((if condition then left else right) =
+          (if simplified then left else right))``,
+     Tactical.REPEAT Tactic.GEN_TAC THEN
+     Tactic.DISCH_TAC THEN
+     Rewrite.ASM_REWRITE_TAC [])
+end
+
+val weak_cong_ss =
+  simpLib.SSFRAG
+    {name = SOME "CONGWEAK",
+     congs =
+       [Rewrite.REWRITE_RULE [Conv.GSYM boolTheory.AND_IMP_INTRO]
+          boolTheory.IMP_CONG,
+        cond_weak_cong,
+        boolTheory.RES_FORALL_CONG,
+        boolTheory.RES_EXISTS_CONG],
+     convs = [], rewrs = [], filter = NONE, ac = [], dprocs = []}
+
+(* [remove_ssfrags] signals an absent fragment by raising UNCHANGED.
+   Reporting that is what keeps the replacement honest: a caught
+   exception here would leave the strong congruence in place under a
+   name that says otherwise. *)
+fun weaken_cond_congruence ss =
+  simpLib.++
+    (simpLib.remove_ssfrags ["CONG"] ss
+       handle Conv.UNCHANGED =>
+         raise ERR "weaken_cond_congruence"
+           "the simpset carries no CONG fragment to replace",
+     weak_cong_ss)
+
 (* The unsafe side-condition solver added here reaches this simpset only:
    the simplifier offers unsafe solvers to every traversal regardless of
    the safe solvers, so a simpset with a normalisation phase to protect
@@ -29,6 +82,7 @@ val safe_solver =
    from here. *)
 fun derive_clasimp_ss ss _ =
   ss
+  |> weaken_cond_congruence
   |> simpLib.set_cond_depth 40
   |> (fn ss' => simpLib.++ (ss', simpLib.split_ss))
   (* ETA_ss is where Isabelle's matcher is and HOL4's is not.  Isabelle

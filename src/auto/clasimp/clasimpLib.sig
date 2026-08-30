@@ -9,6 +9,14 @@ sig
      rather than restating it. *)
   val safe_solver : Traverse.ssolver
 
+  (* Replaces the conditional congruence of a simpset by the weak form,
+     which simplifies the condition and leaves the branches to whatever
+     case split the caller arranges.  Exported so that the simpsets
+     derived elsewhere in this layer (aesop) share the arrangement
+     rather than restating it.  Reports a simpset with no conditional
+     congruence to replace rather than returning it unchanged. *)
+  val weaken_cond_congruence : simpLib.simpset -> simpLib.simpset
+
   val clasimp_ss : unit -> simpLib.simpset
   val asm_full_simp : simpLib.simpset -> thm list -> tactic
   val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic
