@@ -12404,6 +12404,98 @@ in
   check_oracle_tags "n-binder quantified Boolean normalization" theorem
 end
 
+fun z3_skolem_nary_binders_replay_success () =
+let
+  fun names prefix count =
+    List.tabulate (count, fn index =>
+      prefix ^ Int.toString (index + 1))
+  fun conjunction [term] = term
+    | conjunction (term :: terms) =
+        "(and " ^ term ^ " " ^ conjunction terms ^ ")"
+    | conjunction [] = raise Fail "empty skolem test conjunction"
+  fun binder variables =
+    "(" ^ String.concatWith " "
+      (List.map (fn variable => "(" ^ variable ^ " Bool)") variables) ^
+    ")"
+  fun quantify "exists" variables body =
+        "(exists " ^ binder variables ^ " " ^ body ^ ")"
+    | quantify "forall" variables body =
+        "(not (forall " ^ binder variables ^ " " ^ body ^ "))"
+    | quantify _ _ _ = raise Fail "unknown skolem test quantifier"
+  fun case_text quantifier arity peeled =
+    let
+      val variables = names "x" arity
+      val skolems = names "z" peeled
+      val remaining = List.drop (variables, peeled)
+      val declarations = String.concat
+        (List.map (fn skolem =>
+          "(declare-fun " ^ skolem ^ " () Bool) ") skolems)
+      val lhs = quantify quantifier variables (conjunction variables)
+      val rhs_body = conjunction (skolems @ remaining)
+      val rhs =
+        if List.null remaining then
+          if quantifier = "forall" then "(not " ^ rhs_body ^ ")"
+          else rhs_body
+        else quantify quantifier remaining rhs_body
+      val target = "(= " ^ lhs ^ " " ^ rhs ^ ")"
+      val proof_text =
+        "(" ^ declarations ^ "(proof (sk " ^ target ^ ")))"
+      val expected = List.hd (parse_legacy_smtlib_assertions
+        ("(set-logic ALL)\n" ^ declarations ^
+         "(assert " ^ target ^ ")\n"))
+    in
+      (proof_text, expected, skolems)
+    end
+  fun definition_name definition =
+    let
+      val lhs = Lib.fst (boolSyntax.dest_eq definition)
+    in
+      Lib.fst (Term.dest_var lhs)
+    end
+  fun run_case (quantifier, arity, peeled) =
+    let
+      val label = quantifier ^ " n=" ^ Int.toString arity ^
+        ", peeled=" ^ Int.toString peeled
+      val (proof_text, expected, skolems) =
+        case_text quantifier arity peeled
+      val proof = parse_z3_proof_string "4.12.4" proof_text
+      val {asserted_hyps, definition_hyps, thm} =
+        Z3_ProofReplay.replay_root_with_state_for_test proof
+      val theorem_hyps = Thm.hyp thm
+      val defined = List.map definition_name definition_hyps
+    in
+      assert (Thm.concl thm ~~ expected,
+        label ^ " returned the wrong skolem equality");
+      assert (List.null asserted_hyps andalso
+          List.length definition_hyps = peeled andalso
+          List.length theorem_hyps = peeled,
+        label ^ " did not record exactly one definition per peeled binder");
+      assert (List.all (fn skolem => List.exists (fn name =>
+          name = skolem) defined) skolems,
+        label ^ " did not define every recorded skolem variable");
+      check_oracle_tags ("Z3 skolem " ^ label) thm
+    end
+  val full = List.concat (List.map (fn quantifier =>
+    List.map (fn arity => (quantifier, arity, arity)) [1, 2, 3, 4])
+    ["exists", "forall"])
+  val partial = List.concat (List.map (fn quantifier =>
+    List.map (fn peeled => (quantifier, 4, peeled)) [1, 2, 3])
+    ["exists", "forall"])
+  val undeclared = ``skolem_result:bool``
+  val guarded_target = boolSyntax.mk_eq
+    (boolSyntax.mk_exists (``x:bool``, ``x:bool``), undeclared)
+  val initial = Z3_Proof.empty_proof "4.12.4"
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+    Z3_Proof.SKOLEM guarded_target)
+  val guarded_proof = Z3_Proof.update_proof_steps initial steps
+in
+  List.app run_case (full @ partial);
+  expect_hol_error_contains "skolem non-Z3 variable guard"
+    "definition for a non-Z3 variable"
+    (fn () => ignore
+      (Z3_ProofReplay.replay_root_for_test guarded_proof))
+end
+
 fun profile_call_count name =
   case List.find (fn (result_name, _) => result_name = name)
       (Profile.results ()) of
@@ -16898,6 +16990,8 @@ let
       ground_subterm_evaluation_budget_success),
     ("quantified_boolean_rewrite_n_binders_success",
       quantified_boolean_rewrite_n_binders_success),
+    ("z3_skolem_nary_binders_replay_success",
+      z3_skolem_nary_binders_replay_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
     ("z3_emitted_definition_word_replay_success",

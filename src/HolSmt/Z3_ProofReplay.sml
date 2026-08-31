@@ -2366,19 +2366,45 @@ local
   fun z3_skolem (state, t) =
   let
     val lhs = Lib.fst (boolSyntax.dest_eq t)
-    val thm1 =
-      if boolSyntax.is_exists lhs then
+    fun skolem_theorem term =
+      if boolSyntax.is_exists term then
         HolSmtTheory.SKOLEM_EXISTS
       else
-        HolSmtTheory.SKOLEM_FORALL
-    val thm2 = Drule.SELECT_RULE thm1
-    val thm3 = Conv.HO_REWR_CONV thm2 lhs
-    val substs = Term.match_term t (Thm.concl thm3)
-    val {redex, residue} = List.hd (Lib.fst substs)
-    val thm4 = Thm.SYM (Thm.ASSUME (boolSyntax.mk_eq (redex, residue)))
-    val thm5 = Drule.SUBST_CONV [redex |-> thm4] t
-      (Thm.concl thm3)
-    val thm = Thm.EQ_MP thm5 thm3
+        case Lib.total boolSyntax.dest_neg term of
+          SOME body =>
+            if boolSyntax.is_forall body then
+              HolSmtTheory.SKOLEM_FORALL
+            else
+              raise ERR "z3_skolem" "expected a quantified formula"
+        | NONE => raise ERR "z3_skolem" "expected a quantified formula"
+    fun instantiate accumulated substs =
+      let
+        fun definition {redex, residue} =
+          if HOLset.member (#var_set state, redex) then
+            redex |-> Thm.SYM
+              (Thm.ASSUME (boolSyntax.mk_eq (redex, residue)))
+          else
+            raise ERR "z3_skolem"
+              "match produced a definition for a non-Z3 variable"
+        val conversion = Drule.SUBST_CONV (List.map definition substs) t
+          (Thm.concl accumulated)
+      in
+        Thm.EQ_MP conversion accumulated
+      end
+    (* Z3 may skolemize all or only a prefix of a binder block.  Peel at
+       least one binder (this is the [sk] rule), then stop at the first
+       prefix whose conclusion matches the recorded result. *)
+    fun peel current accumulated =
+      let
+        val step = Conv.HO_REWR_CONV
+          (Drule.SELECT_RULE (skolem_theorem current)) current
+        val accumulated = Thm.TRANS accumulated step
+      in
+        case Lib.total (Term.match_term t) (Thm.concl accumulated) of
+          SOME (substs, _) => instantiate accumulated substs
+        | NONE => peel (boolSyntax.rhs (Thm.concl step)) accumulated
+      end
+    val thm = peel lhs (Thm.REFL lhs)
     val asl = Thm.hyp thm
   in
     (state_define state asl, thm)
