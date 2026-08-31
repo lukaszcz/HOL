@@ -11895,6 +11895,12 @@ in
       (``\x:bool. (p:bool->bool) x``, ``q:bool->bool``))
 end
 
+fun profile_call_count name =
+  case List.find (fn (result_name, _) => result_name = name)
+      (Profile.results ()) of
+    SOME (_, info) => #n info
+  | NONE => 0
+
 fun z3_rewrite_beta_eta_abs_rungs_success () =
 let
   val beta = replay_z3_proof_string
@@ -11919,6 +11925,170 @@ in
   check_oracle_tags "Z3 rewrite beta rung" beta;
   check_oracle_tags "Z3 rewrite eta rung" eta;
   check_oracle_tags "Z3 rewrite ABS rung" abs
+end
+
+fun z3_rewrite_skeleton_congruence_success () =
+let
+  val skeleton = "rewrite(25a)(skeleton-congruence)_OK"
+  val word_rung = "rewrite(18)(BBLAST)_OK"
+  val seq_rung = "rewrite(6)(seq)_OK"
+  val x = ``skeleton_x:word4``
+  val y = ``skeleton_y:word4``
+  val word_atom_template =
+    ``(skeleton_x:word4) && (skeleton_x - 1w) =
+      skeleton_x - (skeleton_x && -skeleton_x)``
+  val seq_atom =
+    ``REVERSE [skeleton_a:int; skeleton_b] =
+      [skeleton_b; skeleton_a]``
+  fun word_atom variable =
+    Term.subst [x |-> variable] word_atom_template
+  fun replay target =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+    in
+      Z3_ProofReplay.replay_root_for_test
+        (Z3_Proof.update_proof_steps initial steps)
+    end
+  fun check name expected_skeleton (left, right) =
+    let
+      val target = boolSyntax.mk_eq (left, right)
+      val () = Profile.reset_all ()
+      val theorem = replay target
+    in
+      assert_no_hyps (name, theorem);
+      assert_concl_alpha (name, theorem, target);
+      check_oracle_tags name theorem;
+      assert (profile_call_count skeleton = expected_skeleton,
+        name ^ " consumed " ^ Int.toString (profile_call_count skeleton) ^
+        " skeleton residues, expected " ^ Int.toString expected_skeleton);
+      assert (profile_call_count word_rung = 1,
+        name ^ " did not consume exactly one word residue");
+      assert (profile_call_count seq_rung = 1,
+        name ^ " did not consume exactly one Sequence residue")
+    end
+  val left_conj = boolSyntax.mk_conj (word_atom x, seq_atom)
+  val right_conj = boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)
+  val false_word_atom = boolSyntax.mk_neg (word_atom x)
+  val false_seq_atom = boolSyntax.mk_neg seq_atom
+  val forall_left = boolSyntax.mk_forall
+    (x, boolSyntax.mk_conj (word_atom x, seq_atom))
+  val forall_right = boolSyntax.mk_forall
+    (y, boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T))
+  val exists_left = boolSyntax.mk_exists
+    (x, boolSyntax.mk_conj (word_atom x, seq_atom))
+  val exists_right = boolSyntax.mk_exists
+    (y, boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T))
+in
+  check "rewrite skeleton negation" 2
+    (boolSyntax.mk_neg left_conj, boolSyntax.mk_neg right_conj);
+  check "rewrite skeleton conjunction" 1
+    (left_conj, right_conj);
+  check "rewrite skeleton disjunction" 1
+    (boolSyntax.mk_disj (false_word_atom, false_seq_atom),
+     boolSyntax.mk_disj (boolSyntax.F, boolSyntax.F));
+  check "rewrite skeleton implication" 1
+    (boolSyntax.mk_imp (word_atom x, false_seq_atom),
+     boolSyntax.mk_imp (boolSyntax.T, boolSyntax.F));
+  check "rewrite skeleton equivalence" 1
+    (boolSyntax.mk_eq (word_atom x, false_seq_atom),
+     boolSyntax.mk_eq (boolSyntax.T, boolSyntax.F));
+  check "rewrite skeleton forall" 2 (forall_left, forall_right);
+  check "rewrite skeleton exists" 2 (exists_left, exists_right)
+end
+
+fun z3_rewrite_skeleton_congruence_boundaries () =
+let
+  val skeleton = "rewrite(25a)(skeleton-congruence)"
+  val word_rung = "rewrite(18)(BBLAST)_OK"
+  val x = ``skeleton_boundary_x:word4``
+  val left_atom =
+    ``(skeleton_boundary_x:word4) && (skeleton_boundary_x - 1w) =
+      skeleton_boundary_x -
+        (skeleton_boundary_x && -skeleton_boundary_x)``
+  val seq_atom =
+    ``REVERSE [skeleton_boundary_a:int; skeleton_boundary_b] =
+      [skeleton_boundary_b; skeleton_boundary_a]``
+  fun replay target =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+    in
+      Z3_ProofReplay.replay_root_for_test
+        (Z3_Proof.update_proof_steps initial steps)
+    end
+  val direct = boolSyntax.mk_eq
+    (boolSyntax.mk_neg left_atom, boolSyntax.mk_neg boolSyntax.T)
+  val () = Profile.reset_all ()
+  val direct_theorem = replay direct
+  val _ = assert (profile_call_count word_rung = 1 andalso
+      profile_call_count skeleton = 0,
+    "skeleton congruence pre-empted direct word replay")
+  val mismatch = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (left_atom, seq_atom),
+     boolSyntax.mk_disj (boolSyntax.F, boolSyntax.F))
+  val () = Profile.reset_all ()
+  val failure =
+    ((ignore (replay mismatch);
+      die "FAIL: nonmatching skeleton rewrite succeeded")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+  val declarations =
+    "(set-logic ALL)\n" ^
+    "(declare-fun a () Bool)\n" ^
+    "(declare-fun b () Bool)\n" ^
+    "(declare-fun c () Bool)\n" ^
+    "(declare-fun d () Bool)\n"
+  val deferred_rewrite = "(= (not (and a b)) (not (or c d)))"
+  val deferred_target = List.hd (parse_smtlib_assertions
+    (declarations ^ "(assert " ^ deferred_rewrite ^ ")\n"))
+  val deferred_child = boolSyntax.mk_eq
+    (boolSyntax.dest_neg (boolSyntax.lhs deferred_target),
+     boolSyntax.dest_neg (boolSyntax.rhs deferred_target))
+  val deferred_proof = parse_z3_proof_string "4.12.4"
+    ("(" ^ declarations ^
+     "(proof (unit-resolution (asserted (not " ^ deferred_rewrite ^ ")) " ^
+     "(rewrite " ^ deferred_rewrite ^ ") false))))")
+in
+  assert_no_hyps ("direct theory rewrite ordering", direct_theorem);
+  check_oracle_tags "direct theory rewrite ordering" direct_theorem;
+  assert (String.isSubstring "rewrite ladder exhausted" failure,
+    "nonmatching skeleton did not fail through the later ladder boundary");
+  assert (profile_call_count (skeleton ^ "_HOL_ERR") = 1 andalso
+      profile_call_count word_rung = 0,
+    "nonmatching skeleton recursed before rejecting its unequal heads");
+  Profile.reset_all ();
+  let val deferred_theorem =
+      Z3_ProofReplay.replay_root_for_test deferred_proof
+  in
+    assert (Thm.concl deferred_theorem ~~ boolSyntax.F,
+      "deferred skeleton boundary returned the wrong conclusion");
+    assert (List.exists (Term.aconv deferred_target)
+        (Thm.hyp deferred_theorem) andalso
+      not (List.exists (Term.aconv deferred_child)
+        (Thm.hyp deferred_theorem)),
+      "skeleton congruence replaced a whole deferred rewrite with a " ^
+      "self-assumed child residue");
+    assert (profile_call_count (skeleton ^ "_HOL_ERR") = 2 andalso
+        profile_call_count (skeleton ^ "_OK") = 0 andalso
+        profile_call_count
+          "rewrite(26)(contextual-entailment)_OK" = 2 andalso
+        profile_call_count
+          "rewrite(14)(unification:deferred-alias-return)_OK" = 0,
+      "self-assumed child residue was not rejected before whole-rewrite " ^
+      "deferral: skeleton errors=" ^
+      Int.toString (profile_call_count (skeleton ^ "_HOL_ERR")) ^
+      ", skeleton successes=" ^
+      Int.toString (profile_call_count (skeleton ^ "_OK")) ^
+      ", contextual successes=" ^
+      Int.toString (profile_call_count
+        "rewrite(26)(contextual-entailment)_OK") ^
+      ", deferred aliases=" ^
+      Int.toString (profile_call_count
+        "rewrite(14)(unification:deferred-alias-return)_OK"));
+    check_oracle_tags "deferred skeleton boundary" deferred_theorem
+  end
 end
 
 fun z3_rewrite_abs_rung_shaped_failure () =
@@ -12589,12 +12759,6 @@ in
     (fn () => ignore
       (Z3_ProofReplay.replay_root_for_test guarded_proof))
 end
-
-fun profile_call_count name =
-  case List.find (fn (result_name, _) => result_name = name)
-      (Profile.results ()) of
-    SOME (_, info) => #n info
-  | NONE => 0
 
 fun ground_subterm_evaluation_budget_success () =
 let
@@ -13339,7 +13503,9 @@ let
     ("rewrite(23)(abs-congruence)",
       "higher-order-congruence/beta/eta"),
     ("rewrite(24)(beta)", "higher-order-congruence/beta/eta"),
-    ("rewrite(25)(eta)", "higher-order-congruence/beta/eta")
+    ("rewrite(25)(eta)", "higher-order-congruence/beta/eta"),
+    ("rewrite(25a)(skeleton-congruence)",
+      "boolean/binder-skeleton")
   ]
   fun assert_profile_class (profile_name, fragment) =
     if profile_call_count profile_name = 0 then ()
@@ -13355,7 +13521,8 @@ in
     "terminal diagnostic probe did not route through Set/Array replay");
   assert (profile_call_count "rewrite(22)(equality-congruence)" > 0 andalso
       profile_call_count "rewrite(24)(beta)" > 0 andalso
-      profile_call_count "rewrite(25)(eta)" > 0,
+      profile_call_count "rewrite(25)(eta)" > 0 andalso
+      profile_call_count "rewrite(25a)(skeleton-congruence)" > 0,
     "terminal diagnostic probe did not route through HO/beta/eta replay");
   List.app assert_profile_class routed_profiles
 end
@@ -17130,6 +17297,10 @@ let
       z3_beta_eta_replay_rungs_shaped_failure),
     ("z3_rewrite_beta_eta_abs_rungs_success",
       z3_rewrite_beta_eta_abs_rungs_success),
+    ("z3_rewrite_skeleton_congruence_success",
+      z3_rewrite_skeleton_congruence_success),
+    ("z3_rewrite_skeleton_congruence_boundaries",
+      z3_rewrite_skeleton_congruence_boundaries),
     ("z3_rewrite_abs_rung_shaped_failure",
       z3_rewrite_abs_rung_shaped_failure),
     ("z3_abs_congruence_replay_rung_success",

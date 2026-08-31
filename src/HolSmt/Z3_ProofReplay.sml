@@ -2061,6 +2061,114 @@ local
       else attempts := !attempts @ [fragment]
     fun rewrite_profile fragment name prove input =
       (record_attempt fragment; profile name prove input)
+    fun skeleton_congruence () =
+      let
+        fun same_head (left, right) =
+          let
+            val (left_head, _) = boolSyntax.strip_comb left
+            val (right_head, _) = boolSyntax.strip_comb right
+          in
+            Term.aconv left_head right_head orelse
+              raise ERR "skeleton_congruence" "skeleton heads differ"
+          end
+        fun child (state, left_parent, right_parent) (left, right) =
+          if Term.term_eq left right then
+            (state, Thm.REFL left)
+          else if Term.aconv left right then
+            (state, Thm.ALPHA left right)
+          else
+            let
+              val _ = Term.term_size left < Term.term_size left_parent andalso
+                  Term.term_size right < Term.term_size right_parent orelse
+                raise ERR "skeleton_congruence"
+                  "recursive residue did not strictly shrink"
+              val target = boolSyntax.mk_eq (left, right)
+              val (state', theorem) = z3_rewrite (state, target)
+              (* Contextual deferral is not recursive progress: lifting its
+                 self-assumption would replace one whole obligation by a
+                 harder residue.  Other checked definition hypotheses stay. *)
+              val _ = List.exists (fn hypothesis =>
+                  Term.aconv hypothesis target) (Thm.hyp theorem) andalso
+                raise ERR "skeleton_congruence"
+                  "recursive residue was deferred as its own assumption"
+              val exact = Thm.EQ_MP
+                (Thm.ALPHA (Thm.concl theorem) target) theorem
+            in
+              (state', exact)
+            end
+        fun unary dest (state, left, right) =
+          let
+            val _ = same_head (left, right)
+            val (left_body, right_body) = (dest left, dest right)
+            val (state', body_theorem) =
+              child (state, left, right) (left_body, right_body)
+          in
+            (state', Thm.AP_TERM (Term.rator left) body_theorem)
+          end
+        fun binary dest (state, left, right) =
+          let
+            val _ = same_head (left, right)
+            val (left_first, left_second) = dest left
+            val (right_first, right_second) = dest right
+            val (state', first_theorem) = child (state, left, right)
+              (left_first, right_first)
+            val (state'', second_theorem) = child (state', left, right)
+              (left_second, right_second)
+            val head = Term.rator (Term.rator left)
+            val theorem = Thm.MK_COMB
+              (Thm.MK_COMB (Thm.REFL head, first_theorem), second_theorem)
+          in
+            (state'', theorem)
+          end
+        fun quantified dest (state, left, right) =
+          let
+            val _ = same_head (left, right)
+            val _ = dest left
+            val _ = dest right
+            val state_ref = ref state
+            val abstraction_theorem = abs_congruence
+              (fn (left_body, right_body) =>
+                let
+                  val (state', body_theorem) =
+                    child (!state_ref, left, right)
+                      (left_body, right_body)
+                in
+                  state_ref := state'; body_theorem
+                end)
+              (Term.rand left, Term.rand right)
+          in
+            (!state_ref,
+             Thm.AP_TERM (Term.rator left) abstraction_theorem)
+          end
+        fun boolean_equality term =
+          let val (left, right) = boolSyntax.dest_eq term in
+            Term.type_of left = Type.bool andalso
+            Term.type_of right = Type.bool
+          end
+          handle Feedback.HOL_ERR _ => false
+        val result =
+          if boolSyntax.is_neg l andalso boolSyntax.is_neg r then
+            unary boolSyntax.dest_neg (state, l, r)
+          else if boolSyntax.is_conj l andalso boolSyntax.is_conj r then
+            binary boolSyntax.dest_conj (state, l, r)
+          else if boolSyntax.is_disj l andalso boolSyntax.is_disj r then
+            binary boolSyntax.dest_disj (state, l, r)
+          else if boolSyntax.is_imp l andalso boolSyntax.is_imp r then
+            binary boolSyntax.dest_imp (state, l, r)
+          else if boolean_equality l andalso boolean_equality r then
+            binary boolSyntax.dest_eq (state, l, r)
+          else if boolSyntax.is_forall l andalso boolSyntax.is_forall r then
+            quantified boolSyntax.dest_forall (state, l, r)
+          else if boolSyntax.is_exists l andalso boolSyntax.is_exists r then
+            quantified boolSyntax.dest_exists (state, l, r)
+          else
+            raise ERR "skeleton_congruence"
+              "rewrite does not have a shared supported skeleton head"
+        val (state', theorem) = result
+        val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) t) theorem
+      in
+        (state_cache_thm state' exact, exact)
+      end
   in
     (* E1(a): kernel reflexivity decides the reflexive-equality fragment. *)
     if l ~~ r then
@@ -2384,6 +2492,14 @@ local
     (* E1(a): kernel eta conversion decides eta equality. *)
     (state, rewrite_profile "higher-order-congruence/beta/eta"
       "rewrite(25)(eta)" eta_equal (l, r))
+    handle Feedback.HOL_ERR _ =>
+
+    (* Recurse only below a shared Boolean/binder head, after every semantic
+       theory rung has declined the complete rewrite.  [child] above proves
+       unchanged positions reflexively and checks that each differing pair is
+       strictly smaller before it re-enters [z3_rewrite]. *)
+    rewrite_profile "boolean/binder-skeleton"
+      "rewrite(25a)(skeleton-congruence)" skeleton_congruence ()
     handle Feedback.HOL_ERR _ =>
 
     (* Proof-local terms have already reached the general unifier before the
