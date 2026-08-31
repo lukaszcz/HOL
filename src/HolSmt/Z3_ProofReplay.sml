@@ -24,6 +24,7 @@ local
      without inviting arithmetic or unification fallbacks. *)
   exception FP_REWRITE_ERROR of exn
   exception BAG_REWRITE_ERROR of exn
+  exception STRING_REWRITE_ERROR of exn
 
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
   val ALL_DISTINCT_CONS = HolSmtTheory.ALL_DISTINCT_CONS
@@ -2309,13 +2310,16 @@ local
       (state_cache_thm state thm, thm)
     end
 
-    handle Feedback.HOL_ERR _ =>
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise STRING_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+      else
 
-    (* |- ALL_DISTINCT ... /\ T = ... *)
-    (* E1(a): recursive expansion decides literal-list distinctness. *)
-    (state, rewrite_profile "datatype-literal-distinctness"
-      "rewrite(13)(all_distinct)"
-      rewrite_all_distinct (l, r))
+        (* |- ALL_DISTINCT ... /\ T = ... *)
+        (* E1(a): recursive expansion decides literal-list distinctness. *)
+        (state, rewrite_profile "datatype-literal-distinctness"
+          "rewrite(13)(all_distinct)"
+          rewrite_all_distinct (l, r))
     handle Feedback.HOL_ERR _ =>
 
     (* Resolve proof-local names before arithmetic.  These rewrites are not
@@ -2550,6 +2554,7 @@ local
   end
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
+       | STRING_REWRITE_ERROR error => raise error
 
   fun z3_rewrite_entry (state, target) =
   let
@@ -2933,14 +2938,20 @@ local
     val thm =
       ((* E1(b): the general String/regex procedure gates its family. *)
        profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)") prover t')
-      handle Feedback.HOL_ERR _ =>
-        ((* E1(b): contextual String/regex replay fails loudly at exit. *)
-         profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
-          (SmtStringProve.string_contextual_prove context) t'
-          handle Feedback.HOL_ERR _ =>
-          raise ERR ("z3_th_lemma_" ^ dispatch_theory)
-            (unsupported_string_th_lemma_message dispatch_theory
-              state metadata t'))
+      handle Feedback.HOL_ERR holerr =>
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else
+          ((* E1(b): contextual String/regex replay fails loudly at exit. *)
+           profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
+            (SmtStringProve.string_contextual_prove context) t'
+            handle Feedback.HOL_ERR contextual_error =>
+            if SmtResource.is_resource_gate contextual_error then
+              raise Feedback.HOL_ERR contextual_error
+            else
+              raise ERR ("z3_th_lemma_" ^ dispatch_theory)
+                (unsupported_string_th_lemma_message dispatch_theory
+                  state metadata t'))
   in
     (state_cache_thm state thm, Drule.LIST_MP thms thm)
   end

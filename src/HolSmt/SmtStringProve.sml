@@ -215,6 +215,14 @@ struct
     (* Normalize with the complete iff; the directional rule below lets the
        bounded prover consume a known straddling witness directly. *)
     smtstringTheory.smtstr_contains_concat,
+    (* A singleton occurrence cannot split into two nonempty strings.  These
+       representation laws reduce that general boundary fact to the complete
+       list split in APPEND_EQ_SING; concrete SMT characters discharge their
+       code-point side condition during simplification. *)
+    smtstringTheory.smtstr_concat_def,
+    smtstringTheory.smtstr_eq_singleton,
+    smtstringTheory.smtstr_rep_eq_nil,
+    listTheory.APPEND_EQ_SING,
     smtstringTheory.smtstr_prefixof_singleton
   ] @ seq_shape_rules @ [
     smtstringz3Theory.seq_unit_def,
@@ -458,39 +466,49 @@ struct
           end
     end
 
+  (* One budgeted symbolic implementation serves both the String th-lemma
+     ladder and Z3's rewrite ladder.  Keep the resource classification at
+     this shared boundary so neither consumer can relabel a refusal as an
+     ordinary unsupported shape. *)
   fun symbolic_string_prove t =
-    if not (is_symbolic_string_goal t) then
-      raise ERR "symbolic_string_prove"
-        "no symbolic concat/prefix/suffix/contains term"
-    else
-      (* E1(b): bounded constructor splitting is general for the literal
-         concat-refutation shape and fails loudly outside that family. *)
-      profile "string-symbolic(1)(bounded-concat-split)"
-        bounded_concat_split_refute t
-      handle Feedback.HOL_ERR _ =>
-      profile "string-symbolic(2)(parametric-seq)"
-        replay_parametric_seq_prove t
-      handle Feedback.HOL_ERR _ =>
-      (* E1(b): normalization plus bounded first-order search is the general
-         symbolic String-family procedure and has a loud failure boundary. *)
-      profile "string-symbolic(3)(general)"
-        (fn target =>
-          (* The two-orientation concat procedure is part of this general
-             rung; it is not a one-theorem, certificate-shape cache. *)
-          profile "string-symbolic(general:concat-family)"
-            (prove_alias_metis symbolic_concat_lemmas) target
-          handle Feedback.HOL_ERR _ =>
-          profile "string-symbolic(general:lemma-set)"
-            (prove_alias_metis symbolic_lemmas) target
-          handle Feedback.HOL_ERR _ =>
-            with_metis_limit (fn () =>
-              Tactical.prove (target,
-                Tactical.THEN
-                  (bossLib.RW_TAC
-                     (simpLib.++
-                       (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-                     symbolic_normalizations,
-                   bossLib.METIS_TAC symbolic_lemmas))) ()) t
+    with_string_budget "symbolic" (fn t =>
+      if not (is_symbolic_string_goal t) then
+        raise ERR "symbolic_string_prove"
+          "no symbolic concat/prefix/suffix/contains term"
+      else
+        (* E1(b): bounded constructor splitting is general for the literal
+           concat-refutation shape and fails loudly outside that family. *)
+        profile "string-symbolic(1)(bounded-concat-split)"
+          bounded_concat_split_refute t
+        handle Feedback.HOL_ERR holerr =>
+        (rethrow_resource holerr;
+         profile "string-symbolic(2)(parametric-seq)"
+           replay_parametric_seq_prove t)
+        handle Feedback.HOL_ERR holerr =>
+        (rethrow_resource holerr;
+         (* E1(b): normalization plus bounded first-order search is the
+            general symbolic String-family procedure and has a loud failure
+            boundary. *)
+         profile "string-symbolic(3)(general)"
+           (fn target =>
+             (* The two-orientation concat procedure is part of this general
+                rung; it is not a one-theorem, certificate-shape cache. *)
+             profile "string-symbolic(general:concat-family)"
+               (prove_alias_metis symbolic_concat_lemmas) target
+             handle Feedback.HOL_ERR holerr =>
+             (rethrow_resource holerr;
+              profile "string-symbolic(general:lemma-set)"
+                (prove_alias_metis symbolic_lemmas) target)
+             handle Feedback.HOL_ERR holerr =>
+             (rethrow_resource holerr;
+              with_metis_limit (fn () =>
+                Tactical.prove (target,
+                  Tactical.THEN
+                    (bossLib.RW_TAC
+                       (simpLib.++
+                         (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                       symbolic_normalizations,
+                     bossLib.METIS_TAC symbolic_lemmas))) ())) t)) t
 
   (* General automaton rules only.  Literal states and loop bounds are
      specialized from these at replay time below. *)
@@ -865,7 +883,18 @@ struct
          (* E1(b): the named semantic String normalization family is general
             for its rewrite set and fails loudly outside it. *)
          profile "string-rewrite(2)(normalization)"
-           rewrite_simp_prove t)) t
+           rewrite_simp_prove t)
+        handle Feedback.HOL_ERR holerr =>
+        (rethrow_resource holerr;
+         ((* The same bounded symbolic rung used by String th-lemmas closes
+             solver rewrite nodes involving concat/prefix/suffix/contains. *)
+          profile "string-rewrite(3)(symbolic)"
+            symbolic_string_prove t
+          handle Feedback.HOL_ERR symbolic_error =>
+            (rethrow_resource symbolic_error;
+             (* Preserve the established unsupported-shape boundary when
+                neither rewrite procedure applies. *)
+             raise Feedback.HOL_ERR holerr)))) t
 
   fun string_prove_canonical arith_prove t =
     let val () = check_seq_type t in

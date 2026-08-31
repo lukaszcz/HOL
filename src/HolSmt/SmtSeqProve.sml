@@ -336,20 +336,20 @@ struct
       unsupported t
 
   fun seq_prove t =
-    SmtResource.with_resource_step_time "Sequence" "seq" (fn () =>
-    let
-      val _ = SmtResource.check_resource_goal "Sequence" "seq" t
-      fun next attempt fallback =
-        attempt ()
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
-            fallback ()
-    in
-      if not (has_seq_type t) then
-        unsupported t
-      else
+    if not (has_seq_type t) then
+      unsupported t
+    else
+      SmtResource.with_resource_step_time "Sequence" "seq" (fn () =>
+      let
+        val _ = SmtResource.check_resource_goal "Sequence" "seq" t
+        fun next attempt fallback =
+          attempt ()
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else
+              fallback ()
+      in
         next (fn () => nth_decomposition_prove t) (fn () =>
         next (fn () => concat_length_prove t) (fn () =>
         next (fn () => unit_empty_prove t) (fn () =>
@@ -357,6 +357,6 @@ struct
         next (fn () => prefix_suffix_contains_prove t) (fn () =>
         next (fn () => indexof_replace_prove t) (fn () =>
         next (fn () => update_reverse_prove t) (fn () => unsupported t)))))))
-    end) ()
+      end) ()
 
 end

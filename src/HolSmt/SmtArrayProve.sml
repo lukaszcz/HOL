@@ -190,9 +190,12 @@ struct
     Tactical.TAC_PROOF (([], t),
       bossLib.SIMP_TAC boolSimps.bool_ss [])
 
+  fun has_array_family t =
+    is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
+    has_set_variable t
+
   fun admitted_array_prove t =
-    if is_array_goal t orelse has_array_variable t orelse has_set_term t orelse
-       has_set_variable t then
+    if has_array_family t then
       (* E1(a): Boolean simplification decides admitted beta-redex goals. *)
       profile "array(2)(beta)" beta_prove t
       handle Feedback.HOL_ERR _ =>
@@ -219,8 +222,6 @@ struct
       unsupported t
 
   fun array_prove_unbounded t =
-    profile "array(0)(reflexive)" trivial_prove t
-    handle Feedback.HOL_ERR _ =>
     (* E1(c): this redundant cache keeps its pre-admission position so
        base-typed translated store conclusions remain fast and covered. *)
     array_fastpath "array(1)(update-simp)"
@@ -228,6 +229,15 @@ struct
     handle Feedback.HOL_ERR _ => admitted_array_prove t
 
   fun array_prove t =
-    with_replay_budget "array-replay" array_prove_unbounded t
+    (* Solver preprocessing can erase every Array term from a trivial
+       th-lemma conclusion.  Kernel truth/reflexivity is theory-neutral and
+       bounded, so retain it before admission; only actual Array/Set work may
+       consume the Array-specific resource budget. *)
+    profile "array(0)(reflexive)" trivial_prove t
+    handle Feedback.HOL_ERR _ =>
+      if has_array_family t then
+        with_replay_budget "array-replay" array_prove_unbounded t
+      else
+        unsupported t
 
 end

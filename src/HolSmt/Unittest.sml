@@ -15294,6 +15294,20 @@ let
      "(re.diff (str.to_re \"a\") (str.to_re \"b\"))))))")
   val direct_ground = SmtStringProve.string_rewrite_prove
     ``smtstr_len (SmtStr [97; 98; 99]) = 3``
+  (* This is the natural no-quote sanitizer law from dossier B3.  A quote is
+     a singleton, so it cannot straddle the concat boundary; proving the
+     equality requires the symbolic contains-over-concat decomposition. *)
+  val no_quote_target =
+    ``(~smtstr_contains (smtstr_concat s t) (SmtStr [34])) =
+      (~smtstr_contains s (SmtStr [34]) /\
+       ~smtstr_contains t (SmtStr [34]))``
+  val initial = Z3_Proof.empty_proof "4.11.2"
+  val steps = Redblackmap.insert
+    (Z3_Proof.proof_steps initial, 0,
+     Z3_Proof.REWRITE no_quote_target)
+  val () = Profile.reset_all ()
+  val no_quote = Z3_ProofReplay.replay_root_for_test
+    (Z3_Proof.update_proof_steps initial steps)
 in
   assert (Thm.concl literal ~~
       ``smtstr_concat
@@ -15327,9 +15341,86 @@ in
   assert (Thm.concl direct_ground ~~
       ``smtstr_len (SmtStr [97; 98; 99]) = 3``,
     "direct string ground rewrite returned the wrong equality");
+  assert_no_hyps ("Z3 no-quote symbolic rewrite", no_quote);
+  assert_concl_alpha
+    ("Z3 no-quote symbolic rewrite", no_quote, no_quote_target);
+  assert
+    (profile_call_count "rewrite(12)(string)_OK" = 1,
+     "no-quote rewrite did not consume Z3's String rewrite rung");
+  assert
+    (profile_call_count "string-rewrite(3)(symbolic)_OK" = 1,
+     "no-quote rewrite did not consume the rewrite symbolic rung");
+  assert
+    (profile_call_count "string-symbolic(3)(general)_OK" = 1,
+     "no-quote rewrite did not consume the shared symbolic procedure");
   check_oracle_tags "Z3 string literal rewrite" literal;
   check_oracle_tags "Z3 string length rewrite" length;
+  check_oracle_tags "Z3 no-quote symbolic rewrite" no_quote;
   ()
+end
+
+fun string_rewrite_symbolic_resource_diagnostic () =
+let
+  val concat = ``smtstr_concat``
+  fun nest 0 acc = acc
+    | nest n acc = nest (n - 1)
+        (Term.list_mk_comb (concat, [acc, ``budget_t:smtstr``]))
+  val oversized = boolSyntax.mk_eq
+    (nest 70000 ``budget_s:smtstr``, ``budget_s:smtstr``)
+  val append = ``APPEND : int list -> int list -> int list``
+  fun nest_append 0 acc = acc
+    | nest_append n acc = nest_append (n - 1)
+        (Term.list_mk_comb (append, [acc, ``[]:int list``]))
+  val oversized_seq = boolSyntax.mk_eq
+    (nest_append 70000 ``budget_xs:int list``, ``budget_xs:int list``)
+  val array_index = ``array_budget_i:int``
+  fun nest_add 0 acc = acc
+    | nest_add n acc = nest_add (n - 1)
+        (intSyntax.mk_plus (acc, intSyntax.zero_tm))
+  val oversized_array = boolSyntax.mk_eq
+    (Term.mk_abs (array_index, nest_add 70000 array_index),
+     ``array_budget_a:int->int``)
+  fun replay proofterm =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial, 0, proofterm)
+    in
+      Z3_ProofReplay.replay_root_for_test
+        (Z3_Proof.update_proof_steps initial steps)
+    end
+  val seq_metadata = Z3_Proof.mk_th_lemma_metadata ("seq", NONE, [])
+  fun expect_gate label category case_id prove target =
+    (ignore (prove target);
+     die ("FAIL: " ^ label ^ " did not resource-gate"))
+    handle Feedback.HOL_ERR holerr =>
+      let
+        val expected = SmtResource.term_size_diagnostic_for
+          category case_id (SmtResource.max_bitblast_term_nodes + 1)
+      in
+        assert (SmtResource.is_resource_gate holerr,
+          label ^ " was relabelled as an ordinary unsupported rung");
+        assert (Feedback.message_of holerr = expected,
+          label ^ " changed its explicit budget diagnostic: " ^
+          Feedback.message_of holerr)
+      end
+in
+  (* Admission is checked before theory-specific budgets: these genuine
+     families still gate, while the end-to-end String rows below prove that
+     the same rungs decline the oversized String target without preemption. *)
+  expect_gate "native Sequence family" "Sequence" "seq"
+    SmtSeqProve.seq_prove oversized_seq;
+  expect_gate "native Array family" "Array" "array-replay"
+    SmtArrayProve.array_prove oversized_array;
+  expect_gate "shared String symbolic rung" "String" "symbolic"
+    SmtStringProve.symbolic_string_prove oversized;
+  expect_gate "String rewrite entry" "String" "rewrite"
+    SmtStringProve.string_rewrite_prove oversized;
+  expect_gate "Z3 String rewrite replay" "String" "rewrite"
+    (fn target => replay (Z3_Proof.REWRITE target)) oversized;
+  expect_gate "Z3 String th-lemma replay" "String" "replay"
+    (fn target => replay
+      (Z3_Proof.TH_LEMMA_SEQ (seq_metadata, [], target))) oversized
 end
 
 fun z3_rewrite_string_rung_shaped_failure () =
@@ -17450,6 +17541,8 @@ let
       z3_rewrite_datatype_rung_replay_success),
     ("z3_rewrite_string_rungs_replay_success",
       z3_rewrite_string_rungs_replay_success),
+    ("string_rewrite_symbolic_resource_diagnostic",
+      string_rewrite_symbolic_resource_diagnostic),
     ("z3_rewrite_string_rung_shaped_failure",
       z3_rewrite_string_rung_shaped_failure),
     ("smtfp_prove_core_rungs_success",
