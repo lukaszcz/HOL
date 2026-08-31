@@ -221,7 +221,7 @@ val simplification_and_search_reports_no_proof =
      "list_L2818_map_zip_map2", "list_L4637_extract_Some_iff",
      "list_L4707_foldr_fold_remove1",
      "list_L4781_foldr_fold_removeAll", "list_L5409_nths_drop",
-     "list_L6839_sorted_list_of_set_atMost_Suc", "list_L7247_lex_conv",
+     "list_L7247_lex_conv",
      "list_L7321_lex_append_rightI",
      "list_L8044_listrel1_subset_listrel",
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
@@ -331,8 +331,7 @@ val blast_search_reports_no_proof =
   classified "blast search reports no proof"
     ("the tableau search exhausts its depths without a "
      ^ "reconstructible proof")
-    ["list_L4319_successively_nth", "list_L4326_distinct_adj_nth",
-     "list_L4450_distinct_adj_map_iff", "list_L7771_wf_measures",
+    ["list_L7771_wf_measures",
      "list_L7861_listrel1_converse", "list_L8006_listrel_Nil",
      "list_L9013_list_all_transfer", "map_L789_in_graphI",
      "map_L792_in_graphD", "map_L828_finite_graph_map_of",
@@ -340,9 +339,18 @@ val blast_search_reports_no_proof =
 
 val integer_interval =
   classified "integer interval"
-    ("source_upto is unfolded but its recursion is not")
-    ["list_L3683_upto_split2", "list_L3687_upto_split3",
-     "list_L3695_upto_aux_rec"]
+    ("the cited recursion equations do reach the goal -- they stand "
+     ^ "as hypotheses in the residual -- but nothing regroups the "
+     ^ "append across the split point, so the residual is "
+     ^ "[source_upto i (k - 1) ++ [k]] against "
+     ^ "[source_upto i (j - 1) ++ [j] ++ source_upto (j + 1) k]")
+    ["list_L3683_upto_split2"]
+
+val integer_interval_emptiness =
+  classified "integer interval emptiness"
+    ("the residual is [j < i ==> source_upto i j = []], which the "
+     ^ "source method does not name and no simpset carries")
+    ["list_L3695_upto_aux_rec"]
 
 val rotation_by_iteration =
   classified "rotation by iteration"
@@ -398,15 +406,13 @@ val finite_map_update =
     ("map_upds_def unfolds to an ALOOKUP over a reversed zip and "
      ^ "nothing reduces it")
     ["map_L372_map_add_upds", "map_L467_map_upds_Nil1",
-     "map_L470_map_upds_Nil2", "map_L473_map_upds_Cons",
-     "map_L776_ran_map_of_zip"]
+     "map_L470_map_upds_Nil2", "map_L473_map_upds_Cons"]
 
 val option_relations =
   classified "option relations"
     ("OPTREL and the option-set constructions carry no claset "
      ^ "rules")
     ["option_L317_these_empty_eq", "option_L320_these_not_empty_eq",
-     "option_L337_option_bind_transfer",
      "option_L361_equal_None_code_unfold_2"]
 
 val character_arithmetic =
@@ -464,6 +470,7 @@ val execution : benchLib.shortfall list =
   pair_membership_after_flattening @
   blast_search_reports_no_proof @
   integer_interval @
+  integer_interval_emptiness @
   rotation_by_iteration @
   index_selection @
   membership_of_an_indexed_element @

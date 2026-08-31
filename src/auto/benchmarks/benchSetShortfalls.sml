@@ -29,16 +29,6 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-(* The goal below is the only one in this family whose assigned tactic
-   is denied a fact it would otherwise have: the goal is itself an
-   ambient characterisation, and rule A1 withholds it. *)
-val excluded_characterisation =
-  classified "excluded characterisation"
-    ("the goal is the ambient characterisation itself, so the "
-     ^ "measurement withholds the one fact that closes it and there "
-     ^ "is no second route to search for")
-    ["set_L769_insert_iff"]
-
 val blast_set_rule_forms =
   classified "blast set rule forms"
     ("the obstruction is not isolated: these goals withhold no "
@@ -90,7 +80,7 @@ val vimage =
   classified "vimage"
     ("PREIMAGE reasoning is downstream of the missing set rule "
      ^ "forms")
-    ["set_L1740_vimage_eq", "set_L1790_vimage_image_eq"]
+    ["set_L1790_vimage_image_eq"]
 
 val definite_description =
   classified "definite description"
@@ -132,7 +122,6 @@ val equality_between_two_abstractions =
 
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
-  excluded_characterisation @
   isabelle_lattice_instance @
   disjnt @
   bounded_quantifier_one_point @
