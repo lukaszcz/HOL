@@ -212,6 +212,9 @@ struct
     smtstringTheory.smtstr_prefixof_refl,
     smtstringTheory.smtstr_suffixof_refl,
     smtstringTheory.smtstr_contains_refl,
+    (* Normalize with the complete iff; the directional rule below lets the
+       bounded prover consume a known straddling witness directly. *)
+    smtstringTheory.smtstr_contains_concat,
     smtstringTheory.smtstr_prefixof_singleton
   ] @ seq_shape_rules @ [
     smtstringz3Theory.seq_unit_def,
@@ -238,6 +241,7 @@ struct
     smtstringTheory.smtstr_prefixof_singleton,
     smtstringTheory.smtstr_prefixof_imp_contains,
     smtstringTheory.smtstr_suffixof_imp_contains,
+    smtstringTheory.smtstr_contains_concat_straddling,
     smtstringTheory.smtstr_prefixof_trans,
     smtstringTheory.smtstr_suffixof_trans,
     smtstringTheory.smtstr_contains_trans

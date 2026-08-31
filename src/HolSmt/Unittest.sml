@@ -14590,6 +14590,19 @@ fun string_prove_ladder_rungs_success () =
        smtstr_to_int (SmtStr [49; 50]) = 12 /\
        smt_in_re (SmtStr [97; 97])
          (reglan_star (reglan_to_re (SmtStr [97])))``;
+   assert_string_prover "string contains concat left right and straddling"
+     SmtStringProve.ground_eval_prove
+     ``smtstr_contains
+         (smtstr_concat (SmtStr [97; 98]) (SmtStr [99; 100]))
+         (SmtStr [97; 98]) /\
+       smtstr_contains
+         (smtstr_concat (SmtStr [97; 98]) (SmtStr [99; 100]))
+         (SmtStr [99; 100]) /\
+       ~smtstr_contains (SmtStr [97; 98]) (SmtStr [98; 99]) /\
+       ~smtstr_contains (SmtStr [99; 100]) (SmtStr [98; 99]) /\
+       smtstr_contains
+         (smtstr_concat (SmtStr [97; 98]) (SmtStr [99; 100]))
+         (SmtStr [98; 99])``;
    assert_string_prover "string_prove length arithmetic rung"
      (SmtStringProve.length_arith_prove intLib.ARITH_PROVE)
      ``smtstr_len (smtstr_concat s t) >=
@@ -14739,6 +14752,19 @@ fun string_prove_symbolic_rung_success () =
     direct [general] "string symbolic contains"
       ``smtstr_contains s t /\ smtstr_contains t u ==>
         smtstr_contains s u``;
+    direct [general] "string symbolic contains concat decomposition"
+      ``smtstr_contains (smtstr_concat s t) sub <=>
+        smtstr_contains s sub \/ smtstr_contains t sub \/
+        ?p q.
+          sub = smtstr_concat p q /\
+          p <> SmtStr [] /\ q <> SmtStr [] /\
+          smtstr_suffixof p s /\ smtstr_prefixof q t``;
+    direct [general] "string symbolic contains concat straddling"
+      ``~smtstr_contains s (smtstr_concat p q) /\
+        ~smtstr_contains t (smtstr_concat p q) /\
+        p <> SmtStr [] /\ q <> SmtStr [] /\
+        smtstr_suffixof p s /\ smtstr_prefixof q t ==>
+        smtstr_contains (smtstr_concat s t) (smtstr_concat p q)``;
     Profile.reset_all ();
     assert_string_prover "string symbolic full ladder"
       (SmtStringProve.string_prove intLib.ARITH_PROVE) concat_goal;

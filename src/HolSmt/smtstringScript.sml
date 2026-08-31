@@ -1611,6 +1611,101 @@ Proof
       simp [smtstr_rep_def])
 QED
 
+Theorem IS_SUBLIST_APPEND_DECOMPOSE[local]:
+  IS_SUBLIST (l1 ++ l2) sub <=>
+    IS_SUBLIST l1 sub \/ IS_SUBLIST l2 sub \/
+    ?p q. sub = p ++ q /\ p <> [] /\ q <> [] /\
+          IS_SUFFIX l1 p /\ IS_PREFIX l2 q
+Proof
+  simp [rich_listTheory.IS_SUBLIST_APPEND,
+        rich_listTheory.IS_SUFFIX_APPEND,
+        rich_listTheory.IS_PREFIX_APPEND] >>
+  eq_tac
+  >- (strip_tac >>
+      qpat_x_assum `l1 ++ l2 = _` mp_tac >>
+      ONCE_REWRITE_TAC [listTheory.APPEND_EQ_APPEND] >>
+      strip_tac
+      >- (rename1 `l1 = before ++ sub ++ after` >>
+          disj1_tac >>
+          qexistsl [`before`, `after`] >>
+          simp [])
+      >- (rename1 `before ++ sub = l1 ++ crossing` >>
+          rename1 `l2 = crossing ++ after` >>
+          qpat_x_assum `before ++ sub = l1 ++ crossing` mp_tac >>
+          ONCE_REWRITE_TAC [listTheory.APPEND_EQ_APPEND] >>
+          strip_tac
+          >- (rename1 `before = l1 ++ middle` >>
+              disj2_tac >> disj1_tac >>
+              qexistsl [`middle`, `after`] >>
+              fs [listTheory.APPEND_ASSOC])
+          >- (rename1 `sub = middle ++ crossing` >>
+              rename1 `l1 = before ++ middle` >>
+              Cases_on `middle`
+              >- (disj2_tac >> disj1_tac >>
+                  qexistsl [`[]`, `after`] >> fs [])
+              >> Cases_on `crossing`
+              >- (disj1_tac >>
+                  qexistsl [`before`, `[]`] >> fs [])
+              >- (disj2_tac >> disj2_tac >>
+                  qexistsl [`h::t`, `h'::t'`] >>
+                  simp [] >>
+                  qexistsl [`before`, `after`] >>
+                  simp []))))
+  >- (strip_tac
+      >- (rename1 `l1 = before ++ sub ++ after` >>
+          qexistsl [`before`, `after ++ l2`] >>
+          simp [listTheory.APPEND_ASSOC])
+      >- (rename1 `l2 = before ++ sub ++ after` >>
+          qexistsl [`l1 ++ before`, `after`] >>
+          simp [listTheory.APPEND_ASSOC])
+      >- (rename1 `sub = p ++ q` >>
+          rename1 `l1 = before ++ p` >>
+          rename1 `l2 = q ++ after` >>
+          qexistsl [`before`, `after`] >>
+          simp [listTheory.APPEND_ASSOC]))
+QED
+
+Theorem smtstr_contains_concat:
+  smtstr_contains (smtstr_concat s t) sub <=>
+    smtstr_contains s sub \/ smtstr_contains t sub \/
+    ?p q.
+      sub = smtstr_concat p q /\
+      p <> SmtStr [] /\ q <> SmtStr [] /\
+      smtstr_suffixof p s /\ smtstr_prefixof q t
+Proof
+  simp [smtstr_contains_def, smtstr_concat_def, smtstr_suffixof_def,
+        smtstr_prefixof_def, smtstr_rep_def,
+        IS_SUBLIST_APPEND_DECOMPOSE] >>
+  eq_tac
+  >- (strip_tac
+      >- (disj1_tac >> first_assum ACCEPT_TAC)
+      >- (disj2_tac >> disj1_tac >> first_assum ACCEPT_TAC)
+      >- (disj2_tac >> disj2_tac >>
+          `EVERY (\c. c <= 196607) (p ++ q)` by
+            metis_tac [smtstr_rep_bound] >>
+          fs [] >>
+          qexistsl [`SmtStr p`, `SmtStr q`] >>
+          simp [smtstr_rep_def, smtstr_eq_SmtStr] >>
+          metis_tac [SmtStr_smtstr_rep]))
+  >- (strip_tac
+      >- (disj1_tac >> first_assum ACCEPT_TAC)
+      >- (disj2_tac >> disj1_tac >> first_assum ACCEPT_TAC)
+      >- (disj2_tac >> disj2_tac >>
+          qexistsl [`smtstr_rep p`, `smtstr_rep q`] >>
+          fs [smtstr_rep_eq_nil, smtstr_rep_def]))
+QED
+
+Theorem smtstr_contains_concat_straddling:
+  p <> SmtStr [] /\ q <> SmtStr [] /\
+  smtstr_suffixof p s /\ smtstr_prefixof q t ==>
+  smtstr_contains (smtstr_concat s t) (smtstr_concat p q)
+Proof
+  rw [smtstr_contains_concat] >>
+  disj2_tac >> disj2_tac >>
+  qexistsl [`p`, `q`] >>
+  simp []
+QED
+
 (* TASK_02 draft_regex_membership records reflexive prefix clauses.  The
    suffix and contains variants complete the same symbolic A6 family used by
    the TASK_02 per-operator recordings. *)
