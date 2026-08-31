@@ -20,7 +20,7 @@ val goals =
             ys = prefix ++ (right::ys') /\
             relation left right)``,
    entry "list_L7256_lenlex_conv" 7256
-     "by (auto simp add: lenlex_def)"
+     "by (auto simp add: lenlex_def Id_on_def lex_prod_def inv_image_def)"
      ``!relation xs ys.
          (parityTranslation$source_lenlex relation xs ys <=>
           LENGTH xs < LENGTH ys \/

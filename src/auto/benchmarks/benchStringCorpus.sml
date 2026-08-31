@@ -15,7 +15,7 @@ val goals : benchLib.source_goal list =
  goal = ``∀width number.
   8 ≤ width ⇒
   source_char_of (source_take_bit width number) = source_char_of number``,
- source_method = "by (simp add: char_of_def bit_take_bit_iff)",
+ source_method = "using that by (simp add: char_of_def bit_take_bit_iff)",
  provenance = {file = "src/HOL/String.thy", line = 60, commit = "f7e02b7e"},
  representative = false},
 {id = "string_L68_char_of_comp_of_char",

@@ -43,7 +43,8 @@ val goals =
            (parityTranslation$source_lists domain)
            (LIST_REL relation)``,
    entry "list_L7998_listrel_rtrancl_refl" 7998
-     "using listrel_refl_on[of UNIV, OF refl_rtrancl] by auto"
+     ("using listrel_refl_on[of UNIV, OF refl_rtrancl] by(auto simp: " ^
+      "refl_on_def)")
      ``!relation xs. LIST_REL (relation$RTC relation) xs xs``,
    entry "list_L8006_listrel_Nil" 8006
      "by (blast intro: listrel.intros)"
@@ -60,7 +61,7 @@ val goals =
            (parityTranslation$source_rel_image
               (LIST_REL relation) {xs})``,
    entry "list_L8044_listrel1_subset_listrel" 8044
-     "by (auto elim!: listrel1E simp add: listrel_iff_zip)"
+     "by(auto elim!: listrel1E simp add: listrel_iff_zip set_zip refl_on_def)"
      ``!left_relation right_relation.
          (!left right.
             left_relation left right ==>
@@ -84,7 +85,8 @@ val goals =
            (set_relation$reln_to_rel (LIST_TO_SET pairs)) <=>
          set_relation$acyclic (LIST_TO_SET pairs)``,
    entry "list_L8999_set_Cons_transfer" 8999
-     "unfolding rel_fun_def rel_set_def set_Cons_def by fastforce"
+     ("unfolding rel_fun_def rel_set_def set_Cons_def by (fastforce simp " ^
+      "add: list_all2_Cons1 list_all2_Cons2)")
      ``!relation.
          (list$SET_REL relation ===>
           list$SET_REL (LIST_REL relation) ===>

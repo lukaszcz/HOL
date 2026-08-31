@@ -330,7 +330,7 @@ v_b0 ∈ v_B0 v_a0 ⇒
 (v_a0,v_b0) ∈
 (λb_sigma_pair.
      FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair))``,
- source_method = "by blast",
+ source_method = "unfolding Sigma_def by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1028, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1031_SigmaE",
@@ -339,7 +339,7 @@ v_b0 ∈ v_B0 v_a0 ⇒
      FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇒
 (∀b_x b_y. b_x ∈ v_A0 ⇒ b_y ∈ v_B0 b_x ⇒ v_c0 = (b_x,b_y) ⇒ v_P0) ⇒
 v_P0``,
- source_method = "by blast",
+ source_method = "unfolding Sigma_def by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1031, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1040_SigmaD1",
@@ -793,7 +793,7 @@ IMAGE (λb_y. (v_x0,b_y)) v_B0 ∪
   ((λb_apfst_func b_apfst_pair.
         (b_apfst_func (FST b_apfst_pair),SND b_apfst_pair)) v_f0) 𝕌(:α # β) ⇔
 (λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:γ)) v_f0 𝕌(:α)``,
- source_method = "by simp",
+ source_method = "using inj_on_apfst[of f UNIV] by simp",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1226, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1229_inj_on_apsnd",
@@ -812,7 +812,7 @@ IMAGE (λb_y. (v_x0,b_y)) v_B0 ∪
   ((λb_apsnd_func b_apsnd_pair.
         (FST b_apsnd_pair,b_apsnd_func (SND b_apsnd_pair))) v_f0) 𝕌(:α # β) ⇔
 (λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:γ)) v_f0 𝕌(:β)``,
- source_method = "by simp",
+ source_method = "using inj_on_apsnd[of f UNIV] by simp",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1232, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1241_member_product",
@@ -839,7 +839,7 @@ BIJ
   (λb_sigma_pair.
        FST b_sigma_pair ∈ v_C0 ∧
        SND b_sigma_pair ∈ (λb_uu_. v_D0) (FST b_sigma_pair))``,
- source_method = "by auto",
+ source_method = "using assms unfolding bij_betw_def inj_on_def by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1329, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1364_disjnt_Times1_iff",

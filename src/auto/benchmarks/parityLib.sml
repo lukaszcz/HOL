@@ -272,6 +272,51 @@ fun dropped_citations ({goals, ...} : family) =
           | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
     goals
 
+(* A citation the name table answers with [Unrepresented] names an
+   Isabelle fact HOL4 has no counterpart for, in the library or in the
+   translation theory.  The recipe supplies nothing for it, so the goal
+   is measured without a fact its source proof had -- the same
+   under-crediting the section above reports, reached the other way.
+   The table is what knows which citations those are, so the list is
+   read out of it. *)
+fun unrepresented_citations ({goals, ...} : family) =
+  let
+    fun absent name =
+      case benchNames.lookup name of
+          SOME benchNames.Unrepresented => true
+        | _ => false
+    fun once (name, kept) =
+      if List.exists (fn item => item = name) kept then kept
+      else kept @ [name]
+  in
+    List.mapPartial
+      (fn ({id, source_method, provenance, ...} : benchLib.corpus_goal) =>
+        if not (String.isPrefix "src/HOL/" (#file provenance)) then NONE
+        else
+          case List.foldl once []
+                 (List.filter absent
+                   (benchRecipe.cited_names
+                     (benchRecipe.parse source_method))) of
+              [] => NONE
+            | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
+      goals
+  end
+
+fun unrepresented_section () =
+  let
+    val absent = List.concat (map unrepresented_citations families)
+  in
+    ["## Facts the translation does not render\n\n",
+     "An Isabelle proof can name a fact HOL4 states nowhere -- neither ",
+     "in a library nor in the translation theory.  The recipe has ",
+     "nothing to supply for such a citation, so the goal below is ",
+     "measured without it. As above, that can only under-credit HOL4, ",
+     "and the goals are named rather than left implicit in a shortfall ",
+     "count.\n\n"] @
+    (if null absent then ["No goal was measured that way.\n\n"]
+     else map (fn text => "- `" ^ text ^ "`\n") absent @ ["\n"])
+  end
+
 fun withheld_section () =
   let
     val dropped = List.concat (map dropped_citations families)
@@ -362,6 +407,7 @@ fun render () =
       "It is not a claim about Isabelle automation in general, and it ",
       "is not a claim about goals outside the six theories.\n\n"] @
      withheld_section () @
+     unrepresented_section () @
      ["## Source accounting\n\n",
       "Source mining identified 1,070 relevant Isabelle results. Nine ",
       "pairs translated to the same HOL4 statement except for bound ",

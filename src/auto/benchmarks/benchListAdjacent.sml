@@ -12,7 +12,8 @@ fun entry id line method goal : benchLib.source_goal =
    representative = false}
 
 val goals =
-  [entry "list_L4319_successively_nth" 4319 "by blast"
+  [entry "list_L4319_successively_nth" 4319 ("unfolding " ^
+                                             "successively_conv_nth by blast")
      ``!relation xs i.
          parityTranslation$source_successively relation xs ==>
          i + 1 < LENGTH xs ==>
@@ -22,7 +23,8 @@ val goals =
      ``!xs.
          parityTranslation$source_distinct_adj xs <=>
          !i. i + 1 < LENGTH xs ==> EL i xs <> EL (i + 1) xs``,
-   entry "list_L4326_distinct_adj_nth" 4326 "by blast"
+   entry "list_L4326_distinct_adj_nth" 4326 ("unfolding " ^
+                                             "distinct_adj_conv_nth by blast")
      ``!xs i.
          parityTranslation$source_distinct_adj xs ==>
          i + 1 < LENGTH xs ==> EL i xs <> EL (i + 1) xs``,
@@ -60,7 +62,8 @@ val goals =
      ``!xs ys.
          parityTranslation$source_distinct_adj (xs ++ ys) ==>
          parityTranslation$source_distinct_adj ys``,
-   entry "list_L4450_distinct_adj_map_iff" 4450 "by blast"
+   entry "list_L4450_distinct_adj_map_iff" 4450 ("using distinct_adj_mapD " ^
+                                                 "distinct_adj_mapI by blast")
      ``!function xs.
          parityTranslation$source_inj_on
            function (LIST_TO_SET xs) ==>

@@ -41,8 +41,7 @@ val over_budget =
    "list_L4632_extract_SomeE", "list_L4637_extract_Some_iff",
    "list_L4645_extract_Cons_code",
    "list_L5044_takeWhile_replicate", "list_L5048_dropWhile_replicate",
-   "list_L5325_bij_rotate1", "list_L5388_notin_set_nthsI",
-   "list_L7998_listrel_rtrancl_refl",
+   "list_L5325_bij_rotate1", "list_L7998_listrel_rtrancl_refl",
    "list_L6138_map_sorted_distinct_set_unique",
    "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
    "list_L6847_sorted_list_of_set_nonempty", "list_L8705_set_relcomp",
@@ -136,8 +135,7 @@ val instantiated_fact_citation =
      "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id",
      "list_L2806_zip_map1", "list_L2810_zip_map2",
      "list_L5301_nth_rotate1", "list_L6101_sorted_remove1",
-     "list_L6202_sorted_same", "list_L6208_sorted_upt",
-     "list_L6292_sorted_insort",
+     "list_L6208_sorted_upt", "list_L6292_sorted_insort",
      "list_L6298_sorted_sort", "list_L6389_sorted_insort_insert"]
 
 val zip_against_map =
@@ -158,7 +156,6 @@ val over_budget_with_no_residual =
      "list_L4628_extract_None_iff", "list_L4632_extract_SomeE",
      "list_L4645_extract_Cons_code", "list_L5044_takeWhile_replicate",
      "list_L5048_dropWhile_replicate", "list_L5325_bij_rotate1",
-     "list_L5388_notin_set_nthsI",
      "list_L6138_map_sorted_distinct_set_unique",
      "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
      "list_L6847_sorted_list_of_set_nonempty",
@@ -240,8 +237,12 @@ val take_and_drop_arithmetic =
 
 val list_relation_lifting =
   classified "list relation lifting"
-    ("LIST_REL and LLEX carry no claset rules and SHORTLEX carries "
-     ^ "only its two length rules, so the goal is never decomposed")
+    ("the declared rules take a LIST_REL apart at a nil, a cons or a "
+     ^ "REVERSE, and trade a SHORTLEX for a length comparison; these "
+     ^ "goals are about the relation as a whole -- an append, a "
+     ^ "transitivity chain, asymmetry, well-foundedness, an "
+     ^ "equivalence, or NULL carried across -- and need an induction "
+     ^ "over the list rather than a rule application")
     ["list_L3089_list_all2_appendI",
      "list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
      "list_L7401_lexord_append_leftD", "list_L7508_lexord_trans",
@@ -278,13 +279,21 @@ val sorted_against_sorted_wrt =
      ^ "SORTED is the adjacent-pairs predicate and the bridge "
      ^ "needs transitivity, a step the source method never names")
     ["list_L412_sorted_simps_2", "list_L415_strict_sorted_simps_2",
-     "list_L5946_sorted_wrt_dropWhile", "list_L5964_sorted_wrt01",
-     "list_L6034_sorted_append", "list_L6038_sorted_map",
-     "list_L6042_sorted01", "list_L6049_sorted_iff_nth_mono_less",
-     "list_L6053_sorted_iff_nth_mono", "list_L6057_sorted_nth_mono",
-     "list_L6061_sorted_iff_nth_Suc", "list_L6104_sorted_butlast",
-     "list_L6146_sorted_dropWhile",
+     "list_L6034_sorted_append",
+     "list_L6038_sorted_map", "list_L6042_sorted01",
+     "list_L6049_sorted_iff_nth_mono_less",
+     "list_L6053_sorted_iff_nth_mono", "list_L6061_sorted_iff_nth_Suc",
+     "list_L6104_sorted_butlast", "list_L6146_sorted_dropWhile",
      "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
+
+val numeral_against_Suc =
+  classified "numeral against Suc"
+    ("the goal bounds a length by the numeral 1 and the cited facts "
+     ^ "-- le_Suc_eq and length_Suc_conv -- are stated on SUC; "
+     ^ "nothing rewrites between the two spellings, and with the "
+     ^ "bound written SUC 0 both facts fire and leave only the two "
+     ^ "list shapes")
+    ["list_L5964_sorted_wrt01"]
 
 val characterisation_is_the_goal =
   classified "characterisation is the goal"
@@ -340,16 +349,24 @@ val rotation_by_iteration =
     ("rotate_def unfolds to FUNPOW and nothing reduces the "
      ^ "iteration")
     ["list_L5191_rotate0", "list_L5194_rotate_Suc",
-     "list_L5197_rotate_add", "list_L5207_rotate1_rotate_swap",
-     "list_L5241_rotate_conv_mod", "list_L5244_rotate_id",
-     "list_L5259_rotate_map"]
+     "list_L5197_rotate_add", "list_L5207_rotate1_rotate_swap"]
 
 val index_selection =
   classified "index selection"
-    ("nths_def unfolds and the comprehension over indices it "
-     ^ "exposes is not reduced")
-    ["list_L5334_nths_empty", "list_L5344_length_nths",
-     "list_L5385_set_nths_subset", "list_L5391_in_set_nthsD"]
+    ("Isabelle defines nths as a filter over the list paired with "
+     ^ "its indices, where the translation is primitive-recursive on "
+     ^ "the list; the cited definition therefore does not unfold "
+     ^ "under a list variable and the residual still names "
+     ^ "source_nths")
+    ["list_L5334_nths_empty", "list_L5344_length_nths"]
+
+val membership_of_an_indexed_element =
+  classified "membership of an indexed element"
+    ("set_nths reduces the comprehension and leaves [MEM (EL index "
+     ^ "xs) xs] under [index < LENGTH xs]; Isabelle carries that as "
+     ^ "the simp rule nth_mem and no HOL4 simpset carries EL_MEM")
+    ["list_L5385_set_nths_subset", "list_L5388_notin_set_nthsI",
+     "list_L5391_in_set_nthsD"]
 
 val decision_procedure_scope =
   classified "decision procedure scope"
@@ -441,6 +458,7 @@ val execution : benchLib.shortfall list =
   finite_cardinality @
   propositional_rearrangement @
   sorted_against_sorted_wrt @
+  numeral_against_Suc @
   characterisation_is_the_goal @
   predicate_and_set_representation @
   pair_membership_after_flattening @
@@ -448,6 +466,7 @@ val execution : benchLib.shortfall list =
   integer_interval @
   rotation_by_iteration @
   index_selection @
+  membership_of_an_indexed_element @
   decision_procedure_scope @
   definitional_unfolding_stops_short @
   injectivity_and_surjectivity @

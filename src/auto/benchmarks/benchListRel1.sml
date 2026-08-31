@@ -46,7 +46,7 @@ val goals =
      ``!relation xs.
          ~parityTranslation$source_listrel1 relation xs []``,
    entry "list_L7823_append_listrel1I" 7823
-     "unfolding listrel1_def by auto"
+     "unfolding listrel1_def by auto (blast intro: append_eq_appendI)+"
      ``!relation xs ys us vs.
          ((parityTranslation$source_listrel1 relation xs ys /\
            us = vs) \/

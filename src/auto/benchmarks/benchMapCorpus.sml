@@ -52,7 +52,7 @@ IMAGE v_m0 v_A0``,
 {id = "map_L308_dom_map_option_comp",
  goal = ``(λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) (OPTION_MAP v_g0 ∘ v_m0) =
 (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_m0``,
- source_method = "by (simp add: comp_def)",
+ source_method = "using dom_map_option [of \"\\<lambda>_. g\" m] by (simp add: comp_def)",
  provenance = {file = "src/HOL/Map.thy", line = 308, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L325_map_comp_empty_1",
@@ -329,7 +329,7 @@ else
         option_CASE
           (ALOOKUP (REVERSE (ZIP (b_upds_keys,b_upds_values))) b_upds_key)
           (b_upds_func b_upds_key) SOME) v_m0 v_as0 v_bs0) v_a0 (SOME v_b0)``,
- source_method = "by (fastforce simp add: map_upd_upds_conv_if)",
+ source_method = "using set_take_subset by (fastforce simp add: map_upd_upds_conv_if)",
  provenance = {file = "src/HOL/Map.thy", line = 519, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L565_dom_eq_empty_conv",
@@ -433,14 +433,14 @@ else v_x0 INSERT (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0``,
 (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0 DIFF
 (v_x0 INSERT v_A0) =
 (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0 DIFF v_A0``,
- source_method = "by simp",
+ source_method = "unfolding dom_def by simp",
  provenance = {file = "src/HOL/Map.thy", line = 638, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L642_insert_dom",
  goal = ``v_f0 v_x0 = SOME v_y0 ⇒
 v_x0 INSERT (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0 =
 (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0``,
- source_method = "by auto",
+ source_method = "unfolding dom_def by auto",
  provenance = {file = "src/HOL/Map.thy", line = 642, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L699_ranI",
@@ -466,7 +466,7 @@ v_b0 ∈
 v_b0 INSERT
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
   v_m0``,
- source_method = "by force",
+ source_method = "unfolding ran_def by force",
  provenance = {file = "src/HOL/Map.thy", line = 723, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L727_fun_upd_None_if_notin_dom",
@@ -504,7 +504,7 @@ v_z0 ∉
           (alist$ALOOKUP
              (ZIP ((v_xs0 : 'a list), (v_ys0 : 'b list)))) =
         LIST_TO_SET (v_ys0 : 'b list))))``,
- source_method = "by (simp add: ran_distinct set_map[symmetric])",
+ source_method = "using assms by (simp add: ran_distinct set_map[symmetric])",
  provenance = {file = "src/HOL/Map.thy", line = 776, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L781_ran_map_option",
@@ -520,7 +520,7 @@ IMAGE v_f0
  goal = ``(λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) (λb_x. NONE) =
 ∅``,
- source_method = "by simp",
+ source_method = "unfolding graph_def by simp",
  provenance = {file = "src/HOL/Map.thy", line = 786, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L789_in_graphI",
@@ -528,7 +528,7 @@ IMAGE v_f0
 (v_k0,v_v0) ∈
 (λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0``,
- source_method = "by blast",
+ source_method = "unfolding graph_def by blast",
  provenance = {file = "src/HOL/Map.thy", line = 789, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L792_in_graphD",
@@ -536,7 +536,7 @@ IMAGE v_f0
 (λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0 ⇒
 v_m0 v_k0 = SOME v_v0``,
- source_method = "by blast",
+ source_method = "unfolding graph_def by blast",
  provenance = {file = "src/HOL/Map.thy", line = 792, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L795_graph_map_upd",
@@ -551,7 +551,7 @@ v_m0 v_k0 = SOME v_v0``,
   ((λb_update_func b_update_key b_update_value b_update_query.
         if b_update_query = b_update_key then b_update_value
         else b_update_func b_update_query) v_m0 v_k0 NONE)``,
- source_method = "by (auto split: if_splits)",
+ source_method = "unfolding graph_def by (auto split: if_splits)",
  provenance = {file = "src/HOL/Map.thy", line = 795, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L798_graph_fun_upd_None",
@@ -565,7 +565,7 @@ v_m0 v_k0 = SOME v_v0``,
      (λb_graph_func b_graph_pair.
           b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0 ∧
      FST b_e ≠ v_k0)``,
- source_method = "by (auto split: if_splits)",
+ source_method = "unfolding graph_def by (auto split: if_splits)",
  provenance = {file = "src/HOL/Map.thy", line = 798, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L801_graph_restrictD_1",
@@ -605,7 +605,7 @@ v_m0 v_k0 = SOME v_v0``,
         b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m20)
   ((λb_graph_func b_graph_pair.
         b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m10)``,
- source_method = "by (auto simp: map_comp_Some_iff relcomp_unfold)",
+ source_method = "unfolding graph_def by (auto simp: map_comp_Some_iff relcomp_unfold)",
  provenance = {file = "src/HOL/Map.thy", line = 807, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L810_graph_map_add",
@@ -620,7 +620,7 @@ v_m0 v_k0 = SOME v_v0``,
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m10 ∪
 (λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m20``,
- source_method = "by force",
+ source_method = "unfolding graph_def using map_add_comm by force",
  provenance = {file = "src/HOL/Map.thy", line = 810, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L813_graph_eq_to_snd_dom",
@@ -628,7 +628,7 @@ v_m0 v_k0 = SOME v_v0``,
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0 =
 IMAGE (λb_x. (b_x,THE (v_m0 b_x)))
   ((λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_m0)``,
- source_method = "by force",
+ source_method = "unfolding graph_def dom_def by force",
  provenance = {file = "src/HOL/Map.thy", line = 813, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L816_fst_graph_eq_dom",
@@ -636,7 +636,7 @@ IMAGE (λb_x. (b_x,THE (v_m0 b_x)))
   ((λb_graph_func b_graph_pair.
         b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0) =
 (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_m0``,
- source_method = "by force",
+ source_method = "unfolding graph_eq_to_snd_dom by force",
  provenance = {file = "src/HOL/Map.thy", line = 816, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L822_snd_graph_ran",
@@ -645,7 +645,7 @@ IMAGE (λb_x. (b_x,THE (v_m0 b_x)))
         b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0) =
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
   v_m0``,
- source_method = "by force",
+ source_method = "unfolding graph_def ran_def by force",
  provenance = {file = "src/HOL/Map.thy", line = 822, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L828_finite_graph_map_of",
@@ -656,7 +656,7 @@ IMAGE (λb_x. (b_x,THE (v_m0 b_x)))
              b_graph_func (FST b_graph_pair) =
              SOME (SND b_graph_pair))
           (alist$ALOOKUP (v_al0 : ('a # 'b) list)))``,
- source_method = "by blast",
+ source_method = "unfolding graph_eq_to_snd_dom finite_dom_map_of using finite_dom_map_of by blast",
  provenance = {file = "src/HOL/Map.thy", line = 828, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L832_graph_map_of_if_distinct_dom",
@@ -668,14 +668,14 @@ IMAGE (λb_x. (b_x,THE (v_m0 b_x)))
             SOME (SND b_graph_pair))
          (alist$ALOOKUP (v_al0 : ('a # 'b) list)) =
        LIST_TO_SET (v_al0 : ('a # 'b) list)))``,
- source_method = "by auto",
+ source_method = "unfolding graph_def by auto",
  provenance = {file = "src/HOL/Map.thy", line = 832, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L849_inj_on_fst_graph",
  goal = ``(λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:α)) FST
   ((λb_graph_func b_graph_pair.
         b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair)) v_m0)``,
- source_method = "by force",
+ source_method = "unfolding graph_def inj_on_def by force",
  provenance = {file = "src/HOL/Map.thy", line = 849, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L854_map_le_empty",

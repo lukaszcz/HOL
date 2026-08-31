@@ -29,15 +29,15 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-(* The three goals below are the only ones in this family whose
-   assigned tactic is denied a fact it would otherwise have: each goal
-   is itself an ambient characterisation, and rule A1 withholds it. *)
+(* The goal below is the only one in this family whose assigned tactic
+   is denied a fact it would otherwise have: the goal is itself an
+   ambient characterisation, and rule A1 withholds it. *)
 val excluded_characterisation =
   classified "excluded characterisation"
     ("the goal is the ambient characterisation itself, so the "
      ^ "measurement withholds the one fact that closes it and there "
      ^ "is no second route to search for")
-    ["set_L690_Int_iff", "set_L717_Un_iff", "set_L769_insert_iff"]
+    ["set_L769_insert_iff"]
 
 val blast_set_rule_forms =
   classified "blast set rule forms"

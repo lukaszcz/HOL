@@ -245,7 +245,8 @@ val goals =
              (MAP LENGTH
                (parityTranslation$source_transpose rows)))``,
    entry "list_L6487_nth_nth_transpose_sorted" 6487
-     "by (simp add: takeWhile_nth)"
+     ("using j filter_equals_takeWhile_sorted_rev[OF sorted, of i] " ^
+      "nth_transpose[OF i] nth_map[OF j] by (simp add: takeWhile_nth)")
      ``!rows : 'a list list.
          parityTranslation$source_sorted ($<=)
            (REVERSE (MAP LENGTH rows)) ==>
@@ -260,7 +261,7 @@ val goals =
                (parityTranslation$source_transpose rows)) =
            EL column (EL row rows)``,
    entry "list_L6669_sorted_key_list_of_set_eq_Nil_iff" 6669
-     "by (auto simp: fold_insort_key.remove)"
+     "using assms by (auto simp: fold_insort_key.remove)"
      ``!le : 'b -> 'b -> bool.
          relation$WeakLinearOrder le ==>
          !source function domain.
@@ -285,7 +286,7 @@ val goals =
            LIST_TO_SET ys = domain ==>
            xs = ys``,
    entry "list_L6770_sorted_key_list_of_set_unique" 6770
-     ("by (auto simp: strict_sorted_iff card_distinct " ^
+     ("using assms by (auto simp: strict_sorted_iff card_distinct " ^
       "idem_if_sorted_distinct)")
      ``!le : 'b -> 'b -> bool.
          relation$WeakLinearOrder le ==>
@@ -300,14 +301,15 @@ val goals =
             parityTranslation$source_sorted_key_list_of_set
               le function domain = target)``,
    entry "list_L6835_sorted_list_of_set_lessThan_Suc" 6835
-     "by presburger"
+     ("using le0 lessThan_atLeast0 sorted_list_of_set_range upt_Suc_append " ^
+      "by presburger")
      ``!bound.
          parityTranslation$source_sorted_list_of_set ($<=)
            (parityTranslation$source_lessThan ($<) (SUC bound)) =
          parityTranslation$source_sorted_list_of_set ($<=)
            (parityTranslation$source_lessThan ($<) bound) ++ [bound]``,
    entry "list_L6839_sorted_list_of_set_atMost_Suc" 6839
-     "by fastforce"
+     "using lessThan_Suc_atMost sorted_list_of_set_lessThan_Suc by fastforce"
      ``!bound.
          parityTranslation$source_sorted_list_of_set ($<=)
            (parityTranslation$source_atMost ($<=) (SUC bound)) =
@@ -315,7 +317,7 @@ val goals =
            (parityTranslation$source_atMost ($<=) bound) ++
          [SUC bound]``,
    entry "list_L6847_sorted_list_of_set_nonempty" 6847
-     ("by (auto simp: less_le simp flip: " ^
+     ("using assms by (auto simp: less_le simp flip: " ^
       "sorted_list_of_set.sorted_key_list_of_set_unique intro: Min_in)")
      ``!le : 'a -> 'a -> bool.
          relation$WeakLinearOrder le ==>
@@ -328,7 +330,8 @@ val goals =
                (domain DELETE
                 parityTranslation$source_minimum le domain)``,
    entry "list_L6873_nth_sorted_list_of_set_greaterThanAtMost" 6873
-     ("by (simp add: greaterThanAtMost_def greaterThanLessThan_eq " ^
+     ("using nth_sorted_list_of_set_greaterThanLessThan [of n \"Suc j\" i] " ^
+      "by (simp add: greaterThanAtMost_def greaterThanLessThan_eq " ^
       "lessThan_Suc_atMost)")
      ``!index lower upper.
          index < upper - lower ==>

@@ -37,7 +37,7 @@ val goals : benchLib.source_goal list =
  representative = false},
 {id = "list_L990_append_self_conv2",
  goal = ``v_xs0 ++ v_ys0 = v_ys0 ⇔ v_xs0 = []``,
- source_method = "by auto",
+ source_method = "using append_same_eq [of _ _ \"[]\"] by auto",
  provenance = {file = "src/HOL/List.thy", line = 990, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L1001_hd_append2",
@@ -307,7 +307,7 @@ else
       FILTER (λb_partition_item. ¬b_partition_predicate b_partition_item)
         b_partition_list)) v_f0 v_xs0 =
 (FILTER v_f0 v_xs0,FILTER ((λb_not. ¬b_not) ∘ v_f0) v_xs0)``,
- source_method = "by simp",
+ source_method = "unfolding partition_filter2[symmetric] unfolding partition_filter1[symmetric] by simp",
  provenance = {file = "src/HOL/List.thy", line = 1838, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L1848_nth_Cons_0",
@@ -412,7 +412,7 @@ v_A0``,
  representative = false},
 {id = "list_L2088_hd_Nil_eq_last",
  goal = ``source_hd [] = source_last []``,
- source_method = "by simp",
+ source_method = "unfolding hd_def last_def by simp",
  provenance = {file = "src/HOL/List.thy", line = 2088, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L2097_last_ConsL",
@@ -562,13 +562,13 @@ ZIP (v_xs0 ++ v_ys0,v_us0 ++ v_vs0) = ZIP (v_xs0,v_us0) ++ ZIP (v_ys0,v_vs0)``,
 {id = "list_L2806_zip_map1",
  goal = ``ZIP (MAP v_f0 v_xs0,v_ys0) =
 MAP (λ(b_x,b_y). (v_f0 b_x,b_y)) (ZIP (v_xs0,v_ys0))``,
- source_method = "using zip_map_map[of f xs identity ys] by simp",
+ source_method = "using zip_map_map[of f xs \"\\<lambda>x. x\" ys] by simp",
  provenance = {file = "src/HOL/List.thy", line = 2806, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L2810_zip_map2",
  goal = ``ZIP (v_xs0,MAP v_f0 v_ys0) =
 MAP (λ(b_x,b_y). (b_x,v_f0 b_y)) (ZIP (v_xs0,v_ys0))``,
- source_method = "using zip_map_map[of identity xs f ys] by simp",
+ source_method = "using zip_map_map[of \"\\<lambda>x. x\" xs f ys] by simp",
  provenance = {file = "src/HOL/List.thy", line = 2810, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L2814_map_zip_map",
@@ -903,7 +903,7 @@ MEM v_x0 v_xs0 ⇒
 v_A0 = (λb_less_than b_less_item. b_less_item < b_less_than) (LENGTH v_xs0) ⇒
 v_B0 = set v_xs0 ⇒
 BIJ ((λb_nth_list b_nth_index. b_nth_list❲b_nth_index❳) v_xs0) v_A0 v_B0``,
- source_method = "by (auto intro!: inj_on_nth simp: set_conv_nth)",
+ source_method = "using assms unfolding bij_betw_def by (auto intro!: inj_on_nth simp: set_conv_nth)",
  provenance = {file = "src/HOL/List.thy", line = 3919, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L3925_set_update_distinct",
@@ -1266,7 +1266,7 @@ IMAGE (λb_x. [b_x]) v_A0``,
  goal = ``v_xs0 = v_ys0 ⇒
 (∀b_x. MEM b_x v_ys0 ⇒ (v_f0 b_x ⇔ v_g0 b_x)) ⇒
 (EXISTS v_f0 v_xs0 ⇔ EXISTS v_g0 v_ys0)``,
- source_method = "by (simp add: list_ex_iff)",
+ source_method = "using that by (simp add: list_ex_iff)",
  provenance = {file = "src/HOL/List.thy", line = 8236, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L8607_empty_set",
@@ -1381,7 +1381,7 @@ set
           b_rel_right (b_rel_left_function b_rel_x)
             (b_rel_right_function b_rel_y)) (LIST_REL v_A0)
      (λb_equal_left b_equal_right. b_equal_left ⇔ b_equal_right)) EVERY EVERY``,
- source_method = "by blast",
+ source_method = "using list.pred_transfer by blast",
  provenance = {file = "src/HOL/List.thy", line = 9013, commit = "f7e02b7e"},
  representative = false}]
 

@@ -43,12 +43,13 @@ val goals =
      ``!i j : int. i <= j ==>
          parityTranslation$source_upto i j =
          i :: parityTranslation$source_upto (i + 1) j``,
-   entry "list_L3683_upto_split2" 3683 "by auto"
+   entry "list_L3683_upto_split2" 3683 ("using upto_rec1 upto_rec2 " ^
+                                        "upto_split1 by auto")
      ``!i j k : int. i <= j ==> j <= k ==>
          parityTranslation$source_upto i k =
          parityTranslation$source_upto i j ++
          parityTranslation$source_upto (j + 1) k``,
-   entry "list_L3687_upto_split3" 3687 "by auto"
+   entry "list_L3687_upto_split3" 3687 "using upto_rec1 upto_split1 by auto"
      ``!i j k : int. i <= j ==> j <= k ==>
          parityTranslation$source_upto i k =
          parityTranslation$source_upto i (j - 1) ++

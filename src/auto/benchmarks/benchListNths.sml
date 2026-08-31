@@ -44,7 +44,8 @@ val goals =
          parityTranslation$source_nths [value] indices =
          if 0 IN indices then [value] else []``,
    entry "list_L5409_nths_drop" 5409
-     "by force"
+     ("by(force simp: drop_eq_nths nths_nths simp flip: atLeastLessThan_iff " ^
+      "intro: arg_cong2[where f=nths, OF refl])")
      ``!count xs indices.
          parityTranslation$source_nths (DROP count xs) indices =
          parityTranslation$source_nths xs

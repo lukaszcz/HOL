@@ -16,7 +16,7 @@ val goals : benchLib.source_goal list =
  representative = false},
 {id = "option_L59_split_option_ex",
  goal = ``(∃b_x. v_P0 b_x) ⇔ v_P0 NONE ∨ ∃b_x. v_P0 (SOME b_x)``,
- source_method = "using split_option_all[of (\\x. ~ P x)] by blast",
+ source_method = "using split_option_all[of \"\\<lambda>x. \\<not> P x\"] by blast",
  provenance = {file = "src/HOL/Option.thy", line = 59, commit = "f7e02b7e"},
  representative = false},
 {id = "option_L62_UNIV_option_conv",
@@ -235,7 +235,7 @@ v_B0 ≠ ∅ ∧ v_B0 ≠ {NONE}``,
              b_rel_right (b_rel_left_function b_rel_x)
                (b_rel_right_function b_rel_y)) v_A0 (OPTREL v_B0))
      (OPTREL v_B0)) OPTION_BIND OPTION_BIND``,
- source_method = "by simp",
+ source_method = "unfolding rel_fun_def split_option_all by simp",
  provenance = {file = "src/HOL/Option.thy", line = 337, commit = "f7e02b7e"},
  representative = false},
 {id = "option_L351_finite_option_UNIV",

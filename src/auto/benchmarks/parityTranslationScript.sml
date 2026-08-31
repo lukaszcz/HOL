@@ -248,6 +248,89 @@ Proof
   >> simp[source_sorted_wrt_def]
 QED
 
+Theorem source_sorted_wrt_drop:
+  !relation count xs.
+    source_sorted_wrt relation xs ==>
+    source_sorted_wrt relation (DROP count xs)
+Proof
+  gen_tac
+  >> Induct
+  >- simp[]
+  >> Cases_on `xs`
+  >> simp[source_sorted_wrt_def]
+QED
+
+Theorem source_sorted_wrt_append:
+  !relation xs ys.
+    source_sorted_wrt relation (xs ++ ys) <=>
+    source_sorted_wrt relation xs /\ source_sorted_wrt relation ys /\
+    (!left right. MEM left xs ==> MEM right ys ==> relation left right)
+Proof
+  gen_tac
+  >> Induct
+  >- simp[source_sorted_wrt_def]
+  >> simp[source_sorted_wrt_def]
+  >> metis_tac[]
+QED
+
+Theorem source_sorted_wrt_map:
+  !relation function xs.
+    source_sorted_wrt relation (MAP function xs) <=>
+    source_sorted_wrt
+      (\left right. relation (function left) (function right)) xs
+Proof
+  ntac 2 gen_tac
+  >> Induct
+  >> simp[source_sorted_wrt_def, listTheory.MEM_MAP]
+  >> metis_tac[]
+QED
+
+Theorem source_sorted_wrt_mono_rel:
+  !weaker stronger xs.
+    (!left right.
+       MEM left xs ==> MEM right xs ==> stronger left right ==>
+       weaker left right) ==>
+    source_sorted_wrt stronger xs ==> source_sorted_wrt weaker xs
+Proof
+  ntac 2 gen_tac
+  >> Induct
+  >> simp[source_sorted_wrt_def]
+  >> metis_tac[]
+QED
+
+Theorem source_sorted_wrt_iff_nth_Suc_transp:
+  !relation xs.
+    relation$transitive relation ==>
+    (source_sorted_wrt relation xs <=>
+     !index. SUC index < LENGTH xs ==>
+             relation (EL index xs) (EL (SUC index) xs))
+Proof
+  rpt strip_tac
+  >> simp[source_sorted_wrt_bridge, sortingTheory.SORTED_EL_SUC]
+QED
+
+Theorem source_sorted_iff_nth_mono:
+  !le : 'a -> 'a -> bool.
+    relation$WeakLinearOrder le ==>
+    !xs.
+      (source_sorted le xs <=>
+       !left right.
+         left <= right ==> right < LENGTH xs ==>
+         le (EL left xs) (EL right xs))
+Proof
+  rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
+  >> drule source_weak_linear_refl
+  >> strip_tac
+  >> simp[source_sorted_def, sortingTheory.SORTED_EL_LESS]
+  >> eq_tac
+  >> rpt strip_tac
+  >- (Cases_on `left = right` >> simp[] >> first_x_assum irule >> simp[])
+  >> first_x_assum irule
+  >> simp[]
+QED
+
 Theorem source_sorted_same:
   !le : 'a -> 'a -> bool.
     relation$WeakLinearOrder le ==>
@@ -928,6 +1011,16 @@ Proof
            (qspecl_then [`left`, `right`] mp_tac)
       >> fs[])
   >> simp[]
+QED
+
+Theorem source_nth_transpose:
+  !rows : 'a list list.
+    !index.
+      index < LENGTH (source_transpose rows) ==>
+      EL index (source_transpose rows) =
+      MAP (\row. EL index row) (FILTER (\row. index < LENGTH row) rows)
+Proof
+  rw[source_transpose_def]
 QED
 
 Theorem source_nth_nth_transpose_sorted:
@@ -1887,6 +1980,26 @@ Proof
   >> metis_tac[]
 QED
 
+Theorem source_sorted_map_remove1:
+  !le : 'a -> 'a -> bool.
+    relation$WeakLinearOrder le ==>
+    !function value xs.
+      source_sorted le (MAP function xs) ==>
+      source_sorted le (MAP function (source_remove1 value xs))
+Proof
+  rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
+  >> ntac 2 (pop_assum mp_tac)
+  >> qid_spec_tac `xs`
+  >> Induct
+  >- simp[source_remove1_def]
+  >> rpt strip_tac
+  >> rw[source_remove1_def]
+  >> fs[source_sorted_def, sortingTheory.SORTED_EQ, listTheory.MEM_MAP]
+  >> metis_tac[source_remove1_mem]
+QED
+
 Theorem source_removeAll_filter:
   !value xs.
     source_removeAll value xs = FILTER ((<>) value) xs
@@ -2677,6 +2790,46 @@ Proof
   >> metis_tac[source_sorted_wrt_bridge, source_sorted_upt]
 QED
 
+(* Isabelle cites [sorted_wrt_mono_rel] with its second premise already
+   discharged, by [sorted_wrt_upt] here and by [sorted_wrt_upto] below.
+   An instance reached that way is its own citation, so it is stated as
+   its own theorem rather than left to be recombined.  The interval is
+   written [$+ start], the eta-contracted form the goals arrive in. *)
+Theorem source_sorted_wrt_mono_rel_upt:
+  !relation start length.
+    (!left right.
+       MEM left (GENLIST ($+ start) length) ==>
+       MEM right (GENLIST ($+ start) length) ==>
+       left < right ==> relation left right) ==>
+    source_sorted_wrt relation (GENLIST ($+ start) length)
+Proof
+  rpt strip_tac
+  >> irule source_sorted_wrt_mono_rel
+  >> qexists_tac `$<`
+  >> `relation$transitive ($< : num -> num -> bool)`
+       by simp[relationTheory.transitive_def]
+  >> simp[source_sorted_wrt_bridge, sortingTheory.SORTED_GENLIST_PLUS]
+  >> metis_tac[]
+QED
+
+Theorem source_sorted_wrt_mono_rel_upto:
+  !relation lower upper.
+    (!left right.
+       MEM left (source_num_upto lower upper) ==>
+       MEM right (source_num_upto lower upper) ==>
+       left < right ==> relation left right) ==>
+    source_sorted_wrt relation (source_num_upto lower upper)
+Proof
+  rpt strip_tac
+  >> irule source_sorted_wrt_mono_rel
+  >> qexists_tac `$<`
+  >> `relation$transitive ($< : num -> num -> bool)`
+       by simp[relationTheory.transitive_def]
+  >> simp[source_sorted_wrt_bridge, source_num_upto_def]
+  >> rw[sortingTheory.SORTED_GENLIST_PLUS]
+  >> metis_tac[]
+QED
+
 (* Isabelle/HOL src/HOL/List.thy:5185-5327. *)
 Definition source_rotate1_def:
   (source_rotate1 ([] : 'a list) = []) /\
@@ -2846,6 +2999,70 @@ Proof
   simp[source_rotate_def, source_funpow_rotate1_map]
 QED
 
+(* Rotating the empty list is the identity however often it is done,
+   which is what makes [source_rotate_drop_take] unconditional: the
+   modulus below is taken by a length that can be zero. *)
+Theorem source_rotate_nil:
+  !steps. source_rotate steps ([] : 'a list) = []
+Proof
+  Induct
+  >- simp[source_rotate_def]
+  >> simp[source_rotate_def, arithmeticTheory.FUNPOW_SUC]
+  >> fs[source_rotate_def]
+  >> simp[source_rotate1_def]
+QED
+
+Theorem source_rotate_drop_take_bounded:
+  !steps xs.
+    steps <= LENGTH xs ==>
+    source_rotate steps xs = DROP steps xs ++ TAKE steps xs
+Proof
+  rpt strip_tac
+  >> qspecl_then [`TAKE steps xs`, `DROP steps xs`] mp_tac
+       source_rotate_split_period
+  >> simp[]
+QED
+
+Theorem source_rotate_drop_take:
+  !steps xs.
+    source_rotate steps xs =
+    DROP (steps MOD LENGTH xs) xs ++ TAKE (steps MOD LENGTH xs) xs
+Proof
+  rpt strip_tac
+  >> Cases_on `xs`
+  >- simp[source_rotate_nil]
+  >> qabbrev_tac `ys = h::t`
+  >> `0 < LENGTH ys` by simp[Abbr `ys`]
+  >> `steps MOD LENGTH ys < LENGTH ys` by simp[]
+  >> ONCE_REWRITE_TAC [source_rotate_conv_mod]
+  >> irule source_rotate_drop_take_bounded
+  >> simp[]
+QED
+
+Theorem source_nth_rotate:
+  !steps xs index.
+    index < LENGTH xs ==>
+    EL index (source_rotate steps xs) =
+    EL ((steps + index) MOD LENGTH xs) xs
+Proof
+  rpt strip_tac
+  >> `0 < LENGTH xs` by simp[]
+  >> `steps MOD LENGTH xs < LENGTH xs` by simp[]
+  >> `(steps + index) MOD LENGTH xs =
+      (steps MOD LENGTH xs + index) MOD LENGTH xs`
+       by metis_tac[arithmeticTheory.MOD_PLUS, arithmeticTheory.LESS_MOD]
+  >> qabbrev_tac `offset = steps MOD LENGTH xs`
+  >> simp[source_rotate_drop_take]
+  >> Cases_on `index < LENGTH xs - offset`
+  >- simp[rich_listTheory.EL_APPEND1, listTheory.EL_DROP]
+  >> simp[rich_listTheory.EL_APPEND2, listTheory.EL_TAKE]
+  >> `LENGTH xs <= index + offset` by simp[]
+  >> `index + offset - LENGTH xs < LENGTH xs` by simp[]
+  >> `(index + offset) MOD LENGTH xs = index + offset - LENGTH xs`
+       by metis_tac[arithmeticTheory.SUB_MOD, arithmeticTheory.LESS_MOD]
+  >> simp[]
+QED
+
 Definition source_unrotate1_def:
   source_unrotate1 (xs : 'a list) =
     if NULL xs then [] else LAST xs :: FRONT xs
@@ -2918,6 +3135,18 @@ Proof
   >> rw[source_nths_def]
   >> first_x_assum drule
   >> simp[]
+QED
+
+Theorem source_set_nths:
+  !xs indices.
+    LIST_TO_SET (source_nths xs indices) =
+    {value | ?index. index < LENGTH xs /\ index IN indices /\
+                     value = EL index xs}
+Proof
+  rw[source_nths_filter_bridge, pred_setTheory.EXTENSION,
+     listTheory.MEM_MAP, listTheory.MEM_FILTER,
+     rich_listTheory.MEM_COUNT_LIST]
+  >> metis_tac[]
 QED
 
 Theorem source_map_el_filter_count_mem:
@@ -3106,6 +3335,13 @@ Theorem source_less_than_count:
 Proof
   simp[source_lessThan_def, pred_setTheory.count_def,
        pred_setTheory.EXTENSION]
+QED
+
+Theorem source_lessThan_Suc_atMost:
+  !bound.
+    source_lessThan ($<) (SUC bound) = source_atMost ($<=) bound
+Proof
+  rw[source_lessThan_def, source_atMost_def, pred_setTheory.EXTENSION]
 QED
 
 Theorem source_at_most_count:
@@ -5878,6 +6114,23 @@ Proof
              (Q.SPECL [`key`, `keys`, `values`]
                 source_alookup_reverse_zip_some)
              th))
+QED
+
+(* src/HOL/Map.thy: ran_distinct.  The translation inlines [ran] as the
+   lambda below rather than naming a constant, and the map is HOL4's own
+   [alist$ALOOKUP], not the [source_alookup] this section overloads. *)
+Theorem source_ran_distinct:
+  !al : ('a # 'b) list.
+    ALL_DISTINCT (MAP FST al) ==>
+    (\value. ?key. alist$ALOOKUP al key = SOME value) =
+    IMAGE SND (LIST_TO_SET al)
+Proof
+  rw[pred_setTheory.EXTENSION, pred_setTheory.IN_ABS]
+  >> eq_tac >> rw[]
+  >- (drule alistTheory.ALOOKUP_MEM >> strip_tac
+      >> qexists_tac `(key,x)` >> simp[])
+  >> Cases_on `x'` >> fs[]
+  >> metis_tac[alistTheory.ALOOKUP_ALL_DISTINCT_MEM]
 QED
 
 (* src/HOL/Map.thy: map_upd_upds_conv_if. *)
