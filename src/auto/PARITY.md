@@ -88,11 +88,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 328 | 327 | 4 |
-| List/map | 602 | 402 | 366 | 5 |
+| List/map | 602 | 405 | 369 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **843** | **806** | **28** |
+| **Total** | **1070** | **846** | **809** | **28** |
 
 ## Cost of the solutions
 
@@ -100,13 +100,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 12 | 13 | 0 | 0 | 0.8 | 45 | 616 |
-| Sets | 328 | 129 | 190 | 9 | 0 | 4.0 | 6 | 2430 |
-| List/map | 402 | 6 | 392 | 4 | 0 | 3.0 | 0 | 1868 |
-| Linarith | 46 | 43 | 3 | 0 | 0 | 0.5 | 0 | 0 |
+| Classical | 25 | 11 | 14 | 0 | 0 | 0.5 | 45 | 616 |
+| Sets | 328 | 119 | 202 | 7 | 0 | 3.1 | 6 | 2430 |
+| List/map | 405 | 6 | 394 | 5 | 0 | 3.2 | 0 | 1868 |
+| Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **843** | **228** | **601** | **14** | **0** | **4.0** | **0** | **2430** |
+| **Total** | **846** | **218** | **615** | **13** | **0** | **3.2** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -119,11 +119,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 25 | 0 | 0 |
-| List/map | 0 | 200 | 2 | 0 |
+| List/map | 0 | 197 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **227** | **2** | **0** |
+| **Total** | **0** | **224** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
