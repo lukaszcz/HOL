@@ -362,15 +362,6 @@ val rotation_by_iteration =
     ["list_L5191_rotate0", "list_L5194_rotate_Suc",
      "list_L5197_rotate_add", "list_L5207_rotate1_rotate_swap"]
 
-val index_selection =
-  classified "index selection"
-    ("Isabelle defines nths as a filter over the list paired with "
-     ^ "its indices, where the translation is primitive-recursive on "
-     ^ "the list; the cited definition therefore does not unfold "
-     ^ "under a list variable and the residual still names "
-     ^ "source_nths")
-    ["list_L5334_nths_empty", "list_L5344_length_nths"]
-
 val decision_procedure_scope =
   classified "decision procedure scope"
     ("the goal is outside what the HOL4 counterpart of the cited "
@@ -467,7 +458,6 @@ val execution : benchLib.shortfall list =
   integer_interval @
   integer_interval_emptiness @
   rotation_by_iteration @
-  index_selection @
   decision_procedure_scope @
   definitional_unfolding_stops_short @
   injectivity_and_surjectivity @

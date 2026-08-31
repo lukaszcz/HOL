@@ -720,7 +720,7 @@ val table : (string * (unit -> resolution)) list =
   ("nth_list_update",
    library "list" "EL_LUPDATE"),
   ("nths_Cons",
-   translated "source_nths_def"),
+   translated "source_nths_recursion"),
   ("option.induct",
    library "option" "option_induction"),
   ("option.split",

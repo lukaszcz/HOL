@@ -3092,20 +3092,24 @@ Proof
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:5329-5411. *)
+(* [0..<size xs] is written GENLIST rather than COUNT_LIST: both denote
+   the index list, but GENLIST's base case is a simp rule, so a [nths]
+   at a known list reduces the way Isabelle's does. *)
 Definition source_nths_def:
-  (source_nths ([] : 'a list) (indices : num set) = []) /\
-  (source_nths (head::tail) indices =
-     (if 0 IN indices then [head] else []) ++
-     source_nths tail {index | SUC index IN indices})
+  source_nths (xs : 'a list) (indices : num set) =
+    MAP FST
+      (FILTER (\pair. SND pair IN indices)
+        (ZIP (xs, GENLIST (\index. index) (LENGTH xs))))
 End
 
-Theorem source_map_el_suc:
-  !head tail indices.
-    MAP (\index. EL index (head::tail)) (MAP SUC indices) =
-    MAP (\index. EL index tail) indices
+Theorem source_nths_index_zip:
+  !xs : 'a list.
+    ZIP (xs, GENLIST (\index. index) (LENGTH xs)) =
+    MAP (\index. (EL index xs, index))
+      (GENLIST (\index. index) (LENGTH xs))
 Proof
-  Induct_on `indices`
-  >> simp[listTheory.EL]
+  simp[listTheory.LIST_EQ_REWRITE, listTheory.LENGTH_ZIP,
+       listTheory.EL_ZIP, listTheory.EL_MAP, listTheory.EL_GENLIST]
 QED
 
 Theorem source_nths_filter_bridge:
@@ -3115,14 +3119,29 @@ Theorem source_nths_filter_bridge:
       (FILTER (\index. index IN indices)
         (rich_list$COUNT_LIST (LENGTH xs)))
 Proof
-  Induct_on `xs`
-  >- simp[source_nths_def, rich_listTheory.COUNT_LIST_def]
+  simp[source_nths_def, source_nths_index_zip,
+       rich_listTheory.FILTER_MAP, listTheory.MAP_MAP_o,
+       combinTheory.o_DEF, rich_listTheory.COUNT_LIST_GENLIST,
+       combinTheory.I_DEF, combinTheory.S_DEF, combinTheory.K_DEF]
+QED
+
+(* The recursion Isabelle does not state.  It is where the primitive
+   equations went: consumers that take a [nths] apart one element at a
+   time use this, and the definition stays the one the source writes. *)
+Theorem source_nths_recursion:
+  (!indices. source_nths ([] : 'a list) indices = []) /\
+  (!head tail indices.
+     source_nths (head::tail) indices =
+     (if 0 IN indices then [head] else []) ++
+     source_nths tail {index | SUC index IN indices})
+Proof
+  conj_tac
+  >- simp[source_nths_filter_bridge, rich_listTheory.COUNT_LIST_def]
   >> rpt gen_tac
   >> Cases_on `0 IN indices`
-  >> simp[source_nths_def, rich_listTheory.COUNT_LIST_def,
+  >> simp[source_nths_filter_bridge, rich_listTheory.COUNT_LIST_def,
           rich_listTheory.FILTER_MAP, listTheory.MAP_MAP_o,
-          combinTheory.o_DEF, listTheory.EL,
-          source_map_el_suc]
+          combinTheory.o_DEF, listTheory.EL]
 QED
 
 Theorem source_nths_set_subset:
@@ -3130,9 +3149,9 @@ Theorem source_nths_set_subset:
     MEM value (source_nths xs indices) ==> MEM value xs
 Proof
   Induct_on `xs`
-  >- simp[source_nths_def]
+  >- simp[source_nths_recursion]
   >> rpt gen_tac
-  >> rw[source_nths_def]
+  >> rw[source_nths_recursion]
   >> first_x_assum drule
   >> simp[]
 QED
@@ -3187,7 +3206,8 @@ Proof
   >> fs[]
 QED
 
-Theorem source_length_filter_count:
+(* The index-list case, from which the general statement below follows. *)
+Theorem source_length_filter_count_index:
   !predicate size.
     LENGTH
       (FILTER predicate (rich_list$COUNT_LIST size)) =
@@ -3208,6 +3228,25 @@ Proof
        by (rw[pred_setTheory.EXTENSION, pred_setTheory.IN_COUNT]
            >> metis_tac[])
   >> fs[]
+QED
+
+(* src/HOL/List.thy: length_filter_conv_card.  Isabelle states it for
+   any list; the index list is the special case above. *)
+Theorem source_length_filter_count:
+  !predicate xs : 'a list.
+    LENGTH (FILTER predicate xs) =
+    CARD {index | index < LENGTH xs /\ predicate (EL index xs)}
+Proof
+  rpt gen_tac
+  >> `LENGTH (FILTER predicate xs) =
+      LENGTH (FILTER (\index. predicate (EL index xs))
+                (rich_list$COUNT_LIST (LENGTH xs)))`
+       by (Induct_on `xs`
+           >> simp[rich_listTheory.COUNT_LIST_def,
+                   rich_listTheory.FILTER_MAP, listTheory.EL,
+                   combinTheory.o_DEF]
+           >> rw[])
+  >> simp[source_length_filter_count_index]
 QED
 
 Theorem source_shift_image:
@@ -3234,9 +3273,9 @@ Theorem source_nths_drop:
     source_nths xs (IMAGE (\index. count + index) indices)
 Proof
   Induct
-  >- simp[source_nths_def, pred_setTheory.EXTENSION]
+  >- simp[source_nths_recursion, pred_setTheory.EXTENSION]
   >> Cases_on `xs`
-  >> simp[source_nths_def, source_shift_image]
+  >> simp[source_nths_recursion, source_shift_image]
 QED
 
 Theorem source_selected_drop_shift:
