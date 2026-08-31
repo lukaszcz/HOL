@@ -1226,6 +1226,32 @@ val _ =
              String.concatWith "\n" uncited_entries ^ "\n");
         null uncited_entries))
 
+(* Two entries under one citation is two answers to one question, and
+   [lookup] silently takes the first: the second is unreachable and can
+   contradict the one that wins.  Five did -- three calling a citation
+   unrepresented that the winning entry resolves to a translation
+   lemma, two naming a different translation lemma for it. *)
+val repeated_entries =
+  let
+    fun repeats [] = []
+      | repeats (name :: rest) =
+          (if List.exists (equal name) rest then [name] else []) @
+          repeats (List.filter (not o equal name) rest)
+  in
+    repeats benchNames.names
+  end
+
+val _ =
+  check
+    ("the name table answers each citation once",
+     fn () =>
+       (if null repeated_entries then ()
+        else
+          print
+            ("\nrepeated:\n" ^ String.concatWith "\n" repeated_entries ^
+             "\n");
+        null repeated_entries))
+
 (* ---- Phase B: the method dispatcher ------------------------------- *)
 
 val corpus_method_heads =

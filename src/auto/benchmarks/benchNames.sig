@@ -11,7 +11,11 @@ sig
      whose attribute only instantiates it -- [of ...], [where ...] --
      resolves to the general theorem: HOL4 applies a rewrite by matching,
      so the instantiation is a control hint rather than a different
-     fact. *)
+     fact.
+
+     Each key appears once.  [lookup] takes the first entry under a
+     name, so a second one is unreachable and free to contradict it;
+     the selftest rejects a repeat. *)
 
   datatype resolution =
       (* More than one theorem in two cases only: the Isabelle name
