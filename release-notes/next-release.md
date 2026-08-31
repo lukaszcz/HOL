@@ -290,6 +290,15 @@ New examples
    completeness of λη-equational theory, Wadsworth's theorem (solvable
    iff has hnf), Takahashi's modern proofs about η-reduction, etc.
 
+-   `src/HolSmt/examples`: a worked tour of `HolSmtLib` — checked
+    tactics, the term-to-theorem API, and the supported arithmetic,
+    function/array, datatype, collection, bit-vector, string, and
+    floating-point surfaces — followed by classic SMT case studies
+    stated as HOL theorems: constraint puzzles as uniqueness theorems,
+    job-shop scheduling with a proved optimal-makespan lower bound,
+    verifier-style proof obligations, and bit-level programming
+    tricks.
+
 Incompatibilities
 -----------------
 

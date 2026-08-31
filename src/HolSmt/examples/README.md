@@ -45,7 +45,18 @@ Holmake
 | `HolSmtWordsScript.sml` | Fixed-width bit-vector operations |
 | `HolSmtStringsScript.sml` | Native SMT Unicode strings and regular languages |
 | `HolSmtFloatingPointScript.sml` | Native SMT floating-point terms |
-| `HolSmtCvc5Script.sml` | Checked cvc5 tactics, bags, lemmas, and `CVC_PROVE` |
+| `HolSmtCvc5Script.sml` | Checked cvc5 tactics, bags, floating point, and `CVC_PROVE` |
+
+The files above tour the supported theories one feature at a time.  The
+case studies below then state classic SMT applications as HOL theorems and
+discharge them with the checked tactics:
+
+| File | Case study |
+| --- | --- |
+| `HolSmtPuzzlesScript.sml` | Constraint puzzles as uniqueness theorems: knights and knaves, 100 animals for 100 dollars, SEND + MORE = MONEY |
+| `HolSmtJobShopScript.sml` | Job-shop scheduling: checking a concrete schedule and proving the optimal makespan's lower bound |
+| `HolSmtBitTricksScript.sml` | Bit-level programming tricks over `word32`: the XOR swap and an alignment round trip |
+| `HolSmtVerificationScript.sml` | Verifier-style proof obligations: binary-search midpoint bounds, a clamp routine, and array swap via the theory of arrays |
 
 ## The usual workflow
 

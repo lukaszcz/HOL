@@ -1,6 +1,6 @@
 Theory HolSmtCvc5
 Ancestors
-  HolSmtBasics bag
+  HolSmtBasics bag smtfloat
 Libs
   HolSmtLib
 
@@ -25,3 +25,13 @@ QED
 
 Theorem cvc_prove_example =
   CVC_PROVE ``!x : int. x <= x + 1``
+
+(* Solver capabilities differ (see the parent README): this quantified
+   floating-point fact replays through cvc5's CPC proofs in milliseconds.
+   IEEE addition is commutative even for NaN inputs here, because smtfp is
+   the canonical-NaN carrier, so the conclusion is a plain equality. *)
+Theorem fp_addition_commutes:
+  !x y : (4, 3) smtfp. smtfp_add RNE x y = smtfp_add RNE y x
+Proof
+  CVC_TAC
+QED
