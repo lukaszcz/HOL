@@ -25,9 +25,41 @@ Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof cit
 - `list_L8660_card_set (list$CARD_LIST_TO_SET_EQN[symmetric])`
 - `list_L6444_stable_sort_key_sort_key (parityTranslation$source_sort_key_stable)`
 - `list_L6690_distinct_if_distinct_map (list$ALL_DISTINCT_MAP)`
+- `list_L6761_anon_L6761 (parityTranslation$source_strict_sorted_equal_unique)`
 - `list_L8683_can_select_set_list_ex1 (parityTranslation$source_list_ex1_def)`
 - `string_L728_anon_L728 (source_Literal_prime_def)`
 - `product_type_L785_curry_conv (pair$CURRY_DEF)`
+
+## Facts the translation does not render
+
+An Isabelle proof can name a fact HOL4 states nowhere -- neither in a library nor in the translation theory.  The recipe has nothing to supply for such a citation, so the goal below is measured without it. As above, that can only under-credit HOL4, and the goals are named rather than left implicit in a shortfall count.
+
+- `set_L651_Pow_not_empty (Pow_top)`
+- `list_L1838_partition_filter_conv (partition_filter2[symmetric], partition_filter1[symmetric])`
+- `list_L9013_list_all_transfer (list.pred_transfer)`
+- `list_L4628_extract_None_iff (dropWhile_eq_Cons_conv)`
+- `list_L4632_extract_SomeE (dropWhile_eq_Cons_conv)`
+- `list_L4637_extract_Some_iff (dropWhile_eq_Cons_conv)`
+- `list_L5409_nths_drop (drop_eq_nths, nths_nths, atLeastLessThan_iff[symmetric])`
+- `list_L6487_nth_nth_transpose_sorted (filter_equals_takeWhile_sorted_rev[OF sorted, of i])`
+- `list_L6669_sorted_key_list_of_set_eq_Nil_iff (fold_insort_key.remove)`
+- `list_L6770_sorted_key_list_of_set_unique (idem_if_sorted_distinct)`
+- `list_L6835_sorted_list_of_set_lessThan_Suc (lessThan_atLeast0, sorted_list_of_set_range, upt_Suc_append)`
+- `list_L6873_nth_sorted_list_of_set_greaterThanAtMost (nth_sorted_list_of_set_greaterThanLessThan[of n "Suc j" i], greaterThanLessThan_eq)`
+- `list_L7823_append_listrel1I (append_eq_appendI)`
+- `list_L7922_wf_listrel1_iff (lists_accD, lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]])`
+- `list_L7256_lenlex_conv (lex_prod_def, inv_image_def)`
+- `list_L7570_asym_lenlex (asym_inv_image, asym_less_than, asym_lex)`
+- `list_L8999_set_Cons_transfer (rel_set_def)`
+- `map_L308_dom_map_option_comp (dom_map_option[of "\<lambda>_. g" m])`
+- `map_L810_graph_map_add (map_add_comm)`
+- `map_L816_fst_graph_eq_dom (graph_eq_to_snd_dom)`
+- `map_L828_finite_graph_map_of (finite_dom_map_of, graph_eq_to_snd_dom)`
+- `string_L60_char_of_take_bit_eq (bit_take_bit_iff)`
+- `string_L135_char_of_nat (drop_bit_of_nat, bit_simps, possible_bit_def)`
+- `string_L344_char_of_integer_code (bit_iff_odd_drop_bit, drop_bit_eq_div)`
+- `product_type_L1226_inj_apfst (inj_on_apfst[of f UNIV])`
+- `product_type_L1232_inj_apsnd (inj_on_apsnd[of f UNIV])`
 
 ## Source accounting
 
@@ -55,12 +87,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Solved under Isabelle's own ambient set | Routine selftest goals |
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
-| Sets | 353 | 319 | 318 | 4 |
-| List/map | 602 | 379 | 342 | 5 |
+| Sets | 353 | 328 | 327 | 4 |
+| List/map | 602 | 402 | 366 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **811** | **773** | **28** |
+| **Total** | **1070** | **843** | **806** | **28** |
 
 ## Cost of the solutions
 
@@ -68,13 +100,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 15 | 9 | 1 | 0 | 1.4 | 45 | 771 |
-| Sets | 319 | 128 | 184 | 7 | 0 | 3.0 | 7 | 2430 |
-| List/map | 379 | 5 | 368 | 6 | 0 | 3.8 | 0 | 1868 |
-| Linarith | 46 | 43 | 3 | 0 | 0 | 0.2 | 0 | 0 |
+| Classical | 25 | 12 | 13 | 0 | 0 | 0.8 | 45 | 616 |
+| Sets | 328 | 129 | 190 | 9 | 0 | 4.0 | 6 | 2430 |
+| List/map | 402 | 6 | 392 | 4 | 0 | 3.0 | 0 | 1868 |
+| Linarith | 46 | 43 | 3 | 0 | 0 | 0.5 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **811** | **229** | **567** | **15** | **0** | **3.8** | **0** | **2430** |
+| **Total** | **843** | **228** | **601** | **14** | **0** | **4.0** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -86,12 +118,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 34 | 0 | 0 |
-| List/map | 0 | 223 | 2 | 0 |
+| Sets | 0 | 25 | 0 | 0 |
+| List/map | 0 | 200 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **259** | **2** | **0** |
+| **Total** | **0** | **227** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -102,12 +134,12 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 | Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
-| Sets | 0 | 8 | 9 |
-| List/map | 19 | 0 | 16 |
+| Sets | 0 | 6 | 8 |
+| List/map | 17 | 0 | 16 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **19** | **8** | **25** |
+| **Total** | **17** | **6** | **24** |
 
 ## Seed-rule safety check
 
