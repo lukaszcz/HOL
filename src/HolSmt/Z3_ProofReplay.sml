@@ -1637,45 +1637,131 @@ local
 
   (*                     P = Q
      ---------------------------------------------
-     (!x. ?y. !z. P x y z) = (!a. ?b. !c. Q a b c) *)
-  fun z3_quant_intro (state, thm, t) =
+     (!x. ?y. !z. P x y z) = (!a. ?b. !c. Q a b c)
+
+     The proof-bind variables are the binders introduced by this inference.
+     Target binders determine only their logical kind; their variables are
+     alpha-renamed to the annotation before rigidly checking the pointwise
+     premise. *)
+  fun quant_intro_annotation_mismatch detail =
+    raise ERR "quant_intro_annotation_mismatch"
+      ("quant_intro_annotation_mismatch: quant-intro proof-bind " ^
+       "annotation mismatch: " ^ detail)
+
+  fun z3_quant_intro (state, annotation, thm, t) =
   let
-    (* Remove an outer binder and return a function that restores it on both
-       sides of an equality.  Z3's quant-intro also introduces lambda binders
-       for higher-order sequence functions. *)
-    fun dest_binder term : ((thm -> thm) * term) option =
+    datatype binder_kind = ForallBinder | ExistsBinder | AbsBinder
+
+    (* Z3's quant-intro also introduces lambda binders for higher-order
+       sequence functions. *)
+    fun dest_binder term : (binder_kind * term * term) option =
       if boolSyntax.is_forall term then
-        SOME (Lib.apfst Drule.FORALL_EQ (boolSyntax.dest_forall term))
+        let val (var, body) = boolSyntax.dest_forall term
+        in SOME (ForallBinder, var, body) end
       else if boolSyntax.is_exists term then
-        SOME (Lib.apfst Drule.EXISTS_EQ (boolSyntax.dest_exists term))
+        let val (var, body) = boolSyntax.dest_exists term
+        in SOME (ExistsBinder, var, body) end
       else if Term.is_abs term then
-        SOME (Lib.apfst Thm.ABS (Term.dest_abs term))
+        let val (var, body) = Term.dest_abs term
+        in SOME (AbsBinder, var, body) end
       else
         NONE
-    fun strip_binders term acc : (thm -> thm) list * term =
-      case dest_binder term of
-        NONE => (List.rev acc, term)
-      | SOME (f, body) => strip_binders body (f :: acc)
 
+    fun kind_name ForallBinder = "forall"
+      | kind_name ExistsBinder = "exists"
+      | kind_name AbsBinder = "lambda"
+
+    fun same_kind (ForallBinder, ForallBinder) = true
+      | same_kind (ExistsBinder, ExistsBinder) = true
+      | same_kind (AbsBinder, AbsBinder) = true
+      | same_kind _ = false
+
+    (* Peel exactly the annotated block and rename its target variables to
+       the proof-bind variables.  This is recursive over the annotation, so
+       neither supported binder forms nor arity depend on corpus examples. *)
+    fun peel side term =
+      let
+        fun recurse [] body kinds = (List.rev kinds, body)
+          | recurse (annotated :: rest) body kinds =
+              (case dest_binder body of
+                NONE => quant_intro_annotation_mismatch
+                  (side ^ " has fewer binders than its annotation")
+              | SOME (kind, target, residue) =>
+                  if Type.compare
+                      (Term.type_of annotated, Term.type_of target) = EQUAL
+                  then recurse rest
+                    (Term.subst [target |-> annotated] residue)
+                    (kind :: kinds)
+                  else quant_intro_annotation_mismatch
+                    (side ^ " binder type differs from its annotation"))
+      in
+        recurse annotation term []
+      end
+
+    fun check_kinds [] = ()
+      | check_kinds ((left, right) :: rest) =
+          if same_kind (left, right) then check_kinds rest
+          else quant_intro_annotation_mismatch
+            ("conclusion binder kinds differ (" ^ kind_name left ^
+             " versus " ^ kind_name right ^ ")")
+
+    (* Replace H[v1,...,vn] by its universal closure as a hypothesis.  The
+       closure still entails H at the current variables, but none of those
+       variables remains free in the hypotheses seen by ABS/FORALL_EQ/
+       EXISTS_EQ. *)
+    fun close_hypothesis hyp result =
+      let
+        val captured = List.filter (fn var => Term.free_in var hyp) annotation
+      in
+        if List.null captured then result
+        else
+          let
+            val closed = boolSyntax.list_mk_forall (captured, hyp)
+            val instance = Drule.SPECL captured (Thm.ASSUME closed)
+          in
+            Drule.PROVE_HYP instance result
+          end
+      end
+
+    fun add_binder (ForallBinder, var) result =
+          Drule.FORALL_EQ var result
+      | add_binder (ExistsBinder, var) result =
+          Drule.EXISTS_EQ var result
+      | add_binder (AbsBinder, var) result = Thm.ABS var result
+
+    val _ = if List.null annotation then
+        quant_intro_annotation_mismatch "annotation is empty"
+      else if List.all Term.is_var annotation then ()
+      else quant_intro_annotation_mismatch
+        "annotation contains a non-variable binder"
     val (lhs, rhs) = boolSyntax.dest_eq t
-    val (binderfs, _) = strip_binders lhs []
-    (* P may already have leading binders; retain only the newly introduced
-       ones. *)
-    val (P, _) = boolSyntax.dest_eq (Thm.concl thm)
-    val binderfs = List.take (binderfs, List.length binderfs -
-      List.length (Lib.fst (strip_binders P [])))
-    (* P and Q in the conclusion may require variable renaming to match
-       the premise -- we only look at P and hope Q will come out right *)
-    fun strip_some_binders 0 term = term
-      | strip_some_binders n term =
-          strip_some_binders (n - 1)
-            (Lib.snd (Option.valOf (dest_binder term)))
-    val len = List.length binderfs
-    val (tmsubst, _) = Term.match_term P (strip_some_binders len lhs)
-    val thm = Thm.INST tmsubst thm
-    (* add binders (on both sides) *)
-    val thm = List.foldr (fn (binderf, th) => binderf th)
-      thm binderfs
+      handle Feedback.HOL_ERR _ => quant_intro_annotation_mismatch
+        "conclusion is not an equality"
+    val (lhs_kinds, annotated_lhs) = peel "left conclusion" lhs
+    val (rhs_kinds, annotated_rhs) = peel "right conclusion" rhs
+    val _ = check_kinds (ListPair.zip (lhs_kinds, rhs_kinds))
+    val (premise_lhs, premise_rhs) = boolSyntax.dest_eq (Thm.concl thm)
+      handle Feedback.HOL_ERR _ => quant_intro_annotation_mismatch
+        "pointwise premise is not an equality"
+    val _ = if premise_lhs ~~ annotated_lhs then ()
+      else quant_intro_annotation_mismatch
+        ("annotated left conclusion body is not alpha-equal to the " ^
+         "pointwise premise")
+    val _ = if premise_rhs ~~ annotated_rhs then ()
+      else quant_intro_annotation_mismatch
+        ("annotated right conclusion body is not alpha-equal to the " ^
+         "pointwise premise")
+    val thm = List.foldl
+      (fn (hyp, result) => close_hypothesis hyp result) thm (Thm.hyp thm)
+    val _ = if List.exists
+        (fn hyp => List.exists (fn var => Term.free_in var hyp) annotation)
+        (Thm.hyp thm)
+      then raise ERR "z3_quant_intro"
+        "an annotated binder remains free in a premise hypothesis"
+      else ()
+    val thm = List.foldr
+      (fn (binder, result) => add_binder binder result) thm
+      (ListPair.zip (lhs_kinds, annotation))
     (* rename variables on rhs if necessary *)
     val (_, intermediate_rhs) = boolSyntax.dest_eq (Thm.concl thm)
     val thm = Thm.TRANS thm (Thm.ALPHA intermediate_rhs rhs)
@@ -3121,6 +3207,38 @@ local
           ((state, proof), thm)
         end))
 
+  and quant_intro_prem (state_proof : state * proof)
+      (name : string)
+      (z3_rule_fn : state * Term.term list * Thm.thm * Term.term ->
+        state * Thm.thm)
+      (pt : proofterm, concl : Term.term)
+      (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
+      : (state * proof) * Thm.thm =
+    let
+      val (vars, body) =
+        case pt of
+          PROOF_BIND ([], _) =>
+            quant_intro_annotation_mismatch "annotation is empty"
+        | PROOF_BIND pair => pair
+        | _ => quant_intro_annotation_mismatch
+            "premise is not an immediate proof-bind annotation"
+    in
+      thm_of_proofterm (state_proof, body) (continuation o
+        (fn ((state, proof), thm) =>
+          let
+            val (state, thm) = profile name z3_rule_fn
+              (state, vars, thm, concl)
+              handle Feedback.HOL_ERR holerr =>
+                raise_replay_error name state name [pt] concl [thm] holerr
+            val _ = profile "check_thm" check_thm (name, thm, concl)
+              handle Feedback.HOL_ERR holerr =>
+                raise_replay_error "check_thm" state name [pt] concl
+                  [thm] holerr
+          in
+            ((state, proof), thm)
+          end))
+    end
+
   and two_prems (state_proof : state * proof)
       (name : string)
       (z3_rule_fn : state * Thm.thm * Thm.thm * Term.term -> state * Thm.thm)
@@ -3259,13 +3377,9 @@ local
         thm_of_proofterm (state_proof, body) continuation
     | thm_of_proofterm (state_proof, QUANT_INST x) continuation =
         one_arg_zero_prems state_proof "quant_inst" z3_quant_inst x continuation
-    (* A proof-bind premise of quant-intro only annotates which binders the
-       surrounding step introduced.  `z3_quant_intro` recovers the quantifier
-       structure from the terms themselves and `check_thm` validates the
-       result, so the annotation erases and the rule takes the plain
-       premise. *)
     | thm_of_proofterm (state_proof, QUANT_INTRO x) continuation =
-        one_prem state_proof "quant_intro" z3_quant_intro x continuation
+        quant_intro_prem state_proof "quant_intro" z3_quant_intro x
+          continuation
     | thm_of_proofterm (state_proof, REFL x) continuation =
         zero_prems state_proof "refl" z3_refl x continuation
     | thm_of_proofterm (state_proof, REWRITE x) continuation =

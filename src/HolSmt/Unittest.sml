@@ -12112,25 +12112,84 @@ in
   check_oracle_tags "Z3 quant-intro rewrite canonicalization" thm
 end
 
-fun z3_proof_bind_quant_intro_binder_annotation_ignored () =
+fun z3_proof_bind_quant_intro_annotation_rejection () =
+  expect_hol_error_contains "proof-bind quant-intro binder mismatch"
+    "quant_intro_annotation_mismatch"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (quant-intro \
+      \(proof-bind (lambda ((x Int)) \
+      \(refl (= (= x x) (= x x))))) \
+      \(= (forall ((x Int) (y Int)) (= x x)) \
+      \(forall ((x Int) (y Int)) (= x x))))))"))
+
+fun z3_quant_intro_annotation_required_rejection () =
 let
-  (* The proof-bind wrapper records one bound variable, but quant-intro
-     reintroduces two.  The annotation is metadata, not a replay
-     precondition: `z3_quant_intro` reconstructs the step from the terms and
-     `check_thm` validates it, so replay accepts the certificate rather than
-     rejecting it on the binder-count discrepancy. *)
+  val body = Z3_Proof.REFL ``F = F``
+  val target = ``(!x:bool. F) = (!x:bool. F)``
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+    Z3_Proof.QUANT_INTRO (Z3_Proof.PROOF_BIND ([], body), target))
+  val empty_annotation = Z3_Proof.update_proof_steps initial steps
+in
+  expect_hol_error_contains "quant-intro missing proof-bind"
+    "quant_intro_annotation_mismatch"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (quant-intro (refl (= false false)) \
+      \(= (forall ((x Bool)) false) (forall ((x Bool)) false)))))"));
+  expect_hol_error_contains "quant-intro empty proof-bind"
+    "quant_intro_annotation_mismatch"
+    (fn () => ignore
+      (Z3_ProofReplay.replay_root_for_test empty_annotation))
+end
+
+fun z3_quant_intro_residual_binder_rejection () =
+  (* The annotated Bool variable is a schematic premise side.  Permissive
+     matching could instantiate it with the residual inner forall and make
+     the annotated outer binder vacuous.  Rigid alpha comparison must reject
+     that attempt. *)
+  expect_hol_error_contains "quant-intro residual binder absorption"
+    "quant_intro_annotation_mismatch"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (quant-intro \
+      \(proof-bind (lambda ((x Bool)) (refl (= x x)))) \
+      \(= (forall ((x Bool) (y Bool)) y) \
+      \(forall ((x Bool) (y Bool)) y))))))"))
+
+fun z3_quant_intro_binder_integrity_success () =
+let
+  (* One recursive binder block covers every supported congruence family.
+     The pointwise premise deliberately carries a hypothesis in which all
+     annotated variables are free: applying ABS/FORALL_EQ/EXISTS_EQ directly
+     would trigger the kernel's variable-capture guard.  The target uses
+     different binder names, so success also demonstrates that proof-bind is
+     the source of the replay variables rather than the conclusion. *)
   val thm = replay_z3_proof_string
     "((proof (quant-intro \
-    \(proof-bind (lambda ((x Int)) \
-    \(refl (= (= x x) (= x x))))) \
-    \(= (forall ((x Int) (y Int)) (= x x)) \
-    \(forall ((x Int) (y Int)) (= x x))))))"
-  val expected = ``(!x:int y:int. x = x) = (!x:int y:int. x = x)``
+    \(proof-bind (lambda ((f Int) (x Int) (y Int)) \
+    \(hypothesis (= (= (+ f x) y) (= (+ f x) y))))) \
+    \(= (lambda ((a Int)) \
+    \(forall ((b Int)) (exists ((c Int)) (= (+ a b) c)))) \
+    \(lambda ((d Int)) \
+    \(forall ((e Int)) (exists ((g Int)) (= (+ d e) g))))))))"
+  val expected =
+    ``(\a:int. !b:int. ?c:int. a + b = c) =
+      (\d:int. !e:int. ?g:int. d + e = g)``
+  val expected_hyp =
+    ``!f x y:int. ((f + x = y) = (f + x = y))``
+  val hyps = Thm.hyp thm
 in
-  assert (Thm.concl thm ~~ expected,
-    "proof-bind quant-intro binder annotation: wrong conclusion " ^
-    term_with_types (Thm.concl thm));
-  check_oracle_tags "Z3 proof-bind quant-intro binder annotation" thm
+  assert_concl_alpha ("Z3 quant-intro binder integrity", thm, expected);
+  assert (List.length hyps = 1 andalso List.hd hyps ~~ expected_hyp,
+    "quant-intro did not universally close its capture-prone hypothesis: " ^
+    String.concatWith ", " (List.map term_with_types hyps));
+  assert (List.all
+      (fn hyp => List.all
+        (fn name =>
+          not (List.exists (term_is_var_named name) (Term.free_vars hyp)))
+        ["f", "x", "y"])
+      hyps,
+    "quant-intro left an annotated binder free in a hypothesis");
+  check_oracle_tags "Z3 quant-intro binder integrity" thm
 end
 
 fun z3_proof_bind_nnf_pos_unliftable_premise_success () =
@@ -12682,7 +12741,8 @@ let
       "((proof ((_ quant-inst false) (or (not (forall ((x Bool)) x)) false))))",
       ``~(!x:bool. x) \/ F``),
     ("quant-intro",
-      "((proof (quant-intro (refl (= false false)) \
+      "((proof (quant-intro \
+        \(proof-bind (lambda ((x Bool)) (refl (= false false)))) \
         \(= (forall ((x Bool)) false) (forall ((x Bool)) false)))))",
       ``(!x:bool. F) = (!x:bool. F)``),
     ("refl",
@@ -17058,8 +17118,14 @@ let
       z3_proof_bind_consumers_replay_success),
     ("z3_quant_intro_rewrite_canonicalization_success",
       z3_quant_intro_rewrite_canonicalization_success),
-    ("z3_proof_bind_quant_intro_binder_annotation_ignored",
-      z3_proof_bind_quant_intro_binder_annotation_ignored),
+    ("z3_proof_bind_quant_intro_annotation_rejection",
+      z3_proof_bind_quant_intro_annotation_rejection),
+    ("z3_quant_intro_annotation_required_rejection",
+      z3_quant_intro_annotation_required_rejection),
+    ("z3_quant_intro_residual_binder_rejection",
+      z3_quant_intro_residual_binder_rejection),
+    ("z3_quant_intro_binder_integrity_success",
+      z3_quant_intro_binder_integrity_success),
     ("z3_proof_bind_nnf_pos_unliftable_premise_success",
       z3_proof_bind_nnf_pos_unliftable_premise_success),
     ("z3_remove_extra_hyps_reflexive_equality_success",
