@@ -928,6 +928,18 @@ in
     (``int_max (x:int) y = a ==> x <= int_max a z``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
 
+    (* arithmetic goals with disjunctive hypotheses: the num-to-int transfer
+       must not case-split them (SolverSpec.simplify accepts at most one
+       subgoal) *)
+    (``(x:int) + 2 <= y \/ y + 3 <= x ==> x <> y``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
+    (``0 <= (t1:int) /\ 0 <= t2 /\ 0 <= t3 /\
+       (t1 + 2 <= t2 \/ t2 + 3 <= t1) /\
+       (t1 + 2 <= t3 \/ t3 + 2 <= t1) /\
+       (t2 + 3 <= t3 \/ t3 + 2 <= t2) ==>
+       7 <= t1 + 2 \/ 7 <= t2 + 3 \/ 7 <= t3 + 2``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
+
     (* real *)
 
     (``(x:real) + 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),

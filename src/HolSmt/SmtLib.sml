@@ -6013,6 +6013,20 @@ in
       false atoms
   end
 
+  (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
+     skolemizes existentials but never case-splits, because preprocessing
+     must produce at most one subgoal (SolverSpec.simplify). *)
+  val NO_SPLIT_STRIP_ASSUME_TAC =
+    Thm_cont.REPEAT_TCL
+      (Thm_cont.ORELSE_TCL (Thm_cont.CONJUNCTS_THEN, Thm_cont.CHOOSE_THEN))
+      (fn th =>
+        Tactical.FIRST [Tactic.CONTR_TAC th, Tactic.ACCEPT_TAC th,
+                        Tactic.ASSUME_TAC th])
+
+  fun NO_SPLIT_STRIP_ASSUMS_TAC g =
+    Tactical.MAP_EVERY (fn _ => Tactical.POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
+      (#1 g) g
+
   (* Runs the proved num-to-int transfer on the whole goal.  Assumptions are
      first moved into the conclusion so free num variables anywhere in the
      sequent are made explicit and get a non-negativity guard. *)
@@ -6026,7 +6040,11 @@ in
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
-       bossLib.REV_FULL_SIMP_TAC pureSimps.pure_ss num_transfer_rewrites) g
+       (* The STRIP_ASSUME_TAC re-introduction inside REV_FULL_SIMP_TAC
+          would case-split disjunctive assumptions into several subgoals. *)
+       simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
+         num_transfer_rewrites THEN
+       NO_SPLIT_STRIP_ASSUMS_TAC) g
     else
       ALL_TAC g
   end
@@ -6174,6 +6192,22 @@ in
   (* Eliminates some HOL terms that are not supported by the SMT-LIB
      translation. It also adds some useful theorems to the list of assumptions
      so that SMT solvers can reason about some symbols defined in HOL4 theories. *)
+  (* Every preprocessing stage must keep the goal in at most one subgoal
+     (SolverSpec.simplify consumes a single goal); name the stage that
+     splits, instead of failing opaquely far from the cause. *)
+  fun one_subgoal_stage name (tac : Tactical.tactic) : Tactical.tactic =
+    fn g =>
+    let
+      val (goals, validation) = tac g
+    in
+      if List.length goals > 1 then
+        raise Feedback.mk_HOL_ERR "SmtLib" "SIMP_TAC"
+          ("preprocessing stage '" ^ name ^ "' produced " ^
+           Int.toString (List.length goals) ^ " subgoals")
+      else
+        (goals, validation)
+    end
+
   fun SIMP_TAC_WITH_NATIVE_BAGS preserve_native_bags simp_let =
   let
     open Tactical simpLib
@@ -6181,23 +6215,25 @@ in
       if preserve_native_bags andalso cvc_native_bag_goal g then
         NUM_TO_INT_TAC_EXCEPT is_bag_type g
       else NUM_TO_INT_TAC g
+    val stage = one_subgoal_stage
   in
-    HOL_STRING_TO_SMT_TAC THEN
-    NATIVE_FLOAT_TO_SMT_TAC THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
+    stage "native-float" NATIVE_FLOAT_TO_SMT_TAC THEN
     (* This must precede num transfer: the native real numeral form lets the
        closed positivity proof erase the whole pow term, including its nat
        exponent. *)
     Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_POS_LITERAL_CONV) THEN
     (* Close algebraic natural identities while their saturated subtraction
        is still in its native form, before lowering introduces nested ites. *)
-    SIMP_TAC pureSimps.pure_ss
+    stage "num-algebra" (SIMP_TAC pureSimps.pure_ss
       [HolSmtTheory.num_sub_assoc, HolSmtTheory.num_floor_zero,
        HolSmtTheory.num_ceiling_zero, arithmeticTheory.MAX_0,
-       arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE] THEN
-    num_to_int THEN
-    (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
+       arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE]) THEN
+    stage "num-to-int" num_to_int THEN
+    stage "let-simp"
+      (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV) THEN
-    SIMP_TAC pureSimps.pure_ss [
+    stage "polymorphic-simp" (SIMP_TAC pureSimps.pure_ss [
       (* FIXME: polymorphic functions seem to be highly problematic at the
          moment because after HolSmt's translation, the symbols in these
          theorems (e.g. ``FST``, ``SND``, ``$,``, etc) won't be the same as the
@@ -6214,31 +6250,33 @@ in
       Thm.CONJUNCT1 realTheory.pow, Thm.CONJUNCT2 realTheory.pow,
       integerTheory.INT_MAX, integerTheory.INT_MIN,
       HolSmtTheory.real_div_smt_rdiv, HolSmtTheory.smt_rdiv_zero
-    ] THEN
-    SIMP_TAC realSimps.real_ss
+    ]) THEN
+    stage "real-div-simp" (SIMP_TAC realSimps.real_ss
       [HolSmtTheory.smt_rdiv_zero, HolSmtTheory.smt_rdiv_refl,
        HolSmtTheory.smt_rdiv_one, HolSmtTheory.smt_rdiv_neg_refl,
-       HolSmtTheory.smt_rdiv_neg_one] THEN
-    SIMP_TAC pureSimps.pure_ss [boolTheory.REFL_CLAUSE] THEN
+       HolSmtTheory.smt_rdiv_neg_one]) THEN
+    stage "refl-simp" (SIMP_TAC pureSimps.pure_ss [boolTheory.REFL_CLAUSE])
+      THEN
     Tactic.CONV_TAC
       (Conv.DEPTH_CONV (fun_eq_preprocess_conv preserve_native_bags)) THEN
-    Library.WORD_SIMP_TAC THEN
+    stage "word-simp" Library.WORD_SIMP_TAC THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
        which does not have a native SMT Set translation. *)
-    (if simp_let then CHECKED_SET_SIMP_TAC else NATIVE_SET_SIMP_TAC) THEN
+    stage "set-simp"
+      (if simp_let then CHECKED_SET_SIMP_TAC else NATIVE_SET_SIMP_TAC) THEN
     Tactic.RULE_ASSUM_TAC
       (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
     Tactic.BETA_TAC THEN
-    num_to_int THEN
-    ADD_THEOREMS_TAC THEN
-    CLEANUP_ASSUMPTIONS_TAC THEN
+    stage "num-to-int" num_to_int THEN
+    stage "add-theorems" ADD_THEOREMS_TAC THEN
+    stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
     (* The theorem-discovery pass may expose a fresh num-valued occurrence.
        Run the semantic transfer last, then simplify its newly-added
        assumptions even when they no longer mention num themselves. *)
-    num_to_int THEN
-    CLEANUP_ASSUMPTIONS_TAC
+    stage "num-to-int" num_to_int THEN
+    stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC
   end
 
   fun SIMP_TAC simp_let = SIMP_TAC_WITH_NATIVE_BAGS false simp_let
