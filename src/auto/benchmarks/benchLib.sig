@@ -46,11 +46,14 @@ sig
      [ring_tac ORELSE ideal_tac] -- and choosing one side by reading
      the goal would let a mapping failure be recorded as a HOL4
      limitation. *)
+  (* [Repeat] is Isabelle's method combinator [+]: the recipe runs once
+     and then as often as it keeps applying. *)
   datatype method_recipe =
       Invoke of tactic_id * method_arg list
     | Then of method_recipe * method_recipe
     | AllGoals of method_recipe * method_recipe
     | Otherwise of method_recipe * method_recipe
+    | Repeat of method_recipe
 
   type exclusion = {name : string, theorem : thm}
 

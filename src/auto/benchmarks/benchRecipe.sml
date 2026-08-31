@@ -11,8 +11,13 @@ datatype modifier =
   | Elim of benchLib.rule_strength * string list
   | Dest of benchLib.rule_strength * string list
   | Cong of string list
+  | Facts of string list
 
-type method = {name : string, modifiers : modifier list}
+type method = {
+  name : string,
+  modifiers : modifier list,
+  repeated : bool
+}
 
 type parsed = {
   facts : string list,
@@ -26,7 +31,8 @@ exception Unparseable of string * string
 (* Scanning                                                            *)
 (* ------------------------------------------------------------------ *)
 
-datatype token = Word of string | Key of string | LParen | RParen
+datatype token =
+    Word of string | Key of string | LParen | RParen | Plus
 
 fun is_ident_char c =
   Char.isAlphaNum c orelse c = #"_" orelse c = #"." orelse c = #"'"
@@ -83,11 +89,31 @@ fun scan source =
           if is_ident_char c then span rest (c :: acc)
           else (List.rev acc, c :: rest)
       | span [] acc = (List.rev acc, [])
+    (* [list.distinct(1)] indexes one equation of a multi-clause fact.
+       Only digits read as an index, so [by(auto ...)] still opens a
+       method rather than extending the name [by]. *)
+    fun fact_index chars =
+      let
+        fun digits (c :: rest) acc =
+              if Char.isDigit c then digits rest (c :: acc)
+              else (List.rev acc, c :: rest)
+          | digits [] acc = (List.rev acc, [])
+      in
+        case chars of
+            #"(" :: rest =>
+              (case digits rest [] of
+                   ([], _) => ("", chars)
+                 | (index, #")" :: after) =>
+                     ("(" ^ String.implode index ^ ")", after)
+                 | _ => ("", chars))
+          | _ => ("", chars)
+      end
     fun go [] acc = List.rev acc
       | go (c :: rest) acc =
           if Char.isSpace c then go rest acc
           else if c = #"(" then go rest (LParen :: acc)
           else if c = #")" then go rest (RParen :: acc)
+          else if c = #"+" then go rest (Plus :: acc)
           else if is_ident_char c then
             let
               val (letters, rest') = span (c :: rest) []
@@ -97,8 +123,10 @@ fun scan source =
                   #":" :: after => go after (Key (name ^ ":") :: acc)
                 | #"!" :: #":" :: after => go after (Key (name ^ "!:") :: acc)
                 | _ =>
-                    let val (attribute, after) = attribute_of rest'
-                    in go after (Word (name ^ attribute) :: acc)
+                    let
+                      val (index, rest'') = fact_index rest'
+                      val (attribute, after) = attribute_of rest''
+                    in go after (Word (name ^ index ^ attribute) :: acc)
                     end
             end
           else
@@ -189,19 +217,33 @@ fun parse_modifiers source head tokens =
             let val (names, rest') = named source key rest
             in go rest' (modifier_of source head key names :: acc)
             end
+        (* [metis A B] keys nothing: the names are the method's facts. *)
+        | Word _ :: _ =>
+            let val (names, rest') = named source "the method" tokens
+            in go rest' (Facts names :: acc)
+            end
         | _ => raise Unparseable (source, "unexpected token in method")
   in
     go tokens []
   end
 
 fun parse_method source tokens =
-  case tokens of
-      Word name :: rest => ({name = name, modifiers = []}, rest)
-    | LParen :: Word name :: rest =>
-        let val (modifiers, rest') = parse_modifiers source name rest
-        in ({name = name, modifiers = modifiers}, rest')
-        end
-    | _ => raise Unparseable (source, "expected a method")
+  let
+    fun repetition (Plus :: rest) = (true, rest)
+      | repetition rest = (false, rest)
+    fun built name modifiers rest =
+      let val (repeated, rest') = repetition rest
+      in ({name = name, modifiers = modifiers, repeated = repeated}, rest')
+      end
+  in
+    case tokens of
+        Word name :: rest => built name [] rest
+      | LParen :: Word name :: rest =>
+          let val (modifiers, rest') = parse_modifiers source name rest
+          in built name modifiers rest'
+          end
+      | _ => raise Unparseable (source, "expected a method")
+  end
 
 fun parse source =
   let
@@ -252,13 +294,15 @@ fun render_modifier head modifier =
       | Dest (benchLib.UnsafeRule, names) => spelled "dest:" names
       | Dest (benchLib.SafeRule, names) => spelled "dest!:" names
       | Cong names => spelled "cong:" names
+      | Facts names => String.concatWith " " names
   end
 
-fun render_method ({name, modifiers} : method) =
-  if null modifiers then name
-  else
-    "(" ^ name ^ " " ^
-    String.concatWith " " (map (render_modifier name) modifiers) ^ ")"
+fun render_method ({name, modifiers, repeated} : method) =
+  (if null modifiers then name
+   else
+     "(" ^ name ^ " " ^
+     String.concatWith " " (map (render_modifier name) modifiers) ^ ")") ^
+  (if repeated then "+" else "")
 
 fun render ({facts, unfolded, methods} : parsed) =
   let
@@ -284,6 +328,7 @@ fun modifier_names modifier =
     | Elim (_, names) => names
     | Dest (_, names) => names
     | Cong names => names
+    | Facts names => names
 
 fun distinct [] = []
   | distinct (item :: rest) =
@@ -332,6 +377,7 @@ fun argument_of resolve modifier =
       | Dest (strength, names) =>
           each (fn thm => benchLib.DestAdd (strength, thm)) names
       | Cong names => each benchLib.CongruenceAdd names
+      | Facts names => each benchLib.FactAdd names
   end
 
 fun to_recipe ({theorems, tactics, ambient} : resolver) goal
@@ -370,7 +416,7 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
            List.concat (map (argument_of theorems) modifiers) @
            context)
       end
-    fun invoke ({name, modifiers} : method) =
+    fun invoke ({name, modifiers, repeated} : method) =
       let
         fun alternatives [] =
               raise Unparseable (name, "names no HOL4 tactic")
@@ -378,8 +424,9 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
           | alternatives (identifier :: rest) =
               benchLib.Otherwise (step modifiers identifier,
                                   alternatives rest)
+        val applied = alternatives (tactics name goal)
       in
-        alternatives (tactics name goal)
+        if repeated then benchLib.Repeat applied else applied
       end
     fun compose [] =
           raise Unparseable (render {facts = facts, unfolded = unfolded,

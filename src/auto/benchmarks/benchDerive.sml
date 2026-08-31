@@ -29,6 +29,7 @@ fun without_self goal recipe =
           benchLib.AllGoals (strip left, strip right)
       | strip (benchLib.Otherwise (left, right)) =
           benchLib.Otherwise (strip left, strip right)
+      | strip (benchLib.Repeat inner) = benchLib.Repeat (strip inner)
   in
     strip recipe
   end

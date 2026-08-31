@@ -1054,6 +1054,65 @@ val _ =
        map #name (#methods (parses "by auto (auto elim!: le_funE)"))
        = ["auto", "auto"])
 
+(* Isabelle's [+] repeats the method it follows.  The corpus records the
+   source method verbatim, so the grammar has to carry the combinator
+   rather than the transcription dropping it. *)
+val _ =
+  check
+    ("the parser reads the + repetition combinator",
+     fn () =>
+       let
+         val {methods, ...} =
+           parses "unfolding listrel1_def by auto (blast intro: le_funE)+"
+       in
+         map #name methods = ["auto", "blast"] andalso
+         map #repeated methods = [false, true]
+       end)
+
+val _ =
+  check
+    ("+ survives the render round trip",
+     fn () =>
+       benchRecipe.render (parses "by auto (blast intro: le_funE)+")
+       = "by auto (blast intro: le_funE)+")
+
+val _ =
+  check
+    ("a repeated method becomes a repeated recipe",
+     fn () =>
+       let
+         val once =
+           benchLib.recipe_name
+             (benchDerive.recipe_of ``!x : bool. x \/ ~x`` "by blast")
+         val repeated =
+           benchLib.recipe_name
+             (benchDerive.recipe_of ``!x : bool. x \/ ~x`` "by blast+")
+       in
+         repeated = "repeat(" ^ once ^ ")"
+       end)
+
+(* [metis] takes its facts unkeyed, so a bare name run inside a method
+   is that method's fact list rather than a parse error. *)
+val _ =
+  check
+    ("the parser reads an unkeyed fact list",
+     fn () =>
+       modifiers_of "by (metis in_set_conv_decomp)"
+       = [benchRecipe.Facts ["in_set_conv_decomp"]] andalso
+       benchRecipe.render (parses "by (metis in_set_conv_decomp)")
+       = "by (metis in_set_conv_decomp)")
+
+(* [list.distinct(1)] names one equation of a multi-clause fact.  The
+   index belongs to the name; [by(auto ...)] still opens a method. *)
+val _ =
+  check
+    ("the parser reads an indexed fact name",
+     fn () =>
+       modifiers_of "by (metis dropWhile_eq_Nil_conv list.distinct(1))"
+       = [benchRecipe.Facts ["dropWhile_eq_Nil_conv", "list.distinct(1)"]]
+       andalso
+       map #name (#methods (parses "by(auto simp: dom_def)")) = ["auto"])
+
 val _ =
   check
     ("the parser drops an Isabelle comment",
@@ -1459,6 +1518,7 @@ fun recipe_theorems (benchLib.Invoke (_, arguments)) =
       recipe_theorems left @ recipe_theorems right
   | recipe_theorems (benchLib.Otherwise (left, right)) =
       recipe_theorems left @ recipe_theorems right
+  | recipe_theorems (benchLib.Repeat inner) = recipe_theorems inner
 
 fun recipe_argument_names (benchLib.Invoke (_, arguments)) =
       List.mapPartial argument_name arguments
@@ -1468,6 +1528,8 @@ fun recipe_argument_names (benchLib.Invoke (_, arguments)) =
       recipe_argument_names left @ recipe_argument_names right
   | recipe_argument_names (benchLib.Otherwise (left, right)) =
       recipe_argument_names left @ recipe_argument_names right
+  | recipe_argument_names (benchLib.Repeat inner) =
+      recipe_argument_names inner
 
 fun first_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
   | first_recipe_arguments (benchLib.Then (left, _)) =
@@ -1476,6 +1538,8 @@ fun first_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
       first_recipe_arguments left
   | first_recipe_arguments (benchLib.Otherwise (left, _)) =
       first_recipe_arguments left
+  | first_recipe_arguments (benchLib.Repeat inner) =
+      first_recipe_arguments inner
 
 fun last_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
   | last_recipe_arguments (benchLib.Then (_, right)) =
@@ -1484,6 +1548,8 @@ fun last_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
       last_recipe_arguments right
   | last_recipe_arguments (benchLib.Otherwise (_, right)) =
       last_recipe_arguments right
+  | last_recipe_arguments (benchLib.Repeat inner) =
+      last_recipe_arguments inner
 
 fun without_argument_names names arguments =
   List.filter
@@ -1533,6 +1599,8 @@ val _ =
                               | arguments
                                   (benchLib.Otherwise (left, right)) =
                                   arguments left @ arguments right
+                              | arguments (benchLib.Repeat inner) =
+                                  arguments inner
                           in
                             arguments recipe
                           end))) ^ "]")
@@ -1564,6 +1632,7 @@ fun recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (benchLib.Otherwise (left, right)) =
       recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (benchLib.Repeat inner) = recipe_arguments inner
 
 fun uninstallable_rule_arguments recipe =
   List.mapPartial

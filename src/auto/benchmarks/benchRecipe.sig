@@ -17,8 +17,16 @@ sig
     | Elim of benchLib.rule_strength * string list
     | Dest of benchLib.rule_strength * string list
     | Cong of string list
+    (* A method that takes its facts unkeyed, as [metis] does. *)
+    | Facts of string list
 
-  type method = {name : string, modifiers : modifier list}
+  (* [repeated] is Isabelle's [+]: the method applies once and then as
+     often as it keeps applying. *)
+  type method = {
+    name : string,
+    modifiers : modifier list,
+    repeated : bool
+  }
 
   (* [facts] are the [using] premises, [unfolded] the [unfolding] names,
      and [methods] the one or two methods [by] applies. *)

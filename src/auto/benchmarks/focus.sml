@@ -56,6 +56,7 @@ fun first_arguments recipe =
     | benchLib.Then (left, _) => first_arguments left
     | benchLib.AllGoals (left, _) => first_arguments left
     | benchLib.Otherwise (left, _) => first_arguments left
+    | benchLib.Repeat inner => first_arguments inner
 
 fun override_tactic name =
   case name of

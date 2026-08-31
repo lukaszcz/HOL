@@ -52,6 +52,7 @@ datatype method_recipe =
   | Then of method_recipe * method_recipe
   | AllGoals of method_recipe * method_recipe
   | Otherwise of method_recipe * method_recipe
+  | Repeat of method_recipe
 
 type exclusion = {name : string, theorem : thm}
 
@@ -163,6 +164,7 @@ fun recipe_name recipe =
           "all-goals(" ^ render left ^ ", " ^ render right ^ ")"
       | render (Otherwise (left, right)) =
           "otherwise(" ^ render left ^ ", " ^ render right ^ ")"
+      | render (Repeat inner) = "repeat(" ^ render inner ^ ")"
   in
     render recipe
   end
@@ -174,6 +176,7 @@ fun recipe_has_tactic wanted (Invoke (tactic_id, _)) = wanted = tactic_id
       recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
   | recipe_has_tactic wanted (Otherwise (left, right)) =
       recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
+  | recipe_has_tactic wanted (Repeat inner) = recipe_has_tactic wanted inner
 
 fun linarith_stats_text () =
   let
@@ -535,6 +538,7 @@ fun recipe_arguments (Invoke (_, arguments)) = arguments
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (Otherwise (left, right)) =
       recipe_arguments left @ recipe_arguments right
+  | recipe_arguments (Repeat inner) = recipe_arguments inner
 
 fun direct_recipe_arguments ({goal, recipe, ...} : corpus_goal) =
   List.filter (not o permitted_for goal) (recipe_arguments recipe)
@@ -1050,6 +1054,12 @@ fun compile_recipe entry recipe =
     | Otherwise (left, right) =>
         Tactical.ORELSE
           (compile_recipe entry left, compile_recipe entry right)
+    (* Isabelle's [+] applies its method once and then repeats it, so a
+       recipe that never applies fails rather than passing the goal on. *)
+    | Repeat inner =>
+        let val step = compile_recipe entry inner
+        in Tactical.THEN (step, Tactical.REPEAT step)
+        end
 
 fun exclusions_effective claset ({goal, excl, ...} : corpus_goal) =
   let
