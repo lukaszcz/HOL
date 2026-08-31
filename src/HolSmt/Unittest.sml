@@ -12077,6 +12077,41 @@ in
   check_oracle_tags "Z3 two-binder proof-bind nnf-pos" two_bound_nnf
 end
 
+fun z3_quant_intro_rewrite_canonicalization_success () =
+let
+  (* One proof row jointly exercises the relation-dual, conditional-polarity,
+     and additive-order families below quant-intro.  Binder-integrity tests
+     remain separate from this body-shape coverage. *)
+  val thm = replay_z3_proof_string
+    "((declare-fun p (Int) Bool) \
+    \(declare-fun q (Int) Bool) \
+    \(proof (quant-intro \
+    \(proof-bind (lambda ((x Int)) \
+    \(rewrite (= \
+    \(and (not (< x 30)) \
+    \(ite (not (< x 20)) (p (+ x 1)) (q (+ x 2)))) \
+    \(and (<= 30 x) \
+    \(ite (< x 20) (q (+ 2 x)) (p (+ 1 x)))))))) \
+    \(= (forall ((x Int)) \
+    \(and (not (< x 30)) \
+    \(ite (not (< x 20)) (p (+ x 1)) (q (+ x 2))))) \
+    \(forall ((x Int)) \
+    \(and (<= 30 x) \
+    \(ite (< x 20) (q (+ 2 x)) (p (+ 1 x)))))))))"
+  val expected =
+    ``(!x:int.
+         ~(x < 30) /\
+         (if ~(x < 20) then p (x + 1) else q (x + 2))) =
+      (!x:int.
+         30 <= x /\
+         (if x < 20 then q (2 + x) else p (1 + x)))``
+in
+  assert_no_hyps ("Z3 quant-intro rewrite canonicalization", thm);
+  assert_concl_alpha
+    ("Z3 quant-intro rewrite canonicalization", thm, expected);
+  check_oracle_tags "Z3 quant-intro rewrite canonicalization" thm
+end
+
 fun z3_proof_bind_quant_intro_binder_annotation_ignored () =
 let
   (* The proof-bind wrapper records one bound variable, but quant-intro
@@ -13513,6 +13548,55 @@ let
       Bool.toString (not expected))
 in
   List.app check cases
+end
+
+fun z3_difference_directed_rewrite_canon_success () =
+let
+  fun canonical_target target = boolSyntax.rhs (Thm.concl
+    (SmtReplayCanon.z3_rewrite_canon_conv target))
+  fun closes (name, target) =
+    let val (left, right) = boolSyntax.dest_eq (canonical_target target)
+    in
+      assert (Term.aconv left right,
+        "difference-directed rewrite canonicalization did not close " ^ name)
+    end
+  val closing_cases = [
+    ("int-gt", ``((x:int) > y) = (y < x)``),
+    ("int-ge", ``((x:int) >= y) = (y <= x)``),
+    ("int-not-lt", ``~((x:int) < y) = (y <= x)``),
+    ("int-not-le", ``~((x:int) <= y) = (y < x)``),
+    ("real-gt", ``((x:real) > y) = (y < x)``),
+    ("real-ge", ``((x:real) >= y) = (y <= x)``),
+    ("real-not-lt", ``~((x:real) < y) = (y <= x)``),
+    ("real-not-le", ``~((x:real) <= y) = (y < x)``),
+    ("conditional-polarity",
+      ``(if ~p then x:int else y) = (if p then y else x)``),
+    ("int-conditional-relation-polarity",
+      ``(if (x:int) < y then T else F) =
+        (if y <= x then F else T)``),
+    ("real-conditional-relation-polarity",
+      ``(if (x:real) < y then T else F) =
+        (if y <= x then F else T)``),
+    ("int-additive-order", ``((x:int) + y) = (y + x)``),
+    ("real-additive-order", ``((x:real) + y) = (y + x)``)]
+  val incomplete = ``~((x:int) < y) = (x <= y)``
+  val (incomplete_left, incomplete_right) = boolSyntax.dest_eq incomplete
+  val incomplete_reversed =
+    boolSyntax.mk_eq (incomplete_right, incomplete_left)
+  val guarded = canonical_target incomplete
+  val (guarded_left, guarded_right) = boolSyntax.dest_eq guarded
+  val non_equality = ``p /\ q``
+  val non_equality_reversed = ``q /\ p``
+  val non_equality_canonical = canonical_target non_equality
+in
+  List.app closes closing_cases;
+  assert (not (Term.aconv guarded_left guarded_right),
+    "difference-directed rewrite canonicalization closed a non-dual pair");
+  assert (guarded ~~ incomplete orelse guarded ~~ incomplete_reversed,
+    "difference-directed rewrite canonicalization leaked a partial rewrite");
+  assert (non_equality_canonical ~~ non_equality orelse
+          non_equality_canonical ~~ non_equality_reversed,
+    "difference-directed extension changed non-equality canonicalization")
 end
 
 fun symbolic_power_nonpolynomial_detection_success () =
@@ -16972,6 +17056,8 @@ let
       z3_lambda_intro_def_replay_shaped_failure),
     ("z3_proof_bind_consumers_replay_success",
       z3_proof_bind_consumers_replay_success),
+    ("z3_quant_intro_rewrite_canonicalization_success",
+      z3_quant_intro_rewrite_canonicalization_success),
     ("z3_proof_bind_quant_intro_binder_annotation_ignored",
       z3_proof_bind_quant_intro_binder_annotation_ignored),
     ("z3_proof_bind_nnf_pos_unliftable_premise_success",
@@ -17010,6 +17096,8 @@ let
       z3_width_proforma_public_replay_success),
     ("z3_commuted_rewrite_orientation_replay_success",
       z3_commuted_rewrite_orientation_replay_success),
+    ("z3_difference_directed_rewrite_canon_success",
+      z3_difference_directed_rewrite_canon_success),
     ("z3_arith_bv_fallback_resource_gate_propagates",
       z3_arith_bv_fallback_resource_gate_propagates),
     ("z3_th_lemma_basic_unsupported_diagnostic",

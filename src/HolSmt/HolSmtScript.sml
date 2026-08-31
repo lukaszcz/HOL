@@ -36,6 +36,15 @@ Ancestors[qualified]
 
   val _ = ParseExtras.temp_loose_equality()
 
+(* Canonical polarity for conditionals.  This theorem is intentionally
+   polymorphic: checked replay uses it below quantified formulas in every
+   supported theory. *)
+Theorem COND_NEG:
+  (if ~p then x else y) = if p then y else x
+Proof
+  Cases_on `p` >> simp []
+QED
+
   (* constants used by Z3 *)
 
   (* real division -- in SMT-LIB, division by zero is not defined,

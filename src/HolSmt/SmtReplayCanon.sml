@@ -113,10 +113,91 @@ struct
       reorient_binary_conv boolSyntax.dest_disj boolTheory.DISJ_COMM tm
     else raise Conv.UNCHANGED
 
-  val z3_rewrite_canon_conv = compose
+  val z3_primary_rewrite_canon_conv = compose
     [Conv.TOP_DEPTH_CONV reorient_equality_conv,
      Conv.TOP_DEPTH_CONV boolean_commute_conv,
      Conv.TOP_DEPTH_CONV reorient_equality_conv]
+
+  (* Z3 may express the same arithmetic rewrite through a dual relation,
+     a negated conditional guard, or commuted addition.  These rules are
+     deliberately separate from the primary canonicalizer: their broader
+     normalization is accepted only when it closes the concrete difference
+     between the two sides of the rewrite. *)
+  val z3_cond_polarity_conv = Rewrite.PURE_REWRITE_CONV
+    [HolSmtTheory.COND_NEG]
+
+  val z3_relation_dual_conv = Rewrite.PURE_REWRITE_CONV
+    [integerTheory.INT_GT,
+     integerTheory.INT_GE,
+     integerTheory.INT_NOT_LT,
+     integerTheory.INT_NOT_LE,
+     realTheory.real_gt,
+     realTheory.real_ge,
+     realTheory.REAL_NOT_LT,
+     realTheory.REAL_NOT_LE]
+
+  (* After relation aliases are normalized, a non-strict order in an ite
+     guard is the complement of the reversed strict order.  Expose that
+     negation only at the guard, then use the polymorphic polarity theorem
+     to swap the branches. *)
+  fun z3_order_cond_polarity_conv tm =
+    let
+      val (guard, _, _) = boolSyntax.dest_cond tm
+      val expose_negation =
+        if Lib.can intSyntax.dest_leq guard then
+          Conv.REWR_CONV (Conv.GSYM integerTheory.INT_NOT_LT)
+        else if Lib.can realSyntax.dest_leq guard then
+          Conv.REWR_CONV (Conv.GSYM realTheory.REAL_NOT_LT)
+        else
+          raise Conv.UNCHANGED
+    in
+      Conv.THENC
+        (Conv.RATOR_CONV
+           (Conv.RATOR_CONV (Conv.RAND_CONV expose_negation)),
+         Conv.REWR_CONV HolSmtTheory.COND_NEG) tm
+    end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun additive_order_conv tm =
+    if intSyntax.is_plus tm then
+      reorient_binary_conv intSyntax.dest_plus
+        integerTheory.INT_ADD_COMM tm
+    else if realSyntax.is_plus tm then
+      reorient_binary_conv realSyntax.dest_plus
+        realTheory.REAL_ADD_COMM tm
+    else
+      raise Conv.UNCHANGED
+
+  val z3_difference_rewrite_canon_conv = compose
+    [z3_relation_dual_conv,
+     Conv.TOP_DEPTH_CONV z3_order_cond_polarity_conv,
+     z3_cond_polarity_conv,
+     Conv.TOP_DEPTH_CONV additive_order_conv,
+     z3_primary_rewrite_canon_conv]
+
+  fun equality_operands_alpha_equal tm =
+    let val (left, right) = boolSyntax.dest_eq tm
+    in Term.aconv left right end
+
+  fun z3_rewrite_canon_conv tm =
+    let
+      val primary = z3_primary_rewrite_canon_conv tm
+      val primary_target = boolSyntax.rhs (Thm.concl primary)
+    in
+      if not (boolSyntax.is_eq primary_target) orelse
+         equality_operands_alpha_equal primary_target then
+        primary
+      else
+        let
+          val secondary = z3_difference_rewrite_canon_conv primary_target
+          val secondary_target = boolSyntax.rhs (Thm.concl secondary)
+        in
+          if equality_operands_alpha_equal secondary_target then
+            Thm.TRANS primary secondary
+          else
+            primary
+        end
+    end
 
   fun reflexive_equality_conv tm =
     let

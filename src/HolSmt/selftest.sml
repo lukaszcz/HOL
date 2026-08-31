@@ -344,6 +344,12 @@ in
     (``~0i = ~0i``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``~42i = ~42i``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* Live D3 regression: checked Z3 must replay the full quant-intro chain
+       through relation complementation, ite polarity, and additive order. *)
+    (``(!a:int. f a = if a < 30 then p (a + 1) else q a) =
+       (!a. f a = if 30 <= a then q a else p (1 + a))``,
+      [thm_Z3p_v4]),
+
     (* real *)
 
     (``0r = 0r``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
