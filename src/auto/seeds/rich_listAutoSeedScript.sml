@@ -4,13 +4,15 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_iff (name, theorem) =
+fun export_at attr (name, theorem) =
   let
     val saved = save_thm (name, theorem)
   in
     ThmAttribute.store_at_attribute
-      {name = name, attrname = "iff", args = [], thm = saved}
+      {name = name, attrname = attr, args = [], thm = saved}
   end
+
+fun export_iff entry = export_at "iff" entry
 
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
@@ -31,6 +33,13 @@ val _ =
       rich_listTheory.APPEND_EQ_APPEND_EQ),
      ("LENGTH_FILTER_LEQ_AUTO", rich_listTheory.LENGTH_FILTER_LEQ),
      ("FILTER_ALL_DISTINCT_AUTO", listTheory.FILTER_ALL_DISTINCT)]
+
+(* src/HOL/List.thy:3231 @ f7e02b7e.  [fold_append] is simp there and
+   declared to no simpset here.  HOL4 reverses [rev (xs @ ys)]
+   ambiently but leaves the fold over the result alone, so a goal that
+   folds across an append stops one rewrite short. *)
+val _ =
+  export_at "simp" ("FOLDL_APPEND_AUTO", rich_listTheory.FOLDL_APPEND)
 
 val _ =
   List.app (clasetLib.export_rule sintro_spec)

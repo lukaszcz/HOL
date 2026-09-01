@@ -256,6 +256,23 @@ val _ =
        solved (clasimpLib.AUTO_TAC [])
          ``PERM ([] : 'a list) xs <=> xs = []``)
 
+(* src/HOL/List.thy:3231 @ f7e02b7e.  Isabelle decides [fold_append]
+   ambiently: a fold across an append is the two folds in sequence.
+   Neither goal below is a corpus entry, and neither is [fold_append]
+   itself -- one folds across two appends and the other across a snoc
+   -- and excluding the seed leaves both with the fold unsplit. *)
+val _ =
+  check
+    ("the fold-across-append seed view is usable",
+     fn () =>
+       List.all
+         (solved (clasimpLib.AUTO_TAC []))
+         [``!f a xs ys zs.
+              FOLDL f a (xs ++ ys ++ zs) =
+              FOLDL f (FOLDL f (FOLDL f a xs) ys) zs``,
+          ``!f a xs item.
+              FOLDL f a (xs ++ [item]) = f (FOLDL f a xs) item``])
+
 (* src/HOL/List.thy:1956 @ f7e02b7e.  Isabelle decides [nth_mem]
    ambiently: an index below the length makes the element a member.
    None of the goals below is a corpus entry, and none of them is
