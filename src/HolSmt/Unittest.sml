@@ -13289,6 +13289,124 @@ fun replay_z3_proof_string_with_dicts dicts contents =
   Z3_ProofReplay.replay_root_for_test
     (parse_z3_proof_string_with_dicts dicts "4.12.4" contents)
 
+fun z3_fpa2bv_proof_dictionary_replay_success () =
+let
+  val preamble =
+    "((set-logic QF_FP) " ^
+    "(declare-fun x () Float16) " ^
+    "(declare-fun y () Float16) "
+  val cases = [
+    ("bv_wrap/FP", "smtfp_pack_bv", "(bv_wrap x)", "(bv_wrap x)"),
+    ("bv_wrap/RoundingMode", "smtfp_pack_rounding",
+      "(bv_wrap RNE)", "#b000"),
+    ("rm/RNE", "smtfp_unpack_rounding", "(rm #b000)", "RNE"),
+    ("rm/RNA", "smtfp_unpack_rounding", "(rm #b001)", "RNA"),
+    ("rm/RTP", "smtfp_unpack_rounding", "(rm #b010)", "RTP"),
+    ("rm/RTN", "smtfp_unpack_rounding", "(rm #b011)", "RTN"),
+    ("rm/RTZ", "smtfp_unpack_rounding", "(rm #b100)", "RTZ"),
+    ("bv2rm/default", "smtfp_unpack_rounding",
+      "(bv2rm #b111)", "RTZ"),
+    ("fp.min_i", "smtfp_min", "(fp.min_i x y)", "(fp.min x y)"),
+    ("fp.max_i", "smtfp_max", "(fp.max_i x y)", "(fp.max x y)"),
+    ("fp.to_ubv_I", "smtfp_to_ubv",
+      "((_ fp.to_ubv_I 8) RNE x)", "((_ fp.to_ubv 8) RNE x)"),
+    ("fp.to_sbv_I", "smtfp_to_sbv",
+      "((_ fp.to_sbv_I 9) RTZ x)", "((_ fp.to_sbv 9) RTZ x)"),
+    ("fp.to_real_I", "smtfp_to_real",
+      "(fp.to_real_I x)", "(fp.to_real x)")
+  ]
+  fun is_named_smtfloat_const name tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Thy = "smtfloat" andalso Name = name end
+  fun check (label, hol_name, left, right) =
+    let
+      val proof_text = preamble ^ "(proof (rewrite (= " ^ left ^
+        " " ^ right ^ ")))))"
+      val proof = parse_z3_proof_string "4.11.2" proof_text
+      val parsed =
+        case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+          SOME (Z3_Proof.REWRITE conclusion) => conclusion
+        | SOME _ => die ("FAIL: " ^ label ^ " parsed to the wrong rule")
+        | NONE => die ("FAIL: " ^ label ^ " has no root proof step")
+      val theorem = Z3_ProofReplay.replay_root_for_test proof
+      val _ =
+        if label = "bv_wrap/FP" then
+          let
+            val (left, _) = boolSyntax.dest_eq parsed
+            val width = fcpLib.index_to_num (wordsSyntax.dim_of left)
+          in
+            assert (width = Arbnum.fromInt 16,
+              "Float16 bv_wrap did not produce an exact 16-bit result")
+          end
+        else ()
+    in
+      assert (term_has_subterm (is_named_smtfloat_const hol_name) parsed,
+        label ^ " did not resolve to smtfloatTheory." ^ hol_name);
+      assert (Thm.concl theorem ~~ parsed,
+        label ^ " replay returned the wrong conclusion");
+      assert_no_hyps (label ^ " replay", theorem);
+      check_oracle_tags (label ^ " replay") theorem
+    end
+  val roundtrip =
+    ISPEC ``RTP`` (GEN_ALL smtfloatTheory.smtfp_unpack_pack_rounding)
+in
+  List.app check cases;
+  assert (Thm.concl roundtrip ~~
+      ``smtfp_unpack_rounding (smtfp_pack_rounding RTP) = RTP``,
+    "rounding-mode pack/unpack theorem has the wrong instance");
+  assert_no_hyps ("rounding-mode pack/unpack theorem", roundtrip);
+  check_oracle_tags "rounding-mode pack/unpack theorem" roundtrip
+end
+
+fun z3_fpa2bv_proof_dictionary_strictness () =
+let
+  val preamble =
+    "((set-logic QF_FP) " ^
+    "(declare-fun x () Float16) " ^
+    "(declare-fun y () Float32) " ^
+    "(declare-fun n () Int) "
+  fun rejected_equality label left right expected =
+    expect_hol_error_contains label expected (fn () =>
+      ignore (parse_z3_proof_string "4.11.2"
+        (preamble ^ "(proof (rewrite (= " ^ left ^
+         " " ^ right ^ ")))))")))
+  fun rejected label fragment expected =
+    rejected_equality label fragment fragment expected
+  fun rejected_width symbol spelling index =
+    rejected ("fpa2bv " ^ symbol ^ " width " ^ index)
+      ("((_ " ^ spelling ^ " " ^ index ^ ") RNE x)")
+      (spelling ^ ": positive numeric bit-vector width index expected")
+in
+  rejected "fpa2bv bv_wrap arity" "(bv_wrap RNE RNE)"
+    "one argument expected";
+  rejected "fpa2bv bv_wrap type" "(bv_wrap true)"
+    "FloatingPoint or RoundingMode operand expected";
+  rejected_equality "fpa2bv bv_wrap exact result width"
+    "(bv_wrap x)" "#b0" "different types";
+  rejected "fpa2bv rm width" "(rm #b0000)"
+    "3-bit bit-vector expected";
+  rejected "fpa2bv bv2rm arity" "(bv2rm #b000 #b001)"
+    "one argument expected";
+  rejected "fpa2bv min format" "(fp.min_i x y)"
+    "equal FloatingPoint operand sorts expected";
+  rejected "fpa2bv max arity" "(fp.max_i x)"
+    "two arguments expected";
+  rejected "fpa2bv to_ubv index" "(fp.to_ubv_I RNE x)"
+    "one bit-vector width index expected";
+  List.app (rejected_width "to_ubv" "fp.to_ubv_I")
+    ["0", "-1", "n", "true"];
+  rejected "fpa2bv to_sbv operands" "((_ fp.to_sbv_I 8) x RNE)"
+    "RoundingMode and FloatingPoint operands expected";
+  List.app (rejected_width "to_sbv" "fp.to_sbv_I")
+    ["0", "-1", "n", "true"];
+  rejected "fpa2bv to_real arity" "(fp.to_real_I x x)"
+    "one argument expected";
+  rejected "fpa2bv hi_fp_unspecified"
+    "hi_fp_unspecified"
+    Z3_ProofParser.z3_hi_fp_unspecified_diagnostic
+end
+
 fun z3_nested_lambda_equality_rewrite_success () =
 let
   val thm = replay_z3_proof_string
@@ -18833,6 +18951,10 @@ let
       z3_asserted_membership_diagnostic),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_fpa2bv_proof_dictionary_replay_success",
+      z3_fpa2bv_proof_dictionary_replay_success),
+    ("z3_fpa2bv_proof_dictionary_strictness",
+      z3_fpa2bv_proof_dictionary_strictness),
     ("z3_proof_parser_erases_proof_bind_success",
       z3_proof_parser_erases_proof_bind_success),
     ("z3_proof_parser_verbatim_lambda_binding_success",

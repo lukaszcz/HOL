@@ -1219,6 +1219,42 @@ Definition smtfp_pack_bv_def:
        ('w + 't) word)
 End
 
+(* Z3's fpa2bv proof dialect exposes the internal three-bit rounding-mode
+   encoding.  This is not an outbound SMT-LIB operation: it is the exact
+   encoding used by [bv_wrap]/[rm] in Z3 4.x proof terms. *)
+Definition smtfp_pack_rounding_def:
+  smtfp_pack_rounding mode : 3 word =
+    case mode of
+      RNE => 0w
+    | RNA => 1w
+    | RTP => 2w
+    | RTN => 3w
+    | RTZ => 4w
+End
+
+Definition smtfp_unpack_rounding_def:
+  smtfp_unpack_rounding (bits : 3 word) =
+    if bits = 0w then RNE
+    else if bits = 1w then RNA
+    else if bits = 2w then RTP
+    else if bits = 3w then RTN
+    else RTZ
+End
+
+Theorem smtfp_unpack_pack_rounding[simp]:
+  smtfp_unpack_rounding (smtfp_pack_rounding mode) = mode
+Proof
+  Cases_on `mode` >>
+  simp [smtfp_pack_rounding_def, smtfp_unpack_rounding_def]
+QED
+
+Theorem smtfp_pack_rounding_injective[local]:
+  smtfp_pack_rounding mode1 = smtfp_pack_rounding mode2 <=>
+  mode1 = mode2
+Proof
+  metis_tac [smtfp_unpack_pack_rounding]
+QED
+
 (* -------------------------------------------------------------------------
    Proved outbound transfer kit for native binary_ieee terms
    ------------------------------------------------------------------------- *)

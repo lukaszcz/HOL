@@ -640,6 +640,123 @@ local
   val proof_rule_builtin_entries =
     List.concat (List.map proof_rule_builtin proof_rule_registry)
 
+  (***************************************************************************)
+  (* Z3-internal fpa2bv term symbols                                        *)
+  (***************************************************************************)
+
+  fun z3_is_smtfp_type ty =
+    let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+    in Thy = "smtfloat" andalso Tyop = "smtfp" end
+    handle Feedback.HOL_ERR _ => false
+
+  fun z3_is_rounding_type ty =
+    Type.compare (ty, SmtLib_Theories.rounding_mode_ty) = EQUAL
+
+  fun z3_expect_word_width name width tm =
+    let
+      val actual = fcpLib.index_to_num (wordsSyntax.dim_of tm)
+    in
+      if actual = Arbnum.fromInt width then ()
+      else raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        (Int.toString width ^ "-bit bit-vector expected")
+    end
+    handle Feedback.HOL_ERR _ =>
+      raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        (Int.toString width ^ "-bit bit-vector expected")
+
+  fun z3_smtfp_packed_type x =
+    let
+      val {Thy, Tyop, Args, ...} =
+        Type.dest_thy_type (Term.type_of x)
+      val _ = Thy = "smtfloat" andalso Tyop = "smtfp" orelse
+        raise ERR "<z3_builtin_dict.bv_wrap>"
+          "FloatingPoint or RoundingMode operand expected"
+      val (significand_index, exponent_index) = Lib.pair_of_list Args
+      val significand_width = fcpLib.index_to_num significand_index
+      val exponent_width = fcpLib.index_to_num exponent_index
+      val packed_width = Arbnum.plus1
+        (Arbnum.+ (significand_width, exponent_width))
+    in
+      wordsSyntax.mk_word_type (fcpLib.index_type packed_width)
+    end
+
+  fun z3_positive_word_index name width =
+    let
+      fun invalid () =
+        raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+          (name ^ ": positive numeric bit-vector width index expected")
+    in
+      ((let val value = SmtLib_Theories.natural_of_index width in
+          if Arbnum.compare (value, Arbnum.zero) = GREATER then
+            fcpLib.index_type value
+          else invalid ()
+        end)
+       handle Interrupt => raise Interrupt
+            | _ => invalid ())
+    end
+
+  fun z3_bv_wrap x =
+    if z3_is_smtfp_type (Term.type_of x) then
+      SmtLib_Theories.smtfloat_app_result "smtfp_pack_bv"
+        (z3_smtfp_packed_type x) [x]
+    else if z3_is_rounding_type (Term.type_of x) then
+      SmtLib_Theories.smtfloat_app "smtfp_pack_rounding" [x]
+    else
+      raise ERR "<z3_builtin_dict.bv_wrap>"
+        "FloatingPoint or RoundingMode operand expected"
+
+  fun z3_bv2rm name bits =
+    let val _ = z3_expect_word_width name 3 bits in
+      SmtLib_Theories.smtfloat_app "smtfp_unpack_rounding" [bits]
+    end
+
+  fun z3_fp_binary name hol_name (x, y) =
+    if z3_is_smtfp_type (Term.type_of x) andalso
+       Type.compare (Term.type_of x, Term.type_of y) = EQUAL then
+      SmtLib_Theories.smtfloat_app hol_name [x, y]
+    else
+      raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        "equal FloatingPoint operand sorts expected"
+
+  fun z3_fp_to_bv_i name hol_name indices args =
+    case (indices, args) of
+      ([width], [mode, x]) =>
+        if z3_is_rounding_type (Term.type_of mode) andalso
+           z3_is_smtfp_type (Term.type_of x) then
+          SmtLib_Theories.smtfloat_app_result hol_name
+            (wordsSyntax.mk_word_type
+              (z3_positive_word_index name width)) [mode, x]
+        else
+          raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+            "RoundingMode and FloatingPoint operands expected"
+    | ([_], _) => raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        "two arguments expected"
+    | _ => raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        "one bit-vector width index expected"
+
+  fun z3_fp_to_real_i x =
+    if z3_is_smtfp_type (Term.type_of x) then
+      SmtLib_Theories.smtfloat_app "smtfp_to_real" [x]
+    else
+      raise ERR "<z3_builtin_dict.fp.to_real_I>"
+        "FloatingPoint operand expected"
+
+  val z3_hi_fp_unspecified_diagnostic =
+    "Z3_FPA2BV_HI_FP_UNSPECIFIED_UNSUPPORTED"
+
+  fun z3_hi_fp_unspecified _ _ _ =
+    (* Z3 4.11.2 source evidence: [hi_fp_unspecified] occurs only as the
+       Boolean fpa2bv/fpa rewriter parameter in [*_rewriter_params.pyg] and
+       is never declared by [fpa_decl_plugin] as an AST term.  The proof
+       inventory for pinned Z3 4.11.2, 4.12.4, 4.13.0, 4.14.1 and 4.15.3 --
+       all in-tree proof fixtures plus the HOLSMT_VALIDATION_DIR corpus --
+       contains zero occurrences of the token as a proof term.  It therefore
+       has no term type or HOL denotation to reconstruct.  Keep the exact
+       token enumerated so it cannot fall through to the proof catch-all. *)
+    raise ERR "<z3_builtin_dict.hi_fp_unspecified>"
+      (z3_hi_fp_unspecified_diagnostic ^
+       ": Z3 configuration parameter is not a proof term")
+
   val z3_builtin_dict = Library.dict_from_list (proof_rule_builtin_entries @ [
     (* Z3 may retain the SMT-LIB Reals_Ints predicate in proof conclusions.
        Keep it available even when the translation-local inverse dictionary
@@ -734,6 +851,22 @@ local
       (z3_leftassoc "bvor" wordsSyntax.mk_word_or)),
     ("bvredand", SmtLib_Theories.K_zero_one wordsSyntax.mk_reduce_and),
     ("bvredor", SmtLib_Theories.K_zero_one wordsSyntax.mk_reduce_or),
+    (* Complete Z3 4.x fpa2bv proof-term family.  [rm] is Z3 4.11.2's
+       declaration spelling for its BV-to-rounding-mode operator;
+       [bv2rm] is retained as the family spelling used by proof inventories. *)
+    ("bv_wrap", SmtLib_Theories.K_zero_one z3_bv_wrap),
+    ("rm", SmtLib_Theories.K_zero_one (z3_bv2rm "rm")),
+    ("bv2rm", SmtLib_Theories.K_zero_one (z3_bv2rm "bv2rm")),
+    ("fp.min_i", SmtLib_Theories.K_zero_two
+      (z3_fp_binary "fp.min_i" "smtfp_min")),
+    ("fp.max_i", SmtLib_Theories.K_zero_two
+      (z3_fp_binary "fp.max_i" "smtfp_max")),
+    ("fp.to_ubv_I", fn _ => z3_fp_to_bv_i
+      "fp.to_ubv_I" "smtfp_to_ubv"),
+    ("fp.to_sbv_I", fn _ => z3_fp_to_bv_i
+      "fp.to_sbv_I" "smtfp_to_sbv"),
+    ("fp.to_real_I", SmtLib_Theories.K_zero_one z3_fp_to_real_i),
+    ("hi_fp_unspecified", z3_hi_fp_unspecified),
     (* Z3's symbolic fp.to_real bridge contains its internal real-power
        operator.  HOL's ordinary [pow] has a natural exponent, so preserve
        this proof-local operator without assigning it the wrong semantics. *)
@@ -1467,6 +1600,9 @@ local
   end
 
 in
+
+  val z3_hi_fp_unspecified_diagnostic =
+    z3_hi_fp_unspecified_diagnostic
 
   (* Similar to 'parse_file' below, but for instreams.  Does not close
      the instream. *)

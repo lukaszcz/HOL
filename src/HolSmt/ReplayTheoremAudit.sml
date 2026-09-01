@@ -155,6 +155,7 @@ val non_replay_exports : exemption list =
       "smtfp_nzero_def",
       "smtfp_pack_bv_def",
       "smtfp_pack_ieee_bv_def",
+      "smtfp_pack_rounding_def",
       "smtfp_pinf_def",
       "smtfp_pzero_def",
       "smtfp_rem_def",
@@ -166,6 +167,7 @@ val non_replay_exports : exemption list =
       "smtfp_to_sbv_def",
       "smtfp_to_ubv_def",
       "smtfp_unordered_def",
+      "smtfp_unpack_rounding_def",
       "to_binary_rounding_def"
     ] @
   exempt "smtfloat" fp_proof_reason [
@@ -441,6 +443,7 @@ val non_replay_exports : exemption list =
       "smtfp_to_real_valid",
       "smtfp_to_sbv_valid",
       "smtfp_to_ubv_valid",
+      "smtfp_unpack_pack_rounding",
       "to_binary_rounding_of_binary"
     ] @
   exempt "smtfloat" fp_example_reason [
