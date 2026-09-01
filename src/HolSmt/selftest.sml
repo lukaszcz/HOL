@@ -1903,6 +1903,8 @@ in
       [thm_Z3p_v4]),
     (``smtfp_lt (x : (10,5) smtfp) y ==> ~smtfp_lt y x``,
       [thm_Z3p_v4]),
+    (``!x : (4,3) smtfp. ~smtfp_lt x x``,
+      [thm_Z3p_v4, thm_CVCp]),
 
     (* Tiny symbolic add/sub uses the checked Tier-3 circuit rung.  The add
        row exercises symbolic finite/exceptional dispatch against +0; the

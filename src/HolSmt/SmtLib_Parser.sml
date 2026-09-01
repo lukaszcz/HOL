@@ -1396,7 +1396,10 @@ local
      is no dictionary entry for a token (or every parsing function in
      its dictionary entry raised 'HOL_ERR'), 'parse_term' uses the
      result of the first parsing function in the entry for "_" that
-     does not raise 'HOL_ERR'. So the dictionary key "_" is NOT used
+     does not raise 'HOL_ERR'. If that catch-all also rejects a token
+     with no named dictionary entry, the token is reported as an unknown
+     symbol; a literal-specific catch-all error is not its diagnosis.
+     So the dictionary key "_" is NOT used
      for indexed identifiers (which are instead keyed by the first
      token following "_" in SMT-LIB syntax), but is instead used as a
      catch-all entry. The token itself is passed verbatim.
@@ -1414,6 +1417,11 @@ local
      necessarily differ: parsing terms requires two dictionaries (one
      for declared types, one for declared terms), while parsing types
      only requires one dictionary (for declared types). *)
+
+  val unknown_symbol_diagnostic =
+    "unknown symbol (no dictionary entry)"
+
+  val unknown_symbol_origin = "t_with_args_unknown_symbol"
 
   fun t_with_args dict (token : string) (indices : Term.term list)
       (args : 'a list) : 'a =
@@ -1445,14 +1453,20 @@ local
                 token is not one of its own literals.  Report the specific
                 reason, so an enumerated diagnostic is not masked by a
                 generic one. *)
-             (case (primary_err, catch_all_err) of
-                (SOME holerr, _) =>
-                  raise ERR "t_with_args"
-                    (generic_msg (": " ^ Feedback.message_of holerr))
-              | (NONE, SOME holerr) =>
-                  raise ERR "t_with_args"
-                    (generic_msg (": " ^ Feedback.message_of holerr))
-              | (NONE, NONE) => raise ERR "t_with_args" (generic_msg "")))
+             if List.null primary_fns then
+               raise Feedback.mk_HOL_ERR "SmtLib_Parser"
+                 unknown_symbol_origin
+                 (generic_msg (": " ^ unknown_symbol_diagnostic))
+             else
+               (case (primary_err, catch_all_err) of
+                  (SOME holerr, _) =>
+                    raise ERR "t_with_args"
+                      (generic_msg (": " ^ Feedback.message_of holerr))
+                | (NONE, SOME holerr) =>
+                    raise ERR "t_with_args"
+                      (generic_msg (": " ^ Feedback.message_of holerr))
+                | (NONE, NONE) =>
+                    raise ERR "t_with_args" (generic_msg "")))
   end
 
   fun declared_sort_parsefn sort_name arity =
@@ -6455,6 +6469,8 @@ in
   (* Apply a dictionary symbol when a client parser has already separated
      its indices and term arguments according to its own concrete syntax. *)
   val apply_term = t_with_term_args
+  val unknown_symbol_diagnostic = unknown_symbol_diagnostic
+  val unknown_symbol_origin = unknown_symbol_origin
 
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term

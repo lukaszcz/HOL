@@ -223,6 +223,30 @@ structure Z3 = struct
        "Z3 command: " ^ command_string cmd_stem ^ "\n" ^
        "underlying HOL_ERR: " ^ hol_err_string holerr)
 
+  val unsupported_proof_symbol_diagnostic =
+    "Z3_PROOF_SYMBOL_UNSUPPORTED"
+
+  fun is_unknown_proof_symbol_error holerr =
+    Feedback.top_structure_of holerr = "SmtLib_Parser" andalso
+    Feedback.top_function_of holerr =
+      SmtLib_Parser.unknown_symbol_origin
+    handle Feedback.HOL_ERR _ => false
+
+  (* Classify only the parser's exact no-dictionary-entry boundary.  Builder
+     errors for registered proof symbols, resource gates, and every other
+     parser failure retain their original classification and context. *)
+  fun classify_proof_parse_error holerr =
+    if is_unknown_proof_symbol_error holerr then
+      raise Feedback.mk_HOL_ERR "Z3" "classify_proof_parse_error"
+        (unsupported_proof_symbol_diagnostic ^ ": " ^
+         Feedback.message_of holerr)
+    else
+      raise Feedback.HOL_ERR holerr
+
+  fun classify_proof_parse_error_for_test parse =
+    parse ()
+    handle Feedback.HOL_ERR holerr => classify_proof_parse_error holerr
+
   fun check_reconstructed_theorem name ((As, g), thm) =
     let
       fun terms_to_string terms =
@@ -298,8 +322,11 @@ structure Z3 = struct
                          if SmtResource.is_resource_gate holerr then
                            raise Feedback.HOL_ERR holerr
                          else
-                           raise_with_context "Z3_SMT_Prover" "proof parse"
-                             (current_proof_cmd_stem ()) holerr)
+                           (classify_proof_parse_error holerr
+                            handle Feedback.HOL_ERR classified =>
+                              raise_with_context "Z3_SMT_Prover"
+                                "proof parse" (current_proof_cmd_stem ())
+                                classified))
                     val _ = TextIO.closeIn instream
                   in
                     Z3_ProofReplay.check_proof_with_definitions

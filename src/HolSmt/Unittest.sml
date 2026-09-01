@@ -13018,6 +13018,44 @@ fun z3_proof_parser_unknown_rule_diagnostic () =
         "unknown-rule diagnostic did not include Z3 version: " ^ msg)
     end
 
+fun z3_unknown_proof_symbol_diagnostic () =
+let
+  fun parse_unknown () =
+    ignore (parse_z3_proof_string "4.12.4"
+      "((proof (asserted (task14_unknown_symbol true)))))")
+  fun expect_error label action =
+    (action (); die ("FAIL: " ^ label ^ " succeeded"))
+    handle Feedback.HOL_ERR holerr => holerr
+  val parser_error = expect_error "unknown Z3 proof symbol parse" parse_unknown
+  val parser_msg = Feedback.message_of parser_error
+  val classified_error = expect_error "unknown Z3 proof symbol classification"
+    (fn () => Z3.classify_proof_parse_error_for_test parse_unknown)
+  val classified_msg = Feedback.message_of classified_error
+in
+  assert (Feedback.top_structure_of parser_error = "SmtLib_Parser" andalso
+      Feedback.top_function_of parser_error =
+        SmtLib_Parser.unknown_symbol_origin,
+    "unknown proof symbol came from the wrong parser boundary: " ^
+    parser_msg);
+  assert (String.isSubstring SmtLib_Parser.unknown_symbol_diagnostic
+      parser_msg,
+    "unknown proof symbol omitted dictionary status: " ^ parser_msg);
+  assert (not (String.isSubstring "not a numeral" parser_msg),
+    "unknown proof symbol fell through to the numeral catch-all: " ^
+    parser_msg);
+  assert (String.isSubstring Z3.unsupported_proof_symbol_diagnostic
+      classified_msg,
+    "unknown proof symbol did not reach the Z3 unsupported family: " ^
+    classified_msg);
+  assert (String.isSubstring "task14_unknown_symbol" classified_msg,
+    "unknown proof symbol diagnostic omitted the exact token: " ^
+    classified_msg);
+  assert (String.isSubstring "with indices [] and 1 argument(s)"
+      classified_msg,
+    "unknown proof symbol diagnostic omitted parser context: " ^
+    classified_msg)
+end
+
 (* An untested Z3 version is never a reason to refuse a proof: it resolves to
    the nearest tested anchor and replays under that dialect.  A patch release
    shares its series' dialect, and an undiscoverable version falls back to the
@@ -18979,6 +19017,8 @@ let
       z3_proof_parser_datatype_th_lemma_metadata_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic),
+    ("z3_unknown_proof_symbol_diagnostic",
+      z3_unknown_proof_symbol_diagnostic),
     ("z3_proof_parser_version_resolution_success",
       z3_proof_parser_version_resolution_success),
     ("z3_fp_skolem_naming_registry_diagnostic",

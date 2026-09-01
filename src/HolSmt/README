@@ -233,12 +233,48 @@ FloatingPoint replay covers goals stated over the canonical-NaN `smtfp`
 carrier.  Native `binary_ieee` goals reach the SMT FloatingPoint sort only
 through the proved `smtfp_intro` transfer kit.  The kit covers record
 literals, binders, special values, classification and sign predicates,
-abs/neg, comparisons, and the native add/sub/mul/div/sqrt/fma operations.
+abs/neg, comparisons, add/sub/mul/div/sqrt/fma, min/max/rem,
+round-to-integral, real and IEEE-bit conversions, and unsigned/signed
+bit-vector conversions.  Its classification boundaries include finite,
+signalling and integral values; guarded raw-result transfers preserve source
+zero signs rather than choosing an arbitrary structural zero.
 It does not claim that raw `float` record equality is SMT FloatingPoint
 equality: any residual raw-float term is emitted with an uninterpreted sort,
 never an FP sort.  Checked Z3 and cvc5 replay covers the corpus-demonstrated
 part of this surface; unsupported symbolic shapes are named D2 gates and
 over-budget bit-blasts are named D12 gates.
+
+Phase 4 FloatingPoint support and diagnostic matrix:
+
+  Surface                      Translation / checked-replay contract
+  Canonical `smtfp` operators  Native SMT FloatingPoint translation for the
+                               registered closed family above; ground,
+                               symbolic and quantified comparison evidence
+                               runs through checked Z3 and cvc5 paths.
+  Native `binary_ieee`         Only the proved `smtfp_intro` expansion and
+                               transfer kit above enters the FP sort.  A
+                               residual raw record remains uninterpreted.
+  Other `smtfloat` constants   The generic-symbol boundary refuses to invent
+                               semantics and raises the following diagnostic:
+  `HOLSMT_TRANSLATION_UNSUPPORTED_SMTFLOAT_CONSTANT`.
+                               Its explicit opaque whitelist contains only
+                               carrier/canonicalization and replay-internal
+                               circuit scaffolding.
+  Z3 fpa2bv proof symbols      `bv_wrap` (FP and RoundingMode), `rm`, `bv2rm`,
+                               `fp.min_i`, `fp.max_i`, `fp.to_ubv_I`,
+                               `fp.to_sbv_I`, and `fp.to_real_I` have typed
+                               HOL meanings.  Indexed result widths must be
+                               positive numerals.
+  `hi_fp_unspecified`          Deliberately has no guessed HOL meaning; its
+                               dictionary rung raises
+                               `Z3_FPA2BV_HI_FP_UNSPECIFIED_UNSUPPORTED`.
+  Unknown Z3 proof symbol      A token with no proof dictionary entry raises
+                               `Z3_PROOF_SYMBOL_UNSUPPORTED` and retains the
+                               parser token, indices and argument count.  It
+                               never inherits a numeral catch-all error.
+  FP replay over budget        The checked boundary starts with
+                               `resource-gated: fp-bitblast;`; the tactic
+                               driver reports `Z3_TAC_RESOURCE_GATED`.
 
 Logic coverage summary:
 
@@ -487,7 +523,12 @@ Replay diagnostics from Z3_ProofReplay.sml include the proof rule, local proof
 subterm, parsed HOL conclusion and a replay-state summary of asserted
 hypotheses, definition hypotheses and Z3-created variables.  Unknown proof
 rules are reported by Z3_ProofParser.sml with the missing rule name and local
-proof subterm.
+proof subterm.  Unknown proof-term symbols are distinct from unknown rules:
+SmtLib_Parser reports `unknown symbol (no dictionary entry)`, and Z3's proof
+boundary classifies that exact parser origin as
+`Z3_PROOF_SYMBOL_UNSUPPORTED` before adding solver version and command
+context.  Registered symbols that reject malformed indices or arguments keep
+their own dictionary diagnostic.
 
 SmtResource.sml is the single source of truth for the checked-replay
 resource budget; the FloatingPoint bit-blast limits below are its D12 case,
