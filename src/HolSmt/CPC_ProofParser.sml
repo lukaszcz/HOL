@@ -662,6 +662,23 @@ local
       RawAtom of string
     | RawList of raw_term list
 
+  (* CPC represents a datatype tester as the parameterized application
+       (is Constructor scrutinee)
+     even when it occurs below equality or another proof argument.  The
+     shared SMT-LIB parser deliberately accepts only the standard indexed
+     spelling.  Normalize the complete raw occurrence tree before
+     elaboration so nested CPC testers take the same registered dictionary
+     path as ((_ is Constructor) scrutinee).  Malformed arities remain
+     untouched and therefore retain the ordinary parser diagnostic. *)
+  fun normalize_cpc_testers raw =
+    case raw of
+      RawList [RawAtom "is", RawAtom constructor, scrutinee] =>
+        RawList
+          [RawList [RawAtom "_", RawAtom "is", RawAtom constructor],
+           normalize_cpc_testers scrutinee]
+    | RawList entries => RawList (List.map normalize_cpc_testers entries)
+    | RawAtom _ => raw
+
   fun read_raw_term get_token =
     case get_token () of
       "(" =>
@@ -813,7 +830,7 @@ local
   fun parse_located_term dicts_ref get_token : located_term =
     let
       val raw = read_raw_term get_token
-      val tokens = ref (raw_tokens raw)
+      val tokens = ref (raw_tokens (normalize_cpc_testers raw))
       fun next_token () =
         case !tokens of
           token :: rest => (tokens := rest; token)

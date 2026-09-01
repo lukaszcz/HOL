@@ -3374,6 +3374,30 @@ local
       in
         (acc, (List.concat declss, sexpr name names))
       end
+    (* Equality is a fully ranked Core operator at every HOL instantiation.
+       Once its exact head and arity have been admitted, an operand failure
+       must escape: falling through would eventually invent a function for
+       polymorphic equality itself, and can obscure the actual unsupported
+       operand (notably a residual function over a native datatype). *)
+    fun builtin_equality (rator, rands) =
+      if same_const rator boolSyntax.equality then
+        case rands of
+          [left, right] =>
+            let
+              fun translate_argument (a, argument) =
+                translate_term regime apply_operator
+                  (a, (bounds, argument))
+                handle e as Feedback.HOL_ERR _ =>
+                  raise NestedTranslation e
+              val (acc, declnames) =
+                Lib.foldl_map translate_argument (acc, [left, right])
+              val (declss, names) = Lib.split declnames
+            in
+              (acc, (List.concat declss, sexpr "=" names))
+            end
+        | _ => raise ERR "builtin_equality" "wrong equality arity"
+      else
+        raise ERR "builtin_equality" "not equality"
     fun set_sort tydict set =
       let
         val element_ty = set_element_type set
@@ -4482,7 +4506,9 @@ local
              (acc, (bag_decls @ element_decls, count))
            end
        | NONE =>
-           if native_sequence_symbol rator rands orelse
+           if same_const rator boolSyntax.equality then
+             builtin_equality (rator, rands)
+           else if native_sequence_symbol rator rands orelse
               native_set_symbol rator rands orelse
               native_bag_symbol rator rands orelse
               (case regime of

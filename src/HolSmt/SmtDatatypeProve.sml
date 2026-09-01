@@ -7,6 +7,8 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtDatatypeProve"
 
+  fun profile name f x = Profile.profile_with_exn_name name f x
+
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
   fun with_metis_limit f = Lib.with_flag (metisTools.limit, metis_limit) f
 
@@ -42,6 +44,26 @@ struct
     case TypeBase.fetch ty of
       NONE => false
     | SOME tyi => not (List.null (TypeBasePure.constructors_of tyi))
+
+  fun type_has_name thy tyop ty =
+    let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+    in Thy = thy andalso Tyop = tyop end
+    handle Feedback.HOL_ERR _ => false
+
+  (* These TypeBase types have an earlier semantic owner in the replay
+     ladder.  In particular, [num] must not make every arithmetic or word
+     term look like a datatype obligation merely because it occurs as an
+     index or subterm.  Lists, products, sums, and options stay here: their
+     constructor laws are genuine datatype facts even when another rung
+     owns operations over a related theory such as sequences. *)
+  fun earlier_rung_type ty =
+    ty = Type.bool orelse ty = numSyntax.num orelse
+    type_has_name "smtfloat" "smtfp" ty orelse
+    type_has_name "smtfloat" "smt_rounding" ty orelse
+    type_has_name "binary_ieee" "float" ty
+
+  fun datatype_owned_type ty =
+    has_constructors ty andalso not (earlier_rung_type ty)
 
   fun constructors_of ty =
     case TypeBase.fetch ty of
@@ -125,16 +147,37 @@ struct
       (fn ty => Lib.total TypeBase.nchotomy_of ty)
       (List.filter (fn ty => ty <> Type.bool) (datatype_types t))
 
+  fun constructor_headed tm =
+    let
+      val (head, _) = boolSyntax.strip_comb tm
+      val constructors = constructors_of (Term.type_of tm)
+    in
+      List.exists (fn constructor => Term.same_const head constructor)
+        constructors
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  fun compare_term_size (left, right) =
+    Int.compare (Term.term_size left, Term.term_size right)
+
   fun datatype_split_terms t =
     let
+      val goal_vars = Term.free_vars t
+      fun is_goal_var variable =
+        List.exists (Term.aconv variable) goal_vars
       fun datatype_term tm =
         let val ty = Term.type_of tm
-        in ty <> Type.bool andalso has_constructors ty end
+        in
+          ty <> Type.bool andalso has_constructors ty andalso
+          not (constructor_headed tm) andalso
+          List.all is_goal_var (Term.free_vars tm)
+        end
       fun add_tm (tm, acc) =
         if List.exists (fn tm' => Term.aconv tm' tm) acc then acc
         else tm :: acc
     in
-      List.foldl add_tm [] (List.filter datatype_term (subterms t))
+      Listsort.sort compare_term_size
+        (List.foldl add_tm [] (List.filter datatype_term (subterms t)))
     end
 
   fun datatype_free_terms t =
@@ -152,28 +195,36 @@ struct
   fun nchotomy_for_term tm =
     Drule.ISPEC tm (TypeBase.nchotomy_of (Term.type_of tm))
 
+  fun split_terms_of_goal (assumptions, conclusion) =
+    datatype_split_terms
+      (boolSyntax.list_mk_conj (conclusion :: assumptions))
+
+  (* Rediscover after every substitution: splitting an innermost application
+     changes each enclosing datatype application, so a precomputed list is
+     stale immediately.  The initial candidate count is a per-branch depth
+     budget; recursive datatypes can introduce fresh constructor fields, but
+     no branch can case-split more often than that original finite count. *)
+  fun datatype_split_fixpoint_tac thms budget goal =
+    if budget = 0 then
+      bossLib.RW_TAC (bossLib.srw_ss()) thms goal
+    else
+      case split_terms_of_goal goal of
+        [] => bossLib.RW_TAC (bossLib.srw_ss()) thms goal
+      | split_term :: _ =>
+          Tactical.THEN
+            (profile "datatype(split)"
+               Tactic.FULL_STRUCT_CASES_TAC
+               (nchotomy_for_term split_term),
+             datatype_split_fixpoint_tac thms (budget - 1)) goal
+
   fun exhaustiveness_prove t =
     let
       val thms = datatype_rewrite_thms t
-      val cases = List.map nchotomy_for_term (datatype_split_terms t)
+      val budget = List.length (datatype_split_terms t)
     in
-      if List.null cases then unsupported t
+      if budget = 0 then unsupported t
       else Tactical.prove (t,
-        Tactical.THEN
-          (Tactical.EVERY (List.map Tactic.STRUCT_CASES_TAC cases),
-           bossLib.RW_TAC (bossLib.srw_ss()) thms))
-    end
-
-  fun datatype_cases_prove t =
-    let
-      val thms = datatype_rewrite_thms t
-      val cases = List.map nchotomy_for_term (datatype_free_terms t)
-    in
-      if List.null cases then unsupported t
-      else Tactical.prove (t,
-        Tactical.THEN
-          (Tactical.EVERY (List.map Tactic.FULL_STRUCT_CASES_TAC cases),
-           bossLib.RW_TAC (bossLib.srw_ss()) thms))
+        datatype_split_fixpoint_tac thms budget)
     end
 
   fun acyclicity_prove t =
@@ -213,18 +264,27 @@ struct
       else with_metis_limit (fn () => metisLib.METIS_PROVE thms t) ()
     end
 
+  fun datatype_fragment_admits t =
+    List.exists (datatype_owned_type o Term.type_of) (subterms t)
+
+  fun require_datatype_fragment t =
+    if datatype_fragment_admits t then ()
+    else unsupported t
+
   fun datatype_prove t =
-    datatype_simp_prove t
-    handle Feedback.HOL_ERR _ =>
-    datatype_cases_prove t
-    handle Feedback.HOL_ERR _ =>
-    exhaustiveness_prove t
-    handle Feedback.HOL_ERR _ =>
-    acyclicity_prove t
-    handle Feedback.HOL_ERR _ =>
-    metis_datatype_prove t
-    handle Feedback.HOL_ERR _ =>
-    unsupported t
+    let val _ = profile "datatype(fragment-precondition)"
+      require_datatype_fragment t
+    in
+      profile "datatype(simp)" datatype_simp_prove t
+      handle Feedback.HOL_ERR _ =>
+      profile "datatype(exhaustiveness)" exhaustiveness_prove t
+      handle Feedback.HOL_ERR _ =>
+      profile "datatype(acyclicity)" acyclicity_prove t
+      handle Feedback.HOL_ERR _ =>
+      profile "datatype(metis)" metis_datatype_prove t
+      handle Feedback.HOL_ERR _ =>
+      unsupported t
+    end
 
   (* Establish a datatype consequence under its actual HOL assumptions.  The
      closed implication is proved from TypeBase facts and then instantiated

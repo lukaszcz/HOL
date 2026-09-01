@@ -256,12 +256,20 @@ val _ = Hol_datatype
 val _ = Hol_datatype
   `smt_light = SmtRed | SmtAmber | SmtGreen`
 
+val _ = new_constant
+  ("smt_light_from_int", ``:int -> smt_light``)
+val _ = new_constant
+  ("smt_light_step", ``:smt_light -> smt_light``)
+
 val _ = Hol_datatype
   `smt_fun_rec = <| smt_fun : int -> bool -> int |>`
 
 val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
+
+val _ = new_constant
+  ("smt_left_from_int", ``:int -> smt_left``)
 
 val _ = new_type ("smt_nonfree", 1)
 val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
@@ -271,6 +279,7 @@ val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
 val _ = new_constant ("smtlib_native_dt_uf", ``:smt_tri -> int``)
+val _ = new_constant ("smtlib_native_dt_id", ``:smt_tri -> smt_tri``)
 val _ = new_constant
   ("smtlib_ho_rank2", ``:int -> bool -> int``)
 val _ = new_constant
@@ -9930,6 +9939,16 @@ end
 fun smtlib_invented_uf_native_datatype_domain_diagnostic () =
 let
   val goal = ``smtlib_native_dt_uf d = 0i``
+  val equality_goal = ``smtlib_native_dt_id d = (d:smt_tri)``
+  fun attributed_to function_name goal =
+    (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
+     die "FAIL: invented UF over native datatype was emitted")
+    handle Feedback.HOL_ERR holerr =>
+      let val message = Feedback.message_of holerr in
+        assert (contains function_name message andalso
+            not (contains "function=$=" message),
+          "invented-UF rejection was misattributed: " ^ message)
+      end
 in
   (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
    die "FAIL: invented UF over native datatype was emitted")
@@ -9943,9 +9962,26 @@ in
         "invented-UF rejection omitted its named diagnostic: " ^ message);
       assert (contains "under-specified" message andalso
           contains "not a countermodel" message andalso
+          contains "smtlib_native_dt_uf" message andalso
+          not (contains "function=$=" message) andalso
           contains ":smt_tri" message,
-        "invented-UF rejection omitted its semantic/type detail: " ^ message)
-    end
+        "invented-UF rejection omitted or misattributed its detail: " ^
+        message)
+    end;
+  attributed_to "smtlib_native_dt_id" equality_goal
+end
+
+fun smtlib_native_datatype_equality_builtin_success () =
+let
+  val goal = ``!(d:smt_tri). d = d``
+  val (_, strings) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+  val output = String.concat strings
+in
+  assert (contains "(= " output,
+    "quantified native-datatype equality was not emitted as Core equality");
+  assert (not (contains "(declare-fun =" output),
+    "quantified native-datatype equality was declared as an invented UF")
 end
 
 fun smtlib_uninterpreted_native_datatype_destructor_diagnostic () =
@@ -10313,7 +10349,30 @@ in
     "((assume @p1 (is ctor_Option_Int_NONE ctor_Option_Int_NONE)))";
   parse ``(r:smt_rec) = s``
     "((assume @p1 (is ctor_Smt_rec_recordtype_smt_rec \
-    \(ctor_Smt_rec_recordtype_smt_rec 0 false))))"
+    \(ctor_Smt_rec_recordtype_smt_rec 0 false))))";
+  parse ``SOME (x:int) = SOME y``
+    "((assume @p1 (= (is ctor_Option_Int_NONE \
+    \ctor_Option_Int_NONE) (= ctor_Option_Int_NONE \
+    \ctor_Option_Int_NONE))))"
+end
+
+fun cpc_proof_replay_nested_datatype_tester_success () =
+let
+  val goal = ``(NONE:int option) = NONE``
+  val (translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+  val dicts = SmtLib.parser_dicts_for_translation translation
+  val instream = TextIO.openString
+    "((step @p1 :rule dt-inst :args ((= \
+    \(is ctor_Option_Int_NONE ctor_Option_Int_NONE) \
+    \(= ctor_Option_Int_NONE ctor_Option_Int_NONE)))))"
+  val proof = CPC_ProofParser.parse_stream_with_version
+    dicts "1.3.4" instream
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (List.null (Thm.hyp theorem),
+    "nested CPC datatype tester replay retained hypotheses");
+  check_oracle_tags "nested CPC datatype tester replay" theorem
 end
 
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
@@ -12419,6 +12478,19 @@ let
 in
   assert (Thm.concl thm ~~ ``(T ==> F) = F``,
     "CPC bool-impl-true2 did not rewrite true implication")
+end
+
+fun cpc_proof_replay_ite_then_false_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @p1 :rule ite-then-false :args (true false)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``(if T then F else F) = (~T /\ F)``,
+    "CPC ite-then-false returned an unexpected Boolean rewrite");
+  assert (List.null (Thm.hyp thm),
+    "CPC ite-then-false replay retained hypotheses");
+  check_oracle_tags "CPC ite-then-false replay" thm
 end
 
 fun cpc_proof_replay_integer_tightening_success () =
@@ -16342,6 +16414,101 @@ fun datatype_prove_ladder_rungs_success () =
       ``SmtTriB (x:int) = SmtTriB y /\ SmtTriA <> SmtTriB y ==> x = y``
   end
 
+fun datatype_tester_application_fixpoint_success () =
+  let
+    fun tester_soundness constructor scrutinee =
+      boolSyntax.mk_disj
+        (boolSyntax.mk_eq (constructor, scrutinee),
+         boolSyntax.mk_neg
+           (SmtDatatypeProve.datatype_tester_term
+              (Term.type_of scrutinee) constructor scrutinee))
+    val base = ``smt_light_from_int (i:int)``
+    val once = ``smt_light_step ^base``
+    val twice = ``smt_light_step ^once``
+    val variable = ``d:smt_light``
+    val bound_variable_goal = ``!(d:smt_light). d = d``
+    val closed_application = ``smt_light_from_int 0i``
+    val split_terms = SmtDatatypeProve.datatype_split_terms twice
+    val expected_order = [base, once, twice]
+    val shallow_goal = tester_soundness ``SmtAmber`` base
+    val fixpoint_goal = tester_soundness ``SmtAmber`` twice
+  in
+    assert (not (List.exists
+        (fn term => Term.aconv term ``SmtTriB 1i``)
+        (SmtDatatypeProve.datatype_split_terms ``SmtTriB 1i``)),
+      "constructor-headed datatype term was admitted for splitting");
+    assert (List.exists (Term.aconv variable)
+        (SmtDatatypeProve.datatype_split_terms variable),
+      "goal-free datatype variable was not admitted for splitting");
+    assert (List.null
+        (SmtDatatypeProve.datatype_split_terms bound_variable_goal),
+      "binder-local datatype variable escaped into split candidates");
+    assert (List.exists (Term.aconv closed_application)
+        (SmtDatatypeProve.datatype_split_terms closed_application),
+      "closed non-constructor datatype application was not admitted");
+    assert (List.length split_terms = List.length expected_order andalso
+        ListPair.allEq (fn (left, right) => Term.aconv left right)
+          (split_terms, expected_order),
+      "datatype split terms were not unique and innermost-first");
+    assert (SmtDatatypeProve.datatype_fragment_admits shallow_goal,
+      "opaque datatype-returning application was rejected by precondition");
+    assert_datatype_prover "datatype tester over opaque application"
+      SmtDatatypeProve.exhaustiveness_prove shallow_goal;
+    assert_datatype_prover "datatype tester application fixpoint"
+      SmtDatatypeProve.exhaustiveness_prove fixpoint_goal
+  end
+
+fun datatype_recursive_split_budget_success () =
+  let
+    val recursive_atom = ``smt_left_from_int (i:int)``
+    val false_goal = boolSyntax.mk_eq (recursive_atom, ``SmtLeftDone``)
+    val initial_budget = List.length
+      (SmtDatatypeProve.datatype_split_terms false_goal)
+    val _ = Profile.reset_all ()
+    val rejected =
+      ((ignore (SmtDatatypeProve.exhaustiveness_prove false_goal); false)
+       handle Feedback.HOL_ERR _ => true)
+  in
+    assert (initial_budget = 1,
+      "recursive datatype split probe did not have budget one");
+    assert (rejected,
+      "false recursive datatype split probe unexpectedly proved");
+    assert (profile_call_count "datatype(split)" = initial_budget,
+      "recursive datatype split exceeded its initial-subterm budget")
+  end
+
+fun datatype_fragment_precondition_rejects_earlier_rungs () =
+  let
+    fun reject_early (label, goal) =
+      let
+        val _ = Profile.reset_all ()
+        val holerr =
+          ((ignore (SmtDatatypeProve.datatype_prove goal);
+            die ("FAIL: datatype precondition admitted " ^ label))
+           handle Feedback.HOL_ERR holerr => holerr)
+      in
+        assert (Feedback.top_structure_of holerr = "SmtDatatypeProve" andalso
+            Feedback.top_function_of holerr = "datatype_prove" andalso
+            String.isSubstring "unsupported th-lemma shape"
+              (Feedback.message_of holerr),
+          label ^ " was not rejected at the datatype entry precondition");
+        assert (profile_call_count
+              "datatype(fragment-precondition)_HOL_ERR" = 1,
+          label ^ " did not trace one precondition rejection");
+        assert (profile_call_count "datatype(simp)" = 0 andalso
+            profile_call_count "datatype(exhaustiveness)" = 0 andalso
+            profile_call_count "datatype(acyclicity)" = 0 andalso
+            profile_call_count "datatype(metis)" = 0,
+          label ^ " reached datatype simplification or METIS")
+      end
+  in
+    reject_early ("pure num arithmetic", ``(n:num) + 1 = 1 + n``);
+    reject_early ("pure bit-vector arithmetic",
+      ``(x:word8) + 1w = 1w + x``);
+    reject_early ("mixed bit-vector/num arithmetic",
+      ``w2n (x:word8) + 1 = 1 + w2n x``)
+  end
+
 fun datatype_prove_unsupported_diagnostic () =
   (ignore (SmtDatatypeProve.datatype_prove ``F``);
    die "FAIL: unsupported datatype th-lemma replayed successfully")
@@ -18848,6 +19015,8 @@ let
       datatype_destructor_normalization_success),
     ("smtlib_invented_uf_native_datatype_domain_diagnostic",
       smtlib_invented_uf_native_datatype_domain_diagnostic),
+    ("smtlib_native_datatype_equality_builtin_success",
+      smtlib_native_datatype_equality_builtin_success),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",
@@ -18860,6 +19029,8 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_proof_parser_parameterized_datatype_tester_success",
       cpc_proof_parser_parameterized_datatype_tester_success),
+    ("cpc_proof_replay_nested_datatype_tester_success",
+      cpc_proof_replay_nested_datatype_tester_success),
     ("cpc_proof_parser_ascribed_seq_empty_success",
       cpc_proof_parser_ascribed_seq_empty_success),
     ("cpc_proof_parser_ascribed_bag_empty_success",
@@ -18941,6 +19112,8 @@ let
       cpc_proof_replay_equiv_elim1_success),
     ("cpc_proof_replay_bool_impl_true2_success",
       cpc_proof_replay_bool_impl_true2_success),
+    ("cpc_proof_replay_ite_then_false_success",
+      cpc_proof_replay_ite_then_false_success),
     ("cpc_proof_replay_integer_tightening_success",
       cpc_proof_replay_integer_tightening_success),
     ("cpc_proof_replay_ite_elim2_success",
@@ -19172,6 +19345,12 @@ let
       array_prove_unsupported_diagnostic),
     ("datatype_prove_ladder_rungs_success",
       datatype_prove_ladder_rungs_success),
+    ("datatype_tester_application_fixpoint_success",
+      datatype_tester_application_fixpoint_success),
+    ("datatype_recursive_split_budget_success",
+      datatype_recursive_split_budget_success),
+    ("datatype_fragment_precondition_rejects_earlier_rungs",
+      datatype_fragment_precondition_rejects_earlier_rungs),
     ("datatype_prove_unsupported_diagnostic",
       datatype_prove_unsupported_diagnostic),
     ("string_prove_ladder_rungs_success",

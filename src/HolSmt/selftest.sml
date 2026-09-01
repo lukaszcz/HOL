@@ -252,6 +252,31 @@ val sat_CVCp = mk_CVCp expect_sat
 
 val _ = bossLib.Hol_datatype `dt1 = foo | bar | baz`
 
+val _ = bossLib.Hol_datatype `dirn = NS | EW`
+
+val flc_def = Define `flc d = case d of NS => EW | EW => NS`
+
+fun expect_flc_checked name solver goal =
+  let
+    val solver_calls = ref 0
+    fun counted_solver subgoal =
+      (solver_calls := !solver_calls + 1; solver subgoal)
+    val tactic = Tactical.THEN
+      (Rewrite.PURE_REWRITE_TAC [flc_def], counted_solver)
+    val _ = expect_thm true name tactic goal
+  in
+    if !solver_calls = 1 then ()
+    else die (name ^ " did not receive the unfolded flc goal exactly once")
+  end
+
+val thm_flc_Z3p =
+  mk_test_fun (Z3.is_v4_configured ()) expect_flc_checked
+    "Z3 (proofs)" HolSmtLib.Z3_TAC
+
+val thm_flc_CVCp =
+  mk_test_fun (CVC.is_configured ()) expect_flc_checked
+    "cvc5 (proofs)" HolSmtLib.CVC_TAC
+
 val _ = bossLib.Hol_datatype `person = <| employed :bool; age :num |>`
 
 val _ = bossLib.Hol_datatype `
@@ -1790,6 +1815,7 @@ in
     (``dt1_CASE bar f b z = b``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``dt1_CASE baz f b z = z``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``dt1_CASE x c c c = c``, [(*thm_AUTO,*) thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``!d. flc (flc d) = d``, [thm_flc_Z3p, thm_flc_CVCp]),
     (``list_CASE [] n c = n``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``list_CASE (x::xs) n c = c x xs``,
       [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
