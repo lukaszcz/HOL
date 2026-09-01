@@ -138,7 +138,7 @@ val instantiated_fact_citation =
      "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id",
      "list_L2806_zip_map1", "list_L2810_zip_map2",
      "list_L5301_nth_rotate1", "list_L6101_sorted_remove1",
-     "list_L6208_sorted_upt", "list_L6292_sorted_insort",
+     "list_L6292_sorted_insort",
      "list_L6298_sorted_sort", "list_L6389_sorted_insort_insert"]
 
 val zip_against_map =
@@ -276,18 +276,37 @@ val propositional_rearrangement =
     ["list_L5001_in_set_replicate", "list_L5008_Ball_set_replicate",
      "list_L5012_Bex_set_replicate", "option_L111_map_option_eq_Some"]
 
+(* [source_sorted] is now [source_sorted_wrt], so these are no longer
+   about the two readings disagreeing.  What is left is HOL4 stating
+   the fact about its own adjacent SORTED: the goal is in the
+   all-pairs reading, the ambient bridge carries it across only where
+   the relation is concrete, and for a relation variable the side
+   condition stands. *)
 val sorted_against_sorted_wrt =
   classified "SORTED against sorted_wrt"
-    ("Isabelle's sorted is sorted_wrt (<=) by definition; HOL4's "
-     ^ "SORTED is the adjacent-pairs predicate and the bridge "
-     ^ "needs transitivity, a step the source method never names")
-    ["list_L412_sorted_simps_2", "list_L415_strict_sorted_simps_2",
-     "list_L6034_sorted_append",
-     "list_L6038_sorted_map", "list_L6042_sorted01",
+    ("the goal is in the all-pairs reading and the HOL4 fact that "
+     ^ "would close it is stated on the adjacent SORTED; the ambient "
+     ^ "bridge crosses between them only when the relation is "
+     ^ "concrete enough to settle its transitivity")
+    ["list_L415_strict_sorted_simps_2",
      "list_L6049_sorted_iff_nth_mono_less",
      "list_L6053_sorted_iff_nth_mono", "list_L6061_sorted_iff_nth_Suc",
-     "list_L6104_sorted_butlast", "list_L6146_sorted_dropWhile",
+     "list_L6104_sorted_butlast",
      "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
+
+(* Measured: supplying the order axioms ambiently, so the bridge could
+   discharge its side condition here, made this goal worse rather than
+   better -- the bridge reads left to right, so it replaced the
+   all-pairs hypothesis by the adjacent one and took the chain away. *)
+val order_premise_left_inert =
+  classified "order premise left inert"
+    ("the residual is a transitivity step whose two halves are both "
+     ^ "present -- [le left right] and [le right item] against "
+     ^ "[le left item] -- and the goal carries WeakLinearOrder for "
+     ^ "the relation, but nothing turns that hypothesis into the "
+     ^ "step, where an Isabelle method reads it off the linorder "
+     ^ "class without naming it")
+    ["list_L6029_sorted2"]
 
 val numeral_against_Suc =
   classified "numeral against Suc"
@@ -450,6 +469,7 @@ val execution : benchLib.shortfall list =
   finite_cardinality @
   propositional_rearrangement @
   sorted_against_sorted_wrt @
+  order_premise_left_inert @
   numeral_against_Suc @
   characterisation_is_the_goal @
   predicate_and_set_representation @

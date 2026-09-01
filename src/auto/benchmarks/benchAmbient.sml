@@ -24,7 +24,24 @@ val definitions =
           (DB.definitions "parityTranslation")))
   end
 
-val arguments = map benchLib.RewriteAdd definitions
+(* The one lemma in the ambient set.  Isabelle's [sorted] *is*
+   [sorted_wrt (<=)], so every fact its simpset carries about a sorted
+   list -- [sorted_upt] and the rest -- applies to the [sorted_wrt]
+   reading without anyone naming it.  HOL4 states those facts about its
+   own adjacent SORTED, and the translation's [source_sorted] unfolds
+   to [source_sorted_wrt], whose definition is recursive and so is not
+   a rewrite; without the correspondence the predicate is opaque and
+   the ambient facts cannot reach it.  The bridge is conditional on
+   transitivity, which is what the source linorder supplies, so it
+   hands a goal nothing that Isabelle's [sorted] did not already have. *)
+val sorted_wrt_correspondence =
+  {name = "parityTranslation$source_sorted_wrt_bridge",
+   theorem = DB.fetch "parityTranslation" "source_sorted_wrt_bridge"}
+
+val ambient_lemmas = [sorted_wrt_correspondence]
+
+val arguments =
+  map benchLib.RewriteAdd (definitions @ ambient_lemmas)
 
 (* Self-reference in any clause, read off the constant the first clause
    defines.  A definition of several constants at once -- a [fun ... and
@@ -45,7 +62,9 @@ fun recursive term =
 val recursive_definitions =
   List.filter (recursive o concl o #theorem) definitions
 
-val recursive_arguments = map benchLib.RewriteAdd recursive_definitions
+val recursive_arguments =
+  map benchLib.RewriteAdd
+    (recursive_definitions @ ambient_lemmas)
 
 (* A definition unfolds one constant; a characterisation relates
    several.  [define_new_type_bijections] yields a single theorem whose

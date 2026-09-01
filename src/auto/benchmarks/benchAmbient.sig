@@ -11,10 +11,22 @@ sig
      [definition] not, and this makes no such distinction.
 
      The set is read out of the translation theory rather than listed,
-     so it grows only when a definition is added, and a lemma -- the
-     thing an Isabelle method would have had to name -- can never enter
-     it.  It is also the same set for every goal, so it cannot be
-     tuned against one. *)
+     so it grows only when a definition is added.  It is also the same
+     set for every goal, so it cannot be tuned against one.
+
+     [arguments] adds one lemma to it, and one only:
+     [source_sorted_wrt_bridge].  Isabelle's [sorted] is
+     [sorted_wrt (<=)], so its simpset's facts about sorted lists reach
+     the [sorted_wrt] reading with nobody naming them; HOL4 states the
+     same facts about its adjacent SORTED, and the correspondence
+     between the two is what the translation has to supply for the
+     ambient context to mean the same thing on both sides.  It is
+     conditional on transitivity, and that condition is deliberately
+     left undischarged where the relation is a variable: the bridge
+     reads left to right, so firing it everywhere would replace the
+     all-pairs structure by the adjacent one and throw away exactly
+     what [sorted_wrt] carries.  Measured, supplying the order axioms
+     to discharge it costs more goals than it gains. *)
   val definitions : benchLib.named_thm list
 
   (* [definitions] as recipe arguments, in the order a recipe takes. *)

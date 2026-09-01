@@ -2,19 +2,6 @@ open HolKernel Parse boolLib bossLib sortingTheory relationTheory
 
 val _ = new_theory "parityTranslation"
 
-(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
-   src/HOL/List.thy:399-442.  A source linorder is represented by its
-   explicit weak ordering relation.  Isabelle's strict operation is
-   HOL4's STRORD construction on that relation. *)
-Definition source_sorted_def:
-  source_sorted le (xs : 'a list) = sorting$SORTED le xs
-End
-
-Definition source_strict_sorted_def:
-  source_strict_sorted le (xs : 'a list) =
-    sorting$SORTED (relation$STRORD le) xs
-End
-
 (* Isabelle/HOL src/HOL/List.thy:5911-5974.  Unlike HOL4's adjacent
    SORTED predicate, sorted_wrt relates every earlier element to every
    later element. *)
@@ -25,20 +12,21 @@ Definition source_sorted_wrt_def:
      source_sorted_wrt relation tail)
 End
 
-Theorem source_sorted_bridge:
-  !le xs : 'a list.
-    source_sorted le xs <=> sorting$SORTED le xs
-Proof
-  simp[source_sorted_def]
-QED
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy:399-442.  A source linorder is represented by its
+   explicit weak ordering relation.  Isabelle's [sorted] is
+   [sorted_wrt (<=)] -- the all-pairs reading, not HOL4's adjacent
+   SORTED, which the two agree with only for a transitive relation.
+   Isabelle's strict operation is HOL4's STRORD construction on that
+   relation. *)
+Definition source_sorted_def:
+  source_sorted le (xs : 'a list) = source_sorted_wrt le xs
+End
 
-Theorem source_strict_sorted_bridge:
-  !le xs : 'a list.
-    source_strict_sorted le xs <=>
+Definition source_strict_sorted_def:
+  source_strict_sorted le (xs : 'a list) =
     sorting$SORTED (relation$STRORD le) xs
-Proof
-  simp[source_strict_sorted_def]
-QED
+End
 
 Theorem source_sorted_wrt_bridge:
   !relation xs.
@@ -51,6 +39,24 @@ Proof
   >- simp[source_sorted_wrt_def]
   >> simp[source_sorted_wrt_def, sortingTheory.SORTED_EQ,
           CONJ_COMM]
+QED
+
+(* [sorted] and HOL4's SORTED agree exactly when the relation is
+   transitive, which is what the source linorder always supplies. *)
+Theorem source_sorted_bridge:
+  !le xs : 'a list.
+    relation$transitive le ==>
+    (source_sorted le xs <=> sorting$SORTED le xs)
+Proof
+  simp[source_sorted_def, source_sorted_wrt_bridge]
+QED
+
+Theorem source_strict_sorted_bridge:
+  !le xs : 'a list.
+    source_strict_sorted le xs <=>
+    sorting$SORTED (relation$STRORD le) xs
+Proof
+  simp[source_strict_sorted_def]
 QED
 
 Theorem source_sorted_wrt_nth_less:
@@ -129,99 +135,6 @@ Proof
   rpt strip_tac
   >> drule source_weak_linear_reflexive
   >> simp[relationTheory.reflexive_def]
-QED
-
-Theorem source_sorted_map_bridge:
-  !le function xs.
-    source_sorted le (MAP function xs) <=>
-    source_sorted (\left right. le (function left) (function right)) xs
-Proof
-  rpt gen_tac
-  >> Induct_on `xs`
-  >- simp[source_sorted_def]
-  >> Cases_on `xs`
-  >- simp[source_sorted_def]
-  >> rw[source_sorted_def]
-  >> fs[source_sorted_def]
-  >> Cases_on `t`
-  >> fs[]
-QED
-
-Theorem source_sorted_length01:
-  !le xs : 'a list.
-    LENGTH xs <= 1 ==> source_sorted le xs
-Proof
-  rpt strip_tac
-  >> Cases_on `xs`
-  >- simp[source_sorted_def]
-  >> Cases_on `t`
-  >> fs[source_sorted_def]
-QED
-
-Theorem source_sorted_front:
-  !le : 'a -> 'a -> bool.
-    relation$WeakLinearOrder le ==>
-    !xs.
-      source_sorted le xs ==>
-      source_sorted le (FRONT xs)
-Proof
-  rpt strip_tac
-  >> Cases_on `xs`
-  >- simp[source_sorted_def]
-  >> `FRONT (h::t) ++ [LAST (h::t)] = h::t` by
-       simp[listTheory.APPEND_FRONT_LAST]
-  >> fs[source_sorted_def]
-  >> metis_tac[sortingTheory.SORTED_APPEND,
-               source_weak_linear_transitive]
-QED
-
-Theorem source_sorted_dropwhile:
-  !le : 'a -> 'a -> bool.
-    relation$WeakLinearOrder le ==>
-    !predicate xs.
-      source_sorted le xs ==>
-      source_sorted le (dropWhile predicate xs)
-Proof
-  gen_tac
-  >> strip_tac
-  >> gen_tac
-  >> Induct_on `xs`
-  >- simp[source_sorted_def]
-  >> simp[source_sorted_def, listTheory.dropWhile_def]
-  >> Cases_on `predicate h`
-  >> fs[source_sorted_def]
-  >> metis_tac[sortingTheory.SORTED_TL]
-QED
-
-Theorem source_sorted_front_transitive:
-  !le : 'a -> 'a -> bool.
-    relation$transitive le ==>
-    !xs.
-      source_sorted le xs ==>
-      source_sorted le (FRONT xs)
-Proof
-  rpt strip_tac
-  >> Cases_on `xs`
-  >- simp[source_sorted_def]
-  >> `FRONT (h::t) ++ [LAST (h::t)] = h::t` by
-       simp[listTheory.APPEND_FRONT_LAST]
-  >> fs[source_sorted_def]
-  >> metis_tac[sortingTheory.SORTED_APPEND]
-QED
-
-Theorem source_sorted_dropwhile_general:
-  !le predicate xs.
-    source_sorted le xs ==>
-    source_sorted le (dropWhile predicate xs)
-Proof
-  gen_tac
-  >> gen_tac
-  >> Induct_on `xs`
-  >- simp[source_sorted_def]
-  >> simp[source_sorted_def, listTheory.dropWhile_def]
-  >> Cases_on `predicate h`
-  >> fs[source_sorted_def]
-  >> metis_tac[sortingTheory.SORTED_TL]
 QED
 
 Theorem source_sorted_wrt_dropWhile:
@@ -323,7 +236,7 @@ Proof
   >> strip_tac
   >> drule source_weak_linear_refl
   >> strip_tac
-  >> simp[source_sorted_def, sortingTheory.SORTED_EL_LESS]
+  >> simp[source_sorted_bridge, sortingTheory.SORTED_EL_LESS]
   >> eq_tac
   >> rpt strip_tac
   >- (Cases_on `left = right` >> simp[] >> first_x_assum irule >> simp[])
@@ -339,13 +252,10 @@ Theorem source_sorted_same:
 Proof
   rpt strip_tac
   >> Induct_on `xs`
-  >- simp[source_sorted_def]
-  >> simp[]
+  >- simp[source_sorted_def, source_sorted_wrt_def]
+  >> simp[source_sorted_def]
   >> Cases_on `h = value`
-  >> fs[source_sorted_def, sortingTheory.SORTED_EQ,
-        source_weak_linear_transitive]
-  >> rw[]
-  >> fs[listTheory.MEM_FILTER]
+  >> fs[source_sorted_def, source_sorted_wrt_def, listTheory.MEM_FILTER]
   >> metis_tac[source_weak_linear_refl]
 QED
 
@@ -387,15 +297,17 @@ Theorem source_strict_sorted_iff:
        source_sorted le xs /\ ALL_DISTINCT xs)
 Proof
   rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
   >> Induct_on `xs`
-  >- simp[source_sorted_def, source_strict_sorted_def]
-  >> simp[source_sorted_def, source_strict_sorted_def,
+  >- simp[source_sorted_bridge, source_strict_sorted_def]
+  >> simp[source_sorted_bridge, source_strict_sorted_def,
           sortingTheory.SORTED_EQ,
           source_weak_linear_transitive,
           source_strord_transitive,
           relationTheory.STRORD,
           boolTheory.FORALL_AND_THM]
-  >> fs[source_sorted_def, source_strict_sorted_def]
+  >> fs[source_sorted_bridge, source_strict_sorted_def]
   >> metis_tac[]
 QED
 
@@ -409,7 +321,7 @@ Theorem source_strict_sorted_equal_unique:
       LIST_TO_SET ys = domain ==>
       xs = ys
 Proof
-  metis_tac[source_strict_sorted_iff, source_sorted_def,
+  metis_tac[source_strict_sorted_iff, source_sorted_bridge,
             source_weak_linear_transitive,
             source_weak_linear_antisymmetric,
             sortingTheory.SORTED_ALL_DISTINCT_LIST_TO_SET_EQ]
@@ -427,7 +339,7 @@ Theorem source_sorted_all_distinct_unique:
       LIST_TO_SET xs = LIST_TO_SET ys ==>
       xs = ys
 Proof
-  metis_tac[source_sorted_def,
+  metis_tac[source_sorted_bridge,
             sortingTheory.SORTED_ALL_DISTINCT_LIST_TO_SET_EQ]
 QED
 
@@ -530,14 +442,18 @@ Theorem source_sorted_insort_identity:
 Proof
   gen_tac
   >> strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
   >> gen_tac
   >> Induct_on `xs`
-  >- simp[source_sorted_def, source_insort_key_def]
+  >- simp[source_sorted_def, source_sorted_wrt_def,
+          source_insort_key_def]
   >> rw[source_insort_key_def]
-  >> fs[source_sorted_def, sortingTheory.SORTED_EQ,
+  >> fs[source_sorted_bridge, sortingTheory.SORTED_EQ,
         source_set_insort_key, combinTheory.I_THM,
         relationTheory.WeakLinearOrder_dichotomy,
         relationTheory.WeakOrder]
+  >> rfs[source_sorted_bridge]
   >> metis_tac[]
 QED
 
@@ -571,8 +487,10 @@ Theorem source_sorted_sort_key:
         (source_sort_key le function xs))
 Proof
   rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
   >> Induct_on `xs`
-  >- simp[source_sort_key_def, source_sorted_def]
+  >- simp[source_sort_key_def, source_sorted_bridge]
   >> simp[source_sort_key_def, source_sorted_insort_key]
 QED
 
@@ -628,16 +546,12 @@ Proof
   >- simp[source_sort_key_def]
   >> rpt strip_tac
   >> `source_sorted le (MAP function xs)` by
-       (fs[source_sorted_def]
-        >> metis_tac[sortingTheory.SORTED_TL])
+       fs[source_sorted_def, source_sorted_wrt_def]
   >> `source_sort_key le function xs = xs` by metis_tac[]
   >> `!mapped.
         MEM mapped (MAP function xs) ==>
         le (function h) mapped` by
-       (fs[source_sorted_def]
-        >> `relation$transitive le` by
-             metis_tac[source_weak_linear_transitive]
-        >> imp_res_tac sortingTheory.SORTED_EQ)
+       fs[source_sorted_def, source_sorted_wrt_def]
   >> simp[source_sort_key_def]
   >> irule source_insort_key_is_cons
   >> rpt strip_tac
@@ -903,7 +817,7 @@ Theorem source_sorted_transpose:
       (REVERSE (MAP LENGTH (source_transpose rows)))
 Proof
   gen_tac
-  >> simp[source_sorted_def, sortingTheory.SORTED_EL_LESS,
+  >> simp[source_sorted_bridge, sortingTheory.SORTED_EL_LESS,
           relationTheory.transitive_def]
   >> rpt strip_tac
   >> simp[source_transpose_def, listTheory.MAP_GENLIST,
@@ -924,7 +838,7 @@ Theorem source_sorted_reverse_lengths_mono:
       LENGTH (EL right rows) <= LENGTH (EL left rows)
 Proof
   rpt strip_tac
-  >> fs[source_sorted_def,
+  >> fs[source_sorted_bridge,
         sortingTheory.SORTED_EL_LESS,
         relationTheory.transitive_def]
   >> first_x_assum
@@ -1230,7 +1144,7 @@ Theorem source_sorted_list_of_set_unique:
       LIST_TO_SET target = domain ==>
       source_sorted_list_of_set le domain = target
 Proof
-  metis_tac[source_sorted_def,
+  metis_tac[source_sorted_bridge,
             source_weak_linear_transitive,
             source_weak_linear_antisymmetric,
             source_sorted_sorted_list_of_set,
@@ -1267,6 +1181,8 @@ Theorem source_sorted_list_of_set_nonempty:
           (items DELETE source_minimum le items)
 Proof
   rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
   >> qabbrev_tac `xs = source_sorted_list_of_set le items`
   >> Cases_on `xs`
   >- metis_tac[source_sorted_key_list_of_set_eq_nil,
@@ -1280,17 +1196,17 @@ Proof
        `source_sorted_list_of_set le (items DELETE h) = t`
   >- simp[]
   >> irule source_sorted_list_of_set_unique
-  >> fs[source_sorted_def]
+  >> fs[source_sorted_bridge]
   >> `ALL_DISTINCT (h::t)` by
        metis_tac[source_all_distinct_sorted_list_of_set]
   >> `LIST_TO_SET (h::t) = items` by
        metis_tac[source_set_sorted_list_of_set]
   >> `source_sorted le (h::t)` by
        metis_tac[source_sorted_sorted_list_of_set]
-  >> fs[source_sorted_def]
-  >> conj_tac
+  >> fs[source_sorted_def, source_sorted_wrt_def]
+  >> rw[]
   >- (rw[pred_setTheory.EXTENSION] >> metis_tac[])
-  >> metis_tac[sortingTheory.SORTED_TL]
+  >> metis_tac[source_sorted_wrt_bridge]
 QED
 
 Theorem source_sorted_list_of_set_head_tail:
@@ -1571,13 +1487,15 @@ Theorem source_map_sorted_distinct_set_unique:
       xs = ys
 Proof
   rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
   >> irule listTheory.INJ_MAP_EQ
   >> qexists_tac `function`
   >> conj_tac
   >- (irule sortingTheory.SORTED_ALL_DISTINCT_LIST_TO_SET_EQ
       >> simp[listTheory.LIST_TO_SET_MAP]
       >> qexists_tac `le`
-      >> fs[source_sorted_def,
+      >> fs[source_sorted_bridge,
             source_weak_linear_transitive,
             source_weak_linear_antisymmetric])
   >> fs[pred_setTheory.INJ_DEF, source_inj_on_def]
@@ -1990,13 +1908,15 @@ Proof
   rpt strip_tac
   >> drule source_weak_linear_transitive
   >> strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
   >> ntac 2 (pop_assum mp_tac)
   >> qid_spec_tac `xs`
   >> Induct
   >- simp[source_remove1_def]
   >> rpt strip_tac
   >> rw[source_remove1_def]
-  >> fs[source_sorted_def, sortingTheory.SORTED_EQ, listTheory.MEM_MAP]
+  >> fs[source_sorted_bridge, sortingTheory.SORTED_EQ, listTheory.MEM_MAP]
   >> metis_tac[source_remove1_mem]
 QED
 
@@ -2659,42 +2579,19 @@ Proof
   simp[pred_setTheory.SUBSET_DEF]
 QED
 
-Theorem source_sorted_remove1:
-  !le : 'a -> 'a -> bool.
-    relation$WeakLinearOrder le ==>
-    !value xs.
-      source_sorted le xs ==>
-      source_sorted le (source_remove1 value xs)
+(* Removing an element keeps a list sorted.  Under the all-pairs
+   reading this needs no order assumption, where the adjacent reading
+   needed transitivity to re-relate the two neighbours of the gap. *)
+Theorem source_sorted_wrt_remove1:
+  !relation value xs : 'a list.
+    source_sorted_wrt relation xs ==>
+    source_sorted_wrt relation (source_remove1 value xs)
 Proof
-  gen_tac
-  >> strip_tac
-  >> gen_tac
-  >> Induct_on `xs`
-  >- simp[source_sorted_def, source_remove1_def]
-  >> simp[source_remove1_def]
-  >> Cases_on `value = h`
-  >> fs[source_sorted_def, sortingTheory.SORTED_EQ,
-        source_weak_linear_transitive]
+  ntac 2 gen_tac
+  >> Induct
+  >> rw[source_sorted_wrt_def, source_remove1_def]
+  >> fs[source_sorted_wrt_def]
   >> metis_tac[source_remove1_mem]
-QED
-
-Theorem source_sorted_remove1_transitive:
-  !le : 'a -> 'a -> bool.
-    relation$transitive le ==>
-    !value xs.
-      source_sorted le xs ==>
-      source_sorted le (source_remove1 value xs)
-Proof
-  gen_tac
-  >> strip_tac
-  >> gen_tac
-  >> Induct_on `xs`
-  >- simp[source_sorted_def, source_remove1_def]
-  >> simp[source_remove1_def]
-  >> Cases_on `value = h`
-  >> fs[source_sorted_def, sortingTheory.SORTED_EQ]
-  >> metis_tac[source_remove1_mem,
-               relationTheory.transitive_def]
 QED
 
 Theorem source_sorted_indexed_from:
@@ -2704,7 +2601,7 @@ Theorem source_sorted_indexed_from:
 Proof
   rpt gen_tac
   >> rw[source_indexed_from_bridge]
-  >> simp[source_sorted_def, listTheory.MAP_ZIP]
+  >> simp[source_sorted_bridge, listTheory.MAP_ZIP]
   >> irule sortingTheory.SORTED_weaken
   >> qexists_tac `$<`
   >> simp[]
@@ -2724,7 +2621,7 @@ Theorem source_sorted_num_upto:
   !lower upper.
     source_sorted ($<=) (source_num_upto lower upper)
 Proof
-  rw[source_num_upto_def, source_sorted_def]
+  rw[source_num_upto_def, source_sorted_bridge]
   >> irule sortingTheory.SORTED_weaken
   >> qexists_tac `$<`
   >> simp[sortingTheory.SORTED_GENLIST_PLUS]
@@ -3399,7 +3296,7 @@ Proof
   gen_tac
   >> irule source_sorted_list_of_set_unique
   >> simp[source_num_weak_linear_order,
-          source_sorted_def,
+          source_sorted_bridge,
           sortingTheory.sorted_count_list,
           rich_listTheory.all_distinct_count_list,
           rich_listTheory.COUNT_LIST_COUNT]
@@ -3441,7 +3338,7 @@ Proof
   rpt strip_tac
   >> irule source_sorted_list_of_set_unique
   >> simp[source_num_weak_linear_order,
-          source_sorted_def,
+          source_sorted_bridge,
           sortingTheory.SORTED_GENLIST_PLUS,
           listTheory.ALL_DISTINCT_GENLIST,
           listTheory.LIST_TO_SET_GENLIST,
