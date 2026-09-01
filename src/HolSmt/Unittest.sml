@@ -8566,7 +8566,7 @@ let
   val record_access_text = preprocessed_text
     ``(r:smt_rec).smt_count = 0i``
   val record_update_text = preprocessed_text
-    ``(r with smt_count := 3i).smt_count = 3i``
+    ``(r with smt_count := 3i) = s``
 in
   assert_has "constructor application" ctor_text
     "(ctor_Smt_tri_SmtTriB v1)";
@@ -8735,6 +8735,124 @@ in
       contains "sel_Smt_tri" datatype_text,
     "normalized datatype goal missed tester/selector emission:\n" ^
     datatype_text)
+end
+
+fun datatype_constructor_case_reduction_success () =
+let
+  val record_ty = ``:smt_rec``
+  val record_constructor =
+    case SmtLib.datatype_constructors_for_test record_ty of
+      [constructor] => constructor
+    | _ => die "smt_rec did not have exactly one TypeBase constructor"
+  val fields = TypeBase.fields_of record_ty
+  val count_update = #fupd (Lib.snd (List.nth (fields, 0)))
+  val flag_update = #fupd (Lib.snd (List.nth (fields, 1)))
+  val n = ``n:int``
+  val m = ``m:int``
+  val p = ``p:bool``
+  val arb_record = boolSyntax.mk_arb record_ty
+  fun k value = combinSyntax.mk_K_1 (value, Term.type_of value)
+  fun update fupd value record =
+    Term.list_mk_comb (fupd, [k value, record])
+  val full_literal = ``<| smt_count := n; smt_flag := p |> : smt_rec``
+  val partial_literal = ``<| smt_count := n |> : smt_rec``
+  val full_expected =
+    Term.list_mk_comb (record_constructor, [n, p])
+  val partial_expected =
+    Term.list_mk_comb
+      (record_constructor,
+       [n, SmtLib.datatype_selector_term_for_test record_ty
+         record_constructor 1 arb_record])
+  val inner_update = update flag_update p arb_record
+  val ordering_witness =
+    SmtLib.datatype_selector_term_for_test record_ty record_constructor 1
+      inner_update
+  val explicit_full_chain = update count_update n inner_update
+  val selector_input =
+    SmtLib.datatype_selector_term_for_test record_ty record_constructor 0
+      full_expected
+  fun capture_error label action =
+    (ignore (action ());
+     die ("FAIL: " ^ label ^ " unexpectedly succeeded"))
+    handle Feedback.HOL_ERR holerr => holerr
+  val injected_error = capture_error "admitted conversion failure"
+    (fn () =>
+      SmtLib.datatype_constructor_case_reduce_conv_with_for_test
+        (fn _ => fn _ =>
+          raise Feedback.mk_HOL_ERR "Task08Injected" "proof_conversion"
+            "distinctive admitted conversion failure") selector_input)
+  val unchanged_error = capture_error "admitted unchanged result"
+    (fn () =>
+      SmtLib.datatype_constructor_case_reduce_conv_with_for_test
+        (fn _ => Thm.REFL) selector_input)
+  val case_input = ``case SmtTriB n of
+      SmtTriA => 0i
+    | SmtTriB x => x + 1i
+    | SmtTriC b => if b then 2i else 3i``
+  val full_thm = SmtLib.DATATYPE_TO_SMT_CONV full_literal
+  val partial_thm = SmtLib.DATATYPE_TO_SMT_CONV partial_literal
+  val explicit_full_thm =
+    SmtLib.DATATYPE_TO_SMT_CONV explicit_full_chain
+  val ordering_thm = SmtLib.DATATYPE_TO_SMT_CONV ordering_witness
+  val selector_thm = SmtLib.DATATYPE_TO_SMT_CONV selector_input
+  val case_thm = SmtLib.DATATYPE_TO_SMT_CONV case_input
+  val general_goal =
+    ([boolSyntax.mk_eq (selector_input, m)],
+     boolSyntax.mk_eq (case_input, m))
+  val normalized_general_goal =
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC general_goal) of
+      [goal] => goal
+    | _ => die "datatype reduction did not preserve one general goal"
+  fun result thm = Lib.snd (boolSyntax.dest_eq (Thm.concl thm))
+  fun arb_count tm =
+    List.length (List.filter boolSyntax.is_arb (Library.subterms tm))
+  val full_result = result full_thm
+  val partial_result = result partial_thm
+in
+  List.app assert_no_hyps
+    [("full record literal reduction", full_thm),
+     ("partial record literal reduction", partial_thm),
+     ("explicit full fupd chain reduction", explicit_full_thm),
+     ("post-update ordering witness", ordering_thm),
+     ("general constructor selector reduction", selector_thm),
+     ("general constructor case reduction", case_thm)];
+  assert_concl_alpha ("post-update ordering witness", ordering_thm,
+    boolSyntax.mk_eq (ordering_witness, p));
+  assert_concl_alpha ("full record literal reduction", full_thm,
+    boolSyntax.mk_eq (full_literal, full_expected));
+  assert_concl_alpha ("partial record literal reduction", partial_thm,
+    boolSyntax.mk_eq (partial_literal, partial_expected));
+  assert_concl_alpha ("explicit full fupd chain reduction",
+    explicit_full_thm,
+    boolSyntax.mk_eq (explicit_full_chain, full_expected));
+  assert_concl_alpha ("general constructor selector reduction",
+    selector_thm, boolSyntax.mk_eq (selector_input, n));
+  assert_concl_alpha ("general constructor case reduction", case_thm,
+    boolSyntax.mk_eq (case_input, ``n + 1i``));
+  assert (Feedback.top_structure_of injected_error = "Task08Injected" andalso
+      Feedback.top_function_of injected_error = "proof_conversion" andalso
+      Feedback.message_of injected_error =
+        "distinctive admitted conversion failure",
+    "admitted constructor-case proof failure was swallowed or relabelled");
+  assert (Feedback.top_structure_of unchanged_error = "SmtLib" andalso
+      Feedback.top_function_of unchanged_error =
+        "datatype_constructor_case_reduce_conv" andalso
+      Feedback.message_of unchanged_error =
+        "admitted proof conversion returned an alpha-unchanged result",
+    "admitted unchanged constructor-case proof lacked its named error");
+  assert (Lib.list_eq Term.aconv (Lib.fst normalized_general_goal)
+      [boolSyntax.mk_eq (n, m)] andalso
+      Term.aconv (Lib.snd normalized_general_goal)
+        (boolSyntax.mk_eq (``n + 1i``, m)),
+    "datatype reduction did not fire generally over assumptions/conclusion");
+  assert (arb_count full_result = 0,
+    "full record literal normalization retained ARB");
+  assert (arb_count partial_result = 1,
+    "partial record literal normalization did not retain exactly one ARB");
+  assert_goal_roundtrip "fully reduced record literal"
+    ([], boolSyntax.mk_eq (full_result, ``s:smt_rec``));
+  assert_goal_roundtrip "partially reduced record literal"
+    ([], boolSyntax.mk_eq (partial_result, ``s:smt_rec``))
 end
 
 fun smtlib_datatype_parser_dict_success () =
@@ -17359,6 +17477,8 @@ let
       smtlib_datatype_term_translation_success),
     ("datatype_to_smt_normalization_roundtrip_success",
       datatype_to_smt_normalization_roundtrip_success),
+    ("datatype_constructor_case_reduction_success",
+      datatype_constructor_case_reduction_success),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",

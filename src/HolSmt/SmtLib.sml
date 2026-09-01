@@ -5634,9 +5634,61 @@ local
         end
     end
 
-  (* TASK_08's selector/case-over-constructor reducer belongs exactly here:
-     update rewriting must expose its redexes before general case lowering. *)
-  fun datatype_selector_reduction_slot _ = raise Conv.UNCHANGED
+  (* Once the term has been admitted as a case over a constructor, proof
+     construction is no longer a recognition probe.  In particular, never
+     turn a proof-conversion failure into [UNCHANGED]: it is a checked-path
+     failure and must retain its original diagnostic. *)
+  fun admitted_datatype_constructor_case_reduce_conv proof_conv tm =
+    let
+      val theorem = proof_conv tm
+      val (_, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      if Term.aconv tm rhs then
+        raise ERR "datatype_constructor_case_reduce_conv"
+          "admitted proof conversion returned an alpha-unchanged result"
+      else
+        theorem
+    end
+
+  (* Reduce every TypeBase case whose scrutinee is already a constructor.
+     Parser selectors and testers are cases too, so the datatype's own case
+     theorem is the single generic proof source for all three forms. *)
+  fun datatype_constructor_case_reduce_conv_with proof_conv tm =
+    let
+      val recognized =
+        SOME (let
+          val (_, scrutinee, _) = TypeBase.dest_case tm
+          val data_ty = Term.type_of scrutinee
+          val _ = not (datatype_normalization_excluded data_ty) orelse
+            raise ERR "datatype_constructor_case_reduce_conv"
+              "excluded datatype"
+          val tyinfo =
+            case TypeBase.fetch data_ty of
+              SOME info => info
+            | NONE => raise ERR "datatype_constructor_case_reduce_conv"
+                "missing TypeBase entry"
+          val (head, _) = boolSyntax.strip_comb scrutinee
+          val constructors = List.map (TypeBasePure.cinst data_ty)
+            (TypeBasePure.constructors_of tyinfo)
+          val _ = List.exists (Term.same_const head) constructors orelse
+            raise ERR "datatype_constructor_case_reduce_conv"
+              "case scrutinee is not a constructor application"
+        in
+          tyinfo
+        end)
+        handle Feedback.HOL_ERR _ => NONE
+    in
+      case recognized of
+        NONE => raise Conv.UNCHANGED
+      | SOME tyinfo =>
+          admitted_datatype_constructor_case_reduce_conv
+            (proof_conv tyinfo) tm
+    end
+
+  val datatype_constructor_case_reduce_conv =
+    datatype_constructor_case_reduce_conv_with (fn tyinfo =>
+      simpLib.SIMP_CONV pureSimps.pure_ss
+        [TypeBasePure.case_def_of tyinfo])
 
   fun datatype_case_normalize_conv tm =
     let
@@ -5670,7 +5722,7 @@ local
   val datatype_normalization_rungs = [
     record_accessor_normalize_conv,
     record_update_normalize_conv,
-    datatype_selector_reduction_slot,
+    datatype_constructor_case_reduce_conv,
     datatype_case_normalize_conv
   ]
 
@@ -5681,6 +5733,9 @@ local
           first_datatype_normalization_rung rungs tm
 
   fun DATATYPE_TO_SMT_CONV tm =
+    (* Unlike TOP_SWEEP_CONV, TOP_DEPTH_CONV revisits a parent after a child
+       changes.  Record updates expose constructor cases in precisely that
+       order, so this traversal is the normalization fixpoint. *)
     Conv.TOP_DEPTH_CONV
       (first_datatype_normalization_rung datatype_normalization_rungs) tm
     handle Conv.UNCHANGED => Thm.REFL tm
@@ -6159,6 +6214,8 @@ in
   val datatype_constructors_for_test = datatype_constructors
   val datatype_selector_term_for_test = datatype_selector_term
   val datatype_case_normal_form_for_test = datatype_case_normal_form
+  val datatype_constructor_case_reduce_conv_with_for_test =
+    datatype_constructor_case_reduce_conv_with
   val native_float_transfer_surface = native_float_transfer_surface
   val native_float_transfer_theorems = native_float_transfer_theorems
 
