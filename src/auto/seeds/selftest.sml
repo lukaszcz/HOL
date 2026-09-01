@@ -256,6 +256,27 @@ val _ =
        solved (clasimpLib.AUTO_TAC [])
          ``PERM ([] : 'a list) xs <=> xs = []``)
 
+(* src/HOL/List.thy:1956 @ f7e02b7e.  Isabelle decides [nth_mem]
+   ambiently: an index below the length makes the element a member.
+   None of the goals below is a corpus entry, and none of them is
+   [nth_mem] itself -- each carries the membership on into an append, a
+   reverse, a cons or a subset -- and excluding the seed leaves every
+   one of them with the residual [MEM (EL index xs) xs]. *)
+val _ =
+  check
+    ("the indexed-membership seed view is usable",
+     fn () =>
+       List.all
+         (solved (clasimpLib.AUTO_TAC []))
+         [``!xs ys index.
+              index < LENGTH xs ==> MEM (EL index xs) (xs ++ ys)``,
+          ``!xs index.
+              index < LENGTH xs ==> MEM (EL index xs) (REVERSE xs)``,
+          ``!xs item index.
+              index < LENGTH xs ==> MEM (EL index xs) (item::xs)``,
+          ``!s xs index.
+              index < LENGTH xs ==> set xs SUBSET s ==> EL index xs IN s``])
+
 (* src/HOL/List.thy:1381,1222-1228,2826-2827,6208 @ f7e02b7e.  Isabelle
    decides these ambiently: set_upt turns an interval list into the
    interval set, map_fst_zip, map_snd_zip and nth_zip project a zip whose

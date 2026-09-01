@@ -116,6 +116,13 @@ val _ =
     [("MAP_ZIP_AUTO", listTheory.MAP_ZIP),
      ("EL_ZIP_AUTO", listTheory.EL_ZIP)]
 
+(* src/HOL/List.thy:1956 @ f7e02b7e.  [nth_mem] is simp there and
+   declared to no simpset here, so a goal that indexes a list and then
+   asks about membership stops at [MEM (EL index xs) xs] with the index
+   bound already in hand. *)
+val _ =
+  export_at "simp" ("EL_MEM_AUTO", listTheory.EL_MEM)
+
 (* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
    transitivity to the classical reasoner as [intro], where HOL4 states it
    but declares it to no claset.  The rest of the lexicographic block needs
