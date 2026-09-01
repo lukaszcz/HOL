@@ -5490,7 +5490,9 @@ local
       val x = Term.genvar ty
       val equality = boolSyntax.mk_eq (lhs_for x, rhs_for x)
       val predicate = Term.mk_abs (x, equality)
-      val forall_cases = DatatypeSimps.mk_type_forall_thm_tyinfo tyinfo
+      val type_subst = Type.match_type (TypeBasePure.ty_of tyinfo) ty
+      val forall_cases = Thm.INST_TYPE type_subst
+        (DatatypeSimps.mk_type_forall_thm_tyinfo tyinfo)
       val expanded = Thm.SPEC predicate forall_cases
       val rewrites = TypeBasePure.case_def_of tyinfo :: extra_rewrites tyinfo
       val constructor_cases =
@@ -5528,6 +5530,129 @@ local
             (Conv.REWR_CONV combinTheory.K_THM))))
         specialized
     end
+
+  fun datatype_destructor_head theorem =
+    let
+      val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+      val clauses = boolSyntax.strip_conj body
+      fun clause_head clause =
+        let
+          val (_, equation) = boolSyntax.strip_forall clause
+          val (lhs, _) = boolSyntax.dest_eq equation
+          val (head, arguments) = boolSyntax.strip_comb lhs
+          val _ = if List.length arguments = 1 then () else
+            raise ERR "datatype_destructor_head"
+              "destructor equation is not unary"
+        in
+          head
+        end
+      val heads = List.map clause_head clauses
+      val head = List.hd heads
+      val _ = List.all (Term.same_const head) heads orelse
+        raise ERR "datatype_destructor_head"
+          "destructor theorem defines multiple constants"
+    in
+      head
+    end
+
+  fun datatype_destructor_theorem tyinfo destructor =
+    List.find
+      (fn theorem =>
+        Term.same_const destructor (datatype_destructor_head theorem)
+        handle Feedback.HOL_ERR _ => false)
+      (TypeBasePure.destructors_of tyinfo)
+
+  (* A partial HOL destructor has no theorem fixing its value on constructors
+     outside the owning branch.  Preserve such constructor applications
+     literally: replacing them by the parser selector's ARB choice would be
+     stronger than the registered theorem.  The resulting outer case is the
+     parser's exact generic case form, and no destructor remains applied to a
+     symbolic native-datatype value. *)
+  fun datatype_destructor_case destructor theorem data_ty scrutinee =
+    let
+      fun clause constructor =
+        let
+          val (domains, _) = boolSyntax.strip_fun (Term.type_of constructor)
+          val arguments = List.map Term.genvar domains
+          val pattern = Term.list_mk_comb (constructor, arguments)
+          val application = Term.mk_comb (destructor, pattern)
+          val result =
+            Lib.snd (boolSyntax.dest_eq (Thm.concl
+              (simpLib.SIMP_CONV pureSimps.pure_ss [theorem] application)))
+            handle Conv.UNCHANGED => application
+        in
+          (pattern, result)
+        end
+      val raw_case = TypeBase.mk_case
+        (scrutinee, List.map clause (datatype_constructors data_ty))
+    in
+      datatype_case_normal_form raw_case
+    end
+
+  fun recognize_datatype_destructor tm =
+    let
+      val (destructor, scrutinee) = Term.dest_comb tm
+      val data_ty = Term.type_of scrutinee
+      val _ = not (datatype_normalization_excluded data_ty) orelse
+        raise ERR "datatype_destructor_normalize_conv"
+          "excluded datatype"
+      val tyinfo =
+        case TypeBase.fetch data_ty of
+          SOME info => info
+        | NONE => raise ERR "datatype_destructor_normalize_conv"
+            "missing TypeBase entry"
+      val constructors = List.map (TypeBasePure.cinst data_ty)
+        (TypeBasePure.constructors_of tyinfo)
+      val theorem =
+        case datatype_destructor_theorem tyinfo destructor of
+          SOME theorem => theorem
+        | NONE => raise ERR "datatype_destructor_normalize_conv"
+            "not a registered datatype destructor"
+      val (scrutinee_head, _) = boolSyntax.strip_comb scrutinee
+      val constructor_headed = Term.is_const scrutinee_head andalso
+        List.exists (Term.same_const scrutinee_head) constructors
+      val constructor_reduces =
+        not constructor_headed orelse
+        (case Lib.total
+            (simpLib.SIMP_CONV pureSimps.pure_ss [theorem]) tm of
+           SOME reduction =>
+             let
+               val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl reduction)
+             in
+               not (Term.aconv lhs rhs)
+             end
+         | NONE => false)
+      val _ = constructor_reduces orelse
+        raise ERR "datatype_destructor_normalize_conv"
+          "irreducible constructor-headed destructor residue"
+    in
+      (destructor, theorem, scrutinee, data_ty)
+    end
+
+  fun datatype_destructor_normalize_conv_with proof tm =
+    let
+      val recognized = Lib.total recognize_datatype_destructor tm
+    in
+      case recognized of
+        NONE => raise Conv.UNCHANGED
+      | SOME admitted => proof admitted
+    end
+
+  fun prove_datatype_destructor
+      (destructor, theorem, scrutinee, data_ty) =
+    let
+      fun lhs x = Term.mk_comb (destructor, x)
+      fun rhs x = datatype_destructor_case destructor theorem data_ty x
+    in
+      (* Recognition is complete above.  A failure here is a malformed
+         registered family member and must remain a named proof error,
+         never be relabelled as an inapplicable rung. *)
+      datatype_case_equality data_ty scrutinee
+        (fn _ => [theorem]) lhs rhs
+    end
+
+  val datatype_destructor_normalize_conv =
+    datatype_destructor_normalize_conv_with prove_datatype_destructor
 
   fun record_accessor_normalize_conv tm =
     let
@@ -5720,6 +5845,7 @@ local
     end
 
   val datatype_normalization_rungs = [
+    datatype_destructor_normalize_conv,
     record_accessor_normalize_conv,
     record_update_normalize_conv,
     datatype_constructor_case_reduce_conv,
@@ -6211,6 +6337,17 @@ in
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
   val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
   val DATATYPE_TO_SMT_CONV = DATATYPE_TO_SMT_CONV
+  fun datatype_destructor_theorems_for_test ty =
+    case TypeBase.fetch ty of
+      SOME tyinfo => TypeBasePure.destructors_of tyinfo
+    | NONE => []
+  val datatype_destructor_head_for_test = datatype_destructor_head
+  val datatype_destructor_case_for_test = datatype_destructor_case
+  val recognize_datatype_destructor_for_test = recognize_datatype_destructor
+  val datatype_destructor_normalize_conv_for_test =
+    datatype_destructor_normalize_conv
+  val datatype_destructor_normalize_conv_with_for_test =
+    datatype_destructor_normalize_conv_with
   val datatype_constructors_for_test = datatype_constructors
   val datatype_selector_term_for_test = datatype_selector_term
   val datatype_case_normal_form_for_test = datatype_case_normal_form

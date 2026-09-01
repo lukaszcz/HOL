@@ -135,6 +135,12 @@ Definition TL_DEF[simp]:
 End
 Theorem TL = CONJUNCT2 TL_DEF
 
+(* Keep the datatype metadata's destructor family complete.  Clients that
+   lower native datatype projections can then derive the family from
+   TypeBase instead of maintaining an operator-name table. *)
+val _ = TypeBase.general_update “:'a list”
+  (TypeBasePure.put_destructors [HD, TL_DEF])
+
 Definition SUM:
   SUM [] = 0 /\
   SUM (h::t) = h + SUM t

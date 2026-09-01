@@ -1422,9 +1422,14 @@ in
 
     (``(FST (x, y) = SND (x, y)) = (x = y)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(FST p = SND p) = (p = (SND p, FST p))``,
-      [(*thm_AUTO, thm_CVC,*) thm_YO(*, thm_Z3, thm_Z3p*)]),
+      [thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``((\p. FST p) (x, y) = (\p. SND p) (x, y)) = (x = y)``,
-      [thm_AUTO, (*thm_CVC,*) thm_YO, thm_Z3p, thm_Z3p_v4]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3p, thm_Z3p_v4]),
+
+    (* Symbolic list destruction must use native datatype selectors rather
+       than an unconstrained unary HD symbol. *)
+    (``l = [1; 2] ==> HD l = 1``,
+      [thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* words (i.e., bit vectors) *)
 

@@ -7555,14 +7555,15 @@ in
   assert (datatype_regime =
       SmtLib.HigherOrder SmtLib.Z3LambdaArray andalso
       datatype_reason =
-        "automatic:non-constant/non-variable-rator",
-    "Z3 automatic selection lost the normalized-rator reason");
+        "automatic:surviving-abstraction",
+    "Z3 automatic selection lost the normalized-rator reason: " ^
+    datatype_reason);
   expect_record (SmtLib.HigherOrder SmtLib.Standard27)
     "automatic:surviving-abstraction" automatic_surviving;
   expect_record (SmtLib.HigherOrder SmtLib.Standard27)
     "automatic:non-constant/non-variable-rator" automatic_complex;
   expect_record (SmtLib.HigherOrder SmtLib.Standard27)
-    "automatic:non-constant/non-variable-rator" automatic_datatype;
+    "automatic:surviving-abstraction" automatic_datatype;
   expect_hol_error_contains "forced FirstOrder surviving lambda"
     "unsupported higher-order rator expression"
     (fn () => ignore
@@ -8853,6 +8854,160 @@ in
     ([], boolSyntax.mk_eq (full_result, ``s:smt_rec``));
   assert_goal_roundtrip "partially reduced record literal"
     ([], boolSyntax.mk_eq (partial_result, ``s:smt_rec``))
+end
+
+fun datatype_destructor_ablation_boundaries_success () =
+let
+  fun changed input =
+    let
+      val theorem = SmtLib.DATATYPE_TO_SMT_CONV input
+      val result = Lib.snd (boolSyntax.dest_eq (Thm.concl theorem))
+    in
+      not (Term.aconv input result)
+    end
+  val hd_changed = changed ``HD (l:int list)``
+  val nonpair_changed = changed ``OUTL (s:int + bool)``
+in
+  assert (hd_changed andalso nonpair_changed,
+    "shared destructor rung load-bearing boundary: HD changed=" ^
+    Bool.toString hd_changed ^ ", nonpair changed=" ^
+    Bool.toString nonpair_changed)
+end
+
+fun datatype_destructor_normalization_success () =
+let
+  fun registered ty = SmtLib.datatype_destructor_theorems_for_test ty
+  fun theorem_for ty destructor =
+    case List.find
+        (fn theorem => Term.same_const destructor
+          (SmtLib.datatype_destructor_head_for_test theorem))
+        (registered ty) of
+      SOME theorem => theorem
+    | NONE => die "missing registered datatype destructor theorem"
+  fun conversion input =
+    let
+      val (destructor, scrutinee) = Term.dest_comb input
+      val data_ty = Term.type_of scrutinee
+      val theorem = theorem_for data_ty destructor
+      val expected = SmtLib.datatype_destructor_case_for_test
+        destructor theorem data_ty scrutinee
+      val result = SmtLib.DATATYPE_TO_SMT_CONV input
+    in
+      assert_no_hyps ("datatype destructor normalization", result);
+      assert_concl_alpha ("datatype destructor normalization", result,
+        boolSyntax.mk_eq (input, expected));
+      (result, expected)
+    end
+  val pair_input = ``FST (p:int # bool)``
+  val hd_input = ``HD (l:int list)``
+  val tl_input = ``TL (l:int list)``
+  val sum_input = ``OUTL (s:int + bool)``
+  val literal_hd_input = ``HD ([1; 2]:int list)``
+  val nested_input = ``FST (SND (q:bool # (int # num)))``
+  val _ = SmtLib.recognize_datatype_destructor_for_test pair_input
+  val pair_direct =
+    SmtLib.datatype_destructor_normalize_conv_for_test pair_input
+  fun capture_error label action =
+    (ignore (action ());
+     die ("FAIL: " ^ label ^ " unexpectedly succeeded"))
+    handle Feedback.HOL_ERR holerr => holerr
+  val injected_error = capture_error "admitted destructor proof failure"
+    (fn () =>
+      SmtLib.datatype_destructor_normalize_conv_with_for_test
+        (fn _ => raise Feedback.mk_HOL_ERR
+          "Task09Injected" "destructor_proof"
+          "distinctive admitted destructor proof failure") pair_input)
+  val (pair_thm, pair_result) = conversion pair_input
+  val (hd_thm, hd_result) = conversion hd_input
+  val (tl_thm, tl_result) = conversion tl_input
+  val (sum_thm, sum_result) = conversion sum_input
+  val literal_hd_thm = SmtLib.DATATYPE_TO_SMT_CONV literal_hd_input
+  val literal_hd_result =
+    Lib.snd (boolSyntax.dest_eq (Thm.concl literal_hd_thm))
+  val nested_thm = SmtLib.DATATYPE_TO_SMT_CONV nested_input
+  val nested_result = Lib.snd (boolSyntax.dest_eq (Thm.concl nested_thm))
+  val fixed_hd_thm = SmtLib.DATATYPE_TO_SMT_CONV hd_result
+  fun constructor_headed tm =
+    let
+      val ty = Term.type_of tm
+      val (head, _) = boolSyntax.strip_comb tm
+    in
+      List.exists (Term.same_const head)
+        (SmtLib.datatype_constructors_for_test ty)
+    end handle Feedback.HOL_ERR _ => false
+  fun symbolic_destructor tm =
+    case Lib.total Term.dest_comb tm of
+      NONE => false
+    | SOME (destructor, argument) =>
+        List.exists
+          (fn theorem => Term.same_const destructor
+            (SmtLib.datatype_destructor_head_for_test theorem))
+          (registered (Term.type_of argument)) andalso
+        not (constructor_headed argument)
+  fun contains_symbolic_destructor tm =
+    List.exists symbolic_destructor (Library.subterms tm)
+  fun contains_any_destructor tm =
+    List.exists
+      (fn subterm =>
+        case Lib.total Term.dest_comb subterm of
+          NONE => false
+        | SOME (destructor, argument) =>
+            List.exists
+              (fn theorem => Term.same_const destructor
+                (SmtLib.datatype_destructor_head_for_test theorem))
+              (registered (Term.type_of argument)))
+      (Library.subterms tm)
+  fun normalized_goal goal =
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC goal) of
+      [normalized] => normalized
+    | _ => die "destructor normalization did not preserve one goal"
+  val hd_goal = normalized_goal
+    ([], boolSyntax.mk_eq (hd_input, ``n:int``))
+  val sum_goal = normalized_goal
+    ([], boolSyntax.mk_eq (sum_input, ``m:int``))
+  val hd_text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE hd_goal))
+  val sum_text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE sum_goal))
+  fun family_heads ty = List.map
+    SmtLib.datatype_destructor_head_for_test (registered ty)
+in
+  List.app assert_no_hyps
+    [("direct pair destructor theorem", pair_direct),
+     ("pair destructor theorem", pair_thm),
+     ("list HD destructor theorem", hd_thm),
+     ("list TL destructor theorem", tl_thm),
+     ("sum destructor theorem", sum_thm),
+     ("constructor-exposed HD theorem", literal_hd_thm),
+     ("nested destructor theorem", nested_thm)];
+  assert_concl_alpha ("destructor parser-form fixed point", fixed_hd_thm,
+    boolSyntax.mk_eq (hd_result, hd_result));
+  assert (not (Term.aconv literal_hd_input literal_hd_result),
+    "constructor-exposed HD did not make normalization progress");
+  assert (Feedback.top_structure_of injected_error = "Task09Injected" andalso
+      Feedback.top_function_of injected_error = "destructor_proof" andalso
+      Feedback.message_of injected_error =
+        "distinctive admitted destructor proof failure",
+    "admitted destructor proof failure was swallowed or relabelled");
+  assert (List.length (family_heads ``:'a list``) = 2 andalso
+      List.length (family_heads ``:'a # 'b``) = 2 andalso
+      List.length (family_heads ``:'a + 'b``) = 2 andalso
+      List.length (family_heads ``:'a option``) = 1,
+    "TypeBase-derived destructor family was incomplete");
+  assert (not (contains_symbolic_destructor pair_result) andalso
+      not (contains_symbolic_destructor hd_result) andalso
+      not (contains_symbolic_destructor tl_result) andalso
+      not (contains_symbolic_destructor sum_result) andalso
+      not (contains_symbolic_destructor literal_hd_result) andalso
+      not (contains_symbolic_destructor nested_result),
+    "normalization retained a destructor on a symbolic native datatype");
+  assert (contains_any_destructor hd_result andalso
+      contains_any_destructor sum_result,
+    "partial destructor normalization discarded an unspecified branch");
+  assert (contains "sel_" hd_text andalso contains "sel_" sum_text,
+    "symbolic destructor did not emit parser-native case/selector form");
+  assert_goal_roundtrip "normalized list destructor" hd_goal;
+  assert_goal_roundtrip "normalized non-list destructor" sum_goal
 end
 
 fun smtlib_datatype_parser_dict_success () =
@@ -17479,6 +17634,10 @@ let
       datatype_to_smt_normalization_roundtrip_success),
     ("datatype_constructor_case_reduction_success",
       datatype_constructor_case_reduction_success),
+    ("datatype_destructor_ablation_boundaries_success",
+      datatype_destructor_ablation_boundaries_success),
+    ("datatype_destructor_normalization_success",
+      datatype_destructor_normalization_success),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",

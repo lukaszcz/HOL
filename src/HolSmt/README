@@ -318,6 +318,14 @@ parser/typechecker embeddings and record proof obligations for the soundness
 audit.  Replay is not claimed merely because parsing, typechecking or HOL
 translation succeeds.
 
+The Datatypes row's checked selector replay applies to parser-native selector
+case terms.  It is not, by itself, a claim about HOL destructor constants.
+Before emission, applications of TypeBase-registered destructors to symbolic
+native datatypes are related to parser case form by kernel-proved
+normalization.  For partial destructors, constructor branches not fixed by the
+registered theorem retain the original constructor-headed value; they are not
+silently identified with the parser selector's chosen `ARB` interpretation.
+
 Trusted-code-base boundary and soundness audit:
 
 This section documents the checked boundaries for `Z3_TAC` and `CVC_TAC`. It
