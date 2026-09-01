@@ -99,6 +99,9 @@ sig
   val weight_facts_smoothly : mlThmData.thmid list -> scored_facts
 
   (* Each channel is (global weight, (ranked facts, unknown facts)). *)
+  val mesh_facts_by :
+    (mlThmData.thmid * mlThmData.thmid -> bool) -> int ->
+    mesh_channel list -> mlThmData.thmid list
   val mesh_facts : int -> mesh_channel list -> mlThmData.thmid list
   val merge_mash_channels :
     {max_facts : int, suggestions : mlThmData.thmid list,
@@ -117,12 +120,18 @@ sig
      learner : mlThmData.thmid list,
      max_suggestions : int}
   val clean_context_cache : unit -> unit
+  val target_thmdata_cache_size : unit -> int
+  val target_thmdata_cache_builds : unit -> int
+  val structural_goal_digest_schema : string
+  val structural_goal_sha1 : Abbrev.goal -> string
   (* The explicit constructor supports a lagging persistent model and is also
      useful for checking partial-model behavior hermetically. *)
   val make_context :
     {thmdata : mlThmData.thmdata,
      model_thmdata : mlThmData.thmdata,
      dependencies : dep_table} -> context
+  val create_context_for : string -> mlThmData.thmdata -> context
+  val create_thmdata_for : string -> mlThmData.thmdata
   val create_context : mlThmData.thmdata -> context
   val context_thmids : context -> mlThmData.thmid list
   val mash_details : context ->

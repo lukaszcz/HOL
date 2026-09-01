@@ -545,7 +545,7 @@ fun theory_of_thmid thmid =
       SOME (theory, _) => theory
     | NONE => Theory.current_theory ()
 
-fun create_context (_, thm_features) statures =
+fun create_context_for current (_, thm_features) statures =
   let
     fun fetch (thmid, _) =
       case total mlThmData.thm_of_name thmid of
@@ -557,9 +557,12 @@ fun create_context (_, thm_features) statures =
         | _ => NONE
   in
     make_context
-      {current_theory = Theory.current_theory (),
+      {current_theory = current,
        facts = List.mapPartial fetch thm_features}
   end
+
+fun create_context thmdata statures =
+  create_context_for (Theory.current_theory ()) thmdata statures
 
 fun context_thmids ({facts, ...} : context) = map #thmid facts
 

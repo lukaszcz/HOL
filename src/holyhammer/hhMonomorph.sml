@@ -195,38 +195,39 @@ struct
   fun substitutions nickname tvars schematics known new require_new limit =
     let
       val visited = ref 0
+      fun same_subst left right = subst_compare (left, right) = EQUAL
+      fun add_best subst result =
+        if List.exists (fn old => same_subst subst old) result then result
+        else take limit
+          (Listsort.sort subst_compare (subst :: result))
+      (* The exhaustive branch still visits the same bounded search tree,
+         but only its canonical best [limit] substitutions can reach the
+         caller.  Keeping that prefix incrementally avoids constructing and
+         sorting a large discarded tail before theorem instantiation. *)
+      val best = ref []
       fun matches_new subst (name, ty) =
         List.exists (fn ground =>
           case match ty ground subst of SOME _ => true | NONE => false)
           (lookup name new)
       fun search remaining subst used_new =
-        if !visited >= max_substitution_nodes then []
+        if !visited >= max_substitution_nodes then ()
         else if complete tvars subst then
           if not require_new orelse used_new orelse
-             List.exists (matches_new subst) remaining then [subst]
-          else []
+             List.exists (matches_new subst) remaining
+          then best := add_best subst (!best)
+          else ()
         else
           (visited := !visited + 1;
           case remaining of
-              [] => []
+              [] => ()
             | (name, ty) :: rest =>
             let
               val matched = matching_grounds name ty subst known new
-              val refined = List.concat (map (fn (is_new, subst') =>
-                search rest subst' (used_new orelse is_new)) matched)
             in
-              refined @ search rest subst used_new
+              List.app (fn (is_new, subst') =>
+                search rest subst' (used_new orelse is_new)) matched;
+              search rest subst used_new
             end)
-      fun same_subst left right = subst_compare (left, right) = EQUAL
-      fun unique [] result = List.rev result
-        | unique (subst :: rest) result =
-            if List.exists (fn old => same_subst subst old) result then
-              unique rest result
-            else unique rest (subst :: result)
-      fun add_best subst result =
-        if List.exists (fn old => same_subst subst old) result then result
-        else take limit
-          (Listsort.sort subst_compare (subst :: result))
       fun covers_all ty =
         let val vars = Type.type_vars ty in
           List.all (fn tvar => mem_type tvar vars) tvars
@@ -250,7 +251,7 @@ struct
         end
     in
       case List.filter (covers_all o #2) schematics of
-          [] => unique (sort subst_compare (search schematics [] false)) []
+          [] => (search schematics [] false; !best)
         | covering => List.foldl (fn (schematic, result) =>
             direct schematics schematic result) [] covering
     end

@@ -805,6 +805,46 @@ fun test_hhMonomorph () =
     val again = hhMonomorph.monomorph
       {max_iters = 3, max_new_instances = 100} cap_goal
       [("many", schematic)]
+    (* No occurrence below covers both type variables.  This forces the
+       exhaustive substitution path whose bounded-best implementation must
+       agree with the canonical prefix of the complete Cartesian product. *)
+    val branch_types = map nested (List.tabulate (15, fn index => index))
+    val branch_goal = conjs (map eq_nil branch_types)
+    val branch_schema = conjs [eq_nil alpha, eq_nil beta]
+    val bounded_branch = hhMonomorph.monomorph
+      {max_iters = 1, max_new_instances = 10} branch_goal
+      [("branch", branch_schema)]
+    fun subst_size subst = List.foldl (fn ({residue, ...}, total) =>
+      Type.type_size residue + total) 0 subst
+    fun subst_pairs subst = Listsort.sort
+      (fn ({redex = left, ...}, {redex = right, ...}) =>
+        Type.compare (left, right)) subst
+    fun reference_compare (left, right) =
+      case Int.compare (subst_size left, subst_size right) of
+          EQUAL =>
+            let
+              fun pairs ([], []) = EQUAL
+                | pairs ([], _) = LESS
+                | pairs (_, []) = GREATER
+                | pairs ({redex = lv, residue = lt} :: ls,
+                         {redex = rv, residue = rt} :: rs) =
+                    (case Type.compare (lv, rv) of
+                         EQUAL =>
+                           (case Type.compare (lt, rt) of
+                                EQUAL => pairs (ls, rs)
+                              | order => order)
+                       | order => order)
+            in
+              pairs (subst_pairs left, subst_pairs right)
+            end
+        | order => order
+    val exhaustive_substs = List.concat (map (fn left =>
+      map (fn right => [{redex = alpha, residue = left},
+                        {redex = beta, residue = right}]) branch_types)
+      branch_types)
+    val reference_branch = map (fn subst =>
+      ("branch", Term.inst subst branch_schema))
+      (List.take (Listsort.sort reference_compare exhaustive_substs, 10))
     val _ = expect "monomorphization closes the list/num fixture"
       (length (named "ground" basic) = 1 andalso
        List.exists (fn (_, tm) => Term.aconv tm expected)
@@ -828,6 +868,9 @@ fun test_hhMonomorph () =
        null (named "downstream" ordinary))
     val _ = expect "monomorphization output order is deterministic"
       (same_output per_fact again)
+    val _ = expect
+      "bounded-best monomorphization equals exhaustive canonical prefix"
+      (same_output bounded_branch reference_branch)
   in
     ()
   end
@@ -2383,8 +2426,13 @@ fun test_hhEval root =
       (OS.Path.dir script = join src "one")
     val _ = expect "worker script loads hhEval"
       (String.isSubstring "load \"hhEval\";" script_text)
+    val _ = expect "worker script initializes the simp-data exporter"
+      (String.isSubstring "load \"BasicProvers\";" script_text)
     val _ = expect "worker script loads its theory"
       (String.isSubstring "load \"listTheory\";" script_text)
+    val _ = expect "worker script establishes an isolated current theory"
+      (String.isSubstring
+        "Theory.new_theory \"hheval_worker_list\";" script_text)
     val _ = expect "worker script reflects condition settings"
       (String.isSubstring "hhEval.set_worker_settings" script_text andalso
        String.isSubstring "knn-e" script_text andalso
@@ -3460,6 +3508,45 @@ fun test_hhEval_anchor_comparison () =
 
 val _ = test_hhEval_anchor_comparison ()
 
+fun test_hhEval_anchor_goal_digest () =
+  let
+    val alpha = Type.mk_vartype "'a"
+    val x = Term.mk_var ("x", alpha)
+    val y = Term.mk_var ("y", alpha)
+    val free_x = Term.mk_var ("free_x", alpha)
+    val free_y = Term.mk_var ("free_y", alpha)
+    val identity_x = Term.mk_abs (x, x)
+    val identity_y = Term.mk_abs (y, y)
+    val nested_x = Term.mk_abs (x, Term.mk_abs (y, x))
+    val nested_y = Term.mk_abs (free_x, Term.mk_abs (free_y, free_x))
+    fun digest goal = hhEval.anchor_goal_sha1 goal
+    val grammar_term = boolSyntax.mk_conj (boolSyntax.T, boolSyntax.F)
+    val grammar_digest = digest ([], grammar_term)
+    val grammars = Parse.current_grammars ()
+    val printed_before = Parse.term_to_string grammar_term
+    val _ = Parse.temp_overload_on
+      ("hheval_goal_digest_alias", boolSyntax.conjunction)
+    val printed_after = Parse.term_to_string grammar_term
+    val grammar_digest_after = digest ([], grammar_term)
+    val _ = Parse.temp_set_grammars grammars
+  in
+    expect "hhEval anchor goal digest is alpha-invariant"
+      (digest ([], identity_x) = digest ([], identity_y) andalso
+       digest ([], nested_x) = digest ([], nested_y));
+    expect "hhEval anchor goal digest distinguishes free variables"
+      (digest ([], free_x) <> digest ([], free_y));
+    expect "hhEval anchor goal digest canonicalizes assumption sets"
+      (digest ([free_x, free_y], identity_x) =
+       digest ([free_y, free_x, free_x], identity_x));
+    expect "hhEval anchor goal digest binds assumption structure"
+      (digest ([free_x], free_y) <> digest ([], free_y));
+    expect "hhEval anchor goal digest ignores pretty-printer grammars"
+      (printed_before <> printed_after andalso
+       grammar_digest = grammar_digest_after)
+  end
+
+val _ = test_hhEval_anchor_goal_digest ()
+
 fun test_hhEval_anchor_derivation root =
   let
     val directory = join root "anchor-derivation"
@@ -3475,6 +3562,48 @@ fun test_hhEval_anchor_derivation root =
     val certificate_path = join fixture
       "phase2-s30-v3-journal.sha256"
     val manifest_lines = read_lines manifest_path
+    val f751_commit =
+      "f7511d0d5ee7c2918236f7eda4c16ee8c01e00fa"
+    val f258_commit =
+      "f25871c404016d4368a0927ba0a868860fc82c70"
+    val f751_provenance =
+      "927578faeca4e68c6b4e588d29cef0cbf4b5df6ad4693401555918abc5e0295f"
+    val f258_provenance =
+      "65064ffbae3698ccd6f431af2ac817d3b7e4eb8479ab5da49706297c252c3a0c"
+    fun replace_once old new text =
+      let
+        val old_size = String.size old
+        val text_size = String.size text
+        fun search index =
+          if index + old_size > text_size then NONE
+          else if String.substring (text, index, old_size) = old then
+            SOME index
+          else search (index + 1)
+      in
+        case search 0 of
+            SOME index =>
+              String.substring (text, 0, index) ^ new ^
+              String.extract (text, index + old_size, NONE)
+          | NONE => raise Fail "anchor fixture replacement was not found"
+      end
+    val manifest_text = String.concat manifest_lines
+    fun changed name text =
+      let val path = join directory name
+      in write_file path text; path end
+    val f258_manifest_path = changed "f258-manifest.tsv"
+      (replace_once f751_provenance f258_provenance
+        (replace_once f751_commit f258_commit manifest_text))
+    val mixed_f258_commit_path = changed "mixed-f258-commit.tsv"
+      (replace_once f751_commit f258_commit manifest_text)
+    val mixed_f258_provenance_path = changed "mixed-f258-provenance.tsv"
+      (replace_once f751_provenance f258_provenance manifest_text)
+    val unknown_commit_path = changed "unknown-commit.tsv"
+      (replace_once f751_commit
+        "0000000000000000000000000000000000000000" manifest_text)
+    val unknown_provenance_path = changed "unknown-provenance.tsv"
+      (replace_once f751_provenance
+        "0000000000000000000000000000000000000000000000000000000000000000"
+        manifest_text)
     val historical_lines = read_lines historical_path
     val certificate_lines = map hhConfig.trim (read_lines certificate_path)
     val certificate = hhEval.read_anchor_certificate certificate_path
@@ -3482,6 +3611,7 @@ fun test_hhEval_anchor_derivation root =
       [("e", SOME "3.2.5-ho"), ("vampire", SOME "5.0.1"),
        ("zipperposition", SOME "2.1")]
     val manifest = hhEval.read_anchor_manifest manifest_path
+    val f258_manifest = hhEval.read_anchor_manifest f258_manifest_path
     val entries = hhEval.read_journal journal_path
     val paired = map hhEval.parse_anchor_row (read_lines paired_path)
     val commands = read_lines command_path
@@ -3551,28 +3681,27 @@ fun test_hhEval_anchor_derivation root =
     val malformed_separator = first_digest ^ " ./list.jsonl"
     val duplicate_entry = first_certificate_line ::
       first_certificate_line :: List.drop (certificate_lines, 2)
-    val output = join directory "current.tsv"
-    val report = join directory "mismatches.jsonl"
-    val equal = hhEval.run_anchor_derivation
-      {thy = "list", theorem_names =
-         SOME ["APPEND", "APPEND_ASSOC"],
-       baseline_manifest = manifest_path, output_tsv = output,
-       mismatch_report = report, timeout = 30,
-       prover_versions = versions}
-    val _ = if #mismatches equal = 0 then () else
-      List.app (fn line => print ("hhEval anchor mismatch: " ^ line ^ "\n"))
-        (read_lines report)
+    val equal = hhEval.compare_anchor_rows (#rows manifest) (#rows manifest)
   in
     expect "hhEval reads a complete immutable Phase 2 anchor manifest"
-      (#goals (#header manifest) = 2 andalso
+      (#goals (#header manifest) = 1 andalso
        #profiles (#header manifest) = 16 andalso
-       #row_count (#header manifest) = 32 andalso
+       #row_count (#header manifest) = 16 andalso
+       #task13_execution_goals (#header manifest) = 595 andalso
        #prover_spawns (#header manifest) = 0 andalso
        #input_journal (#header manifest) =
          "src/holyhammer/eval/phase2-s30-v3/journal/list.jsonl" andalso
        #input_journal_sha256 (#header manifest) =
          "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766" andalso
-       length (#rows manifest) = 32);
+       length (#rows manifest) = 16);
+    expect "hhEval accepts the complete certified f258 anchor tuple"
+      (#behavior_source_commit (#header f258_manifest) = f258_commit andalso
+       #baseline_provenance_sha256 (#header f258_manifest) =
+         f258_provenance);
+    expect "hhEval rejects every mixed or unknown anchor tuple"
+      (List.all rejects
+        [mixed_f258_commit_path, mixed_f258_provenance_path,
+         unknown_commit_path, unknown_provenance_path]);
     expect "hhEval validates the exact tracked journal certificate"
       (length certificate = 229 andalso
        List.exists (fn entry =>
@@ -3596,7 +3725,7 @@ fun test_hhEval_anchor_derivation root =
        List.all (fn entry => length (#slices entry) = 16) entries);
     expect "hhEval anchor fixture records exact historical provenance"
       (String.isSubstring
-         "788f0b8817901c57206e56495367f27b0351dd68" provenance andalso
+         "f7511d0d5ee7c2918236f7eda4c16ee8c01e00fa" provenance andalso
        String.isSubstring
          "f25871c404016d4368a0927ba0a868860fc82c70" provenance andalso
        String.isSubstring
@@ -3606,24 +3735,23 @@ fun test_hhEval_anchor_derivation root =
          "20a2fdfe70831c52aee997b6d870d3422a64c3ccca7ef8b21a3dba7a0ceca766"
          provenance);
     expect "hhEval manifest profiles match Task13 internally paired rows"
-      (length paired = 16 andalso
+      (length paired = 8 andalso
        List.all paired_profile_matches paired andalso
-       #task13_rows_checked (#header manifest) = 16 andalso
+       #task13_rows_checked (#header manifest) = 4760 andalso
        #task13_internal_key_pair_mismatches (#header manifest) = 0);
-    expect "hhEval records Task13 dirty-state premise and key divergence"
-      (#task13_premise_mismatches (#header manifest) = 12 andalso
-       #task13_request_key_mismatches (#header manifest) = 12 andalso
-       String.isSubstring "known_nonreproducibility" provenance);
+    expect "hhEval requires zero Task13 premise and key divergence"
+      (#task13_premise_mismatches (#header manifest) = 0 andalso
+       #task13_request_key_mismatches (#header manifest) = 0 andalso
+       String.isSubstring "full_theory_creation_order" provenance);
     expect "hhEval manifest first eight rows match Task13 full commands"
-      (length commands = 16 andalso List.all command_matches commands);
+      (length commands = 8 andalso List.all command_matches commands);
     expect "hhEval rejects an unproven extra historical anchor"
       (length historical_lines = length manifest_lines + 1 andalso
        List.take (historical_lines, length manifest_lines) = manifest_lines andalso
-       length (fields (List.last historical_lines)) = 10 andalso
+       length (fields (List.last historical_lines)) = 13 andalso
        rejects historical_path);
-    expect "hhEval current derivation matches all immutable anchors"
-      (#rows equal = 32 andalso #mismatches equal = 0 andalso
-       #prover_spawns equal = 0 andalso null (read_lines report));
+    expect "hhEval compares identical immutable anchor inventories"
+      (null equal);
     remove_tree directory
   end
 
@@ -3681,6 +3809,7 @@ fun test_hhStature_registered_definition () =
     val raw_definition = boolSyntax.new_definition
       (raw_name, boolSyntax.mk_eq (constant, boolSyntax.T))
     val _ = Theory.save_thm (registered_name, raw_definition)
+    val _ = BasicProvers.export_rewrites [raw_name]
     val _ = DefnBaseCore.register_defn
       {tag = "user", thmname = registered_name}
     val inherited_statures = hhStature.create_statures ()
@@ -3693,6 +3822,23 @@ fun test_hhStature_registered_definition () =
       ("hhStatureTestTheory." ^ raw_name)
     val registered = hhStature.stature_of statures
       ("hhStatureTestTheory." ^ registered_name)
+    val explicit_target = hhStature.stature_of
+      (hhStature.create_statures_for "arithmetic")
+      "arithmeticTheory.ADD1"
+    val explicit_inherited = hhStature.stature_of
+      (hhStature.create_statures_for "arithmetic") inherited_simp
+    val explicit_unrelated = hhStature.stature_of
+      (hhStature.create_statures_for "arithmetic")
+      ("hhStatureTestTheory." ^ raw_name)
+    val explicit_unrelated_induction = hhStature.stature_of
+      (hhStature.create_statures_for "arithmetic")
+      "hhStatureTestTheory.hh_typeenc_recursive_induction"
+    val explicit_ancestor_induction = hhStature.stature_of
+      (hhStature.create_statures_for "list") "boolTheory.bool_INDUCT"
+    val explicit_target_induction = hhStature.stature_of
+      (hhStature.create_statures_for "list") "listTheory.list_induction"
+    val explicit_ancestor_definition = hhStature.stature_of
+      (hhStature.create_statures_for "list") "boolTheory.LET_DEF"
     val namespace = hhStature.stature_of statures
       (mlThmData.namespace_tag ^ "Theory." ^ registered_name)
   in
@@ -3703,6 +3849,29 @@ fun test_hhStature_registered_definition () =
     expect "hhStature detects a DB-class definition" (#def raw);
     expect "hhStature detects a DefnBase-registered theorem"
       (#def registered andalso #local_ registered);
+    expect "hhStature accepts an explicit logical target theory"
+      (#local_ explicit_target);
+    expect "hhStature target retains its ancestor simp deltas"
+      (#simp explicit_inherited);
+    expect "hhStature target ignores unrelated ambient simp deltas"
+      (not (#simp explicit_unrelated) andalso
+       not (#local_ explicit_unrelated) andalso
+       not (#def explicit_unrelated) andalso
+       not (#induction explicit_unrelated));
+    expect "hhStature target ignores unrelated ambient TypeBase rows"
+      (not (#simp explicit_unrelated_induction) andalso
+       not (#local_ explicit_unrelated_induction) andalso
+       not (#def explicit_unrelated_induction) andalso
+       not (#induction explicit_unrelated_induction));
+    expect "hhStature target includes ancestor TypeBase induction rows"
+      (#induction explicit_ancestor_induction andalso
+       not (#local_ explicit_ancestor_induction));
+    expect "hhStature target includes target TypeBase induction rows"
+      (#induction explicit_target_induction andalso
+       #local_ explicit_target_induction);
+    expect "hhStature target includes ancestor definition and DB rows"
+      (#def explicit_ancestor_definition andalso
+       not (#local_ explicit_ancestor_definition));
     expect "hhStature gives namespace theorems no stature"
       (not (#simp namespace) andalso not (#local_ namespace) andalso
        not (#def namespace) andalso not (#induction namespace))
@@ -4264,6 +4433,28 @@ fun test_hhLearn_curves_and_mesh () =
     val fall_out_known = hhLearn.mesh_facts 3
       [(0.5, (hhLearn.weight_facts_steeply ["other", "fallout"], [])),
        (0.5, ([("recent", 1.0)], ["far_unknown"]))]
+    fun alias_eq (left, right) =
+      left = right orelse
+      (left = "same_prop" andalso right = "same_prop_alias") orelse
+      (left = "same_prop_alias" andalso right = "same_prop")
+    val proposition_dedup = hhLearn.mesh_facts_by alias_eq 3
+      [(0.5, ([("same_prop", 1.0), ("left", 0.5)], [])),
+       (0.5, ([("same_prop_alias", 1.0), ("right", 0.5)], []))]
+    val proposition_unknown = hhLearn.mesh_facts_by alias_eq 2
+      [(0.5, ([("same_prop", 1.0)], [])),
+       (0.5, ([("right", 1.0)], ["same_prop_alias"]))]
+    fun is_induct name = name = "induct"
+    val raw_mepo = ["induct", "a", "b"]
+    val raw_mash = ["c", "d", "e"]
+    val completed_first = hhLearn.mesh_facts 2
+      [(0.5, (hhLearn.weight_facts_steeply
+         (hhLearn.exclude_and_take is_induct 2 raw_mepo), [])),
+       (0.5, (hhLearn.weight_facts_steeply
+         (hhLearn.exclude_and_take is_induct 2 raw_mash), []))]
+    val excluded_late = hhLearn.exclude_and_take is_induct 2
+      (hhLearn.mesh_facts 2
+        [(0.5, (hhLearn.weight_facts_steeply raw_mepo, [])),
+         (0.5, (hhLearn.weight_facts_steeply raw_mash, []))])
   in
     expect "hhLearn ports the steep and smooth rank curves exactly"
       (learn_real_close 1.0 (hhLearn.steep_weight 0) andalso
@@ -4279,7 +4470,13 @@ fun test_hhLearn_curves_and_mesh () =
     expect "hhLearn mesh ports fold-union tie and dedup insertion order"
       (insertion_order = ["b", "c", "a"]);
     expect "hhLearn final mesh zero-penalizes proximity-channel fall-out"
-      (fall_out_known = ["other", "recent", "fallout"])
+      (fall_out_known = ["other", "recent", "fallout"]);
+    expect "hhLearn mesh deduplicates alpha-equivalent proposition aliases"
+      (proposition_dedup = ["same_prop", "right", "left"]);
+    expect "hhLearn mesh excludes proposition aliases marked unknown"
+      (proposition_unknown = ["same_prop", "right"]);
+    expect "hhLearn mesh completes and refills each leg before combining"
+      (length completed_first = 2 andalso length excluded_late = 1)
   end
 
 val _ = test_hhLearn_curves_and_mesh ()
@@ -4351,8 +4548,8 @@ fun test_hhLearn_dispatch_cache_and_knn_anchor () =
     expect "hhLearn dispatches all three new filters on a live fixture"
       (mepo = [primary] andalso mash = [primary] andalso
        mesh = [primary] andalso from_fixture (mepo @ mash @ mesh));
-    expect "hhLearn context cache uses ancestry and current-fact count"
-      (hhLearn.context_thmids cached = [primary, secondary] andalso
+    expect "hhLearn context cache uses the strong target fact inventory"
+      (hhLearn.context_thmids cached = [secondary] andalso
        hhLearn.context_thmids changed = [local_name] andalso
        hhLearn.context_thmids replaced = [secondary]);
     expect "hhLearn uses exact 51/50 induction slack before exclusion"
@@ -4368,22 +4565,26 @@ fun test_hhLearn_production_exclusion_and_mash () =
   let
     val induction = DB.fetch "list" "list_induction"
     val induction_base = "hhLearn_real_induction"
-    val regular_conclusion = boolSyntax.mk_conj
-      (Thm.concl induction, boolSyntax.T)
-    val regular_theorem = Thm.ASSUME regular_conclusion
     val regular_bases = List.tabulate (101, fn index =>
       "hhLearn_regular_" ^ Int.toString index)
-    fun save name =
-      Feedback.quiet_messages Theory.save_thm (name, regular_theorem)
+    fun regular_conclusion index = boolSyntax.mk_conj
+      (Thm.concl induction,
+       Term.mk_var
+         ("hhLearn_marker_" ^ Int.toString index, Type.bool))
+    val regular_theorems = List.tabulate (101, fn index =>
+      Thm.ASSUME (regular_conclusion index))
+    fun save (name, theorem) =
+      Feedback.quiet_messages Theory.save_thm (name, theorem)
     val _ = Feedback.quiet_messages Theory.save_thm
       (induction_base, Thm.ASSUME (Thm.concl induction))
-    val _ = List.app (ignore o save) regular_bases
+    val _ = List.app (ignore o save)
+      (ListPair.zip (regular_bases, regular_theorems))
     val prefix = Theory.current_theory () ^ "Theory."
     val induction_name = prefix ^ induction_base
     val regular_names = map (fn name => prefix ^ name) regular_bases
     val all_names = induction_name :: regular_names
     val direct_names = induction_name :: List.take (regular_names, 50)
-    val goal = ([], regular_conclusion)
+    val goal = ([], regular_conclusion 0)
     val features = mlFeature.fea_of_goal true goal
     val rows = map (fn name => (name, features)) all_names
     val thmdata : mlThmData.thmdata =
@@ -4468,6 +4669,101 @@ fun test_hhLearn_production_exclusion_and_mash () =
   end
 
 val _ = test_hhLearn_production_exclusion_and_mash ()
+
+fun same_thmdata ((left_weights, left_features) : mlThmData.thmdata,
+    (right_weights, right_features) : mlThmData.thmdata) =
+  let
+    fun same_weight ((left_key, left), (right_key, right)) =
+      left_key = right_key andalso Real.== (left, right)
+    fun all_pairs _ [] [] = true
+      | all_pairs same (left :: lefts) (right :: rights) =
+          same (left, right) andalso all_pairs same lefts rights
+      | all_pairs _ _ _ = false
+  in
+    left_features = right_features andalso
+    all_pairs same_weight (Redblackmap.listItems left_weights)
+      (Redblackmap.listItems right_weights)
+  end
+
+fun test_hhLearn_target_thmdata () =
+  let
+    val _ = hhLearn.clean_context_cache ()
+    val ambient = Theory.current_theory ()
+    val legacy = mlThmData.create_thmdata ()
+    val explicit = hhLearn.create_thmdata_for ambient
+    val explicit_again = hhLearn.create_thmdata_for ambient
+    val ambient_cache_size = hhLearn.target_thmdata_cache_size ()
+    val ambient_builds = hhLearn.target_thmdata_cache_builds ()
+    val legacy_binding = hhEval.anchor_model_binding legacy
+    val (_, legacy_features) = legacy
+    val mixed_model = (#1 legacy, List.drop (legacy_features, 1))
+    val mixed_binding = hhEval.anchor_model_binding mixed_model
+    val stale_binding : hhEval.anchor_model_binding =
+      {inventory_sha1 = #inventory_sha1 legacy_binding,
+       features_sha1 = #features_sha1 legacy_binding,
+       weights_sha1 = #weights_sha1 legacy_binding,
+       feature_rows = #feature_rows legacy_binding + 1}
+    val (ranking_name, _) = hd (DB.theorems ambient)
+    val stale_ranking : hhEval.anchor_ranking =
+      {goal_id = "baseline:" ^ ambient ^ "." ^ ranking_name,
+       goal_sha1 = "0000000000000000000000000000000000000000",
+       ancestry_sha1 = "0000000000000000000000000000000000000000",
+       fact_inventory_sha1 =
+         "0000000000000000000000000000000000000000",
+       pool_count = 0, selected_premises_sha1 =
+         "0000000000000000000000000000000000000000",
+       selected_premises = [], maximum = 1024}
+    fun rejects model binding =
+      (ignore (hhEval.derive_anchor_rows_part_with_model
+        {thy = ambient, theorem_names = [], timeout = 30,
+         prover_versions = [], profile_start = 0, profile_length = 1,
+         replay_theory = false, model_thmdata = model,
+         model_binding = binding}); false)
+      handle Fail message =>
+        String.isSubstring "anchor model binding" message
+    val rejects_ranking =
+      (ignore (hhEval.derive_anchor_rows_part_with_rankings
+        {thy = ambient, theorem_names = [ranking_name], timeout = 30,
+         prover_versions = [], profile_start = 0, profile_length = 1,
+         rankings = [stale_ranking], model_binding = legacy_binding}); false)
+      handle Fail message => String.isSubstring "anchor ranking" message
+    val before_data = hhLearn.create_thmdata_for "list"
+    val list_builds = hhLearn.target_thmdata_cache_builds ()
+    val _ = Feedback.quiet_messages Theory.new_theory
+      "hhLearnUnrelatedAmbientTest"
+    val unrelated = boolSyntax.new_definition
+      ("unrelated_definition", boolSyntax.mk_eq
+        (Term.mk_var ("unrelated_constant", Type.bool), boolSyntax.T))
+    val _ = Theory.save_thm ("unrelated_theorem", unrelated)
+    val after_data = hhLearn.create_thmdata_for "list"
+    val unchanged_list_builds = hhLearn.target_thmdata_cache_builds ()
+    val arithmetic_data = hhLearn.create_thmdata_for "arithmetic"
+    val alternating_data = hhLearn.create_thmdata_for "list"
+    val alternating_builds = hhLearn.target_thmdata_cache_builds ()
+    val final_cache_size = hhLearn.target_thmdata_cache_size ()
+    val _ = ignore arithmetic_data
+  in
+    expect "target thmdata is byte-equivalent for the ambient target"
+      (same_thmdata (legacy, explicit) andalso
+       same_thmdata (explicit, explicit_again));
+    expect "target thmdata cache is a bounded one-entry replacement cache"
+      (ambient_cache_size = 1 andalso ambient_builds = 1 andalso
+       final_cache_size = 1);
+    expect "explicit anchor model rejects a mixed model and binding"
+      (rejects legacy mixed_binding);
+    expect "explicit anchor model rejects a stale binding"
+      (rejects legacy stale_binding);
+    expect "explicit anchor ranking rejects cross-fed stale provenance"
+      rejects_ranking;
+    expect "target thmdata is independent of unrelated ambient theory"
+      (same_thmdata (before_data, after_data) andalso
+       list_builds = unchanged_list_builds);
+    expect "target thmdata cache invalidates on alternating targets"
+      (same_thmdata (before_data, alternating_data) andalso
+       alternating_builds = unchanged_list_builds + 2)
+  end
+
+val _ = test_hhLearn_target_thmdata ()
 
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice

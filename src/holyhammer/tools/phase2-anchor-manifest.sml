@@ -9,8 +9,6 @@
 
 open HolKernel boolLib aiLib
 
-val behavior_source_commit =
-  "788f0b8817901c57206e56495367f27b0351dd68"
 val gate_run_source_commit =
   "f25871c404016d4368a0927ba0a868860fc82c70"
 
@@ -19,10 +17,21 @@ fun required_env name =
       SOME value => value
     | NONE => raise Fail (name ^ " is not set")
 
+val behavior_source_commit =
+  required_env "HHEVAL_ANCHOR_BEHAVIOR_COMMIT"
+
 fun optional_words name =
   case OS.Process.getEnv name of
       NONE => []
     | SOME value => String.tokens Char.isSpace value
+
+fun optional_int name default =
+  case OS.Process.getEnv name of
+      NONE => default
+    | SOME value =>
+        (case Int.fromString value of
+             SOME number => number
+           | NONE => raise Fail (name ^ " is not an integer"))
 
 fun trace text =
   case OS.Process.getEnv "HHEVAL_ANCHOR_TRACE" of
@@ -50,6 +59,17 @@ val input_journal_sha =
   required_env "HHEVAL_ANCHOR_INPUT_JOURNAL_SHA256"
 val paired_rows_sha = required_env "HHEVAL_ANCHOR_PAIRED_ROWS_SHA256"
 val command_rows_sha = required_env "HHEVAL_ANCHOR_COMMAND_ROWS_SHA256"
+val baseline_provenance_sha =
+  required_env "HHEVAL_ANCHOR_BASELINE_PROVENANCE_SHA256"
+val invocation_provenance_sha =
+  required_env "HHEVAL_ANCHOR_INVOCATION_PROVENANCE_SHA256"
+val success_marker = required_env "HHEVAL_ANCHOR_SUCCESS_MARKER"
+
+fun write_success_marker () =
+  let val output = TextIO.openOut success_marker in
+    TextIO.output (output, "success\n");
+    TextIO.closeOut output
+  end
 
 fun make_options slices cores : hhConfig.hh_options =
   let val base = hhConfig.snapshot () in
@@ -90,13 +110,18 @@ fun lookup_pool name pools =
       SOME (_, pool) => pool
     | NONE => []
 
+val model_current_theory = Theory.current_theory ()
+val model_ancestry = Theory.ancestry model_current_theory
+val model_namespace_count = length (mlThmData.unsafe_namespace_thms ())
+val _ = trace ("current-theory:" ^ model_current_theory)
+val (knn_weights, knn_features) = mlThmData.create_thmdata ()
+
 fun select_knn pool count goal =
   let
-    val (weights, features) = mlThmData.create_thmdata ()
     val permitted = List.filter (fn (name, _) =>
-      List.exists (fn allowed => allowed = name) pool) features
+      List.exists (fn allowed => allowed = name) pool) knn_features
   in
-    mlNearestNeighbor.thmknn_wdep (weights, permitted) count
+    mlNearestNeighbor.thmknn_wdep (knn_weights, permitted) count
       (mlFeature.fea_of_goal true goal)
   end
 
@@ -127,6 +152,142 @@ fun take_up_to count items =
 
 fun premise_digest count premises =
   sha1_text (String.concat (map frame (take_up_to count premises)))
+
+fun sequence_digest values = sha1_text (String.concat (map frame values))
+
+fun feature_text (name, symbols) =
+  name ^ "\001" ^ String.concatWith "," (map Int.toString symbols)
+
+fun weight_text (symbol, weight) =
+  Int.toString symbol ^ "\001" ^ Real.toString weight
+
+val native_model_inventory_sha1 = sequence_digest (map #1 knn_features)
+val native_model_features_sha1 =
+  sequence_digest (map feature_text knn_features)
+val native_model_weights_sha1 = sequence_digest
+  (map weight_text (Redblackmap.listItems knn_weights))
+
+fun ranking_model_digest name fallback =
+  case OS.Process.getEnv name of
+      SOME value =>
+        if String.size value = 40 andalso
+           List.all (fn character => Char.isDigit character orelse
+             (#"a" <= character andalso character <= #"f"))
+             (String.explode value)
+        then value
+        else raise Fail ("invalid " ^ name)
+    | NONE => fallback
+
+val model_override_names =
+  ["HHEVAL_ANCHOR_MODEL_INVENTORY_SHA1",
+   "HHEVAL_ANCHOR_MODEL_FEATURES_SHA1",
+   "HHEVAL_ANCHOR_MODEL_WEIGHTS_SHA1",
+   "HHEVAL_ANCHOR_MODEL_FEATURE_ROWS"]
+val model_override_values = map OS.Process.getEnv model_override_names
+val _ =
+  if List.all Option.isSome model_override_values orelse
+     List.all (not o Option.isSome) model_override_values
+  then ()
+  else raise Fail "incomplete anchor ranking-model provenance"
+val model_inventory_sha1 = ranking_model_digest
+  "HHEVAL_ANCHOR_MODEL_INVENTORY_SHA1" native_model_inventory_sha1
+val model_features_sha1 = ranking_model_digest
+  "HHEVAL_ANCHOR_MODEL_FEATURES_SHA1" native_model_features_sha1
+val model_weights_sha1 = ranking_model_digest
+  "HHEVAL_ANCHOR_MODEL_WEIGHTS_SHA1" native_model_weights_sha1
+val model_feature_rows = optional_int "HHEVAL_ANCHOR_MODEL_FEATURE_ROWS"
+  (length knn_features)
+val _ = if model_feature_rows > 0 then () else
+  raise Fail "invalid anchor ranking-model feature count"
+
+fun canonical_sequence tag values =
+  frame tag ^ frame (Int.toString (length values)) ^
+  String.concat (map frame values)
+
+val anchor_goal_digest_schema = "hh-goal-struct-v1"
+
+fun sorted_distinct_strings values =
+  let
+    fun distinct [] = []
+      | distinct [value] = [value]
+      | distinct (first :: (rest as second :: _)) =
+          if first = second then distinct rest
+          else first :: distinct rest
+  in
+    distinct (Listsort.sort String.compare values)
+  end
+
+fun canonical_type ty =
+  if Type.is_vartype ty then
+    canonical_sequence "type-variable" [Type.dest_vartype ty]
+  else
+    let
+      val {Thy, Tyop, Args} = Type.dest_thy_type ty
+    in
+      canonical_sequence "type-operator"
+        (Thy :: Tyop :: map canonical_type Args)
+    end
+
+fun canonical_term tm =
+  let
+    fun bound_index _ [] = NONE
+      | bound_index variable (binder :: rest) =
+          if Term.term_eq variable binder then SOME 0
+          else
+            case bound_index variable rest of
+                SOME index => SOME (index + 1)
+              | NONE => NONE
+    fun encode bound current =
+      if Term.is_var current then
+        let
+          val (name, ty) = Term.dest_var current
+          val index = bound_index current bound
+          val fields =
+            case index of
+                SOME position => [Int.toString position, canonical_type ty]
+              | NONE => [name, canonical_type ty]
+          val tag =
+            if Option.isSome index then "bound-variable"
+            else "free-variable"
+        in
+          canonical_sequence tag fields
+        end
+      else if Term.is_const current then
+        let val {Thy, Name, Ty} = Term.dest_thy_const current in
+          canonical_sequence "constant" [Thy, Name, canonical_type Ty]
+        end
+      else if Term.is_comb current then
+        let val (operator, operand) = Term.dest_comb current in
+          canonical_sequence "combination"
+            [encode bound operator, encode bound operand]
+        end
+      else
+        let val (binder, body) = Term.dest_abs current in
+          canonical_sequence "abstraction"
+            [canonical_type (Term.type_of binder),
+             encode (binder :: bound) body]
+        end
+  in
+    encode [] tm
+  end
+
+fun anchor_goal_sha1 (assumptions, conclusion) =
+  sha1_text (canonical_sequence anchor_goal_digest_schema
+    [canonical_sequence "assumption-set"
+       (sorted_distinct_strings (map canonical_term assumptions)),
+     canonical_sequence "conclusion" [canonical_term conclusion]])
+
+fun goal_binding goal_id (assumptions, conclusion) pool premises = JSON.OBJECT
+  [("goal_id", JSON.STRING goal_id),
+   ("goal_sha1", JSON.STRING
+     (anchor_goal_sha1 (assumptions, conclusion))),
+   ("ancestry_sha1", JSON.STRING
+     (sequence_digest (hhExportLib.sorted_ancestry [target_theory]))),
+   ("fact_inventory_sha1", JSON.STRING (sequence_digest pool)),
+   ("selected_premises_sha1", JSON.STRING
+     (premise_digest (length premises) premises)),
+   ("selected_premise_count", JSON.INT
+     (IntInf.fromInt (length premises)))]
 
 fun normalized_argument problem argument =
   if argument = problem then "<problem>"
@@ -376,11 +537,10 @@ fun cross_certify goal index premise key command slice =
             (old_premise, old_key) =>
               (historical_rows_checked := !historical_rows_checked + 1;
                if old_premise = premise then () else
-                 historical_premise_mismatches :=
-                   !historical_premise_mismatches + 1;
+                 raise Fail ("historical premise mismatch for " ^ goal);
                if old_key = key then () else
-                 historical_request_key_mismatches :=
-                   !historical_request_key_mismatches + 1)
+                 raise Fail ("historical request-key mismatch for " ^ goal ^
+                   ": accepted=" ^ old_key ^ " derived=" ^ key))
       val old_command =
         case lookup_command goal slice of
             SOME value => value
@@ -399,7 +559,8 @@ fun row_of goal premises timeout
     val request : hhProver.run_request =
       {timeout = timeout, format = #format slice, problem = problem,
        extra = #extra_opts slice, debug_dir = NONE}
-    val (_, raw_argv) = #mk_command config "anchor-prover" request
+    val (_, raw_argv) = #mk_command config "anchor-prover"
+      (#format request) request
     val command = json_strings
       ("anchor-prover" :: map (normalized_argument problem) raw_argv)
     val key = hhCache.key_of
@@ -418,12 +579,13 @@ fun row_of goal premises timeout
 fun goal_set (entries : journal_entry list) =
   mk_string_set (map #goal_id entries)
 
-fun expected_names () =
+fun requested_names () =
   case optional_words "HHEVAL_ANCHOR_THEOREMS" of
       [] => map #1 (DB.theorems target_theory)
     | names => names
 
-fun header row_count goal_count =
+fun header row_count goal_count execution_goal_count profile_start
+    profile_length profile_sha bindings =
   JSONPrinter.valueToString (JSON.OBJECT
     [("schema", JSON.STRING "hh-anchor-manifest-v2"),
      ("behavior_source_commit", JSON.STRING behavior_source_commit),
@@ -439,6 +601,9 @@ fun header row_count goal_count =
      ("input_journal_sha256", JSON.STRING input_journal_sha),
      ("task13_paired_rows_sha256", JSON.STRING paired_rows_sha),
      ("task13_command_rows_sha256", JSON.STRING command_rows_sha),
+     ("baseline_provenance_sha256", JSON.STRING baseline_provenance_sha),
+     ("invocation_provenance_sha256",
+       JSON.STRING invocation_provenance_sha),
      ("task13_paired_driver_sha256", JSON.STRING
        "2fd0a344574906d38a59774f5e293fc673cb1fca28bcab07664dcb52779bf430"),
      ("task13_paired_controller_sha256", JSON.STRING
@@ -450,18 +615,64 @@ fun header row_count goal_count =
        (IntInf.fromInt (!historical_premise_mismatches))),
      ("task13_request_key_mismatches", JSON.INT
        (IntInf.fromInt (!historical_request_key_mismatches))),
+     ("model_current_theory", JSON.STRING model_current_theory),
+     ("model_ancestry", JSON.ARRAY (map JSON.STRING model_ancestry)),
+     ("model_feature_rows", JSON.INT
+       (IntInf.fromInt model_feature_rows)),
+     ("model_inventory_sha1", JSON.STRING model_inventory_sha1),
+     ("model_features_sha1", JSON.STRING model_features_sha1),
+     ("model_weights_sha1", JSON.STRING model_weights_sha1),
+     ("export_model_inventory_sha1",
+       JSON.STRING native_model_inventory_sha1),
+     ("export_model_features_sha1", JSON.STRING native_model_features_sha1),
+     ("export_model_weights_sha1", JSON.STRING native_model_weights_sha1),
+     ("export_model_feature_rows", JSON.INT
+       (IntInf.fromInt (length knn_features))),
+     ("model_namespace_count", JSON.INT
+       (IntInf.fromInt model_namespace_count)),
+     ("task13_execution_goals", JSON.INT
+       (IntInf.fromInt execution_goal_count)),
      ("goals", JSON.INT (IntInf.fromInt goal_count)),
      ("profiles", JSON.INT 16),
+     ("profile_start", JSON.INT (IntInf.fromInt profile_start)),
+     ("profile_length", JSON.INT (IntInf.fromInt profile_length)),
+     ("profile_set_sha1", JSON.STRING profile_sha),
+     ("goal_digest_schema", JSON.STRING anchor_goal_digest_schema),
+     ("goal_bindings", JSON.ARRAY bindings),
      ("row_count", JSON.INT (IntInf.fromInt row_count)),
      ("prover_spawns", JSON.INT 0)])
 
 fun generate () =
   let
     val options = make_options 16 16
-    val schedule = hhSlice.mk_schedule options
-    val _ = if length schedule = 16 then ()
+    val full_schedule = hhSlice.mk_schedule options
+    val _ = if length full_schedule = 16 then ()
       else raise Fail "Phase 2 anchor schedule does not contain 16 slices"
-    val names = expected_names ()
+    val profile_start = optional_int "HHEVAL_ANCHOR_PROFILE_START" 0
+    val profile_length = optional_int "HHEVAL_ANCHOR_PROFILE_LENGTH" 16
+    val _ =
+      if profile_start >= 0 andalso profile_length > 0 andalso
+         profile_start + profile_length <= 16
+      then ()
+      else raise Fail "invalid Phase 2 anchor profile batch"
+    val indexed_schedule = List.drop (indexed full_schedule, profile_start)
+    val selected = List.take (indexed_schedule, profile_length)
+    val schedule = map #2 selected
+    val profile_batches =
+      if profile_start = 0 andalso profile_length = 16 then
+        [List.take (selected, 8), List.drop (selected, 8)]
+      else if profile_start = 0 andalso profile_length = 8 then [selected]
+      else if profile_start >= 8 then [selected]
+      else raise Fail
+        "historical first-eight profiles must export as one frozen batch"
+    fun profile_text (index, (_, slice : hhProver.slice)) =
+      String.concatWith "\001"
+        [Int.toString index, #prover slice, #filter slice, #format slice,
+         #type_enc slice, #lam_trans slice, Int.toString (#nfacts slice),
+         Int.toString (#slice_size slice), json_strings (#extra_opts slice)]
+    val profile_sha = sequence_digest (map profile_text selected)
+    val all_names = map #1 (DB.theorems target_theory)
+    val names = requested_names ()
     val wanted_goals = mk_string_set
       (map (fn name => target_theory ^ "." ^ name) names)
     val all_journal = read_journal journal_path
@@ -503,51 +714,188 @@ fun generate () =
     val journal_goals = goal_set journal
     val _ = if journal_goals = wanted_goals then ()
       else raise Fail "Phase 2 journal and requested goal inventories differ"
-    val schedule_profiles = distinct_profiles (map #2 schedule)
+    val schedule_profiles = distinct_profiles (map #2 full_schedule)
     fun journal_profiles (entry : journal_entry) = #slices entry
     val _ =
       if length schedule_profiles = 16 andalso
          List.all (fn entry => same_profile_multiset
-           (map #2 schedule) (journal_profiles entry)) journal
+           (map #2 full_schedule) (journal_profiles entry)) journal
       then ()
       else raise Fail "Phase 2 journal profile multisets differ"
-    val maximum = foldl Int.max 0 (map (#nfacts o #2) schedule)
+    val maximum = foldl Int.max 0 (map (#nfacts o #2) full_schedule)
     val pools = chainy_pools target_theory
+    val premise_path = OS.Process.getEnv "HHEVAL_ANCHOR_PREMISES_PATH"
+    val premise_directory =
+      OS.Process.getEnv "HHEVAL_ANCHOR_PREMISES_DIRECTORY"
+    val premise_read_only =
+      OS.Process.getEnv "HHEVAL_ANCHOR_PREMISES_READ_ONLY" = SOME "1"
+    val premise_provenance_sha =
+      case OS.Process.getEnv "HHEVAL_ANCHOR_PREMISES_PROVENANCE_SHA256" of
+          SOME value => value
+        | NONE => baseline_provenance_sha
+    val _ = if hex_digest 64 premise_provenance_sha then () else
+      raise Fail "invalid premise producer provenance SHA-256"
+    val _ =
+      case (premise_path, premise_directory) of
+          (NONE, _) => ()
+        | (SOME _, NONE) =>
+            if length names = 1 then ()
+            else raise Fail "premise journal requires exactly one goal"
+        | (SOME _, SOME _) =>
+            raise Fail "premise path and directory are mutually exclusive"
+    val _ =
+      if premise_read_only andalso not (Option.isSome premise_path) andalso
+         not (Option.isSome premise_directory)
+      then raise Fail "read-only premises require a path or directory"
+      else ()
+    fun premise_file goal_id =
+      case (premise_path, premise_directory) of
+          (SOME path, NONE) => SOME path
+        | (NONE, SOME directory) =>
+            SOME (OS.Path.concat (directory, sha1_text goal_id ^ ".premises"))
+        | (NONE, NONE) => NONE
+        | (SOME _, SOME _) => raise Fail "unreachable premise configuration"
+    fun premise_header goal_id goal pool values =
+      "#hh-anchor-premises-v2\t" ^ JSONPrinter.valueToString (JSON.OBJECT
+        [("schema", JSON.STRING "hh-anchor-premises-v2"),
+         ("invocation_provenance_sha256",
+           JSON.STRING invocation_provenance_sha),
+         ("producer_provenance_sha256",
+           JSON.STRING premise_provenance_sha),
+         ("canonical_journal_member_sha256",
+           JSON.STRING input_journal_sha),
+         ("model_inventory_sha1", JSON.STRING model_inventory_sha1),
+         ("model_features_sha1", JSON.STRING model_features_sha1),
+         ("model_weights_sha1", JSON.STRING model_weights_sha1),
+         ("model_feature_rows", JSON.INT
+           (IntInf.fromInt model_feature_rows)),
+         ("maximum", JSON.INT (IntInf.fromInt maximum)),
+         ("count", JSON.INT (IntInf.fromInt (length values))),
+         ("goal", goal_binding goal_id goal pool values)])
+    fun read_premises path goal_id goal pool =
+      let
+        val input = TextIO.openIn path
+        fun line () =
+          case TextIO.inputLine input of
+              NONE => NONE
+            | SOME text =>
+                SOME (if String.isSuffix "\n" text then
+                        String.substring (text, 0, String.size text - 1)
+                      else text)
+        val header =
+          case line () of
+              SOME text => text
+            | NONE => raise Fail "empty anchor premise journal"
+        fun loop values =
+          case line () of
+              NONE => List.rev values
+            | SOME value => loop (value :: values)
+        val values = loop []
+        val _ = TextIO.closeIn input
+        val expected = premise_header goal_id goal pool values
+        val _ =
+          if header = expected andalso length values <= maximum andalso
+             length values = length (mk_string_set values)
+          then ()
+          else raise Fail "invalid anchor premise journal"
+      in
+        values
+      end
+    fun write_premises path goal_id goal pool values =
+      let
+        val _ = if premise_read_only then
+          raise Fail "missing read-only anchor premise journal" else ()
+        val partial = path ^ ".partial"
+        val output = TextIO.openOut partial
+        val header = premise_header goal_id goal pool values
+        val _ = TextIO.output (output, header ^ "\n")
+        val _ = List.app
+          (fn value => TextIO.output (output, value ^ "\n")) values
+        val _ = TextIO.closeOut output
+        val _ = OS.FileSys.rename {old = partial, new = path}
+      in
+        values
+      end
+    fun premises_for name goal =
+      let
+        val goal_id = target_theory ^ "." ^ name
+        val pool = lookup_pool name pools
+      in
+        case (premise_file goal_id,
+              List.exists (fn requested => requested = name) names) of
+            (SOME path, true) =>
+              if OS.FileSys.access (path, []) then
+                read_premises path goal_id goal pool
+              else
+                write_premises path goal_id goal pool
+                  (select_knn pool maximum goal)
+          | _ => select_knn pool maximum goal
+      end
     val chunks = ref ([] : string list list)
+    val bindings = ref ([] : JSON.value list)
     fun one name =
       let
         val _ = trace ("select:" ^ name)
         val theorem = DB.fetch target_theory name
         val goal = dest_thm theorem
-        val premises = select_knn (lookup_pool name pools) maximum goal
+        val pool = lookup_pool name pools
+        val premises = premises_for name goal
         val goal_id = target_theory ^ "." ^ name
+        val wanted = List.exists (fn requested => requested = name) names
+        val _ = if wanted then
+          bindings := goal_binding goal_id goal pool premises :: !bindings
+          else ()
         val _ = trace ("export:" ^ name)
         val _ = trace ("state:" ^ hhConfig.state_dir ())
-        val _ = trace ("scratch:" ^ scratch_dir_of ())
         val _ = trace ("problem:" ^ hhSchedule.problem_path (#2 (hd schedule)))
-        val _ = hhSchedule.export_problems options goal premises schedule
+        fun batch_rows batch =
+          let
+            val batch_schedule = map #2 batch
+            val _ = hhSchedule.export_problems options goal premises
+              batch_schedule
+          in
+            map (row_of goal_id premises 30) batch
+          end
         val _ = trace ("rows:" ^ name)
+        val rows = List.concat (map batch_rows profile_batches)
       in
-        chunks := map (row_of goal_id premises 30) (indexed schedule) ::
-          !chunks
+        if wanted then chunks := rows :: !chunks else ()
       end
     val _ = hhProver.reset_spawn_count ()
-    val _ = List.app one names
+    (* Legacy FOF translation has a deliberate process-global memo.  Task13
+       traversed every theorem in DB creation order, so a requested subset
+       must replay the complete prefix/state sequence rather than starting
+       at the requested theorem.  Typed-only batches do not cross-certify
+       Task13 and may retain the bounded single-goal resume path. *)
+    val execution_names = if profile_start < 8 then all_names else names
+    val _ = List.app one execution_names
     val spawns = hhProver.spawn_count ()
     val _ = if spawns = 0 then ()
       else raise Fail "Phase 2 manifest generation spawned a prover"
     val rows = List.concat (List.rev (!chunks))
-    val _ = if length rows = 16 * length names then ()
-      else raise Fail "Phase 2 manifest row count is not 16 per goal"
+    val _ = if length rows = profile_length * length names then ()
+      else raise Fail "Phase 2 manifest row count differs from profile batch"
     val output = TextIO.openOut output_path
     val _ = TextIO.output (output,
-      "#hh-anchor-manifest-v2\t" ^ header (length rows) (length names) ^
+      "#hh-anchor-manifest-v2\t" ^
+      header (length rows) (length names) (length execution_names)
+        profile_start profile_length profile_sha (List.rev (!bindings)) ^
       "\n")
     val _ = List.app (fn row => TextIO.output (output, row ^ "\n")) rows
     val _ = TextIO.closeOut output
   in
     print ("HHEVAL_PHASE2_ANCHOR_ROWS=" ^
-      Int.toString (16 * length names) ^ "\nHHEVAL_ANCHOR_PROVER_SPAWNS=0\n")
+      Int.toString (profile_length * length names) ^
+      "\nHHEVAL_ANCHOR_PROVER_SPAWNS=0\n")
   end
 
-val _ = generate ()
+val status =
+  (generate (); write_success_marker (); OS.Process.success)
+  handle Interrupt => raise Interrupt
+       | error =>
+           (TextIO.output (TextIO.stdErr,
+              "anchor manifest worker failed: " ^
+              General.exnMessage error ^ "\n");
+            OS.Process.failure)
+
+val _ = OS.Process.exit status

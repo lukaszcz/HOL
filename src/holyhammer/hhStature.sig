@@ -10,6 +10,7 @@ sig
   val induction_by_concl : induction_concls -> Term.term -> bool
   val induction_by_shape : string -> Term.term -> bool
 
+  val create_statures_for : string -> statures
   val create_statures : unit -> statures
   val stature_of : statures -> string -> stature
 end

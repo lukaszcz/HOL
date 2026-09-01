@@ -71,6 +71,11 @@ type anchor_row =
    extra_opts : string list, slice_size : int, premise_digest : string,
    normalized_command : string list option, request_key : string}
 
+type anchor_goal_binding =
+  {goal_id : string, goal_sha1 : string, ancestry_sha1 : string,
+   fact_inventory_sha1 : string, selected_premises_sha1 : string,
+   selected_premise_count : int}
+
 type anchor_manifest_header =
   {behavior_source_commit : string, gate_run_source_commit : string,
    task13_key_source : string, accepted_run_header : string,
@@ -81,10 +86,18 @@ type anchor_manifest_header =
    task13_command_rows_sha256 : string,
    task13_paired_driver_sha256 : string,
    task13_paired_controller_sha256 : string, task13_rows_checked : int,
+   baseline_provenance_sha256 : string,
+   invocation_provenance_sha256 : string,
    task13_internal_key_pair_mismatches : int,
    task13_premise_mismatches : int,
-   task13_request_key_mismatches : int, goals : int, profiles : int,
-   row_count : int, prover_spawns : int}
+   task13_request_key_mismatches : int, model_current_theory : string,
+   model_ancestry : string list, model_feature_rows : int,
+   model_namespace_count : int, task13_execution_goals : int,
+   goals : int, profiles : int,
+   profile_start : int, profile_length : int, profile_set_sha1 : string,
+   goal_digest_schema : string, goal_bindings : anchor_goal_binding list,
+   row_count : int,
+   prover_spawns : int}
 
 type anchor_manifest =
   {header : anchor_manifest_header, rows : anchor_row list}
@@ -93,8 +106,20 @@ type anchor_mismatch =
   {goal_id : string, slice_index : int, field : string,
    expected : string, actual : string}
 
+type anchor_model_binding =
+  {inventory_sha1 : string, features_sha1 : string,
+   weights_sha1 : string, feature_rows : int}
+
+type anchor_ranking =
+  {goal_id : string, goal_sha1 : string, ancestry_sha1 : string,
+   fact_inventory_sha1 : string, pool_count : int,
+   selected_premises_sha1 : string, selected_premises : string list,
+   maximum : int}
+
 type anchor_derivation =
-  {current : anchor_row list, prover_spawns : int}
+  {current : anchor_row list, goal_bindings : anchor_goal_binding list,
+   rankings : anchor_ranking list, model_binding : anchor_model_binding,
+   prover_spawns : int}
 
 fun cell_key_compare ((goal1, cond1), (goal2, cond2)) =
   case String.compare (goal1, goal2) of
@@ -1468,25 +1493,25 @@ fun restrict_features_to_pool pool features =
       features
   end
 
-fun select_knn pool count goal =
+fun select_knn thy pool count goal =
   let
-    val (weights, features) = mlThmData.create_thmdata ()
+    val (weights, features) = hhLearn.create_thmdata_for thy
     val permitted = restrict_features_to_pool pool features
   in
     mlNearestNeighbor.thmknn_wdep (weights, permitted) count
       (mlFeature.fea_of_goal true goal)
   end
 
-fun select_filter filter pool count goal =
+fun select_filter thy filter pool count goal =
   let
-    val thmdata = mlThmData.create_thmdata ()
-    val context = hhLearn.create_context thmdata
+    val thmdata = hhLearn.create_thmdata_for thy
+    val context = hhLearn.create_context_for thy thmdata
   in
     hhLearn.rank context
       {filter = filter, pool = SOME pool, goal = goal, n = count}
   end
 
-fun selected_premises_at condition pool thm goal knn_count =
+fun selected_premises_at thy condition pool thm goal knn_count =
   case #selector condition of
       Deps =>
         let val dependencies = #2 (mlThmData.intactdep_of_thm thm) in
@@ -1495,16 +1520,16 @@ fun selected_premises_at condition pool thm goal knn_count =
             | Chainy => List.filter (fn name =>
                 List.exists (fn allowed => allowed = name) pool) dependencies
         end
-    | Knn count => select_knn pool
+    | Knn count => select_knn thy pool
         (case knn_count of NONE => count | SOME maximum => maximum) goal
-    | Mepo count => select_filter "mepo" pool count goal
-    | Mash count => select_filter "mash" pool count goal
-    | Mesh count => select_filter "mesh" pool count goal
+    | Mepo count => select_filter thy "mepo" pool count goal
+    | Mash count => select_filter thy "mash" pool count goal
+    | Mesh count => select_filter thy "mesh" pool count goal
     | PerSlice => raise Fail
         "invalid hhEval premise selection: perslice requires Sched"
 
-fun selected_premises condition pool thm goal =
-  selected_premises_at condition pool thm goal NONE
+fun selected_premises thy condition pool thm goal =
+  selected_premises_at thy condition pool thm goal NONE
 
 (* -------------------------------------------------------------------------
    Prover-free Phase 2/Phase 3 anchor derivation
@@ -1543,6 +1568,41 @@ fun take_up_to count items =
 
 fun premise_digest count premises =
   sha1_text (String.concat (map frame (take_up_to count premises)))
+
+fun sequence_digest values = sha1_text (String.concat (map frame values))
+
+fun anchor_model_binding ((weights, features) : mlThmData.thmdata) =
+  let
+    fun feature_text (name, symbols) =
+      name ^ "\001" ^ String.concatWith "," (map Int.toString symbols)
+    fun weight_text (symbol, weight) =
+      Int.toString symbol ^ "\001" ^ Real.toString weight
+  in
+    {inventory_sha1 = sequence_digest (map #1 features),
+     features_sha1 = sequence_digest (map feature_text features),
+     weights_sha1 = sequence_digest
+       (map weight_text (Redblackmap.listItems weights)),
+     feature_rows = length features} : anchor_model_binding
+  end
+
+fun validate_anchor_model_binding expected thmdata =
+  let
+    val actual = anchor_model_binding thmdata
+  in
+    if #inventory_sha1 expected = #inventory_sha1 actual andalso
+       #features_sha1 expected = #features_sha1 actual andalso
+       #weights_sha1 expected = #weights_sha1 actual andalso
+       #feature_rows expected = #feature_rows actual
+    then actual
+    else raise Fail "anchor model binding does not match supplied thmdata"
+  end
+
+fun canonical_sequence tag values =
+  frame tag ^ frame (Int.toString (length values)) ^
+  String.concat (map frame values)
+
+val anchor_goal_digest_schema = hhLearn.structural_goal_digest_schema
+val anchor_goal_sha1 = hhLearn.structural_goal_sha1
 
 fun normalized_argument problem argument =
   if argument = problem then "<problem>"
@@ -1611,7 +1671,7 @@ fun parse_anchor_row line : anchor_row =
     | _ => raise Fail "invalid anchor TSV row"
 
 val phase2_anchor_behavior_commit =
-  "788f0b8817901c57206e56495367f27b0351dd68"
+  "f7511d0d5ee7c2918236f7eda4c16ee8c01e00fa"
 val phase2_anchor_gate_commit =
   "f25871c404016d4368a0927ba0a868860fc82c70"
 val phase2_anchor_run_header_sha =
@@ -1636,6 +1696,12 @@ val phase2_anchor_paired_driver_sha =
   "2fd0a344574906d38a59774f5e293fc673cb1fca28bcab07664dcb52779bf430"
 val phase2_anchor_paired_controller_sha =
   "fb98abd78825ca7e4e15c64bfe6d7ffcc3cee34dca8c6e59fe78828552968141"
+val phase2_anchor_f751_baseline_provenance_sha =
+  "927578faeca4e68c6b4e588d29cef0cbf4b5df6ad4693401555918abc5e0295f"
+val phase2_anchor_f258_baseline_provenance_sha =
+  "65064ffbae3698ccd6f431af2ac817d3b7e4eb8479ab5da49706297c252c3a0c"
+val phase2_anchor_profile_set_sha1 =
+  "dd90fee8ca476562d146037768de2f129dd408c1"
 
 fun parse_anchor_header text : anchor_manifest_header =
   let
@@ -1643,6 +1709,14 @@ fun parse_anchor_header text : anchor_manifest_header =
     val schema = string_field "schema" value
     val _ = if schema = "hh-anchor-manifest-v2" then ()
       else raise Fail ("unsupported anchor manifest schema: " ^ schema)
+    fun goal_binding item : anchor_goal_binding =
+      {goal_id = string_field "goal_id" item,
+       goal_sha1 = string_field "goal_sha1" item,
+       ancestry_sha1 = string_field "ancestry_sha1" item,
+       fact_inventory_sha1 = string_field "fact_inventory_sha1" item,
+       selected_premises_sha1 =
+         string_field "selected_premises_sha1" item,
+       selected_premise_count = int_field "selected_premise_count" item}
   in
     {behavior_source_commit = string_field "behavior_source_commit" value,
      gate_run_source_commit = string_field "gate_run_source_commit" value,
@@ -1665,6 +1739,10 @@ fun parse_anchor_header text : anchor_manifest_header =
        string_field "task13_paired_driver_sha256" value,
      task13_paired_controller_sha256 =
        string_field "task13_paired_controller_sha256" value,
+     baseline_provenance_sha256 =
+       string_field "baseline_provenance_sha256" value,
+     invocation_provenance_sha256 =
+       string_field "invocation_provenance_sha256" value,
      task13_rows_checked = int_field "task13_rows_checked" value,
      task13_internal_key_pair_mismatches =
        int_field "task13_internal_key_pair_mismatches" value,
@@ -1672,7 +1750,19 @@ fun parse_anchor_header text : anchor_manifest_header =
        int_field "task13_premise_mismatches" value,
      task13_request_key_mismatches =
        int_field "task13_request_key_mismatches" value,
+     model_current_theory = string_field "model_current_theory" value,
+     model_ancestry = JSONUtil.arrayMap JSONUtil.asString
+       (field "model_ancestry" value),
+     model_feature_rows = int_field "model_feature_rows" value,
+     model_namespace_count = int_field "model_namespace_count" value,
+     task13_execution_goals = int_field "task13_execution_goals" value,
      goals = int_field "goals" value, profiles = int_field "profiles" value,
+     profile_start = int_field "profile_start" value,
+     profile_length = int_field "profile_length" value,
+     profile_set_sha1 = string_field "profile_set_sha1" value,
+     goal_digest_schema = string_field "goal_digest_schema" value,
+     goal_bindings = JSONUtil.arrayMap goal_binding
+       (field "goal_bindings" value),
      row_count = int_field "row_count" value,
      prover_spawns = int_field "prover_spawns" value}
   end
@@ -1792,8 +1882,15 @@ fun validate_anchor_manifest
       case #normalized_command row of
           SOME ("anchor-prover" :: _) => true
         | _ => false
+    val certified_baseline =
+      (#behavior_source_commit header = phase2_anchor_behavior_commit andalso
+       #baseline_provenance_sha256 header =
+         phase2_anchor_f751_baseline_provenance_sha) orelse
+      (#behavior_source_commit header = phase2_anchor_gate_commit andalso
+       #baseline_provenance_sha256 header =
+         phase2_anchor_f258_baseline_provenance_sha)
     val header_ok =
-      #behavior_source_commit header = phase2_anchor_behavior_commit andalso
+      certified_baseline andalso
       #gate_run_source_commit header = phase2_anchor_gate_commit andalso
       #task13_key_source header =
         "uncommitted-phase2-task13-artifact-state" andalso
@@ -1812,15 +1909,30 @@ fun validate_anchor_manifest
         phase2_anchor_paired_driver_sha andalso
       #task13_paired_controller_sha256 header =
         phase2_anchor_paired_controller_sha andalso
-      #task13_rows_checked header = 8 * #goals header andalso
+      hex_digest 64 (#invocation_provenance_sha256 header) andalso
+      #task13_execution_goals header >= #goals header andalso
+      #task13_rows_checked header =
+        8 * #task13_execution_goals header andalso
       #task13_internal_key_pair_mismatches header = 0 andalso
-      #task13_premise_mismatches header >= 0 andalso
-      #task13_premise_mismatches header <=
-        #task13_rows_checked header andalso
-      #task13_request_key_mismatches header >= 0 andalso
-      #task13_request_key_mismatches header <=
-        #task13_rows_checked header andalso
+      #task13_premise_mismatches header = 0 andalso
+      #task13_request_key_mismatches header = 0 andalso
+      #model_current_theory header = "scratch" andalso
+      not (null (#model_ancestry header)) andalso
+      #model_feature_rows header > 0 andalso
+      #model_namespace_count header = 0 andalso
       #profiles header = 16 andalso #prover_spawns header = 0 andalso
+      #profile_start header = 0 andalso #profile_length header = 16 andalso
+      #profile_set_sha1 header = phase2_anchor_profile_set_sha1 andalso
+      #goal_digest_schema header = anchor_goal_digest_schema andalso
+      length (#goal_bindings header) = #goals header andalso
+      Listsort.sort String.compare (map #goal_id (#goal_bindings header)) =
+        goal_ids andalso
+      List.all (fn binding =>
+        hex_digest 40 (#goal_sha1 binding) andalso
+        hex_digest 40 (#ancestry_sha1 binding) andalso
+        hex_digest 40 (#fact_inventory_sha1 binding) andalso
+        hex_digest 40 (#selected_premises_sha1 binding) andalso
+        #selected_premise_count binding >= 0) (#goal_bindings header) andalso
       #row_count header = length rows andalso
       #goals header = length goal_ids
     val rows_ok =
@@ -1963,44 +2075,174 @@ fun anchor_row_of goal_id premises timeout prover_versions
      request_key = key} : anchor_row
   end
 
-fun derive_anchor_rows
-    {thy, theorem_names, timeout, prover_versions} =
+fun derive_anchor_rows_part_core
+    {thy, theorem_names, timeout, prover_versions, profile_start,
+     profile_length, replay_theory, ranking_for, model_binding} =
   let
     val current_options = anchor_options timeout 24 24 ""
-    val current_schedule = List.take
+    val anchor_schedule = List.take
       (hhSlice.mk_schedule current_options, 16)
     val _ =
-      if length current_schedule = 16 then ()
+      if length anchor_schedule = 16 andalso profile_start >= 0 andalso
+         profile_length > 0 andalso profile_start + profile_length <= 16
+      then ()
       else raise Fail "Phase 3 schedule has fewer than 16 anchor slices"
-    val current_maximum = maximum_facts current_schedule
+    val current_schedule = List.take
+      (List.drop (anchor_schedule, profile_start), profile_length)
+    (* Profile batching is an execution detail: every batch must derive the
+       one canonical ranking used by the complete 16-slice anchor schedule.
+       Otherwise a typed-only batch would bind only its local maximum. *)
+    val current_maximum = maximum_facts anchor_schedule
     val pools = chainy_pools thy
     val current_chunks = ref ([] : anchor_row list list)
+    val current_bindings = ref ([] : anchor_goal_binding list)
+    val current_rankings = ref ([] : anchor_ranking list)
+    fun selected name =
+      List.exists (fn requested => requested = name) theorem_names
     fun rows goal_id premises schedule =
       map (anchor_row_of goal_id premises timeout prover_versions)
-        (indexed schedule)
+        (map (fn (offset, slice) =>
+          (profile_start + offset, slice)) (indexed schedule))
     fun one name =
       let
         val theorem = DB.fetch thy name
         val goal = dest_thm theorem
         val pool = lookup_pool name pools
-        val current_premises = select_knn pool current_maximum goal
         val goal_id = thy ^ "." ^ name
+        val ranking = ranking_for name goal pool current_maximum
+        val premises = #selected_premises ranking
+        val expected_ancestry = sequence_digest
+          (hhExportLib.sorted_ancestry [thy])
+        val _ =
+          if #goal_id ranking = goal_id andalso
+             #goal_sha1 ranking = anchor_goal_sha1 goal andalso
+             #ancestry_sha1 ranking = expected_ancestry andalso
+             #fact_inventory_sha1 ranking = sequence_digest pool andalso
+             #pool_count ranking = length pool andalso
+             #selected_premises_sha1 ranking =
+               premise_digest (length premises) premises andalso
+             #maximum ranking >= current_maximum andalso
+             length premises <= #maximum ranking andalso
+             length premises = length (mk_string_set premises) andalso
+             List.all (fn premise =>
+               List.exists (fn allowed => allowed = premise) pool) premises
+          then ()
+          else raise Fail "anchor ranking binding is stale or malformed"
         val _ = hhSchedule.export_problems current_options goal
-          [("knn", current_premises)] current_schedule
-        val after_rows = rows goal_id current_premises current_schedule
-        val _ = current_chunks := after_rows :: !current_chunks
+          [("knn", premises)] current_schedule
+        val after_rows = rows goal_id premises current_schedule
+        val _ =
+          if selected name then
+            let
+              val binding : anchor_goal_binding =
+                {goal_id = goal_id,
+                 goal_sha1 = anchor_goal_sha1 goal,
+                 ancestry_sha1 = expected_ancestry,
+                 fact_inventory_sha1 = sequence_digest pool,
+                 selected_premises_sha1 =
+                   premise_digest (length premises) premises,
+                 selected_premise_count = length premises}
+            in
+              current_chunks := after_rows :: !current_chunks;
+              current_bindings := binding :: !current_bindings;
+              current_rankings := ranking :: !current_rankings
+            end
+          else ()
       in
         ()
       end
     val _ = hhProver.reset_spawn_count ()
-    val _ = List.app one theorem_names
+    val execution_names =
+      if replay_theory then map #1 (DB.theorems thy) else theorem_names
+    val _ = List.app one execution_names
     val spawns = hhProver.spawn_count ()
     val _ = if spawns = 0 then ()
       else raise Fail "anchor derivation spawned a prover"
   in
     {current = List.concat (List.rev (!current_chunks)),
-     prover_spawns = spawns}
+     goal_bindings = List.rev (!current_bindings),
+     rankings = List.rev (!current_rankings),
+     model_binding = model_binding, prover_spawns = spawns}
   end
+
+
+fun derive_anchor_rows_part_with_model
+    {thy, theorem_names, timeout, prover_versions, profile_start,
+     profile_length, replay_theory, model_thmdata, model_binding} =
+  let
+    (* A caller may select an explicitly certified ranking model, but the
+       binding is checked before any export.  This keeps execution-state
+       reconstruction independent of baseline premise lists and makes a
+       stale or accidentally mixed model fail closed. *)
+    val checked_model_binding =
+      validate_anchor_model_binding model_binding model_thmdata
+    val (knn_weights, knn_features) = model_thmdata
+    fun ranking_for name goal pool maximum : anchor_ranking =
+      let
+        val premises = mlNearestNeighbor.thmknn_wdep
+          (knn_weights, restrict_features_to_pool pool knn_features)
+          maximum (mlFeature.fea_of_goal true goal)
+      in
+        {goal_id = thy ^ "." ^ name,
+         goal_sha1 = anchor_goal_sha1 goal,
+         ancestry_sha1 = sequence_digest
+           (hhExportLib.sorted_ancestry [thy]),
+         fact_inventory_sha1 = sequence_digest pool,
+         pool_count = length pool,
+         selected_premises_sha1 =
+           premise_digest (length premises) premises,
+         selected_premises = premises, maximum = maximum}
+      end
+  in
+    derive_anchor_rows_part_core
+      {thy = thy, theorem_names = theorem_names, timeout = timeout,
+       prover_versions = prover_versions, profile_start = profile_start,
+       profile_length = profile_length, replay_theory = replay_theory,
+       ranking_for = ranking_for, model_binding = checked_model_binding}
+  end
+
+
+fun derive_anchor_rows_part_with_rankings
+    {thy, theorem_names, timeout, prover_versions, profile_start,
+     profile_length, rankings, model_binding} =
+  let
+    val _ = if length rankings = length theorem_names then () else
+      raise Fail "anchor ranking inventory has an unexpected size"
+    fun ranking_for name _ _ _ =
+      let val goal_id = thy ^ "." ^ name in
+        case List.filter (fn ranking => #goal_id ranking = goal_id) rankings of
+            [ranking] => ranking
+          | _ => raise Fail "anchor ranking inventory is missing or duplicated"
+      end
+  in
+    derive_anchor_rows_part_core
+      {thy = thy, theorem_names = theorem_names, timeout = timeout,
+       prover_versions = prover_versions, profile_start = profile_start,
+       profile_length = profile_length, replay_theory = false,
+       ranking_for = ranking_for, model_binding = model_binding}
+  end
+
+
+fun derive_anchor_rows_part
+    {thy, theorem_names, timeout, prover_versions, profile_start,
+     profile_length, replay_theory} =
+  let
+    val model_thmdata = hhLearn.create_thmdata_for thy
+  in
+    derive_anchor_rows_part_with_model
+      {thy = thy, theorem_names = theorem_names, timeout = timeout,
+       prover_versions = prover_versions, profile_start = profile_start,
+       profile_length = profile_length, replay_theory = replay_theory,
+       model_thmdata = model_thmdata,
+       model_binding = anchor_model_binding model_thmdata}
+  end
+
+fun derive_anchor_rows
+    {thy, theorem_names, timeout, prover_versions} =
+  derive_anchor_rows_part
+    {thy = thy, theorem_names = theorem_names, timeout = timeout,
+     prover_versions = prover_versions, profile_start = 0,
+     profile_length = 16, replay_theory = false}
 
 fun write_lines path lines =
   let
@@ -2132,9 +2374,10 @@ fun filter_maxima schedule =
     foldl (fn ((_, slice), maxima) => add slice maxima) [] schedule
   end
 
-fun per_slice_rankings schedule pool goal =
+fun per_slice_rankings thy schedule pool goal =
   let
-    val context = hhLearn.create_context (mlThmData.create_thmdata ())
+    val context = hhLearn.create_context_for thy
+      (hhLearn.create_thmdata_for thy)
     fun rank (filter, maximum) =
       (filter, hhLearn.rank context
         {filter = filter, pool = SOME pool, goal = goal, n = maximum})
@@ -2158,13 +2401,13 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
     val maximum = max_schedule_facts schedule
     val rankings =
       case #selector condition of
-          PerSlice => per_slice_rankings schedule pool goal
+          PerSlice => per_slice_rankings thy schedule pool goal
         | _ =>
             let
               (* Legacy schedule selectors share one longest-first ranking.
                  In particular, chainy kNN uses the schedule maximum. *)
-              val premises = selected_premises_at condition pool thm goal
-                (SOME maximum)
+              val premises = selected_premises_at thy condition pool thm
+                goal (SOME maximum)
             in
               rankings_for_schedule schedule premises
             end
@@ -2233,7 +2476,7 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
 fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
   let
     val goal = dest_thm thm
-    val premises = selected_premises condition pool thm goal
+    val premises = selected_premises thy condition pool thm goal
     val named_premises = mlThmData.thml_of_namel premises
     val nfacts = length named_premises
     val directory = join (join (join expdir "pb") (safe_component thy))
@@ -2422,9 +2665,13 @@ fun write_evalscript expdir thy conditions sample =
       conditions_text ^ "], sample = " ^ Int.toString sample ^ "};"
     val action = "val _ = hhEval.eval_thy " ^ Portable.mlquote expdir ^
       " " ^ Portable.mlquote thy ^ ";"
+    val worker_theory = "hheval_worker_" ^ safe_component thy
     val output = TextIO.openOut path
     val _ = TextIO.output (output,
+      "load \"BasicProvers\";\n" ^
       "load " ^ Portable.mlquote (thy ^ "Theory") ^ ";\n" ^
+      "val _ = Feedback.quiet_messages Theory.new_theory " ^
+      Portable.mlquote worker_theory ^ ";\n" ^
       "load \"hhEval\";\n" ^ settings ^ "\n" ^ action ^ "\n")
     val _ = TextIO.closeOut output
   in

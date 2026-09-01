@@ -55,8 +55,18 @@ fun simp_deltas_of_theories theories =
   List.concat (map (fn thy =>
     ThmSetData.theory_data {settype = "simp", thy = thy}) theories)
 
-fun effective_simp_deltas current =
-  simp_deltas_of_theories (Theory.ancestry "-" @ [current])
+fun target_theories target =
+  let
+    fun add (theory, theories) =
+      if List.exists (fn existing => existing = theory) theories then
+        theories
+      else theory :: theories
+  in
+    rev (foldl add [] (Theory.ancestry target @ [target]))
+  end
+
+fun effective_simp_deltas target =
+  simp_deltas_of_theories (target_theories target)
 
 fun induction_concls_of thms =
   foldl
@@ -85,18 +95,22 @@ fun induction_by_shape thmid conclusion =
     List.exists (predicate_type o type_of) parameters
   end
 
-fun typebase_induction_concls () =
-  TypeBase.elts ()
-  |> List.mapPartial (total TypeBasePure.induction_of)
-  |> induction_concls_of
+fun typebase_induction_concls theories =
+  case TypeBase.merge_typebases theories of
+      NONE => induction_concls_of []
+    | SOME typebase =>
+        TypeBasePure.listItems typebase
+        |> List.mapPartial (total TypeBasePure.induction_of)
+        |> induction_concls_of
 
-fun definition_set () =
+fun definition_set theories =
   let
     fun add_presentation (presentation, definitions) =
       dadd (thmid_of_kname (#thmname presentation)) () definitions
   in
     foldl add_presentation (dempty String.compare)
-      (DefnBaseCore.current_userdefs ())
+      (List.concat (map (fn theory =>
+         DefnBaseCore.thy_userdefs {thyname = theory}) theories))
   end
 
 fun add_db_stature current simp_names def_names induction_conclusions
@@ -114,17 +128,20 @@ fun add_db_stature current simp_names def_names induction_conclusions
     dadd thmid stature result
   end
 
-fun create_statures () =
+fun create_statures_for current =
   let
-    val current = Theory.current_theory ()
+    val theories = target_theories current
     val simp_names =
       simp_set_of_deltas (effective_simp_deltas current)
-    val def_names = definition_set ()
-    val induction_conclusions = typebase_induction_concls ()
+    val def_names = definition_set theories
+    val induction_conclusions = typebase_induction_concls theories
+    val database = List.concat (map DB.thy theories)
   in
     foldl (add_db_stature current simp_names def_names
-      induction_conclusions) (dempty String.compare) (DB.listDB ())
+      induction_conclusions) (dempty String.compare) database
   end
+
+fun create_statures () = create_statures_for (Theory.current_theory ())
 
 fun stature_of statures thmid =
   case theory_name_of thmid of

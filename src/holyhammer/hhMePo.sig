@@ -87,6 +87,8 @@ sig
     {current_theory : string,
      facts : {thmid : string, theory : string, concl : Term.term,
               stature : hhStature.stature} list} -> context
+  val create_context_for :
+    string -> mlThmData.thmdata -> hhStature.statures -> context
   val create_context : mlThmData.thmdata -> hhStature.statures -> context
   val restrict_context : context -> string list -> context
   val context_thmids : context -> string list

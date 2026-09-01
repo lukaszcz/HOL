@@ -56,6 +56,11 @@ sig
      extra_opts : string list, slice_size : int, premise_digest : string,
      normalized_command : string list option, request_key : string}
 
+  type anchor_goal_binding =
+    {goal_id : string, goal_sha1 : string, ancestry_sha1 : string,
+     fact_inventory_sha1 : string, selected_premises_sha1 : string,
+     selected_premise_count : int}
+
   type anchor_manifest_header =
     {behavior_source_commit : string, gate_run_source_commit : string,
      task13_key_source : string, accepted_run_header : string,
@@ -66,9 +71,16 @@ sig
      task13_command_rows_sha256 : string,
      task13_paired_driver_sha256 : string,
      task13_paired_controller_sha256 : string, task13_rows_checked : int,
+     baseline_provenance_sha256 : string,
+     invocation_provenance_sha256 : string,
      task13_internal_key_pair_mismatches : int,
      task13_premise_mismatches : int,
-     task13_request_key_mismatches : int, goals : int, profiles : int,
+     task13_request_key_mismatches : int, model_current_theory : string,
+     model_ancestry : string list, model_feature_rows : int,
+     model_namespace_count : int, task13_execution_goals : int,
+     goals : int, profiles : int,
+     profile_start : int, profile_length : int, profile_set_sha1 : string,
+     goal_digest_schema : string, goal_bindings : anchor_goal_binding list,
      row_count : int, prover_spawns : int}
 
   type anchor_manifest =
@@ -81,8 +93,20 @@ sig
     {goal_id : string, slice_index : int, field : string,
      expected : string, actual : string}
 
+  type anchor_model_binding =
+    {inventory_sha1 : string, features_sha1 : string,
+     weights_sha1 : string, feature_rows : int}
+
+  type anchor_ranking =
+    {goal_id : string, goal_sha1 : string, ancestry_sha1 : string,
+     fact_inventory_sha1 : string, pool_count : int,
+     selected_premises_sha1 : string, selected_premises : string list,
+     maximum : int}
+
   type anchor_derivation =
-    {current : anchor_row list, prover_spawns : int}
+    {current : anchor_row list, goal_bindings : anchor_goal_binding list,
+     rankings : anchor_ranking list, model_binding : anchor_model_binding,
+     prover_spawns : int}
 
   val string_of_regime : regime -> string
   val string_of_selector : selector -> string
@@ -124,9 +148,29 @@ sig
   val read_anchor_certificate : string -> anchor_certificate_entry list
   val compare_anchor_rows :
     anchor_row list -> anchor_row list -> anchor_mismatch list
+  val anchor_goal_digest_schema : string
+  val anchor_goal_sha1 : Term.term list * Term.term -> string
+  val anchor_model_binding : mlThmData.thmdata -> anchor_model_binding
   val derive_anchor_rows :
     {thy : string, theorem_names : string list, timeout : int,
      prover_versions : (string * string option) list} -> anchor_derivation
+  val derive_anchor_rows_part :
+    {thy : string, theorem_names : string list, timeout : int,
+     prover_versions : (string * string option) list,
+     profile_start : int, profile_length : int, replay_theory : bool} ->
+    anchor_derivation
+  val derive_anchor_rows_part_with_model :
+    {thy : string, theorem_names : string list, timeout : int,
+     prover_versions : (string * string option) list,
+     profile_start : int, profile_length : int, replay_theory : bool,
+     model_thmdata : mlThmData.thmdata,
+     model_binding : anchor_model_binding} -> anchor_derivation
+  val derive_anchor_rows_part_with_rankings :
+    {thy : string, theorem_names : string list, timeout : int,
+     prover_versions : (string * string option) list,
+     profile_start : int, profile_length : int,
+     rankings : anchor_ranking list,
+     model_binding : anchor_model_binding} -> anchor_derivation
   val run_anchor_derivation :
     {thy : string, baseline_manifest : string,
      output_tsv : string, mismatch_report : string, timeout : int,
