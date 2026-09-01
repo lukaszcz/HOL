@@ -23,6 +23,7 @@ structure Z3 = struct
                 case String.tokens Char.isSpace line of
                   ["sat"] => (SolverSpec.SAT NONE, consumed)
                 | ["unsat"] => (SolverSpec.UNSAT NONE, consumed)
+                | ["unknown"] => (SolverSpec.UNKNOWN NONE, consumed)
                 | _ => scan consumed
             end
     in
@@ -177,7 +178,7 @@ structure Z3 = struct
     mk_Z3_fun "Z3_SMT_Oracle"
       (fn goal =>
         let
-          val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC false) goal
+          val (goal, _) = SolverSpec.simplify (SmtLib.Z3_SIMP_TAC false) goal
           val (_, strings) =
             goal_to_SmtLib_translation_for_version (configured_version ()) goal
         in
@@ -261,7 +262,8 @@ structure Z3 = struct
       (fn goal =>
         let
           val original_goal = goal
-          val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
+          val (goal, validation) = SolverSpec.simplify
+            (SmtLib.Z3_SIMP_TAC true) goal
           val (translation, strings) =
             goal_to_SmtLib_with_get_proof_translation_for_version
               (configured_version ()) goal

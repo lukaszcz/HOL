@@ -20,6 +20,9 @@ local
   val ERR = Feedback.mk_HOL_ERR "Z3_ProofReplay"
   val WARNING = Feedback.HOL_WARNING "Z3_ProofReplay"
 
+  val asserted_membership_diagnostic =
+    "HOLSMT_TRANSLATION_ASSERTED_MEMBERSHIP"
+
   (* Dedicated-theory failures must cross the generic rewrite handlers
      without inviting arithmetic or unification fallbacks. *)
   exception FP_REWRITE_ERROR of exn
@@ -63,6 +66,10 @@ local
   (***************************************************************************)
 
   type state = {
+    (* The exact assertions emitted for the original goal.  An [asserted]
+       proof node is admissible only when its parsed term is a member of this
+       set; this is the enforcement half of translation round-trip identity. *)
+    allowed_asserted_hyps : Term.term HOLset.set,
     (* keeps track of assumptions; (only) these may remain in the
        final theorem *)
     asserted_hyps : Term.term HOLset.set,
@@ -87,6 +94,7 @@ local
 
   fun state_assert (s : state) (t : Term.term) : state =
     {
+      allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
       definition_hyps = #definition_hyps s,
       thm_cache = #thm_cache s,
@@ -98,6 +106,7 @@ local
 
   fun state_define (s : state) (terms : Term.term list) : state =
     {
+      allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
       thm_cache = #thm_cache s,
@@ -109,6 +118,7 @@ local
 
   fun state_cache_thm (s : state) (thm : Thm.thm) : state =
     {
+      allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = #definition_hyps s,
       thm_cache = Net.insert (Thm.concl thm, thm) (#thm_cache s),
@@ -1051,8 +1061,19 @@ local
   fun z3_and_elim (state, thm, t) =
     (state, Library.conj_elim (thm, t))
 
-  fun z3_asserted (state, t) =
-    (state_assert state t, Thm.ASSUME t)
+  fun z3_asserted (state : state, t) =
+  let
+    val _ = List.exists (Term.aconv t)
+      (HOLset.listItems (#allowed_asserted_hyps state)) orelse
+      raise ERR "z3_asserted"
+        (asserted_membership_diagnostic ^
+         ": proof asserted a term outside {~goal} U assumptions; term=" ^
+         Library.term_to_string t)
+    (* [ASSUME] is sound only after the translation-membership gate above. *)
+    val theorem = Thm.ASSUME t
+  in
+    (state_assert state t, theorem)
+  end
 
   fun z3_commutativity (state, t) =
   let
@@ -4114,6 +4135,7 @@ local
   end
 in
   (* For unit tests *)
+  val asserted_membership_diagnostic = asserted_membership_diagnostic
   val remove_definitions = remove_definitions
   val remove_extra_hyps = remove_extra_hyps
   val remove_hyps_for_test = remove_hyps
@@ -4133,7 +4155,8 @@ in
   val word_decide_for_test = word_decide
   val arith_bv_fallback_for_test = arith_bv_fallback
 
-  fun initial_replay_state definitions proof : state = {
+  fun initial_replay_state allowed_asserted_hyps definitions proof : state = {
+    allowed_asserted_hyps = allowed_asserted_hyps,
     asserted_hyps = Term.empty_tmset,
     definition_hyps = Term.empty_tmset,
     thm_cache = Net.empty,
@@ -4143,6 +4166,58 @@ in
     z3_version = proof_version proof
   }
 
+  (* Unit replay helpers do not have an original goal.  Derive their allowed
+     set from the complete synthetic proof value so they continue to exercise
+     individual rules.  Production replay never uses this helper: it supplies
+     the original goal's assertions explicitly below. *)
+  fun proof_asserted_hyps proof =
+  let
+    fun add_list pts set = List.foldl (fn (pt, set) => add pt set) set pts
+    and add pt set =
+      case pt of
+        AND_ELIM (p, _) => add p set
+      | APPLY_DEF (p, _) => add p set
+      | ASSERTED t => HOLset.add (set, t)
+      | COMMUTATIVITY _ => set
+      | DEF_AXIOM _ => set
+      | ELIM_UNUSED _ => set
+      | HYPOTHESIS _ => set
+      | IFF_FALSE (p, _) => add p set
+      | IFF_TRUE (p, _) => add p set
+      | INTRO_DEF _ => set
+      | LEMMA (p, _) => add p set
+      | MONOTONICITY (ps, _) => add_list ps set
+      | MP (p, q, _) => add q (add p set)
+      | MP_EQ (p, q, _) => add q (add p set)
+      | NNF_NEG (ps, _) => add_list ps set
+      | NNF_POS (ps, _) => add_list ps set
+      | NOT_OR_ELIM (p, _) => add p set
+      | PROOF_BIND (_, p) => add p set
+      | QUANT_INST _ => set
+      | QUANT_INTRO (p, _) => add p set
+      | REFL _ => set
+      | REWRITE _ => set
+      | SKOLEM _ => set
+      | SYMM (p, _) => add p set
+      | TH_LEMMA_ARITH (_, ps, _) => add_list ps set
+      | TH_LEMMA_ARRAY (_, ps, _) => add_list ps set
+      | TH_LEMMA_BASIC (_, ps, _) => add_list ps set
+      | TH_LEMMA_BV (_, ps, _) => add_list ps set
+      | TH_LEMMA_DATATYPE (_, ps, _) => add_list ps set
+      | TH_LEMMA_SEQ (_, ps, _) => add_list ps set
+      | TH_LEMMA_CHAR (_, ps, _) => add_list ps set
+      | TH_LEMMA_ADVANCED (_, ps, _) => add_list ps set
+      | TRANS (p, q, _) => add q (add p set)
+      | TRANS_STAR (ps, _) => add_list ps set
+      | TRUE_AXIOM _ => set
+      | UNIT_RESOLUTION (ps, _) => add_list ps set
+      | ID _ => set
+      | THEOREM _ => set
+  in
+    Redblackmap.foldl (fn (_, pt, set) => add pt set)
+      Term.empty_tmset (proof_steps proof)
+  end
+
   (* Exercise the semantic advanced-family cache policy without manufacturing
      an otherwise unsupported Z3 proof node.  The same finite checked-state
      lookup must remain available when D-mode disables performance caches. *)
@@ -4151,7 +4226,8 @@ in
     val metadata = mk_th_lemma_metadata
       ("nonlinear-arith", SOME "lemma", ["1"])
     val state = state_cache_thm
-      (initial_replay_state [] (empty_proof "4.12.4")) cached
+      (initial_replay_state Term.empty_tmset []
+        (empty_proof "4.12.4")) cached
     val (_, thm) = z3_th_lemma_advanced metadata (state, [], target)
   in
     thm
@@ -4159,7 +4235,8 @@ in
 
   fun replay_root_with_definitions_for_test definitions proof : Thm.thm =
   let
-    val state = initial_replay_state definitions proof
+    val state = initial_replay_state (proof_asserted_hyps proof)
+      definitions proof
     val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
   in
     thm
@@ -4170,7 +4247,7 @@ in
 
   fun replay_root_with_state_for_test proof =
   let
-    val state = initial_replay_state [] proof
+    val state = initial_replay_state (proof_asserted_hyps proof) [] proof
     val ((state, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
   in
     {asserted_hyps = HOLset.listItems (#asserted_hyps state),
@@ -4187,7 +4264,9 @@ in
       else ()
 
     (* initial state *)
-    val state = initial_replay_state definitions proof
+    val allowed_asserted_hyps = HOLset.addList
+      (Term.empty_tmset, boolSyntax.mk_neg g :: asl)
+    val state = initial_replay_state allowed_asserted_hyps definitions proof
 
     (* ID 0 denotes the proof's root node *)
     val ((state, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I

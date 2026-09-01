@@ -268,8 +268,11 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant ("smtlib_native_dt_uf", ``:smt_tri -> int``)
 val _ = new_constant
   ("smtlib_ho_rank2", ``:int -> bool -> int``)
+val _ = new_constant
+  ("smtlib_ho_rank3", ``:int -> (bool -> int) -> bool -> real``)
 val smt_nonfree_ind = new_axiom
   ("smt_nonfree_ind",
    ``!P. P smt_nonfree_nil /\
@@ -6124,11 +6127,27 @@ let
     | SolverSpec.SAT _ =>
         die "FAIL: Z3 error followed by sat was accepted as SAT"
     | _ => die "FAIL: Z3 error did not return diagnostic UNKNOWN"
+  fun expect_unknown_verdict () =
+    let
+      val contents = "unknown\n(error \"proof is not available\")\n"
+      val instream = TextIO.openString contents
+      val (answer, consumed) = Z3.is_sat_stream_with_consumed instream
+      val () = TextIO.closeIn instream
+    in
+      case answer of
+        SolverSpec.UNKNOWN NONE =>
+          assert (consumed = String.size "unknown\n",
+            "Z3 unknown verdict consumed and exposed the get-proof error")
+      | SolverSpec.UNKNOWN (SOME message) =>
+          die ("FAIL: get-proof error masked Z3 unknown verdict: " ^ message)
+      | _ => die "FAIL: Z3 unknown token was not recognized as UNKNOWN"
+    end
 in
   expect_sat "sat\n";
   expect_unsat "unsat\n";
   expect_unsat "unsupported logic; continuing with ALL\nunsat\n";
   expect_unknown_error "  (error \"unknown sort 'Array'\")\nsat\n";
+  expect_unknown_verdict ();
   (case result "" of
      SolverSpec.UNKNOWN NONE => ()
    | _ => die "FAIL: end-of-stream did not return UNKNOWN")
@@ -7464,6 +7483,158 @@ in
     (fn () => ignore (parse_generated fo_translation rank2 [x]))
 end
 
+fun z3_assertion_roundtrip_normalization_success () =
+let
+  fun totalized argument = boolSyntax.mk_cond
+    (boolSyntax.mk_eq (argument, realSyntax.zero_tm),
+     realSyntax.zero_tm,
+     Term.list_mk_comb
+       (Term.prim_mk_const {Thy = "HolSmt", Name = "smt_rdiv"},
+        [realSyntax.one_tm, argument]))
+  fun capture_error label action =
+    (ignore (action ()); die ("FAIL: " ^ label ^ " unexpectedly succeeded"))
+    handle Feedback.HOL_ERR holerr => holerr
+  fun checked_conversion label term =
+    SmtLib.z3_assertion_roundtrip_conv_for_test term
+    handle Feedback.HOL_ERR holerr =>
+      die ("FAIL: " ^ label ^ " raised " ^
+        Feedback.top_structure_of holerr ^ "." ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  val input =
+    ``(H:(bool -> int) -> bool) (smtlib_ho_rank2 (x:int))``
+  val expected =
+    ``(H:(bool -> int) -> bool) (\p:bool. smtlib_ho_rank2 (x:int) p)``
+  val theorem = checked_conversion "partial-ranked assertion normalization"
+    input
+  val nested_input =
+    ``(Q:bool) /\ (H:(bool -> int) -> bool) (smtlib_ho_rank2 (x:int))``
+  val nested_expected =
+    ``(Q:bool) /\ (H:(bool -> int) -> bool)
+        (\p:bool. smtlib_ho_rank2 (x:int) p)``
+  val nested = checked_conversion "nested partial argument normalization"
+    nested_input
+  val cons_input = ``(x:'a)::(xs:'a list)``
+  val cons_expected = ``APPEND [x:'a] xs``
+  val cons = checked_conversion "symbolic CONS assertion normalization"
+    cons_input
+  val multi_cons_input = ``(x:'a)::y::(xs:'a list)``
+  val multi_cons_expected = ``APPEND [x:'a] (APPEND [y] xs)``
+  val multi_cons =
+    checked_conversion "multi-CONS assertion normalization" multi_cons_input
+  val inverse_input = ``realinv (r:real)``
+  val inverse_expected =
+    ``if (r:real) = 0r then 0r else HolSmt$smt_rdiv 1r r``
+  val inverse = checked_conversion "inverse assertion normalization"
+    inverse_input
+  val nested_inverse_input = ``realinv (realinv (r:real))``
+  val nested_inverse_expected = totalized (totalized ``r:real``)
+  val nested_inverse =
+    checked_conversion "nested inverse assertion normalization"
+      nested_inverse_input
+  val ceiling_input = ``intreal$INT_CEILING (r:real)``
+  val ceiling_expected = ``~intreal$INT_FLOOR (~(r:real))``
+  val ceiling = checked_conversion "ceiling assertion normalization"
+    ceiling_input
+  val inner_ceiling = ``intreal$INT_CEILING (s:real)``
+  val nested_ceiling_input = intrealSyntax.mk_INT_CEILING
+    (realSyntax.mk_plus
+      (``r:real``, intrealSyntax.mk_real_of_int inner_ceiling))
+  val lowered_inner = intSyntax.mk_negated
+    (intrealSyntax.mk_INT_FLOOR (realSyntax.mk_negated ``s:real``))
+  val nested_ceiling_argument = realSyntax.mk_plus
+    (``r:real``, intrealSyntax.mk_real_of_int lowered_inner)
+  val nested_ceiling_expected = intSyntax.mk_negated
+    (intrealSyntax.mk_INT_FLOOR
+      (realSyntax.mk_negated nested_ceiling_argument))
+  val nested_ceiling =
+    checked_conversion "nested ceiling assertion normalization"
+      nested_ceiling_input
+  val nested_partial_input =
+    ``smtlib_ho_rank3 (x:int) (smtlib_ho_rank2 (y:int))``
+  val nested_partial_expected =
+    ``\q:bool. smtlib_ho_rank3 (x:int)
+        (\p:bool. smtlib_ho_rank2 (y:int) p) q``
+  val nested_partial =
+    checked_conversion "nested partial-ranked assertion normalization"
+      nested_partial_input
+  val injected_error = capture_error "Z3 admitted expansion proof failure"
+    (fn () => SmtLib.z3_assertion_roundtrip_conv_with_for_test
+      (fn _ => raise Feedback.mk_HOL_ERR
+        "Task10Injected" "z3_expansion_proof"
+        "distinctive admitted Z3 expansion failure") inverse_input)
+  val unchanged_error = capture_error "Z3 admitted unchanged expansion"
+    (fn () => SmtLib.z3_assertion_roundtrip_conv_with_for_test
+      (fn (admitted_input, _) => Thm.REFL admitted_input) inverse_input)
+  val public_goal =
+    ([], boolSyntax.mk_eq (multi_cons_input, ``ys:'a list``))
+  val normalized_public_goal =
+    (case Lib.fst (SmtLib.Z3_ASSERTION_TO_SMT_TAC public_goal) of
+       [goal] => goal
+     | _ => die "Z3 assertion normalization did not preserve one goal")
+    handle Feedback.HOL_ERR holerr =>
+      die ("FAIL: public Z3 assertion normalization raised " ^
+        Feedback.top_structure_of holerr ^ "." ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  val inverse_public_goal = ([], boolSyntax.mk_eq
+    (inverse_input, ``u:real``))
+  val normalized_inverse_public_goal =
+    case Lib.fst (SmtLib.Z3_ASSERTION_TO_SMT_TAC inverse_public_goal) of
+      [goal] => goal
+    | _ => die "Z3 inverse normalization did not preserve one goal"
+  val closed_literal_unchanged =
+    ((ignore (SmtLib.z3_assertion_roundtrip_conv_for_test
+        ``[49; 50]``); false)
+     handle Conv.UNCHANGED => true)
+in
+  assert_no_hyps ("Z3 partial-constant eta normalization", theorem);
+  assert_concl_alpha ("Z3 partial-constant eta normalization", theorem,
+    boolSyntax.mk_eq (input, expected));
+  assert_no_hyps ("nested Z3 partial-constant eta normalization", nested);
+  assert_concl_alpha ("nested Z3 partial-constant eta normalization", nested,
+    boolSyntax.mk_eq (nested_input, nested_expected));
+  assert_no_hyps ("Z3 native Seq CONS normalization", cons);
+  assert_concl_alpha ("Z3 native Seq CONS normalization", cons,
+    boolSyntax.mk_eq (cons_input, cons_expected));
+  assert_concl_alpha ("Z3 multi-CONS revisit normalization", multi_cons,
+    boolSyntax.mk_eq (multi_cons_input, multi_cons_expected));
+  assert_no_hyps ("Z3 total real-inverse normalization", inverse);
+  assert_concl_alpha ("Z3 total real-inverse normalization", inverse,
+    boolSyntax.mk_eq (inverse_input, inverse_expected));
+  assert_concl_alpha ("Z3 nested real-inverse normalization", nested_inverse,
+    boolSyntax.mk_eq (nested_inverse_input, nested_inverse_expected));
+  assert_no_hyps ("Z3 real-ceiling normalization", ceiling);
+  assert_concl_alpha ("Z3 real-ceiling normalization", ceiling,
+    boolSyntax.mk_eq (ceiling_input, ceiling_expected));
+  assert_concl_alpha ("Z3 nested real-ceiling normalization", nested_ceiling,
+    boolSyntax.mk_eq (nested_ceiling_input, nested_ceiling_expected));
+  assert_concl_alpha ("Z3 nested partial-ranked normalization",
+    nested_partial,
+    boolSyntax.mk_eq (nested_partial_input, nested_partial_expected));
+  assert (Feedback.top_structure_of injected_error = "Task10Injected" andalso
+      Feedback.top_function_of injected_error = "z3_expansion_proof" andalso
+      Feedback.message_of injected_error =
+        "distinctive admitted Z3 expansion failure",
+    "admitted Z3 expansion failure was swallowed or relabelled");
+  assert (Feedback.top_structure_of unchanged_error = "SmtLib" andalso
+      Feedback.top_function_of unchanged_error =
+        "z3_assertion_roundtrip_conv" andalso
+      contains "alpha-unchanged" (Feedback.message_of unchanged_error),
+    "alpha-unchanged Z3 expansion missed its named invariant");
+  (assert_goal_roundtrip "checked Z3 multi-CONS assertion normalization"
+     normalized_public_goal
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: checked Z3 assertion round-trip raised " ^
+       Feedback.top_structure_of holerr ^ "." ^
+       Feedback.top_function_of holerr ^ ": " ^
+       Feedback.message_of holerr));
+  assert_goal_roundtrip "checked Z3 smt_rdiv assertion normalization"
+    normalized_inverse_public_goal;
+  assert (closed_literal_unchanged,
+    "Z3 assertion normalization rewrote a closed list literal")
+end
+
 fun smtlib_regime_trigger_success () =
 let
   fun preprocess goal =
@@ -7557,7 +7728,8 @@ in
       datatype_reason =
         "automatic:surviving-abstraction",
     "Z3 automatic selection lost the normalized-rator reason: " ^
-    datatype_reason);
+    datatype_reason ^ "; normalized goal: " ^
+    term_with_types (Lib.snd datatype_rator));
   expect_record (SmtLib.HigherOrder SmtLib.Standard27)
     "automatic:surviving-abstraction" automatic_surviving;
   expect_record (SmtLib.HigherOrder SmtLib.Standard27)
@@ -8431,6 +8603,9 @@ let
   fun expect_shape (test_name, goal, snippets) =
     let val text = smtlib_text goal
     in List.app (assert_snippet test_name text) snippets end
+  val tuple_selector_goal = Lib.fst
+    (SolverSpec.simplify (SmtLib.SIMP_TAC true)
+      ([], ``FST (p:int # bool) <= FST p + 1``))
   val cases = [
     ("bool-sort-and-equality", ([], ``(p:bool) = q``),
       ["(set-logic QF_UF)\n", "(declare-fun v0 () Bool)\n",
@@ -8463,11 +8638,10 @@ let
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 t1))",
        "(declare-fun v2 () (Array t2 t1))",
        "(= (select v0 v1) (select v2 v3))"]),
-    ("tuple-selector-native-dt", ([],
-       ``FST (p:int # bool) <= FST p + 1``),
-      ["(set-logic QF_UFDTLIA)\n",
+    ("tuple-selector-native-dt", tuple_selector_goal,
+       ["(set-logic QF_UFDTLIA)\n",
        "(declare-datatypes ((Prod_Int_Bool 0))",
-       "(declare-fun v0 (Prod_Int_Bool) Int)"]),
+       "(sel_Prod_Int_Bool_ctor_Prod_Int_Bool___0 v0)"]),
     ("sets-as-predicates-current-uf", ([],
        ``(s:'a -> bool) x``),
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 Bool))",
@@ -8790,6 +8964,17 @@ let
       SmtTriA => 0i
     | SmtTriB x => x + 1i
     | SmtTriC b => if b then 2i else 3i``
+  val direct_case_input =
+    ``option_CASE (SOME (x:'b)) (n:'a) (s:'b -> 'a) = s x``
+  val direct_case_lhs = Lib.fst (boolSyntax.dest_eq direct_case_input)
+  val eta_injected_error = capture_error "admitted case eta proof failure"
+    (fn () => SmtLib.datatype_case_branch_eta_conv_with_for_test
+      (fn _ => raise Feedback.mk_HOL_ERR
+        "Task10Injected" "case_eta_proof"
+        "distinctive admitted case eta proof failure") direct_case_lhs)
+  val eta_unchanged_error = capture_error "admitted unchanged case eta"
+    (fn () => SmtLib.datatype_case_branch_eta_conv_with_for_test
+      (fn _ => Thm.REFL direct_case_lhs) direct_case_lhs)
   val full_thm = SmtLib.DATATYPE_TO_SMT_CONV full_literal
   val partial_thm = SmtLib.DATATYPE_TO_SMT_CONV partial_literal
   val explicit_full_thm =
@@ -8797,6 +8982,7 @@ let
   val ordering_thm = SmtLib.DATATYPE_TO_SMT_CONV ordering_witness
   val selector_thm = SmtLib.DATATYPE_TO_SMT_CONV selector_input
   val case_thm = SmtLib.DATATYPE_TO_SMT_CONV case_input
+  val direct_case_thm = SmtLib.DATATYPE_TO_SMT_CONV direct_case_input
   val general_goal =
     ([boolSyntax.mk_eq (selector_input, m)],
      boolSyntax.mk_eq (case_input, m))
@@ -8816,7 +9002,8 @@ in
      ("explicit full fupd chain reduction", explicit_full_thm),
      ("post-update ordering witness", ordering_thm),
      ("general constructor selector reduction", selector_thm),
-     ("general constructor case reduction", case_thm)];
+     ("general constructor case reduction", case_thm),
+     ("direct case function-branch eta reduction", direct_case_thm)];
   assert_concl_alpha ("post-update ordering witness", ordering_thm,
     boolSyntax.mk_eq (ordering_witness, p));
   assert_concl_alpha ("full record literal reduction", full_thm,
@@ -8830,6 +9017,9 @@ in
     selector_thm, boolSyntax.mk_eq (selector_input, n));
   assert_concl_alpha ("general constructor case reduction", case_thm,
     boolSyntax.mk_eq (case_input, ``n + 1i``));
+  assert_concl_alpha ("direct case function-branch eta reduction",
+    direct_case_thm,
+    boolSyntax.mk_eq (direct_case_input, ``(s:'b -> 'a) x = s x``));
   assert (Feedback.top_structure_of injected_error = "Task08Injected" andalso
       Feedback.top_function_of injected_error = "proof_conversion" andalso
       Feedback.message_of injected_error =
@@ -8841,6 +9031,16 @@ in
       Feedback.message_of unchanged_error =
         "admitted proof conversion returned an alpha-unchanged result",
     "admitted unchanged constructor-case proof lacked its named error");
+  assert (Feedback.top_structure_of eta_injected_error = "Task10Injected" andalso
+      Feedback.top_function_of eta_injected_error = "case_eta_proof" andalso
+      Feedback.message_of eta_injected_error =
+        "distinctive admitted case eta proof failure",
+    "admitted case eta proof failure was swallowed or relabelled");
+  assert (Feedback.top_structure_of eta_unchanged_error = "SmtLib" andalso
+      Feedback.top_function_of eta_unchanged_error =
+        "datatype_case_branch_eta_conv" andalso
+      contains "alpha-unchanged" (Feedback.message_of eta_unchanged_error),
+    "admitted unchanged case eta missed its named invariant");
   assert (Lib.list_eq Term.aconv (Lib.fst normalized_general_goal)
       [boolSyntax.mk_eq (n, m)] andalso
       Term.aconv (Lib.snd normalized_general_goal)
@@ -8854,6 +9054,170 @@ in
     ([], boolSyntax.mk_eq (full_result, ``s:smt_rec``));
   assert_goal_roundtrip "partially reduced record literal"
     ([], boolSyntax.mk_eq (partial_result, ``s:smt_rec``))
+end
+
+fun datatype_mixed_arity_case_eta_success () =
+let
+  val mixed_case =
+    ``option_CASE (eta_option:int option)
+        (\eta_none_arg:bool. if eta_none_arg then 1i else 0i)
+        (eta_some:int -> bool -> int)``
+  val eta_expected =
+    ``option_CASE (eta_option:int option)
+        (\eta_none_arg:bool. if eta_none_arg then 1i else 0i)
+        (\eta_some_arg:int. eta_some eta_some_arg)``
+  val direct_thm =
+    SmtLib.datatype_case_branch_eta_conv_for_test mixed_case
+  val normalized_expected =
+    SmtLib.datatype_case_normal_form_for_test eta_expected
+  val normalized_thm = SmtLib.DATATYPE_TO_SMT_CONV mixed_case
+  val extra = ``eta_mixed_extra:bool``
+  val result = ``eta_mixed_result:int``
+  val applied_input = Term.mk_comb (mixed_case, extra)
+  val applied_expected = Term.mk_comb (normalized_expected, extra)
+  val input_goal = ([], boolSyntax.mk_eq (applied_input, result))
+  val expected_goal =
+    ([], boolSyntax.mk_eq (applied_expected, result))
+  val normalized_goal =
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC input_goal) of
+      [goal] => goal
+    | _ => die "mixed-arity case eta did not preserve one public goal"
+  val pointwise_case =
+    ``option_CASE (eta_option:int option)
+        (if eta_mixed_extra then 1i else 0i)
+        (\eta_some_arg:int. eta_some eta_some_arg eta_mixed_extra)``
+  val roundtrip_goal =
+    ([], boolSyntax.mk_eq
+      (SmtLib.datatype_case_normal_form_for_test pointwise_case, result))
+in
+  List.app assert_no_hyps
+    [("mixed nullary/unary direct case eta", direct_thm),
+     ("mixed nullary/unary datatype normalization", normalized_thm)];
+  assert_concl_alpha ("mixed nullary/unary direct case eta",
+    direct_thm, boolSyntax.mk_eq (mixed_case, eta_expected));
+  assert_concl_alpha ("mixed nullary/unary datatype normalization",
+    normalized_thm,
+    boolSyntax.mk_eq (mixed_case, normalized_expected));
+  assert (Lib.list_eq Term.aconv (Lib.fst normalized_goal)
+      (Lib.fst expected_goal) andalso
+      Term.aconv (Lib.snd normalized_goal) (Lib.snd expected_goal),
+    "public mixed-arity case eta normalized the wrong goal");
+  assert_goal_roundtrip "public mixed-arity case eta traversal"
+    roundtrip_goal
+end
+
+fun datatype_exact_spine_case_eta_success () =
+let
+  val record_ty = ``:smt_rec``
+  val tyinfo =
+    case TypeBase.fetch record_ty of
+      SOME info => info
+    | NONE => die "smt_rec did not have a TypeBase entry"
+  val record_constructor =
+    case SmtLib.datatype_constructors_for_test record_ty of
+      [constructor] => constructor
+    | _ => die "smt_rec did not have exactly one TypeBase constructor"
+  val (constructor_domains, _) = boolSyntax.strip_fun
+    (Term.type_of record_constructor)
+  val _ = assert (List.length constructor_domains = 2,
+    "exact-spine case eta requires the two-field smt_rec constructor")
+  val case_const = TypeBasePure.case_const_of tyinfo
+  val record = ``r:smt_rec``
+  val count = ``eta_count_var:int``
+  val count_arg = ``eta_count:int``
+  val flag_arg = ``eta_flag:bool``
+  val extra_arg = ``eta_extra:bool``
+  val result = ``eta_result:int``
+  val raw_branch = ``eta_raw:int -> bool -> int``
+  val partial_head = ``eta_partial:int -> bool -> int``
+  val partial_branch = Term.mk_abs
+    (count, Term.mk_comb (partial_head, count))
+  val returning_branch = ``eta_returning:int -> bool -> bool -> int``
+  fun typed_apply (function, argument) =
+    let
+      val (domain, _) = Type.dom_rng (Term.type_of function)
+      val specialized = Term.inst
+        (Type.match_type domain (Term.type_of argument)) function
+    in
+      Term.mk_comb (specialized, argument)
+    end
+  fun mk_case branch = List.foldl
+    (fn (argument, function) => typed_apply (function, argument))
+    case_const [record, branch]
+  fun eta_expand branch =
+    let
+      val (existing_variables, body) = Term.strip_abs branch
+      val missing_arguments = List.drop
+        ([count_arg, flag_arg], List.length existing_variables)
+    in
+      Term.list_mk_abs
+        (existing_variables @ missing_arguments,
+         Term.list_mk_comb (body, missing_arguments))
+    end
+  val raw_case = mk_case raw_branch
+  val partial_case = mk_case partial_branch
+  val raw_eta_expected = mk_case (eta_expand raw_branch)
+  val partial_eta_expected = mk_case (eta_expand partial_branch)
+  val raw_eta_thm =
+    SmtLib.datatype_case_branch_eta_conv_for_test raw_case
+  val partial_eta_thm =
+    SmtLib.datatype_case_branch_eta_conv_for_test partial_case
+  val enclosing_input = Term.mk_abs (extra_arg, partial_case)
+  val enclosing_eta_expected =
+    Term.mk_abs (extra_arg, partial_eta_expected)
+  val enclosing_eta_thm = Conv.ABS_CONV
+    SmtLib.datatype_case_branch_eta_conv_for_test enclosing_input
+  val selected_count =
+    SmtLib.datatype_selector_term_for_test record_ty record_constructor 0
+      record
+  val selected_flag =
+    SmtLib.datatype_selector_term_for_test record_ty record_constructor 1
+      record
+  val overapplied_input =
+    Term.mk_comb (mk_case returning_branch, extra_arg)
+  val overapplied_expected = Term.list_mk_comb
+    (returning_branch, [selected_count, selected_flag, extra_arg])
+  val overapplied_thm = SmtLib.DATATYPE_TO_SMT_CONV overapplied_input
+  val enclosing_expected = Term.mk_abs
+    (extra_arg,
+     Term.list_mk_comb (partial_head, [selected_count, selected_flag]))
+  val enclosing_thm = SmtLib.DATATYPE_TO_SMT_CONV enclosing_input
+  val public_input_goal =
+    ([], boolSyntax.mk_eq (overapplied_input, result))
+  val public_expected_goal =
+    ([], boolSyntax.mk_eq (overapplied_expected, result))
+  val public_normalized_goal =
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC public_input_goal) of
+      [goal] => goal
+    | _ => die "exact-spine case eta did not preserve one public goal"
+in
+  List.app assert_no_hyps
+    [("two-field raw-branch exact-spine eta", raw_eta_thm),
+     ("two-field partial-lambda exact-spine eta", partial_eta_thm),
+     ("enclosing-lambda exact-spine eta", enclosing_eta_thm),
+     ("overapplied function-result case traversal", overapplied_thm),
+     ("enclosing-lambda datatype traversal", enclosing_thm)];
+  assert_concl_alpha ("two-field raw-branch exact-spine eta",
+    raw_eta_thm, boolSyntax.mk_eq (raw_case, raw_eta_expected));
+  assert_concl_alpha ("two-field partial-lambda exact-spine eta",
+    partial_eta_thm,
+    boolSyntax.mk_eq (partial_case, partial_eta_expected));
+  assert_concl_alpha ("enclosing-lambda exact-spine eta",
+    enclosing_eta_thm,
+    boolSyntax.mk_eq (enclosing_input, enclosing_eta_expected));
+  assert_concl_alpha ("overapplied function-result case traversal",
+    overapplied_thm,
+    boolSyntax.mk_eq (overapplied_input, overapplied_expected));
+  assert_concl_alpha ("enclosing-lambda datatype traversal",
+    enclosing_thm,
+    boolSyntax.mk_eq (enclosing_input, enclosing_expected));
+  assert (Lib.list_eq Term.aconv (Lib.fst public_normalized_goal)
+      (Lib.fst public_expected_goal) andalso
+      Term.aconv (Lib.snd public_normalized_goal)
+        (Lib.snd public_expected_goal),
+    "public exact-spine case eta normalized the wrong goal");
+  assert_goal_roundtrip "public exact-spine case eta traversal"
+    public_normalized_goal
 end
 
 fun datatype_destructor_ablation_boundaries_success () =
@@ -8965,10 +9329,13 @@ let
     ([], boolSyntax.mk_eq (hd_input, ``n:int``))
   val sum_goal = normalized_goal
     ([], boolSyntax.mk_eq (sum_input, ``m:int``))
-  val hd_text = String.concat
-    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE hd_goal))
-  val sum_text = String.concat
-    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE sum_goal))
+  fun translation_error label goal =
+    (ignore (SmtLib.goal_to_SmtLib_translation NONE goal);
+     die ("FAIL: " ^ label ^
+       " partial destructor translation unexpectedly succeeded"))
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
+  val (_, hd_strings) = SmtLib.goal_to_SmtLib_translation NONE hd_goal
+  val sum_error = translation_error "OUTL" sum_goal
   fun family_heads ty = List.map
     SmtLib.datatype_destructor_head_for_test (registered ty)
 in
@@ -9004,10 +9371,114 @@ in
   assert (contains_any_destructor hd_result andalso
       contains_any_destructor sum_result,
     "partial destructor normalization discarded an unspecified branch");
-  assert (contains "sel_" hd_text andalso contains "sel_" sum_text,
-    "symbolic destructor did not emit parser-native case/selector form");
-  assert_goal_roundtrip "normalized list destructor" hd_goal;
-  assert_goal_roundtrip "normalized non-list destructor" sum_goal
+  assert (not (List.null hd_strings),
+    "closed HD residual did not translate through its zero-arity boundary");
+  assert (contains
+      SmtLib.uninterpreted_native_datatype_destructor_diagnostic sum_error,
+    "free-variable partial destructor residual missed the named boundary")
+end
+
+fun smtlib_invented_uf_native_datatype_domain_diagnostic () =
+let
+  val goal = ``smtlib_native_dt_uf d = 0i``
+in
+  (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
+   die "FAIL: invented UF over native datatype was emitted")
+  handle Feedback.HOL_ERR holerr =>
+    let val message = Feedback.message_of holerr in
+      assert (Feedback.top_structure_of holerr = "SmtLib" andalso
+          Feedback.top_function_of holerr = "translate_term",
+        "invented-UF rejection came from the wrong boundary: " ^ message);
+      assert (contains
+          SmtLib.invented_uf_native_datatype_domain_diagnostic message,
+        "invented-UF rejection omitted its named diagnostic: " ^ message);
+      assert (contains "under-specified" message andalso
+          contains "not a countermodel" message andalso
+          contains ":smt_tri" message,
+        "invented-UF rejection omitted its semantic/type detail: " ^ message)
+    end
+end
+
+fun smtlib_uninterpreted_native_datatype_destructor_diagnostic () =
+let
+  val goal = ``OUTL (INR (p:bool) : int + bool) = 0i``
+  val closed_hd = ``HD ([]:int list)``
+  val reducible_hd = ``HD ([1]:int list)``
+  val reducible_fst = ``FST ((1i, T):int # bool)``
+  val reducible_outl = ``OUTL (INL 1i : int + bool)``
+  fun raw_rejection label term =
+    ((ignore (SmtLib.goal_to_SmtLib_translation NONE
+        ([], boolSyntax.mk_eq (term, term)));
+      die ("FAIL: raw reducible destructor crossed translation: " ^ label))
+     handle Feedback.HOL_ERR holerr =>
+       contains SmtLib.uninterpreted_native_datatype_destructor_diagnostic
+         (Feedback.message_of holerr))
+  val (closed_translation, _) = SmtLib.goal_to_SmtLib_translation NONE
+    ([], boolSyntax.mk_eq (closed_hd, closed_hd))
+  val closed_declarations = List.filter
+    (fn SmtLib.TermDeclaration {hol_term, ...} =>
+          Term.aconv hol_term closed_hd
+      | _ => false)
+    (SmtLib.translation_records closed_translation)
+  val closed_shape =
+    case closed_declarations of
+      [SmtLib.TermDeclaration {arity, domain_sorts, ...}] =>
+        arity = 0 andalso List.null domain_sorts
+    | _ => false
+  val reuse_input =
+    ([boolSyntax.mk_eq (``HD [HD ([]:int list)]``, ``x:int``)],
+     boolSyntax.mk_eq (closed_hd, ``y:int``))
+  val reuse_goal =
+    case Lib.fst (SmtLib.SIMP_TAC true reuse_input) of
+      [normalized] => normalized
+    | _ => die "closed destructor reuse preprocessing changed goal count"
+  val (reuse_translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE reuse_goal
+  val reuse_declarations = List.filter
+    (fn SmtLib.TermDeclaration {hol_term, ...} =>
+          Term.aconv hol_term closed_hd
+      | _ => false)
+    (SmtLib.translation_records reuse_translation)
+  val prescan_message =
+    ((SmtLib.reject_uninterpreted_native_destructors_for_test [reducible_hd];
+      die "FAIL: defensive destructor pre-scan accepted raw HD [1]")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+in
+  assert (contains
+      SmtLib.uninterpreted_native_datatype_destructor_diagnostic
+      prescan_message,
+    "defensive destructor pre-scan missed its unique raw-boundary test");
+  assert (SmtLib.closed_constructor_destructor_residual_for_test closed_hd,
+    "irreducible closed HD residue missed its theorem-sensitive boundary");
+  assert (not (SmtLib.closed_constructor_destructor_residual_for_test
+      reducible_hd) andalso
+      not (SmtLib.closed_constructor_destructor_residual_for_test
+        reducible_fst) andalso
+      not (SmtLib.closed_constructor_destructor_residual_for_test
+        reducible_outl),
+    "a theorem-reducible destructor was admitted as a closed residual");
+  assert (raw_rejection "HD [1]" reducible_hd andalso
+      raw_rejection "FST (1,T)" reducible_fst andalso
+      raw_rejection "OUTL (INL 1)" reducible_outl,
+    "raw public translation did not hard-reject a reducible destructor");
+  assert (closed_shape,
+    "closed destructor residue was not reused as one zero-arity symbol");
+  assert (List.length reuse_declarations = 1,
+    "preprocessed HD [HD []] and HD [] did not reuse one residual symbol");
+  ((ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
+    die "FAIL: uninterpreted native-datatype destructor was emitted")
+   handle Feedback.HOL_ERR holerr =>
+     let val message = Feedback.message_of holerr in
+       assert (Feedback.top_structure_of holerr = "SmtLib" andalso
+           Feedback.top_function_of holerr = "translate_term",
+         "destructor rejection came from the wrong boundary: " ^ message);
+       assert (contains
+           SmtLib.uninterpreted_native_datatype_destructor_diagnostic
+           message,
+         "destructor rejection omitted its named diagnostic: " ^ message);
+       assert (contains "OUTL" message andalso contains ":int + bool" message,
+         "destructor rejection omitted its destructor/domain: " ^ message)
+     end)
 end
 
 fun smtlib_datatype_parser_dict_success () =
@@ -11745,6 +12216,28 @@ in
     SOME (Z3_Proof.MP_EQ _) => ()
   | SOME _ => die "FAIL: mp-eq proof rule parsed to unexpected constructor"
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
+end
+
+fun z3_asserted_membership_diagnostic () =
+let
+  val rogue = ``p:bool``
+  val initial = Z3_Proof.empty_proof "4.12.4"
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+    Z3_Proof.ASSERTED rogue)
+  val proof = Z3_Proof.update_proof_steps initial steps
+in
+  (ignore (Z3_ProofReplay.check_proof ([], boolSyntax.T, proof));
+   die "FAIL: out-of-goal asserted node was silently admitted")
+  handle Feedback.HOL_ERR holerr =>
+    let val message = Feedback.message_of holerr in
+      assert (contains Z3_ProofReplay.asserted_membership_diagnostic
+          message,
+        "asserted-membership rejection omitted its named diagnostic: " ^
+        message);
+      assert (contains "{~goal} U assumptions" message andalso
+          contains "p" message,
+        "asserted-membership rejection omitted set/term detail: " ^ message)
+    end
 end
 
 fun z3_proof_parser_erases_proof_bind_success () =
@@ -17612,6 +18105,8 @@ let
       smtlib_higher_order_translation_abstraction_success),
     ("smtlib_ho_parser_dict_currying_success",
       smtlib_ho_parser_dict_currying_success),
+    ("z3_assertion_roundtrip_normalization_success",
+      z3_assertion_roundtrip_normalization_success),
     ("smtlib_regime_trigger_success",
       smtlib_regime_trigger_success),
     ("smtlib_driver_regime_selection_success",
@@ -17632,12 +18127,20 @@ let
       smtlib_datatype_term_translation_success),
     ("datatype_to_smt_normalization_roundtrip_success",
       datatype_to_smt_normalization_roundtrip_success),
+    ("datatype_mixed_arity_case_eta_success",
+      datatype_mixed_arity_case_eta_success),
     ("datatype_constructor_case_reduction_success",
       datatype_constructor_case_reduction_success),
+    ("datatype_exact_spine_case_eta_success",
+      datatype_exact_spine_case_eta_success),
     ("datatype_destructor_ablation_boundaries_success",
       datatype_destructor_ablation_boundaries_success),
+    ("smtlib_uninterpreted_native_datatype_destructor_diagnostic",
+      smtlib_uninterpreted_native_datatype_destructor_diagnostic),
     ("datatype_destructor_normalization_success",
       datatype_destructor_normalization_success),
+    ("smtlib_invented_uf_native_datatype_domain_diagnostic",
+      smtlib_invented_uf_native_datatype_domain_diagnostic),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",
@@ -17775,6 +18278,8 @@ let
       cpc_live_checked_replay_int_abs_success),
     ("z3_proof_registry_metadata_success",
       z3_proof_registry_metadata_success),
+    ("z3_asserted_membership_diagnostic",
+      z3_asserted_membership_diagnostic),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
     ("z3_proof_parser_erases_proof_bind_success",

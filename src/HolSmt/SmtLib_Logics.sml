@@ -33,6 +33,11 @@ local
     handle Feedback.HOL_ERR _ =>
       one_int_to_real (t1, t2)
 
+  fun mk_smt_rdiv (left, right) =
+    Term.list_mk_comb
+      (Term.prim_mk_const {Thy = "HolSmt", Name = "smt_rdiv"},
+       [left, right])
+
   open SmtLib_Theories
 
   val BV_extension_tmentries = [
@@ -172,7 +177,7 @@ in
         ("-", leftassoc (realSyntax.mk_minus o one_int_to_real)),
         ("+", leftassoc (realSyntax.mk_plus o one_int_to_real)),
         ("*", leftassoc (realSyntax.mk_mult o one_int_to_real)),
-        ("/", leftassoc (realSyntax.mk_div o two_ints_to_real)),
+        ("/", leftassoc (mk_smt_rdiv o two_ints_to_real)),
         ("<=", chainable (realSyntax.mk_leq o one_int_to_real)),
         ("<", chainable (realSyntax.mk_less o one_int_to_real)),
         (">=", chainable (realSyntax.mk_geq o one_int_to_real)),

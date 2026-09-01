@@ -2174,6 +2174,159 @@ local
       else
         NONE
 
+  val invented_uf_native_datatype_domain_diagnostic =
+    "HOLSMT_TRANSLATION_INVENTED_UF_NATIVE_DATATYPE_DOMAIN"
+
+  val uninterpreted_native_datatype_destructor_diagnostic =
+    "HOLSMT_TRANSLATION_UNINTERPRETED_NATIVE_DATATYPE_DESTRUCTOR"
+
+  fun datatype_destructor_head theorem =
+    let
+      val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+      val clauses = boolSyntax.strip_conj body
+      fun clause_head clause =
+        let
+          val (_, equation) = boolSyntax.strip_forall clause
+          val (lhs, _) = boolSyntax.dest_eq equation
+          val (head, arguments) = boolSyntax.strip_comb lhs
+          val _ = if List.length arguments = 1 then () else
+            raise ERR "datatype_destructor_head"
+              "destructor equation is not unary"
+        in
+          head
+        end
+      val heads = List.map clause_head clauses
+      val head = List.hd heads
+      val _ = List.all (Term.same_const head) heads orelse
+        raise ERR "datatype_destructor_head"
+          "destructor theorem defines multiple constants"
+    in
+      head
+    end
+
+  fun datatype_destructor_theorem tyinfo destructor =
+    List.find
+      (fn theorem =>
+        Term.same_const destructor (datatype_destructor_head theorem))
+      (TypeBasePure.destructors_of tyinfo)
+
+  (* This predicate follows the actual type emitter: ordinary native lists
+     are datatypes, but a selected Seq backend emits them as `(Seq ...)` and
+     therefore does not create the under-specified native-datatype boundary. *)
+  fun emits_native_datatype_sort ty =
+    not (is_function_type ty) andalso
+    not (has_type_builtin ty) andalso
+    not (!current_native_sequence_emission andalso
+      is_native_sequence_type ty) andalso
+    Option.isSome (datatype_family ty)
+
+  fun registered_destructor_for_domain destructor domain =
+    case TypeBase.fetch domain of
+      SOME tyinfo =>
+        Option.isSome (datatype_destructor_theorem tyinfo destructor)
+    | NONE => false
+
+  fun emitted_native_sort ty =
+    emits_native_datatype_sort ty orelse
+    (!current_native_sequence_emission andalso is_native_sequence_type ty)
+
+  fun uninterpreted_native_destructor_domain rator domain_types =
+    if Term.is_const rator then
+      List.find (fn domain => emitted_native_sort domain andalso
+        registered_destructor_for_domain rator domain) domain_types
+    else
+      NONE
+
+  fun raise_uninterpreted_native_destructor rator domain =
+    raise ERR "translate_term"
+      (uninterpreted_native_datatype_destructor_diagnostic ^
+       ": refusing an uninterpreted TypeBase destructor over a native " ^
+       "sort; destructor=" ^ Hol_pp.term_to_string rator ^
+       "; domain=" ^ Hol_pp.type_to_string domain)
+
+  fun theorem_reduces_exact_application theorem tm =
+    let
+      val reduction = simpLib.SIMP_CONV pureSimps.pure_ss [theorem] tm
+      val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl reduction)
+      val _ = Term.aconv lhs tm orelse
+        raise ERR "closed_constructor_destructor_residual"
+          "registered destructor proof has the wrong left-hand side"
+    in
+      not (Term.aconv lhs rhs)
+    end
+    handle Conv.UNCHANGED => false
+
+  (* A partial destructor on a closed constructor outside its owning branch
+     is a fixed but unspecified HOL value.  It can soundly be represented by
+     one zero-arity SMT constant keyed by the whole application: unlike an
+     uninterpreted destructor function, that declaration has no native-sort
+     domain.  Admission is theorem-sensitive: a registered equation which can
+     reduce the exact application must be used by preprocessing, never hidden
+     behind this residual boundary.  Any free/symbolic scrutinee remains behind
+     the hard diagnostic. *)
+  fun closed_constructor_destructor_residual tm =
+    if not (Term.is_comb tm) then false
+    else
+        let
+          val (destructor, scrutinee) = Term.dest_comb tm
+          val domain = Term.type_of scrutinee
+          val (constructor, _) = boolSyntax.strip_comb scrutinee
+          val registered =
+            case TypeBase.fetch domain of
+              NONE => NONE
+            | SOME tyinfo =>
+                Option.map (fn theorem => (tyinfo, theorem))
+                  (datatype_destructor_theorem tyinfo destructor)
+        in
+          case registered of
+            NONE => false
+          | SOME (_, theorem) =>
+              emitted_native_sort domain andalso
+              Term.is_const constructor andalso
+              TypeBase.is_constructor constructor andalso
+              List.null (Term.free_vars tm) andalso
+              not (theorem_reduces_exact_application theorem tm)
+        end
+
+  fun reject_uninterpreted_native_destructors terms =
+  let
+    fun reject tm =
+      if not (Term.is_comb tm) then ()
+      else
+        let val (rator, argument) = Term.dest_comb tm in
+          if closed_constructor_destructor_residual tm then ()
+          else
+            (case uninterpreted_native_destructor_domain rator
+                [Term.type_of argument] of
+              SOME domain => raise_uninterpreted_native_destructor rator domain
+            | NONE => ())
+        end
+  in
+    List.app reject (List.concat (List.map Library.subterms terms))
+  end
+
+
+  fun reject_invented_native_datatype_domain rator domain_types =
+  let
+    val destructor_domain =
+      uninterpreted_native_destructor_domain rator domain_types
+  in
+    case destructor_domain of
+      SOME domain => raise_uninterpreted_native_destructor rator domain
+    | NONE =>
+        (case List.find emits_native_datatype_sort domain_types of
+          NONE => ()
+        | SOME domain =>
+            raise ERR "translate_term"
+              (invented_uf_native_datatype_domain_diagnostic ^
+               ": refusing an invented function whose domain was emitted " ^
+               "as a native datatype sort; the query is under-specified " ^
+               "and its sat/unknown verdict is not a countermodel; " ^
+               "function=" ^ Hol_pp.term_to_string rator ^ "; domain=" ^
+               Hol_pp.type_to_string domain))
+  end
+
+
   fun constructor_name type_name constructor used =
     let
       val raw = #Name (Term.dest_thy_const constructor)
@@ -3866,6 +4019,27 @@ local
     fun ensure_type ((tydict, tmdict), ty) =
       let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
       in (((tydict, tmdict), decls), name) end
+    fun translate_closed_destructor_residual acc =
+      let
+        val _ = closed_constructor_destructor_residual tm orelse
+          raise ERR "translate_closed_destructor_residual"
+            "not a closed constructor-headed destructor residue"
+        val (((tydict, tmdict), typedecls), sort) =
+          ensure_type (acc, Term.type_of tm)
+      in
+        case Redblackmap.peek (tmdict, (tm, 0)) of
+          SOME name => ((tydict, tmdict), (typedecls, name))
+        | NONE =>
+            let
+              val name = tm_prefix ^
+                Int.toString (Redblackmap.numItems tmdict)
+              val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
+              val declaration = term_declaration_text regime name [] sort
+              val _ = record_emitted_term_sorts (tm, 0) ([], sort)
+            in
+              ((tydict, tmdict), (typedecls @ [declaration], name))
+            end
+      end
     fun translate_injected_string acc =
       let
         val string = dest_injected_string tm
@@ -4211,6 +4385,17 @@ local
     handle e as NestedTranslation _ => raise e
          | Feedback.HOL_ERR _ =>
 
+    (* A closed partial-destructor residue is one fixed HOL value.  Emit the
+       whole residual as a reusable zero-arity symbol; never decompose it into
+       a function whose domain is the native datatype/sequence sort. *)
+    (if closed_constructor_destructor_residual tm then
+       translate_closed_destructor_residual acc
+       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+     else
+       raise ERR "translate_term" "not a closed destructor residue")
+    handle e as NestedTranslation _ => raise e
+         | Feedback.HOL_ERR _ =>
+
     (* cvc5 parses a bag literal as a lambda, but retransmission must retain
        the Bag operation rather than send that lambda to Array consumers. *)
     (if is_parsed_bag_literal tm then translate_parsed_bag_literal acc
@@ -4517,6 +4702,7 @@ local
                   Lib.foldl_map translate_domain (tydict,
                     ListPair.zip (List.tabulate (List.length domtys, Lib.I),
                       domtys))
+                val _ = reject_invented_native_datatype_domain rator domtys
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 fun translate_variable_function_type (tydict, index, ty) =
@@ -5024,6 +5210,7 @@ local
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
+    val _ = reject_uninterpreted_native_destructors terms
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) =>
         translate_term regime apply_operator (acc, (bounds, tm)))
@@ -5480,6 +5667,100 @@ local
   fun datatype_normalization_excluded ty =
     datatype_translation_excluded ty orelse same_type (ty, Type.bool)
 
+  fun explicit_depth_conv conversion tm =
+    let
+      fun changed theorem =
+        let val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+        in not (Term.aconv lhs rhs) end
+      fun descend input =
+        let
+          val children =
+            if Term.is_comb input then
+              let val (rator, rand) = Term.dest_comb input
+              in Thm.MK_COMB (descend rator, descend rand) end
+            else if Term.is_abs input then
+              let val (variable, body) = Term.dest_abs input
+              in Thm.ABS variable (descend body) end
+            else Thm.REFL input
+          val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+          val root = conversion current
+            handle Conv.UNCHANGED => Thm.REFL current
+        in
+          if changed children then Thm.TRANS children root else root
+        end
+    in
+      descend tm
+    end
+
+  fun admitted_beta_conv tm =
+    if Term.is_comb tm andalso Term.is_abs (Lib.fst (Term.dest_comb tm)) then
+      Thm.BETA_CONV tm
+    else
+      raise Conv.UNCHANGED
+
+  fun admitted_k_conv tm =
+    if combinSyntax.is_K tm then Conv.REWR_CONV combinTheory.K_THM tm
+    else raise Conv.UNCHANGED
+
+  fun admitted_eta_conv tm =
+    if Term.is_abs tm then
+      let
+        val (variable, body) = Term.dest_abs tm
+      in
+        if Term.is_comb body then
+          let
+            val (function, argument) = Term.dest_comb body
+          in
+            if Term.aconv argument variable andalso
+               not (Term.free_in variable function) then
+              Drule.ETA_CONV tm
+            else
+              raise Conv.UNCHANGED
+          end
+        else
+          raise Conv.UNCHANGED
+      end
+    else
+      raise Conv.UNCHANGED
+
+  fun eta_expansion_reduction label function domains =
+    let
+      val variables = List.map Term.genvar domains
+      val expanded = Term.list_mk_abs
+        (variables, Term.list_mk_comb (function, variables))
+      fun contract_introduced [] tm = Thm.REFL tm
+        | contract_introduced (_ :: remaining) tm =
+            if Term.is_abs tm then
+              let
+                val (variable, body) = Term.dest_abs tm
+                val children = Thm.ABS variable
+                  (contract_introduced remaining body)
+                val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+                val step = admitted_eta_conv current
+                val (step_lhs, step_rhs) =
+                  boolSyntax.dest_eq (Thm.concl step)
+                val _ = Term.aconv step_lhs current orelse
+                  raise ERR label
+                    "eta step theorem has the wrong left-hand side"
+                val _ = not (Term.aconv step_lhs step_rhs) orelse
+                  raise ERR label "eta step theorem made no progress"
+              in
+                Thm.TRANS children step
+              end
+            else
+              raise ERR label "introduced eta binder was lost"
+      val reduction = contract_introduced variables expanded
+      val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl reduction)
+      val _ = Term.aconv lhs expanded orelse
+        raise ERR label "eta theorem has the wrong left-hand side"
+      val _ = not (Term.aconv lhs rhs) orelse
+        raise ERR label "eta theorem made no progress"
+      val _ = Term.aconv rhs function orelse
+        raise ERR label "eta proof did not reduce to the admitted function"
+    in
+      reduction
+    end
+
   fun datatype_case_equality ty scrutinee extra_rewrites lhs_for rhs_for =
     let
       val tyinfo =
@@ -5497,8 +5778,7 @@ local
       val rewrites = TypeBasePure.case_def_of tyinfo :: extra_rewrites tyinfo
       val constructor_cases =
         Lib.snd (boolSyntax.dest_eq (Thm.concl expanded))
-      val beta = Conv.TRY_CONV
-        (Conv.DEPTH_CONV Thm.BETA_CONV) constructor_cases
+      val beta = explicit_depth_conv admitted_beta_conv constructor_cases
       val beta_cases = Lib.snd (boolSyntax.dest_eq (Thm.concl beta))
       val simplified = simpLib.SIMP_CONV pureSimps.pure_ss
         (boolTheory.COND_CLAUSES :: boolTheory.REFL_CLAUSE ::
@@ -5520,47 +5800,15 @@ local
         else
           Thm.EQ_MP (Thm.SYM beta) simplified
       val theorem = Thm.EQ_MP (Thm.SYM expanded) constructor_theorem
-      val specialized =
-        Conv.CONV_RULE (Conv.TRY_CONV (Conv.DEPTH_CONV Thm.BETA_CONV))
-          (Thm.SPEC scrutinee theorem)
+      val specialized0 = Thm.SPEC scrutinee theorem
+      val specialized = Conv.CONV_RULE
+        (explicit_depth_conv admitted_beta_conv) specialized0
     in
       Conv.CONV_RULE
-        (Conv.RAND_CONV (Conv.TRY_CONV
-          (Conv.DEPTH_CONV
-            (Conv.REWR_CONV combinTheory.K_THM))))
+        (Conv.RAND_CONV (explicit_depth_conv
+          admitted_k_conv))
         specialized
     end
-
-  fun datatype_destructor_head theorem =
-    let
-      val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
-      val clauses = boolSyntax.strip_conj body
-      fun clause_head clause =
-        let
-          val (_, equation) = boolSyntax.strip_forall clause
-          val (lhs, _) = boolSyntax.dest_eq equation
-          val (head, arguments) = boolSyntax.strip_comb lhs
-          val _ = if List.length arguments = 1 then () else
-            raise ERR "datatype_destructor_head"
-              "destructor equation is not unary"
-        in
-          head
-        end
-      val heads = List.map clause_head clauses
-      val head = List.hd heads
-      val _ = List.all (Term.same_const head) heads orelse
-        raise ERR "datatype_destructor_head"
-          "destructor theorem defines multiple constants"
-    in
-      head
-    end
-
-  fun datatype_destructor_theorem tyinfo destructor =
-    List.find
-      (fn theorem =>
-        Term.same_const destructor (datatype_destructor_head theorem)
-        handle Feedback.HOL_ERR _ => false)
-      (TypeBasePure.destructors_of tyinfo)
 
   (* A partial HOL destructor has no theorem fixing its value on constructors
      outside the owning branch.  Preserve such constructor applications
@@ -5590,52 +5838,47 @@ local
     end
 
   fun recognize_datatype_destructor tm =
-    let
+    if not (Term.is_comb tm) then raise Conv.UNCHANGED
+    else let
       val (destructor, scrutinee) = Term.dest_comb tm
       val data_ty = Term.type_of scrutinee
       val _ = not (datatype_normalization_excluded data_ty) orelse
-        raise ERR "datatype_destructor_normalize_conv"
-          "excluded datatype"
+        raise Conv.UNCHANGED
       val tyinfo =
         case TypeBase.fetch data_ty of
           SOME info => info
-        | NONE => raise ERR "datatype_destructor_normalize_conv"
-            "missing TypeBase entry"
+        | NONE => raise Conv.UNCHANGED
       val constructors = List.map (TypeBasePure.cinst data_ty)
         (TypeBasePure.constructors_of tyinfo)
       val theorem =
         case datatype_destructor_theorem tyinfo destructor of
           SOME theorem => theorem
-        | NONE => raise ERR "datatype_destructor_normalize_conv"
-            "not a registered datatype destructor"
+        | NONE => raise Conv.UNCHANGED
       val (scrutinee_head, _) = boolSyntax.strip_comb scrutinee
       val constructor_headed = Term.is_const scrutinee_head andalso
         List.exists (Term.same_const scrutinee_head) constructors
       val constructor_reduces =
         not constructor_headed orelse
-        (case Lib.total
-            (simpLib.SIMP_CONV pureSimps.pure_ss [theorem]) tm of
-           SOME reduction =>
-             let
-               val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl reduction)
-             in
-               not (Term.aconv lhs rhs)
-             end
-         | NONE => false)
+        theorem_reduces_exact_application theorem tm
       val _ = constructor_reduces orelse
-        raise ERR "datatype_destructor_normalize_conv"
-          "irreducible constructor-headed destructor residue"
+        raise Conv.UNCHANGED
     in
       (destructor, theorem, scrutinee, data_ty)
     end
 
   fun datatype_destructor_normalize_conv_with proof tm =
     let
-      val recognized = Lib.total recognize_datatype_destructor tm
+      val admitted = recognize_datatype_destructor tm
+      val theorem = proof admitted
+      val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+      val _ = Term.aconv lhs tm orelse
+        raise ERR "datatype_destructor_normalize_conv"
+          "admitted proof theorem has the wrong left-hand side"
+      val _ = not (Term.aconv lhs rhs) orelse
+        raise ERR "datatype_destructor_normalize_conv"
+          "admitted proof theorem is alpha-unchanged"
     in
-      case recognized of
-        NONE => raise Conv.UNCHANGED
-      | SOME admitted => proof admitted
+      theorem
     end
 
   fun prove_datatype_destructor
@@ -5815,6 +6058,122 @@ local
       simpLib.SIMP_CONV pureSimps.pure_ss
         [TypeBasePure.case_def_of tyinfo])
 
+  (* [TypeBase.dest_case] requires every constructor branch to be presented
+     as a syntactic lambda.  Direct uses of a case constant may instead pass
+     a function-valued branch (for example option_CASE ... n s).  Eta-expand
+     those branches from the current TypeBase constructor arities, with a
+     kernel theorem, so the generic case normalizer below sees the same case
+     rather than letting the emitter lower an unnormalized source term. *)
+  fun recognize_datatype_case_branch_eta tm =
+    let
+      val (case_const, arguments) = boolSyntax.strip_comb tm
+      fun candidate [] = NONE
+        | candidate (scrutinee :: branches) =
+            let
+              val data_ty = Term.type_of scrutinee
+            in
+              if datatype_normalization_excluded data_ty then NONE
+              else
+                case TypeBase.fetch data_ty of
+                  NONE => NONE
+                | SOME tyinfo =>
+                    let
+                      val constructors = List.map
+                        (TypeBasePure.cinst data_ty)
+                        (TypeBasePure.constructors_of tyinfo)
+                    in
+                      if List.null constructors then NONE
+                      else
+                      let
+                        val registered_case = TypeBasePure.cinst data_ty
+                          (TypeBasePure.case_const_of tyinfo)
+                      in
+                      if not (Term.same_const case_const registered_case) then
+                        NONE
+                      else if List.length branches < List.length constructors
+                      then NONE
+                      else if List.length branches > List.length constructors
+                      then NONE (* normalize the saturated rator prefix *)
+                      else
+                        let
+                          fun needs_eta (constructor, branch) =
+                            let
+                              val (domains, _) = boolSyntax.strip_fun
+                                (Term.type_of constructor)
+                              val (variables, _) = Term.strip_abs branch
+                            in
+                              List.length variables < List.length domains
+                            end
+                        in
+                          if List.exists needs_eta
+                              (ListPair.zipEq (constructors, branches)) then
+                            SOME (case_const, scrutinee,
+                              constructors, branches)
+                          else NONE
+                        end
+                      end
+                    end
+            end
+    in
+      case candidate arguments of
+        NONE => raise Conv.UNCHANGED
+      | SOME admitted => admitted
+    end
+
+  fun eta_expand_branch (constructor, branch) =
+    let
+      val (domains, _) = boolSyntax.strip_fun (Term.type_of constructor)
+      val (existing_variables, body) = Term.strip_abs branch
+      val constructor_arity = List.length domains
+      val existing_arity = List.length existing_variables
+    in
+      if existing_arity >= constructor_arity then Thm.REFL branch
+      else
+        let
+          val missing_domains = List.drop (domains, existing_arity)
+          val body_expansion = Thm.SYM (eta_expansion_reduction
+            "datatype_case_branch_eta_conv" body missing_domains)
+        in
+          List.foldr (fn (variable, theorem) =>
+            Thm.ABS variable theorem) body_expansion existing_variables
+        end
+    end
+
+  fun prove_datatype_case_branch_eta
+      (case_const, scrutinee, constructors, branches) =
+    let
+      val branch_theorems = ListPair.mapEq eta_expand_branch
+        (constructors, branches)
+      val changed = List.exists (fn theorem =>
+        let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+        in not (Term.aconv left right) end) branch_theorems
+      val _ = changed orelse raise ERR "datatype_case_branch_eta_conv"
+        "admitted case had no eta-expandable branch"
+    in
+      List.foldl (fn (argument, application) =>
+        Thm.MK_COMB (application, argument))
+        (Thm.MK_COMB (Thm.REFL case_const, Thm.REFL scrutinee))
+        branch_theorems
+    end
+
+  fun datatype_case_branch_eta_conv_with proof tm =
+    let
+      val admitted = recognize_datatype_case_branch_eta tm
+      val theorem = proof admitted
+      val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+      val _ = Term.aconv lhs tm orelse
+        raise ERR "datatype_case_branch_eta_conv"
+          "admitted proof theorem has the wrong left-hand side"
+      val _ = not (Term.aconv lhs rhs) orelse
+        raise ERR "datatype_case_branch_eta_conv"
+          "admitted proof theorem is alpha-unchanged"
+    in
+      theorem
+    end
+
+  val datatype_case_branch_eta_conv =
+    datatype_case_branch_eta_conv_with prove_datatype_case_branch_eta
+
   fun datatype_case_normalize_conv tm =
     let
       val recognized =
@@ -5848,6 +6207,7 @@ local
     datatype_destructor_normalize_conv,
     record_accessor_normalize_conv,
     record_update_normalize_conv,
+    datatype_case_branch_eta_conv,
     datatype_constructor_case_reduce_conv,
     datatype_case_normalize_conv
   ]
@@ -5859,12 +6219,54 @@ local
           first_datatype_normalization_rung rungs tm
 
   fun DATATYPE_TO_SMT_CONV tm =
-    (* Unlike TOP_SWEEP_CONV, TOP_DEPTH_CONV revisits a parent after a child
-       changes.  Record updates expose constructor cases in precisely that
-       order, so this traversal is the normalization fixpoint. *)
-    Conv.TOP_DEPTH_CONV
-      (first_datatype_normalization_rung datatype_normalization_rungs) tm
-    handle Conv.UNCHANGED => Thm.REFL tm
+    let
+      fun changed theorem =
+        let val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+        in not (Term.aconv lhs rhs) end
+      fun validate input theorem =
+        let
+          val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+          val _ = Term.aconv lhs input orelse
+            raise ERR "DATATYPE_TO_SMT_CONV"
+              "normalization theorem has the wrong left-hand side"
+          val _ = not (Term.aconv lhs rhs) orelse
+            raise ERR "DATATYPE_TO_SMT_CONV"
+              "normalization theorem made no progress"
+        in rhs end
+      fun normalize ancestors input =
+        let
+          val children =
+            if Term.is_comb input then
+              let
+                val (rator, rand) = Term.dest_comb input
+              in
+                Thm.MK_COMB
+                  (normalize ancestors rator, normalize ancestors rand)
+              end
+            else if Term.is_abs input then
+              let val (variable, body) = Term.dest_abs input
+              in Thm.ABS variable (normalize ancestors body) end
+            else
+              Thm.REFL input
+          val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+          val root =
+            (let
+               val step = first_datatype_normalization_rung
+                 datatype_normalization_rungs current
+               val rhs = validate current step
+               val _ = not (List.exists (Term.aconv rhs) ancestors) orelse
+                 raise ERR "DATATYPE_TO_SMT_CONV"
+                   "normalization revisited an earlier alpha-equivalent term"
+             in
+               Thm.TRANS step (normalize (current :: ancestors) rhs)
+             end
+             handle Conv.UNCHANGED => Thm.REFL current)
+        in
+          if changed children then Thm.TRANS children root else root
+        end
+    in
+      normalize [] tm
+    end
 
   fun num_free_concl_vars (asms, concl) =
   let
@@ -6337,6 +6739,10 @@ in
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
   val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
   val DATATYPE_TO_SMT_CONV = DATATYPE_TO_SMT_CONV
+  val invented_uf_native_datatype_domain_diagnostic =
+    invented_uf_native_datatype_domain_diagnostic
+  val uninterpreted_native_datatype_destructor_diagnostic =
+    uninterpreted_native_datatype_destructor_diagnostic
   fun datatype_destructor_theorems_for_test ty =
     case TypeBase.fetch ty of
       SOME tyinfo => TypeBasePure.destructors_of tyinfo
@@ -6353,6 +6759,14 @@ in
   val datatype_case_normal_form_for_test = datatype_case_normal_form
   val datatype_constructor_case_reduce_conv_with_for_test =
     datatype_constructor_case_reduce_conv_with
+  val datatype_case_branch_eta_conv_with_for_test =
+    datatype_case_branch_eta_conv_with
+  val datatype_case_branch_eta_conv_for_test =
+    datatype_case_branch_eta_conv
+  val closed_constructor_destructor_residual_for_test =
+    closed_constructor_destructor_residual
+  val reject_uninterpreted_native_destructors_for_test =
+    reject_uninterpreted_native_destructors
   val native_float_transfer_surface = native_float_transfer_surface
   val native_float_transfer_theorems = native_float_transfer_theorems
 
@@ -6705,6 +7119,188 @@ in
 
   fun SIMP_TAC simp_let = SIMP_TAC_WITH_NATIVE_BAGS false simp_let
   fun CVC_SIMP_TAC simp_let = SIMP_TAC_WITH_NATIVE_BAGS true simp_let
+
+  datatype z3_roundtrip_expansion =
+      Z3Inverse of Term.term
+    | Z3Ceiling of Term.term
+    | Z3SymbolicCons of Term.term * Term.term
+    | Z3PartialRanked of Term.term * Term.term list * Type.hol_type list
+
+  (* Recognition is proof-free.  In particular, a malformed proof below is
+     never permitted to turn an admitted expansion back into UNCHANGED. *)
+  fun recognize_z3_roundtrip_expansion tm =
+    if realSyntax.is_inv tm then
+      SOME (Z3Inverse (realSyntax.dest_inv tm))
+    else if intrealSyntax.is_INT_CEILING tm then
+      SOME (Z3Ceiling (intrealSyntax.dest_INT_CEILING tm))
+    else if listSyntax.is_cons tm then
+      let val (element, tail) = listSyntax.dest_cons tm in
+        if listSyntax.is_nil tail orelse listSyntax.is_cons tail then NONE
+        else SOME (Z3SymbolicCons (element, tail))
+      end
+    else
+      let
+        val (head, arguments) = boolSyntax.strip_comb tm
+      in
+        if not (Term.is_const head) then NONE
+        else
+          let
+            val {Thy, Name, ...} = Term.dest_thy_const head
+            val has_direct_encoding =
+              Redblackset.member (builtin_const_names, (Thy, Name)) orelse
+              is_native_set_head head orelse is_native_bag_head head
+            val rank = declared_const_arity head
+            val missing = rank - List.length arguments
+            val (domains, _) = boolSyntax.strip_fun (Term.type_of tm)
+          in
+            if has_direct_encoding orelse TypeBase.is_constructor head orelse
+               missing <= 0 orelse List.length domains <> missing then NONE
+            else SOME (Z3PartialRanked (head, arguments, domains))
+          end
+      end
+
+  (* The measure follows the emitter's maximal-application view.  Counting a
+     rator prefix of a saturated application would incorrectly classify that
+     prefix as an independently emitted partial symbol. *)
+  fun z3_roundtrip_measure tm =
+    let
+      val contribution =
+        if Option.isSome (recognize_z3_roundtrip_expansion tm) then 1 else 0
+    in
+      if Term.is_abs tm then
+        let val (_, body) = Term.dest_abs tm
+        in contribution + z3_roundtrip_measure body end
+      else
+        let val (_, arguments) = boolSyntax.strip_comb tm
+        in contribution + List.foldl
+          (fn (argument, total) => z3_roundtrip_measure argument + total)
+          0 arguments
+        end
+    end
+
+  fun eta_expansion_theorem function domains =
+    Thm.SYM (eta_expansion_reduction
+      "z3_assertion_roundtrip_conv" function domains)
+
+  fun prove_z3_roundtrip_expansion (tm, expansion) =
+    case expansion of
+      Z3Inverse argument => let
+        val variable = Term.genvar realSyntax.real_ty
+        val totalized = boolSyntax.mk_cond
+          (boolSyntax.mk_eq (variable, realSyntax.zero_tm),
+           realSyntax.zero_tm,
+           Term.list_mk_comb
+             (smt_rdiv_tm, [realSyntax.one_tm, variable]))
+        val generic = simpLib.SIMP_PROVE (bossLib.srw_ss ())
+          [HolSmtTheory.smt_rinv_def, HolSmtTheory.smt_rdiv_eq_div]
+          (boolSyntax.mk_forall (variable,
+            boolSyntax.mk_eq (realSyntax.mk_inv variable, totalized)))
+      in
+        Thm.SPEC argument generic
+      end
+    | Z3Ceiling argument => let
+        val variable = Term.genvar realSyntax.real_ty
+        val lowered = intSyntax.mk_negated
+          (intrealSyntax.mk_INT_FLOOR
+            (realSyntax.mk_negated variable))
+        val generic = simpLib.SIMP_PROVE (bossLib.srw_ss ())
+          [intrealTheory.INT_FLOOR_NEG]
+          (boolSyntax.mk_forall (variable,
+            boolSyntax.mk_eq
+              (intrealSyntax.mk_INT_CEILING variable, lowered)))
+      in
+        Thm.SPEC argument generic
+      end
+    | Z3SymbolicCons (element, tail) =>
+      let
+        val singleton = listSyntax.mk_list
+          ([element], Term.type_of element)
+        val appended = listSyntax.mk_append (singleton, tail)
+        val reduction = simpLib.SIMP_PROVE (bossLib.srw_ss ())
+          [listTheory.APPEND] (boolSyntax.mk_eq (appended, tm))
+      in
+        Thm.SYM reduction
+      end
+    | Z3PartialRanked (_, _, domains) =>
+        eta_expansion_theorem tm domains
+
+  (* Explicit terminating postorder/revisit traversal.  Every admitted
+     expansion is checked at the same boundary, and its RHS is recursively
+     normalized before the parent is retried. *)
+  fun z3_assertion_roundtrip_conv_with prove tm =
+  let
+    fun changed theorem =
+      let val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+      in not (Term.aconv lhs rhs) end
+    fun normalize input =
+      let
+        val children =
+          if Term.is_abs input then
+            let val (variable, body) = Term.dest_abs input
+            in Thm.ABS variable (normalize body) end
+          else
+            let
+              val (head, arguments) = boolSyntax.strip_comb input
+              val argument_theorems = List.map normalize arguments
+            in
+              List.foldl (fn (argument, application) =>
+                Thm.MK_COMB (application, argument))
+                (Thm.REFL head) argument_theorems
+            end
+        val (_, current) = boolSyntax.dest_eq (Thm.concl children)
+        val root =
+          case recognize_z3_roundtrip_expansion current of
+            NONE => Thm.REFL current
+          | SOME admitted =>
+              let
+                val old_measure = z3_roundtrip_measure current
+                val step = prove (current, admitted)
+                val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl step)
+                val _ = Term.aconv lhs current orelse
+                  raise ERR "z3_assertion_roundtrip_conv"
+                    "admitted expansion theorem has the wrong left-hand side"
+                val new_measure = z3_roundtrip_measure rhs
+                val _ = not (Term.aconv lhs rhs) orelse
+                  raise ERR "z3_assertion_roundtrip_conv"
+                    "admitted expansion theorem is alpha-unchanged"
+                val _ = new_measure < old_measure orelse
+                  raise ERR "z3_assertion_roundtrip_conv"
+                    ("admitted expansion did not decrease the measure: " ^
+                     Int.toString old_measure ^ " -> " ^
+                     Int.toString new_measure)
+              in
+                Thm.TRANS step (normalize rhs)
+              end
+      in
+        if changed children then Thm.TRANS children root else root
+      end
+  in
+    normalize tm
+  end
+
+  val z3_assertion_roundtrip_total_conv =
+    z3_assertion_roundtrip_conv_with prove_z3_roundtrip_expansion
+
+  fun z3_assertion_roundtrip_conv tm =
+    let val theorem = z3_assertion_roundtrip_total_conv tm in
+      if let val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+         in Term.aconv lhs rhs end then raise Conv.UNCHANGED
+      else theorem
+    end
+
+  val Z3_ASSERTION_TO_SMT_TAC =
+    Tactical.THEN
+      (Tactic.RULE_ASSUM_TAC
+        (Conv.CONV_RULE z3_assertion_roundtrip_total_conv),
+       Tactic.CONV_TAC z3_assertion_roundtrip_total_conv)
+
+  fun Z3_SIMP_TAC simp_let =
+    Tactical.THEN (SIMP_TAC simp_let, Z3_ASSERTION_TO_SMT_TAC)
+
+  val z3_assertion_roundtrip_conv_for_test =
+    z3_assertion_roundtrip_conv
+  val z3_assertion_roundtrip_conv_with_for_test =
+    z3_assertion_roundtrip_conv_with
 
   (* Kept public for Unittest's outbound-scope audit. *)
   val builtin_encoding_for_test = builtin_encoding
