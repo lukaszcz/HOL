@@ -76,6 +76,7 @@ val non_replay_exports : exemption list =
       "integral_round_candidate_def",
       "integral_round_tiesToAway_def",
       "round_tiesToAway_def",
+      "smt_float_restore_zero_sign_def",
       "smt_rounding_BIJ",
       "smt_rounding_CASE",
       "smt_rounding_TY_DEF",

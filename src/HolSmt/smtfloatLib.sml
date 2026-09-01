@@ -9,6 +9,8 @@ struct
 
 open HolKernel Parse boolLib bossLib
 open realSyntax binary_ieeeSyntax
+open smtfloatIntegralRoundTheory
+structure IntegralRound = smtfloatIntegralRoundTheory
 
 val ERR = Feedback.mk_HOL_ERR "smtfloatLib"
 val lhsc = boolSyntax.lhs o Thm.concl
@@ -401,6 +403,63 @@ fun nearest_away_integer tm =
     if Arbrat.< (r, Arbrat.zero) then Arbint.~ magnitude else magnitude
   end
 
+fun nearest_even_integer tm =
+  let
+    val r = real_to_arbrat tm
+    val lo = Arbrat.floor r
+    val frac = Arbrat.- (r, Arbrat.fromAInt lo)
+    val half = Arbrat./ (Arbrat.one, Arbrat.two)
+  in
+    case Arbrat.compare (frac, half) of
+      LESS => lo
+    | GREATER => Arbint.+ (lo, Arbint.one)
+    | EQUAL =>
+        if Arbint.mod (Arbint.abs lo, Arbint.two) = Arbint.zero then lo
+        else Arbint.+ (lo, Arbint.one)
+  end
+
+fun integral_integer (mode, x) =
+  let
+    val r = real_to_arbrat x
+  in
+    if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm then
+      nearest_even_integer x
+    else if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm then
+      Arbrat.ceil r
+    else if mode ~~ binary_ieeeSyntax.roundTowardNegative_tm then
+      Arbrat.floor r
+    else if mode ~~ binary_ieeeSyntax.roundTowardZero_tm then
+      if Arbrat.< (r, Arbrat.zero) then Arbrat.ceil r else Arbrat.floor r
+    else
+      raise ERR "integral_integer" "unsupported binary rounding mode"
+  end
+
+fun prove_even_abs (i, ry) =
+  let
+    val n = Arbint.abs i
+    val ntm = numSyntax.mk_numeral (Arbint.toNat n)
+    val nvar = Term.mk_var ("n", numSyntax.num)
+    val body = boolSyntax.mk_conj
+      (numSyntax.mk_even nvar,
+       mk_eq (realSyntax.mk_absval ry, realSyntax.mk_injected nvar))
+    val ex = boolSyntax.mk_exists (nvar, body)
+    val witness = Thm.CONJ
+      (prove (numSyntax.mk_even ntm))
+      (prove (mk_eq
+        (realSyntax.mk_absval ry, realSyntax.mk_injected ntm)))
+  in
+    Thm.EXISTS (ex, ntm) witness
+  end
+
+fun prove_float_even_abs y =
+  let
+    val ry = f2r y
+    val normalized = rhsc (EVAL ry)
+    val i = nearest_even_integer normalized
+  in
+    prove_even_abs (i, ry)
+  end
+
 fun mk_named_unop thy name result_ty arg =
   Term.mk_comb
     (Term.mk_thy_const
@@ -494,6 +553,276 @@ fun integral_round_tiesToAway_CONV tm =
   handle HOL_ERR e =>
     raise ERR "integral_round_tiesToAway_CONV" (Feedback.message_of e)
 
+fun integral_round_CONV tm =
+  let
+    val (mode, x) = binary_ieeeSyntax.dest_integral_round tm
+    val (t, w) = dest_float_type (Term.type_of tm)
+    val tw = mk_tw (t, w)
+    val large = binary_ieeeSyntax.mk_largest tw
+    val nlarge = mk_neg large
+    val threshold = binary_ieeeSyntax.mk_threshold tw
+    val nthreshold = mk_neg threshold
+
+    fun apply thm ant =
+      Drule.MATCH_MP thm (prove ant) |> normalize_rhs
+
+    fun rne_edge result cert (lower, upper, value) =
+      let
+        val y = rhsc result
+        val even_abs = prove_float_even_abs y
+        val ants = map prove
+          [lower, upper, binary_ieeeSyntax.mk_float_is_integral y,
+           value, mk_not (zero y)] @ [even_abs]
+      in
+        Drule.MATCH_MP cert (Drule.LIST_CONJ ants)
+        |> normalize_rhs
+      end
+  in
+    if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm andalso
+       can_prove (mk_leq (x, nthreshold)) then
+      apply smtfloatIntegralRoundTheory.integral_round_RNE_underflow
+        (mk_leq (x, nthreshold))
+    else if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm andalso
+            can_prove (mk_leq (threshold, x)) then
+      apply smtfloatIntegralRoundTheory.integral_round_RNE_overflow
+        (mk_leq (threshold, x))
+    else if can_prove (mk_lt (x, nlarge)) then
+      if mode ~~ binary_ieeeSyntax.roundTowardZero_tm then
+        apply smtfloatIntegralRoundTheory.integral_round_RTZ_underflow
+          (mk_lt (x, nlarge))
+      else if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm then
+        apply smtfloatIntegralRoundTheory.integral_round_RTP_underflow
+          (mk_lt (x, nlarge))
+      else if mode ~~ binary_ieeeSyntax.roundTowardNegative_tm then
+        apply smtfloatIntegralRoundTheory.integral_round_RTN_underflow
+          (mk_lt (x, nlarge))
+      else if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm andalso
+              can_prove (mk_lt (nthreshold, x)) then
+        let
+          val result = apply
+            smtfloatIntegralRoundTheory.integral_round_RTP_underflow
+            (mk_lt (x, nlarge))
+          val y = rhsc result
+          val cert =
+            IntegralRound.integral_round_RNE_just_above_underflow
+        in
+          rne_edge result cert
+            (mk_lt (nthreshold, x), mk_lt (x, nlarge),
+             mk_eq (f2r y, nlarge))
+        end
+      else
+        raise ERR "integral_round_CONV" "unsupported binary rounding mode"
+    else if can_prove (mk_lt (large, x)) then
+      if mode ~~ binary_ieeeSyntax.roundTowardZero_tm then
+        apply smtfloatIntegralRoundTheory.integral_round_RTZ_overflow
+          (mk_lt (large, x))
+      else if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm then
+        apply smtfloatIntegralRoundTheory.integral_round_RTP_overflow
+          (mk_lt (large, x))
+      else if mode ~~ binary_ieeeSyntax.roundTowardNegative_tm then
+        apply smtfloatIntegralRoundTheory.integral_round_RTN_overflow
+          (mk_lt (large, x))
+      else if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm andalso
+              can_prove (mk_lt (x, threshold)) then
+        let
+          val result = apply
+            smtfloatIntegralRoundTheory.integral_round_RTN_overflow
+            (mk_lt (large, x))
+          val y = rhsc result
+          val cert =
+            IntegralRound.integral_round_RNE_just_below_overflow
+        in
+          rne_edge result cert
+            (mk_lt (large, x), mk_lt (x, threshold),
+             mk_eq (f2r y, large))
+        end
+      else
+        raise ERR "integral_round_CONV" "unsupported binary rounding mode"
+    else if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm orelse
+            mode ~~ binary_ieeeSyntax.roundTowardNegative_tm then
+      let
+        val rounded = round_CONV
+          (binary_ieeeSyntax.mk_round (mode, x, t, w))
+        val y = rhsc rounded
+        val ry = f2r y
+        val integral = binary_ieeeSyntax.mk_float_is_integral y
+        val nonzero = mk_not (zero y)
+        val bounds = [mk_leq (nlarge, x), mk_leq (x, large)]
+        val (cert, side) =
+          if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm then
+            (IntegralRound.integral_round_RTP_from_float_round,
+             realSyntax.mk_geq (ry, x))
+          else
+            (IntegralRound.integral_round_RTN_from_float_round,
+             mk_leq (ry, x))
+      in
+        if can_prove integral andalso can_prove nonzero then
+          Drule.MATCH_MP cert
+            (Drule.LIST_CONJ
+              (map prove bounds @ [rounded] @
+               map prove [integral, side, nonzero]))
+          |> normalize_rhs
+        else
+          let
+            val i = integral_integer (mode, x)
+            val ri = realSyntax.term_of_int i
+            val fallback = round_CONV
+              (binary_ieeeSyntax.mk_round (mode, ri, t, w))
+            val fallback_y = rhsc fallback
+            val fallback_ry = f2r fallback_y
+            val fallback_integral =
+              binary_ieeeSyntax.mk_float_is_integral fallback_y
+            val fallback_nonzero = mk_not (zero fallback_y)
+          in
+            if not (can_prove fallback_nonzero) then
+              raise ERR "integral_round_CONV"
+                "zero result requires float-facing signed-zero restoration"
+            else if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm then
+              certify IntegralRound.integral_round_RTP_inrange
+                (bounds @
+                 [mk_lt
+                    (realSyntax.mk_minus (fallback_ry, ``1r``), x),
+                  mk_leq (x, fallback_ry),
+                  fallback_integral, fallback_nonzero])
+              |> normalize_rhs
+            else
+              certify IntegralRound.integral_round_RTN_inrange
+                (bounds @
+                 [mk_leq (fallback_ry, x),
+                  mk_lt (x, realSyntax.mk_plus (fallback_ry, ``1r``)),
+                  fallback_integral, fallback_nonzero])
+              |> normalize_rhs
+          end
+      end
+    else
+      let
+        val i = integral_integer (mode, x)
+        val ri = realSyntax.term_of_int i
+        val rounded = round_CONV
+          (binary_ieeeSyntax.mk_round (mode, ri, t, w))
+        val y = rhsc rounded
+        val ry = f2r y
+        val integral = binary_ieeeSyntax.mk_float_is_integral y
+        val nonzero = mk_not (zero y)
+        val pinf = binary_ieeeSyntax.mk_float_plus_infinity tw
+        val ninf = binary_ieeeSyntax.mk_float_minus_infinity tw
+        val distance =
+          realSyntax.mk_absval (realSyntax.mk_minus (ry, x))
+      in
+        if not (can_prove nonzero) then
+          raise ERR "integral_round_CONV"
+            "zero result requires float-facing signed-zero restoration"
+        else if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm then
+          if can_prove
+               (mk_leq
+                  (realSyntax.mk_mult (``2r``, distance), ``1r``)) then
+            let
+              val even_abs = prove_even_abs (i, ry)
+              val ants =
+                map prove
+                  [mk_lt (nthreshold, x), mk_lt (x, threshold),
+                   integral, nonzero,
+                   mk_leq
+                     (realSyntax.mk_mult (``2r``, distance), ``1r``)] @
+                [even_abs] @
+                map prove
+                  [mk_lt (distance,
+                     realSyntax.mk_absval
+                       (realSyntax.mk_minus (f2r pinf, x))),
+                   mk_lt (distance,
+                     realSyntax.mk_absval
+                       (realSyntax.mk_minus (f2r ninf, x)))]
+            in
+              Drule.MATCH_MP
+                smtfloatIntegralRoundTheory.integral_round_RNE_nearest
+                (Drule.LIST_CONJ ants)
+              |> normalize_rhs
+            end
+          else
+            let
+              fun directed mode =
+                Term.mk_comb
+                  (Term.mk_comb (Term.rator (Term.rator tm), mode), x)
+              val floor_thm = integral_round_CONV
+                (directed binary_ieeeSyntax.roundTowardNegative_tm)
+              val ceiling_thm = integral_round_CONV
+                (directed binary_ieeeSyntax.roundTowardPositive_tm)
+              val lo = rhsc floor_thm
+              val hi = rhsc ceiling_thm
+              val rlo = f2r lo
+              val rhi = f2r hi
+              val lo_integral =
+                binary_ieeeSyntax.mk_float_is_integral lo
+              val hi_integral =
+                binary_ieeeSyntax.mk_float_is_integral hi
+              val lo_side = mk_leq (rlo, x)
+              val hi_side = realSyntax.mk_geq (rhi, x)
+              val bounds = [mk_leq (nlarge, x), mk_leq (x, large)]
+              val floor_cert =
+                IntegralRound.directed_floor_result_is_closest
+              val floor_closest = Drule.MATCH_MP
+                floor_cert
+                (Drule.LIST_CONJ
+                  (map prove bounds @ [floor_thm] @
+                   map prove [lo_integral, lo_side]))
+              val ceiling_cert =
+                IntegralRound.directed_ceiling_result_is_closest
+              val ceiling_closest = Drule.MATCH_MP
+                ceiling_cert
+                (Drule.LIST_CONJ
+                  (map prove bounds @ [ceiling_thm] @
+                   map prove [hi_integral, hi_side]))
+              val dlo = abs_diff (lo, x)
+              val dhi = abs_diff (hi, x)
+
+              fun choose theorem chosen strict =
+                let
+                  val even_abs = prove_float_even_abs chosen
+                  val ants =
+                    map prove
+                      [mk_lt (nthreshold, x), mk_lt (x, threshold)] @
+                    [floor_closest, ceiling_closest] @
+                    map prove
+                      [lo_integral, lo_side, hi_integral, hi_side,
+                       mk_not (zero chosen), strict] @
+                    [even_abs]
+                in
+                  Drule.MATCH_MP theorem (Drule.LIST_CONJ ants)
+                  |> normalize_rhs
+                end
+            in
+              if can_prove (mk_lt (dlo, dhi)) then
+                choose
+                  IntegralRound.integral_round_RNE_from_directed_lower
+                  lo (mk_lt (dlo, dhi))
+              else if can_prove (mk_lt (dhi, dlo)) then
+                choose
+                  IntegralRound.integral_round_RNE_from_directed_upper
+                  hi (mk_lt (dhi, dlo))
+              else
+                raise ERR "integral_round_CONV"
+                  "ambiguous equidistant directed integral candidates"
+            end
+        else if mode ~~ binary_ieeeSyntax.roundTowardZero_tm andalso
+                can_prove (mk_lt (``0r``, ry)) then
+          certify smtfloatIntegralRoundTheory.integral_round_RTZ_positive
+            [mk_lt (``0r``, ry), mk_leq (ry, x),
+             mk_lt (x, realSyntax.mk_plus (ry, ``1r``)),
+             mk_leq (x, large), integral]
+          |> normalize_rhs
+        else if mode ~~ binary_ieeeSyntax.roundTowardZero_tm then
+          certify smtfloatIntegralRoundTheory.integral_round_RTZ_negative
+            [mk_lt (ry, ``0r``),
+             mk_lt (realSyntax.mk_minus (ry, ``1r``), x),
+             mk_leq (x, ry), mk_leq (nlarge, x), integral]
+          |> normalize_rhs
+        else
+          raise ERR "integral_round_CONV" "unsupported binary rounding mode"
+      end
+  end
+  handle HOL_ERR e =>
+    raise ERR "integral_round_CONV" (Feedback.message_of e)
+
 fun reduce_rounding_case_CONV tm =
   (Conv.REWR_CONV smtfloatTheory.smt_round_def
    THENC simpLib.SIMP_CONV (bossLib.srw_ss ()) []) tm
@@ -508,7 +837,7 @@ fun smt_round_CONV tm =
 
 fun smt_integral_round_CONV tm =
   (reduce_integral_rounding_case_CONV
-   THENC (integral_round_tiesToAway_CONV ORELSEC EVAL)) tm
+   THENC (integral_round_tiesToAway_CONV ORELSEC integral_round_CONV)) tm
 
 (* Ground operation conversions.  The operation definitions are deliberately
    [nocompute]: several contain choice-based rounding definitions which must
@@ -535,8 +864,146 @@ val smt_float_sqrt_CONV =
   unfold_and_eval smtfloatTheory.smt_float_sqrt_def
 val smt_float_fma_CONV =
   unfold_and_eval smtfloatTheory.smt_float_fma_def
-val smt_float_round_to_integral_CONV =
-  unfold_and_eval smtfloatTheory.smt_float_round_to_integral_def
+
+fun mk_smt_integral_round (mode, x, result_ty) =
+  Term.list_mk_comb
+    (Term.mk_thy_const
+       {Thy = "smtfloat", Name = "smt_integral_round",
+        Ty = Type.mk_type
+          ("fun", [Term.type_of mode,
+            Type.mk_type ("fun", [realSyntax.real_ty, result_ty])])},
+     [mode, x])
+
+fun binary_integral_zero_class tm =
+  let
+    val (mode, x) = binary_ieeeSyntax.dest_integral_round tm
+    val (t, w) = dest_float_type (Term.type_of tm)
+    val tw = mk_tw (t, w)
+    val large = binary_ieeeSyntax.mk_largest tw
+    val threshold = binary_ieeeSyntax.mk_threshold tw
+    val half = realSyntax.mk_div (``1r``, ``2r``)
+    val absx = realSyntax.mk_absval x
+    val bounds_threshold =
+      [mk_lt (mk_neg threshold, x), mk_lt (x, threshold)]
+    val bounds_largest =
+      [mk_leq (mk_neg large, x), mk_leq (x, large)]
+    fun all_provable ants = List.all can_prove ants
+    fun use thm ants =
+      if all_provable ants then certify thm ants
+      else raise Conv.UNCHANGED
+  in
+    if mode ~~ binary_ieeeSyntax.roundTiesToEven_tm then
+      use smtfloatIntegralRoundTheory.integral_round_RNE_zero_class
+        (bounds_threshold @ [mk_leq (absx, half)])
+    else if mode ~~ binary_ieeeSyntax.roundTowardZero_tm then
+      use smtfloatIntegralRoundTheory.integral_round_RTZ_zero_class
+        (bounds_largest @ [mk_lt (absx, ``1r``)])
+    else if mode ~~ binary_ieeeSyntax.roundTowardPositive_tm then
+      use smtfloatIntegralRoundTheory.integral_round_RTP_zero_class
+        (bounds_largest @ [mk_lt (``~1r``, x), mk_leq (x, ``0r``)])
+    else if mode ~~ binary_ieeeSyntax.roundTowardNegative_tm then
+      use smtfloatIntegralRoundTheory.integral_round_RTN_zero_class
+        (bounds_largest @ [mk_leq (``0r``, x), mk_lt (x, ``1r``)])
+    else
+      raise Conv.UNCHANGED
+  end
+
+fun smt_integral_zero_class tm =
+  let
+    val reduced = reduce_integral_rounding_case_CONV tm
+    val binary_tm = rhsc reduced
+    val zbinary =
+      case Lib.total
+        (dest_named_unop "smtfloat" "integral_round_tiesToAway")
+        binary_tm of
+        SOME x =>
+        let
+          val (t, w) = dest_float_type (Term.type_of binary_tm)
+          val tw = mk_tw (t, w)
+          val threshold = binary_ieeeSyntax.mk_threshold tw
+          val pinf = binary_ieeeSyntax.mk_float_plus_infinity tw
+          val ninf = binary_ieeeSyntax.mk_float_minus_infinity tw
+          val absx = realSyntax.mk_absval x
+          val half = realSyntax.mk_div (``1r``, ``2r``)
+          val ants =
+            [mk_lt (mk_neg threshold, x), mk_lt (x, threshold),
+             mk_lt (absx, half),
+             mk_lt (absx,
+               realSyntax.mk_absval
+                 (realSyntax.mk_minus (f2r pinf, x))),
+             mk_lt (absx,
+               realSyntax.mk_absval
+                 (realSyntax.mk_minus (f2r ninf, x)))]
+        in
+          if List.all can_prove ants then
+            certify
+              smtfloatIntegralRoundTheory.integral_round_RNA_zero_class
+              ants
+          else raise Conv.UNCHANGED
+        end
+      | NONE => binary_integral_zero_class binary_tm
+    val zeq =
+      Conv.RAND_CONV (Conv.REWR_CONV reduced)
+        (binary_ieeeSyntax.mk_float_is_zero tm)
+  in
+    Thm.EQ_MP (Thm.SYM zeq) zbinary
+  end
+
+fun dest_smt_float_round_to_integral tm =
+  let
+    val (head, args) = strip_comb tm
+    val named = Lib.total Term.dest_thy_const head
+  in
+    case (named, args) of
+        (SOME {Thy = "smtfloat", Name = "smt_float_round_to_integral",
+               ...}, [mode, x]) => (mode, x)
+      | _ => raise Conv.UNCHANGED
+  end
+
+fun checked_smt_float_round_to_integral_result tm thm =
+  case Lib.total (boolSyntax.dest_eq o Thm.concl) thm of
+      SOME (lhs, _) =>
+        if Term.aconv lhs tm then thm
+        else raise ERR "smt_float_round_to_integral_CONV"
+          "proof conversion returned theorem for wrong left-hand side"
+    | NONE => raise ERR "smt_float_round_to_integral_CONV"
+        "proof conversion returned a non-equational theorem"
+
+val smt_float_round_to_integral_checked_result_for_test =
+  checked_smt_float_round_to_integral_result
+
+fun smt_float_round_to_integral_CONV tm =
+  let
+    val (mode, x) = dest_smt_float_round_to_integral tm
+    val value_thm = binary_ieeeLib.float_value_CONV
+      (binary_ieeeSyntax.mk_float_value x)
+    val result =
+      if binary_ieeeSyntax.is_float (rhsc value_thm) then
+        let
+          val r = binary_ieeeSyntax.dest_float (rhsc value_thm)
+          val integral = mk_smt_integral_round (mode, r, Term.type_of x)
+          val zero_thm = smt_integral_zero_class integral
+          val result = Drule.MATCH_MP
+            smtfloatTheory.smt_float_round_to_integral_zero_class
+            (Thm.CONJ value_thm zero_thm)
+        in
+          normalize_rhs result
+        end
+        handle Conv.UNCHANGED =>
+          (Conv.REWR_CONV smtfloatTheory.smt_float_round_to_integral_def
+           THENC Conv.ONCE_DEPTH_CONV
+             (fn t => if binary_ieeeSyntax.is_float_value t then
+                binary_ieeeLib.float_value_CONV t
+              else raise Conv.UNCHANGED)
+           THENC simpLib.SIMP_CONV pureSimps.pure_ss []
+           THENC Conv.ONCE_DEPTH_CONV smt_integral_round_CONV
+           THENC EVAL) tm
+      else
+        (Conv.REWR_CONV smtfloatTheory.smt_float_round_to_integral_def
+         THENC EVAL) tm
+  in
+    checked_smt_float_round_to_integral_result tm result
+  end
 val float_min_CONV = unfold_and_eval smtfloatTheory.float_min_def
 val float_max_CONV = unfold_and_eval smtfloatTheory.float_max_def
 val smt_nearest_integer_CONV =

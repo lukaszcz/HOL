@@ -4,6 +4,7 @@ sig
   val float_round_CONV : Conv.conv
   val round_tiesToAway_CONV : Conv.conv
   val integral_round_tiesToAway_CONV : Conv.conv
+  val integral_round_CONV : Conv.conv
   val smt_round_CONV : Conv.conv
   val smt_integral_round_CONV : Conv.conv
   val smt_float_round_CONV : Conv.conv
@@ -14,6 +15,8 @@ sig
   val smt_float_sqrt_CONV : Conv.conv
   val smt_float_fma_CONV : Conv.conv
   val smt_float_round_to_integral_CONV : Conv.conv
+  val smt_float_round_to_integral_checked_result_for_test :
+    Term.term -> Thm.thm -> Thm.thm
   val float_min_CONV : Conv.conv
   val float_max_CONV : Conv.conv
   val smt_nearest_integer_CONV : Conv.conv

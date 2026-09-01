@@ -5611,6 +5611,10 @@ local
     {surface = ["float_is_nan", "float_is_infinite", "float_is_normal",
                 "float_is_subnormal", "float_is_zero"],
      theorem = smtfloatTheory.native_float_classification_transfer},
+    {surface = ["float_is_finite", "float_is_integral"],
+     theorem = smtfloatTheory.native_float_finite_integral_transfer},
+    {surface = ["float_is_signalling at canonical representative"],
+     theorem = smtfloatTheory.native_float_signalling_transfer},
     {surface = ["negative sign predicate", "positive sign predicate"],
      theorem = smtfloatTheory.native_float_sign_transfer},
     {surface = ["float_abs"],
@@ -5632,7 +5636,25 @@ local
     {surface = ["float_sqrt"],
      theorem = smtfloatTheory.native_float_sqrt_transfer},
     {surface = ["float_mul_add"],
-     theorem = smtfloatTheory.native_float_fma_transfer}
+     theorem = smtfloatTheory.native_float_fma_transfer},
+    {surface = ["float_to_real on finite input"],
+     theorem = smtfloatTheory.native_float_to_real_transfer},
+    {surface = ["float_to_ubv", "float_to_sbv"],
+     theorem = smtfloatTheory.native_float_word_conversion_transfer},
+    {surface = ["float_from_ieee_bv", "float_pack_ieee_bv at canon"],
+     theorem = smtfloatTheory.native_float_ieee_bv_transfer},
+    {surface = ["float_min"],
+     theorem = smtfloatTheory.native_float_min_transfer},
+    {surface = ["float_max"],
+     theorem = smtfloatTheory.native_float_max_transfer},
+    {surface = ["float_rem"],
+     theorem = smtfloatTheory.native_float_rem_transfer},
+    {surface = ["float_round with nonzero result or matching zero sign"],
+     theorem = smtfloatTheory.native_float_round_transfer},
+    {surface = ["real_to_float with nonzero result or matching zero sign"],
+     theorem = smtfloatTheory.native_real_to_float_transfer},
+    {surface = ["float_round_to_integral with nonzero result"],
+     theorem = smtfloatTheory.native_float_round_to_integral_transfer}
   ]
 
   val native_float_transfer_surface =
@@ -5643,12 +5665,277 @@ local
 
   val native_float_transfer_rewrites =
     native_float_transfer_theorems @
-    [smtfloatTheory.smtfp_rounding_of_binary_def,
+    [smtfloatTheory.smtfp_is_finite_expansion,
+     smtfloatTheory.smtfp_unordered_expansion,
+     smtfloatTheory.smtfp_is_signalling_expansion,
+     smtfloatTheory.smtfp_is_integral_expansion,
+     smtfloatTheory.smtfp_rounding_of_binary_def,
      binary_ieeeTheory.rounding_case_def]
 
+  (* Conditional transfers must see their native guards before the general
+     pass lowers those guards to the smtfp surface. *)
+  val native_float_guarded_context_rewrites =
+    [smtfloatTheory.native_float_to_real_guarded_transfer,
+     smtfloatTheory.native_float_round_sign_guarded_transfer,
+     smtfloatTheory.native_float_round_guarded_transfer,
+     smtfloatTheory.native_real_to_float_sign_guarded_transfer,
+     smtfloatTheory.native_real_to_float_guarded_transfer,
+     smtfloatTheory.native_float_round_to_integral_guarded_transfer]
+
+  val native_float_guarded_transfer_rewrites =
+    [smtfloatTheory.native_float_to_real_transfer,
+     smtfloatTheory.native_float_round_transfer,
+     smtfloatTheory.native_real_to_float_transfer,
+     smtfloatTheory.native_float_round_to_integral_transfer]
+
+  val native_float_ground_guard_transfers =
+    [smtfloatTheory.native_float_round_transfer,
+     smtfloatTheory.native_real_to_float_transfer]
+
+  fun guarded_context_pattern theorem =
+    let
+      val (lhs, _) = boolSyntax.dest_eq (Thm.concl theorem)
+      val (_, predicate_application) = boolSyntax.dest_imp lhs
+      val (predicate, arguments) =
+        boolSyntax.strip_comb predicate_application
+      val _ = List.length arguments = 1 orelse
+        raise ERR "guarded_context_pattern"
+          "guarded transfer predicate is not unary"
+    in
+      (predicate, List.hd arguments)
+    end
+
+  (* HO_REWR_CONV deliberately does not guess an arbitrary surrounding
+     predicate from an implication.  Match the raw result first, abstract
+     its actual consequent context, and only then invoke the theorem-backed
+     higher-order rewrite. *)
+  fun instantiate_guarded_context theorem consequent occurrence =
+    let
+      val (_, raw_pattern) = guarded_context_pattern theorem
+      val theorem = Drule.INST_TY_TERM
+        (Term.match_term raw_pattern occurrence) theorem
+      val (predicate, _) = guarded_context_pattern theorem
+      val hole = Term.variant (Term.free_vars consequent)
+        (Term.mk_var ("guarded_float_result", Term.type_of occurrence))
+      val context = Term.mk_abs (hole,
+        Term.subst [{redex = occurrence, residue = hole}] consequent)
+    in
+      Conv.BETA_RULE
+        (Thm.INST [{redex = predicate, residue = context}] theorem)
+    end
+
+  val raw_float_result_predicates =
+    [binary_ieeeSyntax.is_float_to_real,
+     binary_ieeeSyntax.is_float_round,
+     binary_ieeeSyntax.is_real_to_float,
+     binary_ieeeSyntax.is_float_round_to_integral]
+
+  fun count_raw_float_results tm =
+    let
+      val here = if List.exists (fn pred => pred tm)
+        raw_float_result_predicates then 1 else 0
+      val below =
+        if Term.is_comb tm then
+          let val (rator, rand) = Term.dest_comb tm in
+            count_raw_float_results rator + count_raw_float_results rand
+          end
+        else if Term.is_abs tm then
+          count_raw_float_results (Lib.snd (Term.dest_abs tm))
+        else
+          0
+    in
+      here + below
+    end
+
+  fun recognize_native_float_guarded_context tm =
+    let
+      fun guarded_implication () =
+        if not (boolSyntax.is_imp tm) then NONE
+        else
+          let
+            val (_, consequent) = boolSyntax.dest_imp tm
+            val occurrences = Library.subterms consequent
+            fun first_instantiation _ [] = NONE
+              | first_instantiation theorem (occurrence :: rest) =
+                  let
+                    val (_, raw_pattern) = guarded_context_pattern theorem
+                  in
+                    if FCNet.can_match_term raw_pattern occurrence then
+                      let
+                        val instantiated = instantiate_guarded_context
+                          theorem consequent occurrence
+                        val (lhs, _) =
+                          boolSyntax.dest_eq (Thm.concl instantiated)
+                      in
+                        if FCNet.can_match_term lhs tm then
+                          SOME (Drule.INST_TY_TERM
+                            (Term.match_term lhs tm) instantiated)
+                        else
+                          first_instantiation theorem rest
+                      end
+                    else
+                      first_instantiation theorem rest
+                  end
+            fun first_theorem [] = NONE
+              | first_theorem (theorem :: rest) =
+                  (case first_instantiation theorem occurrences of
+                     SOME instantiated => SOME instantiated
+                   | NONE => first_theorem rest)
+          in
+            first_theorem native_float_guarded_context_rewrites
+          end
+
+      fun ground_pattern theorem =
+        let
+          val (_, transfer) = boolSyntax.dest_imp (Thm.concl theorem)
+        in
+          Lib.fst (boolSyntax.dest_eq transfer)
+        end
+
+      fun lift_transfer consequent occurrence transfer =
+        let
+          val hole = Term.variant (Term.free_vars consequent)
+            (Term.mk_var
+              ("ground_guarded_float_result", Term.type_of occurrence))
+          val context = Term.mk_abs (hole,
+            Term.subst [{redex = occurrence, residue = hole}] consequent)
+        in
+          Conv.BETA_RULE (Thm.AP_TERM context transfer)
+        end
+
+      fun ground_instantiation _ [] = NONE
+        | ground_instantiation theorem (occurrence :: rest) =
+            let
+              val pattern = ground_pattern theorem
+            in
+              if FCNet.can_match_term pattern occurrence then
+                let
+                  val instantiated = Drule.INST_TY_TERM
+                    (Term.match_term pattern occurrence) theorem
+                  val (guard, _) =
+                    boolSyntax.dest_imp (Thm.concl instantiated)
+                in
+                  if List.null (Term.free_vars guard) then
+                    let
+                      val evaluated = bossLib.EVAL guard
+                      val (_, verdict) =
+                        boolSyntax.dest_eq (Thm.concl evaluated)
+                    in
+                      if Term.aconv verdict boolSyntax.T then
+                        let
+                          val transfer = Drule.MATCH_MP instantiated
+                            (Drule.EQT_ELIM evaluated)
+                        in
+                          SOME (lift_transfer tm occurrence transfer)
+                        end
+                      else
+                        ground_instantiation theorem rest
+                    end
+                  else
+                    ground_instantiation theorem rest
+                end
+              else
+                ground_instantiation theorem rest
+            end
+
+      fun ground_theorem _ [] = NONE
+        | ground_theorem occurrences (theorem :: rest) =
+            (case ground_instantiation theorem occurrences of
+               SOME instantiated => SOME instantiated
+             | NONE => ground_theorem occurrences rest)
+    in
+      case guarded_implication () of
+        SOME instantiated => SOME instantiated
+      | NONE =>
+      let
+        val occurrences = Library.subterms tm
+      in
+        ground_theorem occurrences native_float_ground_guard_transfers
+      end
+    end
+
+  fun native_float_guarded_context_match_conv_with prove tm =
+    case recognize_native_float_guarded_context tm of
+      NONE => raise Conv.UNCHANGED
+    | SOME instantiated =>
+    let
+      val result = prove instantiated tm
+      val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl result)
+      val _ = Term.aconv lhs tm orelse
+        raise ERR "native_float_guarded_context_match_conv_with"
+          "admitted proof theorem has the wrong left-hand side"
+      val count_before = count_raw_float_results tm
+      val count_after = count_raw_float_results rhs
+      val _ = count_after < count_before orelse
+        raise ERR "native_float_guarded_context_match_conv_with"
+          "admitted proof theorem does not strictly reduce raw FP results"
+    in
+      result
+    end
+
+  fun native_float_guarded_context_match_conv tm =
+    native_float_guarded_context_match_conv_with
+      (fn theorem => Conv.HO_REWR_CONV theorem) tm
+
+  fun native_float_guarded_postorder_conv root_conversion tm =
+    let
+      fun theorem_rhs theorem =
+        Lib.snd (boolSyntax.dest_eq (Thm.concl theorem))
+      fun descend input =
+        let
+          val children =
+            if Term.is_comb input then
+              let val (rator, rand) = Term.dest_comb input
+              in Thm.MK_COMB (descend rator, descend rand) end
+            else if Term.is_abs input then
+              let val (variable, body) = Term.dest_abs input
+              in Thm.ABS variable (descend body) end
+            else
+              Thm.REFL input
+          val current = theorem_rhs children
+          val root = root_conversion current
+            handle Conv.UNCHANGED => Thm.REFL current
+          val revisited =
+            if Term.aconv current (theorem_rhs root) then root
+            else Thm.TRANS root (descend (theorem_rhs root))
+        in
+          Thm.TRANS children revisited
+        end
+      val result = descend tm
+      val (lhs, _) = boolSyntax.dest_eq (Thm.concl result)
+      val _ = Term.aconv lhs tm orelse
+        raise ERR "native_float_guarded_postorder_conv"
+          "recursive traversal produced a theorem for the wrong input"
+    in
+      result
+    end
+
+  val native_float_transfer_ss =
+    simpLib.++
+      (simpLib.++ (pureSimps.pure_ss, wordsLib.SIZES_ss),
+       numSimps.REDUCE_ss)
+
+  val native_float_guarded_transfer_ss =
+    simpLib.++ (native_float_transfer_ss, realSimps.REAL_ARITH_ss)
+
   fun NATIVE_FLOAT_TO_SMT_CONV tm =
-    simpLib.SIMP_CONV pureSimps.pure_ss native_float_transfer_rewrites tm
-    handle Conv.UNCHANGED => Thm.REFL tm
+    let
+      fun apply_or_refl conversion input = conversion input
+        handle Conv.UNCHANGED => Thm.REFL input
+      val guarded = native_float_guarded_postorder_conv
+        native_float_guarded_context_match_conv tm
+      val guarded_rhs = Lib.snd (boolSyntax.dest_eq (Thm.concl guarded))
+      val lowered_guards = apply_or_refl
+        (simpLib.SIMP_CONV native_float_guarded_transfer_ss
+          native_float_guarded_transfer_rewrites) guarded_rhs
+      val lowered_guards_rhs =
+        Lib.snd (boolSyntax.dest_eq (Thm.concl lowered_guards))
+      val lowered = apply_or_refl
+        (simpLib.SIMP_CONV native_float_transfer_ss
+          native_float_transfer_rewrites) lowered_guards_rhs
+    in
+      Thm.TRANS guarded (Thm.TRANS lowered_guards lowered)
+    end
 
   val hol_string_transfer_rewrites = [
     Conv.GSYM smtstringTheory.str_inj_11,
@@ -6767,6 +7054,10 @@ in
     closed_constructor_destructor_residual
   val reject_uninterpreted_native_destructors_for_test =
     reject_uninterpreted_native_destructors
+  val native_float_guarded_context_match_conv_with_for_test =
+    native_float_guarded_context_match_conv_with
+  val native_float_guarded_postorder_conv_for_test =
+    native_float_guarded_postorder_conv
   val native_float_transfer_surface = native_float_transfer_surface
   val native_float_transfer_theorems = native_float_transfer_theorems
 

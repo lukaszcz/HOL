@@ -1872,6 +1872,12 @@ in
     (``smtfp_round_to_integral RNA
          (smtfp_bits 1w 4w 4w : (4,3) smtfp) =
        smtfp_bits 1w 4w 8w``, [thm_Z3p_v4]),
+    (``smtfp_round_to_integral RNE
+         (smtfp_bits 0w 14w 0w : (3,5) smtfp) = smtfp_pzero``,
+      [thm_Z3p_v4]),
+    (``smtfp_round_to_integral RNE
+         (smtfp_bits 1w 14w 0w : (3,5) smtfp) = smtfp_nzero``,
+      [thm_Z3p_v4]),
     (``smtfp_lt
          (smtfp_bits 0w 3w 0w : (4,3) smtfp)
          (smtfp_bits 0w 4w 0w : (4,3) smtfp)``, [thm_Z3p_v4]),
@@ -1896,6 +1902,66 @@ in
        is the evidence for the support record's checked-replay claim. *)
     (``float_less_than (x : (4,3) binary_ieee$float) y ==>
        ~float_less_than y x``, [thm_Z3p_v4]),
+
+    (* TASK_11: each proved expansion/transfer family reaches a checked
+       solver verdict through the public native-float preprocessing path. *)
+    (``float_is_finite (x : (4,3) binary_ieee$float) <=>
+       ~float_is_nan x /\ ~float_is_infinite x``, [thm_Z3p_v4]),
+    (``float_unordered (x : (4,3) binary_ieee$float) y <=>
+       float_is_nan x \/ float_is_nan y``, [thm_Z3p_v4]),
+    (``~float_is_signalling
+         (canon (x : (4,3) binary_ieee$float))``, [thm_Z3p_v4]),
+    (``float_is_integral (x : (4,3) binary_ieee$float) <=>
+       ((~smtfp_is_nan (smtfp_intro x) /\
+         ~smtfp_is_infinite (smtfp_intro x)) /\
+        smtfp_round_to_integral RTZ (smtfp_intro x) = smtfp_intro x)``,
+      [thm_Z3p_v4]),
+    (``~float_is_zero
+         (float_round_to_integral roundTowardZero
+           (x : (4,3) binary_ieee$float)) ==>
+       smtfp_intro (float_round_to_integral roundTowardZero x) =
+       smtfp_round_to_integral RTZ (smtfp_intro x)``, [thm_Z3p_v4]),
+    (``float_is_finite (x : (4,3) binary_ieee$float) ==>
+       float_to_real x = smtfp_to_real (smtfp_intro x)``,
+      [thm_Z3p_v4]),
+    (``(toneg <=> (r : real) < 0) ==>
+       (smtfp_intro
+          (float_round roundTowardZero toneg r) : (4,3) smtfp) =
+       smtfp_from_real RTZ r``, [thm_Z3p_v4]),
+    (``((roundTowardZero = roundTowardNegative) <=> (r : real) < 0) ==>
+       (smtfp_intro (real_to_float roundTowardZero r) : (4,3) smtfp) =
+       smtfp_from_real RTZ r``, [thm_Z3p_v4]),
+    (``(smtfp_intro
+          (float_round roundTowardZero T (3r / 2) :
+            (3,5) binary_ieee$float)) =
+       (smtfp_from_real RTZ (3r / 2) : (3,5) smtfp)``, [thm_Z3p_v4]),
+    (``(smtfp_intro
+          (float_round roundTowardZero F (-3r / 2) :
+            (3,5) binary_ieee$float)) =
+       (smtfp_from_real RTZ (-3r / 2) : (3,5) smtfp)``, [thm_Z3p_v4]),
+    (``(smtfp_intro
+          (real_to_float roundTowardNegative (3r / 2) :
+            (3,5) binary_ieee$float)) =
+       (smtfp_from_real RTN (3r / 2) : (3,5) smtfp)``, [thm_Z3p_v4]),
+    (``(smtfp_intro
+          (real_to_float roundTowardZero (-3r / 2) :
+            (3,5) binary_ieee$float)) =
+       (smtfp_from_real RTZ (-3r / 2) : (3,5) smtfp)``, [thm_Z3p_v4]),
+    (``(smtfp_intro (float_min x y) : (4,3) smtfp) =
+         smtfp_min (smtfp_intro x) (smtfp_intro y) /\
+       smtfp_intro (float_max x y) =
+         smtfp_max (smtfp_intro x) (smtfp_intro y) /\
+       smtfp_intro (float_rem x y) =
+         smtfp_rem (smtfp_intro x) (smtfp_intro y)``, [thm_Z3p_v4]),
+    (``(smtfp_intro
+          (float_from_ieee_bv (v : (1 + (3 + 4)) word)) : (4,3) smtfp) =
+         smtfp_from_ieee_bv v /\
+       float_pack_ieee_bv (canon (x : (4,3) binary_ieee$float)) =
+         smtfp_pack_ieee_bv (smtfp_intro x)``, [thm_Z3p_v4]),
+    (``((float_to_ubv RTZ (x : (4,3) binary_ieee$float) : word8) =
+          smtfp_to_ubv RTZ (smtfp_intro x)) /\
+       ((float_to_sbv RTZ x : word8) =
+          smtfp_to_sbv RTZ (smtfp_intro x))``, [thm_Z3p_v4]),
 
     (* Native comparison plus arithmetic is first rewritten by the proved
        transfer kit, then answered by Z3 over the SMT FloatingPoint sort. *)

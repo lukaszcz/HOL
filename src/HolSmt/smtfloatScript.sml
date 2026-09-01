@@ -19,6 +19,7 @@ Theory smtfloat
 Ancestors[qualified]
   binary_ieee
   binary_ieeeProps
+  lift_ieee
   integer_word
 
 Datatype:
@@ -787,14 +788,36 @@ Definition smt_float_fma_def[nocompute]:
                   else F) \/ r < 0) r
 End
 
+Definition smt_float_restore_zero_sign_def:
+  smt_float_restore_zero_sign (x : ('t,'w) float) y =
+    if float_is_zero y then
+      if x.Sign = 1w then float_minus_zero (:'t # 'w)
+      else float_plus_zero (:'t # 'w)
+    else y
+End
+
 Definition smt_float_round_to_integral_def[nocompute]:
   smt_float_round_to_integral mode (x : ('t,'w) float) =
     case float_value x of
       Float r =>
-        let i = smt_real_to_int mode r in
-          smt_float_round mode (x.Sign = 1w) (real_of_int i)
+        smt_float_restore_zero_sign x (smt_integral_round mode r)
     | _ => x
 End
+
+(* Zero is a result class here, not a chosen raw record.  This composition
+   theorem deliberately delays the +0/-0 choice until the original float's
+   sign is available. *)
+Theorem smt_float_round_to_integral_zero_class:
+  float_value x = Float r /\
+  float_is_zero
+    (smt_integral_round mode r : ('t,'w) float) ==>
+  smt_float_round_to_integral mode x =
+    if x.Sign = 1w then float_minus_zero (:'t # 'w)
+    else float_plus_zero (:'t # 'w)
+Proof
+  simp [smt_float_round_to_integral_def,
+        smt_float_restore_zero_sign_def]
+QED
 
 (* This is the official SMT-LIB minNum/maxNum dispatch: one NaN is ignored,
    two NaNs produce a NaN (the second argument here), ordinary arguments are
@@ -1207,6 +1230,54 @@ Proof
         canon_qnan_msb]
 QED
 
+Theorem smtfp_is_finite_expansion:
+  smtfp_is_finite x <=>
+    ~smtfp_is_nan x /\ ~smtfp_is_infinite x
+Proof
+  simp [smtfp_is_finite_def, smtfp_is_nan_def,
+        smtfp_is_infinite_def, binary_ieeeTheory.float_is_finite_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_is_infinite_def] >>
+  Cases_on `float_value (smtfp_rep x)` >> simp []
+QED
+
+Theorem smtfp_unordered_expansion:
+  smtfp_unordered x y <=> smtfp_is_nan x \/ smtfp_is_nan y
+Proof
+  simp [smtfp_unordered_def, smtfp_is_nan_def,
+        binary_ieeeTheory.float_unordered_def,
+        binary_ieeeTheory.float_compare_def,
+        binary_ieeeTheory.float_is_nan_def] >>
+  Cases_on `float_value (smtfp_rep x)` >>
+  Cases_on `float_value (smtfp_rep y)` >>
+  simp [AllCaseEqs()]
+QED
+
+Theorem smtfp_is_signalling_expansion:
+  smtfp_is_signalling x <=> F
+Proof
+  simp [smtfp_is_signalling_def,
+        binary_ieeeTheory.float_is_signalling_def] >>
+  Cases_on `float_is_nan (smtfp_rep x)` >> simp [] >>
+  `smtfp_canonical (smtfp_rep x)` by simp [] >>
+  qpat_x_assum `smtfp_canonical (smtfp_rep x)` mp_tac >>
+  rewrite_tac [smtfp_canonical_def] >>
+  simp [float_canon_qnan_def, canon_qnan_msb]
+QED
+
+Theorem native_float_finite_integral_transfer:
+  (float_is_finite x <=> smtfp_is_finite (smtfp_intro x)) /\
+  (float_is_integral x <=> smtfp_is_integral (smtfp_intro x))
+Proof
+  Cases_on `float_is_nan x` >>
+  simp [smtfp_intro_def, smtfp_is_finite_def,
+        smtfp_is_integral_def, canon_def] >>
+  fs [binary_ieeeTheory.float_is_nan_def,
+      binary_ieeeTheory.float_is_finite_def,
+      binary_ieeeTheory.float_is_integral_def] >>
+  Cases_on `float_value x` >> fs []
+QED
+
 Theorem native_float_bits_transfer:
   smtfp_intro
     (<| Sign := s; Exponent := e; Significand := m |> : ('t,'w) float) =
@@ -1416,6 +1487,323 @@ Proof
   Cases_on `float_is_nan z` >> simp [canon_def] >>
   simp [binary_ieeeTheory.float_mul_add_def,
         binary_ieeeTheory.some_nan_properties]
+QED
+
+(* Transfers for observers that are well-defined on SMT-LIB's canonical
+   floating-point quotient.  Operations whose raw IEEE result distinguishes
+   NaN payloads are stated at [canon], which is the exact abstraction
+   boundary represented by [smtfp_intro]. *)
+Theorem native_float_signalling_transfer:
+  float_is_signalling (canon x) <=>
+    smtfp_is_signalling (smtfp_intro x)
+Proof
+  rewrite_tac [smtfp_is_signalling_expansion] >>
+  Cases_on `float_is_nan x` >>
+  simp [canon_def, binary_ieeeTheory.float_is_signalling_def,
+        float_canon_qnan_def, canon_qnan_msb]
+QED
+
+Theorem native_float_to_real_transfer:
+  float_is_finite x ==>
+  float_to_real x = smtfp_to_real (smtfp_intro x)
+Proof
+  strip_tac >>
+  drule binary_ieeePropsTheory.float_value_eq_float_to_real >>
+  strip_tac >>
+  `~float_is_nan x` by
+    fs [binary_ieeeTheory.float_is_nan_def] >>
+  simp [smtfp_to_real_def, smtfp_intro_def, smtfp_rep_def,
+        smt_float_to_real_def, canon_def]
+QED
+
+Theorem native_float_to_real_guarded_transfer:
+  (float_is_finite x ==> P (float_to_real x)) <=>
+  (float_is_finite x ==> P (smtfp_to_real (smtfp_intro x)))
+Proof
+  metis_tac [native_float_to_real_transfer]
+QED
+
+Theorem float_word_conversion_canon[local,simp]:
+  (float_to_ubv mode (canon x) : 'm word) = float_to_ubv mode x /\
+  (float_to_sbv mode (canon x) : 'm word) = float_to_sbv mode x
+Proof
+  Cases_on `float_value x` >>
+  simp [float_to_ubv_def, float_to_sbv_def, canon_def,
+        binary_ieeeTheory.float_is_nan_def]
+QED
+
+Theorem native_float_word_conversion_transfer:
+  ((float_to_ubv mode x : 'm word) =
+     smtfp_to_ubv mode (smtfp_intro x)) /\
+  ((float_to_sbv mode x : 'm word) =
+     smtfp_to_sbv mode (smtfp_intro x))
+Proof
+  simp [smtfp_to_ubv_def, smtfp_to_sbv_def, smtfp_intro_def,
+        smtfp_rep_def]
+QED
+
+Theorem native_float_ieee_bv_transfer:
+  smtfp_intro (float_from_ieee_bv v) = smtfp_from_ieee_bv v /\
+  float_pack_ieee_bv (canon x) =
+    smtfp_pack_ieee_bv (smtfp_intro x)
+Proof
+  simp [smtfp_intro_def, smtfp_from_ieee_bv_def,
+        smtfp_pack_ieee_bv_def, smtfp_rep_def]
+QED
+
+Theorem native_float_min_transfer:
+  smtfp_intro (float_min x y) =
+    smtfp_min (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_min_def, smtfp_rep_def] >>
+  Cases_on `float_is_nan x` >> Cases_on `float_is_nan y` >>
+  simp [float_min_def, canon_def]
+QED
+
+Theorem native_float_max_transfer:
+  smtfp_intro (float_max x y) =
+    smtfp_max (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_max_def, smtfp_rep_def] >>
+  Cases_on `float_is_nan x` >> Cases_on `float_is_nan y` >>
+  simp [float_max_def, canon_def]
+QED
+
+Theorem native_float_rem_transfer:
+  smtfp_intro (float_rem x y) =
+    smtfp_rem (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_rem_def, smtfp_rep_def] >>
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  simp [float_rem_def, canon_def,
+        binary_ieeeTheory.float_is_nan_def]
+QED
+
+Theorem float_round_zero_follows_raw_zero[local]:
+  float_is_zero (round mode r : ('t,'w) float) ==>
+  float_is_zero (float_round mode toneg r : ('t,'w) float)
+Proof
+  disch_then (fn raw_zero =>
+    simp [binary_ieeeTheory.float_round_def, raw_zero,
+          binary_ieeeTheory.zero_properties]) >>
+  Cases_on `toneg` >> simp [binary_ieeeTheory.zero_properties]
+QED
+
+Theorem float_round_eq_raw_if_nonzero[local]:
+  ~float_is_zero (round mode r : ('t,'w) float) ==>
+  (float_round mode toneg r : ('t,'w) float) = round mode r
+Proof
+  disch_then (fn raw_nonzero =>
+    simp [binary_ieeeTheory.float_round_def, raw_nonzero])
+QED
+
+Theorem float_round_sign_irrelevant_nonzero[local]:
+  ~float_is_zero (float_round mode toneg r : ('t,'w) float) \/
+  (toneg <=> other_sign) ==>
+  (float_round mode toneg r : ('t,'w) float) =
+  float_round mode other_sign r
+Proof
+  disch_tac >>
+  Cases_on `float_is_zero (round mode r : ('t,'w) float)`
+  >- (imp_res_tac float_round_zero_follows_raw_zero >>
+      `(toneg <=> other_sign)` by fs [] >>
+      Cases_on `toneg` >> Cases_on `other_sign` >>
+      fs [binary_ieeeTheory.float_round_def])
+  >- (irule EQ_TRANS >>
+      qexists_tac `(round mode r : ('t,'w) float)` >>
+      conj_tac
+      >- (irule float_round_eq_raw_if_nonzero >> fs [])
+      >- (irule EQ_SYM >>
+          irule float_round_eq_raw_if_nonzero >> fs []))
+QED
+
+Theorem native_float_round_canonical_sign[local]:
+  smtfp_intro
+    (float_round mode (r < 0) r : ('t,'w) float) =
+  smtfp_from_real (smtfp_rounding_of_binary mode) r
+Proof
+  simp [smtfp_intro_def, smtfp_from_real_def, smt_real_to_fp_def,
+        smtfp_rep_def, smt_float_round_def, smt_round_def] >>
+  Cases_on `mode` >>
+  simp [smtfp_rounding_of_binary_def,
+        binary_ieeeTheory.float_round_def]
+QED
+
+Theorem native_float_round_transfer:
+  ~float_is_zero (float_round mode toneg r : ('t,'w) float) \/
+  (toneg <=> r < 0) ==>
+  smtfp_intro
+    (float_round mode toneg r : ('t,'w) float) =
+  smtfp_from_real (smtfp_rounding_of_binary mode) r
+Proof
+  disch_tac >>
+  first_assum (fn guard =>
+    ASSUME_TAC (MATCH_MP float_round_sign_irrelevant_nonzero guard)) >>
+  qpat_assum
+    `float_round mode toneg r =
+     (float_round mode (r < 0) r : ('t,'w) float)`
+    (fn raw_equality =>
+      ASSUME_TAC (Q.AP_TERM `smtfp_intro` raw_equality)) >>
+  irule EQ_TRANS >>
+  qexists_tac
+    `smtfp_intro (float_round mode (r < 0) r)` >>
+  conj_tac
+  >- (qpat_assum
+        `smtfp_intro (float_round mode toneg r : ('t,'w) float) =
+         smtfp_intro (float_round mode (r < 0) r : ('t,'w) float)`
+        ACCEPT_TAC)
+  >- irule native_float_round_canonical_sign
+QED
+
+Theorem float_round_zero_sign_irrelevant[local]:
+  float_is_zero (float_round mode toneg r : ('t,'w) float) <=>
+  float_is_zero (float_round mode other_sign r : ('t,'w) float)
+Proof
+  Cases_on `toneg` >> Cases_on `other_sign` >>
+  Cases_on `float_is_zero (round mode r : ('t,'w) float)` >>
+  fs [binary_ieeeTheory.float_round_def,
+      binary_ieeeTheory.zero_properties]
+QED
+
+Theorem native_float_round_zero_transfer[local]:
+  float_is_zero (float_round mode toneg r : ('t,'w) float) <=>
+  smtfp_is_zero
+    (smtfp_from_real (smtfp_rounding_of_binary mode) r : ('t,'w) smtfp)
+Proof
+  metis_tac [float_round_zero_sign_irrelevant,
+             native_float_classification_transfer,
+             native_float_round_canonical_sign]
+QED
+
+Theorem native_float_round_guarded_transfer:
+  ((~float_is_zero (float_round mode toneg r : ('t,'w) float) \/
+    (toneg <=> r < 0)) ==>
+     P (smtfp_intro (float_round mode toneg r : ('t,'w) float))) <=>
+  ((~smtfp_is_zero
+       (smtfp_from_real (smtfp_rounding_of_binary mode) r :
+         ('t,'w) smtfp) \/
+    (toneg <=> r < 0)) ==>
+     P (smtfp_from_real (smtfp_rounding_of_binary mode) r))
+Proof
+  metis_tac [native_float_round_transfer,
+             native_float_round_zero_transfer]
+QED
+
+Theorem native_float_round_sign_guarded_transfer:
+  ((toneg <=> r < 0) ==>
+     P (smtfp_intro
+       (float_round mode toneg r : ('t,'w) float))) <=>
+  ((toneg <=> r < 0) ==>
+     P (smtfp_from_real (smtfp_rounding_of_binary mode) r))
+Proof
+  metis_tac [native_float_round_transfer]
+QED
+
+Theorem native_real_to_float_transfer:
+  ~float_is_zero (real_to_float mode r : ('t,'w) float) \/
+  ((mode = roundTowardNegative) <=> r < 0) ==>
+  smtfp_intro (real_to_float mode r : ('t,'w) float) =
+  smtfp_from_real (smtfp_rounding_of_binary mode) r
+Proof
+  disch_tac >>
+  simp [binary_ieeeTheory.real_to_float_def] >>
+  irule native_float_round_transfer >>
+  fs [binary_ieeeTheory.real_to_float_def]
+QED
+
+Theorem native_real_to_float_zero_transfer[local]:
+  float_is_zero (real_to_float mode r : ('t,'w) float) <=>
+  smtfp_is_zero
+    (smtfp_from_real (smtfp_rounding_of_binary mode) r : ('t,'w) smtfp)
+Proof
+  simp [binary_ieeeTheory.real_to_float_def,
+        native_float_round_zero_transfer]
+QED
+
+Theorem native_real_to_float_guarded_transfer:
+  ((~float_is_zero (real_to_float mode r : ('t,'w) float) \/
+    ((mode = roundTowardNegative) <=> r < 0)) ==>
+     P (smtfp_intro (real_to_float mode r : ('t,'w) float))) <=>
+  ((~smtfp_is_zero
+       (smtfp_from_real (smtfp_rounding_of_binary mode) r :
+         ('t,'w) smtfp) \/
+    ((mode = roundTowardNegative) <=> r < 0)) ==>
+     P (smtfp_from_real (smtfp_rounding_of_binary mode) r))
+Proof
+  metis_tac [native_real_to_float_transfer,
+             native_real_to_float_zero_transfer]
+QED
+
+Theorem native_real_to_float_sign_guarded_transfer:
+  (((mode = roundTowardNegative) <=> r < 0) ==>
+     P (smtfp_intro (real_to_float mode r : ('t,'w) float))) <=>
+  (((mode = roundTowardNegative) <=> r < 0) ==>
+     P (smtfp_from_real (smtfp_rounding_of_binary mode) r))
+Proof
+  metis_tac [native_real_to_float_transfer]
+QED
+
+(* Raw binary_ieee rounding forgets the sign of a zero input before choosing
+   a closest integral record.  SMT-LIB instead preserves that sign.  Away
+   from exactly this result class, the shared integral-round abstraction gives
+   a complete transfer for every binary rounding mode. *)
+Theorem native_float_round_to_integral_transfer:
+  ~float_is_zero (float_round_to_integral mode x) ==>
+  smtfp_intro (float_round_to_integral mode x) =
+    smtfp_round_to_integral (smtfp_rounding_of_binary mode)
+      (smtfp_intro x)
+Proof
+  Cases_on `mode` >> Cases_on `float_value x` >>
+  simp [binary_ieeeTheory.float_round_to_integral_def,
+        smtfp_round_to_integral_def, smtfp_intro_def, smtfp_rep_def,
+        smtfp_rounding_of_binary_def, smt_float_round_to_integral_def,
+        smt_float_restore_zero_sign_def, smt_integral_round_def, canon_def,
+        binary_ieeeTheory.float_is_nan_def]
+QED
+
+Theorem float_is_zero_restore_zero_sign[local,simp]:
+  float_is_zero (smt_float_restore_zero_sign x y) <=> float_is_zero y
+Proof
+  rw [smt_float_restore_zero_sign_def] >> simp []
+QED
+
+Theorem float_is_zero_canon[local,simp]:
+  float_is_zero (canon y) <=> float_is_zero y
+Proof
+  Cases_on `float_is_nan y` >> simp [canon_def] >>
+  metis_tac [binary_ieeeTheory.float_is_distinct,
+             float_canon_qnan_is_nan]
+QED
+
+Theorem native_float_round_to_integral_zero_transfer[local]:
+  float_is_zero (float_round_to_integral mode x) <=>
+  smtfp_is_zero
+    (smtfp_round_to_integral (smtfp_rounding_of_binary mode)
+      (smtfp_intro x))
+Proof
+  Cases_on `mode` >> Cases_on `float_value x` >>
+  simp [smtfp_round_to_integral_def, smtfp_is_zero_def,
+        smtfp_rep_def] >>
+  simp [binary_ieeeTheory.float_round_to_integral_def,
+        smtfp_intro_def, canon_def,
+        smtfp_rounding_of_binary_def,
+        smt_float_round_to_integral_def,
+        smt_integral_round_def, binary_ieeeTheory.float_is_nan_def] >>
+  simp [binary_ieeeTheory.float_is_zero_def, float_canon_qnan_def,
+        binary_ieeeTheory.float_value_def, canon_qnan_msb]
+QED
+
+Theorem native_float_round_to_integral_guarded_transfer:
+  (~float_is_zero (float_round_to_integral mode x) ==>
+     P (smtfp_intro (float_round_to_integral mode x))) <=>
+  (~smtfp_is_zero
+      (smtfp_round_to_integral (smtfp_rounding_of_binary mode)
+        (smtfp_intro x)) ==>
+     P (smtfp_round_to_integral (smtfp_rounding_of_binary mode)
+          (smtfp_intro x)))
+Proof
+  metis_tac [native_float_round_to_integral_transfer,
+             native_float_round_to_integral_zero_transfer]
 QED
 
 (* Invalid raw record equality is deliberately absent: smtfp_intro identifies
@@ -1749,6 +2137,43 @@ Proof
      metis_tac [binary_ieeePropsTheory.round_representable_zero]) >>
   simp [smt_real_to_fp_def, smt_float_round_def] >>
   fs []
+QED
+
+Theorem smt_float_round_RTZ_zero[local]:
+  2 <= dimindex(:'w) /\ float_is_zero (x : ('t,'w) float) ==>
+  smt_float_round RTZ (x.Sign = 1w) (float_to_real x) = x
+Proof
+  strip_tac >>
+  imp_res_tac binary_ieeeTheory.float_is_zero_to_real >>
+  fs [binary_ieeePropsTheory.float_to_real_EQ0_cases] >>
+  `smt_float_to_fp RTZ
+       (float_plus_zero (:'t # 'w) : ('t,'w) float) =
+     float_plus_zero (:'t # 'w)` by
+    simp [smt_float_to_fp_shared_zero, to_binary_rounding_def] >>
+  `smt_float_to_fp RTZ
+       (float_minus_zero (:'t # 'w) : ('t,'w) float) =
+     float_minus_zero (:'t # 'w)` by
+    simp [smt_float_to_fp_shared_zero, to_binary_rounding_def] >>
+  fs [smt_float_to_fp_def]
+QED
+
+Theorem smt_float_to_fp_RTZ_nonzero[local]:
+  2 <= dimindex(:'w) /\ float_is_finite (x : ('t,'w) float) /\
+  ~float_is_zero x ==> smt_float_to_fp RTZ x = x
+Proof
+  strip_tac >> irule smt_float_to_fp_shared_roundtrip >>
+  simp [to_binary_rounding_def]
+QED
+
+Theorem smt_float_round_RTZ_representable[local]:
+  2 <= dimindex(:'w) /\ float_is_finite (x : ('t,'w) float) ==>
+  smt_float_round RTZ (x.Sign = 1w) (float_to_real x) = x
+Proof
+  strip_tac >> Cases_on `float_is_zero x`
+  >- metis_tac [smt_float_round_RTZ_zero] >>
+  drule_all smt_float_to_fp_RTZ_nonzero >>
+  simp [smt_float_to_fp_def,
+        binary_ieeePropsTheory.float_value_eq_float_to_real]
 QED
 
 Theorem float32_ieee_one_ground[simp]:
@@ -2353,6 +2778,166 @@ Proof
       >- (qexists_tac `-&n` >> simp [] >>
           realLib.REAL_ASM_ARITH_TAC)
       >- (Cases_on `i` >> fs []))
+QED
+
+Theorem float_is_zero_cases[local]:
+  float_is_zero (x : ('t,'w) float) ==>
+  x = float_plus_zero (:'t # 'w) \/
+  x = float_minus_zero (:'t # 'w)
+Proof
+  metis_tac [binary_ieeeTheory.float_is_zero_to_real,
+             binary_ieeePropsTheory.float_to_real_EQ0_cases]
+QED
+
+Theorem float_is_integral_imp_finite[local]:
+  float_is_integral (x : ('t,'w) float) ==> float_is_finite x
+Proof
+  Cases_on `float_value x` >>
+  simp [binary_ieeeTheory.float_is_integral_def,
+        binary_ieeeTheory.float_is_finite_def]
+QED
+
+Theorem smt_integral_round_RTZ_integral[local]:
+  2 <= dimindex(:'w) /\ float_is_finite (x : ('t,'w) float) ==>
+  float_is_integral
+    (smt_integral_round RTZ (float_to_real x) : ('t,'w) float)
+Proof
+  strip_tac >>
+  `abs (float_to_real x) <= largest (:'t # 'w)` by
+    metis_tac [lift_ieeeTheory.float_to_real_finite] >>
+  `~(float_to_real x < -largest (:'t # 'w)) /\
+   ~(float_to_real x > largest (:'t # 'w))` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  fs [smt_integral_round_def, binary_ieeeTheory.integral_round_def] >>
+  qabbrev_tac `s = {a : ('t,'w) float |
+    float_is_integral a /\
+    abs (float_to_real a) <= abs (float_to_real x)}` >>
+  `s <> {}` by
+    (simp [Abbr `s`, pred_setTheory.EXTENSION] >>
+     qexists_tac `float_plus_zero (:'t # 'w)` >>
+     simp [binary_ieeeTheory.float_is_integral_def]) >>
+  `is_closest s (float_to_real x) (closest s (float_to_real x))` by
+    (rewrite_tac [binary_ieeeTheory.closest_def] >>
+     irule (cj 1 closest_such_properties) >> simp []) >>
+  fs [binary_ieeeTheory.is_closest_def, Abbr `s`, IN_DEF]
+QED
+
+Theorem smt_integral_round_RTZ_fixed[local]:
+  2 <= dimindex(:'w) /\ float_is_finite (x : ('t,'w) float) ==>
+  (float_is_integral x <=>
+   smt_float_restore_zero_sign x
+     (smt_integral_round RTZ (float_to_real x)) = x)
+Proof
+  strip_tac >>
+  `abs (float_to_real x) <= largest (:'t # 'w)` by
+    metis_tac [lift_ieeeTheory.float_to_real_finite] >>
+  `~(float_to_real x < -largest (:'t # 'w)) /\
+   ~(float_to_real x > largest (:'t # 'w))` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  simp [smt_integral_round_def, binary_ieeeTheory.integral_round_def,
+        smt_float_restore_zero_sign_def] >>
+  qabbrev_tac `s = {a : ('t,'w) float |
+    float_is_integral a /\
+    abs (float_to_real a) <= abs (float_to_real x)}` >>
+  qabbrev_tac `c = closest s (float_to_real x)` >>
+  `s <> {}` by
+    (simp [Abbr `s`, pred_setTheory.EXTENSION] >>
+     qexists_tac `float_plus_zero (:'t # 'w)` >>
+     simp [binary_ieeeTheory.float_is_integral_def]) >>
+  `is_closest s (float_to_real x) c` by
+    (simp [Abbr `c`] >>
+     rewrite_tac [binary_ieeeTheory.closest_def] >>
+     irule (cj 1 closest_such_properties) >> simp []) >>
+  `c IN s` by
+    fs [binary_ieeeTheory.is_closest_def] >>
+  `!b. b IN s ==>
+       abs (float_to_real c - float_to_real x) <=
+       abs (float_to_real b - float_to_real x)` by
+    fs [binary_ieeeTheory.is_closest_def] >>
+  `float_is_integral c` by fs [Abbr `s`, IN_DEF] >>
+  eq_tac >> strip_tac
+  >- (`x IN s` by simp [Abbr `s`, IN_DEF] >>
+      `float_to_real c = float_to_real x` by
+        (qpat_x_assum `!b. _` (qspec_then `x` mp_tac) >>
+         simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      Cases_on `float_is_zero x`
+      >- (`x = float_plus_zero (:'t # 'w) \/
+           x = float_minus_zero (:'t # 'w)` by
+            metis_tac [float_is_zero_cases] >>
+          `c = float_plus_zero (:'t # 'w) \/
+           c = float_minus_zero (:'t # 'w)` by
+            metis_tac
+              [binary_ieeePropsTheory.float_to_real_EQ0_cases] >>
+          fs [binary_ieeeTheory.float_is_zero_def,
+              binary_ieeeTheory.float_minus_zero_def,
+              binary_ieeeTheory.float_value_def,
+              binary_ieeeTheory.float_negate_def,
+              binary_ieeeTheory.float_plus_zero_def,
+              binary_ieeeTheory.float_to_real]) >>
+      fs [binary_ieeeTheory.float_to_real_eq]) >>
+  Cases_on `float_is_zero c`
+  >- (fs [] >> Cases_on `x.Sign = 1w` >>
+      fs [binary_ieeeTheory.float_is_integral_def,
+          binary_ieeeTheory.float_is_zero_def,
+          binary_ieeeTheory.float_minus_zero_def,
+          binary_ieeeTheory.float_plus_zero_def,
+          binary_ieeeTheory.float_negate_def,
+          binary_ieeeTheory.float_value_def] >>
+      simp [binary_ieeeTheory.float_to_real,
+            binary_ieeeTheory.is_integral_def,
+            intrealTheory.is_int_def]) >>
+  fs [] >> strip_tac >> fs []
+QED
+
+Theorem smtfp_is_integral_expansion:
+  2 <= dimindex(:'w) ==>
+  (smtfp_is_integral (x : ('t,'w) smtfp) <=>
+   smtfp_is_finite x /\ smtfp_round_to_integral RTZ x = x)
+Proof
+  strip_tac >>
+  simp [smtfp_is_integral_def, smtfp_is_finite_def,
+        smtfp_round_to_integral_def, smtfp_rep_def,
+        smt_float_round_to_integral_def] >>
+  Cases_on `float_value (smtfp_rep x)` >>
+  simp [binary_ieeeTheory.float_is_integral_def,
+        binary_ieeeTheory.float_is_finite_def] >>
+  `float_is_finite (smtfp_rep x)` by
+    simp [binary_ieeeTheory.float_is_finite_def] >>
+  `float_to_real (smtfp_rep x) = r` by
+    metis_tac [binary_ieeePropsTheory.float_value_float_to_real] >>
+  `float_is_integral (smt_integral_round RTZ r : ('t,'w) float)` by
+    metis_tac [smt_integral_round_RTZ_integral] >>
+  `float_is_finite (smt_integral_round RTZ r : ('t,'w) float)` by
+    metis_tac [float_is_integral_imp_finite] >>
+  qabbrev_tac `y = smt_float_restore_zero_sign (smtfp_rep x)
+    (smt_integral_round RTZ r : ('t,'w) float)` >>
+  `float_is_finite y` by
+    (Cases_on
+       `float_is_zero (smt_integral_round RTZ r : ('t,'w) float)` >>
+     simp [Abbr `y`, smt_float_restore_zero_sign_def] >>
+     Cases_on `(smtfp_rep x).Sign = 1w` >> simp []) >>
+  `canon y = y` by
+    (fs [canon_def, binary_ieeeTheory.float_is_finite_def,
+         binary_ieeeTheory.float_is_nan_def] >>
+     Cases_on `float_value y` >> fs []) >>
+  `smtfp_canonical y` by metis_tac [canon_canonical] >>
+  `x = SmtFp (smtfp_rep x)` by
+    metis_tac [smtfp_intro_rep, smtfp_intro_def, canon_smtfp_rep] >>
+  eq_tac
+  >- (strip_tac >>
+      `float_is_integral (smtfp_rep x)` by
+        simp [binary_ieeeTheory.float_is_integral_def] >>
+      `y = smtfp_rep x` by
+        metis_tac [smt_integral_round_RTZ_fixed] >>
+      metis_tac []) >>
+  strip_tac >>
+  `SmtFp y = SmtFp (smtfp_rep x)` by metis_tac [] >>
+  `y = smtfp_rep x` by
+    metis_tac [SmtFp_11, smtfp_rep_canonical] >>
+  `float_is_integral (smtfp_rep x)` by
+    metis_tac [smt_integral_round_RTZ_fixed] >>
+  qpat_x_assum `float_is_integral (smtfp_rep x)` mp_tac >>
+  fs [binary_ieeeTheory.float_is_integral_def]
 QED
 
 Theorem abs_real_of_int:

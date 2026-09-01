@@ -508,6 +508,10 @@ let
          (label, thm, boolSyntax.mk_eq (input, expected))
      end
      handle e => die (label ^ " raised " ^ General.exnMessage e))
+  fun capture_error label action =
+    (ignore (action ());
+     die ("FAIL: " ^ label ^ " unexpectedly succeeded"))
+    handle Feedback.HOL_ERR holerr => holerr
   val fp3_one =
     ``(<| Sign := 0w; Exponent := 15w; Significand := 0w |> :
        (3,5) binary_ieee$float)``
@@ -517,6 +521,45 @@ let
   val fp3_eighteen =
     ``(<| Sign := 0w; Exponent := 19w; Significand := 1w |> :
        (3,5) binary_ieee$float)``
+  val fp3_sixteen =
+    ``(<| Sign := 0w; Exponent := 19w; Significand := 0w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_minus_sixteen =
+    ``(<| Sign := 1w; Exponent := 19w; Significand := 0w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_minus_eighteen =
+    ``(<| Sign := 1w; Exponent := 19w; Significand := 1w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_top =
+    ``(<| Sign := 0w; Exponent := 30w; Significand := 7w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_bottom =
+    ``(<| Sign := 1w; Exponent := 30w; Significand := 7w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_pzero =
+    ``(<| Sign := 0w; Exponent := 0w; Significand := 0w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_nzero =
+    ``(<| Sign := 1w; Exponent := 0w; Significand := 0w |> :
+       (3,5) binary_ieee$float)``
+  val exact_rti_input =
+    ``smt_float_round_to_integral RNE
+        (<| Sign := 0w; Exponent := 14w; Significand := 0w |> :
+          (3,5) binary_ieee$float)``
+  val (exact_rti_head, exact_rti_args) = strip_comb exact_rti_input
+  val wrong_rti_head = Term.mk_var
+    ("wrong_round_to_integral", Term.type_of exact_rti_head)
+  val wrong_rti_input = Term.list_mk_comb (wrong_rti_head, exact_rti_args)
+  val wrong_head_declined =
+    ((ignore
+        (smtfloatLib.smt_float_round_to_integral_CONV wrong_rti_input);
+      false)
+     handle Conv.UNCHANGED => true)
+  val wrong_lhs_error = capture_error
+    "roundToIntegral wrong-LHS invariant"
+    (fn () =>
+      smtfloatLib.smt_float_round_to_integral_checked_result_for_test
+        exact_rti_input (Thm.REFL wrong_rti_input))
   val tests =
     [
       ("RTP ordinary (10,5)", smtfloatLib.round_CONV,
@@ -682,10 +725,140 @@ let
       ("smt_integral_round RNA dispatch",
        smtfloatLib.smt_integral_round_CONV,
        ``(smt_integral_round RNA (3r / 2) :
-          (3,5) binary_ieee$float)``, fp3_two)
+          (3,5) binary_ieee$float)``, fp3_two),
+      ("integral RNE parity tie",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven (3r / 2) :
+          (3,5) binary_ieee$float)``, fp3_two),
+      ("integral RNE coarse positive upper neighbor 87/5",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven (87r / 5) :
+          (3,5) binary_ieee$float)``, fp3_eighteen),
+      ("integral RNE coarse positive lower neighbor 83/5",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven (83r / 5) :
+          (3,5) binary_ieee$float)``, fp3_sixteen),
+      ("integral RNE coarse negative lower neighbor -87/5",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven (-87r / 5) :
+          (3,5) binary_ieee$float)``, fp3_minus_eighteen),
+      ("integral RNE coarse negative upper neighbor -83/5",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven (-83r / 5) :
+          (3,5) binary_ieee$float)``, fp3_minus_sixteen),
+      ("integral RNE just below positive overflow threshold",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven 62000r :
+          (3,5) binary_ieee$float)``, fp3_top),
+      ("integral RNE just above negative overflow threshold",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven (-62000r) :
+          (3,5) binary_ieee$float)``, fp3_bottom),
+      ("integral RTP ceiling",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTowardPositive (6r / 5) :
+          (3,5) binary_ieee$float)``, fp3_two),
+      ("integral RTN floor",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTowardNegative (6r / 5) :
+          (3,5) binary_ieee$float)``, fp3_one),
+      ("integral RTZ negative",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTowardZero (-3r / 2) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 15w; Significand := 0w |> :
+          (3,5) binary_ieee$float)``),
+      ("integral RNE overflow",
+       smtfloatLib.integral_round_CONV,
+       ``(integral_round roundTiesToEven 63488r :
+          (3,5) binary_ieee$float)``,
+       ``float_plus_infinity (:3 # 5)``),
+      ("float-facing RNE positive signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RNE
+           (<| Sign := 0w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_pzero),
+      ("float-facing RNE positive exact-half signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       exact_rti_input, fp3_pzero),
+      ("float-facing RNE negative signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RNE
+           (<| Sign := 1w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_nzero),
+      ("float-facing RNE negative exact-half signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RNE
+           (<| Sign := 1w; Exponent := 14w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_nzero),
+      ("float-facing RNA positive signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RNA
+           (<| Sign := 0w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_pzero),
+      ("float-facing RNA negative signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RNA
+           (<| Sign := 1w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_nzero),
+      ("float-facing RTZ positive signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RTZ
+           (<| Sign := 0w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_pzero),
+      ("float-facing RTZ negative signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RTZ
+           (<| Sign := 1w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_nzero),
+      ("float-facing RTN positive signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RTN
+           (<| Sign := 0w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_pzero),
+      ("float-facing RTP negative signed zero",
+       smtfloatLib.smt_float_round_to_integral_CONV,
+       ``smt_float_round_to_integral RTP
+           (<| Sign := 1w; Exponent := 13w; Significand := 0w |> :
+             (3,5) binary_ieee$float)``,
+       fp3_nzero)
     ]
 in
-  List.app check tests
+  List.app check tests;
+  assert (wrong_head_declined,
+    "roundToIntegral conversion admitted a wrong same-typed head");
+  assert (Feedback.top_structure_of wrong_lhs_error = "smtfloatLib" andalso
+      Feedback.top_function_of wrong_lhs_error =
+        "smt_float_round_to_integral_CONV" andalso
+      String.isSubstring "wrong left-hand side"
+        (Feedback.message_of wrong_lhs_error),
+    "roundToIntegral conversion missed its wrong-LHS invariant");
+  List.app
+    (fn (label, input) =>
+      let
+        val error = capture_error label
+          (fn () => smtfloatLib.integral_round_CONV input)
+      in
+        assert (Feedback.top_structure_of error = "smtfloatLib" andalso
+            Feedback.top_function_of error = "integral_round_CONV" andalso
+            String.isSubstring "ambiguous equidistant"
+              (Feedback.message_of error),
+          label ^ " did not fail closed at the coarse exact tie")
+      end)
+    [("integral RNE coarse positive exact tie fails closed",
+      ``(integral_round roundTiesToEven 17r :
+         (3,5) binary_ieee$float)``),
+     ("integral RNE coarse negative exact tie fails closed",
+      ``(integral_round roundTiesToEven (-17r) :
+         (3,5) binary_ieee$float)``)]
 end
 
 fun smtfloat_ground_evaluation_success () =
@@ -712,6 +885,7 @@ let
   val one = ``(smtfp_bits 0w 15w 0w : (3,5) smtfp)``
   val none = ``(smtfp_bits 1w 15w 0w : (3,5) smtfp)``
   val half = ``(smtfp_bits 0w 14w 0w : (3,5) smtfp)``
+  val nhalf = ``(smtfp_bits 1w 14w 0w : (3,5) smtfp)``
   val onehalf = ``(smtfp_bits 0w 15w 4w : (3,5) smtfp)``
   val two = ``(smtfp_bits 0w 16w 0w : (3,5) smtfp)``
   val three = ``(smtfp_bits 0w 16w 4w : (3,5) smtfp)``
@@ -812,6 +986,44 @@ in
        (``smtfp_round_to_integral RTN ^onehalf``, one)),
      ("roundToIntegral RTZ", eq
        (``smtfp_round_to_integral RTZ ^onehalf``, one)),
+     ("roundToIntegral RNE preserves positive zero sign", eq
+       (``smtfp_round_to_integral RNE
+           (smtfp_bits 0w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_pzero : (3,5) smtfp)``)),
+     ("roundToIntegral RNE exact positive half is positive zero", eq
+       (``smtfp_round_to_integral RNE ^half``,
+        ``(smtfp_pzero : (3,5) smtfp)``)),
+     ("roundToIntegral RNE preserves negative zero sign", eq
+       (``smtfp_round_to_integral RNE
+           (smtfp_bits 1w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_nzero : (3,5) smtfp)``)),
+     ("roundToIntegral RNE exact negative half is negative zero", eq
+       (``smtfp_round_to_integral RNE ^nhalf``,
+        ``(smtfp_nzero : (3,5) smtfp)``)),
+     ("roundToIntegral RNA preserves positive zero sign", eq
+       (``smtfp_round_to_integral RNA
+           (smtfp_bits 0w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_pzero : (3,5) smtfp)``)),
+     ("roundToIntegral RNA preserves negative zero sign", eq
+       (``smtfp_round_to_integral RNA
+           (smtfp_bits 1w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_nzero : (3,5) smtfp)``)),
+     ("roundToIntegral RTZ preserves positive zero sign", eq
+       (``smtfp_round_to_integral RTZ
+           (smtfp_bits 0w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_pzero : (3,5) smtfp)``)),
+     ("roundToIntegral RTZ preserves negative zero sign", eq
+       (``smtfp_round_to_integral RTZ
+           (smtfp_bits 1w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_nzero : (3,5) smtfp)``)),
+     ("roundToIntegral RTN preserves positive zero sign", eq
+       (``smtfp_round_to_integral RTN
+           (smtfp_bits 0w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_pzero : (3,5) smtfp)``)),
+     ("roundToIntegral RTP preserves negative zero sign", eq
+       (``smtfp_round_to_integral RTP
+           (smtfp_bits 1w 13w 0w : (3,5) smtfp)``,
+        ``(smtfp_nzero : (3,5) smtfp)``)),
      ("to unsigned BV RNE", ``(smtfp_to_ubv RNE ^onehalf : word8) = 2w``),
      ("to unsigned BV RNA", ``(smtfp_to_ubv RNA ^onehalf : word8) = 2w``),
      ("to unsigned BV RTP", ``(smtfp_to_ubv RTP ^onehalf : word8) = 2w``),
@@ -831,6 +1043,7 @@ end
 
 fun native_float_to_smt_conversion_success () =
 let
+  val conversion_start = Time.now ()
   val input =
     ``float_less_than
         (SND (float_add roundTiesToEven
@@ -857,16 +1070,212 @@ let
         smtfp_is_nan x \/
         smtfp_is_nan (smtfp_intro (y:(4,3) binary_ieee$float))``
   val existential_thm = SmtLib.NATIVE_FLOAT_TO_SMT_CONV existential_input
+  fun check_conversion (name, source, target) =
+    let val theorem = SmtLib.NATIVE_FLOAT_TO_SMT_CONV source
+    in
+      assert_no_hyps (name, theorem);
+      assert (Type.compare (type_of source, type_of target) = EQUAL,
+        name ^ " source/target type mismatch");
+      assert_concl_alpha
+        (name, theorem, boolSyntax.mk_eq (source, target))
+    end
+  fun capture_error label action =
+    (ignore (action ());
+     die ("FAIL: " ^ label ^ " unexpectedly succeeded"))
+    handle Feedback.HOL_ERR holerr => holerr
+  val finite_input =
+    ``float_is_finite (x : (3,4) binary_ieee$float)``
+  val finite_expected =
+    ``~smtfp_is_nan (smtfp_intro (x : (3,4) binary_ieee$float)) /\
+      ~smtfp_is_infinite (smtfp_intro x)``
+  val integral_input =
+    ``float_is_integral (x : (3,4) binary_ieee$float)``
+  val integral_expected =
+    ``(~smtfp_is_nan (smtfp_intro (x : (3,4) binary_ieee$float)) /\
+       ~smtfp_is_infinite (smtfp_intro x)) /\
+      smtfp_round_to_integral RTZ (smtfp_intro x) = smtfp_intro x``
+  val signalling_input =
+    ``float_is_signalling
+        (canon (x : (3,4) binary_ieee$float))``
+  val signalling_expected = ``F``
+  val word_input =
+    ``((float_to_ubv RTZ (x : (3,4) binary_ieee$float) : word8),
+       (float_to_sbv RTZ x : word8))``
+  val word_expected =
+    ``((smtfp_to_ubv RTZ
+         (smtfp_intro (x : (3,4) binary_ieee$float)) : word8),
+       (smtfp_to_sbv RTZ
+         (smtfp_intro (x : (3,4) binary_ieee$float)) : word8))``
+  val ieee_input =
+    ``((smtfp_intro
+          (float_from_ieee_bv (v : (1 + (4 + 3)) word)) : (3,4) smtfp),
+       float_pack_ieee_bv
+         (canon (x : (3,4) binary_ieee$float)))``
+  val ieee_expected =
+    ``((smtfp_from_ieee_bv (v : (1 + (4 + 3)) word) : (3,4) smtfp),
+       (smtfp_pack_ieee_bv
+         (smtfp_intro (x : (3,4) binary_ieee$float)) :
+         (1 + (4 + 3)) word))``
+  val minmaxrem_input =
+    ``((smtfp_intro (float_min x y) : (3,4) smtfp),
+       (smtfp_intro (float_max x y) : (3,4) smtfp),
+       (smtfp_intro (float_rem x y) : (3,4) smtfp))``
+  val minmaxrem_expected =
+    ``((smtfp_min (smtfp_intro x) (smtfp_intro y) : (3,4) smtfp),
+       (smtfp_max (smtfp_intro x) (smtfp_intro y) : (3,4) smtfp),
+       (smtfp_rem (smtfp_intro x) (smtfp_intro y) : (3,4) smtfp))``
+  val to_real_input =
+    ``float_is_finite (x : (3,4) binary_ieee$float) ==>
+      float_to_real x = r``
+  val to_real_expected =
+    ``(~smtfp_is_nan (smtfp_intro
+         (x : (3,4) binary_ieee$float)) /\
+       ~smtfp_is_infinite (smtfp_intro x)) ==>
+      smtfp_to_real (smtfp_intro x) = r``
+  val round_input =
+    ``(toneg <=> (r : real) < 0) ==>
+      (smtfp_intro
+         (float_round roundTowardZero toneg r) : (3,4) smtfp) = z``
+  val round_expected =
+    ``(toneg <=> (r : real) < 0) ==>
+      (smtfp_from_real RTZ r : (3,4) smtfp) = z``
+  val real_to_float_input =
+    ``((roundTowardZero = roundTowardNegative) <=> (r : real) < 0) ==>
+      (smtfp_intro
+         (real_to_float roundTowardZero r) : (3,4) smtfp) = z``
+  val real_to_float_expected =
+    ``((roundTowardZero = roundTowardNegative) <=> (r : real) < 0) ==>
+      (smtfp_from_real RTZ r : (3,4) smtfp) = z``
+  val round_to_integral_input =
+    ``~float_is_zero
+        (float_round_to_integral roundTowardZero
+          (x : (3,4) binary_ieee$float)) ==>
+      smtfp_intro (float_round_to_integral roundTowardZero x) = z``
+  val round_to_integral_expected =
+    ``~smtfp_is_zero
+        (smtfp_round_to_integral RTZ
+          (smtfp_intro (x : (3,4) binary_ieee$float))) ==>
+      smtfp_round_to_integral RTZ (smtfp_intro x) =
+        (z : (3,4) smtfp)``
+  val mixed_guarded_input =
+    ``(float_is_finite (x : (3,4) binary_ieee$float) ==>
+         float_to_real x = r /\ float_to_real x <= r) /\
+      ((toneg <=> (r : real) < 0) ==>
+         (smtfp_intro
+            (float_round roundTowardZero toneg r) : (3,4) smtfp) = z)``
+  val mixed_guarded_expected =
+    ``((~smtfp_is_nan
+          (smtfp_intro (x : (3,4) binary_ieee$float)) /\
+        ~smtfp_is_infinite (smtfp_intro x)) ==>
+         smtfp_to_real (smtfp_intro x) = r /\
+         smtfp_to_real (smtfp_intro x) <= r) /\
+      ((toneg <=> (r : real) < 0) ==>
+         (smtfp_from_real RTZ r : (3,4) smtfp) = z)``
+  val nested_guarded_input =
+    ``\q:bool.
+       (toneg <=> (r : real) < 0) ==>
+       q /\
+       (smtfp_intro
+          (float_round roundTowardZero toneg r) : (3,4) smtfp) = z``
+  val nested_guarded_expected =
+    ``\q:bool.
+       (toneg <=> (r : real) < 0) ==>
+       q /\ (smtfp_from_real RTZ r : (3,4) smtfp) = z``
+  val maximal_round_input =
+    ``(~float_is_zero
+         (float_round roundTowardZero toneg r :
+           (3,4) binary_ieee$float) \/
+       (toneg <=> (r : real) < 0)) ==>
+      (smtfp_intro
+         (float_round roundTowardZero toneg r) : (3,4) smtfp) = z``
+  val maximal_round_expected =
+    ``(~smtfp_is_zero (smtfp_from_real RTZ r : (3,4) smtfp) \/
+       (toneg <=> (r : real) < 0)) ==>
+      (smtfp_from_real RTZ r : (3,4) smtfp) = z``
+  val positive_nonzero_sign_mismatch =
+    ``(smtfp_intro
+         (float_round roundTowardZero T (3r / 2) :
+           (3,5) binary_ieee$float)) = z``
+  val positive_nonzero_sign_mismatch_expected =
+    ``(smtfp_from_real RTZ (3r / 2) : (3,5) smtfp) = z``
+  val negative_nonzero_sign_mismatch =
+    ``(smtfp_intro
+         (float_round roundTowardZero F (-3r / 2) :
+           (3,5) binary_ieee$float)) = z``
+  val negative_nonzero_sign_mismatch_expected =
+    ``(smtfp_from_real RTZ (-3r / 2) : (3,5) smtfp) = z``
+  val zero_sign_mismatch =
+    ``(smtfp_intro
+         (float_round roundTowardZero T (1r / 262144) :
+           (3,5) binary_ieee$float)) = z``
+  val positive_nonzero_real_to_float_sign_mismatch =
+    ``(smtfp_intro
+         (real_to_float roundTowardNegative (3r / 2) :
+           (3,5) binary_ieee$float)) = z``
+  val positive_nonzero_real_to_float_sign_mismatch_expected =
+    ``(smtfp_from_real RTN (3r / 2) : (3,5) smtfp) = z``
+  val negative_nonzero_real_to_float_sign_mismatch =
+    ``(smtfp_intro
+         (real_to_float roundTowardZero (-3r / 2) :
+           (3,5) binary_ieee$float)) = z``
+  val negative_nonzero_real_to_float_sign_mismatch_expected =
+    ``(smtfp_from_real RTZ (-3r / 2) : (3,5) smtfp) = z``
+  val zero_real_to_float_sign_mismatch =
+    ``(smtfp_intro
+         (real_to_float roundTowardNegative (1r / 262144) :
+           (3,5) binary_ieee$float)) = z``
+  fun traverse_with proof =
+    SmtLib.native_float_guarded_postorder_conv_for_test
+      (SmtLib.native_float_guarded_context_match_conv_with_for_test proof)
+  val admitted_proof_error = capture_error
+    "admitted native FP guard proof failure"
+    (fn () => traverse_with
+      (fn _ => fn _ => raise Feedback.mk_HOL_ERR
+        "Task11Injected" "guarded_fp_proof"
+        "distinctive admitted native FP guard proof failure")
+      maximal_round_input)
+  val wrong_lhs_error = capture_error
+    "wrong-LHS native FP guard proof"
+    (fn () => traverse_with
+      (fn _ => fn _ => Thm.REFL ``T``) maximal_round_input)
+  val unchanged_error = capture_error
+    "alpha-unchanged native FP guard proof"
+    (fn () => traverse_with
+      (fn _ => fn target => Thm.REFL target) maximal_round_input)
+  val expansion_inputs_expected =
+    [("smtfp finite expansion",
+      ``smtfp_is_finite (a : (3,4) smtfp)``,
+      ``~smtfp_is_nan (a : (3,4) smtfp) /\
+        ~smtfp_is_infinite a``),
+     ("smtfp unordered expansion",
+      ``smtfp_unordered (a : (3,4) smtfp) b``,
+      ``smtfp_is_nan (a : (3,4) smtfp) \/
+        smtfp_is_nan (b : (3,4) smtfp)``),
+     ("smtfp signalling expansion",
+      ``smtfp_is_signalling (a : (3,4) smtfp)``, ``F``),
+     ("smtfp integral expansion",
+      ``smtfp_is_integral (a : (3,4) smtfp)``,
+      ``(~smtfp_is_nan (a : (3,4) smtfp) /\
+         ~smtfp_is_infinite a) /\
+        smtfp_round_to_integral RTZ a = a``)]
   val expected_surface = [
     "float record constructor", "universal float binder",
     "existential float binder", "float_plus_zero", "float_minus_zero",
     "float_plus_infinity", "float_minus_infinity", "float_some_qnan",
     "float_is_nan", "float_is_infinite", "float_is_normal",
-    "float_is_subnormal", "float_is_zero", "negative sign predicate",
-    "positive sign predicate", "float_abs", "float_negate",
+    "float_is_subnormal", "float_is_zero", "float_is_finite",
+    "float_is_integral", "float_is_signalling at canonical representative",
+    "negative sign predicate", "positive sign predicate", "float_abs",
+    "float_negate",
     "float_less_than", "float_less_equal", "float_greater_than",
     "float_greater_equal", "float_equal", "float_unordered", "float_add",
-    "float_sub", "float_mul", "float_div", "float_sqrt", "float_mul_add"
+    "float_sub", "float_mul", "float_div", "float_sqrt", "float_mul_add",
+    "float_to_real on finite input", "float_to_ubv", "float_to_sbv",
+    "float_from_ieee_bv", "float_pack_ieee_bv at canon", "float_min",
+    "float_max", "float_rem",
+    "float_round with nonzero result or matching zero sign",
+    "real_to_float with nonzero result or matching zero sign",
+    "float_round_to_integral with nonzero result"
   ]
 in
   assert_no_hyps ("NATIVE_FLOAT_TO_SMT_CONV", thm);
@@ -880,10 +1289,72 @@ in
   assert_concl_alpha
     ("existential NATIVE_FLOAT_TO_SMT_CONV", existential_thm,
      boolSyntax.mk_eq (existential_input, existential_expected));
+  List.app check_conversion
+    [("native finite conversion", finite_input, finite_expected),
+     ("native integral conversion", integral_input, integral_expected),
+     ("canonical signalling conversion", signalling_input,
+      signalling_expected),
+     ("native word conversions", word_input, word_expected),
+     ("native IEEE bit conversions", ieee_input, ieee_expected),
+     ("native min/max/rem conversions", minmaxrem_input,
+      minmaxrem_expected),
+     ("native finite to-real conversion", to_real_input,
+      to_real_expected),
+     ("native float-round conversion", round_input, round_expected),
+     ("native real-to-float conversion", real_to_float_input,
+      real_to_float_expected),
+     ("native round-to-integral conversion", round_to_integral_input,
+      round_to_integral_expected),
+     ("mixed repeated guarded conversions", mixed_guarded_input,
+      mixed_guarded_expected),
+     ("nested-lambda guarded conversion", nested_guarded_input,
+      nested_guarded_expected),
+     ("maximal float-round guarded conversion", maximal_round_input,
+      maximal_round_expected),
+     ("positive nonzero mismatched-sign float-round conversion",
+      positive_nonzero_sign_mismatch,
+      positive_nonzero_sign_mismatch_expected),
+     ("negative nonzero mismatched-sign float-round conversion",
+      negative_nonzero_sign_mismatch,
+      negative_nonzero_sign_mismatch_expected),
+     ("zero mismatched-sign float-round fails closed",
+      zero_sign_mismatch, zero_sign_mismatch),
+     ("positive nonzero mismatched-sign real-to-float conversion",
+      positive_nonzero_real_to_float_sign_mismatch,
+      positive_nonzero_real_to_float_sign_mismatch_expected),
+     ("negative nonzero mismatched-sign real-to-float conversion",
+      negative_nonzero_real_to_float_sign_mismatch,
+      negative_nonzero_real_to_float_sign_mismatch_expected),
+     ("zero mismatched-sign real-to-float fails closed",
+      zero_real_to_float_sign_mismatch,
+      zero_real_to_float_sign_mismatch)];
+  assert (Feedback.top_structure_of admitted_proof_error =
+        "Task11Injected" andalso
+      Feedback.top_function_of admitted_proof_error =
+        "guarded_fp_proof" andalso
+      Feedback.message_of admitted_proof_error =
+        "distinctive admitted native FP guard proof failure",
+    "admitted native FP guard proof failure was swallowed or relabelled");
+  assert (Feedback.top_structure_of wrong_lhs_error = "SmtLib" andalso
+      Feedback.top_function_of wrong_lhs_error =
+        "native_float_guarded_context_match_conv_with" andalso
+      String.isSubstring "wrong left-hand side"
+        (Feedback.message_of wrong_lhs_error),
+    "wrong-LHS native FP guard proof missed its named invariant");
+  assert (Feedback.top_structure_of unchanged_error = "SmtLib" andalso
+      Feedback.top_function_of unchanged_error =
+        "native_float_guarded_context_match_conv_with" andalso
+      String.isSubstring "does not strictly reduce"
+        (Feedback.message_of unchanged_error),
+    "alpha-unchanged native FP guard proof missed its progress invariant");
+  List.app check_conversion expansion_inputs_expected;
   List.app (check_oracle_tags "native float transfer theorem")
     SmtLib.native_float_transfer_theorems;
   assert (SmtLib.native_float_transfer_surface = expected_surface,
-    "native float transfer coverage list changed without updating its pin")
+    "native float transfer coverage list changed without updating its pin");
+  assert (Time.< (Time.- (Time.now (), conversion_start),
+                  Time.fromSeconds 15),
+    "native float conversion exceeded guarded traversal budget")
 end
 
 fun hol_string_to_smt_conversion_success () =
