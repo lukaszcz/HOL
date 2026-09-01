@@ -7822,6 +7822,8 @@ let
   fun translate_automatic goal =
     SmtLib.goal_to_SmtLib_translation_with_dialect
       SmtLib.Z3LambdaArray NONE goal
+  fun preprocess goal =
+    Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true) goal)
   fun text_of result = String.concat (Lib.snd result)
   fun assert_has name text snippet =
     assert (contains snippet text,
@@ -7860,8 +7862,9 @@ let
       (if p then (f:int -> int) else g)``)
   val conditional_value_translation = Lib.fst conditional_value_result
   val conditional_value_text = text_of conditional_value_result
-  val selector_text = text_of (translate
-    ([], ``((r:smt_fun_rec).smt_fun) x p = y``))
+  val selector_goal = preprocess
+    ([], ``((r:smt_fun_rec).smt_fun) x p = y``)
+  val selector_text = text_of (translate selector_goal)
   val complex_result = translate_automatic
     ([], ``((\f:int -> int. f) g) (x:int) = y``)
   val complex_translation = Lib.fst complex_result
@@ -7906,7 +7909,7 @@ in
   assert_has "automatic function-valued built-in" conditional_value_text
     "(select v0 (ite v1 v2 v3))";
   assert_has "function-valued record selector" selector_text
-    "(select (select (sel_ctor_Smt_fun_rec_recordtype_smt_fun_rec_recordtype_smt_fun_rec_seldef_smt_fun v1) v2) v3)";
+    "(select (select (sel_ctor_Smt_fun_rec_recordtype_smt_fun_rec_recordtype_smt_fun_rec_seldef_smt_fun v0) v1) v2)";
   assert_lacks "function-valued record selector" selector_text
     "(declare-fun v0 (Smt_fun_rec Int Bool) Int)";
   assert (SmtLib.translation_regime complex_translation = z3_regime,
@@ -8532,6 +8535,12 @@ let
   fun smtlib_text goal =
     let val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
     in String.concat strings end
+  fun preprocessed_text term =
+    let
+      val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], term)
+    in
+      smtlib_text goal
+    end
   fun assert_has name text snippet =
     assert (contains snippet text,
       "datatype translation case '" ^ name ^
@@ -8554,10 +8563,10 @@ let
       (``SmtTriB (x:int)``, ``x:int``),
       (``SmtTriC (p:bool)``, boolSyntax.mk_arb intSyntax.int_ty)])
   val selector_text = smtlib_text ([], boolSyntax.mk_eq (selector_tm, ``0i``))
-  val record_access_text = smtlib_text ([],
-    ``(r:smt_rec).smt_count = 0i``)
-  val record_update_text = smtlib_text ([],
-    ``(r with smt_count := 3i).smt_count = 3i``)
+  val record_access_text = preprocessed_text
+    ``(r:smt_rec).smt_count = 0i``
+  val record_update_text = preprocessed_text
+    ``(r with smt_count := 3i).smt_count = 3i``
 in
   assert_has "constructor application" ctor_text
     "(ctor_Smt_tri_SmtTriB v1)";
@@ -8576,11 +8585,156 @@ in
   assert_lacks "selector-shaped case" selector_text
     "(_ is ctor_Smt_tri_SmtTriB)";
   assert_has "record access" record_access_text
-    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v1)";
+    "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_count v0)";
   assert_has "record update" record_update_text
     "(ctor_Smt_rec_recordtype_smt_rec 3";
   assert_has "record update" record_update_text
     "(sel_ctor_Smt_rec_recordtype_smt_rec_recordtype_smt_rec_seldef_smt_flag v1)"
+end
+
+fun datatype_to_smt_normalization_roundtrip_success () =
+let
+  val record_ty = ``:smt_rec``
+  val record_constructor =
+    case SmtLib.datatype_constructors_for_test record_ty of
+      [constructor] => constructor
+    | _ => die "smt_rec did not have exactly one TypeBase constructor"
+  val record_fields = TypeBase.fields_of record_ty
+  val count_accessor =
+    #accessor (Lib.snd (List.nth (record_fields, 0)))
+  val count_update = #fupd (Lib.snd (List.nth (record_fields, 0)))
+  val flag_update = #fupd (Lib.snd (List.nth (record_fields, 1)))
+  val r = ``r:smt_rec``
+  val n = ``n:int``
+  val p = ``p:bool``
+  val accessor_input = Term.mk_comb (count_accessor, r)
+  val accessor_expected = SmtLib.datatype_selector_term_for_test record_ty
+    record_constructor 0 r
+  val update_input = Term.list_mk_comb
+    (count_update, [combinSyntax.mk_K_1 (n, Term.type_of n), r])
+  val update_expected = Term.list_mk_comb
+    (record_constructor,
+     [n, SmtLib.datatype_selector_term_for_test record_ty
+       record_constructor 1 r])
+  val updater = ``\old:int. old + n``
+  val functional_update_input = Term.list_mk_comb
+    (count_update, [updater, r])
+  val original_count = SmtLib.datatype_selector_term_for_test record_ty
+    record_constructor 0 r
+  val functional_new_value = Lib.snd (boolSyntax.dest_eq
+    (Thm.concl (Thm.BETA_CONV (Term.mk_comb (updater, original_count)))))
+  val functional_update_expected = Term.list_mk_comb
+    (record_constructor,
+     [functional_new_value,
+      SmtLib.datatype_selector_term_for_test record_ty
+        record_constructor 1 r])
+  val case_input = ``case (d:smt_tri) of
+      SmtTriA => 0i
+    | SmtTriB x => x + 1i
+    | SmtTriC b => if b then 2i else 3i``
+  val case_expected = SmtLib.datatype_case_normal_form_for_test case_input
+  val accessor_thm = SmtLib.DATATYPE_TO_SMT_CONV accessor_input
+  val update_thm = SmtLib.DATATYPE_TO_SMT_CONV update_input
+  val functional_update_thm = SmtLib.DATATYPE_TO_SMT_CONV
+    functional_update_input
+  val case_thm = SmtLib.DATATYPE_TO_SMT_CONV case_input
+  val fixed_case_thm = SmtLib.DATATYPE_TO_SMT_CONV case_expected
+  val function_record_ty = ``:smt_fun_rec``
+  val function_constructor =
+    case SmtLib.datatype_constructors_for_test function_record_ty of
+      [constructor] => constructor
+    | _ => die "smt_fun_rec did not have exactly one TypeBase constructor"
+  val function_accessor =
+    #accessor (Lib.snd (List.hd (TypeBase.fields_of function_record_ty)))
+  val function_record = ``fr:smt_fun_rec``
+  val function_accessor_input = Term.mk_comb
+    (function_accessor, function_record)
+  val function_accessor_expected =
+    SmtLib.datatype_selector_term_for_test function_record_ty
+      function_constructor 0 function_record
+  val function_accessor_thm = SmtLib.DATATYPE_TO_SMT_CONV
+    function_accessor_input
+  val literal = ``<| smt_count := n; smt_flag := p |> : smt_rec``
+  val arb_record = boolSyntax.mk_arb record_ty
+  val fupd_chain = Term.list_mk_comb
+    (count_update,
+     [combinSyntax.mk_K_1 (n, Term.type_of n),
+      Term.list_mk_comb
+        (flag_update,
+         [combinSyntax.mk_K_1 (p, Term.type_of p), arb_record])])
+  val record_goal =
+    ([``(r:smt_rec).smt_flag = p``],
+    ``(r:smt_rec).smt_count = n /\
+      (r with smt_count := n) = s /\
+      ((r with smt_count := n).smt_flag = p) /\
+      (^literal = t) /\
+      (^fupd_chain = u)``)
+  val datatype_goal = ([], boolSyntax.mk_eq (case_input, ``m:int``))
+  fun normalized label goal =
+    let
+      val (goals, _) = SmtLib.SIMP_TAC true goal
+    in
+      case goals of
+        [normalized] => normalized
+      | _ => die (label ^ " normalization did not leave exactly one goal")
+    end
+  val normalized_record = normalized "record" record_goal
+  val normalized_datatype = normalized "datatype" datatype_goal
+  fun is_record_surface tm =
+    List.exists
+      (fn (_, {accessor, fupd, ...} : TypeBasePure.rcd_fieldinfo) =>
+        (Term.same_const tm accessor orelse Term.same_const tm fupd)
+        handle Feedback.HOL_ERR _ => false)
+      record_fields
+  fun has_record_surface (assumptions, conclusion) =
+    List.exists is_record_surface
+      (List.concat (List.map Library.subterms (conclusion :: assumptions)))
+  fun emitted_text goal =
+    String.concat (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+  val record_text = emitted_text normalized_record
+  val datatype_text = emitted_text normalized_datatype
+in
+  assert_no_hyps ("record accessor normalization", accessor_thm);
+  assert_concl_alpha ("record accessor normalization", accessor_thm,
+    boolSyntax.mk_eq (accessor_input, accessor_expected));
+  assert_no_hyps ("record update normalization", update_thm);
+  assert_concl_alpha ("record update normalization", update_thm,
+    boolSyntax.mk_eq (update_input, update_expected));
+  assert_no_hyps ("functional record update normalization",
+    functional_update_thm);
+  assert_concl_alpha ("functional record update normalization",
+    functional_update_thm,
+    boolSyntax.mk_eq
+      (functional_update_input, functional_update_expected));
+  assert_no_hyps ("function-valued record accessor normalization",
+    function_accessor_thm);
+  assert_concl_alpha ("function-valued record accessor normalization",
+    function_accessor_thm,
+    boolSyntax.mk_eq
+      (function_accessor_input, function_accessor_expected));
+  assert_no_hyps ("datatype case normalization", case_thm);
+  assert_concl_alpha ("datatype case normalization", case_thm,
+    boolSyntax.mk_eq (case_input, case_expected));
+  assert_concl_alpha ("parser datatype case fixed point", fixed_case_thm,
+    boolSyntax.mk_eq (case_expected, case_expected));
+  assert (not (has_record_surface normalized_record),
+    "late datatype pass retained a record accessor/update surface term");
+  assert_goal_roundtrip "normalized record constructor/case form"
+    normalized_record;
+  assert_goal_roundtrip "normalized non-record datatype case form"
+    normalized_datatype;
+  assert (contains "ctor_Smt_rec" record_text andalso
+      contains "sel_ctor_Smt_rec" record_text,
+    "normalized record goal missed constructor/selector emission:\n" ^
+    record_text);
+  assert (not (contains "recordtype_smt_rec_seldef_smt_count_fupd"
+      record_text),
+    "normalized record goal emitted a record update symbol:\n" ^
+    record_text);
+  assert (contains "(_ is ctor_Smt_tri" datatype_text andalso
+      contains "sel_Smt_tri" datatype_text,
+    "normalized datatype goal missed tester/selector emission:\n" ^
+    datatype_text)
 end
 
 fun smtlib_datatype_parser_dict_success () =
@@ -17203,6 +17357,8 @@ let
       smtlib_term_translation_branch_matrix_success),
     ("smtlib_datatype_term_translation_success",
       smtlib_datatype_term_translation_success),
+    ("datatype_to_smt_normalization_roundtrip_success",
+      datatype_to_smt_normalization_roundtrip_success),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",

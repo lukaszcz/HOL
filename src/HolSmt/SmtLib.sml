@@ -2769,6 +2769,116 @@ local
       TypeBase.mk_case (arg, List.map clause infos)
     end
 
+  datatype parser_datatype_case =
+      ParserSelector of {constructor : Term.term, selector_index : int,
+                         scrutinee : Term.term}
+    | ParserTester of {constructor : Term.term, scrutinee : Term.term}
+
+  fun datatype_constructors ty =
+    case TypeBase.fetch ty of
+      SOME tyinfo =>
+        List.map (TypeBasePure.cinst ty)
+          (TypeBasePure.constructors_of tyinfo)
+    | NONE => raise ERR "datatype_constructors" "missing TypeBase entry"
+
+  (* These are exactly the HOL terms installed in the parser dictionary for
+     SMT datatype selectors and testers.  Recognizing them centrally makes
+     them fixed points of both preprocessing and outbound translation. *)
+  fun parser_datatype_case tm =
+    let
+      val (_, scrutinee, _) = TypeBase.dest_case tm
+      val ty = Term.type_of scrutinee
+      val constructors = datatype_constructors ty
+      fun selector_for constructor =
+        let
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+          fun matches selector_index =
+            Term.aconv tm
+              (datatype_selector_term ty constructor selector_index
+                scrutinee)
+        in
+          case List.find matches
+              (List.tabulate (List.length doms, fn n => n)) of
+            SOME selector_index =>
+              SOME (ParserSelector {constructor = constructor,
+                selector_index = selector_index, scrutinee = scrutinee})
+          | NONE => NONE
+        end
+      fun tester_for constructor =
+        if Term.aconv tm (datatype_tester_term ty constructor scrutinee) then
+          SOME (ParserTester {constructor = constructor,
+            scrutinee = scrutinee})
+        else
+          NONE
+    in
+      case Lib.get_first selector_for constructors of
+        SOME result => SOME result
+      | NONE => Lib.get_first tester_for constructors
+    end
+    handle Feedback.HOL_ERR _ => NONE
+
+  type datatype_case_parts = {
+    data_ty : Type.hol_type,
+    scrutinee : Term.term,
+    constructors : Term.term list,
+    branches : Term.term list
+  }
+
+  (* Decompose a HOL datatype case using the same selector spelling that the
+     parser assigns to SMT selector applications. *)
+  fun datatype_case_parts tm : datatype_case_parts =
+    let
+      val (_, scrutinee, clauses) = TypeBase.dest_case tm
+      val data_ty = Term.type_of scrutinee
+      val constructors = datatype_constructors data_ty
+      fun clause_for constructor =
+        case List.find
+            (fn (pattern, _) =>
+              let val (head, _) = boolSyntax.strip_comb pattern
+              in Term.same_const constructor head end)
+            clauses of
+          SOME clause => clause
+        | NONE => raise ERR "datatype_case_parts" "missing case branch"
+      fun branch constructor =
+        let
+          val (pattern, rhs) = clause_for constructor
+          val (_, pattern_args) = boolSyntax.strip_comb pattern
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+          val _ = if List.length pattern_args = List.length doms then ()
+                  else raise ERR "datatype_case_parts"
+                    "case pattern arity mismatch"
+          val selectors = List.map
+            (fn n => datatype_selector_term data_ty constructor n scrutinee)
+            (List.tabulate (List.length doms, fn n => n))
+          val subst = ListPair.mapEq
+            (fn (redex, residue) => {redex = redex, residue = residue})
+            (pattern_args, selectors)
+        in
+          Term.subst subst rhs
+        end
+    in
+      {data_ty = data_ty, scrutinee = scrutinee,
+       constructors = constructors, branches = List.map branch constructors}
+    end
+
+  fun datatype_case_normal_form tm =
+    let
+      val {data_ty, scrutinee, constructors, branches} =
+        datatype_case_parts tm
+      fun tester constructor =
+        datatype_tester_term data_ty constructor scrutinee
+      fun cascade [] [] = raise ERR "datatype_case_normal_form"
+            "empty datatype case"
+        | cascade [_] [branch] = branch
+        | cascade (constructor :: constructors) (branch :: branches) =
+            boolSyntax.mk_cond
+              (tester constructor, branch, cascade constructors branches)
+        | cascade _ _ = raise ERR "datatype_case_normal_form"
+            "case branch mismatch"
+    in
+      cascade constructors branches
+    end
+
   fun add_datatype_parser_entries (ty, type_name, dict) =
     let
       val infos = datatype_constructor_infos ty type_name
@@ -3898,56 +4008,52 @@ local
       in
         (acc, (typedecls @ List.concat declss, sexpr cname names))
       end
-    fun selector_case_match match_tydict elem clauses =
-      let
-        val data_ty = Term.type_of elem
-        val type_name = Redblackmap.find (match_tydict, data_ty)
-        val infos = datatype_constructor_infos data_ty type_name
-        fun clause_for constructor =
-          List.find (fn (pat, _) =>
-            let val (pat_rator, _) = boolSyntax.strip_comb pat
-            in Term.same_const constructor pat_rator end) clauses
-        fun rhs_is_arb rhs = boolSyntax.is_arb rhs
-        fun selector_for (constructor, _, selectors) =
-          let
-            val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-            val indices = List.tabulate (List.length doms, fn n => n)
-            fun try_index n =
-              case clause_for constructor of
-                SOME (pat, rhs) =>
-                  let val (_, vars) = boolSyntax.strip_comb pat
-                  in
-                    if List.length vars = List.length doms andalso
-                       Term.aconv rhs (List.nth (vars, n)) andalso
-                       List.all (fn (constructor', _, _) =>
-                         Term.same_const constructor constructor' orelse
-                         (case clause_for constructor' of
-                            SOME (_, rhs') => rhs_is_arb rhs'
-                          | NONE => false)) infos
-                    then SOME (Lib.fst (List.nth (selectors, n)))
-                    else NONE
-                  end
-              | NONE => NONE
-          in
-            Lib.get_first try_index indices
-          end
-      in
-        Lib.get_first selector_for infos
-      end
     fun translate_selector_case acc =
       let
-        val (_, elem, clauses) = TypeBase.dest_case tm
+        val {constructor, selector_index, scrutinee} =
+          case parser_datatype_case tm of
+            SOME (ParserSelector fields) => fields
+          | _ => raise ERR "translate_term" "not a selector case"
+        val data_ty = Term.type_of scrutinee
         val (((tydict, tmdict), typedecls), _) =
-          ensure_type (acc, Term.type_of elem)
+          ensure_type (acc, data_ty)
+        val type_name = Redblackmap.find (tydict, data_ty)
+        val infos = datatype_constructor_infos data_ty type_name
         val selector_name =
-          case selector_case_match tydict elem clauses of
-            SOME name => name
-          | NONE => raise ERR "translate_term" "not a selector case"
+          case List.find
+              (fn (constructor', _, _) =>
+                Term.same_const constructor constructor') infos of
+            SOME (_, _, selectors) =>
+              Lib.fst (List.nth (selectors, selector_index))
+          | NONE => raise ERR "translate_term" "selector constructor missing"
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
-          translate_term regime apply_operator (acc, (bounds, elem))
+          translate_term regime apply_operator (acc, (bounds, scrutinee))
       in
         (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
+      end
+    fun translate_tester_case acc =
+      let
+        val {constructor, scrutinee} =
+          case parser_datatype_case tm of
+            SOME (ParserTester fields) => fields
+          | _ => raise ERR "translate_term" "not a tester case"
+        val data_ty = Term.type_of scrutinee
+        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, data_ty)
+        val type_name = Redblackmap.find (tydict, data_ty)
+        val infos = datatype_constructor_infos data_ty type_name
+        val constructor_name =
+          case List.find
+              (fn (constructor', _, _) =>
+                Term.same_const constructor constructor') infos of
+            SOME (_, name, _) => name
+          | NONE => raise ERR "translate_term" "tester constructor missing"
+        val acc = (tydict, tmdict)
+        val (acc, (elemdecls, elemname)) =
+          translate_term regime apply_operator (acc, (bounds, scrutinee))
+      in
+        (acc, (typedecls @ elemdecls,
+          sexpr ("(_ is " ^ constructor_name ^ ")") [elemname]))
       end
     fun translate_case_constant acc rator rands =
       let
@@ -3994,22 +4100,6 @@ local
         (acc, (typedecls @ elemdecls @ List.concat branchdeclss,
           cascaded infos branchnames))
       end
-    fun is_record_selector_term candidate =
-      let
-        val (select, _) = Term.dest_comb candidate
-        val (_, select_ty) = Term.dest_const select
-        val (record_ty, rng_ty) = Type.dom_rng select_ty
-        val _ = not (datatype_translation_excluded record_ty) orelse
-          raise ERR "translate_term" "excluded record selector"
-        val fields = TypeBase.fields_of record_ty
-      in
-        List.exists
-          (fn (_, {ty = field_ty, accessor, ...} :
-                   TypeBasePure.rcd_fieldinfo) =>
-            Term.same_const select accessor andalso
-            Lib.can (Type.match_type field_ty) rng_ty) fields
-      end
-      handle Feedback.HOL_ERR _ => false
     fun has_semantic_function_prefix head rands =
       let
         fun loop _ [] = false
@@ -4017,8 +4107,7 @@ local
               let val applied = Term.mk_comb (applied, rand)
               in
                 (is_function_type (Term.type_of applied) andalso
-                 (is_record_selector_term applied orelse
-                  Lib.can TypeBase.dest_case applied orelse
+                 (Lib.can TypeBase.dest_case applied orelse
                   combinSyntax.is_update_comb applied orelse
                   Option.isSome (builtin_encoding applied))) orelse
                 loop applied rands
@@ -4027,82 +4116,6 @@ local
         loop head rands
       end
       handle Feedback.HOL_ERR _ => false
-    fun translate_record_selector acc =
-      let
-        val (select, x) = Term.dest_comb tm
-        val (_, select_ty) = Term.dest_const select
-        val (record_ty, rng_ty) = Type.dom_rng select_ty
-        val _ = not (datatype_translation_excluded record_ty) orelse
-          raise ERR "translate_term" "excluded record selector"
-        val fields = TypeBase.fields_of record_ty
-        val _ = if List.null fields then
-            raise ERR "translate_term" "not a record selector"
-          else ()
-        val j = Lib.index (fn (_, {ty = field_ty, accessor, ...}) =>
-            Term.same_const select accessor andalso
-            Lib.can (Type.match_type field_ty) rng_ty) fields
-        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, record_ty)
-        val type_name = Redblackmap.find (tydict, record_ty)
-        val infos = datatype_constructor_infos record_ty type_name
-        val (_, _, selectors) =
-          case infos of
-            [info] => info
-          | _ => raise ERR "translate_term" "record has multiple constructors"
-        val selector_name = Lib.fst (List.nth (selectors, j))
-        val tmdict = Redblackmap.insert (tmdict, (select, 1), selector_name)
-        val acc = (tydict, tmdict)
-        val (acc, (xdecls, xname)) =
-          translate_term regime apply_operator (acc, (bounds, x))
-      in
-        (acc, (typedecls @ xdecls, sexpr selector_name [xname]))
-      end
-    fun translate_record_update acc =
-      let
-        val (update_f, x) = Term.dest_comb tm
-        val (update, f) = Term.dest_comb update_f
-        val new_val =
-          combinSyntax.dest_K_1 f
-          handle Feedback.HOL_ERR _ =>
-            let
-              val (var1, body) = Term.dest_abs f
-              val (k_tm, var2) = Term.dest_comb body
-              val _ =
-                if Term.aconv var1 var2 then ()
-                else raise ERR "translate_term"
-                  "record update function not in eta-long form"
-            in
-              combinSyntax.dest_K_1 k_tm
-            end
-        val record_ty = Term.type_of x
-        val _ = not (datatype_translation_excluded record_ty) orelse
-          raise ERR "translate_term" "excluded record update"
-        val fields = TypeBase.fields_of record_ty
-        val _ = if List.null fields then
-            raise ERR "translate_term" "not a record update"
-          else ()
-        val val_ty = Term.type_of new_val
-        val j = Lib.index (fn (_, {ty = field_ty, fupd, ...}) =>
-            Term.same_const update fupd andalso
-            Lib.can (Type.match_type field_ty) val_ty) fields
-        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, record_ty)
-        val type_name = Redblackmap.find (tydict, record_ty)
-        val infos = datatype_constructor_infos record_ty type_name
-        val (_, cname, selectors) =
-          case infos of
-            [info] => info
-          | _ => raise ERR "translate_term" "record has multiple constructors"
-        val acc = (tydict, tmdict)
-        val (acc, (xdecls, xname)) =
-          translate_term regime apply_operator (acc, (bounds, x))
-        val (acc, (newdecls, newname)) =
-          translate_term regime apply_operator (acc, (bounds, new_val))
-        fun field_name (n, (selector_name, _)) =
-          if n = j then newname else sexpr selector_name [xname]
-        val field_names = ListPair.mapEq field_name
-          (List.tabulate (List.length selectors, fn n => n), selectors)
-      in
-        (acc, (typedecls @ xdecls @ newdecls, sexpr cname field_names))
-    end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
     val _ =
       (case Lib.total Term.dest_comb tm of
@@ -4265,13 +4278,10 @@ local
       translate_selector_case acc
     handle Feedback.HOL_ERR _ =>
 
+      translate_tester_case acc
+    handle Feedback.HOL_ERR _ =>
+
       translate_case_constant acc rator rands
-    handle Feedback.HOL_ERR _ =>
-
-      translate_record_selector acc
-    handle Feedback.HOL_ERR _ =>
-
-      translate_record_update acc
     handle Feedback.HOL_ERR _ =>
 
       (* FO functions and the Z3 dialect are arrays.  Standard 2.7 maps have
@@ -5465,6 +5475,216 @@ local
     simpLib.SIMP_CONV pureSimps.pure_ss hol_string_transfer_rewrites tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
+  (* Boolean cases are already SMT's native `ite`; treating COND as a
+     datatype case would recursively lower each generated conditional. *)
+  fun datatype_normalization_excluded ty =
+    datatype_translation_excluded ty orelse same_type (ty, Type.bool)
+
+  fun datatype_case_equality ty scrutinee extra_rewrites lhs_for rhs_for =
+    let
+      val tyinfo =
+        case TypeBase.fetch ty of
+          SOME info => info
+        | NONE => raise ERR "datatype_case_equality"
+            "missing TypeBase entry"
+      val x = Term.genvar ty
+      val equality = boolSyntax.mk_eq (lhs_for x, rhs_for x)
+      val predicate = Term.mk_abs (x, equality)
+      val forall_cases = DatatypeSimps.mk_type_forall_thm_tyinfo tyinfo
+      val expanded = Thm.SPEC predicate forall_cases
+      val rewrites = TypeBasePure.case_def_of tyinfo :: extra_rewrites tyinfo
+      val constructor_cases =
+        Lib.snd (boolSyntax.dest_eq (Thm.concl expanded))
+      val beta = Conv.TRY_CONV
+        (Conv.DEPTH_CONV Thm.BETA_CONV) constructor_cases
+      val beta_cases = Lib.snd (boolSyntax.dest_eq (Thm.concl beta))
+      val simplified = simpLib.SIMP_CONV pureSimps.pure_ss
+        (boolTheory.COND_CLAUSES :: boolTheory.REFL_CLAUSE ::
+         boolTheory.FORALL_SIMP :: boolTheory.AND_CLAUSES :: rewrites)
+        beta_cases
+      val constructor_theorem =
+        if boolSyntax.is_eq (Thm.concl simplified) then
+          let
+            val closed = Thm.TRANS beta simplified
+            val closed_rhs = Lib.snd (boolSyntax.dest_eq (Thm.concl closed))
+          in
+            if Term.aconv closed_rhs boolSyntax.T then
+              Drule.EQT_ELIM closed
+            else
+              raise ERR "datatype_case_equality"
+                ("constructor cases did not close: " ^
+                 Library.thm_to_string closed)
+          end
+        else
+          Thm.EQ_MP (Thm.SYM beta) simplified
+      val theorem = Thm.EQ_MP (Thm.SYM expanded) constructor_theorem
+      val specialized =
+        Conv.CONV_RULE (Conv.TRY_CONV (Conv.DEPTH_CONV Thm.BETA_CONV))
+          (Thm.SPEC scrutinee theorem)
+    in
+      Conv.CONV_RULE
+        (Conv.RAND_CONV (Conv.TRY_CONV
+          (Conv.DEPTH_CONV
+            (Conv.REWR_CONV combinTheory.K_THM))))
+        specialized
+    end
+
+  fun record_accessor_normalize_conv tm =
+    let
+      val recognized =
+        SOME (let
+          val (accessor, record) = Term.dest_comb tm
+          val record_ty = Term.type_of record
+          val _ = not (datatype_normalization_excluded record_ty) orelse
+            raise ERR "record_accessor_normalize_conv" "excluded datatype"
+          val fields = TypeBase.fields_of record_ty
+          val _ = if List.null fields then
+              raise ERR "record_accessor_normalize_conv" "not a record"
+            else ()
+          val selector_index = Lib.index
+            (fn (_, {accessor = candidate, ...} :
+                     TypeBasePure.rcd_fieldinfo) =>
+              Term.same_const accessor candidate) fields
+          val constructor =
+            case datatype_constructors record_ty of
+              [constructor] => constructor
+            | _ => raise ERR "record_accessor_normalize_conv"
+                "record constructor count"
+        in
+          (accessor, record, record_ty, constructor, selector_index)
+        end)
+        handle Feedback.HOL_ERR _ => NONE
+    in
+      case recognized of
+        NONE => raise Conv.UNCHANGED
+      | SOME (accessor, record, record_ty, constructor, selector_index) =>
+          let
+            fun lhs x = Term.mk_comb (accessor, x)
+            fun rhs x = datatype_selector_term record_ty constructor
+              selector_index x
+          in
+            datatype_case_equality record_ty record
+              TypeBasePure.accessors_of lhs rhs
+          end
+    end
+
+  fun record_update_normalize_conv tm =
+    let
+      val recognized =
+        SOME (let
+          val (update_f, record) = Term.dest_comb tm
+          val (update, updater) = Term.dest_comb update_f
+          val record_ty = Term.type_of record
+          val result_ty = Term.type_of tm
+          val _ = not (datatype_normalization_excluded record_ty) andalso
+                  not (datatype_normalization_excluded result_ty) orelse
+            raise ERR "record_update_normalize_conv" "excluded datatype"
+          val input_fields = TypeBase.fields_of record_ty
+          val result_fields = TypeBase.fields_of result_ty
+          val _ = if List.null input_fields orelse
+                     List.length input_fields <> List.length result_fields then
+              raise ERR "record_update_normalize_conv" "not matching records"
+            else ()
+          val update_index = Lib.index
+            (fn (_, {fupd, ...} : TypeBasePure.rcd_fieldinfo) =>
+              Term.same_const update fupd) input_fields
+          val input_constructor =
+            case datatype_constructors record_ty of
+              [constructor] => constructor
+            | _ => raise ERR "record_update_normalize_conv"
+                "input record constructor count"
+          val result_constructor =
+            case datatype_constructors result_ty of
+              [constructor] => constructor
+            | _ => raise ERR "record_update_normalize_conv"
+                "result record constructor count"
+        in
+          (update, updater, record, record_ty, result_fields, update_index,
+           input_constructor, result_constructor)
+        end)
+        handle Feedback.HOL_ERR _ => NONE
+    in
+      case recognized of
+        NONE => raise Conv.UNCHANGED
+      | SOME (update, updater, record, record_ty, result_fields,
+              update_index, input_constructor, result_constructor) =>
+        let
+      fun lhs x = Term.list_mk_comb (update, [updater, x])
+      fun rhs x =
+        let
+          fun field selector_index =
+            let
+              val selected = datatype_selector_term record_ty
+                input_constructor selector_index x
+            in
+              if selector_index = update_index then
+                Term.mk_comb (updater, selected)
+              else
+                selected
+            end
+          val values = List.map field
+            (List.tabulate (List.length result_fields, fn n => n))
+        in
+          Term.list_mk_comb (result_constructor, values)
+        end
+        in
+          datatype_case_equality record_ty record
+            (fn tyinfo => TypeBasePure.accessors_of tyinfo @
+              TypeBasePure.updates_of tyinfo) lhs rhs
+        end
+    end
+
+  (* TASK_08's selector/case-over-constructor reducer belongs exactly here:
+     update rewriting must expose its redexes before general case lowering. *)
+  fun datatype_selector_reduction_slot _ = raise Conv.UNCHANGED
+
+  fun datatype_case_normalize_conv tm =
+    let
+      val recognized =
+        SOME (let
+          val (_, scrutinee, clauses) = TypeBase.dest_case tm
+          val data_ty = Term.type_of scrutinee
+          val _ = not (datatype_normalization_excluded data_ty) orelse
+            raise ERR "datatype_case_normalize_conv" "excluded datatype"
+          val _ =
+            case parser_datatype_case tm of
+              SOME _ => raise ERR "datatype_case_normalize_conv"
+                "already in parser normal form"
+            | NONE => ()
+        in
+          (scrutinee, clauses, data_ty)
+        end)
+        handle Feedback.HOL_ERR _ => NONE
+    in
+      case recognized of
+        NONE => raise Conv.UNCHANGED
+      | SOME (scrutinee, clauses, data_ty) =>
+          let
+            fun lhs x = TypeBase.mk_case (x, clauses)
+            fun rhs x = datatype_case_normal_form (lhs x)
+          in
+            datatype_case_equality data_ty scrutinee (fn _ => []) lhs rhs
+          end
+    end
+
+  val datatype_normalization_rungs = [
+    record_accessor_normalize_conv,
+    record_update_normalize_conv,
+    datatype_selector_reduction_slot,
+    datatype_case_normalize_conv
+  ]
+
+  fun first_datatype_normalization_rung [] _ = raise Conv.UNCHANGED
+    | first_datatype_normalization_rung (rung :: rungs) tm =
+        rung tm
+        handle Conv.UNCHANGED =>
+          first_datatype_normalization_rung rungs tm
+
+  fun DATATYPE_TO_SMT_CONV tm =
+    Conv.TOP_DEPTH_CONV
+      (first_datatype_normalization_rung datatype_normalization_rungs) tm
+    handle Conv.UNCHANGED => Thm.REFL tm
+
   fun num_free_concl_vars (asms, concl) =
   let
     fun is_num_var v =
@@ -5935,6 +6155,10 @@ in
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
   val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
+  val DATATYPE_TO_SMT_CONV = DATATYPE_TO_SMT_CONV
+  val datatype_constructors_for_test = datatype_constructors
+  val datatype_selector_term_for_test = datatype_selector_term
+  val datatype_case_normal_form_for_test = datatype_case_normal_form
   val native_float_transfer_surface = native_float_transfer_surface
   val native_float_transfer_theorems = native_float_transfer_theorems
 
@@ -6069,6 +6293,11 @@ in
     Tactical.THEN
       (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE NATIVE_FLOAT_TO_SMT_CONV),
        Tactic.CONV_TAC NATIVE_FLOAT_TO_SMT_CONV)
+
+  val DATATYPE_TO_SMT_TAC =
+    Tactical.THEN
+      (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE DATATYPE_TO_SMT_CONV),
+       Tactic.CONV_TAC DATATYPE_TO_SMT_CONV)
 
   (* This tactic calls ASSUME_TAC on theorems that are deemed necessary for SMT
      solvers to solve the goal (but only if `include_theorems` is true) *)
@@ -6276,7 +6505,8 @@ in
        Run the semantic transfer last, then simplify its newly-added
        assumptions even when they no longer mention num themselves. *)
     stage "num-to-int" num_to_int THEN
-    stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC
+    stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
+    stage "datatype-to-smt" DATATYPE_TO_SMT_TAC
   end
 
   fun SIMP_TAC simp_let = SIMP_TAC_WITH_NATIVE_BAGS false simp_let
