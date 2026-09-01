@@ -9,9 +9,15 @@ sig
      A citation carrying an attribute that changes the theorem --
      [symmetric], [OF ...], [THEN ...] -- is its own key.  A citation
      whose attribute only instantiates it -- [of ...], [where ...] --
-     resolves to the general theorem: HOL4 applies a rewrite by matching,
-     so the instantiation is a control hint rather than a different
-     fact.
+     is its own key too, and resolves either to the general theorem or,
+     through [instantiated], to the instance the source method wrote.
+     Matching recovers an instantiation only when the general
+     statement's left-hand side occurs in the goal; where the instance
+     collapses a constant -- an identity key turning [insort_key f]
+     into [insort] -- it does not, and the general theorem reaches the
+     goal not at all.  The instantiating terms are transcribed from the
+     method, never chosen per goal, so the entry says the same thing
+     for every goal that cites that string.
 
      Each key appears once.  [lookup] takes the first entry under a
      name, so a second one is unreachable and free to contradict it;

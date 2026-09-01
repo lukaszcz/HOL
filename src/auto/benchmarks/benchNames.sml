@@ -40,6 +40,39 @@ fun symmetric build () =
            {name = name ^ "[symmetric]", theorem = Conv.GSYM theorem})
        (resolved build))
 
+(* An attribute that only instantiates -- [of ...], [where ...] --
+   names the same theorem at particular arguments, and the arguments
+   are read off the source method rather than chosen here.  It is not
+   always a control hint: where the instance mentions constants the
+   general statement does not -- an identity key collapsing
+   [insort_key f] to [insort] -- HOL4 cannot recover it by matching,
+   because the general statement's left-hand side occurs nowhere in
+   the goal.  Each binding names a variable of the theorem and the
+   term the method instantiates it with. *)
+fun instantiated bindings build () =
+  let
+    fun bind (name, term) theorem =
+      case List.find (fn variable => fst (dest_var variable) = name)
+             (free_vars (concl theorem)) of
+          NONE =>
+            raise mk_HOL_ERR "benchNames" "instantiated"
+              (name ^ " is not a variable of the cited theorem")
+        | SOME variable =>
+            let val (terms, types) = Term.match_term variable term
+            in Thm.INST terms (Thm.INST_TYPE types theorem)
+            end
+    fun instance theorem =
+      Drule.GEN_ALL
+        (Drule.DISCH_ALL
+          (List.foldl (fn (binding, current) => bind binding current)
+            (Drule.SPEC_ALL (Drule.UNDISCH_ALL (Drule.SPEC_ALL theorem)))
+            bindings))
+  in
+    Theorems
+      (map (fn {name, theorem} => {name = name, theorem = instance theorem})
+        (resolved build))
+  end
+
 (* The first equation of a multi-clause definition. *)
 fun first_case build () =
   Theorems
@@ -170,9 +203,11 @@ val table : (string * (unit -> resolution)) list =
   ("zip_append1",
    translated "source_zip_append1"),
   ("zip_map_map[of f xs \"\\<lambda>x. x\" ys]",
-   translated "source_zip_map_map"),
+   instantiated [("g", ``combin$I``)]
+     (translated "source_zip_map_map")),
   ("zip_map_map[of \"\\<lambda>x. x\" xs f ys]",
-   translated "source_zip_map_map"),
+   instantiated [("f", ``combin$I``)]
+     (translated "source_zip_map_map")),
   ("zip_map1",
    translated "source_zip_map1"),
   ("zip_map2",
@@ -243,9 +278,11 @@ val table : (string * (unit -> resolution)) list =
   ("nths_def",
    translated "source_nths_def"),
   ("sorted_insort_key[where f=\"\\<lambda>x. x\"]",
-   translated "source_sorted_insort_key"),
+   instantiated [("function", ``combin$I``)]
+     (translated "source_sorted_insort_key")),
   ("sorted_sort_key[where f=\"\\<lambda>x. x\"]",
-   translated "source_sorted_sort_key"),
+   instantiated [("function", ``combin$I``)]
+     (translated "source_sorted_sort_key")),
   ("sort_key_id_if_sorted",
    translated "source_sort_key_id_if_sorted"),
   ("sorted_distinct_set_unique",
@@ -263,15 +300,18 @@ val table : (string * (unit -> resolution)) list =
   ("insort_insert_key_def",
    translated "source_insort_insert_key_def"),
   ("insort_insert_key_triv[of \"\\<lambda>x. x\"]",
-   translated "source_insort_insert_key_triv"),
+   instantiated [("function", ``combin$I``)]
+     (translated "source_insort_insert_key_triv")),
   ("insort_insert_insort_key[of \"\\<lambda>x. x\"]",
-   translated "source_insort_insert_insort_key"),
+   instantiated [("function", ``combin$I``)]
+     (translated "source_insort_insert_insort_key")),
   ("set_insort_key",
    translated "source_set_insort_key"),
   ("sorted_insort_key",
    translated "source_sorted_insort_key"),
   ("sorted_insort_insert_key[of \"\\<lambda>x. x\"]",
-   translated "source_sorted_insort_insert_key"),
+   instantiated [("function", ``combin$I``)]
+     (translated "source_sorted_insort_insert_key")),
   ("stable_sort_key_def",
    translated "source_stable_sort_key_def"),
   ("sort_key_stable",
@@ -356,7 +396,8 @@ val table : (string * (unit -> resolution)) list =
   ("sorted_iff_nth_mono",
    translated "source_sorted_iff_nth_mono"),
   ("sorted_map_remove1[of \"\\<lambda>x. x\"]",
-   translated "source_sorted_map_remove1"),
+   instantiated [("function", ``combin$I``)]
+     (translated "source_sorted_map_remove1")),
   ("set_nths",
    translated "source_set_nths"),
   ("rotate_drop_take",

@@ -128,18 +128,32 @@ val list_decomposition_witnesses =
      "list_L1590_concat_eq_append_conv", "list_L7823_append_listrel1I",
      "list_L8673_these_set_code"]
 
+(* The name table can now carry an instantiation, so what is left here
+   is the citations whose instantiating terms have not been
+   transcribed.  Four of the class closed once the identity key was
+   supplied; these did not. *)
 val instantiated_fact_citation =
   classified "instantiated fact citation"
-    ("the source method instantiates its cited facts with [OF "
-     ^ "...], [of ...] or [where ...]; the recipe compiler "
-     ^ "represents a citation but not its instantiation")
+    ("the source method instantiates its cited facts and the name "
+     ^ "table still resolves the citation to the general theorem, "
+     ^ "whose left-hand side does not occur in the goal")
     ["list_L1460_split_list_propE",
      "list_L1484_split_list_first_propE",
      "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id",
-     "list_L2806_zip_map1", "list_L2810_zip_map2",
-     "list_L5301_nth_rotate1", "list_L6101_sorted_remove1",
-     "list_L6292_sorted_insort",
-     "list_L6298_sorted_sort", "list_L6389_sorted_insort_insert"]
+     "list_L5301_nth_rotate1"]
+
+(* Both citations are instantiated and both instances land: the
+   residual carries the specialised fact as a hypothesis, in the same
+   spelling as the goal.  Neither goal withholds anything (excl = []),
+   so this is not the recognition rule; what is not understood is why
+   the simplifier does not apply a hypothesis the goal is an instance
+   of.  Recorded as observed rather than diagnosed. *)
+val instantiated_fact_not_applied =
+  classified "instantiated fact not applied"
+    ("the instantiated citation reaches the goal as a hypothesis and "
+     ^ "the goal is an instance of it, the goal withholds nothing, "
+     ^ "and the method's simplifier still does not close it")
+    ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
 val zip_against_map =
   classified "zip against map"
@@ -471,6 +485,7 @@ val execution : benchLib.shortfall list =
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
   instantiated_fact_citation @
+  instantiated_fact_not_applied @
   zip_against_map @
   over_budget_with_no_residual @
   arithmetic_residual_after_unfolding @

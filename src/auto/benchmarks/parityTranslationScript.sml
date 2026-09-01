@@ -2411,10 +2411,15 @@ QED
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
    src/HOL/List.thy:2794-2804.  The following zip-map lemmas use this
    independently proved, more general result through a `using` fact. *)
+(* Isabelle writes the image as the paired abstraction
+   [%(x, y). (f x, g y)], which the translation spells UNCURRY, as
+   [source_zip_map1] and [source_zip_map2] below already do.  Stated
+   with FST and SND instead it is the same theorem in a spelling no
+   translated goal arrives in. *)
 Theorem source_zip_map_map:
   !xs ys f g.
     ZIP (MAP f xs, MAP g ys) =
-    MAP (\pair. (f (FST pair), g (SND pair))) (ZIP (xs, ys))
+    MAP (UNCURRY (\x y. (f x, g y))) (ZIP (xs, ys))
 Proof
   Induct_on `xs`
   >- simp[listTheory.ZIP_def]
