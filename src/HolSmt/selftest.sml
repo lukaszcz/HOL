@@ -123,6 +123,21 @@ fun mk_test_fun is_configured expect_fun name smt_tac =
   else
     Lib.K ()
 
+(* This is intentionally a public translation-path check rather than a
+   solver check: no SMT-LIB may be emitted for a residual smtfloat head. *)
+fun reject_unsupported_smtfloat t =
+  (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], t));
+   die ("unsupported smtfloat constant reached SMT-LIB emission"))
+  handle Feedback.HOL_ERR holerr =>
+    if Feedback.top_structure_of holerr = "SmtLib" andalso
+       Feedback.top_function_of holerr = "translate_term" andalso
+       String.isSubstring SmtLib.unsupported_smtfloat_constant_diagnostic
+         (Feedback.message_of holerr)
+    then print "."
+    else
+      die ("unsupported smtfloat constant raised the wrong diagnostic: " ^
+        Feedback.exn_to_string (Feedback.HOL_ERR holerr))
+
 (*****************************************************************************)
 (* a built-in automated semi-decision procedure that *very* loosely          *)
 (* resembles SMT solvers (in terms of coverage; not so much in terms of      *)
@@ -1962,6 +1977,11 @@ in
           smtfp_to_ubv RTZ (smtfp_intro x)) /\
        ((float_to_sbv RTZ x : word8) =
           smtfp_to_sbv RTZ (smtfp_intro x))``, [thm_Z3p_v4]),
+
+    (* TASK_12: a raw residual smtfloat semantic head is rejected by the
+       public translation entry point before an SMT-LIB program exists. *)
+    (``smtfp_unordered (x : (4,3) smtfp) y``,
+      [reject_unsupported_smtfloat]),
 
     (* Native comparison plus arithmetic is first rewritten by the proved
        transfer kit, then answered by Z3 over the SMT FloatingPoint sort. *)

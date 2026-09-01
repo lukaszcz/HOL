@@ -268,6 +268,8 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant
+  ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
 val _ = new_constant ("smtlib_native_dt_uf", ``:smt_tri -> int``)
 val _ = new_constant
   ("smtlib_ho_rank2", ``:int -> bool -> int``)
@@ -8977,6 +8979,11 @@ let
   val quantified_native =
     ``!a:(4,3) binary_ieee$float. float_less_equal a a``
   val quantified_native_text = preprocessed_text quantified_native
+  val (uf_translation, _) = translate ``smtlib_fp_uf_pred ^x ^y``
+  val uf_declarations = List.mapPartial
+    (fn SmtLib.TermDeclaration {hol_term, ...} => SOME hol_term
+      | _ => NONE)
+    (SmtLib.translation_records uf_translation)
   val roundtrip_cases = [literal,
     ``smtfp_add RNA ^x ^y = smtfp_mul RTZ ^y ^x``,
     ``(smtfp_to_fp RTP ^x : (7,5) smtfp) = smtfp_ninf``,
@@ -8992,14 +8999,24 @@ in
     ``(smtfp_from_real RNE 1r : (4,3) smtfp) = ^x``;
   expect_logic "QF_FPLRA" mixed_real_bv;
   expect_logic "FP" ``!a:(4,3) smtfp. a = a``;
-  expect_logic "QF_UFFP" ``smtfp_unordered ^x ^y``;
+  expect_logic "QF_UFFP" ``smtlib_fp_uf_pred ^x ^y``;
   expect_logic "QF_ABVFP"
     ``(f:(4,3) smtfp -> (4,3) smtfp) ^x = ^x``;
   expect_logic "QF_AUFBVFP"
     ``(f:(4,3) smtfp -> (4,3) smtfp) ^x = ^x /\
-      smtfp_unordered ^x ^y``;
+      smtlib_fp_uf_pred ^x ^y``;
   expect_logic "ALL"
     ``(xs:(4,3) smtfp list) = ys``;
+  assert (List.exists
+      (fn head => Term.same_const head ``smtlib_fp_uf_pred``)
+      uf_declarations andalso
+      not (List.exists
+        (fn head =>
+          case Lib.total Term.dest_thy_const head of
+            SOME {Thy = "smtfloat", ...} => true
+          | _ => false)
+        uf_declarations),
+    "QF_UFFP fixture did not use its genuine non-smtfloat UF head");
   List.app (Lib.uncurry expect_feature_logic) [
     ("QF_FP", {quantifiers = false, uninterpreted = false,
       arrays = false, bitvectors = false, reals = false}),
@@ -9059,6 +9076,67 @@ in
       not (contains "declare-sort" quantified_native_text),
     "quantified native float did not transfer its binder to smtfp:\n" ^
     quantified_native_text)
+end
+
+fun smtlib_unsupported_smtfloat_constant_diagnostic () =
+let
+  val x = ``x : (4,3) smtfp``
+  val y = ``y : (4,3) smtfp``
+  val cases =
+    [("fully applied", ``smtfp_unordered ^x ^y``),
+     ("partial application",
+      ``smtfp_unordered ^x = smtfp_unordered ^y``),
+     ("residual function",
+      ``(smtfp_is_finite : (4,3) smtfp -> bool) = smtfp_is_finite``)]
+  fun reject (label, goal) =
+    (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
+     die ("FAIL: non-whitelisted smtfloat " ^ label ^
+       " was emitted as an invented UF"))
+    handle Feedback.HOL_ERR holerr =>
+      let
+        val message = Feedback.message_of holerr
+      in
+        assert (Feedback.top_structure_of holerr = "SmtLib" andalso
+            Feedback.top_function_of holerr = "translate_term",
+          label ^ " rejection came from the wrong boundary: " ^ message);
+        assert (contains SmtLib.unsupported_smtfloat_constant_diagnostic
+            message,
+          label ^ " rejection omitted its named diagnostic: " ^ message);
+        assert (contains "smtfloat$" message andalso contains "type=" message,
+          label ^ " rejection omitted constant/type detail: " ^ message)
+      end
+  val whitelist = SmtLib.smtfloat_opaque_replay_constants_for_test
+  fun member name = List.exists (fn candidate => candidate = name) whitelist
+  val expected_whitelist =
+    ["SmtFp", "canon", "smtfp_addsub_circuit", "smtfp_addsub_trace",
+     "smtfp_addsub_zero_sign", "smtfp_circuit_divisor",
+     "smtfp_circuit_effective_exponent", "smtfp_circuit_encode",
+     "smtfp_circuit_encoded_exponent", "smtfp_circuit_exp",
+     "smtfp_circuit_infinity", "smtfp_circuit_overflow",
+     "smtfp_circuit_pack", "smtfp_circuit_quotient",
+     "smtfp_circuit_remainder", "smtfp_circuit_round",
+     "smtfp_circuit_round_up", "smtfp_circuit_rounded",
+     "smtfp_circuit_shift", "smtfp_circuit_sig", "smtfp_circuit_top",
+     "smtfp_circuit_wanted_exponent", "smtfp_mul_circuit",
+     "smtfp_mul_divisor", "smtfp_mul_encode",
+     "smtfp_mul_encoded_exponent", "smtfp_mul_exponent_sum",
+     "smtfp_mul_product", "smtfp_mul_quotient", "smtfp_mul_remainder",
+     "smtfp_mul_shift_right", "smtfp_mul_sign", "smtfp_mul_trace",
+     "smtfp_mul_wanted_exponent", "smtfp_rep"]
+  val admitted_representatives =
+    [``smtfloat$SmtFp``, ``smtfp_rep``, ``canon``,
+     ``smtfp_circuit_encode``, ``smtfp_addsub_circuit``,
+     ``smtfp_mul_circuit``]
+in
+  List.app reject cases;
+  assert (whitelist = expected_whitelist,
+    "opaque/replay whitelist changed without updating its closed audit");
+  List.app SmtLib.reject_unsupported_smtfloat_constant_for_test
+    admitted_representatives;
+  assert (List.all (not o member)
+      ["smtfp_intro", "smtfp_unordered", "smtfp_is_finite",
+       "smtfp_is_signalling", "smtfp_is_integral"],
+    "ordinary smtfloat semantics leaked into the opaque/replay whitelist")
 end
 
 fun smtlib_translation_shape_matrix_success () =
@@ -18590,6 +18668,8 @@ let
       smtlib_fo_emission_golden_success),
     ("smtlib_fp_outbound_translation_success",
       smtlib_fp_outbound_translation_success),
+    ("smtlib_unsupported_smtfloat_constant_diagnostic",
+      smtlib_unsupported_smtfloat_constant_diagnostic),
     ("smtlib_translation_shape_matrix_success",
       smtlib_translation_shape_matrix_success),
     ("smtlib_term_translation_branch_matrix_success",

@@ -2180,6 +2180,51 @@ local
   val uninterpreted_native_datatype_destructor_diagnostic =
     "HOLSMT_TRANSLATION_UNINTERPRETED_NATIVE_DATATYPE_DESTRUCTOR"
 
+  val unsupported_smtfloat_constant_diagnostic =
+    "HOLSMT_TRANSLATION_UNSUPPORTED_SMTFLOAT_CONSTANT"
+
+  (* The generic symbol emitter is deliberately closed over the smtfloat
+     theory.  These constants are representation or replay scaffolding, not
+     additional SMT FloatingPoint operations: replay may keep them opaque
+     while proving the surrounding formula.  Every name is explicit so a new
+     smtfloat definition cannot silently acquire invented-UF semantics. *)
+  val smtfloat_opaque_replay_constants =
+    Redblackset.addList
+      (Redblackset.empty String.compare,
+       ["SmtFp", "smtfp_rep", "canon",
+        "smtfp_circuit_sig", "smtfp_circuit_exp",
+        "smtfp_circuit_round_up", "smtfp_circuit_round",
+        "smtfp_circuit_infinity", "smtfp_circuit_top",
+        "smtfp_circuit_overflow", "smtfp_circuit_wanted_exponent",
+        "smtfp_circuit_encoded_exponent",
+        "smtfp_circuit_effective_exponent", "smtfp_circuit_shift",
+        "smtfp_circuit_divisor", "smtfp_circuit_quotient",
+        "smtfp_circuit_remainder", "smtfp_circuit_rounded",
+        "smtfp_circuit_pack", "smtfp_circuit_encode",
+        "smtfp_addsub_trace", "smtfp_addsub_zero_sign",
+        "smtfp_addsub_circuit",
+        "smtfp_mul_trace", "smtfp_mul_sign", "smtfp_mul_product",
+        "smtfp_mul_exponent_sum", "smtfp_mul_wanted_exponent",
+        "smtfp_mul_encoded_exponent", "smtfp_mul_shift_right",
+        "smtfp_mul_divisor", "smtfp_mul_quotient",
+        "smtfp_mul_remainder", "smtfp_mul_encode",
+        "smtfp_mul_circuit"])
+
+  fun reject_unsupported_smtfloat_constant rator =
+    if not (Term.is_const rator) then ()
+    else
+      case Lib.total Term.dest_thy_const rator of
+        SOME {Thy = "smtfloat", Name, ...} =>
+          if Redblackset.member (smtfloat_opaque_replay_constants, Name) then
+            ()
+          else
+            raise ERR "translate_term"
+              (unsupported_smtfloat_constant_diagnostic ^
+               ": refusing to invent SMT semantics for smtfloat$" ^ Name ^
+               "; constant=" ^ Hol_pp.term_to_string rator ^
+               "; type=" ^ Hol_pp.type_to_string (Term.type_of rator))
+      | _ => ()
+
   fun datatype_destructor_head theorem =
     let
       val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
@@ -4652,6 +4697,10 @@ local
             rands_count
         else
           let
+            (* All preceding rungs preserve official SMT operators,
+               constructors, carrier injections, and ranked eta expansion.
+               Only the generic invented-symbol boundary is closed here. *)
+            val _ = reject_unsupported_smtfloat_constant rator
             val (acc, (decls, name)) =
               (* A function-valued binder is a symbol head too. *)
               (acc, ([], Redblackmap.find (bounds, rator)))
@@ -7030,6 +7079,12 @@ in
     invented_uf_native_datatype_domain_diagnostic
   val uninterpreted_native_datatype_destructor_diagnostic =
     uninterpreted_native_datatype_destructor_diagnostic
+  val unsupported_smtfloat_constant_diagnostic =
+    unsupported_smtfloat_constant_diagnostic
+  val smtfloat_opaque_replay_constants_for_test =
+    Redblackset.listItems smtfloat_opaque_replay_constants
+  val reject_unsupported_smtfloat_constant_for_test =
+    reject_unsupported_smtfloat_constant
   fun datatype_destructor_theorems_for_test ty =
     case TypeBase.fetch ty of
       SOME tyinfo => TypeBasePure.destructors_of tyinfo
