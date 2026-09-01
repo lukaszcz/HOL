@@ -371,14 +371,6 @@ val index_selection =
      ^ "source_nths")
     ["list_L5334_nths_empty", "list_L5344_length_nths"]
 
-val membership_of_an_indexed_element =
-  classified "membership of an indexed element"
-    ("set_nths reduces the comprehension and leaves [MEM (EL index "
-     ^ "xs) xs] under [index < LENGTH xs]; Isabelle carries that as "
-     ^ "the simp rule nth_mem and no HOL4 simpset carries EL_MEM")
-    ["list_L5385_set_nths_subset", "list_L5388_notin_set_nthsI",
-     "list_L5391_in_set_nthsD"]
-
 val decision_procedure_scope =
   classified "decision procedure scope"
     ("the goal is outside what the HOL4 counterpart of the cited "
@@ -476,7 +468,6 @@ val execution : benchLib.shortfall list =
   integer_interval_emptiness @
   rotation_by_iteration @
   index_selection @
-  membership_of_an_indexed_element @
   decision_procedure_scope @
   definitional_unfolding_stops_short @
   injectivity_and_surjectivity @
