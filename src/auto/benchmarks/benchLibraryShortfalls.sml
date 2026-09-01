@@ -252,14 +252,29 @@ val list_relation_lifting =
      "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff",
      "list_L9009_null_transfer"]
 
+(* The earlier reading -- that the translation renders foldr as FOLDL
+   over REVERSE -- was wrong: [source_foldr] is FOLDR.  The FOLDL over
+   a REVERSE arrives from the cited [foldr_conv_fold], which is what
+   Isabelle's own proofs rewrite with. *)
 val fold_direction =
   classified "fold direction"
-    ("the translation renders foldr as FOLDL over REVERSE and "
-     ^ "nothing relates the two")
-    ["list_L3340_inter_coset_fold", "list_L3381_anon_L3381",
-     "list_L3385_anon_L3385", "list_L3413_foldr_cong",
+    ("the cited foldr_conv_fold rewrites the goal into a FOLDL over "
+     ^ "a REVERSE, which is where Isabelle's proof continues into its "
+     ^ "fold lemmas; the HOL4 fold law that would close each residual "
+     ^ "is either declared to no simpset or, for the append law, the "
+     ^ "goal itself, which rule A1 withholds")
+    ["list_L3413_foldr_cong",
      "list_L3421_foldr_append", "list_L3427_foldr_map",
      "list_L3430_foldr_filter"]
+
+val fold_against_a_set_aggregate =
+  classified "fold against a set aggregate"
+    ("the goal relates a set-valued aggregate to a fold over any list "
+     ^ "with that set, and the residual still carries the aggregate: "
+     ^ "nothing turns the hypothesis about every list into the "
+     ^ "instance the goal needs")
+    ["list_L3340_inter_coset_fold", "list_L3381_anon_L3381",
+     "list_L3385_anon_L3385"]
 
 val finite_cardinality =
   classified "finite cardinality"
@@ -466,6 +481,7 @@ val execution : benchLib.shortfall list =
   take_and_drop_arithmetic @
   list_relation_lifting @
   fold_direction @
+  fold_against_a_set_aggregate @
   finite_cardinality @
   propositional_rearrangement @
   sorted_against_sorted_wrt @
