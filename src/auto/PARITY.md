@@ -44,7 +44,6 @@ An Isabelle proof can name a fact HOL4 states nowhere -- neither in a library no
 - `list_L6487_nth_nth_transpose_sorted (filter_equals_takeWhile_sorted_rev[OF sorted, of i])`
 - `list_L6669_sorted_key_list_of_set_eq_Nil_iff (fold_insort_key.remove)`
 - `list_L6770_sorted_key_list_of_set_unique (idem_if_sorted_distinct)`
-- `list_L6835_sorted_list_of_set_lessThan_Suc (sorted_list_of_set_range)`
 - `list_L6873_nth_sorted_list_of_set_greaterThanAtMost (nth_sorted_list_of_set_greaterThanLessThan[of n "Suc j" i], greaterThanLessThan_eq)`
 - `list_L7823_append_listrel1I (append_eq_appendI)`
 - `list_L7922_wf_listrel1_iff (lists_accD, lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]])`
@@ -88,11 +87,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 328 | 327 | 4 |
-| List/map | 602 | 423 | 380 | 5 |
+| List/map | 602 | 429 | 385 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **864** | **820** | **28** |
+| **Total** | **1070** | **870** | **825** | **28** |
 
 ## Cost of the solutions
 
@@ -100,13 +99,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 5 | 19 | 1 | 0 | 3.0 | 100 | 1580 |
-| Sets | 328 | 96 | 227 | 5 | 0 | 3.6 | 6 | 2430 |
-| List/map | 423 | 10 | 403 | 10 | 0 | 3.3 | 0 | 1868 |
-| Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
+| Classical | 25 | 7 | 17 | 1 | 0 | 3.3 | 100 | 1580 |
+| Sets | 328 | 98 | 226 | 4 | 0 | 3.1 | 6 | 2430 |
+| List/map | 429 | 9 | 413 | 7 | 0 | 4.2 | 0 | 1868 |
+| Linarith | 46 | 44 | 2 | 0 | 0 | 0.3 | 0 | 0 |
 | Presburger | 34 | 30 | 3 | 1 | 0 | 4.5 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 2.9 | 0 | 0 |
-| **Total** | **864** | **192** | **654** | **18** | **0** | **4.5** | **0** | **2430** |
+| Algebra | 8 | 7 | 0 | 1 | 0 | 3.0 | 0 | 0 |
+| **Total** | **870** | **195** | **661** | **14** | **0** | **4.5** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -119,11 +118,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 25 | 0 | 0 |
-| List/map | 0 | 179 | 2 | 0 |
+| List/map | 0 | 173 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **206** | **2** | **0** |
+| **Total** | **0** | **200** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
