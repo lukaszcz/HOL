@@ -18024,6 +18024,121 @@ fun string_prove_regex_rung_success () =
       "regex goal fell through to the unsupported rung")
   end
 
+fun string_regex_char_representation_bridge_success () =
+  let
+    val character = ``character : 18 word``
+    fun normalized name input expected =
+      let
+        val theorem = SmtStringProve.regex_normalize input
+        val actual = boolSyntax.rhs (Thm.concl theorem)
+      in
+        assert (Term.aconv actual expected,
+          name ^ " normalized to the wrong term: " ^
+          Library.term_to_string actual);
+        assert (List.null (Thm.hyp theorem),
+          name ^ " normalization returned hypotheses");
+        check_oracle_tags name theorem
+      end
+  in
+    normalized "regex Char literal w2n/n2w bridge"
+      ``w2n (n2w 196607 : 18 word)`` ``196607n``;
+    normalized "regex Char first invalid literal stays unchanged"
+      ``w2n (n2w 196608 : 18 word)``
+      ``w2n (n2w 196608 : 18 word)``;
+    normalized "regex Char seq.nth_i w2n/n2w bridge"
+      ``w2n (n2w (seq_nth_i s k) : 18 word)``
+      ``seq_nth_i s k``;
+    normalized "regex Char word n2w/w2n bridge"
+      ``(n2w (w2n ^character) : 18 word)`` character;
+    normalized "regex Char Num-of-int bridge"
+      ``Num (&k)`` ``k:num``;
+    (* A num with no checked Unicode bound is not known to survive packing.
+       The conditional theorem must therefore leave it byte-for-byte alone. *)
+    normalized "regex Char unresolved bound stays unchanged"
+      ``w2n (n2w n : 18 word)`` ``w2n (n2w n : 18 word)``
+  end
+
+fun z3_regex_char_representation_bridge_replay_success () =
+  let
+    val proof =
+      "((declare-fun x () String) (proof ((_ th-lemma seq) " ^
+      "(or (not ((_ aut.accept aut.accept) x 7 " ^
+      "(re.range (seq.unit (_ Char 31)) " ^
+      "(seq.unit (_ Char 211))))) " ^
+      "(<= (seq.len x) 7) " ^
+      "(and (char.<= (seq.nth_i x 7) (_ Char 211)) " ^
+      "(char.<= (_ Char 31) (seq.nth_i x 7)) " ^
+      "((_ aut.accept aut.accept) x 8 (str.to_re \"\")))))))"
+    val () = Profile.reset_all ()
+    val theorem = replay_z3_proof_string proof
+    val conclusion = Thm.concl theorem
+    val constants = HolKernel.find_terms Term.is_const conclusion
+    fun has_const thy name = List.exists (fn term =>
+      case Lib.total Term.dest_thy_const term of
+        SOME {Thy, Name, ...} => Thy = thy andalso Name = name
+      | NONE => false) constants
+  in
+    assert (has_const "words" "w2n" andalso
+        has_const "words" "n2w" andalso
+        has_const "integer" "Num",
+      "D7-alpha replay did not traverse the parser's Char/Int boundary");
+    assert (profile_call_count "regex(2)(parametric-automaton)_OK" = 1,
+      "D7-alpha clause did not consume the shared automaton rung once");
+    assert (List.null (Thm.hyp theorem),
+      "D7-alpha replay returned hypotheses");
+    check_oracle_tags "D7-alpha Char representation replay" theorem
+  end
+
+fun z3_regex_char_bridge_shared_entry_replay_success () =
+  let
+    (* This parser-shaped D7 membership bridge stays nontrivial after shared
+       Char/Int normalization.  It is not a length or transition schema:
+       rungs 1 and 2 must decline, while the complete bounded lemma rung
+       proves the normalized membership/automaton relationship. *)
+    val proof =
+      "((declare-fun x () String) (proof ((_ th-lemma seq) " ^
+      "(and (or (not (str.in_re x " ^
+      "(re.range (seq.unit (seq.nth_i x 7)) " ^
+      "(seq.unit (_ Char 211))))) " ^
+      "((_ aut.accept aut.accept) x 0 " ^
+      "(re.range (seq.unit (seq.nth_i x 7)) " ^
+      "(seq.unit (_ Char 211))))) " ^
+      "(char.<= (seq.nth_i x 7) (_ Char 196607)))))))"
+    val () = Profile.reset_all ()
+    val theorem = replay_z3_proof_string proof
+    val conclusion = Thm.concl theorem
+    val constants = HolKernel.find_terms Term.is_const conclusion
+    fun has_const thy name = List.exists (fn term =>
+      case Lib.total Term.dest_thy_const term of
+        SOME {Thy, Name, ...} => Thy = thy andalso Name = name
+      | NONE => false) constants
+  in
+    assert (has_const "words" "w2n" andalso
+        has_const "words" "n2w" andalso
+        has_const "integer" "Num" andalso
+        has_const "smtstring" "smt_in_re" andalso
+        has_const "smtstringz3" "aut_accept",
+      "shared-entry D7 replay did not retain its parser-shaped boundary");
+    let
+      val counts = List.map profile_call_count
+        ["regex(1)(parametric-length)_OK",
+         "regex(2)(parametric-automaton)_OK",
+         "regex(3)(bounded-metis)_OK",
+         "regex(4)(normalized-metis)_OK"]
+    in
+      assert (counts = [0, 0, 0, 1],
+        "shared-entry D7 replay did not succeed specifically at regex " ^
+        "rung 4; counts=" ^
+        String.concatWith "," (List.map Int.toString counts))
+    end;
+    assert (profile_call_count
+        "regex(entry)(normalize-target)_OK" = 1,
+      "shared-entry D7 replay did not normalize its target exactly once");
+    assert (List.null (Thm.hyp theorem),
+      "shared-entry D7 replay returned hypotheses");
+    check_oracle_tags "shared-entry D7 Char representation replay" theorem
+  end
+
 fun string_prove_structured_failures () =
   let
     fun expect_message name expected thunk =
@@ -20486,6 +20601,12 @@ let
       string_prove_symbolic_rung_success),
     ("string_prove_regex_rung_success",
       string_prove_regex_rung_success),
+    ("z3_regex_char_bridge_shared_entry_replay_success",
+      z3_regex_char_bridge_shared_entry_replay_success),
+    ("z3_regex_char_representation_bridge_replay_success",
+      z3_regex_char_representation_bridge_replay_success),
+    ("string_regex_char_representation_bridge_success",
+      string_regex_char_representation_bridge_success),
     ("string_prove_structured_failures",
       string_prove_structured_failures),
     ("z3_string_th_lemma_dispatch_success",

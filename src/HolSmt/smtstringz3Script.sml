@@ -112,6 +112,34 @@ QED
    Official SMT strings remain num lists; these lemmas are the checked
    boundary between those representations. *)
 
+(* The parser introduces exactly these three representation crossings:
+   Char results are packed with n2w, Char arguments are unpacked with w2n,
+   and Int-sorted sequence indices cross back to num through Num.  The
+   w2n/n2w direction is intentionally restricted to valid Z3 code points;
+   its premise lets replay simplification fail closed for an arbitrary word
+   payload while accepting literals and seq_nth_i results. *)
+
+Theorem char_word18_w2n_n2w:
+  n <= 196607 ==>
+  (w2n (n2w n : 18 word) = n)
+Proof
+  strip_tac >>
+  simp [wordsTheory.w2n_n2w, wordsTheory.dimword_def,
+        arithmeticTheory.LESS_MOD]
+QED
+
+Theorem char_word18_n2w_w2n:
+  n2w (w2n (c : 18 word)) = c
+Proof
+  simp []
+QED
+
+Theorem char_num_of_int:
+  Num (&n) = n
+Proof
+  simp []
+QED
+
 Theorem char_is_digit_word18:
   char_is_digit (w2n (c : 18 word)) <=>
     (n2w 48 : 18 word) <=+ c /\ c <=+ (n2w 57 : 18 word)

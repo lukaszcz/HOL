@@ -61,7 +61,6 @@ val non_replay_exports : exemption list =
       "aut_accept_lang",
       "aut_accept_plus_allchar",
       "seq_head_tail",
-      "seq_nth_i_bound",
       "seq_nth_i_def"
     ] @
   exempt "smtfloat" fp_definition_reason [

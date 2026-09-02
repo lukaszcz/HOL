@@ -593,19 +593,29 @@ struct
 
   (* Numeral reduction shared by the regex-length and automaton rungs; the
      simpset is built once rather than per replay step. *)
+  val char_representation_bridge_theorems =
+    [smtstringz3Theory.char_word18_w2n_n2w,
+     smtstringz3Theory.char_word18_n2w_w2n,
+     smtstringz3Theory.char_num_of_int]
+
+  val regex_normalization_theorems =
+    [smtstringz3Theory.seq_unit_def,
+     smtstringz3Theory.seq_nth_i_bound] @
+    char_representation_bridge_theorems
+
   val regex_reduce_ss = simpLib.++
-    (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
-     intSimps.INT_REDUCE_ss)
+    (simpLib.++
+      (simpLib.++ (boolSimps.bool_ss, numSimps.REDUCE_ss),
+       intSimps.INT_REDUCE_ss),
+     simpLib.rewrites regex_normalization_theorems)
 
   fun regex_normalize term = Conv.QCONV
-    (simpLib.SIMP_CONV regex_reduce_ss [smtstringz3Theory.seq_unit_def])
+    (simpLib.SIMP_CONV regex_reduce_ss [])
     term
 
   fun replay_parametric_regex_length_prove target =
     let
-      val target_normalization = regex_normalize target
-      val normalized_target =
-        boolSyntax.rhs (Thm.concl target_normalization)
+      val normalized_target = target
       val target_premise =
         Lib.fst (boolSyntax.dest_imp normalized_target)
       fun instantiate rule =
@@ -622,13 +632,12 @@ struct
           val substitution =
             Lib.tryfind match_premise (boolSyntax.strip_conj rule_premise)
           val instance = Drule.INST_TY_TERM substitution rule
-          val instance = simpLib.SIMP_RULE regex_reduce_ss
-            [smtstringz3Theory.seq_unit_def] instance
+          val instance = simpLib.SIMP_RULE regex_reduce_ss [] instance
           val _ = Term.aconv (Thm.concl instance) normalized_target orelse
             raise ERR "replay_parametric_regex_length_prove"
               "specialized length rule has the wrong conclusion"
         in
-          Thm.EQ_MP (Thm.SYM target_normalization) instance
+          instance
         end
     in
       Lib.tryfind instantiate parametric_regex_length_rules
@@ -693,10 +702,7 @@ struct
       fun anchors term = HolKernel.find_terms is_aut_accept term
       val control_normalization = automaton_control_conv target
       val control_target = boolSyntax.rhs (Thm.concl control_normalization)
-      val regex_normalization = regex_normalize control_target
-      val target_normalization =
-        Thm.TRANS control_normalization regex_normalization
-      val normalized_target = boolSyntax.rhs (Thm.concl regex_normalization)
+      val normalized_target = control_target
       val target_anchors = anchors normalized_target
       fun instantiate theorem (schema_anchor, target_anchor) =
         let
@@ -705,8 +711,7 @@ struct
           val instance = Drule.INST_TY_TERM substitution theorem
           val instance = Conv.CONV_RULE automaton_control_conv instance
           val instance = simpLib.SIMP_RULE regex_reduce_ss
-            [smtstringz3Theory.seq_unit_def,
-             smtstringz3Theory.aut_accept_loop_empty] instance
+            [smtstringz3Theory.aut_accept_loop_empty] instance
           val oriented = Conv.CONV_RULE
             (Conv.QCONV (Conv.TOP_DEPTH_CONV
               SmtReplayCanon.reorient_equality_conv)) instance
@@ -732,7 +737,7 @@ struct
       val theorem = Lib.tryfind
         (fn (schema, anchors) => instantiate schema anchors) candidates
     in
-      Thm.EQ_MP (Thm.SYM target_normalization) theorem
+      Thm.EQ_MP (Thm.SYM control_normalization) theorem
     end
 
   fun is_regex_goal t = mentions_any regex_names t
@@ -741,32 +746,49 @@ struct
     if not (is_regex_goal t) then
       raise ERR "regex_prove" "no regex membership or aut.accept term"
     else
-      (* E1(b): general instantiation for the named parametric regex-length
-         schemas, with a loud shape boundary. *)
-      profile "regex(1)(parametric-length)"
-        replay_parametric_regex_length_prove t
-      handle Feedback.HOL_ERR _ =>
-      (* E1(b): structural instantiation plus proof-producing control-numeral
-         normalization for the named parametric automaton schemas. *)
-      profile "regex(2)(parametric-automaton)"
-        replay_parametric_automaton_prove t
-      handle Feedback.HOL_ERR _ =>
-      (* E1(b): bounded first-order search over the complete named regex
-         lemma set used by this replay family. *)
-      profile "regex(3)(bounded-metis)"
-        (fn target => with_metis_limit
-          (fn () => metisLib.METIS_PROVE regex_lemmas target) ()) t
-      handle Feedback.HOL_ERR _ =>
-      (* E1(b): the general normalized regex/automaton procedure is terminal
-         for the family and fails loudly when it cannot reconstruct a fact. *)
-      profile "regex(4)(normalized-metis)"
-        (fn target => with_metis_limit (fn () =>
-          Tactical.prove (target,
-            Tactical.THEN
-              (bossLib.RW_TAC
-                 (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-                 regex_normalizations,
-              bossLib.METIS_TAC regex_lemmas))) ()) t
+      let
+        (* Normalize once at the family boundary so every complete rung sees
+           the identical checked Char/Int representation.  Schema matching
+           remains on [regex_reduce_ss], so bridge knowledge still has one
+           owner. *)
+        val normalization = profile "regex(entry)(normalize-target)"
+          regex_normalize t
+        val normalized = boolSyntax.rhs (Thm.concl normalization)
+        fun prove normalized =
+          ((* E1(b): general instantiation for the named parametric
+               regex-length schemas, with a loud shape boundary. *)
+           profile "regex(1)(parametric-length)"
+             replay_parametric_regex_length_prove normalized
+           handle Feedback.HOL_ERR _ =>
+           (* E1(b): structural instantiation plus proof-producing
+              control-numeral normalization for the named parametric
+              automaton schemas. *)
+           profile "regex(2)(parametric-automaton)"
+             replay_parametric_automaton_prove normalized
+           handle Feedback.HOL_ERR _ =>
+           (* E1(b): bounded first-order search over the complete named regex
+              lemma set used by this replay family. *)
+           profile "regex(3)(bounded-metis)"
+             (fn target => with_metis_limit
+               (fn () => metisLib.METIS_PROVE regex_lemmas target) ())
+             normalized
+           handle Feedback.HOL_ERR _ =>
+           (* E1(b): the general normalized regex/automaton procedure is
+              terminal for the family and fails loudly when it cannot
+              reconstruct a fact. *)
+           profile "regex(4)(normalized-metis)"
+             (fn target => with_metis_limit (fn () =>
+               Tactical.prove (target,
+                 Tactical.THEN
+                   (bossLib.RW_TAC
+                      (simpLib.++
+                        (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                      regex_normalizations,
+                    bossLib.METIS_TAC regex_lemmas))) ()) normalized)
+        val theorem = prove normalized
+      in
+        Thm.EQ_MP (Thm.SYM normalization) theorem
+      end
 
   (* `rewrite` steps are a separate customer of the string theory.  Keep
      their entry point narrow: a failed string attempt must not turn an
