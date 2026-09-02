@@ -954,16 +954,64 @@ struct
       ``((~d /\ c) \/ (~d /\ r) \/ (c /\ r)) =
         ((c /\ ~d) \/ ((c = d) /\ r))``
 
+  val char_word_expansion_theorems =
+    [smtstringz3Theory.char_bit_word18,
+     smtstringz3Theory.char_is_digit_word18,
+     smtstringz3Theory.char_le_word18]
+
+  (* Preserve the production character prover's historical syntactic
+     admission boundary.  The prototype owner below is intentionally more
+     precise and theorem-driven; it must not widen this public prover. *)
   val char_decomposition_names =
     const_name_set
       (smtstring_consts "smtstringz3" ["char_bit", "char_is_digit"] @
        smtstring_consts "words" ["word_or"])
 
-  fun char_bitblast_prove t =
+  val char_word_domain_ss =
+    simpLib.++ (simpLib.empty_ss, numSimps.REDUCE_ss)
+
+  fun theorem_rewrite_lhs theorem =
     let
-      val _ =
-        if mentions_any char_decomposition_names t then ()
-        else raise ERR "char_prove" "no char decomposition atom"
+      val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+      val equation =
+        if boolSyntax.is_imp body then Lib.snd (boolSyntax.dest_imp body)
+        else body
+    in
+      Lib.fst (boolSyntax.dest_eq equation)
+    end
+
+  fun char_theorem_applies_at theorem term =
+    if Lib.can (Term.match_term (theorem_rewrite_lhs theorem)) term then
+      let
+        val rewritten = simpLib.SIMP_CONV char_word_domain_ss
+          [theorem] term
+      in
+        not (Term.aconv term (boolSyntax.rhs (Thm.concl rewritten)))
+      end
+      handle Conv.UNCHANGED => false
+    else false
+
+  (* Exact, theorem-driven ownership boundary for the character expansion
+     kit.  It recognizes only shapes to which one of the three checked
+     word18 bridge theorems actually applies, including the raw
+     [w2n c <= w2n d] order shape. *)
+  fun char_word_expansion_domain term =
+    let
+      fun visit term =
+        List.exists (fn theorem => char_theorem_applies_at theorem term)
+          char_word_expansion_theorems orelse
+        if Term.is_comb term then
+          let val (operator, operand) = Term.dest_comb term
+          in visit operator orelse visit operand end
+        else if Term.is_abs term then
+          visit (Lib.snd (Term.dest_abs term))
+        else false
+    in
+      visit term
+    end
+
+  fun char_word_normalization_core t =
+    let
       val compacted =
         Conv.TRY_CONV
           (Conv.TOP_DEPTH_CONV
@@ -974,10 +1022,28 @@ struct
       val simplified =
         simpLib.SIMP_CONV
           (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss))
-          [smtstringz3Theory.char_bit_word18,
-           smtstringz3Theory.char_is_digit_word18,
-           smtstringz3Theory.char_le_word18] compacted_t
+          char_word_expansion_theorems compacted_t
       val normalized = Thm.TRANS compacted simplified
+    in
+      normalized
+    end
+
+  fun char_word_expansion_conv t =
+    let
+      val _ =
+        if char_word_expansion_domain t then ()
+        else raise ERR "char_word_expansion_conv"
+          "term is outside the checked character expansion domain"
+    in
+      char_word_normalization_core t
+    end
+
+  fun char_bitblast_prove t =
+    let
+      val _ =
+        if mentions_any char_decomposition_names t then ()
+        else raise ERR "char_prove" "no char decomposition atom"
+      val normalized = char_word_normalization_core t
       val t' = boolSyntax.rhs (Thm.concl normalized)
       val thm = Tactical.prove (t', blastLib.BBLAST_TAC)
     in
