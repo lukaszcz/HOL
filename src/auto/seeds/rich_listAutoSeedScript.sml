@@ -41,6 +41,16 @@ val _ =
 val _ =
   export_at "simp" ("FOLDL_APPEND_AUTO", rich_listTheory.FOLDL_APPEND)
 
+(* src/HOL/List.thy:1824 @ f7e02b7e.  [nth_append_length] is simp there:
+   indexing an append at exactly the left length reaches the right
+   list's head.  HOL4 states it on a non-empty right list and declares
+   it nowhere.  Its [_plus] companion has no HOL4 counterpart, and the
+   conditional halves [nth_append_left] and [_right] are simp in
+   neither system; see the rest of the indexing family in
+   listAutoSeed. *)
+val _ =
+  export_at "simp" ("EL_LENGTH_APPEND_AUTO", rich_listTheory.EL_LENGTH_APPEND)
+
 val _ =
   List.app (clasetLib.export_rule sintro_spec)
     ["rich_list.IS_PREFIX_REFL", "rich_list.IS_SUFFIX_REFL"]

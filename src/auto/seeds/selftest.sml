@@ -528,3 +528,63 @@ val _ =
          (closes_within 20 (tableauLib.BLAST_TAC []))
          [([], ``(left : 'a set) UNION right = {} ==> left = {}``),
           ([], ``(left : 'a set) INTER right = left ==> left SUBSET right``)])
+
+(* src/HOL/Orderings.thy:620-658 @ f7e02b7e.  Isabelle's order solver
+   takes the axioms off the linorder class; the translation states them
+   as a premise about the relation instead, and a conditional rewrite
+   whose side condition is [transitive R] is then offered a condition it
+   cannot discharge from the premise sitting beside it.  What the seed
+   reaches is the simplifier's own condition solver, which has the simp
+   rules and no classical search, so the check goes through SIMP_CONV: a
+   check through AUTO_TAC says nothing, the search proving the
+   decomposition outright with the seed withheld.  Neither the rule nor
+   the goal is a corpus entry, and the rule is assumed rather than
+   proved because its content is irrelevant -- only its side condition
+   is under test. *)
+val order_side_condition_rule =
+  Thm.ASSUME
+    ``!R : 'a -> 'a -> bool.
+        relation$transitive R ==> (order_seed_p R <=> order_seed_q R)``
+
+val order_side_condition_goal =
+  ``!R : 'a -> 'a -> bool.
+      relation$WeakLinearOrder R ==> (order_seed_p R <=> order_seed_q R)``
+
+val _ =
+  check
+    ("an order premise discharges an order side condition",
+     fn () =>
+       let
+         val rewritten =
+           simpLib.SIMP_CONV (clasimpLib.clasimp_ss ())
+             [order_side_condition_rule] order_side_condition_goal
+       in
+         Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
+       end
+       handle Conv.UNCHANGED => false)
+
+(* src/HOL/List.thy:1830,1966-1969,2328,2337,1824 @ f7e02b7e.  None
+   of the goals below is a corpus entry, and none is one of the rules:
+   each indexes a list built by a constructor the seeds now push an
+   index through, and then asks something the arithmetic settles.
+   Excluding the seeds leaves every one of them with the index and the
+   constructor side by side. *)
+val _ =
+  check
+    ("the indexing seed views are usable",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!f xs index. index < LENGTH xs ==>
+                  EL index (MAP f (MAP f xs)) = f (f (EL index xs))``),
+          ([], ``!xs item index.
+                  index < LENGTH xs ==>
+                  EL index (LUPDATE item index xs) = item``),
+          ([], ``!xs count index.
+                  index < count ==> count <= LENGTH xs ==>
+                  EL index (TAKE count xs) = EL index xs``),
+          ([], ``!xs count index.
+                  index + count < LENGTH xs ==>
+                  EL index (DROP count xs) = EL (index + count) xs``),
+          ([], ``!xs item ys.
+                  EL (LENGTH xs) (xs ++ item::ys) = item``)])
