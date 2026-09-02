@@ -95,6 +95,15 @@ fun derive_clasimp_ss ss _ =
      sometimes.  The classical search does close some such goals on its
      own -- it is the rewriting that stops at the mismatch. *)
   |> (fn ss' => simpLib.++ (ss', boolSimps.ETA_ss))
+  (* The same mismatch one spelling further on.  Isabelle normalises the
+     natural number 1 to [Suc 0] -- One_nat_def is a simp rule there --
+     so a fact stated on SUC fires against a goal that bounds by a
+     numeral.  HOL4 normalises the other way, numerals being the normal
+     form, and a cited SUC rule then never meets the goal.  SUC_FILTER
+     closes the gap from HOL4's side, deriving the numeral-matching
+     variant of each SUC rule as it enters, which leaves HOL4's normal
+     form alone. *)
+  |> (fn ss' => simpLib.++ (ss', numSimps.SUC_FILTER_ss))
   |> simpLib.set_safe_solvers [safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
 

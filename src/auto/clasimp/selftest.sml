@@ -1018,6 +1018,31 @@ val _ =
        end
        handle Conv.UNCHANGED => false)
 
+(* The same mismatch one spelling further on.  Isabelle normalises the
+   numeral 1 to [Suc 0] -- One_nat_def is simp there -- so a rule stated
+   on SUC fires against a goal that spells the number as a numeral.
+   HOL4 normalises the other way, and the clasimpset carries
+   SUC_FILTER_ss to derive the numeral-matching variant of a SUC rule as
+   it enters.  The rule is assumed and handed to the simpset for the
+   same reason as the eta case above. *)
+val suc_matching_rule =
+  Thm.ASSUME ``!count. suc_matching_f (SUC count) = suc_matching_g count``
+
+val suc_matching_goal = ``suc_matching_f 3 = suc_matching_g 2``
+
+val _ =
+  check
+    ("the clasimpset matches a rule across a numeral and SUC",
+     fn () =>
+       let
+         val rewritten =
+           simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [suc_matching_rule]
+             suc_matching_goal
+       in
+         Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
+       end
+       handle Conv.UNCHANGED => false)
+
 val extensional_search_goals : Abbrev.goal list =
   [([],
     ``(\value : 'a. left value /\ right value) =
