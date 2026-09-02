@@ -87,6 +87,34 @@ val _ = tprint "Can still look at rule_induction data"
 val _ = if can ThmSetData.current_data{settype = "rule_induction"} then OK()
         else die ""
 
+(* rule inductions key on the clause hypothesis, which must be headed by a
+   constant; a variable there makes the set's apply_to_global raise, and a
+   rejected delta must not reach the theory segment *)
+local
+  val wellformed = ASSUME ``!P : num -> bool. T ==> (!x. even x ==> P x)``
+  val malformed = ASSUME ``!P : num -> bool. T ==> (!x. P x ==> T)``
+  fun count () = length (thy_rule_inductions (current_theory ()))
+  fun raises f = (f (); false) handle HOL_ERR _ => true
+  val _ = save_thm ("wellformed_rule_induction", wellformed)
+  val _ = save_thm ("malformed_rule_induction", malformed)
+  val n0 = count ()
+in
+val _ = tprint "Well-formed rule_induction export is persisted"
+val _ = export_rule_induction "wellformed_rule_induction"
+val _ = if count () = n0 + 1 then OK () else die "export was not recorded"
+val n1 = count ()
+val _ = tprint "Malformed rule_induction export is not persisted"
+val _ = if raises (fn () => export_rule_induction "malformed_rule_induction")
+           andalso count () = n1
+        then OK () else die "malformed export was accepted or recorded"
+val _ = tprint "Malformed stored [rule_induction] attribute is not persisted"
+val _ = if raises (fn () => ThmAttribute.store_at_attribute
+                     {name = "malformed_rule_induction",
+                      attrname = "rule_induction", args = [], thm = malformed})
+           andalso count () = n1
+        then OK () else die "malformed attribute was accepted or recorded"
+end
+
 val _ = shouldfail {testfn = quietly (in_repl_mode (xHol_reln "tr")),
                     printresult = (fn (th,_,_) => thm_to_string th),
                     printarg = K "With Unicode should fail",
