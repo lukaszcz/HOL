@@ -1,6 +1,6 @@
 (* Copyright (c) 2026 The HOL4 contributors. *)
 
-(* Fixed resource budget for checked FloatingPoint bit-blast replay. *)
+(* Fixed resource budgets for checked theory replay. *)
 
 structure SmtResource =
 struct
@@ -14,6 +14,15 @@ struct
   val max_z3_proof_bytes = max_proof_bytes
   val max_bitblast_step_time = Time.fromSeconds 10
   val max_bitblast_term_nodes = 200000
+  (* TASK_17 measurement, commit 1f0a12403, Poly/ML 5.9.2: the authentic
+     word8 COND_BBLAST bridge clause has 1,695,351 tree nodes and completed
+     in 40.158 s (the prior independent measurement was 40.318 s).  Small
+     word8 word_decide/rewrite/BV-th-lemma cases took 0.038/0.083/0.006 s.
+     Two million nodes admits that legitimate clause; 90 seconds gives more
+     than 2x time headroom.  TASK_15's owned-fragment precondition is the
+     primary defense; these limits are the heap-pressure backstop. *)
+  val max_bv_replay_step_time = Time.fromSeconds 90
+  val max_bv_replay_term_nodes = 2000000
   (* Discharging a deferred proof hypothesis runs a general first-order
      search, so bound it: an undischargeable hypothesis must fail with a
      diagnostic rather than hang the replay. *)
@@ -29,6 +38,14 @@ struct
   fun resource_feature category case_id =
     "resource-gate:" ^ category ^ ":" ^ case_id
 
+  fun max_step_time_for category =
+    if category = "BitVector" then max_bv_replay_step_time
+    else max_bitblast_step_time
+
+  fun max_term_nodes_for category =
+    if category = "BitVector" then max_bv_replay_term_nodes
+    else max_bitblast_term_nodes
+
   fun feature case_id = resource_feature "FloatingPoint" case_id
 
   fun proof_size_diagnostic_for category case_id observed =
@@ -40,13 +57,13 @@ struct
   fun step_time_diagnostic_for category case_id =
     resource_diagnostic_prefix category ^
     "limit=step-time; maximum=" ^
-    LargeInt.toString (Time.toSeconds max_bitblast_step_time) ^
+    LargeInt.toString (Time.toSeconds (max_step_time_for category)) ^
     " s; feature=" ^ resource_feature category case_id
 
   fun term_size_diagnostic_for category case_id observed =
     resource_diagnostic_prefix category ^
     "limit=term-size; observed=" ^ Int.toString observed ^
-    " nodes; maximum=" ^ Int.toString max_bitblast_term_nodes ^
+    " nodes; maximum=" ^ Int.toString (max_term_nodes_for category) ^
     " nodes; feature=" ^ resource_feature category case_id
 
   fun proof_size_diagnostic case_id observed =
@@ -90,7 +107,7 @@ struct
   val with_z3_proof_size_gate = with_proof_size_gate
 
   fun check_term_size_for category case_id observed =
-    if observed <= max_bitblast_term_nodes then
+    if observed <= max_term_nodes_for category then
       ()
     else
       raise_gate "check_term_size"
@@ -124,14 +141,15 @@ struct
     end
 
   fun check_resource_goal category case_id goal =
-    check_term_size_for category case_id
-      (term_nodes_up_to max_bitblast_term_nodes goal)
+    let val limit = max_term_nodes_for category in
+      check_term_size_for category case_id (term_nodes_up_to limit goal)
+    end
 
   fun check_bitblast_goal case_id goal =
     check_resource_goal "FloatingPoint" case_id goal
 
   fun with_resource_step_time category case_id f x =
-    Timeout.apply max_bitblast_step_time f x
+    Timeout.apply (max_step_time_for category) f x
     handle Timeout.TIMEOUT _ =>
       raise_gate "with_bitblast_step_time"
         (step_time_diagnostic_for category case_id)

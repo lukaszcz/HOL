@@ -13732,6 +13732,401 @@ in
     "BV complete route did not emit one aggregate profile event")
 end
 
+fun z3_bv_resource_gate_contract () =
+let
+  val word_goal =
+    ``(resource_x :word8) && (resource_x - 1w) =
+      resource_x - (resource_x && -resource_x)``
+  val rewrite_goal = boolSyntax.mk_eq (word_goal, boolSyntax.T)
+  val th_lemma_goal =
+    ``(0w = (resource_y :word8)) \/ resource_y ' 0 \/
+      resource_y ' 1 \/ resource_y ' 2 \/ resource_y ' 3 \/
+      resource_y ' 4 \/ resource_y ' 5 \/ resource_y ' 6 \/
+      resource_y ' 7``
+  val word_theorem = Z3_ProofReplay.word_decide_for_test word_goal
+  val hidden_target = boolSyntax.mk_eq (boolSyntax.T, boolSyntax.T)
+  val hidden_definition = SmtLib.EmittedDefinition {
+    emitted_symbol = SmtLib.EncodedSymbol {
+      hol_term = boolSyntax.T, smt_symbol = "task17.hidden-bv", arity = 0},
+    replay_head = boolSyntax.T,
+    unfolding = Thm.SYM (Drule.EQT_INTRO word_theorem)}
+  val hidden_theorem =
+    Z3_ProofReplay.bv_rewrite_prove_with_definitions_for_test
+      [hidden_definition] hidden_target
+  val rewrite_theorem =
+    Z3_ProofReplay.bv_rewrite_prove_for_test rewrite_goal
+  val th_lemma_theorem =
+    Z3_ProofReplay.bv_th_lemma_prove_for_test th_lemma_goal
+  (* Mirrors the real parser allocation: packed words are declared first,
+     followed by the width-exact sorted Boolean pool. *)
+  val lowered_packed0 = Term.mk_var
+    ("k!00", Term.type_of ``0w :word2``)
+  val lowered_packed1 = Term.mk_var
+    ("k!10", Term.type_of ``0w :word2``)
+  val lowered_bit0 = Term.mk_var ("k!20", Type.bool)
+  val lowered_bit1 = Term.mk_var ("k!30", Type.bool)
+  val lowered_bit2 = Term.mk_var ("k!40", Type.bool)
+  val lowered_bit3 = Term.mk_var ("k!50", Type.bool)
+  val lowered_goal = boolSyntax.mk_disj
+    (lowered_bit0, boolSyntax.mk_neg lowered_bit0)
+  val lowered_registered = HOLset.addList (Term.empty_tmset,
+    [lowered_packed0, lowered_packed1, lowered_bit0, lowered_bit1,
+     lowered_bit2, lowered_bit3])
+  val () = Profile.reset_all ()
+  val lowered_theorem =
+    Z3_ProofReplay.bv_rewrite_lowered_for_test
+      "4.11.2" [lowered_packed0, lowered_packed1]
+        lowered_registered lowered_goal
+  val lowered_profiles = Profile.results ()
+  val inferred_fp_theorem =
+    Z3_ProofReplay.bv_rewrite_inferred_lowered_for_test
+      "4.11.2" lowered_registered
+      [``smtfp_is_zero (task17_fp_context : (4,3) smtfp)``]
+      lowered_goal
+  val inferred_non_fp_declined =
+    ((ignore (Z3_ProofReplay.bv_rewrite_inferred_lowered_for_test
+        "4.11.2" lowered_registered [] lowered_goal);
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       not (SmtResource.is_resource_gate holerr))
+  fun lowered_profile_count name =
+    case List.find (fn (profile_name, _) => profile_name = name)
+        lowered_profiles of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val lone_registered = HOLset.add
+    (Term.empty_tmset, lowered_bit0)
+  val lone_declined =
+    ((ignore (Z3_ProofReplay.bv_rewrite_lowered_for_test
+        "4.11.2" [] lone_registered lowered_goal);
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       not (SmtResource.is_resource_gate holerr))
+  val generic_bit = Term.mk_var ("ordinary_bit", Type.bool)
+  val generic_goal = boolSyntax.mk_disj
+    (generic_bit, boolSyntax.mk_neg generic_bit)
+  val generic_registered = HOLset.add
+    (lowered_registered, generic_bit)
+  val generic_declined =
+    ((ignore (Z3_ProofReplay.bv_rewrite_lowered_for_test
+        "4.11.2" [lowered_packed0, lowered_packed1]
+          generic_registered generic_goal);
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       not (SmtResource.is_resource_gate holerr))
+  val wrong_sort_skolem = Term.mk_var ("k!20", intSyntax.int_ty)
+  val wrong_sort_goal = boolSyntax.mk_eq
+    (wrong_sort_skolem, wrong_sort_skolem)
+  val wrong_sort_registered = HOLset.addList (Term.empty_tmset,
+    [lowered_packed0, lowered_packed1, wrong_sort_skolem, lowered_bit1,
+     lowered_bit2, lowered_bit3])
+  val wrong_sort_declined =
+    ((ignore (Z3_ProofReplay.bv_rewrite_lowered_for_test
+        "4.11.2" [lowered_packed0, lowered_packed1]
+          wrong_sort_registered wrong_sort_goal);
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       not (SmtResource.is_resource_gate holerr))
+  val incomplete_registered = HOLset.addList (Term.empty_tmset,
+    [lowered_packed0, lowered_packed1, lowered_bit0, lowered_bit1,
+     lowered_bit2])
+  val incomplete_declined =
+    ((ignore (Z3_ProofReplay.bv_rewrite_lowered_for_test
+        "4.11.2" [lowered_packed0, lowered_packed1]
+          incomplete_registered lowered_goal);
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       not (SmtResource.is_resource_gate holerr))
+  val strict_packed = Term.mk_var
+    ("k!00", Term.type_of ``0w :word1``)
+  fun malformed_name_declined name =
+    let
+      val malformed_bit = Term.mk_var (name, Type.bool)
+      val malformed_goal = boolSyntax.mk_disj
+        (malformed_bit, boolSyntax.mk_neg malformed_bit)
+      val malformed_registered = HOLset.addList (Term.empty_tmset,
+        [strict_packed, malformed_bit])
+    in
+      ((ignore (Z3_ProofReplay.bv_rewrite_lowered_for_test
+          "4.11.2" [strict_packed] malformed_registered malformed_goal);
+        false)
+       handle Feedback.HOL_ERR holerr =>
+         not (SmtResource.is_resource_gate holerr))
+    end
+  val trailing_junk_declined = malformed_name_declined "k!10x0"
+  val signed_index_declined = malformed_name_declined "k!-10"
+  fun checked (label, target, theorem) =
+    (assert_no_hyps (label, theorem);
+     assert_concl_alpha (label, theorem, target);
+     check_oracle_tags label theorem)
+  fun duplicate 0 term = term
+    | duplicate n term =
+        let val shared = boolSyntax.mk_conj (term, term)
+        in duplicate (n - 1) shared end
+  val family_scan_target = boolSyntax.mk_conj
+    (duplicate 17 ``resource_scan_p:bool``, word_goal)
+  val family_scan =
+    Z3_ProofReplay.bv_family_measure_for_test family_scan_target
+  fun grow_past_budget term =
+    if SmtResource.term_nodes_up_to
+         SmtResource.max_bv_replay_term_nodes term >
+         SmtResource.max_bv_replay_term_nodes then term
+    else grow_past_budget (boolSyntax.mk_conj (term, term))
+  val pathological = duplicate 17 word_goal
+  val non_bv_pathological = grow_past_budget ``resource_p:bool``
+  val smt_ediv_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val ediv_definition_records = List.mapPartial
+    (fn ({emitted_head, arity, replay_head, ...} :
+          SmtLib.emitted_definition_spec) =>
+      if Term.same_const replay_head smt_ediv_total then
+        SOME (SmtLib.EncodedSymbol {hol_term = emitted_head,
+          smt_symbol = "task17.actual-ediv", arity = arity})
+      else NONE)
+    (SmtLib.all_emitted_definition_specs ())
+  val ediv_definitions =
+    SmtLib.emitted_definitions_for_records ediv_definition_records
+  val oversized_ediv = grow_past_budget
+    ``HolSmt$smt_ediv_total (resource_dividend:int) resource_divisor =
+      resource_dividend``
+  val ediv_later_called = ref false
+  val ediv_later_theorem = Z3_ProofReplay.bv_next_rung_for_test
+    (Z3_ProofReplay.bv_rewrite_prove_with_definitions_for_test
+      ediv_definitions)
+    (fn _ => (ediv_later_called := true; Thm.REFL boolSyntax.T))
+    oversized_ediv
+  val observed = SmtResource.term_nodes_up_to
+    SmtResource.max_bv_replay_term_nodes pathological
+  val later_called = ref false
+  val later_theorem = Z3_ProofReplay.bv_next_rung_for_test
+    Z3_ProofReplay.bv_rewrite_prove_for_test
+    (fn _ => (later_called := true; Thm.REFL boolSyntax.T))
+    non_bv_pathological
+  val unrelated_definition_declined =
+    ((ignore
+        (Z3_ProofReplay.bv_rewrite_prove_with_definitions_for_test
+          [hidden_definition]
+          (boolSyntax.mk_eq (boolSyntax.F, boolSyntax.F)));
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       not (SmtResource.is_resource_gate holerr))
+  fun duplicate_theorem 0 theorem = theorem
+    | duplicate_theorem n theorem =
+        duplicate_theorem (n - 1) (Thm.CONJ theorem theorem)
+  val expansion_theorem = duplicate_theorem 21
+    (Thm.REFL ``resource_expansion_x :word8``)
+  val expansion_observed = SmtResource.term_nodes_up_to
+    SmtResource.max_bv_replay_term_nodes
+      (Thm.concl expansion_theorem)
+  val expansion_definition = SmtLib.EmittedDefinition {
+    emitted_symbol = SmtLib.EncodedSymbol {
+      hol_term = boolSyntax.T, smt_symbol = "task17.oversized-bv", arity = 0},
+    replay_head = boolSyntax.T,
+    unfolding = Thm.SYM (Drule.EQT_INTRO expansion_theorem)}
+  val expansion_hidden_target = boolSyntax.T
+  val expansion_visible_target = boolSyntax.mk_conj
+    (boolSyntax.T, ``resource_visible_x :word8 = resource_visible_x``)
+  fun expansion_decide _ = expansion_theorem
+  fun expect_expansion_gate (label, target) =
+    let
+      val later_called = ref false
+      val propagated =
+        (Z3_ProofReplay.bv_next_rung_for_test
+           (Z3_ProofReplay.bv_rewrite17_with_workers_for_test
+             Rewrite.PURE_REWRITE_CONV expansion_decide
+             [expansion_definition])
+           (fn _ =>
+             (later_called := true; raise Fail "later rewrite rung"))
+           target;
+         die ("FAIL: " ^ label ^ " did not gate after expansion"))
+        handle Feedback.HOL_ERR holerr => holerr
+      val expected = SmtResource.term_size_diagnostic_for
+        "BitVector" "rewrite(17)" expansion_observed
+    in
+      assert (not (!later_called),
+        label ^ " executed a later rung after its expanded-size gate");
+      assert (SmtResource.is_resource_gate propagated,
+        label ^ " lost its structured expanded-size gate");
+      assert (Feedback.message_of propagated = expected,
+        label ^ " changed its expanded-size diagnostic")
+    end
+  val envelope_later_called = ref false
+  val envelope_gate =
+    (Z3_ProofReplay.bv_next_rung_for_test
+       (Z3_ProofReplay.bv_rewrite17_with_workers_for_test
+         (fn _ => fn _ => raise Timeout.TIMEOUT Time.zeroTime)
+         expansion_decide [hidden_definition])
+       (fn _ =>
+         (envelope_later_called := true; raise Fail "later rewrite rung"))
+       hidden_target;
+     die "FAIL: rewrite(17) envelope did not convert injected timeout")
+    handle Feedback.HOL_ERR holerr => holerr
+  val envelope_expected = SmtResource.step_time_diagnostic_for
+    "BitVector" "rewrite(17)"
+  val nested_fallback_called = ref false
+  val nested_diagnostic = SmtResource.term_size_diagnostic_for
+    "BitVector" "nested-rewrite-rung"
+      (SmtResource.max_bv_replay_term_nodes + 1)
+  val nested_gate =
+    (SmtResource.check_term_size_for "BitVector" "nested-rewrite-rung"
+       (SmtResource.max_bv_replay_term_nodes + 1);
+     die "FAIL: nested BV rewrite resource probe did not gate")
+    handle Feedback.HOL_ERR holerr => holerr
+  val nested_propagated =
+    (Z3_ProofReplay.bv_next_rung_for_test
+       (fn _ => raise Feedback.HOL_ERR nested_gate)
+       (fn _ => (nested_fallback_called := true; raise Fail "fallback"))
+       boolSyntax.T;
+     die "FAIL: nested BV rewrite resource refusal did not propagate")
+    handle Feedback.HOL_ERR holerr => holerr
+  fun expect_gate case_id prove =
+    (ignore (prove pathological);
+     die ("FAIL: pathological " ^ case_id ^ " goal did not resource-gate"))
+    handle Feedback.HOL_ERR holerr =>
+      let
+        val expected = SmtResource.term_size_diagnostic_for
+          "BitVector" case_id observed
+      in
+        assert (SmtResource.is_resource_gate holerr,
+          case_id ^ " relabelled its resource refusal");
+        assert (Feedback.message_of holerr = expected,
+          case_id ^ " changed its structured resource diagnostic");
+        assert (not (String.isSubstring "no rung"
+          (Feedback.message_of holerr)),
+          case_id ^ " resource refusal was presented as no rung")
+      end
+  fun expect_non_bv_decline (label, prove) =
+    (ignore (prove non_bv_pathological);
+     die ("FAIL: " ^ label ^ " admitted an oversized non-BV goal"))
+    handle Feedback.HOL_ERR holerr =>
+      assert (not (SmtResource.is_resource_gate holerr),
+        label ^ " charged BitVector budget before family admission")
+in
+  checked ("admitted BV word_decide", word_goal, word_theorem);
+  checked ("definition-hidden BV rewrite", hidden_target, hidden_theorem);
+  checked ("admitted BV rewrite(16-18)", rewrite_goal, rewrite_theorem);
+  checked ("admitted BV th-lemma", th_lemma_goal, th_lemma_theorem);
+  checked ("registered lowered-BV rewrite", lowered_goal, lowered_theorem);
+  checked ("FP-owned inferred lowered-BV rewrite", lowered_goal,
+    inferred_fp_theorem);
+  assert (lowered_profile_count "rewrite(18)(BBLAST)_OK" = 1 andalso
+      lowered_profile_count "rewrite(16)(WORD_ARITH_CONV)" = 0 andalso
+      lowered_profile_count
+        "rewrite(17)(translator-definitions+word)" = 0,
+    "registered lowered-BV residue did not select direct BBLAST only");
+  assert (lone_declined,
+    "lone registered name-shaped Boolean was admitted as lowered BV");
+  assert (inferred_non_fp_declined,
+    "ordinary BV skolems were misclassified as inferred fpa2bv residue");
+  assert (generic_declined,
+    "generic Boolean was admitted through an unrelated FP allocation");
+  assert (wrong_sort_declined,
+    "registered non-Boolean skolem was admitted as lowered BV");
+  assert (incomplete_declined,
+    "incomplete fpa2bv allocation was admitted as lowered BV");
+  assert (trailing_junk_declined,
+    "fpa2bv identifier with trailing junk was prefix-parsed");
+  assert (signed_index_declined,
+    "signed fpa2bv identifier was admitted as a decimal index");
+  assert (observed = SmtResource.max_bv_replay_term_nodes + 1,
+    "pathological shared BV goal did not cross the exact node boundary");
+  assert (#found family_scan andalso #visited family_scan < 256,
+    "BV family admission did not traverse the shared term as a DAG");
+  assert (not (!nested_fallback_called),
+    "nested BV resource refusal fell through to the next rewrite rung");
+  assert (SmtResource.is_resource_gate nested_propagated,
+    "nested BV rewrite resource refusal lost its structured marker");
+  assert (Feedback.message_of nested_propagated = nested_diagnostic,
+    "nested BV rewrite resource refusal changed its diagnostic");
+  assert (!later_called andalso
+      Thm.concl later_theorem ~~ boolSyntax.mk_eq
+        (boolSyntax.T, boolSyntax.T),
+    "oversized non-BV rewrite did not decline into its later rung");
+  assert (List.length ediv_definitions = 1,
+    "actual smt_ediv_total regression lacked its emitted definition");
+  assert (!ediv_later_called andalso
+      Thm.concl ediv_later_theorem ~~ boolSyntax.mk_eq
+        (boolSyntax.T, boolSyntax.T),
+    "oversized smt_ediv_total rewrite charged BitVector budget instead " ^
+    "of reaching its later rung");
+  assert (unrelated_definition_declined,
+    "unrelated emitted BV definition falsely admitted a non-BV rewrite");
+  assert (expansion_observed =
+      SmtResource.max_bv_replay_term_nodes + 1,
+    "oversized definition did not cross the expanded node boundary");
+  expect_expansion_gate
+    ("hidden-definition rewrite(17)", expansion_hidden_target);
+  expect_expansion_gate
+    ("visible-definition rewrite(17)", expansion_visible_target);
+  assert (not (!envelope_later_called),
+    "rewrite(17) envelope refusal executed a later rung");
+  assert (SmtResource.is_resource_gate envelope_gate andalso
+      Feedback.message_of envelope_gate = envelope_expected,
+    "rewrite(17) envelope changed its structured time diagnostic");
+  List.app expect_non_bv_decline
+    [("word_decide", Z3_ProofReplay.word_decide_for_test),
+     ("rewrite(16-18)", Z3_ProofReplay.bv_rewrite_prove_for_test),
+     ("bv-th-lemma", Z3_ProofReplay.bv_th_lemma_prove_for_test)];
+  expect_gate "word-decide" Z3_ProofReplay.word_decide_for_test;
+  expect_gate "rewrite(16)" Z3_ProofReplay.bv_rewrite_prove_for_test;
+  expect_gate "bv-th-lemma"
+    Z3_ProofReplay.bv_th_lemma_prove_for_test
+end
+
+fun z3_bv_resource_gate_outer_handlers_contract () =
+let
+  val diagnostic = SmtResource.term_size_diagnostic_for
+    "BitVector" "injected-outer-handler"
+    (SmtResource.max_bv_replay_term_nodes + 1)
+  val gate =
+    (SmtResource.check_term_size_for "BitVector" "injected-outer-handler"
+       (SmtResource.max_bv_replay_term_nodes + 1);
+     die "FAIL: injected outer-handler gate did not fire")
+    handle Feedback.HOL_ERR holerr => holerr
+  fun check_handler (label, handler) =
+    let
+      val fallback_called = ref false
+      val propagated =
+        (handler
+           (fn () => raise Feedback.HOL_ERR gate)
+           (fn () => fallback_called := true) ();
+         die ("FAIL: " ^ label ^ " consumed its recursive resource gate"))
+        handle Feedback.HOL_ERR holerr => holerr
+    in
+      assert (not (!fallback_called),
+        label ^ " executed a later outer rewrite rung after a resource gate");
+      assert (SmtResource.is_resource_gate propagated,
+        label ^ " lost the recursive resource marker");
+      assert (Feedback.message_of propagated = diagnostic,
+        label ^ " changed the recursive resource diagnostic")
+    end
+  val basic_fallback_called = ref false
+  val basic_propagated =
+    (Z3_ProofReplay.bv_th_lemma_basic_branch_for_test
+       (fn _ => raise Feedback.HOL_ERR gate)
+       (fn _ =>
+         (basic_fallback_called := true; Thm.REFL boolSyntax.T))
+       (fn _ =>
+         (basic_fallback_called := true; Thm.REFL boolSyntax.T))
+       ``(resource_outer_x :word8) = resource_outer_x``;
+     die "FAIL: basic BV branch consumed its resource gate")
+    handle Feedback.HOL_ERR holerr => holerr
+in
+  assert (not (!basic_fallback_called),
+    "basic BV branch called array/METIS fallback after a resource gate");
+  assert (SmtResource.is_resource_gate basic_propagated,
+    "basic BV branch lost the resource marker");
+  assert (Feedback.message_of basic_propagated = diagnostic,
+    "basic BV branch changed the resource diagnostic");
+  List.app check_handler
+    [("skeleton recursive handler",
+       Z3_ProofReplay.skeleton_recursive_rewrite_for_test),
+     ("equality recursive handler",
+       Z3_ProofReplay.equality_recursive_rewrite_for_test),
+     ("abstraction recursive handler",
+       Z3_ProofReplay.abstraction_recursive_rewrite_for_test)]
+end
+
 fun z3_bv_width12_dense_literal_exact_lhs_normalization () =
 let
   val goal =
@@ -14848,7 +15243,7 @@ let
       assert_no_hyps (name, theorem);
       check_oracle_tags name theorem
     end
-  fun bblast_counterexample_is_structured_failure () =
+  fun non_bv_goal_declines_before_word_decision () =
     let
       val () = Profile.reset_all ()
       val rejected =
@@ -14858,8 +15253,8 @@ let
       val bblast = profile_call_count
         "word-decide(1)(BBLAST)"
     in
-      assert (rejected andalso bblast > 0,
-        "word-decider BBLAST counterexample escaped its fallback ladder")
+      assert (rejected andalso bblast = 0,
+        "non-BV goal reached BBLAST instead of declining at admission")
     end
 in
   assert (List.null plain_definitions,
@@ -14869,7 +15264,7 @@ in
       direct_proof_text),
      ("nested emitted-definition word replay", nested_expected,
       nested_proof_text)];
-  bblast_counterexample_is_structured_failure ()
+  non_bv_goal_declines_before_word_decision ()
 end
 
 fun z3_trans_star_chain_search_replay_no_metis_success () =
@@ -15002,7 +15397,9 @@ let
       "((declare-fun x () Int) \
         \(proof ((_ th-lemma arith nla 6) (>= (* x x) 0))))"),
     ("bv/bit-blast",
-      "((proof ((_ th-lemma bv bit-blast 1) (= false false))))")
+      "((declare-fun x () (_ BitVec 8)) \
+        \(proof ((_ th-lemma bv bit-blast 1) \
+        \(= (bvadd x #x00) x))))")
   ]
 in
   let
@@ -15260,11 +15657,12 @@ end
 fun z3_arith_bv_fallback_resource_gate_propagates () =
 let
   val fallback_called = ref false
+  val over_limit = SmtResource.max_bv_replay_term_nodes + 1
   val expected = SmtResource.term_size_diagnostic_for
-    "BitVector" "arith-tagged-bv" 200001
+    "BitVector" "arith-tagged-bv" over_limit
   val gate =
     (SmtResource.check_term_size_for
-       "BitVector" "arith-tagged-bv" 200001;
+       "BitVector" "arith-tagged-bv" over_limit;
      die "FAIL: arith-tagged BV resource probe did not gate")
     handle Feedback.HOL_ERR holerr => holerr
   val propagated =
@@ -18315,6 +18713,13 @@ let
     "resource-gated: sequence-replay; limit=term-size; " ^
     "observed=200001 nodes; maximum=200000 nodes; " ^
     "feature=resource-gate:Sequence:seq"
+  val bv_term_diagnostic =
+    "resource-gated: bitvector-replay; limit=term-size; " ^
+    "observed=2000001 nodes; maximum=2000000 nodes; " ^
+    "feature=resource-gate:BitVector:word-decide"
+  val bv_time_diagnostic =
+    "resource-gated: bitvector-replay; limit=step-time; maximum=90 s; " ^
+    "feature=resource-gate:BitVector:bv-th-lemma"
   val fp_continued = ref false
   fun expect_gate label expected thunk =
     (thunk ();
@@ -18335,6 +18740,10 @@ in
     "bit-blast step-time budget is not 10 seconds");
   assert (SmtResource.max_bitblast_term_nodes = 200000,
     "bit-blast term-size budget is not 200k nodes");
+  assert (Time.toSeconds SmtResource.max_bv_replay_step_time = 90,
+    "BV replay step-time budget is not 90 seconds");
+  assert (SmtResource.max_bv_replay_term_nodes = 2000000,
+    "BV replay term-size budget is not 2M nodes");
   SmtResource.check_proof_size "z3-proof-text" 16777216;
   SmtResource.check_term_size "comparison-goal" 200000;
   SmtResource.check_bitblast_goal "small-goal" boolSyntax.T;
@@ -18347,6 +18756,12 @@ in
       (fn () => raise Timeout.TIMEOUT Time.zeroTime) ());
   expect_gate "Sequence term-size cap" seq_diagnostic (fn () =>
     SmtResource.check_term_size_for "Sequence" "seq" 200001);
+  expect_gate "BV term-size cap" bv_term_diagnostic (fn () =>
+    SmtResource.check_term_size_for
+      "BitVector" "word-decide" 2000001);
+  expect_gate "BV step-time cap" bv_time_diagnostic (fn () =>
+    SmtResource.with_resource_step_time "BitVector" "bv-th-lemma"
+      (fn () => raise Timeout.TIMEOUT Time.zeroTime) ());
   expect_gate "FP ladder resource propagation" fp_rung_diagnostic (fn () =>
     ignore (SmtFpProve.next_rung
       (fn _ =>
@@ -19429,6 +19844,10 @@ let
       cpc_fastpath_error_and_cache_atomicity_contract),
     ("z3_bv_complete_route_phase_profiles_success",
       z3_bv_complete_route_phase_profiles_success),
+    ("z3_bv_resource_gate_contract",
+      z3_bv_resource_gate_contract),
+    ("z3_bv_resource_gate_outer_handlers_contract",
+      z3_bv_resource_gate_outer_handlers_contract),
     ("z3_bv_width12_dense_literal_exact_lhs_normalization",
       z3_bv_width12_dense_literal_exact_lhs_normalization),
     ("z3_commuted_rewrite_orientation_replay_success",

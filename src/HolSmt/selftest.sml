@@ -1927,6 +1927,8 @@ in
     (``(smtfp_to_ubv RTZ
          (smtfp_bits 0w 4w 8w : (4,3) smtfp) : word4) = 3w``,
       [thm_Z3p_v4]),
+    (* TASK_17 public parser/replay pin: Z3 lowers this symbolic FP relation
+       to a packed word plus its coherent Boolean bit allocation. *)
     (``smtfp_lt (x : (10,5) smtfp) y ==> ~smtfp_lt y x``,
       [thm_Z3p_v4]),
     (``!x : (4,3) smtfp. ~smtfp_lt x x``,

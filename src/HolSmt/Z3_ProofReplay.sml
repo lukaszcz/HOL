@@ -28,6 +28,7 @@ local
   exception FP_REWRITE_ERROR of exn
   exception BAG_REWRITE_ERROR of exn
   exception STRING_REWRITE_ERROR of exn
+  exception BV_REWRITE_ERROR of exn
 
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
   val ALL_DISTINCT_CONS = HolSmtTheory.ALL_DISTINCT_CONS
@@ -244,9 +245,31 @@ local
 
   val type_contains = Library.type_contains  (* shared, see Library.sml *)
 
+  fun term_contains_measure pred tm =
+    let
+      val seen = ref Term.empty_tmset
+      val visited = ref 0
+      fun visit subterm =
+        if HOLset.member (!seen, subterm) then false
+        else
+          (visited := !visited + 1;
+           seen := HOLset.add (!seen, subterm);
+           pred subterm orelse
+           case Term.dest_term subterm of
+             Term.COMB (rator, rand) => visit rator orelse visit rand
+           | Term.LAMB (_, body) => visit body
+           | _ => false)
+      val found = visit tm
+    in
+      {found = found, visited = !visited}
+    end
+
+  fun term_contains_type_measure pred =
+    term_contains_measure
+      (fn subterm => type_contains pred (Term.type_of subterm))
+
   fun term_contains_type pred tm =
-    Lib.can (HolKernel.find_term
-      (fn subtm => type_contains pred (Term.type_of subtm))) tm
+    #found (term_contains_type_measure pred tm)
 
   fun has_arith_atom tm =
     term_contains_type
@@ -256,6 +279,142 @@ local
 
   fun has_word_atom tm =
     term_contains_type wordsSyntax.is_word_type tm
+
+  fun exact_decimal_index function_name text =
+    let
+      val n = String.size text
+      fun all_digits i = i = n orelse
+        (Char.isDigit (String.sub (text, i)) andalso all_digits (i + 1))
+      val _ = n > 0 andalso all_digits 0 orelse
+        raise ERR function_name
+          "fpa2bv symbol has a malformed numeric identifier"
+    in
+      case Int.fromString text of
+        SOME index => index
+      | NONE => raise ERR function_name
+          "fpa2bv numeric identifier is outside the supported range"
+    end
+
+  fun fp_k_index version var =
+    let
+      val name = Lib.fst (Term.dest_var var)
+      val {prefix, packed_suffix} = fp_skolem_naming version
+      val prefix_size = String.size prefix
+      val _ = String.isPrefix prefix name orelse
+        raise ERR "fp_k_index"
+          ("fpa2bv symbol violates the naming contract for Z3 anchor " ^
+           version)
+      val digits = String.extract (name, prefix_size, NONE)
+      val n = String.size digits
+      val _ = n > 0 andalso String.sub (digits, n - 1) = packed_suffix orelse
+        raise ERR "fp_k_index"
+          ("fpa2bv packed symbol violates the suffix contract for Z3 " ^
+           "anchor " ^ version)
+    in
+      exact_decimal_index "fp_k_index"
+        (String.substring (digits, 0, n - 1))
+    end
+
+  fun fp_inferred_packed_vars_in version registered =
+    List.filter
+      (fn var => wordsSyntax.is_word_type (Term.type_of var) andalso
+        Lib.can (fp_k_index version) var)
+      (HOLset.listItems registered)
+
+  fun fp_inferred_packed_vars_with_provenance version registered assertions =
+    if List.exists SmtFpProve.has_fp_theory_term assertions then
+      fp_inferred_packed_vars_in version registered
+    else
+      []
+
+  (* Validate the complete fpa2bv allocation at once.  A packed word owns
+     exactly its declared width of Boolean skolems; no unallocated Boolean
+     fpa2bv names may remain.  Z3 may interleave unrelated skolem identifiers,
+     so ordering is deterministic but identifiers need not be consecutive.
+     Returning [] on an incoherent allocation makes admission fail closed. *)
+  fun fp_per_bit_definitions_in version packed_vars registered =
+  let
+    fun compare_index (left, right) =
+      Int.compare (fp_k_index version left, fp_k_index version right)
+    val bv_vars = Listsort.sort compare_index packed_vars
+    val _ = List.all (fn bv =>
+      wordsSyntax.is_word_type (Term.type_of bv) andalso
+      HOLset.member (registered, bv)) bv_vars orelse
+      raise ERR "fp_per_bit_definitions"
+        "packed fpa2bv symbol is absent or has the wrong sort"
+    val bool_vars = Listsort.sort compare_index
+      (List.filter
+        (fn var => Term.type_of var = Type.bool andalso
+          Lib.can (fp_k_index version) var)
+        (HOLset.listItems registered))
+    fun allocate ([], remaining, definitions) =
+          if List.null remaining then List.rev definitions
+          else raise ERR "fp_per_bit_definitions"
+            "unallocated fpa2bv Boolean skolems"
+      | allocate (bv :: bvs, remaining, definitions) =
+          let
+            val width = Arbnum.toInt (wordsSyntax.size_of bv)
+            val _ = List.length remaining >= width orelse
+              raise ERR "fp_per_bit_definitions"
+                "too few fpa2bv Boolean skolems"
+            val bits = List.take (remaining, width)
+            val remaining = List.drop (remaining, width)
+            fun definition (offset, bit) =
+              boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
+                (numSyntax.term_of_int offset, bv))
+          in
+            allocate (bvs, remaining,
+              List.revAppend
+                (List.map definition
+                   (ListPair.zip (List.tabulate (width, Lib.I), bits)),
+                 definitions))
+          end
+  in
+    allocate (bv_vars, bool_vars, [])
+  end
+  handle Fail _ => []
+       | Option.Option => []
+       | Overflow => []
+       | Feedback.HOL_ERR _ => []
+
+  fun fp_packed_vars (state : state) =
+    case List.map
+        (fn ({bv_var, ...} : bit_decomposition) => bv_var)
+        (#bit_decompositions state) of
+      [] =>
+        fp_inferred_packed_vars_with_provenance
+          (#z3_version state) (#var_set state)
+          (HOLset.listItems (#allowed_asserted_hyps state))
+    | recorded => recorded
+
+  fun fp_per_bit_definitions (state : state) =
+    fp_per_bit_definitions_in (#z3_version state)
+      (fp_packed_vars state) (#var_set state)
+
+  (* A word can disappear syntactically after fpa2bv lowering while its
+     validated per-bit skolems remain.  Only bits from a complete coherent
+     allocation are provenance; a lone or merely name-shaped variable is
+     not. *)
+  fun has_allocated_fp_bv_atom_in version packed registered target =
+    let
+      val definitions = fp_per_bit_definitions_in
+        version packed registered
+      val allocated = HOLset.addList (Term.empty_tmset,
+        List.map (Lib.fst o boolSyntax.dest_eq) definitions)
+    in
+      not (List.null definitions) andalso
+      #found (term_contains_measure
+        (fn subterm => Term.is_var subterm andalso
+          HOLset.member (allocated, subterm)) target)
+    end
+
+  fun has_allocated_fp_bv_atom (state : state) target =
+    has_allocated_fp_bv_atom_in (#z3_version state)
+      (fp_packed_vars state) (#var_set state) target
+
+  fun require_bv_family function_name target =
+    if has_word_atom target then ()
+    else raise ERR function_name "goal is outside the bit-vector family"
 
   fun is_function_type ty =
     Lib.can Type.dom_rng ty
@@ -1816,35 +1975,150 @@ local
       handle HolSatLib.SAT_cex _ =>
         raise ERR name "word decision procedure found a counterexample"
 
-  fun word_decide target =
+  fun bv_resource_prove_after_admission case_id prove target =
+    SmtResource.with_resource_step_time "BitVector" case_id
+      (fn target =>
+        (SmtResource.check_resource_goal "BitVector" case_id target;
+         prove target)) target
+
+  fun bv_resource_prove case_id prove target =
+    (require_bv_family case_id target;
+     bv_resource_prove_after_admission case_id prove target)
+
+  fun bv_next_rung first second target =
+    first target
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+        second target
+
+  fun word_decide_raw target =
     (* E1(a): BBLAST decides the finite bit-vector fragment. *)
     profile "word-decide(1)(BBLAST)"
       (word_decider_attempt "word_decide(BBLAST)"
         (Feedback.trace ("print blast counterexamples", 0)
           blastLib.BBLAST_PROVE)) target
 
-  (* Unfold only definitions selected by this translation's EncodedSymbol
-     records, then retry the complete word decision procedures.  Requiring an
-     actual rewrite keeps the rung fail-closed for unrelated proof terms. *)
-  fun unfold_translation_definitions_then_word state target =
+  fun word_decide target =
+    bv_resource_prove "word-decide" word_decide_raw target
+
+  fun occurring_translation_definitions definitions target =
+    List.filter
+      (fn definition =>
+        let
+          val head = SmtLib.emitted_definition_head definition
+          fun matches subterm =
+            if Term.is_const head andalso Term.is_const subterm then
+              Term.same_const head subterm
+            else
+              subterm ~~ head
+        in
+          #found (term_contains_measure matches target)
+        end)
+      definitions
+
+  (* A definition can admit the BV rewrite rung only when its registered,
+     kernel-checked unfolding itself exposes the word family.  Merely
+     occurring in the target is not enough: integer totalizations, for
+     example, are emitted definitions but do not make an integer goal BV. *)
+  fun definition_exposes_bv_family definition =
+    has_word_atom (Thm.concl
+      (SmtLib.emitted_definition_theorem definition))
+
+  datatype bv_rewrite_route =
+      DirectBV of SmtLib.emitted_definition list
+    | LoweredBV
+    | DefinedBV of SmtLib.emitted_definition list
+    | OutsideBV
+
+  fun classify_bv_rewrite direct_bv lowered_bv definitions target =
     let
-      val definitions = List.map SmtLib.emitted_definition_theorem
-        (#translation_definitions state)
+      val occurring = List.filter definition_exposes_bv_family
+        (occurring_translation_definitions definitions target)
+    in
+      if direct_bv target then DirectBV occurring
+      else if lowered_bv target then LoweredBV
+      else if List.null occurring then OutsideBV
+      else DefinedBV occurring
+    end
+
+  (* One resource envelope owns the complete rewrite(17) operation: both
+     size checks, the kernel normalization, and the final BBLAST.  Filtering
+     definitions before entering this boundary prevents unrelated emitted
+     definitions from admitting or charging a non-BV rewrite. *)
+  fun rewrite17_under_budget normalize decide definitions target =
+    let
+      val theorems = List.map SmtLib.emitted_definition_theorem definitions
       val _ = not (List.null definitions) orelse
-        raise ERR "unfold_translation_definitions_then_word"
+        raise ERR "rewrite17_under_budget"
           "translation emitted no definitional symbols"
-      val normalization = Rewrite.PURE_REWRITE_CONV definitions target
-      val normalized = boolSyntax.rhs (Thm.concl normalization)
+      val normalization = normalize theorems target
+      val (normalization_lhs, normalized) =
+        boolSyntax.dest_eq (Thm.concl normalization)
+      val _ = normalization_lhs ~~ target orelse
+        raise ERR "rewrite17_under_budget"
+          "normalization theorem has the wrong left-hand side"
       val _ = not (Term.aconv target normalized) orelse
-        raise ERR "unfold_translation_definitions_then_word"
+        raise ERR "rewrite17_under_budget"
           "translation definitions did not occur in rewrite"
-      val decision = word_decide normalized
+      val _ = require_bv_family "rewrite17_under_budget" normalized
+      val _ = SmtResource.check_resource_goal
+        "BitVector" "rewrite(17)" normalized
+      val decision = decide normalized
     in
       Thm.EQ_MP (Thm.SYM normalization) decision
     end
     handle Conv.UNCHANGED =>
-      raise ERR "unfold_translation_definitions_then_word"
+      raise ERR "rewrite17_under_budget"
         "translation definitions did not occur in rewrite"
+
+  fun rewrite17 normalize decide definitions target =
+    bv_resource_prove_after_admission "rewrite(17)"
+      (rewrite17_under_budget normalize decide definitions) target
+
+  fun bv_rewrite_prove_with_context rewrite_profile direct_bv lowered_bv
+      definitions target =
+    let
+      val route = classify_bv_rewrite
+        direct_bv lowered_bv definitions target
+      fun rewrite16 target =
+        bv_resource_prove_after_admission "rewrite(16)"
+          (Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV" target
+            (rewrite_profile "rewrite(16)(WORD_ARITH_CONV)"
+              (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
+                word_arith_prove))) target
+      fun rewrite17_production definitions target =
+        rewrite_profile "rewrite(17)(translator-definitions+word)"
+          (rewrite17 Rewrite.PURE_REWRITE_CONV word_decide_raw definitions)
+          target
+      fun rewrite18 case_id target =
+        bv_resource_prove_after_admission case_id
+          (rewrite_profile "rewrite(18)(BBLAST)"
+            (word_decider_attempt "z3_rewrite(BBLAST)"
+              (Feedback.trace ("print blast counterexamples", 0)
+                blastLib.BBLAST_PROVE))) target
+    in
+      case route of
+        DirectBV occurring =>
+          bv_next_rung rewrite16
+            (if List.null occurring then
+               rewrite18 "rewrite(18)"
+             else
+               bv_next_rung (rewrite17_production occurring)
+                 (rewrite18 "rewrite(18)")) target
+      | LoweredBV =>
+          (* Boolean fpa2bv residue bypasses inapplicable WORD_ARITH and
+             definition scans, but uses the same gated complete BBLAST. *)
+          rewrite18 "rewrite(18)(lowered-bv)" target
+      | DefinedBV occurring => rewrite17_production occurring target
+      | OutsideBV =>
+          raise ERR "bv_rewrite_prove" "goal is outside the BV rewrite family"
+    end
+
+  fun bv_rewrite_prove rewrite_profile (state : state) =
+    bv_rewrite_prove_with_context rewrite_profile has_word_atom
+      (has_allocated_fp_bv_atom state) (#translation_definitions state)
 
   fun fp_bit_decompositions (state : state) =
     List.map
@@ -1887,84 +2161,6 @@ local
     in
       List.filter eligible (fp_bit_decompositions state)
     end
-
-  fun fp_k_index version var =
-    let
-      val name = Lib.fst (Term.dest_var var)
-      val {prefix, packed_suffix} = fp_skolem_naming version
-      val prefix_size = String.size prefix
-      val _ = String.isPrefix prefix name orelse
-        raise ERR "fp_k_index"
-          ("fpa2bv symbol violates the naming contract for Z3 anchor " ^
-           version)
-      val digits = String.extract (name, prefix_size, NONE)
-      val n = String.size digits
-      val _ = n > 0 andalso String.sub (digits, n - 1) = packed_suffix orelse
-        raise ERR "fp_k_index"
-          ("fpa2bv packed symbol violates the suffix contract for Z3 " ^
-           "anchor " ^ version)
-    in
-      Option.valOf (Int.fromString (String.substring (digits, 0, n - 1)))
-    end
-
-  fun fp_inferred_packed_vars (state : state) =
-    List.filter
-      (fn var => wordsSyntax.is_word_type (Term.type_of var) andalso
-        Lib.can (fp_k_index (#z3_version state)) var)
-      (HOLset.listItems (#var_set state))
-
-  fun fp_packed_vars (state : state) =
-    case List.map #bv_var (#bit_decompositions state) of
-      [] => fp_inferred_packed_vars state
-    | recorded => recorded
-
-  (* fpa2bv names packed words k!00, k!10, ... and then allocates one
-     Boolean k!N0 per bit, in the LSB-to-MSB argument order of Z3's internal
-     [mkbv].  A direct atom rewrite need not include a standalone packed-word
-     decomposition, so infer its word skolem only when no parser record is
-     available.  Exact type, name, width, and allocation checks below keep
-     this fallback confined to that proof shape. *)
-  fun fp_per_bit_definitions (state : state) =
-  let
-    fun compare_index (left, right) =
-      Int.compare
-        (fp_k_index (#z3_version state) left,
-         fp_k_index (#z3_version state) right)
-    val bv_vars = Listsort.sort compare_index
-      (fp_packed_vars state)
-    val bool_vars = Listsort.sort compare_index
-      (List.filter
-        (fn var => Term.type_of var = Type.bool andalso
-          Lib.can (fp_k_index (#z3_version state)) var)
-        (HOLset.listItems (#var_set state)))
-    fun allocate ([], remaining, definitions) =
-          if List.null remaining then List.rev definitions
-          else raise ERR "fp_per_bit_definitions"
-            "unallocated fpa2bv Boolean skolems"
-      | allocate (bv :: bvs, remaining, definitions) =
-          let
-            val width = Arbnum.toInt (wordsSyntax.size_of bv)
-            val _ = List.length remaining >= width orelse
-              raise ERR "fp_per_bit_definitions"
-                "too few fpa2bv Boolean skolems"
-            val bits = List.take (remaining, width)
-            val remaining = List.drop (remaining, width)
-            fun definition (offset, bit) =
-              boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
-                (numSyntax.term_of_int offset, bv))
-          in
-            allocate (bvs, remaining,
-              List.revAppend
-                (List.map definition
-                   (ListPair.zip (List.tabulate (width, Lib.I), bits)),
-                 definitions))
-          end
-  in
-    allocate (bv_vars, bool_vars, [])
-  end
-  handle Fail _ => []
-       | Option.Option => []
-       | Overflow => []
 
   (* This is Boolean normalization underneath a negated existential.
      HOL's simplifier descends through every quantifier, so this procedure
@@ -2075,6 +2271,23 @@ local
        "[" ^ String.concatWith ", " attempts ^ "]; conclusion=" ^
        Library.term_to_string target)
 
+  datatype recursive_rewrite_site =
+      RecursiveSkeleton
+    | RecursiveEquality
+    | RecursiveAbstraction
+
+  (* A recursive rewrite returns through a fresh [z3_rewrite] exception
+     boundary.  Re-wrap only resource gates so that the enclosing rewrite
+     handler's ordinary HOL_ERR fallback cannot consume them.  All other
+     recursive failures retain the existing fall-through semantics. *)
+  fun recursive_rewrite_boundary _ recurse input =
+    recurse input
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+      else
+        raise Feedback.HOL_ERR holerr
+
   fun z3_rewrite (state, t) =
   let
     val (l, r) = boolSyntax.dest_eq t
@@ -2107,7 +2320,8 @@ local
                 raise ERR "skeleton_congruence"
                   "recursive residue did not strictly shrink"
               val target = boolSyntax.mk_eq (left, right)
-              val (state', theorem) = z3_rewrite (state, target)
+              val (state', theorem) = recursive_rewrite_boundary
+                RecursiveSkeleton z3_rewrite (state, target)
               (* Contextual deferral is not recursive progress: lifting its
                  self-assumption would replace one whole obligation by a
                  harder residue.  Other checked definition hypotheses stay. *)
@@ -2414,26 +2628,11 @@ local
           (simpLib.SIMP_PROVE (bossLib.srw_ss())
             [HolSmtTheory.smt_rdiv_eq_div]) t
       val thm =
-        (* E1(c): redundant word-arithmetic cache; terminal BBLAST remains
-           the complete coverage path when fast paths are disabled. *)
-        Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV" t
-          (rewrite_profile "bit-vectors" "rewrite(16)(WORD_ARITH_CONV)"
-            (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
-              word_arith_prove)) t
-        handle Feedback.HOL_ERR _ =>
-
-        (* E1(a): emitted-definition unfolding ends in complete BV blast. *)
-        rewrite_profile "bit-vectors" "rewrite(17)(translator-definitions+word)"
-          (unfold_translation_definitions_then_word state) t
-        handle Feedback.HOL_ERR _ =>
-
-        (* E1(a): BBLAST decides the finite bit-vector fragment. *)
-        (rewrite_profile "bit-vectors" "rewrite(18)(BBLAST)"
-          (word_decider_attempt "z3_rewrite(BBLAST)"
-            (Feedback.trace("print blast counterexamples", 0)
-              blastLib.BBLAST_PROVE)) t
-
-        handle Feedback.HOL_ERR _ =>
+        (bv_rewrite_prove (rewrite_profile "bit-vectors") state t
+         handle Feedback.HOL_ERR holerr =>
+           if SmtResource.is_resource_gate holerr then
+             raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+           else
 
         (* Before arithmetic, use the semantic bridge whenever simp can
            discharge the non-zero divisor condition. *)
@@ -2482,7 +2681,8 @@ local
             (ll, rl, fn sub_thm =>
               Thm.AP_THM (Thm.AP_TERM (Term.rator (Term.rator l)) sub_thm) lr)
           else raise ERR "z3_rewrite" "no shared equality argument"
-        val (state', sub_thm) = z3_rewrite
+        val (state', sub_thm) = recursive_rewrite_boundary
+          RecursiveEquality z3_rewrite
           (state, boolSyntax.mk_eq (sub_l, sub_r))
         val lifted = lift sub_thm
         val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl lifted) t) lifted
@@ -2501,7 +2701,8 @@ local
         val state_ref = ref state
         val thm = abs_congruence (fn (lbody, rbody) =>
           let
-            val (state', body_thm) = z3_rewrite
+            val (state', body_thm) = recursive_rewrite_boundary
+              RecursiveAbstraction z3_rewrite
               (!state_ref, boolSyntax.mk_eq (lbody, rbody))
           in
             state_ref := state'; body_thm
@@ -2578,6 +2779,7 @@ local
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
        | STRING_REWRITE_ERROR error => raise error
+       | BV_REWRITE_ERROR error => raise error
 
   fun z3_rewrite_entry (state, target) =
   let
@@ -2700,7 +2902,7 @@ local
       (state_cache_thm state thm, thm)
     end)
 
-  val bv_th_lemma_prove =
+  val bv_th_lemma_prove_raw =
   let
     (* Keep SIMP_TAC for conditional rewrites.  A 2026-07-08 Poly/ML 5.9.2
        retry with PURE_REWRITE_TAC did not reproduce the old segfault in the
@@ -2722,6 +2924,15 @@ local
         Tactical.THEN
           (COND_REWRITE_TAC, Tactic.CONV_TAC PROFILED_BBLAST_CONV))
   end
+
+  fun bv_th_lemma_prove target =
+    bv_resource_prove "bv-th-lemma" bv_th_lemma_prove_raw target
+
+  fun bv_th_lemma_basic_branch prove decline fallback target =
+    if has_word_atom target then
+      bv_next_rung prove fallback target
+    else
+      decline target
 
   fun arith_bv_fallback t fallback holerr =
     if SmtResource.is_resource_gate holerr then
@@ -2812,11 +3023,11 @@ local
         else metis attempts
 
       fun bv attempts =
-        if has_word_atom t then
-          ((* E1(a): the terminal BBLAST route decides bit-vectors. *)
-           profile "th_lemma[basic](4)(bv)" bv_th_lemma_prove t
-           handle Feedback.HOL_ERR _ => array ("bv" :: attempts))
-        else array attempts
+        bv_th_lemma_basic_branch
+          (* E1(a): the terminal BBLAST route decides bit-vectors. *)
+          (profile "th_lemma[basic](4)(bv)" bv_th_lemma_prove)
+          (fn _ => array attempts)
+          (fn _ => array ("bv" :: attempts)) t
 
       fun arith attempts =
         if has_arith_atom t then
@@ -4157,8 +4368,47 @@ in
   val ground_subterm_eval_max_calls_for_test =
     ground_subterm_eval_max_calls
   val word_decide_for_test = word_decide
+  fun bv_family_measure_for_test target =
+    term_contains_type_measure wordsSyntax.is_word_type target
+  fun bv_rewrite_prove_for_test target =
+    bv_rewrite_prove_with_context profile has_word_atom (fn _ => false)
+      [] target
+  fun bv_rewrite_prove_with_definitions_for_test definitions target =
+    bv_rewrite_prove_with_context profile has_word_atom (fn _ => false)
+      definitions target
+  fun bv_rewrite_lowered_for_test version packed registered target =
+    bv_rewrite_prove_with_context profile (fn _ => false)
+      (has_allocated_fp_bv_atom_in version packed registered) [] target
+  fun bv_rewrite_inferred_lowered_for_test version registered assertions
+      target =
+    let val packed = fp_inferred_packed_vars_with_provenance
+      version registered assertions
+    in
+      bv_rewrite_lowered_for_test version packed registered target
+    end
+  fun bv_rewrite17_with_workers_for_test normalize decide definitions target =
+    rewrite17 normalize decide definitions target
+  val bv_next_rung_for_test = bv_next_rung
   val bv_th_lemma_prove_for_test = bv_th_lemma_prove
+  val bv_th_lemma_basic_branch_for_test = bv_th_lemma_basic_branch
   val arith_bv_fallback_for_test = arith_bv_fallback
+
+  fun recursive_rewrite_outer_for_test site recurse fallback input =
+    ((recursive_rewrite_boundary site recurse input
+      handle Feedback.HOL_ERR _ => fallback input)
+     handle BV_REWRITE_ERROR error => raise error)
+
+  fun skeleton_recursive_rewrite_for_test recurse fallback input =
+    recursive_rewrite_outer_for_test
+      RecursiveSkeleton recurse fallback input
+
+  fun equality_recursive_rewrite_for_test recurse fallback input =
+    recursive_rewrite_outer_for_test
+      RecursiveEquality recurse fallback input
+
+  fun abstraction_recursive_rewrite_for_test recurse fallback input =
+    recursive_rewrite_outer_for_test
+      RecursiveAbstraction recurse fallback input
 
   fun initial_replay_state allowed_asserted_hyps definitions proof : state = {
     allowed_asserted_hyps = allowed_asserted_hyps,
