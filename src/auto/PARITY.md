@@ -44,7 +44,7 @@ An Isabelle proof can name a fact HOL4 states nowhere -- neither in a library no
 - `list_L6487_nth_nth_transpose_sorted (filter_equals_takeWhile_sorted_rev[OF sorted, of i])`
 - `list_L6669_sorted_key_list_of_set_eq_Nil_iff (fold_insort_key.remove)`
 - `list_L6770_sorted_key_list_of_set_unique (idem_if_sorted_distinct)`
-- `list_L6835_sorted_list_of_set_lessThan_Suc (lessThan_atLeast0, sorted_list_of_set_range, upt_Suc_append)`
+- `list_L6835_sorted_list_of_set_lessThan_Suc (sorted_list_of_set_range)`
 - `list_L6873_nth_sorted_list_of_set_greaterThanAtMost (nth_sorted_list_of_set_greaterThanLessThan[of n "Suc j" i], greaterThanLessThan_eq)`
 - `list_L7823_append_listrel1I (append_eq_appendI)`
 - `list_L7922_wf_listrel1_iff (lists_accD, lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]])`
@@ -101,12 +101,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 14 | 11 | 0 | 0 | 0.6 | 45 | 616 |
-| Sets | 328 | 123 | 196 | 9 | 0 | 3.8 | 6 | 2430 |
-| List/map | 416 | 5 | 402 | 9 | 0 | 8.2 | 0 | 1868 |
-| Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
-| Presburger | 34 | 30 | 3 | 1 | 0 | 1.4 | 0 | 0 |
+| Sets | 328 | 135 | 185 | 8 | 0 | 4.2 | 6 | 2430 |
+| List/map | 416 | 6 | 407 | 3 | 0 | 8.2 | 0 | 1868 |
+| Linarith | 46 | 43 | 3 | 0 | 0 | 0.6 | 0 | 0 |
+| Presburger | 34 | 30 | 3 | 1 | 0 | 1.8 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **857** | **223** | **615** | **19** | **0** | **8.2** | **0** | **2430** |
+| **Total** | **857** | **235** | **610** | **12** | **0** | **8.2** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
