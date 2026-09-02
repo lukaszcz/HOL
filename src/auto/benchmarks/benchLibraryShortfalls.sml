@@ -31,8 +31,7 @@ val translation : benchLib.shortfall list =
 val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
    "list_L1511_split_list_last_propE", "list_L1789_filter_eq_Cons_iff",
-   "list_L1903_map_equality_iff", "list_L1921_in_set_conv_nth",
-   "list_L2412_hd_drop_conv_nth", "list_L2576_dropWhile_id",
+   "list_L1921_in_set_conv_nth", "list_L2576_dropWhile_id",
    "list_L3400_foldr_conv_foldl", "list_L3404_foldl_conv_foldr",
    "list_L3417_foldl_cong", "list_L3424_foldl_append",
    "list_L3434_foldl_map",
@@ -128,19 +127,19 @@ val list_decomposition_witnesses =
      "list_L1590_concat_eq_append_conv", "list_L7823_append_listrel1I",
      "list_L8673_these_set_code"]
 
-(* The name table can now carry an instantiation, so what is left here
-   is the citations whose instantiating terms have not been
-   transcribed.  Four of the class closed once the identity key was
-   supplied; these did not. *)
-val instantiated_fact_citation =
-  classified "instantiated fact citation"
-    ("the source method instantiates its cited facts and the name "
-     ^ "table still resolves the citation to the general theorem, "
-     ^ "whose left-hand side does not occur in the goal")
+(* Re-measured at ten times the budget: all four still return nothing.
+   The citation they were filed under is not what stands in the way --
+   each resolves, [OF assms] discharging a premise from the goal's own
+   assumption and [of P xs] instantiating at variables the goal already
+   has.  What is left is the search. *)
+val search_returns_nothing_at_ten_times_the_budget =
+  classified "search returns nothing at ten times the budget"
+    ("the cited facts resolve and are supplied, and the assigned "
+     ^ "search returns neither a proof nor a residual in 300 "
+     ^ "seconds")
     ["list_L1460_split_list_propE",
      "list_L1484_split_list_first_propE",
-     "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id",
-     "list_L5301_nth_rotate1"]
+     "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id"]
 
 (* Diagnosed: a fact reaches a goal as an inserted premise, and a
    premise's type variables are fixed -- only its term variables can be
@@ -170,8 +169,7 @@ val zip_against_map =
 val over_budget_with_no_residual =
   classified "over budget with no residual"
     ("the assigned tactic did not return within the budget")
-    ["list_L1789_filter_eq_Cons_iff", "list_L1903_map_equality_iff",
-     "list_L1921_in_set_conv_nth", "list_L2412_hd_drop_conv_nth",
+    ["list_L1789_filter_eq_Cons_iff", "list_L1921_in_set_conv_nth",
      "list_L7998_listrel_rtrancl_refl", "map_L899_map_add_subsumed1",
      "list_L3400_foldr_conv_foldl", "list_L3404_foldl_conv_foldr",
      "list_L3424_foldl_append", "list_L3434_foldl_map",
@@ -223,16 +221,16 @@ val filter_normalisation =
 
 val indexing_through_list_constructors =
   classified "indexing through list constructors"
-    ("the goal characterises a list operation by index, and the "
-     ^ "residual is either an EL application whose list is built by "
-     ^ "::, MAP, ZIP, LUPDATE, TAKE or DROP -- which the simpset does "
-     ^ "not push EL through, so the two index forms never meet -- or "
-     ^ "the index characterisation itself, which neither "
-     ^ "simplification nor search reduces")
+    ("the goal characterises a list operation by index.  The "
+     ^ "simpset pushes EL through MAP, ZIP, LUPDATE, TAKE and DROP, "
+     ^ "so what is left is a constructor it does not push EL "
+     ^ "through -- :: against an index written [n - 1] or [PRE n] -- "
+     ^ "a side condition on one of those rules that the goal does "
+     ^ "not supply, or the index characterisation itself, which "
+     ^ "neither simplification nor search reduces")
     ["list_L1856_nth_Cons_pos", "list_L2163_last_list_update",
      "list_L2480_take_update_cancel", "list_L2483_drop_update_cancel",
-     "list_L2834_set_zip", "list_L3128_list_all2_map1",
-     "list_L3132_list_all2_map2", "list_L3168_list_eq_iff_zip_eq",
+     "list_L2834_set_zip", "list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth",
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost",
@@ -312,28 +310,37 @@ val propositional_rearrangement =
     ["list_L5001_in_set_replicate", "list_L5008_Ball_set_replicate",
      "list_L5012_Bex_set_replicate", "option_L111_map_option_eq_Some"]
 
-(* [source_sorted] is now [source_sorted_wrt], so these are no longer
-   about the two readings disagreeing.  What is left is HOL4 stating
-   the fact about its own adjacent SORTED: the goal is in the
-   all-pairs reading, the ambient bridge carries it across only where
-   the relation is concrete, and for a relation variable the side
-   condition stands. *)
-val sorted_against_sorted_wrt =
-  classified "SORTED against sorted_wrt"
-    ("the goal is in the all-pairs reading and the HOL4 fact that "
-     ^ "would close it is stated on the adjacent SORTED; the ambient "
-     ^ "bridge crosses between them only when the relation is "
-     ^ "concrete enough to settle its transitivity")
+(* [source_sorted] is now [source_sorted_wrt], and the ambient bridge
+   has crossed: every residual below is stated on HOL4's own adjacent
+   SORTED, with nothing of the all-pairs reading left in it.  So the
+   class is no longer about the two readings at all -- it is what the
+   engine cannot do with SORTED once it has it. *)
+val sortedness_beyond_the_bridge =
+  classified "sortedness beyond the bridge"
+    ("the residual is stated on HOL4's adjacent SORTED, so the "
+     ^ "ambient bridge has crossed; what is left is a fact about "
+     ^ "SORTED itself -- an order step between two of its members, "
+     ^ "or its closure under a list operation, which needs an "
+     ^ "induction the search does not perform")
     ["list_L415_strict_sorted_simps_2",
-     "list_L6049_sorted_iff_nth_mono_less",
-     "list_L6053_sorted_iff_nth_mono", "list_L6061_sorted_iff_nth_Suc",
-     "list_L6104_sorted_butlast",
+     "list_L6053_sorted_iff_nth_mono", "list_L6104_sorted_butlast",
      "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
 
-(* Measured: supplying the order axioms ambiently, so the bridge could
-   discharge its side condition here, made this goal worse rather than
-   better -- the bridge reads left to right, so it replaced the
-   all-pairs hypothesis by the adjacent one and took the chain away. *)
+(* Both sides of the residual equivalence are the same statement, one
+   with its two antecedents conjoined and one with them curried, so
+   the goal is a propositional tautology that the assigned method
+   leaves standing. *)
+val conjoined_against_curried_antecedents =
+  classified "conjoined against curried antecedents"
+    ("the residual is an equivalence between one statement with its "
+     ^ "antecedents conjoined and the same statement with them "
+     ^ "curried, which the assigned method does not close")
+    ["list_L6049_sorted_iff_nth_mono_less"]
+
+(* The order axioms are supplied ambiently now -- the seeds take an
+   order premise apart into its components -- so the side conditions
+   that read them are discharged, and this residual is what is left
+   over: the components are there and nothing chains with them. *)
 val order_premise_left_inert =
   classified "order premise left inert"
     ("the residual is a transitivity step whose two halves are both "
@@ -346,12 +353,12 @@ val order_premise_left_inert =
 
 val numeral_against_Suc =
   classified "numeral against Suc"
-    ("the goal bounds a length by the numeral 1 and the cited facts "
-     ^ "-- le_Suc_eq and length_Suc_conv -- are stated on SUC; "
-     ^ "nothing rewrites between the two spellings, and with the "
-     ^ "bound written SUC 0 both facts fire and leave only the two "
-     ^ "list shapes")
-    ["list_L5964_sorted_wrt01"]
+    ("the residual has the same successor in both spellings -- "
+     ^ "[1 + index] on one side and [SUC index] on the other -- and "
+     ^ "neither is HOL4's normal form for the other, so the cited "
+     ^ "fact stands in the assumptions stating the goal it was cited "
+     ^ "for")
+    ["list_L5301_nth_rotate1"]
 
 val characterisation_is_the_goal =
   classified "characterisation is the goal"
@@ -420,7 +427,8 @@ val rotation_by_iteration =
 val decision_procedure_scope =
   classified "decision procedure scope"
     ("the goal is outside what the HOL4 counterpart of the cited "
-     ^ "decision procedure decides")
+     ^ "decision procedure decides: the cited facts are supplied and "
+     ^ "the procedure rejects what is left of the goal")
     ["list_L6315_sort_replicate",
      "list_L6835_sorted_list_of_set_lessThan_Suc"]
 
@@ -499,7 +507,7 @@ val execution : benchLib.shortfall list =
   transpose_column_lengths @
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
-  instantiated_fact_citation @
+  search_returns_nothing_at_ten_times_the_budget @
   instantiated_fact_not_applied @
   zip_against_map @
   over_budget_with_no_residual @
@@ -514,7 +522,8 @@ val execution : benchLib.shortfall list =
   fold_against_a_set_aggregate @
   finite_cardinality @
   propositional_rearrangement @
-  sorted_against_sorted_wrt @
+  sortedness_beyond_the_bridge @
+  conjoined_against_curried_antecedents @
   order_premise_left_inert @
   numeral_against_Suc @
   characterisation_is_the_goal @
