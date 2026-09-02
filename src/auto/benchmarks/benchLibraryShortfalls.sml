@@ -162,6 +162,17 @@ val instantiated_fact_not_applied =
      ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
+(* Lost to the goal reduction that closed the Sigma class: reducing a
+   projection changes this goal's shape and fastforce no longer closes
+   it.  Recorded rather than traded away silently -- the reduction is
+   +7 / -1 over the corpus. *)
+val paired_collect_after_reduction =
+  classified "paired collect after reduction"
+    ("the goal is a monotonicity over a set former on pairs, and "
+     ^ "reducing the projections it carries leaves a shape the "
+     ^ "method's fastforce does not close")
+    ["product_type_L1100_Collect_split_mono_strong"]
+
 val zip_against_map =
   classified "zip against map"
     ("ZIP against MAP is not normalised")
@@ -391,8 +402,8 @@ val blast_search_reports_no_proof =
      ^ "reconstructible proof")
     ["list_L7771_wf_measures",
      "list_L7861_listrel1_converse", "list_L8006_listrel_Nil",
-     "list_L9013_list_all_transfer", "map_L789_in_graphI",
-     "map_L792_in_graphD", "map_L828_finite_graph_map_of",
+     "list_L9013_list_all_transfer",
+     "map_L828_finite_graph_map_of",
      "option_L59_split_option_ex"]
 
 val integer_interval =
@@ -467,15 +478,12 @@ val character_arithmetic =
 
 val sigma_and_times_rule_forms =
   classified "Sigma and Times rule forms"
-    ("Isabelle states these about the constant Sigma, whose claset "
-     ^ "carries SigmaI, SigmaE and mem_Sigma_iff; the translation "
-     ^ "inlines the definition, so the goal reaching HOL4 is about "
-     ^ "FST and SND of an explicit pair, and a claset rule is about "
-     ^ "a formula rather than a projection")
-    ["product_type_L1028_SigmaI", "product_type_L1031_SigmaE",
-     "product_type_L1040_SigmaD1", "product_type_L1043_SigmaD2",
-     "product_type_L1046_SigmaE2",
-     "product_type_L1073_mem_Sigma_iff",
+    ("the translation inlines Sigma, so the goal reaching HOL4 is "
+     ^ "about FST and SND of an explicit pair; the engines now reduce "
+     ^ "those on the way in, and what is left in this class needs the "
+     ^ "pair itself taken apart -- surjective pairing -- rather than "
+     ^ "a projection applied to one")
+    ["product_type_L1031_SigmaE",
      "product_type_L1082_Times_subset_cancel2",
      "product_type_L1088_Collect_case_prod_Sigma",
      "product_type_L1109_split_paired_Ball_Sigma",
@@ -494,6 +502,7 @@ val execution : benchLib.shortfall list =
   instantiated_fact_citation @
   instantiated_fact_not_applied @
   zip_against_map @
+  paired_collect_after_reduction @
   over_budget_with_no_residual @
   arithmetic_residual_after_unfolding @
   beta_redex_in_a_branch @
