@@ -1117,8 +1117,10 @@ local
      implementation below, however, is considerably faster.
   *)
   fun z3_def_axiom (state, t) =
-    (Library.require_fastpath "Z3 def-axiom proforma";
-     (state, Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms t))
+    Library.require_fastpath "Z3 def-axiom proforma" t
+      (fn target =>
+        (state,
+         Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms target)) t
     handle Feedback.HOL_ERR _ =>
     (* Array-encoded Set literals appear in Z3's Tseitin clauses as a
        select of the parsed EMPTY/UNIV predicate.  Normalize those recorded
@@ -2232,8 +2234,8 @@ local
         (state, rewrite_profile "cached-checked-theorems"
            "rewrite(3)(cache-fp)"
            (fn target =>
-             (Library.require_fastpath "Z3 rewrite FP theorem cache";
-              state_exact_cached_thm state target)) t)
+             Library.require_fastpath "Z3 rewrite FP theorem cache" target
+               (state_exact_cached_thm state) target) t)
         handle Feedback.HOL_ERR _ =>
           let
             val eligible_decompositions =
@@ -2293,8 +2295,8 @@ local
               (state, rewrite_profile "proforma-fastpaths"
                 "rewrite(9)(proforma)"
                 (fn target =>
-                  (Library.require_fastpath "Z3 rewrite proforma";
-                   Z3_ProformaThms.prove_rewrite target))
+                  Library.require_fastpath "Z3 rewrite proforma" target
+                    Z3_ProformaThms.prove_rewrite target)
                 t)
               handle Feedback.HOL_ERR _ =>
                 let
@@ -2316,8 +2318,8 @@ local
       (state, rewrite_profile "cached-checked-theorems"
         "rewrite(11)(cache)"
         (fn target =>
-          (Library.require_fastpath "Z3 rewrite theorem cache";
-           state_inst_cached_thm state target)) t)
+          Library.require_fastpath "Z3 rewrite theorem cache" target
+            (state_inst_cached_thm state) target) t)
 
     handle Feedback.HOL_ERR _ =>
 
@@ -2414,10 +2416,10 @@ local
       val thm =
         (* E1(c): redundant word-arithmetic cache; terminal BBLAST remains
            the complete coverage path when fast paths are disabled. *)
-        (Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV";
-         rewrite_profile "bit-vectors" "rewrite(16)(WORD_ARITH_CONV)"
-           (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
-             word_arith_prove) t)
+        Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV" t
+          (rewrite_profile "bit-vectors" "rewrite(16)(WORD_ARITH_CONV)"
+            (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
+              word_arith_prove)) t
         handle Feedback.HOL_ERR _ =>
 
         (* E1(a): emitted-definition unfolding ends in complete BV blast. *)
@@ -2656,8 +2658,8 @@ local
       case cache_policy of
         D1PerformanceCache =>
           (* E1(c): fallback re-proves this redundant cache's family. *)
-          (Library.require_fastpath "Z3 th-lemma theorem cache";
-           state_inst_cached_thm state target)
+          Library.require_fastpath "Z3 th-lemma theorem cache" target
+            (state_inst_cached_thm state) target
       | SemanticProofLocalLookup =>
           (* E1(a): finite checked-state lookup and instantiation is complete. *)
           state_inst_cached_thm state target
@@ -2674,8 +2676,9 @@ local
           (* E1(c): th-lemma proformas are redundant performance caches. *)
           profile ("th_lemma[" ^ name ^ "](1)(proforma)")
             (fn target =>
-              (Library.require_fastpath "Z3 th-lemma proforma";
-               Z3_ProformaThms.prove Z3_ProformaThms.th_lemma_thms target))
+              Library.require_fastpath "Z3 th-lemma proforma" target
+                (Z3_ProformaThms.prove
+                  Z3_ProformaThms.th_lemma_thms) target)
             t')
          handle Feedback.HOL_ERR _ => general ())
       else general ()
@@ -2705,18 +2708,19 @@ local
        entering functional tests. *)
     val COND_REWRITE_TAC = simpLib.SIMP_TAC
       simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
+    val PROFILED_BBLAST_CONV =
+      blastLib.BBLAST_CONV_WITH_PROFILES
+        (profile "th_lemma[bv](3)(COND_BBLAST:WORD_SIMP_CONV)")
+        (profile "th_lemma[bv](3)(COND_BBLAST:BIT_TAUT_CONV)")
   in
     fn t =>
-      (* E1(c): WORD_BIT_EQ is a shortcut before complete BV blasting. *)
-      profile "th_lemma[bv](2)(WORD_BIT_EQ)" (fn () =>
-        (Library.require_fastpath "Z3 th-lemma WORD_BIT_EQ";
-         Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
-           (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
-           wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t))) ()
-      handle Feedback.HOL_ERR _ =>
-        (* E1(a): conditional normalization plus BBLAST decides BV. *)
-        profile "th_lemma[bv](3)(COND_BBLAST)" Tactical.prove (t,
-          Tactical.THEN (COND_REWRITE_TAC, blastLib.BBLAST_TAC))
+      (* E1(a): conditional normalization plus BBLAST decides BV.  Profile
+         the actual simplification and propositional phases inside the
+         complete converter; no speculative word-equality shortcut
+         precedes this route. *)
+      profile "th_lemma[bv](3)(COND_BBLAST)" Tactical.prove (t,
+        Tactical.THEN
+          (COND_REWRITE_TAC, Tactic.CONV_TAC PROFILED_BBLAST_CONV))
   end
 
   fun arith_bv_fallback t fallback holerr =
@@ -4153,6 +4157,7 @@ in
   val ground_subterm_eval_max_calls_for_test =
     ground_subterm_eval_max_calls
   val word_decide_for_test = word_decide
+  val bv_th_lemma_prove_for_test = bv_th_lemma_prove
   val arith_bv_fallback_for_test = arith_bv_fallback
 
   fun initial_replay_state allowed_asserted_hyps definitions proof : state = {

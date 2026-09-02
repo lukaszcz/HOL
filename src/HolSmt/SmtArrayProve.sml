@@ -10,8 +10,7 @@ struct
   fun profile name f x = Profile.profile_with_exn_name name f x
 
   fun array_fastpath name component prove t =
-    (Library.require_fastpath component;
-     profile name prove t)
+    Library.require_fastpath component t (profile name prove) t
 
   (* METIS on the array-replay path runs with a time/inference bound so that
      a hard or ultimately-unprovable goal cannot hang proof reconstruction

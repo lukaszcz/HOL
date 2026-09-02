@@ -52,9 +52,8 @@ struct
      Z3 still prints a Boolean word formula for that false atom.  The general
      Tier-2 bit-blast rung closes this family; this direct irreflexivity proof
      is only its D1-gated performance cache. *)
-  fun reflexive_lt_prove t =
+  fun reflexive_lt_prove_unbounded t =
   let
-    val () = Library.require_fastpath "FP reflexive less-than"
     val (lhs, rhs) = boolSyntax.dest_eq t
     val (head, args) = boolSyntax.strip_comb lhs
     val {Thy, Name, ...} = Term.dest_thy_const head
@@ -77,13 +76,16 @@ struct
       (Thm.SYM (Drule.EQF_INTRO rhs_not))
   end
 
+  fun reflexive_lt_prove t =
+    Library.require_fastpath "FP reflexive less-than" t
+      reflexive_lt_prove_unbounded t
+
   fun proforma_prove t =
     ((Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
       handle Feedback.HOL_ERR _ =>
         Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms t
       handle Feedback.HOL_ERR _ =>
-        (Library.require_fastpath "FP reflexive less-than";
-         profile "fp(1)(reflexive-lt)" reflexive_lt_prove t)))
+        profile "fp(1)(reflexive-lt)" reflexive_lt_prove t))
     handle Feedback.HOL_ERR holerr =>
       raise ERR "proforma_prove"
         ("proforma lookup failed: " ^ Feedback.message_of holerr)

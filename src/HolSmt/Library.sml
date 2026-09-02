@@ -34,12 +34,56 @@ struct
   fun no_fastpath () =
     OS.Process.getEnv "HOL4_HOLSMT_NO_FASTPATH" = SOME "1"
 
-  fun require_fastpath component =
+  fun fastpath_refusal component reason =
+    raise Feedback.mk_HOL_ERR "Library" "require_fastpath"
+      ("fast path refused: " ^ reason ^ "; component=" ^ component)
+
+  fun is_fastpath_refusal holerr =
+    Feedback.top_structure_of holerr = "Library" andalso
+    Feedback.top_function_of holerr = "require_fastpath" andalso
+    String.isPrefix "fast path refused: " (Feedback.message_of holerr)
+
+  (* A redundant route must never receive a larger resource envelope than
+     the complete checked-replay rung behind it.  Use that rung's existing
+     tree-node and step-time measures rather than a width/corpus threshold.
+     Refusal is deliberately an ordinary HOL_ERR: the enclosing ladder must
+     continue to its complete procedure.  Exceptions raised by [fastpath]
+     itself are not caught or relabelled. *)
+  local
+    datatype 'a fastpath_result =
+        FastpathSuccess of 'a
+      | FastpathWorkerTimeout of exn
+  in
+  fun require_fastpath component target fastpath input =
     if no_fastpath () then
-      raise Feedback.mk_HOL_ERR "Library" "require_fastpath"
-        ("fast path disabled by HOL4_HOLSMT_NO_FASTPATH=1: " ^ component)
+      fastpath_refusal component
+        "disabled by HOL4_HOLSMT_NO_FASTPATH=1"
     else
-      ()
+      let
+        val limit = SmtResource.max_bitblast_term_nodes
+        val observed = SmtResource.term_nodes_up_to limit target
+        val () =
+          if observed <= limit then ()
+          else fastpath_refusal component
+            ("term-size observed=" ^ Int.toString observed ^
+             " maximum=" ^ Int.toString limit)
+      in
+        case (Timeout.apply SmtResource.max_bitblast_step_time
+            (fn input =>
+               FastpathSuccess (fastpath input)
+               handle timeout as Timeout.TIMEOUT _ =>
+                 FastpathWorkerTimeout timeout)
+            input
+          handle Timeout.TIMEOUT _ =>
+            fastpath_refusal component
+              ("step-time maximum=" ^
+               LargeInt.toString
+                 (Time.toSeconds SmtResource.max_bitblast_step_time) ^
+               " s")) of
+          FastpathSuccess result => result
+        | FastpathWorkerTimeout timeout => raise timeout
+      end
+  end
 
   (***************************************************************************)
   (* I/O, parsing                                                            *)

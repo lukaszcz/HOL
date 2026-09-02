@@ -87,12 +87,21 @@ local
       | NONE => AtomicProvenance
 
   (* E1(c): repeated-conclusion theorem reuse is a redundant performance
-     cache.  This one choke point controls both cache insertion and probing;
-     the historical benchmark switch can still disable it independently. *)
+     cache.  The historical benchmark switch can disable it independently;
+     actual insert/probe work also passes through the one shared fast-path
+     resource boundary below. *)
   val theorem_cache_enabled =
     OS.Process.getEnv "HOL4_CPC_THEOREM_CACHE" <> SOME "0" andalso
-    ((Library.require_fastpath "CPC theorem cache"; true)
-     handle Feedback.HOL_ERR _ => false)
+    not (Library.no_fastpath ())
+
+  fun theorem_cache_fastpath target prove input =
+    Library.require_fastpath "CPC theorem cache" target prove input
+
+  fun optional_fastpath fastpath target worker input =
+    SOME (fastpath target worker input)
+    handle Feedback.HOL_ERR holerr =>
+      if Library.is_fastpath_refusal holerr then NONE
+      else raise Feedback.HOL_ERR holerr
 
   type cache_stats = {
     hits : int ref,
@@ -117,6 +126,16 @@ local
   type cached_theorem = {
     thm : Thm.thm
   }
+
+  datatype cache_probe_outcome =
+      CacheProbeHit of {
+        theorem : Thm.thm,
+        context_rejections : int,
+        hypfree : bool
+      }
+    | CacheProbeMiss of {
+        context_rejections : int
+      }
 
   type replay_result = {
     thm : Thm.thm,
@@ -190,27 +209,35 @@ local
     cache_stats = new_cache_stats ()
   }
 
-  fun cache_thm state thm =
+  fun cache_thm_with_fastpath fastpath state thm =
     if not theorem_cache_enabled then
       (profile_event "CPC(cache:insert_disabled)";
        state)
-    else let
-      val stats = #cache_stats state
-      val cardinality = !(#cardinality stats) + 1
-      val () = #cardinality stats := cardinality
-      val () = #peak_cardinality stats :=
-        Int.max (!(#peak_cardinality stats), cardinality)
-      val () = profile_event "CPC(cache:insert)"
-    in {
-      asserted_hyps = #asserted_hyps state,
-      scope_hyps = #scope_hyps state,
-      translation_definitions = #translation_definitions state,
-      steps = #steps state,
-      thm_cache = Net.insert (Thm.concl thm,
-        {thm = thm})
-        (#thm_cache state),
-      cache_stats = stats
-    } end
+    else
+      case optional_fastpath fastpath (Thm.concl thm)
+          (fn () => Net.insert (Thm.concl thm, {thm = thm})
+            (#thm_cache state)) () of
+        NONE =>
+        (profile_event "CPC(cache:insert_budget_refused)";
+         state)
+      | SOME thm_cache => let
+          val stats = #cache_stats state
+          val cardinality = !(#cardinality stats) + 1
+          val () = #cardinality stats := cardinality
+          val () = #peak_cardinality stats :=
+            Int.max (!(#peak_cardinality stats), cardinality)
+          val () = profile_event "CPC(cache:insert)"
+        in {
+          asserted_hyps = #asserted_hyps state,
+          scope_hyps = #scope_hyps state,
+          translation_definitions = #translation_definitions state,
+          steps = #steps state,
+          thm_cache = thm_cache,
+          cache_stats = stats
+        } end
+
+  fun cache_thm state thm =
+    cache_thm_with_fastpath theorem_cache_fastpath state thm
 
   fun cache_step state id rule_name (result : replay_result) =
   let
@@ -277,43 +304,82 @@ local
   fun lookup_rule state id =
     #rule_name (find_step "lookup_rule" state id)
 
-  fun cached_thm state tm =
+  fun cached_thm_with_fastpath fastpath state tm =
     if not theorem_cache_enabled then
       (profile_event "CPC(cache:probe_disabled)";
        raise ERR "cached_thm" "CPC theorem cache is disabled")
-    else profile "CPC(cache:probe)" (fn () => let
-      val available = HOLset.addList (#asserted_hyps state, #scope_hyps state)
-      val stats = #cache_stats state
-      fun conclusion_matches cached =
-        Term.aconv (Thm.concl (#thm cached)) tm
-      fun context_available cached =
-        HOLset.isSubset (Thm.hypset (#thm cached), available)
-      fun is_raw_assumption cached =
-        HOLset.member (Thm.hypset (#thm cached), Thm.concl (#thm cached))
-      val candidates = List.filter conclusion_matches
-        (Net.match tm (#thm_cache state))
-      val matches = List.filter context_available candidates
-      val rejected = List.filter (not o context_available) candidates
-      val () = #context_rejections stats :=
-        !(#context_rejections stats) + List.length rejected
-      val () = List.app (fn _ =>
-        profile_event "CPC(cache:context_rejected)") rejected
-      val derived = List.filter (not o is_raw_assumption) matches
-    in
-    case List.find (fn _ => true)
-      (case derived of [] => matches | _ => derived) of
-      SOME cached =>
-        (#hits stats := !(#hits stats) + 1;
-         profile_event "CPC(cache:hit)";
-         if HOLset.isEmpty (Thm.hypset (#thm cached)) then
-           profile_event "CPC(cache:hypfree_hit)"
-         else ();
-         #thm cached)
-    | NONE =>
-        (#misses stats := !(#misses stats) + 1;
-         profile_event "CPC(cache:miss)";
-         raise ERR "cached_thm" "no alpha-identical cached CPC theorem")
-    end) ()
+    else let
+        fun compute () =
+          let
+            val available = HOLset.addList
+              (#asserted_hyps state, #scope_hyps state)
+            fun conclusion_matches cached =
+              Term.aconv (Thm.concl (#thm cached)) tm
+            fun context_available cached =
+              HOLset.isSubset (Thm.hypset (#thm cached), available)
+            fun is_raw_assumption cached =
+              HOLset.member
+                (Thm.hypset (#thm cached), Thm.concl (#thm cached))
+            val candidates = List.filter conclusion_matches
+              (Net.match tm (#thm_cache state))
+            val matches = List.filter context_available candidates
+            val rejected = List.filter
+              (not o context_available) candidates
+            val derived = List.filter (not o is_raw_assumption) matches
+            val context_rejections = List.length rejected
+          in
+            case List.find (fn _ => true)
+                (case derived of [] => matches | _ => derived) of
+              SOME cached => CacheProbeHit {
+                theorem = #thm cached,
+                context_rejections = context_rejections,
+                hypfree = HOLset.isEmpty (Thm.hypset (#thm cached))
+              }
+            | NONE => CacheProbeMiss {
+                context_rejections = context_rejections
+              }
+          end
+
+        fun commit_rejections count =
+          let
+            val stats = #cache_stats state
+            val () = #context_rejections stats :=
+              !(#context_rejections stats) + count
+            fun emit 0 = ()
+              | emit remaining =
+                  (profile_event "CPC(cache:context_rejected)";
+                   emit (remaining - 1))
+          in
+            emit count
+          end
+
+        fun commit outcome =
+          case outcome of
+            CacheProbeHit {theorem, context_rejections, hypfree} =>
+              (commit_rejections context_rejections;
+               #hits (#cache_stats state) :=
+                 !(#hits (#cache_stats state)) + 1;
+               profile_event "CPC(cache:hit)";
+               if hypfree then profile_event "CPC(cache:hypfree_hit)"
+               else ();
+               theorem)
+          | CacheProbeMiss {context_rejections} =>
+              (commit_rejections context_rejections;
+               #misses (#cache_stats state) :=
+                 !(#misses (#cache_stats state)) + 1;
+               profile_event "CPC(cache:miss)";
+               raise ERR "cached_thm"
+                 "no alpha-identical cached CPC theorem")
+      in
+        case optional_fastpath fastpath tm compute () of
+          NONE =>
+            (profile_event "CPC(cache:probe_budget_refused)";
+             raise ERR "cached_thm" "CPC theorem cache budget refused")
+        | SOME outcome => profile "CPC(cache:probe)" commit outcome
+      end
+
+  fun cached_thm state tm =
+    cached_thm_with_fastpath theorem_cache_fastpath state tm
 
   fun cache_stats state =
     let val stats = #cache_stats state in {
@@ -3571,15 +3637,19 @@ local
       EqResolveCanonicalReal
     else EqResolveArithmetic
 
-  fun enabled_eq_resolve_preflight_route prems =
+  fun enabled_eq_resolve_preflight_route_with_worker worker prems =
     let
-      val enabled =
-        ((Library.require_fastpath "CPC eq_resolve arithmetic preflight";
-          true)
-         handle Feedback.HOL_ERR _ => false)
+      val target = boolSyntax.list_mk_conj
+        (case List.map Thm.concl prems of [] => [boolSyntax.T] | terms => terms)
     in
-      if enabled then SOME (eq_resolve_preflight_route prems) else NONE
+      optional_fastpath
+        (Library.require_fastpath "CPC eq_resolve arithmetic preflight")
+        target worker prems
     end
+
+  fun enabled_eq_resolve_preflight_route prems =
+    enabled_eq_resolve_preflight_route_with_worker
+      eq_resolve_preflight_route prems
 
   fun eq_resolve_preflight_name route =
     case route of
@@ -7070,6 +7140,37 @@ local
 
 in
   val theorem_cache_enabled_for_test = theorem_cache_enabled
+
+  val eq_resolve_preflight_with_worker_for_test =
+    enabled_eq_resolve_preflight_route_with_worker
+
+  fun cache_refusal_accounting_for_test theorem =
+    let
+      fun refuse _ _ _ =
+        Library.fastpath_refusal "CPC theorem cache test"
+          "injected refusal"
+      val initial = initial_state [] []
+      val before_stats = cache_stats initial
+      val after_insert_state =
+        cache_thm_with_fastpath refuse initial theorem
+      val after_insert = cache_stats after_insert_state
+      val () =
+        (ignore (cached_thm_with_fastpath refuse after_insert_state
+           (Thm.concl theorem));
+         raise ERR "cache_refusal_accounting_for_test"
+           "injected probe refusal was admitted")
+        handle Feedback.HOL_ERR holerr =>
+          if Feedback.top_structure_of holerr = "CPC_ProofReplay" andalso
+             Feedback.top_function_of holerr = "cached_thm" andalso
+             Feedback.message_of holerr =
+               "CPC theorem cache budget refused" then ()
+          else raise Feedback.HOL_ERR holerr
+      val after_probe = cache_stats after_insert_state
+    in
+      {before_stats = before_stats,
+       after_insert = after_insert,
+       after_probe = after_probe}
+    end
 
   val strong_cpc_canon_conv_for_test = strong_cpc_canon_conv
 

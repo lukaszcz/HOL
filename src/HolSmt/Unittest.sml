@@ -13598,6 +13598,155 @@ fun profile_call_count name =
     SOME (_, info) => #n info
   | NONE => 0
 
+fun shared_fastpath_budget_contract () =
+let
+  fun nest 0 acc = acc
+    | nest n acc = nest (n - 1) (boolSyntax.mk_conj (acc, boolSyntax.T))
+  val oversized = nest 70000 boolSyntax.T
+  val invoked = ref false
+  fun expect_refusal label target =
+    (ignore (Library.require_fastpath label target
+       (fn () => (invoked := true; ())) ());
+     die ("FAIL: " ^ label ^ " was admitted"))
+    handle Feedback.HOL_ERR holerr =>
+      assert (Library.is_fastpath_refusal holerr andalso
+              not (SmtResource.is_resource_gate holerr),
+        label ^ " did not produce the ordinary shared refusal")
+in
+  expect_refusal "oversized shared fast path" oversized;
+  assert (not (!invoked),
+    "oversized shared fast path invoked its guarded worker");
+  if Library.no_fastpath () then
+    expect_refusal "disabled shared fast path" boolSyntax.T
+  else
+    let
+      val result = Library.require_fastpath "small shared fast path"
+        boolSyntax.T (fn () => (invoked := true; 37)) ()
+      val proof_error = Feedback.mk_HOL_ERR
+        "FastpathProbe" "proof" "distinctive admitted failure"
+      val () =
+        (ignore (Library.require_fastpath "proof failure propagation"
+           boolSyntax.T (fn () => raise proof_error) ());
+         die "FAIL: shared fast path swallowed an admitted proof error")
+        handle Feedback.HOL_ERR holerr =>
+          assert (Feedback.top_structure_of holerr = "FastpathProbe" andalso
+                  Feedback.top_function_of holerr = "proof" andalso
+                  Feedback.message_of holerr =
+                    "distinctive admitted failure",
+            "shared fast path relabelled an admitted proof error")
+      val () =
+        (ignore (Library.require_fastpath "resource gate propagation"
+           boolSyntax.T
+           (fn () => SmtResource.check_term_size
+             "fastpath-probe" (SmtResource.max_bitblast_term_nodes + 1))
+           ());
+         die "FAIL: shared fast path swallowed a resource gate")
+        handle Feedback.HOL_ERR holerr =>
+          assert (SmtResource.is_resource_gate holerr,
+            "shared fast path relabelled a resource gate")
+      val worker_timeout = Time.fromSeconds 37
+      val () =
+        (ignore (Library.require_fastpath "worker timeout propagation"
+           boolSyntax.T
+           (fn () => raise Timeout.TIMEOUT worker_timeout) ());
+         die "FAIL: shared fast path swallowed a worker TIMEOUT")
+        handle Timeout.TIMEOUT elapsed =>
+          assert (Time.compare (elapsed, worker_timeout) = EQUAL,
+            "shared fast path replaced the worker TIMEOUT")
+    in
+      assert (result = 37 andalso !invoked,
+        "small shared fast path did not invoke its guarded worker")
+    end
+end
+
+fun cpc_fastpath_error_and_cache_atomicity_contract () =
+if Library.no_fastpath () orelse
+   not CPC_ProofReplay.theorem_cache_enabled_for_test then ()
+else let
+  val proof_error = Feedback.mk_HOL_ERR
+    "CPCFastpathProbe" "classify" "distinctive worker failure"
+  val premise = Thm.REFL boolSyntax.T
+  val () =
+    (ignore (CPC_ProofReplay.eq_resolve_preflight_with_worker_for_test
+       (fn _ => raise proof_error) [premise]);
+     die "FAIL: CPC preflight swallowed its worker HOL_ERR")
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_structure_of holerr = "CPCFastpathProbe" andalso
+              Feedback.top_function_of holerr = "classify" andalso
+              Feedback.message_of holerr = "distinctive worker failure",
+        "CPC preflight relabelled its worker HOL_ERR")
+
+  fun stats_zero stats =
+    #hits stats = 0 andalso
+    #misses stats = 0 andalso
+    #context_rejections stats = 0 andalso
+    #omitted_bypasses stats = 0 andalso
+    #cardinality stats = 0 andalso
+    #peak_cardinality stats = 0 andalso
+    #step_cardinality stats = 0
+
+  val () = Profile.reset_all ()
+  val accounting =
+    CPC_ProofReplay.cache_refusal_accounting_for_test premise
+in
+  assert (stats_zero (#before_stats accounting),
+    "injected CPC cache test did not start with empty accounting");
+  assert (stats_zero (#after_insert accounting),
+    "refused CPC cache insertion changed accounting");
+  assert (stats_zero (#after_probe accounting),
+    "refused CPC cache probe changed accounting");
+  assert (cpc_profile_call_count "CPC(cache:insert_budget_refused)" = 1,
+    "refused CPC cache insertion omitted its explicit event");
+  assert (cpc_profile_call_count "CPC(cache:probe_budget_refused)" = 1,
+    "refused CPC cache probe omitted its explicit event");
+  assert (cpc_profile_call_count "CPC(cache:insert)" = 0 andalso
+          cpc_profile_call_count "CPC(cache:probe)" = 0 andalso
+          cpc_profile_call_count "CPC(cache:hit)" = 0 andalso
+          cpc_profile_call_count "CPC(cache:miss)" = 0 andalso
+          cpc_profile_call_count "CPC(cache:context_rejected)" = 0,
+    "refused CPC cache work emitted committed telemetry")
+end
+
+fun z3_bv_complete_route_phase_profiles_success () =
+let
+  val goal = ``(0w = (x :word8)) \/ x ' 0 \/ x ' 1 \/ x ' 2 \/
+    x ' 3 \/ x ' 4 \/ x ' 5 \/ x ' 6 \/ x ' 7``
+  val () = Profile.reset_all ()
+  val theorem = Z3_ProofReplay.bv_th_lemma_prove_for_test goal
+  val word_simp = profile_call_count
+    "th_lemma[bv](3)(COND_BBLAST:WORD_SIMP_CONV)_OK"
+  val bit_taut = profile_call_count
+    "th_lemma[bv](3)(COND_BBLAST:BIT_TAUT_CONV)_OK"
+  val complete = profile_call_count "th_lemma[bv](3)(COND_BBLAST)_OK"
+in
+  assert (null (Thm.hyp theorem),
+    "profiled BV complete route retained hypotheses");
+  assert (Thm.concl theorem ~~ goal,
+    "profiled BV complete route returned the wrong conclusion");
+  check_oracle_tags "profiled BV complete route" theorem;
+  assert (word_simp = 1,
+    "BV complete route did not emit one WORD_SIMP_CONV profile event");
+  assert (bit_taut = 1,
+    "BV complete route did not emit one BIT_TAUT_CONV profile event");
+  assert (complete = 1,
+    "BV complete route did not emit one aggregate profile event")
+end
+
+fun z3_bv_width12_dense_literal_exact_lhs_normalization () =
+let
+  val goal =
+    ``!(b0 b1 :word12). b0 <=+ b1 ==>
+        b0 <=+ b0 +
+          (0w :word1 @@ ((11 >< 1) (4095w * b0 + b1)) :word11)``
+  val theorem = blastLib.BBLAST_PROVE goal
+in
+  assert (null (Thm.hyp theorem),
+    "width-12 dense-literal BBLAST retained hypotheses");
+  assert (Thm.concl theorem ~~ goal,
+    "width-12 dense-literal BBLAST returned the wrong conclusion");
+  check_oracle_tags "width-12 dense-literal BBLAST" theorem
+end
+
 fun z3_rewrite_beta_eta_abs_rungs_success () =
 let
   val beta = replay_z3_proof_string
@@ -19274,6 +19423,14 @@ let
       z3_th_lemma_basic_dispatch_replay_success),
     ("z3_width_proforma_public_replay_success",
       z3_width_proforma_public_replay_success),
+    ("shared_fastpath_budget_contract",
+      shared_fastpath_budget_contract),
+    ("cpc_fastpath_error_and_cache_atomicity_contract",
+      cpc_fastpath_error_and_cache_atomicity_contract),
+    ("z3_bv_complete_route_phase_profiles_success",
+      z3_bv_complete_route_phase_profiles_success),
+    ("z3_bv_width12_dense_literal_exact_lhs_normalization",
+      z3_bv_width12_dense_literal_exact_lhs_normalization),
     ("z3_commuted_rewrite_orientation_replay_success",
       z3_commuted_rewrite_orientation_replay_success),
     ("z3_difference_directed_rewrite_canon_success",
