@@ -303,8 +303,18 @@ fun translator fields = translatorMeasured (fn () => ()) fields
    [x IN A] stays inside it however [A] is instantiated, where [A x] with [A]
    a set former is an atom no rule can see.  Reconstruction replays on the
    classical engine, which crosses wherever it compares two forms. *)
+(* The goal is reduced on the way in, as it is when it enters the
+   classical engine: blast holds pterms it has already crossed, so a
+   redex the goal carried would otherwise stay in the branch with no
+   step able to see past it.  [goal_reduce_conv] is the engines' shared
+   normal form for a goal, which is what lets a branch blast closes be
+   replayed by the classical engine. *)
 fun crossed_with is_hole tm =
-  boolSyntax.rhs (Thm.concl (clasetNorm.membership_conv_with is_hole tm))
+  boolSyntax.rhs
+    (Thm.concl
+      (Conv.THENC (clasetNorm.goal_reduce_conv,
+                   clasetNorm.membership_conv_with is_hole)
+        tm))
 
 (* A goal carries no holes; a rule's schematic variables are its own. *)
 fun crossed tm = crossed_with (fn _ => false) tm

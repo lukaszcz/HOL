@@ -108,8 +108,16 @@ fun root_paths goals =
     enumerate 0 goals
   end
 
+(* The engine's terms are reduced; a goal used to arrive as written, so a
+   redex the goal carried stayed in the state and no step could see past
+   it.  [reduce_conv] is the same normal form an instantiated rule is
+   put in, which is what lets a rule and a goal position meet.  A
+   residual goal is carried back to the form the caller posed by
+   [clasetNorm.align_conclusion]. *)
+fun reduced term = rhs (concl (clasetNorm.goal_reduce_conv term))
+
 fun from_goal (asl, w) =
-  let val cgoals = [{params = [], asl = asl, w = w}]
+  let val cgoals = [{params = [], asl = map reduced asl, w = reduced w}]
   in
     make_node cgoals clasetMeta.empty (clasetReplay.empty 1) 0
       (root_paths cgoals) (fresh_marks cgoals) (goal_frees cgoals)

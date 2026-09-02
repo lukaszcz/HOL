@@ -4611,6 +4611,23 @@ val _ =
        blast_solves (tableauLib.BLAST_DEPTH_TAC 4 blast_set_common_rules)
          ([], “(A:'a set) SUBSET C ==> (\x. x IN A) SUBSET (\x. x IN C)”))
 
+(* A projection applied to an explicit pair is a redex the classical
+   layer did not reduce: the simpset carries [pairTheory.FST], so
+   AUTO_TAC closed such a goal while FAST_TAC and BLAST_TAC did not.
+   The engines now reduce a goal's redexes on the way in, and blast
+   inherits it.  Neither goal below is a corpus entry; both arrive in
+   the shape a translated [Sigma] produces, a set former over FST and
+   SND crossed against a pair. *)
+val _ =
+  test
+    ("blast reduces a projection applied to an explicit pair",
+     fn () =>
+       blast_solves (tableauLib.BLAST_DEPTH_TAC 4 [])
+         ([], “!A a b. (FST ((a, b) : 'a # 'b)) IN A ==> a IN A”)
+       andalso
+       blast_solves (tableauLib.BLAST_DEPTH_TAC 4 [])
+         ([], “!B a b. (SND ((a, b) : 'a # 'b)) IN B ==> b IN B”))
+
 val blast_union_image_rules =
   blast_set_common_rules @
   [clasetLib.Intro SET_BIGUNION_IMAGE_I,

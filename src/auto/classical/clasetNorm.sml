@@ -161,12 +161,30 @@ val member_beta_conv =
    way it was posed.  [normalize_conv] adds the crossing and is for
    comparing: the matcher and [align_conclusion] use it, and nothing that
    builds a goal does. *)
+(* [FST (a, b)] is a redex of the same kind, and the engines meet it
+   because a translated [Sigma] is a set former over FST and SND, so a
+   membership crossed against a pair leaves one behind.  The simpset
+   reduces it and the classical layer did not, which is why AUTO_TAC
+   closed such a goal and FAST_TAC and BLAST_TAC did not. *)
+val projection_conv =
+  Conv.ORELSEC (Conv.REWR_CONV pairTheory.FST, Conv.REWR_CONV pairTheory.SND)
+
 val reduction =
   Conv.REDEPTH_CONV
     (Conv.ORELSEC (BETA_CONV, Conv.ORELSEC (Drule.ETA_CONV,
-     member_beta_conv)))
+     Conv.ORELSEC (member_beta_conv, projection_conv))))
 
 val reduce_conv = Conv.QCONV reduction
+
+(* The same reduction for a goal arriving from the caller, without eta.
+   Eta is sound but changes a binder's shape -- [!x. P x] becomes
+   [$! P] -- and a goal is handed to tactics that take it apart, so the
+   engine reduces a goal's redexes without re-spelling its quantifiers. *)
+val goal_reduce_conv =
+  Conv.QCONV
+    (Conv.REDEPTH_CONV
+      (Conv.ORELSEC (BETA_CONV,
+       Conv.ORELSEC (member_beta_conv, projection_conv))))
 
 val normalize_conv =
   Conv.QCONV (Conv.THENC (formula false clasetMeta.is_meta, reduction))
