@@ -426,6 +426,10 @@ val table : (string * (unit -> resolution)) list =
    translated "source_ran_distinct"),
   ("lessThan_Suc_atMost",
    translated "source_lessThan_Suc_atMost"),
+  ("lessThan_atLeast0",
+   translated "source_lessThan_atLeast0"),
+  ("upt_Suc_append",
+   translated "source_upt_suc_append"),
   ("distinct_adj_conv_nth",
    translated "source_distinct_adj_conv_nth"),
   ("distinct_adj_mapD",
@@ -511,7 +515,6 @@ val table : (string * (unit -> resolution)) list =
   (* [source_lenlex] is [list$SHORTLEX] directly, so Isabelle's route to
      it through [inv_image] and [lex_prod] has nothing to unfold. *)
   ("inv_image_def", unrepresented),
-  ("lessThan_atLeast0", unrepresented),
   ("lex_prod_def", unrepresented),
   ("list.pred_transfer", unrepresented),
   ("map_add_comm", unrepresented),
@@ -521,7 +524,6 @@ val table : (string * (unit -> resolution)) list =
   ("partition_filter1[symmetric]", unrepresented),
   ("partition_filter2[symmetric]", unrepresented),
   ("sorted_list_of_set_range", unrepresented),
-  ("upt_Suc_append", unrepresented),
   ("asym_less_than", unrepresented),
   ("asym_lex", unrepresented),
   ("bit_iff_odd_drop_bit", unrepresented),

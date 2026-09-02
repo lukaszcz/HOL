@@ -3278,6 +3278,17 @@ Proof
        pred_setTheory.EXTENSION]
 QED
 
+(* src/HOL/Set_Interval.thy: lessThan_atLeast0. *)
+Theorem source_lessThan_atLeast0:
+  !bound : num.
+    source_lessThan ($< : num -> num -> bool) bound =
+    source_atLeastLessThan ($<= : num -> num -> bool)
+      ($< : num -> num -> bool) 0 bound
+Proof
+  simp[source_lessThan_def, source_atLeastLessThan_def,
+       pred_setTheory.EXTENSION]
+QED
+
 Theorem source_lessThan_Suc_atMost:
   !bound.
     source_lessThan ($<) (SUC bound) = source_atMost ($<=) bound
@@ -7625,6 +7636,19 @@ QED
 (* src/HOL/List.thy: upt_rec and upt_conv_Cons.  Isabelle's half-open
    interval [start..<finish] is represented by the GENLIST expression
    below throughout the executable corpus. *)
+(* src/HOL/List.thy: upt_Suc_append.  The interval is written
+   [$+ start], the eta-contracted form the goals arrive in. *)
+Theorem source_upt_suc_append:
+  !start finish.
+    start <= finish ==>
+    GENLIST ($+ start) (SUC finish - start) =
+    GENLIST ($+ start) (finish - start) ++ [finish]
+Proof
+  rpt strip_tac
+  >> `SUC finish - start = SUC (finish - start)` by decide_tac
+  >> simp[listTheory.GENLIST, listTheory.SNOC_APPEND]
+QED
+
 Theorem source_upt_rec:
   !start finish.
     GENLIST (\offset. start + offset) (finish - start) =
