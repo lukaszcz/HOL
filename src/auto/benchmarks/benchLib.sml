@@ -865,6 +865,99 @@ fun recipe_args entry args =
     raise ERR "compile_recipe"
       (#id entry ^ ": recipe supplies the measured theorem")
 
+(* An ambient correspondence rewrites a goal out of the translation's
+   predicate and into HOL4's -- [source_sorted_wrt] into SORTED -- and a
+   rule the recipe supplies in the translation's spelling then stops
+   meeting the goal it was cited for.  Each supplied rule is offered on
+   the far side of the correspondence as well, in the same role.  The
+   crossing is an equivalence, so the offered rule states the same fact,
+   and the condition the equivalence rests on is kept as the rule's last
+   premise -- after the rule's own, so a destruction rule's major
+   premise stays first -- for the search to discharge rather than
+   assumed here.
+
+   Installed rather than read, for the reason the definitional context
+   is: the translation theory is built above this module. *)
+val correspondences : thm list ref = ref []
+
+val correspondence_heads : string HOLset.set ref =
+  ref (HOLset.empty String.compare)
+
+fun correspondence_head theorem =
+  let
+    val (_, body) = boolSyntax.strip_forall (Thm.concl theorem)
+    val (_, equation) = boolSyntax.strip_imp_only body
+    val (left, _) = boolSyntax.dest_eq equation
+    val (head, _) = boolSyntax.strip_comb left
+  in
+    SOME (#1 (Term.dest_const head))
+  end
+  handle HOL_ERR _ => NONE
+
+fun set_correspondences theorems =
+  (correspondences := map (Drule.UNDISCH_ALL o Drule.SPEC_ALL) theorems;
+   correspondence_heads :=
+     HOLset.addList
+       (HOLset.empty String.compare,
+        List.mapPartial correspondence_head theorems))
+
+fun mentions_correspondence term =
+  List.exists
+    (fn constant =>
+      HOLset.member (!correspondence_heads, #1 (Term.dest_const constant)))
+    (find_terms Term.is_const term)
+
+fun crossed ({name, theorem} : named_thm) =
+  if List.null (!correspondences) orelse
+     not (mentions_correspondence (Thm.concl theorem))
+  then
+    NONE
+  else
+    let
+      val specialised = Drule.SPEC_ALL theorem
+      val rewritten = Rewrite.REWRITE_RULE (!correspondences) specialised
+      val crossed_conclusion = Thm.concl rewritten
+    in
+      if aconv crossed_conclusion (Thm.concl specialised) orelse
+         aconv crossed_conclusion boolSyntax.T
+      then
+        NONE
+      else
+        let
+          val premises = fst (boolSyntax.strip_imp_only crossed_conclusion)
+          val conditions = HOLset.listItems (Thm.hypset rewritten)
+          val core = Drule.UNDISCH_ALL rewritten
+          val ordered =
+            List.foldr (fn (term, current) => Thm.DISCH term current)
+              core (premises @ conditions)
+        in
+          SOME {name = name ^ "[bridged]", theorem = Drule.GEN_ALL ordered}
+        end
+    end
+  handle HOL_ERR _ => NONE
+
+fun crossed_arg arg =
+  case arg of
+      RewriteAdd entry => Option.map RewriteAdd (crossed entry)
+    | IntroAdd (strength, entry) =>
+        Option.map (fn crossing => IntroAdd (strength, crossing))
+          (crossed entry)
+    | ElimAdd (strength, entry) =>
+        Option.map (fn crossing => ElimAdd (strength, crossing))
+          (crossed entry)
+    | DestAdd (strength, entry) =>
+        Option.map (fn crossing => DestAdd (strength, crossing))
+          (crossed entry)
+    | FactAdd entry => Option.map FactAdd (crossed entry)
+    | _ => NONE
+
+(* A crossing that states the goal is dropped rather than reported: it
+   is derived here, not cited, so it is not a recipe supplying its own
+   answer. *)
+fun across_correspondence entry args =
+  args @
+  List.filter (permitted_arg entry) (List.mapPartial crossed_arg args)
+
 fun tactic_for goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
@@ -1042,7 +1135,8 @@ fun compile_recipe entry recipe =
   case recipe of
       Invoke (tactic_id, args) =>
         tactic_for (#goal entry) tactic_id
-          (recipe_args entry args) (#excl entry)
+          (recipe_args entry (across_correspondence entry args))
+          (#excl entry)
     | Then (left, right) =>
         Tactical.THEN1
           (compile_recipe entry left, compile_recipe entry right)

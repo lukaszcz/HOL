@@ -100,4 +100,11 @@ val wrapper_definitions =
    not be handed is the same rule either way. *)
 val _ = benchLib.set_definitional_context (map #theorem wrapper_definitions)
 
+(* The bridge is also the correspondence a recipe's own rules are
+   offered across: it is what rewrites a goal out of [source_sorted_wrt]
+   and into SORTED, so a cited rule stated on the translated predicate
+   has to be available on the other side too. *)
+val _ =
+  benchLib.set_correspondences [#theorem sorted_wrt_correspondence]
+
 end

@@ -293,6 +293,64 @@ val _ =
          (recipe_solves truth_wrapped_recipe
             (Thm.concl conjunction_commute)))
 
+(* The ambient bridge rewrites a goal from the translation's
+   [source_sorted_wrt] into SORTED wherever transitivity is
+   dischargeable, which leaves a rule cited in the translation's
+   spelling on the wrong side of it.  The crossing offers that rule in
+   the goal's spelling too, with the bridge's own condition last so a
+   destruction rule's major premise stays first. *)
+val sorted_wrt_drop_rule =
+  {name = "parityTranslation$source_sorted_wrt_drop",
+   theorem = DB.fetch "parityTranslation" "source_sorted_wrt_drop"}
+
+val crossing_goal =
+  ``relation$transitive bench_cross_le ==>
+    sorting$SORTED bench_cross_le bench_cross_xs ==>
+    sorting$SORTED bench_cross_le (DROP bench_cross_n bench_cross_xs)``
+
+val crossing_recipe =
+  benchLib.Invoke
+    (benchLib.Auto,
+     [benchLib.DestAdd (benchLib.UnsafeRule, sorted_wrt_drop_rule)])
+
+val _ =
+  check
+    ("a supplied rule is offered across the ambient correspondence",
+     fn () =>
+       let
+         val entry = recipe_goal "unit-crossing" crossing_recipe crossing_goal
+         val crossings =
+           List.filter
+             (fn benchLib.DestAdd (_, {name, ...}) =>
+                   name = "parityTranslation$source_sorted_wrt_drop[bridged]"
+               | _ => false)
+             (benchLib.across_correspondence entry
+               [benchLib.DestAdd (benchLib.UnsafeRule, sorted_wrt_drop_rule)])
+       in
+         case crossings of
+             [benchLib.DestAdd (_, {theorem, ...})] =>
+               let
+                 fun mentions name term =
+                   List.exists
+                     (fn constant => #1 (Term.dest_const constant) = name)
+                     (find_terms Term.is_const term)
+                 val (premises, conclusion) =
+                   boolSyntax.strip_imp_only
+                     (snd (boolSyntax.strip_forall (Thm.concl theorem)))
+               in
+                 List.length premises = 2 andalso
+                 mentions "SORTED" (List.hd premises) andalso
+                 mentions "transitive" (List.nth (premises, 1)) andalso
+                 mentions "SORTED" conclusion
+               end
+           | _ => false
+       end)
+
+val _ =
+  check
+    ("the crossed rule is what closes a goal on the far side",
+     fn () => recipe_solves crossing_recipe crossing_goal)
+
 val implication_recipe =
   benchLib.Invoke
     (benchLib.Simp,

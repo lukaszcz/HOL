@@ -21,12 +21,14 @@ sig
      same facts about its adjacent SORTED, and the correspondence
      between the two is what the translation has to supply for the
      ambient context to mean the same thing on both sides.  It is
-     conditional on transitivity, and that condition is deliberately
-     left undischarged where the relation is a variable: the bridge
-     reads left to right, so firing it everywhere would replace the
-     all-pairs structure by the adjacent one and throw away exactly
-     what [sorted_wrt] carries.  Measured, supplying the order axioms
-     to discharge it costs more goals than it gains. *)
+     conditional on transitivity, and the bridge reads left to right,
+     so it fires wherever that condition can be discharged: by the
+     assigned method itself, or from the source linorder premise the
+     goals carry, which the order-premise seeds put within reach of the
+     simplifier's own condition solver.  That is sound, the two
+     predicates agreeing under transitivity, and it costs a goal only
+     where a cited rule is left on the far side; the crossing below is
+     what keeps those rules usable. *)
   val definitions : benchLib.named_thm list
 
   (* [definitions] as recipe arguments, in the order a recipe takes. *)
@@ -57,4 +59,11 @@ sig
      translation's constants is recognised as stating it.  The
      characterisations stay out: being one ambient rewrite away from a
      goal is not stating it. *)
+
+  (* Loading it also installs [source_sorted_wrt_bridge] as benchLib's
+     ambient correspondence, so a recipe's own rules are offered on both
+     sides of it.  The bridge rewrites goals left to right; without the
+     crossing a rule cited in the translation's spelling stops meeting
+     the goal as soon as the bridge's transitivity condition becomes
+     dischargeable. *)
 end

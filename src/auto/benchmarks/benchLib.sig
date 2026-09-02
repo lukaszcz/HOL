@@ -127,6 +127,18 @@ sig
   val set_definitional_context : thm list -> unit
   val definitional_theorems : unit -> thm list
 
+  (* The ambient correspondences: conditional equivalences between a
+     translated predicate and the HOL4 predicate the ambient set
+     rewrites goals into.  [benchAmbient] installs them, for the reason
+     it installs the definitional context.  A recipe's own rules are
+     offered on both sides of each one, in the same role: the goal is
+     rewritten across the correspondence and a rule stated on the
+     translated side would otherwise no longer meet it.  With nothing
+     installed a recipe carries exactly the rules it cites. *)
+  val set_correspondences : thm list -> unit
+  val across_correspondence :
+    corpus_goal -> method_arg list -> method_arg list
+
   (* [term] with the installed definitions unfolded, to a fixed depth. *)
   val unfolded : term -> term
 
