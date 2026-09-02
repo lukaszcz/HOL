@@ -3289,6 +3289,51 @@ Proof
        pred_setTheory.EXTENSION]
 QED
 
+(* src/HOL/List.thy:6775 @ f7e02b7e.  [sorted_list_of_set_range] is simp
+   there.  Its three side conditions -- the interval is finite, the
+   interval list is sorted and repeats nothing, and it enumerates the
+   interval -- are what the uniqueness theorem asks for, and are stated
+   separately here because each is about the interval alone. *)
+Theorem source_atLeastLessThan_finite:
+  !lower upper : num.
+    FINITE (source_atLeastLessThan ($<=) ($<) lower upper)
+Proof
+  rw[source_atLeastLessThan_def]
+  >> irule pred_setTheory.SUBSET_FINITE
+  >> qexists `pred_set$count upper`
+  >> rw[pred_setTheory.SUBSET_DEF, pred_setTheory.count_def]
+QED
+
+(* src/HOL/List.thy:1381 @ f7e02b7e: set_upt. *)
+Theorem source_set_atLeastLessThan:
+  !lower upper : num.
+    LIST_TO_SET (GENLIST ($+ lower) (upper - lower)) =
+    source_atLeastLessThan ($<=) ($<) lower upper
+Proof
+  rw[source_atLeastLessThan_def, pred_setTheory.EXTENSION,
+     listTheory.MEM_GENLIST]
+  >> eq_tac
+  >- (strip_tac >> simp[])
+  >> strip_tac >> qexists_tac `x - lower` >> simp[]
+QED
+
+Theorem source_sorted_list_of_set_range:
+  !lower upper : num.
+    source_sorted_list_of_set ($<=)
+      (source_atLeastLessThan ($<=) ($<) lower upper) =
+    GENLIST ($+ lower) (upper - lower)
+Proof
+  rpt gen_tac
+  >> irule source_sorted_list_of_set_unique
+  >> rw[source_atLeastLessThan_finite, source_set_atLeastLessThan,
+        source_sorted_bridge, sortingTheory.SORTED_EL_SUC,
+        listTheory.ALL_DISTINCT_GENLIST,
+        relationTheory.WeakLinearOrder, relationTheory.WeakOrder,
+        relationTheory.trichotomous, relationTheory.reflexive_def,
+        relationTheory.antisymmetric_def]
+  >> simp[]
+QED
+
 Theorem source_lessThan_Suc_atMost:
   !bound.
     source_lessThan ($<) (SUC bound) = source_atMost ($<=) bound

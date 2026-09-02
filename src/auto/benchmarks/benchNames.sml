@@ -59,10 +59,17 @@ fun instantiated bindings build () =
        cannot apply to anything.  It also means [I] meeting a theorem
        that already uses [I]'s type variable collapses two independent
        types -- real, and visible in
-       [zip_map_map[of f xs "\\<lambda>x. x" ys]].  Renaming apart was
-       measured and costs four goals to gain none; the fix belongs
-       where a supplied fact is instantiated against the goal, not
-       here. *)
+       [zip_map_map[of f xs "\\<lambda>x. x" ys]].  Renaming apart and
+       then collapsing the fresh variable back onto a theorem variable
+       was measured twice and costs three or four goals to gain none:
+       the collapse has to keep one of the two identified variables,
+       and the one it keeps is the key type, so
+       [sorted_sort_key[where f="\\<lambda>x. x"]] resolves at [:beta]
+       where every goal citing it is stated at [:alpha].  Sharing keeps
+       [:alpha] because that is the variable the quoted [I] parses at.
+       The fix belongs where a supplied fact reaches the goal, not
+       here: Isabelle's [using] leaves the fact polymorphic and
+       [insert_facts] freezes it. *)
     fun bind (name, term) theorem =
       case List.find (fn variable => fst (dest_var variable) = name)
              (free_vars (concl theorem)) of
@@ -414,8 +421,12 @@ val table : (string * (unit -> resolution)) list =
    translated "source_set_nths"),
   ("rotate_drop_take",
    translated "source_rotate_drop_take"),
+  (* Isabelle fills the schematics in the order they occur in the
+     proposition, the premise first: [n], [xs], then the rotation count.
+     Only the count is a term the citation brings; the other two name the
+     goal's own variables and instantiate to themselves. *)
   ("nth_rotate[of n xs 1]",
-   translated "source_nth_rotate"),
+   instantiated [("steps", ``1n``)] (translated "source_nth_rotate")),
   ("sorted_wrt_mono_rel[OF _ sorted_wrt_upt]",
    translated "source_sorted_wrt_mono_rel_upt"),
   ("sorted_wrt_mono_rel[OF _ sorted_wrt_upto]",
@@ -445,6 +456,8 @@ val table : (string * (unit -> resolution)) list =
   ("upto_split1", translated "source_upto_split1"),
   ("sorted_list_of_set_lessThan_Suc",
    translated "source_sorted_list_of_set_less_than_suc"),
+  ("sorted_list_of_set_range",
+   translated "source_sorted_list_of_set_range"),
   ("foldr_fold[of _ remove1]", translated "source_foldr_fold"),
   ("foldr_fold[of _ removeAll]", translated "source_foldr_fold"),
   (* [OF i] and [OF j] discharge a premise with a label the enclosing
@@ -494,7 +507,6 @@ val table : (string * (unit -> resolution)) list =
   ("exI[where ?x = \"- u\" for u]", native),
   ("if_split_asm", native),
   ("if_splits", native),
-  ("le_Suc_eq", native),
   ("arg_cong2[where f=nths, OF refl]", native),
   ("list.distinct(1)", native),
   ("nat_less_le", native),
@@ -523,7 +535,6 @@ val table : (string * (unit -> resolution)) list =
   ("nths_nths", unrepresented),
   ("partition_filter1[symmetric]", unrepresented),
   ("partition_filter2[symmetric]", unrepresented),
-  ("sorted_list_of_set_range", unrepresented),
   ("asym_less_than", unrepresented),
   ("asym_lex", unrepresented),
   ("bit_iff_odd_drop_bit", unrepresented),
@@ -689,6 +700,8 @@ val table : (string * (unit -> resolution)) list =
    library "option" "IS_NONE_DEF"),
   ("last_conv_nth",
    library "list" "LAST_EL"),
+  ("le_Suc_eq",
+   library "arithmetic" "LE"),
   ("le_funE",
    translated "source_le_funE"),
   ("le_fun_def",
