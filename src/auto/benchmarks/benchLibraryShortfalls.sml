@@ -162,17 +162,6 @@ val instantiated_fact_not_applied =
      ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
-(* Lost to the goal reduction that closed the Sigma class: reducing a
-   projection changes this goal's shape and fastforce no longer closes
-   it.  Recorded rather than traded away silently -- the reduction is
-   +7 / -1 over the corpus. *)
-val paired_collect_after_reduction =
-  classified "paired collect after reduction"
-    ("the goal is a monotonicity over a set former on pairs, and "
-     ^ "reducing the projections it carries leaves a shape the "
-     ^ "method's fastforce does not close")
-    ["product_type_L1100_Collect_split_mono_strong"]
-
 val zip_against_map =
   classified "zip against map"
     ("ZIP against MAP is not normalised")
@@ -479,16 +468,27 @@ val character_arithmetic =
 val sigma_and_times_rule_forms =
   classified "Sigma and Times rule forms"
     ("the translation inlines Sigma, so the goal reaching HOL4 is "
-     ^ "about FST and SND of an explicit pair; the engines now reduce "
-     ^ "those on the way in, and what is left in this class needs the "
-     ^ "pair itself taken apart -- surjective pairing -- rather than "
-     ^ "a projection applied to one")
+     ^ "about FST and SND of an explicit pair; the engines reduce a "
+     ^ "projection applied to a pair, and these two are what is left "
+     ^ "-- the search reports no proof rather than running out of "
+     ^ "budget")
+    ["product_type_L1088_Collect_case_prod_Sigma",
+     "product_type_L688_The_split_eq"]
+
+(* Four of what used to be one class are budget, not shape: each
+   returns nothing within the budget rather than reporting no proof,
+   so what stands in the way is not established.  Two of them --
+   split_paired_Ball_Sigma and its Bex twin -- relate a quantifier over
+   a pair to quantifiers over its components, which Isabelle decides
+   with split_paired_All. *)
+val sigma_over_budget =
+  classified "Sigma over budget"
+    ("the goal is about a quantifier or a subset over an inlined "
+     ^ "Sigma and the search does not return within the budget")
     ["product_type_L1031_SigmaE",
      "product_type_L1082_Times_subset_cancel2",
-     "product_type_L1088_Collect_case_prod_Sigma",
      "product_type_L1109_split_paired_Ball_Sigma",
-     "product_type_L1112_split_paired_Bex_Sigma",
-     "product_type_L688_The_split_eq"]
+     "product_type_L1112_split_paired_Bex_Sigma"]
 
 val execution : benchLib.shortfall list =
   conditional_list_rewrites @
@@ -502,7 +502,6 @@ val execution : benchLib.shortfall list =
   instantiated_fact_citation @
   instantiated_fact_not_applied @
   zip_against_map @
-  paired_collect_after_reduction @
   over_budget_with_no_residual @
   arithmetic_residual_after_unfolding @
   beta_redex_in_a_branch @
@@ -531,6 +530,7 @@ val execution : benchLib.shortfall list =
   finite_map_update @
   option_relations @
   character_arithmetic @
-  sigma_and_times_rule_forms
+  sigma_and_times_rule_forms @
+  sigma_over_budget
 
 end
