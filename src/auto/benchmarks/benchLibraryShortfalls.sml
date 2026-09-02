@@ -142,17 +142,24 @@ val instantiated_fact_citation =
      "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id",
      "list_L5301_nth_rotate1"]
 
-(* Both citations are instantiated and both instances land: the
-   residual carries the specialised fact as a hypothesis, in the same
-   spelling as the goal.  Neither goal withholds anything (excl = []),
-   so this is not the recognition rule; what is not understood is why
-   the simplifier does not apply a hypothesis the goal is an instance
-   of.  Recorded as observed rather than diagnosed. *)
+(* Diagnosed: a fact reaches a goal as an inserted premise, and a
+   premise's type variables are fixed -- only its term variables can be
+   specialised.  So an instantiated citation applies exactly when its
+   type variables already coincide with the goal's, which they do when
+   the instantiating term is matched against the theorem as written and
+   need not when it is not.  [zip_map_map] uses the identity's own type
+   variable for an unrelated component, so its instance comes out
+   narrower than the citation warrants; renaming the term's type
+   variables apart makes the instance correct and then unusable, and
+   was measured at four goals lost and none gained.  The fix is to
+   instantiate a supplied fact's types against the goal where facts are
+   supplied, not in the name table. *)
 val instantiated_fact_not_applied =
   classified "instantiated fact not applied"
-    ("the instantiated citation reaches the goal as a hypothesis and "
-     ^ "the goal is an instance of it, the goal withholds nothing, "
-     ^ "and the method's simplifier still does not close it")
+    ("the instantiated citation reaches the goal as a premise, whose "
+     ^ "type variables are fixed; the instance is narrower than the "
+     ^ "citation because the identity shares a type variable with an "
+     ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
 val zip_against_map =

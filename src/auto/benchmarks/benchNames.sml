@@ -51,6 +51,18 @@ fun symmetric build () =
    term the method instantiates it with. *)
 fun instantiated bindings build () =
   let
+    (* The instantiating term's type variables are matched against the
+       theorem's as written, sharing names rather than being renamed
+       apart.  That is deliberate and load-bearing: the fact reaches a
+       goal as an inserted premise, whose type variables are fixed and
+       cannot be specialised, so an instance whose types are fresh
+       cannot apply to anything.  It also means [I] meeting a theorem
+       that already uses [I]'s type variable collapses two independent
+       types -- real, and visible in
+       [zip_map_map[of f xs "\\<lambda>x. x" ys]].  Renaming apart was
+       measured and costs four goals to gain none; the fix belongs
+       where a supplied fact is instantiated against the goal, not
+       here. *)
     fun bind (name, term) theorem =
       case List.find (fn variable => fst (dest_var variable) = name)
              (free_vars (concl theorem)) of
