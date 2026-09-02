@@ -256,6 +256,21 @@ val _ =
        solved (clasimpLib.AUTO_TAC [])
          ``PERM ([] : 'a list) xs <=> xs = []``)
 
+(* src/HOL/Product_Type.thy:520,524 @ f7e02b7e.  Isabelle decides
+   [split_paired_All] and [split_paired_Ex] ambiently: a quantifier over
+   a pair is the pair of quantifiers over its components.  Neither goal
+   below is a corpus entry and neither is the rule itself; each states a
+   consequence about the components, and without the seed both are left
+   with the pair quantifier unopened. *)
+val _ =
+  check
+    ("the pair-quantifier seed views are usable",
+     fn () =>
+       List.all
+         (solved (clasimpLib.AUTO_TAC []))
+         [``!Q. (!p : 'a # 'b. Q (FST p) (SND p)) <=> (!x y. Q x y)``,
+          ``!Q. (?p : 'a # 'b. Q (FST p) (SND p)) <=> (?x y. Q x y)``])
+
 (* src/HOL/List.thy:3231 @ f7e02b7e.  Isabelle decides [fold_append]
    ambiently: a fold across an append is the two folds in sequence.
    Neither goal below is a corpus entry, and neither is [fold_append]
