@@ -90,6 +90,9 @@ local
     (* Exact per-translation operator provenance.  Only definitions selected
        by SmtLib's EncodedSymbol records may be unfolded during replay. *)
     translation_definitions : SmtLib.emitted_definition list,
+    (* One mutable atom cache for the complete proof replay.  Every general
+       reduction node in this state shares its owning-theory expansions. *)
+    skeleton_context : SmtSkeletonProve.context,
     z3_version : string
   }
 
@@ -102,6 +105,7 @@ local
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
+      skeleton_context = #skeleton_context s,
       z3_version = #z3_version s
     }
 
@@ -114,6 +118,7 @@ local
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
+      skeleton_context = #skeleton_context s,
       z3_version = #z3_version s
     }
 
@@ -126,6 +131,7 @@ local
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
+      skeleton_context = #skeleton_context s,
       z3_version = #z3_version s
     }
 
@@ -2849,6 +2855,13 @@ local
       D1PerformanceCache
     | SemanticProofLocalLookup
 
+  fun skeleton_general_attempt state target =
+    SmtSkeletonDispatch.attempt (#skeleton_context state) target
+
+  fun skeleton_general_success result =
+    profile "th_lemma[general](success)"
+      (fn () => #theorem result) ()
+
   fun th_lemma_wrapper cache_policy (name : string)
     (th_lemma_implementation : state * Term.term -> state * Thm.thm)
     (state, thms, t) : state * Thm.thm =
@@ -2865,13 +2878,19 @@ local
       | SemanticProofLocalLookup =>
           (* E1(a): finite checked-state lookup and instantiation is complete. *)
           state_inst_cached_thm state target
+    fun checked_general target =
+      case skeleton_general_attempt state target of
+        SmtSkeletonDispatch.Proved result =>
+          (state, skeleton_general_success result)
+      | SmtSkeletonDispatch.Declined =>
+          th_lemma_implementation (state, target)
     fun general () =
       ((state,
         profile ("th_lemma[" ^ name ^ "](" ^ cache_rung ^ ")(cache)")
           cached t')
       handle Feedback.HOL_ERR _ =>
         (* do actual work to derive the theorem *)
-        th_lemma_implementation (state, t'))
+        checked_general t')
     val (state, thm) =
       if has_proforma then
         ((state,
@@ -2942,6 +2961,10 @@ local
     else
       raise Feedback.HOL_ERR holerr
 
+  (* The single production entry for TASK_19's propositionally-valid modulo
+     atom-expansion class.  Admission is a code-level precondition in the
+     dispatcher; a normal decline/failure lets the owning legacy theory rung
+     run, while resource rejection always terminates the ladder. *)
   val z3_th_lemma_arith_generic =
     th_lemma_wrapper D1PerformanceCache "arith" (fn (state, t) =>
     let
@@ -3130,13 +3153,19 @@ local
     val () =
       if SmtFpProve.has_fp_theory_term t' then ()
       else SmtFpProve.unsupported t'
-    (* E1(b): checked lowering is the general selected FP th-lemma procedure
-       and fails loudly at its unsupported/D4 boundary. *)
-    val thm = profile "th_lemma[fp](1)"
-      (SmtFpProve.fp_prove_with_decompositions_and_arith
-        arith_prove []) t'
+    val (general, thm) =
+      case skeleton_general_attempt state t' of
+        SmtSkeletonDispatch.Proved result =>
+          (true, skeleton_general_success result)
+      | SmtSkeletonDispatch.Declined =>
+          (* E1(b): checked lowering is the general selected FP th-lemma
+             procedure and fails loudly at its unsupported/D4 boundary. *)
+          (false, profile "th_lemma[fp](1)"
+            (SmtFpProve.fp_prove_with_decompositions_and_arith
+              arith_prove []) t')
   in
-    (state_cache_thm state thm, Drule.LIST_MP thms thm)
+    (if general then state else state_cache_thm state thm,
+     Drule.LIST_MP thms thm)
   end
 
   fun z3_th_lemma_advanced metadata =
@@ -3171,9 +3200,15 @@ local
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
     val context = HOLset.listItems (#asserted_hyps state)
     val () = gate t'
-    val thm =
+    (* Run the bounded DAG-aware family scan before the common attempt.  Once
+       the String/character metadata guard has admitted the node, every
+       target is offered: owned bridge atoms may be reduced while symbolic
+       String leaves remain as propositional residuals. *)
+    val _ = SmtStringProve.has_string_theory_term t'
+    fun legacy () =
       ((* E1(b): the general String/regex procedure gates its family. *)
-       profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)") prover t')
+       profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)")
+         prover t')
       handle Feedback.HOL_ERR holerr =>
         if SmtResource.is_resource_gate holerr then
           raise Feedback.HOL_ERR holerr
@@ -3188,8 +3223,14 @@ local
               raise ERR ("z3_th_lemma_" ^ dispatch_theory)
                 (unsupported_string_th_lemma_message dispatch_theory
                   state metadata t'))
+    val (general, thm) =
+      case skeleton_general_attempt state t' of
+        SmtSkeletonDispatch.Proved result =>
+          (true, skeleton_general_success result)
+      | SmtSkeletonDispatch.Declined => (false, legacy ())
   in
-    (state_cache_thm state thm, Drule.LIST_MP thms thm)
+    (if general then state else state_cache_thm state thm,
+     Drule.LIST_MP thms thm)
   end
 
   val z3_th_lemma_native_seq =
@@ -3757,16 +3798,16 @@ local
           z3_th_lemma_arith (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_ARRAY (metadata, pts, concl))
         continuation =
-        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_array
-          (pts, concl) continuation []
+        list_prems state_proof (th_lemma_rule_name metadata)
+          z3_th_lemma_array (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_BASIC (metadata, pts, concl))
         continuation =
-        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_basic
-          (pts, concl) continuation []
+        list_prems state_proof (th_lemma_rule_name metadata)
+          z3_th_lemma_basic (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_BV (metadata, pts, concl))
         continuation =
-        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_bv
-          (pts, concl) continuation []
+        list_prems state_proof (th_lemma_rule_name metadata)
+          z3_th_lemma_bv (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_DATATYPE
         (metadata, pts, concl)) continuation =
         list_prems state_proof (th_lemma_rule_name metadata)
@@ -4393,6 +4434,61 @@ in
   val bv_th_lemma_basic_branch_for_test = bv_th_lemma_basic_branch
   val arith_bv_fallback_for_test = arith_bv_fallback
 
+  fun skeleton_general_sequence_for_test targets =
+    let
+      val context = SmtSkeletonDispatch.new_context arith_prove
+    in
+      {procedure_names = SmtSkeletonDispatch.procedure_names context,
+       results = List.map (SmtSkeletonDispatch.prove context) targets,
+       cache_size = SmtSkeletonProve.cache_size context}
+    end
+
+  fun skeleton_general_admits_for_test target =
+    case SmtSkeletonDispatch.attempt
+        (SmtSkeletonDispatch.new_context arith_prove) target of
+      SmtSkeletonDispatch.Proved _ => true
+    | SmtSkeletonDispatch.Declined => false
+
+  fun skeleton_general_word_branch_for_test word_expand fallback target =
+    let
+      fun unable _ = SmtSkeletonProve.Unable
+      val context = SmtSkeletonProve.new_context
+        [{name = "char-word", expand = unable},
+         {name = "word", expand = word_expand},
+         {name = "ground-regex", expand = unable},
+         {name = "arithmetic", expand = unable}]
+    in
+      case SmtSkeletonDispatch.attempt context target of
+        SmtSkeletonDispatch.Proved result => #theorem result
+      | SmtSkeletonDispatch.Declined => fallback target
+    end
+
+  fun skeleton_general_arithmetic_branch_for_test arith_prove fallback
+      target =
+    let
+      val context = SmtSkeletonDispatch.new_context arith_prove
+    in
+      case SmtSkeletonDispatch.attempt context target of
+        SmtSkeletonDispatch.Proved result => #theorem result
+      | SmtSkeletonDispatch.Declined => fallback target
+    end
+
+  fun skeleton_general_branch_for_test fallback target =
+    case SmtSkeletonDispatch.attempt
+        (SmtSkeletonDispatch.new_context arith_prove) target of
+      SmtSkeletonDispatch.Proved result => #theorem result
+    | SmtSkeletonDispatch.Declined => fallback target
+
+  fun skeleton_duplicate_registry_for_test target =
+    let
+      fun unable _ = SmtSkeletonProve.Unable
+      val context = SmtSkeletonProve.new_context
+        [{name = "word", expand = unable},
+         {name = "word", expand = unable}]
+    in
+      SmtSkeletonDispatch.attempt context target
+    end
+
   fun recursive_rewrite_outer_for_test site recurse fallback input =
     ((recursive_rewrite_boundary site recurse input
       handle Feedback.HOL_ERR _ => fallback input)
@@ -4418,6 +4514,7 @@ in
     var_set = proof_vars proof,
     bit_decompositions = proof_bit_decompositions proof,
     translation_definitions = definitions,
+    skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
     z3_version = proof_version proof
   }
 

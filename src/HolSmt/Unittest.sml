@@ -15554,16 +15554,564 @@ in
         profile_call_count "rewrite(18)(BBLAST)_OK" = 11,
       "disabled width rewrite caches did not fall back to 11 BBLAST proofs");
      assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 0 andalso
-        profile_call_count "th_lemma[arith](4)(bv)_OK" = 4 andalso
-        profile_call_count "th_lemma[bv](3)(COND_BBLAST)_OK" = 4,
-      "disabled width th-lemma caches did not fall back to four BV proofs"))
+        profile_call_count
+          "th_lemma[general](success)_OK" = 4 andalso
+        profile_call_count "th_lemma[arith](4)(bv)_OK" = 0 andalso
+        profile_call_count "th_lemma[bv](3)(COND_BBLAST)_OK" = 0,
+      "disabled width th-lemma caches did not use four general reductions"))
   else
     (assert (profile_call_count "rewrite(9)(proforma)_OK" = 11 andalso
         profile_call_count "rewrite(18)(BBLAST)_OK" = 0,
       "width rewrite caches were not consumed exactly 11 times");
      assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 4 andalso
+        profile_call_count
+          "th_lemma[general](success)_OK" = 0 andalso
         profile_call_count "th_lemma[arith](4)(bv)_OK" = 0,
       "width th-lemma caches were not consumed exactly four times"))
+end
+
+fun z3_general_skeleton_reduction_integration_success () =
+let
+  fun timed label action =
+    let
+      val timer = Timer.startRealTimer ()
+      val result = action ()
+      val elapsed = Timer.checkRealTimer timer
+      val () = print ("TASK19_TIMING " ^ label ^ "=" ^
+        Time.toString elapsed ^ "s\n")
+    in
+      result
+    end
+  fun mk_proof proofterm =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val steps = Redblackmap.insert
+        (Z3_Proof.proof_steps initial, 0, proofterm)
+    in
+      Z3_Proof.update_proof_steps initial steps
+    end
+  fun metadata theory id =
+    Z3_Proof.mk_th_lemma_metadata (theory, SOME "lemma", [id])
+  fun bridge width name =
+    let
+      val word_type = wordsSyntax.mk_int_word_type width
+      val low = Term.mk_var (name ^ "_low", word_type)
+      val high = Term.mk_var (name ^ "_high", word_type)
+      val one = wordsSyntax.mk_word
+        (Arbnum.one, Arbnum.fromInt width)
+      val middle = wordsSyntax.mk_word_add (low,
+        wordsSyntax.mk_word_lsr_bv
+          (wordsSyntax.mk_word_sub (high, low), one))
+    in
+      boolSyntax.mk_imp (wordsSyntax.mk_word_ls (low, high),
+        boolSyntax.mk_conj (wordsSyntax.mk_word_ls (low, middle),
+          wordsSyntax.mk_word_ls (middle, high)))
+    end
+  fun char_bit index character =
+    ``char_bit ^(numSyntax.mk_numeral (Arbnum.fromInt index))
+        (w2n ^character)``
+  fun char_ladder expanded character other index =
+    if index < 0 then boolSyntax.F
+    else
+      let
+        val c = char_bit index character
+        val d = char_bit index other
+        val tail = char_ladder expanded character other (index - 1)
+      in
+        if expanded then
+          boolSyntax.mk_disj
+            (boolSyntax.mk_conj (boolSyntax.mk_neg d, c),
+             boolSyntax.mk_disj
+               (boolSyntax.mk_conj (boolSyntax.mk_neg d, tail),
+                boolSyntax.mk_conj (c, tail)))
+        else
+          boolSyntax.mk_disj
+            (boolSyntax.mk_conj (c, boolSyntax.mk_neg d),
+             boolSyntax.mk_conj (boolSyntax.mk_eq (c, d), tail))
+      end
+  fun replay label proofterm target =
+    let val theorem = Z3_ProofReplay.replay_root_for_test
+      (mk_proof proofterm)
+    in
+      assert_no_hyps (label, theorem);
+      assert_concl_alpha (label, theorem, target);
+      check_oracle_tags label theorem
+    end
+  fun replay_large_dag label proofterm =
+    let val theorem = Z3_ProofReplay.replay_root_for_test
+      (mk_proof proofterm)
+    in
+      (* The production [check_thm] already enforces the exact parsed
+         conclusion.  Repeating alpha comparison here unfolds this fixture's
+         15-million-node shared tree and would turn a subsecond replay into a
+         test-only multi-minute traversal. *)
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  val word8 = bridge 8 "task19_word8"
+  val word12 = bridge 12 "task19_word12"
+  val word16 = bridge 16 "task19_word16"
+  val word32 = bridge 32 "task19_word32"
+  val character = ``task19_character : 18 word``
+  val other = ``task19_other : 18 word``
+  val char17 = boolSyntax.mk_eq
+    (char_ladder true character other 17,
+     char_ladder false character other 17)
+  val euro = ``smt_in_re (SmtStr [8364; 8364; 8364])
+    (reglan_loop (reglan_to_re (seq_unit 8364)) 2 4)``
+  val smile = ``smt_in_re (SmtStr [128578])
+    (reglan_inter
+      (reglan_range (seq_unit 128512) (seq_unit 128591))
+      (reglan_comp (reglan_to_re (seq_unit 128577))))``
+  val regex_target = boolSyntax.mk_conj
+    (boolSyntax.mk_imp (euro, euro),
+     boolSyntax.mk_disj (smile, boolSyntax.mk_neg smile))
+  val ground_arithmetic =
+    ``(1:int) < 2 \/ ~((1:int) < 2)``
+  val symbolic_arithmetic_true =
+    ``(task19_symbolic_int:int) + 0 = task19_symbolic_int``
+  val symbolic_arithmetic_false =
+    ``(task19_symbolic_int:int) + 1 = task19_symbolic_int``
+  fun atom_tautology atom =
+    boolSyntax.mk_disj (atom, boolSyntax.mk_neg atom)
+  val direct = timed "direct-sequence" (fn () =>
+    Z3_ProofReplay.skeleton_general_sequence_for_test
+      [word8, word8, word12, word16, word32, ground_arithmetic])
+  val results = #results direct
+  fun metrics result = #metrics
+    (result : {theorem : thm, metrics : SmtSkeletonProve.metrics})
+  val repeated8 = metrics (List.nth (results, 1))
+  val held16 = metrics (List.nth (results, 3))
+  val held32 = metrics (List.nth (results, 4))
+  val arithmetic = metrics (List.nth (results, 5))
+  val symbolic_arithmetic = timed "direct-symbolic-arithmetic" (fn () =>
+    Z3_ProofReplay.skeleton_general_sequence_for_test
+      [atom_tautology symbolic_arithmetic_true,
+       atom_tautology symbolic_arithmetic_false])
+  val direct_char = timed "direct-char17" (fn () =>
+    Z3_ProofReplay.skeleton_general_sequence_for_test [char17])
+  val arithmetic_transitivity =
+    ``2 * (task19_x:int) <= 2 * task19_y ==>
+       task19_x <= task19_y``
+  val () = assert
+    (#procedure_names direct =
+       ["char-word", "word", "ground-regex", "arithmetic"],
+     "general reduction registry was not the exact unique-owner set")
+  val () = assert
+    (Z3_ProofReplay.skeleton_general_admits_for_test word8 andalso
+     not (Z3_ProofReplay.skeleton_general_admits_for_test
+       ``(task19_x:word8) <=+ task19_y``) andalso
+     not (Z3_ProofReplay.skeleton_general_admits_for_test
+       ``task19_p \/ ~task19_p``) andalso
+     not (Z3_ProofReplay.skeleton_general_admits_for_test
+       ``(task19_divisor:int) <> 0 ==>
+         emod 0 task19_divisor = 0``) andalso
+     not (Z3_ProofReplay.skeleton_general_admits_for_test
+       (atom_tautology
+         ``(task19_nonlinear_x:int) * task19_nonlinear_y >= 0``)),
+     "general reduction class boundary admitted a whole/pure obligation")
+  val () = assert
+    (#atom_cache_hits repeated8 > 0 andalso #atom_proofs repeated8 = 0,
+     "per-proof general reduction cache did not reuse word8 atoms")
+  val () = assert
+    (#atom_proofs held16 > 0 andalso #atom_proofs held32 > 0,
+     "held-out word16/word32 did not use atom expansion")
+  val () = assert
+    (#atom_proofs arithmetic = 1,
+     "closed arithmetic atom did not use the arithmetic owner")
+  val () = List.app
+    (fn result =>
+      let
+        val theorem = #theorem
+          (result : {theorem : thm, metrics : SmtSkeletonProve.metrics})
+        val arithmetic_calls = List.foldl
+          (fn ((name, count), total) =>
+            if name = "arithmetic" then count else total) 0
+          (#procedure_calls (#metrics result))
+      in
+        assert_no_hyps ("symbolic arithmetic expansion", theorem);
+        check_oracle_tags "symbolic arithmetic expansion" theorem;
+        assert (arithmetic_calls = 1 andalso
+            #atom_proofs (#metrics result) = 1 andalso
+            #atom_cache_hits (#metrics result) = 1,
+          "symbolic arithmetic did not use one checked T/F expansion")
+      end) (#results symbolic_arithmetic)
+  val () = assert
+    (#atom_proofs (metrics (List.hd (#results direct_char))) = 36,
+     "direct char ladder did not expand its 36 distinct atoms")
+  val () = Profile.reset_all ()
+  val () = timed "full-word8" (fn () =>
+    replay "general reduction word8 full replay"
+      (Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-word8", [], word8)) word8)
+  val () = timed "full-word12" (fn () =>
+    replay "general reduction word12 full replay"
+      (Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-word12", [], word12)) word12)
+  val () = timed "full-word16" (fn () =>
+    replay "general reduction held-out word16 full replay"
+      (Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-word16", [], word16)) word16)
+  val () = timed "full-word32" (fn () =>
+    replay "general reduction held-out word32 full replay"
+      (Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-word32", [], word32)) word32)
+  val () = timed "full-char17" (fn () =>
+    replay_large_dag "general reduction char k17 full replay"
+      (Z3_Proof.TH_LEMMA_CHAR
+        (metadata "char" "task19-char17", [], char17)))
+  val () = timed "full-regex" (fn () =>
+    replay "general reduction unseen regex full replay"
+      (Z3_Proof.TH_LEMMA_SEQ
+        (metadata "seq" "task19-unseen-regex", [], regex_target))
+      regex_target)
+  val () = assert
+    (profile_call_count "th_lemma[general](candidate/attempt)_OK" = 6 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 6,
+     "full replay did not attempt and prove six general reductions")
+  val () = Profile.reset_all ()
+  fun with_residual residual = boolSyntax.mk_imp (residual, word8)
+  val bag_target = with_residual
+    ``BAG_IN (0:num) (task19_bag:num -> num)``
+  val array_target = with_residual ``(task19_array:num -> bool) 0``
+  val datatype_target = with_residual
+    ``(task19_option:num option) = NONE``
+  val seq_target = with_residual
+    ``LENGTH (task19_sequence:num list) = LENGTH task19_sequence``
+  val fp_target = with_residual
+    ``smtfp_is_nan (task19_fp:(4,3) smtfp)``
+  val cross_metadata =
+    [("arith", Z3_Proof.TH_LEMMA_ARITH
+        (metadata "arith" "task19-cross-arith", [], word8), word8),
+     ("bag", Z3_Proof.TH_LEMMA_ARITH
+        (metadata "arith" "task19-cross-bag", [], bag_target), bag_target),
+     ("array", Z3_Proof.TH_LEMMA_ARRAY
+        (metadata "array" "task19-cross-array", [], array_target),
+        array_target),
+     ("basic", Z3_Proof.TH_LEMMA_BASIC
+        (metadata "basic" "task19-cross-basic", [], word8), word8),
+     ("bv", Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-cross-bv", [], word8), word8),
+     ("datatype", Z3_Proof.TH_LEMMA_DATATYPE
+        (metadata "datatype" "task19-cross-datatype", [],
+         datatype_target), datatype_target),
+     ("native-seq", Z3_Proof.TH_LEMMA_SEQ
+        (metadata "seq" "task19-cross-native-seq", [], seq_target),
+        seq_target),
+     ("char", Z3_Proof.TH_LEMMA_CHAR
+        (metadata "char" "task19-cross-char", [], word8), word8),
+     ("advanced", Z3_Proof.TH_LEMMA_ADVANCED
+        (metadata "nonlinear-arith" "task19-cross-advanced", [], word8),
+        word8),
+     ("fp", Z3_Proof.TH_LEMMA_ADVANCED
+        (metadata "fp" "task19-cross-fp", [], fp_target), fp_target)]
+  val () = List.app
+    (fn (name, proofterm, target) =>
+      replay ("general reduction cross-metadata " ^ name)
+        proofterm target) cross_metadata
+  val () = assert
+    (profile_call_count "th_lemma[general](candidate/attempt)_OK" = 10 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 10,
+     "not every th-lemma metadata family attempted and used the common rung")
+  val () = Profile.reset_all ()
+  val () = timed "legacy-arithmetic" (fn () =>
+    replay "legacy arithmetic transitivity full replay"
+      (Z3_Proof.TH_LEMMA_ARITH
+        (metadata "arith" "task19-transitivity", [],
+         arithmetic_transitivity)) arithmetic_transitivity)
+  val () = assert
+    (profile_call_count
+       "th_lemma[general](candidate/attempt)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 0 andalso
+     profile_call_count "th_lemma[arith](3)_OK" = 1,
+     "theory-valid transitivity did not decline to the legacy arith rung")
+  val opaque_word =
+    ``task19_opaque_word (task19_a:word8) \/
+      ~task19_opaque_word task19_a``
+  val owner_boundary = boolSyntax.mk_disj
+    (``(task19_a:word8) <=+ task19_b``,
+     boolSyntax.mk_neg ``(task19_a:word8) <=+ task19_b``)
+  val false_regex = boolSyntax.mk_conj (euro, boolSyntax.mk_neg euro)
+  val false_arithmetic = ``(1:int) < 2 /\ ~((1:int) < 2)``
+  val family_atoms =
+    [("char", char_bit 0 character),
+     ("word", ``(task19_a:word8) <=+ task19_b``),
+     ("regex", euro),
+     ("arithmetic", ``(1:int) < 2``)]
+  fun mixed_pairs [] result = List.rev result
+    | mixed_pairs ((left_name, left) :: rest) result =
+        mixed_pairs rest
+          (List.foldl
+            (fn ((right_name, right), pairs) =>
+              ((left_name ^ "/" ^ right_name,
+                boolSyntax.mk_conj
+                  (atom_tautology left, atom_tautology right)) :: pairs))
+            result rest)
+  val pair_targets = mixed_pairs family_atoms []
+  val pair_results = Z3_ProofReplay.skeleton_general_sequence_for_test
+    (List.map Lib.snd pair_targets)
+  val () = List.app
+    (fn ((name, target), result) =>
+      let val theorem = #theorem
+        (result : {theorem : thm, metrics : SmtSkeletonProve.metrics})
+      in
+        assert_no_hyps ("mixed owner pair " ^ name, theorem);
+        assert_concl_alpha ("mixed owner pair " ^ name, theorem, target);
+        check_oracle_tags ("mixed owner pair " ^ name) theorem;
+        assert (#atom_requests (#metrics result) = 4 andalso
+            #atom_proofs (#metrics result) +
+              #atom_cache_hits (#metrics result) = 4,
+          "mixed owner pair did not transactionally prove/cache both " ^
+          "owners: " ^ name)
+      end) (ListPair.zip (pair_targets, #results pair_results))
+  val mixed_all = boolSyntax.mk_conj
+    (atom_tautology (Lib.snd (List.nth (family_atoms, 0))),
+     boolSyntax.mk_conj
+       (atom_tautology (Lib.snd (List.nth (family_atoms, 1))),
+        boolSyntax.mk_conj
+          (atom_tautology (Lib.snd (List.nth (family_atoms, 2))),
+           atom_tautology (Lib.snd (List.nth (family_atoms, 3))))))
+  val mixed_all_result = List.hd (#results
+    (Z3_ProofReplay.skeleton_general_sequence_for_test [mixed_all]))
+  val mixed_all_metrics = #metrics mixed_all_result
+  fun procedure_count name = List.foldl
+    (fn ((candidate, count), total) =>
+      if candidate = name then count else total) 0
+    (#procedure_calls mixed_all_metrics)
+  val () = assert_no_hyps
+    ("mixed four-owner skeleton", #theorem mixed_all_result)
+  val () = assert_concl_alpha
+    ("mixed four-owner skeleton", #theorem mixed_all_result, mixed_all)
+  val () = check_oracle_tags
+    "mixed four-owner skeleton" (#theorem mixed_all_result)
+  val () = assert
+    (#atom_proofs mixed_all_metrics = 4 andalso
+     #atom_cache_hits mixed_all_metrics = 4 andalso
+     List.all (fn name => procedure_count name = 1)
+       ["char-word", "word", "ground-regex", "arithmetic"],
+     "mixed four-owner skeleton did not transactionally expand/cache each " ^
+     "owner exactly once")
+  fun overlap name left right =
+    Term.list_mk_comb
+      (Term.mk_var (name, ``:bool -> bool -> bool``), [left, right])
+  val ground_char = char_bit 0 ``(0w:18 word)``
+  val word_atom = ``(task19_a:word8) <=+ task19_b``
+  val arithmetic_atom = ``(1:int) < 2``
+  val same_leaf_overlaps =
+    [("char/regex", overlap "task19_char_regex" ground_char euro),
+     ("char/arithmetic",
+      overlap "task19_char_arithmetic" ground_char arithmetic_atom),
+     ("word/regex", overlap "task19_word_regex" word_atom euro),
+     ("word/arithmetic",
+      overlap "task19_word_arithmetic" word_atom arithmetic_atom),
+     ("regex/arithmetic",
+      overlap "task19_regex_arithmetic" euro arithmetic_atom)]
+  val () = assert
+    (not (Z3_ProofReplay.skeleton_general_admits_for_test opaque_word),
+     "opaque word application was assigned to the word owner")
+  val () = Profile.reset_all ()
+  val () = replay "opaque word production decline"
+    (Z3_Proof.TH_LEMMA_BASIC
+      (metadata "basic" "task19-opaque-word", [], opaque_word))
+    opaque_word
+  val () = assert
+    (profile_call_count "th_lemma[general](success)_OK" = 0 andalso
+     profile_call_count
+       "th_lemma[general](candidate/attempt)_OK" = 1 andalso
+     profile_call_count "th_lemma[basic](2)(TAUT_PROVE)_OK" = 1,
+     "opaque word production row did not decline to Boolean replay")
+  val symbolic_string_bridge = boolSyntax.mk_imp
+    (``smtstr_len (task19_symbolic_string:smtstr) = 0``, word8)
+  val () = Profile.reset_all ()
+  val () = replay "symbolic String residual plus word bridge"
+    (Z3_Proof.TH_LEMMA_SEQ
+      (metadata "seq" "task19-string-word-bridge", [],
+       symbolic_string_bridge)) symbolic_string_bridge
+  val () = assert
+    (profile_call_count
+       "th_lemma[general](candidate/attempt)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 1 andalso
+     profile_call_count "th_lemma[seq](1)(theory)_OK" = 0,
+     "String metadata did not offer the symbolic residual/word bridge to " ^
+     "the common attempt")
+  val symbolic_string_fallback =
+    ``smtstr_concat (smtstr_concat task19_s task19_t) task19_u =
+      smtstr_concat task19_s (smtstr_concat task19_t task19_u)``
+  val () = Profile.reset_all ()
+  val () = replay "symbolic String common-attempt fallback"
+    (Z3_Proof.TH_LEMMA_SEQ
+      (metadata "seq" "task19-string-fallback", [],
+       symbolic_string_fallback)) symbolic_string_fallback
+  val () = assert
+    (profile_call_count
+       "th_lemma[general](candidate/attempt)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 0 andalso
+     profile_call_count "th_lemma[seq](1)(theory)_OK" = 1,
+     "symbolic String target did not decline from the common attempt to " ^
+     "the legacy checked String prover")
+  val () = List.app
+    (fn (name, target) =>
+      assert
+        (not (Z3_ProofReplay.skeleton_general_admits_for_test target),
+         "ambiguous same-leaf family overlap was admitted: " ^ name))
+    same_leaf_overlaps
+  val () = expect_hol_error_contains
+    "general reduction duplicate registry invariant"
+    "duplicate atom-procedure registry name"
+    (fn () => ignore
+      (Z3_ProofReplay.skeleton_duplicate_registry_for_test
+        owner_boundary))
+  fun assert_decline name target =
+    let
+      val fallback_called = ref false
+      val _ = Z3_ProofReplay.skeleton_general_branch_for_test
+        (fn original =>
+          (fallback_called := true; Thm.REFL original)) target
+    in
+      assert (!fallback_called, name ^ " did not reach the later rung")
+    end
+  val () = assert_decline "checked false regex" false_regex
+  val () = assert_decline "checked false arithmetic" false_arithmetic
+  fun no_fallback target =
+    raise mk_HOL_ERR "Unittest" "task19_no_fallback"
+      (Library.term_to_string target)
+  val () = expect_hol_error_contains
+    "general reduction wrong-LHS invariant"
+    "returned the wrong left side"
+    (fn () => ignore
+      (Z3_ProofReplay.skeleton_general_word_branch_for_test
+        (fn _ => SmtSkeletonProve.Expanded (Thm.REFL boolSyntax.T))
+        no_fallback owner_boundary))
+  val () = expect_hol_error_contains
+    "general reduction resource propagation"
+    "resource-gated: skeleton-replay; limit=dag-size"
+    (fn () => ignore
+      (Z3_ProofReplay.skeleton_general_word_branch_for_test
+        (fn _ =>
+          (SmtResource.check_dag_size_for "Skeleton" "general-reduction"
+             (SmtResource.max_skeleton_replay_dag_nodes + 1);
+           SmtSkeletonProve.Unable))
+        no_fallback owner_boundary))
+  val () = expect_hol_error_contains
+    "arithmetic owner resource propagation"
+    "resource-gated: skeleton-replay; limit=dag-size"
+    (fn () => ignore
+      (Z3_ProofReplay.skeleton_general_arithmetic_branch_for_test
+        (fn _ =>
+          (SmtResource.check_dag_size_for "Skeleton" "general-reduction"
+             (SmtResource.max_skeleton_replay_dag_nodes + 1);
+           boolTheory.TRUTH))
+        no_fallback (atom_tautology symbolic_arithmetic_true)))
+  val unable_fallback = ref false
+  val _ = Z3_ProofReplay.skeleton_general_word_branch_for_test
+    (fn _ => SmtSkeletonProve.Unable)
+    (fn target => (unable_fallback := true; Thm.REFL target))
+    owner_boundary
+  val () = assert (!unable_fallback,
+    "explicit owner inability did not reach the later rung")
+  fun shared_branch 0 term = term
+    | shared_branch depth term =
+        let
+          val child = shared_branch (depth - 1) term
+          val left = Term.mk_var
+            ("task19_deep_left_" ^ Int.toString depth, Type.bool)
+          val right = Term.mk_var
+            ("task19_deep_right_" ^ Int.toString depth, Type.bool)
+        in
+          boolSyntax.mk_conj
+            (boolSyntax.mk_disj (child, left),
+             boolSyntax.mk_disj (child, right))
+        end
+  val deep_shared = shared_branch 70 owner_boundary
+  val deep_measure = SmtSkeletonProve.term_measure deep_shared
+  val () = assert
+    (#tree_nodes deep_measure = SmtSkeletonProve.max_metric andalso
+     #dag_nodes deep_measure < 1000,
+     "depth-70 shared DAG metric did not saturate without overflow")
+  val () = expect_hol_error_contains
+    "deep shared non-string family admission"
+    "no Unicode-string term"
+    (fn () => ignore (SmtStringProve.string_rewrite_prove deep_shared))
+  fun sibling_proof target =
+    let
+      val initial = Z3_Proof.empty_proof "4.11.2"
+      val tag = metadata "bv" "task19-shared-siblings"
+      val steps0 = Z3_Proof.proof_steps initial
+      val steps1 = Redblackmap.insert
+        (steps0, 1, Z3_Proof.TH_LEMMA_BV (tag, [], target))
+      val steps2 = Redblackmap.insert
+        (steps1, 2, Z3_Proof.TH_LEMMA_BV (tag, [], target))
+      val root = Z3_Proof.TH_LEMMA_BV
+        (tag, [Z3_Proof.ID 1, Z3_Proof.ID 2], target)
+    in
+      Z3_Proof.update_proof_steps initial
+        (Redblackmap.insert (steps2, 0, root))
+    end
+  val () = Profile.reset_all ()
+  val sibling_theorem = Z3_ProofReplay.replay_root_for_test
+    (sibling_proof owner_boundary)
+  val () = assert_no_hyps
+    ("general reduction production sibling DAG", sibling_theorem)
+  val () = assert_concl_alpha
+    ("general reduction production sibling DAG", sibling_theorem,
+     owner_boundary)
+  val () = check_oracle_tags
+    "general reduction production sibling DAG" sibling_theorem
+  val () = assert
+    (profile_call_count "th_lemma[general](atom:word)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 3 andalso
+     profile_call_count "th_lemma[bv](1)(cache)_OK" = 0,
+     "production sibling DAG did not reuse atoms outside the legacy Net")
+  fun variables 0 result = result
+    | variables remaining result =
+        variables (remaining - 1)
+          (Term.mk_var
+            ("task19_resource_" ^ Int.toString remaining, Type.bool) ::
+           result)
+  val owned_tautology = boolSyntax.mk_disj
+    (``(task19_a:word8) <=+ task19_b``,
+     boolSyntax.mk_neg ``(task19_a:word8) <=+ task19_b``)
+  fun pair_conjunctions [] result = List.rev result
+    | pair_conjunctions [term] result = List.rev (term :: result)
+    | pair_conjunctions (left :: right :: rest) result =
+        pair_conjunctions rest
+          (boolSyntax.mk_conj (left, right) :: result)
+  fun balanced_conjunction [term] = term
+    | balanced_conjunction terms =
+        balanced_conjunction (pair_conjunctions terms [])
+  val oversized = balanced_conjunction
+    (owned_tautology :: variables 1800 [])
+  val () = assert
+    (SmtSkeletonProve.dag_nodes oversized >
+       SmtResource.max_skeleton_replay_dag_nodes,
+     "pathological skeleton did not exceed the production DAG budget")
+  val () = timed "resource-rejection" (fn () =>
+    expect_hol_error_contains "general reduction DAG resource gate"
+      "resource-gated: skeleton-replay; limit=dag-size"
+      (fn () => ignore
+        (Z3_ProofReplay.skeleton_general_sequence_for_test [oversized])))
+  val () = timed "full-replay-resource-rejection" (fn () =>
+    expect_hol_error_contains "general reduction full replay resource gate"
+      "resource-gated: skeleton-replay; limit=dag-size"
+      (fn () => ignore (Z3_ProofReplay.replay_root_for_test
+        (mk_proof (Z3_Proof.TH_LEMMA_BASIC
+          (metadata "basic" "task19-hostile-dag", [], oversized))))))
+  fun duplicate 0 term = term
+    | duplicate remaining term =
+        duplicate (remaining - 1) (boolSyntax.mk_conj (term, term))
+  val oversized_nonstring_rewrite = duplicate 17 owned_tautology
+  val string_node_limit = SmtResource.max_term_nodes_for "String"
+  val () = assert
+    (SmtResource.term_nodes_up_to
+       string_node_limit oversized_nonstring_rewrite > string_node_limit,
+     "non-string admission row did not exceed the String node budget")
+  val () = timed "nonstring-skips-string-budget" (fn () =>
+    expect_hol_error_contains "large word rewrite skips String accounting"
+      "no Unicode-string term"
+      (fn () => ignore
+        (SmtStringProve.string_rewrite_prove oversized_nonstring_rewrite)))
+in
+  ()
 end
 
 fun z3_commuted_rewrite_orientation_replay_success () =
@@ -17560,8 +18108,9 @@ let
   val () = List.app check_boundary [0, 127, 196607]
   val digit_thm = replay_z3_proof_string digit_proof
 in
-  assert (profile_call_count "char(1)(bitblast)" = 4,
-    "char decomposition proofs did not use char(1)(bitblast) four times");
+  assert (profile_call_count "char(1)(bitblast)" = 3 andalso
+      profile_call_count "th_lemma[general](success)_OK" = 1,
+    "char proofs did not split three reconstruction and one general rung");
   assert (profile_call_count "char(2)(unsupported)" = 0,
     "char decomposition proofs fell through to unsupported");
   check_oracle_tags "Z3 char.is_digit decomposition" digit_thm
@@ -19838,6 +20387,8 @@ let
       z3_th_lemma_basic_dispatch_replay_success),
     ("z3_width_proforma_public_replay_success",
       z3_width_proforma_public_replay_success),
+    ("z3_general_skeleton_reduction_integration_success",
+      z3_general_skeleton_reduction_integration_success),
     ("shared_fastpath_budget_contract",
       shared_fastpath_budget_contract),
     ("cpc_fastpath_error_and_cache_atomicity_contract",

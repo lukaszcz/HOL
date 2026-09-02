@@ -23,6 +23,13 @@ struct
      primary defense; these limits are the heap-pressure backstop. *)
   val max_bv_replay_step_time = Time.fromSeconds 90
   val max_bv_replay_term_nodes = 2000000
+  (* TASK_18's authentic word12 bridge had 584 distinct target DAG nodes
+     despite 66,027,023 unfolded tree nodes.  Its slower held-out word32 row
+     completed in 4.584 s.  This replay class is intentionally measured as a
+     DAG: 4,096 nodes gives more than 7x structural headroom and 30 seconds
+     gives more than 6x time headroom while bounding pathological skeletons. *)
+  val max_skeleton_replay_step_time = Time.fromSeconds 30
+  val max_skeleton_replay_dag_nodes = 4096
   (* Discharging a deferred proof hypothesis runs a general first-order
      search, so bound it: an undischargeable hypothesis must fail with a
      diagnostic rather than hang the replay. *)
@@ -40,6 +47,7 @@ struct
 
   fun max_step_time_for category =
     if category = "BitVector" then max_bv_replay_step_time
+    else if category = "Skeleton" then max_skeleton_replay_step_time
     else max_bitblast_step_time
 
   fun max_term_nodes_for category =
@@ -65,6 +73,16 @@ struct
     "limit=term-size; observed=" ^ Int.toString observed ^
     " nodes; maximum=" ^ Int.toString (max_term_nodes_for category) ^
     " nodes; feature=" ^ resource_feature category case_id
+
+  fun dag_size_diagnostic_with_limit category case_id maximum observed =
+    resource_diagnostic_prefix category ^
+    "limit=dag-size; observed=" ^ Int.toString observed ^
+    " nodes; maximum=" ^ Int.toString maximum ^
+    " nodes; feature=" ^ resource_feature category case_id
+
+  fun dag_size_diagnostic_for category case_id observed =
+    dag_size_diagnostic_with_limit category case_id
+      max_skeleton_replay_dag_nodes observed
 
   fun proof_size_diagnostic case_id observed =
     proof_size_diagnostic_for "FloatingPoint" case_id observed
@@ -144,6 +162,16 @@ struct
     let val limit = max_term_nodes_for category in
       check_term_size_for category case_id (term_nodes_up_to limit goal)
     end
+
+  fun check_dag_size_for category case_id observed =
+    if observed <= max_skeleton_replay_dag_nodes then ()
+    else raise_gate "check_dag_size_for"
+      (dag_size_diagnostic_for category case_id observed)
+
+  fun check_dag_size_with_limit category case_id maximum observed =
+    if observed <= maximum then ()
+    else raise_gate "check_dag_size_with_limit"
+      (dag_size_diagnostic_with_limit category case_id maximum observed)
 
   fun check_bitblast_goal case_id goal =
     check_resource_goal "FloatingPoint" case_id goal

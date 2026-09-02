@@ -5,8 +5,10 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtSkeletonProve"
 
+  datatype expansion = Expanded of thm | Unable
+
   type atom_procedure =
-    {name : string, owns : term -> bool, expand : term -> thm}
+    {name : string, expand : term -> expansion}
 
   datatype context = Context of
     {procedures : atom_procedure list,
@@ -46,6 +48,14 @@ struct
       let val (_, body) = Term.dest_abs term in [body] end
     else []
 
+  val max_metric =
+    case Int.maxInt of
+      SOME maximum => maximum
+    | NONE => 1073741823
+
+  fun saturated_add left right =
+    if left >= max_metric - right then max_metric else left + right
+
   fun term_measure term =
     let
       (* The count is the unfolded tree size, but each DAG node is visited
@@ -57,7 +67,7 @@ struct
         | NONE =>
             let
               val size = List.foldl
-                (fn (child, result) => result + visit child)
+                (fn (child, result) => saturated_add result (visit child))
                 1 (term_children term)
               val _ = sizes := Redblackmap.insert (!sizes, term, size)
             in
@@ -140,14 +150,16 @@ struct
       theorem
     end
 
-  fun choose_owner procedures atom =
-    case List.filter (fn {owns, ...} => owns atom) procedures of
-      [] => NONE
-    | [procedure] => SOME procedure
-    | owners =>
-        raise ERR "choose_owner"
-          ("ambiguous theory atom owners: " ^
-           String.concatWith "," (List.map #name owners))
+  fun procedure_names (Context {procedures, ...}) =
+    List.map #name procedures
+
+  fun procedure_named procedures name =
+    case List.filter (fn procedure => #name procedure = name) procedures of
+      [procedure] => procedure
+    | [] => raise ERR "procedure_named"
+        ("unknown classified atom owner: " ^ name)
+    | _ => raise ERR "procedure_named"
+        ("duplicate classified atom owner: " ^ name)
 
   (* Force HolSat's checked equality-to-T path; EQT_ELIM recovers the
      requested theorem by a kernel inference. *)
@@ -345,7 +357,11 @@ struct
       (abstracted, substitution, Redblackmap.numItems (!atoms))
     end
 
-  fun prove (Context {procedures, atom_cache}) target =
+  exception PROCEDURE_UNABLE
+
+  fun prove_with_owners
+      (Context {procedures, atom_cache}) owners
+      (target_measure : {tree_nodes : int, dag_nodes : int}) target =
     let
       val _ =
         if Term.type_of target = Type.bool then ()
@@ -356,11 +372,11 @@ struct
             "whole obligation is a theory atom; local solve is forbidden"
         | SOME _ => ()
       val total_timer = Timer.startRealTimer ()
-      val target_measure = term_measure target
       val nodes = ref (Redblackmap.mkDict Term.compare)
       val skeleton_nodes = ref (HOLset.empty Term.compare)
       val distinct_atoms = ref (HOLset.empty Term.compare)
       val calls = ref (Redblackmap.mkDict String.compare)
+      val working_cache = ref (!atom_cache)
       val node_hits = ref 0
       val atom_requests = ref 0
       val atom_proofs = ref 0
@@ -374,25 +390,32 @@ struct
           calls := Redblackmap.insert (!calls, name, count + 1)
         end
       fun expand atom =
-        case choose_owner procedures atom of
+        case Redblackmap.peek (owners, atom) of
           NONE => Thm.REFL atom
-        | SOME {name, expand, ...} =>
+        | SOME name =>
             let
+              val {expand, ...} = procedure_named procedures name
               val _ = owned_atoms := !owned_atoms + 1
               val _ = atom_requests := !atom_requests + 1
               val _ = distinct_atoms := HOLset.add (!distinct_atoms, atom)
             in
-              case Redblackmap.peek (!atom_cache, atom) of
+              case Redblackmap.peek (!working_cache, atom) of
                 SOME theorem => (atom_hits := !atom_hits + 1; theorem)
               | NONE =>
                   let
                     val timer = Timer.startRealTimer ()
                     val _ = add_call name
-                    val theorem = validate_theorem name atom (expand atom)
+                    val theorem =
+                      case Profile.profile_with_exn_name
+                          ("th_lemma[general](atom:" ^ name ^ ")")
+                          expand atom of
+                        Expanded theorem =>
+                          validate_theorem name atom theorem
+                      | Unable => raise PROCEDURE_UNABLE
                     val elapsed = Timer.checkRealTimer timer
                     val _ = atom_time := Time.+ (!atom_time, elapsed)
-                    val _ = atom_cache :=
-                      Redblackmap.insert (!atom_cache, atom, theorem)
+                    val _ = working_cache :=
+                      Redblackmap.insert (!working_cache, atom, theorem)
                     val _ = atom_proofs := !atom_proofs + 1
                   in
                     theorem
@@ -476,8 +499,18 @@ struct
          sat_seconds = sat_time,
          total_seconds = total_time,
          procedure_calls = procedure_calls}
+      val _ = atom_cache := !working_cache
     in
       {theorem = theorem, metrics = metrics}
     end
+
+  datatype attempt =
+      Proved of {theorem : thm, metrics : metrics}
+    | Declined
+
+  fun attempt_with_owners context owners target_measure target =
+    Proved (prove_with_owners context owners target_measure target)
+    handle PROCEDURE_UNABLE => Declined
+         | HolSatLib.SAT_cex _ => Declined
 
 end

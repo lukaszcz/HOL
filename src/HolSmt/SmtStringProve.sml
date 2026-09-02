@@ -147,8 +147,11 @@ struct
     computeLib.add_thms ground_eval_thms
       (computeLib.copy (computeLib.the_compset()))
 
+  fun ground_eval_conv t =
+    computeLib.CBV_CONV ground_eval_compset t
+
   fun ground_eval_prove t =
-    Drule.EQT_ELIM (computeLib.CBV_CONV ground_eval_compset t)
+    Drule.EQT_ELIM (ground_eval_conv t)
     handle Conv.UNCHANGED =>
       raise ERR "ground_eval_prove"
         "ground evaluation did not change the conclusion"
@@ -787,7 +790,32 @@ struct
           "seq_digit", "char_is_digit", "char_bit", "aut_state",
           "aut_accept"])
 
-  fun has_string_theory_term t = mentions_any string_theory_names t
+  fun has_string_theory_term t =
+    let
+      val seen = ref (HOLset.empty Term.compare)
+      val observed = ref 0
+      fun visit term =
+        if HOLset.member (!seen, term) then false
+        else
+          let
+            val _ = seen := HOLset.add (!seen, term)
+            val _ = observed := !observed + 1
+            val _ = SmtResource.check_dag_size_with_limit
+              "String" "family-admission"
+              (SmtResource.max_term_nodes_for "String") (!observed)
+          in
+            is_named_const string_theory_names term orelse
+            List.exists visit
+              (if Term.is_comb term then
+                 let val (operator, operand) = Term.dest_comb term
+                 in [operator, operand] end
+               else if Term.is_abs term then
+                 let val (_, body) = Term.dest_abs term in [body] end
+               else [])
+          end
+    in
+      visit t
+    end
 
   (* These are semantic rewrite facts, rather than a general-purpose simp
      set.  In particular, do not include METIS here: each rewrite rung must
@@ -870,10 +898,13 @@ struct
   (* The ordering is intentional and mirrors `string_prove`: executable
      evaluation precedes the small, named normalization set above. *)
   fun string_rewrite_prove t =
-    with_string_budget "rewrite" (fn t =>
-      if not (has_string_theory_term t) then
-        raise ERR "string_rewrite_prove" "no Unicode-string term"
-      else
+    if not (has_string_theory_term t) then
+      (* Family admission must precede the String-specific size gate.  A
+         large word-only rewrite belongs to the later BV rungs and must not
+         be rejected under a String resource diagnostic. *)
+      raise ERR "string_rewrite_prove" "no Unicode-string term"
+    else
+      with_string_budget "rewrite" (fn t =>
         (* E1(a): executable evaluation is complete for closed String/regex
            constructor equalities (and structural regex constructors). *)
         profile "string-rewrite(1)(ground-eval)"
