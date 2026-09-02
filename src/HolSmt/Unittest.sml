@@ -15657,6 +15657,14 @@ let
   val char17 = boolSyntax.mk_eq
     (char_ladder true character other 17,
      char_ladder false character other 17)
+  val char17_measure = SmtResource.term_measure char17
+  val () = assert
+    (#tree_nodes char17_measure >
+       SmtResource.max_term_nodes_for "String" andalso
+     #dag_nodes char17_measure <
+       SmtResource.max_skeleton_replay_dag_nodes andalso
+     SmtStringProve.check_string_family_admission char17,
+     "authentic char k17 was not admitted by the shared DAG metric")
   val euro = ``smt_in_re (SmtStr [8364; 8364; 8364])
     (reglan_loop (reglan_to_re (seq_unit 8364)) 2 4)``
   val smile = ``smt_in_re (SmtStr [128578])
@@ -18370,6 +18378,35 @@ let
         (Term.list_mk_comb (concat, [acc, ``budget_t:smtstr``]))
   val oversized = boolSyntax.mk_eq
     (nest 70000 ``budget_s:smtstr``, ``budget_s:smtstr``)
+  fun variables 0 result = result
+    | variables count result = variables (count - 1)
+        (Term.mk_var ("task21_budget_" ^ Int.toString count,
+           Type.bool) :: result)
+  fun pair_conjunctions [] result = List.rev result
+    | pair_conjunctions [term] result = List.rev (term :: result)
+    | pair_conjunctions (left :: right :: rest) result =
+        pair_conjunctions rest
+          (boolSyntax.mk_conj (left, right) :: result)
+  fun balanced_conjunction [term] = term
+    | balanced_conjunction terms =
+        balanced_conjunction (pair_conjunctions terms [])
+  val string_atom = ``smtstr_len task21_budget_string = 0``
+  val early_string_wrapper = balanced_conjunction
+    (string_atom :: variables 1800 [])
+  val oversized_wrapper = balanced_conjunction
+    (variables 1800 [] @ [string_atom])
+  val early_rewrite_target = boolSyntax.mk_eq
+    (early_string_wrapper, early_string_wrapper)
+  val late_rewrite_target = boolSyntax.mk_eq
+    (oversized_wrapper, oversized_wrapper)
+  val large_nonfamily = balanced_conjunction (variables 1800 [])
+  val deep_string_atom =
+    ``~char_bit 0 (w2n (0w : 18 word))``
+  fun shared_string 0 = deep_string_atom
+    | shared_string depth =
+        let val shared = shared_string (depth - 1)
+        in boolSyntax.mk_conj (shared, shared) end
+  val deep_shared_target = shared_string 500
   val append = ``APPEND : int list -> int list -> int list``
   fun nest_append 0 acc = acc
     | nest_append n acc = nest_append (n - 1)
@@ -18393,37 +18430,165 @@ let
         (Z3_Proof.update_proof_steps initial steps)
     end
   val seq_metadata = Z3_Proof.mk_th_lemma_metadata ("seq", NONE, [])
-  fun expect_gate label category case_id prove target =
+  val char_metadata = Z3_Proof.mk_th_lemma_metadata ("char", NONE, [])
+  fun tree_diagnostic category case_id =
+    SmtResource.term_size_diagnostic_for category case_id
+      (SmtResource.max_bitblast_term_nodes + 1)
+  val string_dag_maximum = SmtResource.max_skeleton_replay_dag_nodes
+  val string_dag_diagnostic =
+    SmtResource.dag_size_diagnostic_with_limit
+      "String" "family-admission"
+      string_dag_maximum (string_dag_maximum + 1)
+  val () = assert
+    (SmtResource.dag_nodes oversized_wrapper > string_dag_maximum andalso
+     SmtResource.dag_nodes oversized_wrapper <
+       SmtResource.max_term_nodes_for "String",
+     "String wrapper fixture did not lie strictly between its two caps")
+  val () = assert
+    (SmtStringProve.check_string_family_admission early_string_wrapper,
+     "early String family node was not admitted before the DAG cap")
+  val () = assert
+    (not (SmtStringProve.check_string_family_admission large_nonfamily),
+     "large genuine non-String DAG did not decline normally")
+  val () = assert
+    (SmtStringProve.check_string_family_admission deep_shared_target,
+     "deep shared String DAG was not admitted iteratively")
+  val () = assert
+    (SmtStringProve.has_string_theory_term early_string_wrapper andalso
+     SmtStringProve.has_string_theory_term oversized_wrapper,
+     "generic String classification changed with early/late family order")
+  val early_rewrite = SmtStringProve.string_rewrite_prove
+    early_rewrite_target
+  val late_rewrite = SmtStringProve.string_rewrite_prove
+    late_rewrite_target
+  val () = assert_no_hyps ("early generic String rewrite", early_rewrite)
+  val () = assert_no_hyps ("late generic String rewrite", late_rewrite)
+  val () = assert_concl_alpha
+    ("early generic String rewrite", early_rewrite, early_rewrite_target)
+  val () = assert_concl_alpha
+    ("late generic String rewrite", late_rewrite, late_rewrite_target)
+  fun expect_gate label expected prove target =
     (ignore (prove target);
      die ("FAIL: " ^ label ^ " did not resource-gate"))
     handle Feedback.HOL_ERR holerr =>
-      let
-        val expected = SmtResource.term_size_diagnostic_for
-          category case_id (SmtResource.max_bitblast_term_nodes + 1)
-      in
+      (
         assert (SmtResource.is_resource_gate holerr,
           label ^ " was relabelled as an ordinary unsupported rung");
         assert (Feedback.message_of holerr = expected,
           label ^ " changed its explicit budget diagnostic: " ^
-          Feedback.message_of holerr)
-      end
+          Feedback.message_of holerr))
 in
   (* Admission is checked before theory-specific budgets: these genuine
      families still gate, while the end-to-end String rows below prove that
      the same rungs decline the oversized String target without preemption. *)
-  expect_gate "native Sequence family" "Sequence" "seq"
+  expect_gate "native Sequence family" (tree_diagnostic "Sequence" "seq")
     SmtSeqProve.seq_prove oversized_seq;
-  expect_gate "native Array family" "Array" "array-replay"
+  expect_gate "native Array family"
+    (tree_diagnostic "Array" "array-replay")
     SmtArrayProve.array_prove oversized_array;
-  expect_gate "shared String symbolic rung" "String" "symbolic"
+  expect_gate "shared String symbolic rung"
+    (tree_diagnostic "String" "symbolic")
     SmtStringProve.symbolic_string_prove oversized;
-  expect_gate "String rewrite entry" "String" "rewrite"
+  expect_gate "String rewrite entry" (tree_diagnostic "String" "rewrite")
     SmtStringProve.string_rewrite_prove oversized;
-  expect_gate "Z3 String rewrite replay" "String" "rewrite"
+  expect_gate "Z3 String rewrite replay"
+    (tree_diagnostic "String" "rewrite")
     (fn target => replay (Z3_Proof.REWRITE target)) oversized;
-  expect_gate "Z3 String th-lemma replay" "String" "replay"
+  expect_gate "Z3 String th-lemma replay" string_dag_diagnostic
     (fn target => replay
-      (Z3_Proof.TH_LEMMA_SEQ (seq_metadata, [], target))) oversized
+      (Z3_Proof.TH_LEMMA_SEQ (seq_metadata, [], target))) oversized_wrapper;
+  expect_gate "Z3 Character th-lemma replay" string_dag_diagnostic
+    (fn target => replay
+      (Z3_Proof.TH_LEMMA_CHAR (char_metadata, [], target))) oversized_wrapper
+end
+
+fun z3_string_th_lemma_gate_hoist_success () =
+let
+  val maximum = SmtResource.max_skeleton_replay_dag_nodes
+  val expected = SmtResource.dag_size_diagnostic_with_limit
+    "String" "task21-route-probe" maximum (maximum + 1)
+  val gate =
+    (SmtResource.check_dag_size_with_limit
+       "String" "task21-route-probe" maximum (maximum + 1);
+     die "FAIL: TASK21 route probe did not gate")
+    handle Feedback.HOL_ERR holerr => holerr
+  val ordinary_ERR = Feedback.mk_HOL_ERR "Task21RouteProbe"
+  fun check_gate label run fallback_called =
+    let
+      val propagated =
+        ((run (); NONE)
+         handle Feedback.HOL_ERR holerr => SOME holerr)
+    in
+      case propagated of
+        NONE => die ("FAIL: " ^ label ^ " swallowed a resource gate")
+      | SOME holerr =>
+          (assert (SmtResource.is_resource_gate holerr,
+             label ^ " changed the resource exception class");
+           assert (Feedback.message_of holerr = expected,
+             label ^ " changed the resource diagnostic");
+           assert (not (!fallback_called),
+             label ^ " entered a later route after the resource gate"))
+    end
+  val primary_fallback = ref false
+  val () = check_gate "String primary route"
+    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+      (fn () => raise Feedback.HOL_ERR gate)
+      (fn () => primary_fallback := true))) primary_fallback
+  val final_fallback = ref false
+  val () = check_gate "String contextual route"
+    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+      (fn () => raise ordinary_ERR "primary" "ordinary route decline")
+      (fn () => Z3_ProofReplay.string_th_lemma_next_route_for_test
+        (fn () => raise Feedback.HOL_ERR gate)
+        (fn () => final_fallback := true)))) final_fallback
+  fun char_bit index character =
+    ``char_bit ^(numSyntax.mk_numeral (Arbnum.fromInt index))
+        (w2n ^character)``
+  fun char_ladder expanded character other index =
+    if index < 0 then boolSyntax.F
+    else
+      let
+        val c = char_bit index character
+        val d = char_bit index other
+        val tail = char_ladder expanded character other (index - 1)
+      in
+        if expanded then
+          boolSyntax.mk_disj
+            (boolSyntax.mk_conj (boolSyntax.mk_neg d, c),
+             boolSyntax.mk_disj
+               (boolSyntax.mk_conj (boolSyntax.mk_neg d, tail),
+                boolSyntax.mk_conj (c, tail)))
+        else
+          boolSyntax.mk_disj
+            (boolSyntax.mk_conj (c, boolSyntax.mk_neg d),
+             boolSyntax.mk_conj (boolSyntax.mk_eq (c, d), tail))
+      end
+  val character = ``task21_character : 18 word``
+  val other = ``task21_other : 18 word``
+  val heldout = boolSyntax.mk_eq
+    (char_ladder true character other 16,
+     char_ladder false character other 16)
+  val measure = SmtResource.term_measure heldout
+  val () = assert
+    (#tree_nodes measure > maximum andalso #dag_nodes measure < maximum,
+     "held-out char k16 did not distinguish tree and DAG admission")
+  val () = assert (SmtStringProve.check_string_family_admission heldout,
+    "held-out char k16 failed DAG family admission")
+  val metadata = Z3_Proof.mk_th_lemma_metadata
+    ("char", SOME "lemma", ["task21-char16"])
+  val initial = Z3_Proof.empty_proof "4.11.2"
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+    Z3_Proof.TH_LEMMA_CHAR (metadata, [], heldout))
+  val proof = Z3_Proof.update_proof_steps initial steps
+  val () = Profile.reset_all ()
+  val theorem = Z3_ProofReplay.replay_root_for_test proof
+in
+  assert_no_hyps ("TASK21 held-out char k16", theorem);
+  check_oracle_tags "TASK21 held-out char k16" theorem;
+  assert
+    (profile_call_count "th_lemma[general](candidate/attempt)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 1,
+     "held-out char k16 did not use the DAG-costed skeleton engine")
 end
 
 fun z3_rewrite_string_rung_shaped_failure () =
@@ -20623,6 +20788,8 @@ let
       z3_rewrite_string_rungs_replay_success),
     ("string_rewrite_symbolic_resource_diagnostic",
       string_rewrite_symbolic_resource_diagnostic),
+    ("z3_string_th_lemma_gate_hoist_success",
+      z3_string_th_lemma_gate_hoist_success),
     ("z3_rewrite_string_rung_shaped_failure",
       z3_rewrite_string_rung_shaped_failure),
     ("smtfp_prove_core_rungs_success",

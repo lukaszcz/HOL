@@ -163,6 +163,71 @@ struct
       check_term_size_for category case_id (term_nodes_up_to limit goal)
     end
 
+  (* Replay terms are DAGs.  Count each node once while retaining the
+     saturated unfolded-tree metric used by the skeleton profiler.  Keeping
+     this measurement here gives admission gates and the skeleton engine one
+     structural cost model instead of two subtly different traversals. *)
+  val max_metric =
+    case Int.maxInt of
+      SOME maximum => maximum
+    | NONE => 1073741823
+
+  fun saturated_add left right =
+    if left >= max_metric - right then max_metric else left + right
+
+  fun term_children term =
+    if Term.is_comb term then
+      let val (operator, operand) = Term.dest_comb term
+      in [operator, operand] end
+    else if Term.is_abs term then
+      let val (_, body) = Term.dest_abs term in [body] end
+    else []
+
+  fun term_measure term =
+    let
+      val sizes = ref (Redblackmap.mkDict Term.compare)
+      fun visit term =
+        case Redblackmap.peek (!sizes, term) of
+          SOME size => size
+        | NONE =>
+            let
+              val size = List.foldl
+                (fn (child, result) => saturated_add result (visit child))
+                1 (term_children term)
+              val _ = sizes := Redblackmap.insert (!sizes, term, size)
+            in
+              size
+            end
+    in
+      {tree_nodes = visit term, dag_nodes = Redblackmap.numItems (!sizes)}
+    end
+
+  fun tree_nodes term = #tree_nodes (term_measure term)
+
+  fun dag_nodes term = #dag_nodes (term_measure term)
+
+  (* Admission needs only to distinguish an in-budget DAG from an oversized
+     one.  This tail-recursive worklist has the same Term.compare identity as
+     [term_measure], but stops at the first node beyond the limit and does not
+     compute the potentially enormous unfolded-tree metric. *)
+  fun dag_nodes_up_to limit root =
+    let
+      fun loop ([], _, observed) = observed
+        | loop (term :: pending, seen, observed) =
+            if HOLset.member (seen, term) then
+              loop (pending, seen, observed)
+            else
+              let
+                val observed = observed + 1
+                val seen = HOLset.add (seen, term)
+              in
+                if observed > limit then observed
+                else loop (term_children term @ pending, seen, observed)
+              end
+    in
+      loop ([root], HOLset.empty Term.compare, 0)
+    end
+
   fun check_dag_size_for category case_id observed =
     if observed <= max_skeleton_replay_dag_nodes then ()
     else raise_gate "check_dag_size_for"

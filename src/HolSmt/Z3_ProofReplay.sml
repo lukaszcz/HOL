@@ -3189,6 +3189,17 @@ local
     "this clause shape; conclusion=" ^ Library.term_to_string t
   end
 
+  (* All String th-lemma routes use this single transition.  A resource gate
+     is a terminal structured rejection, whereas an ordinary HOL_ERR means
+     only that the next checked route may be attempted. *)
+  fun string_th_lemma_next_route attempt fallback =
+    attempt ()
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+        fallback ()
+
   (* `gate` runs the theory preconditions that must surface their own
      enumerated diagnostic.  Deciding this before the prover keeps the gate
      distinguishable from an ordinary prover failure — the contextual rung
@@ -3204,25 +3215,24 @@ local
        the String/character metadata guard has admitted the node, every
        target is offered: owned bridge atoms may be reduced while symbolic
        String leaves remain as propositional residuals. *)
-    val _ = SmtStringProve.has_string_theory_term t'
+    val _ = SmtStringProve.check_string_family_admission t'
     fun legacy () =
-      ((* E1(b): the general String/regex procedure gates its family. *)
-       profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)")
-         prover t')
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else
-          ((* E1(b): contextual String/regex replay fails loudly at exit. *)
-           profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
-            (SmtStringProve.string_contextual_prove context) t'
-            handle Feedback.HOL_ERR contextual_error =>
-            if SmtResource.is_resource_gate contextual_error then
-              raise Feedback.HOL_ERR contextual_error
-            else
+      string_th_lemma_next_route
+        (fn () =>
+          (* E1(b): the general String/regex procedure gates its family. *)
+          profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)")
+            prover t')
+        (fn () =>
+          string_th_lemma_next_route
+            (fn () =>
+              (* E1(b): contextual String/regex replay fails loudly at
+                 exit. *)
+              profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
+                (SmtStringProve.string_contextual_prove context) t')
+            (fn () =>
               raise ERR ("z3_th_lemma_" ^ dispatch_theory)
                 (unsupported_string_th_lemma_message dispatch_theory
-                  state metadata t'))
+                  state metadata t')))
     val (general, thm) =
       case skeleton_general_attempt state t' of
         SmtSkeletonDispatch.Proved result =>
@@ -4433,6 +4443,7 @@ in
   val bv_th_lemma_prove_for_test = bv_th_lemma_prove
   val bv_th_lemma_basic_branch_for_test = bv_th_lemma_basic_branch
   val arith_bv_fallback_for_test = arith_bv_fallback
+  val string_th_lemma_next_route_for_test = string_th_lemma_next_route
 
   fun skeleton_general_sequence_for_test targets =
     let

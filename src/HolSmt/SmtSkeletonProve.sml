@@ -40,42 +40,13 @@ struct
   fun cache_size (Context {atom_cache, ...}) =
     Redblackmap.numItems (!atom_cache)
 
-  fun term_children term =
-    if Term.is_comb term then
-      let val (operator, operand) = Term.dest_comb term
-      in [operator, operand] end
-    else if Term.is_abs term then
-      let val (_, body) = Term.dest_abs term in [body] end
-    else []
-
-  val max_metric =
-    case Int.maxInt of
-      SOME maximum => maximum
-    | NONE => 1073741823
-
-  fun saturated_add left right =
-    if left >= max_metric - right then max_metric else left + right
-
-  fun term_measure term =
-    let
-      (* The count is the unfolded tree size, but each DAG node is visited
-         once.  Metrics must not accidentally materialize the proof tree. *)
-      val sizes = ref (Redblackmap.mkDict Term.compare)
-      fun visit term =
-        case Redblackmap.peek (!sizes, term) of
-          SOME size => size
-        | NONE =>
-            let
-              val size = List.foldl
-                (fn (child, result) => saturated_add result (visit child))
-                1 (term_children term)
-              val _ = sizes := Redblackmap.insert (!sizes, term, size)
-            in
-              size
-            end
-    in
-      {tree_nodes = visit term, dag_nodes = Redblackmap.numItems (!sizes)}
-    end
+  (* Admission and proof reconstruction share this exact DAG-aware metric.
+     In particular, String dispatch must not reject a compact shared term by
+     its exponentially larger unfolded tree before this engine sees it. *)
+  val max_metric = SmtResource.max_metric
+  val saturated_add = SmtResource.saturated_add
+  val term_children = SmtResource.term_children
+  val term_measure = SmtResource.term_measure
 
   fun tree_nodes term = #tree_nodes (term_measure term)
 

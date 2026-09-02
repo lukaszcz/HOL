@@ -812,32 +812,72 @@ struct
           "seq_digit", "char_is_digit", "char_bit", "aut_state",
           "aut_accept"])
 
-  fun has_string_theory_term t =
+  datatype family_scan_policy =
+      GateLateFamily
+    | GateTraversal
+
+  datatype family_scan_result =
+      FamilyAbsent
+    | FamilyFound of int
+    | TraversalLimit of int
+
+  fun scan_string_family policy maximum t =
     let
-      val seen = ref (HOLset.empty Term.compare)
-      val observed = ref 0
-      fun visit term =
-        if HOLset.member (!seen, term) then false
-        else
-          let
-            val _ = seen := HOLset.add (!seen, term)
-            val _ = observed := !observed + 1
-            val _ = SmtResource.check_dag_size_with_limit
-              "String" "family-admission"
-              (SmtResource.max_term_nodes_for "String") (!observed)
-          in
-            is_named_const string_theory_names term orelse
-            List.exists visit
-              (if Term.is_comb term then
-                 let val (operator, operand) = Term.dest_comb term
-                 in [operator, operand] end
-               else if Term.is_abs term then
-                 let val (_, body) = Term.dest_abs term in [body] end
-               else [])
-          end
+      (* Admission and its cost measurement are deliberately one traversal.
+         In particular, a large completed non-String DAG is an ordinary
+         decline under [GateLateFamily], while [GateTraversal] retains the
+         generic String classifier's established whole-traversal cap. *)
+      fun scan target =
+        let
+          fun children term rest =
+            if Term.is_comb term then
+              let val (operator, operand) = Term.dest_comb term
+              in operator :: operand :: rest end
+            else if Term.is_abs term then
+              let val (_, body) = Term.dest_abs term in body :: rest end
+            else
+              rest
+          fun loop seen observed [] = FamilyAbsent
+            | loop seen observed (term :: rest) =
+                if HOLset.member (seen, term) then
+                  loop seen observed rest
+                else
+                  let
+                    val seen = HOLset.add (seen, term)
+                    val observed = Int.min (maximum + 1, observed + 1)
+                  in
+                    if policy = GateTraversal andalso observed > maximum then
+                      TraversalLimit observed
+                    else if is_named_const string_theory_names term then
+                      FamilyFound observed
+                    else
+                      loop seen observed (children term rest)
+                  end
+        in
+          loop (HOLset.empty Term.compare) 0 [target]
+        end
+      val found = SmtResource.with_resource_step_time
+        "String" "family-admission" scan t
     in
-      visit t
+      case found of
+        FamilyAbsent => false
+      | FamilyFound observed =>
+          (SmtResource.check_dag_size_with_limit
+             "String" "family-admission" maximum observed;
+           true)
+      | TraversalLimit observed =>
+          (SmtResource.check_dag_size_with_limit
+             "String" "family-admission" maximum observed;
+           false)
     end
+
+  fun check_string_family_admission t =
+    scan_string_family GateLateFamily
+      SmtResource.max_skeleton_replay_dag_nodes t
+
+  fun has_string_theory_term t =
+    scan_string_family GateTraversal
+      (SmtResource.max_term_nodes_for "String") t
 
   (* These are semantic rewrite facts, rather than a general-purpose simp
      set.  In particular, do not include METIS here: each rewrite rung must
