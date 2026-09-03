@@ -232,6 +232,27 @@ fun align_conclusion target theorem =
                      "the theorem does not prove the target in normal form")
   end
 
+(* The engine renders a goal reduced, so a step's child is proved in the
+   reduced spelling while the step's own validation was built on the
+   spelling the step returned.  This restates such a proof: the conclusion
+   through [align_conclusion], and each assumption the step stated in place
+   of the reduction the proof discharged. *)
+fun align_goal (asl, w) theorem =
+  let
+    fun restore (assumption, th) =
+      let
+        val equality = reduce_conv assumption
+        val reduced = rhs (concl equality)
+      in
+        if aconv reduced assumption then th
+        else if List.exists (aconv reduced) (hyp th) then
+          Drule.PROVE_HYP (EQ_MP equality (ASSUME assumption)) th
+        else th
+      end
+  in
+    List.foldl restore (align_conclusion w theorem) asl
+  end
+
 fun normalize_thm theorem =
   Conv.CONV_RULE reduce_conv theorem
 

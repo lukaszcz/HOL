@@ -144,10 +144,29 @@ fun direct_children (Direct {children, ...}) = children
 fun direct_action (Direct {action, ...}) = action
 fun direct_closed (Direct {closed, ...}) = closed
 
+(* A step's children are stated by the tactic that returned them, and the
+   engine renders every goal reduced, so a child carrying a redex is proved
+   in the reduced spelling and not in the one the tactic's validation was
+   built on.  This is the boundary back: each child theorem is restated in
+   the tactic's own spelling, mirroring [align_conclusion], which carries a
+   step's result forward to the goal the caller posed. *)
+fun aligned_result (goals, validation) =
+  let
+    fun aligned theorems =
+      if length theorems <> length goals then validation theorems
+      else
+        validation
+          (ListPair.map
+            (fn (goal, theorem) => clasetNorm.align_goal goal theorem)
+            (goals, theorems))
+  in
+    (goals, aligned)
+  end
+
 fun tactic_direct kind consumed node pos tactic =
   let
     val rendered = clasetGoal.render node pos
-    val result as (goals, _) = tactic rendered
+    val result as (goals, _) = aligned_result (tactic rendered)
     val eigens = new_free_names_by_goal rendered goals
   in
     SOME
@@ -1236,7 +1255,7 @@ fun internal_hyp_subst_results (node, pos) =
 
     val repeated = Tactical.THEN (once, Tactical.REPEAT once)
   in
-    case total repeated rendered of
+    case Option.map aligned_result (total repeated rendered) of
         NONE => seq.empty
       | SOME (result as ([(child_asl, child_w)], _)) =>
           let
@@ -1277,7 +1296,7 @@ fun plain_tactic_results kind action tactic (node, pos) =
         val rendered = clasetGoal.render node pos
         val {params, ...} = clasetGoal.goal_at node pos
       in
-        case total tactic rendered of
+        case Option.map aligned_result (total tactic rendered) of
             NONE => seq.empty
           | SOME (result as (goals, _)) =>
               let
@@ -1335,8 +1354,9 @@ fun blast_hyp_subst_in
                clasetReplay.BLAST_HYP_SUBST_TAC_AT
                  {position = position, changed = mask} goal)) () of
         NONE => NONE
-      | SOME (changed, result as (goals, _)) =>
+      | SOME (changed, unaligned) =>
           let
+            val result as (goals, _) = aligned_result unaligned
             fun child (child_asl, child_w) =
               {params = params, asl = child_asl, w = child_w}
           in
@@ -1897,7 +1917,7 @@ fun blast_move_back_step position =
   direct_step (move_back_results position)
 
 fun wrapper_direct rendered goals validation store =
-  let val result = (goals, validation)
+  let val result = aligned_result (goals, validation)
   in
     Direct
       {kind = Wrapper, consumed = NONE, created = no_created,

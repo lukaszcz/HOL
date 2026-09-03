@@ -28,6 +28,10 @@ sig
 
   (* Carry a proof of a target's normal form back to the target. *)
   val align_conclusion : term -> thm -> thm
+  (* The same for a whole goal: the engine renders a goal reduced, so a
+     step's child is proved in that spelling while the step's validation
+     was built on the spelling the step returned. *)
+  val align_goal : goal -> thm -> thm
   val normalize_thm : thm -> thm
   val normalize_rule_thm : thm -> thm
   val normalize_assumption_thm : thm -> term * thm

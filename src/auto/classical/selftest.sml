@@ -6255,3 +6255,33 @@ val _ =
          member_step implication goal
            ([implication], mk_comb (member_q, member_a))
        end)
+
+(* A step states its children in the spelling the tactic that produced them
+   returned, and the engine renders every goal reduced, so substituting an
+   abstraction for a function variable leaves a child whose proof comes back
+   beta-reduced while the step's own validation was built on the unreduced
+   spelling.  The goal is not a corpus entry.
+
+   Only the safe saturation is asserted: a complete search replays its
+   record against the caller's own goal, so it reconstructs the unreduced
+   spelling for itself and the boundary does not decide it. *)
+local
+  val redex_g = mk_var ("g", alpha --> bool)
+  val redex_b = mk_var ("b", alpha)
+  val redex_x = mk_var ("x", alpha)
+  val redex_goal =
+    ([] : term list,
+     boolSyntax.list_mk_forall ([redex_g, redex_b],
+       boolSyntax.mk_imp
+         (boolSyntax.mk_eq (redex_g, mk_abs (redex_x, boolSyntax.T)),
+          mk_comb (redex_g, redex_b))))
+  fun closes tactic =
+    (Tactical.TAC_PROOF (redex_goal, tactic); true)
+    handle Interrupt => raise Interrupt
+         | _ => false
+in
+val _ =
+  test
+    ("a substituted abstraction leaves a safe step its own spelling",
+     fn () => closes (classicalLib.SAFE_TAC [boolTheory.TRUTH]))
+end
