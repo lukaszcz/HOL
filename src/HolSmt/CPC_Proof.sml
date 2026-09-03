@@ -31,6 +31,147 @@ struct
     replay_handler = replay_handler
   }
 
+  datatype rare_string_recipe =
+      ContainsConcatFind
+    | ContainsConcatFindContra
+    | ContainsLeqLenEq
+    | ContainsEmpty
+    | ContainsChar
+    | LenReplaceInv
+    | LenReplaceAllInv
+    | LenUpdateInv
+    | LenSubstrInRange
+    | LenConcatRec
+    | LenEqZeroConcatRec
+    | LenEqZeroBase
+    | PrefixElim
+    | PrefixEq
+    | PrefixOne
+
+  fun rare_string_recipe_name recipe =
+    case recipe of
+      ContainsConcatFind => "str-contains-concat-find"
+    | ContainsConcatFindContra => "str-contains-concat-find-contra"
+    | ContainsLeqLenEq => "str-contains-leq-len-eq"
+    | ContainsEmpty => "str-contains-emp"
+    | ContainsChar => "str-contains-char"
+    | LenReplaceInv => "str-len-replace-inv"
+    | LenReplaceAllInv => "str-len-replace-all-inv"
+    | LenUpdateInv => "str-len-update-inv"
+    | LenSubstrInRange => "str-len-substr-in-range"
+    | LenConcatRec => "str-len-concat-rec"
+    | LenEqZeroConcatRec => "str-len-eq-zero-concat-rec"
+    | LenEqZeroBase => "str-len-eq-zero-base"
+    | PrefixElim => "str-prefixof-elim"
+    | PrefixEq => "str-prefixof-eq"
+    | PrefixOne => "str-prefixof-one"
+
+  datatype rare_replay_kind =
+      RareArgumentRewrite
+    | RareRecursiveArgumentRewrite
+    | RareStringRecipe of rare_string_recipe
+    | RareContainsRefl
+    | RareContainsSplitChar
+    | RareUnsupported of string
+
+  datatype rare_inventory_family =
+      RareContains
+    | RareLength
+    | RarePrefix
+    | RareArray
+
+  type rare_inventory_entry = {
+    name : string,
+    family : rare_inventory_family,
+    replay_kind : rare_replay_kind
+  }
+
+  fun rare_entry family replay_kind name : rare_inventory_entry =
+    {name = name, family = family, replay_kind = replay_kind}
+
+  fun unsupported name reason =
+    RareUnsupported
+      ("unsupported cvc5-1.3.4 RARE rule " ^ name ^ ": " ^ reason)
+
+  fun string_entry family recipe =
+    rare_entry family (RareStringRecipe recipe)
+      (rare_string_recipe_name recipe)
+
+  (* Generated from cvc5-1.3.4's authoritative
+       src/theory/strings/rewrites and src/theory/arrays/rewrites.
+     The first string tranche contains 7 contains, 7 length, and 3 prefix
+     rules.  The adjacent closed Array inventory has 6 rules.  TASK_24
+     extends this same block with the remaining string families.
+
+     A disposition is part of every entry: registry membership can therefore
+     never silently fall through to a generic replay handler. *)
+  val cvc134_rare_rewrite_inventory : rare_inventory_entry list = [
+    rare_entry RareContains RareContainsRefl "str-contains-refl",
+    string_entry RareContains ContainsConcatFind,
+    string_entry RareContains ContainsConcatFindContra,
+    rare_entry RareContains RareContainsSplitChar
+      "str-contains-split-char",
+    string_entry RareContains ContainsLeqLenEq,
+    string_entry RareContains ContainsEmpty,
+    string_entry RareContains ContainsChar,
+    string_entry RareLength LenReplaceInv,
+    string_entry RareLength LenReplaceAllInv,
+    string_entry RareLength LenUpdateInv,
+    string_entry RareLength LenSubstrInRange,
+    string_entry RareLength LenConcatRec,
+    string_entry RareLength LenEqZeroConcatRec,
+    string_entry RareLength LenEqZeroBase,
+    string_entry RarePrefix PrefixElim,
+    string_entry RarePrefix PrefixEq,
+    string_entry RarePrefix PrefixOne,
+    rare_entry RareArray RareArgumentRewrite "array-read-over-write",
+    rare_entry RareArray RareArgumentRewrite "array-read-over-write2",
+    rare_entry RareArray RareArgumentRewrite "array-store-overwrite",
+    rare_entry RareArray RareArgumentRewrite "array-store-self",
+    rare_entry RareArray RareRecursiveArgumentRewrite
+      "array-read-over-write-split",
+    rare_entry RareArray RareArgumentRewrite "array-store-swap"
+  ]
+
+  fun family_count family =
+    List.length (List.filter
+      (fn entry => #family entry = family) cvc134_rare_rewrite_inventory)
+
+  val _ =
+    let
+      val names = List.map #name cvc134_rare_rewrite_inventory
+      fun duplicates [] = false
+        | duplicates (name :: rest) =
+            List.exists (Lib.equal name) rest orelse duplicates rest
+      fun exact_recipe (entry : rare_inventory_entry) =
+        case #replay_kind entry of
+          RareStringRecipe recipe =>
+            rare_string_recipe_name recipe = #name entry
+        | _ => true
+      val recursive_names = List.map #name (List.filter
+        (fn entry => #replay_kind entry = RareRecursiveArgumentRewrite)
+        cvc134_rare_rewrite_inventory)
+    in
+      if List.length names = 23 andalso not (duplicates names) andalso
+         List.all exact_recipe cvc134_rare_rewrite_inventory andalso
+         recursive_names = ["array-read-over-write-split"] andalso
+         family_count RareContains = 7 andalso
+         family_count RareLength = 7 andalso
+         family_count RarePrefix = 3 andalso
+         family_count RareArray = 6 then ()
+      else raise Fail
+        "cvc5-1.3.4 RARE first-tranche inventory is not closed and unique"
+    end
+
+  fun rare_inventory_lookup name =
+    List.find (fn entry : rare_inventory_entry => #name entry = name)
+      cvc134_rare_rewrite_inventory
+
+  val rare_inventory_rules = List.map
+    (fn entry : rare_inventory_entry =>
+      mk_rule RareRewrite (#name entry, "rare_inventory"))
+    cvc134_rare_rewrite_inventory
+
   (* This is deliberately a registry, rather than a catch-all replay case.
      Entries are promoted from the recorded CPC corpus.  The initial list is
      the cvc5 1.3.4 dsl-rewrite seed inventory; an unlisted rule is a checked
@@ -89,7 +230,6 @@ struct
     (* Native (Seq A) rules observed in the frozen cvc5 CPC corpus. *)
     mk_rule RareRewrite ("seq-eval-op", "seq_rewrite"),
     mk_rule RareRewrite ("seq-rev-rev", "seq_rev_rev"),
-    mk_rule RareRewrite ("str-contains-refl", "str_contains_refl"),
     mk_rule RareRewrite ("str-substr-full-eq", "str_substr_full_eq"),
     mk_rule RareRewrite ("str-at-elim", "seq_at_elim"),
     mk_rule RareRewrite ("str-substr-concat1", "seq_rewrite"),
@@ -133,9 +273,6 @@ struct
     mk_rule RareRewrite ("arith-mod-over-mod-1", "rewrite"),
     mk_rule RareRewrite ("arith-mod-over-mod", "rewrite"),
     mk_rule RareRewrite ("arith-mod-over-mod-mult", "rewrite"),
-    mk_rule RareRewrite ("array-read-over-write", "rewrite"),
-    mk_rule RareRewrite ("array-read-over-write-split", "rewrite"),
-    mk_rule RareRewrite ("array-store-overwrite", "rewrite"),
     mk_rule RareRewrite ("bool-double-not-elim", "rewrite"),
     mk_rule RareRewrite ("bool-and-de-morgan", "rewrite"),
     mk_rule RareRewrite ("bool-eq-false", "rewrite"),
@@ -165,12 +302,10 @@ struct
     mk_rule RareRewrite ("re-repeat-elim", "string"),
     mk_rule RareRewrite ("str-concat-clash-rev", "string"),
     mk_rule RareRewrite ("str-concat-unify-rev", "string"),
-    mk_rule RareRewrite ("str-contains-concat-find", "string"),
     mk_rule RareRewrite ("str-in-re-eval", "string"),
     mk_rule RareRewrite ("str-in-re-range-elim", "string"),
     mk_rule RareRewrite ("str-in-re-union-elim", "string"),
     mk_rule RareRewrite ("str-is-digit-elim", "rewrite"),
-    mk_rule RareRewrite ("str-len-concat-rec", "string"),
     mk_rule RareRewrite ("str-lt-elim", "rewrite"),
     mk_rule RareRewrite ("str-replace-re-all-eval", "string"),
     mk_rule RareRewrite ("str-replace-re-eval", "string"),
@@ -277,7 +412,7 @@ struct
     mk_rule RareRewrite ("dt-cons-eq-clash", "datatype_eq"),
     mk_rule RareRewrite ("dt-collapse-updater", "datatype_eq"),
     mk_rule RareRewrite ("dt-updater-elim", "datatype_eq")
-  ]
+  ] @ rare_inventory_rules
 
   val unknown_cvc_version = "<unknown>"
 

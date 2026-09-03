@@ -11086,7 +11086,9 @@ let
     | NONE => die ("FAIL: CPC string registry omitted " ^ name)
   fun check_rare name =
     check CPC_Proof.RareRewrite
-      (if name = "str-is-digit-elim" orelse name = "str-lt-elim" then
+      (if Option.isSome (CPC_Proof.rare_inventory_lookup name) then
+         "rare_inventory"
+       else if name = "str-is-digit-elim" orelse name = "str-lt-elim" then
          "rewrite"
        else
          "string")
@@ -11150,6 +11152,249 @@ fun cpc_proof_replay_string_obligation_diagnostic () =
       (parse_cpc_proof_string
         "((step @p1 (= re.all (re.* re.allchar)) \
         \:rule re-all-elim))")))
+
+fun cpc_rare_inventory_part1_success () =
+let
+  open CPC_Proof
+  val entries = cvc134_rare_rewrite_inventory
+  fun count family = List.length (List.filter
+    (fn entry => #family entry = family) entries)
+  fun check_entry entry =
+    case lookup_rule "1.3.4" (#name entry) of
+      SOME rule => assert
+        (#namespace rule = RareRewrite andalso
+         #replay_handler rule = "rare_inventory",
+         "TASK23 inventory registry metadata is wrong for " ^ #name entry)
+    | NONE => die ("FAIL: TASK23 inventory omitted " ^ #name entry)
+  fun replay label text =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string text)
+    in
+      assert (List.null (Thm.hyp theorem),
+        label ^ " retained hypotheses");
+      check_oracle_tags label theorem;
+      theorem
+    end
+  val contains_refl = replay "TASK23 String contains reflexivity"
+    "((declare-const x String) \
+    \(step @p (= (str.contains x x) true) \
+    \ :rule str-contains-refl :args (x)))"
+  val seq_contains_refl = replay "TASK23 Seq contains reflexivity"
+    "((declare-const x (Seq Int)) \
+    \(step @p (= (seq.contains x x) true) \
+    \ :rule str-contains-refl :args (x)))"
+  val contains = replay "TASK23 contains split-char"
+    "((declare-const x String) (declare-const y String) \
+    \(step @l :rule evaluate :args ((str.len \"a\"))) \
+    \(step @p \
+    \  (= (str.contains (str.++ x y) \"a\") \
+    \     (or (str.contains x \"a\") \
+    \         (str.contains y \"a\"))) \
+    \  :rule str-contains-split-char :premises (@l) \
+    \  :args (x y \"\" \"a\")))"
+  val seq_contains = replay "TASK23 Seq contains split-char"
+    "((declare-const x (Seq Int)) (declare-const y (Seq Int)) \
+    \(declare-const i Int) \
+    \(step @l :rule evaluate :args ((seq.len (seq.unit i)))) \
+    \(step @p \
+    \  (= (seq.contains (seq.++ x y) (seq.unit i)) \
+    \     (or (seq.contains x (seq.unit i)) \
+    \         (seq.contains y (seq.unit i)))) \
+    \  :rule str-contains-split-char :premises (@l) \
+    \  :args (x y (as seq.empty (Seq Int)) (seq.unit i))))"
+  val length = replay "TASK23 length concat"
+    "((step @p \
+    \  (= (str.len (str.++ \"a\" \"bc\")) \
+    \     (+ (str.len \"a\") (str.len \"bc\"))) \
+    \  :rule str-len-concat-rec :args (\"a\" \"bc\" \"\")))"
+  val seq_length = replay "TASK23 Seq length concat"
+    "((declare-const x (Seq Int)) (declare-const y (Seq Int)) \
+    \(step @p \
+    \  (= (seq.len (seq.++ x y)) \
+    \     (+ (seq.len x) (seq.len y))) \
+    \  :rule str-len-concat-rec \
+    \  :args (x y (as seq.empty (Seq Int)))))"
+  val prefix = replay "TASK23 prefix elimination"
+    "((step @p \
+    \  (= (str.prefixof \"a\" \"ab\") \
+    \     (= \"a\" (str.substr \"ab\" 0 (str.len \"a\")))) \
+    \  :rule str-prefixof-elim :args (\"a\" \"ab\")))"
+  val empty = ``smtstring$SmtStr []``
+  val a = ``smtstring$SmtStr [97]``
+  val b = ``smtstring$SmtStr [98]``
+  val zero = intSyntax.zero_tm
+  val one = intSyntax.one_tm
+  val string_recipes = [
+    ("str-contains-concat-find", [empty, a, a, empty]),
+    ("str-contains-concat-find-contra", [empty, b, a, empty]),
+    ("str-contains-leq-len-eq", [a, a]),
+    ("str-contains-emp", [a, empty]),
+    ("str-contains-char", [a, empty]),
+    ("str-len-replace-inv", [a, a, b]),
+    ("str-len-replace-all-inv", [a, a, b]),
+    ("str-len-update-inv", [a, zero, b]),
+    ("str-len-substr-in-range", [a, zero, one]),
+    ("str-len-concat-rec", [a, b, empty]),
+    ("str-len-eq-zero-concat-rec", [empty, empty, empty]),
+    ("str-len-eq-zero-base", [empty]),
+    ("str-prefixof-elim", [a, a]),
+    ("str-prefixof-eq", [a, a]),
+    ("str-prefixof-one", [a, a])]
+  fun check_string_recipe (name, args) =
+    let
+      val theorem =
+        CPC_ProofReplay.replay_rare_inventory_string_for_test name args
+    in
+      assert (List.null (Thm.hyp theorem),
+        "TASK23 String recipe retained hypotheses: " ^ name);
+      check_oracle_tags ("TASK23 String recipe " ^ name) theorem
+    end
+  val array_proofs = [
+    ("array-read-over-write",
+     "((declare-const a (Array Int Int)) \
+     \(step @p (= (select (store a 0 7) 0) 7) \
+     \ :rule array-read-over-write :args (a 0 7)))"),
+    ("array-read-over-write2",
+     "((declare-const a (Array Int Int)) \
+     \(step @n (= (= 0 1) false) :rule evaluate \
+     \ :args ((= 0 1))) \
+     \(step @p (= (select (store a 0 7) 1) (select a 1)) \
+     \ :rule array-read-over-write2 :premises (@n) :args (a 0 1 7)))"),
+    ("array-store-overwrite",
+     "((declare-const a (Array Int Int)) \
+     \(step @p (= (store (store a 0 7) 0 8) (store a 0 8)) \
+     \ :rule array-store-overwrite :args (a 0 7 8)))"),
+    ("array-store-self",
+     "((declare-const a (Array Int Int)) \
+     \(step @p (= (store a 0 (select a 0)) a) \
+     \ :rule array-store-self :args (a 0)))"),
+    ("array-read-over-write-split",
+     "((declare-const a (Array Int Int)) \
+     \(step @p :rule array-read-over-write-split \
+     \ :args (a 0 7 1)))"),
+    ("array-store-swap",
+     "((declare-const a (Array Int Int)) \
+     \(step @n (= (= 0 1) false) :rule evaluate \
+     \ :args ((= 0 1))) \
+     \(step @p \
+     \ (= (store (store a 0 7) 1 8) \
+     \    (store (store a 1 8) 0 7)) \
+     \ :rule array-store-swap :premises (@n) :args (a 0 1 7 8)))")]
+  val exercised_names =
+    ["str-contains-refl", "str-contains-split-char"] @
+    List.map Lib.fst string_recipes @ List.map Lib.fst array_proofs
+  val inventory_names = List.map #name entries
+in
+  assert (List.length entries = 23 andalso
+          count RareContains = 7 andalso count RareLength = 7 andalso
+          count RarePrefix = 3 andalso count RareArray = 6,
+    "TASK23 inventory counts changed");
+  List.app check_entry entries;
+  assert (List.length exercised_names = 23 andalso
+          Listsort.sort String.compare exercised_names =
+          Listsort.sort String.compare inventory_names,
+    "TASK23 execution coverage no longer equals its exact inventory");
+  List.app check_string_recipe string_recipes;
+  List.app (fn (name, proof) =>
+    ignore (replay ("TASK23 array " ^ name) proof)) array_proofs;
+  List.app (fn theorem => assert (Term.type_of (Thm.concl theorem) =
+      Type.bool, "TASK23 string replay did not return a proposition"))
+    [contains_refl, seq_contains_refl, contains, seq_contains,
+     length, seq_length, prefix]
+end
+
+fun cpc_rare_inventory_part1_diagnostic () =
+  let
+    fun rejected label needle proof =
+      expect_hol_error_contains label needle
+        (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+          (parse_cpc_proof_string proof)))
+  in
+    rejected "TASK23 split-char rule-specific diagnostic"
+      "str-contains-split-char"
+      "((step @p (= (str.contains \"a\" \"a\") true) \
+      \:rule str-contains-split-char :args (\"a\" \"\" \"\" \"a\")))";
+    rejected "TASK23 exact premise diagnostic"
+      "premises do not match its exact argument recipe"
+      "((step @p (= (str.contains \"a\" \"a\") true) \
+      \:rule str-contains-concat-find \
+      \:args (\"\" \"a\" \"a\" \"\")))";
+    rejected "TASK23 exact conclusion diagnostic"
+      "conclusion does not match its exact argument recipe"
+      "((step @p (= (str.prefixof \"a\" \"a\") true) \
+      \:rule str-prefixof-elim :args (\"a\" \"a\")))";
+    rejected "TASK23 len-concat nonempty diagnostic"
+      "cvc5-1.3.4 RARE rule str-len-concat-rec received the wrong argument shape"
+      "((step @p (= 0 0) :rule str-len-concat-rec :args (\"a\")))";
+    rejected "TASK23 mixed-carrier diagnostic"
+      "str-len-concat-rec received type-incompatible arguments"
+      "((declare-const x String) (declare-const y (Seq Int)) \
+      \(step @p (= true true) :rule str-len-concat-rec \
+      \:args (x y \"\")))";
+    rejected "TASK23 unconditional Array wrong conclusion"
+      "array-read-over-write conclusion does not match its synthesized theorem"
+      "((declare-const a (Array Int Int)) \
+      \(step @p (= (select (store a 0 7) 0) 8) \
+      \:rule array-read-over-write :args (a 0 7)))";
+    rejected "TASK23 unconditional Array missing conclusion"
+      "array-read-over-write requires an explicit declared conclusion"
+      "((declare-const a (Array Int Int)) \
+      \(step @p :rule array-read-over-write :args (a 0 7)))";
+    rejected "TASK23 unconditional Array extra premise"
+      "array-read-over-write premises do not match its synthesized theorem hypotheses"
+      "((declare-const a (Array Int Int)) \
+      \(step @t (= (= 0 0) true) :rule evaluate :args ((= 0 0))) \
+      \(step @p (= (select (store a 0 7) 0) 7) \
+      \:rule array-read-over-write :premises (@t) :args (a 0 7)))";
+    rejected "TASK23 conditional Array wrong conclusion"
+      "array-read-over-write2 conclusion does not match its synthesized theorem"
+      "((declare-const a (Array Int Int)) \
+      \(step @n (= (= 0 1) false) :rule evaluate :args ((= 0 1))) \
+      \(step @p (= (select (store a 0 7) 1) 7) \
+      \:rule array-read-over-write2 :premises (@n) :args (a 0 1 7)))";
+    rejected "TASK23 conditional Array missing premise"
+      "array-read-over-write2 premises do not match its synthesized theorem hypotheses"
+      "((declare-const a (Array Int Int)) \
+      \(step @p (= (select (store a 0 7) 1) (select a 1)) \
+      \:rule array-read-over-write2 :args (a 0 1 7)))";
+    rejected "TASK23 conditional Array wrong premise"
+      "array-read-over-write2 premises do not match its synthesized theorem hypotheses"
+      "((declare-const a (Array Int Int)) \
+      \(step @t (= (= 0 0) true) :rule evaluate :args ((= 0 0))) \
+      \(step @p (= (select (store a 0 7) 1) (select a 1)) \
+      \:rule array-read-over-write2 :premises (@t) :args (a 0 1 7)))";
+    rejected "TASK23 conditional Array extra premise"
+      "array-read-over-write2 premises do not match its synthesized theorem hypotheses"
+      "((declare-const a (Array Int Int)) \
+      \(step @n (= (= 0 1) false) :rule evaluate :args ((= 0 1))) \
+      \(step @t (= (= 0 0) true) :rule evaluate :args ((= 0 0))) \
+      \(step @p (= (select (store a 0 7) 1) (select a 1)) \
+      \:rule array-read-over-write2 :premises (@n @t) \
+      \:args (a 0 1 7)))";
+    rejected "TASK23 recursive Array unexpected conclusion"
+      "array-read-over-write-split requires its authoritative omitted conclusion"
+      "((declare-const a (Array Int Int)) \
+      \(step @p \
+      \ (= (select (store a 1 7) 0) \
+      \    (ite (= 0 1) 7 (select a 0))) \
+      \:rule array-read-over-write-split :args (a 0 7 1)))";
+    rejected "TASK23 contains-refl wrong conclusion"
+      "str-contains-refl conclusion does not match its synthesized theorem"
+      "((declare-const x String) \
+      \(step @p (= (str.contains x x) false) \
+      \:rule str-contains-refl :args (x)))";
+    rejected "TASK23 contains-refl missing conclusion"
+      "str-contains-refl requires an explicit declared conclusion"
+      "((declare-const x String) \
+      \(step @p :rule str-contains-refl :args (x)))";
+    rejected "TASK23 contains-refl extra premise"
+      "str-contains-refl premises do not match its synthesized theorem hypotheses"
+      "((declare-const x String) \
+      \(step @t (= (= 0 0) true) :rule evaluate :args ((= 0 0))) \
+      \(step @p (= (str.contains x x) true) \
+      \:rule str-contains-refl :premises (@t) :args (x)))"
+  end
 
 (* A CPC string step whose premise is an earlier derived lemma must not leak
    that lemma's conclusion as a hypothesis: the contextual rung feeds it to
@@ -21041,6 +21286,10 @@ let
       cpc_proof_replay_string_rules_success),
     ("cpc_proof_replay_string_obligation_diagnostic",
       cpc_proof_replay_string_obligation_diagnostic),
+    ("cpc_rare_inventory_part1_success",
+      cpc_rare_inventory_part1_success),
+    ("cpc_rare_inventory_part1_diagnostic",
+      cpc_rare_inventory_part1_diagnostic),
     ("cpc_proof_replay_string_premise_hypotheses",
       cpc_proof_replay_string_premise_hypotheses),
     ("cpc_proof_parser_lambda_inline_var_apply_success",

@@ -2478,13 +2478,18 @@ local
         else
           let
             val sequence_ty = Term.type_of sequence
+            val empty = listSyntax.mk_nil (listSyntax.eltype sequence)
             val contains = Term.mk_thy_const {Thy = "rich_list",
               Name = "IS_SUBLIST", Ty = Type.--> (sequence_ty,
                 Type.--> (sequence_ty, Type.bool))}
             val target = Term.list_mk_comb (contains, [sequence, sequence])
             val proof = Tactical.TAC_PROOF (([], target),
-              bossLib.SIMP_TAC (bossLib.srw_ss ())
-                [rich_listTheory.IS_SUBLIST_APPEND])
+              Tactical.THEN
+                (bossLib.RW_TAC (bossLib.srw_ss ())
+                   [rich_listTheory.IS_SUBLIST_APPEND],
+                 Tactical.THEN (Tactic.EXISTS_TAC empty,
+                   Tactical.THEN (Tactic.EXISTS_TAC empty,
+                     bossLib.SIMP_TAC (bossLib.srw_ss ()) []))))
           in
             Drule.EQT_INTRO proof
           end
@@ -2969,6 +2974,45 @@ local
             raise ERR "array-read-over-write-split"
               ("read-over-write composition failed: " ^
                Feedback.message_of holerr)
+        end
+    | ("array-read-over-write", [array, index, value]) =>
+        Drule.ISPECL [index, value, array] combinTheory.UPDATE_APPLY1
+    | ("array-read-over-write2", [array, update_index, index, value]) =>
+        let
+          val guard = boolSyntax.mk_eq
+            (boolSyntax.mk_eq (update_index, index), boolSyntax.F)
+          val target = boolSyntax.mk_eq
+            (Term.mk_comb
+               (Term.mk_comb
+                 (combinSyntax.mk_update (update_index, value), array),
+                index),
+             Term.mk_comb (array, index))
+        in
+          Tactical.TAC_PROOF (([guard], target),
+            bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+              [combinTheory.APPLY_UPDATE_THM])
+        end
+    | ("array-store-overwrite", [array, index, old_value, new_value]) =>
+        Drule.ISPECL [array, index, old_value, new_value]
+          combinTheory.UPDATE_EQ
+    | ("array-store-self", [array, index]) =>
+        Drule.ISPECL [array, index] combinTheory.APPLY_UPDATE_ID
+    | ("array-store-swap",
+       [array, left_index, right_index, left_value, right_value]) =>
+        let
+          val guard = boolSyntax.mk_eq
+            (boolSyntax.mk_eq (left_index, right_index), boolSyntax.F)
+          fun update index value base =
+            Term.mk_comb (combinSyntax.mk_update (index, value), base)
+          val target = boolSyntax.mk_eq
+            (update right_index right_value
+               (update left_index left_value array),
+             update left_index left_value
+               (update right_index right_value array))
+        in
+          Tactical.TAC_PROOF (([guard], target),
+            bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+              [combinTheory.UPDATE_COMMUTES])
         end
     | ("absorb", [target]) =>
         (profile "CPC(rung:RARE/absorb/simp)" Tactical.TAC_PROOF
@@ -6613,6 +6657,399 @@ local
         profile "CPC(rung:string/unsupported)" fail ()
     end
 
+  fun apply_native_const const args =
+    let
+      fun apply_one (arg, rator) =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of rator)
+        in
+          Term.mk_comb (Term.inst
+            (Type.match_type domain (Term.type_of arg)) rator, arg)
+        end
+    in
+      List.foldl apply_one const args
+    end
+
+  fun rare_string_expected_target name args =
+    let
+      fun app thy constant arguments = apply_native_const
+        (Term.prim_mk_const {Thy = thy, Name = constant}) arguments
+      fun is_empty_string tm =
+        case boolSyntax.strip_comb tm of
+          (head, [chars]) =>
+            (case Lib.total Term.dest_thy_const head of
+               SOME {Thy = "smtstring", Name = "SmtStr", ...} =>
+                 listSyntax.is_nil chars
+             | _ => false)
+        | _ => false
+      fun is_string tm = is_smtstr_type (Term.type_of tm)
+      fun concat_two (left, right) =
+        if is_string left then app "smtstring" "smtstr_concat" [left, right]
+        else listSyntax.mk_append (left, right)
+      fun concat [] = raise ERR name "expected a nonempty concat operand list"
+        | concat (first :: rest) = List.foldl
+            (fn (right, left) => concat_two (left, right)) first rest
+      fun list_arg tm =
+        case Lib.total listSyntax.dest_list tm of
+          SOME (terms, _) => terms
+        | NONE => if is_empty_string tm then [] else [tm]
+      fun length sequence =
+        if is_string sequence then app "smtstring" "smtstr_len" [sequence]
+        else Term.mk_comb
+          (intSyntax.int_injection, listSyntax.mk_length sequence)
+      fun contains (sequence, sub) =
+        if is_string sequence then
+          app "smtstring" "smtstr_contains" [sequence, sub]
+        else app "rich_list" "IS_SUBLIST" [sequence, sub]
+      fun prefixof (prefix, sequence) =
+        if is_string prefix then
+          app "smtstring" "smtstr_prefixof" [prefix, sequence]
+        else app "rich_list" "IS_PREFIX" [sequence, prefix]
+      fun substr (sequence, start, count) =
+        if is_string sequence then
+          app "smtstring" "smtstr_substr" [sequence, start, count]
+        else app "HolSmt" "smt_seq_extract" [sequence, start, count]
+      fun replace (sequence, pattern, replacement) =
+        if is_string sequence then app "smtstring" "smtstr_replace"
+          [sequence, pattern, replacement]
+        else app "HolSmt" "smt_seq_replace"
+          [sequence, pattern, replacement]
+      fun replace_all (sequence, pattern, replacement) =
+        if is_string sequence then app "smtstring" "smtstr_replace_all"
+          [sequence, pattern, replacement]
+        else app "HolSmt" "smt_seq_replace_all"
+          [sequence, pattern, replacement]
+      fun update (sequence, index, replacement) =
+        if is_string sequence then app "smtstring" "smtstr_update"
+          [sequence, index, replacement]
+        else app "HolSmt" "smt_seq_update" [sequence, index, replacement]
+      fun empty sequence =
+        if is_string sequence then app "smtstring" "SmtStr"
+          [listSyntax.mk_nil numSyntax.num]
+        else listSyntax.mk_nil (listSyntax.eltype sequence)
+      fun eq (left, right) = boolSyntax.mk_eq (left, right)
+      fun checked label action = action ()
+        handle Feedback.HOL_ERR holerr =>
+          raise ERR name (label ^ ": " ^ Feedback.message_of holerr)
+      fun concat_context xs z zs = concat (list_arg xs @ z :: list_arg zs)
+      fun bad_shape () = raise ERR name
+        ("cvc5-1.3.4 RARE rule " ^ name ^
+         " received the wrong argument shape")
+    in
+      case (name, args) of
+        ("str-contains-split-char", [x, y, zs, w]) =>
+          let
+            val tail = y :: list_arg zs
+            val suffix = checked "split suffix" (fn () => concat tail)
+            val whole = checked "split whole" (fn () => concat (x :: tail))
+            val whole_contains = checked "split whole contains"
+              (fn () => contains (whole, w))
+            val left_contains = checked "split left contains"
+              (fn () => contains (x, w))
+            val right_contains = checked "split right contains"
+              (fn () => contains (suffix, w))
+          in
+            checked "split equality" (fn () => eq (whole_contains,
+              boolSyntax.mk_disj (left_contains, right_contains)))
+          end
+      | ("str-contains-concat-find", [xs, z, y, zs]) =>
+          eq (contains (concat_context xs z zs, y), boolSyntax.T)
+      | ("str-contains-concat-find-contra", [xs, z, y, zs]) =>
+          eq (contains (y, concat_context xs z zs), boolSyntax.F)
+      | ("str-contains-leq-len-eq", [x, y]) =>
+          eq (contains (x, y), eq (x, y))
+      | ("str-contains-emp", [x, y]) =>
+          eq (contains (x, y), boolSyntax.T)
+      | ("str-contains-char", [x, y]) =>
+          eq (contains (x, y),
+            boolSyntax.mk_disj (eq (empty x, y), eq (x, y)))
+      | ("str-contains-char", [x, y, _]) =>
+          rare_string_expected_target name [x, y]
+      | ("str-len-replace-inv", [t, s, r]) =>
+          eq (length (replace (t, s, r)), length t)
+      | ("str-len-replace-all-inv", [t, s, r]) =>
+          eq (length (replace_all (t, s, r)), length t)
+      | ("str-len-update-inv", [t, n, r]) =>
+          eq (length (update (t, n, r)), length t)
+      | ("str-len-substr-in-range", [s, n, m]) =>
+          eq (length (substr (s, n, m)), m)
+      | ("str-len-concat-rec", [s1, s2, s3]) =>
+          let val tail = s2 :: list_arg s3 in
+            eq (length (concat (s1 :: tail)),
+              intSyntax.mk_plus (length s1, length (concat tail)))
+          end
+      | ("str-len-eq-zero-concat-rec", [s1, s2, s3]) =>
+          let val tail = s2 :: list_arg s3 in
+            eq (eq (length (concat (s1 :: tail)), intSyntax.zero_tm),
+              boolSyntax.mk_conj (eq (s1, empty s1),
+                eq (length (concat tail), intSyntax.zero_tm)))
+          end
+      | ("str-len-eq-zero-concat-rec", [s1, s2, s3, _]) =>
+          rare_string_expected_target name [s1, s2, s3]
+      | ("str-len-eq-zero-base", [s]) =>
+          eq (eq (length s, intSyntax.zero_tm), eq (s, empty s))
+      | ("str-len-eq-zero-base", [s, _]) =>
+          rare_string_expected_target name [s]
+      | ("str-prefixof-elim", [s, t]) =>
+          eq (prefixof (s, t),
+            eq (s, substr (t, intSyntax.zero_tm, length s)))
+      | ("str-prefixof-eq", [s, t]) =>
+          eq (prefixof (s, t), eq (s, t))
+      | ("str-prefixof-one", [s, t]) =>
+          eq (prefixof (s, t), contains (t, s))
+      | _ => bad_shape ()
+    end
+
+  fun replay_contains_split_char prems conclusion args =
+    case (prems, conclusion) of
+      ([length_one], SOME target) =>
+        let
+          fun phase label action = action ()
+            handle Feedback.HOL_ERR holerr =>
+              raise ERR "str-contains-split-char"
+                (label ^ ": " ^ Feedback.message_of holerr)
+          fun typed tm = Library.term_to_string tm ^ " : " ^
+            Parse.type_to_string (Term.type_of tm)
+          val expected = phase "could not derive the exact conclusion"
+            (fn () => rare_string_expected_target
+              "str-contains-split-char" args)
+            handle Feedback.HOL_ERR holerr =>
+              raise ERR "str-contains-split-char"
+                (Feedback.message_of holerr ^ "; args=[" ^
+                 String.concatWith ", " (List.map typed args) ^ "]")
+          fun length sequence =
+            if is_smtstr_type (Term.type_of sequence) then
+              Term.mk_comb
+                (Term.prim_mk_const
+                  {Thy = "smtstring", Name = "smtstr_len"}, sequence)
+            else Term.mk_comb
+              (intSyntax.int_injection, listSyntax.mk_length sequence)
+          val expected_premise = phase "could not derive the length premise"
+            (fn () =>
+            case args of
+              [_, _, _, needle] => boolSyntax.mk_eq
+                (length needle, intSyntax.one_tm)
+            | _ => raise ERR "str-contains-split-char"
+                "received the wrong argument shape")
+          val _ = Term.aconv (Thm.concl length_one) expected_premise orelse
+            raise ERR "str-contains-split-char"
+              "length premise does not match the needle argument"
+          val _ = Term.aconv target expected orelse
+            raise ERR "str-contains-split-char"
+              "conclusion does not match its exact argument recipe"
+          val theorem = phase "could not prove the exact conclusion" (fn () =>
+            if SmtSeqProve.has_seq_type target then
+              Tactical.TAC_PROOF
+                (([Thm.concl length_one], target),
+                 bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+                   [smtstringTheory.IS_SUBLIST_APPEND_len_one,
+                    listTheory.APPEND_ASSOC])
+            else Tactical.TAC_PROOF
+              (([Thm.concl length_one], target),
+               bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
+                 [smtstringTheory.smtstr_contains_concat_len_one,
+                  smtstringTheory.smtstr_concat_assoc]))
+        in
+          Drule.PROVE_HYP length_one theorem
+        end
+    | ([_], NONE) => raise ERR "str-contains-split-char"
+        "the proved split-char replay requires its declared conclusion"
+    | _ => raise ERR "str-contains-split-char"
+        "expected exactly one length-one premise"
+
+  fun rare_string_expected_premises name args =
+    let
+      fun app thy constant arguments = apply_native_const
+        (Term.prim_mk_const {Thy = thy, Name = constant}) arguments
+      fun is_string tm = is_smtstr_type (Term.type_of tm)
+      fun length sequence =
+        if is_string sequence then app "smtstring" "smtstr_len" [sequence]
+        else Term.mk_comb
+          (intSyntax.int_injection, listSyntax.mk_length sequence)
+      fun contains (sequence, sub) =
+        if is_string sequence then
+          app "smtstring" "smtstr_contains" [sequence, sub]
+        else app "rich_list" "IS_SUBLIST" [sequence, sub]
+      fun eq (left, right) = boolSyntax.mk_eq (left, right)
+      fun true_eq proposition = eq (proposition, boolSyntax.T)
+      fun geq (left, right) = intSyntax.mk_geq (left, right)
+      fun bad_shape () = raise ERR name
+        ("cvc5-1.3.4 RARE rule " ^ name ^
+         " received the wrong argument shape")
+    in
+      case (name, args) of
+        ("str-contains-concat-find", [_, z, y, _]) =>
+          [true_eq (contains (z, y))]
+      | ("str-contains-concat-find-contra", [_, z, y, _]) =>
+          [eq (contains (y, z), boolSyntax.F)]
+      | ("str-contains-leq-len-eq", [x, y]) =>
+          [true_eq (geq (length y, length x))]
+      | ("str-contains-emp", [_, y]) =>
+          [eq (length y, intSyntax.zero_tm)]
+      | ("str-contains-char", [x, _]) =>
+          [eq (length x, intSyntax.one_tm)]
+      | ("str-contains-char", [x, y, _]) =>
+          rare_string_expected_premises name [x, y]
+      | ("str-len-replace-inv", [_, s, r]) =>
+          [eq (length s, length r)]
+      | ("str-len-replace-all-inv", [_, s, r]) =>
+          [eq (length s, length r)]
+      | ("str-len-substr-in-range", [s, n, m]) =>
+          [true_eq (geq (n, intSyntax.zero_tm)),
+           true_eq (geq (m, intSyntax.zero_tm)),
+           true_eq (geq (length s, intSyntax.mk_plus (n, m)))]
+      | ("str-prefixof-eq", [s, t]) =>
+          [true_eq (geq (length s, length t))]
+      | ("str-prefixof-one", [_, t]) =>
+          [eq (length t, intSyntax.one_tm)]
+      | ("str-len-update-inv", [_, _, _]) => []
+      | ("str-len-concat-rec", [_, _, _]) => []
+      | ("str-len-eq-zero-concat-rec", [_, _, _]) => []
+      | ("str-len-eq-zero-concat-rec", [_, _, _, _]) => []
+      | ("str-len-eq-zero-base", [_]) => []
+      | ("str-len-eq-zero-base", [_, _]) => []
+      | ("str-prefixof-elim", [_, _]) => []
+      | _ => bad_shape ()
+    end
+
+  fun replay_inventory_string_rule name prems conclusion args =
+    let
+      val expected = rare_string_expected_target name args
+        handle Feedback.HOL_ERR holerr =>
+          let val message = Feedback.message_of holerr in
+            if String.isSubstring "received the wrong argument shape" message
+            then raise Feedback.HOL_ERR holerr
+            else raise ERR name
+              ("cvc5-1.3.4 RARE rule " ^ name ^
+               " received type-incompatible arguments")
+          end
+      val target = case conclusion of
+          SOME target =>
+            if Term.aconv target expected then target
+            else raise ERR name
+              ("cvc5-1.3.4 RARE rule " ^ name ^
+               " conclusion does not match its exact argument recipe")
+        | NONE => expected
+      val expected_premises = rare_string_expected_premises name args
+      val actual_premises = List.map Thm.concl prems
+      val _ = ListPair.allEq (fn (actual, expected) =>
+          Term.aconv actual expected)
+        (actual_premises, expected_premises) orelse raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " premises do not match its exact argument recipe")
+      val context = List.map Thm.concl prems
+      val theorem =
+        if SmtSeqProve.has_seq_type target then
+          (SmtSeqProve.seq_prove target
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else SmtSeqProve.seq_contextual_prove context target)
+        else
+          (SmtStringProve.string_rewrite_prove target
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else SmtStringProve.string_contextual_prove context target)
+    in
+      List.foldl
+        (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+        theorem prems
+    end
+
+  (* A theorem's hypotheses are a set, so HOL does not retain their source
+     order.  Compare them as an exact alpha-equivalence multiset: counts are
+     preserved, and removal follows HOL's deterministic hypothesis order. *)
+  fun same_alpha_hypotheses expected actual =
+    let
+      fun remove _ [] = NONE
+        | remove target (candidate :: rest) =
+            if Term.aconv target candidate then SOME rest
+            else Option.map (fn remaining => candidate :: remaining)
+              (remove target rest)
+      fun consume [] remaining = List.null remaining
+        | consume (target :: rest) remaining =
+            (case remove target remaining of
+               SOME remaining => consume rest remaining
+             | NONE => false)
+    in
+      List.length expected = List.length actual andalso
+      consume expected actual
+    end
+
+  fun alpha_union terms =
+    List.foldl (fn (term, accumulated) =>
+      if List.exists (Term.aconv term) accumulated then accumulated
+      else term :: accumulated) [] terms
+
+  fun discharge_rare_inventory_contract name prems synthesized =
+    let
+      val expected_premises = Thm.hyp synthesized
+      val supplied_premises = List.map Thm.concl prems
+      val _ = same_alpha_hypotheses expected_premises supplied_premises
+        orelse raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " premises do not match its synthesized theorem hypotheses")
+      val discharged = List.foldl
+        (fn (premise, theorem) => Drule.PROVE_HYP premise theorem)
+        synthesized prems
+      val expected_final_hypotheses = alpha_union
+        (List.concat (List.map Thm.hyp prems))
+      val _ = same_alpha_hypotheses expected_final_hypotheses
+          (Thm.hyp discharged) orelse
+        raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " violated its final hypothesis contract")
+    in
+      discharged
+    end
+
+  fun validate_rare_inventory_contract name prems conclusion synthesized =
+    let
+      val declared = case conclusion of
+          SOME declared => declared
+        | NONE => raise ERR name
+            ("cvc5-1.3.4 RARE rule " ^ name ^
+             " requires an explicit declared conclusion")
+      val _ = Term.aconv (Thm.concl synthesized) declared orelse
+        raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " conclusion does not match its synthesized theorem")
+    in
+      discharge_rare_inventory_contract name prems synthesized
+    end
+
+  fun validate_recursive_rare_inventory_contract name prems conclusion
+      synthesized =
+    case conclusion of
+      NONE => discharge_rare_inventory_contract name prems synthesized
+    | SOME _ => raise ERR name
+        ("cvc5-1.3.4 recursive RARE rule " ^ name ^
+         " requires its authoritative omitted conclusion")
+
+  fun replay_rare_inventory state name prems conclusion args =
+    case rare_inventory_lookup name of
+      NONE => raise ERR "rare_inventory"
+        ("internal cvc5-1.3.4 RARE inventory drift: " ^ name)
+    | SOME entry =>
+        (case #replay_kind entry of
+           RareArgumentRewrite =>
+             validate_rare_inventory_contract name prems conclusion
+               (replay_rare_rewrite name args)
+         | RareRecursiveArgumentRewrite =>
+             validate_recursive_rare_inventory_contract name prems conclusion
+               (replay_rare_rewrite name args)
+         | RareStringRecipe recipe =>
+             if rare_string_recipe_name recipe = name then
+               replay_inventory_string_rule name prems conclusion args
+             else raise ERR name "internal TASK23 String recipe mismatch"
+         | RareContainsRefl =>
+             validate_rare_inventory_contract name prems conclusion
+               (replay_str_contains_refl args)
+         | RareContainsSplitChar =>
+             replay_contains_split_char prems conclusion args
+         | RareUnsupported diagnostic => raise ERR name diagnostic)
+
   fun unsupported_step ({id, rule, conclusion, ...} : step) =
     let
       val conclusion_text =
@@ -7733,6 +8170,8 @@ local
                replay_seq_rewrite (#name rule) prems conclusion args)
            | "seq_rev_rev" => opaque ( replay_seq_rev_rev args)
            | "str_contains_refl" => opaque ( replay_str_contains_refl args)
+           | "rare_inventory" => opaque (
+               replay_rare_inventory state (#name rule) prems conclusion args)
            | "str_substr_full_eq" => opaque ( replay_str_substr_full_eq args)
            | "seq_at_elim" => opaque ( replay_seq_at_elim conclusion args)
            | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
@@ -7960,6 +8399,17 @@ in
 
   fun replay_rare_rewrite_for_test name args =
     replay_rare_rewrite name args
+
+  fun replay_rare_inventory_string_for_test name args =
+    let
+      fun prove proposition =
+        Drule.EQT_ELIM (bossLib.EVAL proposition)
+      val premises = List.map prove
+        (rare_string_expected_premises name args)
+      val target = rare_string_expected_target name args
+    in
+      replay_inventory_string_rule name premises (SOME target) args
+    end
 
   fun replay_arith_reduction_for_test args =
     #1 (replay_arith_reduction args)

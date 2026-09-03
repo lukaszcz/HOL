@@ -1733,6 +1733,34 @@ Proof
   simp []
 QED
 
+Theorem smtstr_contains_concat_len_one:
+  smtstr_len sub = 1 ==>
+  (smtstr_contains (smtstr_concat s t) sub <=>
+   smtstr_contains s sub \/ smtstr_contains t sub)
+Proof
+  rw [smtstr_contains_concat] >>
+  eq_tac >> strip_tac >> simp [] >>
+  `0 <= smtstr_len p /\ 0 <= smtstr_len q` by
+    simp [smtstr_len_nonnegative] >>
+  `smtstr_len p <> 0 /\ smtstr_len q <> 0` by
+    metis_tac [smtstr_len_eq_zero] >>
+  `~(smtstr_len p + smtstr_len q = 1)` by intLib.ARITH_TAC >>
+  fs [smtstr_len_concat]
+QED
+
+Theorem IS_SUBLIST_APPEND_len_one:
+  LENGTH sub = 1 ==>
+  (IS_SUBLIST (s ++ t) sub <=>
+   IS_SUBLIST s sub \/ IS_SUBLIST t sub)
+Proof
+  rw [IS_SUBLIST_APPEND_DECOMPOSE] >>
+  eq_tac >> strip_tac >> simp [] >>
+  `LENGTH p <> 0 /\ LENGTH q <> 0` by
+    fs [listTheory.LENGTH_NIL] >>
+  `LENGTH p + LENGTH q = 1` by fs [] >>
+  decide_tac
+QED
+
 (* TASK_02 draft_regex_membership records reflexive prefix clauses.  The
    suffix and contains variants complete the same symbolic A6 family used by
    the TASK_02 per-operator recordings. *)
