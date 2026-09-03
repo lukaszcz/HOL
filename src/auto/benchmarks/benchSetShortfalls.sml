@@ -11,7 +11,6 @@ struct
 val over_budget =
   ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
    "set_L1607_Pow_insert",
-   "set_L1790_vimage_image_eq",
    "set_L1847_is_singleton_the_elem",
    "set_L928_subset_image_iff", "set_L994_image_add_0",
    "set_theory_L168", "set_theory_L184", "set_theory_L36",
@@ -76,12 +75,6 @@ val bounded_quantifier_one_point =
      ^ "with RES_FORALL, so the one-point rewrite never fires")
     ["set_L421_ball_triv", "set_L425_bex_triv"]
 
-val vimage =
-  classified "vimage"
-    ("PREIMAGE reasoning is downstream of the missing set rule "
-     ^ "forms")
-    ["set_L1790_vimage_image_eq"]
-
 val definite_description =
   classified "definite description"
     ("CHOICE over a singleton is not reduced by the assigned "
@@ -125,7 +118,6 @@ val entries : benchLib.shortfall list =
   isabelle_lattice_instance @
   disjnt @
   bounded_quantifier_one_point @
-  vimage @
   definite_description @
   image_comprehension @
   boolean_induction_rule @

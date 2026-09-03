@@ -63,7 +63,7 @@ Theorem source_sorted_wrt_nth_less:
   !relation xs.
     source_sorted_wrt relation xs <=>
     !left right.
-      left < right /\ right < LENGTH xs ==>
+      left < right ==> right < LENGTH xs ==>
       relation (EL left xs) (EL right xs)
 Proof
   gen_tac
@@ -220,6 +220,26 @@ Theorem source_sorted_wrt_iff_nth_Suc_transp:
 Proof
   rpt strip_tac
   >> simp[source_sorted_wrt_bridge, sortingTheory.SORTED_EL_SUC]
+QED
+
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy:6049.  The [<] characterisation of [sorted], with
+   its two antecedents curried; sorting$SORTED_EL_LESS conjoins them
+   and is stated on HOL4's own SORTED. *)
+Theorem source_sorted_iff_nth_mono_less:
+  !le : 'a -> 'a -> bool.
+    relation$WeakLinearOrder le ==>
+    !xs.
+      (source_sorted le xs <=>
+       !left right.
+         left < right ==> right < LENGTH xs ==>
+         le (EL left xs) (EL right xs))
+Proof
+  rpt strip_tac
+  >> drule source_weak_linear_transitive
+  >> strip_tac
+  >> simp[source_sorted_bridge, sortingTheory.SORTED_EL_LESS]
+  >> metis_tac[]
 QED
 
 Theorem source_sorted_iff_nth_mono:
@@ -2148,40 +2168,69 @@ Proof
 QED
 
 Theorem source_fold_commute:
-  !operation.
-    (!left right current.
-       operation left (operation right current) =
-       operation right (operation left current)) ==>
-    !xs value current.
+  !operation xs value.
+    (!element current.
+       MEM element xs ==>
+       operation element (operation value current) =
+       operation value (operation element current)) ==>
+    !current.
       source_fold operation xs (operation value current) =
       operation value (source_fold operation xs current)
 Proof
   gen_tac
-  >> strip_tac
   >> Induct
-  >> simp[source_fold_def]
-  >> rpt gen_tac
+  >> rpt strip_tac
   >> fs[source_fold_def]
+  >> `operation h (operation value current) =
+      operation value (operation h current)`
+       by (first_assum irule >> simp[])
+  >> pop_assum SUBST1_TAC
+  >> first_x_assum irule
+  >> rpt strip_tac
+  >> first_x_assum irule
+  >> simp[]
 QED
 
 Theorem source_foldr_fold:
-  !operation.
-    (!left right current.
-       operation left (operation right current) =
-       operation right (operation left current)) ==>
-    source_foldr operation = source_fold operation
+  !operation xs.
+    (!left right.
+       MEM left xs ==> MEM right xs ==>
+       operation right o operation left =
+       operation left o operation right) ==>
+    source_foldr operation xs = source_fold operation xs
 Proof
   gen_tac
-  >> strip_tac
+  >> Induct
+  >- simp[source_foldr_def, source_fold_def, FUN_EQ_THM]
+  >> rpt strip_tac
+  >> `!element current.
+        MEM element xs ==>
+        operation element (operation h current) =
+        operation h (operation element current)`
+       by (rpt strip_tac
+           >> qpat_assum `!left right. MEM left (h::xs) ==> _`
+                (qspecl_then [`h`, `element`] mp_tac)
+           >> simp[FUN_EQ_THM]
+           >> disch_then (qspec_then `current` ACCEPT_TAC))
+  >> `!left right.
+        MEM left xs ==> MEM right xs ==>
+        operation right o operation left =
+        operation left o operation right`
+       by (rpt strip_tac
+           >> qpat_assum `!left right. MEM left (h::xs) ==> _` irule
+           >> simp[])
+  >> fs[]
   >> rw[FUN_EQ_THM]
-  >> Induct_on `x`
-  >> simp[source_foldr_def, source_fold_def]
-  >> rpt gen_tac
-  >> fs[source_foldr_def, source_fold_def]
-  >> once_rewrite_tac[GSYM source_fold_def]
+  >> `source_foldr operation (h::xs) x =
+      operation h (source_foldr operation xs x)`
+       by simp[source_foldr_def]
+  >> `source_fold operation (h::xs) x =
+      source_fold operation xs (operation h x)`
+       by simp[source_fold_def]
+  >> ASM_REWRITE_TAC []
   >> irule EQ_SYM
   >> irule source_fold_commute
-  >> simp[]
+  >> first_assum ACCEPT_TAC
 QED
 
 Definition source_minus_list_mset_def:
@@ -2397,14 +2446,33 @@ Proof
   >> simp[source_num_genlist_distinct]
 QED
 
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy, [zip_append1] and [zip_append2].  Isabelle's [zip]
+   truncates against the shorter list and so does HOL4's -- ZIP is
+   specified by [ZIP ([], l) = []], [ZIP (l, []) = []] and the cons
+   clause -- so the two lemmas translate as stated.  The equal-length
+   [zip_append] they are cited to prove is the goal of
+   [list_L2786_zip_append]; stating either of these as that one would
+   hand the goal back to itself as a fact. *)
 Theorem source_zip_append1:
-  !xs ys us vs.
-    LENGTH xs = LENGTH us ==>
-    ZIP (xs ++ ys, us ++ vs) = ZIP (xs, us) ++ ZIP (ys, vs)
+  !xs ys zs.
+    ZIP (xs ++ ys, zs) =
+    ZIP (xs, TAKE (LENGTH xs) zs) ++ ZIP (ys, DROP (LENGTH xs) zs)
 Proof
-  Induct_on `xs`
-  >- (Cases_on `us` >> simp[listTheory.ZIP_def])
-  >> Cases_on `us`
+  Induct
+  >> rpt gen_tac
+  >> Cases_on `zs`
+  >> simp[listTheory.ZIP_def]
+QED
+
+Theorem source_zip_append2:
+  !ys xs zs.
+    ZIP (xs, ys ++ zs) =
+    ZIP (TAKE (LENGTH ys) xs, ys) ++ ZIP (DROP (LENGTH ys) xs, zs)
+Proof
+  Induct
+  >> rpt gen_tac
+  >> Cases_on `xs`
   >> simp[listTheory.ZIP_def]
 QED
 
@@ -2549,11 +2617,12 @@ Proof
 QED
 
 Theorem source_inj_on_nth:
-  !xs.
+  !xs indices.
     ALL_DISTINCT xs ==>
-    INJ (\index. EL index xs) (count (LENGTH xs)) UNIV
+    (!index. index IN indices ==> index < LENGTH xs) ==>
+    INJ (\index. EL index xs) indices UNIV
 Proof
-  simp[pred_setTheory.INJ_DEF, pred_setTheory.IN_COUNT]
+  simp[pred_setTheory.INJ_DEF]
   >> metis_tac[listTheory.ALL_DISTINCT_EL_IMP]
 QED
 
@@ -4095,17 +4164,20 @@ Proof
   >> fs[relationTheory.reflexive_def]
 QED
 
-(* Isabelle/HOL src/HOL/List.thy:7995-7996. *)
+(* Isabelle/HOL src/HOL/Relation.thy, [refl_on_def].  It carries no
+   range condition; [equiv] states [r SUBSET A * A] as a conjunct of
+   its own. *)
 Definition source_refl_on_def:
   source_refl_on domain relation <=>
-    (!value. value IN domain ==> relation value value) /\
-    (!left right.
-       relation left right ==>
-       left IN domain /\ right IN domain)
+    !value. value IN domain ==> relation value value
 End
 
+(* Isabelle/HOL src/HOL/Equiv_Relations.thy, [equiv_def]. *)
 Definition source_equiv_def:
   source_equiv domain relation <=>
+    (!left right.
+       relation left right ==>
+       left IN domain /\ right IN domain) /\
     source_refl_on domain relation /\
     relation$symmetric relation /\
     relation$transitive relation
@@ -4158,17 +4230,9 @@ Theorem source_LIST_REL_refl_on_preserve:
 Proof
   simp[source_refl_on_def]
   >> rpt strip_tac
-  >- (irule source_LIST_REL_refl_on
-      >> qexists_tac `carrier`
-      >> fs[source_lists_def])
-  >- (qspecl_then [`carrier`, `relation`, `left`, `right`]
-        mp_tac source_LIST_REL_in_lists
-      >> simp[source_lists_def]
-      >> metis_tac[])
-  >> qspecl_then [`carrier`, `relation`, `left`, `right`]
-       mp_tac source_LIST_REL_in_lists
-  >> simp[source_lists_def]
-  >> metis_tac[]
+  >> irule source_LIST_REL_refl_on
+  >> qexists_tac `carrier`
+  >> fs[source_lists_def]
 QED
 
 Theorem source_LIST_REL_symmetric:
@@ -4234,19 +4298,19 @@ Proof
   >> strip_tac
   >> fs[source_equiv_def, source_refl_on_def]
   >> rw[source_equiv_def, source_refl_on_def]
-      >- (irule
+  >- (qspecl_then [`carrier`, `relation`, `left`, `right`]
+        mp_tac source_LIST_REL_in_lists
+      >> simp[source_lists_def]
+      >> metis_tac[])
+  >- (qspecl_then [`carrier`, `relation`, `left`, `right`]
+        mp_tac source_LIST_REL_in_lists
+      >> simp[source_lists_def]
+      >> metis_tac[])
+  >- (irule
         (Q.SPECL [`carrier`, `relation`, `value`]
            source_LIST_REL_refl_on)
       >> qexists_tac `carrier`
       >> fs[source_lists_def])
-  >- (qspecl_then [`carrier`, `relation`, `left`, `right`]
-        mp_tac source_LIST_REL_in_lists
-      >> simp[source_lists_def]
-      >> metis_tac[])
-  >- (qspecl_then [`carrier`, `relation`, `left`, `right`]
-        mp_tac source_LIST_REL_in_lists
-      >> simp[source_lists_def]
-      >> metis_tac[])
   >- (fs[relationTheory.symmetric_def]
       >> rw[relationTheory.symmetric_def]
       >> eq_tac
@@ -8209,6 +8273,72 @@ Theorem source_subset_sandwich:
     lower = middle
 Proof
   metis_tac[pred_setTheory.SUBSET_ANTISYM]
+QED
+
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/Set.thy, [image_constant].  It carries the membership
+   premise; the unconditional [image_constant_conv], which is what
+   pred_set$IMAGE_CONST states, is a different lemma. *)
+Theorem source_image_constant:
+  !value set (constant : 'b).
+    value IN set ==> IMAGE (\x. constant) set = {constant}
+Proof
+  simp[pred_setTheory.EXTENSION]
+  >> metis_tac[]
+QED
+
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy, [set_replicate_conv_if].  The set, not the
+   membership: the membership form is [in_set_replicate], which is the
+   goal of [list_L5001_in_set_replicate]. *)
+Theorem source_set_replicate_conv_if:
+  !n (value : 'a).
+    LIST_TO_SET (REPLICATE n value) = if n = 0 then {} else {value}
+Proof
+  Induct
+  >> simp[rich_listTheory.REPLICATE]
+  >> rw[]
+  >> fs[]
+QED
+
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy, [distinct_zipI1].  Isabelle's [zip] truncates and
+   so does HOL4's, so no length condition is needed;
+   list$ALL_DISTINCT_ZIP carries one. *)
+Theorem source_mem_zip_left:
+  !xs (ys : 'b list) left right.
+    MEM (left, right) (ZIP (xs, ys)) ==> MEM left xs
+Proof
+  Induct
+  >- simp[listTheory.ZIP_def]
+  >> rpt gen_tac
+  >> Cases_on `ys`
+  >> simp[listTheory.ZIP_def]
+  >> metis_tac[]
+QED
+
+Theorem source_distinct_zipI1:
+  !xs (ys : 'b list).
+    ALL_DISTINCT xs ==> ALL_DISTINCT (ZIP (xs, ys))
+Proof
+  Induct
+  >- simp[listTheory.ZIP_def]
+  >> gen_tac
+  >> Cases_on `ys`
+  >> simp[listTheory.ZIP_def]
+  >> rpt strip_tac
+  >> metis_tac[source_mem_zip_left]
+QED
+
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy, [butlast_append].  Unconditional, with the case
+   split on the right; rich_list$FRONT_APPEND_NOT_NIL is only the
+   second branch. *)
+Theorem source_butlast_append:
+  !xs ys : 'a list.
+    FRONT (xs ++ ys) = if ys = [] then FRONT xs else xs ++ FRONT ys
+Proof
+  rw[rich_listTheory.FRONT_APPEND_NOT_NIL]
 QED
 
 val _ = export_theory ()

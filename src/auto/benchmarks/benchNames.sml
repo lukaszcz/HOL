@@ -13,7 +13,9 @@ datatype resolution =
 fun named theory theorem =
   {name = theory ^ "$" ^ theorem, theorem = DB.fetch theory theorem}
 
-(* A HOL4 library theorem, named the way the benchmark reports names. *)
+(* A HOL4 library theorem, named the way the benchmark reports names.
+   Nothing records which Isabelle statement it is meant to be, so a
+   wrong one shows up only by reading the two side by side. *)
 fun library theory theorem () = Theorems [named theory theorem]
 
 (* A lemma of the translation theory.  Each one cites the Isabelle file
@@ -21,9 +23,10 @@ fun library theory theorem () = Theorems [named theory theorem]
    so faithfulness against f7e02b7e is checked there, not restated here. *)
 fun translated theorem () = Theorems [named "parityTranslation" theorem]
 
-(* The combinators below -- [bundle], [symmetric], [first_case] -- only
-   make sense over an entry that names theorems.  Applying one to an
-   entry that names none is an authoring mistake, not an empty list. *)
+(* The combinators below -- [bundle], [symmetric], [first_case],
+   [later_cases] -- only make sense over an entry that names theorems.
+   Applying one to an entry that names none is an authoring mistake,
+   not an empty list. *)
 fun resolved build =
   case build () of
       Theorems theorems => theorems
@@ -92,10 +95,38 @@ fun instantiated bindings build () =
         (resolved build))
   end
 
+(* A HOL4 recursion equation or characterisation bundles clauses an
+   Isabelle citation names one at a time, and handing over the bundle
+   gives a method facts it did not name.  The conjunction can sit under
+   the theorem's quantifiers and premises -- [MIN_SET_LEM] states both
+   its clauses inside [~(s = {}) ==> _] -- so the prefix comes off
+   before the clause is taken and goes back on after. *)
+fun conjunct_of part theorem =
+  let
+    fun peel current =
+      case Lib.total Drule.UNDISCH (Drule.SPEC_ALL current) of
+          NONE => Drule.SPEC_ALL current
+        | SOME stripped => peel stripped
+    val body = peel theorem
+    val selected = part body
+  in
+    Drule.GEN_ALL
+      (List.foldl (fn (hypothesis, current) => Thm.DISCH hypothesis current)
+        selected (Thm.hyp body))
+  end
+
 (* The first equation of a multi-clause definition. *)
 fun first_case build () =
   Theorems
-    (map (fn {name, theorem} => {name = name, theorem = CONJUNCT1 theorem})
+    (map (fn {name, theorem} =>
+            {name = name, theorem = conjunct_of CONJUNCT1 theorem})
+       (resolved build))
+
+(* The rest of one. *)
+fun later_cases build () =
+  Theorems
+    (map (fn {name, theorem} =>
+            {name = name, theorem = conjunct_of CONJUNCT2 theorem})
        (resolved build))
 
 fun context () = Context
@@ -128,17 +159,20 @@ val table : (string * (unit -> resolution)) list =
   ("Un_def", library "pred_set" "UNION_DEF"),
   ("minus_set_def", library "pred_set" "DIFF_DEF"),
   ("insert_compr", library "pred_set" "INSERT_DEF"),
-  ("image_constant", library "pred_set" "IMAGE_CONST"),
+  ("image_constant", translated "source_image_constant"),
   ("subset_insert_iff", library "pred_set" "SUBSET_INSERT_DELETE"),
   ("psubset_eq", library "pred_set" "PSUBSET_DEF"),
   ("subset_antisym", library "pred_set" "SUBSET_ANTISYM"),
   ("vimage_def", library "pred_set" "PREIMAGE_def"),
   ("is_singleton_def", library "pred_set" "SING_DEF"),
-  ("pairwise_def", library "pred_set" "pairwise_def"),
+  (* HOL4's [pairwise] omits the [x <> y] guard Isabelle's carries,
+     so it is a different predicate; the translated goals write
+     Isabelle's definition out and leave the citation nothing. *)
+  ("pairwise_def", inlined),
   ("disjnt_def", library "pred_set" "DISJOINT_DEF"),
   ("disjnt_iff", library "pred_set" "IN_DISJOINT"),
   ("disjoint_iff", library "pred_set" "IN_DISJOINT"),
-  ("sym", library "bool" "EQ_SYM_EQ"),
+  ("sym", library "bool" "EQ_SYM"),
   ("all_conj_distrib", library "bool" "FORALL_AND_THM"),
   ("bind_def", library "option" "OPTION_BIND_def"),
 
@@ -540,7 +574,7 @@ val table : (string * (unit -> resolution)) list =
   ("bit_iff_odd_drop_bit", unrepresented),
   ("bit_simps", unrepresented),
   ("bit_take_bit_iff", unrepresented),
-  ("distinct_zipI1", library "list" "ALL_DISTINCT_ZIP"),
+  ("distinct_zipI1", translated "source_distinct_zipI1"),
   ("div_mult2_numeral_eq", library "arithmetic" "DIV_DIV_DIV_MULT"),
   ("dropWhile_append3", library "list" "dropWhile_APPEND_NOT"),
   ("dropWhile_eq_drop", library "list" "dropWhile_eq_DROP"),
@@ -549,7 +583,7 @@ val table : (string * (unit -> resolution)) list =
   ("fold_insort_key.remove", unrepresented),
   ("greaterThanLessThan_eq", unrepresented),
   ("idem_if_sorted_distinct", unrepresented),
-  ("listrel_subset", library "list" "LIST_REL_MEM_IMP"),
+  ("listrel_subset", translated "source_LIST_REL_in_lists"),
   ("lists_accD", unrepresented),
   ("lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]]",
    unrepresented),
@@ -585,7 +619,7 @@ val table : (string * (unit -> resolution)) list =
   ("Diff_eq[symmetric]",
    translated "source_Diff_eq_symmetric"),
   ("Min_in",
-   library "pred_set" "MIN_SET_LEM"),
+   first_case (library "pred_set" "MIN_SET_LEM")),
   ("Nat.gr0_conv_Suc",
    library "arithmetic" "num_CASES"),
   ("Option.is_none_def",
@@ -612,7 +646,7 @@ val table : (string * (unit -> resolution)) list =
   ("bot_fun_def",
    library "pred_set" "EMPTY_DEF"),
   ("butlast_append",
-   library "rich_list" "FRONT_APPEND_NOT_NIL"),
+   translated "source_butlast_append"),
   ("butlast_conv_take",
    translated "source_front_by_take"),
   ("card_Pow",
@@ -701,7 +735,7 @@ val table : (string * (unit -> resolution)) list =
   ("last_conv_nth",
    library "list" "LAST_EL"),
   ("le_Suc_eq",
-   library "arithmetic" "LE"),
+   later_cases (library "arithmetic" "LE")),
   ("le_funE",
    translated "source_le_funE"),
   ("le_fun_def",
@@ -731,7 +765,7 @@ val table : (string * (unit -> resolution)) list =
   ("lexordp_iff",
    translated "source_lexordp_iff"),
   ("lfp_unfold[OF monoI, of F]",
-   library "fixedPoint" "lfp_fixedpoint"),
+   first_case (library "fixedPoint" "lfp_fixedpoint")),
   ("list.pred_set",
    library "list" "EVERY_MEM"),
   ("list.split",
@@ -797,8 +831,9 @@ val table : (string * (unit -> resolution)) list =
    library "option" "option_case_eq"),
   ("option.splits",
    library "option" "option_case_eq"),
-  ("pairwiseI",
-   library "pred_set" "pairwise_def"),
+  (* With [pairwise] written out, [pairwiseI] is the reordering of a
+     bounded quantifier that the engines do for themselves. *)
+  ("pairwiseI", native),
   ("prod.split",
    library "pair" "pair_case_eq"),
   ("prod_eq_iff",
@@ -820,11 +855,11 @@ val table : (string * (unit -> resolution)) list =
   ("set_map[symmetric]",
    symmetric (library "list" "LIST_TO_SET_MAP")),
   ("set_replicate_conv_if",
-   library "rich_list" "IS_EL_REPLICATE"),
+   translated "source_set_replicate_conv_if"),
   ("snd_conv",
    library "pair" "SND"),
   ("sorted_iff_nth_mono_less",
-   library "sorting" "SORTED_EL_LESS"),
+   translated "source_sorted_iff_nth_mono_less"),
   ("sorted_wrt_iff_nth_less",
    translated "source_sorted_wrt_nth_less"),
   ("split_tupled_all",
@@ -852,7 +887,7 @@ val table : (string * (unit -> resolution)) list =
   ("wf_iff_acyclic_if_finite",
    translated "source_finite_wf_acyclic"),
   ("zip_append2",
-   library "rich_list" "ZIP_APPEND"),
+   translated "source_zip_append2"),
 ]
 
 fun lookup citation =

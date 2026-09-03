@@ -66,13 +66,24 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
+(* Isabelle's [take_append] and [drop_append] are default simp rules,
+   so its [zip_append1] rewrite lands on a goal simp finishes.  HOL4
+   states the same facts as rich_list$TAKE_LENGTH_APPEND and
+   DROP_LENGTH_APPEND and carries neither in the ambient simpset, so
+   the take and drop the rewrite introduces stay. *)
+val take_drop_against_append =
+  classified "take and drop against an append"
+    ("the residual is [TAKE (LENGTH l1) (l1 ++ l2)] and its DROP "
+     ^ "counterpart, which the ambient simpset does not reduce")
+    ["list_L2786_zip_append"]
+
 val conditional_list_rewrites =
   classified "conditional list rewrites"
     ("the residual is a conditional equation about TL, LAST, "
      ^ "FRONT, NULL, nub or dropWhile that the simpset does not "
      ^ "carry")
     ["list_L1010_tl_append_if", "list_L2100_last_ConsR",
-     "list_L2141_in_set_butlast_appendI", "list_L2589_dropWhile_last",
+     "list_L2589_dropWhile_last",
      "list_L4481_insert_remdups", "list_L4642_extract_Nil_code",
      "list_L8603_is_empty_set"]
 
@@ -325,17 +336,6 @@ val sortedness_beyond_the_bridge =
      "list_L6053_sorted_iff_nth_mono", "list_L6104_sorted_butlast",
      "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
 
-(* Both sides of the residual equivalence are the same statement, one
-   with its two antecedents conjoined and one with them curried, so
-   the goal is a propositional tautology that the assigned method
-   leaves standing. *)
-val conjoined_against_curried_antecedents =
-  classified "conjoined against curried antecedents"
-    ("the residual is an equivalence between one statement with its "
-     ^ "antecedents conjoined and the same statement with them "
-     ^ "curried, which the assigned method does not close")
-    ["list_L6049_sorted_iff_nth_mono_less"]
-
 (* The order axioms are supplied ambiently now -- the seeds take an
    order premise apart into its components -- so the side conditions
    that read them are discharged, and this residual is what is left
@@ -498,6 +498,7 @@ val sigma_over_budget =
      "product_type_L1112_split_paired_Bex_Sigma"]
 
 val execution : benchLib.shortfall list =
+  take_drop_against_append @
   conditional_list_rewrites @
   congruence_rules @
   prefix_from_its_indices @
@@ -522,7 +523,6 @@ val execution : benchLib.shortfall list =
   finite_cardinality @
   propositional_rearrangement @
   sortedness_beyond_the_bridge @
-  conjoined_against_curried_antecedents @
   order_premise_left_inert @
   numeral_against_Suc @
   characterisation_is_the_goal @
