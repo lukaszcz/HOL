@@ -27,6 +27,7 @@ Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof cit
 - `list_L6690_distinct_if_distinct_map (list$ALL_DISTINCT_MAP)`
 - `list_L6761_anon_L6761 (parityTranslation$source_strict_sorted_equal_unique)`
 - `list_L8683_can_select_set_list_ex1 (parityTranslation$source_list_ex1_def)`
+- `list_L7775_in_measures_2 (parityTranslation$source_measures_def)`
 - `string_L728_anon_L728 (source_Literal_prime_def)`
 - `product_type_L785_curry_conv (pair$CURRY_DEF)`
 
@@ -87,11 +88,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 329 | 328 | 4 |
-| List/map | 602 | 432 | 386 | 5 |
+| List/map | 602 | 424 | 378 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **874** | **827** | **28** |
+| **Total** | **1070** | **866** | **819** | **28** |
 
 ## Cost of the solutions
 
@@ -99,13 +100,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 8 | 16 | 1 | 0 | 4.0 | 100 | 1580 |
-| Sets | 329 | 112 | 211 | 6 | 0 | 3.7 | 6 | 2430 |
-| List/map | 432 | 9 | 418 | 5 | 0 | 5.6 | 0 | 1868 |
-| Linarith | 46 | 44 | 2 | 0 | 0 | 0.3 | 0 | 0 |
-| Presburger | 34 | 30 | 3 | 1 | 0 | 4.9 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 3.0 | 0 | 0 |
-| **Total** | **874** | **210** | **650** | **14** | **0** | **5.6** | **0** | **2430** |
+| Classical | 25 | 2 | 22 | 1 | 0 | 3.9 | 100 | 1580 |
+| Sets | 329 | 65 | 258 | 6 | 0 | 3.5 | 6 | 2430 |
+| List/map | 424 | 2 | 409 | 13 | 0 | 4.4 | 0 | 1868 |
+| Linarith | 46 | 43 | 3 | 0 | 0 | 0.2 | 0 | 0 |
+| Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
+| Algebra | 8 | 7 | 0 | 1 | 0 | 2.2 | 0 | 0 |
+| **Total** | **866** | **150** | **694** | **22** | **0** | **4.4** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -118,11 +119,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 24 | 0 | 0 |
-| List/map | 0 | 170 | 2 | 0 |
+| List/map | 0 | 178 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **196** | **2** | **0** |
+| **Total** | **0** | **204** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -134,11 +135,11 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
 | Sets | 0 | 6 | 7 |
-| List/map | 14 | 0 | 9 |
+| List/map | 17 | 0 | 12 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **14** | **6** | **16** |
+| **Total** | **17** | **6** | **19** |
 
 ## Seed-rule safety check
 

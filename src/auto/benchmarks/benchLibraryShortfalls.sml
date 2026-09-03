@@ -486,6 +486,32 @@ val sigma_over_budget =
      "product_type_L1109_split_paired_Ball_Sigma",
      "product_type_L1112_split_paired_Bex_Sigma"]
 
+(* Eight goals the corrected circularity guard newly withholds a rule
+   from, all in the [characterisation is the goal] class above and
+   dated to the measurement that found them.  Seven are one conjunct of
+   a conjunctive rule -- [listTheory.EL], [ZIP], [LIST_REL_NIL],
+   [EVERY_DEF], [EXISTS_DEF] and the translation's own
+   [source_measures_def], which the cited method unfolds -- and the
+   simpset splits each into a rewrite that is the goal.  The eighth is
+   [listTheory.SHORTLEX_NIL2], which is the goal once the translation
+   of [lenlex] is unfolded; the guard used to compare a rule's
+   conclusion against the goal with the goal's quantifier prefix still
+   on, so neither reading matched. *)
+val a_reading_of_the_characterisation_is_the_goal =
+  map
+    (fn id =>
+      {id = id, cause = benchLib.EngineLimitation, date = "2026-09-03",
+       note =
+         "a reading of the characterisation is the goal: the HOL4 " ^
+         "rule that reaches this goal states it as one conjunct of a " ^
+         "conjunction, or states it with its quantifiers in another " ^
+         "order, and A1 withholds it under either reading; the " ^
+         "assigned tactic has no second route"} : benchLib.shortfall)
+    ["list_L1851_nth_Cons_Suc", "list_L2740_zip_Cons_Cons",
+     "list_L3014_list_all2_Nil", "list_L3017_list_all2_Nil2",
+     "list_L7300_Nil_lenlex_iff2", "list_L7775_in_measures_2",
+     "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
+
 val execution : benchLib.shortfall list =
   conditional_list_rewrites @
   congruence_rules @
@@ -527,6 +553,7 @@ val execution : benchLib.shortfall list =
   option_relations @
   character_arithmetic @
   sigma_and_times_rule_forms @
-  sigma_over_budget
+  sigma_over_budget @
+  a_reading_of_the_characterisation_is_the_goal
 
 end

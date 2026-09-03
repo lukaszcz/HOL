@@ -455,20 +455,54 @@ fun contentless term =
        | NONE => false)
   end
 
+(* A citation and a goal can be one statement written two ways: the
+   quantifier prefix differs, the premises stand in a different order,
+   or the citation states the goal alongside other conjuncts.
+   Stripping only the citation and comparing what is left against the
+   whole goal therefore sees a citation that is a premise-free goal and
+   misses one that is a goal carrying premises.
+
+   So the citation is read every way a rule is read from it -- prefix
+   off, premises accumulated, conjunction split, since a conjunctive
+   rule enters the simpset as one rewrite per conjunct -- and it is the
+   goal when one of those readings has the goal's conclusion and every
+   premise it carries is one the goal carries too.  Coverage runs that
+   way only: a reading with fewer premises is stronger than the goal and
+   supplies it outright, while one with a premise the goal does not have
+   leaves work and is not the goal. *)
 fun statement_is_goal goal statement =
   let
-    val (_, body) = boolSyntax.strip_forall statement
-    val (_, conclusion) = boolSyntax.strip_imp_only body
     val goal = strip_truth_equivalence goal
-    val conclusion = strip_truth_equivalence conclusion
-    val theorem_conclusion = strip_truth_equivalence statement
     fun variants left right =
       can (match_term left) right andalso can (match_term right) left
     fun same left right =
       Term.aconv left right orelse variants left right orelse
       Term.aconv (statement_normal_form left) (statement_normal_form right)
+    fun parts term =
+      let
+        val (_, body) = boolSyntax.strip_forall term
+      in
+        boolSyntax.strip_imp_only body
+      end
+    fun readings term =
+      let
+        val (premises, conclusion) = parts term
+      in
+        case total boolSyntax.dest_conj conclusion of
+            SOME (left, right) =>
+              map (fn (rest, c) => (premises @ rest, c))
+                (readings left @ readings right)
+          | NONE => [(premises, strip_truth_equivalence conclusion)]
+      end
+    val (goal_premises, goal_body) = parts goal
+    val goal_conclusion = strip_truth_equivalence goal_body
+    fun covered term = List.exists (same term) goal_premises
+    fun matches (premises, conclusion) =
+      same conclusion goal orelse
+      (same conclusion goal_conclusion andalso List.all covered premises)
   in
-    same conclusion goal orelse same theorem_conclusion goal
+    same (strip_truth_equivalence statement) goal orelse
+    List.exists matches (readings statement)
   end
 
 fun theorem_is_goal goal theorem =

@@ -303,10 +303,15 @@ val sorted_wrt_drop_rule =
   {name = "parityTranslation$source_sorted_wrt_drop",
    theorem = DB.fetch "parityTranslation" "source_sorted_wrt_drop"}
 
+(* Two drops, so the goal is not the rule with its premises in another
+   order -- which is a self-analogue A1 withholds, and would leave this
+   check asserting the crossing on a rule the measurement never
+   offers. *)
 val crossing_goal =
   ``relation$transitive bench_cross_le ==>
     sorting$SORTED bench_cross_le bench_cross_xs ==>
-    sorting$SORTED bench_cross_le (DROP bench_cross_n bench_cross_xs)``
+    sorting$SORTED bench_cross_le (DROP bench_cross_n bench_cross_xs) /\
+    sorting$SORTED bench_cross_le (DROP bench_cross_m bench_cross_xs)``
 
 val crossing_recipe =
   benchLib.Invoke
@@ -673,6 +678,48 @@ val _ =
          (benchLib.theorem_is_goal member_goal
             (Thm.INST_TYPE [Type.alpha |-> numSyntax.num]
               listTheory.MEM_APPEND)))
+
+(* A citation can be the goal and still carry premises, and a
+   comparison that strips only the citation puts its conclusion beside
+   the whole goal and never sees it.  The quantifier prefix is where
+   the two drift apart: the same statement written with the bound
+   variables in another order is not alpha-equivalent to it, which is
+   how a translation stated as its own goal went unnoticed. *)
+val premised_goal =
+  ``!l1 l2 n. n < LENGTH (l1 : 'a list) ==> EL n (l1 ++ l2) = EL n l1``
+
+val _ =
+  check
+    ("A1 catches a supplied theorem that is a goal carrying premises",
+     fn () =>
+       benchLib.theorem_is_goal premised_goal rich_listTheory.EL_APPEND1)
+
+val _ =
+  check
+    ("A1 leaves a theorem whose premise the goal does not carry alone",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal premised_goal
+            rich_listTheory.EL_APPEND2))
+
+(* [clean_simpset] filters whole theorems, and the simpset then splits
+   what survives into one rewrite per conjunct.  So a conjunctive rule
+   carrying the goal among its conjuncts reaches the goal as a rewrite
+   that is it, and each conjunct has to be read on its own. *)
+val _ =
+  check
+    ("A1 catches a conjunct of a supplied theorem that is the goal",
+     fn () =>
+       benchLib.theorem_is_goal ``!l. [] ++ l = l`` listTheory.APPEND)
+
+val _ =
+  check
+    ("A1 leaves a conjunctive theorem no conjunct of which is the goal",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal
+            ``!l1 l2. LENGTH (l1 ++ l2) = LENGTH l1 + LENGTH l2``
+            listTheory.APPEND))
 
 val _ =
   check
