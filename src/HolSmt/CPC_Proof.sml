@@ -73,6 +73,8 @@ struct
     mk_rule ProofRule ("string_eager_reduction", "string"),
     mk_rule ProofRule ("string_length_pos", "string"),
     mk_rule ProofRule ("string_reduction", "string"),
+    mk_rule ProofRule ("concat_unify", "string"),
+    mk_rule ProofRule ("re_unfold_pos", "string"),
     mk_rule ProofRule ("aci_norm", "aci_norm"),
     mk_rule ProofRule ("bv_poly_norm", "bv_poly_norm"),
     mk_rule ProofRule ("bv_poly_norm_eq", "bv_poly_norm_eq"),

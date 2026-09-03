@@ -5748,6 +5748,308 @@ local
 
   fun replay_string state name prems conclusion args =
     let
+      fun same_const thy name tm =
+        case Lib.total Term.dest_thy_const tm of
+          SOME {Thy, Name, ...} => Thy = thy andalso Name = name
+        | NONE => false
+      fun binary_app thy name left right = Term.list_mk_comb
+        (Term.prim_mk_const {Thy = thy, Name = name}, [left, right])
+      fun smt_in_re string regex =
+        binary_app "smtstring" "smt_in_re" string regex
+      fun concat_strings [] = raise ERR "string"
+            "re_unfold_pos produced no components"
+        | concat_strings [only] = only
+        | concat_strings (first :: rest) =
+            binary_app "smtstring" "smtstr_concat" first
+              (concat_strings rest)
+      fun concat_regexps [] = raise ERR "string"
+            "re_unfold_pos produced no regular expressions"
+        | concat_regexps [only] = only
+        | concat_regexps (first :: rest) =
+            binary_app "smtstring" "reglan_concat" first
+              (concat_regexps rest)
+      fun binary_congruence operator left right =
+        Thm.MK_COMB (Thm.MK_COMB (Thm.REFL operator, left), right)
+      (* Expose only the selected edge of an outer associative spine.  The
+         selected term is an explicit stopping point, even when it is itself
+         headed by the same operator, so opaque nested operands are never
+         rewritten. *)
+      fun outer_edge_decomposition operator dest mk assoc empty
+          nil_left nil_right from_end whole selected =
+        let
+          fun root_rewrite label theorem term =
+            Conv.REWR_CONV theorem term
+            handle Feedback.HOL_ERR holerr => raise ERR "string"
+              ("outer concat " ^ label ^ " failed on " ^
+               Library.term_to_string term ^ ": " ^
+               Feedback.message_of holerr)
+          fun descend term =
+            if Term.aconv term selected then
+              if from_end then
+                let
+                  val theorem = root_rewrite "left identity" nil_left
+                    (mk (empty, selected))
+                in
+                  {theorem = Thm.SYM theorem, other = empty}
+                end
+              else
+                let
+                  val theorem = root_rewrite "right identity" nil_right
+                    (mk (selected, empty))
+                in
+                  {theorem = Thm.SYM theorem, other = empty}
+                end
+            else
+              case Lib.total dest term of
+                NONE => raise ERR "string"
+                  "concat_unify selected term is not on the outer edge"
+              | SOME (left, right) =>
+                  if from_end andalso Term.aconv right selected then
+                    {theorem = Thm.REFL term, other = left}
+                  else if not from_end andalso
+                          Term.aconv left selected then
+                    {theorem = Thm.REFL term, other = right}
+                  else if from_end then
+                    let
+                      val {theorem, other} = descend right
+                      val congruence = binary_congruence operator
+                        (Thm.REFL left) theorem
+                      val reassociate = Thm.SYM
+                        (root_rewrite "reverse associativity" assoc
+                          (mk (mk (left, other), selected)))
+                    in
+                      {theorem = Thm.TRANS congruence reassociate,
+                       other = mk (left, other)}
+                    end
+                  else
+                    let
+                      val {theorem, other} = descend left
+                      val congruence = binary_congruence operator theorem
+                        (Thm.REFL right)
+                      val reassociate = root_rewrite "front associativity"
+                        assoc
+                        (mk (mk (selected, other), right))
+                    in
+                      {theorem = Thm.TRANS congruence reassociate,
+                       other = mk (other, right)}
+                    end
+        in
+          descend whole
+        end
+      (* Prove semantic right-canonicalization against the parser's exact
+         desired component list.  A singleton alpha-match is an opaque stop,
+         even when that component is concat-headed.  Otherwise, backtrack
+         over nonempty desired-list partitions matching the original root. *)
+      fun regex_components_right_canonical dest mk whole desired =
+        let
+          val smtstr_type = Type.mk_thy_type
+            {Thy = "smtstring", Tyop = "smtstr", Args = []}
+          fun fold [term] = term
+            | fold (term :: rest) = mk (term, fold rest)
+            | fold [] = raise ERR "string" "empty outer concat spine"
+          fun language_refl regex =
+            let
+              val string = Term.variant (Term.free_vars regex)
+                (Term.mk_var ("outer_regex_string", smtstr_type))
+            in
+              Thm.GEN string (Thm.REFL (smt_in_re string regex))
+            end
+          fun language_trans first second =
+            let
+              val string = Term.variant
+                (Term.free_vars (Thm.concl first) @
+                 Term.free_vars (Thm.concl second))
+                (Term.mk_var ("outer_regex_string", smtstr_type))
+            in
+              Thm.GEN string (Thm.TRANS
+                (Thm.SPEC string first) (Thm.SPEC string second))
+            end
+          fun language_congruence left left' right right'
+              left_theorem right_theorem =
+            Thm.MP (Drule.SPECL [left, left', right, right']
+              smtstringTheory.smt_in_re_concat_language_cong)
+              (Thm.CONJ left_theorem right_theorem)
+          fun merge (left :: []) right =
+                language_refl (mk (left, fold right))
+            | merge (left :: rest) right =
+                let
+                  val tail = merge rest right
+                  val reassociate = Drule.SPECL
+                    [left, fold rest, fold right]
+                    smtstringTheory.smt_in_re_concat_assoc_all
+                  val congruence = language_congruence
+                    left left (mk (fold rest, fold right))
+                    (fold (rest @ right)) (language_refl left) tail
+                in
+                  language_trans reassociate congruence
+                end
+            | merge [] _ = raise ERR "string" "empty outer concat spine"
+          fun prove term [only] =
+                if Term.aconv term only then SOME (language_refl term)
+                else NONE
+            | prove _ [] = NONE
+            | prove term components =
+                (case Lib.total dest term of
+                   NONE => NONE
+                 | SOME (left, right) =>
+                     let
+                       fun try [] = NONE
+                         | try (position :: positions) =
+                             let
+                               val lefts = List.take
+                                 (components, position)
+                               val rights = List.drop
+                                 (components, position)
+                             in
+                               case (prove left lefts,
+                                     prove right rights) of
+                                 (SOME left_theorem,
+                                  SOME right_theorem) =>
+                                   let
+                                     val congruence = language_congruence
+                                       left (fold lefts) right (fold rights)
+                                       left_theorem right_theorem
+                                     val merged = merge lefts rights
+                                   in
+                                     SOME (language_trans congruence merged)
+                                   end
+                               | _ => try positions
+                             end
+                       val positions = List.tabulate
+                         (List.length components - 1, fn index => index + 1)
+                     in
+                       try positions
+                     end)
+        in
+          case prove whole desired of
+            SOME theorem => theorem
+          | NONE => raise ERR "string"
+              "re_unfold_pos regex does not match parser component spine"
+        end
+      fun empty_string () = Term.mk_comb
+        (Term.prim_mk_const {Thy = "smtstring", Name = "SmtStr"},
+         listSyntax.mk_nil numSyntax.num)
+      fun concat_unify_target () =
+        case prems of
+          [_, length_equality] =>
+            let
+              fun length_argument side tm =
+                case boolSyntax.strip_comb tm of
+                  (head, [argument]) =>
+                    if same_const "smtstring" "smtstr_len" head then
+                      argument
+                    else if Term.aconv head intSyntax.int_injection then
+                      (case Lib.total listSyntax.dest_length argument of
+                         SOME sequence => sequence
+                       | NONE => raise ERR "string"
+                           ("concat_unify " ^ side ^
+                            " term is not a sequence length"))
+                    else raise ERR "string"
+                      ("concat_unify " ^ side ^ " term is not a length")
+                | _ => raise ERR "string"
+                    ("concat_unify " ^ side ^ " length is not unary")
+              val (left_length, right_length) =
+                boolSyntax.dest_eq (Thm.concl length_equality)
+              val left = length_argument "left" left_length
+              val right = length_argument "right" right_length
+            in
+              boolSyntax.mk_eq (left, right)
+            end
+        | _ => raise ERR "string"
+            "concat_unify expects equality and length premises"
+      fun re_unfold_pos_target () =
+        case prems of
+          [membership] =>
+            let
+              val (head, membership_args) =
+                boolSyntax.strip_comb (Thm.concl membership)
+              val (string, regex) =
+                case membership_args of
+                  [string, regex] =>
+                    if same_const "smtstring" "smt_in_re" head then
+                      (string, regex)
+                    else raise ERR "string"
+                      "re_unfold_pos premise is not membership"
+                | _ => raise ERR "string"
+                    "re_unfold_pos premise is not binary membership"
+              fun decomposition decomposition_regex =
+                let
+                  val components =
+                    CPC_ProofParser.cpc_re_unfold_pos_regexps
+                      decomposition_regex
+                  fun component (component_regex, index) =
+                    case boolSyntax.strip_comb component_regex of
+                      (to_re, [literal]) =>
+                        if same_const "smtstring" "reglan_to_re" to_re then
+                          (literal, NONE)
+                        else
+                          let
+                            val index = intSyntax.term_of_int
+                              (Arbint.fromInt index)
+                            val skolem =
+                              CPC_ProofParser.cpc_re_unfold_pos_component
+                                string decomposition_regex index
+                          in
+                            (skolem, SOME
+                              (smt_in_re skolem component_regex))
+                          end
+                    | _ =>
+                        let
+                          val index = intSyntax.term_of_int
+                            (Arbint.fromInt index)
+                          val skolem =
+                            CPC_ProofParser.cpc_re_unfold_pos_component
+                              string decomposition_regex index
+                        in
+                          (skolem, SOME
+                            (smt_in_re skolem component_regex))
+                        end
+                  val indexed = ListPair.zip
+                    (components, List.tabulate
+                      (List.length components, Lib.I))
+                  val decomposed = List.map component indexed
+                  val strings = List.map Lib.fst decomposed
+                  val equality = boolSyntax.mk_eq
+                    (string, concat_strings strings)
+                in
+                  (strings, equality, List.mapPartial Lib.snd decomposed)
+                end
+            in
+              case boolSyntax.strip_comb regex of
+                (star, [body]) =>
+                  if same_const "smtstring" "reglan_star" star then
+                    let
+                      val expanded = concat_regexps [body, regex, body]
+                      val (strings, equality, memberships) =
+                        decomposition expanded
+                      val decomposition = boolSyntax.list_mk_conj
+                        (equality :: memberships)
+                      val first = List.hd strings
+                      val last = List.last strings
+                      val nonempty = fn component => boolSyntax.mk_neg
+                        (boolSyntax.mk_eq (component, empty_string ()))
+                    in
+                      boolSyntax.list_mk_disj
+                        [boolSyntax.mk_eq (string, empty_string ()),
+                         smt_in_re string body,
+                         boolSyntax.list_mk_conj
+                           [decomposition, nonempty first, nonempty last]]
+                    end
+                  else raise ERR "string"
+                    "re_unfold_pos expects star or concatenation membership"
+              | (concat, [_, _]) =>
+                  if same_const "smtstring" "reglan_concat" concat then
+                    let
+                      val (_, equality, memberships) = decomposition regex
+                    in
+                      boolSyntax.list_mk_conj (equality :: memberships)
+                    end
+                  else raise ERR "string"
+                    "re_unfold_pos expects star or concatenation membership"
+              | _ => raise ERR "string"
+                  "re_unfold_pos expects star or concatenation membership"
+            end
+        | _ => raise ERR "string" "re_unfold_pos expects one premise"
       fun is_empty_string tm =
         case boolSyntax.strip_comb tm of
           (head, [chars]) =>
@@ -5759,7 +6061,9 @@ local
         | _ => false
       fun inferred_target () =
         case (name, args) of
-          ("str-len-concat-rec", [left, right, empty]) =>
+          ("concat_unify", [_]) => concat_unify_target ()
+        | ("re_unfold_pos", []) => re_unfold_pos_target ()
+        | ("str-len-concat-rec", [left, right, empty]) =>
             if listSyntax.is_nil empty orelse is_empty_string empty then
               if is_smtstr_type (Term.type_of left) then
                 Thm.concl (Drule.SPECL [left, right]
@@ -5784,9 +6088,17 @@ local
             ("CPC string step " ^ name ^
              " omitted its conclusion; tracked replay obligation")
       val target =
+        let
+          val _ =
+            if name = "re_unfold_pos" andalso not (List.null args) then
+              raise ERR "string"
+                "re_unfold_pos expects no explicit arguments"
+            else ()
+        in
         case conclusion of
           SOME target => target
         | NONE => inferred_target ()
+        end
       (* Only this rung needs the assertion set, and it is reached only after
          the cheaper string rungs have failed, so the flattening stays behind
          a thunk.  ASM_SIMP_TAC turns every context assumption it uses into a
@@ -5807,11 +6119,472 @@ local
           ("unsupported CPC string step: rule=" ^ name ^
            "; conclusion=" ^ Library.term_to_string target ^
            "; attempted rungs=[rewrite, theory, contextual]")
+      fun concat_unify_prove rev =
+        case prems of
+          [concat_equality, length_equality] =>
+            let
+              fun stage label work = work ()
+                handle Feedback.HOL_ERR holerr => raise ERR "string"
+                  ("concat_unify " ^ label ^ ": " ^
+                   Feedback.message_of holerr)
+              val from_end =
+                if Term.aconv rev boolSyntax.T then true
+                else if Term.aconv rev boolSyntax.F then false
+                else raise ERR "string"
+                  "concat_unify direction argument is not Boolean"
+              val (left_string, right_string) =
+                boolSyntax.dest_eq (Thm.concl concat_equality)
+              val (left_selected, right_selected) = boolSyntax.dest_eq target
+              val string_carrier =
+                is_smtstr_type (Term.type_of left_string) andalso
+                is_smtstr_type (Term.type_of right_string)
+              val sequence_carrier =
+                Lib.can listSyntax.dest_list_type (Term.type_of left_string)
+                andalso Type.compare
+                  (Term.type_of left_string, Term.type_of right_string) = EQUAL
+              val _ = string_carrier orelse sequence_carrier orelse
+                raise ERR "string"
+                  "concat_unify expects String or same-element Seq operands"
+              val direct =
+                if Term.aconv (Thm.concl concat_equality) target then
+                  SOME concat_equality
+                else if Term.aconv
+                    (Thm.concl (Thm.SYM concat_equality)) target then
+                  SOME (Thm.SYM concat_equality)
+                else NONE
+            in
+              case direct of
+                SOME theorem => theorem
+              | NONE =>
+                  let
+                    val (operator, dest, mk, assoc, empty,
+                         nil_left, nil_right) =
+                      if string_carrier then
+                        let
+                          val operator = Term.prim_mk_const
+                            {Thy = "smtstring", Name = "smtstr_concat"}
+                          fun dest term =
+                            case boolSyntax.strip_comb term of
+                              (head, [left, right]) =>
+                                if Term.aconv head operator then (left, right)
+                                else raise ERR "string" "not a String concat"
+                            | _ => raise ERR "string" "not a String concat"
+                        in
+                          (operator, dest,
+                           fn (left, right) =>
+                             Term.list_mk_comb (operator, [left, right]),
+                           smtstringTheory.smtstr_concat_assoc,
+                           empty_string (),
+                           smtstringTheory.smtstr_concat_nil_left,
+                           smtstringTheory.smtstr_concat_nil_right)
+                        end
+                      else
+                        let
+                          val element = listSyntax.dest_list_type
+                            (Term.type_of left_string)
+                          val empty = listSyntax.mk_nil element
+                          val operator = Lib.fst (boolSyntax.strip_comb
+                            (listSyntax.mk_append (empty, empty)))
+                        in
+                          (operator, listSyntax.dest_append,
+                           listSyntax.mk_append,
+                           Thm.SYM
+                             (Drule.SPEC_ALL listTheory.APPEND_ASSOC),
+                           empty,
+                           Thm.CONJUNCT1 listTheory.APPEND,
+                           listTheory.APPEND_NIL)
+                        end
+                    val left_decomposition = stage
+                      "left outer-spine decomposition" (fn () =>
+                        outer_edge_decomposition operator dest mk assoc
+                          empty nil_left nil_right from_end left_string
+                          left_selected)
+                    val right_decomposition = stage
+                      "right outer-spine decomposition" (fn () =>
+                        outer_edge_decomposition operator dest mk assoc
+                          empty nil_left nil_right from_end right_string
+                          right_selected)
+                    val canonical_equality = Thm.TRANS
+                      (Thm.SYM (#theorem left_decomposition))
+                      (Thm.TRANS concat_equality
+                        (#theorem right_decomposition))
+                    val represented_equality = stage
+                      "representation lowering" (fn () =>
+                        if string_carrier then
+                          Conv.CONV_RULE
+                            (Conv.BINOP_CONV (Conv.REWR_CONV
+                              smtstringTheory.smtstr_rep_concat))
+                            (Thm.AP_TERM
+                              (Term.prim_mk_const
+                                {Thy = "smtstring", Name = "smtstr_rep"})
+                              canonical_equality)
+                        else canonical_equality)
+                    val represented_length = stage
+                      "length normalization" (fn () => Rewrite.REWRITE_RULE
+                        [smtstringTheory.smtstr_len_def,
+                         integerTheory.INT_OF_NUM_EQ] length_equality)
+                    val (left_append, right_append) =
+                      boolSyntax.dest_eq (Thm.concl represented_equality)
+                    val (left_prefix, left_suffix) = stage
+                      "left concat decomposition" (fn () =>
+                        listSyntax.dest_append left_append)
+                    val (right_prefix, right_suffix) = stage
+                      "right concat decomposition" (fn () =>
+                        listSyntax.dest_append right_append)
+                    val cancellation_schema =
+                      if from_end then
+                        Thm.CONJUNCT2 listTheory.APPEND_11_LENGTH
+                      else Thm.CONJUNCT1 listTheory.APPEND_11_LENGTH
+                    val cancellation = stage "cancellation specialization"
+                      (fn () => Drule.ISPECL
+                        [left_prefix, left_suffix,
+                         right_prefix, right_suffix]
+                        cancellation_schema)
+                    val equivalence = stage "length discharge" (fn () =>
+                      let
+                        val expected = Lib.fst
+                          (boolSyntax.dest_imp (Thm.concl cancellation))
+                        val received = Thm.concl represented_length
+                        val _ = Term.aconv expected received orelse
+                          raise ERR "string"
+                            ("expected " ^ Library.term_to_string expected ^
+                             "; received " ^
+                             Library.term_to_string received)
+                      in
+                        Thm.MP cancellation represented_length
+                      end)
+                    val components = stage "append cancellation" (fn () =>
+                      Thm.EQ_MP equivalence represented_equality)
+                    val represented_result =
+                      if from_end then Thm.CONJUNCT2 components
+                      else Thm.CONJUNCT1 components
+                  in
+                    if string_carrier then
+                      let
+                        val constructor = Term.mk_thy_const
+                          {Thy = "smtstring", Name = "SmtStr",
+                           Ty = Type.--> (Term.type_of left_prefix,
+                             Term.type_of left_selected)}
+                      in
+                        stage "representation injectivity" (fn () =>
+                          Conv.CONV_RULE
+                            (Conv.BINOP_CONV (Conv.REWR_CONV
+                              smtstringTheory.SmtStr_smtstr_rep))
+                            (Thm.AP_TERM constructor represented_result))
+                      end
+                    else represented_result
+                  end
+            end
+        | _ => raise ERR "string"
+            "concat_unify expects equality and length premises"
+      fun re_unfold_pos_prove () =
+        case prems of
+          [membership] =>
+            let
+              val (membership_head, membership_args) =
+                boolSyntax.strip_comb (Thm.concl membership)
+              val (string, regex) =
+                case membership_args of
+                  [string, regex] =>
+                    if same_const "smtstring" "smt_in_re" membership_head
+                    then (string, regex)
+                    else raise ERR "string"
+                      "re_unfold_pos premise is not membership"
+                | _ => raise ERR "string"
+                    "re_unfold_pos premise is not binary membership"
+              fun adapt_decomposition source_theorem target =
+                let
+                  val source_atoms = Drule.CONJUNCTS source_theorem
+                  fun literal_equality theorem =
+                    let
+                      val (head, operands) = boolSyntax.strip_comb
+                        (Thm.concl theorem)
+                      val regex =
+                        case operands of
+                          [_, regex] => regex
+                        | _ => raise ERR "string"
+                            "not a binary membership atom"
+                      val to_re =
+                        case boolSyntax.strip_comb regex of
+                          (to_re, [_]) => to_re
+                        | _ => raise ERR "string"
+                            "not a literal membership atom"
+                      val _ = same_const "smtstring" "smt_in_re" head
+                        andalso same_const "smtstring" "reglan_to_re" to_re
+                        orelse raise ERR "string"
+                          "not a literal membership atom"
+                    in
+                      Thm.EQ_MP
+                        (Conv.REWR_CONV smtstringTheory.smt_in_re_to_re
+                          (Thm.concl theorem)) theorem
+                    end
+                  val literal_equalities = List.mapPartial
+                    (Lib.total literal_equality) source_atoms
+                  fun exact_literal_rewrite [] _ =
+                        raise Conv.UNCHANGED
+                    | exact_literal_rewrite (theorem :: rest) term =
+                        let
+                          val (left, _) = boolSyntax.dest_eq
+                            (Thm.concl theorem)
+                        in
+                          if Term.aconv left term then theorem
+                          else exact_literal_rewrite rest term
+                        end
+                  val rewrite_literals = Conv.DEPTH_CONV
+                    (exact_literal_rewrite literal_equalities)
+                  val candidates = List.map
+                    (Conv.CONV_RULE rewrite_literals)
+                    (source_atoms @ literal_equalities)
+                  fun prove_atom atom =
+                    case List.find
+                        (fn theorem => Term.aconv
+                          (Thm.concl theorem) atom) candidates of
+                      SOME theorem => theorem
+                    | NONE => raise ERR "string"
+                        ("re_unfold_pos component did not match: " ^
+                         Library.term_to_string atom ^ "; available: " ^
+                         String.concatWith "; "
+                           (List.map (Library.term_to_string o Thm.concl)
+                             candidates))
+                  val assembled = Drule.LIST_CONJ
+                    (List.map prove_atom (boolSyntax.strip_conj target))
+                  val reassociate = Drule.CONJUNCTS_AC
+                    (Thm.concl assembled, target)
+                in
+                  Thm.EQ_MP reassociate assembled
+                end
+              fun expose_preferred theorem = Conv.BETA_RULE
+                (Rewrite.PURE_REWRITE_RULE
+                  [boolTheory.LET_THM,
+                   smtstringTheory.cpc_re_unfold_pos_preferred_def,
+                   smtstringTheory.cpc_re_unfold_pos_ordinary_def,
+                   smtstringTheory.cpc_re_unfold_pos_endpoints_def]
+                  theorem)
+              fun normalize_preferred decomposition_regex theorem =
+                let
+                  val {witness = selector, ...} =
+                    CPC_ProofParser.cpc_re_unfold_pos_decomposition
+                      string decomposition_regex
+                  val selectors = HolKernel.find_terms
+                    boolSyntax.is_select (Thm.concl theorem)
+                  val _ = List.exists (Term.aconv selector) selectors
+                    orelse raise ERR "string"
+                      ("re_unfold_pos authoritative selector is absent; " ^
+                       "expected " ^ Library.term_to_string selector ^
+                       "; found " ^ String.concatWith "; "
+                         (List.map Library.term_to_string selectors))
+                  val frozen = Term.variant
+                    (Term.free_vars (Thm.concl theorem))
+                    (Term.mk_var
+                      ("re_unfold_pos_frozen_pieces",
+                       Term.type_of selector))
+                  val protected_string = Term.variant
+                    (frozen :: Term.free_vars (Thm.concl theorem))
+                    (Term.mk_var
+                      ("re_unfold_pos_input", Term.type_of string))
+                  val frozen_conclusion = Term.subst
+                    [{redex = selector, residue = frozen},
+                     {redex = string, residue = protected_string}]
+                    (Thm.concl theorem)
+                  val string_list_rewrites = Drule.CONJUNCTS
+                    smtstringTheory.smtstr_concat_list_def
+                  val normalized_frozen = Conv.BETA_RULE
+                    (simpLib.SIMP_CONV
+                      (simpLib.++
+                        (simpLib.++ (boolSimps.bool_ss,
+                           numSimps.REDUCE_ss),
+                         listSimps.LIST_ss))
+                      ([boolTheory.LET_THM,
+                        listTheory.GENLIST_NUMERALS,
+                        listTheory.GENLIST_AUX,
+                        listTheory.LIST_REL_def] @
+                       string_list_rewrites)
+                      frozen_conclusion)
+                  (* LIST simplification exposes the head of a nonempty
+                     GENLIST as HD.  CPC's component dictionary names that
+                     same projection uniformly as EL 0; restore precisely
+                     that surface form while the authoritative SELECT is
+                     still protected by [frozen]. *)
+                  val hd_to_el0 = Thm.SYM
+                    (Drule.SPEC_ALL
+                      (Thm.CONJUNCT1 listTheory.EL))
+                  val normalized_frozen =
+                    Rewrite.PURE_REWRITE_RULE [hd_to_el0]
+                      normalized_frozen
+                  val normalized = Thm.INST
+                    [{redex = frozen, residue = selector},
+                     {redex = protected_string, residue = string}]
+                    normalized_frozen
+                in
+                  Thm.EQ_MP normalized theorem
+                end
+            in
+              case boolSyntax.strip_comb regex of
+                (star, [body]) =>
+                  if same_const "smtstring" "reglan_star" star then
+                    let
+                      val expanded = concat_regexps [body, regex, body]
+                      val expansion = normalize_preferred expanded
+                        (expose_preferred (Drule.MATCH_MP
+                          smtstringTheory.smt_in_re_star_cpc_preferred
+                          membership))
+                    in
+                      if Term.aconv (Thm.concl expansion) target then expansion
+                      else
+                        let
+                          val normalized_expansion =
+                            Rewrite.REWRITE_RULE
+                              [smtstringTheory.smtstr_concat_assoc]
+                              expansion
+                          val (source_empty, source_rest) =
+                            boolSyntax.dest_disj
+                              (Thm.concl normalized_expansion)
+                          val (source_single, source_decomposition) =
+                            boolSyntax.dest_disj source_rest
+                          val (target_empty, target_rest) =
+                            boolSyntax.dest_disj target
+                          val (target_single, target_decomposition) =
+                            boolSyntax.dest_disj target_rest
+                          val _ = Term.aconv source_empty target_empty orelse
+                            raise ERR "string"
+                              "re_unfold_pos empty arm mismatch"
+                          val _ = Term.aconv source_single target_single orelse
+                            raise ERR "string"
+                              "re_unfold_pos single-match arm mismatch"
+                          val decomposition = adapt_decomposition
+                            (Thm.ASSUME source_decomposition)
+                            target_decomposition
+                          val empty_case = Thm.DISJ1
+                            (Thm.ASSUME source_empty) target_rest
+                          val single_case = Thm.DISJ2 target_empty
+                            (Thm.DISJ1 (Thm.ASSUME source_single)
+                              target_decomposition)
+                          val decomposition_case = Thm.DISJ2 target_empty
+                            (Thm.DISJ2 target_single decomposition)
+                          val rest_case = Thm.DISJ_CASES
+                            (Thm.ASSUME source_rest) single_case
+                            decomposition_case
+                        in
+                          Thm.DISJ_CASES normalized_expansion empty_case
+                            rest_case
+                        end
+                    end
+                  else raise ERR "string"
+                    "re_unfold_pos expects star or concatenation membership"
+              | (concat, [_, _]) =>
+                  if same_const "smtstring" "reglan_concat" concat then
+                    let
+                      val regex_operator = Term.prim_mk_const
+                        {Thy = "smtstring", Name = "reglan_concat"}
+                      fun dest_regex term =
+                        case boolSyntax.strip_comb term of
+                          (head, [left, right]) =>
+                            if Term.aconv head regex_operator then
+                              (left, right)
+                            else raise ERR "string" "not a regex concat"
+                        | _ => raise ERR "string" "not a regex concat"
+                      val regexps =
+                        CPC_ProofParser.cpc_re_unfold_pos_regexps regex
+                      fun mk_regex (left, right) = Term.list_mk_comb
+                        (regex_operator, [left, right])
+                      val regex_canonical =
+                        regex_components_right_canonical dest_regex
+                          mk_regex regex regexps
+                      val regex_list = listSyntax.mk_list
+                        (regexps, Term.type_of (List.hd regexps))
+                      val nonempty = boolSyntax.mk_neg
+                        (boolSyntax.mk_eq (regex_list,
+                          listSyntax.mk_nil (Term.type_of
+                            (List.hd regexps))))
+                      val nonempty = Drule.EQT_ELIM
+                        (computeLib.EVAL_CONV nonempty)
+                      val normalized_membership = Thm.EQ_MP
+                        (Thm.SPEC string regex_canonical) membership
+                      val choice_theorem =
+                        smtstringTheory.smt_in_re_concat_list_cpc_preferred
+                      val free_variables =
+                        Term.free_vars (Thm.concl choice_theorem)
+                      val regex_list_variable = valOf (List.find
+                        (fn variable => Type.compare
+                          (Term.type_of variable,
+                           Term.type_of regex_list) = EQUAL)
+                        free_variables)
+                      val string_variable = valOf (List.find
+                        (fn variable => Type.compare
+                          (Term.type_of variable,
+                           Term.type_of string) = EQUAL)
+                        free_variables)
+                      (* [string] may itself contain an unrelated component
+                         selector.  Protect it before simplifying the outer
+                         regex-list premise, so the inner selector remains
+                         byte-for-byte unchanged. *)
+                      val protected_string = Term.variant
+                        (Term.free_vars string @ free_variables)
+                        (Term.mk_var
+                          ("re_unfold_pos_input", Term.type_of string))
+                      val choice_theorem = Thm.INST
+                        [{redex = regex_list_variable,
+                          residue = regex_list},
+                         {redex = string_variable,
+                          residue = protected_string}]
+                        choice_theorem
+                      val reglan_list_rewrites = Drule.CONJUNCTS
+                        smtstringTheory.reglan_concat_list_def
+                      val choice_theorem = Conv.BETA_RULE
+                        (Rewrite.PURE_REWRITE_RULE
+                          (reglan_list_rewrites @
+                           [listTheory.list_case_def,
+                            listTheory.LENGTH]) choice_theorem)
+                      val choice_theorem = simpLib.SIMP_RULE
+                        (simpLib.++
+                          (boolSimps.bool_ss, numSimps.REDUCE_ss))
+                        [] choice_theorem
+                      val choice_theorem = Thm.INST
+                        [{redex = protected_string, residue = string}]
+                        choice_theorem
+                      val expected_premise = Lib.fst
+                        (boolSyntax.dest_imp (Thm.concl choice_theorem))
+                      val choice_premise =
+                        if Term.aconv expected_premise
+                            (Thm.concl normalized_membership) then
+                          normalized_membership
+                        else Thm.CONJ nonempty normalized_membership
+                      val _ = Term.aconv expected_premise
+                        (Thm.concl choice_premise) orelse
+                        raise ERR "string"
+                          ("re_unfold_pos n-ary premise mismatch: expected " ^
+                           Library.term_to_string expected_premise ^
+                           "; received " ^ Library.term_to_string
+                             (Thm.concl choice_premise))
+                      val raw_expansion = Drule.MATCH_MP
+                        choice_theorem choice_premise
+                      (* Expose the one preferred selector, then freeze it
+                         while normalizing only the decomposition it carries. *)
+                      val expansion = normalize_preferred regex
+                        (expose_preferred raw_expansion)
+                    in
+                      if Term.aconv (Thm.concl expansion) target then expansion
+                      else adapt_decomposition expansion target
+                    end
+                  else raise ERR "string"
+                    "re_unfold_pos expects star or concatenation membership"
+              | _ => raise ERR "string"
+                  "re_unfold_pos expects star or concatenation membership"
+            end
+        | _ => raise ERR "string" "re_unfold_pos expects one premise"
     in
       (* `str` is cvc5's macro name for both String and Seq theory steps.
          Dispatch on HOL's carrier, rather than the macro spelling, so the
          Phase-4 String route remains unchanged. *)
-      if SmtSeqProve.has_seq_type target then
+      if name = "concat_unify" then
+        profile "CPC(rung:string/concat_unify)" concat_unify_prove
+          (Lib.singleton_of_list args handle Feedback.HOL_ERR _ =>
+            raise ERR "string"
+              "concat_unify expects one direction argument")
+      else if name = "re_unfold_pos" then
+        profile "CPC(rung:string/re_unfold_pos)"
+          re_unfold_pos_prove ()
+      else if SmtSeqProve.has_seq_type target then
         let
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @

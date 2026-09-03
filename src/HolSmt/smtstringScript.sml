@@ -372,6 +372,12 @@ Definition smt_in_re_def:
      reglan_loop_lang (\u. re_lang r u) i n (smtstr_rep s))
 End
 
+Theorem smt_in_re_to_re:
+  smt_in_re s (reglan_to_re t) <=> s = t
+Proof
+  simp [smt_in_re_def]
+QED
+
 Theorem smt_in_re_rep:
   smt_in_re s r <=> re_lang r (smtstr_rep s)
 Proof
@@ -889,6 +895,27 @@ Theorem reglan_kstar_cons_unfold:
     reglan_dot (\t. p (c::t)) (reglan_kstar p) s
 Proof
   irule reglan_kstar_cons >>
+  simp []
+QED
+
+Theorem reglan_kstar_cvc_unfold:
+  reglan_kstar p s ==>
+    s = [] \/ p s \/
+    ?u v w.
+      p u /\ reglan_kstar p v /\ p w /\
+      u <> [] /\ w <> [] /\ s = (u ++ v) ++ w
+Proof
+  rw [reglan_kstar_def] >>
+  Cases_on `ss`
+  >- simp [] >>
+  Cases_on `t` using listTheory.SNOC_CASES
+  >- fs [] >>
+  disj2_tac >> disj2_tac >>
+  qexistsl [`h`, `FLAT l`, `x`] >>
+  fs [rich_listTheory.FLAT_SNOC, listTheory.EVERY_SNOC,
+      listTheory.APPEND_ASSOC] >>
+  simp [reglan_kstar_def] >>
+  qexists `l` >>
   simp []
 QED
 
@@ -2014,6 +2041,190 @@ Proof
   >- (strip_tac >>
       qexistsl [`smtstr_rep u`, `smtstr_rep v`] >>
       simp [smtstr_rep_def])
+QED
+
+Theorem smt_in_re_concat_assoc:
+  smt_in_re s (reglan_concat (reglan_concat r1 r2) r3) <=>
+  smt_in_re s (reglan_concat r1 (reglan_concat r2 r3))
+Proof
+  simp [smt_in_re_concat] >>
+  metis_tac [smtstr_concat_assoc]
+QED
+
+Theorem smt_in_re_concat_assoc_all:
+  !r1 r2 r3 s.
+    smt_in_re s (reglan_concat (reglan_concat r1 r2) r3) <=>
+    smt_in_re s (reglan_concat r1 (reglan_concat r2 r3))
+Proof
+  simp [smt_in_re_concat_assoc]
+QED
+
+Theorem smt_in_re_concat_language_cong:
+  !r1 r1' r2 r2'.
+    (!s. smt_in_re s r1 <=> smt_in_re s r1') /\
+    (!s. smt_in_re s r2 <=> smt_in_re s r2') ==>
+    !s. smt_in_re s (reglan_concat r1 r2) <=>
+        smt_in_re s (reglan_concat r1' r2')
+Proof
+  simp [smt_in_re_concat] >>
+  metis_tac []
+QED
+
+Theorem smt_in_re_star_cvc_unfold:
+  smt_in_re s (reglan_star r) ==>
+    s = SmtStr [] \/ smt_in_re s r \/
+    ?u v w.
+      smt_in_re u r /\ smt_in_re v (reglan_star r) /\
+      smt_in_re w r /\ u <> SmtStr [] /\ w <> SmtStr [] /\
+      s = smtstr_concat (smtstr_concat u v) w
+Proof
+  strip_tac >>
+  fs [smt_in_re_def] >>
+  drule reglan_kstar_cvc_unfold >>
+  strip_tac
+  >- (disj1_tac >>
+      metis_tac [smtstr_rep_eq_nil])
+  >- (disj2_tac >> disj1_tac >>
+      fs [smt_in_re_rep]) >>
+  disj2_tac >> disj2_tac >>
+  `EVERY (\c. c <= 196607) ((u ++ v) ++ w)` by
+    metis_tac [smtstr_rep_bound] >>
+  `EVERY (\c. c <= 196607) u /\
+   EVERY (\c. c <= 196607) v /\
+   EVERY (\c. c <= 196607) w` by fs [] >>
+  qexistsl [`SmtStr u`, `SmtStr v`, `SmtStr w`] >>
+  simp [smt_in_re_rep, smt_in_re_def, smtstr_rep_def,
+        smtstr_concat_def, SmtStr_11] >>
+  metis_tac [SmtStr_smtstr_rep]
+QED
+
+(* CPC's RE_UNFOLD_POS rule flattens an arbitrarily associated, nonempty
+   concatenation and uses one shared choice for all components.  These list
+   folds state that contract once, independently of parser association. *)
+Definition smtstr_concat_list_def:
+  (smtstr_concat_list [] = SmtStr []) /\
+  (smtstr_concat_list (s::ss) =
+    case ss of [] => s | _ => smtstr_concat s (smtstr_concat_list ss))
+End
+
+Definition reglan_concat_list_def:
+  (reglan_concat_list [] = reglan_none) /\
+  (reglan_concat_list (r::rs) =
+    case rs of [] => r | _ => reglan_concat r (reglan_concat_list rs))
+End
+
+Definition cpc_re_unfold_pos_ordinary_def:
+  cpc_re_unfold_pos_ordinary s rs pieces <=>
+    LENGTH pieces = LENGTH rs /\
+    s = smtstr_concat_list
+      (GENLIST (\i. EL i pieces) (LENGTH rs)) /\
+    EVERY2 smt_in_re
+      (GENLIST (\i. EL i pieces) (LENGTH rs)) rs
+End
+
+Definition cpc_re_unfold_pos_endpoints_def:
+  cpc_re_unfold_pos_endpoints rs pieces <=>
+    EL 0 pieces <> SmtStr [] /\
+    EL (PRE (LENGTH rs)) pieces <> SmtStr []
+End
+
+Definition cpc_re_unfold_pos_preferred_def:
+  cpc_re_unfold_pos_preferred s rs =
+    @pieces.
+      cpc_re_unfold_pos_ordinary s rs pieces /\
+      ((?other.
+          cpc_re_unfold_pos_ordinary s rs other /\
+          cpc_re_unfold_pos_endpoints rs other) ==>
+       cpc_re_unfold_pos_endpoints rs pieces)
+End
+
+Theorem cpc_preferred_choice_ordinary:
+  (?x:'a. ordinary x) ==>
+  ordinary
+    (@x. ordinary x /\ ((?y. ordinary y /\ endpoints y) ==> endpoints x))
+Proof
+  strip_tac >> SELECT_ELIM_TAC >> metis_tac []
+QED
+
+Theorem cpc_preferred_choice_guarded:
+  (?x:'a. ordinary x /\ endpoints x) ==>
+  let selected =
+    @x. ordinary x /\ ((?y. ordinary y /\ endpoints y) ==> endpoints x)
+  in ordinary selected /\ endpoints selected
+Proof
+  strip_tac >> PURE_REWRITE_TAC [LET_THM] >>
+  SELECT_ELIM_TAC >> metis_tac []
+QED
+
+Theorem smt_in_re_concat_list:
+  !rs s. rs <> [] /\ smt_in_re s (reglan_concat_list rs) ==>
+    ?pieces. LENGTH pieces = LENGTH rs /\
+      s = smtstr_concat_list pieces /\
+      EVERY2 smt_in_re pieces rs
+Proof
+  Induct >> simp [reglan_concat_list_def, smtstr_concat_list_def] >>
+  Cases_on `rs` >>
+  simp [reglan_concat_list_def, smtstr_concat_list_def]
+  >- (rpt gen_tac >> strip_tac >> qexists_tac `[s]` >>
+      simp [smtstr_concat_list_def]) >>
+  rpt gen_tac >> strip_tac >>
+  drule (iffLR smt_in_re_concat) >> strip_tac >>
+  qpat_x_assum `!s. _` (qspec_then `v` mp_tac) >>
+  impl_tac >- simp [reglan_concat_list_def] >>
+  strip_tac >>
+  qexists_tac `u::pieces` >>
+  simp [smtstr_concat_list_def] >>
+  Cases_on `pieces` >> fs []
+QED
+
+Theorem smt_in_re_concat_list_cpc_preferred:
+  rs <> [] /\ smt_in_re s (reglan_concat_list rs) ==>
+  cpc_re_unfold_pos_ordinary s rs
+    (cpc_re_unfold_pos_preferred s rs)
+Proof
+  strip_tac >>
+  simp [cpc_re_unfold_pos_preferred_def] >>
+  irule cpc_preferred_choice_ordinary >>
+  qspec_then `s` mp_tac (Q.SPEC `rs` smt_in_re_concat_list) >>
+  impl_tac >- simp [] >> strip_tac >>
+  qexists_tac `pieces` >>
+  simp [cpc_re_unfold_pos_ordinary_def] >>
+  `GENLIST (\i. EL i pieces) (LENGTH rs) = pieces` by
+    (irule listTheory.GENLIST_EL >> simp []) >>
+  simp []
+QED
+
+Theorem smt_in_re_star_cpc_preferred:
+  smt_in_re s (reglan_star r) ==>
+  let rs = [r; reglan_star r; r] in
+  s = SmtStr [] \/ smt_in_re s r \/
+  (cpc_re_unfold_pos_ordinary s rs
+      (cpc_re_unfold_pos_preferred s rs) /\
+   cpc_re_unfold_pos_endpoints rs
+      (cpc_re_unfold_pos_preferred s rs))
+Proof
+  strip_tac >> drule smt_in_re_star_cvc_unfold >>
+  disch_then (fn theorem => DISJ_CASES_TAC theorem)
+  >- simp []
+  >- (qpat_x_assum `_ \/ _` DISJ_CASES_TAC
+      >- simp []
+      >- (qpat_x_assum `?u v w. _` strip_assume_tac >>
+          PURE_REWRITE_TAC [LET_THM] >> BETA_TAC >>
+          `?pieces.
+             cpc_re_unfold_pos_ordinary s
+               [r; reglan_star r; r] pieces /\
+             cpc_re_unfold_pos_endpoints
+               [r; reglan_star r; r] pieces` by
+            (qexists_tac `[u; v; w]` >>
+             simp [cpc_re_unfold_pos_ordinary_def,
+                   cpc_re_unfold_pos_endpoints_def,
+                   smtstr_concat_list_def] >>
+             metis_tac [smtstr_concat_assoc]) >>
+          disj2_tac >> disj2_tac >>
+          PURE_REWRITE_TAC [cpc_re_unfold_pos_preferred_def] >>
+          irule (Conv.BETA_RULE (PURE_REWRITE_RULE [LET_THM]
+            cpc_preferred_choice_guarded)) >>
+          qexists_tac `pieces` >> fs []))
 QED
 
 Theorem smt_in_re_concat_cons:

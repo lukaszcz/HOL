@@ -118,33 +118,6 @@ local
           wordsSyntax.mk_word_bit
             (numSyntax.mk_numeral (numeral_of_term "@bit index" index), word)
       | ("@from_bools", bits) => SmtLib_Theories.mk_bbterm bits
-      | ("extract", [upper_tm, lower_tm, word]) =>
-          let
-            val upper = numeral_of_term "extract upper index" upper_tm
-            val lower = numeral_of_term "extract lower index" lower_tm
-            val index_type = fcpLib.index_type
-              (Arbnum.plus1 (Arbnum.- (upper, lower)))
-          in
-            wordsSyntax.mk_word_extract
-              (numSyntax.mk_numeral upper, numSyntax.mk_numeral lower,
-               word, index_type)
-          end
-      | ("zero_extend", [amount_tm, word]) =>
-          let
-            val amount = numeral_of_term "zero_extend amount" amount_tm
-            val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
-          in
-            wordsSyntax.mk_w2w
-              (word, fcpLib.index_type (Arbnum.+ (width, amount)))
-          end
-      | ("sign_extend", [amount_tm, word]) =>
-          let
-            val amount = numeral_of_term "sign_extend amount" amount_tm
-            val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
-          in
-            wordsSyntax.mk_sw2sw
-              (word, fcpLib.index_type (Arbnum.+ (width, amount)))
-          end
       | ("bvsltbv", [left, right]) =>
           boolSyntax.mk_cond
             (wordsSyntax.mk_word_lt (left, right),
@@ -179,37 +152,102 @@ local
              intSyntax.mk_Num exponent)
       | _ => raise ERR "cpc_intreal_parsefn" "malformed CPC arithmetic term"
 
-  (* CPC flattens indexed FP applications: `((_ to_fp eb sb) x)` is
-     printed as `(to_fp eb sb x)`, and similarly for FP/BV conversions.
-     Restore the indices and reuse the official dictionary constructors. *)
-  fun cpc_fp_indexed_parsefn token indices args =
+  (* CPC prints every indexed SMT-LIB term identifier as an ordinary
+     application whose leading arguments are the indices.  Derive the
+     adapter from the authoritative ALL-logic registry, retaining the
+     official SMT-LIB entries and cvc5's proof-term extensions (but not
+     another solver's dialect).  This covers the current 23 entries,
+     including duplicate overloaded entries, and makes a future applicable
+     registry addition available without another CPC list. *)
+  fun same_metadata
+      ({theory = theory1, kind = kind1, name = name1, source = source1,
+        attributes = attributes1, declarations = declarations1}
+        : SmtLib_Theories.symbol_metadata)
+      ({theory = theory2, kind = kind2, name = name2, source = source2,
+        attributes = attributes2, declarations = declarations2}
+        : SmtLib_Theories.symbol_metadata) =
+    theory1 = theory2 andalso kind1 = kind2 andalso name1 = name2 andalso
+    source1 = source2 andalso attributes1 = attributes2 andalso
+    declarations1 = declarations2
+
+  fun distinct_metadata metadata = List.foldl
+    (fn (entry, result) =>
+      if List.exists (same_metadata entry) result then result
+      else result @ [entry]) [] metadata
+
+  val cpc_indexed_term_registry = distinct_metadata (List.filter
+    (fn ({kind, source, attributes, ...}
+          : SmtLib_Theories.symbol_metadata) =>
+      kind = "term" andalso #indexed attributes andalso
+      (case source of
+         SmtLib_Theories.Official => true
+       | SmtLib_Theories.Extension "cvc5" => true
+       | SmtLib_Theories.Extension _ => false))
+    (SmtLib_Logics.metadata_of_logic "ALL"))
+
+  fun indexed_family_arities metadata =
     let
-      fun two_indices constructor =
-        case (indices, args) of
-          ([_, _], _) => constructor indices args
-        | ([], eb :: sb :: rest) => constructor [eb, sb] rest
-        | _ => raise ERR "cpc_fp_indexed_parsefn"
-            (token ^ " expects two FP format indices")
-      fun one_index smt_name hol_name =
-        case (indices, args) of
-          ([_], _) => SmtLib_Theories.FloatingPoint.fp_to_bv
-            smt_name hol_name indices args
-        | ([], width :: rest) =>
-            SmtLib_Theories.FloatingPoint.fp_to_bv
-              smt_name hol_name [width] rest
-        | _ => raise ERR "cpc_fp_indexed_parsefn"
-            (token ^ " expects one bit-vector width index")
+      fun add ({name, attributes, ...}: SmtLib_Theories.symbol_metadata,
+          families) =
+        let
+          val arity = List.length (#parametric_sorts attributes)
+        in
+          case Redblackmap.peek (families, name) of
+            NONE => Redblackmap.insert (families, name, arity)
+          | SOME old_arity =>
+              if old_arity = arity then families
+              else raise ERR "indexed_family_arities"
+                ("inconsistent indexed arities for registry symbol " ^ name)
+        end
     in
-      case token of
-        "to_fp" => two_indices SmtLib_Theories.FloatingPoint.to_fp
-      | "to_fp_bv" => two_indices SmtLib_Theories.FloatingPoint.to_fp
-      | "to_fp_unsigned" =>
-          two_indices SmtLib_Theories.FloatingPoint.to_fp_unsigned
-      | "fp.to_sbv" => one_index "fp.to_sbv" "smtfp_to_sbv"
-      | "fp.to_ubv" => one_index "fp.to_ubv" "smtfp_to_ubv"
-      | _ => raise ERR "cpc_fp_indexed_parsefn"
-          ("unsupported flattened FP symbol " ^ token)
+      Redblackmap.listItems (List.foldl add
+        (Redblackmap.mkDict String.compare) metadata)
     end
+
+  val cpc_indexed_term_families =
+    indexed_family_arities cpc_indexed_term_registry
+
+  fun cpc_deindexed_parsefn source_dict index_arity token indices args =
+    if not (List.null indices) then
+      raise ERR "cpc_deindexed_parsefn"
+        (token ^ " already has explicit indices")
+    else if List.length args < index_arity then
+      raise ERR "cpc_deindexed_parsefn"
+        (token ^ " expects " ^ Int.toString index_arity ^
+         " flattened index argument(s)")
+    else
+      SmtLib_Parser.apply_term source_dict token
+        (List.take (args, index_arity)) (List.drop (args, index_arity))
+
+  fun with_cpc_deindexed_entries tmdict =
+    List.foldl
+      (fn ((name, arity), dict) =>
+        if Option.isSome (Redblackmap.peek (tmdict, name)) then
+          let
+            val adapter = cpc_deindexed_parsefn tmdict arity
+            (* [_] is also the parser's generic literal pseudo-entry.  Its
+               non-indexed alternatives must remain available for atoms such
+               as [#b0]; every real indexed family is replaced outright so
+               malformed flattened applications cannot fall through. *)
+            val entries = if name = "_" then
+                adapter :: Redblackmap.find (tmdict, name)
+              else [adapter]
+          in
+            Redblackmap.insert (dict, name, entries)
+          end
+        else dict)
+      tmdict cpc_indexed_term_families
+
+  (* [to_fp_bv] is a genuinely CPC-specific alias, rather than an indexed
+     SMT-LIB registry name. *)
+  fun cpc_to_fp_bv_parsefn token indices args =
+    case (token, indices, args) of
+      ("to_fp_bv", [_, _], _) =>
+        SmtLib_Theories.FloatingPoint.to_fp indices args
+    | ("to_fp_bv", [], eb :: sb :: rest) =>
+        SmtLib_Theories.FloatingPoint.to_fp [eb, sb] rest
+    | _ => raise ERR "cpc_to_fp_bv_parsefn"
+        "to_fp_bv expects two FP format indices"
 
   (* cvc5's FP bit-blaster uses sort expressions as proof-term metadata,
      for example `(@fp.SIGN (_ BitVec 1))`.  HOL has no terms denoting
@@ -260,9 +298,17 @@ local
     else
       case args of
         [index, sort_marker] =>
-          Term.mk_var
-            ("@cpc.const." ^ Arbnum.toString (numeral_of_term token index),
-             Term.type_of sort_marker)
+          let
+            val _ =
+              Type.compare (Term.type_of index, intSyntax.int_ty) = EQUAL
+              orelse raise ERR "cpc_private_const_parsefn"
+                "@const index must have HOL int type"
+          in
+            Term.mk_var
+              ("@cpc.const." ^
+               Arbnum.toString (numeral_of_term token index),
+               Term.type_of sort_marker)
+          end
       | _ => raise ERR "cpc_private_const_parsefn"
           "@const expects an index and a sort marker"
 
@@ -394,20 +440,533 @@ local
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
          "@fp.NAN", "@fp.INF"]
       val tmdict = Library.extend_dict
-        (("@const", cpc_private_const_parsefn), tmdict)
-      val tmdict = Library.extend_dict
         (("bvite", cpc_bvite_parsefn), tmdict)
       val tmdict = List.foldl
         (fn (name, dict) => Library.extend_dict
           ((name, cpc_fp_total_parsefn), dict))
         tmdict ["fp.max_total", "fp.min_total"]
     in
-      List.foldl
-      (fn (name, dict) => Library.extend_dict
-        ((name, cpc_fp_indexed_parsefn), dict))
-      tmdict
-      ["to_fp", "to_fp_bv", "to_fp_unsigned", "fp.to_sbv", "fp.to_ubv"]
+      Library.extend_dict
+        (("to_fp_bv", cpc_to_fp_bv_parsefn), tmdict)
     end
+
+  val cpc_smtstr_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
+
+  fun cpc_skolem_error where_ message = raise ERR where_ message
+
+  fun cpc_exact_args where_ arity args =
+    if List.length args = arity then args
+    else cpc_skolem_error where_
+      ("expected " ^ Int.toString arity ^ " explicit argument(s)")
+
+  (* Parameterized CPC skolems are authoritative typed symbols, not an
+     invitation to synthesize a fresh UF at whatever types happen to parse.
+     Keep all sort/coherence checks in this fail-closed boundary. *)
+  val cpc_reglan_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
+
+  fun cpc_type_eq (left, right) = Type.compare (left, right) = EQUAL
+
+  fun cpc_expect_type where_ expected term =
+    if cpc_type_eq (Term.type_of term, expected) then ()
+    else cpc_skolem_error where_ "parameterized-skolem sort mismatch"
+
+  fun cpc_expect_same where_ left right =
+    if cpc_type_eq (Term.type_of left, Term.type_of right) then ()
+    else cpc_skolem_error where_
+      "parameterized-skolem arguments have different sorts"
+
+  fun cpc_expect_smtstr where_ term =
+    cpc_expect_type where_ cpc_smtstr_ty term
+
+  fun cpc_expect_reglan where_ term =
+    cpc_expect_type where_ cpc_reglan_ty term
+
+  fun cpc_expect_int where_ term =
+    cpc_expect_type where_ intSyntax.int_ty term
+
+  fun cpc_sequence_element where_ term =
+    if cpc_type_eq (Term.type_of term, cpc_smtstr_ty) then numSyntax.num
+    else
+      (listSyntax.dest_list_type (Term.type_of term)
+       handle Feedback.HOL_ERR _ => cpc_skolem_error where_
+         "expected a String or Seq argument")
+
+  fun cpc_expect_same_sequence where_ left right =
+    let
+      val left_element = cpc_sequence_element where_ left
+      val right_element = cpc_sequence_element where_ right
+    in
+      if cpc_type_eq (left_element, right_element) andalso
+         cpc_type_eq (Term.type_of left, Term.type_of right) then ()
+      else cpc_skolem_error where_
+        "parameterized-skolem expected same-element Seq arguments"
+    end
+
+  fun cpc_function_types where_ function =
+    Type.dom_rng (Term.type_of function)
+    handle Feedback.HOL_ERR _ => cpc_skolem_error where_
+      "expected a function argument"
+
+  fun cpc_expect_function where_ domain range function =
+    let val (actual_domain, actual_range) =
+      cpc_function_types where_ function
+    in
+      if cpc_type_eq (domain, actual_domain) andalso
+         cpc_type_eq (range, actual_range) then ()
+      else cpc_skolem_error where_
+        "parameterized-skolem function domain/range mismatch"
+    end
+
+  fun cpc_opaque_skolem token result_ty args =
+    Term.list_mk_comb
+      (Term.mk_var (token,
+        boolSyntax.list_mk_fun (List.map Term.type_of args, result_ty)), args)
+
+  fun cpc_purify_parsefn token indices args =
+    case (token, indices, cpc_exact_args "cpc_purify_parsefn" 1 args) of
+      ("@purify", [], [term]) => term
+    | _ => cpc_skolem_error "cpc_purify_parsefn"
+        "malformed @purify application"
+
+  fun cpc_array_deq_diff_parsefn token indices args =
+    case (token, indices,
+        cpc_exact_args "cpc_array_deq_diff_parsefn" 2 args) of
+      ("@array_deq_diff", [], [left, right]) =>
+        let
+          val (index, _) = cpc_function_types token left
+          val _ = cpc_expect_same token left right
+          val variable = Term.variant (Term.all_varsl [left, right])
+            (Term.mk_var ("array_deq_diff_x", index))
+        in
+          boolSyntax.mk_select (variable, boolSyntax.mk_neg
+            (boolSyntax.mk_eq (Term.mk_comb (left, variable),
+              Term.mk_comb (right, variable))))
+        end
+    | _ => cpc_skolem_error "cpc_array_deq_diff_parsefn"
+        "malformed @array_deq_diff application"
+
+  fun cpc_quantifiers_skolemize_parsefn token indices args =
+    case (token, indices,
+        cpc_exact_args "cpc_quantifiers_skolemize_parsefn" 2 args) of
+      ("@quantifiers_skolemize", [], [quantified, index]) =>
+        let
+          val _ = cpc_expect_int token index
+          val index = Arbnum.toInt
+            (numeral_of_term "@quantifiers_skolemize index" index)
+          val (variables, objective) =
+            if boolSyntax.is_forall quantified then
+              let val (variables, body) = boolSyntax.strip_forall quantified
+              in (variables, boolSyntax.mk_neg body) end
+            else if boolSyntax.is_exists quantified then
+              boolSyntax.strip_exists quantified
+            else cpc_skolem_error "cpc_quantifiers_skolemize_parsefn"
+              "expected a quantified Boolean formula"
+          fun witnesses [] _ = []
+            | witnesses (variable :: rest) objective =
+                let
+                  val witness = boolSyntax.mk_select
+                    (variable, boolSyntax.list_mk_exists (rest, objective))
+                  val objective' = Term.subst
+                    [{redex = variable, residue = witness}] objective
+                in
+                  witness :: witnesses rest objective'
+                end
+        in
+          List.nth (witnesses variables objective, index)
+          handle Subscript => cpc_skolem_error
+            "cpc_quantifiers_skolemize_parsefn"
+            "binder index is outside the quantified formula"
+        end
+    | _ => cpc_skolem_error "cpc_quantifiers_skolemize_parsefn"
+        "malformed @quantifiers_skolemize application"
+
+  fun cpc_sets_deq_diff_parsefn token indices args =
+    case (token, indices, cpc_exact_args "cpc_sets_deq_diff_parsefn" 2 args) of
+      ("@sets_deq_diff", [], [left, right]) =>
+        let
+          val (element, range) = cpc_function_types token left
+          val _ = cpc_expect_type token Type.bool
+            (Term.mk_var ("set_range", range))
+          val _ = cpc_expect_same token left right
+          val variable = Term.variant (Term.all_varsl [left, right])
+            (Term.mk_var ("sets_deq_diff_x", element))
+        in
+          boolSyntax.mk_select (variable, boolSyntax.mk_neg
+            (boolSyntax.mk_eq (Term.mk_comb (left, variable),
+              Term.mk_comb (right, variable))))
+        end
+    | _ => cpc_skolem_error "cpc_sets_deq_diff_parsefn"
+        "malformed @sets_deq_diff application"
+
+  fun cpc_bag_element where_ bag =
+    let val (element, count) =
+      (Type.dom_rng (Term.type_of bag)
+       handle Feedback.HOL_ERR _ => cpc_skolem_error where_
+         "parameterized-skolem expected a Bag argument")
+    in
+      if Type.compare (count, numSyntax.num) = EQUAL then element
+      else cpc_skolem_error where_
+        "parameterized-skolem expected a Bag argument"
+    end
+
+  fun cpc_bag_element_type where_ bag_ty =
+    let val (element, count) =
+      (Type.dom_rng bag_ty
+       handle Feedback.HOL_ERR _ => cpc_skolem_error where_
+         "parameterized-skolem expected a nested Bag argument")
+    in
+      if cpc_type_eq (count, numSyntax.num) then element
+      else cpc_skolem_error where_
+        "parameterized-skolem expected a nested Bag argument"
+    end
+
+  fun cpc_bag_skolem_parsefn token indices args =
+    if not (List.null indices) then
+      cpc_skolem_error "cpc_bag_skolem_parsefn"
+        (token ^ " does not accept indices")
+    else
+      case (token, args) of
+        ("@bags_deq_diff", [left, right]) =>
+          let
+            val element = cpc_bag_element token left
+            val _ =
+              if Type.compare (Term.type_of left, Term.type_of right) = EQUAL
+              then ()
+              else cpc_skolem_error token
+                "expected two Bags of the same type"
+            val variable = Term.variant (Term.all_varsl [left, right])
+              (Term.mk_var ("bags_deq_diff_x", element))
+          in
+            boolSyntax.mk_select (variable, boolSyntax.mk_neg
+              (boolSyntax.mk_eq (Term.mk_comb (left, variable),
+                Term.mk_comb (right, variable))))
+          end
+      | ("@tables_group_part", [table]) =>
+          let
+            val bag_ty = cpc_bag_element token table
+            val element = cpc_bag_element_type token bag_ty
+          in
+            cpc_opaque_skolem token (Type.--> (element, bag_ty)) args
+          end
+      | ("@tables_group_part_element", [table, bag]) =>
+          let
+            val nested_bag_ty = cpc_bag_element token table
+            val element = cpc_bag_element_type token nested_bag_ty
+            val _ = cpc_expect_type token nested_bag_ty bag
+          in
+            cpc_opaque_skolem token element args
+          end
+      | ("@bags_map_sum", [function, bag, image]) =>
+          let
+            val element = cpc_bag_element token bag
+            val (domain, range) = cpc_function_types token function
+            val _ = cpc_type_eq (domain, element) orelse
+              cpc_skolem_error token
+                ("parameterized-skolem Bag-map function domain does not " ^
+                 "match Bag element")
+            val _ = cpc_expect_type token range image
+          in
+            cpc_opaque_skolem token
+              (Type.--> (intSyntax.int_ty, intSyntax.int_ty)) args
+          end
+      | ("@bags_distinct_elements", [bag]) =>
+          cpc_opaque_skolem token (Type.--> (intSyntax.int_ty,
+            cpc_bag_element token bag)) args
+      | ("@bags_distinct_elements_size", [bag]) =>
+          (ignore (cpc_bag_element token bag);
+           cpc_opaque_skolem token intSyntax.int_ty args)
+      | ("@bags_map_preimage_injective", [function, bag, image]) =>
+          let
+            val element = cpc_bag_element token bag
+            val (_, range) = cpc_function_types token function
+            val _ = cpc_expect_function token element range function
+            val _ = cpc_expect_type token range image
+          in
+            cpc_opaque_skolem token element args
+          end
+      | _ => cpc_skolem_error "cpc_bag_skolem_parsefn"
+          ("malformed parameterized Bag skolem " ^ token)
+
+  fun cpc_same_const thy name tm =
+    case Lib.total Term.dest_thy_const tm of
+      SOME {Thy, Name, ...} => Thy = thy andalso Name = name
+    | NONE => false
+
+  fun cpc_strip_regex_concat regex =
+    case boolSyntax.strip_comb regex of
+      (head, [left, right]) =>
+        if cpc_same_const "smtstring" "reglan_concat" head then
+          cpc_strip_regex_concat left @ cpc_strip_regex_concat right
+        else [regex]
+    | _ => [regex]
+
+  fun cpc_regex_concat_pair regex =
+    case boolSyntax.strip_comb regex of
+      (head, [left, right]) =>
+        if cpc_same_const "smtstring" "reglan_concat" head then
+          SOME (left, right)
+        else NONE
+    | _ => NONE
+
+  fun cpc_re_unfold_pos_direct_star regex =
+    let
+      fun recognized body middle suffix =
+        case boolSyntax.strip_comb middle of
+          (star, [star_body]) =>
+            if cpc_same_const "smtstring" "reglan_star" star andalso
+               Term.aconv body star_body andalso Term.aconv body suffix
+            then SOME [body, middle, suffix]
+            else NONE
+        | _ => NONE
+      val right_associated =
+        case cpc_regex_concat_pair regex of
+          SOME (body, rest) =>
+            (case cpc_regex_concat_pair rest of
+               SOME (middle, suffix) => recognized body middle suffix
+             | NONE => NONE)
+        | NONE => NONE
+    in
+      case right_associated of
+        SOME components => SOME components
+      | NONE =>
+          (case cpc_regex_concat_pair regex of
+             SOME (front, suffix) =>
+               (case cpc_regex_concat_pair front of
+                  SOME (body, middle) => recognized body middle suffix
+                | NONE => NONE)
+           | NONE => NONE)
+    end
+
+  fun cpc_re_unfold_pos_regexps regex =
+    case cpc_re_unfold_pos_direct_star regex of
+      SOME components => components
+    | NONE => cpc_strip_regex_concat regex
+
+  fun cpc_re_unfold_pos_decomposition string regex =
+    let
+      val regexps = cpc_re_unfold_pos_regexps regex
+      val list_ty = listSyntax.mk_list_type cpc_smtstr_ty
+      val pieces = Term.variant (Term.all_varsl [string, regex])
+        (Term.mk_var ("re_unfold_pos_pieces", list_ty))
+      fun piece position = listSyntax.mk_el
+        (numSyntax.mk_numeral (Arbnum.fromInt position), pieces)
+      val positions = List.tabulate (List.length regexps, Lib.I)
+      val selected = List.map piece positions
+      val regex_list = listSyntax.mk_list
+        (regexps, Term.type_of (List.hd regexps))
+      val count = listSyntax.mk_length regex_list
+      val position = Term.mk_var ("i", numSyntax.num)
+      fun selected_list candidate = listSyntax.mk_genlist
+        (Term.mk_abs (position, listSyntax.mk_el (position, candidate)),
+         count)
+      val concat_list = Term.prim_mk_const
+        {Thy = "smtstring", Name = "smtstr_concat_list"}
+      val membership_relation = Term.prim_mk_const
+        {Thy = "smtstring", Name = "smt_in_re"}
+      val list_relation = Term.inst
+        [{redex = Type.alpha, residue = cpc_smtstr_ty},
+         {redex = Type.beta, residue = Term.type_of (List.hd regexps)}]
+        (Term.prim_mk_const {Thy = "list", Name = "LIST_REL"})
+      val empty = Term.mk_comb
+        (Term.prim_mk_const {Thy = "smtstring", Name = "SmtStr"},
+         listSyntax.mk_nil numSyntax.num)
+      fun ordinary candidate = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (listSyntax.mk_length candidate, count),
+         boolSyntax.mk_eq
+           (string, Term.mk_comb (concat_list, selected_list candidate)),
+         Term.list_mk_comb
+           (list_relation,
+            [membership_relation, selected_list candidate, regex_list])]
+      fun endpoints candidate = boolSyntax.mk_conj
+        (boolSyntax.mk_neg (boolSyntax.mk_eq
+           (listSyntax.mk_el (numSyntax.zero_tm, candidate), empty)),
+         boolSyntax.mk_neg (boolSyntax.mk_eq
+           (listSyntax.mk_el
+             (Term.mk_comb
+                (Term.prim_mk_const {Thy = "prim_rec", Name = "PRE"},
+                 count),
+              candidate),
+            empty)))
+      val other = Term.variant (pieces :: Term.all_varsl [string, regex])
+        (Term.mk_var ("re_unfold_pos_other", list_ty))
+      val guarded_exists = boolSyntax.mk_exists
+        (other, boolSyntax.mk_conj (ordinary other, endpoints other))
+      val predicate = boolSyntax.mk_conj
+        (ordinary pieces,
+         boolSyntax.mk_imp (guarded_exists, endpoints pieces))
+    in
+      {pieces = pieces, regexps = regexps, selected = selected,
+       predicate = predicate,
+       witness = boolSyntax.mk_select (pieces, predicate)}
+    end
+
+  (* A RE_UNFOLD_POS component is a projection of one shared Hilbert-choice
+     decomposition, not an independent opaque string.  Rebuilding the same
+     choice predicate for every index makes all projections coherent while
+     leaving the choice entirely theorem backed. *)
+  fun cpc_re_unfold_pos_component string regex index =
+    let
+      val index = Arbint.toInt (intSyntax.int_of_term index)
+        handle Overflow => cpc_skolem_error
+          "cpc_re_unfold_pos_component" "component index is too large"
+      val _ = if index >= 0 then () else cpc_skolem_error
+        "cpc_re_unfold_pos_component" "component index is negative"
+      val {regexps, witness, ...} =
+        cpc_re_unfold_pos_decomposition string regex
+      val _ = if index < List.length regexps then () else cpc_skolem_error
+        "cpc_re_unfold_pos_component"
+        "component index is outside the regular-expression concat"
+    in
+      listSyntax.mk_el
+        (numSyntax.mk_numeral (Arbnum.fromInt index), witness)
+    end
+
+  fun cpc_string_skolem_parsefn token indices args =
+    if not (List.null indices) then
+      cpc_skolem_error "cpc_string_skolem_parsefn"
+        (token ^ " does not accept indices")
+    else
+      let
+        val arity =
+          case token of
+            "@re_unfold_pos_component" => 3
+          | "@strings_deq_diff" => 2
+          | "@strings_stoi_result" => 1
+          | "@strings_stoi_non_digit" => 1
+          | "@strings_itos_result" => 1
+          | "@strings_num_occur" => 2
+          | "@strings_num_occur_re" => 2
+          | "@strings_occur_index" => 2
+          | "@strings_occur_index_re" => 2
+          | "@strings_replace_all_result" => 1
+          | "@witness_string_length" => 1
+          | _ => cpc_skolem_error "cpc_string_skolem_parsefn"
+              ("unknown parameterized String skolem " ^ token)
+        val args = cpc_exact_args "cpc_string_skolem_parsefn" arity args
+      in
+      case (token, args) of
+        ("@re_unfold_pos_component", [string, regex, index]) =>
+          (cpc_expect_smtstr token string;
+           cpc_expect_reglan token regex;
+           cpc_expect_int token index;
+           cpc_re_unfold_pos_component string regex index)
+      | ("@strings_deq_diff", [left, right]) =>
+          (cpc_expect_same_sequence token left right;
+           cpc_opaque_skolem token intSyntax.int_ty args)
+      | ("@strings_stoi_result", [string]) =>
+          (cpc_expect_smtstr token string;
+          cpc_opaque_skolem token
+            (Type.--> (intSyntax.int_ty, intSyntax.int_ty)) args)
+      | ("@strings_stoi_non_digit", [string]) =>
+          (cpc_expect_smtstr token string;
+           cpc_opaque_skolem token intSyntax.int_ty args)
+      | ("@strings_itos_result", [integer]) =>
+          (cpc_expect_int token integer;
+          cpc_opaque_skolem token
+            (Type.--> (intSyntax.int_ty, intSyntax.int_ty)) args)
+      | ("@strings_num_occur", [left, right]) =>
+          (cpc_expect_same_sequence token left right;
+           cpc_opaque_skolem token intSyntax.int_ty args)
+      | ("@strings_num_occur_re", [string, regex]) =>
+          (cpc_expect_smtstr token string;
+           cpc_expect_reglan token regex;
+           cpc_opaque_skolem token intSyntax.int_ty args)
+      | ("@strings_occur_index", [left, right]) =>
+          (cpc_expect_same_sequence token left right;
+          cpc_opaque_skolem token
+            (Type.--> (intSyntax.int_ty, intSyntax.int_ty)) args)
+      | ("@strings_occur_index_re", [string, regex]) =>
+          (cpc_expect_smtstr token string;
+           cpc_expect_reglan token regex;
+          cpc_opaque_skolem token
+            (Type.--> (intSyntax.int_ty, intSyntax.int_ty)) args)
+      | ("@strings_replace_all_result", [sequence]) =>
+          (ignore (cpc_sequence_element token sequence);
+           cpc_opaque_skolem token
+             (Type.--> (intSyntax.int_ty, Term.type_of sequence)) args)
+      | ("@witness_string_length", [sort_marker]) =>
+          (ignore (cpc_sequence_element token sort_marker);
+           cpc_opaque_skolem token
+             (boolSyntax.list_mk_fun
+               ([intSyntax.int_ty, intSyntax.int_ty],
+                Term.type_of sort_marker)) args)
+      | _ => cpc_skolem_error "cpc_string_skolem_parsefn"
+          ("malformed parameterized String skolem " ^ token)
+      end
+
+  type cpc_skolem_entry = {
+    name: string,
+    parse: string -> Term.term list -> Term.term list -> Term.term
+  }
+
+  fun cpc_skolem_entry parse name : cpc_skolem_entry =
+    {name = name, parse = parse}
+
+  (* The closed opaque-skolem inventory in cvc5 1.3.4's safe CPC
+     signature: Cpc.eo plus Arrays/Builtin/Quantifiers/Sets/Strings and the
+     seven Bag skolems from the expert signature. *)
+  val cpc_parameterized_skolem_registry : cpc_skolem_entry list =
+    [cpc_skolem_entry cpc_purify_parsefn "@purify",
+     cpc_skolem_entry cpc_array_deq_diff_parsefn "@array_deq_diff",
+     cpc_skolem_entry cpc_private_const_parsefn "@const",
+     cpc_skolem_entry cpc_string_skolem_parsefn
+       "@re_unfold_pos_component",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_deq_diff",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_stoi_result",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_stoi_non_digit",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_itos_result",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_num_occur",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_num_occur_re",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_occur_index",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@strings_occur_index_re",
+     cpc_skolem_entry cpc_string_skolem_parsefn
+       "@strings_replace_all_result",
+     cpc_skolem_entry cpc_string_skolem_parsefn "@witness_string_length",
+     cpc_skolem_entry cpc_sets_deq_diff_parsefn "@sets_deq_diff",
+     cpc_skolem_entry cpc_quantifiers_skolemize_parsefn
+       "@quantifiers_skolemize",
+     cpc_skolem_entry cpc_bag_skolem_parsefn "@bags_deq_diff",
+     cpc_skolem_entry cpc_bag_skolem_parsefn "@tables_group_part",
+     cpc_skolem_entry cpc_bag_skolem_parsefn
+       "@tables_group_part_element",
+     cpc_skolem_entry cpc_bag_skolem_parsefn "@bags_map_sum",
+     cpc_skolem_entry cpc_bag_skolem_parsefn
+       "@bags_distinct_elements",
+     cpc_skolem_entry cpc_bag_skolem_parsefn
+       "@bags_distinct_elements_size",
+     cpc_skolem_entry cpc_bag_skolem_parsefn
+       "@bags_map_preimage_injective"]
+
+  val cpc_parameterized_skolem_names =
+    List.map (fn ({name, ...}: cpc_skolem_entry) => name)
+      cpc_parameterized_skolem_registry
+
+  val _ =
+    let
+      val unique = HOLset.numItems (HOLset.addList
+        (HOLset.empty String.compare, cpc_parameterized_skolem_names))
+    in
+      if List.length cpc_parameterized_skolem_registry = 23 andalso
+         unique = 23 then ()
+      else cpc_skolem_error "cpc_parameterized_skolem_registry"
+        "closed CPC parameterized-skolem registry must contain 23 unique names"
+    end
+
+  fun with_cpc_parameterized_skolems tmdict =
+    List.foldl
+      (fn ({name, parse}: cpc_skolem_entry, dict) =>
+        Library.extend_dict ((name, parse), dict))
+      tmdict cpc_parameterized_skolem_registry
+
+  fun cpc_parameterized_skolem_for_test name args =
+    case List.find
+        (fn ({name = candidate, ...}: cpc_skolem_entry) =>
+          candidate = name) cpc_parameterized_skolem_registry of
+      SOME {parse, ...} => parse name [] args
+    | NONE => cpc_skolem_error "cpc_parameterized_skolem_for_test"
+        ("unknown parameterized skolem " ^ name)
 
   fun with_cpc_literals (tydict, tmdict) =
     let
@@ -417,6 +976,12 @@ local
         if token = "Bool" andalso List.null indices andalso List.null args then
           boolSyntax.T
         else raise ERR "bool_sort_marker" "expected the Bool sort marker"
+      fun string_sort_marker token indices args =
+        if token = "String" andalso List.null indices andalso
+           List.null args then
+          Term.mk_var ("@cpc.String", cpc_smtstr_ty)
+        else raise ERR "string_sort_marker"
+          "expected the String sort marker"
       fun bag_sort_marker token indices args =
         case (token, indices, args) of
           ("Bag", [], [element]) => Term.mk_var ("@cpc.Bag",
@@ -438,89 +1003,17 @@ local
          declared logic.  CPC arithmetic lemmas may nevertheless contain
          rationals and their Real coercions, so add the mixed arithmetic
          overloads only while reading the proof. *)
-      val tmdict = Library.extend_dict (("Bool", bool_sort_marker),
-        Library.extend_dict (("Bag", bag_sort_marker),
-          Library.extend_dict (("Set", set_sort_marker),
-            Library.extend_dict (("as", as_sort_marker),
-              Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict))))
-      fun cpc_quantifiers_skolemize_parsefn token indices args =
-        case args of
-          [quantified, index] =>
-            let
-              val index = Arbnum.toInt
-                (numeral_of_term "@quantifiers_skolemize index" index)
-              val (variables, objective) =
-                (let val (variables, body) = boolSyntax.strip_forall quantified
-                 in (variables, boolSyntax.mk_neg body) end)
-                handle Feedback.HOL_ERR _ => boolSyntax.strip_exists quantified
-              fun witnesses [] _ = []
-                | witnesses (variable :: rest) objective =
-                    let
-                      val witness = boolSyntax.mk_select
-                        (variable,
-                         boolSyntax.list_mk_exists (rest, objective))
-                      val objective' = Term.subst
-                        [{redex = variable, residue = witness}] objective
-                    in
-                      witness :: witnesses rest objective'
-                    end
-            in
-              List.nth (witnesses variables objective, index)
-              handle Subscript => raise ERR
-                "cpc_quantifiers_skolemize_parsefn"
-                "binder index is outside the quantified formula"
-            end
-        | _ => raise ERR "cpc_quantifiers_skolemize_parsefn"
-            "expected a quantified formula and a binder index"
-      fun sets_deq_diff_parsefn token indices args =
-        case (token, indices, args) of
-          ("@sets_deq_diff", [], [left, right]) =>
-            let
-              val (element, range) = Type.dom_rng (Term.type_of left)
-              val _ =
-                if Type.compare (range, Type.bool) = EQUAL andalso
-                   Type.compare (Term.type_of left, Term.type_of right) = EQUAL
-                then ()
-                else raise ERR "sets_deq_diff_parsefn"
-                  "expected two Sets of the same type"
-              val element_var = Term.variant (Term.all_varsl [left, right])
-                (Term.mk_var ("sets_deq_diff_x", element))
-            in
-              boolSyntax.mk_select (element_var, boolSyntax.mk_neg
-                (boolSyntax.mk_eq (Term.mk_comb (left, element_var),
-                  Term.mk_comb (right, element_var))))
-            end
-        | _ => raise ERR "sets_deq_diff_parsefn"
-            "expected two unindexed Set arguments"
-      fun bags_deq_diff_parsefn token indices args =
-        case (token, indices, args) of
-          ("@bags_deq_diff", [], [left, right]) =>
-            let
-              val (element, count) = Type.dom_rng (Term.type_of left)
-              val _ =
-                if Type.compare (count, numSyntax.num) = EQUAL andalso
-                   Type.compare (Term.type_of left, Term.type_of right) = EQUAL
-                then ()
-                else raise ERR "bags_deq_diff_parsefn"
-                  "expected two Bags of the same type"
-              val element_var = Term.variant (Term.all_varsl [left, right])
-                (Term.mk_var ("bags_deq_diff_x", element))
-              val differs = boolSyntax.mk_neg (boolSyntax.mk_eq
-                (Term.mk_comb (left, element_var),
-                 Term.mk_comb (right, element_var)))
-            in
-              boolSyntax.mk_select (element_var, differs)
-            end
-        | _ => raise ERR "bags_deq_diff_parsefn"
-            "expected two unindexed Bag arguments"
+      val tmdict = with_cpc_deindexed_entries tmdict
+      val tmdict = Library.extend_dict (("String", string_sort_marker),
+        Library.extend_dict (("Bool", bool_sort_marker),
+          Library.extend_dict (("Bag", bag_sort_marker),
+            Library.extend_dict (("Set", set_sort_marker),
+              Library.extend_dict (("as", as_sort_marker),
+                Library.union_dict tmdict
+                  SmtLib_Theories.Reals_Ints.tmdict)))))
+      val tmdict = with_cpc_parameterized_skolems tmdict
     in
-    (tydict, Library.extend_dict
-      (("@sets_deq_diff", sets_deq_diff_parsefn),
-      Library.extend_dict
-      (("@bags_deq_diff", bags_deq_diff_parsefn),
-      Library.extend_dict
-      (("@quantifiers_skolemize", cpc_quantifiers_skolemize_parsefn),
-      Library.extend_dict (("str.++",
+    (tydict, Library.extend_dict (("str.++",
         cpc_concat_parsefn "smtstr_concat"),
       Library.extend_dict (("re.++",
         cpc_concat_parsefn "reglan_concat"),
@@ -534,9 +1027,6 @@ local
       Library.extend_dict (("@mod_by_zero", cpc_arith_total_parsefn),
       Library.extend_dict (("@div_by_zero", cpc_arith_total_parsefn),
       Library.extend_dict (("**_total", cpc_arith_total_parsefn),
-      Library.extend_dict (("extract", cpc_bv_parsefn),
-      Library.extend_dict (("zero_extend", cpc_bv_parsefn),
-      Library.extend_dict (("sign_extend", cpc_bv_parsefn),
       Library.extend_dict (("bvsltbv", cpc_bv_parsefn),
       Library.extend_dict (("bvultbv", cpc_bv_parsefn),
       Library.extend_dict (("concat", cpc_bv_parsefn),
@@ -545,7 +1035,7 @@ local
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
           Library.extend_dict (("_", cpc_literal_parsefn),
-            with_cpc_fp_entries tmdict)))))))))))))))))))))))))))
+            with_cpc_fp_entries tmdict)))))))))))))))))))))
     end
 
   fun parse_term dicts_ref get_token =
@@ -1503,6 +1993,15 @@ local
       | SOME _ => parse_commands dicts_ref version get_token stop acc
     end
 in
+  val cpc_indexed_term_registry = cpc_indexed_term_registry
+  val with_cpc_deindexed_entries = with_cpc_deindexed_entries
+  val cpc_parameterized_skolem_names = cpc_parameterized_skolem_names
+  val cpc_parameterized_skolem_for_test =
+    cpc_parameterized_skolem_for_test
+  val cpc_re_unfold_pos_decomposition = cpc_re_unfold_pos_decomposition
+  val cpc_re_unfold_pos_regexps = cpc_re_unfold_pos_regexps
+  val cpc_re_unfold_pos_component = cpc_re_unfold_pos_component
+
   fun parse_stream_with_version (dicts : dicts) version instream : proof =
     let
       (* Resolve once, here: everything downstream -- rule lookup, gating and

@@ -10439,6 +10439,601 @@ in
     "CPC flattened FP conversions did not all parse")
 end
 
+fun cpc_registry_deindexing_complete_success () =
+let
+  val registry = CPC_ProofParser.cpc_indexed_term_registry
+  fun arity ({attributes, ...}: SmtLib_Theories.symbol_metadata) =
+    List.length (#parametric_sorts attributes)
+  fun add_source (metadata as {name, ...}
+      : SmtLib_Theories.symbol_metadata, dict) =
+    let
+      val expected = arity metadata
+      fun parse _ indices args =
+        if List.length indices = expected andalso
+           List.length args = 1 andalso List.hd args ~~ boolSyntax.F then
+          boolSyntax.T
+        else raise Feedback.mk_HOL_ERR "Unittest"
+          "cpc_registry_deindexing_complete_success"
+          "registry adapter split indices at the wrong boundary"
+    in
+      Library.extend_dict ((name, parse), dict)
+    end
+  val source = List.foldl add_source
+    (Redblackmap.mkDict String.compare) registry
+  val adapted = CPC_ProofParser.with_cpc_deindexed_entries source
+  fun check (metadata as {name, ...}
+      : SmtLib_Theories.symbol_metadata) =
+    let
+      val indices = List.tabulate (arity metadata,
+        fn index => numSyntax.mk_numeral (Arbnum.fromInt (index + 1)))
+      val parsed = SmtLib_Parser.apply_term adapted name []
+        (indices @ [boolSyntax.F])
+    in
+      assert (parsed ~~ boolSyntax.T,
+        "CPC registry adapter missed indexed entry " ^ name)
+    end
+in
+  assert (List.length registry = 23,
+    "authoritative indexed-term registry no longer has 23 entries: found " ^
+    Int.toString (List.length registry) ^ " [" ^
+    String.concatWith ", " (List.map
+    (fn ({name, ...}: SmtLib_Theories.symbol_metadata) => name) registry) ^
+    "]");
+  List.app check registry;
+  expect_hol_error_contains "CPC flattened index arity"
+    "char expects 1 flattened index argument(s)"
+    (fn () => ignore (SmtLib_Parser.apply_term adapted "char" [] []))
+end
+
+fun cpc_d13_deindexed_operator_repros_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (re.^ 2 (str.to_re \"a\"))) \
+    \(define @t2 () (re.loop 1 2 @t1)) \
+    \(define @t3 () (char 97)) \
+    \(define @t4 () (divisible 3 6)) \
+    \(define @t5 () (repeat 2 #b10)) \
+    \(define @t6 () (rotate_left 1 #b01)) \
+    \(define @t7 () (rotate_right 1 #b01)) \
+    \(define @t8 () (int_to_bv 4 3)) \
+    \(define @t9 () (@bit_of 0 #b1)) \
+    \(step @p1 :rule refl :args ((= @t9 @t9))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (List.null (Thm.hyp theorem),
+    "D13 de-indexed operator replay retained hypotheses");
+  check_oracle_tags "D13 de-indexed operator replay" theorem
+end
+
+fun cpc_parameterized_skolem_registry_success () =
+let
+  val expected =
+    ["@array_deq_diff", "@bags_deq_diff", "@bags_distinct_elements",
+     "@bags_distinct_elements_size", "@bags_map_preimage_injective",
+     "@bags_map_sum", "@const", "@purify",
+     "@quantifiers_skolemize", "@re_unfold_pos_component",
+     "@sets_deq_diff", "@strings_deq_diff", "@strings_itos_result",
+     "@strings_num_occur", "@strings_num_occur_re",
+     "@strings_occur_index", "@strings_occur_index_re",
+     "@strings_replace_all_result", "@strings_stoi_non_digit",
+     "@strings_stoi_result", "@tables_group_part",
+     "@tables_group_part_element", "@witness_string_length"]
+  val actual = Listsort.sort String.compare
+    CPC_ProofParser.cpc_parameterized_skolem_names
+  val string = ``SmtStr []``
+  val regex = ``reglan_none``
+  val integer = ``0:int``
+  val sequence = ``([]:num list)``
+  val array = ``(\x:num. 0:num)``
+  val set = ``(\x:num. T)``
+  val bag = ``(\x:num. 0:num)``
+  val table = ``(\b:num->num. 0:num)``
+  val map = ``(\x:num. &x:int)``
+  val quantified = ``?(x:num). T``
+  val valid_signatures =
+    [("@purify", [integer]), ("@array_deq_diff", [array, array]),
+     ("@const", [integer, string]),
+     ("@re_unfold_pos_component", [string, regex, integer]),
+     ("@strings_deq_diff", [string, string]),
+     ("@strings_stoi_result", [string]),
+     ("@strings_stoi_non_digit", [string]),
+     ("@strings_itos_result", [integer]),
+     ("@strings_num_occur", [string, string]),
+     ("@strings_num_occur_re", [string, regex]),
+     ("@strings_occur_index", [string, string]),
+     ("@strings_occur_index_re", [string, regex]),
+     ("@strings_replace_all_result", [sequence]),
+     ("@witness_string_length", [sequence]),
+     ("@sets_deq_diff", [set, set]),
+     ("@quantifiers_skolemize", [quantified, integer]),
+     ("@bags_deq_diff", [bag, bag]),
+     ("@tables_group_part", [table]),
+     ("@tables_group_part_element", [table, bag]),
+     ("@bags_map_sum", [map, bag, integer]),
+     ("@bags_distinct_elements", [bag]),
+     ("@bags_distinct_elements_size", [bag]),
+     ("@bags_map_preimage_injective", [map, bag, integer])]
+  val valid_results = List.map
+    (fn (name, arguments) =>
+      CPC_ProofParser.cpc_parameterized_skolem_for_test name arguments)
+    valid_signatures
+  val valid_const = CPC_ProofParser.cpc_parameterized_skolem_for_test
+    "@const" [integer, string]
+  val valid_map_sum = CPC_ProofParser.cpc_parameterized_skolem_for_test
+    "@bags_map_sum" [map, bag, integer]
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (@re_unfold_pos_component \
+    \  \"\" (re.* re.none) 0)) \
+    \(step @p1 :rule refl :args ((= @t1 @t1))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (actual = expected,
+    "CPC parameterized-skolem inventory is incomplete or duplicated");
+  assert (List.length valid_results = List.length expected andalso
+          Listsort.sort String.compare (List.map Lib.fst valid_signatures) =
+            expected,
+    "CPC parameterized-skolem signature sweep is incomplete");
+  assert (Type.compare (Term.type_of valid_const, Term.type_of string) = EQUAL,
+    "CPC @const did not retain its exact declared result type");
+  assert (Type.compare (Term.type_of valid_map_sum,
+      Type.--> (intSyntax.int_ty, intSyntax.int_ty)) = EQUAL,
+    "CPC @bags_map_sum did not have exact Int -> Int result type");
+  assert (List.null (Thm.hyp theorem),
+    "String skolem replay retained hypotheses");
+  check_oracle_tags "CPC String skolem replay" theorem;
+  expect_hol_error_contains "CPC String skolem arity"
+    "expected 3 explicit argument(s)"
+    (fn () => ignore (parse_cpc_proof_string
+      "((define @t1 () (@re_unfold_pos_component \"\" re.none))))"));
+  expect_hol_error_contains "CPC @const rejects Num index"
+    "@const index must have HOL int type"
+    (fn () => ignore
+      (CPC_ProofParser.cpc_parameterized_skolem_for_test
+        "@const" [``0:num``, string]));
+  List.app (fn (label, name, arguments) =>
+    expect_hol_error_contains label "parameterized-skolem"
+      (fn () => ignore
+        (CPC_ProofParser.cpc_parameterized_skolem_for_test
+          name arguments)))
+    [("CPC String sort validator", "@strings_stoi_result", [integer]),
+     ("CPC RegLan sort validator", "@strings_num_occur_re",
+       [string, string]),
+     ("CPC Int sort validator", "@strings_itos_result", [string]),
+     ("CPC mixed Seq validator", "@strings_deq_diff",
+       [sequence, ``([]:bool list)``]),
+     ("CPC Array coherence validator", "@array_deq_diff",
+       [array, ``(\x:num. T)``]),
+     ("CPC Set range validator", "@sets_deq_diff", [array, array]),
+     ("CPC nested Bag validator", "@tables_group_part", [bag]),
+     ("CPC Bag-map domain validator", "@bags_map_sum",
+       [``(\x:bool. 0:int)``, bag, integer]),
+     ("CPC Bag-map image validator", "@bags_map_sum",
+       [map, bag, ``0:num``]),
+     ("CPC function-range validator", "@bags_map_preimage_injective",
+       [map, bag, ``0:num``])]
+end
+
+fun cpc_concat_unify_and_re_unfold_pos_replay_success () =
+let
+  val concat = parse_cpc_proof_string
+    "((declare-const x String) (declare-const y String) \
+    \(declare-const a String) (declare-const b String) \
+    \(assume @p1 (= (str.++ x a) (str.++ y b))) \
+    \(assume @p2 (= (str.len x) (str.len y))) \
+    \(step @p3 :rule concat_unify :premises (@p1 @p2) :args (false)))"
+  val unfold = parse_cpc_proof_string
+    "((declare-const x String) \
+    \(assume @p1 (str.in_re x (re.* (str.to_re \"a\")))) \
+    \(step @p2 :rule re_unfold_pos :premises (@p1)))"
+  val unfold_concat = parse_cpc_proof_string
+    "((declare-const x String) \
+    \(assume @p1 (str.in_re x \
+    \  (re.++ (str.to_re \"a\") re.allchar))) \
+    \(step @p2 :rule re_unfold_pos :premises (@p1)))"
+  val unfold_empty_concat = parse_cpc_proof_string
+    "((assume @p1 (str.in_re \"\" \
+    \  (re.++ (str.to_re \"\") (re.* (str.to_re \"\")) \
+    \    (str.to_re \"\")))) \
+    \(step @p2 :rule re_unfold_pos :premises (@p1)))"
+  fun concat_app name left right =
+    "(" ^ name ^ " " ^ left ^ " " ^ right ^ ")"
+  fun associated name shape [first, second, third, fourth] =
+        if shape = "left" then
+          concat_app name
+            (concat_app name (concat_app name first second) third) fourth
+        else if shape = "right" then
+          concat_app name first
+            (concat_app name second (concat_app name third fourth))
+        else
+          concat_app name (concat_app name first second)
+            (concat_app name third fourth)
+    | associated _ _ _ = die "FAIL: bad concat_unify test fixture"
+  fun concat_case (sort, concat_name, length_name) shape from_end =
+    let
+      val left = associated concat_name shape ["x", "a", "c", "e"]
+      val right = associated concat_name shape ["y", "b", "d", "f"]
+      val (left_edge, right_edge) =
+        if from_end then ("e", "f") else ("x", "y")
+      fun declaration name =
+        "(declare-const " ^ name ^ " " ^ sort ^ ") "
+    in
+      "(" ^ String.concat
+        (List.map declaration ["x", "y", "a", "b", "c", "d", "e", "f"]) ^
+      "(assume @p1 (= " ^ left ^ " " ^ right ^ ")) " ^
+      "(assume @p2 (= (" ^ length_name ^ " " ^ left_edge ^ ") (" ^
+        length_name ^ " " ^ right_edge ^ "))) " ^
+      "(step @p3 :rule concat_unify :premises (@p1 @p2) :args (" ^
+        Bool.toString from_end ^ ")))"
+    end
+  fun singleton_concat_case (sort, concat_name, length_name) from_end =
+    let
+      val right = if from_end then concat_app concat_name "b" "y"
+                  else concat_app concat_name "y" "b"
+      fun declaration name =
+        "(declare-const " ^ name ^ " " ^ sort ^ ") "
+    in
+      "(" ^ String.concat (List.map declaration ["x", "y", "b"]) ^
+      "(assume @p1 (= x " ^ right ^ ")) " ^
+      "(assume @p2 (= (" ^ length_name ^ " x) (" ^ length_name ^
+        " y))) " ^
+      "(step @p3 :rule concat_unify :premises (@p1 @p2) :args (" ^
+        Bool.toString from_end ^ ")))"
+    end
+  fun opaque_concat_case (sort, concat_name, length_name) from_end =
+    let
+      val left_selected = concat_app concat_name "x" "a"
+      val right_selected = concat_app concat_name "y" "b"
+      val left = if from_end then concat_app concat_name "c" left_selected
+                 else concat_app concat_name left_selected "c"
+      val right = if from_end then concat_app concat_name "d" right_selected
+                  else concat_app concat_name right_selected "d"
+      fun declaration name =
+        "(declare-const " ^ name ^ " " ^ sort ^ ") "
+    in
+      "(" ^ String.concat
+        (List.map declaration ["x", "y", "a", "b", "c", "d"]) ^
+      "(assume @p1 (= " ^ left ^ " " ^ right ^ ")) " ^
+      "(assume @p2 (= (" ^ length_name ^ " " ^ left_selected ^ ") (" ^
+        length_name ^ " " ^ right_selected ^ "))) " ^
+      "(step @p3 :rule concat_unify :premises (@p1 @p2) :args (" ^
+        Bool.toString from_end ^ ")))"
+    end
+  val association_cases = List.concat (List.map
+    (fn carrier => List.concat (List.map
+      (fn from_end => List.map
+        (fn shape => concat_case carrier shape from_end)
+        ["left", "right", "mixed"])
+    [false, true]))
+    [("String", "str.++", "str.len"),
+     ("(Seq Int)", "seq.++", "seq.len")])
+  val edge_cases = List.concat (List.map
+    (fn carrier => List.concat (List.map
+      (fn from_end =>
+        [singleton_concat_case carrier from_end,
+         opaque_concat_case carrier from_end])
+      [false, true]))
+    [("String", "str.++", "str.len"),
+     ("(Seq Bool)", "seq.++", "seq.len")])
+  val concat_cases = association_cases @ edge_cases
+  val opaque_regex =
+    "(re.* (re.++ re.allchar (str.to_re \"z\")))"
+  fun opaque_regex_case shape =
+    "((declare-const x String) " ^
+    "(assume @p1 (str.in_re x " ^
+      associated "re.++" shape
+        ["(str.to_re \"a\")", opaque_regex,
+         "re.allchar", "(str.to_re \"b\")"] ^ ")) " ^
+    "(step @p2 :rule re_unfold_pos :premises (@p1)))"
+  val star_body_parts =
+    ["re.allchar", "(str.to_re \"a\")",
+     "(re.* re.allchar)", "(str.to_re \"b\")"]
+  fun star_concat_case shape =
+    "((declare-const x String) " ^
+    "(assume @p1 (str.in_re x (re.* " ^
+      associated "re.++" shape star_body_parts ^ "))) " ^
+    "(step @p2 :rule re_unfold_pos :premises (@p1)))"
+  val unfold_nary_cases =
+    ["((declare-const x String) \
+     \(assume @p1 (str.in_re x (re.++ (str.to_re \"a\") \
+     \  re.allchar (str.to_re \"b\")))) \
+     \(step @p2 :rule re_unfold_pos :premises (@p1)))",
+     "((declare-const x String) \
+     \(assume @p1 (str.in_re x (re.++ (str.to_re \"a\") \
+     \  (re.++ re.allchar (str.to_re \"b\"))))) \
+     \(step @p2 :rule re_unfold_pos :premises (@p1)))"] @
+    List.map opaque_regex_case ["left", "right", "mixed"]
+  val star_concat_cases =
+    List.map star_concat_case ["left", "right", "mixed"]
+  fun ordinary_direct_case shape =
+    let
+      val body = associated "re.++" "mixed" star_body_parts
+      val middle = "(re.* " ^ body ^ ")"
+      val pattern =
+        if shape = "left" then
+          concat_app "re.++" (concat_app "re.++" body middle) body
+        else concat_app "re.++" body
+          (concat_app "re.++" middle body)
+    in
+      "((declare-const x String) " ^
+      "(assume @p1 (str.in_re x " ^ pattern ^ ")) " ^
+      "(step @p2 :rule re_unfold_pos :premises (@p1)))"
+    end
+  val ordinary_direct_cases =
+    List.map ordinary_direct_case ["left", "right"]
+  val nested_selector = parse_cpc_proof_string
+    "((define @inner () (@re_unfold_pos_component \
+    \  \"q\" (re.++ re.allchar re.allchar) 0)) \
+    \(assume @p1 (str.in_re @inner \
+    \  (re.++ (str.to_re \"a\") re.allchar (str.to_re \"b\")))) \
+    \(step @p2 :rule re_unfold_pos :premises (@p1)))"
+  val () = Profile.reset_all ()
+  val concat_thm = CPC_ProofReplay.replay_root_for_test concat
+  val unfold_thm = CPC_ProofReplay.replay_root_for_test unfold
+  val unfold_concat_thm =
+    CPC_ProofReplay.replay_root_for_test unfold_concat
+  val unfold_empty_concat_thm =
+    CPC_ProofReplay.replay_root_for_test unfold_empty_concat
+  val concat_theorems = List.map
+    (CPC_ProofReplay.replay_root_for_test o parse_cpc_proof_string)
+    concat_cases
+  val unfold_nary_theorems = List.map
+    (CPC_ProofReplay.replay_root_for_test o parse_cpc_proof_string)
+    unfold_nary_cases
+  val star_concat_theorems = List.map
+    (CPC_ProofReplay.replay_root_for_test o parse_cpc_proof_string)
+    star_concat_cases
+  val ordinary_direct_theorems = List.map
+    (CPC_ProofReplay.replay_root_for_test o parse_cpc_proof_string)
+    ordinary_direct_cases
+  val nested_selector_theorem =
+    CPC_ProofReplay.replay_root_for_test nested_selector
+  val inner_regex = ``reglan_concat reglan_allchar reglan_allchar``
+  val inner_string = CPC_ProofParser.cpc_re_unfold_pos_component
+    ``SmtStr [113]`` inner_regex ``0:int``
+  val outer_regex =
+    ``reglan_concat (reglan_to_re (SmtStr [97]))
+        (reglan_concat reglan_allchar (reglan_to_re (SmtStr [98])))``
+  val {witness = outer_witness, ...} =
+    CPC_ProofParser.cpc_re_unfold_pos_decomposition
+      inner_string outer_regex
+  val nested_selectors = HolKernel.find_terms boolSyntax.is_select
+    (Thm.concl nested_selector_theorem)
+  val regex_operator = ``reglan_concat``
+  fun regex_concat (left, right) =
+    Term.list_mk_comb (regex_operator, [left, right])
+  fun regex_associated shape [first, second, third, fourth] =
+        if shape = "left" then
+          regex_concat
+            (regex_concat (regex_concat (first, second), third), fourth)
+        else if shape = "right" then
+          regex_concat
+            (first, regex_concat (second, regex_concat (third, fourth)))
+        else
+          regex_concat
+            (regex_concat (first, second), regex_concat (third, fourth))
+    | regex_associated _ _ = die "FAIL: bad regex association fixture"
+  val regex_parts =
+    [``reglan_allchar``, ``reglan_to_re (SmtStr [97])``,
+     ``reglan_star reglan_allchar``,
+     ``reglan_to_re (SmtStr [98])``]
+  val star_bodies = List.map
+    (fn shape => regex_associated shape regex_parts)
+    ["left", "right", "mixed"]
+  fun star_expansion body =
+    regex_concat
+      (body, regex_concat (Term.mk_comb (``reglan_star``, body), body))
+  val empty_body = ``reglan_to_re (SmtStr [])``
+  val empty_pattern = star_expansion empty_body
+  val {witness = empty_preferred, ...} =
+    CPC_ProofParser.cpc_re_unfold_pos_decomposition
+      ``SmtStr []`` empty_pattern
+  val empty_theorem_selectors = HolKernel.find_terms
+    boolSyntax.is_select (Thm.concl unfold_empty_concat_thm)
+  val star_decompositions = List.map
+    (fn body =>
+      CPC_ProofParser.cpc_re_unfold_pos_decomposition
+        ``x:smtstr`` (star_expansion body)) star_bodies
+  val ordinary_body = List.last star_bodies
+  val ordinary_middle = Term.mk_comb (``reglan_star``, ordinary_body)
+  val ordinary_patterns =
+    [regex_concat
+       (regex_concat (ordinary_body, ordinary_middle), ordinary_body),
+     regex_concat
+       (ordinary_body, regex_concat (ordinary_middle, ordinary_body))]
+  val ordinary_decompositions = List.map
+    (CPC_ProofParser.cpc_re_unfold_pos_decomposition ``x:smtstr``)
+    ordinary_patterns
+  val empty_string = ``SmtStr []``
+  fun check_star_decomposition
+      (body, {pieces, regexps, selected, predicate, witness}) =
+    let
+      val expected_regexps =
+        [body, Term.mk_comb (``reglan_star``, body), body]
+      val (_, preference) = boolSyntax.dest_conj predicate
+      val (_, chosen_endpoints) = boolSyntax.dest_imp preference
+      val (first_guard, last_guard) =
+        boolSyntax.dest_conj chosen_endpoints
+      fun endpoint_index guard =
+        let
+          val equality = boolSyntax.dest_neg guard
+          val (projection, endpoint_empty) = boolSyntax.dest_eq equality
+          val (index, selected_witness) = listSyntax.dest_el projection
+          val index = boolSyntax.rhs
+            (Thm.concl (computeLib.EVAL_CONV index))
+          val _ = assert (Term.aconv selected_witness pieces andalso
+                          Term.aconv endpoint_empty empty_string,
+            "star expansion endpoint does not use its shared selector")
+        in
+          index
+        end
+      val projected = List.map
+        (CPC_ProofParser.cpc_re_unfold_pos_component
+          ``x:smtstr`` (star_expansion body))
+        [``0:int``, ``1:int``, ``2:int``]
+      val expected_projected = List.tabulate (3, fn index =>
+        listSyntax.mk_el
+          (numSyntax.mk_numeral (Arbnum.fromInt index), witness))
+    in
+      assert (ListPair.allEq (Lib.uncurry Term.aconv)
+          (regexps, expected_regexps),
+        "concat-headed star body was flattened inside its expansion");
+      ListPair.app (fn (projection, expected) =>
+        assert (Term.aconv projection expected,
+          "star expansion projection mismatch: " ^
+          term_to_string projection ^ " versus " ^
+          term_to_string expected)) (projected, expected_projected);
+      assert (numSyntax.dest_numeral (endpoint_index first_guard) =
+              Arbnum.zero andalso
+              numSyntax.dest_numeral (endpoint_index last_guard) =
+              Arbnum.fromInt 2,
+        "star expansion decomposition lost its endpoint guards");
+      assert (Term.aconv witness
+          (boolSyntax.mk_select (pieces, predicate)),
+        "star expansion did not retain the exact parser selector")
+    end
+  fun profile_count name =
+    case List.find (fn (candidate, _) => candidate = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun registered name =
+    case CPC_Proof.lookup_rule "1.3.4" name of
+      SOME rule => #namespace rule = CPC_Proof.ProofRule andalso
+        #replay_handler rule = "string"
+    | NONE => false
+  fun distinct_terms terms = List.foldl
+    (fn (term, result) =>
+      if List.exists (Term.aconv term) result then result
+      else term :: result) [] terms
+in
+  assert (registered "concat_unify" andalso registered "re_unfold_pos",
+    "CPC String proof rules are missing from the exact registry");
+  assert (boolSyntax.is_eq (Thm.concl concat_thm),
+    "concat_unify did not reconstruct its omitted equality conclusion");
+  assert (boolSyntax.is_disj (Thm.concl unfold_thm),
+    "re_unfold_pos did not reconstruct its omitted disjunction conclusion");
+  assert (boolSyntax.is_conj (Thm.concl unfold_concat_thm),
+    "re_unfold_pos did not reconstruct its concat decomposition");
+  assert (boolSyntax.is_conj (Thm.concl unfold_empty_concat_thm) andalso
+          List.length (Thm.hyp unfold_empty_concat_thm) = 1,
+    "ordinary empty R ++ R* ++ R lost its unguarded decomposition");
+  assert (List.exists (Term.aconv empty_preferred)
+            empty_theorem_selectors andalso
+          List.length (distinct_terms empty_theorem_selectors) = 1 andalso
+          List.all (not o boolSyntax.is_neg)
+            (boolSyntax.strip_conj (Thm.concl unfold_empty_concat_thm)),
+    "ordinary empty decomposition did not use only the preferred selector");
+  assert (List.length (Thm.hyp concat_thm) = 2,
+    "concat_unify did not preserve its two source premises exactly");
+  assert (List.all (fn theorem =>
+      boolSyntax.is_eq (Thm.concl theorem) andalso
+      List.length (Thm.hyp theorem) = 2) concat_theorems,
+    "carrier-aware concat_unify lost an association/direction case");
+  assert (List.all (fn theorem =>
+      boolSyntax.is_conj (Thm.concl theorem) andalso
+      List.length (Thm.hyp theorem) = 1) unfold_nary_theorems,
+    "n-ary re_unfold_pos did not preserve one coherent decomposition");
+  ListPair.app check_star_decomposition (star_bodies, star_decompositions);
+  assert (List.all (fn theorem =>
+      boolSyntax.is_disj (Thm.concl theorem) andalso
+      List.length (Thm.hyp theorem) = 1 andalso
+      List.length (distinct_terms
+        (HolKernel.find_terms boolSyntax.is_select
+          (Thm.concl theorem))) = 1) star_concat_theorems,
+    "concat-headed star replay did not keep one three-part choice");
+  ListPair.app (fn ({regexps, witness, ...}, theorem) =>
+    assert (ListPair.allEq (Lib.uncurry Term.aconv)
+              (regexps,
+               [ordinary_body, ordinary_middle, ordinary_body]) andalso
+            boolSyntax.is_conj (Thm.concl theorem) andalso
+            List.length (Thm.hyp theorem) = 1 andalso
+            List.exists (Term.aconv witness)
+              (HolKernel.find_terms boolSyntax.is_select
+                (Thm.concl theorem)) andalso
+            List.length (distinct_terms
+              (HolKernel.find_terms boolSyntax.is_select
+                (Thm.concl theorem))) = 1,
+      "ordinary concat-headed R ++ R* ++ R lost its opaque components"))
+    (ordinary_decompositions, ordinary_direct_theorems);
+  ListPair.app (fn (decomposition, theorem) =>
+    assert (List.exists (Term.aconv (#witness decomposition))
+        (HolKernel.find_terms boolSyntax.is_select (Thm.concl theorem)),
+      "concat-headed star replay did not use the parser's exact selector"))
+    (star_decompositions, star_concat_theorems);
+  assert (List.all (fn theorem =>
+      List.length (distinct_terms
+        (HolKernel.find_terms boolSyntax.is_select
+          (Thm.concl theorem))) = 1) unfold_nary_theorems,
+    "n-ary re_unfold_pos did not share exactly one decomposition choice");
+  assert (List.exists (Term.aconv outer_witness) nested_selectors andalso
+          List.exists (fn selector =>
+            not (Term.aconv selector outer_witness)) nested_selectors,
+    "re_unfold_pos froze a nested selector instead of its outer witness");
+  assert (List.length (Thm.hyp unfold_thm) = 1 andalso
+          List.length (Thm.hyp unfold_concat_thm) = 1,
+    "re_unfold_pos did not preserve its source membership exactly");
+  assert
+    (profile_count "CPC(rung:string/concat_unify)_OK" = 21 andalso
+     profile_count "CPC(rung:string/re_unfold_pos)_OK" = 14,
+    "CPC String rule registration did not reach each exact replay rung");
+  check_oracle_tags "CPC concat_unify replay" concat_thm;
+  check_oracle_tags "CPC re_unfold_pos replay" unfold_thm;
+  check_oracle_tags "CPC concat re_unfold_pos replay" unfold_concat_thm
+  ; check_oracle_tags "CPC empty ordinary re_unfold_pos replay"
+      unfold_empty_concat_thm
+  ; List.app (check_oracle_tags "CPC carrier concat_unify replay")
+      concat_theorems
+  ; List.app (check_oracle_tags "CPC n-ary re_unfold_pos replay")
+      unfold_nary_theorems;
+  List.app (check_oracle_tags "CPC concat-headed star replay")
+    star_concat_theorems;
+  List.app (check_oracle_tags "CPC ordinary opaque-star replay")
+    ordinary_direct_theorems;
+  check_oracle_tags "CPC nested-selector re_unfold_pos replay"
+    nested_selector_theorem;
+  expect_hol_error_contains "CPC re_unfold_pos rejects one argument"
+    "re_unfold_pos expects no explicit arguments"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x String) \
+        \(assume @p1 (str.in_re x (re.* re.allchar))) \
+        \(step @p2 (= x x) :rule re_unfold_pos \
+        \  :premises (@p1) :args (0))))")));
+  expect_hol_error_contains "CPC re_unfold_pos rejects many arguments"
+    "re_unfold_pos expects no explicit arguments"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x String) \
+        \(assume @p1 (str.in_re x (re.* re.allchar))) \
+        \(step @p2 (= x x) :rule re_unfold_pos \
+        \  :premises (@p1) :args (0 1))))")));
+  expect_hol_error_contains "CPC inferred re_unfold_pos rejects one argument"
+    "re_unfold_pos expects no explicit arguments"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x String) \
+        \(assume @p1 (str.in_re x (re.* re.allchar))) \
+        \(step @p2 :rule re_unfold_pos \
+        \  :premises (@p1) :args (0))))")));
+  expect_hol_error_contains
+    "CPC inferred re_unfold_pos rejects many arguments"
+    "re_unfold_pos expects no explicit arguments"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x String) \
+        \(assume @p1 (str.in_re x (re.* re.allchar))) \
+        \(step @p2 :rule re_unfold_pos \
+        \  :premises (@p1) :args (0 1))))")));
+  expect_hol_error_contains "CPC re_unfold_pos applicability is strict"
+    "re_unfold_pos expects star or concatenation membership"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x String) \
+        \(assume @p1 (str.in_re x re.none)) \
+        \(step @p2 (= x x) :rule re_unfold_pos \
+        \  :premises (@p1))))")))
+end
+
 fun cpc_proof_parser_private_fp_terms_success () =
 let
   val proof = parse_cpc_proof_string
@@ -20430,6 +21025,14 @@ let
       cpc_proof_parser_ascribed_bag_empty_success),
     ("cpc_proof_parser_flattened_fp_indices_success",
       cpc_proof_parser_flattened_fp_indices_success),
+    ("cpc_registry_deindexing_complete_success",
+      cpc_registry_deindexing_complete_success),
+    ("cpc_d13_deindexed_operator_repros_success",
+      cpc_d13_deindexed_operator_repros_success),
+    ("cpc_parameterized_skolem_registry_success",
+      cpc_parameterized_skolem_registry_success),
+    ("cpc_concat_unify_and_re_unfold_pos_replay_success",
+      cpc_concat_unify_and_re_unfold_pos_replay_success),
     ("cpc_proof_parser_private_fp_terms_success",
       cpc_proof_parser_private_fp_terms_success),
     ("cpc_string_registry_and_literal_parser_success",
