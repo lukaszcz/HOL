@@ -588,3 +588,34 @@ val _ =
                   EL index (DROP count xs) = EL (index + count) xs``),
           ([], ``!xs item ys.
                   EL (LENGTH xs) (xs ++ item::ys) = item``)])
+
+(* src/HOL/List.thy @ f7e02b7e, [take_append] and [drop_append].
+   Neither goal is a corpus entry and neither is one of the rules: each
+   cuts an append at exactly the left list's length and maps over what
+   is left, and pushing the cut through the append is what the two do.
+   The halves the push leaves are already ambient -- TAKE_LENGTH_ID and
+   DROP_LENGTH_NIL are simp -- so these two goals pin these two rules
+   and nothing else. *)
+val _ =
+  check
+    ("take and drop reach through an append",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!f xs ys. MAP f (TAKE (LENGTH xs) (xs ++ ys)) = MAP f xs``),
+          ([], ``!f xs ys. MAP f (DROP (LENGTH xs) (xs ++ ys)) = MAP f ys``)])
+
+(* src/HOL/List.thy @ f7e02b7e, [take_all] and [drop_all]: the same cut
+   where the bound is a length comparison rather than the length
+   itself, which is where the ambient unconditional forms stop.  Both
+   goals put the cut under a function, so the reduction has to happen
+   as a rewrite: DROP_EQ_NIL is ambient and would settle [DROP n xs =
+   []] posed as a goal, but it cannot rewrite the drop under a fold. *)
+val _ =
+  check
+    ("a length bound cuts a take and a drop short",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!f xs n. LENGTH xs <= n ==> MAP f (TAKE n xs) = MAP f xs``),
+          ([], ``!f a xs n. LENGTH xs <= n ==> FOLDL f a (DROP n xs) = a``)])

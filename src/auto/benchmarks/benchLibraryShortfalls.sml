@@ -66,17 +66,6 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-(* Isabelle's [take_append] and [drop_append] are default simp rules,
-   so its [zip_append1] rewrite lands on a goal simp finishes.  HOL4
-   states the same facts as rich_list$TAKE_LENGTH_APPEND and
-   DROP_LENGTH_APPEND and carries neither in the ambient simpset, so
-   the take and drop the rewrite introduces stay. *)
-val take_drop_against_append =
-  classified "take and drop against an append"
-    ("the residual is [TAKE (LENGTH l1) (l1 ++ l2)] and its DROP "
-     ^ "counterpart, which the ambient simpset does not reduce")
-    ["list_L2786_zip_append"]
-
 val conditional_list_rewrites =
   classified "conditional list rewrites"
     ("the residual is a conditional equation about TL, LAST, "
@@ -498,7 +487,6 @@ val sigma_over_budget =
      "product_type_L1112_split_paired_Bex_Sigma"]
 
 val execution : benchLib.shortfall list =
-  take_drop_against_append @
   conditional_list_rewrites @
   congruence_rules @
   prefix_from_its_indices @

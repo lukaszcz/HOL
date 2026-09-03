@@ -51,6 +51,13 @@ val _ =
 val _ =
   export_at "simp" ("EL_LENGTH_APPEND_AUTO", rich_listTheory.EL_LENGTH_APPEND)
 
+(* src/HOL/List.thy @ f7e02b7e.  [take_append] is simp there and
+   declared to no simpset here; its [drop_append] counterpart and the
+   two length rules that finish the halves are seeded in
+   listAutoSeed, which states them. *)
+val _ =
+  export_at "simp" ("TAKE_APPEND_AUTO", rich_listTheory.TAKE_APPEND)
+
 val _ =
   List.app (clasetLib.export_rule sintro_spec)
     ["rich_list.IS_PREFIX_REFL", "rich_list.IS_SUFFIX_REFL"]

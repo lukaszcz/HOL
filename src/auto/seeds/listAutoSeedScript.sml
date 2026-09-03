@@ -139,6 +139,19 @@ val _ =
      ("EL_TAKE_AUTO", listTheory.EL_TAKE),
      ("EL_DROP_AUTO", listTheory.EL_DROP)]
 
+(* src/HOL/List.thy @ f7e02b7e, [drop_append], [take_all] and
+   [drop_all], simp there and declared to no simpset here.  Isabelle
+   pushes a drop through an append and then reads off each half by its
+   length; HOL4 states the three and carries none, so a rewrite that
+   introduces [DROP n (l1 ++ l2)] leaves it and the subtracted length
+   standing.  [take_append] is rich_list$TAKE_APPEND and is seeded
+   with it. *)
+val _ =
+  List.app (export_at "simp")
+    [("DROP_APPEND_AUTO", listTheory.DROP_APPEND),
+     ("TAKE_LENGTH_TOO_LONG_AUTO", listTheory.TAKE_LENGTH_TOO_LONG),
+     ("DROP_LENGTH_TOO_LONG_AUTO", listTheory.DROP_LENGTH_TOO_LONG)]
+
 (* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
    transitivity to the classical reasoner as [intro], where HOL4 states it
    but declares it to no claset.  The rest of the lexicographic block needs
