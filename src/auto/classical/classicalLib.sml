@@ -21,6 +21,15 @@ fun initial_validation [theorem] = theorem
       raise mk_HOL_ERR "classicalLib" "initial_validation"
         "validation expected one theorem"
 
+(* [clasetGoal.from_goal] reduces the caller's goal on the way in, and the
+   engine's own validations therefore prove the reduced goal.  The caller
+   posed the goal as written and has to be given a proof of that, so the
+   crossing is run backwards here.  A driver that replays its record
+   against the caller's goal reconstructs the spelling for itself and does
+   not come through this. *)
+fun caller_result goal (goals, validation) =
+  (goals, fn theorems => clasetNorm.align_goal goal (validation theorems))
+
 fun replace_validation old_count pos child_count step_validation
     old_validation theorem_list =
   if length theorem_list <> old_count - 1 + child_count then
@@ -59,7 +68,7 @@ fun safe_saturate cs goal =
     val goals = rendered_goals (#node final)
   in
     if boolSyntax.goals_eq goals [goal] then seq.empty
-    else seq.result (goals, #validation final)
+    else seq.result (caller_result goal (goals, #validation final))
   end
 
 fun step_ntactic step cs goal =
@@ -68,7 +77,8 @@ fun step_ntactic step cs goal =
   in
     seq.map
       (fn (record, next) =>
-        (rendered_goals next, clasetStep.validation_of record))
+        caller_result goal
+          (rendered_goals next, clasetStep.validation_of record))
       (step cs (node, 1))
   end
 

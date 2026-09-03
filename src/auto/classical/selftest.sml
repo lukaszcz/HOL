@@ -6285,3 +6285,34 @@ val _ =
     ("a substituted abstraction leaves a safe step its own spelling",
      fn () => closes (classicalLib.SAFE_TAC [boolTheory.TRUTH]))
 end
+
+(* The engine reduces the caller's goal on the way in, so a result assembled
+   from its own validations proves the reduced goal and not the one the
+   caller posed.  Both entry points that hand back engine goals directly are
+   asserted; the complete-search drivers replay their record against the
+   caller's goal and reconstruct the spelling for themselves.  The goal is
+   not a corpus entry. *)
+local
+  val posed_b = mk_var ("b", alpha)
+  val posed_x = mk_var ("x", alpha)
+  val posed_goal =
+    ([] : term list,
+     boolSyntax.mk_forall
+       (posed_b, mk_comb (mk_abs (posed_x, boolSyntax.T), posed_b)))
+  fun closes tactic =
+    (Tactical.TAC_PROOF (posed_goal, tactic); true)
+    handle Interrupt => raise Interrupt
+         | _ => false
+in
+val _ =
+  test
+    ("safe saturation proves the goal the caller posed",
+     fn () => closes (classicalLib.SAFE_TAC [boolTheory.TRUTH]))
+
+val _ =
+  test
+    ("a safe step proves the goal the caller posed",
+     fn () =>
+       closes
+         (Tactical.REPEAT (classicalLib.SAFE_STEP_TAC [boolTheory.TRUTH])))
+end
