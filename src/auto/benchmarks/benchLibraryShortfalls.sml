@@ -247,8 +247,7 @@ val simplification_and_search_reports_no_proof =
      "list_L7321_lex_append_rightI",
      "list_L8044_listrel1_subset_listrel",
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
-     "map_L565_dom_eq_empty_conv", "map_L810_graph_map_add",
-     "string_L178_card_UNIV_char"]
+     "map_L810_graph_map_add", "string_L178_card_UNIV_char"]
 
 val take_and_drop_arithmetic =
   classified "take and drop arithmetic"
