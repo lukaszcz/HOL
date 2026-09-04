@@ -1826,6 +1826,20 @@ val _ =
              (#recipe satisfiable_absolute_value_goal)
              satisfiable_absolute_value_goal)))
 
+(* The pair rule is support for the translation's spelling of a set of
+   pairs, and a goal with no pair in it neither needs it nor can afford
+   it: it goes in as an assumption, and a universal assumption is
+   instantiated afresh on every branch the search opens.  This goal
+   closes in a third of a second when the rule is withheld and does not
+   return inside the budget when it is not.  It is not a corpus entry. *)
+val _ =
+  check
+    ("the pair rule is withheld from a goal with no pair in it",
+     fn () =>
+       recipe_solves (benchLib.Invoke (benchLib.Blast, []))
+         ``(!s t. bench_apart s t <=> !x. x IN s ==> x NOTIN t) ==>
+           bench_apart (A : 'a -> bool) B ==> bench_apart B A``)
+
 val _ =
   check
     ("mapped BLAST distributes BIGINTER over pointwise intersection",

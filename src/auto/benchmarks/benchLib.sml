@@ -775,9 +775,30 @@ fun blast_arg (IntroAdd (SafeRule, {theorem, ...})) =
 
 fun all_blast_args args = List.concat (map blast_arg args)
 
-val blast_translation_args =
-  [pairTheory.PAIR,
-   clasetLib.Intro boolTheory.SELECT_UNIQUE]
+(* The translation writes a set of pairs as a predicate over a pair
+   variable, so a goal can need [PAIR] where the Isabelle source it came
+   from never wrote a pair down.  It is support for that spelling and not
+   a fact the source method names, so a goal with no pair in it is given
+   it neither faithfully nor usefully: it arrives as an assumption, which
+   is a universal the search instantiates afresh on every branch it
+   opens.  [DISJOINT A B ==> DISJOINT B A] closes in milliseconds without
+   it and does not return inside the budget with it. *)
+fun type_mentions_pair ty =
+  case Lib.total Type.dest_thy_type ty of
+      SOME {Thy = "pair", Tyop = "prod", ...} => true
+    | SOME {Args, ...} => List.exists type_mentions_pair Args
+    | NONE => false
+
+fun mentions_pair term =
+  type_mentions_pair (Term.type_of term) orelse
+  (case Term.dest_term term of
+       COMB (rator, rand) => mentions_pair rator orelse mentions_pair rand
+     | LAMB (bound, body) => mentions_pair bound orelse mentions_pair body
+     | _ => false)
+
+fun blast_translation_args goal =
+  (if mentions_pair goal then [pairTheory.PAIR] else []) @
+  [clasetLib.Intro boolTheory.SELECT_UNIQUE]
 
 fun simp_arg (RewriteAdd {theorem, ...}) = SOME theorem
   | simp_arg (RewriteDelete name) = SOME (simpLib.Excl name)
@@ -1084,7 +1105,7 @@ fun tactic_for goal Simp args exclusions =
                                 (accept_supplied,
                                  tableauLib.BLAST_TAC
                                    (all_blast_args args @
-                                    blast_translation_args @
+                                    blast_translation_args goal @
                                     controls exclusions))))))))))
       end
   | tactic_for goal Force args exclusions =
