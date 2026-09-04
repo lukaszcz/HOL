@@ -649,6 +649,51 @@ val _ =
            | _ => false
        end)
 
+(* The HOL side of a conversion -- the canonical form, the crossing and
+   the translation -- is memoised on the rule's statement, so a retrieval
+   has to hand back a copy: the prototerms carry the cells unification
+   assigns, and a shared entry would give one branch a rule another branch
+   had already decided.  The cells are collected without following
+   assignments, which is what a shared entry would show. *)
+fun rule_cells (rule : blastRule.tableau_rule) =
+  let
+    fun cells (term, collected) =
+      case term of
+          Const (_, arguments) => List.foldl cells collected arguments
+        | Skolem (_, arguments) => arguments @ collected
+        | Var variable => variable :: collected
+        | Abs (_, body) => cells (body, collected)
+        | left $ right => cells (left, cells (right, collected))
+        | _ => collected
+  in
+    List.foldl cells []
+      (#pattern rule :: List.concat (#premises rule))
+  end
+
+val _ =
+  test
+    ("each conversion of a rule owns the cells it hands back",
+     fn () =>
+       let
+         fun round convert theorem =
+           let
+             val rule = convert (blastRule.newCache ()) [] theorem
+             val cells = rule_cells rule
+             val unassigned =
+               List.all (fn variable => !variable = NONE) cells
+           in
+             List.app (fn variable => variable := SOME False) cells;
+             not (List.null cells) andalso unassigned
+           end
+         fun elim_convert cache vars theorem =
+           valOf (blastRule.convertElim cache vars theorem)
+         fun rounds convert theorem =
+           List.all (fn _ => round convert theorem) [1, 2, 3]
+       in
+         rounds blastRule.convertIntro boolTheory.AND_INTRO_THM andalso
+         rounds elim_convert CONJ_ELIM_THM
+       end)
+
 fun pseudo_origin expected ({origin, ...} : blastRule.tableau_rule) =
   case (expected, origin) of
       ("imp", blastRule.ImpIntro) => true

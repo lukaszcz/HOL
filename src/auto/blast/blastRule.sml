@@ -398,7 +398,7 @@ fun is_false_var term =
            | _ => false)
     | _ => false
 
-fun canonical_dataMeasured checkpoint is_elim theorem =
+fun compute_canonical_data checkpoint is_elim theorem =
   let
     val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
     val form =
@@ -425,6 +425,92 @@ fun canonical_dataMeasured checkpoint is_elim theorem =
     {outer = outer, hol_conclusion = #concl form,
      premises = premises, conclusion = conclusion}
   end
+
+(* The HOL side of a rule's conversion -- the canonical form, the
+   membership crossing and the translation into prototerms -- is a
+   function of the rule's statement, and a search meets the same rule
+   again at every branch whose atom it indexes.  Isabelle rebuilds a rule
+   from [Thm.prop_of] with no kernel inference (blast.ML:503); this port
+   derives a canonical form and runs two conversions, which is affordable
+   once for a rule and not once for an acquisition.  The memo is keyed on
+   the statement because that is all the conversion reads, and every
+   retrieval copies: the prototerms carry the mutable cells unification
+   assigns, and the stored one must stay pristine. *)
+type canonical_data =
+  {outer : hol_term list,
+   hol_conclusion : hol_term,
+   premises : pterm list,
+   conclusion : pterm}
+
+val canonical_memo :
+  (bool * hol_term, canonical_data) Redblackmap.dict ref =
+  ref (Redblackmap.mkDict
+         (Portable.pair_compare (bool_compare, Term.compare)))
+
+fun copy_canonical checkpoint
+      ({outer, hol_conclusion, premises, conclusion} : canonical_data) =
+  let
+    val copies = ref ([] : (var * var) list)
+
+    fun copy_variable variable =
+      (checkpoint ();
+       case findMeasured checkpoint
+              (fn (source, _) => source = variable) (!copies) of
+           SOME (_, copy) => copy
+         | NONE =>
+             let
+               val copy = ref NONE
+               val _ = copies := (variable, copy) :: !copies
+               val _ =
+                 case !variable of
+                     NONE => ()
+                   | SOME term => copy := SOME (copy_term term)
+             in
+               copy
+             end)
+
+    and copy_term term =
+      (checkpoint ();
+       case term of
+           Const (name, args) =>
+             Const (name, mapMeasured checkpoint copy_term args)
+         | Skolem (name, arguments) =>
+             Skolem (name, mapMeasured checkpoint copy_variable arguments)
+         | Fvar name => Fvar name
+         | Goal => Goal
+         | False => False
+         | Var variable => Var (copy_variable variable)
+         | Bound index => Bound index
+         | Abs (name, body) => Abs (name, copy_term body)
+         | left $ right => copy_term left $ copy_term right)
+  in
+    {outer = outer, hol_conclusion = hol_conclusion,
+     premises = mapMeasured checkpoint copy_term premises,
+     conclusion = copy_term conclusion}
+  end
+
+(* A rule carrying hypotheses is not a statement the memo can key on, and
+   a claset rule never has any; it is converted afresh. *)
+fun canonical_dataMeasured checkpoint is_elim theorem =
+  if not (List.null (Thm.hyp theorem)) then
+    compute_canonical_data checkpoint is_elim theorem
+  else
+    let
+      val key = (is_elim, Thm.concl theorem)
+      val _ = checkpoint ()
+    in
+      case Redblackmap.peek (!canonical_memo, key) of
+          SOME data => copy_canonical checkpoint data
+        | NONE =>
+            let
+              val data = compute_canonical_data checkpoint is_elim theorem
+              val stored = copy_canonical checkpoint data
+            in
+              canonical_memo :=
+                Redblackmap.insert (!canonical_memo, key, stored);
+              data
+            end
+    end
 
 fun countConversion (Cache {conversions, ...}) =
   conversions := !conversions + 1
