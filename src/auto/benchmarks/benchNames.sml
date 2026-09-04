@@ -23,6 +23,28 @@ fun library theory theorem () = Theorems [named theory theorem]
    so faithfulness against f7e02b7e is checked there, not restated here. *)
 fun translated theorem () = Theorems [named "parityTranslation" theorem]
 
+(* Isabelle's [t.split] and [t.split_asm] come out of the datatype
+   package; HOL4's counterparts are derived from TypeBase on demand and
+   stored nowhere, so they are named after the case constant they split,
+   which is the identity the simplifier registers them under.  The
+   [t_case_eq] theorems the table used to name here are not split rules
+   at all -- their left side is an equation and not [P (case ...)] -- so
+   the splitter dropped every one of them and the [split:] element of
+   the method never reached the goal. *)
+fun split_named theorem =
+  {name =
+     splitLib.split_thm_name theorem ^
+     (if splitLib.is_asm_split theorem then "[split_asm]" else "[split]"),
+   theorem = theorem}
+
+fun datatype_split ty () = Theorems [split_named (splitLib.type_split_of ty)]
+
+fun datatype_asm_split ty () =
+  Theorems [split_named (splitLib.type_asm_split_of ty)]
+
+fun datatype_splits ty () =
+  Theorems (map split_named (splitLib.type_split_rules ty))
+
 (* The combinators below -- [bundle], [symmetric], [first_case],
    [later_cases] -- only make sense over an entry that names theorems.
    Applying one to an entry that names none is an authoring mistake,
@@ -769,9 +791,9 @@ val table : (string * (unit -> resolution)) list =
   ("list.pred_set",
    library "list" "EVERY_MEM"),
   ("list.split",
-   library "list" "list_case_eq"),
+   datatype_split ``:'a list``),
   ("list.splits",
-   library "list" "list_case_eq"),
+   datatype_splits ``:'a list``),
   ("list_all2_append",
    library "list" "LIST_REL_APPEND_EQ"),
   ("list_all2_conv_all_nth",
@@ -826,16 +848,16 @@ val table : (string * (unit -> resolution)) list =
   ("option.induct",
    library "option" "option_induction"),
   ("option.split",
-   library "option" "option_case_eq"),
+   datatype_split ``:'a option``),
   ("option.split_asm",
-   library "option" "option_case_eq"),
+   datatype_asm_split ``:'a option``),
   ("option.splits",
-   library "option" "option_case_eq"),
+   datatype_splits ``:'a option``),
   (* With [pairwise] written out, [pairwiseI] is the reordering of a
      bounded quantifier that the engines do for themselves. *)
   ("pairwiseI", native),
   ("prod.split",
-   library "pair" "pair_case_eq"),
+   datatype_split ``:'a # 'b``),
   ("prod_eq_iff",
    library "pair" "PAIR_FST_SND_EQ"),
   ("rel_fun_def",

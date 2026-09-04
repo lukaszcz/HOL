@@ -2220,17 +2220,21 @@ end
 (* Split markers that cannot become split rules.                           *)
 
 val _ = let
-  (* Two theorems that [add_split] cannot turn into a looper: one of the
-     right shape but under no name in the theorem database, and one that
-     has a name but is not a split rule at all.  Neither may stop a
-     tactic, and the rule list is the path on which the user hears about
-     it. *)
+  (* A rule of the right shape but under no name in the theorem database
+     -- what [type_split_of] derives -- is registered under its split
+     redex's head constant, and a theorem that has a name but is not a
+     split rule at all is dropped.  Neither may stop a tactic, and the
+     rule list is the path on which the user hears about the drop. *)
   val bool_split = type_split_of ``:bool``
   val unnamed_split =
     INST_TYPE (map (fn v => v |-> ``:'zz -> 'zz``)
                    (type_vars_in_term (concl bool_split)))
               bool_split
-  val split_goal = ([], ``P (if b then x:'a else y) : bool``)
+  (* The instantiated rule matches only at the type it was instantiated
+     to, so the goal is stated there: at [:'a] the rule would be
+     inapplicable and the two outcomes -- dropped, and not matching --
+     would look the same. *)
+  val split_goal = ([], ``P (if b then (x:'zz -> 'zz) else y) : bool``)
 
   val warnings = ref ([] : string list)
   val saved_outstream = !Feedback.WARNING_outstream
@@ -2239,17 +2243,32 @@ val _ = let
   fun run tac goal = Lib.total (fn () => #1 (VALID tac goal)) ()
 
   val _ = warnings := []
-  val _ = tprint "unnamed Split rule leaves SIMP_TAC alone"
+  val _ = tprint "unnamed Split rule splits under its head constant"
   val _ =
     case run (SIMP_TAC bool_ss [Split unnamed_split]) split_goal of
         NONE => die "unnamed Split rule aborted SIMP_TAC"
       | SOME [([], result)] =>
-          if not (aconv result (#2 split_goal)) then
-            die "unnamed Split rule changed the goal"
-          else if not (warned ()) then
-            die "unnamed Split rule was dropped without a warning"
+          if aconv result (#2 split_goal) then
+            die "unnamed Split rule left the goal alone"
+          else if warned () then
+            die "unnamed Split rule was reported unusable"
           else OK()
       | SOME _ => die "unnamed Split rule produced the wrong subgoals"
+
+  val _ = warnings := []
+  val _ = tprint "an unnamed Split rule is retracted by its head constant"
+  val _ =
+    let
+      val name = split_thm_name unnamed_split
+      val retracted = del_split name (add_split unnamed_split bool_ss)
+    in
+      case run (SIMP_TAC retracted []) split_goal of
+          NONE => die "the retracted split rule aborted SIMP_TAC"
+        | SOME [([], result)] =>
+            if aconv result (#2 split_goal) then OK()
+            else die "the split rule survived its retraction"
+        | SOME _ => die "the retracted split rule produced wrong subgoals"
+    end
 
   val _ = warnings := []
   val _ = tprint "malformed Split rule leaves SIMP_TAC alone"

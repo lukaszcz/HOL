@@ -89,8 +89,19 @@ fun split_thm_name th =
           (case local_location locations of
                SOME name => name
              | NONE =>
-                 raise ERR "split_thm_name"
-                   "split theorem has no database name")
+                 (* A rule derived on demand -- [type_split_of] builds one
+                    out of TypeBase and stores nothing -- has no name in
+                    the database, and the looper still needs an identity
+                    to be added, displayed and retracted under.  The
+                    split redex's head constant is that identity: it is
+                    what the rule splits, so two derivations for one type
+                    answer to the same name and no two types collide. *)
+                 let
+                   val {Thy, Name, ...} =
+                     dest_thy_const (#head (rule_parts th))
+                 in
+                   persistent_name {Thy = Thy, Name = Name}
+                 end)
   end
 
 (* A REMOVE delta carries a table key and is applied as it stands.  This

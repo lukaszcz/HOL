@@ -1669,6 +1669,47 @@ val every_corpus_goal =
   benchClassical.goals @ benchSets.goals @ benchListMap.goals @
   benchLinarith.goals @ benchPresburger.goals @ benchAlgebra.goals
 
+(* A [split:] element the splitter cannot analyse is dropped with a
+   warning, and the goal is then measured under a method it was not
+   given.  Isabelle's [t.split] is the datatype package's rule and HOL4's
+   counterpart is derived from TypeBase; the [t_case_eq] theorems are
+   equations about a case term -- [list_CASE x v f = v' <=> ...] -- and
+   are not split rules at all. *)
+fun split_argument (benchLib.SplitAdd {name, theorem}) = SOME (name, theorem)
+  | split_argument _ = NONE
+
+fun recipe_splits (benchLib.Invoke (_, arguments)) =
+      List.mapPartial split_argument arguments
+  | recipe_splits (benchLib.Then (left, right)) =
+      recipe_splits left @ recipe_splits right
+  | recipe_splits (benchLib.AllGoals (left, right)) =
+      recipe_splits left @ recipe_splits right
+  | recipe_splits (benchLib.Otherwise (left, right)) =
+      recipe_splits left @ recipe_splits right
+  | recipe_splits (benchLib.Repeat inner) = recipe_splits inner
+
+val corpus_split_arguments =
+  List.concat
+    (map (fn ({recipe, ...} : benchLib.corpus_goal) => recipe_splits recipe)
+       every_corpus_goal)
+
+val unusable_split_arguments =
+  List.filter
+    (fn (_, theorem) => not (can splitLib.split_forms theorem))
+    corpus_split_arguments
+
+val _ =
+  check
+    ("every recipe split rule is one the splitter applies",
+     fn () =>
+       (if null unusable_split_arguments then ()
+        else
+          print
+            ("\nunusable splits: " ^
+             String.concatWith ", " (map #1 unusable_split_arguments) ^ "\n");
+        not (null corpus_split_arguments) andalso
+        null unusable_split_arguments))
+
 val direct_recipe_goals =
   List.filter
     (fn ({goal, recipe, ...} : benchLib.corpus_goal) =>

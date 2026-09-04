@@ -1600,16 +1600,15 @@ fun SF ssfrag =
                     markerLib.FRAG nm)
 
 (* A [Split] marker whose theorem cannot be turned into a split rule --
-   one with no database name to build a looper name from, or one that is
-   not shaped like a split rule at all -- drops the marker instead of
-   aborting.  [process_tags] is applied to the goal's own assumptions as
-   well as to a rule list (see [counted_psr] and the implication rebuild
-   in [GEN_GLOBAL_SIMP_TAC]), and there a marker-headed assumption is a
-   term the user is reasoning about rather than an instruction to the
-   simplifier; the tactics that scan assumptions are documented never to
-   fail.  Where the marker was written explicitly the drop is reported,
-   because silently ignoring a rule that was asked for is worse than a
-   warning. *)
+   one that is not shaped like a split rule at all -- drops the marker
+   instead of aborting.  [process_tags] is applied to the goal's own
+   assumptions as well as to a rule list (see [counted_psr] and the
+   implication rebuild in [GEN_GLOBAL_SIMP_TAC]), and there a
+   marker-headed assumption is a term the user is reasoning about rather
+   than an instruction to the simplifier; the tactics that scan
+   assumptions are documented never to fail.  Where the marker was
+   written explicitly the drop is reported, because silently ignoring a
+   rule that was asked for is worse than a warning. *)
 fun add_split_marker report th ss =
     add_split (destSplit th) ss
     handle HOL_ERR e =>
