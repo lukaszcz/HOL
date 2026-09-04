@@ -24,30 +24,117 @@ local
     (Redblackmap.mkDict String.compare :
       (string, term_provenance) Redblackmap.dict)
 
+  (* Quoting is lexical for ordinary user symbols, but quoted spellings of
+     syntax and baseline theory names denote separate user symbols.  Keep the
+     baseline, source/query, and proof-declaration provenances separate.
+     Thus a proof cannot shadow a builtin or duplicate its own declaration. *)
+  val cpc_reserved_symbols = ref (HOLset.empty String.compare)
+  val cpc_source_term_symbols = ref (HOLset.empty String.compare)
+  val cpc_source_sort_symbols = ref (HOLset.empty String.compare)
+  val cpc_proof_term_symbols = ref (HOLset.empty String.compare)
+  val cpc_proof_sort_symbols = ref (HOLset.empty String.compare)
+
+  fun set_member set item = HOLset.member (set, item)
+
+  fun quoted_symbol_key token =
+    case SmtLib_Parser.proof_quoted_symbol_token token of
+      SOME name =>
+        if set_member (!cpc_reserved_symbols) name then token else name
+    | NONE => token
+
+  (* Provenance follows the same semantic key as term elaboration.  In
+     particular, an ordinary user symbol has one entry whether cvc5 prints
+     it as [foo] or [|foo|]. *)
+  fun provenance_key name = quoted_symbol_key name
+
   fun add_term_provenance name provenance =
     cpc_term_provenances := Redblackmap.insert
-      (!cpc_term_provenances, name, provenance)
+      (!cpc_term_provenances, provenance_key name, provenance)
 
   fun lookup_term_provenance name =
-    SOME (Redblackmap.find (!cpc_term_provenances, name))
+    SOME (Redblackmap.find (!cpc_term_provenances, provenance_key name))
     handle Redblackmap.NotFound => NONE
 
   fun add_cpc_list name terms =
-    (cpc_list_definitions := Redblackmap.insert
-       (!cpc_list_definitions, name, terms);
-     cpc_list_names := name :: !cpc_list_names)
+    let val key = provenance_key name in
+      cpc_list_definitions := Redblackmap.insert
+        (!cpc_list_definitions, key, terms);
+      cpc_list_names := key :: !cpc_list_names
+    end
 
   fun lookup_cpc_list name =
-    SOME (Redblackmap.find (!cpc_list_definitions, name))
+    SOME (Redblackmap.find
+      (!cpc_list_definitions, provenance_key name))
     handle Redblackmap.NotFound => NONE
 
   val cpc_cfg : SmtLib_Parser.parser_cfg = {
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
     mk_let = SmtLib_Parser.smtlib_mk_let,
     lookup_binder_list = lookup_cpc_list,
+    symbol_key = quoted_symbol_key,
     parse_choice = false,
     parse_lambda = true
   }
+
+  fun cpc_symbol_key where_ token =
+    case SmtLib_Parser.proof_string_token token of
+      SOME _ => raise ERR where_ "string literal used as a symbol"
+    | NONE => quoted_symbol_key token
+
+  fun cpc_semantic_token token =
+    case SmtLib_Parser.proof_string_token token of
+      SOME _ => token
+    | NONE => quoted_symbol_key token
+
+  fun cpc_get_token get_token () = cpc_semantic_token (get_token ())
+
+  fun parse_cpc_type get_token tydict =
+    SmtLib_Parser.parse_type (cpc_get_token get_token) tydict
+
+  fun parse_cpc_type_list get_token tydict =
+    SmtLib_Parser.parse_type_list (cpc_get_token get_token) tydict
+
+  fun cpc_symbol_name where_ token =
+    SmtLib_Parser.proof_symbol_text (cpc_symbol_key where_ token)
+
+  fun cpc_id_initial c =
+    ((#"a" <= c andalso c <= #"z") orelse
+     (#"A" <= c andalso c <= #"Z")) orelse
+    List.exists (Lib.equal c)
+      [#"~", #"!", #"@", #"$", #"%", #"^", #"&", #"*", #"_",
+       #"-", #"+", #"=", #"<", #">", #".", #"?", #"/"]
+
+  fun cpc_simple_symbol text =
+    String.size text > 0 andalso
+    cpc_id_initial (String.sub (text, 0)) andalso
+    List.all (fn c => cpc_id_initial c orelse Char.isDigit c)
+      (String.explode text)
+
+  (* CPC command and premise IDs use the @-prefixed identifier production,
+     not the wider atom production and never the String-token production.
+     Apply the ordinary symbol key only after checking the original token
+     kind and spelling.  Thus [@p] and [|@p|] share a key unless [@p] is a
+     reserved symbol, whose quoted spelling remains a distinct symbol. *)
+  fun cpc_id_key where_ description token =
+    case SmtLib_Parser.proof_string_token token of
+      SOME _ => raise ERR where_
+        ("string literal is not a valid CPC " ^ description)
+    | NONE =>
+        let val text = SmtLib_Parser.proof_symbol_text token in
+          if cpc_simple_symbol text andalso String.size text > 1 andalso
+             String.sub (text, 0) = #"@"
+          then quoted_symbol_key token
+          else raise ERR where_
+            ("invalid CPC " ^ description ^ " '" ^ text ^ "'")
+        end
+
+  (* cvc5's @var production is the one CPC context whose name is serialized
+     as an SMT-LIB String token.  Decode it to the corresponding HOL name;
+     no ordinary identifier position receives this exception. *)
+  fun cpc_var_name token =
+    case SmtLib_Parser.proof_string_token token of
+      SOME name => name
+    | NONE => SmtLib_Parser.proof_symbol_text token
 
   fun add_term (dicts_ref : dicts ref) name tm =
     let
@@ -407,10 +494,10 @@ local
       | _ => cpc_arith_total_error
         ("unsupported totalized arithmetic symbol " ^ token)
 
-  (* cvc5 uses unary str.++ and re.++ applications as compact suffix
-     containers in RARE annotations.  They are proof metadata, not accepted
-     benchmark syntax; interpret a singleton as itself and retain the
-     standard left-associative meaning for longer lists. *)
+  (* cvc5 uses unary variadic aggregates as compact list substitutions in
+     RARE annotations.  They are proof metadata, not accepted benchmark
+     syntax; interpret a singleton as itself and retain the standard
+     left-associative meaning for longer lists. *)
   fun cpc_concat_parsefn theory_name token indices args =
     if not (List.null indices) then
       raise ERR "cpc_concat_parsefn" "unexpected concat indices"
@@ -999,6 +1086,14 @@ local
             then term
             else raise ERR "as_sort_marker" "qualification sort mismatch"
         | _ => raise ERR "as_sort_marker" "expected a qualified term"
+      fun function_sort token indices args =
+        if token = "->" andalso List.null indices andalso
+           List.length args >= 2 then
+          let val (domains, range) = Lib.front_last args in
+            boolSyntax.list_mk_fun (domains, range)
+          end
+        else raise ERR "function_sort"
+          "expected a function sort with a domain and range"
       (* The source translation dictionary is deliberately as narrow as its
          declared logic.  CPC arithmetic lemmas may nevertheless contain
          rationals and their Real coercions, so add the mixed arithmetic
@@ -1013,10 +1108,15 @@ local
                   SmtLib_Theories.Reals_Ints.tmdict)))))
       val tmdict = with_cpc_parameterized_skolems tmdict
     in
-    (tydict, Library.extend_dict (("str.++",
+    (Library.extend_dict (("->", function_sort), tydict),
+      Library.extend_dict (("str.++",
         cpc_concat_parsefn "smtstr_concat"),
       Library.extend_dict (("re.++",
         cpc_concat_parsefn "reglan_concat"),
+      Library.extend_dict (("re.union",
+        cpc_concat_parsefn "reglan_union"),
+      Library.extend_dict (("re.inter",
+        cpc_concat_parsefn "reglan_inter"),
       Library.extend_dict (("to_int", cpc_intreal_parsefn),
       Library.extend_dict (("to_real", cpc_intreal_parsefn),
       Library.extend_dict (("int.pow2", cpc_intreal_parsefn),
@@ -1035,11 +1135,12 @@ local
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
           Library.extend_dict (("_", cpc_literal_parsefn),
-            with_cpc_fp_entries tmdict)))))))))))))))))))))
+            with_cpc_fp_entries tmdict)))))))))))))))))))))))
     end
 
-  fun parse_term dicts_ref get_token =
+  fun parse_term dicts_ref raw_get_token =
     let
+      val get_token = cpc_get_token raw_get_token
       val first = get_token ()
       fun ordinary tokens = SmtLib_Parser.parse_term_with_cfg cpc_cfg
         (Library.undo_look_ahead tokens get_token) (!dicts_ref)
@@ -1082,7 +1183,8 @@ local
               val scrutinee = parse_term dicts_ref get_token
               val _ = Library.expect_token ")" (get_token ())
               val constructor_parameter = Term.mk_var
-                (constructor, Type.gen_tyvar ())
+                (cpc_symbol_name "parse_term" constructor,
+                 Type.gen_tyvar ())
               val (_, tmdict) = !dicts_ref
             in
               SmtLib_Parser.apply_term tmdict "is"
@@ -1090,8 +1192,8 @@ local
             end
           else if head = "@var" then
             let
-              val var_name = get_token ()
-              val var_type = SmtLib_Parser.parse_type get_token
+              val var_name = cpc_var_name (get_token ())
+              val var_type = parse_cpc_type get_token
                 (#1 (!dicts_ref))
               val _ = Library.expect_token ")" (get_token ())
             in
@@ -1212,10 +1314,16 @@ local
      erase which exact side an equality-consuming route selected. *)
   fun sparse_equality left right = EqualityProvenance (left, right)
 
-  fun lookup_lexical_provenance [] _ = NONE
-    | lookup_lexical_provenance ((bound, provenance) :: rest) name =
-        if bound = name then SOME provenance
-        else lookup_lexical_provenance rest name
+  fun lookup_lexical_provenance environment name =
+    let
+      val key = provenance_key name
+      fun lookup [] = NONE
+        | lookup ((bound, provenance) :: rest) =
+            if provenance_key bound = key then SOME provenance
+            else lookup rest
+    in
+      lookup environment
+    end
 
   fun binder_names raw =
     case raw of
@@ -1223,7 +1331,7 @@ local
         let
           fun binder_name (RawAtom alias) = alias
             | binder_name (RawList
-                [RawAtom "@var", RawAtom name, _]) = name
+                [RawAtom "@var", RawAtom name, _]) = cpc_var_name name
             | binder_name _ = raise ERR "provenance_of_raw"
                 "unsupported CPC inline binder"
         in
@@ -1251,7 +1359,8 @@ local
       RawList bindings =>
         let
           fun binding (RawList [RawAtom name, rhs]) =
-                (name, provenance_of_raw_in environment rhs)
+                (provenance_key name,
+                 provenance_of_raw_in environment rhs)
             | binding _ = raise ERR "provenance_of_raw"
                 "unsupported SMT-LIB let binding"
         in
@@ -1286,7 +1395,8 @@ local
           (case binder_names binders of
              SOME names => exact_binders head names
                (provenance_of_raw_in
-                 (List.map (fn name => (name, AtomicProvenance)) names @
+                 (List.map (fn name =>
+                    (provenance_key name, AtomicProvenance)) names @
                   environment) body)
            | NONE => UnavailableProvenance
                ("unsupported " ^ head ^ " binder provenance"))
@@ -1381,12 +1491,6 @@ local
       loop 0 []
     end
 
-  fun term_declared (tydict, tmdict) name =
-    Option.isSome (Redblackmap.peek (tmdict, name))
-
-  fun type_declared (tydict, tmdict) name =
-    Option.isSome (Redblackmap.peek (tydict, name))
-
   fun datatype_binding_names tokens =
     let
       fun bindings ("(" :: name :: _ :: ")" :: rest) acc =
@@ -1397,64 +1501,631 @@ local
       case tokens of "(" :: rest => bindings rest [] | _ => []
     end
 
-  fun parse_or_keep_term_declaration parse dicts_ref get_token =
-    let
-      val tokens = declaration_tokens get_token
-      val name = case tokens of name :: _ => name
-        | [] => raise ERR "parse_declaration" "missing declaration name"
-    in
-      if term_declared (!dicts_ref) name then ()
-      else dicts_ref := parse (Library.undo_look_ahead tokens get_token)
-        (!dicts_ref)
-    end
+  type term_declaration = {
+    key: string,
+    name: string,
+    domain: Type.hol_type list,
+    range: Type.hol_type,
+    parse: Term.term SmtLib_Parser.parse_fn
+  }
 
-  fun parse_declare_const get_token (tydict, tmdict) =
+  fun parse_term_declaration parse_domain get_token (tydict, _) =
     let
-      val name = get_token ()
-      val range = SmtLib_Parser.parse_type get_token tydict
+      val marked_name = get_token ()
+      val key = cpc_symbol_key "parse_declaration" marked_name
+      val name = cpc_symbol_name "parse_declaration" marked_name
+      val domain =
+        if parse_domain then parse_cpc_type_list get_token tydict
+        else []
+      val range = parse_cpc_type get_token tydict
       val _ = Library.expect_token ")" (get_token ())
-      val tm = Term.mk_var (name, range)
-      fun parsefn _ indices args =
-        if not (List.null indices) then
-          raise ERR "parse_declare_const"
-            ("CPC constant " ^ name ^ " does not accept indices")
+      val tm = Term.mk_var
+        (name, boolSyntax.list_mk_fun (domain, range))
+      fun parse _ indices args =
+        if not (List.null indices) orelse
+           (parse_domain andalso
+            List.length args <> List.length domain) then
+          raise ERR ("<" ^ name ^ ">")
+            "wrong number of CPC declaration arguments"
         else
           Term.list_mk_comb (tm, args)
           handle Feedback.HOL_ERR holerr =>
-            raise ERR "parse_declare_const"
-              ("ill-typed CPC application of " ^ name ^ ": " ^
+            raise ERR ("<" ^ name ^ ">")
+              ("ill-typed CPC declaration application: " ^
                Feedback.message_of holerr)
     in
-      (tydict, Library.extend_dict ((name, parsefn), tmdict))
+      {key = key, name = name, domain = domain,
+       range = range, parse = parse}
     end
 
-  fun parse_declare_fun get_token (tydict, tmdict) =
-    let val (_, tmdict) = SmtLib_Parser.parse_declare_fun get_token
-      (tydict, tmdict)
-    in (tydict, tmdict) end
+  fun declaration_compatible tmdict
+      ({key, domain, range, ...}: term_declaration) =
+    let
+      fun make_args _ [] = []
+        | make_args index (ty :: rest) =
+            Term.mk_var
+              ("cpc_decl_arg" ^ Int.toString index, ty) ::
+            make_args (index + 1) rest
+      val signatures =
+        if List.null domain andalso Lib.can Type.dom_rng range then
+          let val (function_domain, function_range) =
+            boolSyntax.strip_fun range
+          in
+            [([], range), (function_domain, function_range)]
+          end
+        else [(domain, range)]
+      val candidates =
+        case Redblackmap.peek (tmdict, key) of
+          SOME parsefns => parsefns
+        | NONE => []
+      fun compatible_signature parsefn (argument_types, result_type) =
+        Type.compare
+          (Term.type_of
+             (parsefn (SmtLib_Parser.proof_symbol_text key) []
+               (make_args 0 argument_types)),
+           result_type) = EQUAL
+        handle Feedback.HOL_ERR _ => false
+             | _ => false
+      fun compatible parsefn =
+        List.exists (compatible_signature parsefn) signatures
+    in
+      List.exists compatible candidates
+    end
+
+  fun parse_or_keep_term_declaration parse_domain dicts_ref get_token =
+    let
+      val tokens = declaration_tokens get_token
+      val declaration = parse_term_declaration parse_domain
+        (Library.undo_look_ahead tokens get_token) (!dicts_ref)
+      val (tydict, tmdict) = !dicts_ref
+      val {key, name, parse, ...} = declaration
+      val source_symbol = set_member (!cpc_source_term_symbols) key
+      val proof_symbol = set_member (!cpc_proof_term_symbols) key
+      val builtin_symbol = set_member (!cpc_reserved_symbols) key orelse
+        set_member (!cpc_reserved_symbols) name
+      fun incompatible () = raise ERR "parse_declaration"
+        ("incompatible redeclaration of CPC symbol " ^ name)
+    in
+      if builtin_symbol then
+        raise ERR "parse_declaration"
+          ("CPC declaration may not shadow builtin symbol " ^ name)
+      else if proof_symbol then
+        raise ERR "parse_declaration"
+          ("duplicate CPC declaration of symbol " ^ name)
+      else if source_symbol then
+        if declaration_compatible tmdict declaration then ()
+        else incompatible ()
+      else if Option.isSome (Redblackmap.peek (tmdict, key)) then
+        incompatible ()
+      else
+        (dicts_ref :=
+           (tydict, Library.extend_dict ((key, parse), tmdict));
+         cpc_proof_term_symbols :=
+           HOLset.add (!cpc_proof_term_symbols, key))
+    end
+
+  val parse_declare_const = false
+  val parse_declare_fun = true
 
   fun parse_declare_sort get_token (tydict, tmdict) =
     let
-      val name = get_token ()
-      val _ = Library.expect_token "0" (get_token ())
+      val marked_name = get_token ()
+      val key = cpc_symbol_key "parse_declare_sort" marked_name
+      val name = cpc_symbol_name "parse_declare_sort" marked_name
+      val arity_text = get_token ()
+      val arity =
+        case Int.fromString arity_text of
+          SOME value =>
+            if value < 0 then raise ERR "parse_declare_sort"
+              "CPC sort arity must be non-negative"
+            else value
+        | NONE => raise ERR "parse_declare_sort"
+            "CPC sort arity must be a numeral"
       val _ = Library.expect_token ")" (get_token ())
       val ty = Type.mk_vartype ("'cpc_" ^ name)
       fun parsefn _ indices args =
-        if List.null indices andalso List.null args then ty
+        if List.null indices andalso arity = 0 andalso List.null args then ty
         else raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
     in
-      (Library.extend_dict ((name, parsefn), tydict), tmdict)
+      {key = key, name = name, arity = arity, parse = parsefn,
+       dicts = (tydict, tmdict)}
+    end
+
+  fun sort_declaration_compatible tydict key arity =
+    let
+      val arguments = List.tabulate (arity, fn index =>
+        Type.mk_vartype ("'cpc_sort_arg" ^ Int.toString index))
+    in
+      case Redblackmap.peek (tydict, key) of
+        NONE => false
+      | SOME parsefns => List.exists
+          (fn parsefn =>
+            (ignore
+               (parsefn (SmtLib_Parser.proof_symbol_text key) [] arguments);
+             true)
+            handle Feedback.HOL_ERR _ => false
+                 | _ => false) parsefns
     end
 
   fun parse_or_keep_sort_declaration dicts_ref get_token =
     let
       val tokens = declaration_tokens get_token
-      val name = case tokens of name :: _ => name
-        | [] => raise ERR "parse_declaration" "missing sort declaration name"
-    in
-      if type_declared (!dicts_ref) name then ()
-      else dicts_ref := parse_declare_sort
+      val declaration = parse_declare_sort
         (Library.undo_look_ahead tokens get_token) (!dicts_ref)
+      val {key, name, arity, parse, dicts = (tydict, tmdict)} = declaration
+      val source_symbol = set_member (!cpc_source_sort_symbols) key
+      val proof_symbol = set_member (!cpc_proof_sort_symbols) key
+      val builtin_symbol = set_member (!cpc_reserved_symbols) key orelse
+        set_member (!cpc_reserved_symbols) name
+    in
+      if builtin_symbol then
+        raise ERR "parse_declaration"
+          ("CPC declaration may not shadow builtin sort " ^ name)
+      else if proof_symbol then
+        raise ERR "parse_declaration"
+          ("duplicate CPC declaration of sort " ^ name)
+      else if source_symbol then
+        if sort_declaration_compatible tydict key arity then ()
+        else raise ERR "parse_declaration"
+          ("incompatible redeclaration of CPC sort " ^ name)
+      else if arity <> 0 then
+        raise ERR "parse_declaration"
+          ("unsupported non-nullary CPC sort declaration " ^ name)
+      else if Option.isSome (Redblackmap.peek (tydict, key)) then
+        raise ERR "parse_declaration"
+          ("incompatible redeclaration of CPC sort " ^ name)
+      else
+        (dicts_ref :=
+           (Library.extend_dict ((key, parse), tydict), tmdict);
+         cpc_proof_sort_symbols :=
+           HOLset.add (!cpc_proof_sort_symbols, key))
+    end
+
+  type datatype_selector = {
+    key: string,
+    name: string,
+    sort: raw_term
+  }
+
+  type datatype_constructor = {
+    key: string,
+    name: string,
+    selectors: datatype_selector list
+  }
+
+  type datatype_declaration = {
+    sort_key: string,
+    sort_name: string,
+    arity: int,
+    params: string list,
+    constructors: datatype_constructor list
+  }
+
+  fun all_chars predicate text =
+    List.all predicate (String.explode text)
+
+  fun valid_simple_symbol text =
+    let
+      fun letter c =
+        (#"a" <= c andalso c <= #"z") orelse
+        (#"A" <= c andalso c <= #"Z")
+      fun initial c =
+        letter c orelse List.exists (Lib.equal c)
+          [#"~", #"!", #"@", #"$", #"%", #"^", #"&", #"*",
+           #"_", #"-", #"+", #"=", #"<", #">", #".", #"?", #"/"]
+    in
+      String.size text > 0 andalso initial (String.sub (text, 0)) andalso
+      all_chars (fn c => initial c orelse Char.isDigit c) text
+    end
+
+  fun datatype_symbol where_ role token =
+    let
+      val key = cpc_symbol_key where_ token
+      val name = SmtLib_Parser.proof_symbol_text key
+      val _ =
+        case SmtLib_Parser.proof_quoted_symbol_token token of
+          SOME _ => ()
+        | NONE =>
+            if valid_simple_symbol token andalso
+               String.sub (token, 0) <> #":" then ()
+            else raise ERR where_
+              ("invalid " ^ role ^ " name '" ^ token ^ "'")
+    in
+      (key, name)
+    end
+
+  fun distinct_datatype_names where_ role names =
+    let
+      fun loop _ [] = ()
+        | loop seen ((key, name) :: rest) =
+            if set_member seen key then raise ERR where_
+              ("duplicate " ^ role ^ " name " ^ name)
+            else loop (HOLset.add (seen, key)) rest
+    in
+      loop (HOLset.empty String.compare) names
+    end
+
+  fun datatype_arity where_ name text =
+    case Int.fromString text of
+      SOME arity =>
+        if arity >= 0 andalso all_chars Char.isDigit text andalso
+           String.size text > 0 then arity
+        else raise ERR where_
+          ("datatype arity for '" ^ name ^ "' must be a natural numeral")
+    | NONE => raise ERR where_
+        ("datatype arity for '" ^ name ^ "' must be a natural numeral")
+
+  fun parse_datatype_body where_ sort_key sort_name arity body =
+    let
+      val (param_tokens, constructor_raws) =
+        case body of
+          RawList [RawAtom "par", RawList params, RawList constructors] =>
+            (params, constructors)
+        | RawList (RawAtom "par" :: _) => raise ERR where_
+            "parametric datatype body must be (par (params) (constructors))"
+        | RawList constructors => ([], constructors)
+        | RawAtom _ => raise ERR where_ "datatype body must be parenthesized"
+      fun parameter raw =
+        case raw of
+          RawAtom token => datatype_symbol where_ "datatype parameter" token
+        | RawList _ => raise ERR where_ "datatype parameter must be a symbol"
+      val parameter_names = List.map parameter param_tokens
+      val _ = distinct_datatype_names where_ "datatype parameter"
+        parameter_names
+      val _ =
+        if List.length parameter_names = arity then ()
+        else raise ERR where_
+          ("datatype arity for '" ^ sort_name ^ "' is " ^
+           Int.toString arity ^ " but its body has " ^
+           Int.toString (List.length parameter_names) ^ " parameter(s)")
+      fun selector raw : datatype_selector =
+        case raw of
+          RawList [RawAtom token, sort] =>
+            let val (key, name) =
+              datatype_symbol where_ "datatype selector" token
+            in {key = key, name = name, sort = sort} end
+        | _ => raise ERR where_
+            "datatype selector must have the form (name sort)"
+      fun constructor raw : datatype_constructor =
+        case raw of
+          RawList (RawAtom token :: selector_raws) =>
+            let
+              val (key, name) =
+                datatype_symbol where_ "datatype constructor" token
+              val selectors = List.map selector selector_raws
+              val _ = distinct_datatype_names where_ "datatype selector"
+                (List.map (fn ({key, name, ...}: datatype_selector) =>
+                  (key, name)) selectors)
+            in
+              {key = key, name = name, selectors = selectors}
+            end
+        | _ => raise ERR where_
+            "datatype constructor must be a nonempty parenthesized form"
+      val _ = if List.null constructor_raws then
+          raise ERR where_ "datatype constructor list must be nonempty"
+        else ()
+      val constructors = List.map constructor constructor_raws
+      val _ = distinct_datatype_names where_ "datatype constructor"
+        (List.map (fn ({key, name, ...}: datatype_constructor) =>
+          (key, name)) constructors)
+      val selector_names = List.concat (List.map
+        (fn ({selectors, ...}: datatype_constructor) => List.map
+          (fn ({key, name, ...}: datatype_selector) => (key, name))
+          selectors) constructors)
+      val _ = distinct_datatype_names where_ "datatype selector"
+        selector_names
+    in
+      {sort_key = sort_key, sort_name = sort_name, arity = arity,
+       params = List.map #1 parameter_names, constructors = constructors}
+    end
+
+  fun source_sort_type where_ tydict key arguments =
+    let
+      val candidates =
+        case Redblackmap.peek (tydict, key) of
+          SOME parsefns => parsefns
+        | NONE => []
+      fun first [] = raise ERR where_
+            ("source datatype sort " ^
+             SmtLib_Parser.proof_symbol_text key ^ " is unavailable")
+        | first (parsefn :: rest) =
+            (parsefn (SmtLib_Parser.proof_symbol_text key) [] arguments
+             handle Feedback.HOL_ERR _ => first rest
+                  | _ => first rest)
+    in
+      first candidates
+    end
+
+  fun validate_datatype_declarations dicts_ref declarations =
+    let
+      val (tydict, tmdict) = !dicts_ref
+      val sort_names = List.map
+        (fn ({sort_key, sort_name, ...}: datatype_declaration) =>
+          (sort_key, sort_name)) declarations
+      val _ = distinct_datatype_names "declare-datatypes" "datatype sort"
+        sort_names
+      val value_names = List.concat (List.map
+        (fn ({constructors, ...}: datatype_declaration) =>
+          List.concat (List.map
+            (fn ({key, name, selectors}: datatype_constructor) =>
+              (key, name) :: List.map
+                (fn ({key, name, ...}: datatype_selector) => (key, name))
+                selectors) constructors)) declarations)
+      val _ = distinct_datatype_names "declare-datatypes"
+        "datatype constructor/selector" value_names
+      fun reject_sort ({sort_key, sort_name, arity, ...}:
+          datatype_declaration) =
+        if set_member (!cpc_reserved_symbols) sort_key orelse
+           set_member (!cpc_reserved_symbols) sort_name then
+          raise ERR "declare-datatypes"
+            ("datatype may not shadow builtin sort " ^ sort_name)
+        else if set_member (!cpc_proof_sort_symbols) sort_key then
+          raise ERR "declare-datatypes"
+            ("datatype sort conflicts with a proof declaration " ^ sort_name)
+        else if not (set_member (!cpc_source_sort_symbols) sort_key) orelse
+                not (sort_declaration_compatible tydict sort_key arity) then
+          raise ERR "declare-datatypes"
+            ("datatype sort is not identical to source sort " ^ sort_name)
+        else ()
+      val _ = List.app reject_sort declarations
+      fun validate_one ({sort_key, sort_name, arity, params, constructors}:
+          datatype_declaration) =
+        let
+          val param_tys = List.tabulate (arity, fn index =>
+            Type.mk_vartype ("'cpc_datatype_param" ^ Int.toString index))
+          val datatype_ty = source_sort_type "declare-datatypes" tydict
+            sort_key param_tys
+          val parameter_pairs = ListPair.zip (params, param_tys)
+          fun add_parameter ((key, ty), dictionary) =
+            let
+              val name = SmtLib_Parser.proof_symbol_text key
+              val _ =
+                if set_member (!cpc_reserved_symbols) key orelse
+                   set_member (!cpc_reserved_symbols) name orelse
+                   set_member (!cpc_source_sort_symbols) key orelse
+                   set_member (!cpc_proof_sort_symbols) key then
+                  raise ERR "declare-datatypes"
+                    ("datatype parameter shadows namespace symbol " ^ name)
+                else ()
+              fun parse _ indices arguments =
+                if List.null indices andalso List.null arguments then ty
+                else raise ERR "declare-datatypes"
+                  ("datatype parameter " ^ name ^ " takes no arguments")
+            in
+              Library.extend_dict ((key, parse), dictionary)
+            end
+          val body_tydict = List.foldl add_parameter tydict parameter_pairs
+          fun selector_type ({sort, ...}: datatype_selector) =
+            let
+              val tokens = ref (raw_tokens sort)
+              fun next () =
+                case !tokens of
+                  token :: rest => (tokens := rest; token)
+                | [] => raise ERR "declare-datatypes"
+                    "datatype selector sort ended unexpectedly"
+              val ty = parse_cpc_type next body_tydict
+              val _ = if List.null (!tokens) then () else
+                raise ERR "declare-datatypes"
+                  "datatype selector sort has trailing syntax"
+            in
+              ty
+            end
+          fun constructor_domains ty =
+            case Lib.total Type.dom_rng ty of
+              NONE => []
+            | SOME (domain, range) =>
+                domain :: constructor_domains range
+          val source_constructor_templates =
+            TypeBase.constructors_of datatype_ty
+            handle Feedback.HOL_ERR holerr =>
+              raise ERR "declare-datatypes"
+                ("source sort " ^ sort_name ^
+                 " has no TypeBase datatype mapping: " ^
+                 Feedback.message_of holerr)
+          val source_constructors =
+            List.map (TypeBasePure.cinst datatype_ty)
+              source_constructor_templates
+          val _ =
+            if List.length constructors = List.length source_constructors
+            then ()
+            else raise ERR "declare-datatypes"
+              ("datatype " ^ sort_name ^
+               " constructor set is not identical to source: expected " ^
+               Int.toString (List.length source_constructors) ^
+               ", declared " ^ Int.toString (List.length constructors))
+          fun require_source_symbol role key name =
+            if set_member (!cpc_reserved_symbols) key orelse
+               set_member (!cpc_reserved_symbols) name then
+              raise ERR "declare-datatypes"
+                ("datatype " ^ role ^ " may not shadow builtin symbol " ^
+                 name)
+            else if set_member (!cpc_proof_term_symbols) key then
+              raise ERR "declare-datatypes"
+                ("datatype " ^ role ^
+                 " conflicts with a proof declaration " ^ name)
+            else if not (set_member (!cpc_source_term_symbols) key) then
+              raise ERR "declare-datatypes"
+                ("datatype " ^ role ^
+                 " is not identical to source symbol " ^ name)
+            else ()
+          fun parse_source role key name arguments =
+            let
+              val _ = require_source_symbol role key name
+            in
+              SmtLib_Parser.apply_term tmdict key [] arguments
+              handle Feedback.HOL_ERR holerr =>
+                raise ERR "declare-datatypes"
+                  ("datatype " ^ role ^
+                   " is not identical to source symbol " ^ name ^ ": " ^
+                   Feedback.message_of holerr)
+            end
+          fun map_constructor
+              ({key, name, selectors}: datatype_constructor) =
+            let
+              val _ = require_source_symbol "constructor" key name
+              val declared_selector_tys = List.map selector_type selectors
+              fun exact_parser_result constructor =
+                let
+                  val domains = constructor_domains
+                    (Term.type_of constructor)
+                  val arguments = Lib.mapi
+                    (fn index => fn ty => Term.mk_var
+                      ("cpc_datatype_argument" ^ Int.toString index, ty))
+                    domains
+                  val expected = Term.list_mk_comb (constructor, arguments)
+                  val parsed =
+                    SOME (SmtLib_Parser.apply_term tmdict key [] arguments)
+                    handle Feedback.HOL_ERR _ => NONE
+                in
+                  case parsed of
+                    SOME result => Term.aconv result expected
+                  | NONE => false
+                end
+              fun probes_as (template, candidate) =
+                if exact_parser_result template orelse
+                   exact_parser_result candidate
+                then SOME candidate
+                else NONE
+              val mappings = List.mapPartial probes_as
+                (ListPair.zip
+                  (source_constructor_templates, source_constructors))
+              val source_constructor =
+                case mappings of
+                  [candidate] => candidate
+                | _ => raise ERR "declare-datatypes"
+                    ("datatype constructor " ^ name ^
+                     " does not have one exact source parser mapping in " ^
+                     sort_name)
+              val source_selector_tys =
+                constructor_domains (Term.type_of source_constructor)
+              val _ =
+                if List.length selectors = List.length source_selector_tys
+                then ()
+                else raise ERR "declare-datatypes"
+                  ("datatype constructor " ^ name ^
+                   " selector count is not identical to source: expected " ^
+                   Int.toString (List.length source_selector_tys) ^
+                   ", declared " ^ Int.toString (List.length selectors))
+              val _ =
+                if ListPair.allEq (fn (declared, source) =>
+                     Type.compare (declared, source) = EQUAL)
+                     (declared_selector_tys, source_selector_tys)
+                then ()
+                else raise ERR "declare-datatypes"
+                  ("datatype constructor " ^ name ^
+                   " has selector types different from its source")
+            in
+              (source_constructor, selectors, source_selector_tys)
+            end
+          val mapped_constructors = List.map map_constructor constructors
+          fun same_constructor left right = Term.same_const left right
+          fun unique_mapped [] = true
+            | unique_mapped ((constructor, _, _) :: rest) =
+                not (List.exists (fn (other, _, _) =>
+                  same_constructor constructor other) rest) andalso
+                unique_mapped rest
+          val _ =
+            if unique_mapped mapped_constructors andalso
+               List.all (fn source_constructor =>
+                 List.exists (fn (mapped, _, _) =>
+                   same_constructor source_constructor mapped)
+                   mapped_constructors) source_constructors
+            then ()
+            else raise ERR "declare-datatypes"
+              ("datatype " ^ sort_name ^
+               " constructor set is not identical to source")
+          val scrutinee = Term.mk_var
+            ("cpc_datatype_scrutinee", datatype_ty)
+          fun validate_selectors
+              (constructor, selectors, source_selector_tys) =
+            let
+              fun validate (index,
+                  ({key, name, ...}: datatype_selector), source_range) =
+                let
+                  val parsed = parse_source "selector" key name [scrutinee]
+                  val expected =
+                    SmtLib_Parser.canonical_datatype_selector_case
+                      constructor index scrutinee
+                in
+                  if Type.compare (Term.type_of parsed, source_range) = EQUAL
+                     andalso Term.aconv parsed expected then ()
+                  else raise ERR "declare-datatypes"
+                    ("datatype selector " ^ name ^
+                     " is not identical to source constructor/field " ^
+                     "association " ^ Int.toString index)
+                end
+              val indexed = ListPair.zip
+                (List.tabulate (List.length selectors, Lib.I),
+                 ListPair.zip (selectors, source_selector_tys))
+            in
+              List.app (fn (index, (selector, source_range)) =>
+                validate (index, selector, source_range)) indexed
+            end
+        in
+          List.app validate_selectors mapped_constructors
+        end
+    in
+      List.app validate_one declarations
+    end
+
+  fun parse_declare_datatype_command dicts_ref get_token =
+    let
+      val marked_name = get_token ()
+      val (sort_key, sort_name) =
+        datatype_symbol "declare-datatype" "datatype sort" marked_name
+      val body = read_raw_term get_token
+      val _ = Library.expect_token ")" (get_token ())
+      val arity =
+        case body of
+          RawList [RawAtom "par", RawList params, RawList _] =>
+            List.length params
+        | _ => 0
+      val declaration = parse_datatype_body "declare-datatype"
+        sort_key sort_name arity body
+    in
+      validate_datatype_declarations dicts_ref [declaration]
+    end
+
+  fun parse_declare_datatypes_command dicts_ref get_token =
+    let
+      val bindings_raw = read_raw_term get_token
+      val bodies_raw = read_raw_term get_token
+      val _ = Library.expect_token ")" (get_token ())
+      val bindings =
+        case bindings_raw of
+          RawList [] => raise ERR "declare-datatypes"
+            "datatype sort binding list must be nonempty"
+        | RawList entries => entries
+        | RawAtom _ => raise ERR "declare-datatypes"
+            "datatype sort bindings must be parenthesized"
+      val bodies =
+        case bodies_raw of
+          RawList [] => raise ERR "declare-datatypes"
+            "datatype body list must be nonempty"
+        | RawList entries => entries
+        | RawAtom _ => raise ERR "declare-datatypes"
+            "datatype bodies must be parenthesized"
+      val _ = if List.length bindings = List.length bodies then () else
+        raise ERR "declare-datatypes"
+          "datatype sort and body lists have different lengths"
+      fun binding raw =
+        case raw of
+          RawList [RawAtom token, RawAtom arity_text] =>
+            let
+              val (key, name) = datatype_symbol "declare-datatypes"
+                "datatype sort" token
+            in
+              (key, name,
+               datatype_arity "declare-datatypes" name arity_text)
+            end
+        | _ => raise ERR "declare-datatypes"
+            "datatype sort binding must have the form (name arity)"
+      fun declaration ((key, name, arity), body) =
+        parse_datatype_body "declare-datatypes" key name arity body
+      val declarations = List.map declaration
+        (ListPair.zip (List.map binding bindings, bodies))
+    in
+      validate_datatype_declarations dicts_ref declarations
     end
 
   fun parse_paren_name_list get_token =
@@ -1468,11 +2139,30 @@ local
       if first = "(" then loop [] else [first]
     end
 
+  fun parse_premise_ids get_token =
+    List.map (cpc_id_key "parse_step" "premise ID")
+      (parse_paren_name_list get_token)
+
   (* A CPC definition is a term alias, not a HOL hypothesis.  Resolving it in
      the parser preserves sharing without granting the solver any theorem. *)
   fun parse_define dicts_ref get_token =
     let
-      val name = get_token ()
+      val marked_name = get_token ()
+      val key = cpc_symbol_key "parse_define" marked_name
+      val name = cpc_symbol_name "parse_define" marked_name
+      val _ =
+        if set_member (!cpc_reserved_symbols) key orelse
+           set_member (!cpc_reserved_symbols) name then
+          raise ERR "parse_define"
+            ("CPC definition may not shadow builtin symbol " ^ name)
+        else if set_member (!cpc_proof_term_symbols) key then
+          raise ERR "parse_define"
+            ("duplicate CPC declaration or definition of symbol " ^ name)
+        else if set_member (!cpc_source_term_symbols) key orelse
+                Option.isSome (Redblackmap.peek (#2 (!dicts_ref), key)) then
+          raise ERR "parse_define"
+            ("CPC definition may not redefine source symbol " ^ name)
+        else ()
       (* Most CPC definitions use SMT-LIB's ``()`` binder list, but cvc5
          also emits proof-local aliases without that list (notably for its
          @list bookkeeping values).  Both forms are nullary definitions. *)
@@ -1501,7 +2191,7 @@ local
                       (Library.undo_look_ahead [token] get_token) :: acc)
                   end
                 val terms = list_terms []
-                val _ = add_cpc_list name terms
+                val _ = add_cpc_list key terms
                 val _ = Library.expect_token ")" (get_token ())
               in NONE end
             else if head = "@purify" then
@@ -1517,8 +2207,8 @@ local
               end
             else if head = "@var" then
               let
-                val var_name = get_token ()
-                val var_type = SmtLib_Parser.parse_type get_token
+                val var_name = cpc_var_name (get_token ())
+                val var_type = parse_cpc_type get_token
                   (#1 (!dicts_ref))
                 val _ = Library.expect_token ")" (get_token ())
               in
@@ -1534,36 +2224,512 @@ local
       val _ = case defined_term of
           SOME ({term, provenance} : located_term) =>
             (Library.expect_token ")" (get_token ());
-             add_term dicts_ref name term;
-             add_term_provenance name provenance)
+             add_term dicts_ref key term;
+             add_term_provenance key provenance)
         | NONE => ()
+      val _ = cpc_proof_term_symbols :=
+        HOLset.add (!cpc_proof_term_symbols, key)
     in
       ()
     end
 
-  fun parse_step dicts_ref version get_token =
+  fun duplicate_id id known_ids =
+    List.exists (Lib.equal id) (!known_ids)
+
+  fun ensure_fresh_id where_ id known_ids =
+    if duplicate_id id known_ids then
+      raise ERR where_ ("duplicate CPC command ID " ^ id)
+    else ()
+
+  fun require_known_premise id known_ids premise =
+    if List.exists (Lib.equal premise) (!known_ids) then ()
+    else raise ERR "parse_step"
+      ("unknown premise ID '" ^ premise ^ "' in CPC step " ^ id)
+
+  fun parse_step dicts_ref version known_ids record_unsupported get_token =
     let
-      val id = get_token ()
+      val id = cpc_id_key "parse_step" "command ID" (get_token ())
+      val _ = ensure_fresh_id "parse_step" id known_ids
       val first = get_token ()
-      val (conclusion, attr) =
+      (* CPC serializes the conclusion before [:rule].  Buffer exactly one
+         raw term so rule dispatch can happen before SMT semantic parsing.
+         Only an exact registered unsupported RARE rule may bypass semantic
+         elaboration, and even that route validates the complete step below. *)
+      val (raw_conclusion, attr) =
         if first = ":rule" then (NONE, first)
         else
-          let val get_token' = Library.undo_look_ahead [first] get_token in
-            (SOME (parse_located_term dicts_ref get_token'), get_token ())
-          end
+          (SOME (read_raw_term
+             (Library.undo_look_ahead [first] get_token)),
+           get_token ())
       val _ = if attr = ":rule" then () else
         raise ERR "parse_step" "expected :rule"
       val rule_name = get_token ()
       val rule =
         case lookup_rule version rule_name of
           SOME rule => rule
-        | NONE => raise ERR "parse_step" (registry_lookup_failure version rule_name)
-      fun attrs premises args =
+        | NONE => raise ERR "parse_step"
+            (registry_lookup_failure version rule_name)
+      val unsupported_diagnostic =
+        rare_unsupported_diagnostic rule_name
+      (* Unsupported entries may contain symbols for which HOL deliberately
+         has no dictionary entry.  They still have to be valid CPC steps:
+         consume and check every premise/argument occurrence, every attribute,
+         and the step's own closing delimiter before issuing the registered
+         semantic diagnostic. *)
+      fun structural_token context =
+        get_token () handle SmtLib_Parser.CPCProofEOF =>
+          raise ERR "parse_step"
+            ("unexpected end of unsupported CPC step " ^ id ^ " " ^ context)
+      (* This is a syntax-only CST validator.  Exact unsupported rules may
+         mention operators that cannot be elaborated to HOL, but they do not
+         get a weaker term language: applications, qualified identifiers,
+         binders, lets, matches and annotations must still satisfy the
+         SMT-LIB/CPC grammar accepted by this parser. *)
+      fun raw_error detail = raise ERR "parse_step"
+        ("malformed raw term in unsupported CPC step " ^ id ^ ": " ^
+         detail)
+      fun member token choices = List.exists (Lib.equal token) choices
+      fun quoted_symbol token =
+        SmtLib_Parser.proof_quoted_symbol_token token
+      fun token_text token =
+        Option.getOpt (quoted_symbol token, token)
+      fun unquoted_is expected token =
+        not (Option.isSome (quoted_symbol token)) andalso token = expected
+      fun string_literal token =
+        Option.isSome (SmtLib_Parser.proof_string_token token)
+      val reserved =
+        ["_", "!", "as", "let", "forall", "exists", "lambda",
+         "match", "par"]
+      fun all_chars predicate text =
+        List.all predicate (String.explode text)
+      fun ascii_letter c =
+        (#"a" <= c andalso c <= #"z") orelse
+        (#"A" <= c andalso c <= #"Z")
+      fun simple_initial c =
+        ascii_letter c orelse
+        member c [#"~", #"!", #"@", #"$", #"%", #"^", #"&",
+          #"*", #"_", #"-", #"+", #"=", #"<", #">", #".",
+          #"?", #"/"]
+      fun simple_symbol text =
+        String.size text > 0 andalso
+        simple_initial (String.sub (text, 0)) andalso
+        all_chars (fn c => simple_initial c orelse Char.isDigit c) text
+      fun keyword token =
+        not (Option.isSome (quoted_symbol token)) andalso
+        String.size token > 1 andalso String.sub (token, 0) = #":" andalso
+        simple_symbol (String.extract (token, 1, NONE))
+      fun digits text =
+        String.size text > 0 andalso all_chars Char.isDigit text
+      fun numeral text =
+        text = "0" orelse
+        (String.size text > 0 andalso String.sub (text, 0) <> #"0" andalso
+         digits text)
+      fun decimal text =
+        case String.fields (Lib.equal #".") text of
+          [whole, fraction] => numeral whole andalso digits fraction
+        | _ => false
+      fun radix_literal prefix predicate text =
+        String.isPrefix prefix text andalso String.size text > 2 andalso
+        all_chars predicate (String.extract (text, 2, NONE))
+      fun hex_digit c =
+        Char.isDigit c orelse (#"a" <= c andalso c <= #"f") orelse
+        (#"A" <= c andalso c <= #"F")
+      fun hexadecimal text =
+        radix_literal "#x" hex_digit text
+      fun binary text =
+        radix_literal "#b" (fn c => c = #"0" orelse c = #"1") text
+      fun unsigned_number text = numeral text orelse decimal text
+      fun signed_number text =
+        String.size text > 1 andalso String.sub (text, 0) = #"-" andalso
+        unsigned_number (String.extract (text, 1, NONE))
+      fun rational text =
+        case String.fields (Lib.equal #"/") text of
+          [numerator, denominator] =>
+            (numeral numerator orelse signed_number numerator) andalso
+            numeral denominator andalso denominator <> "0"
+        | _ => false
+      fun literal token =
+        string_literal token orelse numeral token orelse decimal token orelse
+        hexadecimal token orelse binary token orelse signed_number token orelse
+        rational token
+      fun valid_quoted text =
+        (SmtLib_String_Literal.validate_lexical_text true text; true)
+        handle SmtLib_String_Literal.InvalidStringLiteral _ => false
+      fun validate_symbol description token =
+        case SmtLib_Parser.proof_string_token token of
+          SOME _ => raw_error
+            ("string literal is not a valid " ^ description)
+        | NONE =>
+            (case quoted_symbol token of
+               SOME text =>
+                 if valid_quoted text then ()
+                 else raw_error ("invalid quoted " ^ description)
+             | NONE =>
+                 if simple_symbol token andalso not (keyword token) andalso
+                    not (member token reserved)
+                 then ()
+                 else raw_error
+                   ("invalid " ^ description ^ " '" ^ token ^ "'"))
+      val validate_identifier_symbol = validate_symbol
+      fun validate_index raw =
+        case raw of
+          RawAtom token =>
+            if Option.isSome (quoted_symbol token) then
+              validate_symbol "indexed-identifier index" token
+            else if numeral token then ()
+            else validate_identifier_symbol
+              "indexed-identifier index" token
+        | RawList _ => raw_error "indexed-identifier index is not atomic"
+      fun validate_simple_identifier description raw =
+        case raw of
+          RawAtom token => validate_identifier_symbol description token
+        | RawList (RawAtom marker :: RawAtom name :: indices) =>
+            if unquoted_is "_" marker then
+              (validate_identifier_symbol
+                 ("indexed " ^ description ^ " name") name;
+               if List.null indices then
+                 raw_error ("indexed " ^ description ^
+                   " requires at least one index")
+               else List.app validate_index indices)
+            else raw_error
+              (description ^ " is not a simple/indexed identifier")
+        | RawList _ =>
+            raw_error (description ^ " is not a simple/indexed identifier")
+      fun validate_sort raw =
+        case raw of
+          RawAtom _ => validate_simple_identifier "sort identifier" raw
+        | RawList (RawAtom marker :: RawAtom _ :: _) =>
+            if unquoted_is "_" marker then
+              validate_simple_identifier "sort identifier" raw
+            else validate_sort_application raw
+        | RawList [] => raw_error "empty sort"
+        | RawList _ => validate_sort_application raw
+      and validate_sort_application raw =
+        case raw of
+          RawList (head :: arguments) =>
+            (validate_simple_identifier "sort application head" head;
+             if List.null arguments then
+               raw_error "sort application requires at least one argument"
+             else List.app validate_sort arguments)
+        | _ => raw_error "malformed sort application"
+      fun validate_identifier raw =
+        case raw of
+          RawAtom _ => validate_simple_identifier "identifier" raw
+        | RawList [RawAtom marker, identifier, sort] =>
+            if unquoted_is "as" marker then
+              (validate_simple_identifier "ascribed identifier" identifier;
+               validate_sort sort)
+            else if unquoted_is "_" marker then
+              validate_simple_identifier "identifier" raw
+            else raw_error
+              "application head is not a qualified identifier"
+        | RawList (RawAtom marker :: _) =>
+            if unquoted_is "as" marker then
+              raw_error
+                "qualified identifier 'as' expects an identifier and sort"
+            else if unquoted_is "_" marker then
+              validate_simple_identifier "identifier" raw
+            else raw_error
+              "application head is not a qualified identifier"
+        | RawList _ => raw_error
+            "application head is not a qualified identifier"
+      fun validate_sorted_variable raw =
+        case raw of
+          RawList [RawAtom name, sort] =>
+            (validate_symbol "bound variable" name; validate_sort sort)
+        | _ => raw_error
+            "sorted variable must have the form (name sort)"
+      fun validate_cpc_var name sort =
+        (case SmtLib_Parser.proof_string_token name of
+           SOME _ => ()
+         | NONE => validate_symbol "bound variable" name;
+         validate_sort sort)
+      fun validate_binders binders =
+        case binders of
+          RawAtom alias => validate_symbol "CPC binder-list alias" alias
+        | RawList (RawAtom marker :: variables) =>
+            if unquoted_is "@list" marker then
+              if List.null variables then
+                raw_error "CPC binder list must be nonempty"
+              else List.app (fn variable =>
+                case variable of
+                  RawAtom alias =>
+                    validate_symbol "CPC bound-variable alias" alias
+                | RawList [RawAtom var_marker, RawAtom name, sort] =>
+                    if unquoted_is "@var" var_marker then
+                      validate_cpc_var name sort
+                    else raw_error
+                      "CPC binder must be an alias or (@var name sort)"
+                | _ => raw_error
+                    "CPC binder must be an alias or (@var name sort)")
+                variables
+            else validate_sorted_variables binders
+        | RawList _ => validate_sorted_variables binders
+      and validate_sorted_variables binders =
+        case binders of
+          RawList variables =>
+            if List.null variables then
+              raw_error "sorted-variable list must be nonempty"
+            else List.app validate_sorted_variable variables
+        | _ => raw_error "sorted-variable list must be parenthesized"
+      fun validate_pattern pattern =
+        case pattern of
+          RawAtom name => validate_symbol "match pattern" name
+        | RawList (RawAtom constructor :: variables) =>
+            (validate_symbol "match constructor" constructor;
+             if List.null variables then
+               raw_error "constructor pattern requires at least one variable"
+             else List.app (fn variable => case variable of
+                 RawAtom name => validate_symbol "match binder" name
+               | RawList _ => raw_error "match binder is not atomic")
+               variables)
+        | RawList _ => raw_error "malformed match pattern"
+      fun validate_sexp sexp =
+        case sexp of
+          RawAtom token =>
+            if literal token orelse keyword token then ()
+            else validate_symbol "annotation s-expression atom" token
+        | RawList entries => List.app validate_sexp entries
+      fun validate_attributes attributes =
+        let
+          fun loop [] = ()
+            | loop (RawAtom attribute :: rest) =
+                if not (keyword attribute) then
+                  raw_error "annotation expects an attribute keyword"
+                else
+                  (case rest of
+                     RawAtom next :: _ =>
+                       if keyword next then loop rest
+                       else (validate_sexp (List.hd rest);
+                             loop (List.tl rest))
+                   | RawList value :: tail =>
+                       (validate_sexp (RawList value); loop tail)
+                   | [] => ())
+            | loop _ = raw_error "annotation expects an attribute keyword"
+        in
+          if List.null attributes then
+            raw_error "annotation requires at least one attribute"
+          else loop attributes
+        end
+      fun validate_application_arity head operands =
+        let
+          fun exact expected =
+            if List.length operands = expected then ()
+            else raw_error ("'" ^ head ^ "' expects exactly " ^
+              Int.toString expected ^ " operand(s)")
+          fun at_least expected =
+            if List.length operands >= expected then ()
+            else raw_error ("'" ^ head ^ "' expects at least " ^
+              Int.toString expected ^ " operand(s)")
+        in
+          case head of
+            "true" => raw_error "'true' must be an atomic term"
+          | "false" => raw_error "'false' must be an atomic term"
+          | "not" => exact 1
+          | "ite" => exact 3
+          | "=" => at_least 2
+          | "distinct" => at_least 2
+          | "=>" => at_least 2
+          | "and" => at_least 2
+          | "or" => at_least 2
+          | "xor" => at_least 2
+          | _ => at_least 1
+        end
+      fun validate_raw raw =
+        case raw of
+          RawAtom token =>
+            if literal token then ()
+            else validate_identifier_symbol "term identifier" token
+        | RawList (RawAtom marked_head :: rest) =>
+            let
+              val head = token_text marked_head
+              val special =
+                not (Option.isSome (quoted_symbol marked_head))
+              fun special_head name = special andalso head = name
+            in
+              if special_head "as" then
+                (case rest of
+                   [identifier, sort] =>
+                     (validate_simple_identifier
+                        "ascribed identifier" identifier;
+                      validate_sort sort)
+                 | _ => raw_error
+                     ("qualified identifier 'as' expects an identifier " ^
+                      "and sort"))
+              else if special_head "_" then
+                validate_simple_identifier "identifier" raw
+              else if member head ["forall", "exists", "lambda"] andalso
+                      special then
+                (case rest of
+                   [binders, body] =>
+                     (validate_binders binders; validate_raw body)
+                 | _ => raw_error ("malformed " ^ head ^ " binder"))
+              else if special_head "let" then
+                (case rest of
+                   [RawList bindings, body] =>
+                     (if List.null bindings then
+                        raw_error "let requires at least one binding"
+                      else List.app (fn binding => case binding of
+                          RawList [RawAtom name, rhs] =>
+                            (validate_symbol "let variable" name;
+                             validate_raw rhs)
+                        | _ => raw_error
+                            "let binding must have the form (name term)")
+                        bindings;
+                      validate_raw body)
+                 | _ => raw_error "malformed let term")
+              else if special_head "!" then
+                (case rest of
+                   term :: attributes =>
+                     (validate_raw term; validate_attributes attributes)
+                 | [] => raw_error "annotation is missing its term")
+              else if special_head "match" then
+                (case rest of
+                   [scrutinee, RawList branches] =>
+                     (validate_raw scrutinee;
+                      if List.null branches then
+                        raw_error "match requires at least one branch"
+                      else List.app (fn branch => case branch of
+                          RawList [pattern, body] =>
+                            (validate_pattern pattern; validate_raw body)
+                        | _ => raw_error
+                            "match branch must have pattern and body")
+                          branches)
+                 | _ => raw_error
+                     "match expects a scrutinee and parenthesized branches")
+              else if special_head "set.comprehension" then
+                (case rest of
+                   [binders as RawList (RawList _ :: _), predicate, value] =>
+                     (validate_binders binders;
+                      validate_raw predicate;
+                      validate_raw value)
+                 | _ =>
+                     (validate_identifier_symbol
+                        "application head" marked_head;
+                      validate_application_arity head rest;
+                      List.app validate_raw rest))
+              else if special_head "@list" then List.app validate_raw rest
+              else if special_head "@" then
+                (case rest of
+                   rator :: arguments =>
+                     if List.null arguments then
+                       raw_error "'@' expects a rator and at least one operand"
+                     else
+                       (validate_raw rator; List.app validate_raw arguments)
+                 | [] => raw_error
+                     "'@' expects a rator and at least one operand")
+              else if special_head "@var" then
+                (case rest of
+                   [RawAtom name, sort] => validate_cpc_var name sort
+                 | _ => raw_error "@var expects a name and sort")
+              else if special_head "is" then
+                (case rest of
+                   [RawAtom constructor, scrutinee] =>
+                     (validate_symbol "tester constructor" constructor;
+                      validate_raw scrutinee)
+                 | _ => raw_error
+                     "CPC datatype tester expects a constructor and scrutinee")
+              else
+                (validate_identifier_symbol "application head" marked_head;
+                 if special then validate_application_arity head rest else
+                   if List.null rest then
+                     raw_error
+                       "function application requires at least one argument"
+                   else ();
+                 List.app validate_raw rest)
+            end
+        | RawList (head :: operands) =>
+            (validate_identifier head;
+             if List.null operands then
+               raw_error "function application requires at least one argument"
+             else List.app validate_raw operands)
+        | RawList [] => raw_error "empty term"
+      fun structural_premises () =
+        let
+          val _ = if structural_token "while reading :premises" = "("
+            then ()
+            else raise ERR "parse_step"
+              ("expected parenthesized :premises in unsupported CPC step " ^
+               id)
+          fun ids () =
+            case structural_token "while reading :premises" of
+              ")" => ()
+            | "(" => raise ERR "parse_step"
+                ("invalid premise ID in unsupported CPC step " ^ id)
+            | raw_premise =>
+                let
+                  val premise =
+                    cpc_id_key "parse_step" "premise ID" raw_premise
+                in
+                  if List.exists (Lib.equal premise) (!known_ids) then
+                    ids ()
+                  else raise ERR "parse_step"
+                    ("unknown premise ID '" ^
+                     SmtLib_Parser.proof_symbol_text raw_premise ^
+                     "' in unsupported CPC step " ^ id)
+                end
+        in
+          ids ()
+        end
+      fun structural_args () =
+        let
+          val _ = if structural_token "while opening :args" = "(" then ()
+            else raise ERR "parse_step"
+              ("expected parenthesized :args in unsupported CPC step " ^ id)
+          fun terms () =
+            case structural_token "while reading :args" of
+              ")" => ()
+            | token =>
+                (validate_raw (read_raw_term
+                   (Library.undo_look_ahead [token]
+                     (fn () => structural_token "while reading :args")));
+                 terms ())
+        in
+          terms ()
+        end
+      fun consume_unsupported seen_premises seen_args diagnostic =
+        case structural_token "before its closing delimiter" of
+          ")" => ()
+        | ":premises" =>
+            if seen_premises then raise ERR "parse_step"
+              ("duplicate :premises in unsupported CPC step " ^ id)
+            else (structural_premises ();
+              consume_unsupported true seen_args diagnostic)
+        | ":args" =>
+            if seen_args then raise ERR "parse_step"
+              ("duplicate :args in unsupported CPC step " ^ id)
+            else (structural_args ();
+              consume_unsupported seen_premises true diagnostic)
+        | attribute => raise ERR "parse_step"
+            ("unknown CPC step attribute " ^ attribute ^
+             " in cvc5 version " ^ version)
+      fun parse_supported () =
+      let
+      fun parse_buffered raw =
+        parse_located_term dicts_ref
+          (Library.undo_look_ahead (raw_tokens raw) (fn () =>
+            raise ERR "parse_step"
+              ("buffered conclusion ended early in CPC step " ^ id)))
+      val conclusion = Option.map parse_buffered raw_conclusion
+      fun attrs seen_premises seen_args premises args =
         case get_token () of
           ")" => {id = id, conclusion = conclusion, rule = rule,
                    premises = premises, args = args}
-        | ":premises" => attrs (parse_paren_name_list get_token) args
+        | ":premises" =>
+            if seen_premises then raise ERR "parse_step"
+              ("duplicate :premises in CPC step " ^ id)
+            else
+              let
+                val premises = parse_premise_ids get_token
+                val _ = List.app
+                  (require_known_premise id known_ids) premises
+              in
+                attrs true seen_args premises args
+              end
         | ":args" =>
+            if seen_args then raise ERR "parse_step"
+              ("duplicate :args in CPC step " ^ id)
+            else
             let
               val _ = Library.expect_token "(" (get_token ())
               (* Resolution annotations such as @list are proof-search hints,
@@ -1780,7 +2946,7 @@ local
               fun sort_marker tokens =
                 let val (tydict, _) = !dicts_ref in
                   Term.mk_var ("@cpc.sort",
-                    SmtLib_Parser.parse_type
+                    parse_cpc_type
                       (Library.undo_look_ahead tokens get_token) tydict)
                 end
               fun is_set_sort_metadata position =
@@ -1850,8 +3016,18 @@ local
                 end
               fun cpc_list_term terms =
                 case terms of
-                  first :: _ => listSyntax.mk_list
-                    (terms, Term.type_of first)
+                  first :: rest =>
+                    let
+                      val element_type = Term.type_of first
+                      val _ = List.all (fn term =>
+                          Type.compare (Term.type_of term, element_type) =
+                            EQUAL) rest orelse
+                        raise ERR "parse_step"
+                          ("CPC structured list has mixed element types in " ^
+                           "step " ^ id ^ " (rule " ^ rule_name ^ ")")
+                    in
+                      listSyntax.mk_list (terms, element_type)
+                    end
                 | [] => listSyntax.mk_list
                     ([], Type.mk_vartype "'cpc_list")
               fun validate_set_sort_metadata args =
@@ -1901,96 +3077,213 @@ local
                 end
             in
               if rule_name = "resolution" then
-                attrs premises (resolution_args ())
+                attrs seen_premises true premises (resolution_args ())
               else if #replay_handler rule = "resolution" then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)
-                attrs premises (macro_resolution_args ())
+                attrs seen_premises true premises
+                  (macro_resolution_args ())
               else if #replay_handler rule = "and_elim" then
-                attrs premises (and_elim_index ())
+                attrs seen_premises true premises (and_elim_index ())
               else if #replay_handler rule = "not_or_elim" then
-                attrs premises (not_or_elim_index ())
+                attrs seen_premises true premises (not_or_elim_index ())
               else if #replay_handler rule = "exists_elim" then
-                attrs premises (exists_elim_args ())
+                attrs seen_premises true premises (exists_elim_args ())
               else if #replay_handler rule = "quant_rewrite" then
-                attrs premises (quant_rewrite_args ())
+                attrs seen_premises true premises (quant_rewrite_args ())
               else if rule_name = "cnf_and_pos" then
-                attrs premises (cnf_and_pos_args ())
+                attrs seen_premises true premises (cnf_and_pos_args ())
               else if rule_name = "cnf_or_neg" then
-                attrs premises (cnf_or_neg_args ())
+                attrs seen_premises true premises (cnf_or_neg_args ())
               else if rule_name = "arith-mod-over-mod" orelse
                       rule_name = "arith-mod-over-mod-mult" then
-                attrs premises (structured_terms [])
+                attrs seen_premises true premises (structured_terms [])
+              else if #replay_handler rule = "rare_inventory" then
+                (* Declarative RARE recipes distinguish one term from a
+                   variadic list formal.  Preserve each CPC @list (and each
+                   recorded alias for one) as exactly one HOL list wrapper;
+                   the owning replay contract validates and unwraps it. *)
+                attrs seen_premises true premises (structured_terms [])
               else
                 let val args = terms [] in
                   (validate_set_sort_metadata
                     (List.map (fn (located : located_term) => #term located)
                       args);
-                   attrs premises args)
+                   attrs seen_premises true premises args)
                 end
             end
         | attribute => raise ERR "parse_step"
             ("unknown CPC step attribute " ^ attribute ^
              " in cvc5 version " ^ version)
+      in
+        attrs false false [] []
+      end
     in
-      attrs [] []
+      case unsupported_diagnostic of
+        SOME diagnostic =>
+          (Option.app validate_raw raw_conclusion;
+           consume_unsupported false false diagnostic;
+           record_unsupported (rule_name, diagnostic);
+           (id, NONE))
+      | NONE => (id, SOME (parse_supported ()))
     end
 
-  fun parse_commands dicts_ref version get_token stop acc =
+  fun parse_commands dicts_ref version known_ids scope_snapshots
+      seen_steps record_unsupported get_token stop acc =
     let
-      val token = (SOME (get_token ())) handle Feedback.HOL_ERR _ => NONE
+      fun add_id id =
+        (ensure_fresh_id "parse_commands" id known_ids;
+         known_ids := id :: !known_ids)
+      fun recurse acc =
+        parse_commands dicts_ref version known_ids scope_snapshots
+          seen_steps record_unsupported get_token stop acc
+      fun same_tokens left right =
+        ListPair.allEq (op =) (left, right)
+      fun normalize_premise_ids tokens =
+        let
+          fun normal acc [] = List.rev acc
+            | normal acc (":premises" :: "(" :: rest) =
+                premises ("(" :: ":premises" :: acc) rest
+            | normal acc (token :: rest) = normal (token :: acc) rest
+          and premises acc [] = List.rev acc
+            | premises acc (")" :: rest) = normal (")" :: acc) rest
+            | premises acc (_ :: rest) =
+                premises ("@premise" :: acc) rest
+        in
+          normal [] tokens
+        end
+      fun register_step_signature kind id tokens =
+        let
+          (* [tokens] starts with the raw command-ID token.  Use its already
+             validated semantic key so normalized-identical scoped reuse is
+             independent of equivalent quoted/unquoted spelling. *)
+          val signature_tokens =
+            kind :: id :: normalize_premise_ids (List.tl tokens)
+        in
+          case List.find (fn (known_id, _) => known_id = id) (!seen_steps) of
+            NONE => seen_steps := (id, signature_tokens) :: !seen_steps
+          | SOME (_, known_tokens) =>
+              if same_tokens signature_tokens known_tokens then ()
+              else raise ERR "parse_commands"
+                ("duplicate CPC command ID " ^ id)
+        end
+      fun parse_recorded_step kind =
+        let
+          val consumed = ref ([] : string list)
+          fun recording_token () =
+            let val token = get_token () in
+              consumed := token :: !consumed;
+              token
+            end
+          val result as (id, _) =
+            parse_step dicts_ref version known_ids record_unsupported
+              recording_token
+          val _ = register_step_signature kind id (List.rev (!consumed))
+        in
+          result
+        end
+      fun close_scope id =
+        case !scope_snapshots of
+          previous :: rest =>
+            (known_ids := previous;
+             scope_snapshots := rest;
+             add_id id)
+        | [] => raise ERR "parse_commands"
+            ("step-pop without matching assume-push in CPC step " ^ id)
+      val token =
+        (SOME (get_token ()))
+        handle SmtLib_Parser.CPCProofEOF => NONE
     in
       case token of
-        NONE => List.rev acc
-      | SOME ")" => if stop then List.rev acc
-                      else parse_commands dicts_ref version get_token stop acc
+        NONE =>
+          if stop then raise ERR "parse_commands"
+            "unexpected end of nested CPC wrapper"
+          else List.rev acc
+      | SOME ")" =>
+          if stop then List.rev acc
+          else raise ERR "parse_commands"
+            "unexpected closing delimiter at CPC top level"
       | SOME "(" =>
           let val head = get_token () in
             case head of
-              "(" =>
-                let val nested = parse_commands dicts_ref version
-                      (Library.undo_look_ahead ["("] get_token) true []
-                in if List.null acc then nested
-                   else List.rev acc end
-            | "declare-const" => (parse_or_keep_term_declaration
-                  parse_declare_const dicts_ref get_token;
-                parse_commands dicts_ref version get_token stop acc)
-            | "declare-fun" => (parse_or_keep_term_declaration
-                  parse_declare_fun dicts_ref get_token;
-                parse_commands dicts_ref version get_token stop acc)
-            | "declare-sort" => (parse_or_keep_sort_declaration
-                  dicts_ref get_token;
-                parse_commands dicts_ref version get_token stop acc)
-            | "declare-datatype" => (skip_sexp get_token;
-                parse_commands dicts_ref version get_token stop acc)
-            | "declare-datatypes" => (skip_sexp get_token;
-                parse_commands dicts_ref version get_token stop acc)
-            | "define" => (parse_define dicts_ref get_token;
-                            parse_commands dicts_ref version get_token stop acc)
-            | "assume" =>
-                let val id = get_token ()
-                    val tm = parse_located_term dicts_ref get_token
-                    val _ = Library.expect_token ")" (get_token ())
-                in parse_commands dicts_ref version get_token stop
-                     (ASSUME (id, tm) :: acc) end
-            | "assume-push" =>
-                let val id = get_token ()
-                    val tm = parse_located_term dicts_ref get_token
-                    val _ = Library.expect_token ")" (get_token ())
-                in parse_commands dicts_ref version get_token stop
-                     (ASSUME_PUSH (id, tm) :: acc) end
-            | "step" =>
-                let val step = parse_step dicts_ref version get_token
-                in parse_commands dicts_ref version get_token stop
-                     (STEP step :: acc) end
-            | "step-pop" =>
-                let val step = parse_step dicts_ref version get_token
-                in parse_commands dicts_ref version get_token stop
-                     (STEP step :: acc) end
-            | other => raise ERR "parse_commands"
-                ("unknown CPC construct " ^ other ^ " in cvc5 version " ^ version)
+              "(" => raise ERR "parse_commands"
+                "nested or second CPC proof wrapper is not permitted"
+            | other =>
+                if not stop then raise ERR "parse_commands"
+                  "CPC command found outside a proof wrapper"
+                else
+                  case other of
+                    "declare-const" =>
+                      (parse_or_keep_term_declaration parse_declare_const
+                         dicts_ref get_token;
+                       recurse acc)
+                  | "declare-fun" =>
+                      (parse_or_keep_term_declaration parse_declare_fun
+                         dicts_ref get_token;
+                       recurse acc)
+                  | "declare-sort" =>
+                      (parse_or_keep_sort_declaration dicts_ref get_token;
+                       recurse acc)
+                  | "declare-datatype" =>
+                      (parse_declare_datatype_command dicts_ref get_token;
+                       recurse acc)
+                  | "declare-datatypes" =>
+                      (parse_declare_datatypes_command dicts_ref get_token;
+                       recurse acc)
+                  | "define" =>
+                      (parse_define dicts_ref get_token;
+                       recurse acc)
+                  | "assume" =>
+                      let
+                        val id = cpc_id_key "parse_commands" "command ID"
+                          (get_token ())
+                        val _ = ensure_fresh_id "parse_commands" id known_ids
+                        val tm = parse_located_term dicts_ref get_token
+                        val _ = Library.expect_token ")" (get_token ())
+                        val command = ASSUME (id, tm)
+                        val _ = add_id id
+                      in
+                        recurse (command :: acc)
+                      end
+                  | "assume-push" =>
+                      let
+                        val id = cpc_id_key "parse_commands" "command ID"
+                          (get_token ())
+                        val _ = ensure_fresh_id "parse_commands" id known_ids
+                        val tm = parse_located_term dicts_ref get_token
+                        val _ = Library.expect_token ")" (get_token ())
+                        val command = ASSUME_PUSH (id, tm)
+                        val _ = scope_snapshots :=
+                          !known_ids :: !scope_snapshots
+                        val _ = add_id id
+                      in
+                        recurse (command :: acc)
+                      end
+                  | "step" =>
+                      let
+                        val (id, step) = parse_recorded_step "step"
+                        val _ = add_id id
+                      in
+                        case step of
+                          SOME step => recurse (STEP step :: acc)
+                        | NONE => recurse acc
+                      end
+                  | "step-pop" =>
+                      let
+                        val (id, step) = parse_recorded_step "step-pop"
+                        val _ = close_scope id
+                      in
+                        case step of
+                          SOME step => recurse (STEP step :: acc)
+                        | NONE => recurse acc
+                      end
+                  | _ => raise ERR "parse_commands"
+                      ("unknown CPC construct " ^ other ^
+                       " in cvc5 version " ^ version)
           end
-      | SOME _ => parse_commands dicts_ref version get_token stop acc
+      | SOME other => raise ERR "parse_commands"
+          ("unexpected CPC token '" ^
+           SmtLib_Parser.proof_symbol_text other ^ "'")
     end
 in
   val cpc_indexed_term_registry = cpc_indexed_term_registry
@@ -2010,13 +3303,69 @@ in
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
+      fun keys dictionary = Redblackmap.foldl
+        (fn (key, _, set) => HOLset.add (set, key))
+        (HOLset.empty String.compare) dictionary
+      val (all_tydict, all_tmdict) =
+        SmtLib_Logics.parsedicts_of_logic "ALL"
+      val baseline_dicts = with_cpc_literals
+        (all_tydict, Library.union_dict all_tmdict
+          SmtLib_Theories.CVC5_Seq.tmdict)
+      val baseline = HOLset.union
+        (keys (#1 baseline_dicts), keys (#2 baseline_dicts))
+      val syntax_names =
+        ["_", "!", "as", "let", "forall", "exists", "lambda",
+         "match", "par", "declare-const", "declare-fun",
+         "declare-sort", "declare-datatype", "declare-datatypes",
+         "define", "assume", "assume-push", "step", "step-pop"]
+      val _ = cpc_reserved_symbols := HOLset.addList
+        (baseline, syntax_names)
+      fun source_keys dictionary = HOLset.filter
+        (fn key => not (set_member (!cpc_reserved_symbols) key))
+        (keys dictionary)
+      val _ = cpc_source_sort_symbols := source_keys (#1 dicts)
+      val _ = cpc_source_term_symbols := source_keys (#2 dicts)
+      val _ = cpc_proof_sort_symbols := HOLset.empty String.compare
+      val _ = cpc_proof_term_symbols := HOLset.empty String.compare
+      val known_ids = ref ([] : string list)
+      val scope_snapshots = ref ([] : string list list)
+      val seen_steps = ref ([] : (string * string list) list)
+      val pending = ref (NONE : (string * string) option)
+      fun record_unsupported diagnostic =
+        case !pending of
+          NONE => pending := SOME diagnostic
+        | SOME _ => ()
       (* CPC conclusions and arguments can contain SMT-LIB string literals.
-         Preserve their token kind so the empty string is not confused with
-         an empty atom by the legacy term parser. *)
+         Preserve token kind and apply cvc5's proof lexical policy. *)
       val get_token =
-        SmtLib_Parser.make_proof_stream_tokenizer instream
-      val commands = parse_commands (ref (with_cpc_literals dicts)) version
-        get_token false []
+        SmtLib_Parser.make_cpc_proof_stream_tokenizer instream
+      val _ =
+        (Library.expect_token "(" (get_token ()))
+        handle SmtLib_Parser.CPCProofEOF =>
+          raise ERR "parse_stream_with_version"
+            "unexpected end before CPC proof wrapper"
+      val commands =
+        parse_commands (ref (with_cpc_literals dicts)) version known_ids
+          scope_snapshots seen_steps record_unsupported get_token true []
+        handle SmtLib_Parser.CPCProofEOF =>
+          raise ERR "parse_stream_with_version"
+            "unexpected end of CPC proof wrapper"
+      val _ = List.null (!scope_snapshots) orelse
+        raise ERR "parse_stream_with_version"
+          "unclosed assume-push scope at end of CPC proof wrapper"
+      val trailing =
+        (SOME (get_token ()))
+        handle SmtLib_Parser.CPCProofEOF => NONE
+      val _ =
+        case trailing of
+          NONE => ()
+        | SOME token => raise ERR "parse_stream_with_version"
+            ("second CPC proof wrapper or trailing token '" ^
+             SmtLib_Parser.proof_symbol_text token ^ "'")
+      val _ =
+        case !pending of
+          SOME (rule_name, diagnostic) => raise ERR rule_name diagnostic
+        | NONE => ()
     in
       {commands = commands, cvc_version = version}
     end

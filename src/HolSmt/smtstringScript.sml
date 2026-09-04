@@ -171,12 +171,232 @@ Definition smtstr_at_def:
   smtstr_at s (i : int) = smtstr_substr s i 1
 End
 
+Theorem smtstr_rep_substr:
+  smtstr_rep (smtstr_substr s i n) =
+  if i < 0 \/ n <= 0 \/ LENGTH (smtstr_rep s) <= Num i then []
+  else TAKE (Num n) (DROP (Num i) (smtstr_rep s))
+Proof
+  rw [smtstr_substr_def] >>
+  simp [smtstr_rep_def, rich_listTheory.EVERY_TAKE,
+        rich_listTheory.EVERY_DROP]
+QED
+
+Theorem smtstr_rep_substr_positive:
+  0 <= i /\ 0 < n ==>
+  smtstr_rep (smtstr_substr s i n) =
+    TAKE (Num n) (DROP (Num i) (smtstr_rep s))
+Proof
+  strip_tac >>
+  rw [smtstr_rep_substr] >>
+  `~(i < 0) /\ ~(n <= 0)` by intLib.ARITH_TAC >>
+  Cases_on `LENGTH (smtstr_rep s) <= Num i` >>
+  simp [listTheory.DROP_EQ_NIL]
+QED
+
+Theorem smtstr_rep_substr_nonpositive:
+  n <= 0 ==>
+  smtstr_rep (smtstr_substr s i n) = []
+Proof
+  simp [smtstr_rep_substr]
+QED
+
+Theorem TAKE_DROP_TAKE_RIGHT_BOUND[local]:
+  m1 - n2 <= m2 ==>
+  TAKE m2 (DROP n2 (TAKE m1 (DROP n1 xs))) =
+  TAKE (m1 - n2) (DROP (n1 + n2) xs)
+Proof
+  strip_tac >>
+  simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+        listTheory.TAKE_TAKE_MIN, arithmeticTheory.MIN_DEF]
+QED
+
+Theorem TAKE_DROP_TAKE_LEFT_BOUND[local]:
+  m2 <= m1 - n2 ==>
+  TAKE m2 (DROP n2 (TAKE m1 (DROP n1 xs))) =
+  TAKE m2 (DROP (n1 + n2) xs)
+Proof
+  strip_tac >>
+  Cases_on `m2 < m1 - n2`
+  >- simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+           listTheory.TAKE_TAKE_MIN, arithmeticTheory.MIN_DEF] >>
+  `m2 = m1 - n2` by decide_tac >>
+  simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+        listTheory.TAKE_TAKE_MIN]
+QED
+
+Theorem TAKE_DROP_TAKE_ACTUAL_BOUND[local]:
+  LENGTH (TAKE m1 (DROP n1 xs)) <= n2 + m2 ==>
+  TAKE m2 (DROP n2 (TAKE m1 (DROP n1 xs))) =
+  TAKE (m1 - n2) (DROP (n1 + n2) xs)
+Proof
+  strip_tac >>
+  Cases_on `m2 < m1 - n2`
+  >- (`n2 + m2 < m1` by decide_tac >>
+      `LENGTH (DROP n1 xs) < m1` by
+        fs [listTheory.LENGTH_TAKE_EQ] >>
+      `LENGTH (DROP n1 xs) <= m1` by decide_tac >>
+      `TAKE m1 (DROP n1 xs) = DROP n1 xs` by
+        simp [listTheory.TAKE_LENGTH_TOO_LONG] >>
+      `LENGTH (DROP n1 xs) <= n2 + m2` by metis_tac [] >>
+      `LENGTH (DROP (n1 + n2) xs) <= m2` by
+        fs [listTheory.LENGTH_DROP] >>
+      `TAKE m2 (DROP (n1 + n2) xs) = DROP (n1 + n2) xs` by
+        simp [listTheory.TAKE_LENGTH_TOO_LONG] >>
+      `LENGTH (DROP (n1 + n2) xs) <= m1 - n2` by decide_tac >>
+      `TAKE (m1 - n2) (DROP (n1 + n2) xs) =
+       DROP (n1 + n2) xs` by
+        simp [listTheory.TAKE_LENGTH_TOO_LONG] >>
+      simp [rich_listTheory.DROP_DROP_T]) >>
+  `m1 - n2 <= m2` by decide_tac >>
+  simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+        listTheory.TAKE_TAKE_MIN, arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smtstr_substr_combine_right:
+  0 <= n1 /\ 0 <= n2 /\ 0 <= m2 - (m1 - n2) ==>
+  smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+  smtstr_substr s (n1 + n2) (m1 - n2)
+Proof
+  strip_tac >>
+  irule (iffLR smtstr_rep_11) >>
+  Cases_on `m1 - n2 <= 0`
+  >- (`m1 <= n2` by intLib.ARITH_TAC >>
+      `smtstr_rep
+         (smtstr_substr s (n1 + n2) (m1 - n2)) = []` by
+        simp [smtstr_rep_substr_nonpositive] >>
+      Cases_on `m2 <= 0`
+      >- (`smtstr_rep
+             (smtstr_substr
+                (smtstr_substr s n1 m1) n2 m2) = []` by
+            metis_tac [smtstr_rep_substr_nonpositive] >>
+          metis_tac []) >>
+      `0 < m2` by intLib.ARITH_TAC >>
+      Cases_on `m1 <= 0`
+      >- (`smtstr_rep (smtstr_substr s n1 m1) = []` by
+            metis_tac [smtstr_rep_substr_nonpositive] >>
+          `smtstr_rep
+             (smtstr_substr
+                (smtstr_substr s n1 m1) n2 m2) =
+           TAKE (Num m2)
+             (DROP (Num n2)
+               (smtstr_rep (smtstr_substr s n1 m1)))` by
+            metis_tac [smtstr_rep_substr_positive] >>
+          `TAKE (Num m2)
+             (DROP (Num n2)
+               (smtstr_rep (smtstr_substr s n1 m1))) = []` by
+            simp [] >>
+          metis_tac []) >>
+      `0 < m1` by intLib.ARITH_TAC >>
+      `Num m1 <= Num n2` by intLib.ARITH_TAC >>
+      `smtstr_rep (smtstr_substr s n1 m1) =
+         TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))` by
+        metis_tac [smtstr_rep_substr_positive] >>
+      `smtstr_rep
+         (smtstr_substr (smtstr_substr s n1 m1) n2 m2) =
+       TAKE (Num m2)
+         (DROP (Num n2)
+           (smtstr_rep (smtstr_substr s n1 m1)))` by
+        metis_tac [smtstr_rep_substr_positive] >>
+      `TAKE (Num m2)
+         (DROP (Num n2)
+           (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s)))) =
+       TAKE (Num m1 - Num n2)
+         (DROP (Num n1 + Num n2) (smtstr_rep s))` by
+        simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+              listTheory.TAKE_TAKE_MIN,
+              arithmeticTheory.MIN_DEF] >>
+      `TAKE (Num m1 - Num n2)
+         (DROP (Num n1 + Num n2) (smtstr_rep s)) = []` by
+        simp [] >>
+      `TAKE (Num m2)
+         (DROP (Num n2)
+           (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s)))) = []` by
+        metis_tac [] >>
+      metis_tac []) >>
+  `0 < m1 - n2` by intLib.ARITH_TAC >>
+  `0 < m1` by intLib.ARITH_TAC >>
+  `0 < m2` by intLib.ARITH_TAC >>
+  `0 <= n1 + n2` by intLib.ARITH_TAC >>
+  `Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `Num m1 - Num n2 <= Num m2` by intLib.ARITH_TAC >>
+  `smtstr_rep (smtstr_substr s n1 m1) =
+     TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_rep
+     (smtstr_substr (smtstr_substr s n1 m1) n2 m2) =
+   TAKE (Num m2)
+     (DROP (Num n2) (smtstr_rep (smtstr_substr s n1 m1)))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_rep (smtstr_substr s (n1 + n2) (m1 - n2)) =
+     TAKE (Num (m1 - n2))
+       (DROP (Num (n1 + n2)) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `TAKE (Num m2)
+     (DROP (Num n2)
+       (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s)))) =
+   TAKE (Num (m1 - n2))
+     (DROP (Num (n1 + n2)) (smtstr_rep s))` by
+    metis_tac [TAKE_DROP_TAKE_RIGHT_BOUND] >>
+  metis_tac []
+QED
+
+Theorem smtstr_substr_combine_left:
+  0 <= n1 /\ 0 <= n2 /\ 0 <= (m1 - n2) - m2 ==>
+  smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+  smtstr_substr s (n1 + n2) m2
+Proof
+  strip_tac >>
+  irule (iffLR smtstr_rep_11) >>
+  Cases_on `m2 <= 0`
+  >- (`smtstr_rep
+         (smtstr_substr (smtstr_substr s n1 m1) n2 m2) = []` by
+        metis_tac [smtstr_rep_substr_nonpositive] >>
+      `smtstr_rep (smtstr_substr s (n1 + n2) m2) = []` by
+        metis_tac [smtstr_rep_substr_nonpositive] >>
+      metis_tac []) >>
+  `0 < m2` by intLib.ARITH_TAC >>
+  `0 < m1 - n2` by intLib.ARITH_TAC >>
+  `0 < m1` by intLib.ARITH_TAC >>
+  `0 <= n1 + n2` by intLib.ARITH_TAC >>
+  `Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `Num m2 <= Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `smtstr_rep (smtstr_substr s n1 m1) =
+     TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_rep
+     (smtstr_substr (smtstr_substr s n1 m1) n2 m2) =
+   TAKE (Num m2)
+     (DROP (Num n2) (smtstr_rep (smtstr_substr s n1 m1)))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_rep (smtstr_substr s (n1 + n2) m2) =
+     TAKE (Num m2) (DROP (Num (n1 + n2)) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  metis_tac [TAKE_DROP_TAKE_LEFT_BOUND]
+QED
+
 Theorem smtstr_substr_full:
   smtstr_substr s 0 (smtstr_len s) = s
 Proof
   qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
   Cases_on `l` >>
   simp [smtstr_substr_def, smtstr_len_def]
+QED
+
+Theorem smtstr_substr_empty_start:
+  smtstr_len s <= i ==> smtstr_substr s i n = SmtStr []
+Proof
+  simp [smtstr_substr_def, smtstr_len_def] >>
+  strip_tac >>
+  `LENGTH (smtstr_rep s) <= Num i` by intLib.ARITH_TAC >>
+  simp []
+QED
+
+Theorem smtstr_substr_empty_start_neg:
+  i < 0 ==> smtstr_substr s i n = SmtStr []
+Proof
+  simp [smtstr_substr_def]
 QED
 
 Definition smtstr_update_def:
@@ -196,6 +416,22 @@ Theorem smtstr_rev_rev:
 Proof
   qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
   simp [smtstr_rev_def]
+QED
+
+Theorem smtstr_len_rev:
+  smtstr_len (smtstr_rev s) = smtstr_len s
+Proof
+  simp [smtstr_rev_def, smtstr_len_def, smtstr_rep_def]
+QED
+
+Theorem smtstr_rev_concat:
+  smtstr_rev (smtstr_concat s t) =
+  smtstr_concat (smtstr_rev t) (smtstr_rev s)
+Proof
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  qspec_then `t` strip_assume_tac ranged_smtstr_nchotomy >>
+  simp [smtstr_rev_def, smtstr_concat_def,
+        listTheory.REVERSE_APPEND]
 QED
 
 Definition smtstr_prefixof_def:
@@ -238,6 +474,20 @@ End
 Definition smtstr_le_def:
   smtstr_le s t <=> smtstr_lt s t \/ s = t
 End
+
+Theorem smtstr_le_empty_left:
+  smtstr_le (SmtStr []) s
+Proof
+  Cases_on `smtstr_rep s = []`
+  >- fs [smtstr_rep_eq_nil, smtstr_le_def] >>
+  simp [smtstr_le_def, smtstr_lt_def, listTheory.LLEX_def]
+QED
+
+Theorem smtstr_le_empty_right:
+  smtstr_le s (SmtStr []) <=> s = SmtStr []
+Proof
+  simp [smtstr_le_def, smtstr_lt_def, smtstr_rep_eq_nil]
+QED
 
 Definition smtstr_char_def:
   smtstr_char (c : num) = SmtStr [c]
@@ -376,6 +626,24 @@ Theorem smt_in_re_to_re:
   smt_in_re s (reglan_to_re t) <=> s = t
 Proof
   simp [smt_in_re_def]
+QED
+
+Theorem smt_in_re_allchar_len:
+  smt_in_re s reglan_allchar <=> smtstr_len s = 1
+Proof
+  rw [smt_in_re_def, smtstr_len_def,
+      listTheory.LENGTH_EQ_1] >>
+  eq_tac
+  >- (strip_tac >> qexists_tac `c` >>
+      metis_tac [smtstr_eq_singleton]) >>
+  strip_tac >>
+  `x <= 196607` by
+    (qpat_x_assum `smtstr_rep s = [x]`
+       (fn th => mp_tac (REWRITE_RULE [th]
+         (Q.INST [`s` |-> `s`] smtstr_rep_bound))) >>
+     simp []) >>
+  qexists_tac `x` >> simp [] >>
+  metis_tac [smtstr_eq_singleton]
 QED
 
 Theorem smt_in_re_rep:
@@ -1044,6 +1312,19 @@ Proof
   fs [smt_in_re_rep, smtstr_rep_def, re_deriv_lang]
 QED
 
+Theorem reglan_kstar_singleton_gen[local]:
+  (!u. p u <=> ?c. q c /\ u = [c]) ==>
+  !s. reglan_kstar p s <=> EVERY q s
+Proof
+  strip_tac >>
+  Induct
+  >- simp [reglan_kstar_nil] >>
+  rpt strip_tac >>
+  PURE_REWRITE_TAC [reglan_kstar_cons_unfold] >>
+  simp [reglan_dot_def] >>
+  metis_tac []
+QED
+
 Theorem reglan_kstar_allchar_gen[local]:
   (!u. p u <=> ?c. c <= 196607 /\ u = [c]) ==>
   !s. reglan_kstar p s <=> EVERY (\c. c <= 196607) s
@@ -1069,6 +1350,38 @@ Theorem smt_in_re_star_allchar:
   smt_in_re s (reglan_star reglan_allchar) <=> wfstr s
 Proof
   simp [smt_in_re_def, re_lang_def, reglan_kstar_allchar]
+QED
+
+Theorem reglan_kstar_digit:
+  reglan_kstar
+    (\u. ?c. 48 <= c /\ c <= 57 /\ c <= 196607 /\ u = [c]) s <=>
+  EVERY (\c. 48 <= c /\ c <= 57) s
+Proof
+  irule reglan_kstar_singleton_gen >>
+  gen_tac >> eq_tac >> rw [] >> qexists `c` >> simp [] >> decide_tac
+QED
+
+Theorem smtstr_len_one_form:
+  smtstr_len s = 1 ==> ?c. c <= 196607 /\ s = SmtStr [c]
+Proof
+  metis_tac [smt_in_re_allchar_len, smt_in_re_def]
+QED
+
+Theorem smt_in_re_allchar_contains:
+  smt_in_re t
+    (reglan_concat
+       (reglan_concat (reglan_star reglan_allchar) (reglan_to_re s))
+       (reglan_star reglan_allchar)) <=>
+  smtstr_contains t s
+Proof
+  simp [smt_in_re_def, re_lang_def, reglan_dot_def,
+        reglan_kstar_allchar, wfstr_def, smtstr_contains_def,
+        rich_listTheory.IS_SUBLIST_APPEND] >>
+  eq_tac >> strip_tac >> fs []
+  >- (qexistsl [`x`, `v`] >> simp []) >>
+  `EVERY (\c. c <= 196607) (l ++ smtstr_rep s ++ l')` by
+    (qpat_x_assum `smtstr_rep t = _` (SUBST1_TAC o SYM) >> simp []) >>
+  qexistsl [`l ++ smtstr_rep s`, `l'`] >> simp [] >> fs []
 QED
 
 Theorem smt_in_re_plus_allchar:
@@ -1216,6 +1529,547 @@ Definition smtstr_replace_def:
          (smtstr_rep s) (smtstr_rep t) (smtstr_rep u))
 End
 
+Theorem smtstr_indexof_aux_self[local]:
+  !s n. smtstr_indexof_aux s n s = SOME n
+Proof
+  Cases >> simp [smtstr_indexof_aux_def,
+                 rich_listTheory.IS_PREFIX_REFL]
+QED
+
+Theorem smtstr_indexof_aux_empty[local]:
+  !s n. smtstr_indexof_aux [] n s = SOME n
+Proof
+  Cases >> simp [smtstr_indexof_aux_def,
+                 rich_listTheory.IS_PREFIX_NIL]
+QED
+
+Theorem smtstr_indexof_aux_none[local]:
+  !s t n. smtstr_indexof_aux t n s = NONE <=> ~IS_SUBLIST s t
+Proof
+  Induct
+  >- simp [smtstr_indexof_aux_def,
+           rich_listTheory.IS_SUBLIST_APPEND] >>
+  Cases_on `t` >>
+  simp [smtstr_indexof_aux_def, rich_listTheory.IS_SUBLIST] >>
+  metis_tac []
+QED
+
+Theorem smtstr_indexof_aux_split[local]:
+  !s t n k.
+    smtstr_indexof_aux t n s = SOME k ==>
+    ?pre post. s = pre ++ t ++ post /\ LENGTH pre + n = k
+Proof
+  Induct
+  >- (simp [smtstr_indexof_aux_def] >> metis_tac []) >>
+  rw [smtstr_indexof_aux_def] >>
+  Cases_on `IS_PREFIX (h::s) t`
+  >- (fs [rich_listTheory.IS_PREFIX_APPEND] >>
+      qexistsl [`[]`, `l`] >> simp []) >>
+  fs [] >>
+  first_x_assum drule >>
+  strip_tac >>
+  qexistsl [`h::pre`, `post`] >>
+  simp []
+QED
+
+Theorem smtstr_indexof_aux_prefix[local]:
+  !t rest n. smtstr_indexof_aux t n (t ++ rest) = SOME n
+Proof
+  Cases >>
+  simp [smtstr_indexof_aux_def, smtstr_indexof_aux_empty,
+        rich_listTheory.IS_PREFIX_APPEND]
+QED
+
+Theorem smtstr_indexof_oob:
+  smtstr_len s < n ==> smtstr_indexof s t n = -1
+Proof
+  rw [smtstr_indexof_def, smtstr_len_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_indexof_negative_start:
+  n < 0 ==> smtstr_indexof s t n = -1
+Proof
+  simp [smtstr_indexof_def]
+QED
+
+Theorem smtstr_indexof_empty:
+  smtstr_len e = 0 /\ 0 <= n /\ n <= smtstr_len s ==>
+    smtstr_indexof s e n = n
+Proof
+  rw [smtstr_indexof_def, smtstr_len_def] >>
+  fs [smtstr_rep_eq_nil, smtstr_indexof_aux_empty] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem drop_no_self_sublist[local]:
+  0 < n /\ n <= LENGTH s ==> ~IS_SUBLIST (DROP n s) s
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  CCONTR_TAC >>
+  fs [] >>
+  qpat_x_assum `DROP n s = _` (mp_tac o AP_TERM ``LENGTH``) >>
+  simp []
+QED
+
+Theorem smtstr_indexof_self_zero[local]:
+  smtstr_indexof s s 0 =
+    smtstr_indexof (SmtStr []) (SmtStr []) 0
+Proof
+  rw [smtstr_indexof_def, smtstr_rep_def] >>
+  simp [smtstr_indexof_aux_self, smtstr_indexof_aux_empty]
+QED
+
+Theorem smtstr_indexof_self_positive[local]:
+  smtstr_indexof s s (&(SUC n)) =
+    smtstr_indexof (SmtStr []) (SmtStr []) (&(SUC n))
+Proof
+  simp [smtstr_indexof_def, smtstr_rep_def] >>
+  Cases_on `LENGTH (smtstr_rep s) < SUC n` >> simp [] >>
+  `smtstr_indexof_aux (smtstr_rep s) (SUC n)
+     (DROP (SUC n) (smtstr_rep s)) = NONE` by
+    (rw [smtstr_indexof_aux_none] >>
+     irule drop_no_self_sublist >> simp []) >>
+  simp []
+QED
+
+Theorem smtstr_indexof_self:
+  smtstr_indexof s s n =
+    smtstr_indexof (SmtStr []) (SmtStr []) n
+Proof
+  Cases_on `n`
+  >- (Cases_on `n'` >> fs [] >>
+      ACCEPT_TAC smtstr_indexof_self_positive)
+  >- simp [smtstr_indexof_negative_start]
+  >- ACCEPT_TAC smtstr_indexof_self_zero
+QED
+
+Theorem smtstr_indexof_aux_pattern_length[local]:
+  smtstr_indexof_aux t n s = SOME k ==> LENGTH t <= LENGTH s
+Proof
+  strip_tac >>
+  drule smtstr_indexof_aux_split >>
+  strip_tac >>
+  fs []
+QED
+
+Theorem is_prefix_append_short[local]:
+  IS_PREFIX (s ++ u) t /\ LENGTH t <= LENGTH s ==>
+    IS_PREFIX s t
+Proof
+  metis_tac [rich_listTheory.IS_PREFIX_IMP_TAKE,
+             rich_listTheory.IS_PREFIX_EQ_TAKE',
+             listTheory.TAKE_APPEND1]
+QED
+
+Theorem is_prefix_append_right[local]:
+  IS_PREFIX s t ==> IS_PREFIX (s ++ u) t
+Proof
+  rw [rich_listTheory.IS_PREFIX_APPEND] >>
+  qexists `l ++ u` >>
+  simp [listTheory.APPEND_ASSOC]
+QED
+
+Theorem smtstr_indexof_aux_append_some[local]:
+  !s t n k u.
+    smtstr_indexof_aux t n s = SOME k ==>
+    smtstr_indexof_aux t n (s ++ u) = SOME k
+Proof
+  rpt gen_tac >>
+  qid_spec_tac `n` >>
+  Induct_on `s` >>
+  rw [smtstr_indexof_aux_def]
+  >- simp [smtstr_indexof_aux_empty]
+  >- (`IS_PREFIX ((h::s) ++ u) t` by
+        metis_tac [is_prefix_append_right] >>
+      fs [])
+  >- (`LENGTH t <= LENGTH s` by
+        metis_tac [smtstr_indexof_aux_pattern_length] >>
+      mp_tac (Q.INST
+        [`s` |-> `h::s`, `u` |-> `u`, `t` |-> `t`]
+        is_prefix_append_short) >>
+      simp [])
+QED
+
+Theorem smtstr_rep_substr_suffix_inclusive[local]:
+  0 <= n /\ n <= smtstr_len s ==>
+    smtstr_rep (smtstr_substr s n (smtstr_len s)) =
+    DROP (Num n) (smtstr_rep s)
+Proof
+  strip_tac >>
+  `Num n <= LENGTH (smtstr_rep s)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  Cases_on `Num n = LENGTH (smtstr_rep s)`
+  >- (fs [smtstr_len_def] >>
+      simp [smtstr_rep_substr, smtstr_len_def]) >>
+  `Num n < LENGTH (smtstr_rep s)` by decide_tac >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `smtstr_rep s <> []` by
+    (Cases_on `smtstr_rep s` >> fs []) >>
+  simp [smtstr_rep_substr, smtstr_len_def,
+        listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smtstr_rep_substr_prefix_split[local]:
+  smtstr_rep s = pre ++ rest ==>
+  smtstr_rep (smtstr_substr s 0 (&(LENGTH pre))) = pre
+Proof
+  strip_tac >>
+  Cases_on `pre` >>
+  simp [smtstr_rep_substr, rich_listTheory.TAKE_LENGTH_APPEND]
+QED
+
+Theorem smtstr_rep_substr_suffix_split[local]:
+  smtstr_rep s = pre ++ middle ++ post ==>
+  smtstr_rep
+    (smtstr_substr s (&(LENGTH pre + LENGTH middle))
+      (smtstr_len s)) = post
+Proof
+  strip_tac >>
+  Cases_on `pre` >> Cases_on `middle` >> Cases_on `post` >>
+  fs [smtstr_rep_substr, smtstr_len_def,
+      rich_listTheory.DROP_LENGTH_APPEND,
+      listTheory.TAKE_LENGTH_TOO_LONG] >>
+  ONCE_REWRITE_TAC [GSYM listTheory.APPEND_ASSOC] >>
+  simp [rich_listTheory.DROP_LENGTH_APPEND,
+        listTheory.DROP_APPEND1]
+QED
+
+Theorem smtstr_contains_substr_bounds[local]:
+  0 < smtstr_len t /\
+  smtstr_contains (smtstr_substr s n (smtstr_len s)) t ==>
+  0 <= n /\ n < smtstr_len s
+Proof
+  strip_tac >>
+  `smtstr_rep t <> []` by
+    (Cases_on `smtstr_rep t` >> fs [smtstr_len_def]) >>
+  Cases_on `n < 0`
+  >- fs [smtstr_contains_def, smtstr_rep_substr,
+         rich_listTheory.IS_SUBLIST_APPEND] >>
+  Cases_on `smtstr_len s <= n`
+  >- (`LENGTH (smtstr_rep s) <= Num n` by
+        (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+      fs [smtstr_contains_def, smtstr_rep_substr,
+          rich_listTheory.IS_SUBLIST_APPEND]) >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_indexof_suffix_equal:
+  n <= smtstr_len s /\ n <= smtstr_len r /\
+  smtstr_substr s n (smtstr_len s) =
+    smtstr_substr r n (smtstr_len r) ==>
+  smtstr_indexof s t n = smtstr_indexof r t n
+Proof
+  strip_tac >>
+  Cases_on `n < 0`
+  >- simp [smtstr_indexof_negative_start] >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  `smtstr_rep (smtstr_substr s n (smtstr_len s)) =
+   DROP (Num n) (smtstr_rep s)` by
+    metis_tac [smtstr_rep_substr_suffix_inclusive] >>
+  `smtstr_rep (smtstr_substr r n (smtstr_len r)) =
+   DROP (Num n) (smtstr_rep r)` by
+    metis_tac [smtstr_rep_substr_suffix_inclusive] >>
+  `DROP (Num n) (smtstr_rep s) =
+   DROP (Num n) (smtstr_rep r)` by metis_tac [] >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `~(LENGTH (smtstr_rep s) < Num n) /\
+   ~(LENGTH (smtstr_rep r) < Num n)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  simp [smtstr_indexof_def]
+QED
+
+Theorem smtstr_indexof_no_contains:
+  ~smtstr_contains (smtstr_substr s n (smtstr_len s)) t ==>
+    smtstr_indexof s t n = -1
+Proof
+  strip_tac >>
+  Cases_on `n < 0`
+  >- simp [smtstr_indexof_negative_start] >>
+  Cases_on `smtstr_len s < n`
+  >- simp [smtstr_indexof_oob] >>
+  `0 <= n /\ n <= smtstr_len s` by intLib.ARITH_TAC >>
+  `~IS_SUBLIST (DROP (Num n) (smtstr_rep s))
+      (smtstr_rep t)` by
+    (fs [smtstr_contains_def,
+         smtstr_rep_substr_suffix_inclusive]) >>
+  `smtstr_indexof_aux (smtstr_rep t) (Num n)
+      (DROP (Num n) (smtstr_rep s)) = NONE` by
+    simp [smtstr_indexof_aux_none] >>
+  `~(LENGTH (smtstr_rep s) < Num n)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  simp [smtstr_indexof_def]
+QED
+
+Theorem smtstr_indexof_concat_preserve:
+  0 <= n /\ n <= smtstr_len s /\
+  smtstr_contains (smtstr_substr s n (smtstr_len s)) t ==>
+    smtstr_indexof (smtstr_concat s u) t n =
+    smtstr_indexof s t n
+Proof
+  strip_tac >>
+  `smtstr_rep (smtstr_substr s n (smtstr_len s)) =
+   DROP (Num n) (smtstr_rep s)` by
+    metis_tac [smtstr_rep_substr_suffix_inclusive] >>
+  `IS_SUBLIST
+      (smtstr_rep (smtstr_substr s n (smtstr_len s)))
+      (smtstr_rep t)` by fs [smtstr_contains_def] >>
+  `IS_SUBLIST (DROP (Num n) (smtstr_rep s))
+      (smtstr_rep t)` by metis_tac [] >>
+  `?k. smtstr_indexof_aux (smtstr_rep t) (Num n)
+       (DROP (Num n) (smtstr_rep s)) = SOME k` by
+    (Cases_on `smtstr_indexof_aux (smtstr_rep t) (Num n)
+       (DROP (Num n) (smtstr_rep s))` >>
+     fs [smtstr_indexof_aux_none]) >>
+  `Num n <= LENGTH (smtstr_rep s)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `DROP (Num n) (smtstr_rep (smtstr_concat s u)) =
+   DROP (Num n) (smtstr_rep s) ++ smtstr_rep u` by
+    simp [listTheory.DROP_APPEND1] >>
+  `smtstr_indexof_aux (smtstr_rep t) (Num n)
+      (DROP (Num n) (smtstr_rep (smtstr_concat s u))) = SOME k` by
+    metis_tac [smtstr_indexof_aux_append_some] >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `~(LENGTH (smtstr_rep s) < Num n) /\
+   ~(LENGTH (smtstr_rep (smtstr_concat s u)) < Num n)` by
+    (simp [] >> decide_tac) >>
+  simp [smtstr_indexof_def]
+QED
+
+Theorem smtstr_indexof_concat_contains:
+  0 < smtstr_len t /\
+  smtstr_contains (smtstr_substr s n (smtstr_len s)) t ==>
+  smtstr_indexof (smtstr_concat s u) t n =
+    smtstr_indexof s t n
+Proof
+  strip_tac >>
+  `0 <= n /\ n < smtstr_len s` by
+    metis_tac [smtstr_contains_substr_bounds] >>
+  irule smtstr_indexof_concat_preserve >>
+  simp []
+QED
+
+Theorem smtstr_rep_substr_full[local]:
+  smtstr_rep (smtstr_substr s 0 (smtstr_len s)) = smtstr_rep s
+Proof
+  Cases_on `smtstr_rep s` >>
+  simp [smtstr_rep_substr, smtstr_len_def,
+        listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smtstr_indexof_zero_nonnegative:
+  (0 <= smtstr_indexof s t 0 <=> smtstr_contains s t)
+Proof
+  rw [smtstr_indexof_def, smtstr_contains_def] >>
+  eq_tac
+  >- (Cases_on
+        `smtstr_indexof_aux (smtstr_rep t) 0 (smtstr_rep s)` >>
+      simp [] >>
+      drule smtstr_indexof_aux_split >>
+      strip_tac >>
+      rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+      qexistsl [`pre`, `post`] >>
+      simp [])
+  >- (strip_tac >>
+      Cases_on
+        `smtstr_indexof_aux (smtstr_rep t) 0 (smtstr_rep s)` >>
+      fs [smtstr_indexof_aux_none])
+QED
+
+Theorem smtstr_indexof_concat_occurrence:
+  smtstr_indexof
+      (smtstr_concat (smtstr_concat pre t) u) t 0 =
+    smtstr_indexof (smtstr_concat pre t) t 0
+Proof
+  irule smtstr_indexof_concat_preserve >>
+  conj_tac
+  >- simp [smtstr_len_def] >>
+  conj_tac
+  >- simp [] >>
+  simp [smtstr_contains_def, smtstr_rep_substr_full,
+        rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`smtstr_rep pre`, `[]`] >>
+  simp []
+QED
+
+Theorem smtstr_indexof_concat_occurrence_right:
+  smtstr_indexof (smtstr_concat pre (smtstr_concat t u)) t 0 =
+    smtstr_indexof (smtstr_concat pre t) t 0
+Proof
+  `smtstr_concat pre (smtstr_concat t u) =
+   smtstr_concat (smtstr_concat pre t) u` by
+    simp [smtstr_concat_def, listTheory.APPEND_ASSOC] >>
+  metis_tac [smtstr_indexof_concat_occurrence]
+QED
+
+Theorem take_splice[local]:
+  !pre t post. TAKE (LENGTH pre) (pre ++ t ++ post) = pre
+Proof
+  Induct >> simp []
+QED
+
+Theorem drop_splice[local]:
+  !pre t post.
+    DROP (LENGTH pre + LENGTH t) (pre ++ t ++ post) = post
+Proof
+  metis_tac [listTheory.LENGTH_APPEND, listTheory.APPEND_ASSOC,
+             rich_listTheory.DROP_LENGTH_APPEND]
+QED
+
+Theorem replace_splice_identity[local]:
+  TAKE (LENGTH pre) (pre ++ t ++ post) ++ t ++
+  DROP (LENGTH pre + LENGTH t) (pre ++ t ++ post) =
+  pre ++ t ++ post
+Proof
+  simp [take_splice, drop_splice]
+QED
+
+Theorem smtstr_replace_raw_id[local]:
+  smtstr_replace_raw s t t = s
+Proof
+  rw [smtstr_replace_raw_def] >>
+  Cases_on `smtstr_indexof_aux t 0 s` >> simp [] >>
+  drule smtstr_indexof_aux_split >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  simp [replace_splice_identity]
+QED
+
+Theorem smtstr_replace_raw_absent[local]:
+  ~IS_SUBLIST s t ==> smtstr_replace_raw s t u = s
+Proof
+  strip_tac >>
+  `smtstr_indexof_aux t 0 s = NONE` by
+    metis_tac [smtstr_indexof_aux_none] >>
+  simp [smtstr_replace_raw_def]
+QED
+
+Theorem smtstr_replace_raw_hit[local]:
+  IS_SUBLIST s t ==>
+  ?pre post.
+    s = pre ++ t ++ post /\
+    smtstr_replace_raw s t u = pre ++ u ++ post
+Proof
+  strip_tac >>
+  Cases_on `smtstr_indexof_aux t 0 s` >>
+  fs [smtstr_indexof_aux_none] >>
+  drule smtstr_indexof_aux_split >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  qexistsl [`pre`, `post`] >>
+  simp [smtstr_replace_raw_def, take_splice, drop_splice]
+QED
+
+Theorem smtstr_replace_raw_bound[local]:
+  EVERY P s /\ EVERY P u ==>
+  EVERY P (smtstr_replace_raw s t u)
+Proof
+  rw [smtstr_replace_raw_def] >>
+  BasicProvers.every_case_tac >>
+  simp [rich_listTheory.EVERY_TAKE,
+        rich_listTheory.EVERY_DROP]
+QED
+
+Theorem smtstr_rep_replace[simp]:
+  smtstr_rep (smtstr_replace s t u) =
+  smtstr_replace_raw
+    (smtstr_rep s) (smtstr_rep t) (smtstr_rep u)
+Proof
+  simp [smtstr_replace_def, smtstr_rep_def,
+        smtstr_replace_raw_bound]
+QED
+
+Theorem smtstr_replace_contains_replacement:
+  smtstr_contains (smtstr_replace s t u) u <=>
+  smtstr_contains s t \/ smtstr_contains s u
+Proof
+  rw [smtstr_contains_def, smtstr_rep_replace] >>
+  Cases_on `IS_SUBLIST (smtstr_rep s) (smtstr_rep t)`
+  >- (drule_then
+        (qspec_then `smtstr_rep u` strip_assume_tac)
+        smtstr_replace_raw_hit >>
+      rw [] >>
+      rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+      qexistsl [`pre`, `post`] >> simp []) >>
+  simp [smtstr_replace_raw_absent]
+QED
+
+Theorem smtstr_replace_self:
+  smtstr_replace t t s = s
+Proof
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_replace_def, smtstr_replace_raw_def] >>
+  simp [smtstr_indexof_aux_self]
+QED
+
+Theorem smtstr_replace_empty:
+  smtstr_replace t (SmtStr []) s = smtstr_concat s t
+Proof
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC
+    [smtstr_replace_def, smtstr_replace_raw_def,
+     smtstr_concat_def] >>
+  simp [smtstr_indexof_aux_empty, smtstr_rep_def]
+QED
+
+Theorem smtstr_replace_id:
+  smtstr_replace t s s = t
+Proof
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_replace_def] >>
+  simp [smtstr_replace_raw_id]
+QED
+
+Theorem smtstr_replace_absent:
+  ~smtstr_contains t s ==> smtstr_replace t s r = t
+Proof
+  strip_tac >>
+  fs [smtstr_contains_def] >>
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_replace_def] >>
+  simp [smtstr_replace_raw_absent]
+QED
+
+Theorem smtstr_replace_prefix:
+  smtstr_replace (smtstr_concat t rest) t r =
+  smtstr_concat r rest
+Proof
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC
+    [smtstr_replace_def, smtstr_replace_raw_def,
+     smtstr_concat_def] >>
+  simp [smtstr_indexof_aux_prefix,
+        rich_listTheory.DROP_LENGTH_APPEND]
+QED
+
+Theorem smtstr_replace_raw_append_some[local]:
+  smtstr_indexof_aux t 0 s = SOME n ==>
+  smtstr_replace_raw (s ++ u) t r =
+  smtstr_replace_raw s t r ++ u
+Proof
+  strip_tac >>
+  `n + LENGTH t <= LENGTH s` by
+    (drule smtstr_indexof_aux_split >> strip_tac >> fs []) >>
+  `smtstr_indexof_aux t 0 (s ++ u) = SOME n` by
+    metis_tac [smtstr_indexof_aux_append_some] >>
+  asm_rewrite_tac [smtstr_replace_raw_def] >>
+  simp [listTheory.TAKE_APPEND1, listTheory.DROP_APPEND1,
+        listTheory.APPEND_ASSOC]
+QED
+
+Theorem smtstr_replace_concat_after_match:
+  smtstr_contains s t ==>
+  smtstr_replace (smtstr_concat s u) t r =
+  smtstr_concat (smtstr_replace s t r) u
+Proof
+  strip_tac >>
+  Cases_on `smtstr_indexof_aux (smtstr_rep t) 0 (smtstr_rep s)`
+  >- fs [smtstr_contains_def, smtstr_indexof_aux_none] >>
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_rep_replace, smtstr_rep_concat] >>
+  metis_tac [smtstr_replace_raw_append_some]
+QED
+
 Definition smtstr_replace_all_aux_def:
   (smtstr_replace_all_aux 0 (s : num list) t u = s) /\
   (smtstr_replace_all_aux (SUC fuel) [] t u = []) /\
@@ -1234,6 +2088,96 @@ Definition smtstr_replace_all_def:
         (smtstr_replace_all_aux (LENGTH (smtstr_rep s))
            (smtstr_rep s) (smtstr_rep t) (smtstr_rep u))
 End
+
+Theorem smtstr_replace_all_empty:
+  smtstr_len t = 0 ==> smtstr_replace_all s t u = s
+Proof
+  strip_tac >>
+  `smtstr_rep t = []` by
+    (Cases_on `smtstr_rep t` >> fs [smtstr_len_def]) >>
+  simp [smtstr_replace_all_def]
+QED
+
+Theorem smtstr_replace_all_aux_nil[local]:
+  !fuel t u. smtstr_replace_all_aux fuel [] t u = []
+Proof
+  Cases >> simp [smtstr_replace_all_aux_def]
+QED
+
+Theorem smtstr_replace_all_self:
+  smtstr_len s <> 0 ==> smtstr_replace_all s s u = u
+Proof
+  strip_tac >>
+  irule (iffLR smtstr_rep_11) >>
+  Cases_on `smtstr_rep s` >>
+  fs [smtstr_len_def] >>
+  simp [smtstr_replace_all_def, smtstr_replace_all_aux_def,
+        smtstr_replace_all_aux_nil,
+        rich_listTheory.IS_PREFIX_REFL]
+QED
+
+Theorem smtstr_replace_all_aux_absent[local]:
+  !s t u. ~IS_SUBLIST s t ==>
+    smtstr_replace_all_aux (LENGTH s) s t u = s
+Proof
+  Induct
+  >- simp [smtstr_replace_all_aux_def] >>
+  rpt gen_tac >>
+  strip_tac >>
+  `smtstr_indexof_aux t 0 (h::s) = NONE` by
+    simp [smtstr_indexof_aux_none] >>
+  fs [smtstr_indexof_aux_def] >>
+  `~IS_SUBLIST s t` by
+    metis_tac [smtstr_indexof_aux_none] >>
+  simp [smtstr_replace_all_aux_def] >>
+  first_x_assum irule
+QED
+
+Theorem smtstr_replace_all_aux_id[local]:
+  !fuel s t. LENGTH s <= fuel /\ t <> [] ==>
+    smtstr_replace_all_aux fuel s t t = s
+Proof
+  Induct
+  >- (rpt gen_tac >> strip_tac >>
+      `s = []` by (Cases_on `s` >> fs []) >>
+      simp [smtstr_replace_all_aux_def]) >>
+  rpt gen_tac >> strip_tac >>
+  Cases_on `s`
+  >- simp [smtstr_replace_all_aux_def] >>
+  rw [smtstr_replace_all_aux_def]
+  >- (`LENGTH (DROP (LENGTH t) (h::t')) <= fuel` by
+        (simp [listTheory.LENGTH_DROP] >>
+         Cases_on `t` >> fs [] >> decide_tac) >>
+      `smtstr_replace_all_aux fuel
+         (DROP (LENGTH t) (h::t')) t t =
+       DROP (LENGTH t) (h::t')` by
+        (first_x_assum irule >> simp []) >>
+      `t ++ DROP (LENGTH t) (h::t') = h::t'` by
+        (fs [rich_listTheory.IS_PREFIX_APPEND] >>
+         simp [rich_listTheory.DROP_LENGTH_APPEND]) >>
+      metis_tac []) >>
+  first_x_assum irule >>
+  fs [] >>
+  decide_tac
+QED
+
+Theorem smtstr_replace_all_absent:
+  ~smtstr_contains s t ==> smtstr_replace_all s t u = s
+Proof
+  strip_tac >>
+  fs [smtstr_contains_def] >>
+  rw [smtstr_replace_all_def] >>
+  irule (iffLR smtstr_rep_11) >>
+  simp [smtstr_replace_all_aux_absent]
+QED
+
+Theorem smtstr_replace_all_id:
+  smtstr_replace_all s t t = s
+Proof
+  rw [smtstr_replace_all_def] >>
+  irule (iffLR smtstr_rep_11) >>
+  simp [smtstr_replace_all_aux_id]
+QED
 
 Definition smtstr_shortest_re_aux_def:
   (smtstr_shortest_re_aux r s n 0 =
@@ -1282,6 +2226,30 @@ Definition smtstr_replace_re_def:
       (smtstr_replace_re_raw
          (smtstr_rep s) r (smtstr_rep u))
 End
+
+Theorem smtstr_shortest_re_none[local]:
+  !fuel s n. smtstr_shortest_re_aux reglan_none s n fuel = NONE
+Proof
+  Induct >> simp [smtstr_shortest_re_aux_def, smt_in_re_def]
+QED
+
+Theorem smtstr_find_re_none[local]:
+  !s n. smtstr_find_re_aux allow_empty reglan_none n s = NONE
+Proof
+  Induct >>
+  simp [smtstr_find_re_aux_def, smtstr_shortest_re_def,
+        smtstr_shortest_re_none]
+QED
+
+Theorem smtstr_replace_re_none:
+  smtstr_replace_re s reglan_none u = s
+Proof
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC
+    [smtstr_replace_re_def, smtstr_replace_re_raw_def,
+     smtstr_find_re_def] >>
+  simp [smtstr_find_re_none]
+QED
 
 Theorem smtstr_shortest_re_aux_lower:
   smtstr_shortest_re_aux r s n k = SOME m ==> n <= m
@@ -1338,6 +2306,15 @@ Definition smtstr_replace_re_all_def:
          (smtstr_rep s) r (smtstr_rep u))
 End
 
+Theorem smtstr_replace_re_all_none:
+  smtstr_replace_re_all s reglan_none u = s
+Proof
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  Cases_on `LENGTH l` >>
+  simp [smtstr_replace_re_all_def, smtstr_replace_re_all_aux_def,
+        smtstr_find_re_def, smtstr_find_re_none]
+QED
+
 (* SMT-LIB character and decimal conversions. *)
 
 Definition smtstr_is_digit_def:
@@ -1352,6 +2329,57 @@ Definition smtstr_to_code_def:
     | _ => -1
 End
 
+Theorem num_not_le_neg_one[local]:
+  !n. ~((&n : int) <= -1)
+Proof
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_in_re_range_elim:
+  smtstr_len lo = 1 /\ smtstr_len hi = 1 ==>
+  (smt_in_re s (reglan_range lo hi) <=>
+   smtstr_to_code lo <= smtstr_to_code s /\
+   smtstr_to_code s <= smtstr_to_code hi)
+Proof
+  strip_tac >>
+  qpat_x_assum `smtstr_len lo = 1`
+    (strip_assume_tac o MATCH_MP smtstr_len_one_form) >>
+  qpat_x_assum `smtstr_len hi = 1`
+    (strip_assume_tac o MATCH_MP smtstr_len_one_form) >>
+  gvs [] >>
+  eq_tac
+  >- (strip_tac >> fs [smt_in_re_def, smtstr_to_code_def]) >>
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  gvs [] >>
+  rename1 `EVERY (\c. c <= 196607) chars` >>
+  Cases_on `chars`
+  >- (strip_tac >>
+      gvs [smtstr_to_code_def, smtstr_rep_def] >>
+      metis_tac [num_not_le_neg_one]) >>
+  Cases_on `t`
+  >- (strip_tac >>
+      gvs [smt_in_re_def, smtstr_to_code_def, smtstr_rep_def] >>
+      qexists_tac `h` >> simp [] >> decide_tac) >>
+  Cases_on `t'` >> strip_tac >>
+  gvs [smtstr_to_code_def, smtstr_rep_def] >>
+  metis_tac [num_not_le_neg_one]
+QED
+
+Theorem smtstr_is_digit_elim:
+  smtstr_is_digit s <=>
+  48 <= smtstr_to_code s /\ smtstr_to_code s <= 57
+Proof
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  gvs [] >>
+  rename1 `EVERY (\c. c <= 196607) chars` >>
+  Cases_on `chars` >>
+  gvs [smtstr_is_digit_def, smtstr_to_code_def, smtstr_rep_def] >>
+  Cases_on `t` >>
+  gvs [smtstr_is_digit_def, smtstr_to_code_def, smtstr_rep_def] >>
+  Cases_on `t'` >>
+  gvs [smtstr_is_digit_def, smtstr_to_code_def, smtstr_rep_def]
+QED
+
 Definition smtstr_from_code_def:
   smtstr_from_code (n : int) =
     if n < 0 \/ 196607 < Num n then SmtStr []
@@ -1362,6 +2390,33 @@ Definition smtstr_digits_def:
   smtstr_digits s <=>
     EVERY (\c. 48 <= c /\ c <= 57) (smtstr_rep s)
 End
+
+Theorem smt_in_re_star_digit:
+  smt_in_re s
+    (reglan_star (reglan_range (SmtStr [48]) (SmtStr [57]))) <=>
+  smtstr_digits s
+Proof
+  simp [smt_in_re_def, re_lang_def, reglan_kstar_digit,
+        smtstr_digits_def, smtstr_rep_def]
+QED
+
+Theorem smt_in_re_plus_digit:
+  smt_in_re s
+    (reglan_concat
+       (reglan_range (SmtStr [48]) (SmtStr [57]))
+       (reglan_star (reglan_range (SmtStr [48]) (SmtStr [57])))) <=>
+  s <> SmtStr [] /\ smtstr_digits s
+Proof
+  simp [smt_in_re_def, re_lang_def, reglan_dot_def,
+        reglan_kstar_digit, smtstr_digits_def, smtstr_rep_def,
+        smtstr_rep_eq_nil] >>
+  Cases_on `smtstr_rep s`
+  >- fs [smtstr_rep_eq_nil] >>
+  `s <> SmtStr []` by (strip_tac >> fs [smtstr_rep_def]) >>
+  eq_tac >> strip_tac >> fs []
+  >- (qpat_x_assum `u = [c]` SUBST_ALL_TAC >> fs []) >>
+  qexists `[h]` >> qexists `t` >> simp [] >> decide_tac
+QED
 
 Definition smtstr_to_int_def:
   smtstr_to_int s =
@@ -1418,6 +2473,28 @@ Proof
   simp [smtstr_to_int_def]
 QED
 
+Theorem smtstr_to_int_neg_one_nonempty:
+  s <> SmtStr [] /\ smtstr_to_int s = -1 ==>
+  ~smtstr_digits s
+Proof
+  rw [smtstr_to_int_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_to_int_concat_nondigit:
+  s <> SmtStr [] /\ smtstr_to_int s = -1 ==>
+  smtstr_to_int
+    (smtstr_concat left (smtstr_concat s right)) = -1
+Proof
+  strip_tac >>
+  `~smtstr_digits s` by
+    metis_tac [smtstr_to_int_neg_one_nonempty] >>
+  `~smtstr_digits
+      (smtstr_concat left (smtstr_concat s right))` by
+    fs [smtstr_digits_def, smtstr_concat_def, smtstr_rep_def] >>
+  metis_tac [smtstr_to_int_nondigit]
+QED
+
 Theorem smtstr_from_int_ascii:
   0 <= n ==>
   smtstr_from_int n =
@@ -1453,6 +2530,42 @@ Proof
   `~(n < 0)` by intLib.ARITH_TAC >>
   simp [smtstr_from_int_def, smtstr_eq_SmtStr,
         ASCIInumbersTheory.num_to_dec_string_nil]
+QED
+
+Theorem smtstr_from_int_digits:
+  smtstr_digits (smtstr_from_int n)
+Proof
+  Cases_on `n < 0`
+  >- simp [smtstr_from_int_negative, smtstr_digits_def,
+           smtstr_rep_def] >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  simp [smtstr_from_int_ascii, smtstr_digits_num_to_dec_string]
+QED
+
+Theorem smtstr_contains_preserves_digits:
+  smtstr_digits source /\ smtstr_contains source sub ==>
+  smtstr_digits sub
+Proof
+  rw [smtstr_digits_def, smtstr_contains_def,
+      rich_listTheory.IS_SUBLIST_APPEND] >>
+  fs []
+QED
+
+Theorem smtstr_from_int_no_nondigit_substring:
+  s <> SmtStr [] /\ smtstr_to_int s = -1 ==>
+  ~smtstr_contains (smtstr_from_int n) s
+Proof
+  strip_tac >>
+  `~smtstr_digits s` by
+    metis_tac [smtstr_to_int_neg_one_nonempty] >>
+  Cases_on `n < 0`
+  >- fs [smtstr_from_int_negative, smtstr_contains_def,
+         smtstr_rep_def, rich_listTheory.IS_SUBLIST_APPEND,
+         smtstr_rep_eq_nil] >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  `smtstr_digits (smtstr_from_int n)` by
+    simp [smtstr_from_int_ascii, smtstr_digits_num_to_dec_string] >>
+  metis_tac [smtstr_contains_preserves_digits]
 QED
 
 Theorem smtstr_to_int_from_int:
@@ -1543,6 +2656,29 @@ Theorem smtstr_len_eq_zero:
   smtstr_len s = 0 <=> s = SmtStr []
 Proof
   simp [smtstr_len_def, smtstr_rep_eq_nil]
+QED
+
+Theorem smtstr_substr_full_bound:
+  smtstr_len s <= n ==> smtstr_substr s 0 n = s
+Proof
+  strip_tac >>
+  Cases_on `s = SmtStr []`
+  >- simp [smtstr_substr_def] >>
+  `smtstr_len s <> 0` by metis_tac [smtstr_len_eq_zero] >>
+  `0 <= smtstr_len s` by metis_tac [smtstr_len_nonnegative] >>
+  `0 < smtstr_len s` by intLib.ARITH_TAC >>
+  `0 < n` by intLib.ARITH_TAC >>
+  `smtstr_rep s <> []` by metis_tac [smtstr_rep_eq_nil] >>
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_rep_substr] >>
+  simp [smtstr_len_def] >>
+  `~(n <= 0)` by intLib.ARITH_TAC >>
+  asm_simp_tac (srw_ss()) [] >>
+  PURE_REWRITE_TAC [GSYM integerTheory.INT_OF_NUM_LE] >>
+  `&(Num n) = n` by intLib.ARITH_TAC >>
+  asm_rewrite_tac [] >>
+  PURE_REWRITE_TAC [GSYM smtstr_len_def] >>
+  first_assum ACCEPT_TAC
 QED
 
 (* 'smtstr_char c' is the SMT-LIB one-character string only for a genuine
@@ -1844,6 +2980,885 @@ Proof
   metis_tac [smtstr_concat_assoc]
 QED
 
+Theorem smtstr_replace_concat_contained_suffix:
+  smtstr_len t = 1 /\ smtstr_contains s u ==>
+  smtstr_replace (smtstr_concat s u) t r =
+  smtstr_concat (smtstr_replace s t r) u
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains s t`
+  >- simp [smtstr_replace_concat_after_match] >>
+  `~smtstr_contains u t` by
+    metis_tac [smtstr_contains_trans] >>
+  `~smtstr_contains (smtstr_concat s u) t` by
+    simp [smtstr_contains_concat_len_one] >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_contains_length_bound:
+  smtstr_contains s t ==> smtstr_len t <= smtstr_len s
+Proof
+  rw [smtstr_contains_decompose] >>
+  `0 <= smtstr_len u /\ 0 <= smtstr_len v` by
+    simp [smtstr_len_nonnegative] >>
+  fs [smtstr_len_concat] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_contains_length_equal:
+  smtstr_len s <= smtstr_len t ==>
+  (smtstr_contains s t <=> s = t)
+Proof
+  strip_tac >>
+  rw [smtstr_contains_decompose] >>
+  eq_tac
+  >- (strip_tac >>
+      `smtstr_len u = 0 /\ smtstr_len v = 0` by
+        (`0 <= smtstr_len u /\ 0 <= smtstr_len v` by
+           simp [smtstr_len_nonnegative] >>
+         fs [smtstr_len_concat] >>
+         intLib.ARITH_TAC) >>
+      fs [smtstr_len_eq_zero, smtstr_concat_nil_left,
+          smtstr_concat_nil_right]) >>
+  strip_tac >> qexistsl [`SmtStr []`, `SmtStr []`] >>
+  simp [smtstr_concat_nil_left, smtstr_concat_nil_right]
+QED
+
+Theorem smtstr_contains_antisym:
+  smtstr_contains s t /\ smtstr_contains t s ==> s = t
+Proof
+  metis_tac [smtstr_contains_length_bound,
+             smtstr_contains_length_equal]
+QED
+
+Theorem smtstr_replace_preserves_contains:
+  smtstr_contains s u /\ smtstr_contains r u ==>
+  smtstr_contains (smtstr_replace s t r) u
+Proof
+  Cases_on `smtstr_contains s t`
+  >- metis_tac [smtstr_replace_contains_replacement,
+                smtstr_contains_trans] >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_avoids_outer:
+  ~smtstr_contains s t /\ ~smtstr_contains s u ==>
+  ~smtstr_contains s (smtstr_replace t r u)
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains t r`
+  >- (CCONTR_TAC >>
+      `smtstr_contains (smtstr_replace t r u) u` by
+        metis_tac [smtstr_replace_contains_replacement] >>
+      metis_tac [smtstr_contains_trans]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_self_contains:
+  smtstr_contains (smtstr_replace x y x) y <=>
+  smtstr_contains x y
+Proof
+  Cases_on `smtstr_contains x y`
+  >- (`smtstr_contains (smtstr_replace x y x) x` by
+        metis_tac [smtstr_replace_contains_replacement,
+                   smtstr_contains_refl] >>
+      metis_tac [smtstr_contains_trans]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_self_target:
+  smtstr_len x <= smtstr_len y ==>
+  smtstr_replace x y x = x
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains x y`
+  >- (`x = y` by
+        metis_tac [smtstr_contains_length_equal] >>
+      simp [smtstr_replace_self]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_raw_contains_len_one[local]:
+  LENGTH w = 1 /\ ~IS_SUBLIST y w ==>
+  (IS_SUBLIST (smtstr_replace_raw x y z) w <=>
+   IS_SUBLIST x w \/ (IS_SUBLIST x y /\ IS_SUBLIST z w))
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (drule_then (qspec_then `z` strip_assume_tac)
+        smtstr_replace_raw_hit >>
+      rw [] >>
+      simp [IS_SUBLIST_APPEND_len_one] >>
+      tautLib.TAUT_TAC) >>
+  simp [smtstr_replace_raw_absent]
+QED
+
+Theorem smtstr_replace_contains_len_one:
+  smtstr_len w = 1 /\ ~smtstr_contains y w ==>
+  (smtstr_contains (smtstr_replace x y z) w <=>
+   smtstr_contains x w \/
+   (smtstr_contains x y /\ smtstr_contains z w))
+Proof
+  strip_tac >>
+  rw [smtstr_contains_def, smtstr_rep_replace] >>
+  irule smtstr_replace_raw_contains_len_one >>
+  fs [smtstr_contains_def, smtstr_len_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_replace_self_contains_len_one:
+  smtstr_len w = 1 ==>
+  (smtstr_contains (smtstr_replace x y x) w <=>
+   smtstr_contains x w)
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains y w`
+  >- (Cases_on `smtstr_contains x y`
+      >- (`smtstr_contains x w` by
+            metis_tac [smtstr_contains_trans] >>
+          `smtstr_contains (smtstr_replace x y x) x` by
+            metis_tac [smtstr_replace_contains_replacement,
+                       smtstr_contains_refl] >>
+          metis_tac [smtstr_contains_trans]) >>
+      simp [smtstr_replace_absent]) >>
+  metis_tac [smtstr_replace_contains_len_one]
+QED
+
+Theorem smtstr_replace_pattern_self_contains:
+  smtstr_contains s (smtstr_replace t s t) <=>
+  smtstr_contains s t
+Proof
+  Cases_on `smtstr_contains t s`
+  >- (eq_tac
+      >- (strip_tac >>
+          `smtstr_contains (smtstr_replace t s t) t` by
+            metis_tac [smtstr_replace_contains_replacement,
+                       smtstr_contains_refl] >>
+          metis_tac [smtstr_contains_trans]) >>
+      strip_tac >>
+      `s = t` by metis_tac [smtstr_contains_antisym] >>
+      simp [smtstr_replace_self, smtstr_contains_refl]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_empty_source_contains:
+  smtstr_len empty = 0 ==>
+  (smtstr_contains s (smtstr_replace empty s t) <=>
+   empty = smtstr_replace empty s t)
+Proof
+  rw [smtstr_len_eq_zero] >>
+  Cases_on `smtstr_rep s`
+  >- simp [smtstr_replace_def, smtstr_replace_raw_def,
+           smtstr_indexof_aux_def, smtstr_contains_def,
+           smtstr_rep_def, rich_listTheory.IS_SUBLIST_APPEND,
+           smtstr_rep_eq_nil] >>
+  `s = SmtStr (h::t')` by metis_tac [SmtStr_smtstr_rep] >>
+  simp [smtstr_replace_def, smtstr_replace_raw_def,
+        smtstr_indexof_aux_def, smtstr_contains_def,
+        smtstr_rep_def, rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`[]`, `h::t'`] >> simp []
+QED
+
+Theorem smtstr_replace_self_empty_forward[local]:
+  x = SmtStr [] ==>
+  smtstr_replace x y x = SmtStr []
+Proof
+  strip_tac >>
+  fs [smtstr_replace_def, smtstr_replace_raw_def,
+      smtstr_rep_def, smtstr_indexof_aux_def] >>
+  BasicProvers.every_case_tac >> simp []
+QED
+
+Theorem smtstr_replace_self_empty_reverse[local]:
+  smtstr_replace x y x = SmtStr [] ==>
+  x = SmtStr []
+Proof
+  strip_tac >>
+  `smtstr_contains (smtstr_replace x y x) x` by
+    metis_tac [smtstr_replace_contains_replacement,
+               smtstr_contains_refl] >>
+  `smtstr_contains (SmtStr []) x` by
+    (qpat_x_assum `smtstr_replace x y x = SmtStr []`
+       (fn th => ONCE_REWRITE_TAC [GSYM th]) >>
+     first_assum ACCEPT_TAC) >>
+  `smtstr_contains x (SmtStr [])` by
+    (rw [smtstr_contains_def, smtstr_rep_def,
+         rich_listTheory.IS_SUBLIST_APPEND] >>
+     qexistsl [`smtstr_rep x`, `[]`] >> simp []) >>
+  metis_tac [smtstr_contains_antisym]
+QED
+
+Theorem smtstr_replace_self_empty_eq:
+  smtstr_len empty = 0 ==>
+  (smtstr_replace x y x = empty <=> x = empty)
+Proof
+  rw [smtstr_len_eq_zero] >>
+  metis_tac [smtstr_replace_self_empty_forward,
+             smtstr_replace_self_empty_reverse]
+QED
+
+Theorem smtstr_replace_self_source_reverse[local]:
+  smtstr_replace x y x = y ==> x = y
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains x y`
+  >- (`smtstr_contains (smtstr_replace x y x) x` by
+        metis_tac [smtstr_replace_contains_replacement,
+                   smtstr_contains_refl] >>
+      `smtstr_contains y x` by
+        (qpat_x_assum `smtstr_replace x y x = y`
+           (fn th => ONCE_REWRITE_TAC [GSYM th]) >>
+         first_assum ACCEPT_TAC) >>
+      metis_tac [smtstr_contains_antisym])
+  >- fs [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_self_source_eq:
+  (smtstr_replace x y x = y <=> x = y)
+Proof
+  metis_tac [smtstr_replace_self,
+             smtstr_replace_self_source_reverse]
+QED
+
+Theorem smtstr_replace_raw_eq_source_pattern[local]:
+  IS_SUBLIST s t /\ smtstr_replace_raw s t r = s ==> r = t
+Proof
+  strip_tac >>
+  drule_then (qspec_then `r` strip_assume_tac)
+    smtstr_replace_raw_hit >>
+  `pre ++ r ++ post = pre ++ t ++ post` by metis_tac [] >>
+  `r ++ post = t ++ post` by
+    metis_tac [listTheory.APPEND_11] >>
+  metis_tac [listTheory.APPEND_11]
+QED
+
+Theorem smtstr_replace_no_change_reverse[local]:
+  y <> z /\ smtstr_replace x y z = x ==>
+  ~smtstr_contains x y
+Proof
+  strip_tac >> CCONTR_TAC >>
+  `smtstr_replace_raw (smtstr_rep x) (smtstr_rep y)
+      (smtstr_rep z) = smtstr_rep x` by
+    (qpat_x_assum `smtstr_replace x y z = x`
+       (fn th => ACCEPT_TAC
+          (REWRITE_RULE [smtstr_rep_replace]
+            (AP_TERM ``smtstr_rep`` th)))) >>
+  fs [] >>
+  `IS_SUBLIST (smtstr_rep x) (smtstr_rep y)` by
+    fs [smtstr_contains_def] >>
+  `smtstr_rep z = smtstr_rep y` by
+    metis_tac [smtstr_replace_raw_eq_source_pattern] >>
+  metis_tac [smtstr_rep_11]
+QED
+
+Theorem smtstr_replace_no_change_eq:
+  y <> z ==>
+  (smtstr_replace x y z = x <=> ~smtstr_contains x y)
+Proof
+  metis_tac [smtstr_replace_absent,
+             smtstr_replace_no_change_reverse]
+QED
+
+Theorem smtstr_replace_equal_length:
+  smtstr_len t = smtstr_len r ==>
+  smtstr_len (smtstr_replace s t r) = smtstr_len s
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains s t`
+  >- (`IS_SUBLIST (smtstr_rep s) (smtstr_rep t)` by
+        fs [smtstr_contains_def] >>
+      drule_then (qspec_then `smtstr_rep r` strip_assume_tac)
+        smtstr_replace_raw_hit >>
+      fs [smtstr_contains_def, smtstr_len_def])
+  >- simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_target_equal_length_forward[local]:
+  smtstr_len y = smtstr_len z /\ (x = y \/ x = z) ==>
+  smtstr_replace x y z = z
+Proof
+  strip_tac >> fs [smtstr_replace_self, smtstr_replace_self_target]
+QED
+
+Theorem smtstr_replace_target_equal_length_reverse[local]:
+  smtstr_len y = smtstr_len z /\ smtstr_replace x y z = z ==>
+  x = y \/ x = z
+Proof
+  strip_tac >>
+  Cases_on `x = y` >> simp [] >>
+  Cases_on `smtstr_contains x y` >> fs [smtstr_replace_absent] >>
+  `smtstr_len (smtstr_replace x y z) = smtstr_len x` by
+    metis_tac [smtstr_replace_equal_length] >>
+  `smtstr_len x = smtstr_len y` by metis_tac [] >>
+  mp_tac (Q.INST [`s` |-> `x`, `t` |-> `y`]
+    smtstr_contains_length_equal) >>
+  simp []
+QED
+
+Theorem smtstr_replace_target_equal_length_eq:
+  smtstr_len y = smtstr_len z ==>
+  (smtstr_replace x y z = z <=> x = y \/ x = z)
+Proof
+  metis_tac [smtstr_replace_target_equal_length_forward,
+             smtstr_replace_target_equal_length_reverse]
+QED
+
+Theorem smtstr_replace_raw_empty_singleton[local]:
+  smtstr_replace_raw s [c] [] = [] <=> s = [] \/ s = [c]
+Proof
+  Cases_on `IS_SUBLIST s [c]`
+  >- (drule_then (qspec_then `[]` strip_assume_tac)
+        smtstr_replace_raw_hit >>
+      fs [] >>
+      eq_tac >> strip_tac >> fs [] >>
+      Cases_on `pre` >> Cases_on `post` >> fs [])
+      >- (`IS_SUBLIST [c] [c]` by
+        (rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+         qexistsl [`[]`, `[]`] >> simp []) >>
+      fs [smtstr_replace_raw_absent] >>
+      metis_tac [])
+QED
+
+Theorem smtstr_indexof_aux_suc[local]:
+  !s t n.
+    smtstr_indexof_aux t (SUC n) s =
+    OPTION_MAP SUC (smtstr_indexof_aux t n s)
+Proof
+  Induct >> Cases_on `t` >> rw [smtstr_indexof_aux_def] >> simp []
+QED
+
+Theorem smtstr_indexof_aux_first[local]:
+  !s t n.
+    smtstr_indexof_aux t 0 s = SOME n ==>
+    IS_PREFIX (DROP n s) t /\
+    !m. m < n ==> ~IS_PREFIX (DROP m s) t
+Proof
+  Induct
+  >- simp [smtstr_indexof_aux_def] >>
+  rpt gen_tac >>
+  rw [smtstr_indexof_aux_def] >>
+  assume_tac (Q.SPECL [`s`, `t`, `0`] smtstr_indexof_aux_suc) >>
+  Cases_on `smtstr_indexof_aux t 0 s` >>
+  fs [] >>
+  Cases_on `m` >> fs []
+QED
+
+Theorem smtstr_indexof_aux_first_intro[local]:
+  !n s t.
+    IS_PREFIX (DROP n s) t /\
+    (!m. m < n ==> ~IS_PREFIX (DROP m s) t) ==>
+    smtstr_indexof_aux t 0 s = SOME n
+Proof
+  Induct THENL
+  [Cases_on `s` >> rw [smtstr_indexof_aux_def],
+   rpt gen_tac >>
+   (Cases_on `s` THENL
+    [simp [] >> strip_tac >>
+       first_x_assum (qspec_then `0` mp_tac) >> simp [],
+     rw [smtstr_indexof_aux_def] THENL
+     [disj2_tac >> qexists_tac `0` >> simp [],
+      qpat_x_assum `!s t. _`
+        (qspecl_then [`t'`, `t`] mp_tac) >>
+      impl_tac
+      >- (simp [] >> rpt strip_tac >>
+          first_x_assum (qspec_then `SUC m` mp_tac) >> simp []) >>
+      strip_tac >>
+      assume_tac
+        (Q.SPECL [`t'`, `t`, `0`] smtstr_indexof_aux_suc) >>
+      fs []]])]
+QED
+
+Theorem smtstr_inserted_source_no_early[local]:
+  y = pre ++ w ++ post /\ LENGTH pre = n /\
+  (!m. m < n ==> ~IS_PREFIX (DROP m y) w) ==>
+  !m. m < n ==>
+    ~IS_PREFIX (DROP m (pre ++ y ++ post)) y
+Proof
+  rpt strip_tac >>
+  fs [rich_listTheory.IS_PREFIX_APPEND] >>
+  qpat_x_assum `DROP m (pre ++ y ++ post) = y ++ l`
+    (mp_tac o AP_TERM ``DROP n``) >>
+  simp [listTheory.DROP_APPEND1, listTheory.DROP_APPEND2,
+        listTheory.APPEND_ASSOC] >>
+  strip_tac >>
+  first_x_assum (qspec_then `m` mp_tac) >>
+  simp [] >>
+  `IS_PREFIX ((DROP m pre ++ w ++ post) ++ post) w` by
+    (rw [rich_listTheory.IS_PREFIX_APPEND] >>
+     qexists_tac `post ++ l` >> fs [listTheory.APPEND_ASSOC]) >>
+  `LENGTH w <= LENGTH (DROP m pre ++ w ++ post)` by simp [] >>
+  `IS_PREFIX (DROP m pre ++ w ++ post) w` by
+    metis_tac [is_prefix_append_short] >>
+  fs [rich_listTheory.IS_PREFIX_APPEND] >>
+  qexists_tac `l''` >>
+  simp [listTheory.DROP_APPEND1] >>
+  decide_tac
+QED
+
+Theorem smtstr_replace_raw_lookahead_hit[local]:
+  IS_SUBLIST y w ==>
+  smtstr_replace_raw (smtstr_replace_raw y w y) y z =
+  smtstr_replace_raw y w z
+Proof
+  strip_tac >>
+  Cases_on `smtstr_indexof_aux w 0 y`
+  >- fs [smtstr_indexof_aux_none] >>
+  drule smtstr_indexof_aux_first >>
+  strip_tac >>
+  qpat_x_assum `smtstr_indexof_aux w 0 y = SOME x`
+    (fn th => assume_tac th >>
+       mp_tac (MATCH_MP smtstr_indexof_aux_split th)) >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  `smtstr_replace_raw y w y = pre ++ y ++ post` by
+    simp [smtstr_replace_raw_def, take_splice, drop_splice] >>
+  `smtstr_indexof_aux y 0 (pre ++ y ++ post) =
+     SOME (LENGTH pre)` by
+    (irule smtstr_indexof_aux_first_intro >>
+     conj_tac
+     >- (match_mp_tac smtstr_inserted_source_no_early >> fs []) >>
+     simp [rich_listTheory.DROP_LENGTH_APPEND,
+           rich_listTheory.IS_PREFIX_APPEND] >>
+     qexists_tac `post` >>
+     simp [listTheory.DROP_APPEND1, listTheory.APPEND_ASSOC]) >>
+  qpat_x_assum `y = pre ++ w ++ post` SUBST_ALL_TAC >>
+  fs [smtstr_replace_raw_def, take_splice, drop_splice,
+      listTheory.APPEND_ASSOC] >>
+  simp [listTheory.TAKE_APPEND1, listTheory.DROP_APPEND1]
+QED
+
+Theorem smtstr_replace_lookahead_hit[local]:
+  smtstr_contains y w ==>
+  smtstr_replace (smtstr_replace y w y) y z =
+  smtstr_replace y w z
+Proof
+  rw [smtstr_contains_def] >>
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_rep_replace] >>
+  metis_tac [smtstr_replace_raw_lookahead_hit]
+QED
+
+Theorem smtstr_replace_length_le[local]:
+  smtstr_contains s t /\ smtstr_len r <= smtstr_len t ==>
+  smtstr_len (smtstr_replace s t r) <= smtstr_len s
+Proof
+  strip_tac >>
+  fs [smtstr_contains_def] >>
+  drule_then (qspec_then `smtstr_rep r` strip_assume_tac)
+    smtstr_replace_raw_hit >>
+  fs [smtstr_len_def, smtstr_rep_replace] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_replace_nested_lookahead_id_simp:
+  w <> z /\ smtstr_len z <= smtstr_len w ==>
+  smtstr_replace (smtstr_replace y w y) y z =
+  smtstr_replace (smtstr_replace y w z) y z
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains y w`
+  >- (`smtstr_replace (smtstr_replace y w y) y z =
+         smtstr_replace y w z` by
+        metis_tac [smtstr_replace_lookahead_hit] >>
+      `smtstr_len (smtstr_replace y w z) <= smtstr_len y` by
+        metis_tac [smtstr_replace_length_le] >>
+      `~smtstr_contains (smtstr_replace y w z) y` by
+        (CCONTR_TAC >>
+         `smtstr_len y <= smtstr_len (smtstr_replace y w z)` by
+           metis_tac [smtstr_contains_length_bound] >>
+         `smtstr_replace y w z = y` by
+           metis_tac [smtstr_contains_length_equal] >>
+         metis_tac [smtstr_replace_no_change_eq]) >>
+      simp [smtstr_replace_absent]) >>
+  simp [smtstr_replace_absent, smtstr_replace_self]
+QED
+
+Theorem smtstr_replace_raw_singleton_cons[local]:
+  smtstr_replace_raw (h::s) [a] [b] =
+    if h = a then b::s
+    else h::smtstr_replace_raw s [a] [b]
+Proof
+  simp [smtstr_replace_raw_def, smtstr_indexof_aux_def,
+        rich_listTheory.IS_PREFIX] >>
+  Cases_on `h = a` >> simp [smtstr_indexof_aux_suc] >>
+  assume_tac (SIMP_RULE (srw_ss()) []
+    (ISPECL [``s:num list``, ``[a:num]``, ``0:num``]
+      smtstr_indexof_aux_suc)) >>
+  Cases_on `smtstr_indexof_aux [a] 0 s` >>
+  fs [arithmeticTheory.ADD1]
+QED
+
+Theorem smtstr_replace_raw_singleton_nil[local]:
+  smtstr_replace_raw [] [a] [b] = []
+Proof
+  simp [smtstr_replace_raw_def, smtstr_indexof_aux_def]
+QED
+
+Theorem smtstr_replace_raw_singleton_take[local]:
+  !n s.
+    TAKE n (smtstr_replace_raw s [a] [b]) =
+    smtstr_replace_raw (TAKE n s) [a] [b]
+Proof
+  rpt gen_tac >> qid_spec_tac `s` >> Induct_on `n` >>
+  Cases_on `s` >>
+  simp [smtstr_replace_raw_singleton_nil,
+        smtstr_replace_raw_singleton_cons] >>
+  Cases_on `h = a` >> fs [boolTheory.EQ_SYM_EQ]
+QED
+
+Theorem smtstr_replace_raw_length_one_take[local]:
+  LENGTH t = 1 /\ LENGTH r = 1 ==>
+  TAKE n (smtstr_replace_raw s t r) =
+  smtstr_replace_raw (TAKE n s) t r
+Proof
+  strip_tac >>
+  Cases_on `t` >> fs [] >>
+  Cases_on `r` >> fs [] >>
+  MATCH_ACCEPT_TAC smtstr_replace_raw_singleton_take
+QED
+
+Theorem smtstr_substr_replace_len_one:
+  smtstr_len t = smtstr_len r /\ smtstr_len t = 1 ==>
+  smtstr_substr (smtstr_replace s t r) 0 n =
+  smtstr_replace (smtstr_substr s 0 n) t r
+Proof
+  strip_tac >>
+  `LENGTH (smtstr_rep t) = 1 /\ LENGTH (smtstr_rep r) = 1` by
+    fs [smtstr_len_def] >>
+  Cases_on `0 < n`
+  >- (irule (iffLR smtstr_rep_11) >>
+      PURE_REWRITE_TAC [smtstr_rep_replace] >>
+      imp_res_tac smtstr_rep_substr_positive >>
+      fs [smtstr_replace_raw_length_one_take, smtstr_len_def])
+  >- (`n <= 0` by intLib.ARITH_TAC >>
+      `t <> SmtStr []` by
+        (CCONTR_TAC >> fs [smtstr_len_def, smtstr_rep_def]) >>
+      simp [smtstr_substr_def] >>
+      `smtstr_rep t <> []` by metis_tac [SmtStr_smtstr_rep] >>
+      simp [smtstr_replace_def, smtstr_replace_raw_def,
+            smtstr_indexof_aux_def, smtstr_rep_def])
+QED
+
+Theorem smtstr_replace_empty_result_len_one:
+  smtstr_len empty = 0 /\ smtstr_len y = 1 ==>
+  (smtstr_replace x y empty = empty <=> smtstr_prefixof x y)
+Proof
+  rw [smtstr_len_eq_zero] >>
+  Cases_on `smtstr_rep y` >> fs [smtstr_len_def] >>
+  Cases_on `t` >> fs [smtstr_len_def] >>
+  `y = SmtStr [h]` by metis_tac [SmtStr_smtstr_rep] >>
+  `h <= 196607` by
+    (mp_tac (Q.INST [`s` |-> `y`] smtstr_rep_bound) >>
+     asm_rewrite_tac [] >> simp []) >>
+  rw [smtstr_prefixof_singleton] >>
+  eq_tac
+  >- (strip_tac >>
+      qpat_x_assum
+        `smtstr_replace x (SmtStr [h]) (SmtStr []) = SmtStr []`
+        (fn th => assume_tac (MATCH_MP (iffRL smtstr_rep_11) th)) >>
+      qpat_x_assum
+        `smtstr_rep (smtstr_replace x (SmtStr [h]) (SmtStr [])) =
+         smtstr_rep (SmtStr [])`
+        (fn th => assume_tac
+          (PURE_REWRITE_RULE [smtstr_rep_replace] th)) >>
+      `smtstr_rep (SmtStr [h]) = [h]` by
+        simp [smtstr_rep_def] >>
+      qpat_x_assum
+        `smtstr_replace_raw (smtstr_rep x)
+           (smtstr_rep (SmtStr [h])) (smtstr_rep (SmtStr [])) =
+         smtstr_rep (SmtStr [])`
+        (fn th => assume_tac (REWRITE_RULE
+          [ASSUME ``smtstr_rep (SmtStr [h]) = [h]``,
+           smtstr_rep_def] th)) >>
+      fs [smtstr_replace_raw_empty_singleton] >>
+      metis_tac [SmtStr_smtstr_rep])
+  >- (strip_tac >> fs [smtstr_replace_self] >>
+      simp [smtstr_replace_def, smtstr_replace_raw_def,
+            smtstr_indexof_aux_def, smtstr_rep_def])
+QED
+
+Theorem smtstr_contains_empty_pattern:
+  smtstr_contains s (SmtStr [])
+Proof
+  rw [smtstr_contains_def, smtstr_rep_def,
+      rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`smtstr_rep s`, `[]`] >> simp []
+QED
+
+Theorem smtstr_contains_empty_source:
+  smtstr_contains (SmtStr []) s <=> s = SmtStr []
+Proof
+  mp_tac (Q.INST [`s` |-> `SmtStr []`, `t` |-> `s`]
+    smtstr_contains_length_equal) >>
+  simp [smtstr_len_def, smtstr_rep_def,
+        smtstr_len_nonnegative]
+QED
+
+Theorem smtstr_replace_empty_result_nonempty:
+  smtstr_len empty = 0 /\ z <> empty ==>
+  (smtstr_replace x y z = empty <=> x = empty /\ y <> empty)
+Proof
+  rw [smtstr_len_eq_zero] >>
+  eq_tac
+  >- (strip_tac >>
+      Cases_on `smtstr_contains x y`
+      >- (`smtstr_contains (smtstr_replace x y z) z` by
+            metis_tac [smtstr_replace_contains_replacement] >>
+          `smtstr_contains (SmtStr []) z` by metis_tac [] >>
+          fs [smtstr_contains_empty_source])
+      >- (`x = SmtStr []` by
+            fs [smtstr_replace_absent] >>
+          metis_tac [smtstr_contains_empty_source]))
+  >- (strip_tac >> fs [] >>
+      `~smtstr_contains (SmtStr []) y` by
+        metis_tac [smtstr_contains_empty_source] >>
+      simp [smtstr_replace_absent])
+QED
+
+Theorem smtstr_replace_empty_source_nonempty:
+  smtstr_len empty = 0 /\ z <> empty ==>
+  (smtstr_replace empty x y = z <=> x = empty /\ y = z)
+Proof
+  rw [smtstr_len_eq_zero] >>
+  Cases_on `x = SmtStr []` >>
+  simp [smtstr_replace_empty, smtstr_concat_nil_right,
+        smtstr_contains_empty_source, smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_source_target_absent:
+  ~smtstr_contains z w ==>
+  smtstr_replace x w (smtstr_replace z x y) =
+  smtstr_replace x w z
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains x w`
+  >- (`~smtstr_contains z x` by
+        metis_tac [smtstr_contains_trans] >>
+      simp [smtstr_replace_absent]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_target_self:
+  smtstr_replace x y (smtstr_replace y x y) = x
+Proof
+  Cases_on `smtstr_contains x y`
+  >- (Cases_on `smtstr_contains y x`
+      >- (`x = y` by metis_tac [smtstr_contains_antisym] >>
+          simp [smtstr_replace_self]) >>
+      simp [smtstr_replace_absent, smtstr_replace_id]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_target_absent:
+  ~smtstr_contains x z ==>
+  smtstr_replace x y (smtstr_replace y z w) = x
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains x y`
+  >- (`~smtstr_contains y z` by
+        (CCONTR_TAC >>
+         metis_tac [smtstr_contains_trans]) >>
+      simp [smtstr_replace_absent, smtstr_replace_id]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_source_self:
+  smtstr_replace x (smtstr_replace y x y) z =
+  smtstr_replace x y z
+Proof
+  Cases_on `smtstr_contains x y`
+  >- (`~smtstr_contains y x \/ x = y` by
+        metis_tac [smtstr_contains_antisym] >>
+      fs [smtstr_replace_absent, smtstr_replace_self]) >>
+  `smtstr_contains (smtstr_replace y x y) y` by
+    metis_tac [smtstr_replace_contains_replacement,
+               smtstr_contains_refl] >>
+  `~smtstr_contains x (smtstr_replace y x y)` by
+    (CCONTR_TAC >>
+     metis_tac [smtstr_contains_trans]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_source_inverse_absent1:
+  ~smtstr_contains y z ==>
+  smtstr_replace x (smtstr_replace y x z) y =
+  smtstr_replace x y y
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains y x`
+  >- (`smtstr_contains (smtstr_replace y x z) z` by
+        metis_tac [smtstr_replace_contains_replacement] >>
+      `~smtstr_contains x (smtstr_replace y x z)` by
+        (CCONTR_TAC >>
+         `smtstr_contains x z` by
+           metis_tac [smtstr_contains_trans] >>
+         metis_tac [smtstr_contains_trans]) >>
+      `~smtstr_contains x y \/ x = y` by
+        metis_tac [smtstr_contains_antisym] >>
+      fs [smtstr_replace_absent, smtstr_replace_id]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_source_inverse_absent2:
+  ~smtstr_contains y z ==>
+  smtstr_replace x (smtstr_replace y x z) x =
+  smtstr_replace x y x
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains y x`
+  >- (`smtstr_contains (smtstr_replace y x z) z` by
+        metis_tac [smtstr_replace_contains_replacement] >>
+      `~smtstr_contains x (smtstr_replace y x z)` by
+        (CCONTR_TAC >>
+         `smtstr_contains x z` by
+           metis_tac [smtstr_contains_trans] >>
+         metis_tac [smtstr_contains_trans]) >>
+      `~smtstr_contains x y \/ x = y` by
+        metis_tac [smtstr_contains_antisym] >>
+      fs [smtstr_replace_absent, smtstr_replace_self]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_source_inverse_absent3:
+  ~smtstr_contains x z /\ ~smtstr_contains x w ==>
+  smtstr_replace x (smtstr_replace y z w) u =
+  smtstr_replace x y u
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains y z`
+  >- (`smtstr_contains (smtstr_replace y z w) w` by
+        metis_tac [smtstr_replace_contains_replacement] >>
+      `~smtstr_contains x (smtstr_replace y z w)` by
+        (CCONTR_TAC >> metis_tac [smtstr_contains_trans]) >>
+      `~smtstr_contains x y` by
+        (CCONTR_TAC >> metis_tac [smtstr_contains_trans]) >>
+      simp [smtstr_replace_absent]) >>
+  simp [smtstr_replace_absent]
+QED
+
+Theorem smtstr_replace_nested_dual_self:
+  smtstr_replace x (smtstr_replace x y x) x = x
+Proof
+  irule smtstr_replace_self_target >>
+  `smtstr_contains (smtstr_replace x y x) x` by
+    metis_tac [smtstr_replace_contains_replacement,
+               smtstr_contains_refl] >>
+  metis_tac [smtstr_contains_length_bound]
+QED
+
+Theorem append_prefix_of_length[local]:
+  a ++ b = c ++ d /\ LENGTH c <= LENGTH a ==>
+  ?e. a = c ++ e
+Proof
+  rw [listTheory.APPEND_EQ_APPEND] >>
+  fs [] >>
+  Cases_on `l` >>
+  fs []
+QED
+
+Theorem suffix_factor_base[local]:
+  y ++ b = c ++ z ++ b ++ d ==> IS_SUBLIST y z
+Proof
+  strip_tac >>
+  `LENGTH (c ++ z) <= LENGTH y` by
+    (qpat_x_assum `_ = _` (mp_tac o AP_TERM ``LENGTH``) >>
+     simp [] >>
+     decide_tac) >>
+  `?e. y = (c ++ z) ++ e` by
+    metis_tac [append_prefix_of_length, listTheory.APPEND_ASSOC] >>
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`c`, `e`] >>
+  simp []
+QED
+
+Theorem replace_factor_comparable[local]:
+  a ++ y ++ b = c ++ a ++ z ++ b ++ d ==>
+  IS_SUBLIST y z \/ IS_SUBLIST z y
+Proof
+  qid_spec_tac `c` >>
+  Induct_on `a`
+  >- (gen_tac >>
+      strip_tac >>
+      `y ++ b = c ++ z ++ b ++ d` by
+        (qpat_x_assum `_ = _` mp_tac >>
+         simp [listTheory.APPEND_ASSOC]) >>
+      disj1_tac >>
+      irule suffix_factor_base >>
+      qexistsl [`b`, `c`, `d`] >>
+      simp []) >>
+  rpt gen_tac >>
+  Cases_on `c`
+  >- (simp [listTheory.APPEND_ASSOC] >>
+      strip_tac >>
+      disj1_tac >>
+      irule suffix_factor_base >>
+      qexistsl [`b`, `[]`, `d`] >>
+      simp []) >>
+  strip_tac >>
+  fs [listTheory.APPEND_ASSOC]
+QED
+
+Theorem smtstr_replace_raw_incomparable[local]:
+  IS_SUBLIST s t /\ ~IS_SUBLIST t u /\ ~IS_SUBLIST u t ==>
+  ~IS_SUBLIST s (smtstr_replace_raw s t u)
+Proof
+  strip_tac >>
+  drule_then (qspec_then `u` strip_assume_tac)
+    smtstr_replace_raw_hit >>
+  CCONTR_TAC >>
+  fs [] >>
+  qpat_x_assum `IS_SUBLIST s (smtstr_replace_raw s t u)`
+    (mp_tac o REWRITE_RULE [rich_listTheory.IS_SUBLIST_APPEND]) >>
+  strip_tac >>
+  qpat_x_assum `s = pre ++ t ++ post` SUBST_ALL_TAC >>
+  qpat_x_assum
+    `smtstr_replace_raw (pre ++ t ++ post) t u = pre ++ u ++ post`
+    SUBST_ALL_TAC >>
+  fs [listTheory.APPEND_ASSOC] >>
+  qpat_x_assum
+    `pre ++ t ++ post = _ ++ pre ++ u ++ post ++ _`
+    (mp_tac o MATCH_MP replace_factor_comparable) >>
+  simp [rich_listTheory.IS_SUBLIST_APPEND]
+QED
+
+Theorem smtstr_replace_incomparable_not_contained:
+  smtstr_contains x y /\
+  ~smtstr_contains y z /\
+  ~smtstr_contains z y ==>
+  ~smtstr_contains x (smtstr_replace x y z)
+Proof
+  rw [smtstr_contains_def, smtstr_rep_replace] >>
+  metis_tac [smtstr_replace_raw_incomparable]
+QED
+
+Theorem smtstr_replace_nested_dual_ite1:
+  ~smtstr_contains x z ==>
+  smtstr_replace x (smtstr_replace x y z) w =
+    if smtstr_contains x y then x else w
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains x y`
+  >- (`smtstr_contains (smtstr_replace x y z) z` by
+        metis_tac [smtstr_replace_contains_replacement] >>
+      `~smtstr_contains x (smtstr_replace x y z)` by
+        (CCONTR_TAC >> metis_tac [smtstr_contains_trans]) >>
+      simp [smtstr_replace_absent]) >>
+  simp [smtstr_replace_absent, smtstr_replace_self]
+QED
+
+Theorem smtstr_replace_nested_dual_ite2:
+  ~smtstr_contains y z /\ ~smtstr_contains z y ==>
+  smtstr_replace x (smtstr_replace x y z) w =
+    if smtstr_contains x y then x else w
+Proof
+  strip_tac >>
+  Cases_on `smtstr_contains x y`
+  >- (`~smtstr_contains x (smtstr_replace x y z)` by
+        metis_tac [smtstr_replace_incomparable_not_contained] >>
+      simp [smtstr_replace_absent]) >>
+  simp [smtstr_replace_absent, smtstr_replace_self]
+QED
+
 (* TASK_02 draft_str_lt records irreflexivity and the two-direction
    comparison clause.  These facts give the strict/non-strict order kit. *)
 
@@ -1867,6 +3882,13 @@ Theorem smtstr_lt_irrefl:
   ~smtstr_lt s s
 Proof
   simp [smtstr_lt_def, LLEX_num_irrefl]
+QED
+
+Theorem smtstr_lt_elim:
+  smtstr_lt s t <=> ~(s = t) /\ smtstr_le s t
+Proof
+  simp [smtstr_le_def] >>
+  metis_tac [smtstr_lt_irrefl]
 QED
 
 Theorem smtstr_lt_trans:
@@ -1912,6 +3934,24 @@ Proof
   metis_tac [smtstr_lt_trichotomy, smtstr_le_def]
 QED
 
+Theorem LLEX_num_common_prefix[local]:
+  !p x y : num list.
+    LLEX $< (p ++ x) (p ++ y) <=> LLEX $< x y
+Proof
+  Induct >> simp [listTheory.LLEX_def]
+QED
+
+Theorem LLEX_num_equal_length_tail[local]:
+  !a b x y : num list.
+    LENGTH a = LENGTH b /\ a <> b ==>
+    (LLEX $< (a ++ x) (b ++ y) <=> LLEX $< a b)
+Proof
+  Induct >> Cases_on `b` >>
+  simp [listTheory.LLEX_def] >>
+  rw [] >>
+  metis_tac []
+QED
+
 (* TASK_02 draft_substr couples str.at/substr with concat lengths and
    nonnegative tail lengths.  The following boundary lemmas expose all
    totalization branches without unfolding smtstr_substr in consumers. *)
@@ -1939,6 +3979,761 @@ Theorem smtstr_len_substr_count_bound:
 Proof
   rw [smtstr_len_substr] >>
   simp [arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smtstr_substr_positive_count[local]:
+  0 <= n2 /\ 0 < m2 /\
+  n2 + m2 <= smtstr_len (smtstr_substr s n1 m1) ==>
+  0 < m1
+Proof
+  strip_tac >>
+  Cases_on `m1 <= 0`
+  >- (`smtstr_substr s n1 m1 = SmtStr []` by
+        simp [smtstr_substr_def] >>
+      `smtstr_len (smtstr_substr s n1 m1) = 0` by
+        simp [smtstr_len_def, smtstr_rep_def] >>
+      intLib.ARITH_TAC) >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_substr_combine_inner_bound:
+  0 <= n1 /\ 0 <= n2 /\
+  n2 + m2 <= smtstr_len (smtstr_substr s n1 m1) ==>
+  smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+  smtstr_substr s (n1 + n2) m2
+Proof
+  strip_tac >>
+  Cases_on `m2 <= 0`
+  >- simp [smtstr_substr_def] >>
+  `0 < m2` by intLib.ARITH_TAC >>
+  `0 < m1` by metis_tac [smtstr_substr_positive_count] >>
+  `&(Num m1) = m1` by intLib.ARITH_TAC >>
+  `smtstr_len (smtstr_substr s n1 m1) <= &(Num m1)` by
+    metis_tac [smtstr_len_substr_count_bound] >>
+  `0 <= (m1 - n2) - m2` by intLib.ARITH_TAC >>
+  metis_tac [smtstr_substr_combine_left]
+QED
+
+Theorem smtstr_substr_combine_actual_nonpositive[local]:
+  0 <= n1 /\ 0 <= n2 /\ 0 < m1 /\ m2 <= 0 /\
+  smtstr_len (smtstr_substr s n1 m1) <= n2 + m2 ==>
+  smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+  smtstr_substr s (n1 + n2) (m1 - n2)
+Proof
+  strip_tac >>
+  `smtstr_rep (smtstr_substr s n1 m1) =
+     TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_len (smtstr_substr s n1 m1) =
+     &(LENGTH (smtstr_rep (smtstr_substr s n1 m1)))` by
+    simp [smtstr_len_def] >>
+  `&(Num n1) = n1 /\ &(Num n2) = n2` by intLib.ARITH_TAC >>
+  `LENGTH (smtstr_rep (smtstr_substr s n1 m1)) <= Num n2` by
+    intLib.ARITH_TAC >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))) =
+   LENGTH (smtstr_rep (smtstr_substr s n1 m1))` by
+    asm_rewrite_tac [] >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))) <=
+   Num n2 + 0` by decide_tac >>
+  `TAKE 0
+     (DROP (Num n2)
+       (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s)))) =
+   TAKE (Num m1 - Num n2)
+     (DROP (Num n1 + Num n2) (smtstr_rep s))` by
+    metis_tac [TAKE_DROP_TAKE_ACTUAL_BOUND] >>
+  Cases_on `m1 - n2 <= 0`
+  >- (`~(n1 + n2 < 0)` by intLib.ARITH_TAC >>
+      `smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+       SmtStr []` by simp [smtstr_substr_def] >>
+      `smtstr_substr s (n1 + n2) (m1 - n2) = SmtStr []` by
+        simp [smtstr_substr_def] >>
+      metis_tac []) >>
+  `0 < m1 - n2 /\ 0 <= n1 + n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2 /\
+   Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `smtstr_rep (smtstr_substr s (n1 + n2) (m1 - n2)) =
+     TAKE (Num (m1 - n2))
+       (DROP (Num (n1 + n2)) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `TAKE (Num m1 - Num n2)
+     (DROP (Num n1 + Num n2) (smtstr_rep s)) = []` by
+    metis_tac [listTheory.TAKE_0] >>
+  `smtstr_rep
+     (smtstr_substr (smtstr_substr s n1 m1) n2 m2) = []` by
+    metis_tac [smtstr_rep_substr_nonpositive] >>
+  irule (iffLR smtstr_rep_11) >>
+  metis_tac []
+QED
+
+Theorem smtstr_substr_combine_actual_positive[local]:
+  0 <= n1 /\ 0 <= n2 /\ 0 < m1 /\ 0 < m2 /\
+  smtstr_len (smtstr_substr s n1 m1) <= n2 + m2 ==>
+  smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+  smtstr_substr s (n1 + n2) (m1 - n2)
+Proof
+  strip_tac >>
+  `smtstr_rep (smtstr_substr s n1 m1) =
+     TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_len (smtstr_substr s n1 m1) =
+     &(LENGTH (smtstr_rep (smtstr_substr s n1 m1)))` by
+    simp [smtstr_len_def] >>
+  `&(Num n1) = n1 /\ &(Num n2) = n2 /\ &(Num m2) = m2` by
+    intLib.ARITH_TAC >>
+  `LENGTH (smtstr_rep (smtstr_substr s n1 m1)) <=
+   Num n2 + Num m2` by intLib.ARITH_TAC >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))) =
+   LENGTH (smtstr_rep (smtstr_substr s n1 m1))` by
+    asm_rewrite_tac [] >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s))) <=
+   Num n2 + Num m2` by decide_tac >>
+  `smtstr_rep
+     (smtstr_substr (smtstr_substr s n1 m1) n2 m2) =
+   TAKE (Num m2)
+     (DROP (Num n2) (smtstr_rep (smtstr_substr s n1 m1)))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `TAKE (Num m2)
+     (DROP (Num n2)
+       (TAKE (Num m1) (DROP (Num n1) (smtstr_rep s)))) =
+   TAKE (Num m1 - Num n2)
+     (DROP (Num n1 + Num n2) (smtstr_rep s))` by
+    metis_tac [TAKE_DROP_TAKE_ACTUAL_BOUND] >>
+  Cases_on `m1 - n2 <= 0`
+  >- (`Num m1 <= Num n2` by intLib.ARITH_TAC >>
+      `Num m1 - Num n2 = 0` by decide_tac >>
+      `smtstr_rep
+         (smtstr_substr s (n1 + n2) (m1 - n2)) = []` by
+        metis_tac [smtstr_rep_substr_nonpositive] >>
+      irule (iffLR smtstr_rep_11) >>
+      metis_tac [listTheory.TAKE_0]) >>
+  `0 < m1 - n2 /\ 0 <= n1 + n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2 /\
+   Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `smtstr_rep (smtstr_substr s (n1 + n2) (m1 - n2)) =
+     TAKE (Num (m1 - n2))
+       (DROP (Num (n1 + n2)) (smtstr_rep s))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  irule (iffLR smtstr_rep_11) >>
+  metis_tac []
+QED
+
+Theorem smtstr_substr_combine_actual_bound:
+  0 <= n1 /\ 0 <= n2 /\
+  smtstr_len (smtstr_substr s n1 m1) <= n2 + m2 ==>
+  smtstr_substr (smtstr_substr s n1 m1) n2 m2 =
+  smtstr_substr s (n1 + n2) (m1 - n2)
+Proof
+  strip_tac >>
+  Cases_on `m1 <= 0`
+  >- (`~(n1 < 0) /\ ~(n2 < 0) /\ ~(n1 + n2 < 0) /\
+       m1 - n2 <= 0` by intLib.ARITH_TAC >>
+      simp [smtstr_substr_def]) >>
+  `0 < m1` by intLib.ARITH_TAC >>
+  Cases_on `m2 <= 0`
+  >- metis_tac [smtstr_substr_combine_actual_nonpositive] >>
+  `0 < m2` by intLib.ARITH_TAC >>
+  metis_tac [smtstr_substr_combine_actual_positive]
+QED
+
+Theorem smtstr_substr_drop_concat_prefix:
+  smtstr_len s1 <= n ==>
+  smtstr_substr (smtstr_concat (smtstr_concat s1 s2) s3) n m =
+  smtstr_substr (smtstr_concat s2 s3) (n - smtstr_len s1) m
+Proof
+  strip_tac >>
+  `smtstr_len s1 = &(LENGTH (smtstr_rep s1))` by
+    simp [smtstr_len_def] >>
+  `0 <= n /\ 0 <= n - smtstr_len s1` by intLib.ARITH_TAC >>
+  `&(Num n) = n /\
+   &(Num (n - smtstr_len s1)) = n - smtstr_len s1` by
+    intLib.ARITH_TAC >>
+  `Num n = LENGTH (smtstr_rep s1) +
+     Num (n - smtstr_len s1)` by intLib.ARITH_TAC >>
+  irule (iffLR smtstr_rep_11) >>
+  Cases_on `m <= 0`
+  >- (`smtstr_rep
+         (smtstr_substr
+           (smtstr_concat (smtstr_concat s1 s2) s3) n m) = []` by
+        metis_tac [smtstr_rep_substr_nonpositive] >>
+      `smtstr_rep
+         (smtstr_substr (smtstr_concat s2 s3)
+           (n - smtstr_len s1) m) = []` by
+        metis_tac [smtstr_rep_substr_nonpositive] >>
+      metis_tac []) >>
+  `0 < m` by intLib.ARITH_TAC >>
+  `smtstr_rep
+     (smtstr_substr
+       (smtstr_concat (smtstr_concat s1 s2) s3) n m) =
+   TAKE (Num m)
+     (DROP (Num n)
+       (smtstr_rep
+         (smtstr_concat (smtstr_concat s1 s2) s3)))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_rep
+     (smtstr_substr (smtstr_concat s2 s3)
+       (n - smtstr_len s1) m) =
+   TAKE (Num m)
+     (DROP (Num (n - smtstr_len s1))
+       (smtstr_rep (smtstr_concat s2 s3)))` by
+    metis_tac [smtstr_rep_substr_positive] >>
+  `smtstr_rep (smtstr_concat (smtstr_concat s1 s2) s3) =
+     smtstr_rep s1 ++ smtstr_rep s2 ++ smtstr_rep s3` by
+    simp [smtstr_concat_def, smtstr_rep_def] >>
+  `smtstr_rep (smtstr_concat s2 s3) =
+     smtstr_rep s2 ++ smtstr_rep s3` by
+    simp [smtstr_concat_def, smtstr_rep_def] >>
+  `DROP (Num n)
+     (smtstr_rep s1 ++ smtstr_rep s2 ++ smtstr_rep s3) =
+   DROP (Num (n - smtstr_len s1))
+     (smtstr_rep s2 ++ smtstr_rep s3)` by
+    simp [listTheory.DROP_APPEND] >>
+  metis_tac []
+QED
+
+Theorem smtstr_substr_concat_left_bound:
+  n + m <= smtstr_len s1 ==>
+  smtstr_substr (smtstr_concat s1 s2) n m =
+  smtstr_substr s1 n m
+Proof
+  strip_tac >>
+  Cases_on `n < 0 \/ m <= 0`
+  >- fs [smtstr_substr_def] >>
+  `0 <= n /\ 0 < m` by intLib.ARITH_TAC >>
+  `Num n + Num m <= LENGTH (smtstr_rep s1) /\
+   Num n <= LENGTH (smtstr_rep s1)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `Num n < LENGTH (smtstr_rep s1)` by intLib.ARITH_TAC >>
+  `Num m <= LENGTH (DROP (Num n) (smtstr_rep s1))` by
+    simp [listTheory.LENGTH_DROP] >>
+  simp [smtstr_substr_def, smtstr_concat_def, smtstr_rep_def,
+        listTheory.DROP_APPEND1, listTheory.TAKE_APPEND1]
+QED
+
+Theorem smtstr_substr_nested_empty:
+  n <= i ==>
+  smtstr_substr (smtstr_substr s j n) i k = SmtStr []
+Proof
+  strip_tac >>
+  Cases_on `n <= 0`
+  >- simp [smtstr_substr_def] >>
+  `0 < n` by intLib.ARITH_TAC >>
+  `&(Num n) = n` by intLib.ARITH_TAC >>
+  irule smtstr_substr_empty_start >>
+  irule integerTheory.INT_LE_TRANS >>
+  qexists_tac `&(Num n)` >>
+  simp [smtstr_len_substr_count_bound] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_substr_zero_eq_empty:
+  smtstr_len s <> 0 /\ smtstr_len r = 0 ==>
+  (smtstr_substr s 0 m = r <=> m <= 0)
+Proof
+  rw [smtstr_len_eq_zero] >>
+  eq_tac
+  >- (strip_tac >>
+      CCONTR_TAC >>
+      fs [] >>
+      `0 < Num m` by intLib.ARITH_TAC >>
+      `0 < LENGTH (smtstr_rep s)` by
+        (Cases_on `smtstr_rep s` >> fs [smtstr_rep_eq_nil]) >>
+      qpat_x_assum `smtstr_substr s 0 m = SmtStr []`
+        (assume_tac o AP_TERM ``smtstr_len``) >>
+      fs [smtstr_len_substr, smtstr_rep_eq_nil,
+          smtstr_len_def, arithmeticTheory.MIN_DEF] >>
+      Cases_on `Num m < LENGTH (smtstr_rep s)` >> rfs [])
+  >- (strip_tac >>
+      simp [smtstr_substr_def])
+QED
+
+Theorem smtstr_substr_zero_empty_iff:
+  0 < m /\ smtstr_len r = 0 ==>
+  (smtstr_substr s 0 m = r <=> s = r)
+Proof
+  strip_tac >>
+  Cases_on `smtstr_len s = 0`
+  >- fs [smtstr_len_eq_zero, smtstr_substr_def] >>
+  `smtstr_substr s 0 m = r <=> m <= 0` by
+    metis_tac [smtstr_substr_zero_eq_empty] >>
+  `s <> r` by metis_tac [] >>
+  fs [integerTheory.INT_NOT_LE]
+QED
+
+Theorem smtstr_substr_eq_empty_start:
+  0 <= i /\ 0 < n ==>
+  (smtstr_substr s i n = SmtStr [] <=> smtstr_len s <= i)
+Proof
+  strip_tac >>
+  rw [GSYM smtstr_len_eq_zero, smtstr_len_substr,
+      smtstr_len_def] >>
+  `~(i < 0) /\ ~(n <= 0) /\ &(Num i) = i /\ &(Num n) = n` by
+    intLib.ARITH_TAC >>
+  simp [arithmeticTheory.MIN_EQ_0] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_substr_eq_empty:
+  0 <= i ==> 0 < n ==> smtstr_len empty = 0 ==>
+  (smtstr_substr s i n = empty <=> smtstr_len s <= i)
+Proof
+  rw [smtstr_len_eq_zero, smtstr_substr_eq_empty_start]
+QED
+
+Theorem smtstr_substr_prefix:
+  0 <= n ==>
+  smtstr_substr s 0 n = SmtStr (TAKE (Num n) (smtstr_rep s))
+Proof
+  strip_tac >>
+  Cases_on `n = 0`
+  >- simp [smtstr_substr_def] >>
+  `~(n <= 0)` by intLib.ARITH_TAC >>
+  Cases_on `smtstr_rep s` >> simp [smtstr_substr_def]
+QED
+
+Theorem smtstr_substr_concat_prefix_bound:
+  smtstr_len s1 <= n ==>
+  smtstr_substr (smtstr_concat s1 tail) 0 n =
+  smtstr_concat s1
+    (smtstr_substr tail 0 (n - smtstr_len s1))
+Proof
+  strip_tac >>
+  `0 <= smtstr_len s1` by metis_tac [smtstr_len_nonnegative] >>
+  `0 <= n /\ 0 <= n - smtstr_len s1` by intLib.ARITH_TAC >>
+  `Num n = LENGTH (smtstr_rep s1) +
+     Num (n - smtstr_len s1)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  simp [smtstr_substr_prefix, smtstr_concat_def,
+        smtstr_rep_def, rich_listTheory.TAKE_APPEND,
+        rich_listTheory.EVERY_TAKE,
+        listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smtstr_substr_suffix:
+  0 <= i /\ i < smtstr_len s ==>
+  smtstr_substr s i (smtstr_len s) =
+    SmtStr (DROP (Num i) (smtstr_rep s))
+Proof
+  strip_tac >>
+  `~(i < 0) /\ 0 < smtstr_len s /\
+   Num i < LENGTH (smtstr_rep s)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `smtstr_rep s <> []` by
+    (Cases_on `smtstr_rep s` >> fs [smtstr_len_def]) >>
+  simp [smtstr_substr_def, smtstr_len_def,
+        listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smtstr_substr_count_normalize:
+  smtstr_len s <= m ==>
+  smtstr_substr s n m =
+  smtstr_substr s n (smtstr_len s)
+Proof
+  strip_tac >>
+  Cases_on `n < 0`
+  >- simp [smtstr_substr_def] >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  Cases_on `smtstr_len s <= n`
+  >- simp [smtstr_substr_empty_start] >>
+  `0 <= smtstr_len s` by metis_tac [smtstr_len_nonnegative] >>
+  `n < smtstr_len s /\ 0 < smtstr_len s /\ 0 < m` by
+    intLib.ARITH_TAC >>
+  `&(Num m) = m` by intLib.ARITH_TAC >>
+  `LENGTH (smtstr_rep s) <= Num m` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `LENGTH (DROP (Num n) (smtstr_rep s)) <= Num m` by
+    simp [listTheory.LENGTH_DROP] >>
+  `smtstr_rep (smtstr_substr s n m) =
+   DROP (Num n) (smtstr_rep s)` by
+    metis_tac [smtstr_rep_substr_positive,
+               listTheory.TAKE_LENGTH_TOO_LONG] >>
+  `smtstr_substr s n m =
+   SmtStr (DROP (Num n) (smtstr_rep s))` by
+    metis_tac [SmtStr_smtstr_rep] >>
+  metis_tac [smtstr_substr_suffix]
+QED
+
+Theorem smtstr_replace_find:
+  0 <= smtstr_indexof s t 0 ==>
+  smtstr_replace s t r =
+  smtstr_concat (smtstr_substr s 0 (smtstr_indexof s t 0))
+    (smtstr_concat r
+      (smtstr_substr s
+        (smtstr_indexof s t 0 + smtstr_len t)
+        (smtstr_len s)))
+Proof
+  strip_tac >>
+  fs [smtstr_indexof_def] >>
+  Cases_on `smtstr_indexof_aux (smtstr_rep t) 0 (smtstr_rep s)` >>
+  fs [] >>
+  drule smtstr_indexof_aux_split >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  fs [] >>
+  `smtstr_rep (smtstr_substr s 0 (&(LENGTH pre))) = pre` by
+    (irule smtstr_rep_substr_prefix_split >>
+     qexists_tac `smtstr_rep t ++ post` >>
+     simp []) >>
+  `smtstr_rep
+     (smtstr_substr s
+       (&(LENGTH pre) + smtstr_len t) (smtstr_len s)) = post` by
+    (`&(LENGTH pre) + smtstr_len t =
+      &(LENGTH pre + LENGTH (smtstr_rep t))` by
+        (simp [smtstr_len_def] >> intLib.ARITH_TAC) >>
+     metis_tac [smtstr_rep_substr_suffix_split]) >>
+  irule (iffLR smtstr_rep_11) >>
+  PURE_REWRITE_TAC [smtstr_rep_replace, smtstr_rep_concat] >>
+  asm_rewrite_tac [] >>
+  simp [smtstr_replace_raw_def, listTheory.TAKE_APPEND1,
+        rich_listTheory.TAKE_LENGTH_APPEND,
+        rich_listTheory.DROP_LENGTH_APPEND] >>
+  `LENGTH pre + LENGTH (smtstr_rep t) =
+   LENGTH (pre ++ smtstr_rep t)` by simp [] >>
+  asm_rewrite_tac [] >>
+  simp [rich_listTheory.DROP_LENGTH_APPEND]
+QED
+
+Theorem smtstr_substr_to_end:
+  0 <= i /\ i < smtstr_len s ==>
+  smtstr_substr s i (smtstr_len s - i) =
+    SmtStr (DROP (Num i) (smtstr_rep s))
+Proof
+  strip_tac >>
+  `~(i < 0) /\ 0 < smtstr_len s - i /\
+   Num i < LENGTH (smtstr_rep s)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `Num (smtstr_len s - i) =
+   LENGTH (smtstr_rep s) - Num i` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `~(smtstr_len s - i <= 0)` by intLib.ARITH_TAC >>
+  simp [smtstr_substr_def, listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smtstr_contains_substr:
+  smtstr_contains s (smtstr_substr s i n)
+Proof
+  rw [smtstr_contains_def, smtstr_rep_substr,
+      rich_listTheory.IS_SUBLIST_APPEND]
+  >- (qexistsl [`[]`, `smtstr_rep s`] >> simp [])
+  >- (qexistsl [`[]`, `smtstr_rep s`] >> simp [])
+  >- (qexistsl [`[]`, `smtstr_rep s`] >> simp []) >>
+  qexistsl [`TAKE (Num i) (smtstr_rep s)`,
+            `DROP (Num n) (DROP (Num i) (smtstr_rep s))`] >>
+  metis_tac [listTheory.TAKE_DROP, listTheory.APPEND_ASSOC]
+QED
+
+Theorem smtstr_substr_contains_contra:
+  ~smtstr_contains t s ==>
+  ~smtstr_contains (smtstr_substr t n m) s
+Proof
+  metis_tac [smtstr_contains_substr, smtstr_contains_trans]
+QED
+
+Theorem smtstr_substr_short_self_count:
+  smtstr_len x <= 1 ==>
+  smtstr_substr x n n = SmtStr []
+Proof
+  strip_tac >>
+  Cases_on `n <= 0`
+  >- simp [smtstr_substr_def] >>
+  `1 <= n` by intLib.ARITH_TAC >>
+  `smtstr_len x <= n` by intLib.ARITH_TAC >>
+  metis_tac [smtstr_substr_empty_start]
+QED
+
+Theorem smtstr_suffixof_substr:
+  smtstr_suffixof s t <=>
+  (s = smtstr_substr t (smtstr_len t - smtstr_len s)
+    (smtstr_len s))
+Proof
+  eq_tac
+  >- (rw [smtstr_suffixof_decompose] >>
+      simp [smtstr_substr_def, smtstr_len_def,
+            smtstr_concat_def, smtstr_rep_def] >>
+      `(&(LENGTH (smtstr_rep s) + LENGTH (smtstr_rep u)) : int) -
+       &(LENGTH (smtstr_rep s)) = &(LENGTH (smtstr_rep u))` by
+        intLib.ARITH_TAC >>
+      Cases_on `smtstr_rep s` >>
+      simp [smtstr_rep_eq_nil, rich_listTheory.DROP_LENGTH_APPEND] >>
+      metis_tac [SmtStr_smtstr_rep]) >>
+  strip_tac >>
+  Cases_on `s = SmtStr []`
+  >- (simp [smtstr_suffixof_decompose] >>
+      qexists `t` >> simp [smtstr_concat_nil_right]) >>
+  `0 < smtstr_len s` by
+    (`0 <= smtstr_len s` by simp [smtstr_len_nonnegative] >>
+     `smtstr_len s <> 0` by metis_tac [smtstr_len_eq_zero] >>
+     intLib.ARITH_TAC) >>
+  `smtstr_len s <= smtstr_len t` by
+    (spose_not_then assume_tac >>
+     `smtstr_len t - smtstr_len s < 0` by intLib.ARITH_TAC >>
+     fs [smtstr_substr_empty_start_neg]) >>
+  `0 <= smtstr_len t - smtstr_len s /\
+   smtstr_len t - smtstr_len s < smtstr_len t` by
+    intLib.ARITH_TAC >>
+  `smtstr_len s =
+   smtstr_len t - (smtstr_len t - smtstr_len s)` by
+    intLib.ARITH_TAC >>
+  `s = SmtStr (DROP (Num (smtstr_len t - smtstr_len s))
+     (smtstr_rep t))` by
+    metis_tac [smtstr_substr_to_end] >>
+  `EVERY (\c. c <= 196607)
+     (DROP (Num (smtstr_len t - smtstr_len s)) (smtstr_rep t))` by
+    simp [rich_listTheory.EVERY_DROP] >>
+  `smtstr_rep s = DROP (Num (smtstr_len t - smtstr_len s))
+     (smtstr_rep t)` by
+    metis_tac [smtstr_rep_def] >>
+  rw [smtstr_suffixof_decompose] >>
+  qexists `SmtStr (TAKE (Num (smtstr_len t - smtstr_len s))
+    (smtstr_rep t))` >>
+  simp [smtstr_concat_def, smtstr_rep_def,
+        rich_listTheory.EVERY_TAKE, listTheory.TAKE_DROP] >>
+  metis_tac [SmtStr_smtstr_rep]
+QED
+
+Theorem smtstr_suffixof_length_bound:
+  smtstr_len t <= smtstr_len s ==>
+  (smtstr_suffixof s t <=> s = t)
+Proof
+  strip_tac >>
+  rw [smtstr_suffixof_decompose] >>
+  eq_tac
+  >- (strip_tac >>
+      `smtstr_len t = smtstr_len u + smtstr_len s` by
+        simp [smtstr_len_concat] >>
+      `smtstr_len u = 0` by
+        (`0 <= smtstr_len u` by
+           simp [smtstr_len_nonnegative] >>
+         intLib.ARITH_TAC) >>
+      fs [smtstr_len_eq_zero, smtstr_concat_nil_left]) >>
+  strip_tac >>
+  qexists `SmtStr []` >>
+  simp [smtstr_concat_nil_left]
+QED
+
+Theorem smtstr_suffixof_length_one:
+  smtstr_len t = 1 ==>
+  (smtstr_suffixof s t <=> smtstr_contains t s)
+Proof
+  strip_tac >>
+  eq_tac
+  >- metis_tac [smtstr_suffixof_imp_contains] >>
+  rw [smtstr_contains_decompose] >>
+  Cases_on `s = SmtStr []`
+  >- (simp [smtstr_suffixof_decompose] >>
+      qexists `smtstr_concat u v` >>
+      simp [smtstr_concat_nil_left, smtstr_concat_nil_right]) >>
+  `0 < smtstr_len s` by
+    (`0 <= smtstr_len s` by simp [smtstr_len_nonnegative] >>
+     `smtstr_len s <> 0` by metis_tac [smtstr_len_eq_zero] >>
+     intLib.ARITH_TAC) >>
+  `1 = smtstr_len u + smtstr_len s + smtstr_len v` by
+    (fs [smtstr_len_concat] >> intLib.ARITH_TAC) >>
+  `0 <= smtstr_len u /\ 0 <= smtstr_len v` by
+    simp [smtstr_len_nonnegative] >>
+  `smtstr_len u = 0 /\ smtstr_len v = 0` by intLib.ARITH_TAC >>
+  fs [smtstr_len_eq_zero, smtstr_concat_nil_left,
+      smtstr_concat_nil_right, smtstr_suffixof_refl]
+QED
+
+Theorem smtstr_update_concat_first:
+  0 <= i /\ i + smtstr_len u < smtstr_len s ==>
+  smtstr_update (smtstr_concat s tail) i u =
+    smtstr_concat
+      (smtstr_concat
+        (smtstr_concat (smtstr_substr s 0 i) u)
+        (smtstr_substr s (i + smtstr_len u) (smtstr_len s)))
+      tail
+Proof
+  strip_tac >>
+  `~(i < 0) /\ 0 <= i + smtstr_len u /\
+   Num (i + smtstr_len u) = Num i + LENGTH (smtstr_rep u) /\
+   Num (smtstr_len s) = LENGTH (smtstr_rep s) /\
+   Num i + LENGTH (smtstr_rep u) < LENGTH (smtstr_rep s)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  simp [smtstr_substr_prefix, smtstr_substr_suffix] >>
+  simp [smtstr_update_def, smtstr_concat_def, smtstr_rep_def] >>
+  simp [smtstr_rep_def, rich_listTheory.EVERY_TAKE,
+        rich_listTheory.EVERY_DROP, listTheory.TAKE_APPEND1,
+        listTheory.DROP_APPEND1, listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smtstr_concat_left_cancel:
+  (smtstr_concat s x = smtstr_concat s y) <=> (x = y)
+Proof
+  eq_tac
+  >- (strip_tac >>
+      pop_assum (assume_tac o AP_TERM ``smtstr_rep``) >>
+      qpat_x_assum `smtstr_rep (smtstr_concat s x) =
+        smtstr_rep (smtstr_concat s y)` mp_tac >>
+      PURE_REWRITE_TAC [smtstr_rep_concat,
+        CONJUNCT1 listTheory.APPEND_11] >>
+      REWRITE_TAC [smtstr_rep_11])
+  >- simp []
+QED
+
+Theorem smtstr_concat_right_cancel:
+  (smtstr_concat x s = smtstr_concat y s) <=> (x = y)
+Proof
+  eq_tac
+  >- (strip_tac >>
+      pop_assum (assume_tac o AP_TERM ``smtstr_rep``) >>
+      qpat_x_assum `smtstr_rep (smtstr_concat x s) =
+        smtstr_rep (smtstr_concat y s)` mp_tac >>
+      PURE_REWRITE_TAC [smtstr_rep_concat,
+        CONJUNCT2 listTheory.APPEND_11] >>
+      REWRITE_TAC [smtstr_rep_11])
+  >- simp []
+QED
+
+Theorem smtstr_concat_equal_prefix_lengths:
+  smtstr_len s = smtstr_len t ==>
+  ((smtstr_concat s x = smtstr_concat t y) <=>
+   (s = t) /\ (x = y))
+Proof
+  strip_tac >>
+  `LENGTH (smtstr_rep s) = LENGTH (smtstr_rep t)` by
+    fs [smtstr_len_def] >>
+  `(smtstr_rep s ++ smtstr_rep x = smtstr_rep t ++ smtstr_rep y) <=>
+   (smtstr_rep s = smtstr_rep t) /\
+   (smtstr_rep x = smtstr_rep y)` by
+    (irule (CONJUNCT1 listTheory.APPEND_11_LENGTH) >> simp []) >>
+  eq_tac
+  >- (strip_tac >>
+      pop_assum (assume_tac o AP_TERM ``smtstr_rep``) >>
+      qpat_x_assum `smtstr_rep (smtstr_concat s x) =
+        smtstr_rep (smtstr_concat t y)` mp_tac >>
+      PURE_REWRITE_TAC [smtstr_rep_concat] >>
+      strip_tac >>
+      metis_tac [smtstr_rep_11])
+  >- simp []
+QED
+
+Theorem smtstr_concat_equal_suffix_lengths:
+  smtstr_len s = smtstr_len t ==>
+  ((smtstr_concat x s = smtstr_concat y t) <=>
+   (x = y) /\ (s = t))
+Proof
+  strip_tac >>
+  `LENGTH (smtstr_rep s) = LENGTH (smtstr_rep t)` by
+    fs [smtstr_len_def] >>
+  `(smtstr_rep x ++ smtstr_rep s =
+    smtstr_rep y ++ smtstr_rep t) <=>
+   (smtstr_rep x = smtstr_rep y) /\
+   (smtstr_rep s = smtstr_rep t)` by
+    (irule (CONJUNCT2 listTheory.APPEND_11_LENGTH) >> simp []) >>
+  eq_tac
+  >- (strip_tac >>
+      pop_assum (assume_tac o AP_TERM ``smtstr_rep``) >>
+      qpat_x_assum `smtstr_rep (smtstr_concat x s) =
+        smtstr_rep (smtstr_concat y t)` mp_tac >>
+      PURE_REWRITE_TAC [smtstr_rep_concat] >>
+      strip_tac >>
+      metis_tac [smtstr_rep_11])
+  >- simp []
+QED
+
+Theorem smtstr_equal_concat_same_prefix_length:
+  smtstr_len s = smtstr_len t ==>
+  ((s = smtstr_concat t y) <=>
+   (s = t) /\ (y = SmtStr []))
+Proof
+  strip_tac >>
+  `LENGTH (smtstr_rep s) = LENGTH (smtstr_rep t)` by
+    fs [smtstr_len_def] >>
+  `(smtstr_rep s ++ [] = smtstr_rep t ++ smtstr_rep y) <=>
+   (smtstr_rep s = smtstr_rep t) /\
+   ([] = smtstr_rep y)` by
+    (irule (CONJUNCT1 listTheory.APPEND_11_LENGTH) >> simp []) >>
+  eq_tac
+  >- (strip_tac >>
+      pop_assum (assume_tac o AP_TERM ``smtstr_rep``) >>
+      `smtstr_rep s ++ [] = smtstr_rep t ++ smtstr_rep y` by
+        fs [] >>
+      metis_tac [smtstr_rep_11, smtstr_rep_eq_nil])
+  >- simp [smtstr_concat_nil_right]
+QED
+
+Theorem smtstr_equal_concat_same_suffix_length:
+  smtstr_len s = smtstr_len t ==>
+  ((s = smtstr_concat y t) <=>
+   (s = t) /\ (y = SmtStr []))
+Proof
+  strip_tac >>
+  `LENGTH (smtstr_rep s) = LENGTH (smtstr_rep t)` by
+    fs [smtstr_len_def] >>
+  `([] ++ smtstr_rep s = smtstr_rep y ++ smtstr_rep t) <=>
+   ([] = smtstr_rep y) /\
+   (smtstr_rep s = smtstr_rep t)` by
+    (irule (CONJUNCT2 listTheory.APPEND_11_LENGTH) >> simp []) >>
+  eq_tac
+  >- (strip_tac >>
+      pop_assum (assume_tac o AP_TERM ``smtstr_rep``) >>
+      `[] ++ smtstr_rep s = smtstr_rep y ++ smtstr_rep t` by
+        fs [] >>
+      metis_tac [smtstr_rep_11, smtstr_rep_eq_nil])
+  >- simp [smtstr_concat_nil_left]
+QED
+
+Theorem smtstr_concat_common_prefix:
+  (smtstr_concat (smtstr_concat s x) y =
+   smtstr_concat (smtstr_concat s u) v) <=>
+  (smtstr_concat x y = smtstr_concat u v)
+Proof
+  simp [smtstr_concat_assoc, smtstr_concat_left_cancel]
+QED
+
+Theorem smtstr_concat_self_prefix:
+  (s = smtstr_concat (smtstr_concat s x) y) <=>
+  (SmtStr [] = smtstr_concat x y)
+Proof
+  simp [smtstr_concat_assoc,
+        smtstr_equal_concat_same_prefix_length]
+QED
+
+Theorem smtstr_concat_self_suffix:
+  (s = smtstr_concat (smtstr_concat x y) s) <=>
+  (SmtStr [] = smtstr_concat x y)
+Proof
+  simp [smtstr_equal_concat_same_suffix_length]
+QED
+
+Theorem smtstr_le_common_prefix:
+  smtstr_le (smtstr_concat p x) (smtstr_concat p y) <=>
+  smtstr_le x y
+Proof
+  rw [smtstr_le_def, smtstr_lt_def, smtstr_rep_concat,
+      LLEX_num_common_prefix, smtstr_concat_left_cancel]
+QED
+
+Theorem smtstr_le_equal_length_tail:
+  smtstr_len a = smtstr_len b /\ a <> b ==>
+  (smtstr_le (smtstr_concat a x) (smtstr_concat b y) <=>
+   smtstr_le a b)
+Proof
+  strip_tac >>
+  `LENGTH (smtstr_rep a) = LENGTH (smtstr_rep b)` by
+    fs [smtstr_len_def] >>
+  `smtstr_rep a <> smtstr_rep b` by
+    metis_tac [smtstr_rep_11] >>
+  simp [smtstr_le_def, smtstr_lt_def, smtstr_rep_concat,
+        LLEX_num_equal_length_tail,
+        smtstr_concat_equal_prefix_lengths]
+QED
+
+Theorem smtstr_le_equal_length_left_tail:
+  smtstr_len a = smtstr_len b /\ a <> b ==>
+  (smtstr_le (smtstr_concat a x) b <=> smtstr_le a b)
+Proof
+  metis_tac [smtstr_le_equal_length_tail,
+             smtstr_concat_nil_right]
+QED
+
+Theorem smtstr_le_equal_length_right_tail:
+  smtstr_len a = smtstr_len b /\ a <> b ==>
+  (smtstr_le a (smtstr_concat b y) <=> smtstr_le a b)
+Proof
+  metis_tac [smtstr_le_equal_length_tail,
+             smtstr_concat_nil_right]
 QED
 
 Theorem smtstr_at_in_range:

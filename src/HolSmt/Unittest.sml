@@ -1875,6 +1875,39 @@ in
       die "proof tokenizer accepted a symbol forging the string marker"
 end
 
+fun smtlib_cpc_proof_tokenizer_kinds_success () =
+let
+  val instream = TextIO.openString "plain |let| \"let\""
+  val get_token = SmtLib_Parser.make_cpc_proof_stream_tokenizer instream
+  val plain = get_token ()
+  val quoted = get_token ()
+  val string = get_token ()
+  val cpc_eof =
+    ((get_token (); false)
+     handle SmtLib_Parser.CPCProofEOF => true)
+  val legacy = SmtLib_Parser.make_proof_stream_tokenizer
+    (TextIO.openString "")
+  val legacy_eof =
+    ((legacy (); false)
+     handle Feedback.HOL_ERR holerr =>
+       Feedback.top_function_of holerr =
+         "make_proof_tokenizer_from_input")
+  val _ = TextIO.closeIn instream
+in
+  assert (plain = "plain",
+    "CPC tokenizer changed an unquoted symbol");
+  assert (SmtLib_Parser.proof_quoted_symbol_token quoted = SOME "let",
+    "CPC tokenizer lost quoted-symbol identity");
+  assert (SmtLib_Parser.proof_symbol_text quoted = "let",
+    "CPC quoted-symbol semantic decoding changed its text");
+  assert (SmtLib_Parser.proof_string_token string = SOME "let",
+    "CPC tokenizer lost String-token identity");
+  assert (cpc_eof,
+    "CPC tokenizer did not distinguish ordinary EOF");
+  assert (legacy_eof,
+    "CPC EOF handling changed the legacy Z3 proof tokenizer")
+end
+
 val smt_string_ty =
   Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
 
@@ -5323,6 +5356,25 @@ in
     (boolSyntax.mk_eq (holsmt_app "smt_seq_replace" [xs, ys, zs], xs));
   assert_builder "shared seq.prefixof" z3_options "(seq.prefixof xs ys)"
     (listSyntax.mk_isprefix (xs, ys));
+  let
+    val one = intSyntax.term_of_int (Arbint.fromInt 1)
+    val singleton = listSyntax.mk_cons (one, empty)
+    val empty_prefix = listSyntax.mk_isprefix (empty, singleton)
+    val singleton_prefix = listSyntax.mk_isprefix (singleton, empty)
+  in
+    assert_builder "seq.prefixof empty prefixes singleton" z3_options
+      "(seq.prefixof (as seq.empty (Seq Int)) (seq.unit 1))"
+      empty_prefix;
+    assert_builder "seq.prefixof singleton does not prefix empty"
+      cvc5_options
+      "(seq.prefixof (seq.unit 1) (as seq.empty (Seq Int)))"
+      singleton_prefix;
+    assert (Term.aconv (Thm.concl (bossLib.EVAL empty_prefix))
+        (boolSyntax.mk_eq (empty_prefix, boolSyntax.T)) andalso
+        Term.aconv (Thm.concl (bossLib.EVAL singleton_prefix))
+          (boolSyntax.mk_eq (singleton_prefix, boolSyntax.F)),
+      "lowercase list$isPREFIX argument semantics drifted")
+  end;
   assert_builder "shared seq.suffixof" cvc5_options "(seq.suffixof xs ys)"
     (rich_list_app "IS_SUFFIX" [ys, xs]);
   assert_builder "cvc5 seq.update" cvc5_options
@@ -10315,6 +10367,16 @@ in
   CPC_ProofParser.parse_stream_with_version dicts "1.3.4" instream
 end
 
+fun parse_cpc_rare_source_string contents =
+let
+  val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dicts = (tydict,
+    Library.union_dict tmdict SmtLib_Theories.CVC5_Seq.tmdict)
+  val instream = TextIO.openString contents
+in
+  CPC_ProofParser.parse_stream_with_version dicts "1.3.4" instream
+end
+
 fun parse_cvc_bag_proof_string contents =
 let
   val (translation, _) = CVC.goal_to_SmtLib_translation
@@ -10323,6 +10385,562 @@ let
 in
   CPC_ProofParser.parse_stream_with_version
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
+end
+
+fun cpc_quoted_declaration_identity_success () =
+let
+  val names = ["quoted_user"]
+  fun quote name = "|" ^ name ^ "|"
+  fun function_proof name =
+    let
+      val symbol = quote name
+      val proof = parse_cpc_proof_string
+        ("((declare-fun " ^ symbol ^ " (Bool) Bool) " ^
+         "(step @p (= (" ^ symbol ^ " true) (" ^ symbol ^
+         " true)) :rule refl :args ((" ^ symbol ^ " true))))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+      val (application, _) = boolSyntax.dest_eq (Thm.concl theorem)
+      val (function, _) = Term.dest_comb application
+    in
+      assert (Term.is_var function andalso
+          Lib.fst (Term.dest_var function) = name,
+        "quoted CPC function resolved as an unquoted builtin: " ^ symbol);
+      assert (List.null (Thm.hyp theorem),
+        "quoted CPC function retained hypotheses: " ^ symbol);
+      check_oracle_tags ("quoted CPC function " ^ symbol) theorem
+    end
+  fun undeclared name =
+    let val symbol = quote name in
+      (ignore (parse_cpc_proof_string
+         ("((assume @p " ^ symbol ^ "))"));
+       die ("undeclared quoted CPC symbol parsed: " ^ symbol))
+      handle Feedback.HOL_ERR holerr =>
+        assert
+          (Feedback.top_function_of holerr =
+             "t_with_args_unknown_symbol" andalso
+           contains ("failed to parse '" ^ name ^ "'")
+             (Feedback.message_of holerr),
+           "quoted CPC symbol fell through to an unquoted builtin: " ^
+           symbol ^ ": " ^ Feedback.message_of holerr)
+    end
+  val source_function = Term.mk_var
+    ("source_exact", Type.--> (Type.bool, Type.bool))
+  val source_sort = Type.mk_vartype "'source_exact_sort"
+  fun source_parse _ indices args =
+    if List.null indices andalso List.length args = 1 then
+      Term.list_mk_comb (source_function, args)
+    else raise Feedback.mk_HOL_ERR "Unittest"
+      "source_parse" "source signature mismatch"
+  fun source_sort_parse _ indices args =
+    if List.null indices andalso List.null args then source_sort
+    else raise Feedback.mk_HOL_ERR "Unittest"
+      "source_sort_parse" "source sort signature mismatch"
+  val (source_tydict, source_tmdict) =
+    SmtLib_Logics.parsedicts_of_logic "ALL"
+  val source_dicts =
+    (Library.extend_dict
+       (("SourceExactSort", source_sort_parse), source_tydict),
+     Library.extend_dict
+       (("source_exact", source_parse), source_tmdict))
+  fun parse_source text = CPC_ProofParser.parse_stream_with_version
+    source_dicts "1.3.4" (TextIO.openString text)
+  val source_proof = parse_source
+    "((declare-fun |source_exact| (Bool) Bool) \
+    \ (declare-sort |SourceExactSort| 0) \
+    \ (declare-const source_value SourceExactSort) \
+    \ (step @p (= (source_exact true) (|source_exact| true)) \
+    \ :rule refl :args ((source_exact true))))"
+  val source_theorem = CPC_ProofReplay.replay_root_for_test source_proof
+  fun reject label expected text =
+    (ignore (parse_cpc_proof_string text);
+     die ("CPC parser accepted " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+          Feedback.message_of holerr = expected,
+        "CPC " ^ label ^ " diagnostic drifted: " ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  fun reject_top label top expected text =
+    (ignore (parse_cpc_proof_string text);
+     die ("CPC parser accepted " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = top andalso
+          Feedback.message_of holerr = expected,
+        "CPC " ^ label ^ " diagnostic drifted: " ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  fun replay text = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string text)
+  val ordinary_to_quoted = replay
+    "((declare-const foo Bool) \
+    \ (step @p (= |foo| foo) :rule refl :args (foo)))"
+  val quoted_to_ordinary = replay
+    "((declare-const |bar| Bool) \
+    \ (step @p (= bar |bar|) :rule refl :args (bar)))"
+  val sort_cross_spelling = replay
+    "((declare-sort Foo 0) (declare-const x |Foo|) \
+    \ (declare-sort |Bar| 0) (declare-const y Bar) \
+    \ (step @p (= x x) :rule refl :args (x)))"
+  val definition_cross_spelling = replay
+    "((declare-const a String) (declare-const b String) \
+    \ (declare-const c String) (declare-const d String) \
+    \ (declare-const e String) (declare-const f String) \
+    \ (declare-const g String) \
+    \ (define left_tail () (str.++ c d)) \
+    \ (step @p \
+    \  (= (= (str.++ a b c d) (str.++ a e f g)) \
+    \     (= (str.++ b c d) (str.++ e f g))) \
+    \  :rule str-concat-unify \
+    \  :args (a b |left_tail| e (str.++ f g))))"
+  val quoted_definition_cross_spelling = replay
+    "((declare-const a String) (declare-const b String) \
+    \ (declare-const c String) (declare-const d String) \
+    \ (declare-const e String) (declare-const f String) \
+    \ (declare-const g String) \
+    \ (define |right_tail| () (str.++ f g)) \
+    \ (step @p \
+    \  (= (= (str.++ a b c d) (str.++ a e f g)) \
+    \     (= (str.++ b c d) (str.++ e f g))) \
+    \  :rule str-concat-unify \
+    \  :args (a b (str.++ c d) e right_tail)))"
+  val binder_cross_spelling = replay
+    "((step @p \
+    \ (= (forall ((foo Bool)) |foo|) \
+    \    (forall ((|foo| Bool)) foo)) \
+    \ :rule refl :args ((forall ((foo Bool)) foo))))"
+  val let_cross_spelling = replay
+    "((step @p \
+    \ (= (let ((foo true)) |foo|) \
+    \    (let ((|foo| true)) foo)) \
+    \ :rule refl :args (true)))"
+  val _ =
+    (ignore (parse_source
+       "((declare-fun source_exact (Int) Int))");
+     die "CPC parser reused a source declaration with a wrong signature")
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+          Feedback.message_of holerr =
+            "incompatible redeclaration of CPC symbol source_exact",
+        "CPC declaration compatibility diagnostic drifted")
+  val _ =
+    (ignore (parse_source
+       "((declare-sort SourceExactSort 1))");
+     die "CPC parser reused a source sort with the wrong arity")
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+          Feedback.message_of holerr =
+            "incompatible redeclaration of CPC sort SourceExactSort",
+        "CPC sort compatibility diagnostic drifted")
+in
+  List.app function_proof names;
+  List.app undeclared names;
+  assert (List.null (Thm.hyp source_theorem),
+    "compatible source CPC declaration retained hypotheses");
+  reject "cross-spelled duplicate declaration"
+    "duplicate CPC declaration of symbol foo"
+    "((declare-const foo Bool) (declare-const |foo| Bool))";
+  reject "reverse cross-spelled duplicate declaration"
+    "duplicate CPC declaration of symbol foo"
+    "((declare-const |foo| Bool) (declare-const foo Bool))";
+  reject_top "declaration then definition" "parse_define"
+    "duplicate CPC declaration or definition of symbol foo"
+    "((declare-const foo Bool) (define |foo| () true))";
+  reject_top "definition then declaration" "parse_declaration"
+    "duplicate CPC declaration of symbol foo"
+    "((define |foo| () true) (declare-const foo Bool))";
+  reject_top "cross-spelled duplicate definition" "parse_define"
+    "duplicate CPC declaration or definition of symbol foo"
+    "((define foo () true) (define |foo| () true))";
+  reject_top "reverse cross-spelled duplicate definition" "parse_define"
+    "duplicate CPC declaration or definition of symbol foo"
+    "((define |foo| () true) (define foo () true))";
+  reject "same-spelled duplicate declaration"
+    "duplicate CPC declaration of symbol foo"
+    "((declare-const foo Bool) (declare-const foo Bool))";
+  reject "cross-spelled duplicate sort declaration"
+    "duplicate CPC declaration of sort Foo"
+    "((declare-sort |Foo| 0) (declare-sort Foo 0))";
+  List.app (fn name =>
+      (reject ("builtin sort " ^ name)
+         ("CPC declaration may not shadow builtin sort " ^ name)
+         ("((declare-sort " ^ name ^ " 0))");
+       reject ("quoted builtin sort " ^ name)
+         ("CPC declaration may not shadow builtin sort " ^ name)
+         ("((declare-sort |" ^ name ^ "| 0))")))
+    ["Array", "Seq", "Bool", "String"];
+  reject "builtin Array re-arity"
+    "CPC declaration may not shadow builtin sort Array"
+    "((declare-sort Array 2))";
+  List.app (fn name =>
+      (reject ("builtin term " ^ name)
+         ("CPC declaration may not shadow builtin symbol " ^ name)
+         ("((declare-fun " ^ name ^ " () Bool))");
+       reject ("quoted builtin term " ^ name)
+         ("CPC declaration may not shadow builtin symbol " ^ name)
+         ("((declare-fun |" ^ name ^ "| () Bool))")))
+    ["true", "and", "Array", "Seq", "Bool", "String"];
+  List.app (fn name => reject_top ("builtin definition " ^ name)
+      "parse_define"
+      ("CPC definition may not shadow builtin symbol " ^ name)
+      ("((define |" ^ name ^ "| () true))"))
+    ["true", "and", "Array", "Seq", "Bool", "String"];
+  List.app
+    (check_oracle_tags "CPC cross-spelling proof")
+    [ordinary_to_quoted, quoted_to_ordinary, sort_cross_spelling,
+     definition_cross_spelling, quoted_definition_cross_spelling,
+     binder_cross_spelling, let_cross_spelling];
+  check_oracle_tags "compatible source CPC declaration" source_theorem
+end
+
+fun cpc_tokenizer_eof_and_lexical_validation_success () =
+let
+  val e_acute = String.implode (List.map Char.chr [195, 169])
+  val malformed = String.implode (List.map Char.chr [195, 40])
+  val control = String.str (Char.chr 1)
+  fun reject label top fragments text =
+    (ignore (parse_cpc_proof_string text);
+     die ("CPC parser accepted " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      let val message = Feedback.message_of holerr in
+        assert
+          (Feedback.top_function_of holerr = top andalso
+           List.all (fn fragment => contains fragment message) fragments,
+           "CPC " ^ label ^ " diagnostic mismatch: " ^
+           Feedback.top_function_of holerr ^ ": " ^ message)
+      end
+  val valid_text =
+    "((step @p (= \"\\u{e9}\" \"\\u{e9}\") :rule refl \
+    \ :args (\"\\u{e9}\")))"
+  val valid = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string valid_text)
+  val padding = String.concat
+    (List.tabulate (65530, fn _ => "x"))
+  val boundary = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      (";" ^ padding ^ "\n" ^ valid_text ^ "; trailing comment"))
+  val unsupported =
+    "((step @p \"" ^ control ^ "\" \
+    \ :rule str-to-lower-concat))"
+  val unsupported_rule = "str-to-lower-concat"
+  val unsupported_message =
+    "unsupported cvc5-1.3.4 RARE rule str-to-lower-concat: " ^
+    "str.to_lower has no HOL operator or parser dictionary entry"
+  val _ = SmtLib_Parser.parse_script_string
+    ("(assert (= \"" ^ e_acute ^ "\" \"" ^ e_acute ^ "\"))")
+  val quoted_utf8 = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      ("((declare-const |" ^ e_acute ^ "| Bool) \
+       \ (step @p (= |" ^ e_acute ^ "| |" ^ e_acute ^
+       "|) :rule refl :args (|" ^ e_acute ^ "|)))"))
+in
+  check_oracle_tags "CPC escaped Unicode string" valid;
+  check_oracle_tags "CPC extended UTF-8 quoted symbol" quoted_utf8;
+  check_oracle_tags "CPC proof tokenizer chunk boundary" boundary;
+  reject "missing outer close" "parse_commands"
+    ["unexpected end", "wrapper"]
+    "((step @p (= true true) :rule refl :args (true))";
+  reject "unterminated quoted symbol" "get_token"
+    ["unterminated quoted symbol", "line 1"]
+    "((assume @p |unterminated))";
+  reject "entire-input unterminated quote" "get_token"
+    ["unterminated quoted symbol", "line 1"] "|unterminated";
+  reject "unterminated string" "get_token"
+    ["unterminated string literal", "line 1"]
+    "((assume @p \"unterminated))";
+  reject "trailing malformed token" "get_token"
+    ["unterminated quoted symbol", "line 1"]
+    "((step @p (= true true) :rule refl :args (true))) |bad";
+  reject "trailing marker collision"
+    "make_proof_tokenizer_from_input" ["proof token marker"]
+    ("((step @p (= true true) :rule refl :args (true))) " ^
+     control ^ "HolSmtString:forged");
+  reject "nonprintable String token" "get_token"
+    ["string literal contains forbidden raw String byte 0x1", "line 1"]
+    unsupported;
+  reject "raw non-ASCII String token" "get_token"
+    ["string literal contains forbidden raw String byte 0xc3", "line 1"]
+    ("((assume @p \"" ^ e_acute ^ "\"))");
+  reject "raw newline String token" "get_token"
+    ["string literal contains forbidden raw String byte 0xa", "line 1"]
+    "((assume @p \"line1\nline2\"))";
+  reject "nonprintable quoted symbol" "get_token"
+    ["quoted symbol contains forbidden character 0x1", "line 1"]
+    ("((assume @p |bad" ^ control ^ "|))");
+  reject "quoted-symbol tab" "get_token"
+    ["quoted symbol contains forbidden character 0x9", "line 1"]
+    "((assume @p |bad\tname|))";
+  reject "malformed UTF-8 String token" "get_token"
+    ["forbidden raw String byte 0xc3", "line 1"]
+    ("((assume @p \"" ^ malformed ^ "\"))");
+  reject "malformed UTF-8 quoted symbol" "get_token"
+    ["invalid UTF-8", "line 1"]
+    ("((assume @p |" ^ malformed ^ "|))");
+  reject "quoted-symbol backslash" "get_token"
+    ["forbidden quoted-symbol character 0x5c", "line 1"]
+    "((assume @p |bad\\name|))";
+  reject "unsupported missing outer close" "parse_commands"
+    ["unexpected end", "wrapper"]
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat)";
+  reject "unsupported followed by garbage" "parse_stream_with_version"
+    ["trailing token 'garbage'"]
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat)) garbage";
+  reject "unsupported followed by unterminated quote" "get_token"
+    ["unterminated quoted symbol", "line 1"]
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat)) |bad";
+  reject "unsupported followed by malformed command" "read_raw_term"
+    ["unexpected closing parenthesis"]
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat) (assume @q )))";
+  reject "unsupported followed by valid commands" unsupported_rule
+    [unsupported_message]
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat) \
+    \ (step @q (= true true) :rule refl :args (true)))";
+  reject "second valid proof wrapper" "parse_stream_with_version"
+    ["second CPC proof wrapper"]
+    (valid_text ^ " " ^ valid_text);
+  reject "second invalid proof wrapper" "parse_stream_with_version"
+    ["second CPC proof wrapper"]
+    (valid_text ^ " ((unknown-command malformed))")
+end
+
+fun cpc_parser_graph_contract_diagnostics () =
+let
+  val unsupported_open =
+    "(step @unsupported (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat"
+  val unsupported = unsupported_open ^ ")"
+  val unsupported_rule = "str-to-lower-concat"
+  val unsupported_message =
+    "unsupported cvc5-1.3.4 RARE rule str-to-lower-concat: " ^
+    "str.to_lower has no HOL operator or parser dictionary entry"
+  val cross_spelling = parse_cpc_proof_string
+    "((assume @source true) \
+    \ (step |@result| (= true true) :rule refl \
+    \ :premises (|@source|) :args (true)))"
+  val cross_theorem =
+    CPC_ProofReplay.replay_root_for_test cross_spelling
+  val reserved_spelling = parse_cpc_proof_string
+    "((assume @purify true) (assume |@purify| false))"
+  fun reject label top fragment proof =
+    (ignore (parse_cpc_proof_string proof);
+     die ("CPC parser accepted " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = top andalso
+          contains fragment (Feedback.message_of holerr),
+        label ^ " diagnostic mismatch: " ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+in
+  (case CPC_Proof.proof_commands cross_spelling of
+     [CPC_Proof.ASSUME ("@source", _),
+      CPC_Proof.STEP {id = "@result", premises = ["@source"], ...}] => ()
+   | _ => die "CPC IDs did not canonicalize across quoted spellings");
+  assert (Thm.concl cross_theorem ~~ ``T = T``,
+    "cross-spelling CPC premise did not reach the replay map");
+  check_oracle_tags "cross-spelling CPC premise replay" cross_theorem;
+  (case CPC_Proof.proof_commands reserved_spelling of
+     [CPC_Proof.ASSUME (plain, _), CPC_Proof.ASSUME (quoted, _)] =>
+       assert (plain <> quoted,
+         "quoted reserved CPC ID spelling lost its distinct symbol key")
+   | _ => die "quoted reserved CPC ID proof did not parse");
+  reject "String-token command ID" "parse_commands"
+    "string literal is not a valid CPC command ID"
+    "((assume \"id\" true))";
+  reject "non-@ command ID" "parse_commands"
+    "invalid CPC command ID 'id'"
+    "((assume id true))";
+  reject "quoted non-@ command ID" "parse_commands"
+    "invalid CPC command ID 'id'"
+    "((assume |id| true))";
+  reject "String-token premise ID" "parse_step"
+    "string literal is not a valid CPC premise ID"
+    "((assume @in true) (step @out :rule refl \
+    \ :premises (\"@in\") :args (true)))";
+  reject "cross-spelling assume/step duplicate ID" "parse_step"
+    "duplicate CPC command ID @same"
+    "((assume @same true) (step |@same| :rule refl :args (true)))";
+  reject "reverse cross-spelling step/assume duplicate ID" "parse_commands"
+    "duplicate CPC command ID @same"
+    "((step |@same| :rule refl :args (true)) (assume @same true))";
+  reject "assume/step duplicate ID" "parse_step"
+    "duplicate CPC command ID @same"
+    "((assume @same true) (step @same :rule refl :args (true)))";
+  reject "step/assume duplicate ID" "parse_commands"
+    "duplicate CPC command ID @same"
+    "((step @same :rule refl :args (true)) (assume @same true))";
+  reject "conflicting repeated scoped step ID" "parse_commands"
+    "duplicate CPC command ID @same"
+    "((assume-push @scope true) \
+    \ (step @same :rule refl :args (true)) \
+    \ (step-pop @closed :rule scope :premises (@scope @same)) \
+    \ (step @same :rule refl :args (false)))";
+  ignore (parse_cpc_proof_string
+    "((assume-push @scope true) \
+    \ (step @same :rule refl :args (true)) \
+    \ (step-pop @closed :rule scope :premises (|@scope| |@same|)) \
+    \ (step |@same| :rule refl :args (true)))");
+  reject "unsupported recorded duplicate ID" "parse_step"
+    "duplicate CPC command ID @unsupported"
+    ("(" ^ unsupported ^ " " ^ unsupported ^ ")");
+  reject "supported duplicate premises" "parse_step"
+    "duplicate :premises in CPC step @out"
+    "((assume @in true) (step @out :rule refl \
+    \ :premises (@in) :premises (@in) :args (true)))";
+  reject "supported duplicate args" "parse_step"
+    "duplicate :args in CPC step @out"
+    "((step @out :rule refl :args (true) :args (true)))";
+  reject "unsupported duplicate premises" "parse_step"
+    "duplicate :premises in unsupported CPC step @unsupported"
+    ("((assume @in true) " ^ unsupported_open ^
+     " :premises (@in) :premises (@in)))");
+  reject "unsupported duplicate args" "parse_step"
+    "duplicate :args in unsupported CPC step @unsupported"
+    ("(" ^ unsupported_open ^ " :args (x) :args (y)))");
+  reject "premise references validated in order" "parse_step"
+    "unknown premise ID '@missing_first'"
+    "((assume @in true) (step @out :rule refl \
+    \ :premises (@in @missing_first @missing_second) :args (true)))";
+  reject "unsupported cross-spelling premise" unsupported_rule
+    unsupported_message
+    ("((assume @in true) " ^ unsupported_open ^
+     " :premises (|@in|)))");
+  reject "pending unsupported then unknown premise" "parse_step"
+    "unknown premise ID '@missing'"
+    ("(" ^ unsupported ^ " (step @out :rule refl \
+     \ :premises (@missing) :args (true)))");
+  reject "pending unsupported then duplicate ID" "parse_commands"
+    "duplicate CPC command ID @unsupported"
+    ("(" ^ unsupported ^ " (assume @unsupported true))");
+  reject "pending unsupported then duplicate attributes" "parse_step"
+    "duplicate :args in CPC step @out"
+    ("(" ^ unsupported ^ " (step @out :rule refl \
+     \ :args (true) :args (true)))");
+  reject "pending unsupported then malformed supported metadata" "parse_step"
+    "non-numeral CPC and_elim index 'bad'"
+    ("((assume @in (and true true)) " ^ unsupported ^
+     " (step @out :rule and_elim :premises (@in) :args (bad)))")
+end
+
+fun cpc_datatype_declaration_validation_success () =
+let
+  val options =
+    {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
+  fun source_dicts declaration =
+    let
+      val state = SmtLib_Parser.typecheck_script_string_with_options options
+        ("(set-logic ALL)\n" ^ declaration ^ "\n(exit)\n")
+    in
+      (#tydict state, #tmdict state)
+    end
+  fun parse_with dicts text =
+    CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+      (TextIO.openString text)
+  fun wrapped declaration = "(" ^ declaration ^ ")"
+  fun reject label fragment parse text =
+    (ignore (parse text); die ("CPC parser accepted " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      assert (contains fragment (Feedback.message_of holerr),
+        label ^ " diagnostic mismatch: " ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  val recursive =
+    "(declare-datatype CpcListA24 \
+    \ ((cpcNilA24) \
+    \  (cpcConsA24 (cpcHeadA24 Int) \
+    \   (cpcTailA24 CpcListA24))))"
+  val parametric =
+    "(declare-datatype CpcBoxA24 \
+    \ (par (A) ((cpcBoxA24 (cpcValueA24 A)))))"
+  val mutual =
+    "(declare-datatypes ((CpcTreeA24 0) (CpcForestA24 0)) \
+    \ (((cpcLeafA24) \
+    \   (cpcNodeA24 (cpcChildrenA24 CpcForestA24))) \
+    \  ((cpcEmptyA24) \
+    \   (cpcForestConsA24 (cpcTreeA24 CpcTreeA24) \
+    \    (cpcRestA24 CpcForestA24)))))"
+  val structural =
+    "(declare-datatype CpcShapeA24 \
+    \ ((cpcLeftA24 (cpcLeftFirstA24 Int) \
+    \                  (cpcLeftSecondA24 Int)) \
+    \  (cpcRightA24 (cpcRightFirstA24 Int) \
+    \                   (cpcRightSecondA24 Int))))"
+  val structural_dicts = source_dicts structural
+  fun parse_structural text = parse_with structural_dicts text
+  val _ = parse_with (source_dicts recursive) (wrapped recursive)
+  val _ = parse_with (source_dicts parametric) (wrapped parametric)
+  val _ = parse_with (source_dicts mutual) (wrapped mutual)
+  val _ = parse_structural (wrapped structural)
+  val (_, option_strings) = SmtLib.goal_to_SmtLib_translation NONE
+    ([], ``(x:int option) = y``)
+  val option_text = String.concat option_strings
+  val declaration =
+    case List.find
+        (fn SmtLib.DatatypeDeclaration {smt_names, ...} =>
+              List.exists (Lib.equal "Option_Int") smt_names
+          | _ => false)
+        (SmtLib.translation_records (#1
+          (SmtLib.goal_to_SmtLib_translation NONE
+            ([], ``(x:int option) = y``)))) of
+      SOME (SmtLib.DatatypeDeclaration {declaration, ...}) => declaration
+    | _ => die "option translation did not expose its datatype declaration"
+  val (option_translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], ``(x:int option) = y``)
+  val (option_tydict, option_tmdict) =
+    SmtLib.parser_dicts_for_translation option_translation
+  val (base_tydict, base_tmdict) =
+    SmtLib_Logics.parsedicts_of_logic "ALL"
+  val option_dicts =
+    (Library.union_dict option_tydict base_tydict,
+     Library.union_dict option_tmdict base_tmdict)
+  val _ = parse_with option_dicts (wrapped declaration)
+in
+  assert (contains "(declare-datatypes ((Option_Int 0))" option_text,
+    "option translation did not contain a genuine datatype form");
+  reject "omitted source constructor" "expected 2, declared 1"
+    parse_structural
+    "((declare-datatype CpcShapeA24 \
+    \ ((cpcLeftA24 (cpcLeftFirstA24 Int) \
+    \                  (cpcLeftSecondA24 Int)))))";
+  reject "extra source constructor" "expected 2, declared 3"
+    parse_structural
+    "((declare-datatype CpcShapeA24 \
+    \ ((cpcLeftA24 (cpcLeftFirstA24 Int) \
+    \                  (cpcLeftSecondA24 Int)) \
+    \  (cpcRightA24 (cpcRightFirstA24 Int) \
+    \                   (cpcRightSecondA24 Int)) \
+    \  (cpcExtraA24))))";
+  reject "same-typed selectors swapped between constructors"
+    "selector cpcRightFirstA24 is not identical"
+    parse_structural
+    "((declare-datatype CpcShapeA24 \
+    \ ((cpcLeftA24 (cpcRightFirstA24 Int) \
+    \                  (cpcRightSecondA24 Int)) \
+    \  (cpcRightA24 (cpcLeftFirstA24 Int) \
+    \                   (cpcLeftSecondA24 Int)))))";
+  reject "same-typed selector order swapped"
+    "selector cpcLeftSecondA24 is not identical"
+    parse_structural
+    "((declare-datatype CpcShapeA24 \
+    \ ((cpcLeftA24 (cpcLeftSecondA24 Int) \
+    \                  (cpcLeftFirstA24 Int)) \
+    \  (cpcRightA24 (cpcRightFirstA24 Int) \
+    \                   (cpcRightSecondA24 Int)))))";
+  reject "empty datatype blocks" "binding list must be nonempty"
+    parse_structural "((declare-datatypes () ()))";
+  reject "builtin Bool datatype shadowing" "builtin sort Bool"
+    parse_structural "((declare-datatypes ((Bool 0)) (((mkBool)))))";
+  reject "empty datatype constructors" "constructor list must be nonempty"
+    parse_structural "((declare-datatypes ((CpcShapeA24 0)) (()))))";
+  reject "malformed datatype constructor" "constructor must be a nonempty"
+    parse_structural "((declare-datatypes ((CpcShapeA24 0)) ((()))))";
+  reject "malformed datatype selector" "selector must have the form"
+    parse_structural
+      "((declare-datatypes ((CpcShapeA24 0)) \
+      \ (((cpcLeftA24 (bad))))))"
 end
 
 fun cpc_proof_parser_parameterized_datatype_tester_success () =
@@ -10998,7 +11616,7 @@ in
         "((declare-const x String) \
         \(assume @p1 (str.in_re x (re.* re.allchar))) \
         \(step @p2 (= x x) :rule re_unfold_pos \
-        \  :premises (@p1) :args (0))))")));
+        \  :premises (@p1) :args (0)))")));
   expect_hol_error_contains "CPC re_unfold_pos rejects many arguments"
     "re_unfold_pos expects no explicit arguments"
     (fn () => ignore (CPC_ProofReplay.replay_root_for_test
@@ -11006,7 +11624,7 @@ in
         "((declare-const x String) \
         \(assume @p1 (str.in_re x (re.* re.allchar))) \
         \(step @p2 (= x x) :rule re_unfold_pos \
-        \  :premises (@p1) :args (0 1))))")));
+        \  :premises (@p1) :args (0 1)))")));
   expect_hol_error_contains "CPC inferred re_unfold_pos rejects one argument"
     "re_unfold_pos expects no explicit arguments"
     (fn () => ignore (CPC_ProofReplay.replay_root_for_test
@@ -11014,7 +11632,7 @@ in
         "((declare-const x String) \
         \(assume @p1 (str.in_re x (re.* re.allchar))) \
         \(step @p2 :rule re_unfold_pos \
-        \  :premises (@p1) :args (0))))")));
+        \  :premises (@p1) :args (0)))")));
   expect_hol_error_contains
     "CPC inferred re_unfold_pos rejects many arguments"
     "re_unfold_pos expects no explicit arguments"
@@ -11023,7 +11641,7 @@ in
         "((declare-const x String) \
         \(assume @p1 (str.in_re x (re.* re.allchar))) \
         \(step @p2 :rule re_unfold_pos \
-        \  :premises (@p1) :args (0 1))))")));
+        \  :premises (@p1) :args (0 1)))")));
   expect_hol_error_contains "CPC re_unfold_pos applicability is strict"
     "re_unfold_pos expects star or concatenation membership"
     (fn () => ignore (CPC_ProofReplay.replay_root_for_test
@@ -11031,7 +11649,7 @@ in
         "((declare-const x String) \
         \(assume @p1 (str.in_re x re.none)) \
         \(step @p2 (= x x) :rule re_unfold_pos \
-        \  :premises (@p1))))")))
+        \  :premises (@p1)))")))
 end
 
 fun cpc_proof_parser_private_fp_terms_success () =
@@ -11147,7 +11765,8 @@ end
 
 fun cpc_proof_replay_string_obligation_diagnostic () =
   expect_hol_error_contains "CPC re-all-elim obligation"
-    "rule=re-all-elim"
+    ("unsupported cvc5-1.3.4 RARE rule re-all-elim: " ^
+     "universal-language expansion is false as intensional reglan equality")
     (fn () => ignore (CPC_ProofReplay.replay_root_for_test
       (parse_cpc_proof_string
         "((step @p1 (= re.all (re.* re.allchar)) \
@@ -11156,7 +11775,7 @@ fun cpc_proof_replay_string_obligation_diagnostic () =
 fun cpc_rare_inventory_part1_success () =
 let
   open CPC_Proof
-  val entries = cvc134_rare_rewrite_inventory
+  val entries = cvc134_rare_first_tranche
   fun count family = List.length (List.filter
     (fn entry => #family entry = family) entries)
   fun check_entry entry =
@@ -11395,6 +12014,1083 @@ fun cpc_rare_inventory_part1_diagnostic () =
       \(step @p (= (str.contains x x) true) \
       \:rule str-contains-refl :premises (@t) :args (x)))"
   end
+
+(* Frozen independently from both cvc5-1.3.4 String RARE sources,
+   src/theory/strings/rewrites and rewrites-regexp-membership, by:
+
+     awk '/^\(define(-cond)?-rule[*]? / {print $2}' ... | sort
+
+   The newline-delimited source fixture has SHA256
+   93bb14fc27bf70bea2ed39ddd34f091f5b9d8ef5c8ecd32c4b20ad56ba65fc78.
+   This literal is deliberately independent of CPC_Proof's registry. *)
+val cvc134_authoritative_string_rare_names = [
+  "re-all-elim", "re-concat-merge", "re-concat-star-repeat",
+  "re-concat-star-subsume1", "re-concat-star-subsume2",
+  "re-concat-star-swap", "re-diff-elim", "re-in-comp",
+  "re-in-cstring", "re-in-empty", "re-in-sigma", "re-in-sigma-star",
+  "re-inter-all",
+  "re-inter-cstring", "re-inter-cstring-neg", "re-loop-neg",
+  "re-opt-elim", "re-plus-elim", "re-range-emp",
+  "re-range-non-singleton-1", "re-range-non-singleton-2",
+  "re-range-refl", "re-repeat-elim", "re-star-emp", "re-star-none",
+  "re-star-star", "re-star-union-char", "re-star-union-drop-emp",
+  "re-union-all", "re-union-const-elim", "seq-len-rev",
+  "seq-len-unit", "seq-nth-unit", "seq-rev-concat", "seq-rev-rev",
+  "seq-rev-unit", "str-at-elim", "str-concat-clash",
+  "str-concat-clash-rev", "str-concat-clash2",
+  "str-concat-clash2-rev", "str-concat-unify",
+  "str-concat-unify-base", "str-concat-unify-base-rev",
+  "str-concat-unify-rev", "str-contains-char",
+  "str-contains-concat-find", "str-contains-concat-find-contra",
+  "str-contains-emp", "str-contains-leq-len-eq", "str-contains-refl",
+  "str-contains-repl-char", "str-contains-repl-self",
+  "str-contains-repl-self-tgt-char", "str-contains-repl-tgt",
+  "str-contains-split-char", "str-eq-ctn-false",
+  "str-eq-ctn-full-false1", "str-eq-ctn-full-false2",
+  "str-eq-len-false", "str-eq-repl-emp-tgt-nemp",
+  "str-eq-repl-len-one-emp-prefix", "str-eq-repl-nemp-src-emp",
+  "str-eq-repl-no-change", "str-eq-repl-self-emp",
+  "str-eq-repl-self-src", "str-eq-repl-tgt-eq-len",
+  "str-from-int-no-ctn-nondigit", "str-in-re-contains",
+  "str-in-re-from-int-dig-range", "str-in-re-from-int-nemp-dig-range",
+  "str-in-re-inter-elim", "str-in-re-range-elim",
+  "str-in-re-union-elim", "str-indexof-contains-concat-pre",
+  "str-indexof-contains-pre", "str-indexof-eq-irr",
+  "str-indexof-find-emp", "str-indexof-no-contains", "str-indexof-oob",
+  "str-indexof-oob2", "str-indexof-re-emp-re", "str-indexof-re-none",
+  "str-indexof-self", "str-is-digit-elim", "str-len-concat-rec",
+  "str-len-eq-zero-base", "str-len-eq-zero-concat-rec",
+  "str-len-replace-all-inv", "str-len-replace-inv",
+  "str-len-substr-in-range", "str-len-update-inv",
+  "str-leq-concat-base-1", "str-leq-concat-base-2",
+  "str-leq-concat-false", "str-leq-concat-true", "str-leq-empty",
+  "str-leq-empty-eq", "str-lt-elim", "str-prefixof-elim",
+  "str-prefixof-eq", "str-prefixof-one", "str-repl-repl-dual-ite1",
+  "str-repl-repl-dual-ite2", "str-repl-repl-dual-self",
+  "str-repl-repl-len-id", "str-repl-repl-lookahead-id-simp",
+  "str-repl-repl-src-inv-no-ctn1", "str-repl-repl-src-inv-no-ctn2",
+  "str-repl-repl-src-inv-no-ctn3", "str-repl-repl-src-self",
+  "str-repl-repl-src-tgt-no-ctn", "str-repl-repl-tgt-no-ctn",
+  "str-repl-repl-tgt-self", "str-replace-all-empty",
+  "str-replace-all-id", "str-replace-all-no-contains",
+  "str-replace-all-self", "str-replace-dual-ctn",
+  "str-replace-dual-ctn-false", "str-replace-emp-ctn-src",
+  "str-replace-empty", "str-replace-find-base",
+  "str-replace-find-first-concat", "str-replace-find-pre",
+  "str-replace-id", "str-replace-no-contains", "str-replace-one-pre",
+  "str-replace-prefix", "str-replace-re-all-none",
+  "str-replace-re-none", "str-replace-self",
+  "str-replace-self-ctn-simp", "str-substr-char-start-eq-len",
+  "str-substr-combine1", "str-substr-combine2", "str-substr-combine3",
+  "str-substr-combine4", "str-substr-concat1", "str-substr-concat2",
+  "str-substr-ctn", "str-substr-ctn-contra", "str-substr-empty-range",
+  "str-substr-empty-start", "str-substr-empty-start-neg",
+  "str-substr-empty-str", "str-substr-eq-empty",
+  "str-substr-eq-empty-leq-len", "str-substr-full",
+  "str-substr-full-eq", "str-substr-len-include",
+  "str-substr-len-include-pre", "str-substr-len-norm",
+  "str-substr-replace", "str-substr-substr-start-geq-len",
+  "str-substr-z-eq-empty-leq", "str-suffixof-elim",
+  "str-suffixof-eq", "str-suffixof-one", "str-to-int-concat-neg-one",
+  "str-to-lower-concat", "str-to-lower-from-int", "str-to-lower-len",
+  "str-to-lower-upper", "str-to-upper-concat", "str-to-upper-from-int",
+  "str-to-upper-len", "str-to-upper-lower", "str-update-in-first-concat"
+]
+
+fun cpc_rare_inventory_part2_source_sweep () =
+let
+  open CPC_Proof
+  val entries = List.filter
+    (fn entry => case #replay_kind entry of
+       RareSourceRecipe _ => true
+     | RareSourceUnsupported _ => true
+     | _ => false)
+    cvc134_rare_rewrite_inventory
+  val proved = List.length (List.filter
+    (fn entry => case #replay_kind entry of
+       RareSourceRecipe _ => true
+     | _ => false) entries)
+  val unsupported = List.length entries - proved
+  val executed_names = ref ([] : string list)
+  val native_aggregate_names = ref ([] : string list)
+  val native_seq_aggregate_names = ref ([] : string list)
+  fun recipe_has_list ({formals, ...} : rare_source_recipe) =
+    List.exists (fn (_, kind, _) => case kind of
+        RareSourceList _ => true
+      | _ => false) formals
+  fun recipe_has_seq ({formals, ...} : rare_source_recipe) =
+    List.exists (fn (_, _, source) =>
+      source = RareSourceSeq orelse source = RareSourceElement) formals
+  val seq_string_only_operators = ["str.replace_re", "str.replace_re_all"]
+  fun recipe_uses_string_only
+      ({premises, target, ...} : rare_source_recipe) =
+    List.exists (fn operator =>
+      List.exists (String.isSubstring operator) (target :: premises))
+      seq_string_only_operators
+  fun seq_applicable recipe =
+    recipe_has_seq recipe andalso not (recipe_uses_string_only recipe)
+  val seq_entries = List.filter (fn entry =>
+    case #replay_kind entry of
+      RareSourceRecipe recipe => seq_applicable recipe
+    | RareSourceUnsupported (recipe, _) => seq_applicable recipe
+    | _ => false) entries
+  val seq_string_only_entries = List.filter (fn entry =>
+    case #replay_kind entry of
+      RareSourceRecipe recipe =>
+        recipe_has_seq recipe andalso recipe_uses_string_only recipe
+    | RareSourceUnsupported (recipe, _) =>
+        recipe_has_seq recipe andalso recipe_uses_string_only recipe
+    | _ => false) entries
+  val seq_executed_names = ref ([] : string list)
+  val inventory_string_names = List.map #name (List.filter
+    (fn entry => #family entry <> RareArray)
+    cvc134_rare_rewrite_inventory)
+  val first_tranche_string_names = List.map #name (List.filter
+    (fn entry => #family entry <> RareArray)
+    cvc134_rare_first_tranche)
+  val list_bearing_proved_names = [
+    "seq-rev-concat", "str-concat-clash", "str-concat-clash-rev",
+    "str-concat-clash2", "str-concat-clash2-rev", "str-concat-unify",
+    "str-concat-unify-base", "str-concat-unify-base-rev",
+    "str-concat-unify-rev", "str-eq-ctn-false",
+    "str-in-re-inter-elim", "str-in-re-union-elim",
+    "str-indexof-contains-concat-pre", "str-indexof-contains-pre",
+    "str-leq-concat-base-1", "str-leq-concat-base-2",
+    "str-leq-concat-false", "str-leq-concat-true",
+    "str-replace-find-first-concat", "str-replace-find-pre",
+    "str-replace-one-pre", "str-replace-prefix", "str-substr-concat1",
+    "str-substr-concat2", "str-substr-len-include",
+    "str-substr-len-include-pre", "str-to-int-concat-neg-one",
+    "str-update-in-first-concat"
+  ]
+  val former_legacy_names = [
+    "re-all-elim", "re-concat-merge", "re-in-comp", "re-in-cstring",
+    "re-diff-elim", "re-inter-cstring", "re-opt-elim", "re-plus-elim",
+    "re-repeat-elim", "seq-rev-rev", "str-at-elim",
+    "str-concat-clash-rev", "str-concat-unify-rev",
+    "str-in-re-range-elim", "str-in-re-union-elim",
+    "str-is-digit-elim", "str-lt-elim", "str-substr-concat1",
+    "str-substr-empty-range", "str-substr-empty-str",
+    "str-substr-eq-empty", "str-substr-full-eq"]
+  fun sorted names = Listsort.sort String.compare names
+  val former_legacy_entries = List.filter
+    (fn entry => List.exists (Lib.equal (#name entry)) former_legacy_names)
+    entries
+  fun count_in selected family disposition =
+    List.length (List.filter (fn entry =>
+      #family entry = family andalso disposition (#replay_kind entry))
+      selected)
+  fun proved_kind (RareSourceRecipe _) = true
+    | proved_kind _ = false
+  fun unsupported_kind (RareSourceUnsupported _) = true
+    | unsupported_kind _ = false
+  fun count family = List.length (List.filter
+    (fn entry => #family entry = family) entries)
+  fun reject_direct name reason thunk =
+    let
+      val expected =
+        "unsupported cvc5-1.3.4 RARE rule " ^ name ^ ": " ^ reason
+    in
+      (ignore (thunk ());
+       die ("expected exact unsupported diagnostic for " ^ name))
+      handle Feedback.HOL_ERR holerr =>
+        assert (Feedback.top_function_of holerr = name andalso
+            Feedback.message_of holerr = expected,
+          "TASK24 unsupported diagnostic drift for " ^ name ^ ": " ^
+          Feedback.top_function_of holerr ^ ": " ^
+          Feedback.message_of holerr)
+    end
+  fun check entry =
+    let
+      val _ = print ("TASK24_RECIPE " ^ #name entry ^ "\n")
+      val _ = executed_names := #name entry :: !executed_names
+      val _ = case lookup_rule "1.3.4" (#name entry) of
+          SOME rule => assert
+            (#namespace rule = RareRewrite andalso
+             #replay_handler rule = "rare_inventory",
+             "TASK24 generated registry metadata drifted for " ^ #name entry)
+        | NONE => die ("FAIL: TASK24 registry omitted " ^ #name entry)
+    in
+      case #replay_kind entry of
+        RareSourceRecipe recipe =>
+          if recipe_has_list recipe then
+            let
+              val name = #name entry
+              val {proof, premise_count} =
+                CPC_ProofReplay.rare_source_native_cpc_for_test
+                  (recipe_has_seq recipe) 2 name
+              val _ = print ("TASK24_PUBLIC_AGGREGATE " ^ name ^ "\n")
+              val theorem = CPC_ProofReplay.replay_root_for_test
+                (parse_cpc_rare_source_string proof)
+            in
+              native_aggregate_names := name :: !native_aggregate_names;
+              assert (List.length (Thm.hyp theorem) = premise_count,
+                "TASK24 public aggregate premise contract failed for " ^
+                name);
+              check_oracle_tags
+                ("TASK24 public native aggregate " ^ name) theorem
+            end
+          else let
+            fun check_result list_width
+                {args, premises, target, theorem, closed} =
+              let
+                val _ = ListPair.allEq
+                  (fn ((formal, kind, _), argument) =>
+                    case kind of
+                      RareSourceList _ =>
+                        List.length (#1 (listSyntax.dest_list argument)) =
+                          list_width
+                    | _ => true)
+                  (#formals recipe, args) orelse
+                  die ("FAIL: TASK24 helper did not synthesize exact list " ^
+                    "wrappers for " ^ #name entry)
+              in
+                assert (Term.aconv (Thm.concl theorem) target,
+                  "TASK24 recipe returned wrong target for " ^ #name entry);
+                assert
+                  (List.length (Thm.hyp theorem) = List.length premises andalso
+                   List.all (fn premise => List.exists (Term.aconv premise)
+                     (Thm.hyp theorem)) premises,
+                   "TASK24 recipe violated premises for " ^ #name entry);
+                assert (List.null (Thm.hyp closed),
+                  "TASK24 closed recipe retained hyps for " ^ #name entry);
+                check_oracle_tags
+                  ("TASK24 declarative recipe " ^ #name entry) closed
+              end
+            val _ = print ("TASK24_FORM pair " ^ #name entry ^ "\n")
+            val pair_result =
+              CPC_ProofReplay.replay_rare_source_for_test (#name entry)
+          in
+            check_result 2 pair_result
+          end
+      | RareSourceUnsupported (_, reason) =>
+          reject_direct (#name entry) reason (fn () =>
+            CPC_ProofReplay.replay_rare_source_unsupported_for_test
+              (#name entry))
+      | _ => die ("TASK24 source disposition drift: " ^ #name entry)
+    end
+  fun check_seq entry =
+    let
+      val name = #name entry
+      val _ = print ("TASK24_SEQ_RECIPE " ^ name ^ "\n")
+      val _ = seq_executed_names := name :: !seq_executed_names
+    in
+      case #replay_kind entry of
+        RareSourceRecipe recipe =>
+          if recipe_has_list recipe then
+            let
+              val _ = print
+                ("TASK24_PUBLIC_SEQ_AGGREGATE " ^ name ^ " (shared)\n")
+            in
+              assert (List.exists (Lib.equal name)
+                  (!native_aggregate_names),
+                "TASK24 shared Seq aggregate result missing for " ^ name);
+              native_seq_aggregate_names :=
+                name :: !native_seq_aggregate_names
+            end
+          else let
+            fun check_result list_width
+                {args, premises, target, theorem, closed} =
+              let
+                val _ = ListPair.allEq
+                  (fn ((_, kind, _), argument) =>
+                    case kind of
+                      RareSourceList _ =>
+                        List.length (#1 (listSyntax.dest_list argument)) =
+                          list_width
+                    | _ => true)
+                  (#formals recipe, args) orelse
+                  die ("FAIL: TASK24 Seq helper did not synthesize exact " ^
+                    "list wrappers for " ^ name)
+              in
+                assert (Term.aconv (Thm.concl theorem) target,
+                  "TASK24 Seq recipe returned wrong target for " ^ name);
+                assert
+                  (List.length (Thm.hyp theorem) = List.length premises andalso
+                   List.all (fn premise => List.exists (Term.aconv premise)
+                     (Thm.hyp theorem)) premises,
+                   "TASK24 Seq recipe violated premises for " ^ name);
+                assert (List.null (Thm.hyp closed),
+                  "TASK24 Seq closed recipe retained hyps for " ^ name);
+                check_oracle_tags ("TASK24 declarative Seq recipe " ^ name)
+                  closed
+              end
+            val _ = print ("TASK24_SEQ_FORM pair " ^ name ^ "\n")
+            val pair_result =
+              CPC_ProofReplay.replay_rare_source_seq_for_test name
+          in
+            check_result 2 pair_result
+          end
+      | RareSourceUnsupported (_, reason) =>
+          reject_direct name reason (fn () =>
+            CPC_ProofReplay.replay_rare_source_unsupported_for_test name)
+      | _ => die ("TASK24 Seq source disposition drift: " ^ name)
+    end
+in
+  assert (List.length entries = 152 andalso
+          proved = 117 andalso unsupported = 35 andalso
+          count_in entries RareReplace proved_kind = 43 andalso
+          count_in entries RareIndexof proved_kind = 8 andalso
+          count_in entries RareRegexStar unsupported_kind = 9 andalso
+          count RareConcatEquality = 20 andalso
+          count RareSubstringSuffix = 26 andalso
+          count RareConversionOrder = 11 andalso
+          count RareRegexOther = 16 andalso
+          count RareRegexMembership = 11 andalso
+          count RareSequence = 6 andalso
+          count_in entries RareRegexOther unsupported_kind = 16 andalso
+          count_in entries RareRegexMembership proved_kind = 11,
+    "TASK24 complete source disposition counts changed");
+  assert (List.length former_legacy_names = 22 andalso
+          List.length former_legacy_entries = 22 andalso
+          sorted (List.map #name former_legacy_entries) =
+            sorted former_legacy_names andalso
+          List.all (fn entry => case #replay_kind entry of
+              RareSourceRecipe _ => true
+            | RareSourceUnsupported _ => true
+            | _ => false) former_legacy_entries,
+    "TASK24 former legacy source dispositions are not exact and complete");
+  assert (List.length cvc134_rare_rewrite_inventory = 175 andalso
+          List.length inventory_string_names = 169 andalso
+          List.length cvc134_rare_str_re_seq_names = 169 andalso
+          sorted cvc134_rare_str_re_seq_names =
+            sorted inventory_string_names,
+    "TASK24 authoritative 169-rule String/RegLan/Seq closure drifted");
+  assert (List.length cvc134_authoritative_string_rare_names = 169 andalso
+          sorted cvc134_authoritative_string_rare_names =
+            sorted cvc134_rare_str_re_seq_names,
+    ("TASK24 registry differs from the independent authoritative " ^
+     "169-name fixture"));
+  assert (List.length list_bearing_proved_names = 28 andalso
+          sorted list_bearing_proved_names =
+            sorted (List.map #name (List.filter (fn entry =>
+              case #replay_kind entry of
+                RareSourceRecipe recipe => recipe_has_list recipe
+              | _ => false) entries)),
+    "TASK24 source-derived proved list-bearing recipe set changed");
+  cpc_rare_inventory_part1_success ();
+  List.app check entries;
+  List.app check_seq seq_entries;
+  assert (List.length (!executed_names) = 152 andalso
+          sorted (first_tranche_string_names @ !executed_names) =
+            sorted inventory_string_names,
+    "TASK24 execution-name coverage no longer equals all 169 source rules");
+  assert (sorted (List.map #name seq_string_only_entries) =
+            ["str-replace-re-all-none", "str-replace-re-none"] andalso
+          List.length seq_entries = 93 andalso
+          List.length (List.filter (fn entry =>
+            case #replay_kind entry of RareSourceRecipe _ => true
+            | _ => false) seq_entries) = 93,
+    "TASK24 Seq inventory counts changed");
+  assert (sorted (!seq_executed_names) =
+      sorted (List.map #name seq_entries),
+    "TASK24 Seq execution-name coverage no longer equals its exact inventory");
+  assert (List.length (!native_aggregate_names) = 28 andalso
+          sorted (!native_aggregate_names) =
+            sorted list_bearing_proved_names,
+    "TASK24 public native-aggregate parse/replay coverage is not exactly " ^
+    "the 28 source-derived proved list-bearing recipes");
+  assert (sorted (!native_seq_aggregate_names) =
+      sorted (List.filter (fn name => List.exists
+        (fn entry => #name entry = name) seq_entries)
+        list_bearing_proved_names),
+    "TASK24 public Seq native-aggregate parse/replay coverage drifted")
+end
+
+fun cpc_rare_inventory_part2_public_replay_success () =
+let
+  fun checked_any label proof =
+    let
+      val _ = print ("TASK24_PUBLIC " ^ label ^ "\n")
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string proof)
+    in
+      assert (List.null (Thm.hyp theorem),
+        "TASK24 public " ^ label ^ " retained hypotheses");
+      check_oracle_tags ("TASK24 public " ^ label) theorem
+    end
+  fun checked label expected proof =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string proof)
+    in
+      assert (Term.aconv (Thm.concl theorem) expected,
+        "TASK24 public " ^ label ^ " returned the wrong conclusion");
+      assert (List.null (Thm.hyp theorem),
+        "TASK24 public " ^ label ^ " retained hypotheses");
+      check_oracle_tags ("TASK24 public " ^ label) theorem
+    end
+  fun checked_for_goal label goal proof =
+    let
+      val (translation, _) = CVC.goal_to_SmtLib_translation ([], goal)
+      val parsed = CPC_ProofParser.parse_stream_with_version
+        (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+        (TextIO.openString proof)
+      val theorem = CPC_ProofReplay.replay_root_for_test parsed
+    in
+      assert (Term.aconv (Thm.concl theorem) goal,
+        "TASK24 public " ^ label ^ " returned the wrong conclusion");
+      assert (List.null (Thm.hyp theorem),
+        "TASK24 public " ^ label ^ " retained hypotheses");
+      check_oracle_tags ("TASK24 public " ^ label) theorem
+    end
+  fun contains_exact_shadowing_binder provenance =
+    case provenance of
+      CPC_Proof.BinderProvenance
+          (_, CPC_Proof.EqualityProvenance
+            (CPC_Proof.AtomicProvenance, CPC_Proof.AtomicProvenance)) => true
+    | CPC_Proof.BinderProvenance (_, body) =>
+        contains_exact_shadowing_binder body
+    | CPC_Proof.EqualityProvenance (left, right) =>
+        contains_exact_shadowing_binder left orelse
+        contains_exact_shadowing_binder right
+    | CPC_Proof.ApplicationProvenance (_, operands) =>
+        List.exists contains_exact_shadowing_binder operands
+    | CPC_Proof.ConjunctionProvenance (_, operands) =>
+        List.exists contains_exact_shadowing_binder operands
+    | _ => false
+  fun checked_binder_aggregate label proof =
+    let
+      val parsed = parse_cpc_proof_string proof
+      val aggregate_provenance =
+        case List.rev (#commands parsed) of
+          CPC_Proof.STEP {args, ...} :: _ =>
+            #provenance (List.nth (args, 2))
+        | _ => die ("FAIL: TASK24 " ^ label ^ " omitted its final step")
+      val _ = assert
+        (contains_exact_shadowing_binder aggregate_provenance,
+         "TASK24 " ^ label ^
+         " did not canonically shadow aggregate alias provenance")
+      val theorem = CPC_ProofReplay.replay_root_for_test parsed
+    in
+      assert (List.null (Thm.hyp theorem),
+        "TASK24 public " ^ label ^ " retained hypotheses");
+      check_oracle_tags ("TASK24 public " ^ label) theorem
+    end
+  fun rejected label name reason proof =
+    let
+      val expected =
+        "unsupported cvc5-1.3.4 RARE rule " ^ name ^ ": " ^ reason
+    in
+      (ignore (CPC_ProofReplay.replay_root_for_test
+         (parse_cpc_proof_string proof));
+       die ("expected TASK24 public rejection for " ^ label))
+      handle Feedback.HOL_ERR holerr =>
+        assert (Feedback.top_function_of holerr = name andalso
+            Feedback.message_of holerr = expected,
+          "TASK24 public " ^ label ^ " diagnostic drifted: " ^
+          Feedback.top_function_of holerr ^ ": " ^
+          Feedback.message_of holerr)
+    end
+  fun rejected_contract label name detail proof =
+    let
+      val expected = "CPC step @p (rule " ^ name ^ ") failed: " ^
+        "cvc5-1.3.4 RARE rule " ^ name ^ " " ^ detail
+    in
+      (ignore (CPC_ProofReplay.replay_root_for_test
+         (parse_cpc_proof_string proof));
+       die ("expected TASK24 list-contract rejection for " ^ label))
+      handle Feedback.HOL_ERR holerr =>
+        assert (Feedback.top_function_of holerr = "replay_step" andalso
+            Feedback.message_of holerr = expected,
+          "TASK24 public " ^ label ^ " diagnostic drifted: " ^
+          Feedback.top_function_of holerr ^ ": " ^
+          Feedback.message_of holerr)
+    end
+  fun rejected_parse label expected proof =
+    (ignore (parse_cpc_proof_string proof);
+     die ("expected TASK24 parser rejection for " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = "parse_step" andalso
+          Feedback.message_of holerr = expected,
+        "TASK24 public " ^ label ^ " parser diagnostic drifted: " ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  fun rejected_semantic_parse label proof =
+    let
+      val expected =
+        "failed to parse 'str.to_lower' (with indices [] and 1 " ^
+        "argument(s)): unknown symbol (no dictionary entry)"
+    in
+      (ignore (parse_cpc_proof_string proof);
+       die ("expected TASK24 semantic parser rejection for " ^ label))
+      handle Feedback.HOL_ERR holerr =>
+        assert
+          (Feedback.top_function_of holerr =
+             "t_with_args_unknown_symbol" andalso
+           Feedback.message_of holerr = expected,
+           "TASK24 public " ^ label ^ " parser diagnostic drifted: " ^
+           Feedback.top_function_of holerr ^ ": " ^
+           Feedback.message_of holerr)
+    end
+  fun rejected_structural label expected proof =
+    (ignore (parse_cpc_proof_string proof);
+     die ("expected TASK24 structural parser rejection for " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_function_of holerr = "parse_step" andalso
+          Feedback.message_of holerr = expected,
+        "TASK24 structural " ^ label ^ " diagnostic drifted: " ^
+        Feedback.top_function_of holerr ^ ": " ^
+        Feedback.message_of holerr)
+  val syntax_rule = "str-to-lower-concat"
+  val syntax_reason =
+    "str.to_lower has no HOL operator or parser dictionary entry"
+  fun accepted_unsupported_syntax label term =
+    rejected label syntax_rule syntax_reason
+      ("((step @p " ^ term ^ " :rule " ^ syntax_rule ^ "))")
+  fun malformed_unsupported_syntax label detail term =
+    rejected_structural label
+      ("malformed raw term in unsupported CPC step @p: " ^ detail)
+      ("((step @p " ^ term ^ " :rule " ^ syntax_rule ^ "))")
+  val seq_goal = ``REVERSE ([rare_public_x]:int list) = [rare_public_x]``
+  val seq_replace_goal =
+    ``smt_seq_replace ([rare_public_x]:int list) [rare_public_x]
+        [rare_public_y] = [rare_public_y]``
+  val seq_indexof_goal =
+    ``smt_seq_indexof ([rare_public_x]:int list) [rare_public_x] 0 =
+      smt_seq_indexof ([]:int list) [] 0``
+  val quoted_semantic = parse_cpc_proof_string
+    "((declare-const |quoted_semantic| Bool) \
+    \ (assume @q quoted_semantic))"
+  val _ = case #commands quoted_semantic of
+      [CPC_Proof.ASSUME ("@q", {term, ...})] =>
+        assert (Lib.fst (Term.dest_var term) = "quoted_semantic",
+          "ordinary CPC semantics did not decode a quoted symbol")
+    | _ => die "FAIL: quoted CPC semantic parser returned wrong commands"
+  val quoted_application_semantic = parse_cpc_proof_string
+    "((declare-fun |quoted_application| (Bool) Bool) \
+    \ (assume @q (quoted_application true)))"
+  val _ = case #commands quoted_application_semantic of
+      [CPC_Proof.ASSUME ("@q", {term, ...})] =>
+        assert (Lib.fst (Term.dest_var (Lib.fst (Term.dest_comb term))) =
+          "quoted_application",
+          "CPC application did not decode its quoted operator")
+    | _ => die "FAIL: quoted CPC application returned wrong commands"
+  val string_var_semantic = parse_cpc_proof_string
+    "((define @x () (@var \"x\" Bool)) (assume @q @x))"
+  val _ = case #commands string_var_semantic of
+      [CPC_Proof.ASSUME ("@q", {term, ...})] =>
+        assert (Lib.fst (Term.dest_var term) = "x",
+          "CPC @var did not decode its String-token name")
+    | _ => die "FAIL: String-named CPC @var returned wrong commands"
+  val string_binder_semantic = parse_cpc_proof_string
+    "((define @x () (@var \"x\" Bool)) \
+    \ (assume @q (forall (@list @x) @x)))"
+  val _ = case #commands string_binder_semantic of
+      [CPC_Proof.ASSUME ("@q", {term, ...})] =>
+        let val (variable, body) = boolSyntax.dest_forall term in
+          assert (Lib.fst (Term.dest_var variable) = "x" andalso
+                  Term.aconv variable body,
+            "CPC @list binder lost its String-named @var")
+        end
+    | _ => die "FAIL: String-named CPC @list binder returned wrong commands"
+in
+  checked "replace"
+    ``smtstr_replace (SmtStr [97]) (SmtStr [97]) (SmtStr [98]) =
+      SmtStr [98]``
+    "((step @p (= (str.replace \"a\" \"a\" \"b\") \"b\") \
+    \:rule str-replace-self :args (\"a\" \"b\")))";
+  checked "indexof"
+    ``smtstr_indexof (SmtStr [97]) (SmtStr [97]) 0 =
+      smtstr_indexof (SmtStr []) (SmtStr []) 0``
+    "((step @p (= (str.indexof \"a\" \"a\" 0) \
+    \ (str.indexof \"\" \"\" 0)) \
+    \:rule str-indexof-self :args (\"a\" 0)))";
+  checked "substring/suffix"
+    ``smtstr_suffixof rare_public_s rare_public_t =
+      (rare_public_s = smtstr_substr rare_public_t
+        (smtstr_len rare_public_t - smtstr_len rare_public_s)
+        (smtstr_len rare_public_s))``
+    "((declare-const rare_public_s String) \
+    \(declare-const rare_public_t String) \
+    \(step @p (= (str.suffixof rare_public_s rare_public_t) \
+    \ (= rare_public_s (str.substr rare_public_t \
+    \   (- (str.len rare_public_t) (str.len rare_public_s)) \
+    \   (str.len rare_public_s)))) \
+    \:rule str-suffixof-elim :args (rare_public_s rare_public_t)))";
+  checked "conversion/order"
+    ``smtstr_le (SmtStr []) rare_public_s = T``
+    "((declare-const rare_public_s String) \
+    \(step @p (= (str.<= \"\" rare_public_s) true) \
+    \:rule str-leq-empty :args (rare_public_s)))";
+  checked_for_goal "sequence" seq_goal
+    "((declare-const rare_public_x Int) \
+    \(step @p (= (seq.rev (seq.unit rare_public_x)) \
+    \ (seq.unit rare_public_x)) \
+    \:rule seq-rev-unit :args (rare_public_x)))";
+  checked_for_goal "Seq replace" seq_replace_goal
+    "((declare-const rare_public_x Int) \
+    \(declare-const rare_public_y Int) \
+    \(step @p (= (seq.replace (seq.unit rare_public_x) \
+    \ (seq.unit rare_public_x) (seq.unit rare_public_y)) \
+    \ (seq.unit rare_public_y)) \
+    \:rule str-replace-self \
+    \:args ((seq.unit rare_public_x) (seq.unit rare_public_y))))";
+  checked_for_goal "Seq indexof" seq_indexof_goal
+    "((declare-const rare_public_x Int) \
+    \(step @p (= (seq.indexof (seq.unit rare_public_x) \
+    \ (seq.unit rare_public_x) 0) \
+    \ (seq.indexof (as seq.empty (Seq Int)) \
+    \ (as seq.empty (Seq Int)) 0)) \
+    \:rule str-indexof-self :args ((seq.unit rare_public_x) 0)))";
+  checked_any "String native aggregate multiple"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) (declare-const f String) \
+    \(declare-const g String) \
+    \(define @left_tail () (str.++ c d)) \
+    \(step @p \
+    \ (= (= (str.++ a b c d) (str.++ a e f g)) \
+    \    (= (str.++ b c d) (str.++ e f g))) \
+    \ :rule str-concat-unify \
+    \ :args (a b @left_tail e (str.++ f g))))";
+  checked_any "definition aggregate ordinary-to-quoted provenance"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) \
+    \(define @tail () (str.++ c d)) \
+    \(step @p \
+    \ (= (= (str.++ a b c d) (str.++ a e)) \
+    \    (= (str.++ b c d) e)) \
+    \ :rule str-concat-unify :args (a b |@tail| e \"\")))";
+  checked_any "definition aggregate quoted-to-ordinary provenance"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) \
+    \(define |@tail| () (str.++ c d)) \
+    \(step @p \
+    \ (= (= (str.++ a b c d) (str.++ a e)) \
+    \    (= (str.++ b c d) e)) \
+    \ :rule str-concat-unify :args (a b @tail e \"\")))";
+  checked_any "let aggregate ordinary-to-quoted provenance"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) \
+    \(step @p \
+    \ (= (= (str.++ a b c d) (str.++ a e)) \
+    \    (= (str.++ b c d) e)) \
+    \ :rule str-concat-unify \
+    \ :args (a b (let ((tail (str.++ c d))) |tail|) e \"\")))";
+  checked_any "let aggregate quoted-to-ordinary provenance"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) \
+    \(step @p \
+    \ (= (= (str.++ a b c d) (str.++ a e)) \
+    \    (= (str.++ b c d) e)) \
+    \ :rule str-concat-unify \
+    \ :args (a b (let ((|tail| (str.++ c d))) tail) e \"\")))";
+  checked_binder_aggregate
+    "binder aggregate ordinary-to-quoted provenance"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) \
+    \(define @shadow () (str.++ c d)) \
+    \(step @p \
+    \ (= (= (str.++ a b \
+    \          (ite (forall ((@shadow String)) \
+    \                 (= |@shadow| @shadow)) c c) d) \
+    \       (str.++ a e)) \
+    \    (= (str.++ b \
+    \          (ite (forall ((@shadow String)) \
+    \                 (= |@shadow| @shadow)) c c) d) e)) \
+    \ :rule str-concat-unify \
+    \ :args (a b (str.++ \
+    \   (ite (forall ((@shadow String)) (= |@shadow| @shadow)) c c) d) \
+    \   e \"\")))";
+  checked_binder_aggregate
+    "binder aggregate quoted-to-ordinary provenance"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const d String) \
+    \(declare-const e String) \
+    \(define |@shadow| () (str.++ c d)) \
+    \(step @p \
+    \ (= (= (str.++ a b \
+    \          (ite (forall ((|@shadow| String)) \
+    \                 (= @shadow |@shadow|)) c c) d) \
+    \       (str.++ a e)) \
+    \    (= (str.++ b \
+    \          (ite (forall ((|@shadow| String)) \
+    \                 (= @shadow |@shadow|)) c c) d) e)) \
+    \ :rule str-concat-unify \
+    \ :args (a b (str.++ \
+    \   (ite (forall ((|@shadow| String)) (= @shadow |@shadow|)) c c) d) \
+    \   e \"\")))";
+  checked_any "String native aggregate identity"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const e String) \
+    \(step @p \
+    \ (= (= (str.++ a b) (str.++ a e)) (= b e)) \
+    \ :rule str-concat-unify :args (a b \"\" e \"\")))";
+  checked_any "String native aggregate singleton"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const c String) (declare-const e String) \
+    \(declare-const f String) \
+    \(step @p (= (= (str.++ a b c) (str.++ a e f)) \
+    \               (= (str.++ b c) (str.++ e f))) \
+    \ :rule str-concat-unify :args (a b c e f)))";
+  checked_any "Seq native aggregate multiple"
+    "((declare-const a Int) (declare-const b Int) \
+    \(declare-const c Int) (declare-const d Int) \
+    \(declare-const e Int) (declare-const f Int) \
+    \(declare-const g Int) \
+    \(define @left_tail () (seq.++ (seq.unit c) (seq.unit d))) \
+    \(step @p \
+    \ (= (= (seq.++ (seq.unit a) (seq.unit b) (seq.unit c) (seq.unit d)) \
+    \       (seq.++ (seq.unit a) (seq.unit e) (seq.unit f) (seq.unit g))) \
+    \    (= (seq.++ (seq.unit b) (seq.unit c) (seq.unit d)) \
+    \       (seq.++ (seq.unit e) (seq.unit f) (seq.unit g)))) \
+    \ :rule str-concat-unify \
+    \ :args ((seq.unit a) (seq.unit b) @left_tail (seq.unit e) \
+    \        (seq.++ (seq.unit f) (seq.unit g)))))";
+  checked_any "Seq native aggregate identity"
+    "((declare-const a Int) (declare-const b Int) (declare-const e Int) \
+    \(step @p \
+    \ (= (= (seq.++ (seq.unit a) (seq.unit b)) \
+    \       (seq.++ (seq.unit a) (seq.unit e))) \
+    \    (= (seq.unit b) (seq.unit e))) \
+    \ :rule str-concat-unify \
+    \ :args ((seq.unit a) (seq.unit b) (as seq.empty (Seq Int)) \
+    \        (seq.unit e) (as seq.empty (Seq Int)))))";
+  checked_any "Seq native aggregate singleton"
+    "((declare-const a Int) (declare-const b Int) (declare-const c Int) \
+    \(declare-const e Int) (declare-const f Int) \
+    \(step @p \
+    \ (= (= (seq.++ (seq.unit a) (seq.unit b) (seq.unit c)) \
+    \       (seq.++ (seq.unit a) (seq.unit e) (seq.unit f))) \
+    \    (= (seq.++ (seq.unit b) (seq.unit c)) \
+    \       (seq.++ (seq.unit e) (seq.unit f)))) \
+    \ :rule str-concat-unify \
+    \ :args ((seq.unit a) (seq.unit b) (seq.unit c) \
+    \        (seq.unit e) (seq.unit f))))";
+  (* These are reduced public-path reproductions of the frozen cvc5-1.3.4
+     draft_length certificate line 105 and draft_re_loop lines 206/209. *)
+  checked_any "frozen draft_length native empty substitutions"
+    "((declare-const x String) (declare-const y String) \
+    \(define @t1 () (str.++ x y)) \
+    \(define @t26 () (= x x)) (define @t27 () (= @t1 @t1)) \
+    \(step @p32 (= @t27 @t26) :rule str-concat-unify-rev \
+    \ :args (y x \"\" x \"\")))";
+  checked_any "frozen draft_re_loop native union identity"
+    "((declare-const x String) \
+    \(define @t57 () (str.to_re \"aaa\")) \
+    \(define @t59 () (str.to_re \"aa\")) \
+    \(define @t58 () (str.in_re x @t57)) \
+    \(define @t60 () (str.in_re x @t59)) \
+    \(define @t64 () (or @t60 @t58)) \
+    \(define @t67 () (str.in_re x (re.union @t59 @t57))) \
+    \(step @p113 (= @t67 @t64) :rule str-in-re-union-elim \
+    \ :args (x @t59 @t57 re.none)))";
+  checked_any "frozen draft_re_loop native unary union"
+    "((declare-const x String) \
+    \(define @t1 () (str.to_re \"a\")) \
+    \(define @t57 () (str.to_re \"aaa\")) \
+    \(define @t59 () (str.to_re \"aa\")) \
+    \(define @t61 () (str.in_re x @t1)) \
+    \(define @t67 () (str.in_re x (re.union @t59 @t57))) \
+    \(define @t68 () (or @t61 @t67)) \
+    \(define @t69 () (re.union @t1 @t59 @t57)) \
+    \(define @t70 () (str.in_re x @t69)) \
+    \(step @p116 (= @t70 @t68) :rule str-in-re-union-elim \
+    \ :args (x @t1 @t59 (re.union @t57))))";
+  checked_any "regex intersection native aggregate"
+    "((declare-const x String) \
+    \(define @r1 () (str.to_re \"a\")) \
+    \(define @r2 () (str.to_re \"b\")) \
+    \(define @r3 () (str.to_re \"c\")) \
+    \(define @r4 () (str.to_re \"d\")) \
+    \(step @p \
+    \ (= (str.in_re x (re.inter @r1 @r2 @r3 @r4)) \
+    \    (and (str.in_re x @r1) \
+    \         (str.in_re x (re.inter @r2 @r3 @r4)))) \
+    \ :rule str-in-re-inter-elim \
+    \ :args (x @r1 @r2 (re.inter @r3 @r4))))";
+  rejected_contract "mismatched regex aggregate" "str-in-re-union-elim"
+    "formal rs uses mismatched aggregate re.inter instead of re.union"
+    "((step @p :rule str-in-re-union-elim \
+    \ :args (\"a\" (str.to_re \"a\") (str.to_re \"b\") \
+    \        (re.inter (str.to_re \"c\") (str.to_re \"d\")))))";
+  rejected_contract "wrapper around term formal" "str-replace-self"
+    "formal t must not be a CPC list wrapper"
+    "((step @p (= (str.replace \"a\" \"a\" \"b\") \"b\") \
+    \ :rule str-replace-self :args ((@list \"a\" \"b\") \"b\")))";
+  rejected_contract "wrong list carrier" "str-concat-unify"
+    "has inconsistent Seq carriers"
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const e String) (declare-const i Int) (declare-const j Int) \
+    \(step @p (= (= (str.++ a b) (str.++ a e)) (= b e)) \
+    \ :rule str-concat-unify \
+    \ :args (a b (@list (seq.unit i) (seq.unit j)) e (@list))))";
+  rejected_parse "mixed structured list"
+    ("CPC structured list has mixed element types in step @p " ^
+     "(rule str-concat-unify)")
+    "((declare-const a String) (declare-const b String) \
+    \(declare-const e String) (declare-const i Int) \
+    \(step @p (= (= (str.++ a b) (str.++ a e)) (= b e)) \
+    \ :rule str-concat-unify \
+    \ :args (a b (@list b (seq.unit i)) e (@list))))";
+  rejected "indexof_re none" "str-indexof-re-none"
+    "str.indexof_re has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.indexof_re \"a\" re.none 0) (- 1)) \
+    \:rule str-indexof-re-none :args (\"a\" 0)))";
+  rejected "indexof_re empty-regex" "str-indexof-re-emp-re"
+    "str.indexof_re has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.indexof_re \"a\" (str.to_re \"\") 0) 0) \
+    \:rule str-indexof-re-emp-re \
+    \:args (\"a\" (str.to_re \"\") 0)))";
+  rejected "to-lower concat" "str-to-lower-concat"
+    "str.to_lower has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.to_lower (str.++ \"a\" \"b\")) \
+    \ (str.++ (str.to_lower \"a\") (str.to_lower \"b\"))) \
+    \:rule str-to-lower-concat))";
+  rejected "to-upper concat" "str-to-upper-concat"
+    "str.to_upper has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.to_upper (str.++ \"a\" \"b\")) \
+    \ (str.++ (str.to_upper \"a\") (str.to_upper \"b\"))) \
+    \:rule str-to-upper-concat))";
+  rejected "to-lower upper" "str-to-lower-upper"
+    "str.to_lower/str.to_upper have no HOL operator or dictionary entry"
+    "((step @p (= (str.to_lower (str.to_upper \"a\")) \
+    \ (str.to_lower \"a\")) :rule str-to-lower-upper))";
+  rejected "to-upper lower" "str-to-upper-lower"
+    "str.to_upper/str.to_lower have no HOL operator or dictionary entry"
+    "((step @p (= (str.to_upper (str.to_lower \"a\")) \
+    \ (str.to_upper \"a\")) :rule str-to-upper-lower))";
+  rejected "to-lower length" "str-to-lower-len"
+    "str.to_lower has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.len (str.to_lower \"a\")) 1) \
+    \:rule str-to-lower-len))";
+  rejected "to-upper length" "str-to-upper-len"
+    "str.to_upper has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.len (str.to_upper \"a\")) 1) \
+    \:rule str-to-upper-len))";
+  rejected "to-lower from-int" "str-to-lower-from-int"
+    "str.to_lower has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.to_lower (str.from_int 7)) (str.from_int 7)) \
+    \:rule str-to-lower-from-int))";
+  rejected "to-upper from-int" "str-to-upper-from-int"
+    "str.to_upper has no HOL operator or parser dictionary entry"
+    "((step @p (= (str.to_upper (str.from_int 7)) (str.from_int 7)) \
+    \:rule str-to-upper-from-int))";
+  rejected "regex concat native aggregate" "re-concat-star-swap"
+    "star/concat language equality is false as intensional reglan equality"
+    "((step @p (= (re.++ (str.to_re \"a\") (re.* re.none) re.none \
+    \                  (str.to_re \"b\") (str.to_re \"c\")) \
+    \             (re.++ (str.to_re \"a\") re.none (re.* re.none) \
+    \                  (str.to_re \"b\") (str.to_re \"c\"))) \
+    \ :rule re-concat-star-swap \
+    \ :args ((str.to_re \"a\") re.none \
+    \        (re.++ (str.to_re \"b\") (str.to_re \"c\")))))";
+  rejected "regex-star" "re-star-none"
+    "empty-language star is false as intensional reglan equality"
+    "((step @p (= (re.* re.none) (str.to_re \"\")) \
+    \:rule re-star-none))";
+  rejected "legacy intensional regex" "re-all-elim"
+    "universal-language expansion is false as intensional reglan equality"
+    "((step @p (= re.all (re.* re.allchar)) :rule re-all-elim))";
+  rejected "unsupported consumes valid trailing syntax"
+    "str-to-lower-concat"
+    "str.to_lower has no HOL operator or parser dictionary entry"
+    "((assume @q true) \
+    \(step @p (= (unknown.conclusion x) (other.unknown y)) \
+    \ :rule str-to-lower-concat :premises (@q) \
+    \ :args ((unknown.argument z) (@list a b))))";
+  rejected "unsupported accepts unknown operator applications"
+    "str-to-lower-concat"
+    "str.to_lower has no HOL operator or parser dictionary entry"
+    "((step @p (= (unknown.outer (unknown.inner x)) y) \
+    \ :rule str-to-lower-concat \
+    \ :args ((another.unknown a b))))";
+  rejected "unsupported accepts valid syntax-only constructs"
+    "str-to-lower-concat"
+    "str.to_lower has no HOL operator or parser dictionary entry"
+    "((step @p \
+    \ (! (forall ((x Int)) \
+    \      (= (unknown.left x) \
+    \         (let ((y x)) (unknown.right y)))) :named syntax_pin) \
+    \ :rule str-to-lower-concat \
+    \ :args (((_ unknown.indexed 7 0) z) \
+    \        (as unknown.empty (Seq Int)))))";
+  accepted_unsupported_syntax "standalone CPC String-named @var"
+    "(@var \"x\" Int)";
+  accepted_unsupported_syntax "CPC String-named @var binder"
+    "(forall (@list (@var \"x\" Int)) (unknown x))";
+  accepted_unsupported_syntax "quoted let application"
+    "(|let| x)";
+  accepted_unsupported_syntax "quoted equality application"
+    "(|=| x)";
+  accepted_unsupported_syntax "quoted binder, sort and operator"
+    "(forall ((|123| |Int|)) (|operator| |123|))";
+  accepted_unsupported_syntax "quoted indexed names and indices"
+    "((_ |operator| 1 |index|) x)";
+  accepted_unsupported_syntax "qualified identifier"
+    "(as |constant| |Sort|)";
+  accepted_unsupported_syntax "qualified indexed identifier"
+    "(as (_ indexed.constant 1 |index|) |Sort|)";
+  accepted_unsupported_syntax "constructor pattern with variable"
+    "(match x (((|C| |y|) (unknown |y|))))";
+  accepted_unsupported_syntax "all literal classes"
+    "(unknown 0 19 2.5 #x0a #b01 \"text\")";
+  accepted_unsupported_syntax "core binary arities"
+    "(unknown (and a b) (or a b) (xor a b))";
+  malformed_unsupported_syntax "numeric-prefix atom"
+    "invalid term identifier '1abc'" "1abc";
+  malformed_unsupported_syntax "leading-zero numeral"
+    "invalid term identifier '01'" "01";
+  malformed_unsupported_syntax "malformed decimal literal"
+    "invalid term identifier '1.'" "1.";
+  malformed_unsupported_syntax "malformed hexadecimal literal"
+    "invalid term identifier '#xg'" "#xg";
+  malformed_unsupported_syntax "malformed binary literal"
+    "invalid term identifier '#b2'" "#b2";
+  malformed_unsupported_syntax "numeral binder name"
+    "invalid bound variable '1'" "(forall ((1 Int)) x)";
+  malformed_unsupported_syntax "String ordinary binder name"
+    "string literal is not a valid bound variable"
+    "(forall ((\"x\" Int)) x)";
+  malformed_unsupported_syntax "numeral sort identifier"
+    "invalid sort identifier '1'" "(as foo 1)";
+  malformed_unsupported_syntax "String sort identifier"
+    "string literal is not a valid sort identifier"
+    "(as foo \"Int\")";
+  malformed_unsupported_syntax "nested qualified identifier"
+    "ascribed identifier is not a simple/indexed identifier"
+    "(as (as foo Int) Int)";
+  malformed_unsupported_syntax "decimal identifier index"
+    "invalid indexed-identifier index '1.2'"
+    "((_ unknown.indexed 1.2) x)";
+  malformed_unsupported_syntax "hexadecimal identifier index"
+    "invalid indexed-identifier index '#x1'"
+    "((_ unknown.indexed #x1) x)";
+  malformed_unsupported_syntax "String identifier index"
+    "string literal is not a valid indexed-identifier index"
+    "((_ unknown.indexed \"1\") x)";
+  malformed_unsupported_syntax "compound identifier index"
+    "indexed-identifier index is not atomic"
+    "((_ unknown.indexed (index)) x)";
+  malformed_unsupported_syntax "String application head"
+    "string literal is not a valid application head"
+    "(\"operator\" x)";
+  malformed_unsupported_syntax "zero-variable constructor pattern"
+    "constructor pattern requires at least one variable"
+    "(match x (((C) y)))";
+  malformed_unsupported_syntax "unary and"
+    "'and' expects at least 2 operand(s)" "(and x)";
+  malformed_unsupported_syntax "unary or"
+    "'or' expects at least 2 operand(s)" "(or x)";
+  malformed_unsupported_syntax "unary xor"
+    "'xor' expects at least 2 operand(s)" "(xor x)";
+  malformed_unsupported_syntax "true application"
+    "'true' must be an atomic term" "(true x)";
+  malformed_unsupported_syntax "false application"
+    "'false' must be an atomic term" "(false x)";
+  malformed_unsupported_syntax "malformed annotation keyword"
+    "annotation expects an attribute keyword" "(! x :1 y)";
+  rejected_structural "reviewer malformed equality application"
+    "malformed raw term in unsupported CPC step @p: \
+    \'=' expects at least 2 operand(s)"
+    "((step @p (=) :rule str-to-lower-concat))";
+  rejected_structural "malformed zero-operand unknown application"
+    "malformed raw term in unsupported CPC step @p: \
+    \'foo' expects at least 1 operand(s)"
+    "((step @p (foo) :rule str-to-lower-concat))";
+  rejected_structural "malformed unsupported binder"
+    "malformed raw term in unsupported CPC step @p: \
+    \sorted variable must have the form (name sort)"
+    "((step @p (forall ((x)) x) :rule str-to-lower-concat))";
+  rejected_structural "malformed unsupported indexed identifier"
+    "malformed raw term in unsupported CPC step @p: \
+    \indexed identifier requires at least one index"
+    "((step @p (_ extract) :rule str-to-lower-concat))";
+  rejected_structural "malformed unsupported qualified identifier"
+    "malformed raw term in unsupported CPC step @p: \
+    \qualified identifier 'as' expects an identifier and sort"
+    "((step @p (as unknown) :rule str-to-lower-concat))";
+  rejected_structural "literal unsupported application head"
+    "malformed raw term in unsupported CPC step @p: \
+    \invalid application head '7'"
+    "((step @p (7 x) :rule str-to-lower-concat))";
+  rejected_structural "malformed known unsupported application"
+    "malformed raw term in unsupported CPC step @p: \
+    \'not' expects exactly 1 operand(s)"
+    "((step @p (not x y) :rule str-to-lower-concat))";
+  rejected_structural "malformed unsupported application head"
+    "malformed raw term in unsupported CPC step @p: \
+    \application head is not a qualified identifier"
+    "((step @p ((foo x) y) :rule str-to-lower-concat))";
+  rejected_structural "malformed unsupported let"
+    "malformed raw term in unsupported CPC step @p: \
+    \let requires at least one binding"
+    "((step @p (let () x) :rule str-to-lower-concat))";
+  rejected_structural "malformed unsupported annotation"
+    "malformed raw term in unsupported CPC step @p: \
+    \annotation expects an attribute keyword"
+    "((step @p (! x malformed) :rule str-to-lower-concat))";
+  rejected_structural "truncated unsupported args"
+    "unexpected end of unsupported CPC step @p while reading :args"
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat :args ((unknown.argument a)";
+  rejected_structural "unsupported unknown attribute"
+    "unknown CPC step attribute :unknown in cvc5 version 1.3.4"
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat :unknown foo))";
+  rejected_structural "unsupported invalid premise ID"
+    "invalid CPC premise ID 'not-an-id'"
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat :premises (not-an-id)))";
+  rejected_structural "unsupported unknown premise ID"
+    "unknown premise ID '@missing' in unsupported CPC step @p"
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat :premises (@missing)))";
+  rejected_structural "unsupported missing step delimiter"
+    "unexpected end of unsupported CPC step @p before its closing delimiter"
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \ :rule str-to-lower-concat";
+  rejected_semantic_parse
+    "supported rule cannot bypass semantic conclusion parsing"
+    "((step @p (= (str.to_lower \"a\") \"a\") \
+    \:rule str-replace-self :args (\"a\" \"a\")))"
+end
+
+fun cpc_rare_replace_symbolic_final_rules_success () =
+let
+  fun check name expected_premises expected_target =
+    let
+      val {premises, target, theorem, closed, ...} =
+        CPC_ProofReplay.replay_rare_source_for_test name
+    in
+      assert (ListPair.allEq
+          (fn (left, right) => Term.aconv left right)
+          (premises, expected_premises),
+        "TASK24 final replacement rule has wrong symbolic premises: " ^
+        name);
+      assert (Term.aconv target expected_target andalso
+          Term.aconv (Thm.concl theorem) expected_target,
+        "TASK24 final replacement rule has wrong symbolic conclusion: " ^
+        name);
+      assert (List.length (Thm.hyp theorem) =
+          List.length expected_premises andalso
+          List.all (fn premise => List.exists (Term.aconv premise)
+            (Thm.hyp theorem)) expected_premises,
+        "TASK24 final replacement rule did not retain exactly its premises: " ^
+        name);
+      assert (List.null (Thm.hyp closed),
+        "TASK24 final replacement rule did not close its premises: " ^ name);
+      check_oracle_tags
+        ("TASK24 final symbolic replacement rule " ^ name) closed
+    end
+in
+  check "str-repl-repl-dual-ite2"
+    [``smtstr_contains rare_y rare_z = F``,
+     ``smtstr_contains rare_z rare_y = F``]
+    ``smtstr_replace rare_x (smtstr_replace rare_x rare_y rare_z) rare_w =
+      if smtstr_contains rare_x rare_y then rare_x else rare_w``;
+  check "str-repl-repl-lookahead-id-simp"
+    [``((rare_w:smtstr) = rare_z) = F``,
+     ``(smtstr_len rare_w >= smtstr_len rare_z) = T``]
+    ``smtstr_replace (smtstr_replace rare_y rare_w rare_y) rare_y rare_z =
+      smtstr_replace (smtstr_replace rare_y rare_w rare_z) rare_y rare_z``
+end
 
 (* A CPC string step whose premise is an earlier derived lemma must not leak
    that lemma's conclusion as a hypothesis: the contextual rung feeds it to
@@ -12376,13 +14072,6 @@ let
     \(step @conj :rule not_not_elim :premises (@neg)) \
     \(step @out :rule and_elim :premises (@conj) :args (2)))"
     ``r:bool``
-  val _ = run_case "CPC reused live step id" "parsed" 2
-    "((declare-const p Bool) (declare-const q Bool) \
-    \(declare-const r Bool) (assume @same (and p q r)) \
-    \(step @early :rule and_elim :premises (@same) :args (2)) \
-    \(assume @same (and p (and q r))) \
-    \(step @out :rule and_elim :premises (@same) :args (1)))"
-    ``(q:bool) /\ r``
   val _ = run_case "CPC scoped earlier and_elim" "parsed" 1
     "((declare-const p Bool) (declare-const q Bool) \
     \(declare-const r Bool) (assume-push @scope (and p q r)) \
@@ -12889,7 +14578,7 @@ let
         (parse_cpc_proof_string
           ("((assume @truth true) " ^
            "(step @out :rule " ^ rule ^
-           " :premises (@truth))))"))
+           " :premises (@truth)))"))
     in
       assert (Thm.concl theorem ~~ ``T``,
         rule ^ " did not retain its exact neutral-T premise");
@@ -12988,7 +14677,7 @@ let
     (parse_cpc_proof_string
       "((declare-const p Bool) (declare-const q Bool) \
       \(assume @prem (=> (and p q) false)) \
-      \(step @out :rule not_and :premises (@prem))))")
+      \(step @out :rule not_and :premises (@prem)))")
   val not_and_hypothesis = ``(p:bool) /\ q ==> F``
   val real_div_hypothesis =
     ``(guard:bool) ==> (x:real) * inv y = 0r``
@@ -13062,7 +14751,7 @@ in
       (parse_cpc_proof_string
         "((declare-const p Bool) (declare-const q Bool) \
         \(assume @prem (=> (and p q) p)) \
-        \(step @out :rule not_and :premises (@prem))))")))
+        \(step @out :rule not_and :premises (@prem)))")))
 end
 
 fun cpc_proof_replay_seq_rules_success () =
@@ -13095,11 +14784,11 @@ let
   val replace_all =
     "((define @s () (seq.unit 1)) \
     \(define @u () (seq.replace_all @s (as seq.empty (Seq Int)) @s)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @s)))"
+    \(step @p1 :rule seq-eval-op :args ((= @u @s))))"
   val str_replace_all =
     "((define @s () (seq.unit 1)) \
     \(define @u () (str.replace_all @s (as seq.empty (Seq Int)) @s)) \
-    \(step @p1 :rule seq-eval-op :args ((= @u @s)))"
+    \(step @p1 :rule seq-eval-op :args ((= @u @s))))"
   val replace_all_nonempty =
     "((define @s () (seq.++ (seq.unit 1) (seq.unit 1))) \
     \(define @u () (seq.replace_all @s (seq.unit 1) (seq.unit 2))) \
@@ -13280,8 +14969,8 @@ let
   fun check (label, application) =
     let
       val proof = parse_cpc_proof_string
-        ("((" ^ declarations ^
-         "(step @p1 :rule trust :args ((= " ^ application ^ " x)))))")
+        ("(" ^ declarations ^
+         "(step @p1 :rule trust :args ((= " ^ application ^ " x))))")
     in
       (ignore (CPC_ProofReplay.replay_root_for_test proof);
        die ("FAIL: symbolic CPC " ^ label ^ " replayed successfully"))
@@ -13423,7 +15112,7 @@ fun cpc_cache_popped_scope_is_rejected_success () =
 if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
   val proof = parse_cpc_proof_string
     "((assume-push @p1 true) \
-    \(step @p2 :rule scope :premises (@p1)) \
+    \(step-pop @p2 :rule scope :premises (@p1)) \
     \(step @p3 :rule refl :args (true)) \
     \(step @p4 true :rule true_elim :premises (@p3)))"
   val (thm, stats) =
@@ -20960,6 +22649,8 @@ let
       smtlib_proof_stream_tokenizer_success),
     ("smtlib_proof_stream_tokenizer_marker_collision",
       smtlib_proof_stream_tokenizer_marker_collision),
+    ("smtlib_cpc_proof_tokenizer_kinds_success",
+      smtlib_cpc_proof_tokenizer_kinds_success),
     ("smtlib_string_typed_declaration_success",
       smtlib_string_typed_declaration_success),
     ("smtlib_string_typed_binder_success",
@@ -21260,6 +22951,14 @@ let
       smtlib_roundtrip_known_gap_matrix_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
+    ("cpc_quoted_declaration_identity_success",
+      cpc_quoted_declaration_identity_success),
+    ("cpc_tokenizer_eof_and_lexical_validation_success",
+      cpc_tokenizer_eof_and_lexical_validation_success),
+    ("cpc_parser_graph_contract_diagnostics",
+      cpc_parser_graph_contract_diagnostics),
+    ("cpc_datatype_declaration_validation_success",
+      cpc_datatype_declaration_validation_success),
     ("cpc_proof_parser_parameterized_datatype_tester_success",
       cpc_proof_parser_parameterized_datatype_tester_success),
     ("cpc_proof_replay_nested_datatype_tester_success",
@@ -21290,6 +22989,12 @@ let
       cpc_rare_inventory_part1_success),
     ("cpc_rare_inventory_part1_diagnostic",
       cpc_rare_inventory_part1_diagnostic),
+    ("cpc_rare_inventory_part2_public_replay_success",
+      cpc_rare_inventory_part2_public_replay_success),
+    ("cpc_rare_inventory_part2_source_sweep",
+      cpc_rare_inventory_part2_source_sweep),
+    ("cpc_rare_replace_symbolic_final_rules_success",
+      cpc_rare_replace_symbolic_final_rules_success),
     ("cpc_proof_replay_string_premise_hypotheses",
       cpc_proof_replay_string_premise_hypotheses),
     ("cpc_proof_parser_lambda_inline_var_apply_success",

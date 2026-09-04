@@ -54,67 +54,123 @@ struct
       ("UTF-8 code point at byte " ^ Int.toString pos ^ " is 0x" ^
        hex_string value ^ ", above the SMT-LIB maximum 0x2ffff")
 
-  fun decode_string_literal text =
+  fun utf8_code_point text start =
   let
     val size = String.size text
-
     fun byte pos = Char.ord (String.sub (text, pos))
-
-    fun continuation start offset =
-      let val pos = start + offset
-      in
+    fun continuation offset =
+      let val pos = start + offset in
         if pos >= size then
           invalid_utf8 start "truncated multi-byte sequence"
         else
-          let val value = byte pos
-          in
+          let val value = byte pos in
             if 128 <= value andalso value <= 191 then value
             else invalid_utf8 pos "expected a continuation byte"
           end
       end
-
-    fun utf8_code_point start =
-      let
-        val first = byte start
-        fun two () =
-          let val second = continuation start 1
-          in (64 * (first - 192) + second - 128, start + 2) end
-        fun three () =
-          let
-            val second = continuation start 1
-            val third = continuation start 2
-            val _ =
-              if first = 224 andalso second < 160 then
-                invalid_utf8 start "overlong three-byte sequence"
-              else if first = 237 andalso 160 <= second then
-                invalid_utf8 start "surrogate code point"
-              else ()
-          in
-            (4096 * (first - 224) + 64 * (second - 128) + third - 128,
-             start + 3)
-          end
-        fun four () =
-          let
-            val second = continuation start 1
-            val third = continuation start 2
-            val fourth = continuation start 3
-            val _ =
-              if first = 240 andalso second < 144 then
-                invalid_utf8 start "overlong four-byte sequence"
-              else if first = 244 andalso 143 < second then
-                invalid_utf8 start "code point above 0x10ffff"
-              else ()
-          in
-            (262144 * (first - 240) + 4096 * (second - 128) +
-             64 * (third - 128) + fourth - 128, start + 4)
-          end
-      in
-        if first < 128 then (first, start + 1)
-        else if 194 <= first andalso first <= 223 then two ()
-        else if 224 <= first andalso first <= 239 then three ()
-        else if 240 <= first andalso first <= 244 then four ()
-        else invalid_utf8 start "invalid leading byte"
+    val first = byte start
+    fun two () =
+      let val second = continuation 1 in
+        (64 * (first - 192) + second - 128, start + 2)
       end
+    fun three () =
+      let
+        val second = continuation 1
+        val third = continuation 2
+        val _ =
+          if first = 224 andalso second < 160 then
+            invalid_utf8 start "overlong three-byte sequence"
+          else if first = 237 andalso 160 <= second then
+            invalid_utf8 start "surrogate code point"
+          else ()
+      in
+        (4096 * (first - 224) + 64 * (second - 128) + third - 128,
+         start + 3)
+      end
+    fun four () =
+      let
+        val second = continuation 1
+        val third = continuation 2
+        val fourth = continuation 3
+        val _ =
+          if first = 240 andalso second < 144 then
+            invalid_utf8 start "overlong four-byte sequence"
+          else if first = 244 andalso 143 < second then
+            invalid_utf8 start "code point above 0x10ffff"
+          else ()
+      in
+        (262144 * (first - 240) + 4096 * (second - 128) +
+         64 * (third - 128) + fourth - 128, start + 4)
+      end
+  in
+    if first < 128 then (first, start + 1)
+    else if 194 <= first andalso first <= 223 then two ()
+    else if 224 <= first andalso first <= 239 then three ()
+    else if 240 <= first andalso first <= 244 then four ()
+    else invalid_utf8 start "invalid leading byte"
+  end
+
+  (* Quoted symbols in cvc5 CPC output may contain extended UTF-8, but not
+     controls, backslash, or vertical bar.  This validator also remains
+     useful to callers that deliberately apply the same broad lexical test
+     to String text. *)
+  fun validate_lexical_text quoted text =
+  let
+    val size = String.size text
+    fun allowed value =
+      (not quoted andalso
+       (value = 9 orelse value = 10 orelse value = 13)) orelse
+      (32 <= value andalso value <> 127)
+    fun loop pos =
+      if pos >= size then ()
+      else
+        let
+          val (value, next) = utf8_code_point text pos
+          val _ =
+            if value <= max_code_point then ()
+            else raw_out_of_range pos value
+          val _ =
+            if allowed value then ()
+            else raise InvalidStringLiteral
+              ("forbidden character 0x" ^ hex_string value ^
+               " at byte " ^ Int.toString pos)
+          val _ =
+            if quoted andalso
+               (value = Char.ord #"\\" orelse value = Char.ord #"|")
+            then raise InvalidStringLiteral
+              ("forbidden quoted-symbol character 0x" ^
+               hex_string value ^ " at byte " ^ Int.toString pos)
+            else ()
+        in
+          loop next
+        end
+  in
+    loop 0
+  end
+
+  (* The pinned cvc5-1.3.4 CPC printer accepts Unicode in String tokens only
+     through the ASCII \\u escape syntax.  Reject raw controls and non-ASCII
+     bytes before semantic escape decoding.  This policy is proof-dialect
+     specific; the general SMT-LIB frontend does not call this function. *)
+  fun validate_cpc_string_lexical_text text =
+  let
+    val size = String.size text
+    fun loop pos =
+      if pos >= size then ()
+      else
+        let val value = Char.ord (String.sub (text, pos)) in
+          if 32 <= value andalso value <= 126 then loop (pos + 1)
+          else raise InvalidStringLiteral
+            ("forbidden raw String byte 0x" ^ hex_string value ^
+             " at byte " ^ Int.toString pos)
+        end
+  in
+    loop 0
+  end
+
+  fun decode_string_literal text =
+  let
+    val size = String.size text
 
     fun fixed_escape start =
       if start + 6 <= size then
@@ -170,7 +226,7 @@ struct
         List.rev code_points
       else if String.sub (text, pos) <> #"\\" then
         let
-          val (value, next) = utf8_code_point pos
+          val (value, next) = utf8_code_point text pos
         in
           if value <= max_code_point then
             loop next (value :: code_points)

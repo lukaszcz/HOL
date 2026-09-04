@@ -158,10 +158,454 @@ Definition smt_seq_extract_def:
     else TAKE (Num n) (DROP (Num i) s)
 End
 
+Theorem smt_seq_extract_empty_start[local]:
+  &(LENGTH (s : 'a list)) <= i ==> (smt_seq_extract s i n = [])
+Proof
+  rw [smt_seq_extract_def] >>
+  `LENGTH s <= Num i` by intLib.ARITH_TAC >>
+  simp []
+QED
+
+Theorem smt_seq_extract_empty_start_neg[local]:
+  i < 0 ==> (smt_seq_extract (s : 'a list) i n = [])
+Proof
+  simp [smt_seq_extract_def]
+QED
+
+(* CPC's Seq dictionary exposes the defining conditional directly.  These
+   body-form corollaries let replay consume the same checked bounds without
+   depending on the surface spelling retained by a parser occurrence. *)
+Theorem smt_seq_extract_body_empty_start:
+  &(LENGTH (s : 'a list)) <= i ==>
+  ((if i < 0 \/ n <= 0 \/ LENGTH s <= Num i then []
+    else TAKE (Num n) (DROP (Num i) s)) = [])
+Proof
+  rw [] >>
+  `LENGTH s <= Num i` by intLib.ARITH_TAC >>
+  simp []
+QED
+
+Theorem smt_seq_extract_body_empty_start_neg:
+  i < 0 ==>
+  ((if i < 0 \/ n <= 0 \/ LENGTH (s : 'a list) <= Num i then []
+    else TAKE (Num n) (DROP (Num i) s)) = [])
+Proof
+  simp []
+QED
+
+Theorem smt_seq_extract_nested_empty_start[local]:
+  m1 <= n2 ==>
+  (smt_seq_extract (smt_seq_extract (s : 'a list) n1 m1) n2 m2 = [])
+Proof
+  rw [smt_seq_extract_def] >>
+  `Num m1 <= Num n2` by intLib.ARITH_TAC >>
+  simp [listTheory.LENGTH_TAKE_EQ]
+QED
+
+Theorem smt_seq_extract_body_nested_empty_start:
+  m1 <= n2 ==>
+  ((if
+      n2 < 0 \/ m2 <= 0 \/
+      LENGTH
+        (if n1 < 0 \/ m1 <= 0 \/ LENGTH (s : 'a list) <= Num n1 then
+           []
+         else TAKE (Num m1) (DROP (Num n1) s)) <= Num n2
+    then []
+    else
+      TAKE (Num m2)
+        (DROP (Num n2)
+          (if n1 < 0 \/ m1 <= 0 \/ LENGTH s <= Num n1 then []
+           else TAKE (Num m1) (DROP (Num n1) s)))) = [])
+Proof
+  simp [GSYM smt_seq_extract_def,
+        smt_seq_extract_nested_empty_start]
+QED
+
+Theorem smt_seq_extract_zero_eq_empty[local]:
+  (LENGTH (s : 'a list) <> 0) /\ (LENGTH r = 0) ==>
+  ((smt_seq_extract s 0 m = r) <=> m <= 0)
+Proof
+  Cases_on `s` >- simp [] >>
+  rw [smt_seq_extract_def] >>
+  Cases_on `Num m` >-
+    (simp [] >> intLib.ARITH_TAC) >>
+  simp [] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_extract_zero_empty_iff:
+  (0 < m) /\ (LENGTH (r : 'a list) = 0) ==>
+  ((smt_seq_extract s 0 m = r) <=> (s = r))
+Proof
+  strip_tac >>
+  Cases_on `LENGTH s = 0`
+  >- fs [listTheory.LENGTH_EQ_0, smt_seq_extract_def] >>
+  `(smt_seq_extract s 0 m = r) <=> (m <= 0)` by
+    metis_tac [smt_seq_extract_zero_eq_empty] >>
+  `s <> r` by metis_tac [] >>
+  fs [integerTheory.INT_NOT_LE]
+QED
+
+Theorem smt_seq_extract_body_zero_eq_empty:
+  (LENGTH (s : 'a list) <> 0) /\ (LENGTH r = 0) ==>
+  (((if (0 : int) < 0 \/ m <= 0 \/ LENGTH s <= Num 0 then []
+     else TAKE (Num m) (DROP (Num 0) s)) = r) <=> m <= 0)
+Proof
+  simp [GSYM smt_seq_extract_def, smt_seq_extract_zero_eq_empty]
+QED
+
+Theorem smt_seq_extract_eq_empty_length[local]:
+  0 <= n /\ 0 < m /\ (LENGTH emp = 0) ==>
+  ((smt_seq_extract (s : 'a list) n m = emp) <=> &(LENGTH s) <= n)
+Proof
+  rw [smt_seq_extract_def] >>
+  Cases_on `DROP (Num n) s` >>
+  fs [listTheory.DROP_EQ_NIL] >>
+  Cases_on `Num m` >>
+  fs [] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_extract_body_eq_empty_length:
+  0 <= n /\ 0 < m /\ (LENGTH emp = 0) ==>
+  (((if n < 0 \/ m <= 0 \/ LENGTH (s : 'a list) <= Num n then []
+     else TAKE (Num m) (DROP (Num n) s)) = emp) <=> &(LENGTH s) <= n)
+Proof
+  simp [GSYM smt_seq_extract_def, smt_seq_extract_eq_empty_length]
+QED
+
+Theorem smt_seq_extract_positive[local]:
+  0 <= i /\ 0 < n ==>
+  (smt_seq_extract (s : 'a list) i n =
+   TAKE (Num n) (DROP (Num i) s))
+Proof
+  strip_tac >>
+  `~(i < 0) /\ ~(n <= 0)` by intLib.ARITH_TAC >>
+  rw [smt_seq_extract_def] >>
+  Cases_on `LENGTH s <= Num i` >>
+  simp [listTheory.DROP_EQ_NIL]
+QED
+
+Theorem smt_seq_extract_nonpositive[local]:
+  n <= 0 ==> (smt_seq_extract (s : 'a list) i n = [])
+Proof
+  simp [smt_seq_extract_def]
+QED
+
+Theorem TAKE_DROP_TAKE_RIGHT_BOUND_SEQ[local]:
+  m1 - n2 <= m2 ==>
+  (TAKE m2 (DROP n2 (TAKE m1 (DROP n1 xs))) =
+   TAKE (m1 - n2) (DROP (n1 + n2) xs))
+Proof
+  strip_tac >>
+  simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+        listTheory.TAKE_TAKE_MIN, arithmeticTheory.MIN_DEF]
+QED
+
+Theorem TAKE_DROP_TAKE_LEFT_BOUND_SEQ[local]:
+  m2 <= m1 - n2 ==>
+  (TAKE m2 (DROP n2 (TAKE m1 (DROP n1 xs))) =
+   TAKE m2 (DROP (n1 + n2) xs))
+Proof
+  strip_tac >>
+  Cases_on `m2 < m1 - n2`
+  >- simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+           listTheory.TAKE_TAKE_MIN, arithmeticTheory.MIN_DEF] >>
+  `m2 = m1 - n2` by decide_tac >>
+  simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+        listTheory.TAKE_TAKE_MIN]
+QED
+
+Theorem TAKE_DROP_TAKE_ACTUAL_BOUND_SEQ[local]:
+  LENGTH (TAKE m1 (DROP n1 xs)) <= n2 + m2 ==>
+  (TAKE m2 (DROP n2 (TAKE m1 (DROP n1 xs))) =
+   TAKE (m1 - n2) (DROP (n1 + n2) xs))
+Proof
+  strip_tac >>
+  Cases_on `m2 < m1 - n2`
+  >- (`n2 + m2 < m1` by decide_tac >>
+      `LENGTH (DROP n1 xs) < m1` by
+        fs [listTheory.LENGTH_TAKE_EQ] >>
+      `LENGTH (DROP n1 xs) <= m1` by decide_tac >>
+      `TAKE m1 (DROP n1 xs) = DROP n1 xs` by
+        simp [listTheory.TAKE_LENGTH_TOO_LONG] >>
+      `LENGTH (DROP n1 xs) <= n2 + m2` by metis_tac [] >>
+      `LENGTH (DROP (n1 + n2) xs) <= m2` by
+        fs [listTheory.LENGTH_DROP] >>
+      `TAKE m2 (DROP (n1 + n2) xs) = DROP (n1 + n2) xs` by
+        simp [listTheory.TAKE_LENGTH_TOO_LONG] >>
+      `LENGTH (DROP (n1 + n2) xs) <= m1 - n2` by decide_tac >>
+      `TAKE (m1 - n2) (DROP (n1 + n2) xs) =
+       DROP (n1 + n2) xs` by
+        simp [listTheory.TAKE_LENGTH_TOO_LONG] >>
+      simp [rich_listTheory.DROP_DROP_T]) >>
+  `m1 - n2 <= m2` by decide_tac >>
+  simp [listTheory.DROP_TAKE, rich_listTheory.DROP_DROP_T,
+        listTheory.TAKE_TAKE_MIN, arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smt_seq_extract_combine_right:
+  0 <= n1 /\ 0 <= n2 /\ 0 <= m2 - (m1 - n2) ==>
+  (smt_seq_extract (smt_seq_extract (s : 'a list) n1 m1) n2 m2 =
+   smt_seq_extract s (n1 + n2) (m1 - n2))
+Proof
+  strip_tac >>
+  Cases_on `m1 - n2 <= 0`
+  >- (`m1 <= n2` by intLib.ARITH_TAC >>
+      metis_tac [smt_seq_extract_nested_empty_start,
+                 smt_seq_extract_nonpositive]) >>
+  `0 < m1 - n2 /\ 0 < m1 /\ 0 < m2 /\ 0 <= n1 + n2` by
+    intLib.ARITH_TAC >>
+  `Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `Num m1 - Num n2 <= Num m2` by intLib.ARITH_TAC >>
+  simp [smt_seq_extract_positive] >>
+  metis_tac [TAKE_DROP_TAKE_RIGHT_BOUND_SEQ]
+QED
+
+Theorem smt_seq_extract_combine_left:
+  0 <= n1 /\ 0 <= n2 /\ 0 <= (m1 - n2) - m2 ==>
+  (smt_seq_extract (smt_seq_extract (s : 'a list) n1 m1) n2 m2 =
+   smt_seq_extract s (n1 + n2) m2)
+Proof
+  strip_tac >>
+  Cases_on `m2 <= 0`
+  >- metis_tac [smt_seq_extract_nonpositive] >>
+  `0 < m2 /\ 0 < m1 - n2 /\ 0 < m1 /\ 0 <= n1 + n2` by
+    intLib.ARITH_TAC >>
+  `Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `Num m2 <= Num m1 - Num n2` by intLib.ARITH_TAC >>
+  simp [smt_seq_extract_positive] >>
+  metis_tac [TAKE_DROP_TAKE_LEFT_BOUND_SEQ]
+QED
+
+Theorem smt_seq_extract_count_bound[local]:
+  LENGTH (smt_seq_extract (s : 'a list) i n) <= Num n
+Proof
+  rw [smt_seq_extract_def, listTheory.LENGTH_TAKE_EQ] >>
+  simp [arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smt_seq_extract_positive_count[local]:
+  0 <= (n2 : int) /\ 0 < m2 /\
+  n2 + m2 <= &(LENGTH (smt_seq_extract (s : 'a list) n1 m1)) ==>
+  0 < m1
+Proof
+  strip_tac >>
+  Cases_on `m1 <= 0`
+  >- (`smt_seq_extract s n1 m1 = []` by
+        simp [smt_seq_extract_def] >>
+      `n2 + m2 <= 0` by fs [] >>
+      `0 < n2 + m2` by
+        (match_mp_tac integerTheory.INT_LET_ADD >>
+         asm_rewrite_tac []) >>
+      qpat_x_assum `n2 + m2 <= 0`
+        (assume_tac o
+         REWRITE_RULE [GSYM integerTheory.INT_NOT_LT]) >>
+      fs []) >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_extract_combine_inner_bound:
+  0 <= n1 /\ 0 <= n2 /\
+  n2 + m2 <= &(LENGTH (smt_seq_extract (s : 'a list) n1 m1)) ==>
+  (smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 =
+   smt_seq_extract s (n1 + n2) m2)
+Proof
+  strip_tac >>
+  Cases_on `m2 <= 0`
+  >- simp [smt_seq_extract_def] >>
+  `0 < m2` by intLib.ARITH_TAC >>
+  `0 < m1` by metis_tac [smt_seq_extract_positive_count] >>
+  `&(Num m1) = m1` by intLib.ARITH_TAC >>
+  `LENGTH (smt_seq_extract s n1 m1) <= Num m1` by
+    metis_tac [smt_seq_extract_count_bound] >>
+  `0 <= (m1 - n2) - m2` by intLib.ARITH_TAC >>
+  metis_tac [smt_seq_extract_combine_left]
+QED
+
+Theorem smt_seq_extract_combine_actual_nonpositive[local]:
+  0 <= n1 /\ 0 <= n2 /\ 0 < m1 /\ m2 <= 0 /\
+  &(LENGTH (smt_seq_extract (s : 'a list) n1 m1)) <= n2 + m2 ==>
+  (smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 =
+   smt_seq_extract s (n1 + n2) (m1 - n2))
+Proof
+  strip_tac >>
+  `smt_seq_extract s n1 m1 = TAKE (Num m1) (DROP (Num n1) s)` by
+    metis_tac [smt_seq_extract_positive] >>
+  `&(Num n1) = n1` by intLib.ARITH_TAC >>
+  `&(Num n2) = n2` by intLib.ARITH_TAC >>
+  `LENGTH (smt_seq_extract s n1 m1) <= Num n2` by
+    intLib.ARITH_TAC >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) s)) =
+   LENGTH (smt_seq_extract s n1 m1)` by
+    asm_rewrite_tac [] >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) s)) <= Num n2 + 0` by
+    decide_tac >>
+  `TAKE 0 (DROP (Num n2) (TAKE (Num m1) (DROP (Num n1) s))) =
+   TAKE (Num m1 - Num n2)
+     (DROP (Num n1 + Num n2) s)` by
+    (match_mp_tac TAKE_DROP_TAKE_ACTUAL_BOUND_SEQ >>
+     asm_rewrite_tac []) >>
+  Cases_on `m1 - n2 <= 0`
+  >- (`smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 = []` by
+        simp [smt_seq_extract_def] >>
+      `smt_seq_extract s (n1 + n2) (m1 - n2) = []` by
+        simp [smt_seq_extract_def] >>
+      metis_tac []) >>
+  `0 < m1 - n2 /\ 0 <= n1 + n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `TAKE (Num (m1 - n2)) (DROP (Num (n1 + n2)) s) = []` by
+    metis_tac [listTheory.TAKE_0] >>
+  `smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 = []` by
+    metis_tac [smt_seq_extract_nonpositive] >>
+  `smt_seq_extract s (n1 + n2) (m1 - n2) = []` by
+    metis_tac [smt_seq_extract_positive] >>
+  metis_tac []
+QED
+
+Theorem smt_seq_extract_combine_actual_positive[local]:
+  0 <= n1 /\ 0 <= n2 /\ 0 < m1 /\ 0 < m2 /\
+  &(LENGTH (smt_seq_extract (s : 'a list) n1 m1)) <= n2 + m2 ==>
+  (smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 =
+   smt_seq_extract s (n1 + n2) (m1 - n2))
+Proof
+  strip_tac >>
+  `smt_seq_extract s n1 m1 = TAKE (Num m1) (DROP (Num n1) s)` by
+    metis_tac [smt_seq_extract_positive] >>
+  `&(Num n1) = n1` by intLib.ARITH_TAC >>
+  `&(Num n2) = n2` by intLib.ARITH_TAC >>
+  `&(Num m2) = m2` by intLib.ARITH_TAC >>
+  `LENGTH (smt_seq_extract s n1 m1) <= Num n2 + Num m2` by
+    intLib.ARITH_TAC >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) s)) =
+   LENGTH (smt_seq_extract s n1 m1)` by
+    asm_rewrite_tac [] >>
+  `LENGTH (TAKE (Num m1) (DROP (Num n1) s)) <=
+   Num n2 + Num m2` by decide_tac >>
+  `TAKE (Num m2)
+     (DROP (Num n2) (TAKE (Num m1) (DROP (Num n1) s))) =
+   TAKE (Num m1 - Num n2)
+     (DROP (Num n1 + Num n2) s)` by
+    (match_mp_tac TAKE_DROP_TAKE_ACTUAL_BOUND_SEQ >>
+     asm_rewrite_tac []) >>
+  `smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 =
+   TAKE (Num m2)
+     (DROP (Num n2) (TAKE (Num m1) (DROP (Num n1) s)))` by
+    simp [smt_seq_extract_positive] >>
+  Cases_on `m1 - n2 <= 0`
+  >- (`Num m1 <= Num n2` by intLib.ARITH_TAC >>
+      `Num m1 - Num n2 = 0` by decide_tac >>
+      `smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 = []` by
+        metis_tac [listTheory.TAKE_0] >>
+      `smt_seq_extract s (n1 + n2) (m1 - n2) = []` by
+        simp [smt_seq_extract_def] >>
+      metis_tac []) >>
+  `0 < m1 - n2 /\ 0 <= n1 + n2` by intLib.ARITH_TAC >>
+  `Num (m1 - n2) = Num m1 - Num n2` by intLib.ARITH_TAC >>
+  `Num (n1 + n2) = Num n1 + Num n2` by intLib.ARITH_TAC >>
+  `smt_seq_extract s (n1 + n2) (m1 - n2) =
+   TAKE (Num (m1 - n2)) (DROP (Num (n1 + n2)) s)` by
+    metis_tac [smt_seq_extract_positive] >>
+  metis_tac []
+QED
+
+Theorem smt_seq_extract_combine_actual_bound:
+  0 <= n1 /\ 0 <= n2 /\
+  &(LENGTH (smt_seq_extract (s : 'a list) n1 m1)) <= n2 + m2 ==>
+  (smt_seq_extract (smt_seq_extract s n1 m1) n2 m2 =
+   smt_seq_extract s (n1 + n2) (m1 - n2))
+Proof
+  strip_tac >>
+  Cases_on `m1 <= 0`
+  >- (`~(n1 < 0) /\ ~(n2 < 0) /\ ~(n1 + n2 < 0) /\
+       m1 - n2 <= 0` by intLib.ARITH_TAC >>
+      simp [smt_seq_extract_def]) >>
+  `0 < m1` by intLib.ARITH_TAC >>
+  Cases_on `m2 <= 0`
+  >- metis_tac [smt_seq_extract_combine_actual_nonpositive] >>
+  `0 < m2` by intLib.ARITH_TAC >>
+  metis_tac [smt_seq_extract_combine_actual_positive]
+QED
+
+Theorem smt_seq_extract_drop_concat_prefix[local]:
+  &(LENGTH (s1 : 'a list)) <= n ==>
+  (smt_seq_extract ((s1 ++ s2) ++ s3) n m =
+   smt_seq_extract (s2 ++ s3) (n - &(LENGTH s1)) m)
+Proof
+  strip_tac >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  `0 <= n - &(LENGTH s1)` by intLib.ARITH_TAC >>
+  `&(Num n) = n` by intLib.ARITH_TAC >>
+  `&(Num (n - &(LENGTH s1))) = n - &(LENGTH s1)` by
+    intLib.ARITH_TAC >>
+  `Num n = LENGTH s1 + Num (n - &(LENGTH s1))` by
+    intLib.ARITH_TAC >>
+  Cases_on `m <= 0`
+  >- metis_tac [smt_seq_extract_nonpositive] >>
+  `0 < m` by intLib.ARITH_TAC >>
+  `smt_seq_extract ((s1 ++ s2) ++ s3) n m =
+   TAKE (Num m) (DROP (Num n) ((s1 ++ s2) ++ s3))` by
+    metis_tac [smt_seq_extract_positive] >>
+  `smt_seq_extract (s2 ++ s3) (n - &(LENGTH s1)) m =
+   TAKE (Num m)
+     (DROP (Num (n - &(LENGTH s1))) (s2 ++ s3))` by
+    metis_tac [smt_seq_extract_positive] >>
+  `DROP (Num n) ((s1 ++ s2) ++ s3) =
+   DROP (Num (n - &(LENGTH s1))) (s2 ++ s3)` by
+    simp [listTheory.DROP_APPEND] >>
+  metis_tac []
+QED
+
+Theorem smt_seq_extract_drop_concat_prefix_assoc[local]:
+  &(LENGTH (s1 : 'a list)) <= n ==>
+  (smt_seq_extract (s1 ++ (s2 ++ s3)) n m =
+   smt_seq_extract (s2 ++ s3) (n - &(LENGTH s1)) m)
+Proof
+  metis_tac [smt_seq_extract_drop_concat_prefix,
+             listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_extract_drop_prefix:
+  &(LENGTH (prefix : 'a list)) <= n ==>
+  (smt_seq_extract (prefix ++ tail) n m =
+   smt_seq_extract tail (n - &(LENGTH prefix)) m)
+Proof
+  metis_tac [smt_seq_extract_drop_concat_prefix,
+             listTheory.APPEND_NIL]
+QED
+
+Theorem smt_seq_extract_full:
+  &(LENGTH (s : 'a list)) <= n ==> (smt_seq_extract s 0 n = s)
+Proof
+  Cases_on `n` >> Cases_on `s` >>
+  simp [smt_seq_extract_def, integerTheory.INT_OF_NUM_LE,
+        integerTheory.INT_NOT_LE, listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smt_seq_extract_body_full_eq:
+  (&(LENGTH (s : 'a list)) = n) ==>
+  ((if (0 : int) < 0 \/ n <= 0 \/ LENGTH s <= Num 0 then []
+    else TAKE (Num n) (DROP (Num 0) s)) = s)
+Proof
+  PURE_REWRITE_TAC [GSYM smt_seq_extract_def] >>
+  strip_tac >>
+  irule smt_seq_extract_full >>
+  simp []
+QED
+
 Definition smt_seq_at_def:
   smt_seq_at (s : 'a list) (i : int) =
     if i < 0 \/ LENGTH s <= Num i then [] else [EL (Num i) s]
 End
+
+Theorem smt_seq_at_extract:
+  smt_seq_at (s : 'a list) i = smt_seq_extract s i 1
+Proof
+  rw [smt_seq_at_def, smt_seq_extract_def, listTheory.TAKE1_DROP]
+QED
 
 Definition smt_seq_indexof_aux_def:
   (smt_seq_indexof_aux (t : 'a list) n [] =
@@ -180,6 +624,149 @@ Definition smt_seq_indexof_def:
       | SOME n => &n
 End
 
+Theorem smt_seq_indexof_aux_self[local]:
+  smt_seq_indexof_aux (s : 'a list) 0 s = SOME 0
+Proof
+  Cases_on `s` >>
+  simp [smt_seq_indexof_aux_def, rich_listTheory.IS_PREFIX]
+QED
+
+Theorem smt_seq_indexof_aux_empty[local]:
+  !s n. smt_seq_indexof_aux ([] : 'a list) n s = SOME n
+Proof
+  Cases >>
+  simp [smt_seq_indexof_aux_def, rich_listTheory.IS_PREFIX_NIL]
+QED
+
+Theorem smt_seq_indexof_aux_prefix[local]:
+  !t rest n. smt_seq_indexof_aux (t : 'a list) n (t ++ rest) = SOME n
+Proof
+  Cases >>
+  simp [smt_seq_indexof_aux_def, smt_seq_indexof_aux_empty,
+        rich_listTheory.IS_PREFIX_APPEND]
+QED
+
+Theorem smt_seq_indexof_aux_none[local]:
+  !s t n.
+    (smt_seq_indexof_aux (t : 'a list) n s = NONE) <=>
+    ~IS_SUBLIST s t
+Proof
+  Induct
+  >- simp [smt_seq_indexof_aux_def,
+           rich_listTheory.IS_SUBLIST_APPEND] >>
+  Cases_on `t` >>
+  simp [smt_seq_indexof_aux_def, rich_listTheory.IS_SUBLIST] >>
+  metis_tac []
+QED
+
+Theorem smt_seq_indexof_oob[local]:
+  &(LENGTH (s : 'a list)) < n ==> (smt_seq_indexof s t n = -1)
+Proof
+  rw [smt_seq_indexof_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_indexof_negative_start[local]:
+  n < 0 ==> (smt_seq_indexof (s : 'a list) t n = -1)
+Proof
+  simp [smt_seq_indexof_def]
+QED
+
+Theorem smt_seq_indexof_empty:
+  ((e : 'a list) = []) /\ 0 <= n /\ n <= &(LENGTH s) ==>
+  (smt_seq_indexof s e n = n)
+Proof
+  rw [smt_seq_indexof_def, smt_seq_indexof_aux_empty] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_drop_no_self_sublist[local]:
+  0 < n /\ n <= LENGTH (s : 'a list) ==>
+  ~IS_SUBLIST (DROP n s) s
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  CCONTR_TAC >>
+  fs [] >>
+  qpat_x_assum `DROP n s = _` (mp_tac o AP_TERM ``LENGTH``) >>
+  simp []
+QED
+
+Theorem smt_seq_indexof_self_zero[local]:
+  smt_seq_indexof (s : 'a list) s 0 = smt_seq_indexof [] [] 0
+Proof
+  rw [smt_seq_indexof_def] >>
+  simp [smt_seq_indexof_aux_self, smt_seq_indexof_aux_empty]
+QED
+
+Theorem smt_seq_indexof_self_positive[local]:
+  smt_seq_indexof (s : 'a list) s (&(SUC n)) =
+  smt_seq_indexof [] [] (&(SUC n))
+Proof
+  simp [smt_seq_indexof_def] >>
+  Cases_on `LENGTH s < SUC n` >> simp [] >>
+  `smt_seq_indexof_aux s (SUC n) (DROP (SUC n) s) = NONE` by
+    (rw [smt_seq_indexof_aux_none] >>
+     irule smt_seq_drop_no_self_sublist >> simp []) >>
+  simp []
+QED
+
+Theorem smt_seq_indexof_self:
+  smt_seq_indexof (s : 'a list) s n = smt_seq_indexof [] [] n
+Proof
+  Cases_on `n`
+  >- (Cases_on `n'` >> fs [] >>
+      ACCEPT_TAC smt_seq_indexof_self_positive)
+  >- simp [smt_seq_indexof_negative_start]
+  >- ACCEPT_TAC smt_seq_indexof_self_zero
+QED
+
+Theorem smt_seq_extract_suffix_inclusive[local]:
+  0 <= n /\ n <= &(LENGTH (s : 'a list)) ==>
+  (smt_seq_extract s n (&(LENGTH s)) = DROP (Num n) s)
+Proof
+  strip_tac >>
+  `Num n <= LENGTH s` by intLib.ARITH_TAC >>
+  Cases_on `Num n = LENGTH s`
+  >- simp [smt_seq_extract_def] >>
+  `Num n < LENGTH s` by decide_tac >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `s <> []` by (Cases_on `s` >> fs []) >>
+  simp [smt_seq_extract_def, listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem smt_seq_indexof_no_contains:
+  ~IS_SUBLIST (smt_seq_extract (s : 'a list) n (&(LENGTH s))) t ==>
+  (smt_seq_indexof s t n = -1)
+Proof
+  strip_tac >>
+  Cases_on `n < 0`
+  >- simp [smt_seq_indexof_negative_start] >>
+  Cases_on `&(LENGTH s) < n`
+  >- simp [smt_seq_indexof_oob] >>
+  `0 <= n /\ n <= &(LENGTH s)` by intLib.ARITH_TAC >>
+  `~IS_SUBLIST (DROP (Num n) s) t` by
+    metis_tac [smt_seq_extract_suffix_inclusive] >>
+  `smt_seq_indexof_aux t (Num n) (DROP (Num n) s) = NONE` by
+    simp [smt_seq_indexof_aux_none] >>
+  `~(LENGTH s < Num n)` by intLib.ARITH_TAC >>
+  simp [smt_seq_indexof_def]
+QED
+
+Theorem smt_seq_contains_extract_bounds[local]:
+  0 < LENGTH (t : 'a list) /\
+  IS_SUBLIST (smt_seq_extract s n (&(LENGTH s))) t ==>
+  0 <= n /\ n < &(LENGTH s)
+Proof
+  strip_tac >>
+  `t <> []` by (Cases_on `t` >> fs []) >>
+  Cases_on `n < 0`
+  >- fs [smt_seq_extract_def, rich_listTheory.IS_SUBLIST_APPEND] >>
+  Cases_on `&(LENGTH s) <= n`
+  >- (`LENGTH s <= Num n` by intLib.ARITH_TAC >>
+      fs [smt_seq_extract_def, rich_listTheory.IS_SUBLIST_APPEND]) >>
+  intLib.ARITH_TAC
+QED
+
 Definition smt_seq_replace_raw_def:
   smt_seq_replace_raw (s : 'a list) t u =
     case smt_seq_indexof_aux t 0 s of
@@ -190,6 +777,1407 @@ End
 Definition smt_seq_replace_def:
   smt_seq_replace (s : 'a list) t u = smt_seq_replace_raw s t u
 End
+
+Theorem smt_seq_replace_self:
+  smt_seq_replace (t : 'a list) t s = s
+Proof
+  simp [smt_seq_replace_def, smt_seq_replace_raw_def,
+        smt_seq_indexof_aux_self]
+QED
+
+Theorem smt_seq_indexof_aux_split[local]:
+  !s t n k.
+    (smt_seq_indexof_aux (t : 'a list) n s = SOME k) ==>
+    ?pre post. (s = pre ++ t ++ post) /\ (LENGTH pre + n = k)
+Proof
+  Induct
+  >- (simp [smt_seq_indexof_aux_def] >> metis_tac []) >>
+  rw [smt_seq_indexof_aux_def] >>
+  Cases_on `IS_PREFIX (h::s) t`
+  >- (fs [rich_listTheory.IS_PREFIX_APPEND] >>
+      qexistsl [`[]`, `l`] >> simp []) >>
+  fs [] >>
+  first_x_assum drule >>
+  strip_tac >>
+  qexistsl [`h::pre`, `post`] >>
+  simp []
+QED
+
+Theorem smt_seq_indexof_aux_pattern_length[local]:
+  (smt_seq_indexof_aux (t : 'a list) n s = SOME k) ==>
+  LENGTH t <= LENGTH s
+Proof
+  strip_tac >>
+  drule smt_seq_indexof_aux_split >>
+  strip_tac >>
+  fs []
+QED
+
+Theorem smt_seq_is_prefix_append_short[local]:
+  IS_PREFIX ((s : 'a list) ++ u) t /\ LENGTH t <= LENGTH s ==>
+  IS_PREFIX s t
+Proof
+  metis_tac [rich_listTheory.IS_PREFIX_IMP_TAKE,
+             rich_listTheory.IS_PREFIX_EQ_TAKE',
+             listTheory.TAKE_APPEND1]
+QED
+
+Theorem smt_seq_is_prefix_append_right[local]:
+  IS_PREFIX (s : 'a list) t ==> IS_PREFIX (s ++ u) t
+Proof
+  rw [rich_listTheory.IS_PREFIX_APPEND] >>
+  qexists `l ++ u` >>
+  simp [listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_indexof_aux_append_some[local]:
+  !s t n k u.
+    (smt_seq_indexof_aux (t : 'a list) n s = SOME k) ==>
+    (smt_seq_indexof_aux t n (s ++ u) = SOME k)
+Proof
+  rpt gen_tac >>
+  qid_spec_tac `n` >>
+  Induct_on `s` >>
+  rw [smt_seq_indexof_aux_def]
+  >- simp [smt_seq_indexof_aux_empty]
+  >- (`IS_PREFIX ((h::s) ++ u) t` by
+        metis_tac [smt_seq_is_prefix_append_right] >>
+      fs [])
+  >- (`LENGTH t <= LENGTH s` by
+        metis_tac [smt_seq_indexof_aux_pattern_length] >>
+      mp_tac (Q.INST
+        [`s` |-> `h::s`, `u` |-> `u`, `t` |-> `t`]
+        smt_seq_is_prefix_append_short) >>
+      simp [])
+QED
+
+Theorem smt_seq_indexof_concat_preserve[local]:
+  0 <= n /\ n <= &(LENGTH (s : 'a list)) /\
+  IS_SUBLIST (smt_seq_extract s n (&(LENGTH s))) t ==>
+  (smt_seq_indexof (s ++ u) t n = smt_seq_indexof s t n)
+Proof
+  strip_tac >>
+  `smt_seq_extract s n (&(LENGTH s)) = DROP (Num n) s` by
+    metis_tac [smt_seq_extract_suffix_inclusive] >>
+  `IS_SUBLIST (DROP (Num n) s) t` by metis_tac [] >>
+  `?k. smt_seq_indexof_aux t (Num n) (DROP (Num n) s) = SOME k` by
+    (Cases_on `smt_seq_indexof_aux t (Num n) (DROP (Num n) s)` >>
+     fs [smt_seq_indexof_aux_none]) >>
+  `Num n <= LENGTH s` by intLib.ARITH_TAC >>
+  `DROP (Num n) (s ++ u) = DROP (Num n) s ++ u` by
+    simp [listTheory.DROP_APPEND1] >>
+  `smt_seq_indexof_aux t (Num n) (DROP (Num n) (s ++ u)) = SOME k` by
+    metis_tac [smt_seq_indexof_aux_append_some] >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `~(LENGTH s < Num n) /\ ~(LENGTH (s ++ u) < Num n)` by
+    (simp [] >> decide_tac) >>
+  simp [smt_seq_indexof_def]
+QED
+
+Theorem smt_seq_indexof_concat_contains[local]:
+  0 < LENGTH (t : 'a list) /\
+  IS_SUBLIST (smt_seq_extract s n (&(LENGTH s))) t ==>
+  (smt_seq_indexof (s ++ u) t n = smt_seq_indexof s t n)
+Proof
+  strip_tac >>
+  `0 <= n /\ n < &(LENGTH s)` by
+    metis_tac [smt_seq_contains_extract_bounds] >>
+  `smt_seq_extract s n (&(LENGTH s)) = DROP (Num n) s` by
+    (irule smt_seq_extract_suffix_inclusive >> intLib.ARITH_TAC) >>
+  `IS_SUBLIST (DROP (Num n) s) t` by metis_tac [] >>
+  `?k. smt_seq_indexof_aux t (Num n) (DROP (Num n) s) = SOME k` by
+    (Cases_on `smt_seq_indexof_aux t (Num n) (DROP (Num n) s)` >>
+     fs [smt_seq_indexof_aux_none]) >>
+  `Num n <= LENGTH s` by intLib.ARITH_TAC >>
+  `DROP (Num n) (s ++ u) = DROP (Num n) s ++ u` by
+    simp [listTheory.DROP_APPEND1] >>
+  `smt_seq_indexof_aux t (Num n) (DROP (Num n) (s ++ u)) = SOME k` by
+    metis_tac [smt_seq_indexof_aux_append_some] >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `~(LENGTH s < Num n) /\ ~(LENGTH (s ++ u) < Num n)` by
+    (simp [] >> decide_tac) >>
+  simp [smt_seq_indexof_def]
+QED
+
+Theorem smt_seq_indexof_concat_contains2:
+  0 < LENGTH (t : 'a list) /\
+  IS_SUBLIST (smt_seq_extract s n (&(LENGTH s))) t ==>
+  (smt_seq_indexof ((s ++ u) ++ v) t n = smt_seq_indexof s t n)
+Proof
+  metis_tac [smt_seq_indexof_concat_contains, listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_indexof_concat_occurrence[local]:
+  smt_seq_indexof (((pre : 'a list) ++ t) ++ u) t 0 =
+  smt_seq_indexof (pre ++ t) t 0
+Proof
+  irule smt_seq_indexof_concat_preserve >>
+  conj_tac
+  >-
+   (`smt_seq_extract (pre ++ t) 0 (&(LENGTH (pre ++ t))) = pre ++ t` by
+      (irule smt_seq_extract_full >> simp []) >>
+    asm_rewrite_tac [] >>
+    rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+    qexistsl [`pre`, `[]`] >>
+    simp []) >>
+  simp []
+QED
+
+Theorem smt_seq_indexof_concat_occurrence_segments[local]:
+  smt_seq_indexof ((pre : 'a list) ++ t ++ u ++ v) t 0 =
+  smt_seq_indexof (pre ++ t) t 0
+Proof
+  `pre ++ t ++ u ++ v = (pre ++ t) ++ (u ++ v)` by simp [] >>
+  asm_rewrite_tac [] >>
+  simp [smt_seq_indexof_concat_occurrence]
+QED
+
+Theorem smt_seq_indexof_known_occurrence_suffix:
+  smt_seq_indexof (((pre : 'a list) ++ t) ++ suffix) t 0 =
+  smt_seq_indexof (pre ++ t) t 0
+Proof
+  simp [smt_seq_indexof_concat_occurrence]
+QED
+
+Theorem smt_seq_indexof_suffix_equal:
+  n <= &(LENGTH (s : 'a list)) /\ n <= &(LENGTH r) /\
+  (smt_seq_extract s n (&(LENGTH s)) =
+    smt_seq_extract r n (&(LENGTH r))) ==>
+  (smt_seq_indexof s t n = smt_seq_indexof r t n)
+Proof
+  strip_tac >>
+  Cases_on `n < 0`
+  >- simp [smt_seq_indexof_negative_start] >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  `smt_seq_extract s n (&(LENGTH s)) = DROP (Num n) s` by
+    metis_tac [smt_seq_extract_suffix_inclusive] >>
+  `smt_seq_extract r n (&(LENGTH r)) = DROP (Num n) r` by
+    metis_tac [smt_seq_extract_suffix_inclusive] >>
+  `DROP (Num n) s = DROP (Num n) r` by metis_tac [] >>
+  `~(n < 0)` by intLib.ARITH_TAC >>
+  `~(LENGTH s < Num n) /\ ~(LENGTH r < Num n)` by
+    (simp [] >> intLib.ARITH_TAC) >>
+  simp [smt_seq_indexof_def]
+QED
+
+Theorem smt_seq_contains_trans[local]:
+  IS_SUBLIST (s : 'a list) t /\ IS_SUBLIST t u ==>
+  IS_SUBLIST s u
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  metis_tac [listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_extract_sublist:
+  IS_SUBLIST (s : 'a list) (smt_seq_extract s i n)
+Proof
+  rw [smt_seq_extract_def, rich_listTheory.IS_SUBLIST_APPEND]
+  >- (qexistsl [`[]`, `s`] >> simp [])
+  >- (qexistsl [`[]`, `s`] >> simp [])
+  >- (qexistsl [`[]`, `s`] >> simp []) >>
+  qexistsl [`TAKE (Num i) s`, `DROP (Num n) (DROP (Num i) s)`] >>
+  metis_tac [listTheory.TAKE_DROP, listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_extract_contains_contra:
+  ~IS_SUBLIST (t : 'a list) s ==>
+  ~IS_SUBLIST (smt_seq_extract t n m) s
+Proof
+  metis_tac [smt_seq_extract_sublist, smt_seq_contains_trans]
+QED
+
+Theorem smt_seq_extract_short_self_count:
+  LENGTH (x : 'a list) <= 1 ==>
+  (smt_seq_extract x n n = [])
+Proof
+  strip_tac >>
+  Cases_on `n <= 0`
+  >- simp [smt_seq_extract_def] >>
+  `1 <= n` by intLib.ARITH_TAC >>
+  `&(LENGTH x) <= n` by (simp [] >> intLib.ARITH_TAC) >>
+  metis_tac [smt_seq_extract_empty_start]
+QED
+
+Theorem smt_seq_extract_concat_left_bound[local]:
+  n + m <= &(LENGTH (s1 : 'a list)) ==>
+  (smt_seq_extract (s1 ++ s2) n m = smt_seq_extract s1 n m)
+Proof
+  strip_tac >>
+  Cases_on `n < 0 \/ m <= 0`
+  >- fs [smt_seq_extract_def] >>
+  `0 <= n /\ 0 < m` by intLib.ARITH_TAC >>
+  `Num n + Num m <= LENGTH s1 /\ Num n <= LENGTH s1` by
+    (simp [] >> intLib.ARITH_TAC) >>
+  `Num n < LENGTH s1` by intLib.ARITH_TAC >>
+  `Num m <= LENGTH (DROP (Num n) s1)` by
+    simp [listTheory.LENGTH_DROP] >>
+  simp [smt_seq_extract_def, listTheory.DROP_APPEND1,
+        listTheory.TAKE_APPEND1]
+QED
+
+Theorem TAKE_NUM_INT_APPEND[local]:
+  &(LENGTH (s1 : 'a list)) <= n ==>
+  (TAKE (Num n) (s1 ++ tail) =
+   s1 ++ TAKE (Num (n - &(LENGTH s1))) tail)
+Proof
+  strip_tac >>
+  `0 <= n /\ 0 <= n - &(LENGTH s1)` by intLib.ARITH_TAC >>
+  `LENGTH s1 <= Num n` by intLib.ARITH_TAC >>
+  `Num n - LENGTH s1 = Num (n - &(LENGTH s1))` by
+    intLib.ARITH_TAC >>
+  simp [rich_listTheory.TAKE_APPEND,
+        listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem INT_EQ_ZERO_FROM_BOUNDS[local]:
+  0 <= (x : int) /\ x <= 0 ==> (x = 0)
+Proof
+  intLib.ARITH_TAC
+QED
+
+Theorem INT_ZERO_LET_TRANS[local]:
+  !x y : int. 0 <= x /\ x < y ==> 0 < y
+Proof
+  intLib.ARITH_TAC
+QED
+
+Theorem INT_ZERO_LTE_TRANS[local]:
+  !x y : int. 0 < x /\ x <= y ==> 0 < y
+Proof
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_extract_concat_left_bound2:
+  n + m <= &(LENGTH (s1 : 'a list)) ==>
+  (smt_seq_extract ((s1 ++ s2) ++ s3) n m = smt_seq_extract s1 n m)
+Proof
+  metis_tac [smt_seq_extract_concat_left_bound,
+             listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_extract_body_concat_left_bound2:
+  n + m <= &(LENGTH (s1 : 'a list)) ==>
+  ((if n < 0 \/ m <= 0 \/ LENGTH ((s1 ++ s2) ++ s3) <= Num n
+    then [] else TAKE (Num m) (DROP (Num n) ((s1 ++ s2) ++ s3))) =
+   (if n < 0 \/ m <= 0 \/ LENGTH s1 <= Num n
+    then [] else TAKE (Num m) (DROP (Num n) s1)))
+Proof
+  simp [GSYM smt_seq_extract_def,
+        smt_seq_extract_concat_left_bound2]
+QED
+
+Theorem smt_seq_extract_concat_prefix_bound:
+  &(LENGTH (s1 : 'a list)) <= n ==>
+  (smt_seq_extract (s1 ++ tail) 0 n =
+   s1 ++ smt_seq_extract tail 0 (n - &(LENGTH s1)))
+Proof
+  strip_tac >>
+  Cases_on `s1`
+  >- simp [smt_seq_extract_def] >>
+  `0 < n` by
+    (irule integerTheory.INT_LTE_TRANS >>
+     qexists_tac `&(LENGTH (h::t))` >> simp []) >>
+  `~(n <= 0)` by fs [integerTheory.INT_NOT_LE] >>
+  `0 <= n - &(LENGTH (h::t))` by intLib.ARITH_TAC >>
+  drule TAKE_NUM_INT_APPEND >>
+  disch_then (qspec_then `tail` assume_tac) >>
+  Cases_on `tail`
+  >- fs [smt_seq_extract_def] >>
+  Cases_on `n - &(LENGTH (h::t)) <= 0`
+  >- (`n - &(LENGTH (h::t)) = 0` by
+        metis_tac [INT_EQ_ZERO_FROM_BOUNDS] >>
+      fs [smt_seq_extract_def]) >>
+  fs [smt_seq_extract_def]
+QED
+
+Theorem smt_seq_extract_count_normalize:
+  &(LENGTH (s : 'a list)) <= m ==>
+  (smt_seq_extract s n m = smt_seq_extract s n (&(LENGTH s)))
+Proof
+  strip_tac >>
+  Cases_on `n < 0`
+  >- simp [smt_seq_extract_def] >>
+  `0 <= n` by intLib.ARITH_TAC >>
+  Cases_on `&(LENGTH s) <= n`
+  >- simp [smt_seq_extract_empty_start] >>
+  `n < &(LENGTH s)` by fs [integerTheory.INT_NOT_LE] >>
+  `(0 : int) < &(LENGTH s)` by
+    ACCEPT_TAC
+      (MATCH_MP (Q.SPECL [`n`, `&(LENGTH s)`]
+                   INT_ZERO_LET_TRANS)
+         (CONJ (ASSUME ``(0 : int) <= n``)
+               (ASSUME ``(n : int) < &(LENGTH s)``))) >>
+  `0 < m` by
+    ACCEPT_TAC
+      (MATCH_MP (Q.SPECL [`&(LENGTH s)`, `m`]
+                   INT_ZERO_LTE_TRANS)
+         (CONJ (ASSUME ``(0 : int) < &(LENGTH s)``)
+               (ASSUME ``&(LENGTH s) <= (m : int)``))) >>
+  `LENGTH s <= Num m` by intLib.ARITH_TAC >>
+  `LENGTH (DROP (Num n) s) <= Num m /\
+   LENGTH (DROP (Num n) s) <= LENGTH s` by
+    simp [listTheory.LENGTH_DROP] >>
+  simp [smt_seq_extract_def, listTheory.TAKE_LENGTH_TOO_LONG] >>
+  `~(m <= 0)` by intLib.ARITH_TAC >>
+  `~(LENGTH s <= Num n)` by intLib.ARITH_TAC >>
+  `s <> []` by (Cases_on `s` >> fs []) >>
+  simp []
+QED
+
+Theorem smt_seq_replace_take_splice[local]:
+  !pre t post. TAKE (LENGTH pre) (pre ++ t ++ post) = pre
+Proof
+  Induct >> simp []
+QED
+
+Theorem smt_seq_replace_drop_splice[local]:
+  !pre t post.
+    DROP (LENGTH pre + LENGTH t) (pre ++ t ++ post) = post
+Proof
+  metis_tac [listTheory.LENGTH_APPEND, listTheory.APPEND_ASSOC,
+             rich_listTheory.DROP_LENGTH_APPEND]
+QED
+
+Theorem smt_seq_replace_splice_identity[local]:
+  TAKE (LENGTH pre) (pre ++ t ++ post) ++ t ++
+  DROP (LENGTH pre + LENGTH t) (pre ++ t ++ post) =
+  pre ++ t ++ post
+Proof
+  simp [smt_seq_replace_take_splice, smt_seq_replace_drop_splice]
+QED
+
+Theorem smt_seq_replace_id:
+  smt_seq_replace (s : 'a list) t t = s
+Proof
+  rw [smt_seq_replace_def, smt_seq_replace_raw_def] >>
+  Cases_on `smt_seq_indexof_aux t 0 s` >> simp [] >>
+  drule smt_seq_indexof_aux_split >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  simp [smt_seq_replace_splice_identity]
+QED
+
+Theorem smt_seq_replace_prefix:
+  smt_seq_replace ((t : 'a list) ++ rest) t r = r ++ rest
+Proof
+  simp [smt_seq_replace_def, smt_seq_replace_raw_def,
+        smt_seq_indexof_aux_prefix,
+        rich_listTheory.DROP_LENGTH_APPEND]
+QED
+
+Theorem smt_seq_replace_empty:
+  smt_seq_replace (t : 'a list) [] s = s ++ t
+Proof
+  simp [smt_seq_replace_def, smt_seq_replace_raw_def,
+        smt_seq_indexof_aux_empty]
+QED
+
+Theorem smt_seq_replace_absent:
+  ~IS_SUBLIST (s : 'a list) t ==> (smt_seq_replace s t r = s)
+Proof
+  strip_tac >>
+  `smt_seq_indexof_aux t 0 s = NONE` by
+    metis_tac [smt_seq_indexof_aux_none] >>
+  simp [smt_seq_replace_def, smt_seq_replace_raw_def]
+QED
+
+Theorem smt_seq_replace_raw_absent[local]:
+  ~IS_SUBLIST (s : 'a list) t ==>
+  (smt_seq_replace_raw s t u = s)
+Proof
+  strip_tac >>
+  `smt_seq_indexof_aux t 0 s = NONE` by
+    metis_tac [smt_seq_indexof_aux_none] >>
+  simp [smt_seq_replace_raw_def]
+QED
+
+Theorem smt_seq_replace_raw_hit[local]:
+  IS_SUBLIST (s : 'a list) t ==>
+  ?pre post.
+    (s = pre ++ t ++ post) /\
+    (smt_seq_replace_raw s t u = pre ++ u ++ post)
+Proof
+  strip_tac >>
+  Cases_on `smt_seq_indexof_aux t 0 s` >>
+  fs [smt_seq_indexof_aux_none] >>
+  drule smt_seq_indexof_aux_split >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  qexistsl [`pre`, `post`] >>
+  simp [smt_seq_replace_raw_def, smt_seq_replace_take_splice,
+        smt_seq_replace_drop_splice]
+QED
+
+Theorem smt_seq_replace_contains_replacement:
+  IS_SUBLIST (smt_seq_replace (s : 'a list) t u) u <=>
+  IS_SUBLIST s t \/ IS_SUBLIST s u
+Proof
+  rw [smt_seq_replace_def] >>
+  Cases_on `IS_SUBLIST s t`
+  >- (drule_then (qspec_then `u` strip_assume_tac)
+        smt_seq_replace_raw_hit >>
+      rw [] >>
+      rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+      qexistsl [`pre`, `post`] >> simp []) >>
+  simp [smt_seq_replace_raw_absent]
+QED
+
+Theorem smt_seq_replace_preserves_contains:
+  IS_SUBLIST (s : 'a list) u /\ IS_SUBLIST r u ==>
+  IS_SUBLIST (smt_seq_replace s t r) u
+Proof
+  Cases_on `IS_SUBLIST s t`
+  >- metis_tac [smt_seq_replace_contains_replacement,
+                smt_seq_contains_trans] >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_avoids_outer:
+  ~IS_SUBLIST (s : 'a list) t /\ ~IS_SUBLIST s u ==>
+  ~IS_SUBLIST s (smt_seq_replace t r u)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST t r`
+  >- (CCONTR_TAC >>
+      `IS_SUBLIST (smt_seq_replace t r u) u` by
+        metis_tac [smt_seq_replace_contains_replacement] >>
+      metis_tac [smt_seq_contains_trans]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_contains_refl[local]:
+  IS_SUBLIST (s : 'a list) s
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`[]`, `[]`] >> simp []
+QED
+
+Theorem smt_seq_contains_length_bound[local]:
+  IS_SUBLIST (s : 'a list) t ==> LENGTH t <= LENGTH s
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >> simp []
+QED
+
+Theorem smt_seq_contains_length_equal[local]:
+  IS_SUBLIST (s : 'a list) t /\ (LENGTH s = LENGTH t) ==> (s = t)
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  `!a b c : num.
+     (a + (b + c) = c) ==> (a = 0) /\ (b = 0)` by decide_tac >>
+  `(LENGTH l = 0) /\ (LENGTH l' = 0)` by
+    (qpat_x_assum `!a b c. _` (mp_tac o
+       Q.SPECL [`LENGTH l`, `LENGTH l'`, `LENGTH t`]) >>
+     impl_tac >- fs [] >>
+     simp []) >>
+  fs []
+QED
+
+Theorem smt_seq_contains_antisym[local]:
+  IS_SUBLIST (s : 'a list) t /\ IS_SUBLIST t s ==> (s = t)
+Proof
+  metis_tac [smt_seq_contains_length_bound,
+             smt_seq_contains_length_equal,
+             arithmeticTheory.LESS_EQUAL_ANTISYM]
+QED
+
+Theorem smt_seq_replace_self_nil_forward[local]:
+  (smt_seq_replace (x : 'a list) y x = []) ==> (x = [])
+Proof
+  strip_tac >>
+  `IS_SUBLIST (smt_seq_replace x y x) x` by
+    simp [smt_seq_replace_contains_replacement,
+          smt_seq_contains_refl] >>
+  fs [rich_listTheory.IS_SUBLIST_APPEND] >>
+  metis_tac [listTheory.APPEND_eq_NIL]
+QED
+
+Theorem smt_seq_replace_self_nil_reverse[local]:
+  ((x : 'a list) = []) ==> (smt_seq_replace x y x = [])
+Proof
+  strip_tac >>
+  simp [smt_seq_replace_def, smt_seq_replace_raw_def,
+        smt_seq_indexof_aux_def] >>
+  BasicProvers.every_case_tac >> simp []
+QED
+
+Theorem smt_seq_replace_self_empty_eq:
+  (LENGTH (empty : 'a list) = 0) ==>
+  ((smt_seq_replace x y x = empty) <=> (x = empty))
+Proof
+  Cases_on `empty` >>
+  simp [] >>
+  metis_tac [smt_seq_replace_self_nil_forward,
+             smt_seq_replace_self_nil_reverse]
+QED
+
+Theorem smt_seq_replace_self_source_reverse[local]:
+  (smt_seq_replace (x : 'a list) y x = y) ==> (x = y)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (`IS_SUBLIST (smt_seq_replace x y x) x` by
+        metis_tac [smt_seq_replace_contains_replacement,
+                   smt_seq_contains_refl] >>
+      `IS_SUBLIST y x` by metis_tac [] >>
+      metis_tac [smt_seq_contains_antisym]) >>
+  fs [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_self_source_eq:
+  (smt_seq_replace (x : 'a list) y x = y) <=> (x = y)
+Proof
+  metis_tac [smt_seq_replace_self,
+             smt_seq_replace_self_source_reverse]
+QED
+
+Theorem smt_seq_replace_self_contains:
+  IS_SUBLIST (smt_seq_replace (x : 'a list) y x) y <=>
+  IS_SUBLIST x y
+Proof
+  Cases_on `IS_SUBLIST x y`
+  >- (`IS_SUBLIST (smt_seq_replace x y x) x` by
+        metis_tac [smt_seq_replace_contains_replacement,
+                   smt_seq_contains_refl] >>
+      metis_tac [smt_seq_contains_trans]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_self_target:
+  LENGTH (x : 'a list) <= LENGTH y ==>
+  (smt_seq_replace x y x = x)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (`x = y` by
+        metis_tac [smt_seq_contains_length_bound,
+                   smt_seq_contains_length_equal,
+                   arithmeticTheory.LESS_EQUAL_ANTISYM] >>
+      simp [smt_seq_replace_self]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_source_target_absent:
+  ~IS_SUBLIST (z : 'a list) w ==>
+  (smt_seq_replace x w (smt_seq_replace z x y) =
+   smt_seq_replace x w z)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x w`
+  >- (`~IS_SUBLIST z x` by metis_tac [smt_seq_contains_trans] >>
+      simp [smt_seq_replace_absent]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_target_self:
+  smt_seq_replace (x : 'a list) y (smt_seq_replace y x y) = x
+Proof
+  Cases_on `IS_SUBLIST x y`
+  >- (Cases_on `IS_SUBLIST y x`
+      >- (`x = y` by metis_tac [smt_seq_contains_antisym] >>
+          simp [smt_seq_replace_self]) >>
+      simp [smt_seq_replace_absent, smt_seq_replace_id]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_target_absent:
+  ~IS_SUBLIST (x : 'a list) z ==>
+  (smt_seq_replace x y (smt_seq_replace y z w) = x)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (`~IS_SUBLIST y z` by
+        (CCONTR_TAC >> metis_tac [smt_seq_contains_trans]) >>
+      simp [smt_seq_replace_absent, smt_seq_replace_id]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_source_self:
+  smt_seq_replace (x : 'a list) (smt_seq_replace y x y) z =
+  smt_seq_replace x y z
+Proof
+  Cases_on `IS_SUBLIST x y`
+  >- (`~IS_SUBLIST y x \/ (x = y)` by
+        metis_tac [smt_seq_contains_antisym] >>
+      fs [smt_seq_replace_absent, smt_seq_replace_self]) >>
+  `IS_SUBLIST (smt_seq_replace y x y) y` by
+    metis_tac [smt_seq_replace_contains_replacement,
+               smt_seq_contains_refl] >>
+  `~IS_SUBLIST x (smt_seq_replace y x y)` by
+    (CCONTR_TAC >> metis_tac [smt_seq_contains_trans]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_source_inverse_absent1:
+  ~IS_SUBLIST (y : 'a list) z ==>
+  (smt_seq_replace x (smt_seq_replace y x z) y =
+   smt_seq_replace x y y)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST y x`
+  >- (`IS_SUBLIST (smt_seq_replace y x z) z` by
+        metis_tac [smt_seq_replace_contains_replacement] >>
+      `~IS_SUBLIST x (smt_seq_replace y x z)` by
+        (CCONTR_TAC >>
+         `IS_SUBLIST x z` by metis_tac [smt_seq_contains_trans] >>
+         metis_tac [smt_seq_contains_trans]) >>
+      `~IS_SUBLIST x y \/ (x = y)` by
+        metis_tac [smt_seq_contains_antisym] >>
+      fs [smt_seq_replace_absent, smt_seq_replace_id]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_source_inverse_absent2:
+  ~IS_SUBLIST (y : 'a list) z ==>
+  (smt_seq_replace x (smt_seq_replace y x z) x =
+   smt_seq_replace x y x)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST y x`
+  >- (`IS_SUBLIST (smt_seq_replace y x z) z` by
+        metis_tac [smt_seq_replace_contains_replacement] >>
+      `~IS_SUBLIST x (smt_seq_replace y x z)` by
+        (CCONTR_TAC >>
+         `IS_SUBLIST x z` by metis_tac [smt_seq_contains_trans] >>
+         metis_tac [smt_seq_contains_trans]) >>
+      `~IS_SUBLIST x y \/ (x = y)` by
+        metis_tac [smt_seq_contains_antisym] >>
+      fs [smt_seq_replace_absent, smt_seq_replace_self]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_source_inverse_absent3:
+  ~IS_SUBLIST (x : 'a list) z /\ ~IS_SUBLIST x w ==>
+  (smt_seq_replace x (smt_seq_replace y z w) u =
+   smt_seq_replace x y u)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST y z`
+  >- (`IS_SUBLIST (smt_seq_replace y z w) w` by
+        metis_tac [smt_seq_replace_contains_replacement] >>
+      `~IS_SUBLIST x (smt_seq_replace y z w)` by
+        (CCONTR_TAC >> metis_tac [smt_seq_contains_trans]) >>
+      `~IS_SUBLIST x y` by
+        (CCONTR_TAC >> metis_tac [smt_seq_contains_trans]) >>
+      simp [smt_seq_replace_absent]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_nested_dual_self:
+  smt_seq_replace (x : 'a list) (smt_seq_replace x y x) x = x
+Proof
+  irule smt_seq_replace_self_target >>
+  `IS_SUBLIST (smt_seq_replace x y x) x` by
+    metis_tac [smt_seq_replace_contains_replacement,
+               smt_seq_contains_refl] >>
+  metis_tac [smt_seq_contains_length_bound]
+QED
+
+Theorem smt_seq_replace_nested_dual_ite1:
+  ~IS_SUBLIST (x : 'a list) z ==>
+  (smt_seq_replace x (smt_seq_replace x y z) w =
+   if IS_SUBLIST x y then x else w)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (`IS_SUBLIST (smt_seq_replace x y z) z` by
+        metis_tac [smt_seq_replace_contains_replacement] >>
+      `~IS_SUBLIST x (smt_seq_replace x y z)` by
+        (CCONTR_TAC >> metis_tac [smt_seq_contains_trans]) >>
+      simp [smt_seq_replace_absent]) >>
+  simp [smt_seq_replace_absent, smt_seq_replace_self]
+QED
+
+Theorem smt_seq_append_prefix_of_length[local]:
+  (a ++ b = c ++ d) /\ LENGTH c <= LENGTH a ==>
+  ?e. a = c ++ e
+Proof
+  rw [listTheory.APPEND_EQ_APPEND] >>
+  fs [] >>
+  Cases_on `l` >>
+  fs []
+QED
+
+Theorem smt_seq_suffix_factor_base[local]:
+  (y ++ b = c ++ z ++ b ++ d) ==> IS_SUBLIST y z
+Proof
+  strip_tac >>
+  `LENGTH (c ++ z) <= LENGTH y` by
+    (qpat_x_assum `_ = _` (mp_tac o AP_TERM ``LENGTH``) >>
+     simp [] >> decide_tac) >>
+  `?e. y = (c ++ z) ++ e` by
+    metis_tac [smt_seq_append_prefix_of_length,
+               listTheory.APPEND_ASSOC] >>
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`c`, `e`] >>
+  simp []
+QED
+
+Theorem smt_seq_replace_factor_comparable[local]:
+  (a ++ y ++ b = c ++ a ++ z ++ b ++ d) ==>
+  IS_SUBLIST y z \/ IS_SUBLIST z y
+Proof
+  qid_spec_tac `c` >>
+  Induct_on `a`
+  >- (gen_tac >>
+      strip_tac >>
+      `y ++ b = c ++ z ++ b ++ d` by
+        (qpat_x_assum `_ = _` mp_tac >>
+         simp [listTheory.APPEND_ASSOC]) >>
+      disj1_tac >>
+      irule smt_seq_suffix_factor_base >>
+      qexistsl [`b`, `c`, `d`] >>
+      simp []) >>
+  rpt gen_tac >>
+  Cases_on `c`
+  >- (simp [listTheory.APPEND_ASSOC] >>
+      strip_tac >>
+      disj1_tac >>
+      irule smt_seq_suffix_factor_base >>
+      qexistsl [`b`, `[]`, `d`] >>
+      simp []) >>
+  strip_tac >>
+  fs [listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_replace_raw_incomparable[local]:
+  IS_SUBLIST (s : 'a list) t /\ ~IS_SUBLIST t u /\ ~IS_SUBLIST u t ==>
+  ~IS_SUBLIST s (smt_seq_replace_raw s t u)
+Proof
+  strip_tac >>
+  drule_then (qspec_then `u` strip_assume_tac)
+    smt_seq_replace_raw_hit >>
+  CCONTR_TAC >>
+  fs [] >>
+  qpat_x_assum `IS_SUBLIST s (smt_seq_replace_raw s t u)`
+    (mp_tac o REWRITE_RULE [rich_listTheory.IS_SUBLIST_APPEND]) >>
+  strip_tac >>
+  qpat_x_assum `s = pre ++ t ++ post` SUBST_ALL_TAC >>
+  qpat_x_assum
+    `smt_seq_replace_raw (pre ++ t ++ post) t u = pre ++ u ++ post`
+    SUBST_ALL_TAC >>
+  fs [listTheory.APPEND_ASSOC] >>
+  qpat_x_assum
+    `pre ++ t ++ post = _ ++ pre ++ u ++ post ++ _`
+    (mp_tac o MATCH_MP smt_seq_replace_factor_comparable) >>
+  simp [rich_listTheory.IS_SUBLIST_APPEND]
+QED
+
+Theorem smt_seq_replace_incomparable_not_contained[local]:
+  IS_SUBLIST (x : 'a list) y /\
+  ~IS_SUBLIST y z /\ ~IS_SUBLIST z y ==>
+  ~IS_SUBLIST x (smt_seq_replace x y z)
+Proof
+  rw [smt_seq_replace_def] >>
+  metis_tac [smt_seq_replace_raw_incomparable]
+QED
+
+Theorem smt_seq_replace_nested_dual_ite2:
+  ~IS_SUBLIST (y : 'a list) z /\ ~IS_SUBLIST z y ==>
+  (smt_seq_replace x (smt_seq_replace x y z) w =
+   if IS_SUBLIST x y then x else w)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (`~IS_SUBLIST x (smt_seq_replace x y z)` by
+        metis_tac [smt_seq_replace_incomparable_not_contained] >>
+      simp [smt_seq_replace_absent]) >>
+  simp [smt_seq_replace_absent, smt_seq_replace_self]
+QED
+
+Theorem smt_seq_replace_pattern_self_contains:
+  IS_SUBLIST (s : 'a list) (smt_seq_replace t s t) <=>
+  IS_SUBLIST s t
+Proof
+  Cases_on `IS_SUBLIST t s`
+  >- (eq_tac
+      >- (strip_tac >>
+          `IS_SUBLIST (smt_seq_replace t s t) t` by
+            metis_tac [smt_seq_replace_contains_replacement,
+                       smt_seq_contains_refl] >>
+          metis_tac [smt_seq_contains_trans]) >>
+      strip_tac >>
+      `s = t` by metis_tac [smt_seq_contains_antisym] >>
+      simp [smt_seq_replace_self, smt_seq_contains_refl]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_empty_source_contains:
+  (LENGTH (empty : 'a list) = 0) ==>
+  (IS_SUBLIST s (smt_seq_replace empty s t) <=>
+   (empty = smt_seq_replace empty s t))
+Proof
+  rw [] >>
+  Cases_on `s`
+  >- simp [smt_seq_replace_def, smt_seq_replace_raw_def,
+           smt_seq_indexof_aux_def, rich_listTheory.IS_SUBLIST_APPEND] >>
+  simp [smt_seq_replace_def, smt_seq_replace_raw_def,
+        smt_seq_indexof_aux_def, rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`[]`, `h::t'`] >> simp []
+QED
+
+Theorem smt_seq_indexof_zero_nonnegative[local]:
+  (0 <= smt_seq_indexof (s : 'a list) t 0 <=> IS_SUBLIST s t)
+Proof
+  rw [smt_seq_indexof_def] >>
+  eq_tac
+  >- (Cases_on `smt_seq_indexof_aux t 0 s` >>
+      simp [] >>
+      drule smt_seq_indexof_aux_split >>
+      strip_tac >>
+      rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+      qexistsl [`pre`, `post`] >>
+      simp [])
+  >- (strip_tac >>
+      Cases_on `smt_seq_indexof_aux t 0 s` >>
+      fs [smt_seq_indexof_aux_none])
+QED
+
+Theorem smt_seq_replace_raw_append_some[local]:
+  (smt_seq_indexof_aux (t : 'a list) 0 s = SOME n) ==>
+  (smt_seq_replace_raw (s ++ u) t r =
+   smt_seq_replace_raw s t r ++ u)
+Proof
+  strip_tac >>
+  `n + LENGTH t <= LENGTH s` by
+    (drule smt_seq_indexof_aux_split >> strip_tac >> fs []) >>
+  `smt_seq_indexof_aux t 0 (s ++ u) = SOME n` by
+    metis_tac [smt_seq_indexof_aux_append_some] >>
+  asm_rewrite_tac [smt_seq_replace_raw_def] >>
+  simp [listTheory.TAKE_APPEND1, listTheory.DROP_APPEND1,
+        listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_replace_concat_after_match[local]:
+  IS_SUBLIST (s : 'a list) t ==>
+  (smt_seq_replace (s ++ u) t r = smt_seq_replace s t r ++ u)
+Proof
+  strip_tac >>
+  Cases_on `smt_seq_indexof_aux t 0 s`
+  >- fs [smt_seq_indexof_aux_none] >>
+  simp [smt_seq_replace_def, smt_seq_replace_raw_append_some]
+QED
+
+Theorem smt_seq_replace_known_match_suffix:
+  smt_seq_replace ((prefix ++ needle) ++ suffix) needle replacement =
+  smt_seq_replace (prefix ++ needle) needle replacement ++ suffix
+Proof
+  irule smt_seq_replace_concat_after_match >>
+  simp [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`prefix`, `[]`] >>
+  simp []
+QED
+
+Theorem smt_seq_is_sublist_singleton[local]:
+  IS_SUBLIST (s : 'a list) [h] <=> MEM h s
+Proof
+  Induct_on `s` >>
+  simp [rich_listTheory.IS_SUBLIST, boolTheory.EQ_SYM_EQ]
+QED
+
+Theorem smt_seq_is_sublist_append_len_one[local]:
+  (LENGTH (sub : 'a list) = 1) ==>
+  (IS_SUBLIST (s ++ t) sub <=>
+   IS_SUBLIST s sub \/ IS_SUBLIST t sub)
+Proof
+  Cases_on `sub` >> fs [] >>
+  Cases_on `t'` >>
+  simp [smt_seq_is_sublist_singleton]
+QED
+
+Theorem smt_seq_replace_raw_contains_len_one[local]:
+  (LENGTH (w : 'a list) = 1) /\ ~IS_SUBLIST y w ==>
+  (IS_SUBLIST (smt_seq_replace_raw x y z) w <=>
+   IS_SUBLIST x w \/ (IS_SUBLIST x y /\ IS_SUBLIST z w))
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST x y`
+  >- (drule_then (qspec_then `z` strip_assume_tac)
+        smt_seq_replace_raw_hit >>
+      rw [] >>
+      simp [smt_seq_is_sublist_append_len_one] >>
+      tautLib.TAUT_TAC) >>
+  simp [smt_seq_replace_raw_absent]
+QED
+
+Theorem smt_seq_replace_contains_len_one:
+  (LENGTH (w : 'a list) = 1) /\ ~IS_SUBLIST y w ==>
+  (IS_SUBLIST (smt_seq_replace x y z) w <=>
+   IS_SUBLIST x w \/ (IS_SUBLIST x y /\ IS_SUBLIST z w))
+Proof
+  strip_tac >>
+  rw [smt_seq_replace_def] >>
+  metis_tac [smt_seq_replace_raw_contains_len_one]
+QED
+
+Theorem smt_seq_replace_self_contains_len_one:
+  (LENGTH (w : 'a list) = 1) ==>
+  (IS_SUBLIST (smt_seq_replace x y x) w <=> IS_SUBLIST x w)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST y w`
+  >- (Cases_on `IS_SUBLIST x y`
+      >- (`IS_SUBLIST x w` by metis_tac [smt_seq_contains_trans] >>
+          `IS_SUBLIST (smt_seq_replace x y x) x` by
+            metis_tac [smt_seq_replace_contains_replacement,
+                       smt_seq_contains_refl] >>
+          metis_tac [smt_seq_contains_trans]) >>
+      simp [smt_seq_replace_absent]) >>
+  metis_tac [smt_seq_replace_contains_len_one]
+QED
+
+Theorem smt_seq_replace_concat_contained_suffix[local]:
+  (LENGTH (t : 'a list) = 1) /\ IS_SUBLIST s u ==>
+  (smt_seq_replace (s ++ u) t r = smt_seq_replace s t r ++ u)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST s t`
+  >- simp [smt_seq_replace_concat_after_match] >>
+  Cases_on `t` >> fs [] >>
+  qpat_x_assum `t' = []` SUBST_ALL_TAC >>
+  fs [smt_seq_is_sublist_singleton,
+      rich_listTheory.IS_SUBLIST_APPEND, listTheory.MEM_APPEND] >>
+  qpat_x_assum `s = _` SUBST_ALL_TAC >>
+  fs [listTheory.MEM_APPEND, smt_seq_replace_absent,
+      smt_seq_is_sublist_singleton]
+QED
+
+Theorem smt_seq_replace_repeated_segment_suffix:
+  (LENGTH (sub : 'a list) = 1) ==>
+  (smt_seq_replace ((prefix ++ middle ++ suffix) ++ middle) sub replacement =
+   smt_seq_replace (prefix ++ middle ++ suffix) sub replacement ++ middle)
+Proof
+  strip_tac >>
+  irule smt_seq_replace_concat_contained_suffix >>
+  simp [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`prefix`, `suffix`] >>
+  simp [listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_replace_find:
+  0 <= smt_seq_indexof (s : 'a list) t 0 ==>
+  (smt_seq_replace s t r =
+   (smt_seq_extract s 0 (smt_seq_indexof s t 0) ++ r) ++
+   smt_seq_extract s
+     (smt_seq_indexof s t 0 + &(LENGTH t)) (&(LENGTH s)))
+Proof
+  strip_tac >>
+  fs [smt_seq_indexof_def] >>
+  Cases_on `smt_seq_indexof_aux t 0 s` >> fs [] >>
+  drule smt_seq_indexof_aux_split >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  fs [smt_seq_replace_def, smt_seq_replace_raw_def,
+      smt_seq_extract_def, listTheory.TAKE_APPEND1,
+      rich_listTheory.TAKE_LENGTH_APPEND,
+      rich_listTheory.DROP_LENGTH_APPEND,
+      listTheory.APPEND_ASSOC] >>
+  Cases_on `pre` >> Cases_on `t` >> Cases_on `post` >>
+  simp [smt_seq_extract_def, integerTheory.INT_OF_NUM_ADD,
+        rich_listTheory.DROP_LENGTH_APPEND,
+        listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_replace_find_append:
+  0 <= smt_seq_indexof (s : 'a list) t 0 ==>
+  (smt_seq_replace (s ++ u) t r =
+   smt_seq_extract s 0 (smt_seq_indexof s t 0) ++
+   (r ++
+    (smt_seq_extract s
+       (smt_seq_indexof s t 0 + &(LENGTH t)) (&(LENGTH s)) ++ u)))
+Proof
+  metis_tac [smt_seq_indexof_zero_nonnegative,
+             smt_seq_replace_concat_after_match,
+             smt_seq_replace_find, listTheory.APPEND_ASSOC]
+QED
+
+Theorem smt_seq_indexof_aux_suc[local]:
+  !s t n.
+    smt_seq_indexof_aux t (SUC n) s =
+    OPTION_MAP SUC (smt_seq_indexof_aux t n s)
+Proof
+  Induct >> Cases_on `t` >> rw [smt_seq_indexof_aux_def] >> simp []
+QED
+
+Theorem smt_seq_replace_raw_eq_source_pattern[local]:
+  IS_SUBLIST (s : 'a list) t /\
+  (smt_seq_replace_raw s t r = s) ==> (r = t)
+Proof
+  strip_tac >>
+  drule_then (qspec_then `r` strip_assume_tac)
+    smt_seq_replace_raw_hit >>
+  `pre ++ r ++ post = pre ++ t ++ post` by metis_tac [] >>
+  `r ++ post = t ++ post` by metis_tac [listTheory.APPEND_11] >>
+  metis_tac [listTheory.APPEND_11]
+QED
+
+Theorem smt_seq_replace_no_change_reverse[local]:
+  y <> (z : 'a list) /\ (smt_seq_replace x y z = x) ==>
+  ~IS_SUBLIST x y
+Proof
+  strip_tac >> CCONTR_TAC >>
+  `smt_seq_replace_raw x y z = x` by
+    fs [smt_seq_replace_def] >>
+  metis_tac [smt_seq_replace_raw_eq_source_pattern]
+QED
+
+Theorem smt_seq_replace_no_change_eq:
+  y <> (z : 'a list) ==>
+  ((smt_seq_replace x y z = x) <=> ~IS_SUBLIST x y)
+Proof
+  metis_tac [smt_seq_replace_absent,
+             smt_seq_replace_no_change_reverse]
+QED
+
+Theorem smt_seq_replace_equal_length[local]:
+  (LENGTH (t : 'a list) = LENGTH r) ==>
+  (LENGTH (smt_seq_replace s t r) = LENGTH s)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST s t`
+  >- (drule_then (qspec_then `r` strip_assume_tac)
+        smt_seq_replace_raw_hit >>
+      fs [smt_seq_replace_def]) >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_target_equal_length_forward[local]:
+  (LENGTH (y : 'a list) = LENGTH z) /\ ((x = y) \/ (x = z)) ==>
+  (smt_seq_replace x y z = z)
+Proof
+  strip_tac >>
+  fs [smt_seq_replace_self, smt_seq_replace_self_target]
+QED
+
+Theorem smt_seq_replace_target_equal_length_reverse[local]:
+  (LENGTH (y : 'a list) = LENGTH z) /\
+  (smt_seq_replace x y z = z) ==>
+  ((x = y) \/ (x = z))
+Proof
+  strip_tac >>
+  Cases_on `x = y` >> simp [] >>
+  Cases_on `IS_SUBLIST x y` >> fs [smt_seq_replace_absent] >>
+  `LENGTH (smt_seq_replace x y z) = LENGTH x` by
+    metis_tac [smt_seq_replace_equal_length] >>
+  `LENGTH x = LENGTH y` by metis_tac [] >>
+  metis_tac [smt_seq_contains_length_equal]
+QED
+
+Theorem smt_seq_replace_target_equal_length_eq:
+  (LENGTH (y : 'a list) = LENGTH z) ==>
+  ((smt_seq_replace x y z = z) <=> ((x = y) \/ (x = z)))
+Proof
+  metis_tac [smt_seq_replace_target_equal_length_forward,
+             smt_seq_replace_target_equal_length_reverse]
+QED
+
+Theorem smt_seq_indexof_aux_first[local]:
+  !s t n.
+    (smt_seq_indexof_aux t 0 s = SOME n) ==>
+    IS_PREFIX (DROP n s) t /\
+    !m. m < n ==> ~IS_PREFIX (DROP m s) t
+Proof
+  Induct
+  >- simp [smt_seq_indexof_aux_def] >>
+  rpt gen_tac >>
+  rw [smt_seq_indexof_aux_def] >>
+  assume_tac (Q.SPECL [`s`, `t`, `0`] smt_seq_indexof_aux_suc) >>
+  Cases_on `smt_seq_indexof_aux t 0 s` >>
+  fs [] >>
+  Cases_on `m` >> fs []
+QED
+
+Theorem smt_seq_indexof_aux_first_intro[local]:
+  !n s t.
+    IS_PREFIX (DROP n s) t /\
+    (!m. m < n ==> ~IS_PREFIX (DROP m s) t) ==>
+    (smt_seq_indexof_aux t 0 s = SOME n)
+Proof
+  Induct THENL
+  [Cases_on `s` >> rw [smt_seq_indexof_aux_def],
+   rpt gen_tac >>
+   (Cases_on `s` THENL
+    [simp [] >> strip_tac >>
+       first_x_assum (qspec_then `0` mp_tac) >> simp [],
+     rw [smt_seq_indexof_aux_def] THENL
+     [disj2_tac >> qexists_tac `0` >> simp [],
+      qpat_x_assum `!s t. _`
+        (qspecl_then [`t'`, `t`] mp_tac) >>
+      impl_tac
+      >- (simp [] >> rpt strip_tac >>
+          first_x_assum (qspec_then `SUC m` mp_tac) >> simp []) >>
+      strip_tac >>
+      assume_tac
+        (Q.SPECL [`t'`, `t`, `0`] smt_seq_indexof_aux_suc) >>
+      fs []]])]
+QED
+
+Theorem smt_seq_inserted_source_no_early[local]:
+  (y = pre ++ w ++ post) /\ (LENGTH pre = n) /\
+  (!m. m < n ==> ~IS_PREFIX (DROP m y) w) ==>
+  !m. m < n ==>
+    ~IS_PREFIX (DROP m (pre ++ y ++ post)) y
+Proof
+  rpt strip_tac >>
+  fs [rich_listTheory.IS_PREFIX_APPEND] >>
+  qpat_x_assum `DROP m (pre ++ y ++ post) = y ++ l`
+    (mp_tac o AP_TERM ``DROP n``) >>
+  simp [listTheory.DROP_APPEND1, listTheory.DROP_APPEND2,
+        listTheory.APPEND_ASSOC] >>
+  strip_tac >>
+  first_x_assum (qspec_then `m` mp_tac) >>
+  simp [] >>
+  `IS_PREFIX ((DROP m pre ++ w ++ post) ++ post) w` by
+    (rw [rich_listTheory.IS_PREFIX_APPEND] >>
+     qexists_tac `post ++ l` >> fs [listTheory.APPEND_ASSOC]) >>
+  `LENGTH w <= LENGTH (DROP m pre ++ w ++ post)` by simp [] >>
+  `IS_PREFIX (DROP m pre ++ w ++ post) w` by
+    metis_tac [smt_seq_is_prefix_append_short] >>
+  fs [rich_listTheory.IS_PREFIX_APPEND] >>
+  qexists_tac `l''` >>
+  simp [listTheory.DROP_APPEND1] >>
+  decide_tac
+QED
+
+Theorem smt_seq_replace_raw_lookahead_hit[local]:
+  IS_SUBLIST (y : 'a list) w ==>
+  (smt_seq_replace_raw (smt_seq_replace_raw y w y) y z =
+   smt_seq_replace_raw y w z)
+Proof
+  strip_tac >>
+  Cases_on `smt_seq_indexof_aux w 0 y`
+  >- fs [smt_seq_indexof_aux_none] >>
+  drule smt_seq_indexof_aux_first >>
+  strip_tac >>
+  qpat_x_assum `smt_seq_indexof_aux w 0 y = SOME x`
+    (fn th => assume_tac th >>
+       mp_tac (MATCH_MP smt_seq_indexof_aux_split th)) >>
+  strip_tac >>
+  qpat_x_assum `LENGTH pre + 0 = x` (SUBST_ALL_TAC o SYM) >>
+  `smt_seq_replace_raw y w y = pre ++ y ++ post` by
+    simp [smt_seq_replace_raw_def, smt_seq_replace_take_splice,
+          smt_seq_replace_drop_splice] >>
+  `smt_seq_indexof_aux y 0 (pre ++ y ++ post) =
+     SOME (LENGTH pre)` by
+    (irule smt_seq_indexof_aux_first_intro >>
+     conj_tac
+     >- (match_mp_tac smt_seq_inserted_source_no_early >> fs []) >>
+     simp [rich_listTheory.DROP_LENGTH_APPEND,
+           rich_listTheory.IS_PREFIX_APPEND] >>
+     qexists_tac `post` >>
+     simp [listTheory.DROP_APPEND1, listTheory.APPEND_ASSOC]) >>
+  qpat_x_assum `y = pre ++ w ++ post` SUBST_ALL_TAC >>
+  fs [smt_seq_replace_raw_def, smt_seq_replace_take_splice,
+      smt_seq_replace_drop_splice, listTheory.APPEND_ASSOC] >>
+  simp [listTheory.TAKE_APPEND1, listTheory.DROP_APPEND1]
+QED
+
+Theorem smt_seq_replace_lookahead_hit[local]:
+  IS_SUBLIST (y : 'a list) w ==>
+  (smt_seq_replace (smt_seq_replace y w y) y z =
+   smt_seq_replace y w z)
+Proof
+  rw [smt_seq_replace_def] >>
+  metis_tac [smt_seq_replace_raw_lookahead_hit]
+QED
+
+Theorem smt_seq_replace_length_le[local]:
+  IS_SUBLIST (s : 'a list) t /\ LENGTH r <= LENGTH t ==>
+  LENGTH (smt_seq_replace s t r) <= LENGTH s
+Proof
+  strip_tac >>
+  drule_then (qspec_then `r` strip_assume_tac)
+    smt_seq_replace_raw_hit >>
+  fs [smt_seq_replace_def]
+QED
+
+Theorem smt_seq_replace_nested_lookahead_id_simp:
+  w <> (z : 'a list) /\ LENGTH z <= LENGTH w ==>
+  (smt_seq_replace (smt_seq_replace y w y) y z =
+   smt_seq_replace (smt_seq_replace y w z) y z)
+Proof
+  strip_tac >>
+  Cases_on `IS_SUBLIST y w`
+  >- (`smt_seq_replace (smt_seq_replace y w y) y z =
+         smt_seq_replace y w z` by
+        metis_tac [smt_seq_replace_lookahead_hit] >>
+      `LENGTH (smt_seq_replace y w z) <= LENGTH y` by
+        metis_tac [smt_seq_replace_length_le] >>
+      `~IS_SUBLIST (smt_seq_replace y w z) y` by
+        (CCONTR_TAC >>
+         `LENGTH y <= LENGTH (smt_seq_replace y w z)` by
+           metis_tac [smt_seq_contains_length_bound] >>
+         `LENGTH (smt_seq_replace y w z) = LENGTH y` by
+           decide_tac >>
+         `smt_seq_replace y w z = y` by
+           metis_tac [smt_seq_contains_length_equal] >>
+         metis_tac [smt_seq_replace_no_change_eq]) >>
+      simp [smt_seq_replace_absent]) >>
+  simp [smt_seq_replace_absent, smt_seq_replace_self]
+QED
+
+Theorem smt_seq_replace_raw_singleton_cons[local]:
+  smt_seq_replace_raw (h::s) [a] [b] =
+  if h = a then b::s else h::smt_seq_replace_raw s [a] [b]
+Proof
+  simp [smt_seq_replace_raw_def, smt_seq_indexof_aux_def,
+        rich_listTheory.IS_PREFIX] >>
+  Cases_on `h = a` >> simp [smt_seq_indexof_aux_suc] >>
+  assume_tac (SIMP_RULE (srw_ss()) []
+    (ISPECL [``s:'a list``, ``[a:'a]``, ``0:num``]
+      smt_seq_indexof_aux_suc)) >>
+  Cases_on `smt_seq_indexof_aux [a] 0 s` >>
+  fs [arithmeticTheory.ADD1]
+QED
+
+Theorem smt_seq_replace_raw_singleton_nil[local]:
+  smt_seq_replace_raw ([] : 'a list) [a] [b] = []
+Proof
+  simp [smt_seq_replace_raw_def, smt_seq_indexof_aux_def]
+QED
+
+Theorem smt_seq_replace_raw_singleton_eq_nil[local]:
+  (smt_seq_replace_raw (s : 'a list) [a] [b] = []) <=> (s = [])
+Proof
+  Cases_on `s` >>
+  simp [smt_seq_replace_raw_singleton_nil,
+        smt_seq_replace_raw_singleton_cons] >>
+  Cases_on `h = a` >> simp []
+QED
+
+Theorem smt_seq_replace_raw_singleton_take[local]:
+  !n s.
+    TAKE n (smt_seq_replace_raw s [a] [b]) =
+    smt_seq_replace_raw (TAKE n s) [a] [b]
+Proof
+  rpt gen_tac >> qid_spec_tac `s` >> Induct_on `n` >>
+  Cases_on `s` >>
+  simp [smt_seq_replace_raw_singleton_nil,
+        smt_seq_replace_raw_singleton_cons] >>
+  Cases_on `h = a` >> fs [boolTheory.EQ_SYM_EQ]
+QED
+
+Theorem smt_seq_replace_raw_length_one_take[local]:
+  (LENGTH (t : 'a list) = 1) /\ (LENGTH r = 1) ==>
+  (TAKE n (smt_seq_replace_raw s t r) =
+   smt_seq_replace_raw (TAKE n s) t r)
+Proof
+  strip_tac >>
+  Cases_on `t` >> fs [] >>
+  Cases_on `r` >> fs [] >>
+  MATCH_ACCEPT_TAC smt_seq_replace_raw_singleton_take
+QED
+
+Theorem smt_seq_extract_replace_len_one:
+  (LENGTH (t : 'a list) = LENGTH r) /\ (LENGTH t = 1) ==>
+  (smt_seq_extract (smt_seq_replace s t r) 0 n =
+   smt_seq_replace (smt_seq_extract s 0 n) t r)
+Proof
+  strip_tac >>
+  `LENGTH r = 1` by decide_tac >>
+  fs [listTheory.LENGTH_EQ_1] >>
+  Cases_on `n <= 0` >>
+  Cases_on `s = []` >>
+  simp [smt_seq_extract_def, smt_seq_replace_def,
+        smt_seq_replace_raw_length_one_take,
+        smt_seq_replace_raw_singleton_eq_nil,
+        smt_seq_replace_raw_singleton_nil]
+QED
+
+Theorem smt_seq_replace_raw_empty_singleton[local]:
+  (smt_seq_replace_raw (s : 'a list) [c] [] = []) <=>
+  ((s = []) \/ (s = [c]))
+Proof
+  Cases_on `IS_SUBLIST s [c]`
+  >- (drule_then (qspec_then `[]` strip_assume_tac)
+        smt_seq_replace_raw_hit >>
+      fs [] >>
+      eq_tac >> strip_tac >> fs [] >>
+      Cases_on `pre` >> Cases_on `post` >> fs []) >>
+  `IS_SUBLIST [c] [c]` by
+    (rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+     qexistsl [`[]`, `[]`] >> simp []) >>
+  fs [smt_seq_replace_raw_absent] >>
+  metis_tac []
+QED
+
+Theorem smt_seq_is_prefix_singleton[local]:
+  (((s : 'a list) = []) \/ (s = [c])) <=> isPREFIX s [c]
+Proof
+  Cases_on `s` >> simp [listTheory.isPREFIX] >>
+  Cases_on `t` >> simp [listTheory.isPREFIX]
+QED
+
+Theorem smt_seq_replace_empty_result_len_one:
+  (LENGTH (empty : 'a list) = 0) /\ (LENGTH y = 1) ==>
+  ((smt_seq_replace x y empty = empty) <=> isPREFIX x y)
+Proof
+  Cases_on `empty` >> fs [] >>
+  Cases_on `y` >> fs [] >>
+  Cases_on `t` >> fs [smt_seq_replace_def,
+                       smt_seq_replace_raw_empty_singleton,
+                       smt_seq_is_prefix_singleton]
+QED
+
+Theorem smt_seq_contains_empty_source[local]:
+  IS_SUBLIST ([] : 'a list) s <=> (s = [])
+Proof
+  eq_tac >> simp [rich_listTheory.IS_SUBLIST_APPEND] >>
+  strip_tac >>
+  Cases_on `l` >> Cases_on `l'` >> fs []
+QED
+
+Theorem smt_seq_contains_empty_pattern[local]:
+  IS_SUBLIST (s : 'a list) []
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexistsl [`s`, `[]`] >> simp []
+QED
+
+Theorem smt_seq_replace_empty_result_nonempty_forward[local]:
+  z <> ([] : 'a list) /\ (smt_seq_replace x y z = []) ==>
+  ((x = []) /\ y <> [])
+Proof
+  strip_tac >>
+  `~IS_SUBLIST x y` by
+    (CCONTR_TAC >>
+     `IS_SUBLIST (smt_seq_replace x y z) z` by
+       metis_tac [smt_seq_replace_contains_replacement] >>
+     qpat_x_assum `smt_seq_replace x y z = []` SUBST_ALL_TAC >>
+     fs [smt_seq_contains_empty_source]) >>
+  `x = []` by metis_tac [smt_seq_replace_absent] >>
+  fs [smt_seq_contains_empty_source]
+QED
+
+Theorem smt_seq_replace_empty_result_nonempty_reverse[local]:
+  (x = ([] : 'a list)) /\ y <> [] ==>
+  (smt_seq_replace x y z = [])
+Proof
+  strip_tac >>
+  `~IS_SUBLIST ([] : 'a list) y` by
+    fs [smt_seq_contains_empty_source] >>
+  simp [smt_seq_replace_absent]
+QED
+
+Theorem smt_seq_replace_empty_result_nonempty:
+  (LENGTH (empty : 'a list) = 0) /\ z <> empty ==>
+  ((smt_seq_replace x y z = empty) <=>
+   ((x = empty) /\ y <> empty))
+Proof
+  Cases_on `empty` >> fs [] >>
+  metis_tac [smt_seq_replace_empty_result_nonempty_forward,
+             smt_seq_replace_empty_result_nonempty_reverse]
+QED
+
+Theorem smt_seq_replace_empty_source_nonempty:
+  (LENGTH (empty : 'a list) = 0) /\ z <> empty ==>
+  ((smt_seq_replace empty x y = z) <=>
+   ((x = empty) /\ (y = z)))
+Proof
+  Cases_on `empty` >> fs [] >>
+  Cases_on `x = []` >>
+  simp [smt_seq_replace_empty, smt_seq_contains_empty_source,
+        smt_seq_replace_absent]
+QED
 
 (* The all-occurrences variant consumes a matching source segment before
    continuing.  The fuel is structural: a nonempty match drops at least one
@@ -208,6 +2196,87 @@ Definition smt_seq_replace_all_def:
     if t = [] then s else smt_seq_replace_all_aux (LENGTH s) s t u
 End
 
+Theorem smt_seq_replace_all_empty:
+  ((t : 'a list) = []) ==> (smt_seq_replace_all s t u = s)
+Proof
+  simp [smt_seq_replace_all_def]
+QED
+
+Theorem smt_seq_replace_all_aux_nil[local]:
+  !fuel t u. smt_seq_replace_all_aux fuel ([] : 'a list) t u = []
+Proof
+  Cases >> simp [smt_seq_replace_all_aux_def]
+QED
+
+Theorem smt_seq_replace_all_self:
+  (s : 'a list) <> [] ==> (smt_seq_replace_all s s u = u)
+Proof
+  Cases_on `s` >> fs [] >>
+  simp [smt_seq_replace_all_def, smt_seq_replace_all_aux_def,
+        smt_seq_replace_all_aux_nil,
+        rich_listTheory.IS_PREFIX_REFL]
+QED
+
+Theorem smt_seq_replace_all_aux_absent[local]:
+  !s t u. ~IS_SUBLIST (s : 'a list) t ==>
+    (smt_seq_replace_all_aux (LENGTH s) s t u = s)
+Proof
+  Induct
+  >- simp [smt_seq_replace_all_aux_def] >>
+  rpt gen_tac >>
+  strip_tac >>
+  `smt_seq_indexof_aux t 0 (h::s) = NONE` by
+    simp [smt_seq_indexof_aux_none] >>
+  fs [smt_seq_indexof_aux_def] >>
+  `~IS_SUBLIST s t` by
+    metis_tac [smt_seq_indexof_aux_none] >>
+  simp [smt_seq_replace_all_aux_def] >>
+  first_x_assum irule
+QED
+
+Theorem smt_seq_replace_all_aux_id[local]:
+  !fuel s t. LENGTH (s : 'a list) <= fuel /\ t <> [] ==>
+    (smt_seq_replace_all_aux fuel s t t = s)
+Proof
+  Induct
+  >- (rpt gen_tac >> strip_tac >>
+      `s = []` by (Cases_on `s` >> fs []) >>
+      simp [smt_seq_replace_all_aux_def]) >>
+  rpt gen_tac >> strip_tac >>
+  Cases_on `s`
+  >- simp [smt_seq_replace_all_aux_def] >>
+  rw [smt_seq_replace_all_aux_def]
+  >- (`LENGTH (DROP (LENGTH t) (h::t')) <= fuel` by
+        (simp [listTheory.LENGTH_DROP] >>
+         Cases_on `t` >> fs [] >> decide_tac) >>
+      `smt_seq_replace_all_aux fuel
+         (DROP (LENGTH t) (h::t')) t t =
+       DROP (LENGTH t) (h::t')` by
+        (first_x_assum irule >> simp []) >>
+      `t ++ DROP (LENGTH t) (h::t') = h::t'` by
+        (fs [rich_listTheory.IS_PREFIX_APPEND] >>
+         simp [rich_listTheory.DROP_LENGTH_APPEND]) >>
+      metis_tac []) >>
+  first_x_assum irule >>
+  fs [] >>
+  decide_tac
+QED
+
+Theorem smt_seq_replace_all_absent:
+  ~IS_SUBLIST (s : 'a list) t ==> (smt_seq_replace_all s t u = s)
+Proof
+  strip_tac >>
+  rw [smt_seq_replace_all_def] >>
+  simp [smt_seq_replace_all_aux_absent]
+QED
+
+Theorem smt_seq_replace_all_id:
+  smt_seq_replace_all (s : 'a list) t t = s
+Proof
+  rw [smt_seq_replace_all_def] >>
+  simp [smt_seq_replace_all_aux_id]
+QED
+
 (* cvc5's update replaces the segment beginning at i.  Like LUPDATE it is
    a no-op outside the source sequence; its replacement is clipped at the
    end of that source sequence. *)
@@ -217,6 +2286,170 @@ Definition smt_seq_update_def:
     else TAKE (Num i) s ++ TAKE (LENGTH s - Num i) t ++
       DROP (Num i + LENGTH t) s
 End
+
+Theorem smt_seq_update_concat_first:
+  (0 <= i) /\ (i + &(LENGTH u) < &(LENGTH s)) ==>
+  (smt_seq_update (s ++ tail) i (u : 'a list) =
+    smt_seq_extract s 0 i ++ u ++
+    smt_seq_extract s (i + &(LENGTH u)) (&(LENGTH s)) ++ tail)
+Proof
+  strip_tac >>
+  `~(i < 0)` by intLib.ARITH_TAC >>
+  `0 <= i + &(LENGTH u)` by intLib.ARITH_TAC >>
+  `Num (i + &(LENGTH u)) = Num i + LENGTH u` by intLib.ARITH_TAC >>
+  `Num (&(LENGTH s)) = LENGTH s` by intLib.ARITH_TAC >>
+  `Num i + LENGTH u < LENGTH s` by intLib.ARITH_TAC >>
+  `s <> []` by (Cases_on `s` >> fs []) >>
+  Cases_on `i = 0` >-
+    simp [smt_seq_extract_def, smt_seq_update_def,
+          listTheory.TAKE_APPEND1, listTheory.DROP_APPEND1,
+          listTheory.TAKE_LENGTH_TOO_LONG] >>
+  `~(i <= 0)` by intLib.ARITH_TAC >>
+  `~(i + &(LENGTH u) < 0)` by intLib.ARITH_TAC >>
+  simp [smt_seq_extract_def, smt_seq_update_def,
+        listTheory.TAKE_APPEND1, listTheory.DROP_APPEND1,
+        listTheory.TAKE_LENGTH_TOO_LONG]
+QED
+
+Theorem list_eq_append_same_length[local]:
+  (LENGTH (s : 'a list) = LENGTH t) ==>
+  ((s = t ++ u) <=> (s = t) /\ (u = []))
+Proof
+  metis_tac [listTheory.APPEND_11_LENGTH, listTheory.APPEND_NIL]
+QED
+
+Theorem list_eq_prepend_same_length[local]:
+  (LENGTH (s : 'a list) = LENGTH t) ==>
+  ((s = u ++ t) <=> (s = t) /\ (u = []))
+Proof
+  metis_tac [listTheory.APPEND_11_LENGTH, listTheory.APPEND]
+QED
+
+Theorem list_append_neq_same_length:
+  (LENGTH (s : 'a list) = LENGTH t) /\ s <> t ==>
+  ((s ++ u = t ++ v) = F)
+Proof
+  simp [CONJUNCT1 listTheory.APPEND_11_LENGTH]
+QED
+
+Theorem list_neq_append_same_length[local]:
+  (LENGTH (s : 'a list) = LENGTH t) /\ s <> t ==>
+  ((s = t ++ u) = F)
+Proof
+  metis_tac [list_eq_append_same_length]
+QED
+
+Theorem list_neq_prepend_same_length[local]:
+  (LENGTH (s : 'a list) = LENGTH t) /\ s <> t ==>
+  ((s = u ++ t) = F)
+Proof
+  metis_tac [list_eq_prepend_same_length]
+QED
+
+Theorem list_neq_append_same_int_length[local]:
+  (((s : 'a list) = t) <=> F) ==>
+  ((&LENGTH s : int) = &LENGTH t) ==>
+  ((s = t ++ u) <=> F)
+Proof
+  simp [list_eq_append_same_length]
+QED
+
+Theorem list_neq_prepend_same_int_length[local]:
+  (((s : 'a list) = t) <=> F) ==>
+  ((&LENGTH s : int) = &LENGTH t) ==>
+  ((s = u ++ t) <=> F)
+Proof
+  simp [list_eq_prepend_same_length]
+QED
+
+Theorem list_neq_append2_same_int_length:
+  (((s : 'a list) = t) <=> F) ==>
+  ((&LENGTH s : int) = &LENGTH t) ==>
+  ((s = t ++ u ++ v) <=> F)
+Proof
+  metis_tac [list_neq_append_same_int_length, listTheory.APPEND_ASSOC]
+QED
+
+Theorem list_neq_prepend2_same_int_length:
+  (((s : 'a list) = t) <=> F) ==>
+  ((&LENGTH s : int) = &LENGTH t) ==>
+  ((s = (u ++ v) ++ t) <=> F)
+Proof
+  metis_tac [list_neq_prepend_same_int_length]
+QED
+
+Theorem list_is_suffix_drop[local]:
+  IS_SUFFIX (t : 'a list) s <=>
+  (s = DROP (LENGTH t - LENGTH s) t)
+Proof
+  metis_tac [rich_listTheory.IS_SUFFIX_IMP_DROP,
+             rich_listTheory.IS_SUFFIX_EQ_DROP']
+QED
+
+Theorem smt_seq_suffix_extract:
+  IS_SUFFIX (t : 'a list) s <=>
+  (s = smt_seq_extract t (&(LENGTH t) - &(LENGTH s)) (&(LENGTH s)))
+Proof
+  Cases_on `s = []` >-
+    simp [smt_seq_extract_def, list_is_suffix_drop] >>
+  Cases_on `LENGTH s <= LENGTH t`
+  >- (`0 < LENGTH s` by (Cases_on `s` >> fs []) >>
+      `~(LENGTH t <= LENGTH t - LENGTH s)` by decide_tac >>
+      `Num (&(LENGTH t) - &(LENGTH s)) = LENGTH t - LENGTH s`
+        by intLib.ARITH_TAC >>
+      `Num (&(LENGTH s)) = LENGTH s` by intLib.ARITH_TAC >>
+      simp [list_is_suffix_drop, smt_seq_extract_def,
+            integerTheory.INT_LT_SUB_RADD, listTheory.LENGTH_DROP,
+            listTheory.TAKE_LENGTH_TOO_LONG]) >>
+  `LENGTH t < LENGTH s` by decide_tac >>
+  `~IS_SUFFIX t s` by
+    (rw [rich_listTheory.IS_SUFFIX_APPEND] >>
+     strip_tac >>
+     fs [listTheory.LENGTH_APPEND]) >>
+  simp [smt_seq_extract_def, integerTheory.INT_LT_SUB_RADD]
+QED
+
+Theorem list_suffix_equal_length:
+  LENGTH (t : 'a list) <= LENGTH s ==>
+  (IS_SUFFIX t s <=> (s = t))
+Proof
+  rw [rich_listTheory.IS_SUFFIX_APPEND] >>
+  eq_tac
+  >- (strip_tac >>
+      fs [listTheory.LENGTH_APPEND] >>
+      `LENGTH l = 0` by decide_tac >>
+      fs []) >>
+  strip_tac >>
+  qexists `[]` >>
+  simp []
+QED
+
+Theorem list_suffix_length_one:
+  (LENGTH (t : 'a list) = 1) ==>
+  (IS_SUFFIX t s <=> IS_SUBLIST t s)
+Proof
+  Cases_on `t` >> fs [] >>
+  Cases_on `t'` >> fs [] >>
+  rw [rich_listTheory.IS_SUFFIX_APPEND,
+      rich_listTheory.IS_SUBLIST_APPEND] >>
+  eq_tac
+  >- (strip_tac >>
+      qexists `l` >>
+      qexists `[]` >>
+      simp []) >>
+  strip_tac >>
+  Cases_on `s = []`
+  >- (qexists `[h]` >> simp []) >>
+  qexists `l` >>
+  `0 < LENGTH s` by (Cases_on `s` >> fs []) >>
+  `1 = LENGTH l + LENGTH s + LENGTH l'` by
+    (qpat_x_assum `[h] = _`
+       (assume_tac o AP_TERM ``LENGTH : 'a list -> num``) >>
+     fs [listTheory.LENGTH_APPEND]) >>
+  `LENGTH l' = 0` by
+    decide_tac >>
+  fs []
+QED
 
 (* cvc5's CPC proof format totalizes integer Euclidean division and modulus.
    Unlike HOL's ediv/emod, these operators have specified zero-divisor

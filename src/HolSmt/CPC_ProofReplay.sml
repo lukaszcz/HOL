@@ -8,6 +8,17 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "CPC_ProofReplay"
 
+  val rare_seq_contains_refl = Tactical.TAC_PROOF
+    (([], ``!(x:'a list). IS_SUBLIST x x``),
+     Tactical.THEN
+       (bossLib.RW_TAC (bossLib.srw_ss())
+          [rich_listTheory.IS_SUBLIST_APPEND],
+        Tactical.THEN
+          (Tactic.EXISTS_TAC ``[]:'a list``,
+           Tactical.THEN
+             (Tactic.EXISTS_TAC ``[]:'a list``,
+              bossLib.RW_TAC (bossLib.srw_ss()) []))))
+
   fun profile name f x =
     Profile.profile_with_exn_name name f x
 
@@ -7004,6 +7015,1523 @@ local
       discharged
     end
 
+  datatype rare_source_sexp =
+      RareAtom of string
+    | RareList of rare_source_sexp list
+
+  fun parse_rare_source_sexp source =
+    let
+      fun space #"(" = " ( "
+        | space #")" = " ) "
+        | space character = String.str character
+      val tokens = String.tokens Char.isSpace (String.translate space source)
+      fun parse ("(" :: rest) =
+            let
+              fun items accumulated (")" :: rest) =
+                    (RareList (List.rev accumulated), rest)
+                | items _ [] = raise ERR "parse_rare_source_sexp"
+                    "unterminated declarative RARE expression"
+                | items accumulated tokens =
+                    let val (item, rest) = parse tokens in
+                      items (item :: accumulated) rest
+                    end
+              val (items, rest) = items [] rest
+            in
+              (items, rest)
+            end
+        | parse (")" :: _) = raise ERR "parse_rare_source_sexp"
+            "unexpected ')' in declarative RARE expression"
+        | parse (token :: rest) = (RareAtom token, rest)
+        | parse [] = raise ERR "parse_rare_source_sexp"
+            "empty declarative RARE expression"
+      val (result, rest) = parse tokens
+    in
+      if List.null rest then result
+      else raise ERR "parse_rare_source_sexp"
+        "trailing tokens in declarative RARE expression"
+    end
+
+  val (_, rare_source_base_tmdict) =
+    SmtLib_Logics.parsedicts_of_logic "ALL"
+  val rare_source_tmdict = Library.union_dict rare_source_base_tmdict
+    SmtLib_Theories.CVC5_Seq.tmdict
+
+  fun rare_source_empty carrier =
+    if is_smtstr_type (Term.type_of carrier) then
+      Term.mk_comb
+        (Term.prim_mk_const {Thy = "smtstring", Name = "SmtStr"},
+         listSyntax.mk_nil numSyntax.num)
+    else if listSyntax.is_list_type (Term.type_of carrier) then
+      listSyntax.mk_nil (listSyntax.eltype carrier)
+    else raise ERR "rare_source_empty"
+      "expected a String or Seq carrier"
+
+  fun rare_source_is_empty carrier =
+    if is_smtstr_type (Term.type_of carrier) then
+      (case boolSyntax.strip_comb carrier of
+         (head, [characters]) =>
+           (case Lib.total Term.dest_thy_const head of
+              SOME {Thy = "smtstring", Name = "SmtStr", ...} =>
+                listSyntax.is_nil characters
+            | _ => false)
+       | _ => false)
+    else listSyntax.is_list_type (Term.type_of carrier) andalso
+      listSyntax.is_nil carrier
+
+  fun rare_source_structured_wrapper
+      ({provenance, ...} : located_term) =
+    case provenance of
+      UnavailableProvenance "CPC structured-list metadata" => true
+    | UnavailableProvenance "CPC structured-list alias" => true
+    | _ => false
+
+  fun rare_source_fixed_type source =
+    case source of
+      RareSourceString => SOME (Term.type_of ``SmtStr []``)
+    | RareSourceRegex => SOME (Term.type_of ``reglan_none``)
+    | RareSourceInt => SOME intSyntax.int_ty
+    | RareSourceSeq => NONE
+    | RareSourceElement => NONE
+
+  fun rare_source_aggregate_name aggregate carrier_ty =
+    case aggregate of
+      RareSourceSeqConcat =>
+        if is_smtstr_type carrier_ty then "str.++"
+        else if listSyntax.is_list_type carrier_ty then "seq.++"
+        else raise ERR "rare_source_aggregate_name"
+          "sequence concatenation has a non-String/non-Seq carrier"
+    | RareSourceRegexConcat => "re.++"
+    | RareSourceRegexUnion => "re.union"
+    | RareSourceRegexInter => "re.inter"
+
+  fun rare_source_aggregate_head provenance =
+    case provenance of
+      ApplicationProvenance (head, operands) =>
+        if List.exists (Lib.equal head)
+             ["str.++", "seq.++", "re.++", "re.union", "re.inter"]
+        then SOME (head, List.length operands)
+        else NONE
+    | _ => NONE
+
+  fun rare_source_identity aggregate carrier =
+    let
+      fun constant symbol =
+        SmtLib_Parser.apply_term rare_source_tmdict symbol [] []
+      fun empty_string () =
+        Term.mk_comb
+          (Term.prim_mk_const {Thy = "smtstring", Name = "SmtStr"},
+           listSyntax.mk_nil numSyntax.num)
+    in
+      case aggregate of
+        RareSourceSeqConcat => rare_source_is_empty carrier
+      | RareSourceRegexConcat => Term.aconv carrier
+          (SmtLib_Parser.apply_term rare_source_tmdict "str.to_re" []
+            [empty_string ()])
+      | RareSourceRegexUnion => Term.aconv carrier (constant "re.none")
+      | RareSourceRegexInter => Term.aconv carrier (constant "re.all")
+    end
+
+  fun rare_source_binary_head aggregate carrier_ty term =
+    let
+      val (head, operands) = boolSyntax.strip_comb term
+      val expected =
+        case aggregate of
+          RareSourceSeqConcat =>
+            if is_smtstr_type carrier_ty then
+              {Thy = "smtstring", Name = "smtstr_concat"}
+            else {Thy = "list", Name = "APPEND"}
+        | RareSourceRegexConcat =>
+            {Thy = "smtstring", Name = "reglan_concat"}
+        | RareSourceRegexUnion =>
+            {Thy = "smtstring", Name = "reglan_union"}
+        | RareSourceRegexInter =>
+            {Thy = "smtstring", Name = "reglan_inter"}
+    in
+      case (Lib.total Term.dest_thy_const head, operands) of
+        (SOME {Thy, Name, ...}, [left, right]) =>
+          if Thy = #Thy expected andalso Name = #Name expected
+          then SOME (left, right)
+          else NONE
+      | _ => NONE
+    end
+
+  (* cvc5 serializes a :list substitution as its aggregate term, not as a
+     synthetic @list.  The source metadata names that aggregate explicitly.
+     Its outer variadic application denotes the exact lexical operands, a
+     bare identity denotes [], and every other carrier term is a singleton.
+     Application provenance is authoritative for the outer boundary because
+     HOL elaboration left-folds variadic operators and erases unary
+     wrappers. *)
+  fun rare_source_native_list name formal aggregate
+      ({term, provenance} : located_term) =
+    let
+      val carrier_ty = Term.type_of term
+      val expected_head = rare_source_aggregate_name aggregate carrier_ty
+      fun wrong message = raise ERR name
+        ("cvc5-1.3.4 RARE rule " ^ name ^ " formal " ^ formal ^ " " ^
+         message)
+      fun split width aggregate_term =
+        if width = 1 then [aggregate_term]
+        else if width > 1 then
+          (case rare_source_binary_head aggregate carrier_ty aggregate_term of
+             SOME (left, right) => split (width - 1) left @ [right]
+           | NONE => wrong
+               "has aggregate syntax inconsistent with its operands")
+        else wrong "has an empty aggregate application"
+    in
+      case rare_source_aggregate_head provenance of
+        SOME (actual_head, width) =>
+          if actual_head <> expected_head then
+            wrong ("uses mismatched aggregate " ^ actual_head ^
+              " instead of " ^ expected_head)
+          else split width term
+      | NONE => if rare_source_identity aggregate term then [] else [term]
+    end
+
+  fun normalize_rare_source_arguments name formals located_args =
+    let
+      val _ = List.length formals = List.length located_args orelse
+        raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " received the wrong argument count")
+      fun wrong formal message = raise ERR name
+        ("cvc5-1.3.4 RARE rule " ^ name ^ " formal " ^ formal ^ " " ^
+         message)
+      fun list_parts formal aggregate (located : located_term) =
+        if rare_source_structured_wrapper located then
+          (case Lib.total listSyntax.dest_list (#term located) of
+             SOME parts => parts
+           | NONE => wrong formal "has malformed CPC list metadata")
+        else
+          (rare_source_native_list name formal aggregate located,
+           Term.type_of (#term located))
+      fun seq_candidate ((formal, kind, source), located : located_term) =
+        if source <> RareSourceSeq then NONE
+        else case kind of
+          RareSourceTerm =>
+            if rare_source_structured_wrapper located then NONE
+            else SOME (Term.type_of (#term located))
+        | RareSourceList aggregate =>
+            let val (elements, element_ty) =
+              list_parts formal aggregate located
+            in
+              if List.null elements andalso Type.is_vartype element_ty
+              then NONE
+              else if List.null elements then SOME element_ty
+              else SOME (Term.type_of (List.hd elements))
+            end
+        | RareSourceIndex => NONE
+      val seq_candidates = List.mapPartial seq_candidate
+        (ListPair.zip (formals, located_args))
+      val seq_type = case seq_candidates of
+          [] => NONE
+        | first :: rest =>
+            if List.all (fn candidate =>
+                 Type.compare (first, candidate) = EQUAL) rest
+            then SOME first
+            else raise ERR name
+              ("cvc5-1.3.4 RARE rule " ^ name ^
+               " has inconsistent Seq carriers")
+      fun expected_type source =
+        case rare_source_fixed_type source of
+          SOME ty => SOME ty
+        | NONE => if source = RareSourceSeq then seq_type else NONE
+      fun check_type formal source term =
+        case expected_type source of
+          NONE => ()
+        | SOME expected =>
+            if Type.compare (Term.type_of term, expected) = EQUAL then ()
+            else wrong formal "has the wrong declared carrier"
+      fun normalize ((formal, kind, source), located : located_term) =
+        let
+          val term = #term located
+          val wrapper = rare_source_structured_wrapper located
+        in
+          case kind of
+            RareSourceList aggregate =>
+              let
+                val (elements, element_ty) =
+                  list_parts formal aggregate located
+                val carrier_ty = case expected_type source of
+                    SOME ty => ty
+                  | NONE =>
+                      if Type.is_vartype element_ty then
+                        wrong formal "has an untyped empty CPC list wrapper"
+                      else element_ty
+                val _ = List.all (fn element =>
+                    Type.compare (Term.type_of element, carrier_ty) = EQUAL)
+                    elements orelse
+                  wrong formal "has mixed or wrong-carrier list elements"
+                val _ = if Type.is_vartype element_ty orelse
+                    Type.compare (element_ty, carrier_ty) = EQUAL then ()
+                  else wrong formal
+                    "has mixed or wrong-carrier list elements"
+              in
+                listSyntax.mk_list (elements, carrier_ty)
+              end
+          | RareSourceTerm =>
+              if wrapper then
+                wrong formal "must not be a CPC list wrapper"
+              else (check_type formal source term; term)
+          | RareSourceIndex =>
+              if wrapper then
+                wrong formal "must not be a CPC list wrapper"
+              else (check_type formal source term; term)
+        end
+    in
+      ListPair.map normalize (formals, located_args)
+    end
+
+  fun eval_rare_source_recipe name formals args expression =
+    let
+      val _ = List.length formals = List.length args orelse
+        raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " received the wrong argument count")
+      val environment = ListPair.map
+        (fn ((formal, kind, _), argument) => (formal, kind, argument))
+        (formals, args)
+      fun lookup formal =
+        case List.find (fn (name, _, _) => name = formal) environment of
+          SOME binding => binding
+        | NONE => raise ERR name
+            ("unknown formal " ^ formal ^ " in its declarative recipe")
+      fun numeral token = intSyntax.mk_injected
+        (numSyntax.mk_numeral (Library.parse_arbnum token))
+      fun is_digits token =
+        String.size token > 0 andalso
+        List.all Char.isDigit (String.explode token)
+      fun is_simple_string_literal token =
+        String.size token >= 2 andalso String.sub (token, 0) = #"\"" andalso
+        String.sub (token, String.size token - 1) = #"\""
+      fun simple_string_literal token =
+        SmtLib_String_Literal.mk_string_term
+          (String.substring (token, 1, String.size token - 2))
+      fun source_name operator operands =
+        let
+          val seq = List.exists
+            (listSyntax.is_list_type o Term.type_of) operands
+        in
+          if not seq then operator
+          else case operator of
+            "str.++" => "seq.++"
+          | "str.len" => "seq.len"
+          | "str.contains" => "seq.contains"
+          | "str.substr" => "seq.extract"
+          | "str.at" => "seq.at"
+          | "str.indexof" => "seq.indexof"
+          | "str.replace" => "seq.replace"
+          | "str.replace_all" => "seq.replace_all"
+          | "str.update" => "seq.update"
+          | "str.prefixof" => "seq.prefixof"
+          | "str.suffixof" => "seq.suffixof"
+          | "str.rev" => "seq.rev"
+          | other => other
+        end
+      fun list_parts formal =
+        let val (_, _, argument) = lookup formal in
+          #1 (listSyntax.dest_list argument)
+          handle Feedback.HOL_ERR _ => raise ERR name
+            ("cvc5-1.3.4 RARE rule " ^ name ^ " list formal " ^ formal ^
+             " lost its explicit CPC list wrapper")
+        end
+      fun identity operator expressions operands =
+        let
+          fun constant symbol =
+            SmtLib_Parser.apply_term rare_source_tmdict symbol [] []
+          fun binary_fold symbol first rest =
+            List.foldl
+              (fn (operand, accumulated) =>
+                SmtLib_Parser.apply_term rare_source_tmdict symbol []
+                  [accumulated, operand])
+              first rest
+          fun indexed_natural tm =
+            numSyntax.dest_numeral (intSyntax.dest_injected tm)
+            handle Feedback.HOL_ERR _ => raise ERR name
+              ("cvc5-1.3.4 RARE rule " ^ name ^
+               " requires literal natural re.loop indices")
+        in
+        case (operator, operands) of
+          ("str.++", []) =>
+            let
+              fun carrier (RareAtom formal :: _) = #3 (lookup formal)
+                | carrier (_ :: rest) = carrier rest
+                | carrier [] = raise ERR name
+                    "empty concat recipe has no carrier witness"
+            in
+              rare_source_empty (carrier expressions)
+            end
+        | ("seq.++", []) => raise ERR name
+            "internal unnormalized Seq concat recipe"
+        | ("and", []) => boolSyntax.T
+        | ("or", []) => boolSyntax.F
+        | ("str.++", [operand]) => operand
+        | ("seq.++", [operand]) => operand
+        | ("re.++", [operand]) => operand
+        | ("re.union", [operand]) => operand
+        | ("re.inter", [operand]) => operand
+        | ("re.++", []) =>
+            SmtLib_Parser.apply_term rare_source_tmdict "str.to_re" []
+              [rare_source_empty
+                (Term.mk_comb
+                  (Term.prim_mk_const
+                    {Thy = "smtstring", Name = "SmtStr"},
+                   listSyntax.mk_nil numSyntax.num))]
+        | ("re.union", []) => constant "re.none"
+        | ("re.inter", []) => constant "re.all"
+        | ("re.++", first :: rest) => binary_fold "re.++" first rest
+        | ("re.union", first :: rest) =>
+            binary_fold "re.union" first rest
+        | ("re.inter", first :: rest) =>
+            binary_fold "re.inter" first rest
+        | ("re.loop", [lo, hi, re]) =>
+            SmtLib_Parser.apply_term rare_source_tmdict "re.loop"
+              [numSyntax.mk_numeral (indexed_natural lo),
+               numSyntax.mk_numeral (indexed_natural hi)] [re]
+        | ("and", [operand]) => operand
+        | ("or", [operand]) => operand
+        | _ => SmtLib_Parser.apply_term rare_source_tmdict
+            (source_name operator operands) [] operands
+        end
+      fun eval (RareAtom formal) =
+            (case List.find (fn (candidate, _, _) => candidate = formal)
+                 environment of
+               SOME (_, RareSourceTerm, argument) => argument
+             | SOME (_, RareSourceList _, _) => raise ERR name
+                 ("list formal " ^ formal ^ " used outside a variadic head")
+             | SOME (_, RareSourceIndex, argument) => argument
+             | NONE =>
+                 if formal = "true" then boolSyntax.T
+                 else if formal = "false" then boolSyntax.F
+                 else if is_simple_string_literal formal then
+                   simple_string_literal formal
+                 else if is_digits formal then numeral formal
+                 else SmtLib_Parser.apply_term rare_source_tmdict
+                   formal [] [])
+        | eval (RareList
+            [RareAtom "@seq.empty_of_type",
+             RareList [RareAtom "@type_of", RareAtom formal]]) =
+            rare_source_empty (#3 (lookup formal))
+        | eval (RareList (RareAtom operator :: expressions)) =
+            let
+              fun operands [] = []
+                | operands (RareAtom formal :: rest) =
+                    (case List.find
+                       (fn (candidate, _, _) => candidate = formal)
+                       environment of
+                       SOME (_, RareSourceList _, _) =>
+                         list_parts formal @ operands rest
+                     | _ => eval (RareAtom formal) :: operands rest)
+                | operands (expression :: rest) =
+                    eval expression :: operands rest
+              val arguments = operands expressions
+            in
+              identity operator expressions arguments
+            end
+        | eval (RareList []) = raise ERR name
+            "empty application in its declarative recipe"
+        | eval _ = raise ERR name
+            "non-atomic application head in its declarative recipe"
+    in
+      eval (parse_rare_source_sexp expression)
+    end
+
+  fun validate_rare_source_premises name
+      ({formals, premises, ...} : rare_source_recipe) prems args =
+    let
+      val expected_premises = List.map
+        (eval_rare_source_recipe name formals args) premises
+      val supplied_premises = List.map Thm.concl prems
+      val _ = ListPair.allEq (fn (expected, supplied) =>
+          Term.aconv expected supplied)
+          (expected_premises, supplied_premises) orelse
+        raise ERR name
+          ("cvc5-1.3.4 RARE rule " ^ name ^
+           " premises do not match its declarative source recipe")
+    in
+      expected_premises
+    end
+
+  fun validate_rare_source_contract name
+      (recipe as {formals, target, ...} : rare_source_recipe)
+      prems conclusion args =
+    let
+      val expected_premises =
+        validate_rare_source_premises name recipe prems args
+      val expected = eval_rare_source_recipe name formals args target
+      val _ = case conclusion of
+          NONE => ()
+        | SOME declared =>
+            if Term.aconv expected declared then ()
+            else raise ERR name
+              ("cvc5-1.3.4 RARE rule " ^ name ^
+               " conclusion does not match its declarative source recipe")
+    in
+      {expected_premises = expected_premises, expected = expected}
+    end
+
+  fun replay_rare_source_recipe family name
+      (recipe : rare_source_recipe) prems conclusion args =
+    let
+      val {expected_premises, expected} =
+        validate_rare_source_contract name recipe prems conclusion args
+      fun implication_target () =
+        List.foldr boolSyntax.mk_imp expected expected_premises
+      fun apply_implication theorem =
+        List.foldl
+          (fn (premise, theorem) =>
+            Thm.MP theorem (Thm.ASSUME premise))
+          theorem expected_premises
+      fun prove_implication tactic =
+        let
+          val implication = implication_target ()
+          val theorem = Tactical.TAC_PROOF (([], implication), tactic)
+        in
+          apply_implication theorem
+        end
+      fun owning_procedure () =
+        let val implication = implication_target () in
+          apply_implication
+            (if SmtSeqProve.has_seq_type implication then
+               SmtSeqProve.seq_prove implication
+            else SmtStringProve.string_prove intLib.ARITH_PROVE implication)
+        end
+      fun missing_recipe () = raise ERR name
+        ("cvc5-1.3.4 RARE rule " ^ name ^
+         " has no fixed typed family proof recipe")
+      fun seq_family_prove () =
+        if name = "str-eq-ctn-false" then
+          prove_implication (metisLib.METIS_TAC
+            [boolTheory.EQ_CLAUSES, listTheory.APPEND_ASSOC,
+             rich_listTheory.IS_SUBLIST_APPEND])
+        else if name = "str-eq-ctn-full-false1" orelse
+           name = "str-eq-ctn-full-false2" then
+          prove_implication (metisLib.METIS_TAC
+            [rare_seq_contains_refl])
+        else if name = "seq-rev-rev" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [listTheory.REVERSE_REVERSE])
+        else if name = "str-substr-concat1" then
+          prove_implication (metisLib.METIS_TAC
+            [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+             HolSmtTheory.smt_seq_extract_body_concat_left_bound2])
+        else if name = "str-substr-empty-range" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+             HolSmtTheory.smt_seq_extract_def])
+        else if name = "str-substr-empty-str" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [listTheory.LENGTH_EQ_0, HolSmtTheory.smt_seq_extract_def])
+        else if name = "str-substr-eq-empty" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                  [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+                   Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_zero_empty_iff,
+                   Tactical.THEN
+                     (bossLib.ASM_SIMP_TAC (bossLib.srw_ss())
+                        [integerTheory.INT_NOT_LE],
+                      intLib.ARITH_TAC)))))
+        else if name = "str-substr-full-eq" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_extract_body_full_eq])
+        else if name = "str-at-elim" then
+          let
+            val generic = Rewrite.REWRITE_RULE
+              [HolSmtTheory.smt_seq_at_def,
+               HolSmtTheory.smt_seq_extract_def]
+              HolSmtTheory.smt_seq_at_extract
+          in
+            (Drule.INST_TY_TERM
+               (Term.match_term (Thm.concl generic) expected) generic
+             handle Feedback.HOL_ERR _ =>
+               let val symmetric = Thm.SYM generic in
+                 Drule.INST_TY_TERM
+                   (Term.match_term (Thm.concl symmetric) expected)
+                   symmetric
+               end)
+          end
+        else if name = "str-substr-empty-start" orelse
+                name = "str-substr-empty-start-neg" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [integerTheory.int_ge,
+             HolSmtTheory.smt_seq_extract_body_empty_start,
+             HolSmtTheory.smt_seq_extract_body_empty_start_neg])
+        else if name = "str-substr-substr-start-geq-len" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [integerTheory.int_ge,
+             HolSmtTheory.smt_seq_extract_body_nested_empty_start])
+        else if name = "str-substr-z-eq-empty-leq" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [integerTheory.int_le,
+             HolSmtTheory.smt_seq_extract_body_zero_eq_empty])
+        else if name = "str-substr-eq-empty-leq-len" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [integerTheory.int_ge, integerTheory.int_gt,
+             integerTheory.int_le,
+             HolSmtTheory.smt_seq_extract_body_eq_empty_length])
+        else if name = "str-update-in-first-concat" then
+          prove_implication (metisLib.METIS_TAC
+            [integerTheory.int_ge, integerTheory.int_lt,
+             listTheory.APPEND_ASSOC,
+             HolSmtTheory.smt_seq_extract_def,
+             HolSmtTheory.smt_seq_update_concat_first])
+        else if name = "str-concat-clash-rev" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES, integerTheory.INT_INJ,
+             Thm.CONJUNCT2 listTheory.APPEND_11_LENGTH])
+        else if name = "str-concat-unify-rev" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [listTheory.APPEND_ASSOC])
+        else if name = "str-concat-clash" then
+          prove_implication (metisLib.METIS_TAC
+            [boolTheory.EQ_CLAUSES, integerTheory.INT_INJ,
+             listTheory.APPEND_ASSOC,
+             HolSmtTheory.list_append_neq_same_length])
+        else if name = "str-concat-clash2" then
+          prove_implication (Tactic.MATCH_ACCEPT_TAC
+            HolSmtTheory.list_neq_append2_same_int_length)
+        else if name = "str-concat-clash2-rev" then
+          prove_implication (Tactic.MATCH_ACCEPT_TAC
+            HolSmtTheory.list_neq_prepend2_same_int_length)
+        else if name = "str-concat-unify" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [listTheory.APPEND_ASSOC])
+        else if name = "str-concat-unify-base" orelse
+                name = "str-concat-unify-base-rev" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [listTheory.APPEND_ASSOC, listTheory.APPEND_EQ_SELF])
+        else if name = "str-suffixof-elim" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [integerTheory.INT_SUB,
+             HolSmtTheory.smt_seq_extract_def,
+             HolSmtTheory.smt_seq_suffix_extract])
+        else if name = "str-suffixof-eq" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [integerTheory.int_ge,
+             HolSmtTheory.list_suffix_equal_length])
+        else if name = "str-suffixof-one" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.list_suffix_length_one])
+        else if name = "str-substr-combine1" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_combine_right,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-combine2" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_combine_left,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-combine3" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                Tactical.THEN
+                  (Tactical.THEN
+                     (Rewrite.PURE_REWRITE_TAC
+                        [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                      Tactic.MATCH_MP_TAC
+                        HolSmtTheory.smt_seq_extract_combine_inner_bound),
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-combine4" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                Tactical.THEN
+                  (Tactical.THEN
+                     (Rewrite.PURE_REWRITE_TAC
+                        [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                      Tactic.MATCH_MP_TAC
+                        HolSmtTheory.smt_seq_extract_combine_actual_bound),
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-concat2" then
+          prove_implication (metisLib.METIS_TAC
+            [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+             listTheory.APPEND_ASSOC,
+             HolSmtTheory.smt_seq_extract_def,
+             HolSmtTheory.smt_seq_extract_drop_prefix])
+        else if name = "str-substr-replace" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_replace_len_one,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) []))))
+        else if name = "str-substr-full" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC HolSmtTheory.smt_seq_extract_full,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-ctn-contra" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                  [boolTheory.EQ_CLAUSES,
+                   HolSmtTheory.smt_seq_extract_contains_contra])))
+        else if name = "str-substr-ctn" then
+          prove_implication (Tactical.THEN
+            (Rewrite.PURE_REWRITE_TAC
+               [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+             bossLib.SIMP_TAC (bossLib.srw_ss())
+               [HolSmtTheory.smt_seq_extract_sublist]))
+        else if name = "str-substr-char-start-eq-len" then
+          prove_implication (Tactical.THEN
+            (Rewrite.PURE_REWRITE_TAC
+               [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+             bossLib.SIMP_TAC (bossLib.srw_ss())
+               [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                HolSmtTheory.smt_seq_extract_short_self_count]))
+        else if name = "str-substr-len-include" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_concat_left_bound2,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-len-include-pre" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM listTheory.APPEND_ASSOC,
+                   Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_concat_prefix_bound,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-substr-len-norm" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Rewrite.PURE_REWRITE_TAC
+                  [Conv.GSYM HolSmtTheory.smt_seq_extract_def],
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_extract_count_normalize,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [integerTheory.int_ge]))))
+        else if name = "str-replace-dual-ctn" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_preserves_contains])
+        else if name = "str-replace-dual-ctn-false" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_avoids_outer])
+        else if name = "str-replace-self-ctn-simp" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_pattern_self_contains])
+        else if name = "str-replace-emp-ctn-src" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_empty_source_contains])
+        else if name = "str-contains-repl-char" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_contains_len_one])
+        else if name = "str-contains-repl-self-tgt-char" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_self_contains_len_one])
+        else if name = "str-contains-repl-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_self_contains])
+        else if name = "str-contains-repl-tgt" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_contains_replacement])
+        else if name = "str-repl-repl-len-id" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+             HolSmtTheory.smt_seq_replace_self_target])
+        else if name = "str-repl-repl-src-tgt-no-ctn" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_source_target_absent])
+        else if name = "str-repl-repl-tgt-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_nested_target_self])
+        else if name = "str-repl-repl-tgt-no-ctn" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_target_absent])
+        else if name = "str-repl-repl-src-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_nested_source_self])
+        else if name = "str-repl-repl-src-inv-no-ctn1" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_source_inverse_absent1])
+        else if name = "str-repl-repl-src-inv-no-ctn2" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_source_inverse_absent2])
+        else if name = "str-repl-repl-src-inv-no-ctn3" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_source_inverse_absent3])
+        else if name = "str-repl-repl-dual-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_nested_dual_self])
+        else if name = "str-repl-repl-dual-ite1" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_dual_ite1])
+        else if name = "str-repl-repl-dual-ite2" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_nested_dual_ite2])
+        else if name = "str-repl-repl-lookahead-id-simp" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.MATCH_MP_TAC
+                  HolSmtTheory.smt_seq_replace_nested_lookahead_id_simp,
+                bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                  [boolTheory.EQ_CLAUSES, integerTheory.int_ge])))
+        else if name = "str-replace-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_self])
+        else if name = "str-replace-id" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_id])
+        else if name = "str-replace-prefix" then
+          prove_implication (metisLib.METIS_TAC
+            [HolSmtTheory.smt_seq_replace_prefix,
+             listTheory.APPEND_ASSOC])
+        else if name = "str-replace-no-contains" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_absent])
+        else if name = "str-replace-find-base" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                Tactical.THEN
+                  (Q.PAT_X_ASSUM
+                     `rare_tpre = smt_seq_extract rare_t 0
+                        (smt_seq_indexof rare_t rare_s 0)`
+                     Tactic.SUBST_ALL_TAC,
+                   Tactical.THEN
+                     (Q.PAT_X_ASSUM
+                        `rare_tpost = smt_seq_extract rare_t
+                           (smt_seq_indexof rare_t rare_s 0 +
+                            &(LENGTH rare_s)) (&(LENGTH rare_t))`
+                        Tactic.SUBST_ALL_TAC,
+                      Tactical.THEN
+                        (Tactic.MATCH_MP_TAC
+                           HolSmtTheory.smt_seq_replace_find,
+                         bossLib.FULL_SIMP_TAC boolSimps.bool_ss
+                           [boolTheory.EQ_CLAUSES,
+                            integerTheory.int_ge]))))))
+        else if name = "str-replace-find-first-concat" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                Tactical.THEN
+                  (Q.PAT_X_ASSUM
+                     `rare_tpre = smt_seq_extract rare_t 0
+                        (smt_seq_indexof rare_t rare_s 0)`
+                     Tactic.SUBST_ALL_TAC,
+                   Tactical.THEN
+                     (Q.PAT_X_ASSUM
+                        `rare_tpost = smt_seq_extract rare_t
+                           (smt_seq_indexof rare_t rare_s 0 +
+                            &(LENGTH rare_s)) (&(LENGTH rare_t))`
+                        Tactic.SUBST_ALL_TAC,
+                      metisLib.METIS_TAC
+                        [boolTheory.EQ_CLAUSES,
+                         integerTheory.int_ge,
+                         HolSmtTheory.smt_seq_replace_find_append,
+                         listTheory.APPEND_ASSOC])))))
+        else if name = "str-replace-empty" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_empty])
+        else if name = "str-replace-one-pre" then
+          prove_implication (metisLib.METIS_TAC
+            [integerTheory.INT_INJ,
+             HolSmtTheory.smt_seq_replace_repeated_segment_suffix,
+             listTheory.APPEND_ASSOC])
+        else if name = "str-replace-find-pre" then
+          prove_implication (metisLib.METIS_TAC
+            [HolSmtTheory.smt_seq_replace_known_match_suffix,
+             listTheory.APPEND_ASSOC])
+        else if name = "str-replace-all-no-contains" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_all_absent])
+        else if name = "str-replace-all-empty" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_all_empty])
+        else if name = "str-replace-all-id" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_all_id])
+        else if name = "str-replace-all-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_all_self])
+        else if name = "str-eq-repl-self-emp" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_self_empty_eq])
+        else if name = "str-eq-repl-self-src" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_self_source_eq])
+        else if name = "str-eq-repl-no-change" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_no_change_eq])
+        else if name = "str-eq-repl-tgt-eq-len" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_target_equal_length_eq])
+        else if name = "str-eq-repl-len-one-emp-prefix" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_replace_empty_result_len_one])
+        else if name = "str-eq-repl-emp-tgt-nemp" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_empty_result_nonempty])
+        else if name = "str-eq-repl-nemp-src-emp" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES,
+             HolSmtTheory.smt_seq_replace_empty_source_nonempty])
+        else if name = "str-indexof-self" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.smt_seq_indexof_self])
+        else if name = "str-indexof-no-contains" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                  [boolTheory.EQ_CLAUSES,
+                   HolSmtTheory.smt_seq_indexof_no_contains])))
+        else if name = "str-indexof-contains-pre" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                Tactical.THEN
+                  (Tactic.MATCH_MP_TAC
+                     HolSmtTheory.smt_seq_indexof_concat_contains2,
+                   bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                     [boolTheory.EQ_CLAUSES,
+                      integerTheory.int_gt]))))
+        else if name = "str-indexof-contains-concat-pre" then
+          prove_implication (metisLib.METIS_TAC
+            [HolSmtTheory.smt_seq_indexof_known_occurrence_suffix,
+             listTheory.APPEND_ASSOC])
+        else if name = "str-indexof-find-emp" then
+          prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+            [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+             HolSmtTheory.smt_seq_indexof_empty])
+        else if name = "str-indexof-eq-irr" then
+          prove_implication (Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (Tactic.RULE_ASSUM_TAC
+                  (Rewrite.REWRITE_RULE
+                    [Conv.GSYM HolSmtTheory.smt_seq_extract_def]),
+                bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                  [boolTheory.EQ_CLAUSES, integerTheory.int_le,
+                   HolSmtTheory.smt_seq_indexof_suffix_equal])))
+        else if name = "str-indexof-oob" orelse
+                name = "str-indexof-oob2" then
+          owning_procedure ()
+        else if name = "seq-len-rev" orelse
+                name = "seq-rev-concat" orelse
+                name = "seq-len-unit" orelse
+                name = "seq-nth-unit" orelse
+                name = "seq-rev-unit" then
+          owning_procedure ()
+        else missing_recipe ()
+      fun family_prove () =
+        if SmtSeqProve.has_seq_type (implication_target ()) then
+          seq_family_prove ()
+        else case family of
+          RareConcatEquality =>
+            if name = "str-eq-ctn-false" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss())
+                   [boolTheory.EQ_CLAUSES,
+                    smtstringTheory.smtstr_contains_refl],
+                 metisLib.METIS_TAC
+                   [smtstringTheory.smtstr_contains_decompose,
+                    smtstringTheory.smtstr_concat_assoc]))
+            else if name = "str-eq-ctn-full-false1" orelse
+                    name = "str-eq-ctn-full-false2" then
+              prove_implication (metisLib.METIS_TAC
+                [smtstringTheory.smtstr_contains_refl])
+            else if name = "str-eq-len-false" then
+              prove_implication (metisLib.METIS_TAC [])
+            else if name = "str-update-in-first-concat" then
+              prove_implication (bossLib.FULL_SIMP_TAC
+                (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 integerTheory.int_lt,
+                 smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_update_concat_first])
+            else if name = "str-concat-clash-rev" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_concat_equal_suffix_lengths])
+            else if name = "str-concat-unify-rev" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_concat_right_cancel])
+            else if name = "str-concat-clash" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_concat_equal_prefix_lengths])
+            else if name = "str-concat-clash2" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_equal_concat_same_prefix_length])
+            else if name = "str-concat-clash2-rev" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_equal_concat_same_suffix_length])
+            else if name = "str-concat-unify" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_concat_left_cancel])
+            else if name = "str-concat-unify-base" then
+              prove_implication (metisLib.METIS_TAC
+                [smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_concat_self_prefix])
+            else if name = "str-concat-unify-base-rev" then
+              prove_implication (metisLib.METIS_TAC
+                [smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_concat_self_suffix])
+            else if name = "str-leq-concat-false" orelse
+                    name = "str-leq-concat-true" then
+              prove_implication (metisLib.METIS_TAC
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_le_refl,
+                 smtstringTheory.smtstr_le_common_prefix,
+                 smtstringTheory.smtstr_le_equal_length_tail,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-leq-concat-base-1" then
+              prove_implication (metisLib.METIS_TAC
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_le_equal_length_left_tail,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-leq-concat-base-2" then
+              prove_implication (metisLib.METIS_TAC
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_le_equal_length_right_tail,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-to-int-concat-neg-one" then
+              prove_implication (metisLib.METIS_TAC
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_len_eq_zero,
+                 smtstringTheory.smtstr_to_int_concat_nondigit,
+                 smtstringTheory.smtstr_concat_assoc])
+            else missing_recipe ()
+        | RareSubstringSuffix =>
+            if name = "str-at-elim" then
+              (case args of
+                 [sequence, index] =>
+                   if is_smtstr_type (Term.type_of sequence) then
+                     owning_procedure ()
+                   else
+                     let
+                       val theorem = Drule.SPECL [sequence, index]
+                         HolSmtTheory.smt_seq_at_extract
+                     in
+                       if Term.aconv (Thm.concl theorem) expected then theorem
+                       else if Term.aconv (Thm.concl (Thm.SYM theorem))
+                           expected then Thm.SYM theorem
+                       else raise ERR name
+                         "generic Seq at/extract theorem did not match"
+                     end
+               | _ => raise ERR name
+                   "expected sequence and index source arguments")
+            else if name = "str-substr-concat1" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_substr_concat_left_bound,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-substr-empty-range" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_substr_def])
+            else if name = "str-substr-empty-str" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_len_eq_zero,
+                 smtstringTheory.smtstr_substr_def])
+            else if name = "str-substr-eq-empty" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+                 smtstringTheory.smtstr_substr_zero_empty_iff])
+            else if name = "str-substr-full-eq" then
+              prove_implication (metisLib.METIS_TAC
+                [smtstringTheory.smtstr_substr_full])
+            else if name = "str-suffixof-elim" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_suffixof_substr])
+            else if name = "str-suffixof-eq" then
+              prove_implication (Tactical.THEN
+                (Tactical.REPEAT Tactic.STRIP_TAC,
+                 Tactical.THEN
+                   (bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                      [boolTheory.EQ_CLAUSES, integerTheory.int_ge],
+                    metisLib.METIS_TAC
+                      [smtstringTheory.smtstr_suffixof_length_bound])))
+            else if name = "str-suffixof-one" then
+              prove_implication (metisLib.METIS_TAC
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_suffixof_length_one])
+            else if name = "str-substr-empty-start" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss()) [boolTheory.EQ_CLAUSES],
+                 Tactical.THEN (Tactical.REPEAT Tactic.STRIP_TAC,
+                   Tactical.THEN
+                     (Tactic.MATCH_MP_TAC
+                        smtstringTheory.smtstr_substr_empty_start,
+                      intLib.ARITH_TAC))))
+            else if name = "str-substr-empty-start-neg" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss()) [boolTheory.EQ_CLAUSES],
+                 Tactical.THEN (Tactical.REPEAT Tactic.STRIP_TAC,
+                   Tactical.THEN
+                     (Tactic.MATCH_MP_TAC
+                        smtstringTheory.smtstr_substr_empty_start_neg,
+                      bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) []))))
+            else if name = "str-substr-substr-start-geq-len" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss()) [boolTheory.EQ_CLAUSES],
+                 Tactical.THEN (Tactical.REPEAT Tactic.STRIP_TAC,
+                   Tactical.THEN
+                     (Tactic.MATCH_MP_TAC
+                        smtstringTheory.smtstr_substr_nested_empty,
+                      intLib.ARITH_TAC))))
+            else if name = "str-substr-z-eq-empty-leq" then
+              prove_implication (metisLib.METIS_TAC
+                [smtstringTheory.smtstr_substr_zero_eq_empty])
+            else if name = "str-substr-eq-empty-leq-len" then
+              prove_implication (Tactical.THEN
+                (Tactical.REPEAT Tactic.STRIP_TAC,
+                 Tactical.THEN
+                   (bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+                      [boolTheory.EQ_CLAUSES],
+                    Tactical.THEN
+                      (Tactic.irule
+                         smtstringTheory.smtstr_substr_eq_empty,
+                       Tactical.THEN
+                          (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
+                          intLib.ARITH_TAC)))))
+            else if name = "str-substr-combine1" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss())
+                   [boolTheory.EQ_CLAUSES,
+                    smtstringTheory.smtstr_concat_assoc],
+                 Tactical.THEN
+                   (Tactical.REPEAT Tactic.STRIP_TAC,
+                    Tactical.THEN
+                      (Tactic.MATCH_MP_TAC
+                         smtstringTheory.smtstr_substr_combine_right,
+                       intLib.ARITH_TAC))))
+            else if name = "str-substr-combine2" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss())
+                   [boolTheory.EQ_CLAUSES],
+                 Tactical.THEN
+                   (Tactical.REPEAT Tactic.STRIP_TAC,
+                    Tactical.THEN
+                      (Tactic.MATCH_MP_TAC
+                         smtstringTheory.smtstr_substr_combine_left,
+                       intLib.ARITH_TAC))))
+            else if name = "str-substr-combine3" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss())
+                   [boolTheory.EQ_CLAUSES],
+                 Tactical.THEN
+                   (Tactical.REPEAT Tactic.STRIP_TAC,
+                    Tactical.THEN
+                      (Tactic.MATCH_MP_TAC
+                         smtstringTheory.smtstr_substr_combine_inner_bound,
+                       intLib.ARITH_TAC))))
+            else if name = "str-substr-combine4" then
+              prove_implication (Tactical.THEN
+                (bossLib.SIMP_TAC (bossLib.srw_ss())
+                   [boolTheory.EQ_CLAUSES],
+                 Tactical.THEN
+                   (Tactical.REPEAT Tactic.STRIP_TAC,
+                    Tactical.THEN
+                      (Tactic.MATCH_MP_TAC
+                         smtstringTheory.smtstr_substr_combine_actual_bound,
+                       intLib.ARITH_TAC))))
+            else if name = "str-substr-concat2" then
+              prove_implication (metisLib.METIS_TAC
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_concat_assoc,
+                 smtstringTheory.smtstr_substr_drop_concat_prefix])
+            else if name = "str-substr-full" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_substr_full_bound])
+            else if name = "str-substr-ctn" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_contains_substr])
+            else if name = "str-substr-ctn-contra" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_substr_contains_contra])
+            else if name = "str-substr-char-start-eq-len" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_len_eq_zero,
+                 smtstringTheory.smtstr_substr_short_self_count])
+            else if name = "str-substr-len-include" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_substr_concat_left_bound,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-substr-len-include-pre" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_substr_concat_prefix_bound,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-substr-len-norm" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_substr_count_normalize])
+            else missing_recipe ()
+        | RareReplace =>
+            if name = "str-replace-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_self])
+            else if name = "str-replace-id" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_id])
+            else if name = "str-replace-no-contains" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_absent])
+            else if name = "str-replace-prefix" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_prefix,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-replace-empty" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_len_eq_zero,
+                 smtstringTheory.smtstr_replace_empty])
+            else if name = "str-replace-all-no-contains" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_all_absent])
+            else if name = "str-replace-all-empty" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_all_empty])
+            else if name = "str-replace-all-id" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_all_id])
+            else if name = "str-replace-all-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_all_self])
+            else if name = "str-replace-re-none" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_re_none])
+            else if name = "str-replace-re-all-none" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_re_all_none])
+            else if name = "str-replace-dual-ctn" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_preserves_contains])
+            else if name = "str-replace-dual-ctn-false" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_avoids_outer])
+            else if name = "str-replace-self-ctn-simp" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_pattern_self_contains])
+            else if name = "str-replace-emp-ctn-src" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_empty_source_contains])
+            else if name = "str-contains-repl-char" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_contains_len_one])
+            else if name = "str-contains-repl-self-tgt-char" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_self_contains_len_one])
+            else if name = "str-contains-repl-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_self_contains])
+            else if name = "str-contains-repl-tgt" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_contains_replacement])
+            else if name = "str-repl-repl-len-id" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_replace_self_target])
+            else if name = "str-repl-repl-src-tgt-no-ctn" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_source_target_absent])
+            else if name = "str-repl-repl-tgt-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_nested_target_self])
+            else if name = "str-repl-repl-tgt-no-ctn" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_target_absent])
+            else if name = "str-repl-repl-src-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_nested_source_self])
+            else if name = "str-repl-repl-src-inv-no-ctn1" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_source_inverse_absent1])
+            else if name = "str-repl-repl-src-inv-no-ctn2" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_source_inverse_absent2])
+            else if name = "str-repl-repl-src-inv-no-ctn3" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_source_inverse_absent3])
+            else if name = "str-repl-repl-dual-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_nested_dual_self])
+            else if name = "str-repl-repl-dual-ite1" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_dual_ite1])
+            else if name = "str-repl-repl-dual-ite2" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_nested_dual_ite2])
+            else if name = "str-repl-repl-lookahead-id-simp" then
+              prove_implication
+                (Tactical.THEN
+                  (bossLib.SIMP_TAC (bossLib.srw_ss())
+                     [boolTheory.EQ_CLAUSES, integerTheory.int_ge],
+                   Tactical.THEN
+                    (Tactical.REPEAT Tactic.strip_tac,
+                     Tactical.THEN
+                      (Tactic.irule
+                       smtstringTheory.smtstr_replace_nested_lookahead_id_simp,
+                       bossLib.simp []))))
+            else if name = "str-substr-replace" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_substr_replace_len_one])
+            else if name = "str-replace-find-base" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_replace_find,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-replace-find-first-concat" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_indexof_zero_nonnegative,
+                 smtstringTheory.smtstr_replace_concat_after_match,
+                 smtstringTheory.smtstr_replace_find,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-replace-find-pre" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_concat_after_match,
+                 smtstringTheory.smtstr_contains_concat,
+                 smtstringTheory.smtstr_contains_refl,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-replace-one-pre" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_concat_contained_suffix,
+                 smtstringTheory.smtstr_contains_concat,
+                 smtstringTheory.smtstr_contains_refl,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-eq-repl-self-emp" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_self_empty_eq])
+            else if name = "str-eq-repl-self-src" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_self_source_eq])
+            else if name = "str-eq-repl-no-change" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_no_change_eq])
+            else if name = "str-eq-repl-tgt-eq-len" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_target_equal_length_eq])
+            else if name = "str-eq-repl-len-one-emp-prefix" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_replace_empty_result_len_one])
+            else if name = "str-eq-repl-emp-tgt-nemp" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_empty_result_nonempty])
+            else if name = "str-eq-repl-nemp-src-emp" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_replace_empty_source_nonempty])
+            else missing_recipe ()
+        | RareIndexof =>
+            if name = "str-indexof-self" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_indexof_self])
+            else if name = "str-indexof-no-contains" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_indexof_no_contains])
+            else if name = "str-indexof-oob" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+                 smtstringTheory.smtstr_indexof_oob])
+            else if name = "str-indexof-oob2" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+                 smtstringTheory.smtstr_indexof_negative_start])
+            else if name = "str-indexof-find-emp" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smtstr_indexof_empty])
+            else if name = "str-indexof-contains-pre" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+                 smtstringTheory.smtstr_indexof_concat_contains,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-indexof-contains-concat-pre" then
+              prove_implication (metisLib.METIS_TAC
+                [smtstringTheory.smtstr_indexof_concat_occurrence_right,
+                 smtstringTheory.smtstr_concat_assoc])
+            else if name = "str-indexof-eq-irr" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_le,
+                 smtstringTheory.smtstr_indexof_suffix_equal])
+            else missing_recipe ()
+        | RareRegexStar => missing_recipe ()
+        | RareConversionOrder =>
+            if name = "str-is-digit-elim" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_is_digit_elim])
+            else if name = "str-lt-elim" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_lt_elim])
+            else if name = "str-leq-empty" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_le_empty_left])
+            else if name = "str-leq-empty-eq" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_le_empty_right])
+            else if name = "str-from-int-no-ctn-nondigit" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES,
+                 smtstringTheory.smtstr_from_int_no_nondigit_substring])
+            else missing_recipe ()
+        | RareRegexOther => missing_recipe ()
+        | RareRegexMembership =>
+            if name = "str-in-re-range-elim" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smt_in_re_range_elim])
+            else if name = "re-in-empty" orelse
+               name = "str-in-re-inter-elim" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smt_in_re_def,
+                 boolTheory.CONJ_ASSOC])
+            else if name = "re-in-sigma" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smt_in_re_allchar_len])
+            else if name = "re-in-sigma-star" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smt_in_re_star_allchar])
+            else if name = "str-in-re-contains" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smt_in_re_allchar_contains])
+            else if name = "str-in-re-from-int-nemp-dig-range" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [boolTheory.EQ_CLAUSES, integerTheory.int_ge,
+                 smtstringTheory.smt_in_re_plus_digit,
+                 smtstringTheory.smtstr_from_int_nonempty,
+                 smtstringTheory.smtstr_from_int_digits])
+            else if name = "str-in-re-from-int-dig-range" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smt_in_re_star_digit,
+                 smtstringTheory.smtstr_from_int_digits])
+            else if name = "re-in-cstring" orelse name = "re-in-comp" orelse
+                    name = "str-in-re-union-elim" then
+              owning_procedure ()
+            else missing_recipe ()
+        | RareSequence =>
+            if name = "seq-rev-rev" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_rev_rev])
+            else if name = "seq-len-rev" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_len_rev])
+            else if name = "seq-rev-concat" then
+              prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
+                [smtstringTheory.smtstr_rev_concat])
+            else if name = "seq-len-unit" orelse
+                    name = "seq-nth-unit" orelse
+                    name = "seq-rev-unit" then
+              owning_procedure ()
+            else missing_recipe ()
+        | _ => missing_recipe ()
+      val theorem = family_prove ()
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else raise ERR name
+            ("cvc5-1.3.4 RARE rule " ^ name ^
+             " did not prove its exact declarative source recipe: " ^
+             Feedback.message_of holerr)
+    in
+      discharge_rare_inventory_contract name prems theorem
+    end
+
   fun validate_rare_inventory_contract name prems conclusion synthesized =
     let
       val declared = case conclusion of
@@ -7027,18 +8555,33 @@ local
         ("cvc5-1.3.4 recursive RARE rule " ^ name ^
          " requires its authoritative omitted conclusion")
 
-  fun replay_rare_inventory state name prems conclusion args =
+  fun replay_rare_inventory state name prems conclusion located_args =
     case rare_inventory_lookup name of
       NONE => raise ERR "rare_inventory"
         ("internal cvc5-1.3.4 RARE inventory drift: " ^ name)
     | SOME entry =>
-        (case #replay_kind entry of
+        let
+          val args = List.map (fn (located : located_term) => #term located)
+            located_args
+          fun source_args recipe =
+            normalize_rare_source_arguments name (#formals recipe)
+              located_args
+          fun source_unsupported reason =
+            raise ERR name
+              ("unsupported cvc5-1.3.4 RARE rule " ^ name ^ ": " ^ reason)
+        in
+        case #replay_kind entry of
            RareArgumentRewrite =>
              validate_rare_inventory_contract name prems conclusion
                (replay_rare_rewrite name args)
          | RareRecursiveArgumentRewrite =>
              validate_recursive_rare_inventory_contract name prems conclusion
                (replay_rare_rewrite name args)
+         | RareSourceRecipe recipe =>
+             replay_rare_source_recipe (#family entry) name recipe
+               prems conclusion (source_args recipe)
+         | RareSourceUnsupported (_, reason) =>
+             source_unsupported reason
          | RareStringRecipe recipe =>
              if rare_string_recipe_name recipe = name then
                replay_inventory_string_rule name prems conclusion args
@@ -7048,7 +8591,8 @@ local
                (replay_str_contains_refl args)
          | RareContainsSplitChar =>
              replay_contains_split_char prems conclusion args
-         | RareUnsupported diagnostic => raise ERR name diagnostic)
+         | RareUnsupported diagnostic => raise ERR name diagnostic
+        end
 
   fun unsupported_step ({id, rule, conclusion, ...} : step) =
     let
@@ -8171,7 +9715,8 @@ local
            | "seq_rev_rev" => opaque ( replay_seq_rev_rev args)
            | "str_contains_refl" => opaque ( replay_str_contains_refl args)
            | "rare_inventory" => opaque (
-               replay_rare_inventory state (#name rule) prems conclusion args)
+               replay_rare_inventory state (#name rule) prems conclusion
+                 located_args)
            | "str_substr_full_eq" => opaque ( replay_str_substr_full_eq args)
            | "seq_at_elim" => opaque ( replay_seq_at_elim conclusion args)
            | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
@@ -8410,6 +9955,285 @@ in
     in
       replay_inventory_string_rule name premises (SOME target) args
     end
+
+  (* Build a complete public CPC step from the declarative source recipe.
+     Unlike the direct theorem helper below, this returns cvc5 syntax: every
+     :list argument is a bare identity or a native variadic aggregate.  Tests
+     feed the result back through CPC_ProofParser before replay. *)
+  fun rare_source_native_cpc_for_test use_seq list_width name =
+    case rare_inventory_lookup name of
+      SOME {replay_kind = RareSourceRecipe recipe, ...} =>
+        let
+          val formals = #formals recipe
+          fun safe formal suffix = "task24_" ^ formal ^ suffix
+          fun source_sort source =
+            case source of
+              RareSourceSeq => if use_seq then "(Seq Int)" else "String"
+            | RareSourceString => "String"
+            | RareSourceRegex => "RegLan"
+            | RareSourceInt => "Int"
+            | RareSourceElement => "Int"
+          fun atom_for source symbol =
+            case source of
+              RareSourceRegex => RareList
+                [RareAtom "str.to_re", RareAtom ("\"" ^ symbol ^ "\"")]
+            | _ => RareAtom symbol
+          fun declaration source symbol =
+            case source of
+              RareSourceRegex => []
+            | _ => ["(declare-const " ^ symbol ^ " " ^
+                source_sort source ^ ")"]
+          fun aggregate_name aggregate source =
+            case aggregate of
+              RareSourceSeqConcat =>
+                if use_seq andalso source = RareSourceSeq then "seq.++"
+                else "str.++"
+            | RareSourceRegexConcat => "re.++"
+            | RareSourceRegexUnion => "re.union"
+            | RareSourceRegexInter => "re.inter"
+          fun identity aggregate source =
+            case aggregate of
+              RareSourceSeqConcat =>
+                if use_seq andalso source = RareSourceSeq then
+                  RareList [RareAtom "as", RareAtom "seq.empty",
+                    RareList [RareAtom "Seq", RareAtom "Int"]]
+                else RareAtom "\"\""
+            | RareSourceRegexConcat => RareList
+                [RareAtom "str.to_re", RareAtom "\"\""]
+            | RareSourceRegexUnion => RareAtom "re.none"
+            | RareSourceRegexInter => RareAtom "re.all"
+          fun make_binding (formal, kind, source) =
+            case kind of
+              RareSourceIndex =>
+                (formal, kind, source, RareAtom "1", [], [])
+            | RareSourceTerm =>
+                let val symbol = safe formal ""
+                in
+                  (formal, kind, source, atom_for source symbol, [],
+                   declaration source symbol)
+                end
+            | RareSourceList aggregate =>
+                let
+                  fun part index =
+                    let val symbol = safe formal
+                      ("_part" ^ Int.toString index)
+                    in
+                      (atom_for source symbol, declaration source symbol)
+                    end
+                  val made = List.tabulate (list_width, part)
+                  val parts = List.map #1 made
+                  val declarations = List.concat (List.map #2 made)
+                  val argument =
+                    case parts of
+                      [] => identity aggregate source
+                    | _ => RareList
+                        (RareAtom (aggregate_name aggregate source) :: parts)
+                in
+                  (formal, kind, source, argument, parts, declarations)
+                end
+          val environment = List.map make_binding formals
+          fun lookup formal =
+            case List.find (fn (candidate, _, _, _, _, _) =>
+                candidate = formal) environment of
+              SOME binding => binding
+            | NONE => raise ERR "rare_source_native_cpc_for_test"
+                (name ^ " has an unknown declarative formal " ^ formal)
+          fun sequence_expression expression =
+            case expression of
+              RareAtom formal =>
+                (case List.find (fn (candidate, _, source, _, _, _) =>
+                    candidate = formal andalso source = RareSourceSeq)
+                    environment of
+                   SOME _ => use_seq
+                 | NONE => false)
+            | RareList expressions => List.exists sequence_expression
+                expressions
+          fun mapped_operator operator expression =
+            if not (sequence_expression expression) then operator
+            else case operator of
+              "str.++" => "seq.++"
+            | "str.len" => "seq.len"
+            | "str.contains" => "seq.contains"
+            | "str.substr" => "seq.extract"
+            | "str.at" => "seq.at"
+            | "str.indexof" => "seq.indexof"
+            | "str.replace" => "seq.replace"
+            | "str.replace_all" => "seq.replace_all"
+            | "str.update" => "seq.update"
+            | "str.prefixof" => "seq.prefixof"
+            | "str.suffixof" => "seq.suffixof"
+            | "str.rev" => "seq.rev"
+            | other => other
+          fun application operator source_expression operands =
+            case (operator, operands) of
+              ("str.++", []) =>
+                if sequence_expression source_expression andalso use_seq then
+                  RareList [RareAtom "as", RareAtom "seq.empty",
+                    RareList [RareAtom "Seq", RareAtom "Int"]]
+                else RareAtom "\"\""
+            | ("seq.++", []) => RareList
+                [RareAtom "as", RareAtom "seq.empty",
+                 RareList [RareAtom "Seq", RareAtom "Int"]]
+            | ("re.++", []) => RareList
+                [RareAtom "str.to_re", RareAtom "\"\""]
+            | ("re.union", []) => RareAtom "re.none"
+            | ("re.inter", []) => RareAtom "re.all"
+            | ("and", []) => RareAtom "true"
+            | ("or", []) => RareAtom "false"
+            | ("str.++", [operand]) => operand
+            | ("seq.++", [operand]) => operand
+            | ("re.++", [operand]) => operand
+            | ("re.union", [operand]) => operand
+            | ("re.inter", [operand]) => operand
+            | ("and", [operand]) => operand
+            | ("or", [operand]) => operand
+            | _ => RareList (RareAtom operator :: operands)
+          fun instantiate expression =
+            case expression of
+              RareAtom formal =>
+                (case List.find (fn (candidate, _, _, _, _, _) =>
+                    candidate = formal) environment of
+                   SOME (_, RareSourceList _, _, _, _, _) =>
+                     raise ERR "rare_source_native_cpc_for_test"
+                       (name ^ " uses list formal " ^ formal ^
+                        " outside its aggregate")
+                 | SOME (_, _, _, argument, _, _) => argument
+                 | NONE => RareAtom formal)
+            | RareList
+                [RareAtom "@seq.empty_of_type",
+                 RareList [RareAtom "@type_of", RareAtom formal]] =>
+                let val (_, _, source, _, _, _) = lookup formal
+                in identity RareSourceSeqConcat source end
+            | RareList (RareAtom operator :: expressions) =>
+                let
+                  fun operands [] = []
+                    | operands (RareAtom formal :: rest) =
+                        (case List.find (fn (candidate, _, _, _, _, _) =>
+                            candidate = formal) environment of
+                           SOME (_, RareSourceList _, _, _, parts, _) =>
+                             parts @ operands rest
+                         | _ => instantiate (RareAtom formal) ::
+                             operands rest)
+                    | operands (expression :: rest) =
+                        instantiate expression :: operands rest
+                  val operator = mapped_operator operator expression
+                in
+                  application operator expression (operands expressions)
+                end
+            | RareList [] => raise ERR "rare_source_native_cpc_for_test"
+                (name ^ " has an empty declarative application")
+            | RareList _ => raise ERR "rare_source_native_cpc_for_test"
+                (name ^ " has a non-atomic declarative application head")
+          fun render expression =
+            case expression of
+              RareAtom atom => atom
+            | RareList expressions =>
+                "(" ^ String.concatWith " " (List.map render expressions) ^
+                ")"
+          val premises = List.map
+            (instantiate o parse_rare_source_sexp) (#premises recipe)
+          val target = instantiate (parse_rare_source_sexp (#target recipe))
+          val premise_ids = List.tabulate (List.length premises,
+            fn index => "@task24_a" ^ Int.toString index)
+          val assumptions = ListPair.map
+            (fn (premise_id, premise) =>
+              "(assume " ^ premise_id ^ " " ^ render premise ^ ")")
+            (premise_ids, premises)
+          val args = List.map
+            (fn (_, _, _, argument, _, _) => render argument) environment
+          val declarations = List.concat (List.map
+            (fn (_, _, _, _, _, commands) => commands) environment)
+          val premise_attribute =
+            if List.null premise_ids then ""
+            else " :premises (" ^ String.concatWith " " premise_ids ^ ")"
+          val step = "(step @task24_result " ^ render target ^ " :rule " ^
+            name ^ premise_attribute ^ " :args (" ^
+            String.concatWith " " args ^ "))"
+        in
+          {proof = "(" ^ String.concatWith " "
+             (declarations @ assumptions @ [step]) ^ ")",
+           premise_count = List.length premises}
+        end
+    | SOME _ => raise ERR "rare_source_native_cpc_for_test"
+        (name ^ " is not a proved declarative TASK24 recipe")
+    | NONE => raise ERR "rare_source_native_cpc_for_test"
+        (name ^ " is absent from the cvc5-1.3.4 RARE inventory")
+
+  fun replay_rare_source_for_test_with_seq_type_and_list_width
+      seq_type list_width name =
+    case rare_inventory_lookup name of
+      SOME {family, replay_kind = RareSourceRecipe recipe, ...} =>
+        let
+          fun source_type RareSourceSeq = seq_type
+            | source_type RareSourceString =
+                Type.mk_thy_type
+                  {Thy = "smtstring", Tyop = "smtstr", Args = []}
+            | source_type RareSourceRegex = Term.type_of ``reglan_none``
+            | source_type RareSourceInt = intSyntax.int_ty
+            | source_type RareSourceElement = intSyntax.int_ty
+          fun argument (_, RareSourceIndex, _) =
+                intSyntax.mk_injected (numSyntax.mk_numeral Arbnum.one)
+            | argument (formal, RareSourceList _, source) =
+                let
+                  val ty = source_type source
+                  val elements = List.tabulate (list_width, fn index =>
+                    Term.mk_var
+                      ("rare_" ^ formal ^ "_part" ^ Int.toString index, ty))
+                in
+                  listSyntax.mk_list (elements, ty)
+                end
+            | argument (formal, _, source) =
+                Term.mk_var ("rare_" ^ formal, source_type source)
+          val args = List.map argument (#formals recipe)
+          val premises = List.map
+            (eval_rare_source_recipe name (#formals recipe) args)
+            (#premises recipe)
+          val target = eval_rare_source_recipe name
+            (#formals recipe) args (#target recipe)
+          val theorem = replay_rare_source_recipe family name recipe
+            (List.map Thm.ASSUME premises) (SOME target) args
+          val closed = List.foldl
+            (fn (premise, theorem) => Thm.DISCH premise theorem)
+            theorem premises
+        in
+          {args = args, premises = premises, target = target,
+           theorem = theorem, closed = closed}
+        end
+    | SOME _ => raise ERR "replay_rare_source_for_test"
+        (name ^ " is not a declarative TASK24 recipe")
+    | NONE => raise ERR "replay_rare_source_for_test"
+        (name ^ " is absent from the cvc5-1.3.4 RARE inventory")
+
+  fun replay_rare_source_for_test_with_seq_type seq_type name =
+    replay_rare_source_for_test_with_seq_type_and_list_width seq_type 2 name
+
+  fun replay_rare_source_for_test name =
+    replay_rare_source_for_test_with_seq_type
+      (Type.mk_thy_type
+        {Thy = "smtstring", Tyop = "smtstr", Args = []}) name
+
+  fun replay_rare_source_seq_for_test name =
+    replay_rare_source_for_test_with_seq_type
+      (listSyntax.mk_list_type intSyntax.int_ty) name
+
+  fun replay_rare_source_empty_lists_for_test name =
+    replay_rare_source_for_test_with_seq_type_and_list_width
+      (Type.mk_thy_type
+        {Thy = "smtstring", Tyop = "smtstr", Args = []}) 0 name
+
+  fun replay_rare_source_seq_empty_lists_for_test name =
+    replay_rare_source_for_test_with_seq_type_and_list_width
+      (listSyntax.mk_list_type intSyntax.int_ty) 0 name
+
+  fun replay_rare_source_unsupported_for_test name =
+    case rare_inventory_lookup name of
+      SOME {replay_kind = RareSourceUnsupported (_, reason), ...} =>
+        raise ERR name
+          ("unsupported cvc5-1.3.4 RARE rule " ^ name ^ ": " ^ reason)
+    | SOME _ => raise ERR "replay_rare_source_unsupported_for_test"
+        (name ^ " is not an unsupported TASK24 source recipe")
+    | NONE => raise ERR "replay_rare_source_unsupported_for_test"
+        (name ^ " is absent from the cvc5-1.3.4 RARE inventory")
 
   fun replay_arith_reduction_for_test args =
     #1 (replay_arith_reduction args)

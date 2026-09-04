@@ -5,6 +5,8 @@
 structure SmtLib_Parser =
 struct
 
+  exception CPCProofEOF
+
   type 'a parse_fn = string -> Term.term list -> 'a list -> 'a
 
   type 'a dict = (string, 'a parse_fn list) Redblackmap.dict
@@ -162,6 +164,7 @@ struct
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
     lookup_binder_list: string -> Term.term list option,
+    symbol_key: string -> string,
     parse_choice: bool,
     parse_lambda: bool
   }
@@ -249,7 +252,7 @@ local
   val unlocated_pos : source_pos = {line = 1, column = 1, offset = 0}
   val unlocated_span = mk_point_span unlocated_pos
 
-  fun make_tokenizer_from_input track_locations
+  fun make_tokenizer_from_input track_locations cpc_lexical_policy
       (input: unit -> char option) : unit -> located_token option =
   let
     datatype lookahead = NeedChar | NextChar of char | EndOfInput
@@ -265,7 +268,7 @@ local
        Proof streams run to hundreds of megabytes and never report a span,
        so they are tokenized with 'track_locations' false; 'pos' itself
        stays exact, so the syntax errors below remain located either way. *)
-    fun token_start () = if track_locations then pos () else unlocated_pos
+    fun token_start () = pos ()
     fun token_span start =
       if track_locations then SourceSpan {start = start, stop = pos ()}
       else unlocated_span
@@ -305,9 +308,25 @@ local
       | _ => ()
 
     fun token kind start chars =
-      Token {text = String.implode (List.rev chars),
-             kind = kind,
-             loc = token_span start}
+      let
+        val text = String.implode (List.rev chars)
+        val quoted = kind = QuotedSymbolToken
+        val _ =
+          if not cpc_lexical_policy then ()
+          else
+            ((if quoted then
+                SmtLib_String_Literal.validate_lexical_text true text
+              else if kind = StringToken then
+                SmtLib_String_Literal.validate_cpc_string_lexical_text text
+              else ());
+             ())
+            handle SmtLib_String_Literal.InvalidStringLiteral detail =>
+              syntax_error "get_token" (mk_point_span start)
+                ((if quoted then "quoted symbol" else "string literal") ^
+                 " contains " ^ detail)
+      in
+        Token {text = text, kind = kind, loc = token_span start}
+      end
 
     fun atom start chars =
       case peek () of
@@ -376,38 +395,46 @@ local
         let val c = String.sub (text, !index)
         in index := !index + 1; SOME c end
   in
-    make_tokenizer_from_input true input
+    make_tokenizer_from_input true false input
   end
 
-  (* Proof tokens reach the dictionaries as plain strings, so a String token
-     is marked with a prefix that no SMT-LIB symbol can carry: control
-     characters are excluded from simple symbols by the grammar and from
-     quoted symbols by the printable-character requirement.  A token that
-     carries the marker anyway is therefore rejected, rather than silently
-     taken for a string literal. *)
+  (* Proof tokens reach the legacy proof dictionaries as plain strings.
+     Mark token kinds with prefixes no SMT-LIB symbol can carry: control
+     characters are excluded from simple symbols and quoted symbols.  CPC
+     additionally needs quoted-symbol identity while validating unsupported
+     raw terms; the Z3 proof tokenizer deliberately retains its old policy. *)
   val proof_string_token_prefix = "\001HolSmtString:"
+  val proof_quoted_symbol_token_prefix = "\001HolSmtQuoted:"
 
-  fun make_proof_tokenizer_from_input input =
+  fun proof_marker_collision text =
+    String.isPrefix proof_string_token_prefix text orelse
+    String.isPrefix proof_quoted_symbol_token_prefix text
+
+  fun make_proof_tokenizer_from_input preserve_quoted cpc_eof input =
     let
-      val next_token = make_tokenizer_from_input false input
+      val next_token = make_tokenizer_from_input false cpc_eof input
     in
       fn () =>
         case next_token () of
           SOME tok =>
             if token_kind tok = StringToken then
               proof_string_token_prefix ^ token_text tok
-            else if String.isPrefix proof_string_token_prefix
-                (token_text tok) then
+            else if proof_marker_collision (token_text tok) then
               raise ERR "make_proof_tokenizer_from_input"
                 ("symbol '" ^ token_text tok ^
-                 "' collides with the string literal marker")
+                 "' collides with a proof token marker")
+            else if token_kind tok = QuotedSymbolToken andalso
+                    preserve_quoted then
+              proof_quoted_symbol_token_prefix ^ token_text tok
             else
               token_text tok
         | NONE =>
-            raise ERR "make_proof_tokenizer_from_input" "end of stream"
+            if cpc_eof then raise CPCProofEOF
+            else raise ERR "make_proof_tokenizer_from_input" "end of stream"
     end
 
-  fun make_proof_stream_tokenizer instream =
+  fun make_proof_stream_tokenizer_with_policy preserve_quoted cpc_eof
+      instream =
   let
     val chunk = ref ""
     val index = ref 0
@@ -426,15 +453,26 @@ local
              SOME (String.sub (next, 0)))
         end
   in
-    make_proof_tokenizer_from_input input
+    make_proof_tokenizer_from_input preserve_quoted cpc_eof input
   end
 
-  fun proof_string_token token =
-    if String.isPrefix proof_string_token_prefix token then
-      SOME (String.extract
-        (token, String.size proof_string_token_prefix, NONE))
+  val make_proof_stream_tokenizer =
+    make_proof_stream_tokenizer_with_policy false false
+  val make_cpc_proof_stream_tokenizer =
+    make_proof_stream_tokenizer_with_policy true true
+
+  fun decoded_proof_token prefix token =
+    if String.isPrefix prefix token then
+      SOME (String.extract (token, String.size prefix, NONE))
     else
       NONE
+
+  val proof_string_token = decoded_proof_token proof_string_token_prefix
+  val proof_quoted_symbol_token =
+    decoded_proof_token proof_quoted_symbol_token_prefix
+
+  fun proof_symbol_text token =
+    Option.getOpt (proof_quoted_symbol_token token, token)
 
   fun parse_script_tokens next_token : script_ast =
   let
@@ -1423,21 +1461,30 @@ local
 
   val unknown_symbol_origin = "t_with_args_unknown_symbol"
 
-  fun t_with_args dict (token : string) (indices : Term.term list)
+  fun t_with_args dict (marked_token : string) (indices : Term.term list)
       (args : 'a list) : 'a =
   let
+    (* A CPC quoted symbol is keyed by its marked spelling.  Its parse
+       function receives only the decoded display spelling, but lookup never
+       falls through to an unquoted builtin or the literal catch-all. *)
+    val quoted = proof_quoted_symbol_token marked_token
+    val token = Option.getOpt (quoted, marked_token)
     fun try_fns [] last_err = (NONE, last_err)
       | try_fns (f :: fs) last_err =
           (SOME (f token indices args), last_err)
           handle Interrupt => raise Interrupt
                | Feedback.HOL_ERR holerr => try_fns fs (SOME holerr)
                | _ => try_fns fs last_err
-    val primary_fns = Redblackmap.find (dict, token)
+    val primary_fns = Redblackmap.find (dict, marked_token)
       handle Redblackmap.NotFound => []
-    val catch_all_fns = Redblackmap.find (dict, "_")
-      handle Redblackmap.NotFound => []
+    val catch_all_fns =
+      if Option.isSome quoted then []
+      else Redblackmap.find (dict, "_")
+        handle Redblackmap.NotFound => []
+    val diagnostic_token =
+      case quoted of SOME text => "|" ^ text ^ "|" | NONE => token
     fun generic_msg detail =
-      "failed to parse '" ^ token ^ "' (with indices [" ^
+      "failed to parse '" ^ diagnostic_token ^ "' (with indices [" ^
       String.concatWith ", " (List.map Hol_pp.term_to_string indices) ^
       "] and " ^ Int.toString (List.length args) ^ " argument(s))" ^
       detail
@@ -1691,7 +1738,8 @@ local
         handle Feedback.HOL_ERR _ =>
           parse_term_with_cfg cfg get_token' (tydict, tmdict)
           handle Feedback.HOL_ERR _ =>
-            Term.mk_var (token, Type.mk_vartype "'smtlib_index")
+            Term.mk_var
+              (proof_symbol_text token, Type.mk_vartype "'smtlib_index")
     in
       if token = ")" then
         List.rev acc
@@ -1703,7 +1751,7 @@ local
   end
 
   and parse_var_bindings cfg get_token (tydict, tmdict)
-    : (string * Term.term) list =
+    : (string * string * Term.term) list =
   let
     val _ = Library.expect_token "(" (get_token ())
     fun aux acc =
@@ -1715,11 +1763,16 @@ local
       else
         let
           val _ = Library.expect_token "(" token
-          val symbol = get_token ()
+          val marked_symbol = get_token ()
+          val _ = Option.isSome (proof_string_token marked_symbol) andalso
+            raise ERR "parse_var_bindings"
+              "string literal used as a let binding name"
+          val key = (#symbol_key cfg) marked_symbol
+          val name = proof_symbol_text marked_symbol
           val term = parse_term_with_cfg cfg get_token (tydict, tmdict)
           val _ = Library.expect_token ")" (get_token ())
         in
-          aux ((symbol, term) :: acc)
+          aux ((key, name, term) :: acc)
         end
     end
   in
@@ -1730,7 +1783,8 @@ local
   let
     val bindings = parse_var_bindings cfg get_token (tydict, tmdict)
     val bindings = List.map
-      (fn (s, t) => (s, Term.mk_var (s, Term.type_of t), t)) bindings
+      (fn (key, name, term) =>
+        (key, Term.mk_var (name, Term.type_of term), term)) bindings
     val tmdict = (#mk_let_bindings cfg) ((tydict, tmdict), bindings)
     val body = parse_term_with_cfg cfg get_token (tydict, tmdict)
     val _ = Library.expect_token ")" (get_token ())
@@ -1738,7 +1792,8 @@ local
     (#mk_let cfg) (bindings, body)
   end
 
-  and parse_sorted_vars get_token tydict : (string * Type.hol_type) list =
+  and parse_sorted_vars cfg get_token tydict
+      : (string * string * Type.hol_type) list =
   let
     val _ = Library.expect_token "(" (get_token ())
     fun aux acc =
@@ -1750,11 +1805,16 @@ local
       else
         let
           val _ = Library.expect_token "(" token
-          val symbol = get_token ()
+          val marked_symbol = get_token ()
+          val _ = Option.isSome (proof_string_token marked_symbol) andalso
+            raise ERR "parse_sorted_vars"
+              "string literal used as a bound-variable name"
+          val key = (#symbol_key cfg) marked_symbol
+          val name = proof_symbol_text marked_symbol
           val typ = parse_type get_token tydict
           val _ = Library.expect_token ")" (get_token ())
         in
-          aux ((symbol, typ) :: acc)
+          aux ((key, name, typ) :: acc)
         end
     end
   in
@@ -1803,9 +1863,11 @@ local
             let
               val get_token = Library.undo_look_ahead
                 [binder_open, binder_head] get_token
-              val sorted_vars = parse_sorted_vars get_token tydict
+              val sorted_vars = parse_sorted_vars cfg get_token tydict
             in
-              (List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) sorted_vars,
+              (List.map
+                 (fn (key, name, typ) =>
+                   (key, Term.mk_var (name, typ))) sorted_vars,
                false, get_token)
             end
     (* variables don't take arguments *)
@@ -2080,6 +2142,7 @@ local
     mk_let_bindings = smtlib_mk_let_bindings,
     mk_let = smtlib_mk_let,
     lookup_binder_list = fn _ => NONE,
+    symbol_key = proof_symbol_text,
     parse_choice = false,
     parse_lambda = false
   }
@@ -2434,9 +2497,10 @@ local
   fun parse_define_fun get_token (tydict, tmdict) =
   let
     val name = get_token ()
-    val vars = parse_sorted_vars get_token tydict
+    val vars = parse_sorted_vars smtlib_cfg get_token tydict
     val range_type = parse_type get_token tydict
-    val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+    val vars = List.map
+      (fn (key, name, typ) => (key, Term.mk_var (name, typ))) vars
     (* variables don't take arguments *)
     fun var_parsefn var token indices args =
       if List.null indices andalso List.null args then
@@ -2469,10 +2533,11 @@ local
   let
     val _ = Library.expect_token "(" (get_token ())
     val name = get_token ()
-    val vars = parse_sorted_vars get_token tydict
+    val vars = parse_sorted_vars smtlib_cfg get_token tydict
     val range_type = parse_type get_token tydict
     val _ = Library.expect_token ")" (get_token ())
-    val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+    val vars = List.map
+      (fn (key, name, typ) => (key, Term.mk_var (name, typ))) vars
   in
     (name, vars, range_type)
   end
@@ -2480,9 +2545,10 @@ local
   fun parse_define_fun_rec get_token (tydict, tmdict) =
   let
     val name = get_token ()
-    val vars = parse_sorted_vars get_token tydict
+    val vars = parse_sorted_vars smtlib_cfg get_token tydict
     val range_type = parse_type get_token tydict
-    val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+    val vars = List.map
+      (fn (key, name, typ) => (key, Term.mk_var (name, typ))) vars
     val (tm, tmdict) = define_fun_signature name vars range_type tmdict
     val definiens_tmdict = add_sorted_vars_to_legacy_tmdict vars tmdict
     val definiens = parse_term get_token (tydict, definiens_tmdict)
@@ -6439,6 +6505,58 @@ local
   fun typecheck_script_string_with_options options text =
     typecheck_script_with_options options (parse_script_string text)
 
+  (* Build the exact selector interpretation installed by datatype
+     elaboration for one TypeBase constructor field.  Parser clients that
+     validate an already-installed datatype use this to distinguish
+     same-typed selectors belonging to different constructors or positions. *)
+  fun canonical_datatype_selector_case constructor field_index scrutinee =
+    let
+      val datatype_ty = Term.type_of scrutinee
+      fun constructor_domains ty =
+        case Lib.total Type.dom_rng ty of
+          NONE => []
+        | SOME (domain, range) =>
+            domain :: constructor_domains range
+      val constructors =
+        List.map (TypeBasePure.cinst datatype_ty)
+          (TypeBase.constructors_of datatype_ty)
+        handle Feedback.HOL_ERR holerr =>
+          raise ERR "canonical_datatype_selector_case"
+            ("scrutinee has no TypeBase datatype mapping: " ^
+             Feedback.message_of holerr)
+      val target =
+        case List.find (fn candidate =>
+            Term.same_const candidate constructor) constructors of
+          SOME candidate => candidate
+        | NONE => raise ERR "canonical_datatype_selector_case"
+            "constructor does not belong to the scrutinee datatype"
+      val target_domains = constructor_domains (Term.type_of target)
+      val result_ty =
+        List.nth (target_domains, field_index)
+        handle Subscript =>
+          raise ERR "canonical_datatype_selector_case"
+            "selector field index is outside the constructor"
+      fun pattern candidate =
+        let
+          val domains = constructor_domains (Term.type_of candidate)
+          val variables = List.tabulate (List.length domains, fn index =>
+            Term.mk_var
+              ("datatype_selector" ^ Int.toString index,
+               List.nth (domains, index)))
+        in
+          (Term.list_mk_comb (candidate, variables), variables)
+        end
+      fun branch candidate =
+        let val (lhs, variables) = pattern candidate in
+          (lhs,
+           if Term.same_const candidate target then
+             List.nth (variables, field_index)
+           else boolSyntax.mk_arb result_ty)
+        end
+    in
+      TypeBase.mk_case (scrutinee, List.map branch constructors)
+    end
+
 in
 
   val loc_of = loc_of
@@ -6469,6 +6587,8 @@ in
   (* Apply a dictionary symbol when a client parser has already separated
      its indices and term arguments according to its own concrete syntax. *)
   val apply_term = t_with_term_args
+  val canonical_datatype_selector_case =
+    canonical_datatype_selector_case
   val unknown_symbol_diagnostic = unknown_symbol_diagnostic
   val unknown_symbol_origin = unknown_symbol_origin
 
@@ -6476,7 +6596,10 @@ in
   val parse_term = parse_term
   val parse_term_list = parse_term_list
   val make_proof_stream_tokenizer = make_proof_stream_tokenizer
+  val make_cpc_proof_stream_tokenizer = make_cpc_proof_stream_tokenizer
   val proof_string_token = proof_string_token
+  val proof_quoted_symbol_token = proof_quoted_symbol_token
+  val proof_symbol_text = proof_symbol_text
   val parse_benchmark_state = parse_benchmark_state
   val parse_benchmark = parse_benchmark
 

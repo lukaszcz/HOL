@@ -97,6 +97,64 @@ the checked matrix rather than accepting proof-format drift.  The pinned cvc5
 evidence and commands are in
 `$HOLSMT_VALIDATION_DIR/tools/cvc5-version-matrix.md`.
 
+The observed cvc5 1.3.4 String corpus contains 24 String RARE rule names.
+That observation is not the support inventory.  The complete inventory from
+cvc5 release commit `f3b21c4483d3b88dc63cb7cd3e5eb092eee5e341` contains
+169 unique active String/RegLan/Seq rules: 158 from `rewrites` and 11 from
+`rewrites-regexp-membership`.  Every name has an exact source disposition:
+134 have checked HOL proof recipes and 35 have fixed unsupported diagnostics
+(two `str.indexof_re`, eight case-conversion, and 25 intensional-regex
+equalities).  Every declarative `:list` formal records its aggregate from the
+pinned cvc5 source (`str.++`/`seq.++`, `re.++`, `re.union`, or `re.inter`).
+Native cvc5 substitutions decode a bare identity as empty, an outer matching
+variadic aggregate as its operands, and any other carrier term as a singleton;
+`@list` remains accepted as CPC metadata but is not required.  All 28 proved
+list-bearing declarative recipes have retained, name-by-name CPC text
+parse/replay coverage using native multi-operand aggregates; the sweep shares
+those results with its typed Seq coverage instead of constructing HOL lists.
+Separate public cases retain zero/unary/multi String and Seq substitutions and
+regex concat/union/intersection operators.  The CPC tokenizer preserves both
+String and quoted-symbol token kinds without changing the Z3 proof tokenizer.
+For the pinned cvc5 proof dialect, raw String-token text must be printable
+ASCII; non-ASCII characters use cvc5's ASCII `\\u` spelling and are decoded
+semantically.  Quoted symbols permit valid extended UTF-8 through code point
+`0x2ffff`, but reject malformed UTF-8, controls, backslash, and vertical bar.
+These are located lexical errors before supported/unsupported rule dispatch.
+This proof-only policy does not narrow the general SMT-LIB tokenizer.  String
+tokens are decoded as names only in cvc5's `@var` production.
+
+CPC symbol lookup retains token kind and dictionary provenance.  Ordinary
+`foo` and `|foo|` share one user-symbol key in declarations, definitions,
+terms, sorts, and definition occurrence provenance.  Quoted syntax and
+baseline names remain lexically distinguishable in terms, but neither their
+quoted nor unquoted spelling may be declared or defined.  One canonical term
+namespace rejects declaration/definition and definition/definition
+collisions in either order.  A source/query declaration is reused only when
+its complete signature is compatible.  Command and premise IDs accept only
+CPC's simple-symbol `@`-ID production; String tokens and non-`@` symbols are
+rejected.  Equivalent nonreserved spellings such as `@p` and `|@p|` share one
+key for uniqueness, scope, premise lookup, normalized scoped reuse, and replay.
+Quoted reserved-symbol spellings retain their distinct symbol identity.
+
+CPC accepts exactly one outer proof wrapper and requires true EOF immediately
+after its close; a second wrapper and every other trailing token are errors.
+Unsupported entries bypass only HOL elaboration of unknown symbols.  A
+syntax-only CST grammar first validates complete terms, lexical symbols and
+literals, context-specific simple, indexed, and qualified identifiers, sorts,
+binders, patterns, lets, matches, annotations, and core arities.  It also
+validates ordered premise references, command-ID uniqueness within each live
+scope, and post-pop ID reuse only for normalized-identical step signatures,
+as well as unique `:premises`/`:args` attributes, subsequent declarations and
+datatype syntax,
+the wrapper close, and true EOF.  The first exact unsupported diagnostic is
+retained until all of those parser/graph checks finish, so a later failure
+wins.  Theorem replay is not attempted after a semantic unsupported step;
+the deferred guarantee does not claim validation of later theorem semantics.
+Datatype commands are accepted only when their complete constructor families
+and ordered selector ownership/types are structurally identical to the source
+translation dictionaries.  The fixture, source hashes, and reproducibility
+checker are in the validation checkout beside the version matrix.
+
 Supported Z3 proof dialect and tested anchors:
 
   Proof dialect      Proof options used by HolSmt                  Support status
