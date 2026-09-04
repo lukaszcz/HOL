@@ -8,6 +8,7 @@ src/auto/rules
 src/auto/classical
 src/auto/blast
 src/auto/linarith
+src/auto/order
 src/auto/clasimp
 src/auto/aesop
 

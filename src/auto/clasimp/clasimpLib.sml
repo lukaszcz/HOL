@@ -104,6 +104,16 @@ fun derive_clasimp_ss ss _ =
      variant of each SUC rule as it enters, which leaves HOL4's normal
      form alone. *)
   |> (fn ss' => simpLib.++ (ss', numSimps.SUC_FILTER_ss))
+  (* HOL4 carries no order reasoning ambiently: a goal that supplies its
+     own order -- as a [WeakLinearOrder] premise, say -- has the axioms
+     and the steps in the assumptions and nothing chains them.  Isabelle
+     reads such a chain off the linorder class without naming it
+     (Provers/order_tac.ML, installed by Orderings.thy).  The decision
+     procedure covers both places a chain is wanted, since it is asked
+     about an atom wherever the traversal meets one: the atom the
+     rewriting has left standing, and the side condition of a conditional
+     rewrite, which is simplified with this same simpset. *)
+  |> (fn ss' => simpLib.++ (ss', orderLib.ORDER_ss))
   |> simpLib.set_safe_solvers [safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
 

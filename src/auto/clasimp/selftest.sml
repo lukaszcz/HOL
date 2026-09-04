@@ -1520,3 +1520,35 @@ val _ =
          Timeout.apply (Time.fromSeconds 30) run ()
          handle Timeout.TIMEOUT _ => false
        end)
+
+(* The order procedure is in the stack.  This goal is closed by
+   chaining two steps the assumptions state through an order the goal
+   itself supplies, and nothing else in the stack chains: HOL4 carries
+   no order reasoning ambiently, and the premise gives the axioms
+   rather than the step.  It is not a benchmark entry. *)
+val order_chaining_goal : goal =
+  ([] : term list,
+   ``!le a b c.
+       relation$WeakLinearOrder le ==> le a b ==> le b c ==> le a c``)
+
+val _ =
+  check
+    ("AUTO_TAC chains a step in an order the goal supplies",
+     fn () => valid_closes (clasimpLib.AUTO_TAC []) order_chaining_goal)
+
+(* The second position the same procedure is asked about: the rewrite
+   in the assumptions fires on the conclusion only once its order
+   premise is discharged, and the chain that discharges it is the one
+   above.  A side condition is simplified with this simpset, so the
+   decision procedure reaches it and no separate solver is wired. *)
+val order_condition_goal : goal =
+  ([] : term list,
+   ``!le a b c.
+       relation$WeakLinearOrder le ==>
+       (!x y. le x y ==> (clasimp_order_f x y <=> T)) ==>
+       le a b ==> le b c ==> clasimp_order_f a c``)
+
+val _ =
+  check
+    ("a conditional rewrite's order premise is discharged",
+     fn () => valid_closes (clasimpLib.AUTO_TAC []) order_condition_goal)

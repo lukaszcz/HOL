@@ -3,6 +3,7 @@ INCLUDES = $(HOLDIR)/src/auto/rules \
            $(HOLDIR)/src/auto/classical \
            $(HOLDIR)/src/auto/blast \
            $(HOLDIR)/src/auto/linarith \
+           $(HOLDIR)/src/auto/order \
            $(HOLDIR)/src/simp/src
 
 all: $(DEFAULT_TARGETS) selftest.exe

@@ -3,7 +3,7 @@ CLINE_OPTIONS = -r
 # directories to build under src/
 SRCRELNAMES = \
   algebra auto/rules auto/classical auto/blast auto/linarith \
-  auto/linarith/instances auto/clasimp \
+  auto/order auto/linarith/instances auto/clasimp \
   auto/aesop auto/seeds auto/benchmarks auto/examples \
   bag Boolify/src \
   coalgebras \
