@@ -187,8 +187,12 @@ sig
   val write_run_header : string -> run_header -> unit
 
   val sample_goal : int -> string -> bool
+  val goal_partition : {part : int, parts : int} -> string -> bool
 
   val set_worker_settings : {conditions : condition list, sample : int} -> unit
+  val set_worker_goal_ids : string list -> unit
+  val set_worker_partition : {part : int, parts : int} -> unit
+  val worker_theory_complete : string -> string -> bool
   val write_evalscript : string -> string -> condition list -> int -> string
   val journal_theory_error : string -> string -> string -> unit
   val eval_thy : string -> string -> unit

@@ -802,6 +802,13 @@ fun sample_goal factor goal_id =
   if factor < 1 then raise Fail "--sample must be a positive integer"
   else IntInf.mod (sample_hash goal_id, IntInf.fromInt factor) = 0
 
+fun goal_partition {part, parts} goal_id =
+  if parts < 1 then raise Fail "partition count must be positive"
+  else if part < 0 orelse part >= parts then
+    raise Fail "partition index is outside its partition count"
+  else IntInf.mod (sample_hash goal_id, IntInf.fromInt parts) =
+    IntInf.fromInt part
+
 (* -------------------------------------------------------------------------
    Experiment reports
    ------------------------------------------------------------------------- *)
@@ -1383,13 +1390,48 @@ fun report expdir =
 
 val worker_conditions = ref ([] : condition list)
 val worker_sample = ref 1
+val worker_partition = ref (NONE : {part : int, parts : int} option)
+val worker_goal_ids = ref (NONE : string Binaryset.set option)
 
 fun set_worker_settings {conditions, sample} =
   if sample < 1 then raise Fail "eval.sample must be a positive integer"
   else
     (app validate_condition conditions;
      worker_conditions := conditions;
-     worker_sample := sample)
+     worker_sample := sample;
+     worker_partition := NONE;
+     worker_goal_ids := NONE)
+
+fun set_worker_goal_ids ids =
+  let
+    val goals = Binaryset.addList (Binaryset.empty String.compare, ids)
+  in
+    if null ids then raise Fail "worker goal inventory must be nonempty"
+    else if Binaryset.numItems goals <> length ids then
+      raise Fail "worker goal inventory contains duplicates"
+    else worker_goal_ids := SOME goals
+  end
+
+fun set_worker_partition partition =
+  (ignore (goal_partition partition "");
+   worker_partition := SOME partition)
+
+fun worker_selects goal_id =
+  sample_goal (!worker_sample) goal_id andalso
+  (case !worker_goal_ids of
+       NONE => true
+     | SOME goals => Binaryset.member (goals, goal_id)) andalso
+  (case !worker_partition of
+       NONE => true
+     | SOME partition => goal_partition partition goal_id)
+
+fun worker_journal_path expdir thy =
+  case !worker_partition of
+      NONE => journal_path expdir thy
+    | SOME {part, parts} =>
+        journal_path expdir
+          (thy ^ ".part-" ^ Int.toString part ^ "-of-" ^
+           Int.toString parts)
 
 fun run_name expdir = OS.Path.file expdir
 
@@ -1448,16 +1490,19 @@ fun base_entry expdir thy name condition ho fresh nfacts szs t_prover axioms
                 | Sched _ => SOME 0.0),
    winner = NONE, slices = []} : journal_entry
 
-fun journal_theory_error expdir thy message =
+fun append_theory_error path expdir thy message =
   let
     val condition : condition =
       {cond_id = "__load__", regime = Bushy, selector = Deps,
        engine = Prover "", timeout = 0, reconstruct = false}
   in
-    append_journal (journal_path expdir thy)
+    append_journal path
       (base_entry expdir thy "__load__" condition NONE NONE 0 "LoadFailure"
          0.0 NONE NONE (failed message))
   end
+
+fun journal_theory_error expdir thy message =
+  append_theory_error (journal_path expdir thy) expdir thy message
 
 fun pool_ids (thyl, thmidl) =
   map (fn (theory, name) => theory ^ "Theory." ^ name)
@@ -2527,11 +2572,11 @@ fun run_cell expdir thy theorem pool condition =
         | Prover prover_name =>
             prover_cell_entry expdir thy theorem pool condition prover_name
   in
-    append_journal (journal_path expdir thy) entry
+    append_journal (worker_journal_path expdir thy) entry
   end
   handle Interrupt => raise Interrupt
        | error =>
-           append_journal (journal_path expdir thy)
+           append_journal (worker_journal_path expdir thy)
              (base_entry expdir thy (#1 theorem) condition
                 (SOME (is_higher_order_goal
                   (list_mk_imp (dest_thm (#2 theorem)))))
@@ -2540,20 +2585,20 @@ fun run_cell expdir thy theorem pool condition =
                 0 "Error" 0.0 NONE NONE (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name goal condition =
-  append_journal (journal_path expdir thy)
+  append_journal (worker_journal_path expdir thy)
     (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
        (SOME (is_fresh_goal thy goal)) 0 "BrokenDeps" 0.0 NONE NONE
        no_outcome)
 
 fun evaluation_error_cell expdir thy name goal condition message =
-  append_journal (journal_path expdir thy)
+  append_journal (worker_journal_path expdir thy)
     (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
        (SOME (is_fresh_goal thy goal)) 0 "Error" 0.0 NONE NONE
        (failed message))
 
 fun eval_loaded_theory expdir thy =
   let
-    val completed = read_completed (journal_path expdir thy)
+    val completed = read_completed (worker_journal_path expdir thy)
     val pools =
       if List.exists (fn condition => #regime condition = Chainy)
          (!worker_conditions)
@@ -2584,7 +2629,7 @@ fun eval_loaded_theory expdir thy =
                       condition
                   end
       in
-        if sample_goal (!worker_sample) id then app one (!worker_conditions)
+        if worker_selects id then app one (!worker_conditions)
         else ()
       end
   in
@@ -2594,7 +2639,32 @@ fun eval_loaded_theory expdir thy =
 fun eval_thy expdir thy =
   (eval_loaded_theory expdir thy
    handle Interrupt => raise Interrupt
-        | error => journal_theory_error expdir thy (General.exnMessage error))
+        | error => append_theory_error (worker_journal_path expdir thy)
+            expdir thy (General.exnMessage error))
+
+fun worker_theory_complete expdir thy =
+  let
+    fun cells (name, _) =
+      let val id = goal_id thy name in
+        if worker_selects id then
+          map (fn condition => (id, #cond_id condition)) (!worker_conditions)
+        else []
+      end
+    val expected =
+      case !worker_goal_ids of
+          NONE => List.concat (map cells (DB.theorems thy))
+        | SOME goals =>
+            List.concat
+              (map (fn id =>
+                 if worker_selects id then
+                   map (fn condition => (id, #cond_id condition))
+                     (!worker_conditions)
+                 else [])
+               (Binaryset.listItems goals))
+  in
+    journal_complete (worker_journal_path expdir thy)
+      expected
+  end
 
 fun condition_text condition =
   "hhEval.parse_condition " ^ Portable.mlquote (encode_condition condition)

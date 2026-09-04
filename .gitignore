@@ -152,3 +152,4 @@ CLAUDE.local.md
 # Hash-bound Phase 3 measurement evidence; maintained runtime lives in
 # src/holyhammer/tools and must never be sourced from this generated root.
 /.task10-evidence/
+/.task11-evidence/
