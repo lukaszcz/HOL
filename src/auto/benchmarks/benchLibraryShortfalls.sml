@@ -325,20 +325,6 @@ val sortedness_beyond_the_bridge =
      "list_L6053_sorted_iff_nth_mono", "list_L6104_sorted_butlast",
      "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
 
-(* The order axioms are supplied ambiently now -- the seeds take an
-   order premise apart into its components -- so the side conditions
-   that read them are discharged, and this residual is what is left
-   over: the components are there and nothing chains with them. *)
-val order_premise_left_inert =
-  classified "order premise left inert"
-    ("the residual is a transitivity step whose two halves are both "
-     ^ "present -- [le left right] and [le right item] against "
-     ^ "[le left item] -- and the goal carries WeakLinearOrder for "
-     ^ "the relation, but nothing turns that hypothesis into the "
-     ^ "step, where an Isabelle method reads it off the linorder "
-     ^ "class without naming it")
-    ["list_L6029_sorted2"]
-
 val numeral_against_Suc =
   classified "numeral against Suc"
     ("the residual has the same successor in both spellings -- "
@@ -537,7 +523,6 @@ val execution : benchLib.shortfall list =
   finite_cardinality @
   propositional_rearrangement @
   sortedness_beyond_the_bridge @
-  order_premise_left_inert @
   numeral_against_Suc @
   characterisation_is_the_goal @
   predicate_and_set_representation @

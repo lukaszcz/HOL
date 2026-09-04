@@ -88,11 +88,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 329 | 328 | 4 |
-| List/map | 602 | 424 | 378 | 5 |
+| List/map | 602 | 425 | 378 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **866** | **819** | **28** |
+| **Total** | **1070** | **867** | **819** | **28** |
 
 ## Cost of the solutions
 
@@ -100,13 +100,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 2 | 22 | 1 | 0 | 3.9 | 100 | 1580 |
-| Sets | 329 | 65 | 258 | 6 | 0 | 3.5 | 6 | 2430 |
-| List/map | 424 | 2 | 409 | 13 | 0 | 4.4 | 0 | 1868 |
-| Linarith | 46 | 43 | 3 | 0 | 0 | 0.2 | 0 | 0 |
-| Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 2.2 | 0 | 0 |
-| **Total** | **866** | **150** | **694** | **22** | **0** | **4.4** | **0** | **2430** |
+| Classical | 25 | 1 | 23 | 1 | 0 | 3.5 | 100 | 1580 |
+| Sets | 329 | 72 | 251 | 6 | 0 | 3.3 | 6 | 2430 |
+| List/map | 425 | 3 | 412 | 10 | 0 | 4.2 | 0 | 1868 |
+| Linarith | 46 | 44 | 2 | 0 | 0 | 0.6 | 0 | 0 |
+| Presburger | 34 | 30 | 3 | 1 | 0 | 2.1 | 0 | 0 |
+| Algebra | 8 | 7 | 0 | 1 | 0 | 2.1 | 0 | 0 |
+| **Total** | **867** | **157** | **691** | **19** | **0** | **4.2** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -119,11 +119,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 24 | 0 | 0 |
-| List/map | 0 | 178 | 2 | 0 |
+| List/map | 0 | 177 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **204** | **2** | **0** |
+| **Total** | **0** | **203** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
