@@ -30,6 +30,9 @@ local
         String.concatWith "," (List.map provenance_shape operands) ^ ")"
     | provenance_shape (BinderProvenance (head, body)) =
         "binder(" ^ head ^ "," ^ provenance_shape body ^ ")"
+    | provenance_shape (BinderBlockProvenance (head, size, body)) =
+        "binder-block(" ^ head ^ "," ^ Int.toString size ^ "," ^
+        provenance_shape body ^ ")"
     | provenance_shape (EqualityProvenance (left, right)) =
         "equality(" ^ provenance_shape left ^ "," ^
         provenance_shape right ^ ")"
@@ -52,6 +55,8 @@ local
         List.all definitely_no_conjunction operands
     | definitely_no_conjunction (BinderProvenance (_, body)) =
         definitely_no_conjunction body
+    | definitely_no_conjunction (BinderBlockProvenance (_, _, body)) =
+        definitely_no_conjunction body
     | definitely_no_conjunction (EqualityProvenance (left, right)) =
         definitely_no_conjunction left andalso
         definitely_no_conjunction right
@@ -59,11 +64,22 @@ local
     | definitely_no_conjunction (UnavailableProvenance _) = false
     | definitely_no_conjunction (AmbiguousProvenance _) = false
 
-  (* Live metadata retains equality endpoints because several semantic rules
-     select or rewrite one exact side even when neither side contains a
-     conjunction.  Recursively collapse only conjunction-irrelevant
-     application and binder shells; this keeps large arithmetic proofs
-     bounded without erasing the semantic boundaries those rules consume. *)
+  fun contains_binder_block provenance =
+    case provenance of
+      BinderBlockProvenance _ => true
+    | ApplicationProvenance (_, operands) =>
+        List.exists contains_binder_block operands
+    | BinderProvenance (_, body) => contains_binder_block body
+    | EqualityProvenance (left, right) =>
+        contains_binder_block left orelse contains_binder_block right
+    | ConjunctionProvenance (_, operands) =>
+        List.exists contains_binder_block operands
+    | _ => false
+
+  (* Live metadata retains equality endpoints and source binder blocks because
+     semantic rules consume those exact boundaries even when no conjunction
+     occurs below them.  Other conjunction-irrelevant application and binder
+     shells can still be collapsed to keep large arithmetic proofs bounded. *)
   fun compact_live_provenance provenance =
     case provenance of
       EqualityProvenance (left, right) => EqualityProvenance
@@ -72,12 +88,19 @@ local
         ConjunctionProvenance
           (source, List.map compact_live_provenance operands)
     | ApplicationProvenance (head, operands) =>
-        if definitely_no_conjunction provenance then AtomicProvenance
+        if definitely_no_conjunction provenance andalso
+           not (contains_binder_block provenance)
+        then AtomicProvenance
         else ApplicationProvenance
           (head, List.map compact_live_provenance operands)
     | BinderProvenance (head, body) =>
-        if definitely_no_conjunction provenance then AtomicProvenance
+        if definitely_no_conjunction provenance andalso
+           not (contains_binder_block body)
+        then AtomicProvenance
         else BinderProvenance (head, compact_live_provenance body)
+    | BinderBlockProvenance (head, size, body) =>
+        BinderBlockProvenance
+          (head, size, compact_live_provenance body)
     | other => other
 
   fun term_contains_conjunction term =
@@ -799,6 +822,10 @@ local
       | (BinderProvenance (_, left_body),
          BinderProvenance (_, right_body)) =>
           provenance_topology_compatible left_body right_body
+      | (BinderBlockProvenance (_, left_size, left_body),
+         BinderBlockProvenance (_, right_size, right_body)) =>
+          left_size = right_size andalso
+          provenance_topology_compatible left_body right_body
       | (EqualityProvenance (left_lhs, left_rhs),
          EqualityProvenance (right_lhs, right_rhs)) =>
           provenance_topology_compatible left_lhs right_lhs andalso
@@ -855,6 +882,38 @@ local
         else if head = "exists" then
           boolSyntax.mk_exists (#1 (boolSyntax.dest_exists term), body)
         else Term.mk_abs (#1 (Term.dest_abs term), body)
+
+      fun dest_binder_block head size term =
+        let
+          fun dest 0 current variables = (List.rev variables, current)
+            | dest remaining current variables =
+                let
+                  val (variable, body) =
+                    if head = "forall" then boolSyntax.dest_forall current
+                    else if head = "exists" then
+                      boolSyntax.dest_exists current
+                    else Term.dest_abs current
+                in
+                  dest (remaining - 1) body (variable :: variables)
+                end
+        in
+          if size >= 0 then dest size term []
+          else raise ERR "cong_provenance" "negative binder-block size"
+        end
+
+      fun rebuild_binder_block head variables body =
+        if head = "forall" then boolSyntax.list_mk_forall (variables, body)
+        else if head = "exists" then
+          boolSyntax.list_mk_exists (variables, body)
+        else Term.list_mk_abs (variables, body)
+
+      fun lift_binder_block head variables theorem =
+        List.foldr
+          (fn (variable, lifted) =>
+            if head = "forall" then Drule.FORALL_EQ variable lifted
+            else if head = "exists" then Drule.EXISTS_EQ variable lifted
+            else Thm.ABS variable lifted)
+          theorem variables
 
       fun checked_endpoints where_ theorem old replacement =
         let
@@ -1094,7 +1153,10 @@ local
                in
                  if definitely_no_conjunction provenance andalso
                     definitely_no_conjunction candidate_provenance andalso
-                    definitely_no_conjunction replacement_provenance
+                    definitely_no_conjunction replacement_provenance andalso
+                    not (contains_binder_block provenance) andalso
+                    not (contains_binder_block candidate_provenance) andalso
+                    not (contains_binder_block replacement_provenance)
                  then
                    (* Raw CPC applications may be n-ary while their HOL
                       elaboration is nested binary.  Once all three trees
@@ -1148,10 +1210,38 @@ local
                             term')
                      end
                end
+           | BinderBlockProvenance (head, size, body) =>
+               let
+                 val (variables, body_term) =
+                   dest_binder_block head size term
+               in
+                 case rewrite_occurrence body_term body candidate
+                     candidate_provenance replacement
+                     replacement_provenance oriented of
+                   OccurrenceAbsent => OccurrenceAbsent
+                 | OccurrenceBlocked reason => OccurrenceBlocked reason
+                 | OccurrenceRewritten
+                     ({term = body', provenance = body_provenance}, theorem) =>
+                     let
+                       val term' = rebuild_binder_block head variables body'
+                       val lifted = lift_binder_block head variables theorem
+                       val _ = profile_event
+                         ("CPC(cong:binder/" ^ head ^ ")")
+                     in
+                       OccurrenceRewritten
+                         ({term = term',
+                           provenance = BinderBlockProvenance
+                             (head, size, body_provenance)},
+                          checked_endpoints "binder-block occurrence" lifted
+                            term term')
+                     end
+               end
            | AtomicProvenance =>
-               if definitely_no_conjunction candidate_provenance then
-                 rewrite_atomic term candidate replacement
-                   replacement_provenance oriented
+               if definitely_no_conjunction candidate_provenance andalso
+                  not (contains_binder_block candidate_provenance) andalso
+                  not (contains_binder_block replacement_provenance)
+               then rewrite_atomic term candidate replacement
+                 replacement_provenance oriented
                else OccurrenceAbsent
            | UnavailableProvenance reason =>
                if term_has_occurrence candidate term then
@@ -1348,6 +1438,8 @@ local
                      end
                  | BinderProvenance (head, body) =>
                      descend (binder_body head term) body
+                 | BinderBlockProvenance (head, size, body) =>
+                     descend (#2 (dest_binder_block head size term)) body
                  | AtomicProvenance => first (atomic_match term)
                  | UnavailableProvenance _ => NONE
                  | AmbiguousProvenance _ => NONE)
@@ -1583,6 +1675,10 @@ local
              then AtomicProvenance
              else UnavailableProvenance
                "canonical binder transformation lacks exact child alignment"
+         | BinderBlockProvenance _ =>
+             UnavailableProvenance
+               ("canonical binder-block transformation lacks exact " ^
+                "child alignment")
          | AtomicProvenance =>
              if term_contains_conjunction normalized then
                UnavailableProvenance
@@ -4710,11 +4806,10 @@ local
         if Term.aconv tm scope_result then (List.rev acc, NONE)
         else if Term.aconv (canonical_term tm) (canonical_term scope_result)
         then (List.rev acc, SOME tm)
-        else
+        else if boolSyntax.is_imp_only tm then
           let val (antecedent, consequent) = boolSyntax.dest_imp tm
           in dest_scope consequent (antecedent :: acc) end
-          handle Feedback.HOL_ERR _ =>
-            (List.rev acc, SOME tm)
+        else (List.rev acc, SOME tm)
       fun mk_conj [tm] = tm
         | mk_conj (tm :: rest) = boolSyntax.mk_conj (tm, mk_conj rest)
         | mk_conj [] = raise ERR "process_scope" "empty scope implication"
@@ -4836,23 +4931,73 @@ local
             List.map step_provenance premise_steps))
     end
 
-  fun replay_skolemize prems =
+  (* Unlike ordinary replay handlers, SKOLEMIZE has a source-syntax
+     contract which a theorem with the same declared conclusion cannot
+     establish.  This complete check is therefore run before the generic
+     theorem-cache probe. *)
+  fun skolemize_preflight conclusion located_args premise_steps =
     let
-      fun select_witnesses thm =
-        if boolSyntax.is_exists (Thm.concl thm) then
-          select_witnesses (Drule.SELECT_RULE thm)
-        else
-          let
-            val quantified = boolSyntax.dest_neg (Thm.concl thm)
-            val _ = boolSyntax.dest_forall quantified
-            val exposed = Thm.EQ_MP
-              (Conv.HO_REWR_CONV boolTheory.NOT_FORALL_THM (Thm.concl thm)) thm
-          in
-            select_witnesses exposed
-          end
-          handle Feedback.HOL_ERR _ => thm
+      val _ = if List.null located_args then ()
+        else raise ERR "skolemize"
+          "skolemize expects no explicit CPC :args terms"
+      val premise_step =
+        case premise_steps of
+          [premise_step] => premise_step
+        | _ => raise ERR "skolemize" "expected exactly one CPC premise"
+      val (immediate_count, body_provenance) =
+        case step_provenance premise_step of
+          ApplicationProvenance
+              ("not", [BinderBlockProvenance
+                ("forall", size, body)]) => (size, body)
+        | AmbiguousProvenance reason => raise ERR "skolemize"
+            ("premise binder-block provenance is ambiguous: " ^ reason)
+        | UnavailableProvenance reason => raise ERR "skolemize"
+            ("premise binder-block provenance is unavailable: " ^ reason)
+        | provenance => raise ERR "skolemize"
+            ("premise lacks exact negated FORALL binder-block provenance: " ^
+             provenance_shape provenance)
+      val _ = if immediate_count > 0 then ()
+        else raise ERR "skolemize"
+          "expected an unambiguous positive immediate FORALL binder count"
+      (* The shared builder checks that the recorded immediate boundary fits
+         the semantic ~FORALL theorem and consumes exactly that boundary. *)
+      val {theorem, witnesses} = CPC_Proof.cpc_skolem_witnesses
+        immediate_count (step_theorem premise_step)
+      val _ = if List.length witnesses = immediate_count then ()
+        else raise ERR "skolemize"
+          "shared witness builder crossed the immediate FORALL boundary"
+      val _ =
+        case conclusion of
+          NONE => ()
+        | SOME target => if Term.aconv (Thm.concl theorem) target then ()
+            else raise ERR "skolemize"
+              ("declared conclusion differs from the shared witness " ^
+               "builder boundary result")
+      (* SELECT substitutes choice terms for the consumed source variables.
+         Preserve every unaffected source constructor and binder boundary,
+         but mark atomic leaves unavailable because provenance does not label
+         which atoms were substituted.  In particular, a nested source
+         forall remains available as the immediate block of a later premise. *)
+      fun substituted provenance =
+        case provenance of
+          AtomicProvenance => UnavailableProvenance
+            "atomic occurrence may contain a skolem choice substitution"
+        | ApplicationProvenance (head, operands) =>
+            ApplicationProvenance (head, List.map substituted operands)
+        | BinderProvenance (head, body) =>
+            BinderProvenance (head, substituted body)
+        | BinderBlockProvenance (head, size, body) =>
+            BinderBlockProvenance (head, size, substituted body)
+        | EqualityProvenance (left, right) =>
+            EqualityProvenance (substituted left, substituted right)
+        | ConjunctionProvenance (source, operands) =>
+            ConjunctionProvenance (source, List.map substituted operands)
+        | UnavailableProvenance reason => UnavailableProvenance reason
+        | AmbiguousProvenance reason => AmbiguousProvenance reason
+      val provenance = ApplicationProvenance
+        ("not", [substituted body_provenance])
     in
-      select_witnesses (expect_one_premise "skolemize" prems)
+      exact_result provenance theorem
     end
 
   fun replay_arith_mult_neg args =
@@ -9364,8 +9509,26 @@ local
               theorem
           end
         end
-      (* Cache/proforma probe precedes general provers.  We can only probe a
-         declared conclusion; omitted CPC conclusions are rule-derived. *)
+      (* This rule-specific result validates every SKOLEMIZE premise,
+         source boundary, and declared conclusion before a generic theorem
+         with the same conclusion can be reused.  On a cache miss dispatch
+         consumes it; NONE is retained only so an ablation can demonstrate
+         that dispatch itself also fails closed. *)
+      val rule_preflight =
+        ((case #replay_handler rule of
+            "skolemize" => SOME
+              (skolemize_preflight conclusion located_args premise_steps)
+          | _ => NONE)
+         handle Feedback.HOL_ERR holerr =>
+           if SmtResource.is_resource_gate holerr then
+             raise Feedback.HOL_ERR holerr
+           else
+             raise ERR "replay_step"
+               ("CPC step " ^ id ^ " (rule " ^ #name rule ^
+                ") failed preflight: " ^ Feedback.message_of holerr))
+      (* Cache/proforma probe follows every rule-specific preflight.  We can
+         only probe a declared conclusion; omitted CPC conclusions are
+         rule-derived. *)
       fun omitted_conclusion () =
             (#omitted_bypasses (#cache_stats state) :=
                !(#omitted_bypasses (#cache_stats state)) + 1;
@@ -9671,7 +9834,11 @@ local
                  val (theorem, provenance) =
                    replay_and_intro premise_steps
                in exact_result provenance theorem end
-           | "skolemize" => opaque ( replay_skolemize prems)
+           | "skolemize" =>
+               (case rule_preflight of
+                  SOME result => result
+                | NONE =>
+                    skolemize_preflight conclusion located_args premise_steps)
            | "arith_mult_neg" => opaque ( replay_arith_mult_neg args)
            | "arith_mult_pos" => opaque ( replay_arith_mult_pos args)
            | "arith_mult_sign" => opaque ( replay_arith_mult_sign args)
@@ -9930,6 +10097,9 @@ in
     end
 
   val strong_cpc_canon_conv_for_test = strong_cpc_canon_conv
+
+  fun replay_process_scope_for_test args prems =
+    replay_process_scope (strong_cpc_canon_conv []) args prems
 
   fun replay_eq_resolve_routes_for_test prems =
     let

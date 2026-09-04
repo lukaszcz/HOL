@@ -24,6 +24,31 @@ local
     (Redblackmap.mkDict String.compare :
       (string, term_provenance) Redblackmap.dict)
 
+  (* HOL represents a flat source forall block and the corresponding nested
+     source foralls by the same term.  Record every parsed source occurrence
+     by alpha-equivalent semantic term, retaining every distinct immediate
+     block size.  A term with more than one size is deliberately ambiguous:
+     the term-only parameterized-skolem callback must then fail closed. *)
+  val cpc_forall_blocks = ref
+    ([] : (Term.term * int list) list)
+
+  fun add_distinct_int value values =
+    if List.exists (Lib.equal value) values then values else value :: values
+
+  fun record_forall_block (term, size) =
+    let
+      fun record [] = [(term, [size])]
+        | record ((candidate, sizes) :: rest) =
+            if Term.aconv candidate term then
+              (candidate, add_distinct_int size sizes) :: rest
+            else (candidate, sizes) :: record rest
+    in
+      cpc_forall_blocks := record (!cpc_forall_blocks)
+    end
+
+  fun record_cpc_binder_block (name, size, term) =
+    if name = "forall" then record_forall_block (term, size) else ()
+
   (* Quoting is lexical for ordinary user symbols, but quoted spellings of
      syntax and baseline theory names denote separate user symbols.  Keep the
      baseline, source/query, and proof-declaration provenances separate.
@@ -71,6 +96,7 @@ local
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
     mk_let = SmtLib_Parser.smtlib_mk_let,
     lookup_binder_list = lookup_cpc_list,
+    record_binder_block = record_cpc_binder_block,
     symbol_key = quoted_symbol_key,
     parse_choice = false,
     parse_lambda = true
@@ -634,37 +660,52 @@ local
     | _ => cpc_skolem_error "cpc_array_deq_diff_parsefn"
         "malformed @array_deq_diff application"
 
+  fun immediate_forall_block where_ quantified =
+    let
+      fun lookup [] = cpc_skolem_error where_
+            "source FORALL binder-block metadata is unavailable"
+        | lookup ((candidate, sizes) :: rest) =
+            if Term.aconv candidate quantified then
+              (case sizes of
+                 [size] => size
+               | _ => cpc_skolem_error where_
+                   "source FORALL binder-block metadata is ambiguous")
+            else lookup rest
+    in
+      lookup (!cpc_forall_blocks)
+    end
+
   fun cpc_quantifiers_skolemize_parsefn token indices args =
     case (token, indices,
         cpc_exact_args "cpc_quantifiers_skolemize_parsefn" 2 args) of
-      ("@quantifiers_skolemize", [], [quantified, index]) =>
+      ("@quantifiers_skolemize", [], [quantified, index_term]) =>
         let
-          val _ = cpc_expect_int token index
-          val index = Arbnum.toInt
-            (numeral_of_term "@quantifiers_skolemize index" index)
-          val (variables, objective) =
-            if boolSyntax.is_forall quantified then
-              let val (variables, body) = boolSyntax.strip_forall quantified
-              in (variables, boolSyntax.mk_neg body) end
-            else if boolSyntax.is_exists quantified then
-              boolSyntax.strip_exists quantified
-            else cpc_skolem_error "cpc_quantifiers_skolemize_parsefn"
-              "expected a quantified Boolean formula"
-          fun witnesses [] _ = []
-            | witnesses (variable :: rest) objective =
-                let
-                  val witness = boolSyntax.mk_select
-                    (variable, boolSyntax.list_mk_exists (rest, objective))
-                  val objective' = Term.subst
-                    [{redex = variable, residue = witness}] objective
-                in
-                  witness :: witnesses rest objective'
-                end
+          val where_ = "cpc_quantifiers_skolemize_parsefn"
+          val _ = cpc_expect_int token index_term
+          val index =
+            (intSyntax.int_of_term index_term
+             handle Feedback.HOL_ERR _ => cpc_skolem_error where_
+               "expected a concrete integer binder index")
+          val _ = if Arbint.< (index, Arbint.zero) then
+              cpc_skolem_error where_ "binder index is negative"
+            else ()
+          val _ = if boolSyntax.is_forall quantified then ()
+            else cpc_skolem_error where_
+              "expected a FORALL Boolean formula"
+          val immediate_count = immediate_forall_block where_ quantified
+          val {witnesses, ...} = CPC_Proof.cpc_skolem_witnesses
+            immediate_count (Thm.ASSUME (boolSyntax.mk_neg quantified))
+          fun witness_at _ [] = cpc_skolem_error where_
+                "binder index is outside the quantified formula"
+            | witness_at current (witness :: rest) =
+                (case Arbint.compare (index, current) of
+                   EQUAL => witness
+                 | GREATER =>
+                     witness_at (Arbint.+ (current, Arbint.one)) rest
+                 | LESS => cpc_skolem_error where_
+                     "binder index is outside the quantified formula")
         in
-          List.nth (witnesses variables objective, index)
-          handle Subscript => cpc_skolem_error
-            "cpc_quantifiers_skolemize_parsefn"
-            "binder index is outside the quantified formula"
+          witness_at Arbint.zero witnesses
         end
     | _ => cpc_skolem_error "cpc_quantifiers_skolemize_parsefn"
         "malformed @quantifiers_skolemize application"
@@ -1204,11 +1245,18 @@ local
             let
               val binders = get_token ()
               fun bind vars body =
-                if head = "forall" then
-                  boolSyntax.list_mk_forall (vars, body)
-                else if head = "exists" then
-                  boolSyntax.list_mk_exists (vars, body)
-                else Term.list_mk_abs (vars, body)
+                let
+                  val term =
+                    if head = "forall" then
+                      boolSyntax.list_mk_forall (vars, body)
+                    else if head = "exists" then
+                      boolSyntax.list_mk_exists (vars, body)
+                    else Term.list_mk_abs (vars, body)
+                  val _ = record_cpc_binder_block
+                    (head, List.length vars, term)
+                in
+                  term
+                end
             in
               case lookup_cpc_list binders of
                 SOME vars =>
@@ -1302,11 +1350,8 @@ local
   fun exact_application head operands =
     ApplicationProvenance (head, operands)
 
-  fun exact_binder head body =
-    BinderProvenance (head, body)
-
   fun exact_binders head names body =
-    List.foldr (fn (_, nested) => exact_binder head nested) body names
+    BinderBlockProvenance (head, List.length names, body)
 
   (* Equality endpoints are semantic inputs to omitted SYM, TRANS,
      EQ_RESOLVE, and CONG.  Retain their boundary even when both endpoints
@@ -2931,6 +2976,8 @@ local
                           boolSyntax.list_mk_exists (binders, #term body)
                         else raise ERR "parse_step"
                           "expected quantified left side for CPC quantifier rewrite"
+                      val _ = record_cpc_binder_block
+                        (quantifier, List.length binders, lhs)
                       val binder_provenance = exact_binders quantifier binders
                         (#provenance body)
                     in
@@ -3303,6 +3350,7 @@ in
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
+      val _ = cpc_forall_blocks := []
       fun keys dictionary = Redblackmap.foldl
         (fn (key, _, set) => HOLset.add (set, key))
         (HOLset.empty String.compare) dictionary

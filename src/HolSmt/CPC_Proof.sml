@@ -24,6 +24,56 @@ struct
      replays it under the nearest measured dialect. *)
   val supported_cvc_versions = ["1.3.4"]
 
+  (* CPC names each skolem with [@quantifiers_skolemize q i], while its
+     skolemize proof rule exposes all witnesses at once.  Construct both from
+     the same kernel operation so their choice terms cannot drift.  The CPC
+     contract starts specifically from a source [~(forall (x1 ... xn) body)]
+     block, with n > 0.  HOL erases whether adjacent foralls came from that
+     block or a nested source forall, so callers supply the recorded immediate
+     block size.  Push NOT_FORALL and select through exactly that boundary.
+     Neither a direct existential nor a binder inside [body] belongs to it. *)
+  fun cpc_skolem_witnesses immediate_count theorem =
+    let
+      val ERR = Feedback.mk_HOL_ERR "CPC_Proof" "cpc_skolem_witnesses"
+      val _ = if immediate_count > 0 then ()
+        else raise ERR "expected a positive immediate FORALL binder count"
+      val conclusion = Thm.concl theorem
+      val quantified =
+        if boolSyntax.is_neg conclusion then boolSyntax.dest_neg conclusion
+        else raise ERR
+          "expected ~FORALL theorem conclusion with at least one binder"
+      fun immediate_variables 0 _ variables = List.rev variables
+        | immediate_variables remaining tm variables =
+            (case Lib.total boolSyntax.dest_forall tm of
+               SOME (variable, body) =>
+                 immediate_variables (remaining - 1) body
+                   (variable :: variables)
+             | NONE => raise ERR
+                 "immediate FORALL binder count exceeds theorem binder spine")
+      val variables = immediate_variables immediate_count quantified []
+      fun push_not_foralls [] tm = Conv.ALL_CONV tm
+        | push_not_foralls (_ :: rest) tm =
+            if boolSyntax.is_neg tm andalso
+               boolSyntax.is_forall (boolSyntax.dest_neg tm)
+            then
+              Conv.THENC
+                (Conv.HO_REWR_CONV boolTheory.NOT_FORALL_THM,
+                 Conv.BINDER_CONV (push_not_foralls rest)) tm
+            else raise ERR "malformed leading ~FORALL binder spine"
+      val prenexed = Conv.CONV_RULE
+        (push_not_foralls variables) theorem
+      fun select_exact [] thm witnesses =
+            {theorem = thm, witnesses = List.rev witnesses}
+        | select_exact (_ :: rest) thm witnesses =
+            (case Lib.total boolSyntax.dest_exists (Thm.concl thm) of
+               SOME (variable, body) =>
+                 select_exact rest (Drule.SELECT_RULE thm)
+                   (boolSyntax.mk_select (variable, body) :: witnesses)
+             | NONE => raise ERR "malformed generated existential spine")
+    in
+      select_exact variables prenexed []
+    end
+
   fun mk_rule namespace (name, replay_handler) : proof_rule = {
     name = name,
     namespace = namespace,
@@ -1899,6 +1949,7 @@ struct
       AtomicProvenance
     | ApplicationProvenance of string * term_provenance list
     | BinderProvenance of string * term_provenance
+    | BinderBlockProvenance of string * int * term_provenance
     | EqualityProvenance of term_provenance * term_provenance
     | ConjunctionProvenance of
         conjunction_source * term_provenance list

@@ -164,6 +164,7 @@ struct
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
     lookup_binder_list: string -> Term.term list option,
+    record_binder_block: string * int * Term.term -> unit,
     symbol_key: string -> string,
     parse_choice: bool,
     parse_lambda: bool
@@ -1821,7 +1822,8 @@ local
     aux []
   end
 
-  and parse_binder_term cfg get_token (tydict, tmdict) mk_binder : Term.term =
+  and parse_binder_term cfg get_token (tydict, tmdict) name mk_binder
+      : Term.term =
   let
     (* CVC's CPC printer represents a binder list as ``(@list @t1 ...)``.
        This is deliberately accepted only for the explicit marker; ordinary
@@ -1882,8 +1884,10 @@ local
         (List.map (Lib.apsnd parsefn) vars)
     val body = parse_term_with_cfg cfg get_token (tydict, tmdict)
     val _ = Library.expect_token ")" (get_token ())
+    val term = mk_binder (List.map Lib.snd vars, body)
+    val _ = (#record_binder_block cfg) (name, List.length vars, term)
   in
-    mk_binder (List.map Lib.snd vars, body)
+    term
   end
 
   and parse_annotated_term cfg get_token (tydict, tmdict) : Term.term =
@@ -2079,13 +2083,13 @@ local
         val t = if token = "let" then
             parse_let_term cfg get_token (tydict, tmdict)
           else if token = "forall" then
-            parse_binder_term cfg get_token (tydict, tmdict)
+            parse_binder_term cfg get_token (tydict, tmdict) "forall"
               boolSyntax.list_mk_forall
           else if token = "exists" then
-            parse_binder_term cfg get_token (tydict, tmdict)
+            parse_binder_term cfg get_token (tydict, tmdict) "exists"
               boolSyntax.list_mk_exists
           else if token = "choice" andalso #parse_choice cfg then
-            parse_binder_term cfg get_token (tydict, tmdict)
+            parse_binder_term cfg get_token (tydict, tmdict) "choice"
               (fn (vars, body) =>
                 List.foldr (fn (v, acc) => boolSyntax.mk_select (v, acc))
                   body vars)
@@ -2094,7 +2098,7 @@ local
              binder as a genuine HOL abstraction so bound variables cannot
              escape as free variables. *)
           else if token = "lambda" andalso #parse_lambda cfg then
-            parse_binder_term cfg get_token (tydict, tmdict)
+            parse_binder_term cfg get_token (tydict, tmdict) "lambda"
               (fn (vars, body) => Term.list_mk_abs (vars, body))
           else if token = "!" then
             parse_annotated_term cfg get_token (tydict, tmdict)
@@ -2142,6 +2146,7 @@ local
     mk_let_bindings = smtlib_mk_let_bindings,
     mk_let = smtlib_mk_let,
     lookup_binder_list = fn _ => NONE,
+    record_binder_block = fn _ => (),
     symbol_key = proof_symbol_text,
     parse_choice = false,
     parse_lambda = false

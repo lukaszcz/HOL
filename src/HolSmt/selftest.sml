@@ -1395,6 +1395,12 @@ in
     (``?x. P x ==> !x. P x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``~(?x. P x ==> Q) <=> ~?x. ~P x \/ Q``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* D15: cvc5 skolems for a multi-binder negated goal must use the same
+       whole-block choice terms in the CPC parser and checked replay. *)
+    (``!x y:int. x <= (if x < y then y else x)``, [thm_CVCp]),
+    (``!x y:int.
+        x <= (if x < y then y else x) /\
+        y <= (if x < y then y else x)``, [thm_CVCp]),
 
     (* let binders *)
 

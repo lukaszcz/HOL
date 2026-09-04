@@ -11147,7 +11147,6 @@ let
   val bag = ``(\x:num. 0:num)``
   val table = ``(\b:num->num. 0:num)``
   val map = ``(\x:num. &x:int)``
-  val quantified = ``?(x:num). T``
   val valid_signatures =
     [("@purify", [integer]), ("@array_deq_diff", [array, array]),
      ("@const", [integer, string]),
@@ -11163,7 +11162,6 @@ let
      ("@strings_replace_all_result", [sequence]),
      ("@witness_string_length", [sequence]),
      ("@sets_deq_diff", [set, set]),
-     ("@quantifiers_skolemize", [quantified, integer]),
      ("@bags_deq_diff", [bag, bag]),
      ("@tables_group_part", [table]),
      ("@tables_group_part_element", [table, bag]),
@@ -11183,13 +11181,20 @@ let
     "((define @t1 () (@re_unfold_pos_component \
     \  \"\" (re.* re.none) 0)) \
     \(step @p1 :rule refl :args ((= @t1 @t1))))"
+  val quantified_proof = parse_cpc_proof_string
+    "((step @q :rule refl :args \
+    \  ((@quantifiers_skolemize \
+    \    (forall ((x Bool)) x) 0))))"
   val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val quantified_theorem =
+    CPC_ProofReplay.replay_root_for_test quantified_proof
 in
   assert (actual = expected,
     "CPC parameterized-skolem inventory is incomplete or duplicated");
-  assert (List.length valid_results = List.length expected andalso
-          Listsort.sort String.compare (List.map Lib.fst valid_signatures) =
-            expected,
+  assert (List.length valid_results + 1 = List.length expected andalso
+          Listsort.sort String.compare
+            ("@quantifiers_skolemize" ::
+             List.map Lib.fst valid_signatures) = expected,
     "CPC parameterized-skolem signature sweep is incomplete");
   assert (Type.compare (Term.type_of valid_const, Term.type_of string) = EQUAL,
     "CPC @const did not retain its exact declared result type");
@@ -11198,7 +11203,10 @@ in
     "CPC @bags_map_sum did not have exact Int -> Int result type");
   assert (List.null (Thm.hyp theorem),
     "String skolem replay retained hypotheses");
+  assert (List.null (Thm.hyp quantified_theorem),
+    "quantifier skolem parser smoke test retained hypotheses");
   check_oracle_tags "CPC String skolem replay" theorem;
+  check_oracle_tags "CPC quantifier skolem parser" quantified_theorem;
   expect_hol_error_contains "CPC String skolem arity"
     "expected 3 explicit argument(s)"
     (fn () => ignore (parse_cpc_proof_string
@@ -11229,6 +11237,403 @@ in
        [map, bag, ``0:num``]),
      ("CPC function-range validator", "@bags_map_preimage_injective",
        [map, bag, ``0:num``])]
+end
+
+fun cpc_flat_forall_source arity =
+let
+  val names = List.tabulate (arity, fn index =>
+    "x" ^ Int.toString index)
+  val binders = String.concatWith " "
+    (List.map (fn name => "(" ^ name ^ " Bool)") names)
+  val body = case names of
+      [] => "true"
+    | [name] => name
+    | _ => "(or " ^ String.concatWith " " names ^ ")"
+in
+  "(forall (" ^ binders ^ ") " ^ body ^ ")"
+end
+
+fun cpc_nested_forall_source () =
+  "(forall ((x Bool)) (forall ((y Bool)) (or x y)))"
+
+fun cpc_skolem_source_proof quantified use_alias indices =
+let
+  val alias_definition = if use_alias then
+      "(define @q () " ^ quantified ^ ") "
+    else ""
+  val occurrence = if use_alias then "@q" else quantified
+  fun witness_steps _ [] = ""
+    | witness_steps position (index :: rest) =
+        "(step @w" ^ Int.toString position ^ " :rule refl :args (" ^
+        "(@quantifiers_skolemize " ^ occurrence ^ " " ^ index ^ "))) " ^
+        witness_steps (position + 1) rest
+in
+  "(" ^ alias_definition ^
+  "(assume @p (not " ^ occurrence ^ ")) " ^ witness_steps 0 indices ^
+  "(step @s :rule skolemize :premises (@p)))"
+end
+
+fun cpc_skolem_parser_witnesses proof =
+  List.mapPartial
+    (fn CPC_Proof.STEP {id, args = [{term, ...}], ...} =>
+          if String.isPrefix "@w" id then SOME term else NONE
+      | _ => NONE)
+    (CPC_Proof.proof_commands proof)
+
+fun cpc_skolem_variables arity =
+  List.tabulate (arity, fn index =>
+    Term.mk_var ("cpc_sk" ^ Int.toString index, Type.bool))
+
+fun cpc_skolem_witness_nary_case arity =
+let
+  val source = cpc_flat_forall_source arity
+  val indices = List.tabulate (arity, Int.toString)
+  val proof = parse_cpc_proof_string
+    (cpc_skolem_source_proof source true indices)
+  val (premise_term, premise_provenance) =
+    case CPC_Proof.proof_commands proof of
+      CPC_Proof.ASSUME (_, {term, provenance}) :: _ => (term, provenance)
+    | _ => die "FAIL: flat CPC skolem proof lost its premise"
+  val premise = Thm.ASSUME premise_term
+  val {theorem = shared_theorem, witnesses = shared_witnesses} =
+    CPC_Proof.cpc_skolem_witnesses arity premise
+  val replayed = CPC_ProofReplay.replay_root_for_test proof
+  val parser_witnesses = cpc_skolem_parser_witnesses proof
+  val (_, first_objective) = boolSyntax.dest_select (List.hd shared_witnesses)
+  val (first_remaining, _) = boolSyntax.strip_exists first_objective
+  fun same_terms ([], []) = true
+    | same_terms (left :: lefts, right :: rights) =
+        Term.aconv left right andalso same_terms (lefts, rights)
+    | same_terms _ = false
+in
+  assert (case premise_provenance of
+      CPC_Proof.ApplicationProvenance
+        ("not", [CPC_Proof.BinderBlockProvenance
+          ("forall", size, _)]) => size = arity
+    | _ => false,
+    "flat CPC forall did not retain its immediate binder-block size");
+  assert (List.length shared_witnesses = arity,
+    "shared CPC universal builder selected " ^
+    Int.toString (List.length shared_witnesses) ^ " of " ^
+    Int.toString arity ^ " binders");
+  assert (List.length first_remaining = arity - 1,
+    "shared CPC universal builder did not prenex the whole block before " ^
+    "its first SELECT_RULE at arity " ^ Int.toString arity);
+  assert (same_terms (parser_witnesses, shared_witnesses),
+    "CPC parser and replay universal witnesses diverged at arity " ^
+    Int.toString arity);
+  assert (Thm.concl replayed ~~ Thm.concl shared_theorem,
+    "CPC skolemize replay bypassed the shared witness theorem at arity " ^
+    Int.toString arity);
+  assert (not (boolSyntax.is_exists (Thm.concl replayed)),
+    "CPC skolemize replay left an existential binder at arity " ^
+    Int.toString arity);
+  check_oracle_tags
+    ("CPC universal skolem witnesses arity " ^ Int.toString arity) replayed
+end
+
+fun cpc_skolem_exists_rejection_case arity =
+let
+  val names = List.tabulate (arity, fn index =>
+    "e" ^ Int.toString index)
+  val binders = String.concatWith " "
+    (List.map (fn name => "(" ^ name ^ " Bool)") names)
+  val body = case names of
+      [] => "true"
+    | [name] => name
+    | _ => "(or " ^ String.concatWith " " names ^ ")"
+  val quantified = "(exists (" ^ binders ^ ") " ^ body ^ ")"
+  val label = "CPC direct EXISTS arity " ^ Int.toString arity
+  val replay_proof = parse_cpc_proof_string
+    ("((assume @p " ^ quantified ^ ") " ^
+     "(step @s :rule skolemize :premises (@p)))")
+in
+  expect_hol_error_contains (label ^ " parser")
+    "expected a FORALL Boolean formula"
+    (fn () => ignore (parse_cpc_proof_string
+      ("((step @w :rule refl :args (" ^
+       "(@quantifiers_skolemize " ^ quantified ^ " 0)))))")));
+  expect_hol_error_contains (label ^ " replay")
+    "premise lacks exact negated FORALL binder-block provenance"
+    (fn () => ignore
+      (CPC_ProofReplay.replay_root_for_test replay_proof))
+end
+
+fun cpc_skolem_malformed_shape_rejections () =
+let
+  val variable = Term.mk_var ("cpc_skolem_x", Type.bool)
+  val quantified = boolSyntax.mk_forall (variable, variable)
+  val premise = Thm.ASSUME (boolSyntax.mk_neg quantified)
+  fun replay text = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string text)
+in
+  expect_hol_error_contains "CPC skolem builder zero boundary"
+    "expected a positive immediate FORALL binder count"
+    (fn () => ignore (CPC_Proof.cpc_skolem_witnesses 0 premise));
+  expect_hol_error_contains "CPC skolem builder excessive boundary"
+    "immediate FORALL binder count exceeds theorem binder spine"
+    (fn () => ignore (CPC_Proof.cpc_skolem_witnesses 2 premise));
+  expect_hol_error_contains "CPC skolemize zero-binder shape"
+    "premise lacks exact negated FORALL binder-block provenance"
+    (fn () => ignore (replay
+      "((declare-const a Bool) (assume @p (not a)) \
+      \(step @s :rule skolemize :premises (@p)))"));
+  expect_hol_error_contains "CPC skolemize unrelated shape"
+    "premise lacks exact negated FORALL binder-block provenance"
+    (fn () => ignore (replay
+      "((declare-const a Bool) (assume @p a) \
+      \(step @s :rule skolemize :premises (@p)))"));
+  expect_hol_error_contains "CPC skolemize missing premise"
+    "expected exactly one CPC premise"
+    (fn () => ignore (replay "((step @s :rule skolemize))"));
+  expect_hol_error_contains "CPC skolemize extra premise"
+    "expected exactly one CPC premise"
+    (fn () => ignore (replay
+      "((declare-const a Bool) (assume @p a) (assume @q a) \
+      \(step @s :rule skolemize :premises (@p @q)))"));
+  expect_hol_error_contains "CPC skolem parser unrelated formula"
+    "expected a FORALL Boolean formula"
+    (fn () => ignore (parse_cpc_proof_string
+      "((declare-const a Bool) (step @w :rule refl :args \
+      \  ((@quantifiers_skolemize a 0)))))"))
+end
+
+fun cpc_skolem_nested_exists_boundary_success () =
+let
+  val source =
+    "(forall ((outer Bool)) \
+    \  (exists ((inner Bool)) (= outer inner)))"
+  val proof = parse_cpc_proof_string
+    (cpc_skolem_source_proof source true ["0"])
+  val premise_term =
+    case CPC_Proof.proof_commands proof of
+      CPC_Proof.ASSUME (_, {term, ...}) :: _ => term
+    | _ => die "FAIL: nested-exists CPC skolem proof lost its premise"
+  val {theorem = shared_theorem, witnesses} =
+    CPC_Proof.cpc_skolem_witnesses 1 (Thm.ASSUME premise_term)
+  val parser_witnesses = cpc_skolem_parser_witnesses proof
+  val replayed = CPC_ProofReplay.replay_root_for_test proof
+  val (_, objective) = boolSyntax.dest_select (List.hd witnesses)
+  fun is_negated_exists tm = boolSyntax.is_neg tm andalso
+    boolSyntax.is_exists (boolSyntax.dest_neg tm)
+in
+  assert (List.length witnesses = 1,
+    "CPC skolem builder crossed a pre-existing existential boundary");
+  assert (is_negated_exists objective andalso
+      is_negated_exists (Thm.concl shared_theorem),
+    "CPC skolem builder changed the nested existential boundary");
+  assert (case parser_witnesses of
+      [parser_witness] => Term.aconv parser_witness (List.hd witnesses)
+    | _ => false,
+    "CPC parser diverged at a nested existential boundary");
+  assert (Thm.concl replayed ~~ Thm.concl shared_theorem,
+    "CPC replay diverged at a nested existential boundary");
+  check_oracle_tags "CPC nested existential boundary" replayed
+end
+
+fun cpc_skolem_parser_index_rejections () =
+let
+  val quantified = cpc_flat_forall_source 2
+  val huge =
+    "999999999999999999999999999999999999999999999999999999999999"
+  fun reject label index expected =
+    expect_hol_error_contains label expected
+      (fn () => ignore (parse_cpc_proof_string
+        (cpc_skolem_source_proof quantified true [index])))
+in
+  reject "CPC skolem negative index" "(- 1)"
+    "binder index is negative";
+  reject "CPC skolem ordinary out-of-range index" "2"
+    "binder index is outside the quantified formula";
+  reject "CPC skolem huge out-of-range index" huge
+    "binder index is outside the quantified formula"
+end
+
+fun cpc_skolem_inline_flat_boundary_success () =
+let
+  val arity = 2
+  val proof = parse_cpc_proof_string
+    (cpc_skolem_source_proof (cpc_flat_forall_source arity) false
+      ["0", "1"])
+  val premise_term =
+    case CPC_Proof.proof_commands proof of
+      CPC_Proof.ASSUME (_, {term, ...}) :: _ => term
+    | _ => die "FAIL: inline flat skolem proof lost its premise"
+  val {theorem = expected, witnesses} = CPC_Proof.cpc_skolem_witnesses
+    arity (Thm.ASSUME premise_term)
+  val replayed = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (List.length witnesses = arity andalso
+      List.length (cpc_skolem_parser_witnesses proof) = arity,
+    "inline flat forall did not expose both source-block witnesses");
+  assert (Thm.concl replayed ~~ Thm.concl expected,
+    "inline flat forall parser and replay boundaries diverged");
+  check_oracle_tags "CPC inline flat forall boundary" replayed
+end
+
+fun cpc_skolem_nested_forall_boundary_case use_alias =
+let
+  val label = if use_alias then "alias" else "inline"
+  val proof = parse_cpc_proof_string
+    (cpc_skolem_source_proof (cpc_nested_forall_source ()) use_alias ["0"])
+  val (premise_term, premise_provenance) =
+    case CPC_Proof.proof_commands proof of
+      CPC_Proof.ASSUME (_, {term, provenance}) :: _ => (term, provenance)
+    | _ => die ("FAIL: nested " ^ label ^ " skolem proof lost its premise")
+  val {theorem = expected, witnesses} = CPC_Proof.cpc_skolem_witnesses
+    1 (Thm.ASSUME premise_term)
+  val replayed = CPC_ProofReplay.replay_root_for_test proof
+  val inner_remains = boolSyntax.is_neg (Thm.concl replayed) andalso
+    boolSyntax.is_forall (boolSyntax.dest_neg (Thm.concl replayed))
+  val exact_nested_blocks =
+    case premise_provenance of
+      CPC_Proof.ApplicationProvenance
+        ("not", [CPC_Proof.BinderBlockProvenance
+          ("forall", 1, CPC_Proof.BinderBlockProvenance
+            ("forall", 1, _))]) => true
+    | _ => false
+in
+  assert (exact_nested_blocks,
+    "nested " ^ label ^ " forall lost either source binder block");
+  assert (List.length witnesses = 1 andalso
+      List.length (cpc_skolem_parser_witnesses proof) = 1,
+    "nested " ^ label ^ " forall selected beyond its immediate block");
+  assert (inner_remains andalso Thm.concl replayed ~~ Thm.concl expected,
+    "nested " ^ label ^ " forall did not leave the inner forall untouched");
+  expect_hol_error_contains ("nested " ^ label ^ " forall index 1")
+    "binder index is outside the quantified formula"
+    (fn () =>
+      ignore (parse_cpc_proof_string
+        (cpc_skolem_source_proof (cpc_nested_forall_source ())
+          use_alias ["1"])));
+  check_oracle_tags ("CPC nested " ^ label ^ " forall boundary") replayed
+end
+
+fun cpc_skolem_nested_forall_chained_replay_success () =
+let
+  val source = cpc_nested_forall_source ()
+  val proof = parse_cpc_proof_string
+    ("((define @q () " ^ source ^ ") " ^
+     "(assume @p (not @q)) " ^
+     "(step @outer :rule skolemize :premises (@p)) " ^
+     "(step @inner :rule skolemize :premises (@outer)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (not (boolSyntax.is_neg (Thm.concl theorem) andalso
+      boolSyntax.is_forall (boolSyntax.dest_neg (Thm.concl theorem))),
+    "chained skolemize did not consume the preserved inner source block");
+  check_oracle_tags "CPC chained nested forall boundaries" theorem
+end
+
+fun cpc_skolem_conflicting_group_ambiguity () =
+  expect_hol_error_contains "CPC conflicting forall source groups"
+    "source FORALL binder-block metadata is ambiguous"
+    (fn () => ignore (parse_cpc_proof_string
+      "((define @flat () \
+      \  (forall ((x Bool) (y Bool)) (or x y))) \
+      \(define @nested () \
+      \  (forall ((x Bool)) (forall ((y Bool)) (or x y)))) \
+      \(step @w :rule refl :args \
+      \  ((@quantifiers_skolemize @flat 0))))"))
+
+fun cpc_skolem_malformed_args_public_rejection () =
+let
+  val proof = parse_cpc_proof_string
+    ("((assume @p (not " ^ cpc_flat_forall_source 1 ^ ")) " ^
+     "(step @s :rule skolemize :premises (@p) :args (true)))")
+in
+  (ignore (CPC_ProofReplay.replay_root_for_test proof);
+   die "FAIL: CPC skolemize accepted a nonempty :args list")
+  handle Feedback.HOL_ERR holerr =>
+    assert (Feedback.top_function_of holerr = "replay_step" andalso
+        contains "rule skolemize" (Feedback.message_of holerr) andalso
+        contains "skolemize expects no explicit CPC :args terms"
+          (Feedback.message_of holerr),
+      "CPC skolemize malformed-args diagnostic was not structured: " ^
+      Feedback.message_of holerr)
+end
+
+fun cpc_skolem_cache_preflight_rejections () =
+if Library.no_fastpath () orelse
+   not CPC_ProofReplay.theorem_cache_enabled_for_test then ()
+else let
+  fun profile_count name =
+    case List.find (fn (result_name, _) => result_name = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val prefix =
+    "((define @q () \
+    \  (forall ((x Bool) (y Bool)) (or x y))) \
+    \(define @result () \
+    \  (not (or (@quantifiers_skolemize @q 0) \
+    \           (@quantifiers_skolemize @q 1)))) \
+    \(assume @p (not @q)) \
+    \(step @valid @result :rule skolemize :premises (@p)) "
+  fun reject label extra malformed expected =
+    let
+      val proof = parse_cpc_proof_string
+        (prefix ^ extra ^ malformed ^ ")")
+      val _ = Profile.reset_all ()
+      val _ =
+        (ignore (CPC_ProofReplay.replay_root_for_test proof);
+         die ("FAIL: cached CPC skolemize accepted " ^ label))
+        handle Feedback.HOL_ERR holerr =>
+          assert (Feedback.top_function_of holerr = "replay_step" andalso
+              contains "rule skolemize" (Feedback.message_of holerr) andalso
+              contains expected (Feedback.message_of holerr),
+            "cached CPC skolemize " ^ label ^
+            " diagnostic was not structured: " ^
+            Feedback.message_of holerr)
+    in
+      assert (profile_count "CPC(cache:miss)" = 1 andalso
+          profile_count "CPC(cache:hit)" = 0,
+        "malformed CPC skolemize " ^ label ^
+        " reached the theorem cache after its valid seed");
+      assert (profile_count "CPC(handler:ProofRule/skolemize)" = 1,
+        "malformed CPC skolemize " ^ label ^
+        " reached dispatch instead of failing preflight")
+    end
+  val nested =
+    "(define @nested () \
+    \  (forall ((x Bool)) \
+    \    (forall ((y Bool)) (or x y)))) \
+    \(assume @nested_p (not @nested)) "
+in
+  reject "nonempty arguments" ""
+    "(step @bad @result :rule skolemize :premises (@p) :args (true))"
+    "skolemize expects no explicit CPC :args terms";
+  reject "wrong premise count" ""
+    "(step @bad @result :rule skolemize)"
+    "expected exactly one CPC premise";
+  reject "wrong premise shape" "(assume @shape_p true) "
+    "(step @bad @result :rule skolemize :premises (@shape_p))"
+    "premise lacks exact negated FORALL binder-block provenance";
+  reject "wrong source boundary" nested
+    "(step @bad @result :rule skolemize :premises (@nested_p))"
+    "declared conclusion differs from the shared witness builder boundary"
+end
+
+fun cpc_process_scope_negated_leaf_diagnostic () =
+let
+  val antecedent = Term.mk_var ("scope_antecedent", Type.bool)
+  val leaf = Term.mk_var ("scope_leaf", Type.bool)
+  val negated_leaf = boolSyntax.mk_neg leaf
+  val premise = Thm.ASSUME (boolSyntax.mk_imp (antecedent, negated_leaf))
+  val expected =
+    "scope result canonicalization failed; local=" ^
+    Library.term_to_string negated_leaf ^ "; expected=" ^
+    Library.term_to_string leaf
+  val _ = assert (not (boolSyntax.is_imp_only negated_leaf),
+    "negated process_scope leaf was classified as an explicit implication")
+in
+  (ignore (CPC_ProofReplay.replay_process_scope_for_test [leaf] [premise]);
+   die "FAIL: process_scope accepted a mismatched negated leaf")
+  handle Feedback.HOL_ERR holerr =>
+    assert (Feedback.top_function_of holerr = "process_scope" andalso
+        contains expected (Feedback.message_of holerr),
+      "process_scope did not report its negated leaf against the recorded " ^
+      "result: " ^ Feedback.message_of holerr)
 end
 
 fun cpc_concat_unify_and_re_unfold_pos_replay_success () =
@@ -12436,9 +12841,11 @@ let
     end
   fun contains_exact_shadowing_binder provenance =
     case provenance of
-      CPC_Proof.BinderProvenance
-          (_, CPC_Proof.EqualityProvenance
+      CPC_Proof.BinderBlockProvenance
+          (_, _, CPC_Proof.EqualityProvenance
             (CPC_Proof.AtomicProvenance, CPC_Proof.AtomicProvenance)) => true
+    | CPC_Proof.BinderBlockProvenance (_, _, body) =>
+        contains_exact_shadowing_binder body
     | CPC_Proof.BinderProvenance (_, body) =>
         contains_exact_shadowing_binder body
     | CPC_Proof.EqualityProvenance (left, right) =>
@@ -13986,8 +14393,8 @@ let
        "((declare-const p Bool) (declare-const q Bool) \
        \(declare-const r Bool) (define x () (and p q r)) \
        \(assume @shadow (forall ((x Bool)) x)))" of
-       CPC_Proof.BinderProvenance
-         ("forall", CPC_Proof.AtomicProvenance) => ()
+       CPC_Proof.BinderBlockProvenance
+         ("forall", 1, CPC_Proof.AtomicProvenance) => ()
      | _ => die
          "FAIL: quantified variable leaked a global conjunction alias")
   val _ =
@@ -14221,14 +14628,14 @@ let
         forall_cong_proof "@cong" of
        CPC_Proof.EqualityProvenance
          (CPC_Proof.ConjunctionProvenance
-            (_, [CPC_Proof.BinderProvenance
-                   ("forall", CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderBlockProvenance
+                   ("forall", 1, CPC_Proof.ConjunctionProvenance
                      (_, [_, CPC_Proof.ConjunctionProvenance
                        (_, before_operands)])),
                   _]),
           CPC_Proof.ConjunctionProvenance
-            (_, [CPC_Proof.BinderProvenance
-                   ("forall", CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderBlockProvenance
+                   ("forall", 1, CPC_Proof.ConjunctionProvenance
                      (_, [_, CPC_Proof.ConjunctionProvenance
                        (_, after_operands)])),
                   _])) =>
@@ -14268,14 +14675,14 @@ let
         exists_cong_proof "@cong" of
        CPC_Proof.EqualityProvenance
          (CPC_Proof.ConjunctionProvenance
-            (_, [CPC_Proof.BinderProvenance
-                   ("exists", CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderBlockProvenance
+                   ("exists", 1, CPC_Proof.ConjunctionProvenance
                      (_, [_, CPC_Proof.ConjunctionProvenance
                        (_, before_operands)])),
                   _]),
           CPC_Proof.ConjunctionProvenance
-            (_, [CPC_Proof.BinderProvenance
-                   ("exists", CPC_Proof.ConjunctionProvenance
+            (_, [CPC_Proof.BinderBlockProvenance
+                   ("exists", 1, CPC_Proof.ConjunctionProvenance
                      (_, [_, CPC_Proof.ConjunctionProvenance
                        (_, after_operands)])),
                   _])) =>
@@ -14317,13 +14724,13 @@ let
         lambda_cong_proof "@cong" of
        CPC_Proof.EqualityProvenance
          (CPC_Proof.EqualityProvenance
-            (CPC_Proof.BinderProvenance
-               ("lambda", CPC_Proof.ConjunctionProvenance
+            (CPC_Proof.BinderBlockProvenance
+               ("lambda", 1, CPC_Proof.ConjunctionProvenance
                  (_, [_, CPC_Proof.ConjunctionProvenance
                    (_, before_operands)])), _),
           CPC_Proof.EqualityProvenance
-            (CPC_Proof.BinderProvenance
-               ("lambda", CPC_Proof.ConjunctionProvenance
+            (CPC_Proof.BinderBlockProvenance
+               ("lambda", 1, CPC_Proof.ConjunctionProvenance
                  (_, [_, CPC_Proof.ConjunctionProvenance
                    (_, after_operands)])), _)) =>
            assert (List.length before_operands = 3 andalso
@@ -22975,6 +23382,48 @@ let
       cpc_d13_deindexed_operator_repros_success),
     ("cpc_parameterized_skolem_registry_success",
       cpc_parameterized_skolem_registry_success),
+    ("cpc_skolem_witness_forall_1_success",
+      fn () => cpc_skolem_witness_nary_case 1),
+    ("cpc_skolem_witness_forall_2_success",
+      fn () => cpc_skolem_witness_nary_case 2),
+    ("cpc_skolem_witness_forall_3_success",
+      fn () => cpc_skolem_witness_nary_case 3),
+    ("cpc_skolem_witness_forall_4_success",
+      fn () => cpc_skolem_witness_nary_case 4),
+    ("cpc_skolem_witness_forall_5_success",
+      fn () => cpc_skolem_witness_nary_case 5),
+    ("cpc_skolem_witness_exists_1_rejection",
+      fn () => cpc_skolem_exists_rejection_case 1),
+    ("cpc_skolem_witness_exists_2_rejection",
+      fn () => cpc_skolem_exists_rejection_case 2),
+    ("cpc_skolem_witness_exists_3_rejection",
+      fn () => cpc_skolem_exists_rejection_case 3),
+    ("cpc_skolem_witness_exists_4_rejection",
+      fn () => cpc_skolem_exists_rejection_case 4),
+    ("cpc_skolem_witness_exists_5_rejection",
+      fn () => cpc_skolem_exists_rejection_case 5),
+    ("cpc_skolem_malformed_shape_rejections",
+      cpc_skolem_malformed_shape_rejections),
+    ("cpc_skolem_nested_exists_boundary_success",
+      cpc_skolem_nested_exists_boundary_success),
+    ("cpc_skolem_parser_index_rejections",
+      cpc_skolem_parser_index_rejections),
+    ("cpc_skolem_inline_flat_boundary_success",
+      cpc_skolem_inline_flat_boundary_success),
+    ("cpc_skolem_nested_forall_alias_boundary_success",
+      fn () => cpc_skolem_nested_forall_boundary_case true),
+    ("cpc_skolem_nested_forall_inline_boundary_success",
+      fn () => cpc_skolem_nested_forall_boundary_case false),
+    ("cpc_skolem_nested_forall_chained_replay_success",
+      cpc_skolem_nested_forall_chained_replay_success),
+    ("cpc_skolem_conflicting_group_ambiguity",
+      cpc_skolem_conflicting_group_ambiguity),
+    ("cpc_skolem_malformed_args_public_rejection",
+      cpc_skolem_malformed_args_public_rejection),
+    ("cpc_skolem_cache_preflight_rejections",
+      cpc_skolem_cache_preflight_rejections),
+    ("cpc_process_scope_negated_leaf_diagnostic",
+      cpc_process_scope_negated_leaf_diagnostic),
     ("cpc_concat_unify_and_re_unfold_pos_replay_success",
       cpc_concat_unify_and_re_unfold_pos_replay_success),
     ("cpc_proof_parser_private_fp_terms_success",
