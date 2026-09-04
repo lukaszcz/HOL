@@ -43,7 +43,6 @@ val _ =
         so without the rule it can only carry such a membership along. *)
      ("NOT_IN_EMPTY_AUTO", pred_setTheory.NOT_IN_EMPTY),
      ("EMPTY_SUBSET_AUTO", pred_setTheory.EMPTY_SUBSET),
-     ("IN_UNIV_AUTO", pred_setTheory.IN_UNIV),
      ("UNIV_NOT_EMPTY_AUTO", pred_setTheory.UNIV_NOT_EMPTY),
      ("IN_POW_AUTO", pred_setTheory.IN_POW),
      ("IN_COMPL_AUTO", pred_setTheory.IN_COMPL),
@@ -61,6 +60,18 @@ val _ =
      ("IMAGE_EQ_EMPTY_2_AUTO",
       GEN_ALL (CONJUNCT2 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))),
      ("PSUBSET_DEF_AUTO", pred_setTheory.PSUBSET_DEF)]
+
+(* src/HOL/Set.thy:598-601 @ f7e02b7e.  Isabelle states UNIV_I as [simp]
+   and declares the classical half separately as an unsafe [intro] --
+   "unsafe makes it less likely to cause problems".  Safe, it fires on
+   any [item IN unknown] and settles the unknown on the universe before
+   the branch's other goals are looked at; pred_set already carries
+   IN_UNIV as [simp], so only the classical half is declared here. *)
+Theorem IN_UNIV_AUTO[intro]:
+  !item. item IN univ(:'a)
+Proof
+  MATCH_ACCEPT_TAC pred_setTheory.IN_UNIV
+QED
 
 (* src/HOL/Set.thy:1746-1752 @ f7e02b7e. *)
 val _ =

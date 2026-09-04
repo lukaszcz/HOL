@@ -529,6 +529,23 @@ val _ =
          [([], ``(left : 'a set) UNION right = {} ==> left = {}``),
           ([], ``(left : 'a set) INTER right = left ==> left SUBSET right``)])
 
+(* src/HOL/Set.thy:598-601 @ f7e02b7e.  Neither goal is a corpus entry.
+   Isabelle states UNIV_I as [simp] and declares the classical half on a
+   line of its own as an unsafe [intro] -- "unsafe makes it less likely
+   to cause problems".  Safe, it fires on any [item IN unknown] and
+   settles the unknown on the universe before the branch's other goals
+   are looked at, which is search the safe layer is not entitled to do;
+   so the membership survives SAFE_TAC and the search still closes it. *)
+val seed_univ_goal : Abbrev.goal =
+  ([], ``(seed_univ_item : 'a) IN univ(:'a)``)
+
+val _ =
+  check
+    ("the universe membership is a search step and not a safe one",
+     fn () =>
+       not (closes_within 20 (classicalLib.SAFE_TAC []) seed_univ_goal)
+       andalso closes_within 20 (tableauLib.BLAST_TAC []) seed_univ_goal)
+
 (* src/HOL/Orderings.thy:620-658 @ f7e02b7e.  Isabelle's order solver
    takes the axioms off the linorder class; the translation states them
    as a premise about the relation instead, and a conditional rewrite
