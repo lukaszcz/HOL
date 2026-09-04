@@ -152,6 +152,16 @@ val _ =
      ("TAKE_LENGTH_TOO_LONG_AUTO", listTheory.TAKE_LENGTH_TOO_LONG),
      ("DROP_LENGTH_TOO_LONG_AUTO", listTheory.DROP_LENGTH_TOO_LONG)]
 
+(* src/HOL/List.thy @ f7e02b7e, the takeWhile and dropWhile primrecs.
+   Both are primrec there, so both recursion equations are simp.  HOL4
+   tags dropWhile_def and leaves takeWhile_def untagged -- it is the newer
+   constant and its equations were added without changing any
+   pre-existing simpset -- so the two halves of one decomposition
+   reduce differently: a goal that walks a list drops its dropWhile
+   away and keeps the takeWhile whole. *)
+val _ =
+  export_at "simp" ("takeWhile_AUTO", listTheory.takeWhile_def)
+
 (* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
    transitivity to the classical reasoner as [intro], where HOL4 states it
    but declares it to no claset.  The rest of the lexicographic block needs

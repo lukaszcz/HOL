@@ -622,6 +622,23 @@ val _ =
          [([], ``!f xs ys. MAP f (TAKE (LENGTH xs) (xs ++ ys)) = MAP f xs``),
           ([], ``!f xs ys. MAP f (DROP (LENGTH xs) (xs ++ ys)) = MAP f ys``)])
 
+(* src/HOL/List.thy @ f7e02b7e, the takeWhile primrec.  Neither goal is
+   a corpus entry and neither is the rule: each walks a list past a
+   prefix its predicate accepts.  The second states both halves of the
+   decomposition, and only the takeWhile half is missing without the
+   seed -- dropWhile_def is ambient either way. *)
+val _ =
+  check
+    ("the prefix a predicate accepts reduces like the suffix",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!P x y zs. P x /\ ~P y ==>
+                  takeWhile P (x::y::zs) = [x]``),
+          ([], ``!P x ys. P x ==>
+                  takeWhile P (x::ys) ++ dropWhile P (x::ys) =
+                  x::(takeWhile P ys ++ dropWhile P ys)``)])
+
 (* src/HOL/List.thy @ f7e02b7e, [take_all] and [drop_all]: the same cut
    where the bound is a length comparison rather than the length
    itself, which is where the ambient unconditional forms stop.  Both
