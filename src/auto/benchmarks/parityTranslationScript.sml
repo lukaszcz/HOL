@@ -1972,10 +1972,26 @@ Definition source_foldr_def:
   source_foldr operation xs initial = FOLDR operation initial xs
 End
 
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy:109-111.  [fold] is a primrec there, which is why
+   [foldl_conv_fold] can be simp alongside it: the equation that
+   rewrites a foldl into a fold meets a constant that unfolds down the
+   list rather than back into a foldl.  Stating it by its own recursion
+   keeps that, and [source_fold_FOLDL] is the characterisation the
+   results below are proved through. *)
 Definition source_fold_def:
-  source_fold operation xs initial =
-    FOLDL (\current element. operation element current) initial xs
+  source_fold operation [] initial = initial /\
+  source_fold operation (value :: values) initial =
+    source_fold operation values (operation value initial)
 End
+
+Theorem source_fold_FOLDL:
+  !operation xs initial.
+    source_fold operation xs initial =
+    FOLDL (\current element. operation element current) initial xs
+Proof
+  gen_tac >> Induct >> simp[source_fold_def]
+QED
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
    src/HOL/List.thy:3400-3438. *)
@@ -1984,7 +2000,7 @@ Theorem source_foldr_conv_fold:
     FOLDR operation initial xs =
     source_fold operation (REVERSE xs) initial
 Proof
-  simp[source_fold_def,
+  simp[source_fold_FOLDL,
        rich_listTheory.FOLDR_FOLDL_REVERSE]
 QED
 
@@ -1995,7 +2011,7 @@ Theorem source_foldl_conv_fold:
       (\value current. operation current value) xs initial
 Proof
   rpt gen_tac
-  >> rw[source_fold_def]
+  >> rw[source_fold_FOLDL]
   >> `(\current value. operation current value) = operation` by
        simp[FUN_EQ_THM]
   >> simp[]
@@ -2018,7 +2034,7 @@ Theorem source_fold_append:
     source_fold operation (xs ++ ys) initial =
     source_fold operation ys (source_fold operation xs initial)
 Proof
-  simp[source_fold_def, rich_listTheory.FOLDL_APPEND]
+  simp[source_fold_FOLDL, rich_listTheory.FOLDL_APPEND]
 QED
 
 (* src/HOL/List.thy:3283-3287, fold_Cons_rev. *)
@@ -2028,7 +2044,7 @@ Theorem source_fold_Cons_rev:
 Proof
   `(\element current. element::current) = CONS` by
     simp[FUN_EQ_THM]
-  >> simp[source_fold_def,
+  >> simp[source_fold_FOLDL,
           rich_listTheory.FOLDL_FOLDR_REVERSE,
           rich_listTheory.APPEND_FOLDR]
 QED
@@ -2041,7 +2057,7 @@ Theorem source_fold_filter:
          if predicate value then operation value current else current)
       xs initial
 Proof
-  simp[source_fold_def, rich_listTheory.FOLDL_FILTER]
+  simp[source_fold_FOLDL, rich_listTheory.FOLDL_FILTER]
 QED
 
 Theorem source_fold_map_eta:
@@ -2085,7 +2101,7 @@ Theorem source_fold_cong:
     source_fold left xs initial = source_fold right xs initial
 Proof
   rpt strip_tac
-  >> rw[source_fold_def]
+  >> rw[source_fold_FOLDL]
   >> irule listTheory.FOLDL_CONG
   >> simp[]
 QED
@@ -2095,8 +2111,8 @@ Theorem source_fold_append_concat_rev:
     FLAT xss = source_fold APPEND (REVERSE xss) []
 Proof
   Induct
-  >- simp[source_fold_def]
-  >> simp[source_fold_def, listTheory.REVERSE_DEF,
+  >- simp[source_fold_FOLDL]
+  >> simp[source_fold_FOLDL, listTheory.REVERSE_DEF,
           rich_listTheory.FOLDL_APPEND]
 QED
 
@@ -2117,7 +2133,7 @@ Theorem source_fold_map:
       (\value current. operation (function value) current)
       xs initial
 Proof
-  simp[source_fold_def, rich_listTheory.FOLDL_MAP]
+  simp[source_fold_FOLDL, rich_listTheory.FOLDL_MAP]
 QED
 
 Theorem source_aggregate_image_set_fold:
@@ -2180,7 +2196,7 @@ Proof
   gen_tac
   >> Induct
   >> rpt strip_tac
-  >> fs[source_fold_def]
+  >> fs[source_fold_FOLDL]
   >> `operation h (operation value current) =
       operation value (operation h current)`
        by (first_assum irule >> simp[])
@@ -2201,7 +2217,7 @@ Theorem source_foldr_fold:
 Proof
   gen_tac
   >> Induct
-  >- simp[source_foldr_def, source_fold_def, FUN_EQ_THM]
+  >- simp[source_foldr_def, source_fold_FOLDL, FUN_EQ_THM]
   >> rpt strip_tac
   >> `!element current.
         MEM element xs ==>
@@ -2226,7 +2242,7 @@ Proof
        by simp[source_foldr_def]
   >> `source_fold operation (h::xs) x =
       source_fold operation xs (operation h x)`
-       by simp[source_fold_def]
+       by simp[source_fold_FOLDL]
   >> ASM_REWRITE_TAC []
   >> irule EQ_SYM
   >> irule source_fold_commute

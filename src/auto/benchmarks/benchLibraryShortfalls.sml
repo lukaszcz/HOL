@@ -32,9 +32,6 @@ val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
    "list_L1511_split_list_last_propE", "list_L1789_filter_eq_Cons_iff",
    "list_L1921_in_set_conv_nth", "list_L2576_dropWhile_id",
-   "list_L3400_foldr_conv_foldl", "list_L3404_foldl_conv_foldr",
-   "list_L3417_foldl_cong", "list_L3424_foldl_append",
-   "list_L3434_foldl_map",
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons",
    "list_L4632_extract_SomeE", "list_L4637_extract_Some_iff",
@@ -78,8 +75,7 @@ val congruence_rules =
   classified "congruence rules"
     ("the goal is a congruence rule for a list combinator and "
      ^ "the simpset carries no corresponding congruence")
-    ["list_L1119_map_cong", "list_L3417_foldl_cong",
-     "list_L8236_list_ex_cong"]
+    ["list_L1119_map_cong", "list_L8236_list_ex_cong"]
 
 val prefix_from_its_indices =
   classified "prefix from its indices"
@@ -159,6 +155,18 @@ val instantiated_fact_not_applied =
      ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
+(* src/HOL/List.thy:3231 @ f7e02b7e declares [fold_append] simp, and
+   the source method reaches this goal by rewriting both sides into a
+   fold and letting that rule finish.  The ambient context here is the
+   translation's definitions, so the translated [source_fold_append]
+   stands proved and unreachable. *)
+val a_declared_result_about_a_translated_constant =
+  classified "a declared result about a translated constant"
+    ("the residual is a source result Isabelle declares simp about "
+     ^ "the same constant, and the ambient context carries the "
+     ^ "translation's definitions and not its results")
+    ["list_L3424_foldl_append"]
+
 val zip_against_map =
   classified "zip against map"
     ("ZIP against MAP is not normalised")
@@ -169,8 +177,6 @@ val over_budget_with_no_residual =
     ("the assigned tactic did not return within the budget")
     ["list_L1789_filter_eq_Cons_iff", "list_L1921_in_set_conv_nth",
      "list_L7998_listrel_rtrancl_refl", "map_L899_map_add_subsumed1",
-     "list_L3400_foldr_conv_foldl", "list_L3404_foldl_conv_foldr",
-     "list_L3424_foldl_append", "list_L3434_foldl_map",
      "list_L4065_set_take_disj_set_drop_if_distinct",
      "list_L4406_distinct_adj_Cons_Cons",
      "list_L4632_extract_SomeE",
@@ -279,8 +285,7 @@ val fold_direction =
      ^ "fold lemmas; the HOL4 fold law that would close each residual "
      ^ "is either declared to no simpset or, for the append law, the "
      ^ "goal itself, which rule A1 withholds")
-    ["list_L3413_foldr_cong",
-     "list_L3421_foldr_append", "list_L3427_foldr_map",
+    ["list_L3421_foldr_append", "list_L3427_foldr_map",
      "list_L3430_foldr_filter"]
 
 val fold_against_a_set_aggregate =
@@ -507,6 +512,7 @@ val execution : benchLib.shortfall list =
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
   instantiated_fact_not_applied @
+  a_declared_result_about_a_translated_constant @
   zip_against_map @
   over_budget_with_no_residual @
   arithmetic_residual_after_unfolding @
