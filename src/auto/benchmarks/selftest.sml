@@ -1355,7 +1355,7 @@ val _ =
        Portable.sort (fn a => fn b => String.<= (a, b)) native_citations =
        ["arg_cong2[where f=nths, OF refl]", "classical",
         "exI[where ?x = \"- u\" for u]", "if_split_asm", "if_splits",
-        "list.distinct(1)", "nat_less_le", "pairwiseI"])
+        "nat_less_le", "pairwiseI"])
 
 (* A goal identifier in the table would make it a per-goal hint table. *)
 val _ =

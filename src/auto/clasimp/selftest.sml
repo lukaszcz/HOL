@@ -1590,3 +1590,41 @@ val _ =
          ambient_normalized_goal)
 
 val _ = BasicProvers.diminish_srw_ss ["clasimpAmbientProbe"]
+
+(* A first-order search instantiates a function variable with an
+   abstraction and then has no rule to reduce the redex that leaves, so
+   the fact below is unusable in its own goal until the abstraction is
+   named.  The constant is local and the goal is not a benchmark entry:
+   what is asserted is that naming the abstraction is what closes it. *)
+val lifted_application_def =
+  Definition.new_definition
+    ("clasimp_lifted_application_def",
+     ``clasimp_lifted_application (predicate:'a -> bool) (element:'a) =
+         predicate element``)
+
+val lifted_application_goal : goal =
+  ([], ``clasimp_lifted_application (\y. p y /\ q y) (a:'a) ==> p a``)
+
+val _ =
+  check
+    ("naming an abstraction lets a fact instantiate a function variable",
+     fn () =>
+       tactic_fails (metisLib.METIS_TAC [lifted_application_def])
+         lifted_application_goal andalso
+       valid_closes
+         (Tactical.THEN
+            (clasimpLib.LAMBDA_LIFT_TAC,
+             metisLib.METIS_TAC [lifted_application_def]))
+         lifted_application_goal andalso
+       valid_closes
+         (clasimpLib.AMBIENT_METIS_TAC [lifted_application_def])
+         lifted_application_goal)
+
+(* Nothing stands in an argument position, so there is nothing to name
+   and the step refuses rather than reproducing the goal. *)
+val _ =
+  check
+    ("the lifting step refuses a goal with no argument abstraction",
+     fn () =>
+       tactic_fails clasimpLib.LAMBDA_LIFT_TAC
+         ([], ``!x:'a. p x ==> q x ==> p x``))

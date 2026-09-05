@@ -726,21 +726,152 @@ fun CLARSIMP_TAC theorems =
    [[x] ++ l], and the ambient EVERY_MEM iff reads EVERY as membership.
    A fact stated the library's way then never meets such a goal, where
    Isabelle's metis reads its facts in the one normal form its simp
-   leaves goals in.  Each fact enters in both spellings -- the same
+   leaves goals in.  Each fact enters in every spelling -- the same
    closing of a normal-form gap from HOL4's side that SUC_FILTER
    performs for the simpset -- so nothing METIS_TAC would have found is
    lost. *)
-fun ambient_forms theorem =
-  let
-    val normalized = simpLib.SIMP_RULE (clasimp_ss ()) [] theorem
-  in
-    if aconv (concl normalized) (concl theorem) then [theorem]
-    else [theorem, normalized]
-  end
-  handle Portable.Interrupt => raise Portable.Interrupt
-       | HOL_ERR _ => [theorem]
+local
+  (* A rule the ambient set already carries normalizes to nothing when
+     the whole of it is rewritten -- it rewrites itself away -- so the
+     consequent is normalized on its own as well: an equivalence keeps
+     the left-hand side it is triggered by and gains the right-hand
+     side in the form the goal is in. *)
+  fun consequent_conv conv term =
+    if boolSyntax.is_forall term then
+      Conv.QUANT_CONV (consequent_conv conv) term
+    else if boolSyntax.is_imp_only term then
+      Conv.RAND_CONV (consequent_conv conv) term
+    else if boolSyntax.is_eq term then Conv.RAND_CONV conv term
+    else conv term
+
+  fun attempt rule theorem =
+    SOME (rule theorem)
+    handle Portable.Interrupt => raise Portable.Interrupt
+         | HOL_ERR _ => NONE
+         | Conv.UNCHANGED => NONE
+in
+  fun ambient_forms theorem =
+    let
+      val ss = clasimp_ss ()
+      val forms =
+        [attempt (simpLib.SIMP_RULE ss []) theorem,
+         attempt (Conv.CONV_RULE (consequent_conv (simpLib.SIMP_CONV ss [])))
+           theorem]
+      fun add (NONE, kept) = kept
+        | add (SOME form, kept) =
+            if aconv (concl form) boolSyntax.T orelse
+               List.exists (fn k => aconv (concl k) (concl form)) kept
+            then kept
+            else kept @ [form]
+    in
+      List.foldl add [theorem] forms
+    end
+end
+
+(* Isabelle's first-order step lambda-lifts before it searches: an
+   abstraction standing in an argument position becomes a constant with
+   a defining equation, so a fact whose function variable has to take
+   that abstraction as its value is instantiated first-order and the
+   result is used without a beta step.  HOL4's clausifier carries the
+   same transformation (normalForms.extract_lambdas) but does not run
+   it, so the instantiation leaves a redex the search cannot reduce and
+   the step is not taken.
+
+   An abstraction argument of a constant of theory bool or min is the
+   body of a binder rather than data, and is descended into instead;
+   an eta-contractible one already names a function; and one mentioning
+   a variable an enclosing binder binds cannot be named by a goal-level
+   variable.  Naming happens whenever there is anything to name, as it
+   does in Isabelle: the defining equation goes into the goal with the
+   name, so the search is given back everything the abstraction said. *)
+local
+  fun binder_head term =
+    let
+      val head = fst (strip_comb term)
+    in
+      is_const head andalso
+      let val {Thy, ...} = dest_thy_const head
+      in Thy = "bool" orelse Thy = "min" end
+    end
+
+  fun scan bound term found =
+    if is_abs term then
+      let val (variable, body) = dest_abs term
+      in scan (variable :: bound) body found end
+    else if is_comb term then
+      let
+        val opaque = binder_head term
+        val (head, arguments) = strip_comb term
+        fun argument (argument_term, found) =
+          let val found = scan bound argument_term found
+          in
+            if is_abs argument_term andalso not opaque andalso
+               not (Lib.can Drule.ETA_CONV argument_term) andalso
+               not (List.exists (fn v => op_mem aconv v bound)
+                      (free_vars argument_term))
+            then argument_term :: found
+            else found
+          end
+      in
+        List.foldl argument (scan bound head found) arguments
+      end
+    else found
+
+  fun abstractions terms =
+    op_mk_set aconv (List.foldl (fn (t, a) => scan [] t a) [] terms)
+
+  fun definition (name, abstraction) =
+    let
+      val (variables, body) = strip_abs abstraction
+    in
+      boolSyntax.list_mk_forall
+        (variables,
+         boolSyntax.mk_eq (list_mk_comb (name, variables), body))
+    end
+
+  fun beta_theorem (name, abstraction) =
+    let
+      val (variables, _) = strip_abs abstraction
+    in
+      Thm.GENL variables
+        (Drule.LIST_BETA_CONV (list_mk_comb (abstraction, variables)))
+    end
+in
+  fun LAMBDA_LIFT_TAC (assumptions, conclusion) =
+    let
+      val lifted = abstractions (conclusion :: assumptions)
+      val _ =
+        if null lifted then
+          raise ERR "LAMBDA_LIFT_TAC" "no abstraction stands in an argument"
+        else ()
+      val avoid = free_varsl (conclusion :: assumptions)
+      val names =
+        snd (List.foldl
+               (fn (abstraction, (avoid, names)) =>
+                  let
+                    val name =
+                      variant avoid
+                        (mk_var ("lifted", type_of abstraction))
+                  in (name :: avoid, (name, abstraction) :: names) end)
+               (avoid, []) lifted)
+      val forwards = map (fn (name, a) => a |-> name) names
+      val backwards = map (fn (name, a) => name |-> a) names
+      val goal =
+        (map (subst forwards) assumptions,
+         boolSyntax.list_mk_imp
+           (map definition names, subst forwards conclusion))
+    in
+      ([goal],
+       fn theorems =>
+         List.foldl
+           (fn (entry, theorem) => Thm.MP theorem (beta_theorem entry))
+           (Thm.INST backwards (hd theorems)) names)
+    end
+end
 
 fun AMBIENT_METIS_TAC theorems =
-  metisLib.METIS_TAC (List.concat (map ambient_forms theorems))
+  Tactical.THEN
+    (Tactical.TRY LAMBDA_LIFT_TAC,
+     metisLib.METIS_TAC (List.concat (map ambient_forms theorems)))
 
 end

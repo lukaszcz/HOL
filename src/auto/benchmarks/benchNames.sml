@@ -564,7 +564,6 @@ val table : (string * (unit -> resolution)) list =
   ("if_split_asm", native),
   ("if_splits", native),
   ("arg_cong2[where f=nths, OF refl]", native),
-  ("list.distinct(1)", native),
   ("nat_less_le", native),
 
   (* ---- Isabelle facts with no HOL4 counterpart ---- *)
@@ -794,6 +793,14 @@ val table : (string * (unit -> resolution)) list =
    translated "source_lexordp_iff"),
   ("lfp_unfold[OF monoI, of F]",
    first_case (library "fixedPoint" "lfp_fixedpoint")),
+  (* src/HOL/List.thy @ f7e02b7e.  [native] would say the engine has the
+     rule without being handed it, which holds of a simplification and
+     not of a first-order step: that step sees the facts its method
+     names and no ambient context at all, so a citation that is a
+     theorem resolves to the theorem. *)
+  ("list.distinct(1)",
+   library "list" "NOT_CONS_NIL"),
+
   ("list.pred_set",
    library "list" "EVERY_MEM"),
   ("list.split",

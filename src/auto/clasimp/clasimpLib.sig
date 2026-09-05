@@ -82,4 +82,11 @@ sig
      normal form; offering both spellings is what lets the fact meet the
      goal, and it can only add to what METIS_TAC would have found. *)
   val AMBIENT_METIS_TAC : thm list -> tactic
+
+  (* Name each abstraction that stands in an argument position with a
+     goal-level variable and carry its defining equation into the goal.
+     A first-order search can then instantiate a function variable with
+     the name, where instantiating it with the abstraction itself leaves
+     a redex the search has no rule to reduce. *)
+  val LAMBDA_LIFT_TAC : tactic
 end
