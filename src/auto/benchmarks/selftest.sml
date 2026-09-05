@@ -1417,6 +1417,32 @@ val _ =
              "\n");
         null repeated_entries))
 
+(* src/HOL/List.thy @ f7e02b7e: split_list is the implication and
+   in_set_conv_decomp the equivalence, and only the equivalence builds a
+   member back out of a decomposition.  The goal below is not a corpus
+   entry and is not either rule -- it asks for that direction alone --
+   and the first-order step is given nothing but what the citation
+   resolves to. *)
+val decomposition_membership_goal : Abbrev.goal =
+  ([], ``!(value:'a) prefix suffix xs.
+           xs = prefix ++ value::suffix ==> MEM value xs``)
+
+fun metis_closes theorems =
+  (case Tactical.VALID (metisLib.METIS_TAC theorems)
+          decomposition_membership_goal of
+       ([], _) => true
+     | _ => false)
+  handle Portable.Interrupt => raise Portable.Interrupt
+       | HOL_ERR _ => false
+
+val _ =
+  check
+    ("the decomposition citation resolves to the equivalence",
+     fn () =>
+       not (metis_closes [parityTranslationTheory.source_split_list]) andalso
+       metis_closes
+         (map #theorem (benchNames.theorems "in_set_conv_decomp")))
+
 (* ---- Phase B: the method dispatcher ------------------------------- *)
 
 val corpus_method_heads =

@@ -737,8 +737,13 @@ val table : (string * (unit -> resolution)) list =
    library "pred_set" "IMAGE_IMAGE"),
   ("in_set_butlastD",
    translated "source_mem_front"),
+  (* src/HOL/List.thy @ f7e02b7e: split_list is the implication and
+     in_set_conv_decomp the equivalence.  Answering both citations with the
+     translation of the implication measures every goal that names the
+     equivalence without the direction that builds a member from a
+     decomposition. *)
   ("in_set_conv_decomp",
-   translated "source_split_list"),
+   library "list" "MEM_SPLIT"),
   ("in_set_conv_nth",
    library "list" "MEM_EL"),
   ("indexed_from_eq_zip",
