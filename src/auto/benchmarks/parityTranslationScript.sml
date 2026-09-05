@@ -5667,6 +5667,21 @@ Proof
             listTheory.EVERY_MEM]
 QED
 
+(* src/HOL/List.thy: dropWhile_eq_Cons_conv.  HOL4 states dropWhile_eq_nil
+   for the empty result and dropWhile_eq_DROP for the index, and nothing
+   that reads a nonempty result back as a decomposition of the list, which
+   is the step the extract results are proved by. *)
+Theorem source_dropWhile_eq_cons_conv:
+  !predicate (xs : 'a list) head tail.
+    dropWhile predicate xs = head::tail <=>
+    xs = takeWhile predicate xs ++ head::tail /\ ~predicate head
+Proof
+  gen_tac
+  >> Induct
+  >> rw[listTheory.takeWhile_def]
+  >> metis_tac[]
+QED
+
 Theorem source_dropWhile_eq_self_iff:
   !predicate (items : 'a list).
     dropWhile predicate items = items <=>

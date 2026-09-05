@@ -2033,6 +2033,34 @@ val _ =
                  theorem = parityTranslationTheory.source_extract_def}]))
          extract_decomposition_goal)
 
+(* src/HOL/List.thy @ f7e02b7e, dropWhile_eq_Cons_conv.  HOL4 states
+   dropWhile_eq_nil for the empty result and dropWhile_eq_DROP for the
+   index, and nothing that reads a nonempty result back as a
+   decomposition of the list, so the name table used to answer the
+   citation Unrepresented and the three extract results that name it
+   were measured without it.  The goal below is not a corpus entry and
+   is not the rule: it asks only for the rule's second conjunct, which
+   no ambient dropWhile equation reaches -- the list the dropWhile ran
+   down is a variable. *)
+val dropWhile_cons_goal =
+  ``!predicate xs head tail.
+      dropWhile predicate xs = head::tail ==> ~predicate head``
+
+val _ =
+  check
+    ("a nonempty dropWhile stops at a value its predicate rejects",
+     fn () =>
+       not (recipe_solves (benchLib.Invoke (benchLib.Auto, []))
+              dropWhile_cons_goal) andalso
+       recipe_solves
+         (benchLib.Invoke
+            (benchLib.Auto,
+             [benchLib.RewriteAdd
+                {name = "parityTranslation$source_dropWhile_eq_cons_conv",
+                 theorem =
+                   parityTranslationTheory.source_dropWhile_eq_cons_conv}]))
+         dropWhile_cons_goal)
+
 val _ =
   check
     ("rotation modulo normalization applies to an unrelated periodic function",
