@@ -38,9 +38,6 @@ An Isabelle proof can name a fact HOL4 states nowhere -- neither in a library no
 - `set_L651_Pow_not_empty (Pow_top)`
 - `list_L1838_partition_filter_conv (partition_filter2[symmetric], partition_filter1[symmetric])`
 - `list_L9013_list_all_transfer (list.pred_transfer)`
-- `list_L4628_extract_None_iff (dropWhile_eq_Cons_conv)`
-- `list_L4632_extract_SomeE (dropWhile_eq_Cons_conv)`
-- `list_L4637_extract_Some_iff (dropWhile_eq_Cons_conv)`
 - `list_L5409_nths_drop (drop_eq_nths, nths_nths, atLeastLessThan_iff[symmetric])`
 - `list_L6487_nth_nth_transpose_sorted (filter_equals_takeWhile_sorted_rev[OF sorted, of i])`
 - `list_L6669_sorted_key_list_of_set_eq_Nil_iff (fold_insort_key.remove)`
@@ -101,12 +98,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 5 | 20 | 0 | 0 | 0.6 | 39 | 516 |
-| Sets | 330 | 97 | 228 | 5 | 0 | 3.1 | 6 | 2430 |
-| List/map | 427 | 4 | 415 | 8 | 0 | 5.4 | 0 | 1868 |
+| Sets | 330 | 91 | 235 | 4 | 0 | 3.0 | 6 | 2430 |
+| List/map | 427 | 4 | 415 | 8 | 0 | 4.4 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **870** | **188** | **668** | **14** | **0** | **5.4** | **0** | **2430** |
+| **Total** | **870** | **182** | **675** | **13** | **0** | **4.4** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
