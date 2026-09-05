@@ -162,6 +162,29 @@ val _ =
 val _ =
   export_at "simp" ("takeWhile_AUTO", listTheory.takeWhile_def)
 
+(* src/HOL/List.thy @ f7e02b7e, the results about those two that
+   Isabelle declares simp: takeWhile_dropWhile_id, dropWhile_append1,
+   dropWhile_append2, takeWhile_eq_all_conv and dropWhile_eq_Nil_conv.
+   HOL4 states all five and declares none, so a goal that pushes a
+   dropWhile through an append, or reads a takeWhile or a dropWhile off
+   against the list it ran down, keeps both spellings side by side.
+
+   dropWhile_id is simp there and is the implication from a predicate
+   no element satisfies; HOL4's theorem of that name is the equivalence
+   Isabelle calls dropWhile_eq_self_iff and leaves undeclared, so it is
+   not seeded here. *)
+val _ =
+  List.app (export_at "simp")
+    [("takeWhile_APPEND_dropWhile_AUTO",
+      listTheory.takeWhile_APPEND_dropWhile),
+     ("dropWhile_APPEND_EVERY_AUTO", listTheory.dropWhile_APPEND_EVERY),
+     ("dropWhile_APPEND_EXISTS_AUTO", listTheory.dropWhile_APPEND_EXISTS)]
+
+val _ =
+  List.app export_iff
+    [("takeWhile_id_AUTO", listTheory.takeWhile_id),
+     ("dropWhile_eq_nil_AUTO", listTheory.dropWhile_eq_nil)]
+
 (* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
    transitivity to the classical reasoner as [intro], where HOL4 states it
    but declares it to no claset.  The rest of the lexicographic block needs

@@ -653,3 +653,27 @@ val _ =
          (closes_within 20 (clasimpLib.AUTO_TAC []))
          [([], ``!f xs n. LENGTH xs <= n ==> MAP f (TAKE n xs) = MAP f xs``),
           ([], ``!f a xs n. LENGTH xs <= n ==> FOLDL f a (DROP n xs) = a``)])
+
+(* src/HOL/List.thy @ f7e02b7e, the declared results about the two
+   walks: a dropWhile crosses an append by which half stops it, a
+   takeWhile and a dropWhile put the list back together, and each walk
+   reaching its own end reads as a statement about every element.  None
+   of the five goals is a corpus entry, and each is stated over one of
+   the five rules. *)
+val _ =
+  check
+    ("a walk down a list survives an append and reads back",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!P xs ys. EVERY P xs ==>
+                  LENGTH (dropWhile P (xs ++ ys)) =
+                  LENGTH (dropWhile P ys)``),
+          ([], ``!P xs (f:'a list -> 'b).
+                  f (takeWhile P xs ++ dropWhile P xs) = f xs``),
+          ([], ``!P xs ys. EXISTS ($~ o P) xs ==>
+                  LENGTH (dropWhile P (xs ++ ys)) =
+                  LENGTH (dropWhile P xs) + LENGTH ys``),
+          ([], ``!P x xs. takeWhile P (x::xs) = x::xs ==> P x``),
+          ([], ``!P xs. dropWhile P xs <> [] ==>
+                  ?e. MEM e xs /\ ~P e``)])
