@@ -118,7 +118,7 @@ fun tactic_name Simp = "simp"
   | tactic_name Clarify = "CLARIFY_TAC"
   | tactic_name Clarsimp = "CLARSIMP_TAC"
   | tactic_name Aesop = "AESOP_TAC"
-  | tactic_name Metis = "METIS_TAC"
+  | tactic_name Metis = "AMBIENT_METIS_TAC"
   | tactic_name Linarith = "LINARITH_TAC"
   | tactic_name IntArith = "intLib.ARITH_TAC"
   | tactic_name Cooper = "intLib.COOPER_TAC"
@@ -1147,8 +1147,11 @@ fun tactic_for goal Simp args exclusions =
         (processed_clasimp goal
           (aesopLib.CS_AESOP_TAC aesopLib.default_config)
           (all_class_args args @ simp_controls exclusions))
+  (* Isabelle's metis reads its facts in the normal form its simp leaves
+     goals in; the ambient simpset here imposes normal forms the library
+     does not state its lemmas in, so the facts enter in both. *)
   | tactic_for _ Metis args _ =
-      metisLib.METIS_TAC (List.mapPartial fact_arg args)
+      clasimpLib.AMBIENT_METIS_TAC (List.mapPartial fact_arg args)
   | tactic_for _ Linarith args _ =
       with_facts args
         (linarithLib.LINARITH_TAC

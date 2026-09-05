@@ -75,4 +75,11 @@ sig
   val SLOWSIMP_TAC : thm list -> tactic
   val BESTSIMP_TAC : thm list -> tactic
   val CLARSIMP_TAC : thm list -> tactic
+
+  (* METIS_TAC with each fact offered in the ambient normal form as well
+     as its own.  A first-order step runs on a goal the simplification
+     before it normalised, and a library lemma is not stated in that
+     normal form; offering both spellings is what lets the fact meet the
+     goal, and it can only add to what METIS_TAC would have found. *)
+  val AMBIENT_METIS_TAC : thm list -> tactic
 end

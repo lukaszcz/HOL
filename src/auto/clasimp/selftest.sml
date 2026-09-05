@@ -1552,3 +1552,41 @@ val _ =
   check
     ("a conditional rewrite's order premise is discharged",
      fn () => valid_closes (clasimpLib.AUTO_TAC []) order_condition_goal)
+
+(* A first-order step meets a goal the simplification before it left in
+   the ambient normal form, and a fact stated some other way misses it.
+   The two constants below are the same function, and the rewrite
+   between them is the normal form; the fact is stated in the spelling
+   the normal form leaves behind, and the goal in the one it produces. *)
+val ambient_form_left =
+  Definition.new_definition
+    ("clasimp_ambient_left_def", ``clasimp_ambient_left (x:'a) = x``)
+
+val ambient_form_right =
+  Definition.new_definition
+    ("clasimp_ambient_right_def", ``clasimp_ambient_right (x:'a) = x``)
+
+val ambient_variable = mk_var ("x", alpha)
+
+val ambient_normal_form =
+  GEN ambient_variable
+    (TRANS (SPEC ambient_variable ambient_form_left)
+       (SYM (SPEC ambient_variable ambient_form_right)))
+
+val ambient_normalized_goal : goal =
+  ([] : term list, ``clasimp_ambient_right (a:'a) = a``)
+
+val _ =
+  BasicProvers.augment_srw_ss
+    [simpLib.named_rewrites "clasimpAmbientProbe" [ambient_normal_form]]
+
+val _ =
+  check
+    ("a fact reaches the goal its own spelling misses",
+     fn () =>
+       tactic_fails (metisLib.METIS_TAC [ambient_form_left])
+         ambient_normalized_goal andalso
+       valid_closes (clasimpLib.AMBIENT_METIS_TAC [ambient_form_left])
+         ambient_normalized_goal)
+
+val _ = BasicProvers.diminish_srw_ss ["clasimpAmbientProbe"]

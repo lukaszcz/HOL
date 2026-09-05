@@ -720,4 +720,27 @@ fun BESTSIMP_TAC theorems =
 fun CLARSIMP_TAC theorems =
   public clarsimp_with theorems
 
+(* A first-order step meets a goal the simplification before it left in
+   the ambient normal form, and HOL4's normal forms are not the ones its
+   library states lemmas in: a list equation normalises [x::l] to
+   [[x] ++ l], and the ambient EVERY_MEM iff reads EVERY as membership.
+   A fact stated the library's way then never meets such a goal, where
+   Isabelle's metis reads its facts in the one normal form its simp
+   leaves goals in.  Each fact enters in both spellings -- the same
+   closing of a normal-form gap from HOL4's side that SUC_FILTER
+   performs for the simpset -- so nothing METIS_TAC would have found is
+   lost. *)
+fun ambient_forms theorem =
+  let
+    val normalized = simpLib.SIMP_RULE (clasimp_ss ()) [] theorem
+  in
+    if aconv (concl normalized) (concl theorem) then [theorem]
+    else [theorem, normalized]
+  end
+  handle Portable.Interrupt => raise Portable.Interrupt
+       | HOL_ERR _ => [theorem]
+
+fun AMBIENT_METIS_TAC theorems =
+  metisLib.METIS_TAC (List.concat (map ambient_forms theorems))
+
 end
