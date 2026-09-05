@@ -2008,6 +2008,31 @@ val _ =
                  theorem = parityTranslationTheory.source_fold_def}]))
          fold_representation_distinction_goal)
 
+(* src/HOL/List.thy:226-231 @ f7e02b7e.  The source defines extract by
+   dropWhile and takeWhile and proves every result about it by rewriting
+   with those two, whose equations are ambient.  The goal below is not a
+   corpus entry -- it walks two constructors and reads off the prefix --
+   and the definition reaches it only when it is stated over the same
+   decomposition; a paraphrase over some other one states the same
+   function and leaves the walk with nothing to reduce it. *)
+val extract_decomposition_goal =
+  ``!predicate first second rest.
+      ~predicate first ==> predicate second ==>
+      parityTranslation$source_extract predicate (first::second::rest) =
+        SOME ([first], second, rest)``
+
+val _ =
+  check
+    ("the extract definition walks a list by the ambient equations",
+     fn () =>
+       recipe_solves
+         (benchLib.Invoke
+            (benchLib.Auto,
+             [benchLib.DefinitionAdd
+                {name = "parityTranslation$source_extract_def",
+                 theorem = parityTranslationTheory.source_extract_def}]))
+         extract_decomposition_goal)
+
 val _ =
   check
     ("rotation modulo normalization applies to an unrelated periodic function",

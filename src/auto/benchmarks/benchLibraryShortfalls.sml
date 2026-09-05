@@ -38,7 +38,6 @@ val over_budget =
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons", "list_L4628_extract_None_iff",
    "list_L4632_extract_SomeE", "list_L4637_extract_Some_iff",
-   "list_L4645_extract_Cons_code",
    "list_L5044_takeWhile_replicate", "list_L5048_dropWhile_replicate",
    "list_L5325_bij_rotate1", "list_L7998_listrel_rtrancl_refl",
    "list_L6138_map_sorted_distinct_set_unique",
@@ -73,8 +72,7 @@ val conditional_list_rewrites =
      ^ "carry")
     ["list_L1010_tl_append_if", "list_L2100_last_ConsR",
      "list_L2589_dropWhile_last",
-     "list_L4481_insert_remdups", "list_L4642_extract_Nil_code",
-     "list_L8603_is_empty_set"]
+     "list_L4481_insert_remdups", "list_L8603_is_empty_set"]
 
 val congruence_rules =
   classified "congruence rules"
@@ -176,7 +174,7 @@ val over_budget_with_no_residual =
      "list_L4065_set_take_disj_set_drop_if_distinct",
      "list_L4406_distinct_adj_Cons_Cons",
      "list_L4628_extract_None_iff", "list_L4632_extract_SomeE",
-     "list_L4645_extract_Cons_code", "list_L5044_takeWhile_replicate",
+     "list_L5044_takeWhile_replicate",
      "list_L5048_dropWhile_replicate", "list_L5325_bij_rotate1",
      "list_L6138_map_sorted_distinct_set_unique",
      "list_L6669_sorted_key_list_of_set_eq_Nil_iff",

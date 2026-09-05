@@ -2244,135 +2244,18 @@ Definition source_minus_list_set_def:
 End
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
-   src/HOL/List.thy:226-231 and 4626-4650.  SPLITP is the HOL4
-   representation of the source takeWhile/dropWhile decomposition. *)
+   src/HOL/List.thy:226-231.  The source decomposes the list with
+   dropWhile and takeWhile, and the results about extract are proved by
+   rewriting with those two; a paraphrase in terms of any other
+   decomposition -- SPLITP was the earlier one -- states the same
+   function but leaves the source's own proofs without their rewrites. *)
 Definition source_extract_def:
   source_extract predicate xs =
-    case SND (rich_list$SPLITP predicate xs) of
+    case dropWhile ($~ o predicate) xs of
       [] => NONE
     | head::tail =>
-        SOME (FST (rich_list$SPLITP predicate xs), head, tail)
+        SOME (takeWhile ($~ o predicate) xs, head, tail)
 End
-
-Theorem source_extract_splitp_bridge:
-  !predicate xs prefix rest.
-    rich_list$SPLITP predicate xs = (prefix, rest) ==>
-    (source_extract predicate xs =
-     case rest of
-       [] => NONE
-     | head::tail => SOME (prefix, head, tail))
-Proof
-  simp[source_extract_def]
-QED
-
-Theorem source_extract_rec:
-  (source_extract predicate [] = NONE) /\
-  (!head tail.
-    source_extract predicate (head::tail) =
-    if predicate head then SOME ([], head, tail)
-    else
-      case source_extract predicate tail of
-        NONE => NONE
-      | SOME (prefix, value, suffix) =>
-          SOME (head::prefix, value, suffix))
-Proof
-  conj_tac
-  >- simp[source_extract_def, rich_listTheory.SPLITP]
-  >> rpt gen_tac
-  >> rw[source_extract_def, rich_listTheory.SPLITP]
-  >> Cases_on `rich_list$SPLITP predicate tail`
-  >> Cases_on `r`
-  >> simp[source_extract_def]
-QED
-
-Theorem source_extract_none_splitp:
-  !predicate xs.
-    (source_extract predicate xs = NONE <=>
-     SND (rich_list$SPLITP predicate xs) = [])
-Proof
-  simp[source_extract_def]
-  >> Cases_on `SND (rich_list$SPLITP predicate xs)`
-  >> simp[]
-QED
-
-Theorem source_extract_some_splitp:
-  !predicate xs prefix value suffix.
-    (source_extract predicate xs = SOME (prefix, value, suffix) <=>
-     rich_list$SPLITP predicate xs =
-       (prefix, value::suffix))
-Proof
-  rpt gen_tac
-  >> Cases_on `rich_list$SPLITP predicate xs`
-  >> Cases_on `r`
-  >> simp[source_extract_def]
-QED
-
-Theorem source_splitp_none:
-  !predicate xs.
-    (SND (rich_list$SPLITP predicate xs) = [] <=>
-     ~(?value. MEM value xs /\ predicate value))
-Proof
-  Induct_on `xs`
-  >> rw[rich_listTheory.SPLITP]
-  >> Cases_on `rich_list$SPLITP predicate xs`
-  >> simp[]
-  >> metis_tac[]
-QED
-
-Theorem source_splitp_first:
-  !predicate prefix value suffix.
-    predicate value ==>
-    ~(?item. MEM item prefix /\ predicate item) ==>
-    rich_list$SPLITP predicate (prefix ++ value::suffix) =
-      (prefix, value::suffix)
-Proof
-  rpt strip_tac
-  >> `EVERY ($~ o predicate) prefix` by
-       (rw[listTheory.EVERY_MEM, combinTheory.o_DEF]
-        >> metis_tac[])
-  >> `rich_list$SPLITP predicate prefix = (prefix, [])` by
-       simp[rich_listTheory.SPLITP_NIL_SND_EVERY]
-  >> simp[rich_listTheory.SPLITP_APPEND,
-          listTheory.EXISTS_MEM, rich_listTheory.SPLITP]
-QED
-
-Theorem source_splitp_someD:
-  !predicate xs prefix value suffix.
-    rich_list$SPLITP predicate xs =
-      (prefix, value::suffix) ==>
-    xs = prefix ++ value::suffix /\ predicate value /\
-    ~(?item. MEM item prefix /\ predicate item)
-Proof
-  rpt gen_tac
-  >> disch_tac
-  >> imp_res_tac rich_listTheory.SPLITP_JOIN
-  >> imp_res_tac rich_listTheory.SPLITP_IMP
-  >> conj_tac
-  >- fs[]
-  >> conj_tac
-  >- fs[]
-  >> rw[]
-  >> qpat_x_assum `EVERY _ prefix` mp_tac
-  >> simp[listTheory.EVERY_MEM, combinTheory.o_DEF]
-  >> metis_tac[]
-QED
-
-Theorem source_splitp_some:
-  !predicate xs prefix value suffix.
-    (rich_list$SPLITP predicate xs =
-       (prefix, value::suffix) <=>
-     xs = prefix ++ value::suffix /\ predicate value /\
-     ~(?item. MEM item prefix /\ predicate item))
-Proof
-  rpt gen_tac
-  >> eq_tac
-  >- metis_tac[source_splitp_someD]
-  >> rpt strip_tac
-  >> qpat_x_assum `xs = _` SUBST1_TAC
-  >> irule source_splitp_first
-  >> simp[]
-  >> metis_tac[]
-QED
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
    src/HOL/List.thy:247-248 and 5125-5182. *)
