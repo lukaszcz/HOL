@@ -155,18 +155,6 @@ val instantiated_fact_not_applied =
      ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
-(* src/HOL/List.thy:3231 @ f7e02b7e declares [fold_append] simp, and
-   the source method reaches this goal by rewriting both sides into a
-   fold and letting that rule finish.  The ambient context here is the
-   translation's definitions, so the translated [source_fold_append]
-   stands proved and unreachable. *)
-val a_declared_result_about_a_translated_constant =
-  classified "a declared result about a translated constant"
-    ("the residual is a source result Isabelle declares simp about "
-     ^ "the same constant, and the ambient context carries the "
-     ^ "translation's definitions and not its results")
-    ["list_L3424_foldl_append"]
-
 val zip_against_map =
   classified "zip against map"
     ("ZIP against MAP is not normalised")
@@ -512,7 +500,6 @@ val execution : benchLib.shortfall list =
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
   instantiated_fact_not_applied @
-  a_declared_result_about_a_translated_constant @
   zip_against_map @
   over_budget_with_no_residual @
   arithmetic_residual_after_unfolding @

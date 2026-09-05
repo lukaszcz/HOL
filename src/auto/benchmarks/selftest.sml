@@ -1357,6 +1357,30 @@ val _ =
         "exI[where ?x = \"- u\" for u]", "if_split_asm", "if_splits",
         "nat_less_le", "pairwiseI"])
 
+(* The ambient context carries a few results Isabelle declares simp
+   about a translated constant, which its simp step has and a context
+   of definitions alone does not.  That is the source's own context and
+   never a goal's answer, so none of them may state a corpus goal --
+   the same test rule A1 applies to a supplied fact. *)
+val _ =
+  check
+    ("no ambient declared result states a corpus goal",
+     fn () =>
+       let
+         val goals =
+           benchClassical.goals @ benchSets.goals @ benchListMap.goals @
+           benchLinarith.goals @ benchPresburger.goals @
+           benchAlgebra.goals
+         fun states ({theorem, ...} : benchLib.named_thm)
+                    ({goal, ...} : benchLib.corpus_goal) =
+           benchLib.theorem_is_goal goal theorem
+       in
+         not
+           (List.exists
+              (fn result => List.exists (states result) goals)
+              benchAmbient.declared_results)
+       end)
+
 (* A goal identifier in the table would make it a per-goal hint table. *)
 val _ =
   check

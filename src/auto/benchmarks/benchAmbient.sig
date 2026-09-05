@@ -34,6 +34,11 @@ sig
   (* [definitions] as recipe arguments, in the order a recipe takes. *)
   val arguments : benchLib.method_arg list
 
+  (* The results Isabelle declares simp about a translated constant,
+     which its simp step has and a context of definitions alone does
+     not.  Each is part of [arguments]; none states a corpus goal. *)
+  val declared_results : benchLib.named_thm list
+
   (* The subset Isabelle would have made ambient by itself.  The corpus
      does not record whether a constant arrived by [fun] or by
      [definition], so recursion stands in for the distinction: a

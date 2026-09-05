@@ -38,7 +38,22 @@ val sorted_wrt_correspondence =
   {name = "parityTranslation$source_sorted_wrt_bridge",
    theorem = DB.fetch "parityTranslation" "source_sorted_wrt_bridge"}
 
-val ambient_lemmas = [sorted_wrt_correspondence]
+(* Results Isabelle declares simp about a constant the translation
+   carries.  Its ambient context is its simpset and so has them; ours
+   is the translation's definitions, so a method whose simp step leans
+   on one reaches a residual that is the declared result itself, stated
+   and out of reach.  Every entry cites the declaration it transplants
+   and none is any corpus goal's statement, which the selftest checks:
+   the list is the source's own ambient context and never a goal's
+   answer.
+
+   src/HOL/List.thy:3231 @ f7e02b7e declares [fold_append] simp and
+   List.thy:3424 reaches [foldl_append] through it. *)
+val declared_results =
+  [{name = "parityTranslation$source_fold_append",
+    theorem = DB.fetch "parityTranslation" "source_fold_append"}]
+
+val ambient_lemmas = sorted_wrt_correspondence :: declared_results
 
 val arguments =
   map benchLib.RewriteAdd (definitions @ ambient_lemmas)
