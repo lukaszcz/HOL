@@ -20,7 +20,6 @@ Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof cit
 - `set_L563_empty_def (pred_set$EMPTY_DEF)`
 - `set_L595_UNIV_def (pred_set$UNIV_DEF)`
 - `list_L1921_in_set_conv_nth (parityTranslation$source_set_conv_nth)`
-- `list_L3400_foldr_conv_foldl (parityTranslation$source_foldr_conv_fold)`
 - `list_L8167_list_all_iff (list$EVERY_MEM)`
 - `list_L8660_card_set (list$CARD_LIST_TO_SET_EQN[symmetric])`
 - `list_L6444_stable_sort_key_sort_key (parityTranslation$source_sort_key_stable)`
@@ -85,11 +84,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 330 | 329 | 4 |
-| List/map | 602 | 428 | 381 | 5 |
+| List/map | 602 | 434 | 383 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **871** | **823** | **28** |
+| **Total** | **1070** | **877** | **825** | **28** |
 
 ## Cost of the solutions
 
@@ -97,13 +96,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 5 | 20 | 0 | 0 | 0.6 | 39 | 516 |
-| Sets | 330 | 86 | 239 | 5 | 0 | 3.2 | 6 | 2430 |
-| List/map | 428 | 2 | 414 | 12 | 0 | 4.0 | 0 | 1868 |
+| Classical | 25 | 5 | 20 | 0 | 0 | 0.9 | 39 | 516 |
+| Sets | 330 | 92 | 234 | 4 | 0 | 3.2 | 6 | 2430 |
+| List/map | 434 | 3 | 421 | 10 | 0 | 3.9 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **871** | **175** | **678** | **18** | **0** | **4.0** | **0** | **2430** |
+| **Total** | **877** | **182** | **680** | **15** | **0** | **3.9** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -116,11 +115,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 23 | 0 | 0 |
-| List/map | 0 | 174 | 2 | 0 |
+| List/map | 0 | 168 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **199** | **2** | **0** |
+| **Total** | **0** | **193** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
