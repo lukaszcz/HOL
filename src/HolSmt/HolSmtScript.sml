@@ -114,20 +114,13 @@ Proof
   simp [smt_rdiv_def, realTheory.REAL_DIV_RNEG]
 QED
 
-(* Z3 represents inverse by this explicit totalization.  These boundary
-   lemmas identify that macro with HOL's total inverse, including at zero. *)
+(* Z3 represents inverse by this explicit totalization.  This boundary
+   lemma identifies that macro with HOL's total inverse, including at zero. *)
 Theorem smt_rinv_def:
   !x. (if x = 0r then 0r else 1r / x) = realinv x
 Proof
   rw [GSYM realTheory.REAL_INV_1OVER] >>
   Cases_on `x = 0r` >> simp [realTheory.REAL_INV_0]
-QED
-
-Theorem smt_rinv_inv:
-  !x. (if (if x = 0r then 0r else 1r / x) = 0r then 0r
-       else 1r / (if x = 0r then 0r else 1r / x)) = x
-Proof
-  simp [smt_rinv_def, realTheory.REAL_INV_INV]
 QED
 
 (* SMT sequence access is specified only for in-range indices.  This

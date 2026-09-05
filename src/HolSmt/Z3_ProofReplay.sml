@@ -22,6 +22,10 @@ local
 
   val asserted_membership_diagnostic =
     "HOLSMT_TRANSLATION_ASSERTED_MEMBERSHIP"
+  val unsupported_rewrite_diagnostic =
+    "HOLSMT_Z3_REWRITE_UNSUPPORTED"
+  val unsupported_hyp_removal_diagnostic =
+    "HOLSMT_Z3_HYP_REMOVAL_UNSUPPORTED"
 
   (* Dedicated-theory failures must cross the generic rewrite handlers
      without inviting arithmetic or unification fallbacks. *)
@@ -29,6 +33,8 @@ local
   exception BAG_REWRITE_ERROR of exn
   exception STRING_REWRITE_ERROR of exn
   exception BV_REWRITE_ERROR of exn
+  exception DEFINITION_REWRITE_ERROR of exn
+  exception ASSERTED_EQUALITY_REWRITE_ERROR of exn
 
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
   val ALL_DISTINCT_CONS = HolSmtTheory.ALL_DISTINCT_CONS
@@ -2248,19 +2254,21 @@ local
         (Thm.TRANS unified (Thm.SYM rhs_normalized))
     end
 
+  fun has_arithmetic_operator target =
+    Lib.can (HolKernel.find_term (fn tm =>
+      Term.is_const tm andalso
+      let val {Thy, ...} = Term.dest_thy_const tm in
+        Thy = "integer" orelse Thy = "real" orelse Thy = "intreal"
+      end)) target
+
   fun linear_arithmetic_rewrite_prove target =
     let
       fun arithmetic_variable variable =
         SmtReplayCanon.is_arith_type (Term.type_of variable)
-      fun arithmetic_constant tm =
-        Term.is_const tm andalso
-        let val {Thy, ...} = Term.dest_thy_const tm in
-          Thy = "integer" orelse Thy = "real" orelse Thy = "intreal"
-        end
       val _ = List.all arithmetic_variable (Term.free_vars target) orelse
         raise ERR "linear_arithmetic_rewrite_prove"
           "rewrite has a non-arithmetic variable"
-      val _ = Lib.can (HolKernel.find_term arithmetic_constant) target orelse
+      val _ = has_arithmetic_operator target orelse
         raise ERR "linear_arithmetic_rewrite_prove"
           "rewrite has no integer or real operator"
       val _ = not (Lib.can
@@ -2271,11 +2279,13 @@ local
       SmtReplayCanon.arith_poly_norm_prove target
     end
 
-  fun rewrite_ladder_exhausted attempts target =
+  fun unsupported_rewrite version attempts target =
     ERR "z3_rewrite"
-      ("rewrite ladder exhausted; attempted fragment classes=" ^
-       "[" ^ String.concatWith ", " attempts ^ "]; conclusion=" ^
-       Library.term_to_string target)
+      (unsupported_rewrite_diagnostic ^
+       ": proof rule=rewrite; z3-version=" ^ version ^
+       "; attempted fragment classes=[" ^
+       String.concatWith ", " attempts ^
+       "]; parsed HOL conclusion=" ^ Library.term_to_string target)
 
   datatype recursive_rewrite_site =
       RecursiveSkeleton
@@ -2293,6 +2303,184 @@ local
         raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
       else
         raise Feedback.HOL_ERR holerr
+
+  (* Normalize only with definitions that replay has already checked.  Each
+     theorem is oriented away from its proof-local Z3 name, and PURE_REWRITE
+     builds the congruence proof while instantiating that theorem.  The
+     normalized proposition is discharged by its arithmetic owner (including
+     the ediv/emod ladder) or by kernel reflexivity; definitions never become
+     a general-purpose contextual rewrite set. *)
+  fun definition_normalization_prove var_set definitions target =
+    let
+      fun oriented definition =
+        let
+          val theorem = Thm.ASSUME definition
+          val (left, right) = boolSyntax.dest_eq definition
+        in
+          if Term.is_var left andalso HOLset.member (var_set, left) then
+            SOME theorem
+          else if Term.is_var right andalso HOLset.member (var_set, right) then
+            SOME (Thm.SYM theorem)
+          else
+            NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
+      val _ = List.length definitions <= 128 orelse
+        raise ERR "definition_normalization_prove"
+          "too many checked proof-local definitions"
+      val rewrite_theorems = List.mapPartial oriented definitions
+      val _ = not (List.null rewrite_theorems) orelse
+        raise ERR "definition_normalization_prove"
+          "no checked proof-local equality definition"
+      val normalization = Rewrite.PURE_REWRITE_CONV rewrite_theorems target
+      val normalized = boolSyntax.rhs (Thm.concl normalization)
+      fun reflexive () =
+        let val (left, right) = boolSyntax.dest_eq normalized
+        in
+          if Term.aconv left right then Thm.ALPHA left right
+          else raise ERR "definition_normalization_prove"
+            "normalized equality is not reflexive"
+        end
+      val decision = reflexive ()
+        handle Feedback.HOL_ERR _ =>
+          let val variables = Term.free_vars normalized in
+            if not (List.null variables) andalso
+               List.all (SmtReplayCanon.is_arith_type o Term.type_of) variables
+            then profile "definition-normalization(owner:arithmetic)"
+              arith_prove normalized
+            else raise ERR "definition_normalization_prove"
+              "normalized target has no selected owning prover"
+          end
+    in
+      Thm.EQ_MP (Thm.SYM normalization) decision
+    end
+    handle Conv.UNCHANGED =>
+      raise ERR "definition_normalization_prove"
+        "checked definitions do not occur in target"
+
+  val NEGATED_IMPLICATION_ANTECEDENT = Tactical.prove
+    (``!p q. ~(p ==> q) ==> p``, tautLib.TAUT_TAC)
+
+  (* Extract equality facts by a fixed, structurally decreasing derivation.
+     The source theorem remains an exact hypothesis throughout.  In
+     particular, this does not inspect consequents, disjunctions, or arbitrary
+     first-order consequences of the assertion. *)
+  fun asserted_equality_theorems assertions =
+    let
+      val max_facts = 64
+      val max_nodes = 256
+      val _ = List.length assertions <= max_nodes orelse
+        raise ERR "asserted_equality_theorems"
+          "too many replayed assertions for equality extraction"
+      val facts_seen = ref 0
+      val nodes_seen = ref 0
+      fun derive depth theorem =
+        let
+          val _ = nodes_seen := !nodes_seen + 1
+          val _ = !nodes_seen <= max_nodes orelse
+            raise ERR "asserted_equality_theorems"
+              "assertion structure exceeds equality extraction node bound"
+          val conclusion = Thm.concl theorem
+          val _ = depth <= max_facts orelse
+            raise ERR "asserted_equality_theorems"
+              "assertion structure exceeds equality extraction bound"
+        in
+          if boolSyntax.is_eq conclusion then
+            (facts_seen := !facts_seen + 1;
+             !facts_seen <= max_facts orelse
+               raise ERR "asserted_equality_theorems"
+                 "too many explicit equality components";
+             [theorem])
+          else if boolSyntax.is_conj conclusion then
+            derive (depth + 1) (Thm.CONJUNCT1 theorem) @
+            derive (depth + 1) (Thm.CONJUNCT2 theorem)
+          else
+            let
+              val implication = boolSyntax.dest_neg conclusion
+              val (antecedent_term, consequent_term) =
+                boolSyntax.dest_imp implication
+              val antecedent = Thm.MP
+                (Drule.SPECL [antecedent_term, consequent_term]
+                  NEGATED_IMPLICATION_ANTECEDENT) theorem
+            in
+              derive (depth + 1) antecedent
+            end
+            handle Feedback.HOL_ERR _ => []
+        end
+      val facts = List.concat
+        (List.map (derive 0 o Thm.ASSUME) assertions)
+      val _ = List.length facts = !facts_seen orelse
+        raise ERR "asserted_equality_theorems"
+          "internal equality extraction count mismatch"
+    in
+      facts
+    end
+
+  (* Substitution is the only use made of replayed assertions.  Most solve-eqs
+     residues become reflexive immediately.  Integer min/max certificates use
+     complementary < and <= conditionals; after substitution that narrowly
+     admitted linear-conditional residue is sent to the existing arithmetic
+     owner, with no assertion context. *)
+  fun asserted_equality_substitution_prove assertions target =
+    let
+      val equalities = asserted_equality_theorems assertions
+      val _ = not (List.null equalities) orelse
+        raise ERR "asserted_equality_substitution_prove"
+          "no structurally derived asserted equality"
+      fun prove_with rewrite_theorems =
+        let
+          val substitution = Rewrite.PURE_REWRITE_CONV rewrite_theorems target
+          val substituted = boolSyntax.rhs (Thm.concl substitution)
+          fun reflexive () =
+            let val (left, right) = boolSyntax.dest_eq substituted
+            in
+              if Term.aconv left right then Thm.ALPHA left right
+              else raise ERR "asserted_equality_substitution_prove"
+                "substituted equality is not reflexive"
+            end
+          fun integer_conditional () =
+            let
+              val conditionals = List.filter
+                (Lib.can boolSyntax.dest_cond) (Library.subterms substituted)
+              fun add (conditional, unique) =
+                if List.exists (Term.aconv conditional) unique then unique
+                else conditional :: unique
+              val unique = List.foldl add [] conditionals
+              val _ = SmtResource.term_nodes_up_to 4096 substituted <= 4096
+                orelse raise ERR "asserted_equality_substitution_prove"
+                  "integer conditional residue exceeds 4096 syntax nodes"
+              val _ = not (List.null unique) andalso
+                  List.length unique <= 4 orelse
+                raise ERR "asserted_equality_substitution_prove"
+                  "outside bounded integer min/max conditional family"
+              val _ = List.all
+                (fn variable => Term.type_of variable = intSyntax.int_ty)
+                (Term.free_vars substituted) orelse
+                raise ERR "asserted_equality_substitution_prove"
+                  "conditional residue has a non-integer variable"
+            in
+              Tactical.TAC_PROOF (([], substituted),
+                Tactical.REPEAT Tactic.COND_CASES_TAC THEN
+                intLib.ARITH_TAC)
+            end
+          val decision = reflexive ()
+            handle Feedback.HOL_ERR _ => integer_conditional ()
+        in
+          Thm.EQ_MP (Thm.SYM substitution) decision
+        end
+      fun attempt rewrite_theorems = prove_with rewrite_theorems
+        handle Conv.UNCHANGED =>
+          raise ERR "asserted_equality_substitution_prove"
+            "explicit equalities do not occur in target"
+      val oriented = equalities
+      val reversed = List.map Thm.SYM equalities
+    in
+      attempt oriented
+      handle Feedback.HOL_ERR holerr =>
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else attempt reversed
+    end
 
   fun z3_rewrite (state, t) =
   let
@@ -2328,9 +2516,8 @@ local
               val target = boolSyntax.mk_eq (left, right)
               val (state', theorem) = recursive_rewrite_boundary
                 RecursiveSkeleton z3_rewrite (state, target)
-              (* Contextual deferral is not recursive progress: lifting its
-                 self-assumption would replace one whole obligation by a
-                 harder residue.  Other checked definition hypotheses stay. *)
+              (* Reject a circular use when this residue is itself one of the
+                 original assertions.  Checked definition hypotheses stay. *)
               val _ = List.exists (fn hypothesis =>
                   Term.aconv hypothesis target) (Thm.hyp theorem) andalso
                 raise ERR "skeleton_congruence"
@@ -2565,6 +2752,22 @@ local
           rewrite_all_distinct (l, r))
     handle Feedback.HOL_ERR _ =>
 
+    (* Existing checked definitions normalize fresh proof names before the
+       unifier is allowed to invent another definition for the same name. *)
+    (let
+       val theorem = rewrite_profile "proof-local-definition-normalization"
+         "rewrite(13a)(definition-normalization)"
+         (definition_normalization_prove (#var_set state)
+           (HOLset.listItems (#definition_hyps state))) t
+     in
+       (state_cache_thm state theorem, theorem)
+     end
+     handle Feedback.HOL_ERR holerr =>
+       if SmtResource.is_resource_gate holerr then
+         raise DEFINITION_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+       else raise Feedback.HOL_ERR holerr)
+    handle Feedback.HOL_ERR _ =>
+
     (* Resolve proof-local names before arithmetic.  These rewrites are not
        arithmetic tautologies until the fresh Z3 variable is recorded as a
        definition, and nonlinear fallback can otherwise spend a long time on
@@ -2763,6 +2966,22 @@ local
        definitions (as in the `z3_intro_def` handler), to make sure it gets
        removed from the set of hypotheses of the final theorem. *)
 
+    (* solve-eqs may substitute only explicit equality facts reconstructed from
+       assertions that this proof has already replayed. *)
+    (let
+       val theorem = rewrite_profile "asserted-equality-substitution"
+         "rewrite(25c)(asserted-equality-substitution)"
+         (asserted_equality_substitution_prove
+           (HOLset.listItems (#asserted_hyps state))) t
+     in
+       (state_cache_thm state theorem, theorem)
+     end
+     handle Feedback.HOL_ERR holerr =>
+       if SmtResource.is_resource_gate holerr then
+         raise ASSERTED_EQUALITY_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+       else raise Feedback.HOL_ERR holerr)
+    handle Feedback.HOL_ERR _ =>
+
     (case !deferred_unification of
        SOME (thm, asl) =>
          profile "rewrite(14)(unification:deferred-alias-return)"
@@ -2772,20 +2991,16 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
-    (* E1(b): a rewrite may be valid only under earlier asserted facts.
-       Defer such an obligation as a hypothesis only when a proof context
-       exists; final checked hypothesis removal must derive it from that
-       context and fails loudly otherwise. *)
-    if HOLset.isEmpty (#asserted_hyps state) then
-      raise rewrite_ladder_exhausted (!attempts) t
-    else
-      (state, rewrite_profile "contextual-entailment"
-        "rewrite(26)(contextual-entailment)" Thm.ASSUME t)
+    profile "rewrite(26)(unsupported)"
+      (fn target =>
+        raise unsupported_rewrite (#z3_version state) (!attempts) target) t
   end
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
        | STRING_REWRITE_ERROR error => raise error
        | BV_REWRITE_ERROR error => raise error
+       | DEFINITION_REWRITE_ERROR error => raise error
+       | ASSERTED_EQUALITY_REWRITE_ERROR error => raise error
 
   fun z3_rewrite_entry (state, target) =
   let
@@ -4121,262 +4336,68 @@ local
       end
   end
 
-  (* this function identifies hypotheses in the final theorem that are not in
-     the original list of assumptions and then tries to remove them; it's a
-     workaround for the following Z3 issue, whose fix is currently still in
-     progress:
-
-     https://github.com/Z3Prover/z3/pull/7157 *)
+  (* Finalization may reconcile only beta/eta spelling differences with an
+     original assumption.  Semantic proof obligations belong to their proof
+     nodes; accepting them here would silently rescue an incomplete replay
+     rule. *)
   fun remove_hyps (asl, g, thm) : Thm.thm =
   let
-    val hyps = Thm.hypset thm
-    (* add the negation of the conclusion of the goal to the list of
-       expected hypotheses *)
-    val asl = (boolSyntax.mk_neg g) :: asl
-    val asms = HOLset.addList (Term.empty_tmset, asl)
-    val bad_hyps = HOLset.difference (hyps, asms)
-    val smt_normalize_ss = bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
-      intSimps.INT_ARITH_ss ++ realSimps.REAL_ARITH_ss
-    (* Normalize Z3's total inverse macro before expanding ordinary division
-       into smt_rdiv.  The two encodings are equivalent away from zero but
-       have different useful normal forms for nested inverses. *)
-    val smt_semantic_normalize_tac =
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-        [realaxTheory.real_abs,
-         HolSmtTheory.int_ceiling_floor,
-         HolSmtTheory.smt_rinv_def,
-         HolSmtTheory.smt_rinv_inv,
-         Conv.GSYM realTheory.REAL_INV_1OVER,
-         realTheory.REAL_INV_INV,
-         HolSmtTheory.real_div_smt_rdiv,
-         HolSmtTheory.smt_rdiv_lneg,
-         HolSmtTheory.smt_rdiv_rneg]
-    (* Normalize the two total-division encodings to their common semantic
-       form.  The bridge to field division is conditional, so it is used only
-       when simplification discharges its nonzero premise. *)
-    fun smt_total_real_normalize_tac rdiv_bridges =
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-        [realaxTheory.real_abs,
-         HolSmtTheory.int_ceiling_floor,
-         HolSmtTheory.smt_rinv_def,
-         HolSmtTheory.smt_rinv_inv,
-         Conv.GSYM realTheory.REAL_INV_1OVER,
-         realTheory.REAL_INV_INV,
-         HolSmtTheory.real_div_smt_rdiv] >>
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-        [HolSmtTheory.smt_rdiv_eq_div] >>
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) rdiv_bridges
-    (* Solver literals reach replay as ``real_of_int i``.  REAL_INJ reduces
-       their non-zero side conditions, allowing the semantic rdiv boundary
-       lemma to align the solver form with HOL division without unfolding
-       arbitrary divisions. *)
-    fun smt_numeral_normalize_tac rdiv_bridges =
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-        [realTheory.REAL_INJ,
-         realaxTheory.real_abs,
-         HolSmtTheory.int_ceiling_floor,
-         HolSmtTheory.smt_rinv_def,
-         HolSmtTheory.smt_rinv_inv,
-         Conv.GSYM realTheory.REAL_INV_1OVER,
-         realTheory.REAL_INV_INV] >>
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) rdiv_bridges
-    val (_, smt_rdiv_eq_body) =
-      boolSyntax.strip_forall (Thm.concl HolSmtTheory.smt_rdiv_eq_div)
-    val (_, smt_rdiv_eq_concl) = boolSyntax.dest_imp smt_rdiv_eq_body
-    val smt_rdiv_const =
-      Lib.fst (strip_comb
-        (Lib.fst (boolSyntax.dest_eq smt_rdiv_eq_concl)))
-    fun literal_rdiv_bridge tm =
-      case strip_comb tm of
-        (f, [x, y]) =>
-          (let
-             val i = realSyntax.dest_injected y
-             val _ =
-               if intSyntax.is_int_literal i then () else raise ERR "" ""
-             val y_ne_zero =
-               Tactical.TAC_PROOF
-                 (([], boolSyntax.mk_neg
-                   (boolSyntax.mk_eq (y, realSyntax.zero_tm))),
-                  bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [realTheory.REAL_INJ])
-           in
-             if Term.same_const f smt_rdiv_const then
-               SOME (Thm.MP (Drule.SPECL [x, y] HolSmtTheory.smt_rdiv_eq_div)
-                            y_ne_zero)
-             else NONE
-           end handle _ => NONE)
-      | _ => NONE
-    fun literal_rdiv_bridges tm =
-      List.mapPartial literal_rdiv_bridge
-        (HolKernel.find_terms (fn t =>
-           let val (f, _) = strip_comb t
-           in Term.same_const f smt_rdiv_const end
-           handle _ => false) tm)
-      handle _ => []
-    fun smt_normalize_tac thms =
-      bossLib.RW_TAC smt_normalize_ss
-        (realaxTheory.real_abs ::
-         HolSmtTheory.int_ceiling_floor ::
-         HolSmtTheory.smt_rinv_def ::
-         HolSmtTheory.smt_rinv_inv ::
-         Conv.GSYM realTheory.REAL_INV_1OVER ::
-         realTheory.REAL_INV_INV ::
-         HolSmtTheory.real_div_smt_rdiv ::
-         HolSmtTheory.smt_rdiv_lneg ::
-         HolSmtTheory.smt_rdiv_rneg ::
-         intrealTheory.is_int_alt ::
-         intrealTheory.is_int_thm ::
-         thms)
-    fun smt_full_normalize_tac thms =
-      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-        (realaxTheory.real_abs ::
-         HolSmtTheory.int_ceiling_floor ::
-         HolSmtTheory.smt_rinv_def ::
-         HolSmtTheory.smt_rinv_inv ::
-         Conv.GSYM realTheory.REAL_INV_1OVER ::
-         realTheory.REAL_INV_INV ::
-         HolSmtTheory.real_div_smt_rdiv ::
-         HolSmtTheory.smt_rdiv_lneg ::
-         HolSmtTheory.smt_rdiv_rneg ::
-         intrealTheory.is_int_alt ::
-         intrealTheory.is_int_thm ::
-         thms)
-    (* Z3 preprocesses with `solve-eqs`, so a `rewrite` step can hold only
-       under the asserted equalities; replay defers such a step as a
-       hypothesis.  Discharging it needs congruence from an assumption
-       rather than a further rewrite set, which is what no normalization
-       rung above can reach. *)
-    fun entailment_tac goal =
-      Timeout.apply SmtResource.max_hypothesis_entailment_time
-        (Feedback.trace ("metis", 0) (bossLib.METIS_TAC [])) goal
-    fun datatype_normalize_tac thms (asl, hyp) =
+    val expected = boolSyntax.mk_neg g :: asl
+    val expected_set = HOLset.addList (Term.empty_tmset, expected)
+    val bad_hyps = HOLset.difference (Thm.hypset thm, expected_set)
+    fun changed conversion term =
+      (conversion term, true) handle Conv.UNCHANGED => (Thm.REFL term, false)
+    fun canonical_normalization term =
       let
-        val combined = boolSyntax.list_mk_conj (hyp :: asl)
-        val cases = List.map SmtDatatypeProve.nchotomy_for_term
-          (SmtDatatypeProve.datatype_free_terms combined)
+        val (beta, used_beta) = changed
+          (Conv.TOP_DEPTH_CONV Thm.BETA_CONV) term
+        val beta_term = boolSyntax.rhs (Thm.concl beta)
+        val (eta, used_eta) = changed
+          (Conv.TOP_DEPTH_CONV Drule.ETA_CONV) beta_term
       in
-        Tactical.THEN
-          (Tactical.EVERY (List.map Tactic.FULL_STRUCT_CASES_TAC cases),
-           smt_full_normalize_tac thms) (asl, hyp)
+        {theorem = Thm.TRANS beta eta,
+         used_beta = used_beta,
+         used_eta = used_eta}
       end
-    val beta_eta_conv = SmtReplayCanon.compose
-      [Conv.TOP_DEPTH_CONV Thm.BETA_CONV,
-       Conv.TOP_DEPTH_CONV Drule.ETA_CONV]
-    (* 'asl' is fixed across the fold below, so normalize it at most once
-       rather than once per removed hypothesis.  Most checked proofs have no
-       extra hypothesis at all, so the work stays deferred until needed. *)
-    val normalized_asl = ref NONE
-    fun canonical_assumptions () =
-      case !normalized_asl of
-        SOME pairs => pairs
-      | NONE =>
-          let
-            val pairs =
-              List.map (fn a => (a, beta_eta_conv a)) asl
-          in
-            normalized_asl := SOME pairs; pairs
-          end
-    fun remove_hyp (hyp, thm) : Thm.thm =
-    let
-      val combined = boolSyntax.list_mk_conj (hyp :: asl)
-      val datatype_thms = profile
-        "check_proof(hyp_removal:datatype_facts)"
-        SmtDatatypeProve.datatype_rewrite_thms combined
-        handle _ => []
-      val rdiv_bridges = profile
-        "check_proof(hyp_removal:rdiv_bridges)" literal_rdiv_bridges combined
-      fun try_tac name tac =
-        SOME (profile name Tactical.TAC_PROOF ((asl, hyp), tac))
-        handle _ => NONE
-      fun first_success [] = NONE
-        | first_success ((name, tac) :: tacs) =
-            case try_tac name tac of
-              SOME th => SOME th
-            | NONE => first_success tacs
-      val hyp_normalization = beta_eta_conv hyp
-      val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_normalization)
-      fun canonical_assumption [] = NONE
-        | canonical_assumption ((assumption, normalization) :: rest) =
-            if Term.aconv (boolSyntax.rhs (Thm.concl normalization))
-                 normalized_hyp then
-              SOME (Thm.EQ_MP (Thm.SYM hyp_normalization)
-                (Thm.EQ_MP normalization (Thm.ASSUME assumption)))
-            else canonical_assumption rest
-      (* Z3 can leave a proved String normalization as an extra hypothesis
-         during solve-eqs finalization.  Discharge it through the same
-         general, proof-producing String rewrite procedure used by rewrite
-         replay.  Its resource refusal remains terminal; ordinary family
-         mismatch falls through to the other semantic procedures. *)
-      fun prove_string_hypothesis target =
-        SmtStringProve.string_rewrite_prove target
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
-            let
-              val (left, right) = boolSyntax.dest_eq target
-              val reverse = boolSyntax.mk_eq (right, left)
-            in
-              Thm.SYM (SmtStringProve.string_rewrite_prove reverse)
-            end
-      fun string_hypothesis () =
-        SOME (profile "check_proof(hyp_removal:string)"
-          prove_string_hypothesis hyp)
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else NONE
-      (* fpa2bv can leave a proved word normalization as an extra hypothesis
-         after solve-eqs.  Discharge it with the checked, resource-gated word
-         decision procedure used by ordinary replay. *)
-      fun prove_word_hypothesis target =
-        let
-          val _ = Lib.can (HolKernel.find_term
-            (wordsSyntax.is_word_type o Term.type_of)) target orelse
-            raise ERR "prove_word_hypothesis" "no word subterm"
-        in
-          SmtResource.with_bitblast_step_time "hyp-removal-word"
-            (fn term =>
-              (SmtResource.check_bitblast_goal "hyp-removal-word" term;
-               bv_th_lemma_prove term)) target
-        end
-      fun word_hypothesis () =
-        SOME (profile "check_proof(hyp_removal:word)"
-          prove_word_hypothesis hyp)
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else NONE
-      val hyp_thm =
-        case canonical_assumption (canonical_assumptions ()) of
-          SOME th => th
-        | NONE => (case string_hypothesis () of
-          SOME th => th
-        | NONE => (case word_hypothesis () of
-          SOME th => th
-        | NONE => (case first_success
-            [("check_proof(hyp_removal:numeral_normalize)",
-                smt_numeral_normalize_tac rdiv_bridges),
-             ("check_proof(hyp_removal:semantic_normalize)",
-                smt_semantic_normalize_tac),
-             ("check_proof(hyp_removal:total_real_normalize)",
-                smt_total_real_normalize_tac rdiv_bridges),
-             ("check_proof(hyp_removal:normalize)", smt_normalize_tac []),
-             ("check_proof(hyp_removal:full_normalize)",
-                smt_full_normalize_tac datatype_thms),
-             ("check_proof(hyp_removal:datatype_normalize)",
-                datatype_normalize_tac datatype_thms),
-             ("check_proof(hyp_removal:entailment)", entailment_tac)] of
-            SOME th => th
-          | NONE => raise ERR "remove_hyps"
-              ("extra hypothesis is not entailed by the goal's assumptions; " ^
-               "hypothesis=" ^ Library.term_to_string hyp ^
-               "; attempted=[String normalization, word decision, " ^
-               "numeral division, semantic division, total division, " ^
-               "arithmetic normalization, datatype normalization, " ^
-               "context entailment]"))))
-    in
-      Drule.PROVE_HYP hyp_thm thm
-    end
+    val normalized_expected = List.map (fn assumption =>
+      (assumption, canonical_normalization assumption)) expected
+    fun remove_hyp (hyp, theorem) =
+      let
+        val hyp_result = canonical_normalization hyp
+        val hyp_normalization = #theorem hyp_result
+        val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_normalization)
+        fun lookup [] =
+              raise ERR "remove_hyps"
+                (unsupported_hyp_removal_diagnostic ^
+                 ": stage=hyp_removal; policy=beta-eta-canonical-lookup; " ^
+                 "extra hypothesis=" ^ Library.term_to_string hyp)
+          | lookup ((assumption, result) :: rest) =
+              let
+                val normalization = #theorem result
+                val matches = Term.aconv
+                  (boolSyntax.rhs (Thm.concl normalization)) normalized_hyp
+                fun matched () =
+                  Thm.EQ_MP (Thm.SYM hyp_normalization)
+                    (Thm.EQ_MP normalization (Thm.ASSUME assumption))
+                val used_beta = #used_beta hyp_result orelse
+                  #used_beta result
+                val used_eta = #used_eta hyp_result orelse #used_eta result
+              in
+                if not matches then lookup rest
+                else if used_eta andalso not used_beta then
+                  profile "check_proof(hyp_removal:eta-only-lookup)"
+                    matched ()
+                else if used_beta then
+                  profile "check_proof(hyp_removal:beta-lookup)" matched ()
+                else
+                  profile "check_proof(hyp_removal:exact-lookup)" matched ()
+              end
+        val hyp_theorem = profile
+          "check_proof(hyp_removal:beta-eta-lookup)" lookup
+          normalized_expected
+      in
+        Drule.PROVE_HYP hyp_theorem theorem
+      end
   in
     HOLset.foldl remove_hyp thm bad_hyps
   end
@@ -4402,6 +4423,9 @@ local
 in
   (* For unit tests *)
   val asserted_membership_diagnostic = asserted_membership_diagnostic
+  val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
+  val unsupported_hyp_removal_diagnostic =
+    unsupported_hyp_removal_diagnostic
   val remove_definitions = remove_definitions
   val remove_extra_hyps = remove_extra_hyps
   val remove_hyps_for_test = remove_hyps
@@ -4412,6 +4436,10 @@ in
   val monotonicity_prove_for_test = monotonicity_prove
   val arith_prove_for_test = arith_prove
   val arith_prove_ediv_emod_for_test = arith_prove_ediv_emod
+  val definition_normalization_prove_for_test =
+    definition_normalization_prove
+  val asserted_equality_substitution_prove_for_test =
+    asserted_equality_substitution_prove
   val ground_subterm_eval_conv_for_test =
     profiled_ground_subterm_eval_conv
   val ground_subterm_eval_max_nodes_for_test =

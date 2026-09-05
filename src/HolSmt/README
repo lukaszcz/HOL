@@ -620,9 +620,11 @@ with a loud boundary, or an E1(c) redundant performance cache.  Every E1(c)
 rung consults the D-mode switch above.  The ten TASK_09 candidates named in
 `T8_deletions.md` have recorded one-by-one ablation outcomes: redundant fixed
 shapes were deleted or folded into general unification/String procedures, and
-the two measured survivors are E1(c) caches.  Context-dependent rewrites use
-an asserted-context gate and remain hypotheses only until final checked
-entailment discharges them.  The nested
+the two measured survivors are E1(c) caches.  Rewrites additionally use closed
+proof-local definition normalization and structural asserted-equality
+substitution at rewrite nodes.  Any remaining contextual rewrite reaches the
+terminal exact unsupported boundary.  Final hypothesis reconciliation is
+beta/eta-only; it has no asserted-context gate or final entailment.  The nested
 arithmetic/linear, word-decision, String/regex/symbolic, character and
 FloatingPoint sub-ladders follow the same integer-sequential convention.
 Proof-local theorem reuse for an otherwise unsupported advanced family is not

@@ -119,6 +119,46 @@ struct
     (``[x] = (s : 'a list) ==> EL 0 s = x``,
      bossLib.METIS_TAC [listTheory.EL, listTheory.HD])
 
+  (* SMT sequence nth is deliberately unspecified out of range.  Z3 rewrites
+     it to an if whose out-of-range branch preserves that same application.
+     Split on the complete semantic boundary once, then compare the resulting
+     canonical forms.  This covers every element type and symbolic index
+     without assigning a value outside the specified range. *)
+  val nth_boundary_thm = Tactical.prove
+    (``smt_seq_nth (s : 'a list) i =
+        if i < 0 \/ &(LENGTH s) <= i then smt_seq_nth s i
+        else EL (Num i) s``,
+     Tactical.THEN
+       (bossLib.Cases_on `i < 0 \/ &(LENGTH s) <= i`,
+        Tactical.THEN
+          (bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [],
+           Tactical.THEN
+             (Tactic.irule HolSmtTheory.smt_seq_nth_def,
+              intLib.ARITH_TAC))))
+
+  fun nth_boundary_prove t =
+    let
+      fun is_nth_application tm =
+        case boolSyntax.strip_comb tm of
+          (head, [_, _]) => named "HolSmt" ["smt_seq_nth"] head
+        | _ => false
+      val application = HolKernel.find_term is_nth_application t
+      val instantiated = Drule.INST_TY_TERM
+        (Term.match_term ``smt_seq_nth (s : 'a list) i`` application)
+        nth_boundary_thm
+      val theorem = bossLib.SIMP_RULE seq_ss [] instantiated
+      val normalization = simpLib.SIMP_CONV seq_ss [] t
+        handle Conv.UNCHANGED =>
+          raise ERR "nth_boundary_prove"
+            "rewrite has no nth boundary normalization"
+      val normalized = boolSyntax.rhs (Thm.concl normalization)
+      val _ = Term.aconv (Thm.concl theorem) normalized orelse
+        raise ERR "nth_boundary_prove"
+          "rewrite is not the total nth semantic boundary"
+    in
+      Thm.EQ_MP (Thm.SYM normalization) theorem
+    end
+
   fun nth_decomposition_prove t =
     if mentions is_access t then
       (Drule.INST_TY_TERM
@@ -350,13 +390,18 @@ struct
             else
               fallback ()
       in
+        next
+          (fn () => Profile.profile_with_exn_name
+            "seq(0)(nth-boundary)" nth_boundary_prove t)
+          (fn () =>
         next (fn () => nth_decomposition_prove t) (fn () =>
         next (fn () => concat_length_prove t) (fn () =>
         next (fn () => unit_empty_prove t) (fn () =>
         next (fn () => access_prove t) (fn () =>
         next (fn () => prefix_suffix_contains_prove t) (fn () =>
         next (fn () => indexof_replace_prove t) (fn () =>
-        next (fn () => update_reverse_prove t) (fn () => unsupported t)))))))
+        next (fn () => update_reverse_prove t)
+          (fn () => unsupported t))))))))
       end) ()
 
 end

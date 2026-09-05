@@ -17217,54 +17217,41 @@ let
     "(declare-fun b () Bool)\n" ^
     "(declare-fun c () Bool)\n" ^
     "(declare-fun d () Bool)\n"
-  val deferred_rewrite = "(= (not (and a b)) (not (or c d)))"
-  val deferred_target = List.hd (parse_smtlib_assertions
-    (declarations ^ "(assert " ^ deferred_rewrite ^ ")\n"))
-  val deferred_child = boolSyntax.mk_eq
-    (boolSyntax.dest_neg (boolSyntax.lhs deferred_target),
-     boolSyntax.dest_neg (boolSyntax.rhs deferred_target))
-  val deferred_proof = parse_z3_proof_string "4.12.4"
+  val unsupported_rewrite = "(= (not (and a b)) (not (or c d)))"
+  val unsupported_proof = parse_z3_proof_string "4.12.4"
     ("(" ^ declarations ^
-     "(proof (unit-resolution (asserted (not " ^ deferred_rewrite ^ ")) " ^
-     "(rewrite " ^ deferred_rewrite ^ ") false))))")
+     "(proof (unit-resolution (asserted (not " ^ unsupported_rewrite ^
+     ")) (rewrite " ^ unsupported_rewrite ^ ") false))))")
 in
   assert_no_hyps ("direct theory rewrite ordering", direct_theorem);
   check_oracle_tags "direct theory rewrite ordering" direct_theorem;
-  assert (String.isSubstring "rewrite ladder exhausted" failure,
-    "nonmatching skeleton did not fail through the later ladder boundary");
+  assert (String.isSubstring
+      Z3_ProofReplay.unsupported_rewrite_diagnostic failure,
+    "nonmatching skeleton did not reach the rewrite diagnostic");
   assert (profile_call_count (skeleton ^ "_HOL_ERR") = 1 andalso
       profile_call_count word_rung = 0,
     "nonmatching skeleton recursed before rejecting its unequal heads");
   Profile.reset_all ();
-  let val deferred_theorem =
-      Z3_ProofReplay.replay_root_for_test deferred_proof
+  let
+    val message =
+      ((ignore (Z3_ProofReplay.replay_root_for_test unsupported_proof);
+        die "FAIL: unsupported contextual rewrite was accepted")
+       handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
   in
-    assert (Thm.concl deferred_theorem ~~ boolSyntax.F,
-      "deferred skeleton boundary returned the wrong conclusion");
-    assert (List.exists (Term.aconv deferred_target)
-        (Thm.hyp deferred_theorem) andalso
-      not (List.exists (Term.aconv deferred_child)
-        (Thm.hyp deferred_theorem)),
-      "skeleton congruence replaced a whole deferred rewrite with a " ^
-      "self-assumed child residue");
-    assert (profile_call_count (skeleton ^ "_HOL_ERR") = 2 andalso
-        profile_call_count (skeleton ^ "_OK") = 0 andalso
+    assert (String.isSubstring
+        Z3_ProofReplay.unsupported_rewrite_diagnostic message andalso
+        String.isSubstring "proof rule=rewrite" message andalso
+        String.isSubstring "z3-version=4.12.4" message andalso
+        String.isSubstring "parsed HOL conclusion=" message,
+      "contextual rewrite rejection was not exact and structured: " ^
+      message);
+    assert (profile_call_count
+        "rewrite(26)(unsupported)_HOL_ERR" > 0 andalso
         profile_call_count
-          "rewrite(26)(contextual-entailment)_OK" = 2 andalso
+          "rewrite(25c)(asserted-equality-substitution)_OK" = 0 andalso
         profile_call_count
           "rewrite(14)(unification:deferred-alias-return)_OK" = 0,
-      "self-assumed child residue was not rejected before whole-rewrite " ^
-      "deferral: skeleton errors=" ^
-      Int.toString (profile_call_count (skeleton ^ "_HOL_ERR")) ^
-      ", skeleton successes=" ^
-      Int.toString (profile_call_count (skeleton ^ "_OK")) ^
-      ", contextual successes=" ^
-      Int.toString (profile_call_count
-        "rewrite(26)(contextual-entailment)_OK") ^
-      ", deferred aliases=" ^
-      Int.toString (profile_call_count
-        "rewrite(14)(unification:deferred-alias-return)_OK"));
-    check_oracle_tags "deferred skeleton boundary" deferred_theorem
+      "unsupported contextual rewrite did not fail at rewrite(26)")
   end
 end
 
@@ -19198,7 +19185,7 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
         "basic th-lemma diagnostic did not list fragment classes: " ^ msg)
     end
 
-fun z3_rewrite_ladder_exhausted_diagnostic () =
+fun z3_rewrite_unsupported_diagnostic () =
 let
   val () = Profile.reset_all ()
   val msg =
@@ -19208,10 +19195,7 @@ let
      handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
   (* Each class assertion is conditional on evidence that its routed profile
      actually ran.  This prevents the diagnostic test from passing merely
-     because source and test repeat the same fixed list.  Contextual
-     entailment requires an asserted proof context, so its mandatory route is
-     pinned end-to-end by z3_contextual_entailment_end_to_end_success rather
-     than being a silently skipped entry in this no-context diagnostic. *)
+     because source and test repeat the same fixed list. *)
   val routed_profiles = [
     ("rewrite(1)(conj/disj)", "propositional-AC"),
     ("rewrite(2)(nnf)", "propositional-NNF"),
@@ -19226,6 +19210,8 @@ let
     ("rewrite(11)(cache)", "cached-checked-theorems"),
     ("rewrite(12)(string)", "strings/regex"),
     ("rewrite(13)(all_distinct)", "datatype-literal-distinctness"),
+    ("rewrite(13a)(definition-normalization)",
+      "proof-local-definition-normalization"),
     ("rewrite(14)(unification)", "proof-local-definitions"),
     ("rewrite(15)(fp-packed-bits)", "floating-point/bit-vectors"),
     ("rewrite(16)(WORD_ARITH_CONV)", "bit-vectors"),
@@ -19241,7 +19227,9 @@ let
     ("rewrite(24)(beta)", "higher-order-congruence/beta/eta"),
     ("rewrite(25)(eta)", "higher-order-congruence/beta/eta"),
     ("rewrite(25a)(skeleton-congruence)",
-      "boolean/binder-skeleton")
+      "boolean/binder-skeleton"),
+    ("rewrite(25c)(asserted-equality-substitution)",
+      "asserted-equality-substitution")
   ]
   fun assert_profile_class (profile_name, fragment) =
     if profile_call_count profile_name = 0 then ()
@@ -19249,10 +19237,14 @@ let
       "rewrite terminal diagnostic omitted routed class " ^ fragment ^
       " for profile " ^ profile_name ^ ": " ^ msg)
 in
-  assert (String.isSubstring "rewrite ladder exhausted" msg,
-    "rewrite terminal diagnostic did not identify exhaustion: " ^ msg);
+  assert (String.isSubstring
+      Z3_ProofReplay.unsupported_rewrite_diagnostic msg,
+    "rewrite terminal diagnostic did not identify unsupported replay: " ^
+    msg);
   assert (String.isSubstring "attempted fragment classes=" msg,
     "rewrite terminal diagnostic omitted fragment classes: " ^ msg);
+  assert (profile_call_count "rewrite(26)(unsupported)_HOL_ERR" = 1,
+    "terminal rewrite(26) did not fail exactly once");
   assert (profile_call_count "rewrite(10)(array-set)" > 0,
     "terminal diagnostic probe did not route through Set/Array replay");
   assert (profile_call_count "rewrite(22)(equality-congruence)" > 0 andalso
@@ -19346,7 +19338,7 @@ in
   check_oracle_tags "deferred proof-local alias rewrite" thm
 end
 
-fun z3_contextual_entailment_end_to_end_success () =
+fun z3_contextual_entailment_end_to_end_rejection () =
 let
   val declarations =
     "(set-logic ALL)\n" ^
@@ -19361,7 +19353,6 @@ let
      "(rewrite " ^ rewrite_text ^ ") false))))")
   val expected = List.hd (parse_smtlib_assertions
     (declarations ^ "(assert " ^ rewrite_text ^ ")\n"))
-  val guard = Term.mk_var ("context_guard", Type.bool)
   val relation = Term.mk_var ("context_relation",
     Type.--> (intSyntax.int_ty,
       Type.--> (intSyntax.int_ty, Type.bool)))
@@ -19375,41 +19366,143 @@ let
   val transitive = boolSyntax.list_mk_forall ([u, v, w],
     boolSyntax.mk_imp
       (boolSyntax.mk_conj (related u v, related v w), related u w))
-  val entailing_context =
+  val context =
     [transitive, related x y, related y z,
      boolSyntax.mk_imp (related x z, expected)]
   val () = Profile.reset_all ()
-  val thm = Z3_ProofReplay.check_proof
-    (entailing_context, expected, proof)
-  val assertion_set = HOLset.addList
-    (Term.empty_tmset, boolSyntax.mk_neg expected :: entailing_context)
-  val _ = assert
-    (profile_call_count "rewrite(26)(contextual-entailment)_OK" = 1 andalso
-     profile_call_count
-       "check_proof(hyp_removal:entailment)_OK" = 1,
-     "contextual rewrite was not discharged by final checked entailment")
-  val _ = assert (Thm.concl thm ~~ boolSyntax.F andalso
-      HOLset.isSubset (Thm.hypset thm, assertion_set),
-    "contextual replay violated its final conclusion/hypothesis contract")
-  val () = check_oracle_tags "contextual rewrite end-to-end replay" thm
-  val () = Profile.reset_all ()
-  val failure =
-    ((ignore (Z3_ProofReplay.check_proof
-        ([guard], expected, proof));
-      die "FAIL: non-entailing context leaked a theorem")
+  val message =
+    ((ignore (Z3_ProofReplay.check_proof (context, expected, proof));
+      die "FAIL: arbitrary first-order context solved a rewrite")
      handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
 in
-  assert (String.isSubstring "extra hypothesis is not entailed" failure,
-    "non-entailing contextual replay reported the wrong failure: " ^ failure);
+  assert (String.isSubstring
+      Z3_ProofReplay.unsupported_rewrite_diagnostic message andalso
+      String.isSubstring "proof rule=rewrite" message andalso
+      String.isSubstring "z3-version=4.12.4" message,
+    "arbitrary context did not reach the named rewrite diagnostic: " ^
+    message);
   assert (profile_call_count
-      "rewrite(26)(contextual-entailment)_OK" = 1 andalso
-      profile_call_count
-        "check_proof(hyp_removal:entailment)_HOL_ERR" = 1 andalso
-      profile_call_count "check_proof(hyp_removal)_HOL_ERR" = 1,
-    "non-entailing contextual replay did not fail at checked entailment")
+      "rewrite(25c)(asserted-equality-substitution)_HOL_ERR" = 1 andalso
+      profile_call_count "rewrite(26)(unsupported)_HOL_ERR" = 1 andalso
+      profile_call_count "check_proof(hyp_removal)" = 0,
+    "arbitrary context escaped the closed rewrite boundary; unsupported=" ^
+    Int.toString
+      (profile_call_count "rewrite(26)(unsupported)_HOL_ERR"))
 end
 
-fun z3_string_hypothesis_normalization_success () =
+fun z3_closed_definition_normalization_boundaries () =
+let
+  val z = ``definition_local_z:int``
+  val x = ``definition_local_x:int``
+  val definition = boolSyntax.mk_eq (z, x)
+  val variables = HOLset.add (Term.empty_tmset, z)
+  val target =
+    ``definition_local_z:int < 1 <=> (definition_local_x:int) + 0 < 1``
+  val () = Profile.reset_all ()
+  val theorem =
+    Z3_ProofReplay.definition_normalization_prove_for_test variables
+      [definition] target
+  val rejected =
+    ((ignore (Z3_ProofReplay.definition_normalization_prove_for_test
+        Term.empty_tmset [definition] target);
+      false) handle Feedback.HOL_ERR _ => true)
+in
+  assert_concl_alpha ("closed definition normalization", theorem, target);
+  assert (List.length (Thm.hyp theorem) = 1 andalso
+      List.exists (Term.aconv definition) (Thm.hyp theorem),
+    "definition normalization did not retain its exact checked definition");
+  assert (profile_call_count
+      "definition-normalization(owner:arithmetic)_OK" = 1,
+    "definition normalization did not use the arithmetic owner exactly once");
+  assert (rejected,
+    "non-proof-local equality was admitted as a checked definition")
+end
+
+fun z3_asserted_equality_substitution_boundaries () =
+let
+  val direct = ``(asserted_x:int) = asserted_y``
+  val conjunction = ``((asserted_x:int) = asserted_y) /\ asserted_guard``
+  val negated_implication =
+    ``~((asserted_x:int) = asserted_y ==> asserted_guard)``
+  val target =
+    ``(asserted_x:int) + -3 = asserted_y + -3``
+  fun prove source =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [source] target
+  fun exact_source source theorem =
+    List.length (Thm.hyp theorem) = 1 andalso
+    List.exists (Term.aconv source) (Thm.hyp theorem)
+  val direct_theorem = prove direct
+  val conjunction_theorem = prove conjunction
+  val negated_theorem = prove negated_implication
+  fun rejects source =
+    ((ignore (prove source); false) handle Feedback.HOL_ERR _ => true)
+in
+  assert (List.all (fn (source, theorem) =>
+      Thm.concl theorem ~~ target andalso exact_source source theorem)
+      [(direct, direct_theorem), (conjunction, conjunction_theorem),
+       (negated_implication, negated_theorem)],
+    "closed equality substitution changed its source hypothesis");
+  assert (rejects ``(asserted_x:int) = asserted_y ==> asserted_guard`` andalso
+      rejects ``~(asserted_guard ==> (asserted_x:int) = asserted_y)`` andalso
+      rejects ``asserted_guard \/ asserted_other_guard``,
+    "asserted equality substitution crossed its structural admission boundary")
+end
+
+fun z3_hyp_removal_beta_lookup_success () =
+let
+  val assumption = ``(\x:int. x) y = y``
+  val hyp = ``(y:int) = y``
+  val neg_hyp = boolSyntax.mk_neg hyp
+  val contradiction = Thm.MP
+    (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
+  val () = Profile.reset_all ()
+  val thm = Z3_ProofReplay.remove_hyps_for_test
+    ([assumption], hyp, contradiction)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F andalso
+      List.length (Thm.hyp thm) = 2 andalso
+      List.exists (Term.aconv neg_hyp) (Thm.hyp thm) andalso
+      List.exists (Term.aconv assumption) (Thm.hyp thm),
+    "beta lookup did not remove exactly the canonical hypothesis");
+  check_oracle_tags "beta hypothesis lookup" thm;
+  assert (profile_call_count
+      "check_proof(hyp_removal:beta-eta-lookup)_OK" = 1 andalso
+      profile_call_count
+        "check_proof(hyp_removal:beta-lookup)_OK" = 1 andalso
+      profile_call_count
+        "check_proof(hyp_removal:eta-only-lookup)" = 0,
+    "beta-only hypothesis lookup profile counts changed")
+end
+
+fun z3_hyp_removal_eta_only_lookup_success () =
+let
+  val assumption =
+    ``(\x:int. (eta_lookup_f:int->int) x) =
+      (eta_lookup_g:int->int)``
+  val hyp = ``(eta_lookup_f:int->int) = eta_lookup_g``
+  val neg_hyp = boolSyntax.mk_neg hyp
+  val contradiction = Thm.MP
+    (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
+  val () = Profile.reset_all ()
+  val thm = Z3_ProofReplay.remove_hyps_for_test
+    ([assumption], hyp, contradiction)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F andalso
+      List.length (Thm.hyp thm) = 2 andalso
+      List.exists (Term.aconv neg_hyp) (Thm.hyp thm) andalso
+      List.exists (Term.aconv assumption) (Thm.hyp thm),
+    "eta-only lookup did not retain the exact source assumption");
+  check_oracle_tags "eta-only hypothesis lookup" thm;
+  assert (profile_call_count
+      "check_proof(hyp_removal:beta-eta-lookup)_OK" = 1 andalso
+      profile_call_count
+        "check_proof(hyp_removal:eta-only-lookup)_OK" = 1 andalso
+      profile_call_count "check_proof(hyp_removal:beta-lookup)" = 0,
+    "eta-only hypothesis lookup profile counts changed")
+end
+
+fun z3_hyp_removal_semantic_rejection () =
 let
   val hyp =
     ``smtstr_substr (SmtStr []) (z:int) (smtstr_to_int x) = SmtStr []``
@@ -19417,37 +19510,34 @@ let
   val contradiction = Thm.MP
     (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
   val () = Profile.reset_all ()
-  val thm = Z3_ProofReplay.remove_hyps_for_test ([], hyp, contradiction)
+  val message =
+    ((ignore (Z3_ProofReplay.remove_hyps_for_test
+        ([], hyp, contradiction));
+      die "FAIL: semantic extra hypothesis was silently rescued")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
 in
-  assert (Thm.concl thm ~~ boolSyntax.F andalso
-      List.length (Thm.hyp thm) = 1 andalso
-      Term.aconv (List.hd (Thm.hyp thm)) neg_hyp,
-    "String normalization did not remove exactly the solver-added hypothesis");
-  check_oracle_tags "String hypothesis normalization" thm;
+  assert (String.isSubstring
+      Z3_ProofReplay.unsupported_hyp_removal_diagnostic message andalso
+      String.isSubstring "stage=hyp_removal" message andalso
+      String.isSubstring "policy=beta-eta-canonical-lookup" message andalso
+      String.isSubstring "extra hypothesis=" message,
+    "semantic extra hypothesis rejection was not structured: " ^ message);
   assert (profile_call_count
-      "check_proof(hyp_removal:string)_OK" = 1 andalso
-      profile_call_count
-        "check_proof(hyp_removal:numeral_normalize)" = 0,
-    "String extra hypothesis did not consume the general String prover first")
-end
-
-fun z3_word_hypothesis_normalization_success () =
-let
-  val hyp = ``(w:word4) && w = w``
-  val neg_hyp = boolSyntax.mk_neg hyp
-  val contradiction = Thm.MP
-    (Thm.NOT_ELIM (Thm.ASSUME neg_hyp)) (Thm.ASSUME hyp)
-  val () = Profile.reset_all ()
-  val thm = Z3_ProofReplay.remove_hyps_for_test ([], hyp, contradiction)
-in
-  assert (Thm.concl thm ~~ boolSyntax.F andalso
-      List.length (Thm.hyp thm) = 1 andalso
-      Term.aconv (List.hd (Thm.hyp thm)) neg_hyp,
-    "Word normalization did not remove exactly the solver-added hypothesis");
-  check_oracle_tags "Word hypothesis normalization" thm;
-  assert (profile_call_count
-      "check_proof(hyp_removal:word)_OK" = 1,
-    "Word extra hypothesis did not use checked word decision")
+      "check_proof(hyp_removal:beta-eta-lookup)_HOL_ERR" = 1,
+    "semantic extra hypothesis did not fail at canonical lookup");
+  assert (List.all (fn name => profile_call_count name = 0)
+      ["check_proof(hyp_removal:datatype_facts)",
+       "check_proof(hyp_removal:rdiv_bridges)",
+       "check_proof(hyp_removal:string)",
+       "check_proof(hyp_removal:word)",
+       "check_proof(hyp_removal:numeral_normalize)",
+       "check_proof(hyp_removal:semantic_normalize)",
+       "check_proof(hyp_removal:total_real_normalize)",
+       "check_proof(hyp_removal:normalize)",
+       "check_proof(hyp_removal:full_normalize)",
+       "check_proof(hyp_removal:datatype_normalize)",
+       "check_proof(hyp_removal:entailment)"],
+    "retired semantic hyp-removal profile unexpectedly ran")
 end
 
 fun z3_nonlinear_missing_csdp_diagnostic () =
@@ -20373,7 +20463,10 @@ fun z3_seq_raw_captures_replay_success () =
             die ("FAIL: raw Seq " ^ stem ^ " Z3 " ^ version ^ ": " ^
               Feedback.message_of holerr)
       in
-        List.app (fn version => List.app (check version) stems) versions
+        List.app (fn version => List.app (check version) stems) versions;
+        assert (profile_call_count "seq(0)(nth-boundary)_OK" =
+            List.length versions,
+          "raw Seq nth boundary did not consume its general semantic rung")
       end
 
 fun array_prove_unsupported_diagnostic () =
@@ -23697,20 +23790,26 @@ let
       z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_rewrite_propositional_precedes_fp_success",
       z3_rewrite_propositional_precedes_fp_success),
-    ("z3_rewrite_ladder_exhausted_diagnostic",
-      z3_rewrite_ladder_exhausted_diagnostic),
+    ("z3_rewrite_unsupported_diagnostic",
+      z3_rewrite_unsupported_diagnostic),
     ("z3_rewrite_double_negation_unification_success",
       z3_rewrite_double_negation_unification_success),
     ("z3_rewrite_negation_reverse_unification_success",
       z3_rewrite_negation_reverse_unification_success),
     ("z3_rewrite_deferred_alias_return_success",
       z3_rewrite_deferred_alias_return_success),
-    ("z3_contextual_entailment_end_to_end_success",
-      z3_contextual_entailment_end_to_end_success),
-    ("z3_string_hypothesis_normalization_success",
-      z3_string_hypothesis_normalization_success),
-    ("z3_word_hypothesis_normalization_success",
-      z3_word_hypothesis_normalization_success),
+    ("z3_contextual_entailment_end_to_end_rejection",
+      z3_contextual_entailment_end_to_end_rejection),
+    ("z3_closed_definition_normalization_boundaries",
+      z3_closed_definition_normalization_boundaries),
+    ("z3_asserted_equality_substitution_boundaries",
+      z3_asserted_equality_substitution_boundaries),
+    ("z3_hyp_removal_beta_lookup_success",
+      z3_hyp_removal_beta_lookup_success),
+    ("z3_hyp_removal_eta_only_lookup_success",
+      z3_hyp_removal_eta_only_lookup_success),
+    ("z3_hyp_removal_semantic_rejection",
+      z3_hyp_removal_semantic_rejection),
     ("z3_nonlinear_missing_csdp_diagnostic",
       z3_nonlinear_missing_csdp_diagnostic),
     ("nonlinear_power_detection_success",
