@@ -157,15 +157,30 @@ checker are in the validation checkout beside the version matrix.
 
 Supported Z3 proof dialect and tested anchors:
 
-  Proof dialect      Proof options used by HolSmt                  Support status
-  Z3 4.x             proof=true pp.simplify_implies=false          v4 proof path
+  Proof/query class          Query command                   Support status
+  Z3 4.x quantifier-free     (check-sat)                     v4 proof path
+  Z3 4.x quantified          (check-sat-using smt)           v4 proof path
 
-The configured executable comes from `HOL4_Z3_EXECUTABLE` when set, then
+Both checked rows use `proof=true pp.simplify_implies=false`.  The configured
+executable comes from `HOL4_Z3_EXECUTABLE` when set, then
 `Z3`, and otherwise `z3` on `PATH`.  Proof parse and replay diagnostics
 include the discovered Z3 version and command stem.
 The checked-in proof corpus, local contract, and version verifier use the
-exact tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The
-verifier writes its five-version report to
+exact tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  On all five,
+the default proof-producing command can collapse the tested quantified
+context to `(asserted false)`, which does not identify an emitted assertion.
+Checked quantified translations therefore select Z3's explicit `smt` tactic.
+The selection reads the `quantifiers` field in the translation's structured
+`LogicSelection`/`LogicFeatures` record.  That field combines a structural
+scan of translated HOL terms (covering both universal and existential
+binders) with exact emission provenance from the centralized helper used for
+translator-generated SMT-LIB `forall`.  This includes quantified array
+fallback definitions, array-backed Set `SUBSET`, and array-backed Bag
+`SUB_BAG`, even when the source HOL goal is quantifier-free.  The context count
+is reset per translation and saved/restored for nested calls and lazy record
+construction; neither logic nor command selection scans rendered SMT-LIB.
+Quantifier-free checked queries and every oracle query retain `(check-sat)`.
+The verifier writes its five-version report to
 `.holsmt-z3-version-matrix/report.json` in the validation checkout.
 
 Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
@@ -624,7 +639,8 @@ the two measured survivors are E1(c) caches.  Rewrites additionally use closed
 proof-local definition normalization and structural asserted-equality
 substitution at rewrite nodes.  Any remaining contextual rewrite reaches the
 terminal exact unsupported boundary.  Final hypothesis reconciliation is
-beta/eta-only; it has no asserted-context gate or final entailment.  The nested
+beta/eta-only (with alpha-equivalent matching); it has no asserted-context
+gate, universal elimination, or final entailment.  The nested
 arithmetic/linear, word-decision, String/regex/symbolic, character and
 FloatingPoint sub-ladders follow the same integer-sequential convention.
 Proof-local theorem reuse for an otherwise unsupported advanced family is not

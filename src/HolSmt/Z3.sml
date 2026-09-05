@@ -170,8 +170,29 @@ structure Z3 = struct
   fun goal_to_SmtLib_translation_for_version version =
     z3_translation false version
 
-  fun goal_to_SmtLib_with_get_proof_translation_for_version version =
-    z3_translation true version
+  val plain_check_sat_command = "(check-sat)\n"
+  val quantified_proof_check_sat_command = "(check-sat-using smt)\n"
+
+  (* This policy is intentionally a function of translation metadata, not of
+     rendered SMT-LIB text.  LogicFeatures combines a structural scan of the
+     translated HOL terms with exact provenance from generated-forall emitters,
+     without inspecting comments, symbols, or String literals. *)
+  fun checked_check_sat_command translation =
+    if SmtLib.translation_has_quantifiers translation then
+      quantified_proof_check_sat_command
+    else
+      plain_check_sat_command
+
+  fun goal_to_SmtLib_with_get_proof_translation_for_version version goal =
+    let
+      val (translation, strings) = z3_translation true version goal
+      val selected_check_sat = checked_check_sat_command translation
+      fun select_check_sat command =
+        if command = plain_check_sat_command then selected_check_sat
+        else command
+    in
+      (translation, List.map select_check_sat strings)
+    end
 
   (* Z3 (Linux/Unix), SMT-LIB file format, no proofs *)
   val Z3_SMT_Oracle =

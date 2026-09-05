@@ -6477,6 +6477,121 @@ in
   assert (has_encoded_symbol, "translation records did not include encoded symbol")
 end
 
+fun z3_quantified_check_sat_policy_success () =
+let
+  val version = SOME "4.15.3"
+  val literal =
+    ``SmtStr [40; 102; 111; 114; 97; 108; 108; 32; 40]``
+  val cases = [
+    ("forall", ([], ``!x:int. x = x``), true),
+    ("exists", ([], ``?x:int. x = x``), true),
+    ("String literal containing forall syntax",
+      ([], boolSyntax.mk_eq (literal, literal)), false),
+    ("ordinary quantifier-free", ([], ``(x:int) = x``), false)
+  ]
+  fun checked_query strings =
+    case List.rev strings of
+      "(exit)\n" :: "(get-proof)\n" :: command :: _ => command
+    | _ => die "FAIL: malformed checked Z3 command suffix"
+  fun oracle_query strings =
+    case List.rev strings of
+      "(exit)\n" :: command :: _ => command
+    | _ => die "FAIL: malformed oracle Z3 command suffix"
+  fun check (name, goal, quantified) =
+    let
+      val (checked_translation, checked_strings) =
+        Z3.goal_to_SmtLib_with_get_proof_translation_for_version version goal
+      val (oracle_translation, oracle_strings) =
+        Z3.goal_to_SmtLib_translation_for_version version goal
+      val expected_checked =
+        if quantified then Z3.quantified_proof_check_sat_command
+        else Z3.plain_check_sat_command
+    in
+      assert
+        (SmtLib.translation_has_quantifiers checked_translation = quantified,
+         name ^ " checked translation recorded the wrong quantifier feature");
+      assert
+        (SmtLib.translation_has_quantifiers oracle_translation = quantified,
+         name ^ " oracle translation recorded the wrong quantifier feature");
+      assert (Z3.checked_check_sat_command checked_translation =
+          expected_checked,
+        name ^ " selected the wrong structured checked-query command");
+      assert (checked_query checked_strings = expected_checked,
+        name ^ " emitted the wrong checked-query command");
+      assert (oracle_query oracle_strings = Z3.plain_check_sat_command,
+        name ^ " changed the oracle query command")
+    end
+  val (_, literal_strings) =
+    Z3.goal_to_SmtLib_with_get_proof_translation_for_version version
+      (#2 (List.nth (cases, 2)))
+in
+  List.app check cases;
+  assert (contains "(forall (" (String.concat literal_strings),
+    "String-literal boundary no longer exercises rendered forall text")
+end
+
+fun z3_generated_quantifier_check_sat_policy_success () =
+let
+  val version = SOME "4.15.3"
+  val plain_goal = ([], ``(x:int) + 1 = 1 + x``)
+  val generated_cases = [
+    ("cvc5 fallback Set definition",
+     CVC.goal_to_SmtLib_with_get_proof_translation,
+     ([], ``(x:int) IN ((s:int set) UNION t)``)),
+    ("cvc5 fallback Bag definition",
+     CVC.goal_to_SmtLib_with_get_proof_translation,
+     ([], ``BAG_IN (x:int) (BAG_UNION (b:int -> num) c)``)),
+    ("cvc5 array Set SUBSET",
+     CVC.goal_to_SmtLib_with_get_proof_translation,
+     ([], ``(s:int set) SUBSET t``)),
+    ("Z3 array Bag SUB_BAG",
+     Z3.goal_to_SmtLib_with_get_proof_translation_for_version version,
+     ([], bagSyntax.mk_sub_bag
+       (``b:int -> num``, ``c:int -> num``)))
+  ]
+  fun checked_query strings =
+    case List.rev strings of
+      "(exit)\n" :: "(get-proof)\n" :: command :: _ => command
+    | _ => die "FAIL: malformed generated-quantifier command suffix"
+  fun check (name, translate, goal as (assumptions, conclusion)) =
+    let
+      val _ = assert
+        (not (List.exists Library.has_quantifier
+          (conclusion :: assumptions)),
+         name ^ " test input unexpectedly contains a HOL quantifier")
+      (* Keep the generated translation lazy until after the plain query.  The
+         two feature reads then exercise both context restoration and deferred
+         record construction. *)
+      val (generated_translation, generated_strings) = translate goal
+      val (plain_translation, plain_strings) = translate plain_goal
+      val generated_text = String.concat generated_strings
+    in
+      assert (contains "(forall (" generated_text,
+        name ^ " no longer emits its generated forall:\n" ^ generated_text);
+      assert (SmtLib.translation_has_quantifiers generated_translation,
+        name ^ " did not record generated quantifier provenance");
+      assert (Z3.checked_check_sat_command generated_translation =
+          Z3.quantified_proof_check_sat_command,
+        name ^ " selected plain check-sat despite its generated forall");
+      assert (not (SmtLib.translation_has_quantifiers plain_translation),
+        name ^ " leaked generated quantifier state into the next query");
+      assert (Z3.checked_check_sat_command plain_translation =
+          Z3.plain_check_sat_command,
+        name ^ " changed the following QF query command");
+      assert (checked_query plain_strings = Z3.plain_check_sat_command,
+        name ^ " translator changed the following QF query suffix")
+    end
+  val z3_subbag_goal = #3 (List.nth (generated_cases, 3))
+  val (_, z3_subbag_strings) =
+    Z3.goal_to_SmtLib_with_get_proof_translation_for_version version
+      z3_subbag_goal
+in
+  List.app check generated_cases;
+  assert (checked_query z3_subbag_strings =
+      Z3.quantified_proof_check_sat_command,
+    "Z3 SUB_BAG checked query did not emit check-sat-using smt")
+end
+
 fun z3_414_logic_policy_success () =
 let
   fun features arrays = SmtLib.LogicFeatures {
@@ -7108,7 +7223,8 @@ in
 end
 
 (* The translation context lives in mutable cells (Set/Bag backends, the
-   collected collection terms, the emitted sorts).  goal_to_SmtLib_aux
+   collected collection terms, emitted sorts, and generated-forall count).
+   goal_to_SmtLib_aux
    restores every cell after each goal, so neither a translation's text nor
    its lazily built records may depend on what was translated before. *)
 fun smtlib_translation_context_isolation_success () =
@@ -23359,6 +23475,10 @@ let
       smtlib_translation_logic_inference_success),
     ("smtlib_translation_records_success",
       smtlib_translation_records_success),
+    ("z3_quantified_check_sat_policy_success",
+      z3_quantified_check_sat_policy_success),
+    ("z3_generated_quantifier_check_sat_policy_success",
+      z3_generated_quantifier_check_sat_policy_success),
     ("z3_414_logic_policy_success",
       z3_414_logic_policy_success),
     ("z3_414_array_datatype_translation_success",

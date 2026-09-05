@@ -916,6 +916,17 @@ local
      native surface. *)
   val current_native_sequence_emission = ref true
 
+  (* Some collection encodings introduce quantifiers which have no HOL binder
+     in the source goal.  Every such emitter must construct its SMT-LIB forall
+     through this helper, so logic selection and solver command policy observe
+     the syntax that was actually emitted. *)
+  val current_generated_forall_emissions = ref 0
+
+  fun generated_forall declarations body =
+    (current_generated_forall_emissions :=
+       !current_generated_forall_emissions + 1;
+     "(forall (" ^ String.concatWith " " declarations ^ ") " ^ body ^ ")")
+
   (* Snapshot a translation-context cell now; the returned thunk puts it
      back.  Each cell then costs one list entry rather than a declaration,
      a save and a restore that must be kept in step. *)
@@ -2560,7 +2571,8 @@ local
         else if Term.is_abs tm then
           has_nonconstructor_bitvector (Lib.snd (Term.dest_abs tm))
         else false
-      val quantifiers = List.exists has_quantifier terms
+      val quantifiers = !current_generated_forall_emissions > 0 orelse
+        List.exists has_quantifier terms
       val bitvectors = List.exists has_nonconstructor_bitvector terms
       val integers =
         subterm_types type_contains_int orelse
@@ -3546,10 +3558,10 @@ local
             val application = fallback_application name dependencies
             val quantified_decls = dependency_decls @
               ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-            val definition = "(assert (forall (" ^
-              String.concatWith " " quantified_decls ^ ") (= (select " ^
-              application ^ " " ^ binder ^ ") " ^
-              body binder args ^ ")))\n"
+            val definition = "(assert " ^
+              generated_forall quantified_decls
+                ("(= (select " ^ application ^ " " ^ binder ^ ") " ^
+                 body binder args ^ ")") ^ ")\n"
           in
             ((tydict, tmdict),
              (typedecls @ List.concat dependency_typedecls @
@@ -3831,9 +3843,10 @@ local
                       (Redblackmap.numItems tmdict)
                   in
                     ((tydict, tmdict), (decls @ typedecls,
-                      "(forall ((" ^ binder ^ " " ^ element_sort ^ ")) " ^
-                      "(=> (select " ^ left ^ " " ^ binder ^ ") (select " ^
-                      right ^ " " ^ binder ^ ")))"))
+                      generated_forall
+                        ["(" ^ binder ^ " " ^ element_sort ^ ")"]
+                        ("(=> (select " ^ left ^ " " ^ binder ^ ") " ^
+                         "(select " ^ right ^ " " ^ binder ^ "))")))
                   end)
            | _ => raise ERR "native_set_builtin" "wrong subset arity")
         else if pred_setSyntax.is_empty tm then
@@ -4073,9 +4086,10 @@ local
                       (Redblackmap.numItems (Lib.snd acc))
                   in
                     ((tydict, Lib.snd acc), (decls @ typedecls,
-                      "(forall ((" ^ binder ^ " " ^ element_sort ^ ")) " ^
-                      "(<= (select " ^ left ^ " " ^ binder ^ ") (select " ^
-                      right ^ " " ^ binder ^ ")))"))
+                      generated_forall
+                        ["(" ^ binder ^ " " ^ element_sort ^ ")"]
+                        ("(<= (select " ^ left ^ " " ^ binder ^ ") " ^
+                         "(select " ^ right ^ " " ^ binder ^ "))")))
                   end)
            | _ => raise ERR "native_bag_builtin" "wrong subbag arity")
         else if bagSyntax.is_empty tm then
@@ -5041,6 +5055,7 @@ local
       (goal as (original_ts, t)) : translation * string list =
   let
     val _ = current_native_sequence_emission := emit_sequences
+    val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
@@ -5316,6 +5331,8 @@ local
        its eventual construction instead of consulting the restored ambient
        state. *)
     val record_sequence_emission = !current_native_sequence_emission
+    val record_generated_forall_emissions =
+      !current_generated_forall_emissions
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
     val record_emitted_term_sorts = !emitted_term_sorts
@@ -5323,12 +5340,15 @@ local
       let
         val restorers = [
           save_cell current_native_sequence_emission,
+          save_cell current_generated_forall_emissions,
           save_cell current_set_backend,
           save_cell current_bag_backend,
           save_cell emitted_term_sorts
         ]
         fun work () =
           (current_native_sequence_emission := record_sequence_emission;
+           current_generated_forall_emissions :=
+             record_generated_forall_emissions;
            current_set_backend := record_set_backend;
            current_bag_backend := record_bag_backend;
            emitted_term_sorts := record_emitted_term_sorts;
@@ -5375,6 +5395,7 @@ local
   let
     val restorers = [
       save_cell current_native_sequence_emission,
+      save_cell current_generated_forall_emissions,
       save_cell emitted_term_sorts,
       save_cell current_set_backend,
       save_cell current_set_terms,
@@ -6801,6 +6822,18 @@ in
   fun translation_logic ({logic, ...} : translation) = logic
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
+
+  (* Solver command policies consume the feature scan recorded for this exact
+     HOL translation, rather than trying to recognize syntax in printed
+     SMT-LIB. *)
+  fun translation_has_quantifiers translation =
+    case List.find
+      (fn LogicSelection _ => true | _ => false)
+      (translation_records translation) of
+      SOME (LogicSelection {
+        features = LogicFeatures {quantifiers, ...}, ...}) => quantifiers
+    | _ => raise ERR "translation_has_quantifiers"
+        "translation has no LogicSelection record"
 
   (* This is the closed registry of unconditional definitions for HOL heads
      that checked proof parsers use to represent emitted SMT operators.  An

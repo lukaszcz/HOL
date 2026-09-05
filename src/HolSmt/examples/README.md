@@ -55,6 +55,7 @@ discharge them with the checked tactics:
 | --- | --- |
 | `HolSmtPuzzlesScript.sml` | Constraint puzzles as uniqueness theorems: knights and knaves, 100 animals for 100 dollars, SEND + MORE = MONEY |
 | `HolSmtJobShopScript.sml` | Job-shop scheduling: checking a concrete schedule and proving the optimal makespan's lower bound |
+| `HolSmtArraySwapScript.sml` | Array reasoning: swapping the same two entries twice restores the original array |
 | `HolSmtBitTricksScript.sml` | Bit-level programming tricks over `word32`: the XOR swap and an alignment round trip |
 | `HolSmtVerificationScript.sml` | Verifier-style proof obligations: binary-search midpoint bounds, a clamp routine, and array swap via the theory of arrays |
 
