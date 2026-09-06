@@ -181,20 +181,6 @@ val arithmetic_residual_after_unfolding =
      ^ "with")
     ["list_L3509_tl_upt", "list_L3646_upto_rec1"]
 
-(* Isabelle beta-normalises the instance of a rewrite's right-hand side,
-   so the shape below cannot arise there whatever its congruences do. *)
-val beta_redex_in_a_branch =
-  classified "beta redex in a branch"
-    ("unfolding the definition leaves [(\\k. if k IN D then "
-     ^ "(\\x. NONE) k else NONE) = (\\x. NONE)], whose then-branch "
-     ^ "holds an uncontracted redex.  The weak conditional congruence "
-     ^ "does not enter a branch, so the redex stays, and COND_ID never "
-     ^ "meets the [if c then NONE else NONE] it would close.  HOL4 "
-     ^ "contracts a redex where its traversal reaches one; recovering "
-     ^ "this would mean beta-normalising rewrite instantiation, which "
-     ^ "is the simplifier's own business rather than this layer's")
-    ["map_L420_restrict_map_empty"]
-
 val filter_normalisation =
   classified "filter normalisation"
     ("FILTER against a composed or negated predicate is not "
@@ -326,6 +312,7 @@ val characterisation_is_the_goal =
      ^ "translation introduces, and the assigned tactic has no second "
      ^ "route")
     ["list_L6444_stable_sort_key_sort_key", "list_L7318_lenlex_length",
+     "product_type_L785_curry_conv",
      "list_L8167_list_all_iff",
      "list_L8642_image_set", "list_L8660_card_set",
      "list_L8683_can_select_set_list_ex1",
@@ -334,13 +321,12 @@ val characterisation_is_the_goal =
 val predicate_and_set_representation =
   classified "predicate and set representation"
     ("the translation writes a set as a lambda and membership as "
-     ^ "application; the assigned tactic does not identify (\x. t x) "
-     ^ "with t, or x IN P with P x")
-    ["list_L8638_filter_set",
-     "product_type_L1184_sing_Times_sing",
-     "product_type_L469_cond_case_prod_eta",
-     "product_type_L600_case_prodI2_", "product_type_L785_curry_conv",
-     "product_type_L797_curry_case_prod"]
+     ^ "application, and the residual reads a list's set that way: "
+     ^ "[set (FILTER P xs) x] is the membership every list rule is "
+     ^ "stated on, written applied, and no rule meets it there.  Its "
+     ^ "companion is a pair taken apart at a variable, where the "
+     ^ "declared UNCURRY clause asks for an explicit pair")
+    ["list_L8638_filter_set", "product_type_L600_case_prodI2_"]
 
 val pair_membership_after_flattening =
   classified "pair membership after flattening"
@@ -367,10 +353,13 @@ val integer_interval_emptiness =
 
 val rotation_by_iteration =
   classified "rotation by iteration"
-    ("rotate_def unfolds to FUNPOW and nothing reduces the "
-     ^ "iteration")
-    ["list_L5191_rotate0", "list_L5194_rotate_Suc",
-     "list_L5197_rotate_add", "list_L5207_rotate1_rotate_swap"]
+    ("the iteration unfolds and the residual is a FUNPOW law HOL4 "
+     ^ "does not have where the source does: the successor clause, "
+     ^ "which the source declares to its simpset and HOL4 to none, "
+     ^ "and the swap, which HOL4 states only as the commuting law "
+     ^ "between two iterations and never as the single step the goal "
+     ^ "carries")
+    ["list_L5194_rotate_Suc", "list_L5207_rotate1_rotate_swap"]
 
 val decision_procedure_scope =
   classified "decision procedure scope"
@@ -402,7 +391,7 @@ val finite_map_update =
   classified "finite map update"
     ("map_upds_def unfolds to an ALOOKUP over a reversed zip and "
      ^ "nothing reduces it")
-    ["map_L372_map_add_upds", "map_L467_map_upds_Nil1",
+    ["map_L467_map_upds_Nil1",
      "map_L470_map_upds_Nil2", "map_L473_map_upds_Cons"]
 
 val option_relations =
@@ -486,7 +475,6 @@ val execution : benchLib.shortfall list =
   zip_against_map @
   over_budget_with_no_residual @
   arithmetic_residual_after_unfolding @
-  beta_redex_in_a_branch @
   filter_normalisation @
   indexing_through_list_constructors @
   simplification_and_search_reports_no_proof @

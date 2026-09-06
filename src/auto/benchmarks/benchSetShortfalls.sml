@@ -41,13 +41,6 @@ val blast_set_rule_forms =
      "set_theory_L36", "set_theory_L44", "set_theory_L48",
      "set_theory_L168", "set_theory_L184"]
 
-val isabelle_lattice_instance =
-  classified "Isabelle lattice instance"
-    ("the source proof unfolds the lattice instance for 'a set; "
-     ^ "pred_set defines the operation directly and has no "
-     ^ "instance to unfold")
-    ["set_L595_UNIV_def", "set_L687_Int_def", "set_L714_Un_def"]
-
 val disjnt =
   classified "disjnt"
     ("pred_set declares the goal itself, DISJOINT_INSERT, [simp], so "
@@ -101,27 +94,13 @@ val instantiated_fact_citation =
      ^ "citation but not its instantiation")
     ["set_theory_L79"]
 
-val equality_between_two_abstractions =
-  classified "equality between two abstractions"
-    ("the goal is an equation between two functions, which the "
-     ^ "simpset can only reach pointwise; the translation writes a "
-     ^ "set as a lambda, so [{x | P x} = {x | Q x}] arrives as "
-     ^ "[(\\x. P x) = (\\x. Q x)], the simpset's eta step contracts "
-     ^ "both sides before the antecedent can rewrite under the "
-     ^ "binder, and function extensionality -- which Isabelle's set "
-     ^ "type supplies and the predicate encoding drops -- is not an "
-     ^ "ambient rule")
-    ["set_L76_Collect_cong"]
-
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
-  isabelle_lattice_instance @
   disjnt @
   bounded_quantifier_one_point @
   definite_description @
   image_comprehension @
   boolean_induction_rule @
-  instantiated_fact_citation @
-  equality_between_two_abstractions
+  instantiated_fact_citation
 
 end
