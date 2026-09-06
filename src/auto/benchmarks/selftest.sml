@@ -1520,6 +1520,33 @@ val _ =
        handle Portable.Interrupt => raise Portable.Interrupt
             | HOL_ERR _ => false)
 
+(* An [of ...] attribute fills the source lemma's schematic positions,
+   and the translation does not preserve their order: HOL4 states
+   [dropWhile_append1] with its predicate first where Isabelle's
+   statement reaches the list first, so an instance counted off the
+   method's positions would put the list where the predicate belongs and
+   name a fact about neither.  The instances below are the ones the two
+   methods wrote, at the variables the translated goals carry; the
+   position the method leaves open stays quantified. *)
+val cited_instances =
+  [("dropWhile_append1[of _ xs P ys]",
+    ``!item.
+        MEM item v_xs0 ==> ~v_P0 item ==>
+        dropWhile v_P0 (v_xs0 ++ v_ys0) = dropWhile v_P0 v_xs0 ++ v_ys0``),
+   ("takeWhile_eq_Nil_iff[of P xs]",
+    ``takeWhile v_P0 v_xs0 = [] <=> v_xs0 = [] \/ ~v_P0 (HD v_xs0)``)]
+
+val _ =
+  check
+    ("an instantiating citation resolves to the instance it names",
+     fn () =>
+       List.all
+         (fn (citation, expected) =>
+            case map #theorem (benchNames.theorems citation) of
+                [theorem] => aconv (concl theorem) expected
+              | _ => false)
+         cited_instances)
+
 (* ---- Phase B: the method dispatcher ------------------------------- *)
 
 val corpus_method_heads =

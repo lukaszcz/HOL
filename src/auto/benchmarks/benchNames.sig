@@ -10,12 +10,14 @@ sig
      [symmetric], [OF ...], [THEN ...] -- is its own key.  A citation
      whose attribute only instantiates it -- [of ...], [where ...] --
      is its own key too, and resolves either to the general theorem or,
-     through [instantiated], to the instance the source method wrote.
-     Matching recovers an instantiation only when the general
-     statement's left-hand side occurs in the goal; where the instance
-     collapses a constant -- an identity key turning [insort_key f]
-     into [insort] -- it does not, and the general theorem reaches the
-     goal not at all.  The instantiating terms are transcribed from the
+     through [instantiated] or [at_goal_variables], to the instance the
+     source method wrote.  Matching recovers an instantiation only when
+     the general statement's left-hand side occurs in the goal; where
+     the instance collapses a constant -- an identity key turning
+     [insort_key f] into [insort] -- it does not, and the general
+     theorem reaches the goal not at all, and where the instance is a
+     ground equivalence the goal has to take apart, a quantified one
+     will not do.  The instantiating terms are transcribed from the
      method, never chosen per goal, so the entry says the same thing
      for every goal that cites that string.
 

@@ -117,6 +117,52 @@ fun instantiated bindings build () =
         (resolved build))
   end
 
+(* An attribute that instantiates at plain variables names the same
+   theorem at the source lemma's own variables, and the translation
+   names a goal's variables after them -- Isabelle's [xs] is [v_xs0] --
+   so the instance can be written from the names the method wrote and
+   says the same thing for every goal that cites that string.  Each
+   binding pairs a variable of the HOL4 statement with the method
+   argument standing in its place; the source's positions are its own
+   statement's, which the translation does not preserve, so the pairing
+   is written out rather than counted off.  A position the method
+   leaves open contributes no binding and its variable stays
+   quantified, which is what a remaining schematic amounts to in an
+   inserted premise.
+
+   Matching does not always recover such an instance.  A supplied fact
+   reaches the goal as a premise, and splitting an iff is a case
+   analysis on a ground equivalence: a quantified one is not something
+   a safe step takes apart, so a citation the source instantiates
+   before inserting has to be instantiated here too. *)
+fun at_goal_variables bindings build () =
+  let
+    fun instance theorem =
+      let
+        val body = Drule.SPEC_ALL theorem
+        val variables = free_vars (concl body)
+        fun paired (name, argument) =
+          case List.find (fn v => fst (dest_var v) = name) variables of
+              NONE =>
+                raise mk_HOL_ERR "benchNames" "at_goal_variables"
+                  (name ^ " is not a variable of the cited theorem")
+            | SOME variable =>
+                (variable,
+                 mk_var ("v_" ^ argument ^ "0", type_of variable))
+        val pairs = map paired bindings
+        fun instantiated variable =
+          List.exists (fn (bound, _) => aconv bound variable) pairs
+        val specialised =
+          Thm.INST (map (fn (bound, term) => bound |-> term) pairs) body
+      in
+        Thm.GENL (List.filter (not o instantiated) variables) specialised
+      end
+  in
+    Theorems
+      (map (fn {name, theorem} => {name = name, theorem = instance theorem})
+        (resolved build))
+  end
+
 (* A HOL4 recursion equation or characterisation bundles clauses an
    Isabelle citation names one at a time, and handing over the bundle
    gives a method facts it did not name.  The conjunction can sit under
@@ -264,17 +310,29 @@ val table : (string * (unit -> resolution)) list =
   ("neq_Nil_conv",
    translated "source_neq_nil_conv"),
   ("takeWhile_append1[of _ xs P ys]",
-   translated "source_takeWhile_append1"),
+   at_goal_variables
+     [("items", "xs"), ("predicate", "P"), ("suffix", "ys")]
+     (translated "source_takeWhile_append1")),
   ("takeWhile_append2[of xs P ys]",
-   translated "source_takeWhile_append2"),
+   at_goal_variables
+     [("items", "xs"), ("predicate", "P"), ("suffix", "ys")]
+     (translated "source_takeWhile_append2")),
   ("takeWhile_dropWhile_id[of P xs]",
-   translated "source_takeWhile_dropWhile_id"),
+   at_goal_variables
+     [("predicate", "P"), ("items", "xs")]
+     (translated "source_takeWhile_dropWhile_id")),
   ("takeWhile_eq_Nil_iff[of P xs]",
-   translated "source_takeWhile_eq_nil_iff"),
+   at_goal_variables
+     [("predicate", "P"), ("items", "xs")]
+     (translated "source_takeWhile_eq_nil_iff")),
   ("dropWhile_append1[of _ xs P ys]",
-   translated "source_dropWhile_append1"),
+   at_goal_variables
+     [("items", "xs"), ("predicate", "P"), ("suffix", "ys")]
+     (translated "source_dropWhile_append1")),
   ("dropWhile_append2[of xs P ys]",
-   translated "source_dropWhile_append2"),
+   at_goal_variables
+     [("items", "xs"), ("predicate", "P"), ("suffix", "ys")]
+     (translated "source_dropWhile_append2")),
   ("zip_append1",
    translated "source_zip_append1"),
   ("zip_map_map[of f xs \"\\<lambda>x. x\" ys]",
