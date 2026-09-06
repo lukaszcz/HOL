@@ -1775,3 +1775,40 @@ val _ =
          (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
             clasetLib.empty_cs (clasimpLib.clasimp_ss ()))
          self_referential_goal)
+
+(* The library states [FUNPOW f 0 x = x] where the source states
+   [f ^^ 0 = id], so the goal below and the rule that settles it are the
+   same fact at different arities and no rewrite brings them together.
+   Neither goal is a benchmark entry.  The first is put to simplification
+   alone, which is the method the source's own [simp] names and the one
+   route that has nothing else to reach the rule by. *)
+val extensional_goal : Abbrev.goal =
+  ([], ``FUNPOW SUC 0 = (I : num -> num)``)
+
+val _ =
+  check
+    ("an equation between functions meets the applied law that settles it",
+     fn () =>
+       valid_closes
+         (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) [])
+         extensional_goal)
+
+(* Simplification leaves the equation under whatever quantifiers and
+   implications the goal carried, so the step is looked for there and
+   not only at the conclusion's root.  The premise below settles the two
+   functions at every argument and no rewrite reaches the goal, which
+   names neither. *)
+val nested_extensional_goal : Abbrev.goal =
+  ([], ``!clasimp_ext_k.
+           (!n. (clasimp_ext_f : num -> num -> num) clasimp_ext_k n =
+                clasimp_ext_g clasimp_ext_k n) ==>
+           clasimp_ext_f clasimp_ext_k = clasimp_ext_g clasimp_ext_k``)
+
+val _ =
+  check
+    ("the equation is found under the quantifiers the goal carries",
+     fn () =>
+       valid_closes
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            clasetLib.empty_cs (clasimpLib.clasimp_ss ()))
+         nested_extensional_goal)

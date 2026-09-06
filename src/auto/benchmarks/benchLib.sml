@@ -1018,9 +1018,10 @@ fun tactic_for goal Simp args exclusions =
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
         val simplify =
-          simpLib.FULL_SIMP_TAC
-            (clean_simpset goal)
-            (simps @ simp_controls exclusions)
+          clasimpLib.with_extensionality
+            (simpLib.FULL_SIMP_TAC
+               (clean_simpset goal)
+               (simps @ simp_controls exclusions))
       in
         Tactical.THEN
           (insert_facts facts, simplify)

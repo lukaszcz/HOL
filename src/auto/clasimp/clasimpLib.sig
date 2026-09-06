@@ -18,6 +18,18 @@ sig
   val weaken_cond_congruence : simpLib.simpset -> simpLib.simpset
 
   val clasimp_ss : unit -> simpLib.simpset
+
+  (* [with_extensionality simplify] runs [simplify] and, where it leaves
+     a goal whose conclusion is an equation between functions, takes that
+     equation pointwise and runs [simplify] again.  HOL4's library states
+     applied what the source states at the function level, so a goal at
+     the function level cannot meet the rule that settles it; this is the
+     one step that brings the two together.  Exported so that a method
+     built from HOL4's simplifier directly -- the parity corpus builds
+     its simp method that way -- takes the step the layer's own
+     simplification takes, rather than restating it. *)
+  val with_extensionality : tactic -> tactic
+
   val asm_full_simp : simpLib.simpset -> thm list -> tactic
   val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic
 

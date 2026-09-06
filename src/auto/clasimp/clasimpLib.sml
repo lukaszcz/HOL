@@ -264,8 +264,45 @@ fun ambient_simp safe ss =
 fun context_first ss =
   Tactical.TRY (ambient_simp false (simpLib.clear_rules ss) [])
 
+(* An equation between two functions is decided pointwise.  The source
+   states its laws at the function level -- [f ^^ 0 = id],
+   [set (filter P xs) = {x : set xs. P x}] -- where HOL4 states the same
+   facts applied to an argument, so a goal that has reached the function
+   level cannot meet the rule that settles it: the rewrite and the goal
+   are the same fact at different arities.  Isabelle needs no step for
+   this, its statements being already where its goals are; where a goal
+   does reach it, [ext] is an introduction rule there.
+
+   The equation is looked for under the goal's leading quantifiers and
+   implications, which is where simplification leaves it, and taking it
+   pointwise strips one arrow, so the step applies finitely often. *)
+fun pointwise_conv term =
+  if boolSyntax.is_forall term then Conv.QUANT_CONV pointwise_conv term
+  else if boolSyntax.is_imp_only term then Conv.RAND_CONV pointwise_conv term
+  else Conv.REWR_CONV boolTheory.FUN_EQ_THM term
+
+val pointwise = Tactic.CONV_TAC pointwise_conv
+
+(* The step is terminal: it runs on what simplification could not close,
+   so no goal that already closes takes a different route.  Where
+   simplification reports nothing to do the step still applies if the
+   conclusion is a function equation -- that is the case it exists for
+   -- and where neither applies the composite fails as it did.  The
+   safe cascade does not take it: Isabelle's [ext] is an introduction
+   rule and not a safe one, and a safe step that rewrote every function
+   equation would change what SAFE_TAC leaves. *)
+fun with_extensionality simplify =
+  let
+    val pointwise_then = Tactical.THEN (pointwise, Tactical.TRY simplify)
+  in
+    Tactical.THEN
+      (Tactical.ORELSE (simplify, pointwise_then),
+       Tactical.REPEAT pointwise_then)
+  end
+
 fun asm_full_simp ss simp_args =
-  Tactical.THEN (context_first ss, ambient_simp false ss simp_args)
+  with_extensionality
+    (Tactical.THEN (context_first ss, ambient_simp false ss simp_args))
 
 fun safe_asm_full_simp ss simp_args =
   Tactical.THEN (context_first ss, ambient_simp true ss simp_args)
