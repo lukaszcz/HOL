@@ -677,3 +677,37 @@ val _ =
           ([], ``!P x xs. takeWhile P (x::xs) = x::xs ==> P x``),
           ([], ``!P xs. dropWhile P xs <> [] ==>
                   ?e. MEM e xs /\ ~P e``)])
+
+(* src/HOL/List.thy @ f7e02b7e, [hd_in_set].  None of the three goals is
+   a corpus entry and none is the rule: each carries a fact about every
+   element of a list and has to read it off at the head, which is the
+   step the declaration supplies -- the simplifier's condition solver
+   discharges [MEM (HD l) l] from the list being non-empty and the
+   element fact then applies.  The middle goal reaches the same place
+   through a disjunction, where the non-emptiness is what the other
+   disjunct denies. *)
+val _ =
+  check
+    ("a fact about every element reaches the head",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!P xs. (!e. MEM e (xs:'a list) ==> ~P e) ==> xs <> [] ==>
+                   ~P (HD xs)``),
+          ([], ``!P xs. (!e. MEM e (xs:'a list) ==> ~P e) ==>
+                   xs = [] \/ ~P (HD xs)``),
+          ([], ``!P xs. EVERY P (xs:'a list) /\ xs <> [] ==> P (HD xs)``)])
+
+(* src/HOL/List.thy @ f7e02b7e, [hd_replicate].  The goal is not a corpus
+   entry and is not the rule: the walk stops at the first element its
+   predicate rejects, which the given characterisation reads as the list
+   being empty or its head being rejected.  The count is a variable, so
+   no REPLICATE clause reduces and only the declaration says what that
+   head is. *)
+val _ =
+  check
+    ("the head of a replicate is the element it repeats",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [listTheory.takeWhile_eq_nil])
+         ([], ``!P n x. n <> 0 /\ ~P x ==>
+                  takeWhile P (REPLICATE n (x:'a)) = []``))

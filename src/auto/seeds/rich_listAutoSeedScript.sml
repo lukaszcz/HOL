@@ -51,6 +51,28 @@ val _ =
 val _ =
   export_at "simp" ("EL_LENGTH_APPEND_AUTO", rich_listTheory.EL_LENGTH_APPEND)
 
+(* src/HOL/List.thy @ f7e02b7e.  [hd_replicate] is simp there and HOL4
+   states it nowhere: the walk down a replicate reads its head off the
+   count, and a source result about [takeWhile] or [dropWhile] of a
+   replicate reaches its head through the [xs = [] \/ ~P (hd xs)] side
+   of the walk's own characterisation.  The count is a variable, so no
+   REPLICATE clause reduces and the head stays stuck. *)
+Theorem HD_REPLICATE_AUTO[simp]:
+  !count (item : 'a). count <> 0 ==> HD (REPLICATE count item) = item
+Proof
+  Cases >> simp[rich_listTheory.REPLICATE]
+QED
+
+(* src/HOL/List.thy @ f7e02b7e.  [hd_in_set] is simp there: the head
+   of a non-empty list is one of its elements.  HOL4 states the same
+   fact as [HEAD_MEM] and declares it to no simpset, so a premise
+   quantified over the elements of a list stops short of its head --
+   the simplifier's condition solver has no way to discharge
+   [MEM (HD l) l], and every rule whose side condition asks for it
+   fails to fire. *)
+val _ =
+  export_at "simp" ("HEAD_MEM_AUTO", rich_listTheory.HEAD_MEM)
+
 (* src/HOL/List.thy @ f7e02b7e.  [take_append] is simp there and
    declared to no simpset here; its [drop_append] counterpart and the
    two length rules that finish the halves are seeded in
