@@ -93,10 +93,26 @@ structure Z3 = struct
           "" => ()
         | chunk => (TextIO.output (output, chunk); copy ())
       fun finish () =
-        (TextIO.closeIn input handle _ => ();
-         TextIO.closeOut output handle _ => ())
+        let
+          val input_exception =
+            (TextIO.closeIn input; NONE) handle exn => SOME exn
+          fun close_output () = TextIO.closeOut output
+        in
+          case input_exception of
+            NONE =>
+              (close_output () handle exn =>
+                SmtResource.resolve_diagnostic_exception exn
+                  (fn () => ()) (fn _ => ()))
+          | SOME exn =>
+              SmtResource.resolve_diagnostic_exception exn close_output
+                (fn _ => ())
+        end
     in
-      Portable.finally finish copy ()
+      case Exn.capture copy () of
+        Exn.Res result => (finish (); result)
+      | Exn.Exn exn =>
+          SmtResource.resolve_diagnostic_exception exn finish
+            (fn original => raise original)
     end
 
   (* Exact solver artifacts are retained only when this E0 hook is enabled.
@@ -164,7 +180,9 @@ structure Z3 = struct
           val _ =
             (Timeout.apply max_capture_time
                (fn () => copy_file_bounded_memory source target) ()
-             handle exn => (remove_partial (); raise exn))
+             handle exn =>
+               SmtResource.resolve_diagnostic_exception exn remove_partial
+                 (fn original => raise original))
           val _ = captured_bytes := !captured_bytes + bytes
           val _ =
             if stage <> "input" orelse OS.FileSys.access (metadata, []) then ()
@@ -179,7 +197,11 @@ structure Z3 = struct
                  LargeInt.toString (Time.toSeconds max_capture_time), "\n"]
         in
           ()
-        end handle exn => refuse (General.exnMessage exn)
+        end handle exn =>
+          SmtResource.resolve_diagnostic_exception exn
+            (fn () =>
+              (SmtResource.invoke_e0_diagnostic_hook "z3-capture-refusal";
+               refuse (General.exnMessage exn))) (fn _ => ())
     in
       capture
     end
@@ -382,6 +404,15 @@ structure Z3 = struct
     parse ()
     handle Feedback.HOL_ERR holerr => classify_proof_parse_error holerr
 
+  fun capture_diagnostic_precedence_for_test original =
+    SmtResource.resolve_diagnostic_exception original
+      (fn () => SmtResource.invoke_e0_diagnostic_hook
+        "z3-capture-refusal") (fn _ => ())
+
+  fun close_diagnostic_precedence_for_test original =
+    SmtResource.resolve_diagnostic_exception original
+      (fn () => ()) (fn _ => ())
+
   fun check_reconstructed_theorem name ((As, g), thm) =
     let
       fun terms_to_string terms =
@@ -434,24 +465,27 @@ structure Z3 = struct
         fn outfile =>
           let
             val instream = TextIO.openIn outfile
-            fun close () = TextIO.closeIn instream handle _ => ()
+            fun close () =
+              TextIO.closeIn instream
+              handle exn =>
+                SmtResource.resolve_diagnostic_exception exn
+                  (fn () => ()) (fn _ => ())
             fun contextualize_parse exn =
-              case exn of
-                Feedback.HOL_ERR holerr =>
-                  if SmtResource.is_resource_gate holerr then
-                    raise Feedback.HOL_ERR holerr
-                  else
+              if SmtResource.terminal_diagnostic_exception exn then raise exn
+              else
+                case exn of
+                  Feedback.HOL_ERR holerr =>
                     (classify_proof_parse_error holerr
                      handle Feedback.HOL_ERR classified =>
                        raise_with_context "Z3_SMT_Prover" "proof parse"
                          (current_proof_cmd_stem ()) classified)
-              | _ =>
-                  raise Feedback.mk_HOL_ERR "Z3" "Z3_SMT_Prover"
-                    ("Z3 proof parse failed\n" ^
-                     "Z3 version: " ^ version_string () ^ "\n" ^
-                     "Z3 command: " ^
-                     command_string (current_proof_cmd_stem ()) ^ "\n" ^
-                     "underlying exception: " ^ General.exnMessage exn)
+                | _ =>
+                    raise Feedback.mk_HOL_ERR "Z3" "Z3_SMT_Prover"
+                      ("Z3 proof parse failed\n" ^
+                       "Z3 version: " ^ version_string () ^ "\n" ^
+                       "Z3 command: " ^
+                       command_string (current_proof_cmd_stem ()) ^ "\n" ^
+                       "underlying exception: " ^ General.exnMessage exn)
             fun parse_proof proof_start =
               (let
                  val (ty_dict, tm_dict) =
@@ -484,7 +518,9 @@ structure Z3 = struct
                             Int.toString (#variables graph) ^
                             " bit_decompositions=" ^
                             Int.toString (#bit_decompositions graph))
-                       end) handle _ => ())
+                       end) handle exn =>
+                         SmtResource.resolve_diagnostic_exception exn
+                           (fn () => ()) (fn _ => ()))
                in
                  proof
                end handle exn => contextualize_parse exn)
@@ -520,8 +556,13 @@ structure Z3 = struct
                   end
                 | _ => result
               end
+            val outcome = Exn.capture work ()
           in
-            Portable.finally close work ()
+            case outcome of
+              Exn.Res result => (close (); result)
+            | Exn.Exn exn =>
+                SmtResource.resolve_diagnostic_exception exn close
+                  (fn original => raise original)
           end)
 
 end

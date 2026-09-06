@@ -55,35 +55,83 @@ struct
 
   fun e0_enabled () = Option.isSome (!current_e0_invocation)
 
+  fun is_resource_gate holerr =
+    Feedback.top_structure_of holerr = "SmtResource" andalso
+    String.isPrefix "resource-gated: " (Feedback.message_of holerr)
+
+  fun terminal_diagnostic_exception exn =
+    case exn of
+      Interrupt => true
+    | Timeout.TIMEOUT _ => true
+    | Feedback.HOL_ERR holerr => is_resource_gate holerr
+    | _ => false
+
+  (* Diagnostic work is secondary to the proof action.  A terminal primary
+     exception keeps precedence; otherwise a terminal secondary exception
+     remains visible.  The final continuation either preserves a nonterminal
+     primary exception or discards a nonterminal diagnostic failure. *)
+  fun resolve_diagnostic_exception original diagnostic nonterminal =
+    if terminal_diagnostic_exception original then
+      (ignore (Exn.capture diagnostic ()); raise original)
+    else
+      case Exn.capture diagnostic () of
+        Exn.Res _ => nonterminal original
+      | Exn.Exn exn =>
+          if terminal_diagnostic_exception exn then raise exn
+          else nonterminal original
+
+  val e0_diagnostic_hook = ref (NONE : (string -> unit) option)
+
+  fun invoke_e0_diagnostic_hook site =
+    case !e0_diagnostic_hook of NONE => () | SOME hook => hook site
+
+  fun with_e0_diagnostic_hook_for_test hook action input =
+    let
+      val previous = !e0_diagnostic_hook
+      fun restore () = e0_diagnostic_hook := previous
+      fun work () = (e0_diagnostic_hook := SOME hook; action input)
+    in
+      Portable.finally restore work ()
+    end
+
+  fun start_e0_invocation action input =
+    let
+      val invocation =
+        {messages = ref 0,
+         replay_snapshot_emitted = ref false,
+         replay_snapshot_message = ref NONE,
+         profile_baseline = Profile.results ()}
+      fun restore () =
+        (last_e0_message_count := !(#messages invocation);
+         last_e0_replay_snapshot :=
+           !(#replay_snapshot_message invocation);
+         last_e0_replay_snapshot_count :=
+           (if !(#replay_snapshot_emitted invocation) then 1 else 0);
+         current_e0_invocation := NONE)
+      fun work () =
+        (last_e0_profile_names := [];
+         last_e0_replay_snapshot := NONE;
+         last_e0_replay_snapshot_count := 0;
+         current_e0_invocation := SOME invocation;
+         action input)
+    in
+      Portable.finally restore work ()
+    end
+
   fun with_e0_invocation action input =
     case !current_e0_invocation of
       SOME _ => action input
     | NONE =>
         if OS.Process.getEnv "HOL4_SMT_E0_PROFILE" <> SOME "1" then
           action input
-        else
-          let
-            val invocation =
-              {messages = ref 0,
-               replay_snapshot_emitted = ref false,
-               replay_snapshot_message = ref NONE,
-               profile_baseline = Profile.results ()}
-            fun restore () =
-              (last_e0_message_count := !(#messages invocation);
-               last_e0_replay_snapshot :=
-                 !(#replay_snapshot_message invocation);
-               last_e0_replay_snapshot_count :=
-                 (if !(#replay_snapshot_emitted invocation) then 1 else 0);
-               current_e0_invocation := NONE)
-            fun work () =
-              (last_e0_profile_names := [];
-               last_e0_replay_snapshot := NONE;
-               last_e0_replay_snapshot_count := 0;
-               current_e0_invocation := SOME invocation;
-               action input)
-          in
-            Portable.finally restore work ()
-          end
+        else start_e0_invocation action input
+
+  (* Deterministic diagnostics fixtures use the same invocation lifecycle
+     without changing the process environment. *)
+  fun with_e0_invocation_for_test action input =
+    case !current_e0_invocation of
+      SOME _ => action input
+    | NONE => start_e0_invocation action input
 
   fun bounded_text maximum text =
     if String.size text <= maximum then text
@@ -104,7 +152,8 @@ struct
             Feedback.HOL_MESG "HOLSMT_E0 messages=suppressed";
             TextIO.flushOut TextIO.stdOut)
          else ())
-    handle _ => ()
+    handle exn =>
+      if terminal_diagnostic_exception exn then raise exn else ()
 
   (* The replay boundary gets one compact message outside the ordinary phase
      quota.  Set the latch before attempting output, so an output failure
@@ -126,10 +175,12 @@ struct
            else
              (replay_snapshot_emitted := true;
               replay_snapshot_message := SOME snapshot;
+              invoke_e0_diagnostic_hook "replay-snapshot";
               Feedback.HOL_MESG (prefix ^ snapshot);
               TextIO.flushOut TextIO.stdOut)
      end)
-    handle _ => ()
+    handle exn =>
+      if terminal_diagnostic_exception exn then raise exn else ()
 
   fun exception_class exn =
     case exn of
@@ -150,6 +201,7 @@ struct
           val _ = emit_e0 ("phase=start name=" ^ name)
           fun finish status =
             (let
+               val _ = invoke_e0_diagnostic_hook "profile-finish"
                val {nongc, gc} = Timer.checkCPUTimes cpu_timer
                val real = Timer.checkRealTimer real_timer
                val gc_time = Time.+ (#usr gc, #sys gc)
@@ -159,11 +211,13 @@ struct
                  " usr=" ^ Time.toString (#usr nongc) ^
                  " sys=" ^ Time.toString (#sys nongc) ^
                  " gc=" ^ Time.toString gc_time)
-             end handle _ => ())
+             end handle exn =>
+               if terminal_diagnostic_exception exn then raise exn else ())
           val result = f x
-            handle exn =>
-              (finish ("failure exception=" ^ exception_class exn);
-               raise exn)
+            handle exn => resolve_diagnostic_exception exn
+              (fn () => finish
+                ("failure exception=" ^ exception_class exn))
+              (fn original => raise original)
           val _ = finish "end"
         in
           result
@@ -214,7 +268,8 @@ struct
       in
         emit_e0 ("profile entries=" ^ Int.toString (List.length results) ^
           " top16=" ^ bounded_text 3500 summary)
-      end handle _ => ()
+      end handle exn =>
+        if terminal_diagnostic_exception exn then raise exn else ()
 
   fun last_e0_message_count_for_test () = !last_e0_message_count
 
@@ -531,9 +586,5 @@ struct
 
   fun with_bitblast_step_time case_id f x =
     with_resource_step_time "FloatingPoint" case_id f x
-
-  fun is_resource_gate holerr =
-    Feedback.top_structure_of holerr = "SmtResource" andalso
-    String.isPrefix "resource-gated: " (Feedback.message_of holerr)
 
 end

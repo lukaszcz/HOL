@@ -18755,6 +18755,421 @@ in
   check_oracle_tags "structural cache exact LHS" occurrence
 end
 
+fun skeleton_node_cache_metric_split_success () =
+let
+  val p = ``task31_node_cache_p:bool``
+  fun tautology () = boolSyntax.mk_disj (p, boolSyntax.mk_neg p)
+  val shared = tautology ()
+  val pointer_target = boolSyntax.mk_conj (shared, shared)
+  val structural_target = boolSyntax.mk_conj (tautology (), tautology ())
+  fun prove target = SmtResource.with_e0_invocation_for_test
+    (fn target => SmtSkeletonProve.prove_with_owners
+      (SmtSkeletonProve.new_context [])
+      (Redblackmap.mkDict Term.compare)
+      (SmtResource.term_measure target) target) target
+  val pointer_metrics = #metrics (prove pointer_target)
+  val structural_metrics = #metrics (prove structural_target)
+  val declined_atom = ``task31_node_cache_declined:bool``
+  val decline_context = SmtSkeletonProve.new_context
+    [{name = "decline", expand = fn _ => SmtSkeletonProve.Unable}]
+  val decline_owners = Redblackmap.insert
+    (Redblackmap.mkDict Term.compare, declined_atom, "decline")
+  val decline_target = boolSyntax.mk_conj
+    (boolSyntax.mk_conj (tautology (), tautology ()), declined_atom)
+  val observed_attempts = ref 0
+  val observed_successes = ref 0
+  fun observer event =
+    case event of
+      SmtSkeletonProve.NodeCacheStructuralReanchorAttempt =>
+        observed_attempts := !observed_attempts + 1
+    | SmtSkeletonProve.NodeCacheStructuralReanchorSuccess =>
+        observed_successes := !observed_successes + 1
+    | _ => ()
+  val declined = SmtSkeletonProve.with_node_cache_observer (SOME observer)
+    (fn target => SmtSkeletonProve.attempt_with_owners
+      decline_context decline_owners (SmtResource.term_measure target) target)
+    decline_target
+in
+  assert (#node_cache_hits pointer_metrics = 1 andalso
+      #node_cache_pointer_hits pointer_metrics = 1 andalso
+      #node_cache_structural_reanchor_attempts pointer_metrics = 0,
+    "pointer node-cache hit was not classified exactly");
+  assert (#node_cache_hits structural_metrics = 1 andalso
+      #node_cache_pointer_hits structural_metrics = 0 andalso
+      #node_cache_structural_reanchor_attempts structural_metrics = 1 andalso
+      #node_cache_structural_reanchor_successes structural_metrics = 1 andalso
+      #node_cache_structural_reanchor_fallbacks structural_metrics = 0,
+    "structural node-cache reanchor was not classified exactly");
+  assert (Time.compare
+      (#node_cache_reanchor_seconds structural_metrics, Time.zeroTime) <> LESS,
+    "structural node-cache reanchor recorded a negative duration");
+  assert ((case declined of SmtSkeletonProve.Declined => true | _ => false)
+      andalso !observed_attempts = 1 andalso !observed_successes = 1,
+    "node-cache observer lost partial events when the skeleton declined")
+end
+
+fun z3_e0_replay_measurement_aggregate_success () =
+let
+  val p = ``task31_measure_p:bool``
+  val q = ``task31_measure_q:bool``
+  fun repeated () = boolSyntax.mk_disj (p, boolSyntax.mk_neg p)
+  val repeated_left = repeated ()
+  val repeated_right = repeated ()
+  val unique = boolSyntax.mk_conj (p, q)
+  val direct = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets = [repeated_left, repeated_right, unique],
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val direct_summary = #summary direct
+  val binder = Term.mk_var ("task31_measure_bound", numSyntax.num)
+  fun abstraction () = Term.mk_abs (binder, binder)
+  val scoped = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets = [abstraction (), abstraction ()],
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val scoped_summary = #summary scoped
+  val renamed_binder =
+    Term.mk_var ("task31_measure_renamed", numSyntax.num)
+  val alpha_scoped = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets =
+       [Term.mk_abs (binder, binder),
+        Term.mk_abs (renamed_binder, renamed_binder)],
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val free_under_binder = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets =
+       [Term.mk_abs (binder, binder),
+        Term.mk_abs (renamed_binder, binder)],
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val bool_binder = Term.mk_var ("task31_measure_bool", Type.bool)
+  val mixed_types = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets =
+       [Term.mk_abs (binder, binder),
+        Term.mk_abs (bool_binder, bool_binder)],
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val nested_scopes = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets =
+       [abstraction (),
+        Term.mk_abs (binder, Term.mk_abs (binder, binder))],
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val large_atoms = List.tabulate (100, fn index =>
+    Term.mk_var ("task31_measure_large_" ^ Int.toString index, Type.bool))
+  val large = boolSyntax.list_mk_conj large_atoms
+  val _ = assert
+    (SmtResource.dag_nodes_up_to 64 large > 64,
+     "measurement truncation fixture did not exceed its diagnostic cap")
+  val truncated = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets = [large], congruence_targets = [],
+     force_invocation_truncation = false, fail = false}
+  val invocation_truncated =
+    Z3_ProofReplay.e0_measurement_targets_for_test
+      {def_axiom_targets = [unique], congruence_targets = [],
+       force_invocation_truncation = true, fail = false}
+  val target_capped = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets = List.tabulate (2049, fn _ => unique),
+     congruence_targets = [], force_invocation_truncation = false,
+     fail = false}
+  val failed = Z3_ProofReplay.e0_measurement_targets_for_test
+    {def_axiom_targets = [unique], congruence_targets = [],
+     force_invocation_truncation = false, fail = true}
+  val disabled = Z3_ProofReplay.e0_disabled_measurement_for_test unique
+  fun def_axiom_target () = boolSyntax.mk_disj
+    (boolSyntax.mk_neg (boolSyntax.mk_conj (p, q)), p)
+  val actual = Z3_ProofReplay.e0_def_axiom_measurement_for_test
+    [def_axiom_target (), def_axiom_target ()]
+  val timeout_cleanup = Z3_ProofReplay.e0_measurement_exception_for_test
+    (Timeout.TIMEOUT Time.zeroTime) unique
+  val interrupt_cleanup = Z3_ProofReplay.e0_measurement_exception_for_test
+    Interrupt unique
+  val nested = Z3_ProofReplay.e0_nested_measurement_for_test
+    (repeated_left, unique)
+  val partial_cache =
+    Z3_ProofReplay.e0_partial_node_cache_metrics_for_test false
+  val partial_cache_failure =
+    Z3_ProofReplay.e0_partial_node_cache_metrics_for_test true
+  val sample_failure =
+    Z3_ProofReplay.e0_measurement_sample_failure_for_test unique
+  fun deepen 0 term = term
+    | deepen depth term = deepen (depth - 1) (boolSyntax.mk_neg term)
+  val oversized = deepen
+    (SmtResource.max_skeleton_replay_dag_nodes + 1) p
+  val oversized_result =
+    Z3_ProofReplay.e0_measurement_preserves_result_for_test oversized
+in
+  assert
+    (String.isSubstring "def_attempt_calls_started=3" direct_summary andalso
+      String.isSubstring "def_attempt_targets_unique_observed=2"
+        direct_summary andalso
+      String.isSubstring "def_attempt_target_repeats_observed_lower_bound=1"
+        direct_summary andalso
+      String.isSubstring
+        "def_attempt_target_max_multiplicity_observed_lower_bound=2"
+        direct_summary andalso
+      String.isSubstring "def_attempt_target_coverage_complete=true"
+        direct_summary andalso
+      #retained_terms direct = 0,
+    "independent repeated targets were not aggregated structurally");
+  assert
+    (String.isSubstring "def_attempt_calls_started=2" scoped_summary andalso
+      String.isSubstring "def_attempt_targets_unique_observed=1"
+        scoped_summary andalso
+      String.isSubstring "def_attempt_sampled_observations=4"
+        scoped_summary andalso
+      String.isSubstring "def_attempt_sampled_unique_observed=2"
+        scoped_summary andalso
+      String.isSubstring
+        "def_attempt_sampled_max_multiplicity_observed_lower_bound=2"
+        scoped_summary andalso
+      #retained_terms scoped = 0,
+    "corresponding scoped subnodes were not aggregated structurally");
+  assert (String.isSubstring "def_attempt_targets_unique_observed=1"
+      (#summary alpha_scoped) andalso
+      String.isSubstring "def_attempt_sampled_unique_observed=2"
+        (#summary alpha_scoped),
+    "alpha-renamed abstraction samples were distinguished");
+  assert (String.isSubstring "def_attempt_targets_unique_observed=2"
+      (#summary free_under_binder) andalso
+      String.isSubstring "def_attempt_sampled_unique_observed=4"
+        (#summary free_under_binder),
+    "bound and free variables under a binder were conflated");
+  assert (String.isSubstring "def_attempt_targets_unique_observed=2"
+      (#summary mixed_types) andalso
+      String.isSubstring "def_attempt_sampled_unique_observed=4"
+        (#summary mixed_types),
+    "mixed binder types were conflated");
+  assert (String.isSubstring "def_attempt_sampled_observations=5"
+      (#summary nested_scopes) andalso
+      String.isSubstring "def_attempt_sampled_unique_observed=5"
+        (#summary nested_scopes) andalso
+      #retained_terms nested_scopes = 0,
+    "distinct binder depths were conflated");
+  assert (String.isSubstring "def_attempt_sampled_targets_truncated=1"
+      (#summary truncated) andalso #retained_terms truncated = 0,
+    "per-target diagnostic truncation escaped or was not counted");
+  assert (String.isSubstring "def_attempt_sampled_entry_truncations=1"
+        (#summary invocation_truncated) andalso
+      #retained_terms invocation_truncated = 0,
+    "invocation diagnostic truncation escaped or was not counted");
+  assert (String.isSubstring "def_attempt_calls_started=2049"
+      (#summary target_capped) andalso
+      String.isSubstring "def_attempt_target_calls_observed=2048"
+        (#summary target_capped) andalso
+      String.isSubstring "def_attempt_targets_untracked=1"
+        (#summary target_capped) andalso
+      String.isSubstring "def_attempt_target_coverage_complete=false"
+        (#summary target_capped) andalso
+      #retained_terms target_capped = 0,
+    "whole-target cap did not report incomplete coverage transactionally");
+  assert (#failed failed andalso #retained_terms failed = 0,
+    "failed measurement invocation retained target terms");
+  assert (#propagated timeout_cleanup andalso
+      #retained_terms timeout_cleanup = 0 andalso
+      #propagated interrupt_cleanup andalso
+      #retained_terms interrupt_cleanup = 0,
+    "timeout or interrupt was swallowed, or retained diagnostic terms");
+  assert (String.isSubstring "def_attempt_calls_started=3"
+      (#summary nested) andalso
+      String.isSubstring "def_attempt_targets_unique_observed=2"
+        (#summary nested) andalso #retained_terms nested = 0,
+    "nested replay boundary reset or cleared its outer measurement");
+  assert (not (#failed partial_cache) andalso
+      #failed partial_cache_failure andalso
+      String.isSubstring "skeleton_node_cache_hits=2"
+        (#summary partial_cache_failure) andalso
+      String.isSubstring "skeleton_node_pointer_hits=1"
+        (#summary partial_cache_failure) andalso
+      String.isSubstring "skeleton_node_reanchor_attempts=1"
+        (#summary partial_cache_failure) andalso
+      String.isSubstring "skeleton_node_reanchor_fallbacks=1"
+        (#summary partial_cache_failure) andalso
+      String.isSubstring "skeleton_node_reanchor_wall=0.007"
+        (#summary partial_cache_failure) andalso
+      #retained_terms partial_cache_failure = 0,
+    "partial node-cache metrics were lost on a later failure");
+  assert (#summary disabled = "measurement_enabled=false" andalso
+      #retained_terms disabled = 0,
+    "E0-disabled route performed or retained tracing work");
+  assert (String.isSubstring "def_attempt_target_calls_observed=1"
+        (#summary sample_failure) andalso
+      String.isSubstring "def_attempt_targets_untracked=0"
+        (#summary sample_failure) andalso
+      String.isSubstring "def_attempt_target_coverage_complete=true"
+        (#summary sample_failure) andalso
+      String.isSubstring "def_attempt_sampled_errors=1"
+        (#summary sample_failure) andalso
+      String.isSubstring "def_attempt_sampled_coverage_complete=false"
+        (#summary sample_failure),
+    "sample failure corrupted the committed whole-target transaction");
+  assert (Portable.pointer_eq (#result oversized_result, oversized) andalso
+      String.isSubstring "cong_calls_started=1"
+        (#summary oversized_result) andalso
+      String.isSubstring "cong_target_calls_observed=0"
+        (#summary oversized_result) andalso
+      String.isSubstring "cong_targets_untracked=1"
+        (#summary oversized_result) andalso
+      String.isSubstring "cong_target_preflight_truncations=1"
+        (#summary oversized_result) andalso
+      #retained_terms oversized_result = 0,
+    "oversized diagnostic preflight affected the measured route result");
+  assert (String.isSubstring "def_attempt_calls_started=2"
+      (#summary actual) andalso
+      String.isSubstring "def_attempt_targets_unique_observed=1"
+        (#summary actual) andalso
+      String.isSubstring
+        "def_attempt_target_repeats_observed_lower_bound=1"
+        (#summary actual) andalso
+      String.isSubstring "skeleton_successes=2" (#summary actual) andalso
+      #retained_terms actual = 0,
+    "actual def-axiom route did not aggregate and clear E0 state")
+end
+
+fun z3_e0_diagnostic_exception_precedence_success () =
+let
+  val timeout = Timeout.TIMEOUT Time.zeroTime
+  val resource =
+    (SmtResource.check_dag_size_for "Skeleton" "precedence-fixture"
+       (SmtResource.max_skeleton_replay_dag_nodes + 1);
+     Fail "resource fixture did not raise")
+    handle exn => exn
+  fun classify action =
+    (action (); "none")
+    handle Timeout.TIMEOUT _ => "timeout"
+         | Interrupt => "interrupt"
+         | Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then "resource"
+             else "hol-error"
+         | Fail _ => "fail"
+         | _ => "other"
+  fun with_hook site secondary action =
+    let
+      fun hook observed =
+        if observed = site then raise secondary else ()
+    in
+      SmtResource.with_e0_invocation_for_test
+        (SmtResource.with_e0_diagnostic_hook_for_test hook action) ()
+    end
+  fun profiled original () =
+    SmtResource.profile_phase "fixture/precedence"
+      (fn () => raise original) ()
+  fun snapshotted original () =
+    Z3_ProofReplay.with_e0_replay_boundary
+      (fn () => raise original) ()
+  fun captured original () =
+    Z3_ProofReplay.capture_diagnostic_precedence_for_test original
+  val finish_terminal_wins = classify (fn () =>
+    with_hook "profile-finish" timeout (profiled (Fail "primary")))
+  val finish_primary_terminal = classify (fn () =>
+    with_hook "profile-finish" Interrupt (profiled timeout))
+  val snapshot_terminal_wins = classify (fn () =>
+    with_hook "replay-snapshot" timeout (snapshotted (Fail "primary")))
+  val snapshot_primary_terminal = classify (fn () =>
+    with_hook "replay-snapshot" Interrupt (snapshotted timeout))
+  val capture_terminal_wins = classify (fn () =>
+    with_hook "capture-skeleton-obligation" timeout
+      (captured (Fail "primary")))
+  val capture_primary_terminal = classify (fn () =>
+    with_hook "capture-skeleton-obligation" timeout
+      (captured resource))
+  val file_capture_terminal_wins = classify (fn () =>
+    with_hook "z3-capture-refusal" timeout
+      (fn () => Z3.capture_diagnostic_precedence_for_test
+        (Fail "capture observation")))
+  val file_capture_primary_terminal = classify (fn () =>
+    with_hook "z3-capture-refusal" Interrupt
+      (fn () => Z3.capture_diagnostic_precedence_for_test timeout))
+  val continuation_calls = ref 0
+  val generic_primary_terminal = classify (fn () =>
+    SmtResource.resolve_diagnostic_exception timeout (fn () => ())
+      (fn _ => continuation_calls := !continuation_calls + 1))
+  val generic_secondary_terminal = classify (fn () =>
+    SmtResource.resolve_diagnostic_exception (Fail "primary")
+      (fn () => raise timeout) (fn original => raise original))
+  val close_primary_terminal = classify (fn () =>
+    Z3.close_diagnostic_precedence_for_test timeout)
+  val refusal_primary_terminal = classify (fn () =>
+    Z3.capture_diagnostic_precedence_for_test timeout)
+  fun boundary replay () =
+    Z3_ProofReplay.with_e0_replay_boundary replay ()
+  val summary_success_terminal = classify (fn () =>
+    with_hook "measurement-summary" timeout
+      (boundary (fn () => ())))
+  val summary_terminal_primary = classify (fn () =>
+    with_hook "measurement-summary" Interrupt
+      (boundary (fn () => raise timeout)))
+  val summary_terminal_secondary = classify (fn () =>
+    with_hook "measurement-summary" timeout
+      (boundary (fn () => raise Fail "replay-primary")))
+  val summary_success_nonterminal = classify (fn () =>
+    with_hook "measurement-summary" (Fail "summary-secondary")
+      (boundary (fn () => ())))
+  val summary_primary_message =
+    (with_hook "measurement-summary" (Fail "summary-secondary")
+       (boundary (fn () => raise Fail "replay-primary"));
+     "none")
+    handle Fail message => message
+         | _ => "other"
+in
+  assert (finish_terminal_wins = "timeout" andalso
+      snapshot_terminal_wins = "timeout" andalso
+      capture_terminal_wins = "timeout" andalso
+      file_capture_terminal_wins = "timeout",
+    "secondary terminal diagnostic exception did not take precedence");
+  assert (finish_primary_terminal = "timeout" andalso
+      snapshot_primary_terminal = "timeout" andalso
+      capture_primary_terminal = "resource" andalso
+      file_capture_primary_terminal = "timeout" andalso
+      generic_primary_terminal = "timeout" andalso
+      close_primary_terminal = "timeout" andalso
+      refusal_primary_terminal = "timeout" andalso
+      summary_terminal_primary = "timeout" andalso
+      !continuation_calls = 0,
+    "terminal primary exception lost precedence to diagnostics");
+  assert (generic_secondary_terminal = "timeout" andalso
+      summary_success_terminal = "timeout" andalso
+      summary_terminal_secondary = "timeout",
+    "terminal secondary exception was lost during diagnostic cleanup");
+  assert (summary_success_nonterminal = "none" andalso
+      summary_primary_message = "replay-primary",
+    "nonterminal summary failure changed the replay outcome");
+  assert (not (SmtResource.e0_enabled ()) andalso
+      Z3_ProofReplay.replay_measurement_state_size_for_test () = 0 andalso
+      Z3_ProofReplay.replay_local_structure_count_for_test () = 0,
+    "diagnostic exception precedence fixture leaked E0 replay state")
+end
+
+fun z3_e0_replay_measurement_reserved_snapshot_success () =
+let
+  val timed_out =
+    (Z3_ProofReplay.e0_replay_quota_timeout_for_test
+       (Time.fromMilliseconds 20);
+     false)
+    handle Timeout.TIMEOUT _ => true
+  val snapshot = SmtResource.last_e0_replay_snapshot_for_test ()
+  fun rendered_size message =
+    String.size "<<HOL message: " + String.size "HOLSMT_E0 " +
+    String.size message + String.size ">>" + String.size "\n"
+in
+  assert (timed_out,
+    "measurement reserved-snapshot fixture did not time out");
+  case snapshot of
+    SOME message =>
+      assert (String.isSubstring "measurement_enabled=true" message andalso
+          String.isSubstring "def_attempt_calls_started=2" message andalso
+          String.isSubstring "def_attempt_targets_unique_observed=1"
+            message andalso
+          String.isSubstring
+            "def_attempt_target_repeats_observed_lower_bound=1"
+            message andalso
+          String.isSubstring "cong_calls_started=1" message andalso
+          rendered_size message <= 4096 andalso
+          Z3_ProofReplay.replay_measurement_state_size_for_test () = 0,
+        "bounded aggregate was absent, oversized, or retained terms")
+  | NONE => die "FAIL: measurement reserved snapshot was suppressed"
+end
+
 fun z3_emitted_definition_word_replay_success () =
 let
   val direct_expected =
@@ -24612,6 +25027,14 @@ let
       z3_def_axiom_skeleton_resource_gate_ordering),
     ("skeleton_structural_atom_cache_exact_lhs_success",
       skeleton_structural_atom_cache_exact_lhs_success),
+    ("skeleton_node_cache_metric_split_success",
+      skeleton_node_cache_metric_split_success),
+    ("z3_e0_replay_measurement_aggregate_success",
+      z3_e0_replay_measurement_aggregate_success),
+    ("z3_e0_diagnostic_exception_precedence_success",
+      z3_e0_diagnostic_exception_precedence_success),
+    ("z3_e0_replay_measurement_reserved_snapshot_success",
+      z3_e0_replay_measurement_reserved_snapshot_success),
     ("z3_emitted_definition_word_replay_success",
       z3_emitted_definition_word_replay_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",

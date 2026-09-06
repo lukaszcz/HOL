@@ -1313,6 +1313,453 @@ local
   val latest_proof_step = ref (NONE : proof_step_state option)
   val first_failed_proof_step = ref (NONE : proof_step_state option)
 
+  datatype measured_route =
+      MeasuredDefAxiom
+    | MeasuredSkeletonCongruence
+
+  type sampled_node_key = term * hol_type * int
+
+  fun sampled_node_key_compare
+      ((left, left_type, left_depth),
+       (right, right_type, right_depth)) =
+    case Term.compare (left, right) of
+      EQUAL =>
+        (case Type.compare (left_type, right_type) of
+           EQUAL => Int.compare (left_depth, right_depth)
+         | order => order)
+    | order => order
+
+  type route_measurement =
+    {calls : int ref,
+     targets : (term, int) Redblackmap.dict ref,
+     target_calls_observed : int ref,
+     targets_unique : int ref,
+     target_repeats_lower_bound : int ref,
+     target_max_multiplicity : int ref,
+     targets_untracked : int ref,
+     target_preflight_truncations : int ref,
+     target_coverage_complete : bool ref,
+     sampled_subnodes : (sampled_node_key, int) Redblackmap.dict ref,
+     sampled_observations : int ref,
+     sampled_unique : int ref,
+     sampled_repeats_lower_bound : int ref,
+     sampled_max_multiplicity : int ref,
+     sampled_targets_truncated : int ref,
+     sampled_scan_truncations : int ref,
+     sampled_entry_truncations : int ref,
+     sampled_errors : int ref,
+     sampled_coverage_complete : bool ref}
+  type skeleton_measurement =
+    {successes : int ref,
+     target_dag_nodes : int ref,
+     skeleton_dag_nodes : int ref,
+     normalized_dag_nodes : int ref,
+     sat_dag_nodes : int ref,
+     distinct_atoms : int ref,
+     residual_atoms : int ref,
+     node_cache_hits : int ref,
+     node_pointer_hits : int ref,
+     node_reanchor_attempts : int ref,
+     node_reanchor_successes : int ref,
+     node_reanchor_fallbacks : int ref,
+     node_reanchor_time : Time.time ref,
+     sat_time : Time.time ref,
+     total_time : Time.time ref}
+  type replay_measurement =
+    {def_axiom : route_measurement,
+     skeleton_congruence : route_measurement,
+     skeleton : skeleton_measurement,
+     total_sample_scans : int ref,
+     total_sampled_observations : int ref,
+     diagnostic_errors : int ref}
+
+  (* Bounds entered 1,377 def-axiom skeleton calls.  This retains at most
+     2,048 whole-target roots.  Subnode data is a deterministic lower-bound
+     sample: 64 scope-canonical nodes and 256 scan steps per target.  The
+     invocation caps cover every one of the 2,048 observed calls. *)
+  val max_measured_target_calls = 2048
+  val max_sampled_subnodes_per_target = 64
+  val max_sample_scans_per_target = 256
+  val max_sampled_observations = 131072
+  val max_sample_scans = 524288
+
+  fun new_route_measurement () : route_measurement =
+    {calls = ref 0,
+     targets = ref (Redblackmap.mkDict Term.compare),
+     target_calls_observed = ref 0,
+     targets_unique = ref 0,
+     target_repeats_lower_bound = ref 0,
+     target_max_multiplicity = ref 0,
+     targets_untracked = ref 0,
+     target_preflight_truncations = ref 0,
+     target_coverage_complete = ref true,
+     sampled_subnodes = ref
+       (Redblackmap.mkDict sampled_node_key_compare),
+     sampled_observations = ref 0,
+     sampled_unique = ref 0,
+     sampled_repeats_lower_bound = ref 0,
+     sampled_max_multiplicity = ref 0,
+     sampled_targets_truncated = ref 0,
+     sampled_scan_truncations = ref 0,
+     sampled_entry_truncations = ref 0,
+     sampled_errors = ref 0,
+     sampled_coverage_complete = ref true}
+
+  fun new_skeleton_measurement () : skeleton_measurement =
+    {successes = ref 0,
+     target_dag_nodes = ref 0,
+     skeleton_dag_nodes = ref 0,
+     normalized_dag_nodes = ref 0,
+     sat_dag_nodes = ref 0,
+     distinct_atoms = ref 0,
+     residual_atoms = ref 0,
+     node_cache_hits = ref 0,
+     node_pointer_hits = ref 0,
+     node_reanchor_attempts = ref 0,
+     node_reanchor_successes = ref 0,
+     node_reanchor_fallbacks = ref 0,
+     node_reanchor_time = ref Time.zeroTime,
+     sat_time = ref Time.zeroTime,
+     total_time = ref Time.zeroTime}
+
+  fun new_replay_measurement () : replay_measurement =
+    {def_axiom = new_route_measurement (),
+     skeleton_congruence = new_route_measurement (),
+     skeleton = new_skeleton_measurement (),
+     total_sample_scans = ref 0,
+     total_sampled_observations = ref 0,
+     diagnostic_errors = ref 0}
+
+  val current_replay_measurement =
+    ref (NONE : replay_measurement option)
+  val last_replay_measurement_summary = ref "measurement_enabled=false"
+
+  fun measured_route statistics MeasuredDefAxiom = #def_axiom statistics
+    | measured_route statistics MeasuredSkeletonCongruence =
+        #skeleton_congruence statistics
+
+  fun route_measurement_text name
+      ({calls, target_calls_observed, targets_unique,
+        target_repeats_lower_bound, target_max_multiplicity,
+        targets_untracked, target_preflight_truncations,
+        target_coverage_complete, sampled_observations,
+        sampled_unique, sampled_repeats_lower_bound,
+        sampled_max_multiplicity, sampled_targets_truncated,
+        sampled_scan_truncations, sampled_entry_truncations, sampled_errors,
+        sampled_coverage_complete, ...}
+       : route_measurement) =
+      name ^ "_calls_started=" ^ Int.toString (!calls) ^
+      " " ^ name ^ "_target_calls_observed=" ^
+        Int.toString (!target_calls_observed) ^
+      " " ^ name ^ "_targets_unique_observed=" ^
+        Int.toString (!targets_unique) ^
+      " " ^ name ^ "_target_repeats_observed_lower_bound=" ^
+        Int.toString (!target_repeats_lower_bound) ^
+      " " ^ name ^ "_target_max_multiplicity_observed_lower_bound=" ^
+        Int.toString (!target_max_multiplicity) ^
+      " " ^ name ^ "_targets_untracked=" ^
+        Int.toString (!targets_untracked) ^
+      " " ^ name ^ "_target_preflight_truncations=" ^
+        Int.toString (!target_preflight_truncations) ^
+      " " ^ name ^ "_target_coverage_complete=" ^
+        Bool.toString (!target_coverage_complete) ^
+      " " ^ name ^ "_sampled_observations=" ^
+        Int.toString (!sampled_observations) ^
+      " " ^ name ^ "_sampled_unique_observed=" ^
+        Int.toString (!sampled_unique) ^
+      " " ^ name ^ "_sampled_repeats_observed_lower_bound=" ^
+        Int.toString (!sampled_repeats_lower_bound) ^
+      " " ^ name ^ "_sampled_max_multiplicity_observed_lower_bound=" ^
+        Int.toString (!sampled_max_multiplicity) ^
+      " " ^ name ^ "_sampled_targets_truncated=" ^
+        Int.toString (!sampled_targets_truncated) ^
+      " " ^ name ^ "_sampled_scan_truncations=" ^
+        Int.toString (!sampled_scan_truncations) ^
+      " " ^ name ^ "_sampled_entry_truncations=" ^
+        Int.toString (!sampled_entry_truncations) ^
+      " " ^ name ^ "_sampled_errors=" ^
+        Int.toString (!sampled_errors) ^
+      " " ^ name ^ "_sampled_coverage_complete=" ^
+        Bool.toString (!sampled_coverage_complete)
+
+  fun skeleton_measurement_text
+      ({successes, target_dag_nodes, skeleton_dag_nodes,
+        normalized_dag_nodes, sat_dag_nodes, distinct_atoms, residual_atoms,
+        node_cache_hits, node_pointer_hits, node_reanchor_attempts,
+        node_reanchor_successes, node_reanchor_fallbacks, node_reanchor_time,
+        sat_time, total_time} : skeleton_measurement) =
+    " skeleton_successes=" ^ Int.toString (!successes) ^
+    " skeleton_target_dag_sum=" ^ Int.toString (!target_dag_nodes) ^
+    " skeleton_skeleton_dag_sum=" ^ Int.toString (!skeleton_dag_nodes) ^
+    " skeleton_normalized_dag_sum=" ^
+      Int.toString (!normalized_dag_nodes) ^
+    " skeleton_sat_dag_sum=" ^ Int.toString (!sat_dag_nodes) ^
+    " skeleton_distinct_atoms_sum=" ^ Int.toString (!distinct_atoms) ^
+    " skeleton_residual_atoms_sum=" ^ Int.toString (!residual_atoms) ^
+    " skeleton_node_cache_hits=" ^ Int.toString (!node_cache_hits) ^
+    " skeleton_node_pointer_hits=" ^ Int.toString (!node_pointer_hits) ^
+    " skeleton_node_reanchor_attempts=" ^
+      Int.toString (!node_reanchor_attempts) ^
+    " skeleton_node_reanchor_successes=" ^
+      Int.toString (!node_reanchor_successes) ^
+    " skeleton_node_reanchor_fallbacks=" ^
+      Int.toString (!node_reanchor_fallbacks) ^
+    " skeleton_node_reanchor_wall=" ^ Time.toString (!node_reanchor_time) ^
+    " skeleton_sat_wall=" ^ Time.toString (!sat_time) ^
+    " skeleton_total_wall=" ^ Time.toString (!total_time)
+
+  fun replay_measurement_text statistics =
+    "measurement_enabled=true " ^
+    route_measurement_text "def_attempt" (#def_axiom statistics) ^ " " ^
+    route_measurement_text "cong" (#skeleton_congruence statistics) ^
+    skeleton_measurement_text (#skeleton statistics) ^
+    " measurement_sample_scans=" ^
+      Int.toString (!(#total_sample_scans statistics)) ^
+    " measurement_sampled_observations=" ^
+      Int.toString (!(#total_sampled_observations statistics)) ^
+    " measurement_diagnostic_errors=" ^
+      Int.toString (!(#diagnostic_errors statistics))
+
+  fun current_replay_measurement_text () =
+    case !current_replay_measurement of
+      NONE => !last_replay_measurement_summary
+    | SOME statistics => replay_measurement_text statistics
+
+  fun reset_replay_measurement () =
+    (last_replay_measurement_summary := "measurement_enabled=false";
+     current_replay_measurement :=
+       if SmtResource.e0_enabled () then SOME (new_replay_measurement ())
+       else NONE)
+
+  fun detach_replay_measurement () =
+    let val detached = !current_replay_measurement
+    in current_replay_measurement := NONE; detached end
+
+  fun finish_replay_measurement NONE = ()
+    | finish_replay_measurement (SOME statistics) =
+        (SmtResource.invoke_e0_diagnostic_hook "measurement-summary";
+         last_replay_measurement_summary := replay_measurement_text statistics)
+
+  fun terminal_diagnostic_exception exn =
+    SmtResource.terminal_diagnostic_exception exn
+
+  fun mark_target_diagnostic_error statistics route_statistics =
+    (#diagnostic_errors statistics := !(#diagnostic_errors statistics) + 1;
+     #targets_untracked route_statistics :=
+       !(#targets_untracked route_statistics) + 1;
+     #target_coverage_complete route_statistics := false)
+
+  fun mark_sample_diagnostic_error statistics route_statistics =
+    (#diagnostic_errors statistics := !(#diagnostic_errors statistics) + 1;
+     #sampled_errors route_statistics :=
+       !(#sampled_errors route_statistics) + 1;
+     #sampled_coverage_complete route_statistics := false)
+
+  fun record_measured_target route target =
+    case !current_replay_measurement of
+      NONE => ()
+    | SOME statistics =>
+        let
+          val route_statistics = measured_route statistics route
+          val calls = #calls route_statistics
+          val targets = #targets route_statistics
+          val _ = calls := !calls + 1
+          fun terminal_or_mark_target exn =
+            if terminal_diagnostic_exception exn then raise exn
+            else (mark_target_diagnostic_error statistics route_statistics;
+                  false)
+          fun terminal_or_mark_sample exn =
+            if terminal_diagnostic_exception exn then raise exn
+            else mark_sample_diagnostic_error statistics route_statistics
+          fun skip_preflight () =
+            (#target_preflight_truncations route_statistics :=
+               !(#target_preflight_truncations route_statistics) + 1;
+             #targets_untracked route_statistics :=
+               !(#targets_untracked route_statistics) + 1;
+             #target_coverage_complete route_statistics := false;
+             #sampled_coverage_complete route_statistics := false)
+          fun target_preflight () =
+            if SmtResource.dag_nodes_up_to
+                SmtResource.max_skeleton_replay_dag_nodes target >
+                SmtResource.max_skeleton_replay_dag_nodes
+            then (skip_preflight (); false)
+            else true
+          fun commit_target () =
+            if !(#target_calls_observed route_statistics) >=
+                max_measured_target_calls then
+              (#targets_untracked route_statistics :=
+                 !(#targets_untracked route_statistics) + 1;
+               #target_coverage_complete route_statistics := false;
+               #sampled_coverage_complete route_statistics := false;
+               false)
+            else
+              let
+                val previous = Redblackmap.peek (!targets, target)
+                val count = Option.getOpt (previous, 0) + 1
+                val updated = Redblackmap.insert (!targets, target, count)
+              in
+                targets := updated;
+                #target_calls_observed route_statistics :=
+                  !(#target_calls_observed route_statistics) + 1;
+                (case previous of
+                   NONE => #targets_unique route_statistics :=
+                     !(#targets_unique route_statistics) + 1
+                 | SOME _ => #target_repeats_lower_bound route_statistics :=
+                     !(#target_repeats_lower_bound route_statistics) + 1);
+                #target_max_multiplicity route_statistics := Int.max
+                  (!(#target_max_multiplicity route_statistics), count);
+                true
+              end
+          val seen = ref ([] : (term * int list) list)
+          val sampled = ref 0
+          val scans = ref 0
+          val next_scope = ref 0
+          fun same_seen (term, scope) (saved, saved_scope) =
+            scope = saved_scope andalso Portable.pointer_eq (term, saved)
+          fun canonical term binders : sampled_node_key =
+            (List.foldl (fn (binder, body) => Term.mk_abs (binder, body))
+               term binders,
+             Term.type_of term, List.length binders)
+          fun add_sample key =
+            let
+              val samples = #sampled_subnodes route_statistics
+              val previous = Redblackmap.peek (!samples, key)
+              val count = Option.getOpt (previous, 0) + 1
+              val updated = Redblackmap.insert (!samples, key, count)
+            in
+              samples := updated;
+              sampled := !sampled + 1;
+              #sampled_observations route_statistics :=
+                !(#sampled_observations route_statistics) + 1;
+              #total_sampled_observations statistics :=
+                !(#total_sampled_observations statistics) + 1;
+              (case previous of
+                 NONE => #sampled_unique route_statistics :=
+                   !(#sampled_unique route_statistics) + 1
+               | SOME _ => #sampled_repeats_lower_bound route_statistics :=
+                   !(#sampled_repeats_lower_bound route_statistics) + 1);
+              #sampled_max_multiplicity route_statistics := Int.max
+                (!(#sampled_max_multiplicity route_statistics), count)
+            end
+          fun loop [] = ()
+            | loop pending =
+                if !sampled >= max_sampled_subnodes_per_target then
+                  (#sampled_targets_truncated route_statistics :=
+                     !(#sampled_targets_truncated route_statistics) + 1;
+                   #sampled_coverage_complete route_statistics := false)
+                else if !scans >= max_sample_scans_per_target orelse
+                    !(#total_sample_scans statistics) >= max_sample_scans then
+                  (#sampled_scan_truncations route_statistics :=
+                     !(#sampled_scan_truncations route_statistics) + 1;
+                   #sampled_coverage_complete route_statistics := false)
+                else if !(#total_sampled_observations statistics) >=
+                    max_sampled_observations then
+                  (#sampled_entry_truncations route_statistics :=
+                     !(#sampled_entry_truncations route_statistics) + 1;
+                   #sampled_coverage_complete route_statistics := false)
+                else
+                  let
+                    val (term, binders, scope) = hd pending
+                    val pending = tl pending
+                    val _ = scans := !scans + 1
+                    val _ = #total_sample_scans statistics :=
+                      !(#total_sample_scans statistics) + 1
+                  in
+                    if List.exists (same_seen (term, scope)) (!seen) then
+                      loop pending
+                    else
+                      let
+                        val _ = seen := (term, scope) :: !seen
+                        val _ = add_sample (canonical term binders)
+                        val pending =
+                          if Term.is_comb term then
+                            let val (operator, operand) = Term.dest_comb term
+                            in
+                              (operator, binders, scope) ::
+                              (operand, binders, scope) :: pending
+                            end
+                          else if Term.is_abs term then
+                            let
+                              val (binder, body) = Term.dest_abs term
+                              val stamp = !next_scope
+                              val _ = next_scope := stamp + 1
+                            in
+                              (body, binder :: binders, stamp :: scope) ::
+                                pending
+                            end
+                          else pending
+                      in
+                        loop pending
+                      end
+                  end
+          fun sample () =
+            (SmtResource.invoke_e0_diagnostic_hook "measurement-sample";
+             loop [(target, [], [])])
+          val admitted = target_preflight ()
+            handle exn => terminal_or_mark_target exn
+          val committed = admitted andalso
+            (commit_target () handle exn => terminal_or_mark_target exn)
+        in
+          if committed then
+            (sample () handle exn => terminal_or_mark_sample exn)
+          else ()
+        end
+
+  fun add_metric destination amount = destination :=
+    SmtResource.saturated_add (!destination) amount
+
+  fun record_skeleton_metrics
+      (metrics : SmtSkeletonProve.metrics) =
+    case !current_replay_measurement of
+      NONE => ()
+    | SOME statistics =>
+        let val skeleton = #skeleton statistics
+        in
+          #successes skeleton := !(#successes skeleton) + 1;
+          add_metric (#target_dag_nodes skeleton) (#target_dag_nodes metrics);
+          add_metric (#skeleton_dag_nodes skeleton)
+            (#skeleton_dag_nodes metrics);
+          add_metric (#normalized_dag_nodes skeleton)
+            (#normalized_dag_nodes metrics);
+          add_metric (#sat_dag_nodes skeleton) (#sat_dag_nodes metrics);
+          add_metric (#distinct_atoms skeleton) (#distinct_atoms metrics);
+          add_metric (#residual_atoms skeleton) (#residual_atoms metrics);
+          #sat_time skeleton := Time.+
+            (!(#sat_time skeleton), #sat_seconds metrics);
+          #total_time skeleton := Time.+
+            (!(#total_time skeleton), #total_seconds metrics)
+        end
+        handle exn =>
+          if terminal_diagnostic_exception exn then raise exn
+          else #diagnostic_errors statistics :=
+            !(#diagnostic_errors statistics) + 1
+
+  fun observe_skeleton_node_cache event =
+    case !current_replay_measurement of
+      NONE => ()
+    | SOME statistics =>
+        let val skeleton = #skeleton statistics
+        in
+          case event of
+            SmtSkeletonProve.NodeCachePointerHit =>
+              (add_metric (#node_cache_hits skeleton) 1;
+               add_metric (#node_pointer_hits skeleton) 1)
+          | SmtSkeletonProve.NodeCacheStructuralReanchorAttempt =>
+              (add_metric (#node_cache_hits skeleton) 1;
+               add_metric (#node_reanchor_attempts skeleton) 1)
+          | SmtSkeletonProve.NodeCacheStructuralReanchorSuccess =>
+              add_metric (#node_reanchor_successes skeleton) 1
+          | SmtSkeletonProve.NodeCacheStructuralReanchorFallback =>
+              add_metric (#node_reanchor_fallbacks skeleton) 1
+          | SmtSkeletonProve.NodeCacheReanchorTime elapsed =>
+              #node_reanchor_time skeleton := Time.+
+                (!(#node_reanchor_time skeleton), elapsed)
+        end
+        handle exn =>
+          if terminal_diagnostic_exception exn then raise exn
+          else #diagnostic_errors statistics :=
+            !(#diagnostic_errors statistics) + 1
+
   fun proof_step_state id rule status local_info : proof_step_state =
     {id = id, rule = rule, status = status, local_info = local_info}
 
@@ -1348,6 +1795,8 @@ local
       NONE => ()
     | SOME directory =>
         let
+          val _ = SmtResource.invoke_e0_diagnostic_hook
+            "capture-skeleton-obligation"
           val maximum = SmtResource.max_skeleton_replay_dag_nodes
           val structure_metrics =
             SmtResource.bounded_structure maximum target
@@ -1454,11 +1903,20 @@ local
         | SOME describe =>
             describe ()
             handle diagnostic_exn =>
-              "local=unavailable diagnostic_exception=" ^
-              SmtResource.exception_class diagnostic_exn
+              if terminal_diagnostic_exception diagnostic_exn then
+                raise diagnostic_exn
+              else "local=unavailable diagnostic_exception=" ^
+                SmtResource.exception_class diagnostic_exn
+      val measurement_text =
+        (current_replay_measurement_text () handle diagnostic_exn =>
+          if terminal_diagnostic_exception diagnostic_exn then
+            raise diagnostic_exn
+          else "measurement_unavailable=true measurement_exception=" ^
+            SmtResource.exception_class diagnostic_exn)
       val message = SmtResource.bounded_text 4096
         ("replay-snapshot " ^ step ^ " exception=" ^
-         SmtResource.exception_class exn ^ " " ^ local_text)
+         SmtResource.exception_class exn ^ " " ^ measurement_text ^ " " ^
+         local_text)
     in
       SmtResource.emit_e0_replay_snapshot message;
       SmtResource.emit_profile_summary ()
@@ -1468,18 +1926,44 @@ local
     if not (SmtResource.e0_enabled ()) then replay input
     else
       (Timeout.apply duration replay input
-       handle exn =>
-         ((emit_replay_snapshot exn handle _ => ()); raise exn))
+       handle exn => SmtResource.resolve_diagnostic_exception exn
+         (fn () => emit_replay_snapshot exn)
+         (fn original => raise original))
+
+  val replay_measurement_boundary_depth = ref 0
 
   fun with_fresh_e0_replay_boundary_for duration replay input =
-    let
-      val _ = active_proof_step := NONE
-      val _ = latest_proof_step := NONE
-      val _ = first_failed_proof_step := NONE
-      fun run () = with_e0_replay_boundary_for duration replay input
-    in
-      Portable.finally clear_replay_local_structures run ()
-    end
+    if !replay_measurement_boundary_depth > 0 then
+      with_e0_replay_boundary_for duration replay input
+    else
+      let
+        val _ = replay_measurement_boundary_depth := 1
+        val _ = active_proof_step := NONE
+        val _ = latest_proof_step := NONE
+        val _ = first_failed_proof_step := NONE
+        val _ = reset_replay_measurement ()
+        fun run () = with_e0_replay_boundary_for duration replay input
+        fun clear () =
+          let
+            val detached = detach_replay_measurement ()
+            val _ = replay_measurement_boundary_depth := 0
+            val _ = clear_replay_local_structures ()
+          in
+            finish_replay_measurement detached
+          end
+        val outcome = Exn.capture run ()
+      in
+        case outcome of
+          Exn.Res result =>
+            (case Exn.capture clear () of
+               Exn.Res _ => result
+             | Exn.Exn cleanup_exn =>
+                 SmtResource.resolve_diagnostic_exception cleanup_exn
+                   (fn () => ()) (fn _ => result))
+        | Exn.Exn replay_exn =>
+            SmtResource.resolve_diagnostic_exception replay_exn clear
+              (fn original => raise original)
+      end
 
   fun with_e0_replay_boundary replay input =
     with_fresh_e0_replay_boundary_for (Time.fromSeconds 90) replay input
@@ -1509,7 +1993,8 @@ local
     end
 
   fun def_axiom_skeleton_prove state target =
-    SmtResource.with_resource_step_time
+    (record_measured_target MeasuredDefAxiom target;
+     SmtResource.with_resource_step_time
       "Skeleton" "z3-def-axiom"
       (fn target =>
         let
@@ -1518,18 +2003,25 @@ local
           val _ = SmtResource.profile_phase "skeleton/ownership-ownerless"
             (fn () => ()) ()
         in
-          case SmtSkeletonProve.attempt_with_owners
-              def_axiom_skeleton_context def_axiom_skeleton_owners
-              measure target of
-            SmtSkeletonProve.Proved result => #theorem result
+          case SmtSkeletonProve.with_node_cache_observer
+              (case !current_replay_measurement of
+                 NONE => NONE
+               | SOME _ => SOME observe_skeleton_node_cache)
+              (fn () => SmtSkeletonProve.attempt_with_owners
+                def_axiom_skeleton_context def_axiom_skeleton_owners
+                measure target) () of
+            SmtSkeletonProve.Proved result =>
+              (record_skeleton_metrics (#metrics result);
+               #theorem result)
           | SmtSkeletonProve.Declined =>
               raise ERR "z3_def_axiom" "checked skeleton declined"
-        end) target
+        end) target)
     handle exn as Feedback.HOL_ERR holerr =>
-      (if SmtResource.is_resource_gate holerr then
-         (capture_skeleton_obligation state target exn handle _ => ())
-       else ();
-       raise exn)
+      if SmtResource.is_resource_gate holerr then
+        SmtResource.resolve_diagnostic_exception exn
+          (fn () => capture_skeleton_obligation state target exn)
+          (fn original => raise original)
+      else raise exn
 
   fun bounded_taut_prove category case_id target =
     SmtResource.with_resource_step_time category case_id
@@ -3339,8 +3831,9 @@ local
        theory rung has declined the complete rewrite.  [child] above proves
        unchanged positions reflexively and checks that each differing pair is
        strictly smaller before it re-enters [z3_rewrite]. *)
-    rewrite_profile "boolean/binder-skeleton"
-      "rewrite(25a)(skeleton-congruence)" skeleton_congruence ()
+    (record_measured_target MeasuredSkeletonCongruence t;
+     rewrite_profile "boolean/binder-skeleton"
+       "rewrite(25a)(skeleton-congruence)" skeleton_congruence ())
     handle Feedback.HOL_ERR _ =>
 
     (* Proof-local terms have already reached the general unifier before the
@@ -5395,6 +5888,19 @@ in
   fun replay_snapshot_state_for_test () = replay_snapshot_step ()
   fun replay_local_structure_count_for_test () =
     replay_local_structure_count ()
+  fun replay_measurement_state_size_for_test () =
+    case !current_replay_measurement of
+      NONE => 0
+    | SOME statistics =>
+        Redblackmap.numItems (!(#targets (#def_axiom statistics))) +
+        Redblackmap.numItems
+          (!(#sampled_subnodes (#def_axiom statistics))) +
+        Redblackmap.numItems
+          (!(#targets (#skeleton_congruence statistics))) +
+        Redblackmap.numItems
+          (!(#sampled_subnodes (#skeleton_congruence statistics)))
+  fun last_replay_measurement_for_test () =
+    !last_replay_measurement_summary
   fun e0_replay_timeout_for_test duration =
     let
       fun spin n =
@@ -5434,15 +5940,21 @@ in
       val proofterm = UNIT_RESOLUTION
         (premises, conclusion)
       val rule = proofterm_rule_name proofterm
+      val repeated_left = boolSyntax.mk_disj (p, boolSyntax.mk_neg p)
+      val repeated_right = boolSyntax.mk_disj (p, boolSyntax.mk_neg p)
       fun spin n = spin (if n = 1000000 then 0 else n + 1)
       fun replay () =
-        (SmtResource.exhaust_e0_message_quota_for_test ();
+        (record_measured_target MeasuredDefAxiom repeated_left;
+         record_measured_target MeasuredDefAxiom repeated_right;
+         record_measured_target MeasuredSkeletonCongruence
+           (boolSyntax.mk_eq (repeated_left, repeated_right));
+         SmtResource.exhaust_e0_message_quota_for_test ();
          SmtResource.emit_e0 "fixture=ordinary-quota-exhausted";
          track_proof_step_with_local 57721 rule
            (SOME (fn () => proofterm_local_structure proofterm))
            (SmtResource.profile_phase "fixture/quota-timeout" spin) 0)
     in
-      SmtResource.with_e0_invocation
+      SmtResource.with_e0_invocation_for_test
         (with_fresh_e0_replay_boundary_for duration replay) ()
     end
   fun e0_replay_nested_local_timeout_for_test duration =
@@ -5671,6 +6183,134 @@ in
     val state = initial_replay_state Term.empty_tmset [] proof
   in
     Lib.snd (z3_def_axiom (state, target))
+  end
+
+  fun e0_measurement_targets_for_test
+      {def_axiom_targets, congruence_targets, force_invocation_truncation,
+       fail} =
+  let
+    fun replay () =
+      (if force_invocation_truncation then
+         (case !current_replay_measurement of
+            NONE => ()
+          | SOME statistics =>
+              #total_sampled_observations statistics :=
+                max_sampled_observations)
+       else ();
+       List.app (record_measured_target MeasuredDefAxiom)
+         def_axiom_targets;
+       List.app (record_measured_target MeasuredSkeletonCongruence)
+         congruence_targets;
+       if fail then raise Fail "measurement fixture failure" else ())
+    val failed =
+      ((SmtResource.with_e0_invocation_for_test
+          (with_fresh_e0_replay_boundary_for (Time.fromSeconds 5) replay) ();
+        false)
+       handle Fail "measurement fixture failure" => true)
+  in
+    {failed = failed,
+     summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun e0_measurement_sample_failure_for_test target =
+  let
+    fun hook site =
+      if site = "measurement-sample" then
+        raise Fail "injected sample failure"
+      else ()
+  in
+    SmtResource.with_e0_diagnostic_hook_for_test hook
+      (fn () => e0_measurement_targets_for_test
+        {def_axiom_targets = [target], congruence_targets = [],
+         force_invocation_truncation = false, fail = false}) ()
+  end
+
+  fun e0_measurement_preserves_result_for_test target =
+  let
+    fun replay () =
+      (record_measured_target MeasuredSkeletonCongruence target; target)
+    val result = SmtResource.with_e0_invocation_for_test
+      (with_fresh_e0_replay_boundary_for (Time.fromSeconds 5) replay) ()
+  in
+    {result = result, summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun capture_diagnostic_precedence_for_test original =
+    SmtResource.resolve_diagnostic_exception original
+      (fn () => SmtResource.invoke_e0_diagnostic_hook
+        "capture-skeleton-obligation") (fn primary => raise primary)
+
+  fun e0_def_axiom_measurement_for_test targets =
+  let
+    fun replay () = List.app (fn target =>
+      ignore (def_axiom_for_test target)) targets
+    val _ = SmtResource.with_e0_invocation_for_test
+      (with_fresh_e0_replay_boundary_for (Time.fromSeconds 30) replay) ()
+  in
+    {summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun e0_measurement_exception_for_test raised target =
+  let
+    fun replay () =
+      (record_measured_target MeasuredDefAxiom target; raise raised)
+    val propagated =
+      ((SmtResource.with_e0_invocation_for_test
+          (with_fresh_e0_replay_boundary_for (Time.fromSeconds 5) replay) ();
+        false)
+       handle exn => General.exnName exn = General.exnName raised)
+  in
+    {propagated = propagated,
+     summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun e0_nested_measurement_for_test (outer_target, inner_target) =
+  let
+    fun inner () = record_measured_target MeasuredDefAxiom inner_target
+    fun outer () =
+      (record_measured_target MeasuredDefAxiom outer_target;
+       with_fresh_e0_replay_boundary_for (Time.fromSeconds 5) inner ();
+       record_measured_target MeasuredDefAxiom outer_target)
+    val _ = SmtResource.with_e0_invocation_for_test
+      (with_fresh_e0_replay_boundary_for (Time.fromSeconds 5) outer) ()
+  in
+    {summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun e0_partial_node_cache_metrics_for_test fail =
+  let
+    fun replay () =
+      (List.app observe_skeleton_node_cache
+         [SmtSkeletonProve.NodeCachePointerHit,
+          SmtSkeletonProve.NodeCacheStructuralReanchorAttempt,
+          SmtSkeletonProve.NodeCacheStructuralReanchorFallback,
+          SmtSkeletonProve.NodeCacheReanchorTime
+            (Time.fromMilliseconds 7)];
+       if fail then raise Fail "partial cache fixture" else ())
+    val failed =
+      ((SmtResource.with_e0_invocation_for_test
+          (with_fresh_e0_replay_boundary_for (Time.fromSeconds 5) replay) ();
+        false)
+       handle Fail "partial cache fixture" => true)
+  in
+    {failed = failed,
+     summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun e0_disabled_measurement_for_test target =
+  let
+    val _ = current_replay_measurement := NONE
+    val _ = last_replay_measurement_summary := "measurement_enabled=false"
+    val _ = record_measured_target MeasuredDefAxiom target
+  in
+    {summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
   end
 
   fun replay_root_with_state_for_test proof =

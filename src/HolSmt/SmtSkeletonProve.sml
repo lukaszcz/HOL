@@ -27,11 +27,40 @@ struct
      atom_proofs : int,
      atom_cache_hits : int,
      node_cache_hits : int,
+     node_cache_pointer_hits : int,
+     node_cache_structural_reanchor_attempts : int,
+     node_cache_structural_reanchor_successes : int,
+     node_cache_structural_reanchor_fallbacks : int,
+     node_cache_reanchor_seconds : Time.time,
      residual_atoms : int,
      atom_seconds : Time.time,
      sat_seconds : Time.time,
      total_seconds : Time.time,
      procedure_calls : (string * int) list}
+
+  datatype node_cache_event =
+      NodeCachePointerHit
+    | NodeCacheStructuralReanchorAttempt
+    | NodeCacheStructuralReanchorSuccess
+    | NodeCacheStructuralReanchorFallback
+    | NodeCacheReanchorTime of Time.time
+
+  val node_cache_observer =
+    ref (NONE : (node_cache_event -> unit) option)
+
+  fun with_node_cache_observer observer action input =
+    let
+      val previous = !node_cache_observer
+      fun restore () = node_cache_observer := previous
+      fun run () = (node_cache_observer := observer; action input)
+    in
+      Portable.finally restore run ()
+    end
+
+  fun observe_node_cache event =
+    case !node_cache_observer of
+      NONE => ()
+    | SOME observer => observer event
 
   fun new_context procedures = Context
     {procedures = procedures,
@@ -509,6 +538,11 @@ struct
       val calls = ref (Redblackmap.mkDict String.compare)
       val working_cache = ref (!atom_cache)
       val node_hits = ref 0
+      val node_pointer_hits = ref 0
+      val node_reanchor_attempts = ref 0
+      val node_reanchor_successes = ref 0
+      val node_reanchor_fallbacks = ref 0
+      val node_reanchor_time = ref Time.zeroTime
       val atom_requests = ref 0
       val atom_proofs = ref 0
       val atom_hits = ref 0
@@ -587,10 +621,49 @@ struct
                  SOME (saved, (theorem, changed)) =>
                    (node_hits := !node_hits + 1;
                     if Portable.pointer_eq (term, saved) then
-                      (theorem, changed)
+                      (node_pointer_hits := !node_pointer_hits + 1;
+                       observe_node_cache NodeCachePointerHit;
+                       (theorem, changed))
                     else
-                      ((exact_left term theorem, changed)
-                       handle REANCHOR_LIMIT => compute children))
+                      let
+                        val _ = node_reanchor_attempts :=
+                          !node_reanchor_attempts + 1
+                        val _ = observe_node_cache
+                          NodeCacheStructuralReanchorAttempt
+                        val timer =
+                          if SmtResource.e0_enabled () then
+                            SOME (Timer.startRealTimer ())
+                          else NONE
+                        fun finish () =
+                          case timer of
+                            NONE => ()
+                          | SOME timer =>
+                              let
+                                val elapsed = Timer.checkRealTimer timer
+                                val _ = node_reanchor_time := Time.+
+                                  (!node_reanchor_time, elapsed)
+                              in
+                                observe_node_cache
+                                  (NodeCacheReanchorTime elapsed)
+                              end
+                        fun reanchor () =
+                          let val result = (exact_left term theorem, changed)
+                          in
+                            node_reanchor_successes :=
+                              !node_reanchor_successes + 1;
+                            observe_node_cache
+                              NodeCacheStructuralReanchorSuccess;
+                            result
+                          end
+                      in
+                        (Portable.finally finish reanchor ()
+                         handle REANCHOR_LIMIT =>
+                           (node_reanchor_fallbacks :=
+                              !node_reanchor_fallbacks + 1;
+                            observe_node_cache
+                              NodeCacheStructuralReanchorFallback;
+                            compute children))
+                      end)
                | NONE => compute children)
         end
       val normalization = Lib.fst
@@ -659,6 +732,11 @@ struct
          atom_proofs = !atom_proofs,
          atom_cache_hits = !atom_hits,
          node_cache_hits = !node_hits,
+         node_cache_pointer_hits = !node_pointer_hits,
+         node_cache_structural_reanchor_attempts = !node_reanchor_attempts,
+         node_cache_structural_reanchor_successes = !node_reanchor_successes,
+         node_cache_structural_reanchor_fallbacks = !node_reanchor_fallbacks,
+         node_cache_reanchor_seconds = !node_reanchor_time,
          residual_atoms = residual_count,
          atom_seconds = !atom_time,
          sat_seconds = sat_time,
