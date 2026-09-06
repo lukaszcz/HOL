@@ -1628,3 +1628,56 @@ val _ =
      fn () =>
        tactic_fails clasimpLib.LAMBDA_LIFT_TAC
          ([], ``!x:'a. p x ==> q x ==> p x``))
+
+(* What the exclusion drops is a cancellation step the source's simpset
+   also takes, so the layer runs HOL4's procedure and respells what it
+   returns.  None of the terms below is a benchmark entry. *)
+fun simplifies term =
+  SOME (boolSyntax.rhs
+          (Thm.concl (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [] term)))
+  handle Conv.UNCHANGED => NONE
+
+val _ =
+  check
+    ("the layer does not renest an append the way HOL4 does",
+     fn () =>
+       let
+         val term = ``(as:'a list) ++ (bs ++ cs)``
+         fun renests ss =
+           (ignore (simpLib.SIMP_CONV ss [] term); true)
+           handle Conv.UNCHANGED => false
+       in
+         renests (BasicProvers.srw_ss ()) andalso
+         not (renests (clasimpLib.clasimp_ss ()))
+       end)
+
+val _ =
+  check
+    ("an equation with nothing to cancel is left as it stands",
+     fn () =>
+       not (isSome (simplifies ``(as:'a list) ++ (bs ++ cs) = ds``)))
+
+(* A common prefix cancels by APPEND_11, which is ambient; matching two
+   equations up by their last element is the procedure's own step and
+   no rewrite reaches it. *)
+val _ =
+  check
+    ("two equations are still matched up by their last element",
+     fn () =>
+       case simplifies ``(xs:'a list) ++ [x] = ys ++ [y]`` of
+           SOME result =>
+             aconv result ``(xs:'a list) = ys /\ (x:'a) = y``
+         | NONE => false)
+
+(* The cancellation is HOL4's and leaves what it returns left-nested;
+   what this asserts is the respelling that follows it. *)
+val _ =
+  check
+    ("what cancelling leaves is spelled the way the source states it",
+     fn () =>
+       case simplifies
+              ``((as:'a list) ++ (bs ++ cs)) ++ [x] = ds ++ [y]`` of
+           SOME result =>
+             aconv result
+               ``((as:'a list) ++ (bs ++ cs) = ds) /\ (x:'a) = y``
+         | NONE => false)

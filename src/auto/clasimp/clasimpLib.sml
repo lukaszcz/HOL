@@ -63,6 +63,51 @@ val weak_cong_ss =
         boolTheory.RES_EXISTS_CONG],
      convs = [], rewrs = [], filter = NONE, ac = [], dprocs = []}
 
+(* HOL4's list-equation procedure is the analogue of the one src/HOL/
+   List.thy installs over [append1_eq_conv], [append_same_eq] and
+   [same_append_eq]: cancelling a common prefix or suffix of an
+   equation is a step no rewrite set takes by itself, and both sides
+   want it.  HOL4's reaches it through a normal form the layer does not
+   share -- it left-nests an append and turns a trailing cons into a
+   singleton append -- and it leaves the term renested even when
+   nothing cancelled, which is how a goal arrives at a source rule in a
+   spelling the rule cannot read.  Running it and then putting the
+   result back into the source's spelling keeps the cancellation and
+   drops the normal form; a run that only renested becomes no step at
+   all, and the fragment says so rather than reporting progress it did
+   not make. *)
+val source_spelling_conv =
+  Rewrite.PURE_REWRITE_CONV
+    [Conv.GSYM listTheory.APPEND_ASSOC, listTheory.APPEND]
+
+fun list_equation_conv term =
+  let
+    val cancelled = listSimps.LIST_EQ_SIMP_CONV term
+    val respelled =
+      Thm.TRANS cancelled
+        (source_spelling_conv (boolSyntax.rhs (Thm.concl cancelled)))
+      handle Conv.UNCHANGED => cancelled
+  in
+    if aconv (boolSyntax.rhs (Thm.concl respelled)) term then
+      raise Conv.UNCHANGED
+    else respelled
+  end
+
+val list_equation_ss =
+  simpLib.name_ss "AUTO list EQ"
+    (simpLib.conv_ss
+       {name = "SOURCE_LIST_EQ_CONV",
+        trace = 2,
+        key =
+          SOME ([],
+                let
+                  val left =
+                    mk_var ("l1", listSyntax.mk_list_type Type.alpha)
+                in
+                  boolSyntax.mk_eq (left, mk_var ("l2", type_of left))
+                end),
+        conv = K (K list_equation_conv)})
+
 (* [remove_ssfrags] signals an absent fragment by raising UNCHANGED.
    Reporting that is what keeps the replacement honest: a caught
    exception here would leave the strong congruence in place under a
@@ -104,6 +149,26 @@ fun derive_clasimp_ss ss _ =
      variant of each SUC rule as it enters, which leaves HOL4's normal
      form alone. *)
   |> (fn ss' => simpLib.++ (ss', numSimps.SUC_FILTER_ss))
+  (* The same mismatch again, and this one HOL4's normal form cannot be
+     left alone through.  Isabelle's [append_assoc] is a simp rule that
+     reads into the right-nested form and its [append_Cons] keeps a cons
+     at the front, so every source result about a walk down [xs @ ys] is
+     stated of a right-nested append.  HOL4 exports [APPEND_ASSOC] as a
+     rewrite in the other direction and [listSimps]' equation
+     normalisation turns a trailing cons into a singleton append, so the
+     same term arrives as [(xs ++ [y]) ++ zs]; a rule about the prefix
+     every element satisfies then has to read [xs ++ [y]] as that
+     prefix, which is false of [y], and it never fires.  The two
+     directions cannot both be ambient -- each is the other's reverse
+     and the pair loops -- and the layer needs neither: dropping HOL4's
+     leaves an append with the nesting it was written with, which for a
+     translated goal is the source's.  The cons clause of APPEND is simp
+     on both sides and keeps a leading cons at the front.  The equation
+     procedure the exclusion drops comes back respelled: cancelling is
+     wanted, its normal form is not. *)
+  |> simpLib.remove_simps ["APPEND_ASSOC"]
+  |> simpLib.exclude_ssfrags ["list EQ"]
+  |> (fn ss' => simpLib.++ (ss', list_equation_ss))
   (* HOL4 carries no order reasoning ambiently: a goal that supplies its
      own order -- as a [WeakLinearOrder] premise, say -- has the axioms
      and the steps in the assumptions and nothing chains them.  Isabelle
