@@ -257,6 +257,36 @@ fun compare (t1,t2) =
                                    | x => x)
     | (Abs _, _)             => GREATER;
 
+(*---------------------------------------------------------------------------
+ * Does a term contain a free variable?  Bound occurrences remain raw Bv
+ * nodes below abstractions.  A balanced structural set preserves sharing;
+ * structurally equal nodes necessarily have the same answer.                *
+ *---------------------------------------------------------------------------*)
+
+fun has_free_vars tm =
+    let
+      fun scan ([], _) = false
+        | scan (t::ts, seen) =
+            if HOLset.member(seen,t) then scan (ts,seen)
+            else if is_var t then true
+            else
+              case t of
+                (* [compare] normalizes closures, so recording the closure
+                   before its expansion would make the expansion appear to
+                   have been visited already. *)
+                Clos _ => scan (push_clos t::ts,seen)
+              | _ =>
+                  let val seen = HOLset.add(seen,t)
+                  in
+                    case t of
+                        Comb(f,x) => scan (f::x::ts,seen)
+                      | Abs(_,body) => scan (body::ts,seen)
+                      | _ => scan (ts,seen)
+                  end
+    in
+      scan ([tm], HOLset.empty compare)
+    end
+
 val empty_tmset = HOLset.empty compare
 fun term_eq t1 t2 = compare(t1,t2) = EQUAL
 

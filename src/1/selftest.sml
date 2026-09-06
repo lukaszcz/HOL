@@ -37,6 +37,90 @@ val Id = mk_abs(x,x)
 val Idy = mk_abs(y,y)
 val P = mk_var("P", Type.alpha --> Type.bool)
 
+val _ = let
+  val _ = tprint "Term.has_free_vars sharing and closure behavior"
+  fun shared_branch 0 leaf = leaf
+    | shared_branch depth leaf =
+        let val child = shared_branch (depth - 1) leaf
+        in concl (REFL child) end
+  fun independent_branch 0 = boolSyntax.T
+    | independent_branch depth =
+        boolSyntax.mk_conj(independent_branch (depth - 1), boolSyntax.T)
+  fun raw_lambda binder body =
+    Term.read_raw (Vector.fromList [binder, body]) "%0%1|"
+  val binder = mk_var("has_fv_bound", bool)
+  val free = mk_var("has_fv_free", bool)
+  val other_binder = mk_var("has_fv_other_bound", bool)
+  val mixed_scope = boolSyntax.mk_eq
+    (mk_abs(binder, binder), mk_abs(other_binder, binder))
+  (* This is classified directly: constructing an abstraction through the
+     public checked interface must itself inspect its body.  An unfolded
+     traversal of this DAG would require 2^80 visits. *)
+  val deep_shared_body = shared_branch 80 boolSyntax.T
+  val shared_lambda_body = shared_branch 20 boolSyntax.T
+  val shared_open_body = boolSyntax.mk_conj(free, shared_lambda_body)
+  val shared_closed_lambda = raw_lambda binder shared_lambda_body
+  val shared_open_lambda = raw_lambda binder shared_open_body
+  val (shared_left, shared_right) =
+    boolSyntax.dest_eq deep_shared_body
+  val quantified_reflexivity = GEN binder (REFL binder)
+  val closed_closure = concl (Specialize boolSyntax.T quantified_reflexivity)
+  val open_closure = concl (Specialize free quantified_reflexivity)
+  val independent_left = independent_branch 300
+  val independent_right = independent_branch 300
+  val independent_equal =
+    boolSyntax.mk_conj(independent_left, independent_right)
+  fun leaf index =
+    let
+      val ty = mk_vartype ("'has_fv_" ^ Int.toString index)
+      val variable = mk_var("has_fv_leaf", ty)
+      val identity = mk_abs(variable, variable)
+    in
+      boolSyntax.mk_eq(identity, identity)
+    end
+  fun pair_round terms =
+    let
+      fun pair ([], result) = List.rev result
+        | pair ([term], result) = List.rev (term :: result)
+        | pair (left :: right :: rest, result) =
+            pair(rest, boolSyntax.mk_conj(left, right) :: result)
+    in
+      pair(terms, [])
+    end
+  fun balanced [term] = term
+    | balanced terms = balanced (pair_round terms)
+  (* A list-based visited cache would perform quadratically many lookups on
+     these independently allocated nodes. *)
+  val large_closed = balanced (List.tabulate(6000, leaf))
+  val classifications = List.map Term.has_free_vars
+    [binder, mk_abs(binder, binder), closed_closure, open_closure,
+     mixed_scope, deep_shared_body, shared_closed_lambda, shared_open_lambda,
+     independent_equal, large_closed]
+  val agreement_terms =
+    [binder, mk_abs(binder, binder), closed_closure, open_closure, mixed_scope,
+     shared_branch 8 boolSyntax.T,
+     raw_lambda binder (boolSyntax.mk_conj(free,
+       shared_branch 8 boolSyntax.T)),
+     independent_branch 20]
+  val agreement = List.all
+    (fn term =>
+      Term.has_free_vars term = not (List.null (Term.free_vars term)))
+    agreement_terms
+in
+  if not (Portable.pointer_eq(shared_left, shared_right)) then
+    die "deep DAG body was not physically shared"
+  else if Portable.pointer_eq(independent_left, independent_right) orelse
+          Term.compare(independent_left, independent_right) <> EQUAL then
+    die "independently built equal DAG fixture was malformed"
+  else if classifications <>
+      [true, false, false, true, true, false, false, true, false, false] then
+    die "Term.has_free_vars classified a fixture incorrectly"
+  else if not agreement then
+    die "Term.has_free_vars disagreed with Term.free_vars"
+  else
+    OK()
+end
+
 val _ = tprint "TG list_mk_forall bug (0)"
 val _ = require_msg
           (check_result (aconv (List.foldr mk_abs (mk_comb(P,x)) [x,P])))

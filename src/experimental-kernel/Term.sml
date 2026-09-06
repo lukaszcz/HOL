@@ -421,6 +421,42 @@ in
   cmp 0 (empty_env, empty_env) p
 end
 
+(*---------------------------------------------------------------------------
+ * Does a term contain a free variable?  The experimental kernel represents
+ * bound occurrences with named variables, so memoization includes the set of
+ * binders in scope.  Both the scope and the work cache are balanced sets.    *
+ *---------------------------------------------------------------------------*)
+
+fun has_free_vars tm =
+    let
+      fun bound_compare (bound1, bound2) =
+          list_compare var_compare
+            (HOLset.listItems bound1, HOLset.listItems bound2)
+      fun state_compare ((term1, bound1), (term2, bound2)) =
+          case compare (term1, term2) of
+            EQUAL => bound_compare (bound1, bound2)
+          | order => order
+      fun scan ([], _) = false
+        | scan ((term, bound)::rest, seen) =
+            if HOLset.member(seen, (term, bound)) then scan (rest, seen)
+            else
+              let
+                val seen = HOLset.add(seen, (term, bound))
+              in
+                case term of
+                  Var _ =>
+                    if HOLset.member(bound, term) then scan (rest, seen)
+                    else true
+                | Const _ => scan (rest, seen)
+                | App(function, argument) =>
+                    scan ((function, bound)::(argument, bound)::rest, seen)
+                | Abs(variable, body) =>
+                    scan ((body, HOLset.add(bound, variable))::rest, seen)
+              end
+    in
+      scan ([(tm, empty_varset)], HOLset.empty state_compare)
+    end
+
 val empty_tmset = HOLset.empty compare
 
 (* ----------------------------------------------------------------------
