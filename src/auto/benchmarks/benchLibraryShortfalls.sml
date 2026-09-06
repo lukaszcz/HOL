@@ -35,7 +35,6 @@ val over_budget =
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons",
    "list_L4632_extract_SomeE",
-   "list_L5044_takeWhile_replicate", "list_L5048_dropWhile_replicate",
    "list_L5325_bij_rotate1", "list_L7998_listrel_rtrancl_refl",
    "list_L6138_map_sorted_distinct_set_unique",
    "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
@@ -118,11 +117,10 @@ val list_decomposition_witnesses =
      ^ "at a member")
     ["list_L7823_append_listrel1I", "list_L8673_these_set_code"]
 
-(* Re-measured at ten times the budget: all four still return nothing.
+(* Re-measured at ten times the budget: all three still return nothing.
    The citation they were filed under is not what stands in the way --
-   each resolves, [OF assms] discharging a premise from the goal's own
-   assumption and [of P xs] instantiating at variables the goal already
-   has.  What is left is the search. *)
+   [OF assms] discharges a premise from the goal's own assumption and
+   each resolves.  What is left is the search. *)
 val search_returns_nothing_at_ten_times_the_budget =
   classified "search returns nothing at ten times the budget"
     ("the cited facts resolve and are supplied, and the assigned "
@@ -130,7 +128,32 @@ val search_returns_nothing_at_ten_times_the_budget =
      ^ "seconds")
     ["list_L1460_split_list_propE",
      "list_L1484_split_list_first_propE",
-     "list_L1511_split_list_last_propE", "list_L2576_dropWhile_id"]
+     "list_L1511_split_list_last_propE"]
+
+(* Diagnosed by taking the goal apart at the two facts its method
+   names.  Isabelle instantiates both -- [takeWhile_dropWhile_id[of P
+   xs]] and [takeWhile_eq_Nil_iff[of P xs]] -- and an instantiating
+   attribute at plain variables is rendered here as the general
+   statement, on the reading that HOL4 recovers the instance by
+   matching.  It does not: the fact reaches the goal as a universally
+   quantified iff premise, and splitting an iff is a safe step that
+   needs the ground instance.  Supplied by hand at the goal's own
+   variables, SAFE_TAC produces exactly Isabelle's two cases -- and the
+   second is then lost to traversal order, HOL4's simplifier being
+   outermost-first where Isabelle's is innermost-first: the ambient
+   [takeWhile_APPEND_dropWhile] rewrite matches the whole of the
+   decomposition premise and collapses it to T before the sibling
+   equation [takeWhile P xs = []] can rewrite inside it, where
+   Isabelle's is left with [[] ++ dropWhile P xs = xs], the goal.  With
+   a pass that lets the context equations rewrite each other in
+   between, the goal closes. *)
+val cited_instance_and_traversal_order =
+  classified "cited instance and traversal order"
+    ("the method's instantiation is dropped, so the cited iff arrives "
+     ^ "quantified and no safe step splits it; instantiated by hand "
+     ^ "the split happens and the ambient decomposition rewrite then "
+     ^ "consumes the premise that would close it")
+    ["list_L2576_dropWhile_id"]
 
 (* Diagnosed: a fact reaches a goal as an inserted premise, and a
    premise's type variables are fixed -- only its term variables can be
@@ -164,9 +187,7 @@ val over_budget_with_no_residual =
      "list_L7998_listrel_rtrancl_refl", "map_L899_map_add_subsumed1",
      "list_L4065_set_take_disj_set_drop_if_distinct",
      "list_L4406_distinct_adj_Cons_Cons",
-     "list_L4632_extract_SomeE",
-     "list_L5044_takeWhile_replicate",
-     "list_L5048_dropWhile_replicate", "list_L5325_bij_rotate1",
+     "list_L4632_extract_SomeE", "list_L5325_bij_rotate1",
      "list_L6138_map_sorted_distinct_set_unique",
      "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
      "list_L6847_sorted_list_of_set_nonempty",
@@ -487,6 +508,7 @@ val execution : benchLib.shortfall list =
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
+  cited_instance_and_traversal_order @
   instantiated_fact_not_applied @
   zip_against_map @
   over_budget_with_no_residual @
