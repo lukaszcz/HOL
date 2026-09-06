@@ -185,6 +185,24 @@ val _ =
     [("takeWhile_id_AUTO", listTheory.takeWhile_id),
      ("dropWhile_eq_nil_AUTO", listTheory.dropWhile_eq_nil)]
 
+(* src/HOL/List.thy:2559 @ f7e02b7e.  [set_takeWhileD] reads a member of
+   a takeWhile as a member of the list that satisfies the predicate, and
+   Isabelle declares it to no simpset and no claset.  HOL4 states its
+   first half as [MEM_takeWhile_IMP] and carries the second only inside
+   [EVERY_takeWhile], where nothing takes it apart: a walk stopped by
+   its own predicate leaves an element of the prefix against the
+   predicate it was taken by, and neither system's declared rules reach
+   it.  Declared here as a dest rule, which is a declaration Isabelle
+   does not make: the target is automation at least as strong as
+   Isabelle's, and what is declared is a schema about the walk.  Its
+   companion needs no declaration -- [MEM_takeWhile_IMP] gives
+   membership in the list, which the goals reach by other routes. *)
+Theorem MEM_takeWhile_HOLDS_AUTO[dest]:
+  !P l x. MEM x (takeWhile P (l : 'a list)) ==> P x
+Proof
+  metis_tac [listTheory.EVERY_takeWhile, listTheory.EVERY_MEM]
+QED
+
 (* src/HOL/List.thy:7279 @ f7e02b7e.  Isabelle gives lexicographic
    transitivity to the classical reasoner as [intro], where HOL4 states it
    but declares it to no claset.  The rest of the lexicographic block needs

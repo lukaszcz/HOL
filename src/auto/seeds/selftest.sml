@@ -711,3 +711,22 @@ val _ =
        closes_within 20 (clasimpLib.AUTO_TAC [listTheory.takeWhile_eq_nil])
          ([], ``!P n x. n <> 0 /\ ~P x ==>
                   takeWhile P (REPLICATE n (x:'a)) = []``))
+
+(* src/HOL/List.thy:2559 @ f7e02b7e, [set_takeWhileD]'s second half.
+   Neither goal is the rule: the first carries the predicate across a
+   monotone implication, the second meets it with a FILTER against the
+   negation, and both stop at [MEM y (takeWhile P xs)] with the
+   predicate out of reach.  The rule's companion, membership in the
+   list, is not needed by either. *)
+val _ =
+  check
+    ("what a walk kept satisfies the predicate it walked by",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!P Q xs y.
+                   (!z. P z ==> Q z) /\ MEM y (takeWhile P (xs:'a list)) ==>
+                   Q y``),
+          ([], ``!P xs y.
+                   MEM y (takeWhile P (xs:'a list)) /\
+                   MEM y (FILTER ($~ o P) xs) ==> F``)])
