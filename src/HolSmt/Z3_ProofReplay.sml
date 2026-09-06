@@ -1305,28 +1305,43 @@ local
   *)
   val def_axiom_skeleton_context = SmtSkeletonProve.new_context []
   val def_axiom_skeleton_owners = Redblackmap.mkDict Term.compare
-  val active_proof_step = ref (NONE : (int * string) option)
-  val latest_proof_step = ref (NONE : (int * string * string) option)
-  val first_failed_proof_step =
-    ref (NONE : (int * string * string) option)
+  type local_structure = unit -> string
+  type proof_step_state =
+    {id : int, rule : string, status : string,
+     local_info : local_structure option}
+  val active_proof_step = ref (NONE : proof_step_state option)
+  val latest_proof_step = ref (NONE : proof_step_state option)
+  val first_failed_proof_step = ref (NONE : proof_step_state option)
 
-  fun track_proof_step id rule action input =
+  fun proof_step_state id rule status local_info : proof_step_state =
+    {id = id, rule = rule, status = status, local_info = local_info}
+
+  fun set_latest_proof_step id rule status local_info =
+    latest_proof_step := SOME
+      (proof_step_state id rule status local_info)
+
+  fun track_proof_step_with_local id rule local_info action input =
     let
       val previous_step = !active_proof_step
       fun restore () = active_proof_step := previous_step
       fun fail exn =
         (case !first_failed_proof_step of
            NONE =>
-             first_failed_proof_step := SOME (id, rule, "failure")
+             first_failed_proof_step := SOME
+               (proof_step_state id rule "failure" local_info)
          | SOME _ => ();
          raise exn)
       fun work () =
-        (active_proof_step := SOME (id, rule);
-         latest_proof_step := SOME (id, rule, "start");
+        (active_proof_step := SOME
+           (proof_step_state id rule "active" local_info);
+         set_latest_proof_step id rule "start" local_info;
          action input handle exn => fail exn)
     in
       Portable.finally restore work ()
     end
+
+  fun track_proof_step id rule action input =
+    track_proof_step_with_local id rule NONE action input
 
   fun capture_skeleton_obligation (state : state) target exn =
     case OS.Process.getEnv "HOL4_SMT_E0_CAPTURE_DIR" of
@@ -1342,7 +1357,7 @@ local
             else NONE
           val proof_id =
             case !active_proof_step of
-              SOME (id, _) => Int.toString id
+              SOME {id, ...} => Int.toString id
             | NONE => "root-or-unbound"
           val digest_text =
             case digest of
@@ -1386,11 +1401,44 @@ local
 
   fun replay_snapshot_step () =
     case !first_failed_proof_step of
-      SOME step => SOME step
+      SOME {id, rule, status, ...} => SOME (id, rule, status)
     | NONE =>
         case !active_proof_step of
-          SOME (id, rule) => SOME (id, rule, "active")
-        | NONE => !latest_proof_step
+          SOME {id, rule, ...} => SOME (id, rule, "active")
+        | NONE =>
+            case !latest_proof_step of
+              SOME {id, rule, status, ...} => SOME (id, rule, status)
+            | NONE => NONE
+
+  fun replay_snapshot_local () =
+    case !first_failed_proof_step of
+      SOME {local_info, ...} => local_info
+    | NONE =>
+        case !active_proof_step of
+          SOME {local_info, ...} => local_info
+        | NONE =>
+            case !latest_proof_step of
+              SOME {local_info, ...} => local_info
+            | NONE => NONE
+
+  fun clear_step_local NONE = NONE
+    | clear_step_local (SOME {id, rule, status, ...}) =
+        SOME (proof_step_state id rule status NONE)
+
+  fun clear_replay_local_structures () =
+    (active_proof_step := clear_step_local (!active_proof_step);
+     latest_proof_step := clear_step_local (!latest_proof_step);
+     first_failed_proof_step := clear_step_local (!first_failed_proof_step))
+
+  fun replay_local_structure_count () =
+    let
+      fun present NONE = 0
+        | present (SOME {local_info = NONE, ...}) = 0
+        | present (SOME {local_info = SOME _, ...}) = 1
+    in
+      present (!active_proof_step) + present (!latest_proof_step) +
+      present (!first_failed_proof_step)
+    end
 
   fun emit_replay_snapshot exn =
     let
@@ -1400,10 +1448,19 @@ local
         | SOME (id, rule, status) =>
             "id=" ^ Int.toString id ^ " rule=" ^ rule ^
             " status=" ^ status
-    in
-      SmtResource.emit_e0
+      val local_text =
+        case replay_snapshot_local () of
+          NONE => "local=unavailable"
+        | SOME describe =>
+            describe ()
+            handle diagnostic_exn =>
+              "local=unavailable diagnostic_exception=" ^
+              SmtResource.exception_class diagnostic_exn
+      val message = SmtResource.bounded_text 4096
         ("replay-snapshot " ^ step ^ " exception=" ^
-         SmtResource.exception_class exn);
+         SmtResource.exception_class exn ^ " " ^ local_text)
+    in
+      SmtResource.emit_e0_replay_snapshot message;
       SmtResource.emit_profile_summary ()
     end
 
@@ -1419,8 +1476,9 @@ local
       val _ = active_proof_step := NONE
       val _ = latest_proof_step := NONE
       val _ = first_failed_proof_step := NONE
+      fun run () = with_e0_replay_boundary_for duration replay input
     in
-      with_e0_replay_boundary_for duration replay input
+      Portable.finally clear_replay_local_structures run ()
     end
 
   fun with_e0_replay_boundary replay input =
@@ -4515,6 +4573,69 @@ local
     | proofterm_concl (ID _) = NONE
     | proofterm_concl (THEOREM thm) = SOME (Thm.concl thm)
 
+  (* Construct timeout attribution only while unwinding the E0 boundary.
+     Direct premises are sampled without descending into the proof tree, and
+     the conclusion uses the same fixed DAG bound as skeleton diagnostics. *)
+  fun proofterm_local_structure proofterm =
+    let
+      val premise_limit = 64
+      fun premise_ref (ID id) = "@" ^ Int.toString id
+        | premise_ref (THEOREM _) = "theorem"
+        | premise_ref premise = proofterm_replay_handler premise
+      fun sample (0, rest, refs, count) =
+            (List.rev refs, count, not (List.null rest))
+        | sample (_, [], refs, count) = (List.rev refs, count, false)
+        | sample (remaining, premise :: rest, refs, count) =
+            sample (remaining - 1, rest,
+              SmtResource.bounded_text 64 (premise_ref premise) :: refs,
+              count + 1)
+      val (premise_refs, premise_count, premises_more) =
+        sample (premise_limit, proofterm_premises proofterm, [], 0)
+      val premise_text = SmtResource.bounded_text 2048
+        (String.concatWith "," premise_refs)
+      val conclusion_text =
+        case proofterm_concl proofterm of
+          NONE => "conclusion=unavailable"
+        | SOME conclusion =>
+            let
+              val maximum = SmtResource.max_skeleton_replay_dag_nodes
+              val structure_metrics =
+                SmtResource.bounded_structure maximum conclusion
+              val prefix =
+                "conclusion_nodes=" ^
+                Int.toString (#dag_nodes structure_metrics) ^
+                " conclusion_edges=" ^
+                Int.toString (#edges structure_metrics) ^
+                " conclusion_binder_depth=" ^
+                Int.toString (#max_binder_depth structure_metrics) ^
+                " conclusion_identifier_bytes=" ^
+                Int.toString (#max_identifier_bytes structure_metrics) ^
+                " conclusion_complete=" ^
+                Bool.toString (#complete structure_metrics)
+            in
+              if #complete structure_metrics then
+                let
+                  val digest = SmtResource.bounded_graph_digest
+                    (maximum + 1) conclusion
+                in
+                  prefix ^ " conclusion_digest=" ^ #digest digest ^
+                  " conclusion_serialization_bytes=" ^
+                  Int.toString (#serialization_bytes digest) ^
+                  " conclusion_serialization=" ^ #serialization digest
+                end
+              else
+                prefix ^
+                " conclusion_digest=unavailable-oversized" ^
+                " conclusion_serialization=<oversized>"
+            end
+    in
+      "local_rule=" ^ SmtResource.bounded_text 96
+        (proofterm_rule_name proofterm) ^
+      " direct_premises_shown=" ^ Int.toString premise_count ^
+      " direct_premises_more=" ^ Bool.toString premises_more ^
+      " direct_premise_refs=[" ^ premise_text ^ "] " ^ conclusion_text
+    end
+
   fun proofterm_ref (ID id) = "ID " ^ Int.toString id
     | proofterm_ref (THEOREM thm) = "THEOREM(" ^ term_diag (Thm.concl thm) ^ ")"
     | proofterm_ref pt =
@@ -4861,6 +4982,10 @@ local
         | SOME pt =>
             let
               val rule = proofterm_rule_name pt
+              val local_info =
+                if SmtResource.e0_enabled () then
+                  SOME (fn () => proofterm_local_structure pt)
+                else NONE
               fun cache_result ((state, proof), thm) =
                 let
                   val _ =
@@ -4872,7 +4997,8 @@ local
                   val steps = Redblackmap.insert
                     (proof_steps proof, id, THEOREM thm)
                   val proof = update_proof_steps proof steps
-                  val _ = latest_proof_step := SOME (id, rule, "end")
+                  val _ =
+                    set_latest_proof_step id rule "end" local_info
                 in
                   ((state, proof), thm)
                 end
@@ -4883,7 +5009,11 @@ local
                  else ();
                  (* Nested IDs restore this ID when they return. *)
                  thm_of_proofterm ((state, proof), pt) cache_result)
-              val result = track_proof_step id rule replay ()
+              val result =
+                case local_info of
+                  SOME _ =>
+                    track_proof_step_with_local id rule local_info replay ()
+                | NONE => track_proof_step id rule replay ()
             in
               (* The ID owns only its local derivation and cache insertion.
                  Restore the previous active ID before the caller's CPS
@@ -5263,6 +5393,8 @@ in
   val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
   val with_e0_replay_boundary = with_e0_replay_boundary
   fun replay_snapshot_state_for_test () = replay_snapshot_step ()
+  fun replay_local_structure_count_for_test () =
+    replay_local_structure_count ()
   fun e0_replay_timeout_for_test duration =
     let
       fun spin n =
@@ -5278,7 +5410,7 @@ in
     let
       fun spin n = spin (if n = 1000000 then 0 else n + 1)
       fun derive () =
-        (latest_proof_step := SOME (161803, "fixture-local", "end"); ())
+        (set_latest_proof_step 161803 "fixture-local" "end" NONE; ())
       fun continue () = SmtResource.profile_phase
         "fixture/continuation-timeout" spin 0
       fun replay () =
@@ -5286,6 +5418,58 @@ in
           track_proof_step 161803 "fixture-local" derive ()
         in
           continue result
+        end
+    in
+      SmtResource.with_e0_invocation
+        (with_fresh_e0_replay_boundary_for duration replay) ()
+    end
+  fun e0_replay_quota_timeout_for_test duration =
+    let
+      val p = Term.mk_var ("p", Type.bool)
+      fun deepen 0 term = term
+        | deepen n term = deepen (n - 1) (boolSyntax.mk_neg term)
+      val conclusion = deepen 4100 p
+      val premises = REWRITE conclusion ::
+        List.tabulate (69, fn index => ID (1000 + index))
+      val proofterm = UNIT_RESOLUTION
+        (premises, conclusion)
+      val rule = proofterm_rule_name proofterm
+      fun spin n = spin (if n = 1000000 then 0 else n + 1)
+      fun replay () =
+        (SmtResource.exhaust_e0_message_quota_for_test ();
+         SmtResource.emit_e0 "fixture=ordinary-quota-exhausted";
+         track_proof_step_with_local 57721 rule
+           (SOME (fn () => proofterm_local_structure proofterm))
+           (SmtResource.profile_phase "fixture/quota-timeout" spin) 0)
+    in
+      SmtResource.with_e0_invocation
+        (with_fresh_e0_replay_boundary_for duration replay) ()
+    end
+  fun e0_replay_nested_local_timeout_for_test duration =
+    let
+      val p = Term.mk_var ("parent_atom", Type.bool)
+      val q = Term.mk_var ("child_atom", Type.bool)
+      val parent_proofterm = REWRITE (boolSyntax.mk_eq (p, p))
+      val child_proofterm = REWRITE (boolSyntax.mk_eq (q, q))
+      val parent_rule = proofterm_rule_name parent_proofterm
+      val child_rule = proofterm_rule_name child_proofterm
+      val parent_local =
+        SOME (fn () => proofterm_local_structure parent_proofterm)
+      val child_local =
+        SOME (fn () => proofterm_local_structure child_proofterm)
+      fun spin n = spin (if n = 1000000 then 0 else n + 1)
+      fun child () =
+        (set_latest_proof_step 8222 child_rule "end" child_local; ())
+      fun parent () =
+        (track_proof_step_with_local 8222 child_rule child_local child ();
+         set_latest_proof_step 8111 parent_rule "end" parent_local)
+      fun replay () =
+        let
+          val _ = track_proof_step_with_local 8111 parent_rule
+            parent_local parent ()
+        in
+          SmtResource.profile_phase
+            "fixture/nested-local-continuation-timeout" spin 0
         end
     in
       SmtResource.with_e0_invocation

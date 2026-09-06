@@ -43,11 +43,15 @@ struct
 
   type e0_invocation =
     {messages : int ref,
+     replay_snapshot_emitted : bool ref,
+     replay_snapshot_message : string option ref,
      profile_baseline : (string * Profile.call_info) list}
 
   val current_e0_invocation = ref (NONE : e0_invocation option)
   val last_e0_message_count = ref 0
   val last_e0_profile_names = ref ([] : string list)
+  val last_e0_replay_snapshot = ref (NONE : string option)
+  val last_e0_replay_snapshot_count = ref 0
 
   fun e0_enabled () = Option.isSome (!current_e0_invocation)
 
@@ -60,12 +64,21 @@ struct
         else
           let
             val invocation =
-              {messages = ref 0, profile_baseline = Profile.results ()}
+              {messages = ref 0,
+               replay_snapshot_emitted = ref false,
+               replay_snapshot_message = ref NONE,
+               profile_baseline = Profile.results ()}
             fun restore () =
               (last_e0_message_count := !(#messages invocation);
+               last_e0_replay_snapshot :=
+                 !(#replay_snapshot_message invocation);
+               last_e0_replay_snapshot_count :=
+                 (if !(#replay_snapshot_emitted invocation) then 1 else 0);
                current_e0_invocation := NONE)
             fun work () =
               (last_e0_profile_names := [];
+               last_e0_replay_snapshot := NONE;
+               last_e0_replay_snapshot_count := 0;
                current_e0_invocation := SOME invocation;
                action input)
           in
@@ -74,7 +87,9 @@ struct
 
   fun bounded_text maximum text =
     if String.size text <= maximum then text
-    else String.substring (text, 0, maximum) ^ "..."
+    else if maximum <= 0 then ""
+    else if maximum <= 3 then String.substring (text, 0, maximum)
+    else String.substring (text, 0, maximum - 3) ^ "..."
 
   fun emit_e0 message =
     (case !current_e0_invocation of
@@ -89,6 +104,31 @@ struct
             Feedback.HOL_MESG "HOLSMT_E0 messages=suppressed";
             TextIO.flushOut TextIO.stdOut)
          else ())
+    handle _ => ()
+
+  (* The replay boundary gets one compact message outside the ordinary phase
+     quota.  Set the latch before attempting output, so an output failure
+     cannot cause a duplicate snapshot or replace the replay exception. *)
+  fun emit_e0_replay_snapshot message =
+    (let
+       val message_open = "<<HOL message: "
+       val prefix = "HOLSMT_E0 "
+       val message_close = ">>"
+       (* Feedback.format_MESG appends one LF to the rendered message. *)
+       val snapshot = bounded_text
+         (4096 - String.size message_open - String.size prefix -
+          String.size message_close - String.size "\n") message
+     in
+       case !current_e0_invocation of
+         NONE => ()
+       | SOME {replay_snapshot_emitted, replay_snapshot_message, ...} =>
+           if !replay_snapshot_emitted then ()
+           else
+             (replay_snapshot_emitted := true;
+              replay_snapshot_message := SOME snapshot;
+              Feedback.HOL_MESG (prefix ^ snapshot);
+              TextIO.flushOut TextIO.stdOut)
+     end)
     handle _ => ()
 
   fun exception_class exn =
@@ -179,6 +219,16 @@ struct
   fun last_e0_message_count_for_test () = !last_e0_message_count
 
   fun last_e0_profile_names_for_test () = !last_e0_profile_names
+
+  fun last_e0_replay_snapshot_for_test () = !last_e0_replay_snapshot
+
+  fun last_e0_replay_snapshot_count_for_test () =
+    !last_e0_replay_snapshot_count
+
+  fun exhaust_e0_message_quota_for_test () =
+    case !current_e0_invocation of
+      NONE => ()
+    | SOME {messages, ...} => messages := max_e0_messages
 
   val diagnostic_prefix = "resource-gated: fp-bitblast; "
   val feature_prefix = "resource-gate:FloatingPoint:"
