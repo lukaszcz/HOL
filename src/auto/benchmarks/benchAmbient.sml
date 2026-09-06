@@ -47,11 +47,24 @@ val sorted_wrt_correspondence =
    the list is the source's own ambient context and never a goal's
    answer.
 
-   src/HOL/List.thy:3231 @ f7e02b7e declares [fold_append] simp and
-   List.thy:3424 reaches [foldl_append] through it. *)
+   src/HOL/List.thy @ f7e02b7e declares [fold_append] simp, and
+   List.thy:3424 [foldl_append] is reached through it.  The same file
+   declares [takeWhile_append1] and [takeWhile_append2] simp, which is
+   how a source proof that pushes a takeWhile across an append never
+   names them: List.thy:2545 [takeWhile_append] states the two together
+   and still cites them, and List.thy:4637 [extract_Some_iff] reaches
+   one after unfolding [extract]. *)
 val declared_results =
-  [{name = "parityTranslation$source_fold_append",
-    theorem = DB.fetch "parityTranslation" "source_fold_append"}]
+  let
+    fun named name =
+      {name = "parityTranslation$" ^ name,
+       theorem = DB.fetch "parityTranslation" name}
+  in
+    map named
+      ["source_fold_append",
+       "source_takeWhile_append1",
+       "source_takeWhile_append2"]
+  end
 
 val ambient_lemmas = sorted_wrt_correspondence :: declared_results
 

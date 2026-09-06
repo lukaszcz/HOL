@@ -5644,32 +5644,35 @@ Proof
   >> MATCH_ACCEPT_TAC listTheory.CARD_LIST_TO_SET_EQN
 QED
 
+(* src/HOL/List.thy @ f7e02b7e states [takeWhile] as the primrec that
+   keeps a head its predicate holds of and stops at the first it does
+   not, which is HOL4's [takeWhile_def] clause for clause.  Naming
+   that constant, rather than restating its clauses, is what lets the
+   library's results about the walk meet a goal posed over the source
+   one: a second copy of the equations would put every such result on
+   the far side of a spelling difference. *)
 Definition source_takeWhile_def[simp]:
-  (source_takeWhile predicate [] = []) /\
-  (source_takeWhile predicate (head::tail) =
-     if predicate head then
-       head::source_takeWhile predicate tail
-     else [])
+  source_takeWhile = takeWhile
 End
 
 Theorem source_takeWhile_all:
   !predicate (items : 'a list).
     EVERY predicate items ==>
-    source_takeWhile predicate items = items
+    takeWhile predicate items = items
 Proof
   gen_tac
   >> Induct
-  >> simp[source_takeWhile_def]
+  >> simp[listTheory.takeWhile_def]
 QED
 
 Theorem source_takeWhile_none:
   !predicate (items : 'a list).
     EVERY ($~ o predicate) items ==>
-    source_takeWhile predicate items = []
+    takeWhile predicate items = []
 Proof
   gen_tac
   >> Cases
-  >> simp[source_takeWhile_def, combinTheory.o_DEF]
+  >> simp[listTheory.takeWhile_def, combinTheory.o_DEF]
 QED
 
 (* src/HOL/List.thy: set_takeWhileD.  HOL4 states the two conclusions
@@ -5738,11 +5741,11 @@ QED
 (* Isabelle/HOL src/HOL/List.thy:2529-2553. *)
 Theorem source_takeWhile_dropWhile_id:
   !predicate (items : 'a list).
-    source_takeWhile predicate items ++ dropWhile predicate items = items
+    takeWhile predicate items ++ dropWhile predicate items = items
 Proof
   gen_tac
   >> Induct
-  >> simp[source_takeWhile_def]
+  >> simp[listTheory.takeWhile_def]
   >> rw[]
 QED
 
@@ -5750,37 +5753,37 @@ Theorem source_takeWhile_append1:
   !predicate (items : 'a list) suffix item.
     MEM item items ==>
     ~predicate item ==>
-    source_takeWhile predicate (items ++ suffix) =
-    source_takeWhile predicate items
+    takeWhile predicate (items ++ suffix) =
+    takeWhile predicate items
 Proof
   gen_tac
   >> Induct_on `items`
   >- simp[]
   >> rpt gen_tac
   >> Cases_on `predicate h`
-  >> simp[source_takeWhile_def]
+  >> simp[listTheory.takeWhile_def]
   >> metis_tac[]
 QED
 
 Theorem source_takeWhile_append2:
   !predicate (items : 'a list) suffix.
     EVERY predicate items ==>
-    source_takeWhile predicate (items ++ suffix) =
-    items ++ source_takeWhile predicate suffix
+    takeWhile predicate (items ++ suffix) =
+    items ++ takeWhile predicate suffix
 Proof
   gen_tac
   >> Induct_on `items`
-  >> simp[source_takeWhile_def]
+  >> simp[listTheory.takeWhile_def]
 QED
 
 Theorem source_takeWhile_eq_nil_iff:
   !predicate (items : 'a list).
-    source_takeWhile predicate items = [] <=>
+    takeWhile predicate items = [] <=>
     items = [] \/ ~predicate (HD items)
 Proof
   rpt gen_tac
   >> Cases_on `items`
-  >> simp[source_takeWhile_def]
+  >> simp[listTheory.takeWhile_def]
   >> Cases_on `predicate h`
   >> simp[]
 QED

@@ -1467,6 +1467,32 @@ val _ =
        metis_closes
          (map #theorem (benchNames.theorems "in_set_conv_decomp")))
 
+(* [source_takeWhile] names HOL4's [takeWhile] rather than restating its
+   clauses, which is what lets a library result about that walk meet a
+   goal posed over the source constant.  The goal below is not a corpus
+   entry and is no translated result's statement, and the fact it is
+   given is one the translation does not carry: with a second copy of
+   the equations the constant is opaque to it and the goal needs an
+   induction instead. *)
+val translated_walk_goal : Abbrev.goal =
+  ([], ``!P xs.
+           LENGTH (parityTranslation$source_takeWhile P xs) <=
+           LENGTH (xs:'a list)``)
+
+val _ =
+  check
+    ("a library result reaches the translated walk",
+     fn () =>
+       (case Tactical.VALID
+               (clasimpLib.AUTO_TAC
+                  [parityTranslationTheory.source_takeWhile_def,
+                   listTheory.LENGTH_takeWhile_LESS_EQ])
+               translated_walk_goal of
+            ([], _) => true
+          | _ => false)
+       handle Portable.Interrupt => raise Portable.Interrupt
+            | HOL_ERR _ => false)
+
 (* ---- Phase B: the method dispatcher ------------------------------- *)
 
 val corpus_method_heads =
