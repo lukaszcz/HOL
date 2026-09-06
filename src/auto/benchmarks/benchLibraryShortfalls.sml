@@ -31,7 +31,7 @@ val translation : benchLib.shortfall list =
 val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
    "list_L1511_split_list_last_propE", "list_L1789_filter_eq_Cons_iff",
-   "list_L1921_in_set_conv_nth", "list_L2576_dropWhile_id",
+   "list_L1921_in_set_conv_nth",
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons",
    "list_L4632_extract_SomeE",
@@ -129,31 +129,6 @@ val search_returns_nothing_at_ten_times_the_budget =
     ["list_L1460_split_list_propE",
      "list_L1484_split_list_first_propE",
      "list_L1511_split_list_last_propE"]
-
-(* Diagnosed by taking the goal apart at the two facts its method
-   names.  Isabelle instantiates both -- [takeWhile_dropWhile_id[of P
-   xs]] and [takeWhile_eq_Nil_iff[of P xs]] -- and an instantiating
-   attribute at plain variables is rendered here as the general
-   statement, on the reading that HOL4 recovers the instance by
-   matching.  It does not: the fact reaches the goal as a universally
-   quantified iff premise, and splitting an iff is a safe step that
-   needs the ground instance.  Supplied by hand at the goal's own
-   variables, SAFE_TAC produces exactly Isabelle's two cases -- and the
-   second is then lost to traversal order, HOL4's simplifier being
-   outermost-first where Isabelle's is innermost-first: the ambient
-   [takeWhile_APPEND_dropWhile] rewrite matches the whole of the
-   decomposition premise and collapses it to T before the sibling
-   equation [takeWhile P xs = []] can rewrite inside it, where
-   Isabelle's is left with [[] ++ dropWhile P xs = xs], the goal.  With
-   a pass that lets the context equations rewrite each other in
-   between, the goal closes. *)
-val cited_instance_and_traversal_order =
-  classified "cited instance and traversal order"
-    ("the method's instantiation is dropped, so the cited iff arrives "
-     ^ "quantified and no safe step splits it; instantiated by hand "
-     ^ "the split happens and the ambient decomposition rewrite then "
-     ^ "consumes the premise that would close it")
-    ["list_L2576_dropWhile_id"]
 
 (* Diagnosed: a fact reaches a goal as an inserted premise, and a
    premise's type variables are fixed -- only its term variables can be
@@ -508,7 +483,6 @@ val execution : benchLib.shortfall list =
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
-  cited_instance_and_traversal_order @
   instantiated_fact_not_applied @
   zip_against_map @
   over_budget_with_no_residual @
