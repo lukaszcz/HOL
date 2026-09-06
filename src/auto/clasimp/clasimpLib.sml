@@ -225,11 +225,50 @@ val asm_full_simp_config : simpLib.xsimptac_config =
    concl_in_fixpoint = true,
    imp_rebuild = true}
 
-fun asm_full_simp ss =
-  simpLib.GEN_GLOBAL_SIMP_TAC {safe = false} asm_full_simp_config ss
+fun ambient_simp safe ss =
+  simpLib.GEN_GLOBAL_SIMP_TAC {safe = safe} asm_full_simp_config ss
 
-fun safe_asm_full_simp ss =
-  simpLib.GEN_GLOBAL_SIMP_TAC {safe = true} asm_full_simp_config ss
+(* HOL4's simplifier rewrites outermost-first: at each node it tries the
+   whole term before its subterms and re-descends into what it produced.
+   Isabelle's works the other way round, and the difference shows
+   wherever an ambient rule matches a term whose subterm the context has
+   already settled: [takeWhile P xs ++ dropWhile P xs = xs] standing
+   beside [takeWhile P xs = []] collapses to T here, the ambient
+   decomposition matching the whole left-hand side, where the source
+   simplifier rewrites the subterm first and is left with
+   [dropWhile P xs = xs].  What is lost is a premise, and with it the
+   goal it would have closed.
+
+   Running the same step against the goal's own equations first --
+   its assumptions, where a supplied fact stands, and none of the
+   invocation's rules -- gives the subterm its chance.  The pass
+   adds no rule to the goal: every rewrite it can make is one the step
+   after it would have made too, in the other order.  It is not a
+   bottom-up traversal -- an ambient rule can still consume a redex
+   another ambient rule would have refined -- but the assumptions are
+   where the two simplifiers disagree about what a goal still says.
+
+   The supplied rewrites are left to the step after: a method's
+   translation payload unfolds definitions the ambient simpset is
+   needed to reduce again, and unfolding them with no simpset to hand
+   builds terms the pass cannot put back together.
+
+   What the pass keeps of the invocation's simpset is how it reads an
+   assumption as a rewrite: [clear_rules] drops the rules, the decision
+   procedures and the loopers and retains the canonicalisation, which
+   is where a rewrite that would loop is recognised and stood down.  A
+   case analysis on a walk leaves [xs = takeWhile ($~ o P) xs ++ x::r]
+   among the assumptions -- an equation that reproduces its own
+   left-hand side -- and read raw, as an empty simpset reads it, that
+   rewrites forever. *)
+fun context_first ss =
+  Tactical.TRY (ambient_simp false (simpLib.clear_rules ss) [])
+
+fun asm_full_simp ss simp_args =
+  Tactical.THEN (context_first ss, ambient_simp false ss simp_args)
+
+fun safe_asm_full_simp ss simp_args =
+  Tactical.THEN (context_first ss, ambient_simp true ss simp_args)
 
 (* Inside the classical cascade the split between assumptions and
    conclusion is the cascade's own: its negation introduction strips a

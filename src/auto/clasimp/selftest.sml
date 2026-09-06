@@ -1714,3 +1714,64 @@ val _ =
        in
          null subgoals
        end)
+
+(* HOL4's simplifier rewrites outermost-first and Isabelle's the other way
+   round, and the two differ wherever an ambient rule matches a whole term
+   whose subterm the context has already settled.  Below the context
+   settles [TAKE n l] to the empty list while the ambient identity matches
+   the whole [TAKE n l ++ DROP n l]: taken outermost-first the inserted
+   instance collapses to T and the goal loses the equation that would
+   close it.  The simpset carries the identity and the empty append and
+   nothing else, so no case analysis on the assumption stands in for the
+   equation, and the goal is not a benchmark entry. *)
+val traversal_ss =
+  simpLib.++
+    (simpLib.empty_ss,
+     simpLib.rewrites [listTheory.TAKE_DROP, CONJUNCT1 listTheory.APPEND])
+
+val traversal_goal : Abbrev.goal =
+  ([``TAKE n (l:'a list) ++ DROP n l = l``, ``TAKE n (l:'a list) = []``],
+   ``DROP n (l:'a list) = l``)
+
+val _ =
+  check
+    ("a context equation refines a term the ambient rule would collapse",
+     fn () =>
+       valid_closes
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            clasetLib.empty_cs traversal_ss)
+         traversal_goal)
+
+(* A tactic that reports no proof has come back, which is what the bound
+   below is about; only the timeout distinguishes the two outcomes. *)
+fun terminates_within seconds tactic goal =
+  (Timeout.apply (Time.fromSeconds seconds)
+     (fn () => (ignore (Tactical.VALID tactic goal) handle HOL_ERR _ => ()))
+     ();
+   true)
+  handle Timeout.TIMEOUT _ => false
+
+(* A case analysis on a walk leaves an equation that reproduces its own
+   left-hand side among the assumptions.  Read as the invocation's own
+   simpset reads it the pass stands it down, the canonicalisation
+   recognising a rewrite that would loop; read raw -- an empty simpset
+   keeps an assumption as it finds it -- the same equation rewrites
+   forever.  The goal is not a benchmark entry and what is asserted is
+   that the tactic comes back at all. *)
+val self_referential_goal : Abbrev.goal =
+  ([``(clasimp_walk_P : 'a -> bool) clasimp_walk_x``,
+    ``(clasimp_walk_xs : 'a list) =
+        takeWhile ($~ o clasimp_walk_P) clasimp_walk_xs ++
+        clasimp_walk_x::clasimp_walk_rest``],
+   ``?clasimp_walk_value.
+       MEM clasimp_walk_value (clasimp_walk_xs : 'a list) /\
+       clasimp_walk_P clasimp_walk_value``)
+
+val _ =
+  check
+    ("a context equation that reproduces itself does not rewrite forever",
+     fn () =>
+       terminates_within 30
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            clasetLib.empty_cs (clasimpLib.clasimp_ss ()))
+         self_referential_goal)
