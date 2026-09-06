@@ -68,7 +68,6 @@ val conditional_list_rewrites =
      ^ "FRONT, NULL, nub or dropWhile that the simpset does not "
      ^ "carry")
     ["list_L1010_tl_append_if", "list_L2100_last_ConsR",
-     "list_L2589_dropWhile_last",
      "list_L4481_insert_remdups", "list_L8603_is_empty_set"]
 
 val congruence_rules =
@@ -117,9 +116,7 @@ val list_decomposition_witnesses =
   classified "list decomposition witnesses"
     ("the residual needs an existential witness splitting a list "
      ^ "at a member")
-    ["list_L1415_in_set_conv_decomp",
-     "list_L1590_concat_eq_append_conv", "list_L7823_append_listrel1I",
-     "list_L8673_these_set_code"]
+    ["list_L7823_append_listrel1I", "list_L8673_these_set_code"]
 
 (* Re-measured at ten times the budget: all four still return nothing.
    The citation they were filed under is not what stands in the way --
@@ -367,15 +364,6 @@ val blast_search_reports_no_proof =
      "map_L828_finite_graph_map_of",
      "option_L59_split_option_ex"]
 
-val integer_interval =
-  classified "integer interval"
-    ("the cited recursion equations do reach the goal -- they stand "
-     ^ "as hypotheses in the residual -- but nothing regroups the "
-     ^ "append across the split point, so the residual is "
-     ^ "[source_upto i (k - 1) ++ [k]] against "
-     ^ "[source_upto i (j - 1) ++ [j] ++ source_upto (j + 1) k]")
-    ["list_L3683_upto_split2"]
-
 val integer_interval_emptiness =
   classified "integer interval emptiness"
     ("the residual is [j < i ==> source_upto i j = []], which the "
@@ -519,7 +507,6 @@ val execution : benchLib.shortfall list =
   predicate_and_set_representation @
   pair_membership_after_flattening @
   blast_search_reports_no_proof @
-  integer_interval @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @
