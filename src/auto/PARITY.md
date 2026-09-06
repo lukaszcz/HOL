@@ -84,11 +84,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|---:|
 | Classical | 25 | 25 | 25 | 4 |
 | Sets | 353 | 330 | 329 | 4 |
-| List/map | 602 | 434 | 383 | 5 |
+| List/map | 602 | 440 | 389 | 5 |
 | Linarith | 46 | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **877** | **825** | **28** |
+| **Total** | **1070** | **883** | **831** | **28** |
 
 ## Cost of the solutions
 
@@ -96,13 +96,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 5 | 20 | 0 | 0 | 0.9 | 39 | 516 |
-| Sets | 330 | 92 | 234 | 4 | 0 | 3.2 | 6 | 2430 |
-| List/map | 434 | 3 | 421 | 10 | 0 | 3.9 | 0 | 1868 |
+| Classical | 25 | 5 | 20 | 0 | 0 | 0.6 | 39 | 516 |
+| Sets | 330 | 86 | 238 | 6 | 0 | 3.0 | 3 | 2430 |
+| List/map | 440 | 4 | 426 | 10 | 0 | 1.3 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **877** | **182** | **680** | **15** | **0** | **3.9** | **0** | **2430** |
+| **Total** | **883** | **177** | **689** | **17** | **0** | **3.0** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -115,11 +115,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 23 | 0 | 0 |
-| List/map | 0 | 168 | 2 | 0 |
+| List/map | 0 | 162 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **193** | **2** | **0** |
+| **Total** | **0** | **187** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -130,12 +130,12 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 | Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
-| Sets | 0 | 6 | 7 |
-| List/map | 17 | 0 | 12 |
+| Sets | 0 | 6 | 8 |
+| List/map | 18 | 0 | 12 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **17** | **6** | **19** |
+| **Total** | **18** | **6** | **20** |
 
 ## Seed-rule safety check
 
