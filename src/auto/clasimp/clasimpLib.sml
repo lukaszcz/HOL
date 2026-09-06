@@ -169,6 +169,22 @@ fun derive_clasimp_ss ss _ =
   |> simpLib.remove_simps ["APPEND_ASSOC"]
   |> simpLib.exclude_ssfrags ["list EQ"]
   |> (fn ss' => simpLib.++ (ss', list_equation_ss))
+  (* The same mismatch in the premises.  src/HOL/HOL.thy declares
+     [disj_not1] -- [~P \/ Q <=> (P ==> Q)] -- simp, so a negated
+     conjunction or existential reaches a source rule as an implication;
+     HOL4 stops at the disjunction its own de Morgan rules leave.  The
+     difference is not cosmetic: the simplifier's condition solver
+     discharges a conditional rewrite's side condition from
+     [!item. MEM item prefix ==> ~predicate item] and not from
+     [!item. ~MEM item prefix \/ ~predicate item], so a rule whose
+     condition constrains the elements of a list stops firing at exactly
+     the goals that state the constraint negatively.  Isabelle declares
+     this direction only -- [disj_not2] is left out there for changing
+     the orientation -- and HOL4 carries no rewrite the other way, so
+     the pair cannot loop. *)
+  |> (fn ss' =>
+        simpLib.++ (ss',
+          simpLib.rewrites [Conv.GSYM boolTheory.IMP_DISJ_THM]))
   (* HOL4 carries no order reasoning ambiently: a goal that supplies its
      own order -- as a [WeakLinearOrder] premise, say -- has the axioms
      and the steps in the assumptions and nothing chains them.  Isabelle

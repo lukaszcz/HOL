@@ -1681,3 +1681,36 @@ val _ =
              aconv result
                ``((as:'a list) ++ (bs ++ cs) = ds) /\ (x:'a) = y``
          | NONE => false)
+
+(* src/HOL/HOL.thy declares [disj_not1] simp and HOL4 declares nothing
+   in either direction, so a negated existential arrives at a source
+   rule as a disjunction where the source states it as an implication.
+   The rule below is hypothetical rather than proved: what is under
+   test is the shape the simplifier hands its condition solver, and the
+   goal is not a benchmark entry. *)
+val membership_condition_rule =
+  Thm.ASSUME
+    ``!xs. (!i. MEM i xs ==> q i) ==> walk (xs:'a list) = xs``
+
+val _ =
+  check
+    ("a negated existential premise reads as an implication",
+     fn () =>
+       case simplifies ``~(?i. MEM i (xs:'a list) /\ P i)`` of
+           SOME result =>
+             aconv result ``!i. MEM i (xs:'a list) ==> ~P i``
+         | NONE => false)
+
+val _ =
+  check
+    ("a side condition is discharged from a negated existential",
+     fn () =>
+       let
+         val (subgoals, _) =
+           clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ())
+             [membership_condition_rule]
+             ([``~(?i. MEM i (as:'a list) /\ ~q i)``],
+              ``walk (as:'a list) = as``)
+       in
+         null subgoals
+       end)
