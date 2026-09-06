@@ -1381,17 +1381,14 @@ local
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
-    let
-      fun is_char_bit tm =
-        case Lib.total Term.dest_thy_const tm of
-          SOME {Thy = "smtstringz3", Name = "char_bit", ...} => true
-        | _ => false
-      val _ = List.null
-        (SmtStringProve.dag_matching_terms is_char_bit t) andalso
-        raise ERR "z3_def_axiom" "not a character proposition"
-    in
-      (state, def_axiom_skeleton_prove t)
-    end
+    (* A def-axiom is a propositional definition clause.  Abstract its
+       arbitrary theory atoms and discharge the shared Boolean skeleton
+       before any conditional splitting or simplifier search.  With no atom
+       owners this is theory-neutral: a checked SAT theorem is instantiated
+       back to the exact atoms.  An ordinary decline preserves the historical
+       ladder; the bounded Skeleton resource gates remain terminal. *)
+    (state, profile "def-axiom(1)(skeleton)"
+      def_axiom_skeleton_prove t)
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
@@ -1458,11 +1455,6 @@ local
           (Tactical.REPEAT Tactic.COND_CASES_TAC,
            bossLib.ASM_SIMP_TAC boolSimps.bool_ss
              [boolTheory.EQ_SYM_EQ])))
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-        (state, def_axiom_skeleton_prove t)
 
   (* (!x. ?y. !z. P) = P *)
   fun z3_elim_unused (state, t) =
@@ -5273,6 +5265,14 @@ in
 
   fun replay_root_for_test proof : Thm.thm =
     replay_root_with_definitions_for_test [] proof
+
+  fun def_axiom_for_test target : Thm.thm =
+  let
+    val proof = empty_proof "4.11.2"
+    val state = initial_replay_state Term.empty_tmset [] proof
+  in
+    Lib.snd (z3_def_axiom (state, target))
+  end
 
   fun replay_root_with_state_for_test proof =
   let

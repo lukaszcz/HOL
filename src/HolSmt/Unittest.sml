@@ -18562,6 +18562,89 @@ in
   List.app assert_replays_raw_z3_proof_rule cases
 end
 
+fun z3_def_axiom_skeleton_preflight_ordering_success () =
+let
+  val skeleton = "def-axiom(1)(skeleton)"
+  val skeleton_ok = skeleton ^ "_OK"
+  fun replay name proof_text expected =
+    let
+      val () = Profile.reset_all ()
+      val theorem = replay_z3_proof_string proof_text
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " replay returned the wrong conclusion");
+      assert_no_hyps (name, theorem);
+      check_oracle_tags name theorem;
+      theorem
+    end
+  val word_atom = ``(x:word16) + 7w <+ y``
+  val word_other = ``(x:word16) && 3855w = y``
+  val word_target =
+    boolSyntax.mk_disj
+      (boolSyntax.mk_neg (boolSyntax.mk_conj (word_atom, word_other)),
+       word_other)
+  val _ = replay "non-character word def-axiom"
+    "((declare-fun x () (_ BitVec 16))\n\
+    \ (declare-fun y () (_ BitVec 16))\n\
+    \ (proof (def-axiom\n\
+    \  (or (not (and (bvult (bvadd x #x0007) y)\n\
+    \                (= (bvand x #x0f0f) y)))\n\
+    \      (= (bvand x #x0f0f) y)))))"
+    word_target
+  val () = assert (profile_call_count skeleton_ok = 1,
+    "non-character word def-axiom did not use the skeleton preflight")
+  val int_atom = ``(a:int) + 3 <= b``
+  val int_other = ``integer$emod b 5 = 2``
+  val int_target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg (boolSyntax.mk_conj (int_atom, int_other)),
+     int_atom)
+  val _ = replay "integer definitional-shape def-axiom"
+    "((declare-fun a () Int) (declare-fun b () Int)\n\
+    \ (proof (def-axiom\n\
+    \  (or (not (and (<= (+ a 3) b) (= (mod b 5) 2)))\n\
+    \      (<= (+ a 3) b)))))"
+    int_target
+  val () = assert (profile_call_count skeleton_ok = 1,
+    "unrelated integer def-axiom did not use the skeleton preflight")
+  val conditional_target = ``p \/ ((x:int) = if p then y else x)``
+  val _ = replay "semantic conditional def-axiom fallback"
+    "((declare-fun p () Bool) (declare-fun x () Int)\n\
+    \ (declare-fun y () Int)\n\
+    \ (proof (def-axiom (or p (= x (ite p y x))))))"
+    conditional_target
+in
+  assert (profile_call_count skeleton_ok = 0 andalso
+      profile_call_count skeleton = 1,
+    "semantic def-axiom did not decline the skeleton exactly once before " ^
+    "the legacy conditional fallback")
+end
+
+fun z3_def_axiom_skeleton_resource_gate_ordering () =
+let
+  val atom_count = SmtResource.max_skeleton_replay_dag_nodes div 3 + 1
+  val atoms = List.tabulate (atom_count,
+    fn index => boolSyntax.mk_eq
+      (Term.mk_var
+         ("def_axiom_gate_" ^ Int.toString index, intSyntax.int_ty),
+       intSyntax.zero_tm))
+  val conjunction = boolSyntax.list_mk_conj atoms
+  val target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg conjunction, List.hd atoms)
+  val () = Profile.reset_all ()
+  val gate =
+    (ignore (Z3_ProofReplay.def_axiom_for_test target);
+     die "FAIL: oversized def-axiom bypassed the skeleton resource gate")
+    handle Feedback.HOL_ERR holerr => holerr
+in
+  assert (SmtResource.is_resource_gate gate andalso
+      String.isSubstring "resource-gate:Skeleton:z3-def-axiom"
+        (Feedback.message_of gate),
+    "oversized def-axiom did not preserve the skeleton DAG gate");
+  assert (profile_call_count "def-axiom(1)(skeleton)" = 1 andalso
+      profile_call_count "def-axiom(1)(skeleton)_OK" = 0,
+    "oversized def-axiom did not stop at its first skeleton attempt")
+end
+
 fun z3_emitted_definition_word_replay_success () =
 let
   val direct_expected =
@@ -24338,6 +24421,10 @@ let
       z3_skolem_nary_binders_replay_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
+    ("z3_def_axiom_skeleton_preflight_ordering_success",
+      z3_def_axiom_skeleton_preflight_ordering_success),
+    ("z3_def_axiom_skeleton_resource_gate_ordering",
+      z3_def_axiom_skeleton_resource_gate_ordering),
     ("z3_emitted_definition_word_replay_success",
       z3_emitted_definition_word_replay_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",
