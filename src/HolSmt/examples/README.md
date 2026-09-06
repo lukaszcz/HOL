@@ -60,6 +60,7 @@ discharge them with the checked tactics:
 | `HolSmtVerificationScript.sml` | Verifier-style proof obligations: binary-search midpoint bounds, a clamp routine, and array swap via the theory of arrays |
 | `HolSmtStringSanitizerScript.sml` | Quote-free string sanitization and concatenation, checked with Z3 and cvc5 |
 | `HolSmtRegexValidationScript.sml` | Natural `[0-9]{2}` validation, with checked Z3/cvc5 arithmetic rows and a reusable HOL regex reduction |
+| `HolSmtTrafficControllerScript.sml` | A traffic-controller invariant over record literals, updates, accessors, and a datatype case, checked with Z3 and cvc5 |
 
 ## The usual workflow
 
