@@ -1493,6 +1493,33 @@ val _ =
        handle Portable.Interrupt => raise Portable.Interrupt
             | HOL_ERR _ => false)
 
+(* [source_dropWhile_eq_self_iff] reads the walk stopping where it
+   started as the list being empty or its head being kept, and states
+   that head as HOL4's HD, the way its [takeWhile] counterpart does.
+   The empty disjunct covers the one list on which the source's own [hd]
+   and HD differ, so nothing of the source reading is given up, and a
+   library result about a head -- here the ambient [hd_replicate]
+   analogue -- can meet the other disjunct.  The goal below is not a
+   corpus entry and is no translated result's statement: stated over the
+   translation's own [source_hd] the head of the replicate is opaque and
+   the goal does not close. *)
+val translated_head_goal : Abbrev.goal =
+  ([], ``!P n x. n <> 0 /\ P x ==>
+           dropWhile P (REPLICATE n (x:'a)) <> REPLICATE n x``)
+
+val _ =
+  check
+    ("the source's stopped walk reads its head as the library's",
+     fn () =>
+       (case Tactical.VALID
+               (clasimpLib.AUTO_TAC
+                  [parityTranslationTheory.source_dropWhile_eq_self_iff])
+               translated_head_goal of
+            ([], _) => true
+          | _ => false)
+       handle Portable.Interrupt => raise Portable.Interrupt
+            | HOL_ERR _ => false)
+
 (* ---- Phase B: the method dispatcher ------------------------------- *)
 
 val corpus_method_heads =

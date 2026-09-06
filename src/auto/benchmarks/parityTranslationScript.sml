@@ -5701,41 +5701,18 @@ Proof
   >> metis_tac[]
 QED
 
+(* Stated over HOL4's HD, as its [takeWhile] counterpart above is: the
+   empty disjunct covers the list on which the two heads differ, so the
+   source's [hd] reading is kept whole, and a library result about a
+   head can meet the other disjunct. *)
 Theorem source_dropWhile_eq_self_iff:
   !predicate (items : 'a list).
     dropWhile predicate items = items <=>
-    items = [] \/ ~predicate (source_hd items)
+    items = [] \/ ~predicate (HD items)
 Proof
   gen_tac
   >> Cases
-  >> simp[source_hd_def, listTheory.dropWhile_id]
-QED
-
-Theorem source_hd_replicate:
-  !count (item : 'a).
-    source_hd (REPLICATE count item) =
-    if count = 0 then ARB else item
-Proof
-  Cases
-  >> simp[source_hd_def]
-QED
-
-Theorem source_replicate_hd_disjunction:
-  !count (item : 'a) predicate.
-    (count = 0 \/ predicate (HD (REPLICATE count item)) <=>
-     count = 0 \/ predicate item)
-Proof
-  Cases
-  >> simp[rich_listTheory.REPLICATE]
-QED
-
-Theorem source_replicate_hd_disjunction_neg:
-  !count (item : 'a) predicate.
-    ~predicate item ==>
-    count = 0 \/ ~predicate (HD (REPLICATE count item))
-Proof
-  Cases
-  >> simp[rich_listTheory.REPLICATE]
+  >> simp[listTheory.dropWhile_id]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:2529-2553. *)
