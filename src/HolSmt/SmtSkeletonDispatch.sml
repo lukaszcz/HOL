@@ -187,7 +187,8 @@ struct
             | SOME _ => false) then
           Declined
         else
-          case analyze context target of
+          case SmtResource.profile_phase "skeleton/ownership-analysis"
+              (analyze context) target of
             NONE => Declined
           | SOME {owners, target_measure} =>
               (case SmtSkeletonProve.attempt_with_owners

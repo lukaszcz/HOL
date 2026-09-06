@@ -1305,15 +1305,162 @@ local
   *)
   val def_axiom_skeleton_context = SmtSkeletonProve.new_context []
   val def_axiom_skeleton_owners = Redblackmap.mkDict Term.compare
+  val active_proof_step = ref (NONE : (int * string) option)
+  val latest_proof_step = ref (NONE : (int * string * string) option)
+  val first_failed_proof_step =
+    ref (NONE : (int * string * string) option)
 
-  fun def_axiom_skeleton_prove target =
+  fun track_proof_step id rule action input =
+    let
+      val previous_step = !active_proof_step
+      fun restore () = active_proof_step := previous_step
+      fun fail exn =
+        (case !first_failed_proof_step of
+           NONE =>
+             first_failed_proof_step := SOME (id, rule, "failure")
+         | SOME _ => ();
+         raise exn)
+      fun work () =
+        (active_proof_step := SOME (id, rule);
+         latest_proof_step := SOME (id, rule, "start");
+         action input handle exn => fail exn)
+    in
+      Portable.finally restore work ()
+    end
+
+  fun capture_skeleton_obligation (state : state) target exn =
+    case OS.Process.getEnv "HOL4_SMT_E0_CAPTURE_DIR" of
+      NONE => ()
+    | SOME directory =>
+        let
+          val maximum = SmtResource.max_skeleton_replay_dag_nodes
+          val structure_metrics =
+            SmtResource.bounded_structure maximum target
+          val digest =
+            if #complete structure_metrics then
+              SOME (SmtResource.bounded_graph_digest (maximum + 1) target)
+            else NONE
+          val proof_id =
+            case !active_proof_step of
+              SOME (id, _) => Int.toString id
+            | NONE => "root-or-unbound"
+          val digest_text =
+            case digest of
+              SOME data => #digest data
+            | NONE => "unavailable-oversized"
+          val serialization =
+            case digest of
+              SOME data => #serialization data
+            | NONE => "<oversized>"
+          val serialization_bytes =
+            case digest of
+              SOME data => #serialization_bytes data
+            | NONE => 0
+          val message =
+            "obligation rule=def_axiom proof_id=" ^ proof_id ^
+            " nodes=" ^ Int.toString (#dag_nodes structure_metrics) ^
+            " edges=" ^ Int.toString (#edges structure_metrics) ^
+            " binder_depth=" ^
+              Int.toString (#max_binder_depth structure_metrics) ^
+            " identifier_bytes=" ^
+              Int.toString (#max_identifier_bytes structure_metrics) ^
+            " asserted_dependencies=" ^
+              Int.toString (HOLset.numItems (#asserted_hyps state)) ^
+            " definition_dependencies=" ^
+              Int.toString (HOLset.numItems (#definition_hyps state)) ^
+            " allowed_assertions=" ^
+              Int.toString (HOLset.numItems (#allowed_asserted_hyps state)) ^
+            " digest=" ^ digest_text ^
+            " exception=" ^ SmtResource.exception_class exn
+          val _ = SmtResource.emit_e0 message
+          val _ = OS.FileSys.mkDir directory handle SysErr _ => ()
+          val path = OS.Path.concat
+            (directory, "first-skeleton-obligation.meta")
+          val _ =
+            if OS.FileSys.access (path, []) then ()
+            else Library.write_strings_to_file path
+              [message, "\nserialization_bytes=",
+               Int.toString serialization_bytes,
+               "\nserialization=", serialization, "\n"]
+        in () end
+
+  fun emit_replay_snapshot exn =
+    let
+      val step =
+        case !first_failed_proof_step of
+          SOME (id, rule, status) =>
+            "id=" ^ Int.toString id ^ " rule=" ^ rule ^
+            " status=" ^ status
+        | NONE =>
+          case !active_proof_step of
+            SOME (id, rule) =>
+              "id=" ^ Int.toString id ^ " rule=" ^ rule ^
+              " status=active"
+          | NONE =>
+          case !latest_proof_step of
+            NONE => "id=unavailable rule=unavailable status=unavailable"
+        | SOME (id, rule, status) =>
+            "id=" ^ Int.toString id ^ " rule=" ^ rule ^
+            " status=" ^ status
+    in
+      SmtResource.emit_e0
+        ("replay-snapshot " ^ step ^ " exception=" ^
+         SmtResource.exception_class exn);
+      SmtResource.emit_profile_summary ()
+    end
+
+  fun with_e0_replay_boundary_for duration replay input =
+    if not (SmtResource.e0_enabled ()) then replay input
+    else
+      (Timeout.apply duration replay input
+       handle exn =>
+         ((emit_replay_snapshot exn handle _ => ()); raise exn))
+
+  fun with_fresh_e0_replay_boundary_for duration replay input =
+    let
+      val _ = active_proof_step := NONE
+      val _ = latest_proof_step := NONE
+      val _ = first_failed_proof_step := NONE
+    in
+      with_e0_replay_boundary_for duration replay input
+    end
+
+  fun with_e0_replay_boundary replay input =
+    with_fresh_e0_replay_boundary_for (Time.fromSeconds 90) replay input
+
+  fun admitted_def_axiom_measure measure target =
+    let
+      val maximum = SmtResource.max_skeleton_replay_dag_nodes
+      val observed = SmtResource.profile_phase
+        "skeleton/admission-bounded"
+        (SmtResource.dag_nodes_up_to maximum) target
+      val _ = SmtResource.check_dag_size_for
+        "Skeleton" "z3-def-axiom" observed
+      val structure_metrics = SmtResource.profile_phase
+        "skeleton/admission-structure"
+        (SmtResource.bounded_structure maximum) target
+      val _ = SmtResource.emit_e0
+        ("structure stage=skeleton-admission nodes=" ^
+         Int.toString observed ^ " edges=" ^
+         Int.toString (#edges structure_metrics) ^ " binder_depth=" ^
+         Int.toString (#max_binder_depth structure_metrics) ^
+         " identifier_bytes=" ^
+         Int.toString (#max_identifier_bytes structure_metrics) ^
+         " complete=" ^ Bool.toString (#complete structure_metrics))
+    in
+      SmtResource.profile_phase "skeleton/measurement-full"
+        measure target
+    end
+
+  fun def_axiom_skeleton_prove state target =
     SmtResource.with_resource_step_time
       "Skeleton" "z3-def-axiom"
       (fn target =>
         let
-          val measure = SmtSkeletonProve.term_measure target
-          val _ = SmtResource.check_dag_size_for
-            "Skeleton" "z3-def-axiom" (#dag_nodes measure)
+          val measure = admitted_def_axiom_measure
+            SmtSkeletonProve.term_measure target
+          val _ = SmtResource.profile_phase "skeleton/ownership-ownerless"
+            (fn () => ()) ()
         in
           case SmtSkeletonProve.attempt_with_owners
               def_axiom_skeleton_context def_axiom_skeleton_owners
@@ -1322,6 +1469,11 @@ local
           | SmtSkeletonProve.Declined =>
               raise ERR "z3_def_axiom" "checked skeleton declined"
         end) target
+    handle exn as Feedback.HOL_ERR holerr =>
+      (if SmtResource.is_resource_gate holerr then
+         (capture_skeleton_obligation state target exn handle _ => ())
+       else ();
+       raise exn)
 
   fun bounded_taut_prove category case_id target =
     SmtResource.with_resource_step_time category case_id
@@ -1388,7 +1540,7 @@ local
        back to the exact atoms.  An ordinary decline preserves the historical
        ladder; the bounded Skeleton resource gates remain terminal. *)
     (state, profile "def-axiom(1)(skeleton)"
-      def_axiom_skeleton_prove t)
+      (def_axiom_skeleton_prove state) t)
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
@@ -4689,25 +4841,34 @@ local
         (case Redblackmap.peek (proof_steps proof, id) of
           SOME (THEOREM thm) =>
             continuation ((state, proof), thm)
-        | SOME pt => (
-            if !Library.trace > 2 then
-              Feedback.HOL_MESG ("HolSmtLib: replaying proof at ID " ^ Int.toString id)
-            else
-              ();
-            thm_of_proofterm ((state, proof), pt) (continuation o
-              (* update the proof, replacing the original proofterm with
-                 the theorem just derived *)
-              (fn ((state, proof), thm) =>
-                (
-                  if !Library.trace > 2 then
-                    Feedback.HOL_MESG
-                      ("HolSmtLib: updating proof at ID " ^ Int.toString id)
-                  else ();
-                  ((state, update_proof_steps proof
-                    (Redblackmap.insert (proof_steps proof, id, THEOREM thm))),
-                    thm)
-                )))
-        )
+        | SOME pt =>
+            let
+              val rule = proofterm_rule_name pt
+              fun cache_and_continue ((state, proof), thm) =
+                let
+                  val _ =
+                    if !Library.trace > 2 then
+                      Feedback.HOL_MESG
+                        ("HolSmtLib: updating proof at ID " ^
+                         Int.toString id)
+                    else ()
+                  val steps = Redblackmap.insert
+                    (proof_steps proof, id, THEOREM thm)
+                  val proof = update_proof_steps proof steps
+                  val _ = latest_proof_step := SOME (id, rule, "end")
+                in
+                  continuation ((state, proof), thm)
+                end
+              fun replay () =
+                (if !Library.trace > 2 then
+                   Feedback.HOL_MESG
+                     ("HolSmtLib: replaying proof at ID " ^ Int.toString id)
+                 else ();
+                 (* Nested IDs restore this ID when they return. *)
+                 thm_of_proofterm ((state, proof), pt) cache_and_continue)
+            in
+              track_proof_step id rule replay ()
+            end
         | NONE =>
             raise ERR "thm_of_proofterm"
               ("proof has no proofterm for ID " ^ Int.toString id))
@@ -5076,6 +5237,20 @@ in
   val ground_subterm_eval_max_calls_for_test =
     ground_subterm_eval_max_calls
   val word_decide_for_test = word_decide
+  val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
+  val with_e0_replay_boundary = with_e0_replay_boundary
+  fun replay_snapshot_state_for_test () = !first_failed_proof_step
+  fun e0_replay_timeout_for_test duration =
+    let
+      fun spin n =
+        spin (if n = 1000000 then 0 else n + 1)
+      fun nested () = track_proof_step 271828 "fixture-inner"
+        (SmtResource.profile_phase "fixture/nested-timeout" spin) 0
+      fun outer () = track_proof_step 314159 "fixture-outer" nested ()
+    in
+      SmtResource.with_e0_invocation
+        (with_fresh_e0_replay_boundary_for duration outer) ()
+    end
   fun bv_family_measure_for_test target =
     term_contains_type_measure wordsSyntax.is_word_type target
   fun bv_rewrite_prove_for_test target =
@@ -5338,7 +5513,9 @@ in
 
 
   fun check_proof_with_definitions definitions args : Thm.thm =
-    profile "check_proof(total)" (check_proof_impl definitions) args
+    SmtResource.with_e0_invocation
+      (with_e0_replay_boundary
+        (profile "check_proof(total)" (check_proof_impl definitions))) args
 
   fun check_proof args : Thm.thm = check_proof_with_definitions [] args
 

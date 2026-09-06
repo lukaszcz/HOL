@@ -76,11 +76,125 @@ structure Z3 = struct
   fun with_timeout_option cmd_stem =
     timeout_option () ^ cmd_stem
 
+  val max_capture_file_bytes = 64 * 1024 * 1024
+  val max_capture_invocation_bytes = 96 * 1024 * 1024
+  val max_capture_time = Time.fromSeconds 15
+
+  fun capture_file_bytes source =
+    Position.toInt (OS.FileSys.fileSize source)
+    handle Overflow => max_capture_file_bytes + 1
+
+  fun copy_file_bounded_memory source target =
+    let
+      val input = TextIO.openIn source
+      val output = TextIO.openOut target
+      fun copy () =
+        case TextIO.inputN (input, 65536) of
+          "" => ()
+        | chunk => (TextIO.output (output, chunk); copy ())
+      fun finish () =
+        (TextIO.closeIn input handle _ => ();
+         TextIO.closeOut output handle _ => ())
+    in
+      Portable.finally finish copy ()
+    end
+
+  (* Exact solver artifacts are retained only when this E0 hook is enabled.
+     Streaming the copy avoids allocating a proof-sized ML string.  A single
+     invocation-local closure selects unique, non-overwriting targets and
+     bounds file bytes, aggregate bytes, and copy time.  Refused or failed
+     observation is diagnostic only and cannot replace a solver result. *)
+  fun z3_capture_for_directory directory =
+    let
+      val targets = ref ([] : (string * string) list)
+      val captured_bytes = ref 0
+      fun path stem extension =
+        OS.Path.concat (directory, stem ^ extension)
+      fun occupied stem = List.exists
+        (fn extension => OS.FileSys.access (path stem extension, []))
+        [".smt2", ".out", ".meta"]
+      fun unique_stem base =
+        let
+          fun choose 0 =
+                if occupied base then choose 1 else base
+            | choose suffix =
+                let val candidate = base ^ "-" ^ Int.toString suffix
+                in
+                  if occupied candidate then choose (suffix + 1)
+                  else candidate
+                end
+        in
+          choose 0
+        end
+      fun target_for key =
+        case List.find (fn (saved_key, _) => saved_key = key) (!targets) of
+          SOME (_, stem) => stem
+        | NONE =>
+            let
+              val stem = unique_stem ("z3-" ^ OS.Path.file key)
+              val _ = targets := (key, stem) :: !targets
+            in
+              stem
+            end
+      fun refuse message = SmtResource.emit_e0
+        ("capture=refused reason=" ^ SmtResource.bounded_text 240 message)
+      fun capture cmd_stem key stage source =
+        let
+          val _ = OS.FileSys.mkDir directory
+            handle SysErr _ =>
+              if OS.FileSys.isDir directory then ()
+              else raise Fail "capture directory is unavailable"
+          val stem = target_for key
+          val extension = if stage = "input" then ".smt2" else ".out"
+          val target = path stem extension
+          val metadata = path stem ".meta"
+          val bytes = capture_file_bytes source
+          val _ =
+            if bytes > max_capture_file_bytes then
+              raise Fail ("file exceeds " ^
+                Int.toString max_capture_file_bytes ^ " bytes")
+            else if !captured_bytes > max_capture_invocation_bytes - bytes then
+              raise Fail ("invocation exceeds " ^
+                Int.toString max_capture_invocation_bytes ^ " bytes")
+            else if OS.FileSys.access (target, []) then
+              raise Fail "capture target already exists"
+            else ()
+          fun remove_partial () =
+            OS.FileSys.remove target handle SysErr _ => ()
+          val _ =
+            (Timeout.apply max_capture_time
+               (fn () => copy_file_bounded_memory source target) ()
+             handle exn => (remove_partial (); raise exn))
+          val _ = captured_bytes := !captured_bytes + bytes
+          val _ =
+            if stage <> "input" orelse OS.FileSys.access (metadata, []) then ()
+            else
+              Library.write_strings_to_file metadata
+                ["command=", cmd_stem, "<input-file> > <output-file>\n",
+                 "capture_key=", key, "\n",
+                 "max_file_bytes=", Int.toString max_capture_file_bytes,
+                 "\nmax_invocation_bytes=",
+                 Int.toString max_capture_invocation_bytes,
+                 "\nmax_copy_seconds=",
+                 LargeInt.toString (Time.toSeconds max_capture_time), "\n"]
+        in
+          ()
+        end handle exn => refuse (General.exnMessage exn)
+    in
+      capture
+    end
+
+  fun z3_capture_for_invocation () =
+    case get_nonempty_env "HOL4_Z3_PROOF_CAPTURE_DIR" of
+      NONE => NONE
+    | SOME directory => SOME (z3_capture_for_directory directory)
+
   fun mk_Z3_fun name pre cmd_stem post goal =
     case configured_executable () of
       SOME file =>
-        SolverSpec.make_solver pre (file ^ with_timeout_option cmd_stem)
-          post goal
+        SolverSpec.make_solver_with_capture_and_command
+          (z3_capture_for_invocation ()) pre
+          (fn _ => file ^ with_timeout_option cmd_stem) post goal
     | NONE =>
         raise Feedback.mk_HOL_ERR "Z3" name error_msg
 
@@ -304,7 +418,7 @@ structure Z3 = struct
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
   val Z3_SMT_Prover =
     mk_Z3_fun "Z3_SMT_Prover"
-      (fn goal =>
+      (SmtResource.profile_phase "z3/input-generation" (fn goal =>
         let
           val original_goal = goal
           val (goal, validation) = SolverSpec.simplify
@@ -314,61 +428,100 @@ structure Z3 = struct
               (configured_version ()) goal
         in
           (((original_goal, goal, validation), translation), strings)
-        end)
+        end))
       proof_cmd_stem
       (fn ((original_goal, goal, validation), translation) =>
         fn outfile =>
           let
             val instream = TextIO.openIn outfile
-            val (result, proof_start) = is_sat_stream_with_consumed instream
-          in
-            case result of
-              SolverSpec.UNSAT NONE =>
+            fun close () = TextIO.closeIn instream handle _ => ()
+            fun contextualize_parse exn =
+              case exn of
+                Feedback.HOL_ERR holerr =>
+                  if SmtResource.is_resource_gate holerr then
+                    raise Feedback.HOL_ERR holerr
+                  else
+                    (classify_proof_parse_error holerr
+                     handle Feedback.HOL_ERR classified =>
+                       raise_with_context "Z3_SMT_Prover" "proof parse"
+                         (current_proof_cmd_stem ()) classified)
+              | _ =>
+                  raise Feedback.mk_HOL_ERR "Z3" "Z3_SMT_Prover"
+                    ("Z3 proof parse failed\n" ^
+                     "Z3 version: " ^ version_string () ^ "\n" ^
+                     "Z3 command: " ^
+                     command_string (current_proof_cmd_stem ()) ^ "\n" ^
+                     "underlying exception: " ^ General.exnMessage exn)
+            fun parse_proof proof_start =
+              (let
+                 val (ty_dict, tm_dict) =
+                   SmtLib.parser_dicts_for_solver_translation
+                     "Z3" translation
+                 (* Reject oversized proof text before the untrusted proof
+                    parser reads even its first token. *)
+                 val proof_bytes = SmtResource.remaining_file_bytes
+                   outfile proof_start
+                 val _ = SmtResource.profile_phase "z3/byte-admission"
+                   (SmtResource.check_proof_size "z3-proof-text")
+                   proof_bytes
+                 val _ = SmtResource.emit_e0
+                   ("proof bytes=" ^ Int.toString proof_bytes)
+                 val proof =
+                   SmtResource.profile_phase "z3/parse+graph-construction"
+                     (Z3_ProofParser.parse_stream_with_version
+                       (ty_dict, tm_dict) (version_string ())) instream
+                 (* Graph metrics are observation only.  Keep their traversal
+                    entirely out of the ordinary checked path. *)
+                 val _ =
+                   if not (SmtResource.e0_enabled ()) then ()
+                   else
+                     ((let val graph = Z3_Proof.proof_graph_metrics proof
+                       in
+                         SmtResource.emit_e0
+                           ("proof_graph nodes=" ^
+                            Int.toString (#nodes graph) ^ " edges=" ^
+                            Int.toString (#edges graph) ^ " variables=" ^
+                            Int.toString (#variables graph) ^
+                            " bit_decompositions=" ^
+                            Int.toString (#bit_decompositions graph))
+                       end) handle _ => ())
+               in
+                 proof
+               end handle exn => contextualize_parse exn)
+            fun work () =
               let
-                val (As, g) = goal
-                fun replay_proof () =
-                  let
-                    val (ty_dict, tm_dict) =
-                      SmtLib.parser_dicts_for_solver_translation
-                        "Z3" translation
-                    (* Reject oversized proof text before the untrusted proof
-                       parser reads even its first token. *)
-                    val proof =
-                      SmtResource.with_z3_proof_size_gate "z3-proof-text"
-                        outfile proof_start instream
-                        (Z3_ProofParser.parse_stream_with_version
-                          (ty_dict, tm_dict) (version_string ()))
-                      handle Feedback.HOL_ERR holerr =>
-                        (TextIO.closeIn instream;
-                         if SmtResource.is_resource_gate holerr then
-                           raise Feedback.HOL_ERR holerr
-                         else
-                           (classify_proof_parse_error holerr
-                            handle Feedback.HOL_ERR classified =>
-                              raise_with_context "Z3_SMT_Prover"
-                                "proof parse" (current_proof_cmd_stem ())
-                                classified))
-                    val _ = TextIO.closeIn instream
-                  in
-                    Z3_ProofReplay.check_proof_with_definitions
-                      (SmtLib.translation_definitions translation)
-                      (As, g, proof)
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else
-                        raise_with_context "Z3_SMT_Prover" "proof replay"
-                          (current_proof_cmd_stem ()) holerr
-                  end
-                val thm = replay_proof ()
-                val thm = Thm.CCONTR g thm
-                val thm = validation [thm]
-                val thm = check_reconstructed_theorem "Z3_SMT_Prover"
-                  (original_goal, thm)
+                val (result, proof_start) =
+                  is_sat_stream_with_consumed instream
               in
-                SolverSpec.UNSAT (SOME thm)
+                case result of
+                  SolverSpec.UNSAT NONE =>
+                  let
+                    val (As, g) = goal
+                    val proof = parse_proof proof_start
+                    val thm = SmtResource.profile_phase "z3/replay"
+                      (Z3_ProofReplay.check_proof_with_definitions
+                        (SmtLib.translation_definitions translation))
+                      (As, g, proof)
+                      handle Feedback.HOL_ERR holerr =>
+                        if SmtResource.is_resource_gate holerr then
+                          raise Feedback.HOL_ERR holerr
+                        else
+                          raise_with_context "Z3_SMT_Prover" "proof replay"
+                            (current_proof_cmd_stem ()) holerr
+                    val thm = SmtResource.profile_phase "z3/final-ccontr"
+                      (fn thm => Thm.CCONTR g thm) thm
+                    val thm = SmtResource.profile_phase "z3/final-validation"
+                      validation [thm]
+                    val thm = SmtResource.profile_phase "z3/final-checks"
+                      (check_reconstructed_theorem "Z3_SMT_Prover")
+                      (original_goal, thm)
+                  in
+                    SolverSpec.UNSAT (SOME thm)
+                  end
+                | _ => result
               end
-            | _ => (result before TextIO.closeIn instream)
+          in
+            Portable.finally close work ()
           end)
 
 end

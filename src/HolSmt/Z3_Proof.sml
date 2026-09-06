@@ -98,6 +98,47 @@ struct
                      | ID of int
                      | THEOREM of Thm.thm
 
+  fun proofterm_rule_name proofterm =
+    case proofterm of
+      AND_ELIM _ => "and-elim"
+    | APPLY_DEF _ => "apply-def"
+    | ASSERTED _ => "asserted"
+    | COMMUTATIVITY _ => "commutativity"
+    | DEF_AXIOM _ => "def-axiom"
+    | ELIM_UNUSED _ => "elim-unused"
+    | HYPOTHESIS _ => "hypothesis"
+    | IFF_FALSE _ => "iff-false"
+    | IFF_TRUE _ => "iff-true"
+    | INTRO_DEF _ => "intro-def"
+    | LEMMA _ => "lemma"
+    | MONOTONICITY _ => "monotonicity"
+    | MP _ => "mp"
+    | MP_EQ _ => "mp-eq"
+    | NNF_NEG _ => "nnf-neg"
+    | NNF_POS _ => "nnf-pos"
+    | NOT_OR_ELIM _ => "not-or-elim"
+    | PROOF_BIND _ => "proof-bind"
+    | QUANT_INST _ => "quant-inst"
+    | QUANT_INTRO _ => "quant-intro"
+    | REFL _ => "refl"
+    | REWRITE _ => "rewrite"
+    | SKOLEM _ => "skolem"
+    | SYMM _ => "symm"
+    | TH_LEMMA_ARITH _ => "th-lemma-arith"
+    | TH_LEMMA_ARRAY _ => "th-lemma-array"
+    | TH_LEMMA_BASIC _ => "th-lemma-basic"
+    | TH_LEMMA_BV _ => "th-lemma-bv"
+    | TH_LEMMA_DATATYPE _ => "th-lemma-datatype"
+    | TH_LEMMA_SEQ _ => "th-lemma-seq"
+    | TH_LEMMA_CHAR _ => "th-lemma-char"
+    | TH_LEMMA_ADVANCED _ => "th-lemma-advanced"
+    | TRANS _ => "trans"
+    | TRANS_STAR _ => "trans*"
+    | TRUE_AXIOM _ => "true-axiom"
+    | UNIT_RESOLUTION _ => "unit-resolution"
+    | ID _ => "id"
+    | THEOREM _ => "theorem"
+
   datatype proof_premise_shape = ZeroPremises
                                | OnePremise
                                | TwoPremises
@@ -373,5 +414,19 @@ struct
     | proofterm_premises (TRANS_STAR (pts, _)) = pts
     | proofterm_premises (UNIT_RESOLUTION (pts, _)) = pts
     | proofterm_premises _ = []
+
+  fun proof_graph_metrics proof =
+    let
+      val edges = Redblackmap.foldl
+        (fn (_, proofterm, total) =>
+          SmtResource.saturated_add total
+            (List.length (proofterm_premises proofterm)))
+        0 (proof_steps proof)
+    in
+      {nodes = Redblackmap.numItems (proof_steps proof),
+       edges = edges,
+       variables = HOLset.numItems (proof_vars proof),
+       bit_decompositions = List.length (proof_bit_decompositions proof)}
+    end
 
 end

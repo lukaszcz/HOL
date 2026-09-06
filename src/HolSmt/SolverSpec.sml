@@ -69,26 +69,32 @@ structure SolverSpec = struct
       (pre : Abbrev.goal -> 'a * string list)
       (command_stem : 'a -> string)
       (post : 'a -> string -> result) : Abbrev.goal -> result =
-  fn goal =>
+  fn goal => SmtResource.with_e0_invocation (fn goal =>
   let
     (* call 'pre goal' to generate SMT solver input *)
     val (x, inputs) = pre goal
     val cmd_stem = command_stem x
     val infile = FileSys.tmpName ()
     val outfile = FileSys.tmpName ()
+    fun observe stage source =
+      (Option.app
+        (fn record => record cmd_stem infile stage source) capture
+       handle exn =>
+         SmtResource.emit_e0
+           ("capture=refused reason=" ^
+            SmtResource.bounded_text 240 (General.exnMessage exn)))
     fun work() = let
       val _ = Library.write_strings_to_file infile inputs
-      val _ = Option.app
-        (fn record => record cmd_stem infile "input" infile) capture
+      val _ = observe "input" infile
       val cmd = with_wall_timeout (cmd_stem ^ infile ^ " > " ^ outfile)
       (* the actual system call to the SMT solver *)
       val _ = if !Library.trace > 1 then
                 Feedback.HOL_MESG ("HolSmtLib: calling external command '" ^
                                    cmd ^ "'")
               else ()
-      val _ = Systeml.system_ps cmd
-      val _ = Option.app
-        (fn record => record cmd_stem infile "output" outfile) capture
+      val _ = SmtResource.profile_phase "solver/certificate-generation"
+        Systeml.system_ps cmd
+      val _ = observe "output" outfile
       (* call 'post' to determine the result *)
       val result = post x outfile
       val _ =
@@ -138,7 +144,7 @@ structure SolverSpec = struct
         else ()
   in
     Portable.finally finish work ()
-  end
+  end) goal
 
   (* Preserve the original capture hook: it observes only the stable key,
      stage, and temporary path.  The command-aware API above is opt-in. *)

@@ -35,6 +35,151 @@ struct
      diagnostic rather than hang the replay. *)
   val max_hypothesis_entailment_time = Time.fromSeconds 10
 
+  (* E0 profiling is opt-in and bounded.  Profile's in-memory counters retain
+     successful and exceptional timings; these compact messages additionally
+     survive an enclosing timeout when the caller retains stdout.  Never put
+     terms in this channel. *)
+  val max_e0_messages = 1024
+
+  type e0_invocation =
+    {messages : int ref,
+     profile_baseline : (string * Profile.call_info) list}
+
+  val current_e0_invocation = ref (NONE : e0_invocation option)
+  val last_e0_message_count = ref 0
+  val last_e0_profile_names = ref ([] : string list)
+
+  fun e0_enabled () = Option.isSome (!current_e0_invocation)
+
+  fun with_e0_invocation action input =
+    case !current_e0_invocation of
+      SOME _ => action input
+    | NONE =>
+        if OS.Process.getEnv "HOL4_SMT_E0_PROFILE" <> SOME "1" then
+          action input
+        else
+          let
+            val invocation =
+              {messages = ref 0, profile_baseline = Profile.results ()}
+            fun restore () =
+              (last_e0_message_count := !(#messages invocation);
+               current_e0_invocation := NONE)
+            fun work () =
+              (last_e0_profile_names := [];
+               current_e0_invocation := SOME invocation;
+               action input)
+          in
+            Portable.finally restore work ()
+          end
+
+  fun bounded_text maximum text =
+    if String.size text <= maximum then text
+    else String.substring (text, 0, maximum) ^ "..."
+
+  fun emit_e0 message =
+    (case !current_e0_invocation of
+       NONE => ()
+     | SOME {messages, ...} =>
+         if !messages < max_e0_messages then
+           (messages := !messages + 1;
+            Feedback.HOL_MESG ("HOLSMT_E0 " ^ message);
+            TextIO.flushOut TextIO.stdOut)
+         else if !messages = max_e0_messages then
+           (messages := !messages + 1;
+            Feedback.HOL_MESG "HOLSMT_E0 messages=suppressed";
+            TextIO.flushOut TextIO.stdOut)
+         else ())
+    handle _ => ()
+
+  fun exception_class exn =
+    case exn of
+      Feedback.HOL_ERR holerr =>
+        Feedback.top_structure_of holerr ^ "." ^
+        Feedback.top_function_of holerr ^ ":" ^
+        bounded_text 240 (Feedback.message_of holerr)
+    | _ => General.exnName exn
+
+  fun profile_phase name f x =
+    if not (e0_enabled ()) then f x
+    else
+      Profile.profile_with_exn_name ("E0(" ^ name ^ ")")
+        (fn x =>
+        let
+          val real_timer = Timer.startRealTimer ()
+          val cpu_timer = Timer.startCPUTimer ()
+          val _ = emit_e0 ("phase=start name=" ^ name)
+          fun finish status =
+            (let
+               val {nongc, gc} = Timer.checkCPUTimes cpu_timer
+               val real = Timer.checkRealTimer real_timer
+               val gc_time = Time.+ (#usr gc, #sys gc)
+             in
+               emit_e0 ("phase=" ^ status ^ " name=" ^ name ^
+                 " wall=" ^ Time.toString real ^
+                 " usr=" ^ Time.toString (#usr nongc) ^
+                 " sys=" ^ Time.toString (#sys nongc) ^
+                 " gc=" ^ Time.toString gc_time)
+             end handle _ => ())
+          val result = f x
+            handle exn =>
+              (finish ("failure exception=" ^ exception_class exn);
+               raise exn)
+          val _ = finish "end"
+        in
+          result
+        end) x
+
+  fun emit_profile_summary () =
+    case !current_e0_invocation of
+      NONE => ()
+    | SOME {profile_baseline, ...} =>
+      let
+        fun previous name =
+          case List.find (fn (old_name, _) => old_name = name)
+              profile_baseline of
+            SOME (_, info) => SOME info
+          | NONE => NONE
+        fun time_delta current old =
+          if Time.compare (current, old) = LESS then Time.zeroTime
+          else Time.- (current, old)
+        fun delta (name, current : Profile.call_info) =
+          case previous name of
+            NONE => (name, current)
+          | SOME old =>
+              (name,
+               {usr = time_delta (#usr current) (#usr old),
+                sys = time_delta (#sys current) (#sys old),
+                gc = time_delta (#gc current) (#gc old),
+                real = time_delta (#real current) (#real old),
+                n = Int.max (0, #n current - #n old)})
+        fun observed (_, {usr, sys, gc, real, n} : Profile.call_info) =
+          n > 0 orelse
+          List.exists (fn time => Time.compare (time, Time.zeroTime) <> EQUAL)
+            [usr, sys, gc, real]
+        val results = List.filter observed (List.map delta (Profile.results ()))
+        val _ = last_e0_profile_names := List.map Lib.fst results
+        val sorted = Listsort.sort
+          (fn ((_, left), (_, right)) =>
+            Time.compare (#real right, #real left)) results
+        fun take 0 _ = []
+          | take _ [] = []
+          | take n (item :: rest) = item :: take (n - 1) rest
+        fun one (name, {usr, sys, gc, real, n}) =
+          bounded_text 64 name ^ ":n=" ^ Int.toString n ^
+          ",wall=" ^ Time.toString real ^
+          ",usr=" ^ Time.toString usr ^
+          ",sys=" ^ Time.toString sys ^
+          ",gc=" ^ Time.toString gc
+        val summary = String.concatWith " | " (List.map one (take 16 sorted))
+      in
+        emit_e0 ("profile entries=" ^ Int.toString (List.length results) ^
+          " top16=" ^ bounded_text 3500 summary)
+      end handle _ => ()
+
+  fun last_e0_message_count_for_test () = !last_e0_message_count
+
+  fun last_e0_profile_names_for_test () = !last_e0_profile_names
+
   val diagnostic_prefix = "resource-gated: fp-bitblast; "
   val feature_prefix = "resource-gate:FloatingPoint:"
 
@@ -183,6 +328,107 @@ struct
       let val (_, body) = Term.dest_abs term in [body] end
     else []
 
+  type bounded_structure = {
+    dag_nodes : int,
+    edges : int,
+    max_binder_depth : int,
+    max_identifier_bytes : int,
+    complete : bool
+  }
+
+  (* A compact diagnostic scan with a hard distinct-node bound.  Edges count
+     children of each admitted DAG node once; identifier sizes come only from
+     variable and constant metadata and never render a term. *)
+  fun bounded_structure limit root : bounded_structure =
+    let
+      fun identifier_bytes term =
+        String.size (Lib.fst (Term.dest_var term))
+        handle Feedback.HOL_ERR _ =>
+          String.size (#Name (Term.dest_thy_const term))
+          handle Feedback.HOL_ERR _ => 0
+      fun loop ([], _, nodes, edges, depth, identifier) =
+            {dag_nodes = nodes, edges = edges, max_binder_depth = depth,
+             max_identifier_bytes = identifier, complete = true}
+        | loop ((term, binder_depth) :: pending, seen, nodes, edges,
+            depth, identifier) =
+            if List.exists
+                 (fn seen_term => Portable.pointer_eq (term, seen_term))
+                 seen then
+              loop (pending, seen, nodes, edges, depth, identifier)
+            else
+              let
+                val nodes = nodes + 1
+                val seen = term :: seen
+                val children = term_children term
+                val edges = saturated_add edges (List.length children)
+                val depth = Int.max (depth, binder_depth)
+                val identifier = Int.max
+                  (identifier, identifier_bytes term)
+                val next_depth =
+                  if Term.is_abs term then binder_depth + 1
+                  else binder_depth
+                val pending = List.map
+                  (fn child => (child, next_depth)) children @ pending
+              in
+                if nodes > limit then
+                  {dag_nodes = nodes, edges = edges,
+                   max_binder_depth = depth,
+                   max_identifier_bytes = identifier, complete = false}
+                else
+                  loop (pending, seen, nodes, edges, depth, identifier)
+              end
+    in
+      loop ([(root, 0)], [], 0, 0, 0, 0)
+    end
+
+  (* A bounded graph serialization for diagnostics and extracted fixtures.
+     It records applications, abstractions, and identifier metadata with
+     explicit node references, so repeated subterms stay shared.  Identifier
+     labels are truncated independently; this digest is attribution metadata,
+     never proof evidence or a replay key. *)
+  fun bounded_graph_digest limit root =
+    let
+      val ids = ref ([] : (Term.term * int) list)
+      val next_id = ref 0
+      val entries = ref ([] : string list)
+      fun label term =
+        if Term.is_var term then
+          "v:" ^ bounded_text 96 (Lib.fst (Term.dest_var term))
+        else if Term.is_const term then
+          let val {Thy, Name, ...} = Term.dest_thy_const term
+          in "c:" ^ bounded_text 96 (Thy ^ "$" ^ Name) end
+        else if Term.is_abs term then "lambda"
+        else if Term.is_comb term then "apply"
+        else "term"
+      fun visit term =
+        case List.find
+            (fn (seen_term, _) => Portable.pointer_eq (term, seen_term))
+            (!ids) of
+          SOME (_, id) => id
+        | NONE =>
+            let
+              val id = !next_id
+              val _ = next_id := id + 1
+              val _ = id < limit orelse
+                raise ERR "bounded_graph_digest"
+                  "diagnostic graph exceeds its bound"
+              val _ = ids := (term, id) :: !ids
+              val child_ids = List.map visit (term_children term)
+              val entry = Int.toString id ^ ":" ^ label term ^ "(" ^
+                String.concatWith "," (List.map Int.toString child_ids) ^ ");"
+              val _ = entries := entry :: !entries
+            in
+              id
+            end
+      val _ = visit root
+      val serialization = String.concat (List.rev (!entries))
+    in
+      {digest = MLSYSPortable.md5sum serialization,
+       serialization = bounded_text 2048 serialization,
+       serialization_bytes = String.size serialization,
+       nodes = !next_id}
+    end
+
   fun term_measure term =
     let
       val sizes = ref (Redblackmap.mkDict Term.compare)
@@ -206,27 +452,13 @@ struct
 
   fun dag_nodes term = #dag_nodes (term_measure term)
 
-  (* Admission needs only to distinguish an in-budget DAG from an oversized
-     one.  This tail-recursive worklist has the same Term.compare identity as
-     [term_measure], but stops at the first node beyond the limit and does not
-     compute the potentially enormous unfolded-tree metric. *)
+  (* Admission needs only to distinguish an in-budget physical DAG from an
+     oversized one.  [bounded_structure] uses pointer identity, so equal but
+     independently rebuilt subgraphs remain distinct and the scan stops at
+     the first node beyond the limit without computing an unfolded-tree
+     metric. *)
   fun dag_nodes_up_to limit root =
-    let
-      fun loop ([], _, observed) = observed
-        | loop (term :: pending, seen, observed) =
-            if HOLset.member (seen, term) then
-              loop (pending, seen, observed)
-            else
-              let
-                val observed = observed + 1
-                val seen = HOLset.add (seen, term)
-              in
-                if observed > limit then observed
-                else loop (term_children term @ pending, seen, observed)
-              end
-    in
-      loop ([root], HOLset.empty Term.compare, 0)
-    end
+    #dag_nodes (bounded_structure limit root)
 
   fun check_dag_size_for category case_id observed =
     if observed <= max_skeleton_replay_dag_nodes then ()

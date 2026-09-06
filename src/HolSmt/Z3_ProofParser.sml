@@ -1693,8 +1693,10 @@ in
       (List.foldl
         (fn ((_, witness), vars) => HOLset.add (vars, witness))
         Term.empty_tmset string_witnesses)
-    val proof = discover_bit_decompositions (parse_proof get_token
-      (tydict, tmdict, initial_proof))
+    val parsed = SmtResource.profile_phase "z3/parser-core+graph"
+      (parse_proof get_token) (tydict, tmdict, initial_proof)
+    val proof = SmtResource.profile_phase "z3/graph-finalization"
+      discover_bit_decompositions parsed
     val _ = if !Library.trace > 0 then
         WARNING "parse_stream" ("ignoring token '" ^ get_token () ^
           "' (and perhaps others) after proof")

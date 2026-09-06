@@ -47,6 +47,7 @@ struct
   val saturated_add = SmtResource.saturated_add
   val term_children = SmtResource.term_children
   val term_measure = SmtResource.term_measure
+  val phase = SmtResource.profile_phase
 
   fun tree_nodes term = #tree_nodes (term_measure term)
 
@@ -89,6 +90,114 @@ struct
         (fn (child_theorem, theorem) =>
           Thm.MK_COMB (theorem, child_theorem))
         (Thm.REFL head) child_theorems
+    end
+
+  (* Congruence reconstructs an alpha-equal left side from its children.
+     Anchor it to the caller's existing node immediately.  Because recursive
+     results maintain the same invariant, the kernel comparison at each
+     anchor sees the original child pointers and remains local to one node. *)
+  fun anchor_left term theorem =
+    Thm.TRANS (Thm.REFL term) theorem
+
+  fun anchor_right term theorem =
+    Thm.TRANS theorem (Thm.REFL term)
+
+  (* Redblackmap keys are structural.  Keep separate entries for equal terms
+     with different physical identities when a cached value embeds the exact
+     occurrence. *)
+  fun pointer_cache_peek dictionary term =
+    case Redblackmap.peek (dictionary, term) of
+      NONE => NONE
+    | SOME bucket =>
+        case List.find
+            (fn (saved, _) => Portable.pointer_eq (term, saved)) bucket of
+          NONE => NONE
+        | SOME (_, value) => SOME value
+
+  fun pointer_cache_insert dictionary term value =
+    let
+      val bucket = Option.getOpt (Redblackmap.peek (dictionary, term), [])
+    in
+      Redblackmap.insert (dictionary, term, (term, value) :: bucket)
+    end
+
+  exception REANCHOR_LIMIT
+
+  (* Build left = right one physical node at a time.  Both endpoint anchors
+     compare only a newly built outer node whose children already have the
+     requested endpoint pointers.  Structural cache collisions use separate
+     pointer buckets, and the fixed skeleton DAG limit bounds reconstruction. *)
+  fun bounded_nodewise_equality maximum left right =
+    let
+      val _ =
+        if SmtResource.dag_nodes_up_to maximum left <= maximum then ()
+        else raise REANCHOR_LIMIT
+      val compared = ref 0
+      val cache = ref ([] : (term * term * thm) list)
+      fun visit (left, right) =
+        if Portable.pointer_eq (left, right) then Thm.REFL left
+        else
+          case List.find
+              (fn (saved_left, saved_right, _) =>
+                Portable.pointer_eq (left, saved_left) andalso
+                Portable.pointer_eq (right, saved_right)) (!cache) of
+            SOME (_, _, theorem) => theorem
+          | NONE => compute (left, right)
+      and compute (left, right) =
+        let
+          val _ = compared := !compared + 1
+          val _ = if !compared <= maximum then () else raise REANCHOR_LIMIT
+          val theorem =
+            if Term.is_comb left andalso Term.is_comb right then
+              let
+                val (left_operator, left_operand) = Term.dest_comb left
+                val (right_operator, right_operand) = Term.dest_comb right
+              in
+                anchor_right right (anchor_left left
+                  (Thm.MK_COMB
+                    (visit (left_operator, right_operator),
+                     visit (left_operand, right_operand))))
+              end
+            else if Term.is_abs left andalso Term.is_abs right then
+              let
+                val (left_binder, left_body) = Term.dest_abs left
+                val (_, right_body) = Term.dest_abs right
+              in
+                anchor_right right (anchor_left left
+                  (Thm.ABS left_binder (visit (left_body, right_body))))
+              end
+            else
+              Thm.TRANS (Thm.REFL left) (Thm.REFL right)
+          val _ = cache := (left, right, theorem) :: !cache
+        in
+          theorem
+        end
+      val theorem = visit (left, right)
+      val (actual_left, actual_right) =
+        boolSyntax.dest_eq (Thm.concl theorem)
+      val _ =
+        if Portable.pointer_eq (left, actual_left) andalso
+           Portable.pointer_eq (right, actual_right) then ()
+        else raise ERR "bounded_nodewise_equality"
+          "node-wise transport lost an endpoint occurrence"
+    in
+      theorem
+    end
+
+  fun reanchor_cached_theorem occurrence theorem =
+    let
+      val (cached_left, _) = boolSyntax.dest_eq (Thm.concl theorem)
+      val occurrence_equality = bounded_nodewise_equality
+        SmtResource.max_skeleton_replay_dag_nodes occurrence cached_left
+    in
+      Thm.TRANS occurrence_equality theorem
+    end
+
+  fun exact_left occurrence theorem =
+    let val (left, _) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      if Portable.pointer_eq (occurrence, left) then theorem
+      else reanchor_cached_theorem occurrence theorem
     end
 
   fun validate_theorem procedure atom theorem =
@@ -171,49 +280,63 @@ struct
     let
       val nodes = ref (Redblackmap.mkDict Term.compare)
       fun visit term =
-        case skeleton_children term of
-          NONE => Thm.REFL term
-        | SOME [] => Thm.REFL term
+        let
+          fun compute () = case skeleton_children term of
+          NONE => (Thm.REFL term, false)
+        | SOME [] => (Thm.REFL term, false)
         | SOME children =>
-            (case Redblackmap.peek (!nodes, term) of
-               SOME theorem => theorem
-             | NONE =>
                  let
-                   val congruence = connective_congruence term
-                     (List.map visit children)
+                   val child_results = List.map visit children
+                   val child_changed = List.exists Lib.snd child_results
+                   (* Preserve structural cache sharing while normalizing.
+                      The completed root equality is anchored once below;
+                      anchoring every structurally equal cache hit repeats
+                      the same transport throughout an expanded word DAG. *)
+                   val congruence =
+                     if child_changed then
+                       connective_congruence term
+                         (List.map Lib.fst child_results)
+                     else Thm.REFL term
                    val rebuilt = boolSyntax.rhs (Thm.concl congruence)
-                   val theorem =
+                   val (theorem, changed_here) =
                      if boolSyntax.is_disj rebuilt then
                        let val (left, right) = boolSyntax.dest_disj rebuilt
                        in
                          if Term.aconv left right then
-                           Thm.TRANS congruence
-                             (Conv.REWR_CONV disj_idempotent rebuilt)
-                         else congruence
+                           (Thm.TRANS congruence
+                              (Conv.REWR_CONV disj_idempotent rebuilt), true)
+                         else (congruence, false)
                        end
                      else if boolSyntax.is_conj rebuilt then
                        let val (left, right) = boolSyntax.dest_conj rebuilt
                        in
                          if Term.aconv left right then
-                           Thm.TRANS congruence
-                             (Conv.REWR_CONV conj_idempotent rebuilt)
-                         else congruence
+                           (Thm.TRANS congruence
+                              (Conv.REWR_CONV conj_idempotent rebuilt), true)
+                         else (congruence, false)
                        end
-                     else congruence
+                     else (congruence, false)
+                   val result =
+                     (theorem, child_changed orelse changed_here)
                    val _ = nodes :=
-                     Redblackmap.insert (!nodes, term, theorem)
+                     Redblackmap.insert (!nodes, term, result)
                  in
-                   theorem
-                 end)
+                   result
+                 end
+        in
+          case Redblackmap.peek (!nodes, term) of
+            SOME result => result
+          | NONE => compute ()
+        end
     in
-      visit skeleton
+      exact_left skeleton (Lib.fst (visit skeleton))
     end
 
   (* Turn the shared abstract skeleton into an explicitly linear
      definitional implication.  HolSat sees each connective node once.  Its
      checked theorem is instantiated back with the original DAG nodes, whose
      defining equations are then discharged by reflexivity. *)
-  fun linear_sat_target skeleton =
+  fun linear_sat_target actual_nodes residual_substitution skeleton =
     let
       val nodes = ref (Redblackmap.mkDict Term.compare)
       val definitions = ref []
@@ -249,37 +372,66 @@ struct
         | _ => boolSyntax.list_mk_conj equations
       val target = boolSyntax.mk_imp
         (antecedent, root)
-      val substitution = List.map
-        (fn (_, variable, term) => variable |-> term) entries
+      fun actual term = Redblackmap.find (actual_nodes, term)
+        handle Redblackmap.NotFound =>
+          raise ERR "linear_sat_target"
+            "abstract node has no actual-node correspondence"
+      val node_substitution = List.map
+        (fn (_, variable, term) => variable |-> actual term) entries
+      val node_domains = HOLset.addList (HOLset.empty Term.compare,
+        List.map #redex node_substitution)
+      val residual_domains = HOLset.addList (HOLset.empty Term.compare,
+        List.map #redex residual_substitution)
+      val _ =
+        if List.all (Term.is_var o #redex)
+             (node_substitution @ residual_substitution) andalso
+           HOLset.numItems node_domains = List.length node_substitution andalso
+           HOLset.numItems residual_domains =
+             List.length residual_substitution andalso
+           HOLset.isEmpty
+             (HOLset.intersection (node_domains, residual_domains)) then ()
+        else raise ERR "linear_sat_target"
+          "generated substitution domains overlap or are not unique variables"
+      (* Apply atom and Tseitin substitutions simultaneously.  Term.subst
+         returns a matched residue without visiting it, so actual DAGs are
+         inserted once rather than copied through a second INST.  HOL free
+         variables and bound de Bruijn nodes are distinct constructors, so
+         inserting a free-variable residue below an abstraction is
+         capture-safe.  The disjoint-domain check above makes this schedule
+         independent of substitution-list order. *)
+      val substitution = node_substitution @ residual_substitution
       val definition_theorem =
         case entries of
           [] => boolTheory.TRUTH
         | _ => Drule.LIST_CONJ
-            (List.map (fn (_, _, term) => Thm.REFL term) entries)
+            (List.map (fn (_, _, term) => Thm.REFL (actual term)) entries)
     in
       {target = target,
        substitution = substitution,
        definition_theorem = definition_theorem}
     end
 
-  fun checked_sat_skeleton_prove skeleton =
+  fun checked_sat_skeleton_prove
+      (actual_nodes, residual_substitution, expected, skeleton) =
     let
-      val normalization = normalize_idempotent_skeleton skeleton
-      val normalized = boolSyntax.rhs (Thm.concl normalization)
       val {target, substitution, definition_theorem} =
-        linear_sat_target normalized
-      val target_theorem = checked_sat_prove target
-      val instantiated = Thm.INST substitution target_theorem
-      val normalized_theorem = Thm.MP instantiated definition_theorem
-      val _ =
-        if Term.aconv (Thm.concl normalized_theorem) normalized then ()
-        else raise ERR "checked_sat_skeleton_prove"
-          "checked definitions did not return the normalized skeleton"
-      val theorem = Thm.EQ_MP (Thm.SYM normalization) normalized_theorem
-      val _ =
-        if Term.aconv (Thm.concl theorem) skeleton then ()
-        else raise ERR "checked_sat_skeleton_prove"
-          "checked SAT reconstruction returned the wrong skeleton"
+        phase "skeleton/cnf-construction"
+          (linear_sat_target actual_nodes residual_substitution) skeleton
+      (* HolSatLib currently exposes search and certificate reconstruction as
+         one checked operation, so E0 records that indivisible boundary. *)
+      val target_theorem = phase "skeleton/sat-search+checking"
+        checked_sat_prove target
+      val instantiated = phase "skeleton/combined-instantiation"
+        (fn substitution => Thm.INST substitution target_theorem)
+        substitution
+      val theorem = phase "skeleton/cnf-definitions"
+        (fn definition_theorem =>
+          Thm.MP instantiated definition_theorem) definition_theorem
+      val _ = phase "skeleton/cnf-final-check"
+        (fn () =>
+          if Term.aconv (Thm.concl theorem) expected then ()
+          else raise ERR "checked_sat_skeleton_prove"
+            "checked definitions did not return the actual skeleton") ()
     in
       {theorem = theorem, sat_target = target}
     end
@@ -291,6 +443,7 @@ struct
          its checked theorem afterwards is a kernel operation. *)
       val nodes = ref (Redblackmap.mkDict Term.compare)
       val atoms = ref (Redblackmap.mkDict Term.compare)
+      val actual_nodes = ref (Redblackmap.mkDict Term.compare)
       fun atom term =
         case Redblackmap.peek (!atoms, term) of
           SOME variable => variable
@@ -298,13 +451,17 @@ struct
             let
               val variable = Term.genvar Type.bool
               val _ = atoms := Redblackmap.insert (!atoms, term, variable)
+              val _ = actual_nodes :=
+                Redblackmap.insert (!actual_nodes, variable, term)
             in
               variable
             end
       fun visit term =
         case skeleton_children term of
           NONE => atom term
-        | SOME [] => term
+        | SOME [] =>
+            (actual_nodes := Redblackmap.insert (!actual_nodes, term, term);
+             term)
         | SOME children =>
             (case Redblackmap.peek (!nodes, term) of
                SOME result => result
@@ -317,6 +474,8 @@ struct
                      head (List.map visit children)
                    val _ =
                      nodes := Redblackmap.insert (!nodes, term, result)
+                   val _ = actual_nodes :=
+                     Redblackmap.insert (!actual_nodes, result, term)
                  in
                    result
                  end)
@@ -325,7 +484,8 @@ struct
         (fn (actual, variable, result) =>
           (variable |-> actual) :: result) [] (!atoms)
     in
-      (abstracted, substitution, Redblackmap.numItems (!atoms))
+      (abstracted, !actual_nodes, substitution,
+       Redblackmap.numItems (!atoms))
     end
 
   exception PROCEDURE_UNABLE
@@ -362,94 +522,128 @@ struct
         end
       fun expand atom =
         case Redblackmap.peek (owners, atom) of
-          NONE => Thm.REFL atom
+          NONE => (Thm.REFL atom, false)
         | SOME name =>
             let
               val {expand, ...} = procedure_named procedures name
               val _ = owned_atoms := !owned_atoms + 1
               val _ = atom_requests := !atom_requests + 1
               val _ = distinct_atoms := HOLset.add (!distinct_atoms, atom)
+              fun prove () =
+                let
+                  val timer = Timer.startRealTimer ()
+                  val _ = add_call name
+                  val theorem =
+                    case Profile.profile_with_exn_name
+                        ("th_lemma[general](atom:" ^ name ^ ")")
+                        expand atom of
+                      Expanded theorem =>
+                        exact_left atom
+                          (validate_theorem name atom theorem)
+                    | Unable => raise PROCEDURE_UNABLE
+                  val elapsed = Timer.checkRealTimer timer
+                  val _ = atom_time := Time.+ (!atom_time, elapsed)
+                  val _ = working_cache :=
+                    Redblackmap.insert (!working_cache, atom, theorem)
+                  val _ = atom_proofs := !atom_proofs + 1
+                in
+                  (theorem, true)
+                end
             in
               case Redblackmap.peek (!working_cache, atom) of
-                SOME theorem => (atom_hits := !atom_hits + 1; theorem)
-              | NONE =>
-                  let
-                    val timer = Timer.startRealTimer ()
-                    val _ = add_call name
-                    val theorem =
-                      case Profile.profile_with_exn_name
-                          ("th_lemma[general](atom:" ^ name ^ ")")
-                          expand atom of
-                        Expanded theorem =>
-                          validate_theorem name atom theorem
-                      | Unable => raise PROCEDURE_UNABLE
-                    val elapsed = Timer.checkRealTimer timer
-                    val _ = atom_time := Time.+ (!atom_time, elapsed)
-                    val _ = working_cache :=
-                      Redblackmap.insert (!working_cache, atom, theorem)
-                    val _ = atom_proofs := !atom_proofs + 1
-                  in
-                    theorem
-                  end
+                SOME theorem =>
+                  (let
+                     val theorem = reanchor_cached_theorem atom theorem
+                   in
+                     atom_hits := !atom_hits + 1;
+                     (theorem, true)
+                   end handle REANCHOR_LIMIT => prove ())
+              | NONE => prove ()
             end
       fun visit term =
         let
           val _ = skeleton_nodes := HOLset.add (!skeleton_nodes, term)
+          fun compute children =
+            let
+              val child_results = List.map visit children
+              val changed = List.exists Lib.snd child_results
+              val theorem =
+                if changed then
+                  anchor_left term
+                    (connective_congruence term
+                      (List.map Lib.fst child_results))
+                else Thm.REFL term
+              val result = (theorem, changed)
+              val _ = nodes :=
+                Redblackmap.insert (!nodes, term, (term, result))
+            in
+              result
+            end
         in
           case skeleton_children term of
             NONE => expand term
           | SOME children =>
               (case Redblackmap.peek (!nodes, term) of
-                 SOME theorem => (node_hits := !node_hits + 1; theorem)
-               | NONE =>
-                   let
-                     val theorem = connective_congruence term
-                       (List.map visit children)
-                     val _ = nodes :=
-                       Redblackmap.insert (!nodes, term, theorem)
-                   in
-                     theorem
-                   end)
+                 SOME (saved, (theorem, changed)) =>
+                   (node_hits := !node_hits + 1;
+                    if Portable.pointer_eq (term, saved) then
+                      (theorem, changed)
+                    else
+                      ((exact_left term theorem, changed)
+                       handle REANCHOR_LIMIT => compute children))
+               | NONE => compute children)
         end
-      val normalization = visit target
+      val normalization = Lib.fst
+        (phase "skeleton/conversion" visit target)
       val normalized = boolSyntax.rhs (Thm.concl normalization)
       val _ =
         if !owned_atoms > 0 andalso Term.aconv normalized target then
           raise ERR "prove" "atom expansion made no progress"
         else ()
-      val (abstracted, residual_substitution, residual_count) =
-        abstract_skeleton normalized
+      val idempotence = phase "skeleton/cnf-normalization"
+        normalize_idempotent_skeleton normalized
+      val normalized = boolSyntax.rhs (Thm.concl idempotence)
+      val (abstracted, actual_nodes, residual_substitution, residual_count) =
+        phase "skeleton/abstraction" abstract_skeleton normalized
       val sat_timer = Timer.startRealTimer ()
-      val {theorem = abstract_theorem, sat_target} =
-        checked_sat_skeleton_prove abstracted
+      val {theorem = actual_theorem, sat_target} =
+        phase "skeleton/cnf+sat" checked_sat_skeleton_prove
+          (actual_nodes, residual_substitution, normalized, abstracted)
       val _ =
-        if List.null (Thm.hyp abstract_theorem) then ()
+        if List.null (Thm.hyp actual_theorem) then ()
         else raise ERR "prove" "checked SAT theorem has hypotheses"
       val _ =
-        if Term.aconv (Thm.concl abstract_theorem) abstracted then ()
+        if Term.aconv (Thm.concl actual_theorem) normalized then ()
         else raise ERR "prove"
-          "checked SAT theorem does not match the abstract skeleton"
+          "checked SAT theorem does not match the actual skeleton"
       val _ = Library.check_oracle_tags
-        "SmtSkeletonProve" "checked-sat" abstract_theorem
-      val normalized_theorem =
-        Thm.INST residual_substitution abstract_theorem
-      val _ =
-        if Term.aconv (Thm.concl normalized_theorem) normalized then ()
-        else raise ERR "prove"
-          "checked SAT reconstruction did not return the normalized target"
+        "SmtSkeletonProve" "checked-sat" actual_theorem
       val sat_time = Timer.checkRealTimer sat_timer
-      val theorem = Thm.EQ_MP (Thm.SYM normalization) normalized_theorem
-      val _ =
-        if List.null (Thm.hyp theorem) then ()
-        else raise ERR "prove" "result theorem has hypotheses"
-      val _ =
-        if Term.aconv (Thm.concl theorem) target then ()
-        else raise ERR "prove" "result theorem does not match the target"
-      val _ = Library.check_oracle_tags
-        "SmtSkeletonProve" "result" theorem
+      val idempotence_sym = phase "skeleton/idempotence-sym"
+        Thm.SYM idempotence
+      val converted_theorem = phase "skeleton/idempotence-eq-mp"
+        (fn equality => Thm.EQ_MP equality actual_theorem)
+        idempotence_sym
+      val normalization_sym = phase "skeleton/normalization-sym"
+        Thm.SYM normalization
+      val theorem = phase "skeleton/normalization-eq-mp"
+        (fn equality => Thm.EQ_MP equality converted_theorem)
+        normalization_sym
+      val _ = phase "skeleton/final-hypothesis-check"
+        (fn () =>
+          if List.null (Thm.hyp theorem) then ()
+          else raise ERR "prove" "result theorem has hypotheses") ()
+      val _ = phase "skeleton/final-conclusion-check"
+        (fn () =>
+          if Term.aconv (Thm.concl theorem) target then ()
+          else raise ERR "prove" "result theorem does not match the target") ()
+      val _ = phase "skeleton/final-oracle-check"
+        (fn () => Library.check_oracle_tags
+          "SmtSkeletonProve" "result" theorem) ()
       val total_time = Timer.checkRealTimer total_timer
-      val normalized_measure = term_measure normalized
-      val sat_measure = term_measure sat_target
+      val normalized_measure = phase "skeleton/metrics-normalized"
+        term_measure normalized
+      val sat_measure = phase "skeleton/metrics-sat" term_measure sat_target
       val procedure_calls = Redblackmap.foldl
         (fn (name, count, result) => (name, count) :: result) [] (!calls)
       val metrics =

@@ -18579,30 +18579,84 @@ let
     end
   val word_atom = ``(x:word16) + 7w <+ y``
   val word_other = ``(x:word16) && 3855w = y``
-  val word_target =
-    boolSyntax.mk_disj
-      (boolSyntax.mk_neg (boolSyntax.mk_conj (word_atom, word_other)),
-       word_other)
+  val word_target = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (word_atom, word_other),
+     boolSyntax.mk_conj (word_other, word_atom))
   val _ = replay "non-character word def-axiom"
     "((declare-fun x () (_ BitVec 16))\n\
     \ (declare-fun y () (_ BitVec 16))\n\
     \ (proof (def-axiom\n\
-    \  (or (not (and (bvult (bvadd x #x0007) y)\n\
-    \                (= (bvand x #x0f0f) y)))\n\
-    \      (= (bvand x #x0f0f) y)))))"
+    \  (= (and (bvult (bvadd x #x0007) y)\n\
+    \          (= (bvand x #x0f0f) y))\n\
+    \     (and (= (bvand x #x0f0f) y)\n\
+    \          (bvult (bvadd x #x0007) y))))))"
     word_target
-  val () = assert (profile_call_count skeleton_ok = 1,
-    "non-character word def-axiom did not use the skeleton preflight")
+  val word_skeleton_count = profile_call_count skeleton_ok
+  val () = assert (word_skeleton_count = 1,
+    "non-character word def-axiom skeleton count was " ^
+    Int.toString word_skeleton_count ^ ", expected 1")
+  fun shared_tautology 0 atom =
+        boolSyntax.mk_disj (atom, boolSyntax.mk_neg atom)
+    | shared_tautology depth atom =
+        let val child = shared_tautology (depth - 1) atom
+        in boolSyntax.mk_conj (child, child) end
+  val shared_target = shared_tautology 70
+    ``(task31_unrelated_predicate : num -> bool) n``
+  val shared_measure = SmtResource.term_measure shared_target
+  val shared_theorem = Z3_ProofReplay.def_axiom_for_test shared_target
+  val () = assert
+    (#tree_nodes shared_measure = SmtResource.max_metric andalso
+     #dag_nodes shared_measure < 200 andalso
+     Thm.concl shared_theorem ~~ shared_target,
+     "held-out ownerless DAG was unfolded or returned the wrong target")
+  val () = assert_no_hyps
+    ("held-out ownerless DAG def-axiom", shared_theorem)
+  val () = check_oracle_tags
+    "held-out ownerless DAG def-axiom" shared_theorem
+  fun rebuilt 0 atom = boolSyntax.mk_disj (atom, boolSyntax.mk_neg atom)
+    | rebuilt depth atom =
+        let val child = rebuilt (depth - 1) atom
+        in boolSyntax.mk_imp (boolSyntax.mk_conj (child, child), child) end
+  val deep_independently_built_left = rebuilt 70
+    ``(task31_independent_left:num) = task31_independent_right``
+  val deep_independently_built_right = rebuilt 70
+    ``(task31_independent_left:num) = task31_independent_right``
+  val independent_structure = SmtResource.bounded_structure
+    SmtResource.max_skeleton_replay_dag_nodes
+    (boolSyntax.mk_imp
+      (deep_independently_built_left, deep_independently_built_right))
+  val () = assert
+    (#complete independent_structure andalso
+     #dag_nodes independent_structure < 1000,
+     "bounded admission unfolded independently rebuilt equal DAGs")
+  val independently_built_left = rebuilt 14
+    ``(task31_independent_left:num) = task31_independent_right``
+  val independently_built_right = rebuilt 14
+    ``(task31_independent_left:num) = task31_independent_right``
+  val independent_target = boolSyntax.mk_imp
+    (independently_built_left, independently_built_right)
+  val independent_theorem =
+    Z3_ProofReplay.def_axiom_for_test independent_target
+  val () = assert
+    (not (Portable.pointer_eq
+       (independently_built_left, independently_built_right)) andalso
+     independently_built_left ~~ independently_built_right andalso
+     Thm.concl independent_theorem ~~ independent_target,
+     "independently rebuilt equal DAG lost exact node-wise transport")
+  val () = assert_no_hyps
+    ("independently rebuilt ownerless DAG", independent_theorem)
+  val () = check_oracle_tags
+    "independently rebuilt ownerless DAG" independent_theorem
   val int_atom = ``(a:int) + 3 <= b``
   val int_other = ``integer$emod b 5 = 2``
-  val int_target = boolSyntax.mk_disj
-    (boolSyntax.mk_neg (boolSyntax.mk_conj (int_atom, int_other)),
-     int_atom)
+  val int_target = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (int_atom, int_other),
+     boolSyntax.mk_conj (int_other, int_atom))
   val _ = replay "integer definitional-shape def-axiom"
     "((declare-fun a () Int) (declare-fun b () Int)\n\
     \ (proof (def-axiom\n\
-    \  (or (not (and (<= (+ a 3) b) (= (mod b 5) 2)))\n\
-    \      (<= (+ a 3) b)))))"
+    \  (= (and (<= (+ a 3) b) (= (mod b 5) 2))\n\
+    \     (and (= (mod b 5) 2) (<= (+ a 3) b))))))"
     int_target
   val () = assert (profile_call_count skeleton_ok = 1,
     "unrelated integer def-axiom did not use the skeleton preflight")
@@ -18630,6 +18684,18 @@ let
   val conjunction = boolSyntax.list_mk_conj atoms
   val target = boolSyntax.mk_disj
     (boolSyntax.mk_neg conjunction, List.hd atoms)
+  val full_measure_called = ref false
+  val admission_gate =
+    (ignore (Z3_ProofReplay.admitted_def_axiom_measure_for_test
+      (fn term =>
+        (full_measure_called := true; SmtResource.term_measure term))
+      target);
+     die "FAIL: oversized def-axiom passed bounded admission")
+    handle Feedback.HOL_ERR holerr => holerr
+  val () = assert
+    (SmtResource.is_resource_gate admission_gate andalso
+     not (!full_measure_called),
+     "oversized def-axiom ran full measurement before its bounded gate")
   val () = Profile.reset_all ()
   val gate =
     (ignore (Z3_ProofReplay.def_axiom_for_test target);
@@ -18642,7 +18708,51 @@ in
     "oversized def-axiom did not preserve the skeleton DAG gate");
   assert (profile_call_count "def-axiom(1)(skeleton)" = 1 andalso
       profile_call_count "def-axiom(1)(skeleton)_OK" = 0,
-    "oversized def-axiom did not stop at its first skeleton attempt")
+    "oversized def-axiom did not stop at its first skeleton attempt");
+  ()
+end
+
+fun skeleton_structural_atom_cache_exact_lhs_success () =
+let
+  val variable = ``task31_cache_occurrence:num``
+  val first_atom = boolSyntax.mk_eq (variable, variable)
+  val second_atom = boolSyntax.mk_eq (variable, variable)
+  fun owner atom =
+    let val (left, right) = boolSyntax.dest_eq atom
+    in
+      if Term.aconv left right then
+        SmtSkeletonProve.Expanded (Drule.EQT_INTRO (Thm.REFL left))
+      else SmtSkeletonProve.Unable
+    end
+  val owners = Redblackmap.insert
+    (Redblackmap.mkDict Term.compare, first_atom, "reflexive")
+  val context = SmtSkeletonProve.new_context
+    [{name = "reflexive", expand = owner}]
+  val target = boolSyntax.mk_conj (first_atom, second_atom)
+  val result = SmtSkeletonProve.prove_with_owners context owners
+    (SmtResource.term_measure target) target
+  val metrics = #metrics result
+  val cached =
+    case owner first_atom of
+      SmtSkeletonProve.Expanded theorem => theorem
+    | SmtSkeletonProve.Unable =>
+        die "FAIL: structural-cache fixture owner declined"
+  val occurrence =
+    SmtSkeletonProve.reanchor_cached_theorem second_atom cached
+  val (occurrence_left, _) = boolSyntax.dest_eq (Thm.concl occurrence)
+in
+  assert (not (Portable.pointer_eq (first_atom, second_atom)),
+    "structural-cache fixture atoms unexpectedly share a pointer");
+  assert (#atom_proofs metrics = 1 andalso #atom_cache_hits metrics = 1,
+    "structural atom cache did not preserve one proof and one hit");
+  assert_no_hyps ("structural atom cache result", #theorem result);
+  assert (Thm.concl (#theorem result) ~~ target,
+    "structural atom cache proved the wrong target");
+  check_oracle_tags "structural atom cache result" (#theorem result);
+  assert (Portable.pointer_eq (second_atom, occurrence_left),
+    "structural cache transport did not retain the current occurrence LHS");
+  assert_no_hyps ("structural cache exact LHS", occurrence);
+  check_oracle_tags "structural cache exact LHS" occurrence
 end
 
 fun z3_emitted_definition_word_replay_success () =
@@ -24425,6 +24535,8 @@ let
       z3_def_axiom_skeleton_preflight_ordering_success),
     ("z3_def_axiom_skeleton_resource_gate_ordering",
       z3_def_axiom_skeleton_resource_gate_ordering),
+    ("skeleton_structural_atom_cache_exact_lhs_success",
+      skeleton_structural_atom_cache_exact_lhs_success),
     ("z3_emitted_definition_word_replay_success",
       z3_emitted_definition_word_replay_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",
