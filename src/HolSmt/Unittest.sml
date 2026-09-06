@@ -21958,16 +21958,91 @@ fun z3_closed_ground_char_hypothesis_success () =
 let
   val true_literal = ``~smtstringz3$char_bit 1 (w2n (57w:18 word))``
   val false_literal = ``smtstringz3$char_bit 1 (w2n (57w:18 word))``
+  val open_literal =
+    ``smtstringz3$char_bit 1 (w2n (task31_open_char:18 word))``
   val proved = Z3_ProofReplay.hypothesis_theorem_for_test true_literal
   val assumed = Z3_ProofReplay.hypothesis_theorem_for_test false_literal
+  val open_assumed =
+    Z3_ProofReplay.hypothesis_theorem_for_test open_literal
 in
   assert_no_hyps ("true closed character hypothesis", proved);
   assert_concl_alpha
     ("true closed character hypothesis", proved, true_literal);
+  assert_concl_alpha
+    ("false closed character hypothesis", assumed, false_literal);
+  assert_concl_alpha
+    ("open character hypothesis", open_assumed, open_literal);
   assert (List.exists (Term.aconv false_literal) (Thm.hyp assumed),
     "false closed character hypothesis was not retained as an assumption");
+  assert (List.exists (Term.aconv open_literal) (Thm.hyp open_assumed),
+    "open character hypothesis was not retained as an assumption");
   check_oracle_tags "true closed character hypothesis" proved;
-  check_oracle_tags "false closed character hypothesis" assumed
+  check_oracle_tags "false closed character hypothesis" assumed;
+  check_oracle_tags "open character hypothesis" open_assumed
+end
+
+fun z3_noncharacter_hypothesis_skips_free_vars () =
+let
+  val target =
+    ``BAG_IN 0 (EMPTY_BAG:num -> num)``
+  val presence_calls = ref 0
+  val domain_calls = ref 0
+  val char_calls = ref 0
+  val assume_calls = ref 0
+  fun free_variable_present _ =
+    (presence_calls := !presence_calls + 1; false)
+  fun char_domain _ = (domain_calls := !domain_calls + 1; false)
+  fun char_prove term =
+    (char_calls := !char_calls + 1; Thm.ASSUME term)
+  fun assume term =
+    (assume_calls := !assume_calls + 1; Thm.ASSUME term)
+  val theorem = Z3_ProofReplay.hypothesis_theorem_with_for_test
+    free_variable_present char_domain char_prove assume target
+in
+  assert (!presence_calls = 1 andalso !domain_calls = 1 andalso
+      !char_calls = 0 andalso !assume_calls = 1,
+    "closed non-character hypothesis took an unexpected route");
+  assert_concl_alpha ("non-character hypothesis", theorem, target);
+  assert (List.exists (Term.aconv target) (Thm.hyp theorem),
+    "non-character hypothesis was not retained as an assumption");
+  check_oracle_tags "non-character hypothesis" theorem
+end
+
+fun z3_large_open_hypothesis_skips_char_admission () =
+let
+  val maximum = SmtResource.max_skeleton_replay_dag_nodes
+  fun grow (0, term) = term
+    | grow (remaining, term) =
+        grow (remaining - 1, boolSyntax.mk_neg term)
+  val closed_tail = grow (maximum + 1, boolSyntax.T)
+  val open_variable = ``task31_large_open_hypothesis:bool``
+  val target = boolSyntax.mk_conj (open_variable, closed_tail)
+  val observed = SmtResource.dag_nodes_up_to maximum target
+  val domain_calls = ref 0
+  val char_calls = ref 0
+  val assume_calls = ref 0
+  fun forbidden_char_domain _ =
+    (domain_calls := !domain_calls + 1;
+     SmtResource.check_dag_size_with_limit
+       "String" "open-hypothesis" maximum (maximum + 1);
+     false)
+  fun char_prove term =
+    (char_calls := !char_calls + 1; Thm.ASSUME term)
+  fun assume term =
+    (assume_calls := !assume_calls + 1; Thm.ASSUME term)
+  val theorem = Z3_ProofReplay.hypothesis_theorem_with_for_test
+    Term.has_free_vars forbidden_char_domain
+    char_prove assume target
+in
+  assert (observed > maximum,
+    "large open hypothesis did not exceed character admission bound");
+  assert (!domain_calls = 0 andalso !char_calls = 0 andalso
+      !assume_calls = 1,
+    "large open hypothesis invoked character admission or proof");
+  assert_concl_alpha ("large open hypothesis", theorem, target);
+  assert (List.exists (Term.aconv target) (Thm.hyp theorem),
+    "large open hypothesis was not retained as an assumption");
+  check_oracle_tags "large open hypothesis" theorem
 end
 
 fun z3_closed_ground_char_hypothesis_resource_gate () =
@@ -24674,6 +24749,10 @@ let
       z3_char_th_lemma_false_diagnostic),
     ("z3_closed_ground_char_hypothesis_success",
       z3_closed_ground_char_hypothesis_success),
+    ("z3_noncharacter_hypothesis_skips_free_vars",
+      z3_noncharacter_hypothesis_skips_free_vars),
+    ("z3_large_open_hypothesis_skips_char_admission",
+      z3_large_open_hypothesis_skips_char_admission),
     ("z3_closed_ground_char_hypothesis_resource_gate",
       z3_closed_ground_char_hypothesis_resource_gate),
     ("z3_rewrite_datatype_rung_replay_success",

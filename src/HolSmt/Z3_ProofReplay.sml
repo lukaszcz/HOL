@@ -1384,21 +1384,19 @@ local
                "\nserialization=", serialization, "\n"]
         in () end
 
+  fun replay_snapshot_step () =
+    case !first_failed_proof_step of
+      SOME step => SOME step
+    | NONE =>
+        case !active_proof_step of
+          SOME (id, rule) => SOME (id, rule, "active")
+        | NONE => !latest_proof_step
+
   fun emit_replay_snapshot exn =
     let
       val step =
-        case !first_failed_proof_step of
-          SOME (id, rule, status) =>
-            "id=" ^ Int.toString id ^ " rule=" ^ rule ^
-            " status=" ^ status
-        | NONE =>
-          case !active_proof_step of
-            SOME (id, rule) =>
-              "id=" ^ Int.toString id ^ " rule=" ^ rule ^
-              " status=active"
-          | NONE =>
-          case !latest_proof_step of
-            NONE => "id=unavailable rule=unavailable status=unavailable"
+        case replay_snapshot_step () of
+          NONE => "id=unavailable rule=unavailable status=unavailable"
         | SOME (id, rule, status) =>
             "id=" ^ Int.toString id ^ " rule=" ^ rule ^
             " status=" ^ status
@@ -1656,14 +1654,33 @@ local
         raise Feedback.HOL_ERR holerr
       else fallback ()
 
+  fun z3_hypothesis_theorem_with
+      free_variable_present char_domain char_prove assume t =
+    let
+      fun fallback () = SmtResource.profile_phase
+        "hypothesis/fallback-assume" assume t
+      val open_hypothesis = SmtResource.profile_phase
+        "hypothesis/free-variable-presence" free_variable_present t
+    in
+      if open_hypothesis then fallback ()
+      else
+        let
+          val character_domain = SmtResource.profile_phase
+            "hypothesis/char-domain-admission" char_domain t
+        in
+          if character_domain then
+            hypothesis_char_next_route
+              (fn () => SmtResource.profile_phase
+                "hypothesis/char-proof" char_prove t)
+              fallback
+          else fallback ()
+        end
+    end
+
   fun z3_hypothesis_theorem t =
-    if List.null (Term.free_vars t) andalso
-       SmtStringProve.char_word_expansion_domain t then
-      hypothesis_char_next_route
-        (fn () => SmtStringProve.char_prove t)
-        (fn () => Thm.ASSUME t)
-    else
-      Thm.ASSUME t
+    z3_hypothesis_theorem_with
+      Term.has_free_vars SmtStringProve.char_word_expansion_domain
+      SmtStringProve.char_prove Thm.ASSUME t
 
   fun z3_hypothesis (state, t) =
       (state, z3_hypothesis_theorem t)
@@ -4844,7 +4861,7 @@ local
         | SOME pt =>
             let
               val rule = proofterm_rule_name pt
-              fun cache_and_continue ((state, proof), thm) =
+              fun cache_result ((state, proof), thm) =
                 let
                   val _ =
                     if !Library.trace > 2 then
@@ -4857,7 +4874,7 @@ local
                   val proof = update_proof_steps proof steps
                   val _ = latest_proof_step := SOME (id, rule, "end")
                 in
-                  continuation ((state, proof), thm)
+                  ((state, proof), thm)
                 end
               fun replay () =
                 (if !Library.trace > 2 then
@@ -4865,9 +4882,14 @@ local
                      ("HolSmtLib: replaying proof at ID " ^ Int.toString id)
                  else ();
                  (* Nested IDs restore this ID when they return. *)
-                 thm_of_proofterm ((state, proof), pt) cache_and_continue)
+                 thm_of_proofterm ((state, proof), pt) cache_result)
+              val result = track_proof_step id rule replay ()
             in
-              track_proof_step id rule replay ()
+              (* The ID owns only its local derivation and cache insertion.
+                 Restore the previous active ID before the caller's CPS
+                 continuation starts, so later work cannot be attributed to
+                 an already completed child. *)
+              continuation result
             end
         | NONE =>
             raise ERR "thm_of_proofterm"
@@ -5211,6 +5233,7 @@ local
 in
   (* For unit tests *)
   val hypothesis_theorem_for_test = z3_hypothesis_theorem
+  val hypothesis_theorem_with_for_test = z3_hypothesis_theorem_with
   val hypothesis_char_next_route_for_test = hypothesis_char_next_route
   val asserted_membership_diagnostic = asserted_membership_diagnostic
   val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
@@ -5239,7 +5262,7 @@ in
   val word_decide_for_test = word_decide
   val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
   val with_e0_replay_boundary = with_e0_replay_boundary
-  fun replay_snapshot_state_for_test () = !first_failed_proof_step
+  fun replay_snapshot_state_for_test () = replay_snapshot_step ()
   fun e0_replay_timeout_for_test duration =
     let
       fun spin n =
@@ -5250,6 +5273,23 @@ in
     in
       SmtResource.with_e0_invocation
         (with_fresh_e0_replay_boundary_for duration outer) ()
+    end
+  fun e0_replay_continuation_timeout_for_test duration =
+    let
+      fun spin n = spin (if n = 1000000 then 0 else n + 1)
+      fun derive () =
+        (latest_proof_step := SOME (161803, "fixture-local", "end"); ())
+      fun continue () = SmtResource.profile_phase
+        "fixture/continuation-timeout" spin 0
+      fun replay () =
+        let val result =
+          track_proof_step 161803 "fixture-local" derive ()
+        in
+          continue result
+        end
+    in
+      SmtResource.with_e0_invocation
+        (with_fresh_e0_replay_boundary_for duration replay) ()
     end
   fun bv_family_measure_for_test target =
     term_contains_type_measure wordsSyntax.is_word_type target
