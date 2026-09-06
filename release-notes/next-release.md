@@ -229,6 +229,15 @@ New tools
     bounded monomorphization pass.  Empty overrides retain the tested
     per-slice schedule.
 
+-   HOLyHammer's premise selection now includes MePo relevance filtering, a
+    sparse-Naive-Bayes plus kNN MaSh learner, and their MeSh combination.  Its
+    default 24-slice schedule keeps the previous 16 kNN slices as a prefix and
+    adds eight ensemble slices.  The `filter` option accepts `knn`, `mepo`,
+    `mash`, `mesh`, and `none`; its empty default retains each slice's tested
+    filter, while a nonempty value overrides the whole schedule.  Premise
+    rankings, exported problems, result-cache keys, and evaluation journals
+    are filter-aware.
+
 New examples
 ------------
 
