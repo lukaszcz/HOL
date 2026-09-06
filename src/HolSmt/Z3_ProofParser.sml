@@ -187,6 +187,13 @@ local
 
   fun z3_char_to_num c = wordsSyntax.mk_w2n c
 
+  fun z3_char_to_int c =
+    if Type.compare (Term.type_of c, z3_char_ty) = EQUAL then
+      Term.mk_comb (intSyntax.int_injection, z3_char_to_num c)
+    else
+      raise ERR "<z3_string_dict.char.to_int>"
+        "expected one Char argument"
+
   fun z3_num_to_char n =
     wordsSyntax.mk_n2w (n, z3_char_index_ty)
 
@@ -259,8 +266,24 @@ local
             empty))
       end
 
+  fun dest_named_app thy name tm =
+    let
+      val (head, args) = boolSyntax.strip_comb tm
+      val {Thy, Name, ...} = Term.dest_thy_const head
+    in
+      if Thy = thy andalso Name = name then SOME args else NONE
+    end
+    handle Feedback.HOL_ERR _ => NONE
+
   fun z3_natural tm =
     numSyntax.mk_numeral (Arbint.toNat (intSyntax.int_of_term tm))
+
+  fun z3_seq_unit_inv s =
+    if is_z3_string s then
+      z3_char_result
+        (z3_num_to_char (z3_string_app "seq_unit_inv" [s]))
+    else
+      holsmt_app "smt_seq_nth" [s, intSyntax.zero_tm]
 
   fun z3_seq_pre (s, i) =
     if is_z3_string s then
@@ -324,6 +347,21 @@ local
               "unexpected self index"
         | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
             "at most one self index and two arguments expected"
+    end
+
+  fun z3_indexed_unary_marker name make =
+    let val marker = Term.mk_var (name, Type.alpha)
+    in
+      fn _ => fn indices => fn args =>
+        case (indices, args) of
+          ([], []) => marker
+        | ([index], [x]) =>
+            if Term.is_var index andalso
+               Lib.fst (Term.dest_var index) = name then make x
+            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+              "unexpected self index"
+        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+            "one self index and one argument expected"
     end
 
   fun z3_indexed_binary_marker name make =
@@ -539,6 +577,8 @@ local
              z3_string_app "seq_unit" [z3_char_to_num c]
            else listSyntax.mk_cons
              (c, listSyntax.mk_nil (Term.type_of c)))),
+        ("seq.unit-inv", z3_indexed_unary_marker "seq.unit-inv"
+          z3_seq_unit_inv),
         (* Z3 exposes these internal helpers in Seq proof certificates.  They
            have String-specific meanings only on the smtstr carrier; for a
            genuine Seq A certificate, reconstruct their native list forms.
@@ -574,6 +614,7 @@ local
         ("char.is_digit", SmtLib_Theories.K_zero_one
           (fn c => z3_string_app "char_is_digit"
             [z3_char_to_num c])),
+        ("char.to_int", SmtLib_Theories.K_zero_one z3_char_to_int),
         ("char.<=", SmtLib_Theories.K_zero_two
           (fn (c, d) => numSyntax.mk_leq
             (z3_char_to_num c, z3_char_to_num d))),

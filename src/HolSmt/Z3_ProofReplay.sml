@@ -99,6 +99,9 @@ local
     (* One mutable atom cache for the complete proof replay.  Every general
        reduction node in this state shares its owning-theory expansions. *)
     skeleton_context : SmtSkeletonProve.context,
+    (* General regex-index consequences are derived from the asserted DAG.
+       Share their checked specializations across all nodes in one proof. *)
+    string_index_cache : SmtStringProve.contextual_index_cache,
     z3_version : string
   }
 
@@ -112,6 +115,7 @@ local
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
+      string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     }
 
@@ -125,6 +129,7 @@ local
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
+      string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     }
 
@@ -138,6 +143,7 @@ local
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
+      string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     }
 
@@ -774,10 +780,20 @@ local
     handle Feedback.HOL_ERR _ =>
     reflexive_target ()
     handle Feedback.HOL_ERR _ =>
-    Tactical.TAC_PROOF ((HOLset.listItems asms, t),
-      PURE_REWRITE_TAC (rewrite_thms @ nnf_rewrites) THEN
-      bossLib.SIMP_TAC bossLib.bool_ss (rewrite_thms @ nnf_rewrites) THEN
-      tautLib.TAUT_TAC)
+    SmtResource.with_resource_step_time "Skeleton" "z3-nnf-taut"
+      (fn target =>
+        let
+          val maximum = SmtResource.max_term_nodes_for "Skeleton"
+          val observed = SmtResource.dag_nodes_up_to maximum target
+          val _ = SmtResource.check_dag_size_with_limit
+            "Skeleton" "z3-nnf-taut" maximum observed
+        in
+          Tactical.TAC_PROOF ((HOLset.listItems asms, target),
+            PURE_REWRITE_TAC (rewrite_thms @ nnf_rewrites) THEN
+            bossLib.SIMP_TAC bossLib.bool_ss
+              (rewrite_thms @ nnf_rewrites) THEN
+            tautLib.TAUT_TAC)
+        end) t
   end
 
   fun nnf_prove (thms, t) =
@@ -1287,21 +1303,122 @@ local
      single call to TAUT_PROVE.  The (partly less general)
      implementation below, however, is considerably faster.
   *)
+  val def_axiom_skeleton_context = SmtSkeletonProve.new_context []
+  val def_axiom_skeleton_owners = Redblackmap.mkDict Term.compare
+
+  fun def_axiom_skeleton_prove target =
+    SmtResource.with_resource_step_time
+      "Skeleton" "z3-def-axiom"
+      (fn target =>
+        let
+          val measure = SmtSkeletonProve.term_measure target
+          val _ = SmtResource.check_dag_size_for
+            "Skeleton" "z3-def-axiom" (#dag_nodes measure)
+        in
+          case SmtSkeletonProve.attempt_with_owners
+              def_axiom_skeleton_context def_axiom_skeleton_owners
+              measure target of
+            SmtSkeletonProve.Proved result => #theorem result
+          | SmtSkeletonProve.Declined =>
+              raise ERR "z3_def_axiom" "checked skeleton declined"
+        end) target
+
+  fun bounded_taut_prove category case_id target =
+    SmtResource.with_resource_step_time category case_id
+      (fn target =>
+        let
+          val maximum = SmtResource.max_term_nodes_for category
+          val observed = SmtResource.dag_nodes_up_to maximum target
+          val _ = SmtResource.check_dag_size_with_limit
+            category case_id maximum observed
+        in
+          tautLib.TAUT_PROVE target
+        end) target
+
+  fun bounded_conditional_word_prove category case_id target =
+    let
+      (* Splitting conditionals is exponential in their Boolean spine.
+         This helper is a small finite-word rewrite rung; larger shared
+         character DAGs stay on their dedicated bounded routes. *)
+      val maximum = 128
+      val _ = has_word_atom target orelse
+        raise ERR "bounded_conditional_word_prove"
+          "goal is outside the finite-word fragment"
+      val _ = not (has_arith_atom target) orelse
+        raise ERR "bounded_conditional_word_prove"
+          "mixed arithmetic/word goal is outside this fragment"
+      fun oversized_word subterm =
+        wordsSyntax.is_word_type (Term.type_of subterm) andalso
+        Arbnum.toInt (wordsSyntax.size_of subterm) > 8
+        handle Overflow => true
+      val _ = not (#found
+          (term_contains_measure oversized_word target)) orelse
+        raise ERR "bounded_conditional_word_prove"
+          "conditional word width exceeds the admission bound"
+      val _ = #found (term_contains_measure boolSyntax.is_cond target)
+        orelse raise ERR "bounded_conditional_word_prove"
+          "finite-word goal contains no conditional"
+      val observed = SmtResource.dag_nodes_up_to maximum target
+      val _ = observed <= maximum orelse
+        raise ERR "bounded_conditional_word_prove"
+          "conditional finite-word DAG exceeds the admission bound"
+    in
+      SmtResource.with_resource_step_time category case_id
+        (fn target =>
+          (SmtResource.check_resource_goal category case_id target;
+           Tactical.prove (target,
+             Tactical.REPEAT Tactic.COND_CASES_TAC THEN
+             Tactical.REPEAT (POP_ASSUM MP_TAC) THEN
+             Tactic.CONV_TAC blastLib.BBLAST_CONV))) target
+    end
+
   fun z3_def_axiom (state, t) =
+    (* Recognize excluded-middle clauses from their Boolean spine before
+       generic proforma matching.  This avoids traversing deeply shared
+       character and bit-vector atoms merely to bind one proposition. *)
+    (state, Library.gen_excluded_middle t)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+    let
+      fun is_char_bit tm =
+        case Lib.total Term.dest_thy_const tm of
+          SOME {Thy = "smtstringz3", Name = "char_bit", ...} => true
+        | _ => false
+      val _ = List.null
+        (SmtStringProve.dag_matching_terms is_char_bit t) andalso
+        raise ERR "z3_def_axiom" "not a character proposition"
+    in
+      (state, def_axiom_skeleton_prove t)
+    end
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
     Library.require_fastpath "Z3 def-axiom proforma" t
       (fn target =>
         (state,
          Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms target)) t
-    handle Feedback.HOL_ERR _ =>
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
     (* Array-encoded Set literals appear in Z3's Tseitin clauses as a
        select of the parsed EMPTY/UNIV predicate.  Normalize those recorded
        const-array forms before the propositional def-axiom cases below. *)
     (state, SmtArrayProve.set_simp_prove t)
-    handle Feedback.HOL_ERR _ =>
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
     (* or (or ... p ...) (not p) *)
     (* or (or ... (not p) ...) p *)
     (state, Library.gen_excluded_middle t)
-    handle Feedback.HOL_ERR _ =>
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
     (* (or (not (and ... p ...)) p) *)
     let
       val (lhs, rhs) = boolSyntax.dest_disj t
@@ -1332,14 +1449,20 @@ local
     in
       (state, Drule.IMP_ELIM (Lib.fst (Thm.EQ_IMP_RULE l_eq_r)))
     end
-    handle Feedback.HOL_ERR _ =>
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
       (state, Tactical.TAC_PROOF (([], t),
         Tactical.THEN
           (Tactical.REPEAT Tactic.COND_CASES_TAC,
            bossLib.ASM_SIMP_TAC boolSimps.bool_ss
              [boolTheory.EQ_SYM_EQ])))
-    handle Feedback.HOL_ERR _ =>
-      (state, tautLib.TAUT_PROVE t)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+        (state, def_axiom_skeleton_prove t)
 
   (* (!x. ?y. !z. P) = P *)
   fun z3_elim_unused (state, t) =
@@ -1382,8 +1505,24 @@ local
 
   (* introduces a local hypothesis (which must be discharged by
      'z3_lemma' at some later point in the proof) *)
+  fun hypothesis_char_next_route prove fallback =
+    prove ()
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else fallback ()
+
+  fun z3_hypothesis_theorem t =
+    if List.null (Term.free_vars t) andalso
+       SmtStringProve.char_word_expansion_domain t then
+      hypothesis_char_next_route
+        (fn () => SmtStringProve.char_prove t)
+        (fn () => Thm.ASSUME t)
+    else
+      Thm.ASSUME t
+
   fun z3_hypothesis (state, t) =
-      (state, Thm.ASSUME t)
+      (state, z3_hypothesis_theorem t)
 
   (* `apply-def` unfolds a name introduced by `intro-def`.
 
@@ -1712,6 +1851,26 @@ local
     val (l, r) = boolSyntax.dest_eq t
   in
     make_equal (l, r)
+    handle Feedback.HOL_ERR _ =>
+      (* Z3 also labels the injectivity of seq.unit followed by Char
+         repacking as monotonicity.  The sequence characters in this schema
+         are bounded by construction, so use the checked injectivity bridge
+         rather than treating the premise as a congruence equality. *)
+      Lib.tryfind (fn premise =>
+        let
+          fun apply theorem =
+            let val result = Drule.MATCH_MP
+              smtstringz3Theory.seq_unit_nth_i_word18_inj theorem
+            in
+              if Term.aconv (Thm.concl result) t then result
+              else if Term.aconv (Thm.concl (Thm.SYM result)) t then
+                Thm.SYM result
+              else raise ERR "monotonicity_prove"
+                "seq.unit injectivity conclusion mismatch"
+            end
+        in
+          apply premise handle Feedback.HOL_ERR _ => apply (Thm.SYM premise)
+        end) thms
     handle Feedback.HOL_ERR _ =>
       (* surprisingly, 'l' is sometimes of the form ``x /\ y ==> z``
          and must be transformed into ``x ==> y ==> z`` before any
@@ -2634,9 +2793,25 @@ local
        FP_REWRITE_ERROR crosses the handlers below and is converted back to a
        structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
-      ((state, rewrite_profile "propositional"
-          "rewrite(fp-preflight)(TAUT_PROVE)" tautLib.TAUT_PROVE t)
-        handle Feedback.HOL_ERR _ =>
+      let
+        fun bounded_propositional target =
+          case SmtSkeletonDispatch.attempt
+              (#skeleton_context state) target of
+            SmtSkeletonDispatch.Proved result =>
+              rewrite_profile "propositional"
+                "rewrite(fp-preflight)(skeleton)"
+                (fn () => #theorem result) ()
+          | SmtSkeletonDispatch.Declined =>
+              rewrite_profile "propositional"
+                "rewrite(fp-preflight)(TAUT_PROVE)"
+                (bounded_taut_prove "FloatingPoint"
+                  "z3-rewrite-propositional") target
+      in
+      ((state, bounded_propositional t)
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else
        ((* E1(c): exact FP theorem reuse is a redundant performance cache. *)
         (state, rewrite_profile "cached-checked-theorems"
            "rewrite(3)(cache-fp)"
@@ -2661,6 +2836,7 @@ local
           in
             (state, thm)
           end))
+      end
     else
       (* FP has first refusal.  Z3's bag encoding then gets the count-array
          ladder before generic proformas; its [(_ map +)] terms parse to
@@ -2812,9 +2988,18 @@ local
        val definitions = fp_per_bit_definitions state @
          HOLset.listItems (#definition_hyps state)
        (* E1(a): checked definitions reduce this fragment to BV blasting. *)
-       val thm = rewrite_profile "floating-point/bit-vectors"
-         "rewrite(15)(fp-packed-bits)"
-         (SmtFpProve.definition_bitblast_prove definitions) t
+       val thm =
+         (rewrite_profile "floating-point/bit-vectors"
+            "rewrite(15)(fp-packed-bits)"
+            (SmtFpProve.definition_bitblast_prove definitions) t
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else
+              rewrite_profile "bit-vectors"
+                "rewrite(15a)(conditional-BBLAST)"
+                (bounded_conditional_word_prove "BitVector"
+                  "z3-rewrite-conditional-fp-word") t)
        val state = state_define (state_cache_thm state thm) (Thm.hyp thm)
      in
        (state, thm)
@@ -3052,10 +3237,27 @@ local
         val step = Conv.HO_REWR_CONV
           (Drule.SELECT_RULE (skolem_theorem current)) current
         val accumulated = Thm.TRANS accumulated step
+        fun matched theorem =
+          case Lib.total (Term.match_term t) (Thm.concl theorem) of
+            SOME (substs, _) => SOME (instantiate theorem substs)
+          | NONE => NONE
       in
-        case Lib.total (Term.match_term t) (Thm.concl accumulated) of
-          SOME (substs, _) => instantiate accumulated substs
-        | NONE => peel (boolSyntax.rhs (Thm.concl step)) accumulated
+        case matched accumulated of
+          SOME theorem => theorem
+        | NONE =>
+            let
+              (* Simplify only the skolemized side, and only after the exact
+                 prefix misses.  Simplifying the whole equivalence would also
+                 turn [~(!x. ~P x)] into an existential, losing Z3's left
+                 side; doing it eagerly penalizes every ordinary skolem. *)
+              val normalized = Conv.CONV_RULE
+                (Conv.RAND_CONV
+                  (simpLib.SIMP_CONV boolSimps.bool_ss [])) accumulated
+            in
+              case matched normalized of
+                SOME theorem => theorem
+              | NONE => peel (boolSyntax.rhs (Thm.concl step)) accumulated
+            end
       end
     val thm = peel lhs (Thm.REFL lhs)
     val asl = Thm.hyp thm
@@ -3183,13 +3385,381 @@ local
   val z3_th_lemma_arith_generic =
     th_lemma_wrapper D1PerformanceCache "arith" (fn (state, t) =>
     let
-      (* E1(b): arithmetic combines complete linear and loud NLA routes. *)
-      val thm = profile "th_lemma[arith](3)" arith_prove t
+      (* Arithmetic certificates for Char comparisons contain the same
+         let-expanded bit sums as Char certificates.  Compact and normalize
+         those sums before invoking linear arithmetic; EQ_MP below transports
+         the checked result back to Z3's exact declared clause. *)
+      val is_character_arithmetic =
+        SmtStringProve.char_word_expansion_domain t
+      val normalization =
+        if is_character_arithmetic then
+          SmtStringProve.compact_char_word_core t
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else Thm.REFL t
+        else Thm.REFL t
+      val normalized = boolSyntax.rhs (Thm.concl normalization)
+        handle Feedback.HOL_ERR _ => raise ERR "z3_th_lemma_arith"
+          ("normalizer did not return an equality: " ^
+           Library.thm_to_string normalization)
+      (* Z3's mixed Char/arithmetic clauses expose Boolean guards as
+         conditional integer weights.  Prove the admitted additive bound
+         directly from general endpoint lemmas, avoiding an exponential
+         conditional split. *)
+      fun weighted_sum_arith_prove target =
+        let
+          val conditionals = HolKernel.find_terms boolSyntax.is_cond target
+          fun strip_clause term antecedents =
+            if boolSyntax.is_neg term then
+              (List.rev antecedents, term)
+            else
+              case Lib.total boolSyntax.dest_imp term of
+                SOME (antecedent, consequent) =>
+                  strip_clause consequent (antecedent :: antecedents)
+              | NONE => (List.rev antecedents, term)
+          val (antecedents, conclusion) = strip_clause target []
+          fun endpoint_bound lower conditional =
+            let
+              val (guard, upper, lower_endpoint) =
+                boolSyntax.dest_cond conditional
+              val _ = Term.aconv lower_endpoint intSyntax.zero_tm orelse
+                raise ERR "endpoint_bound" "nonzero lower endpoint"
+              val assumed_guard =
+                if lower then guard else boolSyntax.mk_neg guard
+              val bound = if lower then
+                  intSyntax.mk_leq (upper, conditional)
+                else intSyntax.mk_leq (conditional, lower_endpoint)
+              fun prove_from premise =
+                let
+                  val implication = boolSyntax.mk_imp (premise, bound)
+                  val theorem = simpLib.SIMP_PROVE
+                    (simpLib.++
+                      (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                    [integerTheory.int_ge,
+                     smtstringz3Theory.char_bit_word18,
+                     smtstringz3Theory.int_cond_weight_nonpositive,
+                     smtstringz3Theory.int_cond_weight_nonnegative,
+                     smtstringz3Theory.int_cond_weight_at_least]
+                    implication
+                in
+                  Thm.MP theorem (Thm.ASSUME premise)
+                end
+              fun normalize_guard term =
+                boolSyntax.rhs (Thm.concl
+                  (simpLib.SIMP_CONV
+                    (simpLib.++
+                      (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                    [smtstringz3Theory.char_bit_word18] term))
+                handle Conv.UNCHANGED => term
+              val expected_guard = normalize_guard assumed_guard
+              val theorem =
+                case List.find
+                    (fn premise => Term.aconv
+                      (normalize_guard premise) expected_guard)
+                    antecedents of
+                  SOME premise => prove_from premise
+                | NONE => raise ERR "endpoint_bound"
+                    "normalized endpoint guard is not an antecedent"
+            in
+              (if lower then upper else lower_endpoint, theorem)
+            end
+          fun nonnegative_fact conditional =
+            let
+              val theorem = Drule.SPEC_ALL
+                smtstringz3Theory.int_cond_weight_nonnegative
+              val proposition = intSyntax.mk_leq
+                (intSyntax.zero_tm, conditional)
+              val substitution =
+                Term.match_term (Thm.concl theorem) proposition
+            in
+              Drule.INST_TY_TERM substitution theorem
+            end
+          fun lower_bound_term term =
+            if intSyntax.is_plus term then
+              let
+                val (left, right) = intSyntax.dest_plus term
+                val (left_bound, left_theorem) = lower_bound_term left
+                val (right_bound, right_theorem) = lower_bound_term right
+                val combined = Drule.MATCH_MP integerTheory.INT_LE_ADD2
+                  (Thm.CONJ left_theorem right_theorem)
+              in
+                (intSyntax.mk_plus (left_bound, right_bound), combined)
+              end
+            else
+              case Lib.total (endpoint_bound true) term of
+                SOME result => result
+              | NONE =>
+                  case Lib.total nonnegative_fact term of
+                    SOME theorem => (intSyntax.zero_tm, theorem)
+                  | NONE => if List.null (Term.free_vars term) then
+                      (term, Thm.SPEC term integerTheory.INT_LE_REFL)
+                    else raise ERR "lower_bound_term"
+                      "non-literal additive leaf"
+          fun upper_bound_fact conditional =
+            let
+              val theorem = Drule.SPEC_ALL
+                smtstringz3Theory.int_cond_weight_upper_bound
+              val (_, upper, _) = boolSyntax.dest_cond conditional
+              val proposition = intSyntax.mk_leq (conditional, upper)
+              val substitution =
+                Term.match_term (Thm.concl theorem) proposition
+            in
+              Drule.INST_TY_TERM substitution theorem
+            end
+          fun upper_bound_term term =
+            if intSyntax.is_plus term then
+              let
+                val (left, right) = intSyntax.dest_plus term
+                val (left_bound, left_theorem) = upper_bound_term left
+                val (right_bound, right_theorem) = upper_bound_term right
+                val combined = Drule.MATCH_MP integerTheory.INT_LE_ADD2
+                  (Thm.CONJ left_theorem right_theorem)
+              in
+                (intSyntax.mk_plus (left_bound, right_bound), combined)
+              end
+            else
+              case Lib.total (endpoint_bound false) term of
+                SOME result => result
+              | NONE =>
+                  case Lib.total upper_bound_fact term of
+                    SOME theorem =>
+                      let val (_, upper, _) = boolSyntax.dest_cond term
+                      in (upper, theorem) end
+                  | NONE => if List.null (Term.free_vars term) then
+                      (term, Thm.SPEC term integerTheory.INT_LE_REFL)
+                    else raise ERR "upper_bound_term"
+                      "non-literal additive leaf"
+          val conclusion_body = Lib.total boolSyntax.dest_neg conclusion
+          val logical_inputs = antecedents @
+            (case conclusion_body of SOME body => [body] | NONE => [])
+          fun denied_threshold antecedent =
+            let
+              val inequality = boolSyntax.dest_neg antecedent
+              val (left, right) = intSyntax.dest_leq inequality
+            in
+              if List.null (Term.free_vars left) then
+                SOME (antecedent, true, left, right)
+              else if List.null (Term.free_vars right) then
+                SOME (antecedent, false, right, left)
+              else NONE
+            end
+            handle Feedback.HOL_ERR _ => NONE
+          val (denied, is_lower, threshold, code) =
+            case List.mapPartial denied_threshold antecedents of
+              quadruple :: _ => quadruple
+            | [] => raise ERR "weighted_sum_arith_prove"
+                "no denied threshold"
+          fun contains needle haystack = not (List.null
+            (HolKernel.find_terms (Term.aconv needle) haystack))
+          val difference_antecedent =
+            case List.find (fn antecedent =>
+              contains code antecedent andalso not (List.null
+                (HolKernel.find_terms boolSyntax.is_cond antecedent)))
+              logical_inputs of
+              SOME antecedent => antecedent
+            | NONE => raise ERR "weighted_sum_arith_prove"
+                "no difference antecedent"
+          fun code_difference term =
+            let
+              val (left, right) = intSyntax.dest_plus term
+            in
+              if Term.aconv left code then SOME right
+              else if Term.aconv right code then SOME left
+              else NONE
+            end
+            handle Feedback.HOL_ERR _ => NONE
+          val negative_sum =
+            case List.mapPartial code_difference
+              (HolKernel.find_terms intSyntax.is_plus
+                difference_antecedent) of
+              term :: _ => term
+            | [] => raise ERR "weighted_sum_arith_prove"
+                "no code difference"
+          val (factor_left, factor_right) =
+            intSyntax.dest_mult negative_sum
+          val sum =
+            if List.null (HolKernel.find_terms boolSyntax.is_cond factor_left)
+            then factor_right else factor_left
+          val contradiction =
+            if is_lower then
+              let
+                val (_, raw_bound) = lower_bound_term sum
+                val bound = simpLib.SIMP_RULE
+                  (simpLib.++ (boolSimps.bool_ss,
+                    intSimps.INT_REDUCE_ss)) [] raw_bound
+                val (derived_threshold, _) =
+                  intSyntax.dest_leq (Thm.concl bound)
+                val threshold_to_derived = intLib.ARITH_PROVE
+                  (intSyntax.mk_leq (threshold, derived_threshold))
+                  handle Feedback.HOL_ERR _ =>
+                    raise ERR "weighted_sum_arith_prove"
+                      ("lower threshold comparison failed: " ^
+                       Library.term_to_string threshold ^ " <= " ^
+                       Library.term_to_string derived_threshold)
+                val threshold_at_most_sum = Drule.MATCH_MP
+                  integerTheory.INT_LE_TRANS
+                  (Thm.CONJ threshold_to_derived bound)
+                val sum_at_most_code = intSyntax.mk_leq (sum, code)
+                val equivalence = boolSyntax.mk_eq
+                  (difference_antecedent, sum_at_most_code)
+                val substitution = Term.match_term
+                  (Thm.concl
+                    smtstringz3Theory.int_nonnegative_add_neg_mul)
+                  equivalence
+                val bridge = Drule.INST_TY_TERM substitution
+                  smtstringz3Theory.int_nonnegative_add_neg_mul
+                val difference = Thm.EQ_MP bridge
+                  (Thm.ASSUME difference_antecedent)
+                val threshold_at_most_code = Drule.MATCH_MP
+                  integerTheory.INT_LE_TRANS
+                  (Thm.CONJ threshold_at_most_sum difference)
+              in
+                Thm.MP (Thm.NOT_ELIM (Thm.ASSUME denied))
+                  threshold_at_most_code
+              end
+            else
+              let
+                val (_, raw_bound) = upper_bound_term sum
+                val bound = simpLib.SIMP_RULE
+                  (simpLib.++ (boolSimps.bool_ss,
+                    intSimps.INT_REDUCE_ss)) [] raw_bound
+                val (_, derived_threshold) =
+                  intSyntax.dest_leq (Thm.concl bound)
+                val derived_to_threshold = intLib.ARITH_PROVE
+                  (intSyntax.mk_leq (derived_threshold, threshold))
+                  handle Feedback.HOL_ERR _ =>
+                    raise ERR "weighted_sum_arith_prove"
+                      ("upper threshold comparison failed: " ^
+                       Library.term_to_string derived_threshold ^ " <= " ^
+                       Library.term_to_string threshold)
+                val sum_at_most_threshold = Drule.MATCH_MP
+                  integerTheory.INT_LE_TRANS
+                  (Thm.CONJ bound derived_to_threshold)
+                val code_at_most_sum = intSyntax.mk_leq (code, sum)
+                val equivalence = boolSyntax.mk_eq
+                  (difference_antecedent, code_at_most_sum)
+                val substitution = Term.match_term
+                  (Thm.concl
+                    smtstringz3Theory.int_nonpositive_add_neg_mul)
+                  equivalence
+                val bridge = Drule.INST_TY_TERM substitution
+                  smtstringz3Theory.int_nonpositive_add_neg_mul
+                val difference = Thm.EQ_MP bridge
+                  (Thm.ASSUME difference_antecedent)
+                val code_at_most_threshold = Drule.MATCH_MP
+                  integerTheory.INT_LE_TRANS
+                  (Thm.CONJ difference sum_at_most_threshold)
+              in
+                Thm.MP (Thm.NOT_ELIM (Thm.ASSUME denied))
+                  code_at_most_threshold
+              end
+          val proved_conclusion =
+            case conclusion_body of
+              SOME body => Thm.MP (Thm.SPEC body boolTheory.IMP_F)
+                (Thm.DISCH body contradiction)
+            | NONE => Thm.MP
+                (Thm.SPEC conclusion boolTheory.FALSITY) contradiction
+          val exact = List.foldr
+            (fn (antecedent, theorem) => Thm.DISCH antecedent theorem)
+            proved_conclusion antecedents
+          val _ = Term.aconv (Thm.concl exact) target orelse
+            raise ERR "weighted_sum_arith_prove"
+              ("target mismatch; actual=" ^
+               Library.term_to_string (Thm.concl exact) ^
+               "; expected=" ^ Library.term_to_string target)
+        in
+          exact
+        end
+      fun contextual_arith_prove target =
+        Tactical.prove (target,
+          Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN
+               (bossLib.FULL_SIMP_TAC
+                  (simpLib.++ (bossLib.srw_ss(),
+                    intSimps.INT_REDUCE_ss)) [],
+                intLib.ARITH_TAC)))
+      fun bounded_char_arith case_id prove target =
+        SmtResource.with_resource_step_time "String" case_id prove target
+      fun conditional_endpoint_prove target =
+        let
+          val guards = HOLset.listItems (HOLset.fromList Term.compare
+            (List.map (fn conditional =>
+               let val (guard, _, _) = boolSyntax.dest_cond conditional
+               in guard end)
+             (HolKernel.find_terms boolSyntax.is_cond target)))
+          val guard =
+            case guards of
+              [guard] => guard
+            | _ => raise ERR "conditional_endpoint_prove"
+                "not a one-guard endpoint clause"
+        in
+          Tactical.prove (target,
+            Tactical.THEN
+              (Tactical.REPEAT Tactic.STRIP_TAC,
+               Tactical.THEN
+                 (Tactic.ASM_CASES_TAC guard,
+                  bossLib.FULL_SIMP_TAC
+                    (simpLib.++
+                      (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                    [integerTheory.int_ge])))
+        end
+      fun weighted_char_arith target =
+        bounded_char_arith "z3-char-weighted-sum"
+          weighted_sum_arith_prove target
+      fun generic_normalized () =
+        profile "th_lemma[arith](3)" arith_prove normalized
         handle Feedback.HOL_ERR holerr =>
           (* E1(a): ordinary legacy arith-tagged BV failures end in complete
              BBLAST. Resource refusals must terminate this ladder. *)
-          arith_bv_fallback t
+          arith_bv_fallback normalized
             (profile "th_lemma[arith](4)(bv)" bv_th_lemma_prove) holerr
+      fun denied_closed_threshold antecedent =
+        let
+          val inequality = boolSyntax.dest_neg antecedent
+          val (left, right) = intSyntax.dest_leq inequality
+        in
+          List.null (Term.free_vars left) orelse
+          List.null (Term.free_vars right)
+        end
+        handle Feedback.HOL_ERR _ => false
+      val (normalized_antecedents, _) = boolSyntax.strip_imp normalized
+      val is_weighted_clause =
+        List.exists denied_closed_threshold normalized_antecedents
+      val normalized_thm =
+        if Term.aconv normalized boolSyntax.T then boolTheory.TRUTH
+        else if not is_character_arithmetic then generic_normalized ()
+        else if List.null
+          (HolKernel.find_terms boolSyntax.is_cond normalized)
+        then
+          (profile "th_lemma[arith](contextual-char)"
+             (bounded_char_arith "z3-contextual-char"
+               contextual_arith_prove) normalized
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else generic_normalized ())
+        else
+          (profile "th_lemma[arith](conditional-endpoint)"
+             (bounded_char_arith "z3-char-conditional-endpoint"
+               conditional_endpoint_prove) normalized
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else if is_weighted_clause then
+               (* The weighted proof owns closed-threshold contradiction
+                  clauses.  Letting a rejected member enter generic
+                  arithmetic repeats broad proof search and can hide its
+                  exact shape. *)
+               profile "th_lemma[arith](char-conditionals)"
+                 weighted_char_arith normalized
+             else generic_normalized ())
+      val thm = Thm.EQ_MP (Thm.SYM normalization) normalized_thm
+        handle Feedback.HOL_ERR _ => raise ERR "z3_th_lemma_arith"
+          ("failed to transport normalized theorem: normalization=" ^
+           Library.thm_to_string normalization ^ "; theorem=" ^
+           Library.thm_to_string normalized_thm)
     in
       (* cache 'thm' *)
       (state_cache_thm state thm, thm)
@@ -3219,11 +3789,31 @@ local
   fun th_lemma_target (_, thms, t) =
     boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
 
-  fun z3_th_lemma_arith args =
-    if SmtBagProve.has_native_bag_encoding (th_lemma_target args) then
-      z3_th_lemma_bag args
-    else
-      z3_th_lemma_arith_generic args
+  fun z3_th_lemma_arith (args as (state, thms, _)) =
+    let
+      val target = th_lemma_target args
+      fun legacy () =
+        if SmtBagProve.has_native_bag_encoding target then
+          z3_th_lemma_bag args
+        else
+          z3_th_lemma_arith_generic args
+      fun bounded_propositional () =
+        let
+          val theorem = profile "th_lemma[arith](outer-taut)"
+            (bounded_taut_prove "Skeleton" "z3-arith-outer-taut") target
+        in
+          (state, Drule.LIST_MP thms theorem)
+        end
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else legacy ()
+    in
+      case skeleton_general_attempt state target of
+        SmtSkeletonDispatch.Proved result =>
+          (state, Drule.LIST_MP thms (skeleton_general_success result))
+      | SmtSkeletonDispatch.Declined => bounded_propositional ()
+    end
 
   fun z3_th_lemma_array args =
     if SmtBagProve.has_native_bag_encoding (th_lemma_target args) then
@@ -3276,8 +3866,11 @@ local
 
       (* E1(a): TAUT_PROVE decides the propositional fragment. *)
       val thm = profile "th_lemma[basic](2)(TAUT_PROVE)"
-        tautLib.TAUT_PROVE t
-        handle Feedback.HOL_ERR _ => arith ["boolean"]
+        (bounded_taut_prove "Skeleton" "z3-basic-taut") t
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else arith ["boolean"]
     in
       (* cache 'thm' *)
       (state_cache_thm state thm, thm)
@@ -3431,30 +4024,36 @@ local
        target is offered: owned bridge atoms may be reduced while symbolic
        String leaves remain as propositional residuals. *)
     val _ = SmtStringProve.check_string_family_admission t'
+    fun theory () =
+      (* E1(b): the general String/regex procedure gates its family. *)
+      profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)")
+        prover t'
+    fun contextual () =
+      (* E1(b): contextual String/regex replay fails loudly at exit. *)
+      profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
+        (SmtStringProve.string_contextual_prove_cached
+          (#string_index_cache state) context) t'
+    fun unsupported () =
+      raise ERR ("z3_th_lemma_" ^ dispatch_theory)
+        (unsupported_string_th_lemma_message dispatch_theory
+          state metadata t')
     fun legacy () =
-      string_th_lemma_next_route
-        (fn () =>
-          (* E1(b): the general String/regex procedure gates its family. *)
-          profile ("th_lemma[" ^ dispatch_theory ^ "](1)(theory)")
-            prover t')
-        (fn () =>
-          string_th_lemma_next_route
-            (fn () =>
-              (* E1(b): contextual String/regex replay fails loudly at
-                 exit. *)
-              profile ("th_lemma[" ^ dispatch_theory ^ "](2)(contextual)")
-                (SmtStringProve.string_contextual_prove context) t')
-            (fn () =>
-              raise ERR ("z3_th_lemma_" ^ dispatch_theory)
-                (unsupported_string_th_lemma_message dispatch_theory
-                  state metadata t')))
+      if not (List.null context) andalso
+         SmtStringProve.has_contextual_index_target t'
+      then
+        string_th_lemma_next_route contextual (fn () =>
+          string_th_lemma_next_route theory unsupported)
+      else
+        string_th_lemma_next_route theory (fn () =>
+          string_th_lemma_next_route contextual unsupported)
     val (general, thm) =
       case skeleton_general_attempt state t' of
         SmtSkeletonDispatch.Proved result =>
           (true, skeleton_general_success result)
       | SmtSkeletonDispatch.Declined => (false, legacy ())
   in
-    (if general then state else state_cache_thm state thm,
+    (if general orelse dispatch_theory = "char" then state
+     else state_cache_thm state thm,
      Drule.LIST_MP thms thm)
   end
 
@@ -3483,12 +4082,48 @@ local
   fun z3_th_lemma_seq metadata (args as (state, thms, t)) =
     let
       val target = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+      fun string_route () =
+        string_th_lemma_wrapper "seq" SmtStringProve.check_seq_type
+          metadata (SmtStringProve.string_prove arith_prove) args
+      fun direct_head_tail theorem =
+        let
+          fun attempt theorem =
+            let
+              val substitution = Term.match_term (Thm.concl theorem) t
+              val instance = Drule.INST_TY_TERM substitution theorem
+              val _ = Term.aconv (Thm.concl instance) t orelse
+                raise ERR "z3_th_lemma_seq" "direct instance mismatch"
+            in
+              instance
+            end
+          val theorem = Drule.SPEC_ALL theorem
+          val instance = attempt theorem
+            handle Feedback.HOL_ERR _ => attempt (Thm.SYM theorem)
+        in
+          (state, instance)
+        end
+      val direct = Lib.total (Lib.tryfind direct_head_tail)
+        [smtstringz3Theory.seq_head_tail_word18,
+         smtstringz3Theory.seq_head_tail_word18_z3_index,
+         smtstringz3Theory.seq_head_tail_word18_eq,
+         smtstringz3Theory.smtstr_from_code_length_valid_clause,
+         smtstringz3Theory.smtstr_to_code_length_one_lower_clause,
+         smtstringz3Theory.smtstr_to_code_length_one_upper_clause,
+         smtstringz3Theory.char_seq_unit_inv,
+         smtstringz3Theory.seq_head_tail_word18_z3_index]
     in
-      if SmtSeqProve.has_seq_type target then
+      case direct of
+        SOME result => result
+      | NONE => if SmtSeqProve.has_seq_type target then
         z3_th_lemma_native_seq args
       else
-        string_th_lemma_wrapper "seq" SmtStringProve.check_seq_type metadata
-          (SmtStringProve.string_prove arith_prove) args
+        case (SOME (SmtStringProve.replay_parametric_seq_prove target)
+              handle Feedback.HOL_ERR holerr =>
+                if SmtResource.is_resource_gate holerr then
+                  raise Feedback.HOL_ERR holerr
+                else NONE) of
+          SOME theorem => (state, Drule.LIST_MP thms theorem)
+        | NONE => string_route ()
     end
 
   fun z3_th_lemma_char metadata =
@@ -4422,6 +5057,8 @@ local
   end
 in
   (* For unit tests *)
+  val hypothesis_theorem_for_test = z3_hypothesis_theorem
+  val hypothesis_char_next_route_for_test = hypothesis_char_next_route
   val asserted_membership_diagnostic = asserted_membership_diagnostic
   val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
   val unsupported_hyp_removal_diagnostic =
@@ -4554,6 +5191,7 @@ in
     bit_decompositions = proof_bit_decompositions proof,
     translation_definitions = definitions,
     skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
+    string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }
 

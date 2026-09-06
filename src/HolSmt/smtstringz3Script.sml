@@ -55,6 +55,13 @@ Theorem seq_nth_i_def = CONJUNCT1 seq_nth_i_spec
 
 Theorem seq_nth_i_bound[simp] = CONJUNCT2 seq_nth_i_spec
 
+(* One fixed total interpretation of Z3's proof-only seq.unit-inv symbol.
+   Its arbitrary out-of-range value is inherited from seq_nth_i, exactly as
+   for the solver's Char-valued sequence selector. *)
+Definition seq_unit_inv_def:
+  seq_unit_inv s = seq_nth_i s 0
+End
+
 Definition char_is_digit_def:
   char_is_digit (c : num) <=> 48 <= c /\ c <= 57
 End
@@ -79,6 +86,18 @@ Definition char_bit_def:
   char_bit k (c : num) <=> BIT k c
 End
 
+(* Z3's character theory records bit congruence as a disjunctive clause.
+   Keeping the equality premise abstract makes this usable at every string
+   position and for every bit, without expanding the shared word term. *)
+Theorem char_bit_eq_clause:
+  x = y ==>
+  ((n2w y : 18 word) <> n2w x \/
+   ~char_bit b (w2n (n2w y : 18 word)) \/
+   char_bit b (w2n (n2w x : 18 word)))
+Proof
+  simp []
+QED
+
 (* TASK_03's five-version catalog refutes a construction-order state
    number: k is the cursor in the original string, while the regex argument
    already denotes the residual language. *)
@@ -97,10 +116,157 @@ End
 
 (* Evaluation equations consumed by the character and regex replay rungs. *)
 
+Theorem seq_nth_i_unit:
+  c <= 196607 ==> seq_nth_i (seq_unit c) 0 = c
+Proof
+  simp [seq_unit_def, seq_nth_i_def, smtstringTheory.smtstr_rep_def]
+QED
+
+Theorem seq_unit_inv_unit:
+  c <= 196607 ==> seq_unit_inv (seq_unit c) = c
+Proof
+  simp [seq_unit_inv_def, seq_nth_i_unit]
+QED
+
 (* A constructor-recursive equation would be unsound under the bounded
    carrier: 'SmtStr (h::s)' constrains nothing unless 'h' is a code point.
    The evaluation rule is therefore the representation-level one, which
    'smtstr_rep_compute' already reduces for a literal argument. *)
+Theorem seq_nth_i_at:
+  i < LENGTH (smtstr_rep s) ==>
+  seq_nth_i (smtstr_at s (&i)) 0 = seq_nth_i s i
+Proof
+  strip_tac >>
+  `seq_nth_i s i = EL i (smtstr_rep s)` by
+    simp [seq_nth_i_def] >>
+  `EL i (smtstr_rep s) <= 196607` by
+    metis_tac [seq_nth_i_bound] >>
+  simp [seq_nth_i_def, smtstringTheory.smtstr_at_def,
+        smtstringTheory.smtstr_substr_def,
+        smtstringTheory.smtstr_rep_def,
+        rich_listTheory.DROP_CONS_EL]
+QED
+
+Theorem seq_nth_i_to_code:
+  smtstr_len s = 1 ==>
+  smtstr_to_code s = &(seq_nth_i s 0)
+Proof
+  rw [smtstringTheory.smtstr_len_def] >>
+  Cases_on `smtstr_rep s` >> fs [] >>
+  Cases_on `t` >>
+  fs [smtstringTheory.smtstr_to_code_def, seq_nth_i_def]
+QED
+
+Theorem smtstr_to_code_length_one_bounds[local]:
+  smtstr_len s = 1 ==>
+  smtstr_to_code s >= 0 /\ smtstr_to_code s <= 196607
+Proof
+  strip_tac >>
+  `smtstr_to_code s = &(seq_nth_i s 0)` by
+    metis_tac [seq_nth_i_to_code] >>
+  simp [integerTheory.int_ge]
+QED
+
+Theorem smtstr_to_code_length_one_lower_clause:
+  ~(1 = smtstr_len s) \/ smtstr_to_code s >= 0
+Proof
+  Cases_on `1 = smtstr_len s` >> simp [] >>
+  fs [smtstr_to_code_length_one_bounds]
+QED
+
+Theorem smtstr_to_code_length_one_upper_clause:
+  ~(1 = smtstr_len s) \/ smtstr_to_code s <= 196607
+Proof
+  Cases_on `1 = smtstr_len s` >> simp [] >>
+  fs [smtstr_to_code_length_one_bounds]
+QED
+
+Theorem seq_nth_i_to_code_char:
+  smtstr_len s <> 1 \/
+  smtstr_to_code s =
+    &(w2n (n2w (seq_nth_i s 0) : 18 word))
+Proof
+  Cases_on `smtstr_len s = 1` >>
+  `seq_nth_i s 0 < 262144` by
+    (mp_tac (Q.SPECL [`s`, `0`] seq_nth_i_bound) >> decide_tac) >>
+  simp [seq_nth_i_to_code, wordsTheory.w2n_n2w,
+        wordsTheory.dimword_def, arithmeticTheory.LESS_MOD]
+QED
+
+Theorem seq_nth_i_to_code_char_z3:
+  (1 : int) <> smtstr_len s \/
+  &(w2n (n2w (seq_nth_i s 0) : 18 word)) = smtstr_to_code s
+Proof
+  metis_tac [seq_nth_i_to_code_char]
+QED
+
+Theorem seq_nth_i_to_code_char_z3_index:
+  (1 : int) <> smtstr_len s \/
+  &(w2n
+      (n2w (seq_nth_i s (Num (0 : int))) : 18 word)) =
+    smtstr_to_code s
+Proof
+  `Num (0 : int) = 0` by simp [] >>
+  metis_tac [seq_nth_i_to_code_char_z3]
+QED
+
+Theorem smtstr_at_length:
+  !i s.
+  (0 : int) <= i ==>
+  smtstr_len s <= i \/
+  (1 : int) = smtstr_len (smtstr_at s i)
+Proof
+  rw [smtstringTheory.smtstr_len_at,
+      smtstringTheory.smtstr_len_def] >>
+  Cases_on `LENGTH (smtstr_rep s) <= Num i` >> simp [] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem seq_nth_i_mod_2exp18:
+  seq_nth_i s i MOD 262144 = seq_nth_i s i
+Proof
+  `seq_nth_i s i < 262144` by
+    (mp_tac (Q.SPECL [`s`, `i`] seq_nth_i_bound) >> decide_tac) >>
+  simp [arithmeticTheory.LESS_MOD]
+QED
+
+Theorem smtstr_at_index:
+  !i s.
+  (0 : int) <= i ==>
+  smtstr_len s <= i \/
+  seq_unit (seq_nth_i s (Num i)) = smtstr_at s i
+Proof
+  rpt strip_tac >>
+  Cases_on `LENGTH (smtstr_rep s) <= Num i`
+  >- (disj1_tac >>
+      fs [smtstringTheory.smtstr_len_def] >>
+      intLib.ARITH_TAC)
+  >> disj2_tac >>
+  `Num i < LENGTH (smtstr_rep s)` by decide_tac >>
+  simp [seq_unit_def, seq_nth_i_def,
+        smtstringTheory.smtstr_at_in_range]
+QED
+
+Theorem smtstr_at_length_num:
+  !i s.
+  smtstr_len s <= &(i : num) \/
+  (1 : int) = smtstr_len (smtstr_at s (&i))
+Proof
+  rpt strip_tac >>
+  mp_tac (Q.SPECL [`&(i : num)`, `s`] smtstr_at_length) >>
+  simp []
+QED
+
+Theorem smtstr_at_index_num:
+  !i s.
+  smtstr_len s <= &(i : num) \/
+  seq_unit (seq_nth_i s i) = smtstr_at s (&i)
+Proof
+  rpt strip_tac >>
+  mp_tac (Q.SPECL [`&(i : num)`, `s`] smtstr_at_index) >>
+  simp []
+QED
+
 Theorem seq_nth_i_compute[compute]:
   i < LENGTH (smtstr_rep s) ==>
   (seq_nth_i s i = EL i (smtstr_rep s))
@@ -134,8 +300,61 @@ Proof
   simp []
 QED
 
+Theorem seq_unit_nth_i_word18_inj:
+  !s i t j.
+  seq_unit
+      (w2n (n2w (seq_nth_i s i) : 18 word)) =
+    seq_unit
+      (w2n (n2w (seq_nth_i t j) : 18 word)) ==>
+  (n2w (w2n (n2w (seq_nth_i s i) : 18 word)) : 18 word) =
+  n2w (w2n (n2w (seq_nth_i t j) : 18 word))
+Proof
+  rpt strip_tac >>
+  `seq_nth_i s i <= 196607 /\ seq_nth_i t j <= 196607` by
+    simp [seq_nth_i_bound] >>
+  fs [char_word18_w2n_n2w, seq_unit_def,
+      smtstringTheory.SmtStr_11]
+QED
+
+Theorem char_seq_unit_inv:
+  (n2w
+    (seq_unit_inv
+      (seq_unit (w2n (n2w (seq_nth_i s i) : 18 word)))) : 18 word) =
+  n2w (seq_nth_i s i)
+Proof
+  `seq_nth_i s i <= 196607` by simp [seq_nth_i_bound] >>
+  simp [char_word18_w2n_n2w, seq_unit_inv_unit]
+QED
+
+Theorem char_seq_unit_at:
+  i < LENGTH (smtstr_rep s) ==>
+  ((n2w
+      (seq_unit_inv
+        (seq_unit (w2n (n2w (seq_nth_i s i) : 18 word)))) : 18 word) =
+   n2w (seq_nth_i (smtstr_at s (&i)) 0))
+Proof
+  strip_tac >>
+  `seq_nth_i s i <= 196607` by simp [seq_nth_i_bound] >>
+  simp [char_word18_w2n_n2w, seq_unit_inv_unit, seq_nth_i_at]
+QED
+
+Theorem unicode_mod_2exp18_eq:
+  a <= 196607 /\ b <= 196607 ==>
+  (a MOD 262144 = b MOD 262144 <=> a = b)
+Proof
+  strip_tac >>
+  `a < 262144 /\ b < 262144` by decide_tac >>
+  simp [arithmeticTheory.LESS_MOD]
+QED
+
 Theorem char_num_of_int:
   Num (&n) = n
+Proof
+  simp []
+QED
+
+Theorem char_num_zero:
+  Num (0 : int) = 0
 Proof
   simp []
 QED
@@ -164,6 +383,100 @@ Proof
         wordsTheory.w2n_lt]
 QED
 
+Theorem num_not_leq_prev:
+  ~(n <= m) <=> SUC m <= n
+Proof
+  simp [arithmeticTheory.NOT_LEQ]
+QED
+
+Theorem int_cond_weight_nonpositive:
+  0 < n ==>
+  (((if b then (&n : int) else 0) <= 0) <=> ~b)
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem int_cond_weight_at_least:
+  0 < n ==>
+  ((&n <= (if b then (&n : int) else 0)) <=> b)
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem int_cond_weight_nonnegative:
+  0 <= (if b then (&n : int) else 0)
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem int_cond_weight_upper_bound:
+  (if b then (&n : int) else 0) <= &n
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem int_cond_weight_upper_endpoint:
+  (if b then (&n : int) else 0) <> &n \/
+  &n <= (if b then &n else 0)
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem int_cond_weight_lower_endpoint:
+  (if b then (&n : int) else 0) <> 0 \/
+  (if b then &n else 0) <= 0
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem int_nonnegative_add_neg_mul:
+  0 <= x + -1 * y <=> y <= x
+Proof
+  intLib.ARITH_TAC
+QED
+
+Theorem int_nonpositive_add_neg_mul:
+  x + -1 * y <= 0 <=> x <= y
+Proof
+  intLib.ARITH_TAC
+QED
+
+Theorem int_of_num_cond[local]:
+  ((if b then (&m : int) else &n) = &(if b then m else n))
+Proof
+  Cases_on `b` >> simp []
+QED
+
+Theorem char_bit_sum_18:
+  ((if char_bit 0 (w2n (c : 18 word)) then 1 else 0) +
+   (if char_bit 1 (w2n c) then 2 else 0) +
+   (if char_bit 2 (w2n c) then 4 else 0) +
+   (if char_bit 3 (w2n c) then 8 else 0) +
+   (if char_bit 4 (w2n c) then 16 else 0) +
+   (if char_bit 5 (w2n c) then 32 else 0) +
+   (if char_bit 6 (w2n c) then 64 else 0) +
+   (if char_bit 7 (w2n c) then 128 else 0) +
+   (if char_bit 8 (w2n c) then 256 else 0) +
+   (if char_bit 9 (w2n c) then 512 else 0) +
+   (if char_bit 10 (w2n c) then 1024 else 0) +
+   (if char_bit 11 (w2n c) then 2048 else 0) +
+   (if char_bit 12 (w2n c) then 4096 else 0) +
+   (if char_bit 13 (w2n c) then 8192 else 0) +
+   (if char_bit 14 (w2n c) then 16384 else 0) +
+   (if char_bit 15 (w2n c) then 32768 else 0) +
+   (if char_bit 16 (w2n c) then 65536 else 0) +
+   (if char_bit 17 (w2n c) then 131072 else 0) : int) =
+  &(w2n c)
+Proof
+  simp [char_bit_word18, wordsTheory.word_bit_def,
+        wordsTheory.w2n_def, bitTheory.SBIT_def] >>
+  EVAL_TAC >>
+  simp [int_of_num_cond, integerTheory.INT_OF_NUM_ADD] >>
+  CONV_TAC
+    (AC_CONV
+      (arithmeticTheory.ADD_ASSOC, arithmeticTheory.ADD_COMM))
+QED
+
 Theorem aut_accept_compute[compute]:
   aut_accept s k r <=>
     smt_in_re (SmtStr (DROP k (smtstr_rep s))) r
@@ -175,6 +488,13 @@ Theorem aut_accept_zero:
   aut_accept s 0 r <=> smt_in_re s r
 Proof
   simp [aut_accept_compute]
+QED
+
+Theorem aut_accept_none:
+  ~aut_accept s k reglan_none
+Proof
+  simp [aut_accept_compute, smtstringTheory.smt_in_re_def,
+        smtstringTheory.re_lang_def]
 QED
 
 (* The automaton state is a suffix of the representation, and every suffix of
@@ -366,6 +686,20 @@ Proof
          smtstringTheory.smtstr_rep_def]
 QED
 
+Theorem aut_accept_loop_range_deriv:
+  lo <= 196607 /\ hi <= 196607 ==>
+  (aut_accept s k
+      (re_deriv d
+        (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n)) <=>
+   n <> 0 /\ lo <= d /\ d <= hi /\
+   aut_accept s k
+     (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi]))
+       (i - 1) (n - 1)))
+Proof
+  strip_tac >>
+  simp [aut_accept_compute, smtstringTheory.re_deriv_loop_range]
+QED
+
 Theorem aut_accept_loop_deriv:
   c <= 196607 ==>
   (aut_accept s k
@@ -413,6 +747,101 @@ Proof
         integerTheory.INT_OF_NUM_LE] >>
   drule aut_accept_transition >>
   simp [aut_accept_range_deriv]
+QED
+
+Theorem aut_accept_loop_range_transition:
+  lo <= 196607 /\ hi <= 196607 ==>
+  (~aut_accept s k
+      (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n) \/
+   smtstr_len s <= &k \/
+   (n <> 0 /\ seq_nth_i s k <= hi /\ lo <= seq_nth_i s k /\
+    aut_accept s (SUC k)
+      (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi]))
+        (i - 1) (n - 1))))
+Proof
+  strip_tac >>
+  Cases_on
+    `aut_accept s k
+       (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n)` >>
+  simp [smtstringTheory.smtstr_len_def,
+        integerTheory.INT_OF_NUM_LE] >>
+  drule aut_accept_transition >>
+  simp [aut_accept_loop_range_deriv] >>
+  metis_tac []
+QED
+
+Theorem aut_accept_loop_once:
+  aut_accept s k (reglan_loop r 1 1) <=> aut_accept s k r
+Proof
+  simp [aut_accept_compute] >>
+  PURE_REWRITE_TAC [smtstringTheory.smt_in_re_rep] >>
+  simp [smtstringTheory.re_lang_def] >>
+  metis_tac [smtstringTheory.reglan_loop_lang_once]
+QED
+
+Theorem aut_accept_loop_range_length_int:
+  lo <= 196607 /\ hi <= 196607 /\ (&k : int) <= smtstr_len s /\
+  aut_accept s k
+    (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n) ==>
+  (&(k + i) : int) <= smtstr_len s
+Proof
+  rw [aut_accept_lang, smtstringTheory.re_lang_def,
+      smtstringTheory.smtstr_rep_def,
+      smtstringTheory.smtstr_len_def] >>
+  `smtstr_rep (SmtStr [lo]) = [lo] /\
+   smtstr_rep (SmtStr [hi]) = [hi]` by
+    simp [smtstringTheory.smtstr_rep_def] >>
+  fs [smtstringTheory.reglan_loop_lang_bounds,
+      smtstringTheory.reglan_repeat_singletons3,
+      listTheory.LENGTH_DROP] >>
+  numLib.ARITH_TAC
+QED
+
+Theorem smt_in_loop_range_nth_at:
+  lo <= 196607 /\ hi <= 196607 /\ j < i /\
+  smt_in_re s
+    (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n) ==>
+  seq_nth_i (smtstr_at s (&j)) 0 = seq_nth_i s j
+Proof
+  strip_tac >>
+  `aut_accept s 0
+     (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n)` by
+    simp [aut_accept_zero] >>
+  mp_tac (Q.INST [`k` |-> `0`]
+    aut_accept_loop_range_length_int) >>
+  simp [] >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  strip_tac >>
+  `j < LENGTH (smtstr_rep s)` by
+    decide_tac >>
+  irule seq_nth_i_at >> decide_tac
+QED
+
+Theorem aut_accept_loop_range_nth_at:
+  lo <= 196607 /\ hi <= 196607 /\
+  (&k : int) <= smtstr_len s /\ j < i /\
+  aut_accept s k
+    (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n) ==>
+  seq_nth_i (smtstr_at s (&(k + j))) 0 = seq_nth_i s (k + j)
+Proof
+  strip_tac >>
+  `(&(k + i) : int) <= smtstr_len s` by
+    metis_tac [aut_accept_loop_range_length_int] >>
+  `k + j < LENGTH (smtstr_rep s)` by
+    (fs [smtstringTheory.smtstr_len_def,
+         integerTheory.INT_OF_NUM_LE] >>
+     numLib.ARITH_TAC) >>
+  irule seq_nth_i_at >> simp []
+QED
+
+Theorem smt_in_power_range_nth_at:
+  lo <= 196607 /\ hi <= 196607 /\ j < n /\
+  smt_in_re s
+    (reglan_power (reglan_range (SmtStr [lo]) (SmtStr [hi])) n) ==>
+  seq_nth_i (smtstr_at s (&j)) 0 = seq_nth_i s j
+Proof
+  rw [smtstringTheory.smt_in_re_power_loop] >>
+  metis_tac [smt_in_loop_range_nth_at]
 QED
 
 Theorem aut_accept_loop_transition:
@@ -670,6 +1099,40 @@ QED
 
 (* Z3's head/tail decomposition witnesses that the string is non-empty: the
    head is a genuine character, so the representation has one. *)
+Theorem seq_head_tail_word18:
+  0 = smtstr_len s \/
+  seq_eq s
+    (smtstr_concat
+      (seq_unit (w2n (n2w (seq_nth_i s 0) : 18 word)))
+      (seq_tail s 0))
+Proof
+  `seq_nth_i s 0 <= 196607` by simp [] >>
+  metis_tac [char_word18_w2n_n2w,
+             seq_head_tail_int_zero_left]
+QED
+
+Theorem seq_head_tail_word18_z3_index:
+  0 = smtstr_len s \/
+  seq_eq s
+    (smtstr_concat
+      (seq_unit
+        (w2n
+          (n2w (seq_nth_i s (Num (0 : int))) : 18 word)))
+      (seq_tail s (Num (0 : int))))
+Proof
+  PURE_REWRITE_TAC [char_num_zero] >>
+  ACCEPT_TAC seq_head_tail_word18
+QED
+
+Theorem seq_head_tail_word18_eq:
+  0 = smtstr_len s \/
+  s = smtstr_concat
+    (seq_unit (w2n (n2w (seq_nth_i s 0) : 18 word)))
+    (seq_tail s 0)
+Proof
+  ACCEPT_TAC (REWRITE_RULE [seq_eq_def] seq_head_tail_word18)
+QED
+
 Theorem seq_head_tail_nonempty[local]:
   s = smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0) ==>
   smtstr_rep s <> []
@@ -739,6 +1202,55 @@ Proof
     (rw [listTheory.LIST_EQ_REWRITE] >>
      simp [seq_nth_i_def]) >>
   fs [seq_eq_def]
+QED
+
+Theorem smtstr_from_code_length_valid:
+  0 <= n /\ n <= 196607 ==>
+  (1 : int) = smtstr_len (smtstr_from_code n)
+Proof
+  Cases_on `n` >>
+  fs [smtstringTheory.smtstr_from_code_def,
+      smtstringTheory.smtstr_len_def,
+      smtstringTheory.smtstr_rep_def]
+QED
+
+Theorem smtstr_from_code_length_valid_clause:
+  ~(n >= 0) \/ ~(n <= 196607) \/
+  (1 : int) = smtstr_len (smtstr_from_code n)
+Proof
+  rw [integerTheory.int_ge] >>
+  metis_tac [smtstr_from_code_length_valid]
+QED
+
+Theorem smtstr_from_to_code_length_one:
+  smtstr_len s = 1 ==>
+  smtstr_from_code (smtstr_to_code s) = s
+Proof
+  strip_tac >>
+  strip_assume_tac (Q.SPEC `s`
+    smtstringTheory.ranged_smtstr_nchotomy) >>
+  fs [] >>
+  fs [smtstringTheory.smtstr_len_def] >>
+  Cases_on `l` >> fs [] >>
+  Cases_on `t` >> fs [] >>
+  simp [smtstringTheory.smtstr_from_code_def,
+        smtstringTheory.smtstr_to_code_def,
+        smtstringTheory.smtstr_rep_def]
+QED
+
+Theorem smtstr_at_unit:
+  !i s.
+  (0 : int) = smtstr_len (smtstr_at s (&(i : num))) \/
+  seq_unit (seq_nth_i (smtstr_at s (&i)) 0) = smtstr_at s (&i)
+Proof
+  rpt strip_tac >>
+  Cases_on `LENGTH (smtstr_rep s) <= i`
+  >- (disj1_tac >>
+      simp [smtstringTheory.smtstr_len_at])
+  >> disj2_tac >>
+  `i < LENGTH (smtstr_rep s)` by decide_tac >>
+  simp [seq_nth_i_at, smtstringTheory.smtstr_at_in_range,
+        seq_unit_def, seq_nth_i_def, smtstringTheory.smtstr_rep_def]
 QED
 
 (* The old position-zero certificate established tail nonemptiness indirectly:

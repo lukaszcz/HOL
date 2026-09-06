@@ -1375,7 +1375,7 @@ struct
       target = "(= (re.+ x) (re.++ x (re.* x)))"})
       "re-plus-elim",
     rare_entry RareRegexOther (RareSourceRecipe {
-      formals = [("n", RareSourceTerm, RareSourceInt),
+      formals = [("n", RareSourceIndex, RareSourceInt),
                  ("x", RareSourceTerm, RareSourceRegex)],
       premises = [],
       target = "(= (re.^ n x) (re.loop n n x))"})
@@ -1506,58 +1506,7 @@ struct
     ("str-to-lower-from-int",
      "str.to_lower has no HOL operator or parser dictionary entry"),
     ("str-to-upper-from-int",
-     "str.to_upper has no HOL operator or parser dictionary entry"),
-    ("re-concat-star-swap",
-     "star/concat language equality is false as intensional reglan equality"),
-    ("re-concat-star-repeat",
-     "star idempotence is false as intensional reglan equality"),
-    ("re-concat-star-subsume1",
-     "all-character star subsumption is false as intensional reglan equality"),
-    ("re-concat-star-subsume2",
-     "all-character star subsumption is false as intensional reglan equality"),
-    ("re-star-none",
-     "empty-language star is false as intensional reglan equality"),
-    ("re-star-emp",
-     "epsilon-language star is false as intensional reglan equality"),
-    ("re-star-star",
-     "nested-star collapse is false as intensional reglan equality"),
-    ("re-star-union-char",
-     "union/star language equality is false as intensional reglan equality"),
-    ("re-star-union-drop-emp",
-     "epsilon-union star equality is false as intensional reglan equality"),
-    ("re-union-all",
-     "universal-language union is false as intensional reglan equality"),
-    ("re-union-const-elim",
-     "language inclusion does not imply intensional reglan equality"),
-    ("re-inter-all",
-     "universal-language intersection is false as intensional " ^
-     "reglan equality"),
-    ("re-range-refl",
-     "singleton range is false as intensional reglan equality"),
-    ("re-range-emp",
-     "empty range is false as intensional reglan equality"),
-    ("re-range-non-singleton-1",
-     "ill-formed range is false as intensional reglan equality"),
-    ("re-range-non-singleton-2",
-     "ill-formed range is false as intensional reglan equality"),
-    ("re-loop-neg",
-     "empty bounded loop is false as intensional reglan equality"),
-    ("re-inter-cstring-neg",
-     "empty intersection is false as intensional reglan equality"),
-    ("re-all-elim",
-     "universal-language expansion is false as intensional reglan equality"),
-    ("re-concat-merge",
-     "literal concatenation merge is false as intensional reglan equality"),
-    ("re-diff-elim",
-     "language difference is false as intensional reglan equality"),
-    ("re-inter-cstring",
-     "singleton intersection is false as intensional reglan equality"),
-    ("re-opt-elim",
-     "optional-language expansion is false as intensional reglan equality"),
-    ("re-plus-elim",
-     "positive-closure expansion is false as intensional reglan equality"),
-    ("re-repeat-elim",
-     "repeat/loop equality is false as intensional reglan equality")
+     "str.to_upper has no HOL operator or parser dictionary entry")
   ]
 
   fun classify_source_entry (entry : rare_inventory_entry) =
@@ -1641,9 +1590,9 @@ struct
          count_aggregate RareSourceRegexConcat = 10 andalso
          count_aggregate RareSourceRegexUnion = 7 andalso
          count_aggregate RareSourceRegexInter = 5 andalso
-         List.length unsupported_names = 35 andalso
+         List.length unsupported_names = 10 andalso
          not (duplicates unsupported_names) andalso
-         List.length unsupported_entries = 35 andalso
+         List.length unsupported_entries = 10 andalso
          List.all (fn entry => List.exists
            (fn name => name = #name entry) unsupported_names)
            unsupported_entries andalso

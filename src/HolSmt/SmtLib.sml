@@ -3396,6 +3396,12 @@ local
         case rands of
           [left, right] =>
             let
+              val _ =
+                if same_type (Term.type_of left, reglan_ty) then
+                  raise ERR "builtin_equality"
+                    ("HOL equality on smtstring$reglan is intensional; " ^
+                     "SMT-LIB RegLan equality is language equivalence")
+                else ()
               fun translate_argument (a, argument) =
                 translate_term regime apply_operator
                   (a, (bounds, argument))
@@ -6934,10 +6940,44 @@ in
     target : {solver : string, version : string option} option
   }
 
+  fun reject_reglan_hol_equalities (assumptions, conclusion) =
+    let
+      fun children term pending =
+        if Term.is_comb term then
+          let val (operator, operand) = Term.dest_comb term
+          in operator :: operand :: pending end
+        else if Term.is_abs term then
+          Lib.snd (Term.dest_abs term) :: pending
+        else pending
+      fun visit _ [] = ()
+        | visit seen (term :: pending) =
+            if HOLset.member (seen, term) then visit seen pending
+            else
+              let
+                val seen = HOLset.add (seen, term)
+                val (head, arguments) = boolSyntax.strip_comb term
+                val _ =
+                  case arguments of
+                    left :: _ =>
+                      if same_const head boolSyntax.equality andalso
+                         same_type (Term.type_of left, reglan_ty) then
+                        raise ERR "reject_reglan_hol_equalities"
+                          ("HOL equality on smtstring$reglan is intensional; " ^
+                           "SMT-LIB RegLan equality is language equivalence")
+                      else ()
+                  | [] => ()
+              in
+                visit seen (children term pending)
+              end
+    in
+      visit (HOLset.empty Term.compare) (conclusion :: assumptions)
+    end
+
   fun goal_to_SmtLib_translation_gen
       ({request, apply_operator, policy, get_proof, target} : smtlib_emit_options)
       goal =
     let
+      val _ = reject_reglan_hol_equalities goal
       val tail =
         if get_proof then ["(get-proof)\n", "(exit)\n"] else ["(exit)\n"]
     in

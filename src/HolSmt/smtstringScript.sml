@@ -584,6 +584,145 @@ Definition re_lang_def:
      reglan_loop_lang (\x. re_lang r x) i n u)
 End
 
+(* SMT-LIB regular-expression equality is equality of languages.  Keep that
+   proof-certificate relation separate from HOL's constructor equality: the
+   source translator must never turn a user theorem about [reglan] equality
+   into this weaker relation. *)
+Definition reglan_equiv_def:
+  reglan_equiv r s <=> !u. re_lang r u <=> re_lang s u
+End
+
+Theorem reglan_equiv_refl:
+  reglan_equiv r r
+Proof
+  simp [reglan_equiv_def]
+QED
+
+Theorem reglan_equiv_sym:
+  reglan_equiv r s ==> reglan_equiv s r
+Proof
+  simp [reglan_equiv_def] >> metis_tac []
+QED
+
+Theorem reglan_equiv_trans:
+  reglan_equiv r s /\ reglan_equiv s t ==> reglan_equiv r t
+Proof
+  simp [reglan_equiv_def] >> metis_tac []
+QED
+
+Theorem reglan_equiv_equiv_eq:
+  reglan_equiv r r' /\ reglan_equiv s s' ==>
+  (reglan_equiv r s = reglan_equiv r' s')
+Proof
+  simp [reglan_equiv_def] >> metis_tac []
+QED
+
+Triviality reglan_dot_cong:
+  (!u. p u <=> p' u) /\ (!u. q u <=> q' u) ==>
+  (reglan_dot p q u <=> reglan_dot p' q' u)
+Proof
+  rw [reglan_dot_def] >> metis_tac []
+QED
+
+Triviality reglan_kstar_cong:
+  (!u. p u <=> q u) ==>
+  (reglan_kstar p u <=> reglan_kstar q u)
+Proof
+  rw [reglan_kstar_def] >>
+  `!ss. EVERY (\x. p x /\ x <> []) ss <=>
+        EVERY (\x. q x /\ x <> []) ss` by
+    (Induct >> simp []) >>
+  metis_tac []
+QED
+
+Triviality reglan_repeat_cong:
+  (!u. p u <=> q u) ==>
+  (reglan_repeat p n u <=> reglan_repeat q n u)
+Proof
+  rw [reglan_repeat_def] >>
+  `!ss. EVERY p ss <=> EVERY q ss` by (Induct >> simp []) >>
+  metis_tac []
+QED
+
+Triviality reglan_loop_lang_cong:
+  (!u. p u <=> q u) ==>
+  (reglan_loop_lang p i n u <=> reglan_loop_lang q i n u)
+Proof
+  strip_tac >> Induct_on `n` >>
+  simp [reglan_loop_lang_def] >> metis_tac [reglan_repeat_cong]
+QED
+
+Theorem reglan_concat_equiv:
+  reglan_equiv r r' /\ reglan_equiv s s' ==>
+  reglan_equiv (reglan_concat r s) (reglan_concat r' s')
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  metis_tac [reglan_dot_cong]
+QED
+
+Theorem reglan_union_equiv:
+  reglan_equiv r r' /\ reglan_equiv s s' ==>
+  reglan_equiv (reglan_union r s) (reglan_union r' s')
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_inter_equiv:
+  reglan_equiv r r' /\ reglan_equiv s s' ==>
+  reglan_equiv (reglan_inter r s) (reglan_inter r' s')
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_diff_equiv:
+  reglan_equiv r r' /\ reglan_equiv s s' ==>
+  reglan_equiv (reglan_diff r s) (reglan_diff r' s')
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_comp_equiv:
+  reglan_equiv r s ==> reglan_equiv (reglan_comp r) (reglan_comp s)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_star_equiv:
+  reglan_equiv r s ==> reglan_equiv (reglan_star r) (reglan_star s)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  metis_tac [reglan_kstar_cong]
+QED
+
+Theorem reglan_plus_equiv:
+  reglan_equiv r s ==> reglan_equiv (reglan_plus r) (reglan_plus s)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  metis_tac [reglan_dot_cong, reglan_kstar_cong]
+QED
+
+Theorem reglan_opt_equiv:
+  reglan_equiv r s ==> reglan_equiv (reglan_opt r) (reglan_opt s)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_power_equiv:
+  reglan_equiv r s ==>
+  reglan_equiv (reglan_power r n) (reglan_power s n)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  metis_tac [reglan_repeat_cong]
+QED
+
+Theorem reglan_loop_equiv:
+  reglan_equiv r s ==>
+  reglan_equiv (reglan_loop r i n) (reglan_loop s i n)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  metis_tac [reglan_loop_lang_cong]
+QED
+
 Definition smt_in_re_def:
   (smt_in_re s reglan_none <=> F) /\
   (smt_in_re s reglan_all <=> wfstr s) /\
@@ -628,6 +767,12 @@ Proof
   simp [smt_in_re_def]
 QED
 
+Theorem smt_in_re_to_re_length:
+  smt_in_re s (reglan_to_re t) ==> smtstr_len s = smtstr_len t
+Proof
+  simp [smt_in_re_to_re]
+QED
+
 Theorem smt_in_re_allchar_len:
   smt_in_re s reglan_allchar <=> smtstr_len s = 1
 Proof
@@ -646,6 +791,13 @@ Proof
   metis_tac [smtstr_eq_singleton]
 QED
 
+Theorem smt_in_re_range_length:
+  smt_in_re s (reglan_range lo hi) ==> smtstr_len s = 1
+Proof
+  rw [smt_in_re_def, re_lang_def, smtstr_len_def] >>
+  fs [smtstr_rep_def]
+QED
+
 Theorem smt_in_re_rep:
   smt_in_re s r <=> re_lang r (smtstr_rep s)
 Proof
@@ -653,6 +805,33 @@ Proof
   Induct_on `r` >>
   simp [smt_in_re_def, re_lang_def, wfstr_def] >>
   metis_tac [smtstr_eq_singleton, smtstr_rep_eq_nil]
+QED
+
+Theorem reglan_eq_imp_equiv:
+  r = s ==> reglan_equiv r s
+Proof
+  simp [reglan_equiv_refl]
+QED
+
+Theorem smt_in_re_equiv:
+  reglan_equiv r s ==>
+  (smt_in_re t r <=> smt_in_re t s)
+Proof
+  simp [smt_in_re_rep, reglan_equiv_def]
+QED
+
+Theorem smt_in_re_equiv_eq:
+  reglan_equiv r s ==>
+  (smt_in_re t r = smt_in_re t s)
+Proof
+  simp [smt_in_re_equiv]
+QED
+
+Theorem reglan_cond_equiv:
+  reglan_equiv r r' /\ reglan_equiv s s' ==>
+  reglan_equiv (if b then r else s) (if b then r' else s')
+Proof
+  Cases_on `b` >> simp [reglan_equiv_refl]
 QED
 
 Definition re_nullable_def:
@@ -881,12 +1060,52 @@ Proof
       simp [])
 QED
 
+Theorem reglan_repeat_one:
+  reglan_repeat p (SUC 0) s <=> p s
+Proof
+  simp [reglan_repeat_suc, reglan_repeat_zero, reglan_dot_def]
+QED
+
 Theorem reglan_repeat_singleton:
   reglan_repeat (\u. u = [c]) n s <=> s = REPLICATE n c
 Proof
   qid_spec_tac `s` >>
   Induct_on `n` >>
   simp [reglan_repeat_zero, reglan_repeat_suc, reglan_dot_def]
+QED
+
+Triviality singleton_parts_flat:
+  EVERY (\u. ?c. p c /\ u = [c]) ss ==>
+  LENGTH (FLAT ss) = LENGTH ss /\ EVERY p (FLAT ss)
+Proof
+  Induct_on `ss` >> simp [] >>
+  rw [] >> fs []
+QED
+
+Triviality flat_map_singleton:
+  FLAT (MAP (\c. [c]) s) = s
+Proof
+  Induct_on `s` >> simp []
+QED
+
+Triviality every_map_singleton:
+  EVERY (\u. ?c. p c /\ u = [c]) (MAP (\c. [c]) s) <=> EVERY p s
+Proof
+  simp [listTheory.EVERY_MAP, ETA_AX]
+QED
+
+Theorem reglan_repeat_singletons:
+  reglan_repeat (\u. ?c. p c /\ u = [c]) n s <=>
+  LENGTH s = n /\ EVERY p s
+Proof
+  PURE_REWRITE_TAC [reglan_repeat_def] >>
+  eq_tac
+  >- (rw [] >>
+      imp_res_tac singleton_parts_flat >>
+      fs [])
+  >> strip_tac >>
+  qexists_tac `MAP (\c. [c]) s` >>
+  simp [flat_map_singleton, every_map_singleton]
 QED
 
 Theorem REPLICATE_small[local]:
@@ -924,6 +1143,76 @@ Proof
   disj2_tac >>
   qexists `j` >>
   simp []
+QED
+
+Triviality one_bounds:
+  1 <= (j : num) /\ j <= 1 <=> 1 = j
+Proof
+  ACCEPT_TAC (Q.SPECL [`1`, `j`] arithmeticTheory.LE_ANTISYM)
+QED
+
+Triviality one_bounds_extra:
+  1 <= (j : num) /\ j <= 1 /\ q <=> j = 1 /\ q
+Proof
+  metis_tac [one_bounds]
+QED
+
+Theorem reglan_loop_lang_once:
+  reglan_loop_lang p 1 1 s <=> p s
+Proof
+  simp [reglan_loop_lang_bounds] >>
+  simp [one_bounds_extra] >>
+  `(1 : num) = SUC 0` by EVAL_TAC >>
+  pop_assum SUBST1_TAC >>
+  PURE_REWRITE_TAC [reglan_repeat_one] >>
+  REFL_TAC
+QED
+
+Theorem smt_in_re_power_loop:
+  smt_in_re s (reglan_power r n) <=>
+  smt_in_re s (reglan_loop r n n)
+Proof
+  simp [smt_in_re_def, re_lang_def, reglan_loop_lang_bounds] >>
+  metis_tac [arithmeticTheory.LE_ANTISYM]
+QED
+
+Triviality singleton_parts_flat3:
+  EVERY (\u. ?c. p c /\ q c /\ r c /\ u = [c]) ss ==>
+  LENGTH (FLAT ss) = LENGTH ss /\
+  EVERY (\c. p c /\ q c /\ r c) (FLAT ss)
+Proof
+  Induct_on `ss` >> simp [] >>
+  rw [] >> fs []
+QED
+
+Triviality every_map_singleton3:
+  EVERY (\u. ?c. p c /\ q c /\ r c /\ u = [c])
+    (MAP (\c. [c]) s) <=>
+  EVERY (\c. p c /\ q c /\ r c) s
+Proof
+  Induct_on `s` >> simp []
+QED
+
+Theorem reglan_repeat_singletons3:
+  reglan_repeat
+    (\u. ?c. p c /\ q c /\ r c /\ u = [c]) n s <=>
+  LENGTH s = n /\ EVERY (\c. p c /\ q c /\ r c) s
+Proof
+  PURE_REWRITE_TAC [reglan_repeat_def] >>
+  eq_tac
+  >- (rw [] >>
+      imp_res_tac singleton_parts_flat3 >>
+      fs [])
+  >> strip_tac >>
+  qexists_tac `MAP (\c. [c]) s` >>
+  simp [flat_map_singleton, every_map_singleton3]
+QED
+
+Theorem reglan_loop_lang_singletons:
+  reglan_loop_lang (\u. ?c. p c /\ u = [c]) i n s <=>
+  ?j. i <= j /\ j <= n /\ LENGTH s = j /\ EVERY p s
+Proof
+  simp [reglan_loop_lang_bounds, reglan_repeat_singletons]
 QED
 
 Theorem reglan_loop_lang_singleton:
@@ -1346,6 +1635,721 @@ Proof
   simp []
 QED
 
+Theorem re_lang_wf:
+  re_lang r u ==> EVERY (\c. c <= 196607) u
+Proof
+  qid_spec_tac `u` >> Induct_on `r` >>
+  simp [re_lang_def, reglan_dot_def, reglan_kstar_def,
+        reglan_repeat_def, reglan_loop_lang_bounds] >>
+  rw [] >>
+  fs [listTheory.EVERY_FLAT, listTheory.EVERY_MEM] >>
+  metis_tac []
+QED
+
+Triviality flat_filter_nonempty:
+  FLAT (FILTER (\u. u <> []) ss) = FLAT ss
+Proof
+  Induct_on `ss` >> simp [] >> rw [] >> simp []
+QED
+
+Theorem reglan_kstar_relaxed:
+  reglan_kstar p s <=> ?ss. EVERY p ss /\ s = FLAT ss
+Proof
+  PURE_REWRITE_TAC [reglan_kstar_def] >> eq_tac >> strip_tac
+  >> qexists `FILTER (\u. u <> []) ss` >>
+  simp [listTheory.EVERY_FILTER, flat_filter_nonempty] >>
+  fs [listTheory.EVERY_MEM]
+QED
+
+Theorem reglan_kstar_append:
+  reglan_kstar p u /\ reglan_kstar p v ==>
+  reglan_kstar p (u ++ v)
+Proof
+  rw [reglan_kstar_relaxed] >>
+  qexists `ss ++ ss'` >> simp []
+QED
+
+Theorem reglan_kstar_single:
+  p u ==> reglan_kstar p u
+Proof
+  strip_tac >> simp [reglan_kstar_relaxed] >>
+  qexists `[u]` >> simp []
+QED
+
+Theorem reglan_dot_assoc:
+  reglan_dot (reglan_dot p q) r s <=>
+  reglan_dot p (reglan_dot q r) s
+Proof
+  rw [reglan_dot_def] >> metis_tac [listTheory.APPEND_ASSOC]
+QED
+
+Triviality reglan_kstar_flat:
+  EVERY (reglan_kstar p) ss ==> reglan_kstar p (FLAT ss)
+Proof
+  Induct_on `ss` >> simp [reglan_kstar_nil] >>
+  metis_tac [reglan_kstar_append]
+QED
+
+Triviality reglan_dot_kstar_characterization:
+  reglan_dot p (reglan_kstar p) s <=>
+  ?xs. xs <> [] /\ EVERY p xs /\ s = FLAT xs
+Proof
+  simp [reglan_dot_def, reglan_kstar_relaxed] >> eq_tac
+  >- (rw [] >> qexists `u::ss` >> simp []) >>
+  rw [] >> Cases_on `xs` >> fs [] >>
+  qexistsl [`h`, `FLAT t`] >> simp [] >>
+  qexists `t` >> simp []
+QED
+
+Triviality reglan_kstar_dot_characterization:
+  reglan_dot (reglan_kstar p) p s <=>
+  ?xs. xs <> [] /\ EVERY p xs /\ s = FLAT xs
+Proof
+  simp [reglan_dot_def, reglan_kstar_relaxed] >> eq_tac
+  >- (rw [] >> qexists `ss ++ [v]` >>
+      simp [rich_listTheory.FLAT_SNOC]) >>
+  rw [] >> Cases_on `xs` using listTheory.SNOC_CASES >>
+  fs [listTheory.EVERY_SNOC, rich_listTheory.FLAT_SNOC] >>
+  qexistsl [`FLAT l`, `x`] >> simp [] >>
+  qexists `l` >> simp []
+QED
+
+Theorem reglan_kstar_dot_comm:
+  reglan_dot (reglan_kstar p) p s <=>
+  reglan_dot p (reglan_kstar p) s
+Proof
+  simp [reglan_dot_kstar_characterization,
+        reglan_kstar_dot_characterization]
+QED
+
+Theorem reglan_kstar_idem:
+  reglan_kstar (reglan_kstar p) s <=> reglan_kstar p s
+Proof
+  eq_tac
+  >- (strip_tac >> fs [reglan_kstar_relaxed] >>
+      imp_res_tac reglan_kstar_flat >>
+      fs [reglan_kstar_relaxed] >> metis_tac []) >>
+  strip_tac >> simp [reglan_kstar_relaxed] >>
+  qexists `[s]` >> simp []
+QED
+
+Theorem reglan_kstar_epsilon:
+  reglan_kstar (\u. u = []) s <=> s = []
+Proof
+  eq_tac
+  >- (rw [reglan_kstar_relaxed] >>
+      Induct_on `ss` >> fs []) >>
+  strip_tac >> simp [reglan_kstar_nil]
+QED
+
+Theorem reglan_kstar_none:
+  reglan_kstar (\u. F) s <=> s = []
+Proof
+  simp [reglan_kstar_relaxed] >> metis_tac []
+QED
+
+Theorem reglan_kstar_drop_epsilon:
+  reglan_kstar (\u. p u \/ u = []) s <=> reglan_kstar p s
+Proof
+  eq_tac
+  >- (rw [reglan_kstar_relaxed] >>
+      qexists `FILTER (\u. u <> []) ss` >>
+      simp [listTheory.EVERY_FILTER, flat_filter_nonempty] >>
+      fs [listTheory.EVERY_MEM] >> metis_tac []) >>
+  rw [reglan_kstar_relaxed] >> qexists `ss` >>
+  fs [listTheory.EVERY_MEM] >> metis_tac []
+QED
+
+Theorem reglan_kstar_cong:
+  (!u. p u <=> q u) ==>
+  (reglan_kstar p s <=> reglan_kstar q s)
+Proof
+  simp [reglan_kstar_relaxed, listTheory.EVERY_MEM] >> metis_tac []
+QED
+
+Theorem reglan_kstar_epsilon_invariant:
+  (!u. p u <=> q u \/ u = []) ==>
+  (reglan_kstar p s <=> reglan_kstar q s)
+Proof
+  strip_tac >>
+  `reglan_kstar p s <=>
+   reglan_kstar (\u. q u \/ u = []) s` by
+    (irule reglan_kstar_cong >> simp [] >> metis_tac []) >>
+  fs [reglan_kstar_drop_epsilon]
+QED
+
+Theorem reglan_kstar_mono:
+  (!u. p u ==> q u) ==> reglan_kstar p s ==> reglan_kstar q s
+Proof
+  simp [reglan_kstar_relaxed, listTheory.EVERY_MEM] >> metis_tac []
+QED
+
+Theorem reglan_kstar_wf:
+  (!u. p u ==> EVERY (\c. c <= 196607) u) /\
+  reglan_kstar p s ==>
+  EVERY (\c. c <= 196607) s
+Proof
+  rw [reglan_kstar_relaxed] >>
+  fs [listTheory.EVERY_FLAT, listTheory.EVERY_MEM] >> metis_tac []
+QED
+
+Theorem reglan_kstar_allchar_sandwich:
+  (!u. p u ==> EVERY (\c. c <= 196607) u) /\
+  (!c. c <= 196607 ==> p [c]) ==>
+  (reglan_kstar p s <=> EVERY (\c. c <= 196607) s)
+Proof
+  strip_tac >> eq_tac
+  >- (strip_tac >> irule reglan_kstar_wf >> metis_tac []) >>
+  strip_tac >>
+  `reglan_kstar (\u. ?c. c <= 196607 /\ u = [c]) s` by
+    fs [reglan_kstar_allchar] >>
+  irule reglan_kstar_mono >>
+  qexists `\u. ?c. c <= 196607 /\ u = [c]` >>
+  simp [] >> metis_tac []
+QED
+
+Theorem reglan_kstar_dot_subsume:
+  (!u. p u ==> q u) ==>
+  (reglan_dot (reglan_kstar p) (reglan_kstar q) s <=>
+   reglan_kstar q s)
+Proof
+  strip_tac >> eq_tac
+  >- (rw [reglan_dot_def] >>
+      metis_tac [reglan_kstar_append, reglan_kstar_mono]) >>
+  strip_tac >> rw [reglan_dot_def] >>
+  qexistsl [`[]`, `s`] >> simp [reglan_kstar_nil]
+QED
+
+Theorem reglan_equiv_star_swap:
+  reglan_equiv
+    (reglan_concat (reglan_star r) r)
+    (reglan_concat r (reglan_star r))
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_kstar_dot_comm]
+QED
+
+Theorem reglan_equiv_star_repeat:
+  reglan_equiv
+    (reglan_concat (reglan_star r) (reglan_star r))
+    (reglan_star r)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_kstar_dot_subsume]
+QED
+
+Theorem reglan_equiv_star_none:
+  reglan_equiv (reglan_star reglan_none)
+    (reglan_to_re (SmtStr []))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_none,
+        smtstr_rep_def]
+QED
+
+Theorem reglan_equiv_star_epsilon:
+  reglan_equiv (reglan_star (reglan_to_re (SmtStr [])))
+    (reglan_to_re (SmtStr []))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_epsilon,
+        smtstr_rep_def]
+QED
+
+Theorem reglan_equiv_star_star:
+  reglan_equiv (reglan_star (reglan_star r)) (reglan_star r)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_kstar_idem]
+QED
+
+Theorem reglan_equiv_star_drop_epsilon:
+  reglan_equiv
+    (reglan_star (reglan_union r (reglan_to_re (SmtStr []))))
+    (reglan_star r)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_drop_epsilon,
+        smtstr_rep_def]
+QED
+
+Theorem reglan_equiv_star_subsume_right:
+  reglan_equiv
+    (reglan_concat (reglan_star r)
+      (reglan_star reglan_allchar))
+    (reglan_star reglan_allchar)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_dot_def,
+        reglan_kstar_allchar] >> gen_tac >> eq_tac
+  >- (rw [] >>
+      `EVERY (\c. c <= 196607) x` by
+        (irule reglan_kstar_wf >> simp [] >> metis_tac [re_lang_wf]) >>
+      simp []) >>
+  strip_tac >> qexistsl [`[]`, `u`] >> simp [reglan_kstar_nil]
+QED
+
+Theorem reglan_equiv_star_subsume_left:
+  reglan_equiv
+    (reglan_concat (reglan_star reglan_allchar)
+      (reglan_star r))
+    (reglan_star reglan_allchar)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_dot_def,
+        reglan_kstar_allchar] >> gen_tac >> eq_tac
+  >- (rw [] >>
+      `EVERY (\c. c <= 196607) y` by
+        (irule reglan_kstar_wf >> simp [] >> metis_tac [re_lang_wf]) >>
+      simp []) >>
+  strip_tac >> qexistsl [`u`, `[]`] >> simp [reglan_kstar_nil]
+QED
+
+Theorem reglan_star_subsume_right_lang:
+  reglan_dot
+    (reglan_kstar (re_lang r))
+    (reglan_kstar (\u. ?c. c <= 196607 /\ u = [c])) s <=>
+  reglan_kstar (\u. ?c. c <= 196607 /\ u = [c]) s
+Proof
+  simp [re_lang_def, reglan_dot_def, reglan_kstar_allchar] >> eq_tac
+  >- (rw [] >>
+      `EVERY (\c. c <= 196607) u` by
+        (irule reglan_kstar_wf >> simp [] >> metis_tac [re_lang_wf]) >>
+      simp []) >>
+  strip_tac >> qexistsl [`[]`, `s`] >> simp [reglan_kstar_nil]
+QED
+
+Theorem reglan_star_subsume_left_lang:
+  reglan_dot
+    (reglan_kstar (\u. ?c. c <= 196607 /\ u = [c]))
+    (reglan_kstar (re_lang r)) s <=>
+  reglan_kstar (\u. ?c. c <= 196607 /\ u = [c]) s
+Proof
+  simp [re_lang_def, reglan_dot_def, reglan_kstar_allchar] >> eq_tac
+  >- (rw [] >>
+      `EVERY (\c. c <= 196607) v` by
+        (irule reglan_kstar_wf >> simp [] >> metis_tac [re_lang_wf]) >>
+      simp []) >>
+  strip_tac >> qexistsl [`s`, `[]`] >> simp [reglan_kstar_nil]
+QED
+
+Theorem reglan_dot_left_cong:
+  (!u. p u <=> q u) ==>
+  (reglan_dot p r s <=> reglan_dot q r s)
+Proof
+  simp [reglan_dot_def] >> metis_tac []
+QED
+
+Theorem reglan_star_swap_suffix:
+  reglan_dot (reglan_kstar p) (reglan_dot p q) s <=>
+  reglan_dot p (reglan_dot (reglan_kstar p) q) s
+Proof
+  Rewrite.PURE_REWRITE_TAC [GSYM reglan_dot_assoc] >>
+  irule reglan_dot_left_cong >> simp [reglan_kstar_dot_comm]
+QED
+
+Theorem reglan_star_repeat_suffix:
+  reglan_dot (reglan_kstar p) (reglan_dot (reglan_kstar p) q) s <=>
+  reglan_dot (reglan_kstar p) q s
+Proof
+  Rewrite.PURE_REWRITE_TAC [GSYM reglan_dot_assoc] >>
+  irule reglan_dot_left_cong >> simp [reglan_kstar_dot_subsume]
+QED
+
+Theorem reglan_star_subsume_right_suffix:
+  reglan_dot (reglan_kstar (re_lang r))
+    (reglan_dot (reglan_kstar
+      (\u. ?c. c <= 196607 /\ u = [c])) q) s <=>
+  reglan_dot (reglan_kstar
+    (\u. ?c. c <= 196607 /\ u = [c])) q s
+Proof
+  Rewrite.PURE_REWRITE_TAC [GSYM reglan_dot_assoc] >>
+  irule reglan_dot_left_cong >>
+  MATCH_ACCEPT_TAC
+    (CONV_RULE (DEPTH_CONV ETA_CONV)
+      reglan_star_subsume_right_lang)
+QED
+
+Theorem reglan_star_subsume_left_suffix:
+  reglan_dot (reglan_kstar
+      (\u. ?c. c <= 196607 /\ u = [c]))
+    (reglan_dot (reglan_kstar (re_lang r)) q) s <=>
+  reglan_dot (reglan_kstar
+    (\u. ?c. c <= 196607 /\ u = [c])) q s
+Proof
+  Rewrite.PURE_REWRITE_TAC [GSYM reglan_dot_assoc] >>
+  irule reglan_dot_left_cong >>
+  MATCH_ACCEPT_TAC
+    (CONV_RULE (DEPTH_CONV ETA_CONV)
+      reglan_star_subsume_left_lang)
+QED
+
+Theorem reglan_star_swap_suffix_fun:
+  reglan_dot (reglan_kstar p) (reglan_dot p q) =
+  reglan_dot p (reglan_dot (reglan_kstar p) q)
+Proof
+  simp [FUN_EQ_THM, reglan_star_swap_suffix]
+QED
+
+Theorem reglan_star_repeat_suffix_fun:
+  reglan_dot (reglan_kstar p) (reglan_dot (reglan_kstar p) q) =
+  reglan_dot (reglan_kstar p) q
+Proof
+  simp [FUN_EQ_THM, reglan_star_repeat_suffix]
+QED
+
+Theorem reglan_star_subsume_right_suffix_fun:
+  reglan_dot (reglan_kstar (re_lang r))
+    (reglan_dot (reglan_kstar
+      (\u. ?c. c <= 196607 /\ u = [c])) q) =
+  reglan_dot (reglan_kstar
+    (\u. ?c. c <= 196607 /\ u = [c])) q
+Proof
+  simp [FUN_EQ_THM] >> CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_star_subsume_right_suffix]
+QED
+
+Theorem reglan_star_subsume_left_suffix_fun:
+  reglan_dot (reglan_kstar
+      (\u. ?c. c <= 196607 /\ u = [c]))
+    (reglan_dot (reglan_kstar (re_lang r)) q) =
+  reglan_dot (reglan_kstar
+    (\u. ?c. c <= 196607 /\ u = [c])) q
+Proof
+  simp [FUN_EQ_THM] >> CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_star_subsume_left_suffix]
+QED
+
+Theorem reglan_equiv_star_subsume_right_suffix:
+  reglan_equiv
+    (reglan_concat (reglan_star r)
+      (reglan_concat (reglan_star reglan_allchar) q))
+    (reglan_concat (reglan_star reglan_allchar) q)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_star_subsume_right_suffix]
+QED
+
+Theorem reglan_equiv_star_subsume_left_suffix:
+  reglan_equiv
+    (reglan_concat (reglan_star reglan_allchar)
+      (reglan_concat (reglan_star r) q))
+    (reglan_concat (reglan_star reglan_allchar) q)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp [reglan_star_subsume_left_suffix]
+QED
+
+Theorem reglan_concat_literals_suffix_fun:
+  reglan_dot (re_lang (reglan_to_re s))
+    (reglan_dot (re_lang (reglan_to_re t)) q) =
+  reglan_dot (re_lang (reglan_to_re (smtstr_concat s t))) q
+Proof
+  simp [FUN_EQ_THM, re_lang_def, smtstr_rep_def,
+        smtstr_concat_def, reglan_dot_def] >>
+  metis_tac [listTheory.APPEND_ASSOC]
+QED
+
+Theorem reglan_concat_literals_suffix_rep_fun:
+  reglan_dot (\u. u = smtstr_rep s)
+    (reglan_dot (\u. u = smtstr_rep t) q) =
+  reglan_dot (\u. u = smtstr_rep (smtstr_concat s t)) q
+Proof
+  simp [FUN_EQ_THM, smtstr_rep_def, smtstr_concat_def,
+        reglan_dot_def] >>
+  metis_tac [listTheory.APPEND_ASSOC]
+QED
+
+Theorem reglan_equiv_star_union_allchar:
+  reglan_equiv
+    (reglan_star (reglan_union r reglan_allchar))
+    (reglan_star reglan_allchar)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_allchar] >>
+  gen_tac >> eq_tac >> strip_tac
+  >- (irule reglan_kstar_wf >>
+      qexists `\x. re_lang r x \/
+        ?c. c <= 196607 /\ x = [c]` >>
+      conj_tac
+      >- (gen_tac >> strip_tac >> fs [] >>
+          metis_tac [re_lang_wf]) >>
+      first_assum ACCEPT_TAC) >>
+  fs [reglan_kstar_relaxed] >>
+  qexists `MAP (\c. [c]) u` >>
+  simp [listTheory.EVERY_MAP, flat_map_singleton] >>
+  fs [listTheory.EVERY_MEM] >> metis_tac []
+QED
+
+Theorem reglan_star_union_allchar_lang:
+  reglan_kstar
+    (\u. re_lang r u \/ re_lang reglan_allchar u) s <=>
+  reglan_kstar (\u. re_lang reglan_allchar u) s
+Proof
+  simp [re_lang_def, reglan_kstar_allchar] >> eq_tac >> strip_tac
+  >- (irule reglan_kstar_wf >>
+      qexists `\x. re_lang r x \/
+        ?c. c <= 196607 /\ x = [c]` >>
+      conj_tac
+      >- (gen_tac >> strip_tac >> fs [] >>
+          metis_tac [re_lang_wf]) >>
+      first_assum ACCEPT_TAC) >>
+  fs [reglan_kstar_relaxed] >>
+  qexists `MAP (\c. [c]) s` >>
+  simp [listTheory.EVERY_MAP, flat_map_singleton] >>
+  fs [listTheory.EVERY_MEM] >> metis_tac []
+QED
+
+Theorem reglan_equiv_union_const:
+  smt_in_re s r ==>
+  reglan_equiv (reglan_union (reglan_to_re s) r) r
+Proof
+  simp [reglan_equiv_def, re_lang_def, smt_in_re_rep] >> metis_tac []
+QED
+
+Theorem reglan_equiv_inter_cstring:
+  smt_in_re s r ==>
+  reglan_equiv (reglan_inter (reglan_to_re s) r)
+    (reglan_to_re s)
+Proof
+  simp [reglan_equiv_def, re_lang_def, smt_in_re_rep] >> metis_tac []
+QED
+
+Theorem reglan_equiv_inter_cstring_none:
+  ~smt_in_re s r ==>
+  reglan_equiv (reglan_inter (reglan_to_re s) r) reglan_none
+Proof
+  simp [reglan_equiv_def, re_lang_def, smt_in_re_rep] >> metis_tac []
+QED
+
+Theorem smt_in_re_inter_left:
+  smt_in_re s (reglan_inter r q) ==> smt_in_re s r
+Proof
+  simp [smt_in_re_def]
+QED
+
+Theorem reglan_equiv_inter_cstring_step:
+  smt_in_re s (reglan_inter r q) /\
+  reglan_equiv r (reglan_to_re s) ==>
+  reglan_equiv (reglan_inter r q) (reglan_to_re s)
+Proof
+  simp [reglan_equiv_def, re_lang_def, smt_in_re_rep] >> metis_tac []
+QED
+
+Theorem reglan_equiv_power_loop:
+  reglan_equiv (reglan_power r n) (reglan_loop r n n)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_loop_lang_bounds] >>
+  metis_tac [arithmeticTheory.LE_ANTISYM]
+QED
+
+Theorem reglan_equiv_power_zero:
+  reglan_equiv (reglan_power r 0) (reglan_to_re (SmtStr []))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_repeat_zero,
+        smtstr_rep_def]
+QED
+
+Theorem reglan_equiv_power_one:
+  reglan_equiv (reglan_power r 1) r
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  PURE_REWRITE_TAC [arithmeticTheory.ONE, reglan_repeat_one] >>
+  simp []
+QED
+
+Theorem reglan_equiv_power_suc:
+  reglan_equiv (reglan_power r (SUC n))
+    (reglan_concat r (reglan_power r n))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_repeat_suc] >>
+  CONV_TAC (DEPTH_CONV ETA_CONV) >>
+  simp []
+QED
+
+Theorem reglan_equiv_plus:
+  reglan_equiv (reglan_plus r)
+    (reglan_concat r (reglan_star r))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_dot_def]
+QED
+
+Theorem reglan_equiv_opt:
+  reglan_equiv (reglan_opt r)
+    (reglan_union (reglan_to_re (SmtStr [])) r)
+Proof
+  simp [reglan_equiv_def, re_lang_def, smtstr_rep_def]
+QED
+
+Theorem reglan_equiv_diff:
+  reglan_equiv (reglan_diff r s)
+    (reglan_inter r (reglan_comp s))
+Proof
+  simp [reglan_equiv_def, re_lang_def] >>
+  metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_all:
+  reglan_equiv reglan_all (reglan_star reglan_allchar)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_allchar]
+QED
+
+Theorem reglan_equiv_union_all:
+  reglan_equiv (reglan_union r reglan_all) reglan_all
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_inter_all:
+  reglan_equiv (reglan_inter r reglan_all) r
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_union_all_left:
+  reglan_equiv (reglan_union reglan_all r) reglan_all
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_inter_all_left:
+  reglan_equiv (reglan_inter reglan_all r) r
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_union_star_all:
+  reglan_equiv
+    (reglan_union r (reglan_star reglan_allchar))
+    (reglan_star reglan_allchar)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_allchar] >>
+  metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_union_star_all_left:
+  reglan_equiv
+    (reglan_union (reglan_star reglan_allchar) r)
+    (reglan_star reglan_allchar)
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_allchar] >>
+  metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_inter_star_all:
+  reglan_equiv
+    (reglan_inter r (reglan_star reglan_allchar)) r
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_allchar] >>
+  metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_inter_star_all_left:
+  reglan_equiv
+    (reglan_inter (reglan_star reglan_allchar) r) r
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_kstar_allchar] >>
+  metis_tac [re_lang_wf]
+QED
+
+Theorem reglan_equiv_concat_assoc:
+  reglan_equiv
+    (reglan_concat (reglan_concat r s) t)
+    (reglan_concat r (reglan_concat s t))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_dot_def] >>
+  metis_tac [listTheory.APPEND_ASSOC]
+QED
+
+Theorem reglan_equiv_star_subsume_right_context:
+  reglan_equiv
+    (reglan_concat
+      (reglan_concat
+        (reglan_concat p (reglan_star r))
+        (reglan_star reglan_allchar)) q)
+    (reglan_concat
+      (reglan_concat p (reglan_star reglan_allchar)) q)
+Proof
+  irule reglan_concat_equiv >> conj_tac
+  >- (irule reglan_equiv_trans >>
+      qexists_tac
+        `reglan_concat p
+          (reglan_concat (reglan_star r)
+            (reglan_star reglan_allchar))` >>
+      conj_tac
+      >- simp [reglan_equiv_concat_assoc] >>
+      irule reglan_concat_equiv >>
+      simp [reglan_equiv_refl, reglan_equiv_star_subsume_right]) >>
+  simp [reglan_equiv_refl]
+QED
+
+Theorem reglan_equiv_star_subsume_left_context:
+  reglan_equiv
+    (reglan_concat
+      (reglan_concat
+        (reglan_concat p (reglan_star reglan_allchar))
+        (reglan_star r)) q)
+    (reglan_concat
+      (reglan_concat p (reglan_star reglan_allchar)) q)
+Proof
+  irule reglan_concat_equiv >> conj_tac
+  >- (irule reglan_equiv_trans >>
+      qexists_tac
+        `reglan_concat p
+          (reglan_concat (reglan_star reglan_allchar)
+            (reglan_star r))` >>
+      conj_tac
+      >- simp [reglan_equiv_concat_assoc] >>
+      irule reglan_concat_equiv >>
+      simp [reglan_equiv_refl, reglan_equiv_star_subsume_left]) >>
+  simp [reglan_equiv_refl]
+QED
+
+Theorem reglan_equiv_union_assoc:
+  reglan_equiv
+    (reglan_union (reglan_union r s) t)
+    (reglan_union r (reglan_union s t))
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_equiv_union_comm:
+  reglan_equiv (reglan_union r s) (reglan_union s r)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_equiv_inter_assoc:
+  reglan_equiv
+    (reglan_inter (reglan_inter r s) t)
+    (reglan_inter r (reglan_inter s t))
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_equiv_inter_comm:
+  reglan_equiv (reglan_inter r s) (reglan_inter s r)
+Proof
+  simp [reglan_equiv_def, re_lang_def] >> metis_tac []
+QED
+
+Theorem reglan_equiv_concat_literals:
+  reglan_equiv
+    (reglan_concat (reglan_to_re s) (reglan_to_re t))
+    (reglan_to_re (smtstr_concat s t))
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_dot_def,
+        smtstr_concat_def, smtstr_rep_def]
+QED
+
+Theorem reglan_equiv_loop_empty:
+  hi < lo ==> reglan_equiv (reglan_loop r lo hi) reglan_none
+Proof
+  simp [reglan_equiv_def, re_lang_def, reglan_loop_lang_bounds] >>
+  decide_tac
+QED
+
 Theorem smt_in_re_star_allchar:
   smt_in_re s (reglan_star reglan_allchar) <=> wfstr s
 Proof
@@ -1365,6 +2369,31 @@ Theorem smtstr_len_one_form:
   smtstr_len s = 1 ==> ?c. c <= 196607 /\ s = SmtStr [c]
 Proof
   metis_tac [smt_in_re_allchar_len, smt_in_re_def]
+QED
+
+Theorem reglan_equiv_range_refl:
+  smtstr_len s = 1 ==>
+  reglan_equiv (reglan_range s s) (reglan_to_re s)
+Proof
+  strip_tac >> drule smtstr_len_one_form >> rw [] >>
+  simp [reglan_equiv_def, re_lang_def, smtstr_rep_def] >>
+  metis_tac [arithmeticTheory.LE_ANTISYM]
+QED
+
+Theorem reglan_equiv_range_non_singleton_left:
+  smtstr_len s <> 1 ==>
+  reglan_equiv (reglan_range s t) reglan_none
+Proof
+  simp [reglan_equiv_def, re_lang_def, smtstr_len_def,
+        listTheory.LENGTH_EQ_1] >> metis_tac []
+QED
+
+Theorem reglan_equiv_range_non_singleton_right:
+  smtstr_len t <> 1 ==>
+  reglan_equiv (reglan_range s t) reglan_none
+Proof
+  simp [reglan_equiv_def, re_lang_def, smtstr_len_def,
+        listTheory.LENGTH_EQ_1] >> metis_tac []
 QED
 
 Theorem smt_in_re_allchar_contains:
@@ -1399,6 +2428,27 @@ QED
 (* Derivatives of a bounded loop over a one-character language, for arbitrary
    bounds: consuming one character lowers both bounds by one.  The named
    instances below are corollaries. *)
+
+Theorem re_deriv_loop_range:
+  lo <= 196607 /\ hi <= 196607 ==>
+  (smt_in_re s
+      (re_deriv d
+        (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi])) i n)) <=>
+   n <> 0 /\ lo <= d /\ d <= hi /\
+   smt_in_re s
+     (reglan_loop (reglan_range (SmtStr [lo]) (SmtStr [hi]))
+       (i - 1) (n - 1)))
+Proof
+  strip_tac >>
+  simp [smt_in_re_rep, GSYM re_deriv_lang, re_lang_def,
+        smtstr_rep_def] >>
+  `(\x. ?c. lo <= c /\ c <= hi /\ c <= 196607 /\ x = [c]) =
+   (\x. ?c. (lo <= c /\ c <= hi /\ c <= 196607) /\ x = [c])` by
+    (rw [FUN_EQ_THM] >> metis_tac []) >>
+  pop_assum (fn th => PURE_REWRITE_TAC [th]) >>
+  simp [reglan_loop_lang_bounds, reglan_repeat_singletons] >>
+  eq_tac >> rw [] >> decide_tac
+QED
 
 Theorem re_deriv_loop_singleton:
   c <= 196607 ==>
@@ -2329,6 +3379,37 @@ Definition smtstr_to_code_def:
     | _ => -1
 End
 
+(* This is cvc5's STRING_EAGER_REDUCTION predicate for [str.to_code].
+   Keeping the statement independent of parser skolems makes the replay
+   adapter applicable to every string term, including components introduced
+   by regular-expression unfolding. *)
+Theorem smtstr_to_code_eager_reduction:
+  if smtstr_len s = 1 then
+    0 <= smtstr_to_code s /\ smtstr_to_code s < 196608
+  else
+    smtstr_to_code s = -1
+Proof
+  qspec_then `s` strip_assume_tac ranged_smtstr_nchotomy >>
+  gvs [smtstr_len_def, smtstr_to_code_def, smtstr_rep_def] >>
+  Cases_on `l` >> gvs [] >>
+  Cases_on `t` >> gvs [] >>
+  Cases_on `t'` >> gvs []
+QED
+
+Theorem reglan_equiv_range_empty:
+  smtstr_len s = 1 /\ smtstr_len t = 1 /\
+  smtstr_to_code t < smtstr_to_code s ==>
+  reglan_equiv (reglan_range s t) reglan_none
+Proof
+  strip_tac >>
+  qpat_x_assum `smtstr_len s = 1`
+    (strip_assume_tac o MATCH_MP smtstr_len_one_form) >>
+  qpat_x_assum `smtstr_len t = 1`
+    (strip_assume_tac o MATCH_MP smtstr_len_one_form) >>
+  fs [reglan_equiv_def, re_lang_def, smtstr_to_code_def,
+      smtstr_rep_def] >> decide_tac
+QED
+
 Theorem num_not_le_neg_one[local]:
   !n. ~((&n : int) <= -1)
 Proof
@@ -2643,6 +3724,13 @@ Proof
         integerTheory.INT_OF_NUM_ADD]
 QED
 
+Theorem smtstr_len_concat_rec:
+  smtstr_len (smtstr_concat (smtstr_concat s t) u) =
+    smtstr_len s + smtstr_len (smtstr_concat t u)
+Proof
+  simp [smtstr_len_concat, integerTheory.INT_ADD_ASSOC]
+QED
+
 (* TASK_02 draft_regex_membership, draft_substr, and draft_re_comp use
    zero length as the empty-string branch of their sequence clauses. *)
 
@@ -2656,6 +3744,14 @@ Theorem smtstr_len_eq_zero:
   smtstr_len s = 0 <=> s = SmtStr []
 Proof
   simp [smtstr_len_def, smtstr_rep_eq_nil]
+QED
+
+Theorem smtstr_length_positive_split:
+  (smtstr_len s = 0 /\ s = SmtStr []) \/ 0 < smtstr_len s
+Proof
+  rw [smtstr_len_def] >>
+  Cases_on `LENGTH (smtstr_rep s) = 0` >>
+  fs [smtstr_rep_eq_nil, arithmeticTheory.NOT_ZERO_LT_ZERO]
 QED
 
 Theorem smtstr_substr_full_bound:
@@ -4408,6 +5504,108 @@ Proof
   simp [smtstr_substr_def, listTheory.TAKE_LENGTH_TOO_LONG]
 QED
 
+Triviality take_drop_split3:
+  TAKE i xs ++ TAKE n (DROP i xs) ++ DROP (i + n) xs = xs
+Proof
+  rpt gen_tac >>
+  `DROP (i + n) xs = DROP n (DROP i xs)` by
+    simp [rich_listTheory.DROP_DROP_T, arithmeticTheory.ADD_COMM] >>
+  asm_rewrite_tac [] >>
+  metis_tac [listTheory.TAKE_DROP, listTheory.APPEND_ASSOC]
+QED
+
+Triviality smtstr_substr_reduction_partition:
+  0 <= i /\ smtstr_len s > i /\ 0 < n ==>
+  s =
+    smtstr_concat
+      (smtstr_concat (smtstr_substr s 0 i) (smtstr_substr s i n))
+      (smtstr_substr s (i + n) (smtstr_len s - (i + n)))
+Proof
+  strip_tac >>
+  `~(i < 0) /\ ~(n <= 0) /\ 0 <= i + n` by intLib.ARITH_TAC >>
+  `&(Num i) = i /\ &(Num n) = n /\
+   Num i < LENGTH (smtstr_rep s)` by
+    (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+  `Num (i + n) = Num i + Num n` by intLib.ARITH_TAC >>
+  `smtstr_substr s 0 i = SmtStr (TAKE (Num i) (smtstr_rep s))` by
+    metis_tac [smtstr_substr_prefix] >>
+  `smtstr_substr s i n =
+     SmtStr (TAKE (Num n) (DROP (Num i) (smtstr_rep s)))` by
+    simp [smtstr_substr_def] >>
+  `smtstr_substr s (i + n) (smtstr_len s - (i + n)) =
+     SmtStr (DROP (Num (i + n)) (smtstr_rep s))` by
+    (Cases_on `i + n < smtstr_len s`
+     >- metis_tac [smtstr_substr_to_end]
+     >> `smtstr_len s <= i + n` by intLib.ARITH_TAC >>
+        `smtstr_substr s (i + n) (smtstr_len s - (i + n)) =
+           SmtStr []` by metis_tac [smtstr_substr_empty_start] >>
+        `LENGTH (smtstr_rep s) <= Num (i + n)` by
+          (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+        simp [listTheory.DROP_LENGTH_TOO_LONG]) >>
+  `EVERY (\c. c <= 196607) (TAKE (Num i) (smtstr_rep s)) /\
+   EVERY (\c. c <= 196607)
+     (DROP (Num i + Num n) (smtstr_rep s))` by
+    simp [rich_listTheory.EVERY_TAKE, rich_listTheory.EVERY_DROP] >>
+  irule (iffLR smtstr_rep_11) >>
+  simp [smtstr_concat_def, smtstr_rep_def,
+        rich_listTheory.DROP_DROP_T, take_drop_split3]
+QED
+
+(* Checked counterpart of cvc5's STRING_REDUCTION rule for substring.
+   The CPC parser represents each proof-local purification skolem by the
+   substring that witnesses it, so the reduction becomes this semantic
+   decomposition theorem. *)
+Theorem smtstr_substr_reduction:
+  (if 0 <= i /\ smtstr_len s > i /\ 0 < n then
+     s =
+       smtstr_concat
+         (smtstr_concat (smtstr_substr s 0 i)
+           (smtstr_substr s i n))
+         (smtstr_substr s (i + n) (smtstr_len s - (i + n))) /\
+     smtstr_len (smtstr_substr s 0 i) = i /\
+     (smtstr_len
+        (smtstr_substr s (i + n) (smtstr_len s - (i + n))) =
+          smtstr_len s - (i + n) \/
+      smtstr_len
+        (smtstr_substr s (i + n) (smtstr_len s - (i + n))) = 0) /\
+     smtstr_len (smtstr_substr s i n) <= n
+   else
+     smtstr_substr s i n = SmtStr []) /\
+  smtstr_substr s i n = smtstr_substr s i n
+Proof
+  rw []
+  >- metis_tac [smtstr_substr_reduction_partition]
+  >- (`Num i < LENGTH (smtstr_rep s)` by
+        (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+      simp [smtstr_substr_prefix, smtstr_len_def, smtstr_rep_def,
+            rich_listTheory.EVERY_TAKE, listTheory.LENGTH_TAKE,
+            arithmeticTheory.MIN_DEF])
+  >- (Cases_on `i + n < smtstr_len s`
+      >- (disj1_tac >>
+          `0 <= i + n /\ 0 < smtstr_len s - (i + n) /\
+           Num (i + n) < LENGTH (smtstr_rep s)` by
+            (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+          `Num (smtstr_len s - (i + n)) =
+           LENGTH (smtstr_rep s) - Num (i + n)` by
+            (fs [smtstr_len_def] >> intLib.ARITH_TAC) >>
+          simp [smtstr_len_substr, smtstr_len_def,
+                arithmeticTheory.MIN_DEF] >>
+          intLib.ARITH_TAC)
+      >> disj2_tac >>
+         `smtstr_len s <= i + n` by intLib.ARITH_TAC >>
+         `smtstr_substr s (i + n) (smtstr_len s - (i + n)) =
+          SmtStr []` by metis_tac [smtstr_substr_empty_start] >>
+         simp [smtstr_len_def, smtstr_rep_def])
+  >- (`&(Num n) = n` by intLib.ARITH_TAC >>
+      metis_tac [smtstr_len_substr_count_bound])
+  >> Cases_on `i < 0`
+  >- simp [smtstr_substr_def]
+  >> Cases_on `n <= 0`
+  >- simp [smtstr_substr_def]
+  >> `smtstr_len s <= i` by intLib.ARITH_TAC >>
+     metis_tac [smtstr_substr_empty_start]
+QED
+
 Theorem smtstr_contains_substr:
   smtstr_contains s (smtstr_substr s i n)
 Proof
@@ -4864,6 +6062,16 @@ Proof
   >- (strip_tac >>
       qexistsl [`smtstr_rep u`, `smtstr_rep v`] >>
       simp [smtstr_rep_def])
+QED
+
+Theorem smt_in_re_concat_fixed_length:
+  (!u. smt_in_re u r1 ==> smtstr_len u = m) /\
+  (!v. smt_in_re v r2 ==> smtstr_len v = n) ==>
+  smt_in_re s (reglan_concat r1 r2) ==>
+  smtstr_len s = m + n
+Proof
+  rw [smt_in_re_concat] >>
+  simp [smtstr_len_concat]
 QED
 
 Theorem smt_in_re_concat_assoc:

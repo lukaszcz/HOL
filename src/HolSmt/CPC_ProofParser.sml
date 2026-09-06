@@ -596,6 +596,55 @@ local
   fun cpc_expect_reglan where_ term =
     cpc_expect_type where_ cpc_reglan_ty term
 
+  fun cpc_reglan_equiv left right =
+    Term.list_mk_comb
+      (Term.prim_mk_const
+        {Thy = "smtstring", Name = "reglan_equiv"}, [left, right])
+
+  (* RegLan is an extensional sort in SMT-LIB and cvc5's CPC calculus.  This
+     dictionary is proof-local: source HOL equality remains constructor
+     equality and is rejected by translation below. *)
+  fun cpc_equality_parsefn token indices args =
+    let
+      val _ = List.null indices orelse cpc_skolem_error
+        "cpc_equality_parsefn" "equality does not accept indices"
+      val _ = List.length args >= 2 orelse cpc_skolem_error
+        "cpc_equality_parsefn" "equality expects at least two arguments"
+      val ty = Term.type_of (List.hd args)
+      val _ = List.all (fn arg => cpc_type_eq (Term.type_of arg, ty)) args
+        orelse cpc_skolem_error "cpc_equality_parsefn"
+          "equality arguments have different sorts"
+      fun adjacent relation (left :: right :: rest) =
+            relation left right :: adjacent relation (right :: rest)
+        | adjacent _ _ = []
+      val relation =
+        if cpc_type_eq (ty, cpc_reglan_ty) then cpc_reglan_equiv
+        else fn left => fn right => boolSyntax.mk_eq (left, right)
+    in
+      boolSyntax.list_mk_conj (adjacent relation args)
+    end
+
+  fun cpc_distinct_parsefn token indices args =
+    let
+      val _ = List.null indices orelse cpc_skolem_error
+        "cpc_distinct_parsefn" "distinct does not accept indices"
+      val _ = List.length args >= 2 orelse cpc_skolem_error
+        "cpc_distinct_parsefn" "distinct expects at least two arguments"
+      val ty = Term.type_of (List.hd args)
+      val _ = List.all (fn arg => cpc_type_eq (Term.type_of arg, ty)) args
+        orelse cpc_skolem_error "cpc_distinct_parsefn"
+          "distinct arguments have different sorts"
+      fun pairs _ [] = []
+        | pairs relation (left :: rest) =
+            List.map (fn right => boolSyntax.mk_neg (relation left right))
+              rest @ pairs relation rest
+    in
+      if cpc_type_eq (ty, cpc_reglan_ty) then
+        boolSyntax.list_mk_conj (pairs cpc_reglan_equiv args)
+      else
+        listSyntax.mk_all_distinct (listSyntax.mk_list (args, ty))
+    end
+
   fun cpc_expect_int where_ term =
     cpc_expect_type where_ intSyntax.int_ty term
 
@@ -1148,6 +1197,8 @@ local
                 Library.union_dict tmdict
                   SmtLib_Theories.Reals_Ints.tmdict)))))
       val tmdict = with_cpc_parameterized_skolems tmdict
+      val tmdict = Library.extend_dict (("=", cpc_equality_parsefn),
+        Library.extend_dict (("distinct", cpc_distinct_parsefn), tmdict))
     in
     (Library.extend_dict (("->", function_sort), tydict),
       Library.extend_dict (("str.++",

@@ -58,6 +58,8 @@ discharge them with the checked tactics:
 | `HolSmtArraySwapScript.sml` | Array reasoning: swapping the same two entries twice restores the original array |
 | `HolSmtBitTricksScript.sml` | Bit-level programming tricks over `word32`: the XOR swap and an alignment round trip |
 | `HolSmtVerificationScript.sml` | Verifier-style proof obligations: binary-search midpoint bounds, a clamp routine, and array swap via the theory of arrays |
+| `HolSmtStringSanitizerScript.sml` | Quote-free string sanitization and concatenation, checked with Z3 and cvc5 |
+| `HolSmtRegexValidationScript.sml` | Natural `[0-9]{2}` validation, with checked Z3/cvc5 arithmetic rows and a reusable HOL regex reduction |
 
 ## The usual workflow
 

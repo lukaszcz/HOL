@@ -458,14 +458,271 @@ local
     case prems of [prem] => prem
     | _ => raise ERR name "expected exactly one CPC premise"
 
+  val reglan_equiv_tm = Term.prim_mk_const
+    {Thy = "smtstring", Name = "reglan_equiv"}
+
+  fun dest_reglan_equiv proposition =
+    case boolSyntax.strip_comb proposition of
+      (head, [left, right]) =>
+        if Term.same_const head reglan_equiv_tm then (left, right)
+        else raise ERR "dest_reglan_equiv" "not RegLan equivalence"
+    | _ => raise ERR "dest_reglan_equiv" "not binary RegLan equivalence"
+
+  fun is_reglan_equiv proposition = Lib.can dest_reglan_equiv proposition
+
+  fun replay_reglan_refl regex =
+    let
+      val generic = Drule.SPEC_ALL smtstringTheory.reglan_equiv_refl
+      val target = Term.list_mk_comb (reglan_equiv_tm, [regex, regex])
+    in
+      Drule.INST_TY_TERM (Term.match_term (Thm.concl generic) target)
+        generic
+    end
+
+  fun replay_reglan_sym premise =
+    Drule.MATCH_MP smtstringTheory.reglan_equiv_sym premise
+
+  fun replay_reglan_trans first second =
+    let
+      val (left, middle) = dest_reglan_equiv (Thm.concl first)
+      val (middle', right) = dest_reglan_equiv (Thm.concl second)
+      val _ = Term.aconv middle middle' orelse raise ERR "trans"
+        "RegLan equivalence middle endpoints differ"
+    in
+      Drule.MATCH_MP smtstringTheory.reglan_equiv_trans
+        (Thm.CONJ first second)
+    end
+
+  val reglan_congruence_theorems =
+    [smtstringTheory.reglan_eq_imp_equiv,
+     smtstringTheory.reglan_equiv_refl,
+     smtstringTheory.reglan_equiv_sym,
+     smtstringTheory.reglan_equiv_trans,
+     smtstringTheory.reglan_equiv_equiv_eq,
+     smtstringTheory.reglan_concat_equiv,
+     smtstringTheory.reglan_union_equiv,
+     smtstringTheory.reglan_inter_equiv,
+     smtstringTheory.reglan_diff_equiv,
+     smtstringTheory.reglan_comp_equiv,
+     smtstringTheory.reglan_star_equiv,
+     smtstringTheory.reglan_plus_equiv,
+     smtstringTheory.reglan_opt_equiv,
+     smtstringTheory.reglan_power_equiv,
+     smtstringTheory.reglan_loop_equiv,
+     smtstringTheory.reglan_cond_equiv,
+     smtstringTheory.smt_in_re_equiv_eq]
+
+  fun replay_reglan_cong conclusion prems =
+    case conclusion of
+      SOME target => metis_prove (prems @ reglan_congruence_theorems) target
+    | NONE => raise ERR "cong"
+        "RegLan congruence requires a declared exact conclusion"
+
+  fun replay_reglan_cong_from_source source prems =
+    let
+      val (left, right) = dest_reglan_equiv source
+      val (left_premise, right_premise) =
+        case prems of
+          [left_premise, right_premise] =>
+            (left_premise, right_premise)
+        | _ => raise ERR "cong"
+            "RegLan relation congruence expects two operand premises"
+      fun orient operand premise =
+        let val (source, destination) =
+          dest_reglan_equiv (Thm.concl premise)
+        in
+          if Term.aconv source operand then premise
+          else if Term.aconv destination operand then replay_reglan_sym premise
+          else raise ERR "cong"
+            "RegLan congruence premise does not start at its source operand"
+        end
+      val left_premise = orient left left_premise
+      val right_premise = orient right right_premise
+    in
+      Drule.MATCH_MP smtstringTheory.reglan_equiv_equiv_eq
+        (Thm.CONJ left_premise right_premise)
+    end
+
+  (* Omitted-conclusion CONG/NARY_CONG steps name the source application in
+     :args.  Infer the other endpoint only for constructors proved respectful
+     of language equivalence, consuming every supplied premise exactly once.
+     Unchanged operands receive reflexivity; an unrelated premise is a loud
+     failure rather than evidence for an opaque RegLan context. *)
+  fun replay_reglan_producer_cong_from_source source prems =
+    let
+      val remaining = ref prems
+      fun take orient operand fallback =
+        let
+          fun search skipped [] = (fallback operand, operand)
+            | search skipped (premise :: rest) =
+                (case Lib.total (orient operand) premise of
+                   SOME result =>
+                     (remaining := List.revAppend (skipped, rest); result)
+                 | NONE => search (premise :: skipped) rest)
+        in
+          search [] (!remaining)
+        end
+      fun orient_reglan operand premise =
+        let
+          val (left, right) = dest_reglan_equiv (Thm.concl premise)
+        in
+          if Term.aconv left operand then (premise, right)
+          else if Term.aconv right operand then
+            (replay_reglan_sym premise, left)
+          else raise ERR "cong"
+            "RegLan premise does not rewrite this constructor operand"
+        end
+      fun orient_equality operand premise =
+        let
+          val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+        in
+          if Term.aconv left operand then (premise, right)
+          else if Term.aconv right operand then (Thm.SYM premise, left)
+          else raise ERR "cong"
+            "equality premise does not rewrite this constructor operand"
+        end
+      fun reglan_operand operand =
+        take orient_reglan operand replay_reglan_refl
+      fun equality_operand operand =
+        take orient_equality operand Thm.REFL
+      fun require_consumed () =
+        if List.null (!remaining) then ()
+        else raise ERR "cong"
+          "RegLan constructor congruence has an unrelated premise"
+      fun named thy name head =
+        case Lib.total Term.dest_thy_const head of
+          SOME {Thy, Name, ...} => Thy = thy andalso Name = name
+        | NONE => false
+      fun semantic_target destination =
+        let
+          val _ = require_consumed ()
+          val target = Term.list_mk_comb
+            (reglan_equiv_tm, [source, destination])
+        in
+          metis_prove (prems @ reglan_congruence_theorems) target
+        end
+      val (head, operands) = boolSyntax.strip_comb source
+      fun unary make =
+        case operands of
+          [regex] =>
+            let val (_, regex') = reglan_operand regex
+            in semantic_target (make regex') end
+        | _ => raise ERR "cong" "RegLan unary constructor has wrong arity"
+      fun binary make =
+        case operands of
+          [left, right] =>
+            let
+              val (_, left') = reglan_operand left
+              val (_, right') = reglan_operand right
+            in
+              semantic_target (make left' right')
+            end
+        | _ => raise ERR "cong" "RegLan binary constructor has wrong arity"
+      fun rebuild operator arguments = Term.list_mk_comb (operator, arguments)
+      fun conditional () =
+        let
+          val (test, yes, no) = boolSyntax.dest_cond source
+          val (_, test') = equality_operand test
+          val (_, yes') = reglan_operand yes
+          val (_, no') = reglan_operand no
+        in
+          semantic_target (boolSyntax.mk_cond (test', yes', no'))
+        end
+    in
+      if boolSyntax.is_cond source then conditional ()
+      else if named "smtstring" "reglan_star" head orelse
+              named "smtstring" "reglan_comp" head orelse
+              named "smtstring" "reglan_plus" head orelse
+              named "smtstring" "reglan_opt" head then
+        unary (fn regex => rebuild head [regex])
+      else if named "smtstring" "reglan_concat" head orelse
+              named "smtstring" "reglan_union" head orelse
+              named "smtstring" "reglan_inter" head orelse
+              named "smtstring" "reglan_diff" head then
+        binary (fn left => fn right => rebuild head [left, right])
+      else
+        raise ERR "cong"
+          "semantic RegLan premise occurs under an opaque producer"
+    end
+
+  fun replay_reglan_consumer_cong_from_source source prems =
+    let
+      val (head, operands) = boolSyntax.strip_comb source
+      val _ =
+        (case Lib.total Term.dest_thy_const head of
+           SOME {Thy = "smtstring", Name = "smt_in_re", ...} => ()
+         | _ => raise ERR "cong"
+             "semantic RegLan premise occurs under an opaque function")
+      val (string, regex) =
+        case operands of
+          [string, regex] => (string, regex)
+        | _ => raise ERR "cong" "smt_in_re has wrong arity"
+      val (string_premise, regex_premise) =
+        case prems of
+          [string_premise, regex_premise] =>
+            (string_premise, regex_premise)
+        | _ => raise ERR "cong"
+            "smt_in_re congruence expects two operand premises"
+      val (string_source, string_destination) =
+        boolSyntax.dest_eq (Thm.concl string_premise)
+      val (string_premise, string_destination) =
+        if Term.aconv string_source string then
+          (string_premise, string_destination)
+        else if Term.aconv string_destination string then
+          (Thm.SYM string_premise, string_source)
+        else raise ERR "cong"
+          "string congruence premise does not start at its source operand"
+      val (regex_source, regex_destination) =
+        dest_reglan_equiv (Thm.concl regex_premise)
+      val (regex_premise, regex_destination) =
+        if Term.aconv regex_source regex then
+          (regex_premise, regex_destination)
+        else if Term.aconv regex_destination regex then
+          (replay_reglan_sym regex_premise, regex_source)
+        else raise ERR "cong"
+          "RegLan congruence premise does not start at its source operand"
+      fun membership string regex = Term.list_mk_comb
+        (Term.prim_mk_const {Thy = "smtstring", Name = "smt_in_re"},
+         [string, regex])
+      val binder = Term.variant
+        (Term.free_vars source @ Term.free_vars (Thm.concl string_premise))
+        (Term.mk_var ("cpc_string", Term.type_of string))
+      val string_lift = Conv.BETA_RULE (Thm.AP_TERM
+        (Term.mk_abs (binder, membership binder regex)) string_premise)
+      val regex_target = boolSyntax.mk_imp
+        (Thm.concl regex_premise,
+         boolSyntax.mk_eq
+           (membership string_destination regex,
+            membership string_destination regex_destination))
+      val generic = Drule.SPEC_ALL
+        smtstringTheory.smt_in_re_equiv_eq
+      val specialized = Drule.INST_TY_TERM
+        (Term.match_term (Thm.concl generic) regex_target) generic
+      val regex_lift = Thm.MP specialized regex_premise
+    in
+      Thm.TRANS string_lift regex_lift
+    end
+
   fun replay_refl conclusion args =
     case conclusion of
       SOME eq =>
-        let val (left, right) = boolSyntax.dest_eq eq in
-          if Term.aconv left right then Thm.REFL left
-          else raise ERR "refl" "CPC refl conclusion is not reflexive"
+        (case Lib.total dest_reglan_equiv eq of
+           SOME (left, right) =>
+             if Term.aconv left right then replay_reglan_refl left
+             else raise ERR "refl"
+               "CPC RegLan refl conclusion is not reflexive"
+         | NONE =>
+             let val (left, right) = boolSyntax.dest_eq eq in
+               if Term.aconv left right then Thm.REFL left
+               else raise ERR "refl" "CPC refl conclusion is not reflexive"
+             end)
+    | NONE =>
+        let val argument = expect_one_arg "refl" args in
+          if Type.compare
+              (Term.type_of argument, Term.type_of ``reglan_none``) = EQUAL
+          then replay_reglan_refl argument
+          else Thm.REFL argument
         end
-    | NONE => Thm.REFL (expect_one_arg "refl" args)
 
   fun replay_eq_refl args =
     Drule.EQT_INTRO (Thm.REFL (expect_one_arg "eq-refl" args))
@@ -1887,9 +2144,12 @@ local
       theorem supports
 
   fun is_reflexive_equality theorem =
-    case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
+    case Lib.total dest_reglan_equiv (Thm.concl theorem) of
       SOME (left, right) => Term.aconv left right
-    | NONE => false
+    | NONE =>
+        (case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
+           SOME (left, right) => Term.aconv left right
+         | NONE => false)
 
   fun is_reflexive_boolean_equality theorem =
     case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
@@ -1902,6 +2162,10 @@ local
     case prems of
       [] => raise ERR "trans" "expected CPC equality premises"
     | first :: rest =>
+        if is_reglan_equiv (Thm.concl first) then
+          List.foldl (fn (next, accumulated) =>
+            replay_reglan_trans accumulated next) first rest
+        else
         let
           fun attempt work = SOME (work ()) handle Feedback.HOL_ERR _ => NONE
           fun compose th accumulated =
@@ -2308,7 +2572,21 @@ local
     let
       val premise = expect_one_premise "symm" prems
     in
-      Thm.SYM premise
+      (if is_reglan_equiv (Thm.concl premise) then
+         replay_reglan_sym premise
+       else case Lib.total boolSyntax.dest_neg (Thm.concl premise) of
+         SOME relation =>
+           if is_reglan_equiv relation then
+             let
+               val (left, right) = dest_reglan_equiv relation
+               val target = boolSyntax.mk_neg
+                 (Term.list_mk_comb (reglan_equiv_tm, [right, left]))
+             in
+               metis_prove
+                 [premise, smtstringTheory.reglan_equiv_sym] target
+             end
+           else Thm.SYM premise
+       | NONE => Thm.SYM premise)
       handle Feedback.HOL_ERR _ =>
         let
           val (left, right) = boolSyntax.dest_eq
@@ -2361,6 +2639,34 @@ local
       if Term.aconv (Thm.concl premise) boolSyntax.T then premise
       else Drule.EQT_ELIM premise
     end
+
+  fun replay_true_elim_result ([premise_step] : replayed_step list) =
+    let
+      val premise = step_theorem premise_step
+      val theorem = replay_true_elim [premise]
+      val provenance =
+        if Term.aconv (Thm.concl premise) boolSyntax.T then
+          step_provenance premise_step
+        else
+          let
+            val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+            val result = Thm.concl theorem
+          in
+            case step_provenance premise_step of
+              EqualityProvenance (left_provenance, right_provenance) =>
+                if Term.aconv left boolSyntax.T andalso
+                   Term.aconv right result then right_provenance
+                else if Term.aconv right boolSyntax.T andalso
+                        Term.aconv left result then left_provenance
+                else UnavailableProvenance
+                  "true_elim equality sides do not identify its result"
+            | provenance => provenance
+          end
+          handle Feedback.HOL_ERR _ => UnavailableProvenance
+            "true_elim premise lacks equality occurrence provenance"
+    in exact_result provenance theorem end
+    | replay_true_elim_result _ =
+        raise ERR "true_elim" "expected exactly one CPC premise"
 
   fun replay_true_intro prems =
     Drule.EQT_INTRO (expect_one_premise "true_intro" prems)
@@ -3248,8 +3554,14 @@ local
              if SmtResource.is_resource_gate holerr then
                raise Feedback.HOL_ERR holerr
              else
-               profile "CPC(rung:word/aci_norm_tautology)"
-                 (tautology "aci_norm") target)
+               (profile "CPC(rung:string/aci_norm)"
+                  SmtStringProve.string_rewrite_prove target
+                handle Feedback.HOL_ERR holerr =>
+                  if SmtResource.is_resource_gate holerr then
+                    raise Feedback.HOL_ERR holerr
+                  else
+                    profile "CPC(rung:word/aci_norm_tautology)"
+                      (tautology "aci_norm") target))
     end
 
   fun replay_bv_xor_duplicate args =
@@ -6259,10 +6571,133 @@ local
                  listSyntax.is_nil chars
              | NONE => false)
         | _ => false
+      fun substring_reduction_theorem substring =
+        case boolSyntax.strip_comb substring of
+          (head, [string, start, count]) =>
+            if same_const "smtstring" "smtstr_substr" head then
+              Thm.INST
+                [{redex = ``s : smtstr``, residue = string},
+                 {redex = ``i : int``, residue = start},
+                 {redex = ``n : int``, residue = count}]
+                smtstringTheory.smtstr_substr_reduction
+            else raise ERR "string_reduction"
+              "expected a substring argument"
+        | _ => raise ERR "string_reduction"
+            "expected a substring argument"
+      fun instantiate_exact theorem target =
+        let val generic = Drule.SPEC_ALL theorem in
+          Drule.INST_TY_TERM
+            (Term.match_term (Thm.concl generic) target) generic
+        end
+      fun fixed_regex_length_theorem string regex =
+        let
+          fun membership string regex = smt_in_re string regex
+          fun implication length = boolSyntax.mk_imp
+            (membership string regex,
+             boolSyntax.mk_eq
+               (Term.mk_comb
+                  (Term.prim_mk_const
+                    {Thy = "smtstring", Name = "smtstr_len"}, string),
+                length))
+          val (head, operands) = boolSyntax.strip_comb regex
+        in
+          if same_const "smtstring" "reglan_range" head then
+            instantiate_exact smtstringTheory.smt_in_re_range_length
+              (implication (intSyntax.mk_injected
+                (numSyntax.mk_numeral Arbnum.one)))
+          else if same_const "smtstring" "reglan_allchar" head andalso
+                  List.null operands then
+            instantiate_exact
+              (Drule.iffLR smtstringTheory.smt_in_re_allchar_len)
+              (implication (intSyntax.mk_injected
+                (numSyntax.mk_numeral Arbnum.one)))
+          else if same_const "smtstring" "reglan_to_re" head then
+            (case operands of
+               [literal] => instantiate_exact
+                 smtstringTheory.smt_in_re_to_re_length
+                 (implication (Term.mk_comb
+                   (Term.prim_mk_const
+                     {Thy = "smtstring", Name = "smtstr_len"}, literal)))
+             | _ => raise ERR "string_eager_reduction"
+                 "str.to_re has wrong arity")
+          else if same_const "smtstring" "reglan_concat" head then
+            (case operands of
+               [left, right] =>
+                 let
+                   val smtstr_type = Type.mk_thy_type
+                     {Thy = "smtstring", Tyop = "smtstr", Args = []}
+                   val left_string = Term.variant
+                     (Term.free_vars regex @ Term.free_vars string)
+                     (Term.mk_var ("fixed_left", smtstr_type))
+                   val right_string = Term.variant
+                     (left_string :: Term.free_vars regex @
+                      Term.free_vars string)
+                     (Term.mk_var ("fixed_right", smtstr_type))
+                   val left_theorem = Thm.GEN left_string
+                     (fixed_regex_length_theorem left_string left)
+                   val right_theorem = Thm.GEN right_string
+                     (fixed_regex_length_theorem right_string right)
+                   val (_, left_result) = boolSyntax.dest_imp
+                     (Thm.concl (Thm.SPEC left_string left_theorem))
+                   val (_, left_length) = boolSyntax.dest_eq left_result
+                   val (_, right_result) = boolSyntax.dest_imp
+                     (Thm.concl (Thm.SPEC right_string right_theorem))
+                   val (_, right_length) = boolSyntax.dest_eq right_result
+                   val target = implication
+                     (intSyntax.mk_plus (left_length, right_length))
+                   val premise = Thm.CONJ left_theorem right_theorem
+                   val generic = Drule.SPEC_ALL
+                     smtstringTheory.smt_in_re_concat_fixed_length
+                   val specialized = Drule.INST_TY_TERM
+                     (Term.match_term (Thm.concl generic)
+                       (boolSyntax.mk_imp (Thm.concl premise, target)))
+                     generic
+                 in Thm.MP specialized premise end
+             | _ => raise ERR "string_eager_reduction"
+                 "re.++ has wrong arity")
+          else raise ERR "string_eager_reduction"
+            "regular expression has no checked fixed-length schema"
+        end
+      fun string_eager_reduction_theorem argument =
+        case boolSyntax.strip_comb argument of
+          (head, [string, regex]) =>
+            if same_const "smtstring" "smt_in_re" head then
+              fixed_regex_length_theorem string regex
+            else raise ERR "string_eager_reduction"
+              "argument is not regular-expression membership"
+        | (head, [string]) =>
+            if same_const "smtstring" "smtstr_to_code" head then
+              let
+                val generic = Drule.SPEC_ALL
+                  smtstringTheory.smtstr_to_code_eager_reduction
+                val variable = Lib.singleton_of_list
+                  (Term.free_vars (Thm.concl generic))
+              in
+                Thm.INST [{redex = variable, residue = string}] generic
+              end
+            else raise ERR "string_eager_reduction"
+              "unary argument has no checked eager-reduction schema"
+        | _ => raise ERR "string_eager_reduction"
+            "argument has no checked eager-reduction schema"
+      fun string_length_pos_theorem string =
+        let
+          val generic = Drule.SPEC_ALL
+            smtstringTheory.smtstr_length_positive_split
+          val variable = Lib.singleton_of_list (Term.free_vars
+            (Thm.concl generic))
+        in
+          Thm.INST [{redex = variable, residue = string}] generic
+        end
       fun inferred_target () =
         case (name, args) of
           ("concat_unify", [_]) => concat_unify_target ()
         | ("re_unfold_pos", []) => re_unfold_pos_target ()
+        | ("string_reduction", [substring]) =>
+            Thm.concl (substring_reduction_theorem substring)
+        | ("string_eager_reduction", [argument]) =>
+            Thm.concl (string_eager_reduction_theorem argument)
+        | ("string_length_pos", [string]) =>
+            Thm.concl (string_length_pos_theorem string)
         | ("str-len-concat-rec", [left, right, empty]) =>
             if listSyntax.is_nil empty orelse is_empty_string empty then
               if is_smtstr_type (Term.type_of left) then
@@ -6772,6 +7207,125 @@ local
                   "re_unfold_pos expects star or concatenation membership"
             end
         | _ => raise ERR "string" "re_unfold_pos expects one premise"
+      fun string_reduction_prove () =
+        case args of
+          [substring] =>
+            let
+              val theorem = substring_reduction_theorem substring
+              val normalized_theorem = Rewrite.PURE_REWRITE_RULE
+                [integerTheory.int_ge, integerTheory.int_gt] theorem
+              val normalization = Rewrite.PURE_REWRITE_CONV
+                [integerTheory.int_ge, integerTheory.int_gt] target
+              val normalized = boolSyntax.rhs (Thm.concl normalization)
+            in
+              if Term.aconv (Thm.concl normalized_theorem) normalized then
+                Thm.EQ_MP (Thm.SYM normalization) normalized_theorem
+              else raise ERR "string_reduction"
+                ("certificate conclusion differs from the checked schema: " ^
+                 Library.term_to_string target ^ "; normalized to: " ^
+                 Library.term_to_string normalized ^ "; expected: " ^
+                 Library.term_to_string (Thm.concl normalized_theorem))
+            end
+        | _ => raise ERR "string_reduction"
+            "expected exactly one substring argument"
+      fun re_loop_elim_prove () =
+        let
+          val _ = List.null prems orelse raise ERR "re-loop-elim"
+            "expected no premises"
+          val (source, destination) = dest_reglan_equiv target
+          val (loop_head, loop_args) = boolSyntax.strip_comb source
+          val (regex, lower, upper) =
+            if same_const "smtstring" "reglan_loop" loop_head then
+              case loop_args of
+                [regex, lower, upper] => (regex, lower, upper)
+              | _ => raise ERR "re-loop-elim" "re.loop has wrong arity"
+            else raise ERR "re-loop-elim"
+              "source is not a regular-expression loop"
+          val _ = Term.aconv lower upper orelse raise ERR "re-loop-elim"
+            "only exact finite loops have a concatenation expansion"
+          val count = numSyntax.dest_numeral upper
+            handle Feedback.HOL_ERR _ => raise ERR "re-loop-elim"
+              "loop bound is not a numeral"
+          val count_int = Arbnum.toInt count
+            handle Overflow => raise ERR "re-loop-elim"
+              "loop bound is too large to replay"
+          fun exact theorem expected =
+            if Term.aconv (Thm.concl theorem) expected then theorem
+            else raise ERR "re-loop-elim"
+              ("derived theorem does not match the certificate target: " ^
+               Library.term_to_string (Thm.concl theorem) ^ "; expected " ^
+               Library.term_to_string expected)
+          fun instantiate theorem expected =
+            let
+              val generic = Drule.SPEC_ALL theorem
+            in
+              Drule.INST_TY_TERM
+                (Term.match_term (Thm.concl generic) expected) generic
+            end
+          fun equivalent left right =
+            Term.list_mk_comb (reglan_equiv_tm, [left, right])
+          fun power n = Term.list_mk_comb
+            (``reglan_power``, [regex, numSyntax.mk_numeral
+              (Arbnum.fromInt n)])
+          fun concat left right =
+            binary_app "smtstring" "reglan_concat" left right
+          fun power_expansion 0 result =
+                let
+                  val theorem = instantiate
+                    smtstringTheory.reglan_equiv_power_zero
+                    (equivalent (power 0) result)
+                in exact theorem (equivalent (power 0) result) end
+            | power_expansion 1 result =
+                let
+                  val theorem = instantiate
+                    smtstringTheory.reglan_equiv_power_one
+                    (equivalent (power 1) result)
+                in exact theorem (equivalent (power 1) result) end
+            | power_expansion n result =
+                let
+                  val (head, operands) = boolSyntax.strip_comb result
+                  val (first, rest) =
+                    if same_const "smtstring" "reglan_concat" head then
+                      case operands of
+                        [first, rest] => (first, rest)
+                      | _ => raise ERR "re-loop-elim"
+                          "expanded concatenation has wrong arity"
+                    else raise ERR "re-loop-elim"
+                      "expanded loop is not a concatenation"
+                  val _ = Term.aconv first regex orelse
+                    raise ERR "re-loop-elim"
+                      "expanded loop changes its repeated expression"
+                  val tail = power_expansion (n - 1) rest
+                  val lifted = Drule.MATCH_MP
+                    smtstringTheory.reglan_concat_equiv
+                    (Thm.CONJ (replay_reglan_refl regex) tail)
+                  val predecessor = numSyntax.mk_numeral
+                    (Arbnum.fromInt (n - 1))
+                  val raw_step_target = equivalent
+                    (Term.list_mk_comb
+                      (``reglan_power``,
+                       [regex, numSyntax.mk_suc predecessor]))
+                    (concat regex (power (n - 1)))
+                  val step = reduceLib.REDUCE_RULE (instantiate
+                    smtstringTheory.reglan_equiv_power_suc raw_step_target)
+                  val theorem = replay_reglan_trans step lifted
+                in exact theorem (equivalent (power n) result) end
+          val loop_to_power = replay_reglan_sym (instantiate
+            smtstringTheory.reglan_equiv_power_loop
+            (equivalent (power count_int) source))
+          val theorem = replay_reglan_trans loop_to_power
+            (power_expansion count_int destination)
+        in exact theorem target end
+      val is_substring_reduction =
+        name = "string_reduction" andalso
+        (case args of
+           [substring] => Lib.can substring_reduction_theorem substring
+         | _ => false)
+      val is_string_eager_reduction =
+        name = "string_eager_reduction" andalso
+        (case args of
+           [argument] => Lib.can string_eager_reduction_theorem argument
+         | _ => false)
     in
       (* `str` is cvc5's macro name for both String and Seq theory steps.
          Dispatch on HOL's carrier, rather than the macro spelling, so the
@@ -6784,6 +7338,19 @@ local
       else if name = "re_unfold_pos" then
         profile "CPC(rung:string/re_unfold_pos)"
           re_unfold_pos_prove ()
+      else if is_substring_reduction then
+        profile "CPC(rung:string/string_reduction)"
+          string_reduction_prove ()
+      else if is_string_eager_reduction then
+        profile "CPC(rung:string/string_eager_reduction)"
+          string_eager_reduction_theorem (List.hd args)
+      else if name = "string_length_pos" then
+        profile "CPC(rung:string/string_length_pos)"
+          (fn string => string_length_pos_theorem string)
+          (expect_one_arg "string_length_pos" args)
+      else if name = "re-loop-elim" then
+        profile "CPC(rung:string/re-loop-elim)"
+          re_loop_elim_prove ()
       else if SmtSeqProve.has_seq_type target then
         let
           val context =
@@ -6957,8 +7524,8 @@ local
     end
 
   fun replay_contains_split_char prems conclusion args =
-    case (prems, conclusion) of
-      ([length_one], SOME target) =>
+    case prems of
+      [length_one] =>
         let
           fun phase label action = action ()
             handle Feedback.HOL_ERR holerr =>
@@ -6990,9 +7557,12 @@ local
           val _ = Term.aconv (Thm.concl length_one) expected_premise orelse
             raise ERR "str-contains-split-char"
               "length premise does not match the needle argument"
-          val _ = Term.aconv target expected orelse
-            raise ERR "str-contains-split-char"
-              "conclusion does not match its exact argument recipe"
+          val target = case conclusion of
+              NONE => expected
+            | SOME target =>
+                if Term.aconv target expected then target
+                else raise ERR "str-contains-split-char"
+                  "conclusion does not match its exact argument recipe"
           val theorem = phase "could not prove the exact conclusion" (fn () =>
             if SmtSeqProve.has_seq_type target then
               Tactical.TAC_PROOF
@@ -7008,8 +7578,6 @@ local
         in
           Drule.PROVE_HYP length_one theorem
         end
-    | ([_], NONE) => raise ERR "str-contains-split-char"
-        "the proved split-char replay requires its declared conclusion"
     | _ => raise ERR "str-contains-split-char"
         "expected exactly one length-one premise"
 
@@ -7200,6 +7768,8 @@ local
     SmtLib_Logics.parsedicts_of_logic "ALL"
   val rare_source_tmdict = Library.union_dict rare_source_base_tmdict
     SmtLib_Theories.CVC5_Seq.tmdict
+  val rare_source_reglan_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
 
   fun rare_source_empty carrier =
     if is_smtstr_type (Term.type_of carrier) then
@@ -7335,6 +7905,19 @@ local
 
   fun normalize_rare_source_arguments name formals located_args =
     let
+      fun is_string_sort_marker ({term, ...} : located_term) =
+        case Lib.total Term.dest_var term of
+          SOME (marker, ty) => marker = "@cpc.String" andalso
+            is_smtstr_type ty
+        | NONE => false
+      val has_sequence_formal = List.exists
+        (fn (_, _, source) => source = RareSourceSeq) formals
+      val located_args =
+        if has_sequence_formal andalso
+           List.length located_args = List.length formals + 1 andalso
+           is_string_sort_marker (List.last located_args)
+        then List.take (located_args, List.length formals)
+        else located_args
       val _ = List.length formals = List.length located_args orelse
         raise ERR name
           ("cvc5-1.3.4 RARE rule " ^ name ^
@@ -7495,9 +8078,25 @@ local
             handle Feedback.HOL_ERR _ => raise ERR name
               ("cvc5-1.3.4 RARE rule " ^ name ^
                " requires literal natural re.loop indices")
+          fun adjacent _ [_] = []
+            | adjacent relation (left :: (rest as right :: _)) =
+                relation left right :: adjacent relation rest
+            | adjacent _ [] = []
+          fun equality operands =
+            if List.length operands < 2 then raise ERR name
+              "declarative equality requires at least two operands"
+            else if Type.compare
+                (Term.type_of (List.hd operands), rare_source_reglan_ty) =
+                EQUAL then
+              boolSyntax.list_mk_conj
+                (adjacent (fn left => fn right =>
+                   Term.list_mk_comb (reglan_equiv_tm, [left, right]))
+                 operands)
+            else SmtLib_Parser.apply_term rare_source_tmdict "=" [] operands
         in
         case (operator, operands) of
-          ("str.++", []) =>
+          ("=", operands) => equality operands
+        | ("str.++", []) =>
             let
               fun carrier (RareAtom formal :: _) = #3 (lookup formal)
                 | carrier (_ :: rest) = carrier rest
@@ -7533,6 +8132,9 @@ local
             SmtLib_Parser.apply_term rare_source_tmdict "re.loop"
               [numSyntax.mk_numeral (indexed_natural lo),
                numSyntax.mk_numeral (indexed_natural hi)] [re]
+        | ("re.^", [power, re]) =>
+            SmtLib_Parser.apply_term rare_source_tmdict "re.^"
+              [numSyntax.mk_numeral (indexed_natural power)] [re]
         | ("and", [operand]) => operand
         | ("or", [operand]) => operand
         | _ => SmtLib_Parser.apply_term rare_source_tmdict
@@ -7644,6 +8246,344 @@ local
       fun missing_recipe () = raise ERR name
         ("cvc5-1.3.4 RARE rule " ^ name ^
          " has no fixed typed family proof recipe")
+      val regex_context_theorems =
+        [smtstringTheory.reglan_equiv_refl,
+         smtstringTheory.reglan_equiv_sym,
+         smtstringTheory.reglan_equiv_trans,
+         smtstringTheory.reglan_concat_equiv,
+         smtstringTheory.reglan_union_equiv,
+         smtstringTheory.reglan_inter_equiv,
+         smtstringTheory.reglan_star_equiv]
+      fun regex_metis theorems =
+        prove_implication (Tactical.THEN
+          (bossLib.SIMP_TAC (bossLib.srw_ss())
+             [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+              integerTheory.int_ge],
+           metisLib.METIS_TAC (regex_context_theorems @ theorems)))
+      fun instantiate_exact theorem target =
+        let val generic = Drule.SPEC_ALL theorem in
+          Drule.INST_TY_TERM
+            (Term.match_term (Thm.concl generic) target) generic
+        end
+      fun regex_concat_context base_theorems target =
+        let
+          fun base target =
+            Lib.tryfind (fn theorem =>
+              instantiate_exact theorem target
+              handle Feedback.HOL_ERR _ =>
+                instantiate_exact (Thm.SYM theorem) target)
+              base_theorems
+          fun prove left right =
+            if Term.aconv left right then replay_reglan_refl left
+            else
+              let val target = Term.list_mk_comb
+                (reglan_equiv_tm, [left, right])
+              in
+                base target
+                handle Feedback.HOL_ERR _ =>
+                  let
+                    val (left_head, left_args) = boolSyntax.strip_comb left
+                    val (right_head, right_args) = boolSyntax.strip_comb right
+                    val _ = Term.same_const left_head right_head andalso
+                      Term.same_const left_head ``reglan_concat`` orelse
+                      raise ERR name
+                        "semantic regex context is not respectful"
+                    val (left_first, left_rest, right_first, right_rest) =
+                      case (left_args, right_args) of
+                        ([a, b], [c, d]) => (a, b, c, d)
+                      | _ => raise ERR name
+                          "semantic regex concat context has wrong arity"
+                  in
+                    Drule.MATCH_MP smtstringTheory.reglan_concat_equiv
+                      (Thm.CONJ
+                        (prove left_first right_first)
+                        (prove left_rest right_rest))
+                  end
+              end
+          val (left, right) = dest_reglan_equiv target
+        in prove left right end
+      fun regex_union_all target =
+        let
+          val (source, universal) = dest_reglan_equiv target
+          fun prove tm =
+            if Term.aconv tm universal then replay_reglan_refl universal
+            else
+              let
+                val (head, operands) = boolSyntax.strip_comb tm
+                val (left, right) =
+                  if Term.same_const head ``reglan_union`` then
+                    case operands of
+                      [left, right] => (left, right)
+                    | _ => raise ERR name
+                        "semantic regex union context has wrong arity"
+                  else raise ERR name
+                    "semantic regex union context does not contain re.all"
+                fun through_left () =
+                  let
+                    val lifted = Drule.MATCH_MP
+                      smtstringTheory.reglan_union_equiv
+                      (Thm.CONJ (prove left) (replay_reglan_refl right))
+                    val middle = Term.list_mk_comb
+                      (``reglan_union``, [universal, right])
+                    val collapse_target = Term.list_mk_comb
+                      (reglan_equiv_tm, [middle, universal])
+                    val collapse = instantiate_exact
+                      smtstringTheory.reglan_equiv_union_star_all_left
+                      collapse_target
+                  in replay_reglan_trans lifted collapse end
+                fun through_right () =
+                  let
+                    val lifted = Drule.MATCH_MP
+                      smtstringTheory.reglan_union_equiv
+                      (Thm.CONJ (replay_reglan_refl left) (prove right))
+                    val middle = Term.list_mk_comb
+                      (``reglan_union``, [left, universal])
+                    val collapse_target = Term.list_mk_comb
+                      (reglan_equiv_tm, [middle, universal])
+                    val collapse = instantiate_exact
+                      smtstringTheory.reglan_equiv_union_star_all
+                      collapse_target
+                  in replay_reglan_trans lifted collapse end
+              in
+                through_left () handle Feedback.HOL_ERR _ => through_right ()
+              end
+        in prove source end
+      fun regex_remove_identity operator identity congruence left_identity
+          right_identity target =
+        let
+          fun normalize tm =
+            if Term.aconv tm identity then (identity,
+              replay_reglan_refl identity)
+            else
+              let
+                val (head, operands) = boolSyntax.strip_comb tm
+              in
+                if Term.same_const head operator then
+                  let
+                    val (left, right) =
+                      case operands of
+                        [left, right] => (left, right)
+                      | _ => raise ERR name
+                          "semantic regex identity context has wrong arity"
+                    val (left', left_thm) = normalize left
+                    val (right', right_thm) = normalize right
+                    val combined = Term.list_mk_comb
+                      (operator, [left', right'])
+                    val lifted = Drule.MATCH_MP congruence
+                      (Thm.CONJ left_thm right_thm)
+                    fun collapse theorem result =
+                      let
+                        val collapse_target = Term.list_mk_comb
+                          (reglan_equiv_tm, [combined, result])
+                        val collapse = instantiate_exact theorem
+                          collapse_target
+                      in (result, replay_reglan_trans lifted collapse) end
+                  in
+                    if Term.aconv left' identity then
+                      collapse left_identity right'
+                    else if Term.aconv right' identity then
+                      collapse right_identity left'
+                    else (combined, lifted)
+                  end
+                else (tm, replay_reglan_refl tm)
+              end
+          val (source, destination) = dest_reglan_equiv target
+          val (source', source_thm) = normalize source
+          val (destination', destination_thm) = normalize destination
+          val _ = Term.aconv source' destination' orelse raise ERR name
+            ("semantic regex identity normalization changed the target: " ^
+             "source=" ^ Library.term_to_string source' ^
+             "; destination=" ^ Library.term_to_string destination')
+        in
+          replay_reglan_trans source_thm
+            (replay_reglan_sym destination_thm)
+        end
+      fun regex_inter_cstring () =
+        let
+          val premise = expose_true_equality
+            (expect_one_premise name prems)
+          val (string, source) =
+            case boolSyntax.strip_comb (Thm.concl premise) of
+              (head, [string, regex]) =>
+                if Term.same_const head ``smt_in_re`` then (string, regex)
+                else raise ERR name
+                  "expected a regex-membership premise"
+            | _ => raise ERR name "expected a regex-membership premise"
+          val (target_source, singleton) = dest_reglan_equiv expected
+          val _ = Term.aconv source target_source orelse raise ERR name
+            "membership premise and regex equality use different languages"
+          val expected_singleton = Term.mk_comb (``reglan_to_re``, string)
+          val _ = Term.aconv singleton expected_singleton orelse raise ERR name
+            "regex intersection target is not its singleton member"
+          fun prove regex membership =
+            if Term.aconv regex singleton then replay_reglan_refl singleton
+            else
+              let
+                val (head, operands) = boolSyntax.strip_comb regex
+                val (left, _) =
+                  if Term.same_const head ``reglan_inter`` then
+                    case operands of
+                      [left, right] => (left, right)
+                    | _ => raise ERR name
+                        "regex intersection has wrong arity"
+                  else raise ERR name
+                    "regex intersection does not start with its singleton"
+                val left_membership = Drule.MATCH_MP
+                  smtstringTheory.smt_in_re_inter_left membership
+                val left_equiv = prove left left_membership
+              in
+                Drule.MATCH_MP
+                  smtstringTheory.reglan_equiv_inter_cstring_step
+                  (Thm.CONJ membership left_equiv)
+              end
+        in prove source premise end
+      fun regex_semantic_simp theorems =
+        prove_implication (Tactical.THEN
+          (bossLib.SIMP_TAC (bossLib.srw_ss())
+             [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+              integerTheory.int_ge, smtstringTheory.reglan_equiv_def,
+              smtstringTheory.re_lang_def,
+              smtstringTheory.smtstr_rep_def],
+           Tactical.THEN
+             (Tactic.CONV_TAC (Conv.DEPTH_CONV Drule.ETA_CONV),
+              bossLib.SIMP_TAC (bossLib.srw_ss())
+          ([smtstringTheory.reglan_dot_assoc,
+            smtstringTheory.reglan_kstar_dot_comm,
+            smtstringTheory.reglan_kstar_dot_subsume,
+            smtstringTheory.reglan_kstar_idem,
+            smtstringTheory.reglan_kstar_epsilon,
+            smtstringTheory.reglan_kstar_none,
+            smtstringTheory.reglan_kstar_drop_epsilon,
+            smtstringTheory.reglan_kstar_allchar,
+            smtstringTheory.reglan_kstar_allchar_sandwich,
+            smtstringTheory.reglan_star_swap_suffix,
+            smtstringTheory.reglan_star_swap_suffix_fun,
+            smtstringTheory.reglan_star_repeat_suffix,
+            smtstringTheory.reglan_star_repeat_suffix_fun,
+            smtstringTheory.reglan_star_subsume_right_lang,
+            smtstringTheory.reglan_star_subsume_left_lang,
+            smtstringTheory.reglan_star_subsume_right_suffix,
+            smtstringTheory.reglan_star_subsume_right_suffix_fun,
+            Rewrite.REWRITE_RULE [smtstringTheory.re_lang_def]
+              smtstringTheory.reglan_star_subsume_right_suffix_fun,
+            smtstringTheory.reglan_star_subsume_left_suffix,
+            smtstringTheory.reglan_star_subsume_left_suffix_fun,
+            Rewrite.REWRITE_RULE [smtstringTheory.re_lang_def]
+              smtstringTheory.reglan_star_subsume_left_suffix_fun,
+            smtstringTheory.reglan_star_union_allchar_lang,
+            Rewrite.REWRITE_RULE [smtstringTheory.re_lang_def]
+              smtstringTheory.reglan_star_union_allchar_lang,
+            smtstringTheory.reglan_concat_literals_suffix_fun,
+            smtstringTheory.reglan_concat_literals_suffix_rep_fun,
+            smtstringTheory.re_lang_wf] @ theorems))))
+      fun regex_semantic_metis theorems =
+        prove_implication (Tactical.THEN
+          (bossLib.SIMP_TAC (bossLib.srw_ss())
+             [boolTheory.EQ_CLAUSES, integerTheory.int_gt,
+              integerTheory.int_ge, smtstringTheory.reglan_equiv_def,
+              smtstringTheory.re_lang_def,
+              smtstringTheory.smtstr_rep_def,
+              smtstringTheory.smt_in_re_rep,
+              smtstringTheory.reglan_kstar_allchar],
+           Tactical.THEN
+             (Tactic.CONV_TAC (Conv.DEPTH_CONV Drule.ETA_CONV),
+              metisLib.METIS_TAC
+                (smtstringTheory.re_lang_wf :: theorems))))
+      fun regex_star_union_char () =
+        prove_implication (Tactical.THEN
+          (bossLib.SIMP_TAC (bossLib.srw_ss())
+             [smtstringTheory.reglan_equiv_def,
+              smtstringTheory.re_lang_def,
+              smtstringTheory.reglan_kstar_allchar],
+           Tactical.THEN
+             (Tactic.CONV_TAC (Conv.DEPTH_CONV Drule.ETA_CONV),
+              Tactical.THEN
+                (Tactical.REPEAT Tactic.STRIP_TAC,
+                 Tactical.THEN
+                   (Tactic.MATCH_MP_TAC
+                      smtstringTheory.reglan_kstar_allchar_sandwich,
+                    Tactical.THENL
+                      (Tactic.CONJ_TAC,
+                       [Tactical.THEN
+                          (Tactical.REPEAT Tactic.STRIP_TAC,
+                           Tactical.THEN
+                             (bossLib.FULL_SIMP_TAC
+                                (bossLib.srw_ss()) [],
+                              metisLib.METIS_TAC
+                                [smtstringTheory.re_lang_wf])),
+                        bossLib.SIMP_TAC (bossLib.srw_ss()) []]))))))
+      fun regex_star_union_drop_epsilon () =
+        prove_implication (Tactical.THEN
+          (bossLib.SIMP_TAC (bossLib.srw_ss())
+             [smtstringTheory.reglan_equiv_def,
+              smtstringTheory.re_lang_def,
+              smtstringTheory.smtstr_rep_def],
+           Tactical.THEN
+             (Tactic.CONV_TAC (Conv.DEPTH_CONV Drule.ETA_CONV),
+              Tactical.THEN
+                (Tactical.REPEAT Tactic.STRIP_TAC,
+                 Tactical.THEN
+                   (Tactic.MATCH_MP_TAC
+                      smtstringTheory.reglan_kstar_epsilon_invariant,
+                    metisLib.METIS_TAC [])))))
+      fun regex_family_prove () =
+        if name = "re-concat-star-subsume1" then
+          regex_concat_context
+            [smtstringTheory.reglan_equiv_star_subsume_right_context,
+             smtstringTheory.reglan_equiv_star_subsume_right_suffix]
+            expected
+        else if name = "re-concat-star-subsume2" then
+          regex_concat_context
+            [smtstringTheory.reglan_equiv_star_subsume_left_context,
+             smtstringTheory.reglan_equiv_star_subsume_left_suffix]
+            expected
+        else if name = "re-concat-star-swap" orelse
+           name = "re-concat-star-repeat" orelse
+           name = "re-concat-merge" then
+          regex_semantic_simp []
+        else if name = "re-star-union-char" then
+          regex_star_union_char ()
+        else if name = "re-star-union-drop-emp" then
+          regex_star_union_drop_epsilon ()
+        else if name = "re-union-all" then regex_union_all expected
+        else if name = "re-inter-all" then
+          regex_remove_identity ``reglan_inter``
+            ``reglan_star reglan_allchar``
+            smtstringTheory.reglan_inter_equiv
+            smtstringTheory.reglan_equiv_inter_star_all_left
+            smtstringTheory.reglan_equiv_inter_star_all expected
+        else if name = "re-inter-cstring" then regex_inter_cstring ()
+        else if name = "re-inter-cstring-neg" then
+          regex_semantic_metis []
+        else if name = "re-union-const-elim" then regex_metis
+          [smtstringTheory.reglan_equiv_union_const]
+        else if name = "re-star-none" then regex_metis
+          [smtstringTheory.reglan_equiv_star_none]
+        else if name = "re-star-emp" then regex_metis
+          [smtstringTheory.reglan_equiv_star_epsilon]
+        else if name = "re-star-star" then regex_metis
+          [smtstringTheory.reglan_equiv_star_star]
+        else if name = "re-range-refl" then regex_metis
+          [smtstringTheory.reglan_equiv_range_refl]
+        else if name = "re-range-emp" then regex_metis
+          [smtstringTheory.reglan_equiv_range_empty]
+        else if name = "re-range-non-singleton-1" then regex_metis
+          [smtstringTheory.reglan_equiv_range_non_singleton_left]
+        else if name = "re-range-non-singleton-2" then regex_metis
+          [smtstringTheory.reglan_equiv_range_non_singleton_right]
+        else if name = "re-loop-neg" then regex_metis
+          [smtstringTheory.reglan_equiv_loop_empty]
+        else if name = "re-all-elim" then regex_metis
+          [smtstringTheory.reglan_equiv_all]
+        else if name = "re-diff-elim" then regex_metis
+          [smtstringTheory.reglan_equiv_diff]
+        else if name = "re-opt-elim" then regex_metis
+          [smtstringTheory.reglan_equiv_opt]
+        else if name = "re-plus-elim" then regex_metis
+          [smtstringTheory.reglan_equiv_plus]
+        else if name = "re-repeat-elim" then regex_metis
+          [smtstringTheory.reglan_equiv_power_loop]
+        else missing_recipe ()
       fun seq_family_prove () =
         if name = "str-eq-ctn-false" then
           prove_implication (metisLib.METIS_TAC
@@ -8137,8 +9077,21 @@ local
                 name = "seq-rev-unit" then
           owning_procedure ()
         else missing_recipe ()
+      fun source_uses_hol_sequence () =
+        List.exists
+          (fn (((_, kind, source), argument)) =>
+            if source <> RareSourceSeq then false
+            else case kind of
+              RareSourceTerm =>
+                listSyntax.is_list_type (Term.type_of argument)
+            | RareSourceList _ =>
+                listSyntax.is_list_type (Term.type_of argument) andalso
+                listSyntax.is_list_type
+                  (listSyntax.dest_list_type (Term.type_of argument))
+            | RareSourceIndex => false)
+          (ListPair.zip (#formals recipe, args))
       fun family_prove () =
-        if SmtSeqProve.has_seq_type (implication_target ()) then
+        if source_uses_hol_sequence () then
           seq_family_prove ()
         else case family of
           RareConcatEquality =>
@@ -8597,7 +9550,7 @@ local
                 [boolTheory.EQ_CLAUSES, integerTheory.int_le,
                  smtstringTheory.smtstr_indexof_suffix_equal])
             else missing_recipe ()
-        | RareRegexStar => missing_recipe ()
+        | RareRegexStar => regex_family_prove ()
         | RareConversionOrder =>
             if name = "str-is-digit-elim" then
               prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
@@ -8616,7 +9569,7 @@ local
                 [boolTheory.EQ_CLAUSES,
                  smtstringTheory.smtstr_from_int_no_nondigit_substring])
             else missing_recipe ()
-        | RareRegexOther => missing_recipe ()
+        | RareRegexOther => regex_family_prove ()
         | RareRegexMembership =>
             if name = "str-in-re-range-elim" then
               prove_implication (bossLib.SIMP_TAC (bossLib.srw_ss())
@@ -9509,6 +10462,36 @@ local
               theorem
           end
         end
+      (* Exact CPC occurrence provenance is needed while a rewrite could
+         otherwise guess an erased conjunction boundary.  Once every
+         premise is an ordinary HOL equality, however, the kernel can lift
+         that equality through the elaborated source term directly.  This
+         final route is useful when an atomic Boolean consumer (for example
+         [smt_in_re]) is replaced by a conjunction: it consumes each premise
+         once, in CPC order, without treating RegLan language equivalence as
+         HOL equality. *)
+      fun bounded_ordinary_cong_result () =
+        let
+          val source = expect_one_arg "cong" args
+          val _ = List.all (boolSyntax.is_eq o Thm.concl) prems orelse
+            raise ERR "cong"
+              "ordinary congruence fallback requires equality premises"
+          val maximum = SmtResource.max_term_nodes_for "String"
+          fun replay source =
+            let
+              val _ = SmtResource.check_dag_size_with_limit
+                "String" "cpc-ordinary-cong" maximum
+                (SmtResource.dag_nodes_up_to maximum source)
+              val theorem = replay_cong NONE [source] prems
+            in
+              unavailable_result
+                "ordinary CPC congruence lifted by kernel equality"
+                theorem
+            end
+        in
+          SmtResource.with_resource_step_time
+            "String" "cpc-ordinary-cong" replay source
+        end
       (* This rule-specific result validates every SKOLEMIZE premise,
          source boundary, and declared conclusion before a generic theorem
          with the same conclusion can be reused.  On a cache miss dispatch
@@ -9589,7 +10572,11 @@ local
                in exact_result provenance theorem end
            | "symm" => replay_symm_result premise_steps
            | "trans" =>
-               (case conclusion of
+               (if List.exists (is_reglan_equiv o Thm.concl) prems then
+                  unavailable_result
+                    "RegLan transitivity uses semantic language equivalence"
+                    (require_declared "trans" (replay_trans prems))
+                else case conclusion of
                   SOME _ => opaque (canonical_trans ())
                 | NONE =>
                     let
@@ -9623,6 +10610,29 @@ local
                            )
                     in exact_result provenance theorem end)
            | "cong" =>
+               (if Option.getOpt
+                     (Option.map is_reglan_equiv conclusion, false) orelse
+                   List.exists (is_reglan_equiv o Thm.concl) prems then
+                  (case conclusion of
+                     SOME _ => unavailable_result
+                       "RegLan congruence uses semantic language equivalence"
+                       (replay_reglan_cong conclusion prems)
+                   | NONE =>
+                       let val source = expect_one_arg "cong" args in
+                         unavailable_result
+                           "RegLan congruence uses semantic language equivalence"
+                           (if is_reglan_equiv source then
+                              replay_reglan_cong_from_source source prems
+                            else if Type.compare
+                              (Term.type_of source,
+                               Term.type_of ``reglan_none``) = EQUAL then
+                              replay_reglan_producer_cong_from_source
+                                source prems
+                            else
+                              replay_reglan_consumer_cong_from_source
+                                source prems)
+                       end)
+                else
                ((case (conclusion, located_args) of
                    (NONE, [source]) =>
                      replay_exact_cong_result NONE source premise_steps
@@ -9641,17 +10651,36 @@ local
                               NONE =>
                                 (reducing_cong_result ()
                                  handle Feedback.HOL_ERR reducing_error =>
-                                   raise ERR "cong_provenance"
-                                     ("direct: " ^
-                                      Feedback.message_of direct_error ^
-                                      "; canonical: " ^
-                                      Feedback.message_of canonical_error ^
-                                      "; integer spelling: " ^
-                                      Feedback.message_of spelling_error ^
-                                      "; strong: " ^
-                                      Feedback.message_of strong_error ^
-                                      "; reducing: " ^
-                                      Feedback.message_of reducing_error))
+                                   if SmtResource.is_resource_gate
+                                        reducing_error
+                                   then raise Feedback.HOL_ERR reducing_error
+                                   else
+                                     (bounded_ordinary_cong_result ()
+                                      handle Feedback.HOL_ERR ordinary_error =>
+                                        if SmtResource.is_resource_gate
+                                             ordinary_error
+                                        then
+                                          raise Feedback.HOL_ERR ordinary_error
+                                        else
+                                          raise ERR "cong_provenance"
+                                            ("direct: " ^
+                                             Feedback.message_of
+                                               direct_error ^
+                                             "; canonical: " ^
+                                             Feedback.message_of
+                                               canonical_error ^
+                                             "; integer spelling: " ^
+                                             Feedback.message_of
+                                               spelling_error ^
+                                             "; strong: " ^
+                                             Feedback.message_of
+                                               strong_error ^
+                                             "; reducing: " ^
+                                             Feedback.message_of
+                                               reducing_error ^
+                                             "; ordinary: " ^
+                                             Feedback.message_of
+                                               ordinary_error)))
                             | SOME _ => unavailable_result
                                 ("congruence exact occurrence unavailable; " ^
                                  "direct: " ^
@@ -9662,7 +10691,7 @@ local
                                  Feedback.message_of spelling_error ^
                                  "; strong: " ^
                                  Feedback.message_of strong_error)
-                                (reducing_cong ()))))))
+                                (reducing_cong ())))))))
            | "ho_cong" => opaque ( replay_ho_cong prems)
            | "beta_reduce" => opaque ( replay_beta_reduce args)
            | "lambda_elim" => opaque ( replay_lambda_elim args)
@@ -9699,7 +10728,7 @@ local
            | "contra" => opaque ( canonical_handler "contra" replay_contra)
            | "false_intro" => opaque ( replay_false_intro prems)
            | "false_elim" => opaque ( replay_false_elim prems)
-           | "true_elim" => opaque ( replay_true_elim prems)
+           | "true_elim" => replay_true_elim_result premise_steps
            | "true_intro" => opaque ( replay_true_intro prems)
            | "evaluate" =>
                conjunction_free_equality_result

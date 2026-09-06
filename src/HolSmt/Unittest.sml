@@ -12285,13 +12285,271 @@ in
 end
 
 fun cpc_proof_replay_string_obligation_diagnostic () =
-  expect_hol_error_contains "CPC re-all-elim obligation"
-    ("unsupported cvc5-1.3.4 RARE rule re-all-elim: " ^
-     "universal-language expansion is false as intensional reglan equality")
-    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
-      (parse_cpc_proof_string
-        "((step @p1 (= re.all (re.* re.allchar)) \
-        \:rule re-all-elim))")))
+let
+  val theorem = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((step @p1 (= re.all (re.* re.allchar)) \
+      \:rule re-all-elim))")
+in
+  assert (Thm.concl theorem ~~
+      ``reglan_equiv reglan_all (reglan_star reglan_allchar)``,
+    "CPC re-all-elim did not produce language equivalence");
+  check_oracle_tags "CPC re-all-elim semantic equality" theorem
+end
+
+fun cpc_reglan_semantic_relation_replay_success () =
+let
+  val left = ``reglan_none``
+  val middle = ``reglan_union reglan_none reglan_none``
+  val right = ``reglan_inter reglan_none reglan_none``
+  val refl = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((step @p (= re.none re.none) :rule refl :args (re.none)))")
+  val symm = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (step @p2 (= (re.union re.none re.none) re.none) \
+      \ :rule symm :premises (@p1)))")
+  val trans = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (assume @p2 (= (re.union re.none re.none) \
+      \                    (re.inter re.none re.none))) \
+      \ (step @p3 (= re.none (re.inter re.none re.none)) \
+      \ :rule trans :premises (@p1 @p2)))")
+  val nary = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (step @p2 (= (re.* re.none) \
+      \               (re.* (re.union re.none re.none))) \
+      \ :rule nary_cong :premises (@p1) :args ((re.* re.none))))")
+  val conditional = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const c Bool) \
+      \ (assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (step @p2 (= (ite c re.none re.none) \
+      \               (ite c (re.union re.none re.none) \
+      \                      (re.union re.none re.none))) \
+      \ :rule cong :premises (@p1) :args ((ite c re.none re.none))))")
+  val membership = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (step @p2 (= (str.in_re \"a\" re.none) \
+      \               (str.in_re \"a\" (re.union re.none re.none))) \
+      \ :rule cong :premises (@p1) \
+      \ :args ((str.in_re \"a\" re.none))))")
+  val distinct = parse_cpc_proof_string
+    "((assume @p (distinct re.none (re.union re.none re.none))))"
+  val distinct_symm = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (distinct re.none (re.union re.none re.none))) \
+      \ (step @p2 (distinct (re.union re.none re.none) re.none) \
+      \ :rule symm :premises (@p1)))")
+  val omitted_star = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (step @p2 :rule nary_cong :premises (@p1) \
+      \ :args ((re.* re.none))))")
+  val omitted_concat = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (assume @p2 (= re.none (re.inter re.none re.none))) \
+      \ (step @p3 :rule cong :premises (@p1 @p2) \
+      \ :args ((re.++ re.none re.none))))")
+  val omitted_conditional = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const c Bool) (declare-const d Bool) \
+      \ (assume @p0 (= c d)) \
+      \ (assume @p1 (= re.none (re.union re.none re.none))) \
+      \ (assume @p2 (= re.none (re.inter re.none re.none))) \
+      \ (step @p3 :rule nary_cong :premises (@p0 @p1 @p2) \
+      \ :args ((ite c re.none re.none))))")
+  val expected_middle = ``reglan_equiv ^left ^middle``
+  fun expect_conclusion label theorem expected =
+    (assert (Thm.concl theorem ~~ expected,
+       label ^ " returned the wrong semantic relation");
+     check_oracle_tags label theorem)
+in
+  expect_conclusion "CPC RegLan refl" refl ``reglan_equiv ^left ^left``;
+  expect_conclusion "CPC RegLan symm" symm
+    ``reglan_equiv ^middle ^left``;
+  expect_conclusion "CPC RegLan trans" trans
+    ``reglan_equiv ^left ^right``;
+  expect_conclusion "CPC RegLan nary_cong" nary
+    ``reglan_equiv (reglan_star ^left) (reglan_star ^middle)``;
+  expect_conclusion "CPC RegLan conditional congruence" conditional
+    ``reglan_equiv
+        (if c then ^left else ^left)
+        (if c then ^middle else ^middle)``;
+  expect_conclusion "CPC RegLan membership consumer" membership
+    ``smt_in_re (SmtStr [97]) ^left =
+      smt_in_re (SmtStr [97]) ^middle``;
+  expect_conclusion "CPC negated RegLan symm" distinct_symm
+    ``~reglan_equiv ^middle ^left``;
+  expect_conclusion "CPC omitted RegLan star congruence" omitted_star
+    ``reglan_equiv (reglan_star ^left) (reglan_star ^middle)``;
+  expect_conclusion "CPC omitted RegLan concat congruence" omitted_concat
+    ``reglan_equiv
+        (reglan_concat ^left ^left)
+        (reglan_concat ^middle ^right)``;
+  expect_conclusion "CPC omitted RegLan conditional congruence"
+    omitted_conditional
+    ``reglan_equiv
+        (if c then ^left else ^left)
+        (if d then ^middle else ^right)``;
+  (case CPC_Proof.proof_commands distinct of
+     [CPC_Proof.ASSUME (_, {term, ...})] =>
+       assert (term ~~ boolSyntax.mk_neg expected_middle,
+         "CPC RegLan distinct did not use negated language equivalence")
+   | _ => die "FAIL: CPC RegLan distinct parsed to the wrong command")
+end
+
+fun cpc_reglan_nonrespectful_congruence_rejected () =
+let
+  fun reject label proof =
+    (ignore (CPC_ProofReplay.replay_root_for_test
+       (parse_cpc_proof_string proof));
+     die ("CPC accepted non-respectful RegLan context: " ^ label))
+    handle Feedback.HOL_ERR _ => ()
+in
+  reject "RegLan result"
+    "((declare-fun f (RegLan) RegLan) \
+    \ (assume @p1 (= re.none (re.union re.none re.none))) \
+    \ (step @p2 (= (f re.none) (f (re.union re.none re.none))) \
+    \ :rule nary_cong :premises (@p1) :args ((f re.none))))";
+  reject "Boolean result"
+    "((declare-fun p (RegLan) Bool) \
+    \ (assume @p1 (= re.none (re.union re.none re.none))) \
+    \ (step @p2 (= (p re.none) (p (re.union re.none re.none))) \
+    \ :rule cong :premises (@p1) :args ((p re.none))))"
+end
+
+fun smtlib_reglan_hol_equality_rejected () =
+  expect_hol_error_contains "nested public RegLan HOL equality"
+    "HOL equality on smtstring$reglan is intensional"
+    (fn () => ignore (SmtLib.goal_to_SmtLib_translation NONE
+      ([], ``guard \/
+        ~(reglan_none = reglan_union reglan_none reglan_none)``)))
+
+fun z3_string_parametric_heldout_specializations_success () =
+let
+  val power_premise =
+    ``65 <= 196607 /\ 70 <= 196607 /\ 2 < 4 /\
+      smt_in_re s
+        (reglan_power
+          (reglan_range (SmtStr [65]) (SmtStr [70])) 4)``
+  val power_conclusion =
+    ``seq_nth_i (smtstr_at s (&2)) 0 = seq_nth_i s 2``
+  val power_target = boolSyntax.mk_imp (power_premise, power_conclusion)
+  val second_power_premise =
+    ``80 <= 196607 /\ 90 <= 196607 /\ 2 < 5 /\
+      smt_in_re t
+        (reglan_power
+          (reglan_range (SmtStr [80]) (SmtStr [90])) 5)``
+  val second_power_conclusion =
+    ``seq_nth_i (smtstr_at t (&2)) 0 = seq_nth_i t 2``
+  val second_power_target =
+    boolSyntax.mk_imp (second_power_premise, second_power_conclusion)
+  val loop_state_premise =
+    ``65 <= 196607 /\ 70 <= 196607 /\
+      (&3 : int) <= smtstr_len s /\ 2 < 5 /\
+      aut_accept s 3
+        (reglan_loop
+          (reglan_range (SmtStr [65]) (SmtStr [70])) 5 7)``
+  val loop_state_conclusion =
+    ``seq_nth_i (smtstr_at s (&5)) 0 = seq_nth_i s 5``
+  val loop_state_target =
+    boolSyntax.mk_imp (loop_state_premise, loop_state_conclusion)
+  val index_target =
+    ``smtstr_len s <= &(3 : num) \/
+      seq_unit (seq_nth_i s 3) = smtstr_at s (&3)``
+  val cache = SmtStringProve.new_contextual_index_cache ()
+  val power = Thm.DISCH power_premise
+    (SmtStringProve.cached_contextual_index_fact cache [power_premise]
+      (numSyntax.mk_numeral (Arbnum.fromInt 2))
+      smtstringz3Theory.smt_in_power_range_nth_at)
+  val power_again = Thm.DISCH power_premise
+    (SmtStringProve.cached_contextual_index_fact cache [power_premise]
+      (numSyntax.mk_numeral (Arbnum.fromInt 2))
+      smtstringz3Theory.smt_in_power_range_nth_at)
+  val second_power = Thm.DISCH second_power_premise
+    (SmtStringProve.cached_contextual_index_fact cache
+      [second_power_premise]
+      (numSyntax.mk_numeral (Arbnum.fromInt 2))
+      smtstringz3Theory.smt_in_power_range_nth_at)
+  val second_power_again = Thm.DISCH second_power_premise
+    (SmtStringProve.cached_contextual_index_fact cache
+      [second_power_premise]
+      (numSyntax.mk_numeral (Arbnum.fromInt 2))
+      smtstringz3Theory.smt_in_power_range_nth_at)
+  val loop_state = Thm.DISCH loop_state_premise
+    (SmtStringProve.cached_contextual_index_fact cache [loop_state_premise]
+      (numSyntax.mk_numeral (Arbnum.fromInt 2))
+      smtstringz3Theory.aut_accept_loop_range_nth_at)
+  val combined_power_facts =
+    SmtStringProve.cached_contextual_index_facts cache
+      [power_premise, second_power_premise]
+      (numSyntax.mk_numeral (Arbnum.fromInt 2))
+      smtstringz3Theory.smt_in_power_range_nth_at
+  val cache_metrics = SmtStringProve.contextual_index_cache_metrics cache
+  val index = SmtStringProve.replay_parametric_seq_prove index_target
+  fun check label theorem target =
+    (assert (Term.aconv (Thm.concl theorem) target,
+       label ^ " returned the wrong specialization");
+     assert (List.null (Thm.hyp theorem),
+       label ^ " retained hypotheses");
+     check_oracle_tags label theorem)
+in
+  check "held-out power/range/count/index" power power_target;
+  check "held-out power/range cache hit" power_again power_target;
+  check "second power/range/count/index" second_power second_power_target;
+  check "second power/range cache hit" second_power_again
+    second_power_target;
+  check "held-out loop/state/bounds/index" loop_state loop_state_target;
+  check "held-out sequence index" index index_target;
+  assert (List.length combined_power_facts = 2,
+    "combined context did not retrieve both exact power instances");
+  assert (#entries cache_metrics = 3 andalso
+          #hits cache_metrics = 4 andalso
+          #misses cache_metrics = 3,
+    "proof-local contextual cache did not preserve exact instance keys")
+end
+
+fun cpc_reglan_native_aggregate_focused_success () =
+let
+  val names = ["re-concat-star-subsume1", "re-concat-star-subsume2",
+    "re-union-all", "re-inter-all", "re-inter-cstring-neg",
+    "re-star-union-char", "re-star-union-drop-emp", "re-concat-merge",
+    "re-concat-star-repeat", "re-concat-star-swap", "re-inter-cstring"]
+  fun replay name =
+    let
+      val {proof, ...} =
+        CPC_ProofReplay.rare_source_native_cpc_for_test false 2 name
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_rare_source_string proof)
+    in check_oracle_tags ("CPC focused native regex " ^ name) theorem end
+in
+  List.app replay names
+end
+
+fun cpc_substr_reduction_omitted_conclusion_success () =
+let
+  val theorem = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const s String) \
+      \(step @p1 :rule string_reduction \
+      \  :args ((str.substr s 1 2))))")
+  val expected = Thm.concl (Thm.INST
+    [{redex = ``i : int``, residue = ``1 : int``},
+     {redex = ``n : int``, residue = ``2 : int``}]
+    smtstringTheory.smtstr_substr_reduction)
+in
+  assert (Thm.concl theorem ~~ expected,
+    "CPC substring reduction reconstructed the wrong omitted conclusion");
+  assert (List.null (Thm.hyp theorem),
+    "CPC substring reduction retained hypotheses");
+  check_oracle_tags "CPC substring reduction" theorem
+end
 
 fun cpc_rare_inventory_part1_success () =
 let
@@ -12332,6 +12590,11 @@ let
     \     (or (str.contains x \"a\") \
     \         (str.contains y \"a\"))) \
     \  :rule str-contains-split-char :premises (@l) \
+    \  :args (x y \"\" \"a\")))"
+  val contains_omitted = replay "TASK28 contains split-char omitted result"
+    "((declare-const x String) (declare-const y String) \
+    \(step @l :rule evaluate :args ((str.len \"a\"))) \
+    \(step @p :rule str-contains-split-char :premises (@l) \
     \  :args (x y \"\" \"a\")))"
   val seq_contains = replay "TASK23 Seq contains split-char"
     "((declare-const x (Seq Int)) (declare-const y (Seq Int)) \
@@ -12440,8 +12703,8 @@ in
     ignore (replay ("TASK23 array " ^ name) proof)) array_proofs;
   List.app (fn theorem => assert (Term.type_of (Thm.concl theorem) =
       Type.bool, "TASK23 string replay did not return a proposition"))
-    [contains_refl, seq_contains_refl, contains, seq_contains,
-     length, seq_length, prefix]
+    [contains_refl, seq_contains_refl, contains, contains_omitted,
+     seq_contains, length, seq_length, prefix]
 end
 
 fun cpc_rare_inventory_part1_diagnostic () =
@@ -12670,6 +12933,11 @@ let
     (fn entry => #family entry <> RareArray)
     cvc134_rare_first_tranche)
   val list_bearing_proved_names = [
+    "re-concat-merge", "re-concat-star-repeat",
+    "re-concat-star-subsume1", "re-concat-star-subsume2",
+    "re-concat-star-swap", "re-inter-all", "re-inter-cstring",
+    "re-inter-cstring-neg", "re-star-union-char",
+    "re-star-union-drop-emp", "re-union-all",
     "seq-rev-concat", "str-concat-clash", "str-concat-clash-rev",
     "str-concat-clash2", "str-concat-clash2-rev", "str-concat-unify",
     "str-concat-unify-base", "str-concat-unify-base-rev",
@@ -12849,17 +13117,17 @@ let
     end
 in
   assert (List.length entries = 152 andalso
-          proved = 117 andalso unsupported = 35 andalso
+          proved = 142 andalso unsupported = 10 andalso
           count_in entries RareReplace proved_kind = 43 andalso
           count_in entries RareIndexof proved_kind = 8 andalso
-          count_in entries RareRegexStar unsupported_kind = 9 andalso
+          count_in entries RareRegexStar proved_kind = 9 andalso
           count RareConcatEquality = 20 andalso
           count RareSubstringSuffix = 26 andalso
           count RareConversionOrder = 11 andalso
           count RareRegexOther = 16 andalso
           count RareRegexMembership = 11 andalso
           count RareSequence = 6 andalso
-          count_in entries RareRegexOther unsupported_kind = 16 andalso
+          count_in entries RareRegexOther proved_kind = 16 andalso
           count_in entries RareRegexMembership proved_kind = 11,
     "TASK24 complete source disposition counts changed");
   assert (List.length former_legacy_names = 22 andalso
@@ -12882,7 +13150,7 @@ in
             sorted cvc134_rare_str_re_seq_names,
     ("TASK24 registry differs from the independent authoritative " ^
      "169-name fixture"));
-  assert (List.length list_bearing_proved_names = 28 andalso
+  assert (List.length list_bearing_proved_names = 39 andalso
           sorted list_bearing_proved_names =
             sorted (List.map #name (List.filter (fn entry =>
               case #replay_kind entry of
@@ -12906,11 +13174,11 @@ in
   assert (sorted (!seq_executed_names) =
       sorted (List.map #name seq_entries),
     "TASK24 Seq execution-name coverage no longer equals its exact inventory");
-  assert (List.length (!native_aggregate_names) = 28 andalso
+  assert (List.length (!native_aggregate_names) = 39 andalso
           sorted (!native_aggregate_names) =
             sorted list_bearing_proved_names,
     "TASK24 public native-aggregate parse/replay coverage is not exactly " ^
-    "the 28 source-derived proved list-bearing recipes");
+    "the 39 source-derived proved list-bearing recipes");
   assert (sorted (!native_seq_aggregate_names) =
       sorted (List.filter (fn name => List.exists
         (fn entry => #name entry = name) seq_entries)
@@ -13395,8 +13663,7 @@ in
     "str.to_upper has no HOL operator or parser dictionary entry"
     "((step @p (= (str.to_upper (str.from_int 7)) (str.from_int 7)) \
     \:rule str-to-upper-from-int))";
-  rejected "regex concat native aggregate" "re-concat-star-swap"
-    "star/concat language equality is false as intensional reglan equality"
+  checked_any "regex concat native aggregate"
     "((step @p (= (re.++ (str.to_re \"a\") (re.* re.none) re.none \
     \                  (str.to_re \"b\") (str.to_re \"c\")) \
     \             (re.++ (str.to_re \"a\") re.none (re.* re.none) \
@@ -13404,12 +13671,10 @@ in
     \ :rule re-concat-star-swap \
     \ :args ((str.to_re \"a\") re.none \
     \        (re.++ (str.to_re \"b\") (str.to_re \"c\")))))";
-  rejected "regex-star" "re-star-none"
-    "empty-language star is false as intensional reglan equality"
+  checked_any "regex-star"
     "((step @p (= (re.* re.none) (str.to_re \"\")) \
     \:rule re-star-none))";
-  rejected "legacy intensional regex" "re-all-elim"
-    "universal-language expansion is false as intensional reglan equality"
+  checked_any "semantic regex equality"
     "((step @p (= re.all (re.* re.allchar)) :rule re-all-elim))";
   rejected "unsupported consumes valid trailing syntax"
     "str-to-lower-concat"
@@ -15154,14 +15419,18 @@ in
       (parse_cpc_proof_string
         "((assume @p (and true false true)) \
         \(step @out true :rule and_elim :premises (@p) :args (1)))")));
-  expect_hol_error_contains "CPC and_elim unavailable producer provenance"
-    "CPC and_elim provenance unavailable"
-    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+  let
+    val recovered = CPC_ProofReplay.replay_root_for_test
       (parse_cpc_proof_string
         "((declare-const p Bool) (declare-const q Bool) \
         \(assume @eq (= (and p q) true)) \
         \(step @conj :rule true_elim :premises (@eq)) \
-        \(step @out :rule and_elim :premises (@conj) :args (0)))")));
+        \(step @out :rule and_elim :premises (@conj) :args (0)))")
+  in
+    assert (Thm.concl recovered ~~ ``p:bool``,
+      "CPC true_elim did not preserve exact conjunction provenance");
+    check_oracle_tags "CPC true_elim conjunction provenance" recovered
+  end;
   expect_hol_error_contains "CPC and_elim explicitly missing provenance"
     "CPC and_elim provenance unavailable: test missing occurrence"
     (fn () => ignore
@@ -16280,6 +16549,7 @@ let
     \ (= (seq.at q 0) q)\n\
     \ (= (seq.nth q 0) ch)\n\
     \ (= (seq.unit (_ Char 97)) (seq.unit (_ Char 97)))\n\
+    \ (= ((_ seq.unit-inv seq.unit-inv) (seq.unit ch)) ch)\n\
     \ (= (seq.nth_i x 0) (seq.nth_i x 0))\n\
     \ ((_ seq.eq seq.eq) x ((_ seq.tail seq.tail) x 0))\n\
     \ (= ((_ seq.stoi seq.stoi) x 0) (seq.stoi x 0))\n\
@@ -16287,6 +16557,7 @@ let
     \    (seq.digit2int ch))\n\
     \ (= (seq.digit ch) (seq.digit ch))\n\
     \ (char.is_digit ch)\n\
+    \ (= (char.to_int ch) (char.to_int ch))\n\
     \ (char.<= ch ch)\n\
     \ ((_ char.bit char.bit 0) ch)\n\
     \ (= (seq.digit ((_ bits2char bits2char)\n\
@@ -16369,8 +16640,17 @@ let
           "Z3 4.15.3 did not register seq.p.suffix as proof-local")
       else ();
       case ch of
-        SOME tm => assert (Term.type_of tm = expected_char_ty,
-          "Z3 " ^ version ^ " Char sort did not resolve to 18 word")
+        SOME tm =>
+          let
+            val char_to_int = Term.mk_comb
+              (intSyntax.int_injection, wordsSyntax.mk_w2n tm)
+          in
+            assert (Term.type_of tm = expected_char_ty,
+              "Z3 " ^ version ^ " Char sort did not resolve to 18 word");
+            assert (Lib.can (HolKernel.find_term (Term.aconv char_to_int)) concl,
+              "Z3 " ^ version ^
+              " char.to_int did not resolve to the Char code point")
+          end
       | NONE => die ("FAIL: Z3 " ^ version ^
           " string-internal fragment lost its Char variable");
       case seq_char of
@@ -16388,6 +16668,60 @@ let
 in
   check_version "4.11.2";
   check_version "4.15.3"
+end
+
+fun z3_seq_unit_inv_total_compositional_success () =
+let
+  val proof = parse_z3_proof_string "4.15.3"
+    "((declare-fun x () String)\n\
+    \ (proof\n\
+    \  (asserted\n\
+    \   (and\n\
+    \    (= ((_ seq.unit-inv seq.unit-inv) (str.at x (- 1)))\n\
+    \       ((_ seq.unit-inv seq.unit-inv) (str.at x (- 1))))\n\
+    \    (= ((_ seq.unit-inv seq.unit-inv) (str.at x 99))\n\
+    \       ((_ seq.unit-inv seq.unit-inv) (str.at x 99)))\n\
+    \    (= ((_ seq.unit-inv seq.unit-inv) \"\")\n\
+    \       ((_ seq.unit-inv seq.unit-inv) \"\"))\n\
+    \    (= ((_ seq.unit-inv seq.unit-inv) \"ab\")\n\
+    \       ((_ seq.unit-inv seq.unit-inv) \"ab\")))))))"
+  val conclusion =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.ASSERTED proposition) => proposition
+    | SOME _ => die "FAIL: seq.unit-inv totality parsed to wrong proof rule"
+    | NONE => die "FAIL: seq.unit-inv totality proof has no root"
+  fun dest_inv tm =
+    case boolSyntax.strip_comb tm of
+      (head, [argument]) =>
+        if Term.is_const head then
+          let val {Thy, Name, ...} = Term.dest_thy_const head in
+            if Thy = "smtstringz3" andalso Name = "seq_unit_inv" then
+              SOME argument
+            else NONE
+          end
+        else NONE
+    | _ => NONE
+  val arguments = List.mapPartial dest_inv (Library.subterms conclusion)
+  val x = Term.mk_var ("x", smt_string_ty)
+  val expected =
+    [``smtstr_at ^x (-1)``, ``smtstr_at ^x 99``,
+     ``SmtStr []``, ``SmtStr [97; 98]``]
+  val unit_inverse = Tactical.TAC_PROOF
+    (([], ``seq_unit_inv (seq_unit 8364) = 8364``),
+     bossLib.SIMP_TAC (bossLib.srw_ss())
+       [smtstringz3Theory.seq_unit_inv_unit])
+in
+  List.app (fn expected_argument =>
+    assert (List.exists (Term.aconv expected_argument) arguments,
+      "seq.unit-inv was not applied compositionally to " ^
+      Library.term_to_string expected_argument)) expected;
+  assert (List.all (fn argument =>
+      List.exists (Term.aconv argument) expected) arguments,
+    "seq.unit-inv introduced an input-dependent proof-local function");
+  assert (Thm.concl unit_inverse ~~
+      ``seq_unit_inv (seq_unit 8364) = 8364``,
+    "seq.unit-inv singleton inverse theorem did not instantiate");
+  check_oracle_tags "seq.unit-inv singleton inverse" unit_inverse
 end
 
 fun z3_proof_parser_char_th_lemma_index_success () =
@@ -16411,6 +16745,8 @@ let
     ("Char", "(declare-const ch Char)\n(assert (= ch ch))\n"),
     ("Char", "(assert (= x (_ Char 97)))\n"),
     ("seq.unit", "(assert (= x (seq.unit 97)))\n"),
+    ("seq.unit-inv",
+      "(assert (= ((_ seq.unit-inv seq.unit-inv) x) 97))\n"),
     ("seq.nth_i", "(assert (= (seq.nth_i x 0) 0))\n"),
     ("seq.tail",
       "(assert (= x ((_ seq.tail seq.tail) x 0)))\n"),
@@ -16419,6 +16755,7 @@ let
     ("seq.digit2int", "(assert (= (seq.digit2int 48) 0))\n"),
     ("seq.digit", "(assert (= (seq.digit 48) 0))\n"),
     ("char.is_digit", "(assert (char.is_digit 48))\n"),
+    ("char.to_int", "(assert (= (char.to_int 48) 48))\n"),
     ("char.<=", "(assert (char.<= 48 57))\n"),
     ("bits2char",
       "(assert (= ((_ bits2char bits2char)\
@@ -18602,11 +18939,20 @@ in
     (assert (profile_call_count "rewrite(9)(proforma)_OK" = 11 andalso
         profile_call_count "rewrite(18)(BBLAST)_OK" = 0,
       "width rewrite caches were not consumed exactly 11 times");
-     assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 4 andalso
+     (* The bounded skeleton is the first propositional route for arithmetic
+        th-lemmas, so these four clauses no longer reach the redundant
+        proforma cache. *)
+     assert (profile_call_count "th_lemma[arith](1)(proforma)_OK" = 0 andalso
         profile_call_count
-          "th_lemma[general](success)_OK" = 0 andalso
+          "th_lemma[general](success)_OK" = 4 andalso
         profile_call_count "th_lemma[arith](4)(bv)_OK" = 0,
-      "width th-lemma caches were not consumed exactly four times"))
+      "width th-lemmas did not use exactly four bounded skeleton proofs: " ^
+      Int.toString
+        (profile_call_count "th_lemma[arith](1)(proforma)_OK") ^ "/" ^
+      Int.toString
+        (profile_call_count "th_lemma[general](success)_OK") ^ "/" ^
+      Int.toString
+        (profile_call_count "th_lemma[arith](4)(bv)_OK")))
 end
 
 fun z3_general_skeleton_reduction_integration_success () =
@@ -18868,10 +19214,18 @@ let
          arithmetic_transitivity)) arithmetic_transitivity)
   val () = assert
     (profile_call_count
-       "th_lemma[general](candidate/attempt)_OK" = 1 andalso
+       "th_lemma[general](candidate/attempt)_OK" = 2 andalso
      profile_call_count "th_lemma[general](success)_OK" = 0 andalso
+     profile_call_count "th_lemma[arith](outer-taut)_OK" = 0 andalso
      profile_call_count "th_lemma[arith](3)_OK" = 1,
-     "theory-valid transitivity did not decline to the legacy arith rung")
+     "theory-valid transitivity route mismatch: " ^
+     Int.toString (profile_call_count
+       "th_lemma[general](candidate/attempt)_OK") ^ "/" ^
+     Int.toString (profile_call_count
+       "th_lemma[general](success)_OK") ^ "/" ^
+     Int.toString (profile_call_count
+       "th_lemma[arith](outer-taut)_OK") ^ "/" ^
+     Int.toString (profile_call_count "th_lemma[arith](3)_OK"))
   val opaque_word =
     ``task19_opaque_word (task19_a:word8) \/
       ~task19_opaque_word task19_a``
@@ -21407,6 +21761,53 @@ fun z3_char_th_lemma_false_diagnostic () =
     (fn () => ignore (replay_z3_proof_string
       "((proof ((_ th-lemma char) false)))"))
 
+fun z3_closed_ground_char_hypothesis_success () =
+let
+  val true_literal = ``~smtstringz3$char_bit 1 (w2n (57w:18 word))``
+  val false_literal = ``smtstringz3$char_bit 1 (w2n (57w:18 word))``
+  val proved = Z3_ProofReplay.hypothesis_theorem_for_test true_literal
+  val assumed = Z3_ProofReplay.hypothesis_theorem_for_test false_literal
+in
+  assert_no_hyps ("true closed character hypothesis", proved);
+  assert_concl_alpha
+    ("true closed character hypothesis", proved, true_literal);
+  assert (List.exists (Term.aconv false_literal) (Thm.hyp assumed),
+    "false closed character hypothesis was not retained as an assumption");
+  check_oracle_tags "true closed character hypothesis" proved;
+  check_oracle_tags "false closed character hypothesis" assumed
+end
+
+fun z3_closed_ground_char_hypothesis_resource_gate () =
+let
+  val maximum = SmtResource.max_skeleton_replay_dag_nodes
+  val expected = SmtResource.dag_size_diagnostic_with_limit
+    "String" "ground-char-route-probe" maximum (maximum + 1)
+  val gate =
+    (SmtResource.check_dag_size_with_limit
+       "String" "ground-char-route-probe" maximum (maximum + 1);
+     die "FAIL: ground-character route probe did not gate")
+    handle Feedback.HOL_ERR holerr => holerr
+  val fallback_called = ref false
+  val propagated =
+    ((ignore (Z3_ProofReplay.hypothesis_char_next_route_for_test
+        (fn () => raise Feedback.HOL_ERR gate)
+        (fn () =>
+          (fallback_called := true;
+           Thm.ASSUME boolSyntax.T)));
+      NONE)
+     handle Feedback.HOL_ERR holerr => SOME holerr)
+in
+  case propagated of
+    NONE => die "FAIL: ground-character hypothesis swallowed a resource gate"
+  | SOME holerr =>
+      (assert (SmtResource.is_resource_gate holerr,
+         "ground-character hypothesis changed the resource exception class");
+       assert (Feedback.message_of holerr = expected,
+         "ground-character hypothesis changed the resource diagnostic");
+       assert (not (!fallback_called),
+         "ground-character hypothesis assumed a gated character fact"))
+end
+
 fun z3_rewrite_datatype_rung_replay_success () =
 let
   val acyclic_eq =
@@ -21658,7 +22059,7 @@ let
      die "FAIL: TASK21 route probe did not gate")
     handle Feedback.HOL_ERR holerr => holerr
   val ordinary_ERR = Feedback.mk_HOL_ERR "Task21RouteProbe"
-  fun check_gate label run fallback_called =
+  fun check_gate label expected run fallback_called =
     let
       val propagated =
         ((run (); NONE)
@@ -21675,12 +22076,12 @@ let
              label ^ " entered a later route after the resource gate"))
     end
   val primary_fallback = ref false
-  val () = check_gate "String primary route"
+  val () = check_gate "String primary route" expected
     (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
       (fn () => raise Feedback.HOL_ERR gate)
       (fn () => primary_fallback := true))) primary_fallback
   val final_fallback = ref false
-  val () = check_gate "String contextual route"
+  val () = check_gate "String contextual route" expected
     (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
       (fn () => raise ordinary_ERR "primary" "ordinary route decline")
       (fn () => Z3_ProofReplay.string_th_lemma_next_route_for_test
@@ -21713,6 +22114,57 @@ let
   val heldout = boolSyntax.mk_eq
     (char_ladder true character other 16,
      char_ladder false character other 16)
+  fun shared_wrapper 0 = heldout
+    | shared_wrapper depth =
+        let val shared = shared_wrapper (depth - 1)
+        in boolSyntax.mk_conj (shared, shared) end
+  val oversized_shared = shared_wrapper (maximum div 2 + 32)
+  fun no_match_atoms 0 result = result
+    | no_match_atoms count result =
+        no_match_atoms (count - 1)
+          (Term.mk_var
+             ("task28_char_no_match_" ^ Int.toString count, Type.bool) ::
+           result)
+  fun pair_conjunctions [] result = List.rev result
+    | pair_conjunctions [term] result = List.rev (term :: result)
+    | pair_conjunctions (left :: right :: rest) result =
+        pair_conjunctions rest
+          (boolSyntax.mk_conj (left, right) :: result)
+  fun balanced_conjunction [term] = term
+    | balanced_conjunction terms =
+        balanced_conjunction (pair_conjunctions terms [])
+  val oversized_no_match = balanced_conjunction
+    (no_match_atoms (maximum + 32) [])
+  val char_admission_expected =
+    SmtResource.dag_size_diagnostic_with_limit
+      "String" "char-family-admission" maximum (maximum + 1)
+  val char_admission_fallback = ref false
+  val () = check_gate "Character family admission"
+    char_admission_expected
+    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+      (fn () => ignore
+        (SmtStringProve.char_word_expansion_domain oversized_shared))
+      (fn () => char_admission_fallback := true)))
+    char_admission_fallback
+  val no_match_fallback = ref false
+  val () = check_gate "Character no-match admission"
+    char_admission_expected
+    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+      (fn () => ignore
+        (SmtStringProve.char_word_expansion_domain oversized_no_match))
+      (fn () => no_match_fallback := true)))
+    no_match_fallback
+  val applicability_calls = ref 0
+  val () = check_gate "Character pre-applicability admission"
+    char_admission_expected
+    (fn () => ignore
+      (SmtStringProve.char_word_expansion_domain_scan
+        (fn _ =>
+          (applicability_calls := !applicability_calls + 1;
+           false)) oversized_no_match))
+    (ref false)
+  val () = assert (!applicability_calls = maximum,
+    "character family cap did not precede applicability at the next node")
   val measure = SmtResource.term_measure heldout
   val () = assert
     (#tree_nodes measure > maximum andalso #dag_nodes measure < maximum,
@@ -23235,6 +23687,8 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("cpc_reglan_native_aggregate_focused_success",
+      cpc_reglan_native_aggregate_focused_success),
     ("cvc_tac_oracle_tag_gate_rejects_oracle_thm",
       cvc_tac_oracle_tag_gate_rejects_oracle_thm),
     ("yices_tac_is_fail_closed_without_reconstruction",
@@ -23647,6 +24101,16 @@ let
       cpc_proof_replay_string_rules_success),
     ("cpc_proof_replay_string_obligation_diagnostic",
       cpc_proof_replay_string_obligation_diagnostic),
+    ("cpc_reglan_semantic_relation_replay_success",
+      cpc_reglan_semantic_relation_replay_success),
+    ("cpc_reglan_nonrespectful_congruence_rejected",
+      cpc_reglan_nonrespectful_congruence_rejected),
+    ("smtlib_reglan_hol_equality_rejected",
+      smtlib_reglan_hol_equality_rejected),
+    ("z3_string_parametric_heldout_specializations_success",
+      z3_string_parametric_heldout_specializations_success),
+    ("cpc_substr_reduction_omitted_conclusion_success",
+      cpc_substr_reduction_omitted_conclusion_success),
     ("cpc_rare_inventory_part1_success",
       cpc_rare_inventory_part1_success),
     ("cpc_rare_inventory_part1_diagnostic",
@@ -23816,6 +24280,8 @@ let
       z3_proof_parser_floatingpoint_decomposition_success),
     ("z3_proof_parser_string_internal_symbols_success",
       z3_proof_parser_string_internal_symbols_success),
+    ("z3_seq_unit_inv_total_compositional_success",
+      z3_seq_unit_inv_total_compositional_success),
     ("z3_proof_parser_char_th_lemma_index_success",
       z3_proof_parser_char_th_lemma_index_success),
     ("benchmark_rejects_z3_string_internal_symbols",
@@ -24007,6 +24473,10 @@ let
       z3_char_th_lemma_shaped_diagnostics),
     ("z3_char_th_lemma_false_diagnostic",
       z3_char_th_lemma_false_diagnostic),
+    ("z3_closed_ground_char_hypothesis_success",
+      z3_closed_ground_char_hypothesis_success),
+    ("z3_closed_ground_char_hypothesis_resource_gate",
+      z3_closed_ground_char_hypothesis_resource_gate),
     ("z3_rewrite_datatype_rung_replay_success",
       z3_rewrite_datatype_rung_replay_success),
     ("z3_rewrite_string_rungs_replay_success",

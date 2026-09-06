@@ -15,13 +15,25 @@ struct
         (SmtResource.check_resource_goal "String" case_id target;
          prove target)) t
 
+  fun with_string_dag_budget case_id prove t =
+    SmtResource.with_resource_step_time "String" case_id
+      (fn target =>
+        let val maximum = SmtResource.max_term_nodes_for "String" in
+          SmtResource.check_dag_size_with_limit
+            "String" case_id maximum
+            (SmtResource.dag_nodes_up_to maximum target);
+          prove target
+        end) t
+
   fun rethrow_resource holerr =
     if SmtResource.is_resource_gate holerr then raise Feedback.HOL_ERR holerr
     else ()
 
   (* Keep future first-order string rungs under the shared replay bound. *)
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
-  fun with_metis_limit f = Lib.with_flag (metisTools.limit, metis_limit) f
+  fun with_metis_limit f =
+    Lib.with_flag (metisTools.limit, metis_limit)
+      (Feedback.trace ("metis", 0) f)
 
   fun unsupported theory t =
     raise ERR (theory ^ "_prove")
@@ -200,6 +212,17 @@ struct
         ("length/arithmetic replay failed: " ^ message)
 
   val seq_shape_rules = [
+    smtstringz3Theory.smtstr_at_index,
+    smtstringz3Theory.smtstr_at_length,
+    smtstringz3Theory.seq_nth_i_to_code_char_z3_index,
+    smtstringz3Theory.seq_nth_i_to_code_char_z3,
+    smtstringz3Theory.seq_nth_i_to_code_char,
+    smtstringz3Theory.seq_nth_i_to_code,
+    smtstringz3Theory.seq_nth_i_at,
+    smtstringz3Theory.seq_nth_i_unit,
+    smtstringz3Theory.seq_nth_i_bound,
+    smtstringz3Theory.seq_nth_i_mod_2exp18,
+    smtstringz3Theory.unicode_mod_2exp18_eq,
     smtstringz3Theory.seq_head_tail_int,
     smtstringz3Theory.seq_head_tail_int_zero_left,
     smtstringz3Theory.seq_prefixof_singleton,
@@ -228,6 +251,10 @@ struct
     listTheory.APPEND_EQ_SING,
     smtstringTheory.smtstr_prefixof_singleton
   ] @ seq_shape_rules @ [
+    smtstringz3Theory.char_word18_w2n_n2w,
+    smtstringz3Theory.char_num_of_int,
+    smtstringz3Theory.char_seq_unit_at,
+    smtstringz3Theory.char_seq_unit_inv,
     smtstringz3Theory.seq_unit_def,
     smtstringz3Theory.seq_eq_def,
     smtstringTheory.smtstr_update_def,
@@ -257,6 +284,10 @@ struct
     smtstringTheory.smtstr_suffixof_trans,
     smtstringTheory.smtstr_contains_trans
   ] @ seq_shape_rules @ [
+    smtstringz3Theory.char_word18_w2n_n2w,
+    smtstringz3Theory.char_num_of_int,
+    smtstringz3Theory.char_seq_unit_at,
+    smtstringz3Theory.char_seq_unit_inv,
     smtstringz3Theory.seq_unit_def,
     smtstringz3Theory.seq_eq_def
   ]
@@ -264,8 +295,9 @@ struct
   val symbolic_string_names =
     const_name_set
       (smtstring_consts "smtstring"
-        ["smtstr_concat", "smtstr_update", "smtstr_prefixof",
-         "smtstr_suffixof", "smtstr_contains"])
+        ["smtstr_at", "smtstr_concat", "smtstr_len", "smtstr_update",
+         "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains"] @
+       smtstring_consts "smtstringz3" ["seq_nth_i", "seq_unit"])
 
   fun is_symbolic_string_goal t = mentions_any symbolic_string_names t
 
@@ -315,7 +347,8 @@ struct
      GENLIST and REDUCE_CONV normalizes SUC/numeral side conditions. *)
   val seq_position_names =
     const_name_set
-      (smtstring_consts "smtstringz3" ["seq_nth_i", "seq_tail"])
+      (smtstring_consts "smtstring" ["smtstr_at"] @
+       smtstring_consts "smtstringz3" ["seq_nth_i", "seq_tail"])
 
   val seq_length_names =
     const_name_set (smtstring_consts "smtstring" ["smtstr_len"])
@@ -325,7 +358,18 @@ struct
       val (head, args) = boolSyntax.strip_comb tm
       val _ = is_named_const seq_position_names head orelse
         raise ERR "dest_seq_position_numeral" "not a seq position"
-      val index = List.last args
+      val raw_index = List.last args
+      val index =
+        if numSyntax.is_numeral raw_index then raw_index
+        else if Type.compare (Term.type_of raw_index, intSyntax.int_ty) =
+                EQUAL then
+          numSyntax.mk_numeral
+            (Arbint.toNat (intSyntax.int_of_term raw_index))
+        else boolSyntax.rhs (Thm.concl
+          (simpLib.SIMP_CONV
+            (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+            [smtstringz3Theory.char_num_of_int,
+             smtstringz3Theory.char_num_zero] raw_index))
       val _ = numSyntax.is_numeral index orelse
         raise ERR "dest_seq_position_numeral" "position is symbolic"
     in
@@ -352,12 +396,54 @@ struct
       handle Feedback.HOL_ERR _ => dest (right, left)
     end
 
+  (* Solver proofs share large Boolean and bit-vector subterms heavily.
+     [HolKernel.find_terms] follows the displayed term tree and therefore
+     revisits those shared nodes exponentially.  Traverse the HOL term DAG
+     once when collecting replay parameters. *)
+  fun dag_matching_terms predicate target =
+    let
+      fun children term pending =
+        if Term.is_comb term then
+          let val (operator, operand) = Term.dest_comb term
+          in operator :: operand :: pending end
+        else if Term.is_abs term then
+          let val (_, body) = Term.dest_abs term in body :: pending end
+        else
+          pending
+      fun collect _ found [] = found
+        | collect seen found (term :: pending) =
+            if HOLset.member (seen, term) then
+              collect seen found pending
+            else
+              let
+                val seen = HOLset.add (seen, term)
+                val found = if predicate term then term :: found else found
+              in
+                collect seen found (children term pending)
+              end
+    in
+      collect (HOLset.empty Term.compare) [] [target]
+    end
+
   fun distinct_numerals dest target =
     HOLset.listItems
       (HOLset.addList (Term.empty_tmset,
-        List.map dest (HolKernel.find_terms (Lib.can dest) target)))
+        List.map dest (dag_matching_terms (Lib.can dest) target)))
+
+  fun has_contextual_index_target target =
+    not (List.null
+      (distinct_numerals dest_seq_position_numeral target))
 
   val seq_instance_normalizations = [
+    smtstringz3Theory.char_word18_w2n_n2w,
+    integerTheory.int_ge,
+    smtstringz3Theory.smtstr_from_code_length_valid,
+    smtstringz3Theory.smtstr_from_to_code_length_one,
+    smtstringz3Theory.seq_head_tail_word18,
+    smtstringz3Theory.seq_head_tail_word18_eq,
+    smtstringz3Theory.char_num_of_int,
+    smtstringz3Theory.char_num_zero,
+    smtstringz3Theory.seq_nth_i_mod_2exp18,
     smtstringz3Theory.seq_unit_def,
     smtstringz3Theory.seq_eq_def,
     smtstringTheory.smtstr_concat_def,
@@ -365,19 +451,39 @@ struct
   ]
 
   val seq_alias_normalizations = [
+    smtstringz3Theory.smtstr_from_to_code_length_one,
     smtstringz3Theory.seq_unit_def,
     smtstringz3Theory.seq_eq_def,
     smtstringTheory.smtstr_concat_nil_left
   ]
 
   fun seq_normalization rewrites target =
-    Conv.QCONV
-      (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites) target
+    let
+      val numeric =
+        (simpLib.SIMP_CONV (bossLib.srw_ss())
+           [smtstringz3Theory.char_num_of_int,
+            smtstringz3Theory.char_num_zero,
+            smtstringz3Theory.char_word18_w2n_n2w] target
+         handle Conv.UNCHANGED => Thm.REFL target)
+      val numeric_target = boolSyntax.rhs (Thm.concl numeric)
+      val head_tail =
+        (simpLib.SIMP_CONV (bossLib.srw_ss())
+           [smtstringz3Theory.seq_head_tail_word18,
+            smtstringz3Theory.seq_head_tail_word18_eq] numeric_target
+         handle Conv.UNCHANGED => Thm.REFL numeric_target)
+      val priority = Thm.TRANS numeric head_tail
+      val priority_target = boolSyntax.rhs (Thm.concl priority)
+      val normalized =
+        (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites priority_target
+         handle Conv.UNCHANGED => Thm.REFL priority_target)
+    in
+      Thm.TRANS priority normalized
+    end
 
   fun seq_alias_normalization target =
-    Conv.QCONV
-      (simpLib.SIMP_CONV boolSimps.bool_ss
-        seq_alias_normalizations) target
+    (simpLib.SIMP_CONV boolSimps.bool_ss
+       seq_alias_normalizations target
+     handle Conv.UNCHANGED => Thm.REFL target)
 
   fun prove_alias_metis lemmas target =
     let
@@ -391,8 +497,14 @@ struct
 
   fun replay_parametric_seq_prove target =
     let
+      (* Length schemas carry their controlling numeral in a premise, so
+         inspect the whole target for lengths.  Position schemas are selected
+         from the certificate conclusion; this avoids specializing unrelated
+         indices from a large shared assertion context. *)
+      val (_, conclusion) = boolSyntax.strip_imp target
       val lengths = distinct_numerals dest_seq_length_numeral target
-      val positions = distinct_numerals dest_seq_position_numeral target
+      val positions =
+        distinct_numerals dest_seq_position_numeral conclusion
       fun eval_genlist tm =
         let
           val (_, length) = listSyntax.dest_genlist tm
@@ -415,7 +527,10 @@ struct
       val position_instances =
         List.concat (List.map (fn numeral =>
           List.map (fn theorem => specialize theorem numeral)
-            [smtstringz3Theory.seq_split_at,
+            [smtstringz3Theory.smtstr_at_length_num,
+             smtstringz3Theory.smtstr_at_index_num,
+             smtstringz3Theory.smtstr_at_unit,
+             smtstringz3Theory.seq_split_at,
              smtstringz3Theory.seq_concat_position,
              smtstringz3Theory.seq_tail_step_guard,
              smtstringz3Theory.seq_tail_step]) positions)
@@ -438,6 +553,10 @@ struct
         (canonicalize seq_alias_normalizations)
         (length_instances @ position_instances)
       val support = List.map (canonicalize seq_alias_normalizations) [
+        smtstringTheory.smtstr_len_nonnegative,
+        integerTheory.INT_LE_ANTISYM,
+        smtstringz3Theory.seq_head_tail_int_zero_left,
+        smtstringz3Theory.seq_head_tail_word18,
         smtstringz3Theory.concat_singleton_prefix_length,
         smtstringTheory.smtstr_concat_middle_singleton,
         smtstringTheory.smtstr_singleton_concat_middle
@@ -449,11 +568,19 @@ struct
         seq_normalization seq_instance_normalizations target
       val normalized_target = boolSyntax.rhs (Thm.concl normalization)
       val exact = Lib.total (Lib.tryfind (fn theorem =>
-        if Term.aconv (Thm.concl theorem) normalized_target then theorem
-        else raise ERR "replay_parametric_seq_prove"
-          "specialized schema has a different conclusion")) instances
+        let
+          val substitution =
+            Term.match_term (Thm.concl theorem) normalized_target
+          val instance = Drule.INST_TY_TERM substitution theorem
+        in
+          if Term.aconv (Thm.concl instance) normalized_target then instance
+          else raise ERR "replay_parametric_seq_prove"
+            "specialized schema has a different conclusion"
+        end)) (instances @ support)
     in
-      case exact of
+      if Term.aconv normalized_target boolSyntax.T then
+        Thm.EQ_MP (Thm.SYM normalization) boolTheory.TRUTH
+      else case exact of
         SOME proof => Thm.EQ_MP (Thm.SYM normalization) proof
       | NONE =>
           let
@@ -475,9 +602,12 @@ struct
      ordinary unsupported shape. *)
   fun symbolic_string_prove t =
     with_string_budget "symbolic" (fn t =>
-      if not (is_symbolic_string_goal t) then
+      if not (is_symbolic_string_goal t) orelse
+         mentions_any
+           (const_name_set
+             (smtstring_consts "smtstringz3" ["aut_accept"])) t then
         raise ERR "symbolic_string_prove"
-          "no symbolic concat/prefix/suffix/contains term"
+          "no exclusively symbolic concat/prefix/suffix/contains term"
       else
         (* E1(b): bounded constructor splitting is general for the literal
            concat-refutation shape and fails loudly outside that family. *)
@@ -525,7 +655,10 @@ struct
     smtstringz3Theory.aut_accept_comp_transition,
     smtstringz3Theory.aut_accept_comp_range_transition,
     smtstringz3Theory.aut_accept_inter_range_comp_transition,
-    smtstringz3Theory.aut_accept_loop_empty
+    smtstringz3Theory.aut_accept_loop_empty,
+    smtstringz3Theory.aut_accept_loop_range_deriv,
+    smtstringz3Theory.aut_accept_loop_range_transition,
+    smtstringz3Theory.aut_accept_loop_once
   ]
 
   val regex_normalizations = [
@@ -544,9 +677,13 @@ struct
     smtstringTheory.smt_in_re_def,
     smtstringTheory.smtstr_len_def,
     smtstringz3Theory.aut_accept_zero,
+    smtstringz3Theory.aut_accept_none,
     smtstringz3Theory.aut_accept_transition_int
   ] @ aut_transition_rules @ [
     smtstringz3Theory.aut_accept_empty,
+    smtstringz3Theory.aut_accept_loop_range_length_int,
+    smtstringz3Theory.smt_in_loop_range_nth_at,
+    smtstringz3Theory.smt_in_power_range_nth_at,
     smtstringz3Theory.aut_accept_empty_terminal_int
   ]
 
@@ -573,6 +710,10 @@ struct
     smtstringz3Theory.aut_accept_transition_int
   ] @ aut_transition_rules @ [
     smtstringz3Theory.aut_accept_empty,
+    smtstringz3Theory.aut_accept_none,
+    smtstringz3Theory.aut_accept_loop_range_length_int,
+    smtstringz3Theory.smt_in_loop_range_nth_at,
+    smtstringz3Theory.smt_in_power_range_nth_at,
     smtstringz3Theory.aut_accept_empty_terminal_int
   ]
 
@@ -586,6 +727,7 @@ struct
      then reduce only its concrete numeral/code-point side conditions. *)
   val parametric_regex_length_rules = [
     smtstringz3Theory.aut_accept_range_length_int,
+    smtstringz3Theory.aut_accept_loop_range_length_int,
     smtstringz3Theory.aut_accept_loop_positive_length_zero,
     smtstringz3Theory.aut_accept_loop_positive_length_seq_unit,
     smtstringz3Theory.aut_accept_plus_allchar_length_one
@@ -594,13 +736,24 @@ struct
   (* Numeral reduction shared by the regex-length and automaton rungs; the
      simpset is built once rather than per replay step. *)
   val char_representation_bridge_theorems =
-    [smtstringz3Theory.char_word18_w2n_n2w,
+    [smtstringz3Theory.seq_unit_inv_def,
+     smtstringz3Theory.seq_unit_inv_unit,
+     smtstringz3Theory.char_word18_w2n_n2w,
      smtstringz3Theory.char_word18_n2w_w2n,
+     smtstringz3Theory.unicode_mod_2exp18_eq,
      smtstringz3Theory.char_num_of_int]
 
   val regex_normalization_theorems =
-    [smtstringz3Theory.seq_unit_def,
-     smtstringz3Theory.seq_nth_i_bound] @
+    [smtstringTheory.smtstr_len_nonnegative,
+     integerTheory.int_ge,
+     smtstringz3Theory.aut_accept_none,
+     smtstringz3Theory.aut_accept_loop_once,
+     smtstringz3Theory.num_not_leq_prev,
+     smtstringz3Theory.char_num_zero,
+     smtstringz3Theory.seq_unit_def,
+     smtstringz3Theory.seq_nth_i_unit,
+     smtstringz3Theory.seq_nth_i_bound,
+     smtstringz3Theory.seq_nth_i_mod_2exp18] @
     char_representation_bridge_theorems
 
   val regex_reduce_ss = simpLib.++
@@ -719,8 +872,8 @@ struct
             if Term.aconv (Thm.concl instance) normalized_target then instance
             else if Term.aconv (Thm.concl oriented) normalized_target then
               oriented
-            else with_metis_limit (fn () =>
-              metisLib.METIS_PROVE [oriented] normalized_target) ()
+            else raise ERR "replay_parametric_automaton_prove"
+              "specialized automaton rule has the wrong conclusion"
         in
           instance
         end
@@ -891,6 +1044,7 @@ struct
     smtstringTheory.smtstr_update_def,
     smtstringTheory.smtstr_rev_def,
     smtstringTheory.smtstr_len_concat,
+    smtstringTheory.smtstr_len_concat_rec,
     smtstringTheory.smtstr_len_eq_zero,
     smtstringTheory.smtstr_prefixof_refl,
     smtstringTheory.smtstr_suffixof_refl,
@@ -899,6 +1053,7 @@ struct
     smtstringTheory.smtstr_le_refl,
     smtstringTheory.smtstr_lt_imp_le,
     smtstringTheory.smt_in_re_deriv,
+    smtstringTheory.smt_in_re_power_loop,
     smtstringz3Theory.seq_unit_def,
     smtstringz3Theory.seq_tail_def,
     smtstringz3Theory.seq_eq_def,
@@ -911,22 +1066,251 @@ struct
   ]
 
   val contextual_normalizations =
-    ground_eval_thms @ rewrite_normalizations @ regex_normalizations
+    ground_eval_thms @ rewrite_normalizations @ regex_normalizations @ [
+      smtstringz3Theory.char_word18_w2n_n2w,
+      smtstringz3Theory.char_num_of_int,
+      smtstringz3Theory.char_seq_unit_at,
+      smtstringz3Theory.char_seq_unit_inv
+    ]
+
+  (* Forward rules expose guarded consequences whose parameters occur in
+     the String/regex context rather than in the replay target.  Such rules
+     cannot be used reliably as ordinary simplifier rewrites because their
+     range and loop parameters are not determined by the target subterm. *)
+  val contextual_forward_rules = [
+    smtstringz3Theory.aut_accept_loop_range_nth_at,
+    smtstringz3Theory.smt_in_loop_range_nth_at,
+    smtstringz3Theory.smt_in_power_range_nth_at
+  ]
+
+  val contextual_index_rules = [
+    smtstringz3Theory.aut_accept_loop_range_nth_at,
+    smtstringz3Theory.smt_in_loop_range_nth_at,
+    smtstringz3Theory.smt_in_power_range_nth_at
+  ]
+
+  type contextual_index_cache = {
+    entries : (Term.term * Thm.thm) list ref,
+    hits : int ref,
+    misses : int ref
+  }
+
+  fun new_contextual_index_cache () : contextual_index_cache = {
+    entries = ref [], hits = ref 0, misses = ref 0
+  }
+
+  fun contextual_index_cache_metrics
+      ({entries, hits, misses} : contextual_index_cache) =
+    {entries = List.length (!entries), hits = !hits, misses = !misses}
+
+  (* Build every exact specialization selected by the asserted context.  The
+     indexed schema alone is not a cache key: two assertions can use the
+     same rule and index while differing in their string, range, power or
+     automaton state.  Retain the normalized implication as the key so the
+     cached theorem is tied to the assertion instance that justified it. *)
+  fun contextual_index_candidates context numeral rule =
+    let
+      val indexed = Thm.INST
+        [{redex = Term.mk_var ("j", numSyntax.num), residue = numeral}] rule
+      val schema_premise = Lib.fst (boolSyntax.dest_imp (Thm.concl indexed))
+      val schema_anchor = List.last (boolSyntax.strip_conj schema_premise)
+      val anchors = List.concat (List.map
+        (dag_matching_terms (Lib.can (Term.match_term schema_anchor))) context)
+      fun candidate anchor =
+        let
+          val substitution = Term.match_term schema_anchor anchor
+          val instance = Drule.INST_TY_TERM substitution indexed
+          val aliases = simpLib.SIMP_RULE boolSimps.bool_ss
+            [integerTheory.int_ge,
+             smtstringTheory.smtstr_len_nonnegative] instance
+          val reduced = reduceLib.REDUCE_RULE aliases
+            handle Conv.UNCHANGED => aliases
+          val key = Thm.concl reduced
+          fun prove () =
+            let
+              val premise = Lib.fst (boolSyntax.dest_imp key)
+              val premise_theorem = Tactical.TAC_PROOF ((context, premise),
+                Tactical.THEN
+                  (bossLib.ASM_SIMP_TAC
+                     (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                     [integerTheory.int_ge,
+                      smtstringTheory.smtstr_len_nonnegative],
+                   bossLib.METIS_TAC []))
+            in
+              Drule.MATCH_MP reduced premise_theorem
+            end
+        in
+          (key, prove)
+        end
+      fun unique _ [] = []
+        | unique seen ((entry as (key, _)) :: rest) =
+            if HOLset.member (seen, key) then unique seen rest
+            else entry :: unique (HOLset.add (seen, key)) rest
+    in
+      unique Term.empty_tmset (List.map candidate anchors)
+    end
+
+  fun contextual_index_fact context numeral rule =
+    Lib.tryfind (fn (_, prove) => prove ())
+      (contextual_index_candidates context numeral rule)
+
+  fun cached_contextual_index_facts
+      (cache : contextual_index_cache) context numeral rule =
+    let
+      fun lookup key [] = NONE
+        | lookup key ((cached_key, theorem) :: rest) =
+            if Term.aconv cached_key key then SOME theorem
+            else lookup key rest
+      fun fetch (key, prove) =
+        case lookup key (!(#entries cache)) of
+          SOME theorem =>
+            (#hits cache := !(#hits cache) + 1; SOME theorem)
+        | NONE =>
+            let
+              val _ = #misses cache := !(#misses cache) + 1
+            in
+              case Lib.total prove () of
+                SOME theorem =>
+                  (#entries cache := (key, theorem) :: !(#entries cache);
+                   SOME theorem)
+              | NONE => NONE
+            end
+    in
+      List.mapPartial fetch
+        (contextual_index_candidates context numeral rule)
+    end
+
+  fun cached_contextual_index_fact cache context numeral rule =
+    case cached_contextual_index_facts cache context numeral rule of
+      theorem :: _ => theorem
+    | [] => raise ERR "cached_contextual_index_fact"
+        "specialization failed"
+
+  fun indexed_char_clause fact target =
+    let
+      val clause = Drule.MATCH_MP
+        smtstringz3Theory.char_bit_eq_clause fact
+      val substitution = Term.match_term (Thm.concl clause) target
+      val exact = Drule.INST_TY_TERM substitution clause
+      val _ = Term.aconv (Thm.concl exact) target orelse
+        raise ERR "indexed_char_clause" "target mismatch"
+    in
+      exact
+    end
+
+  fun indexed_unit_inv_at fact target =
+    let
+      val target_left = boolSyntax.lhs target
+      val target_right = boolSyntax.rhs target
+      val n2w = Term.rator target_right
+      val unit_inv = smtstringz3Theory.char_seq_unit_inv
+      val substitution = profile "string-contextual(unit-inv-match)"
+        (fn () => Term.match_term
+          (boolSyntax.lhs (Thm.concl unit_inv)) target_left) ()
+      val unit_inv = Drule.INST_TY_TERM substitution unit_inv
+      val original_word = boolSyntax.rhs (Thm.concl unit_inv)
+      val indexed_words = profile "string-contextual(unit-inv-ap-term)"
+        (fn () => Thm.AP_TERM n2w fact) ()
+      fun reduce term =
+        Conv.RAND_CONV
+          (Conv.RAND_CONV
+            (simpLib.SIMP_CONV boolSimps.bool_ss
+              [smtstringz3Theory.char_num_of_int,
+               smtstringz3Theory.char_num_zero])) term
+        handle Conv.UNCHANGED => Thm.REFL term
+      val original_reduction = reduce original_word
+      val indexed_reduction = reduce target_right
+      val bridge = Thm.TRANS original_reduction
+        (Thm.TRANS (Thm.SYM indexed_words) (Thm.SYM indexed_reduction))
+      val exact = profile "string-contextual(unit-inv-trans)"
+        (fn () => Thm.TRANS unit_inv bridge) ()
+      val _ = Term.aconv (Thm.concl exact) target orelse
+        raise ERR "indexed_unit_inv_at" "target mismatch"
+    in
+      exact
+    end
+
+  fun indexed_proof fact target =
+    if Term.aconv (Thm.concl fact) target then fact
+    else
+      let val symmetric = Thm.SYM fact in
+        if Term.aconv (Thm.concl symmetric) target then symmetric
+        else
+          indexed_char_clause fact target
+          handle Feedback.HOL_ERR _ =>
+            indexed_unit_inv_at fact target
+            handle Feedback.HOL_ERR _ =>
+              Thm.SYM (indexed_unit_inv_at fact
+                (boolSyntax.mk_eq
+                  (boolSyntax.rhs target, boolSyntax.lhs target)))
+      end
+
+  fun first_indexed_proof [] target =
+        raise ERR "first_indexed_proof" "no matching index fact"
+    | first_indexed_proof (fact :: facts) target =
+        indexed_proof fact target
+        handle Feedback.HOL_ERR _ =>
+          first_indexed_proof facts target
 
   (* Contextual rung: the recorded conclusion follows from the assertion
      context by simplification with the shared string-theory rule sets.
      Callers order this after the rewrite and theory rungs. *)
+  fun string_contextual_prove_cached index_cache context target =
+    with_string_dag_budget "contextual"
+      (fn current_target =>
+        let
+          val maximum = SmtResource.max_term_nodes_for "String"
+          fun check_context context_term =
+            SmtResource.check_dag_size_with_limit
+              "String" "contextual" maximum
+              (SmtResource.dag_nodes_up_to maximum context_term)
+          val _ = profile "string-contextual(check-context)"
+            (fn () => List.app check_context context) ()
+          val positions = profile "string-contextual(positions)"
+            (fn () =>
+              distinct_numerals dest_seq_position_numeral current_target) ()
+          val index_facts = profile "string-contextual(index-facts)"
+            (fn () => List.concat (List.map (fn numeral =>
+              List.concat (List.map
+                (fn rule =>
+                  cached_contextual_index_facts
+                    index_cache context numeral rule)
+                contextual_index_rules)) positions)) ()
+          val char_index_rewrites = [
+            smtstringz3Theory.char_num_of_int,
+            smtstringz3Theory.char_seq_unit_at,
+            smtstringz3Theory.char_seq_unit_inv
+          ]
+          val indexed_target = not (List.null positions)
+        in
+          if indexed_target then profile "string-contextual(indexed-proof)"
+            (fn () =>
+              first_indexed_proof index_facts current_target) ()
+          else
+            Tactical.TAC_PROOF ((context, current_target),
+              Tactical.THEN
+                (Tactical.THEN
+                   (Tactical.map_every Tactic.ASSUME_TAC index_facts,
+                    Tactical.map_every Tactic.IMP_RES_TAC
+                      contextual_forward_rules),
+                 Tactical.ORELSE
+                   (bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+                      char_index_rewrites,
+                    Tactical.ORELSE
+                      (bossLib.ASM_SIMP_TAC
+                         (simpLib.++
+                           (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                         [smtstringz3Theory.char_word18_n2w_w2n],
+                       bossLib.ASM_SIMP_TAC
+                         (simpLib.++
+                           (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+                         contextual_normalizations))))
+        end)
+      target
+
   fun string_contextual_prove context target =
-    let
-      val _ = List.app
-        (SmtResource.check_resource_goal "String" "contextual") context
-    in
-      with_string_budget "contextual" (fn target =>
-        Tactical.TAC_PROOF ((context, target),
-          bossLib.ASM_SIMP_TAC
-            (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-            contextual_normalizations)) target
-    end
+    string_contextual_prove_cached
+      (new_contextual_index_cache ()) context target
 
   fun rewrite_simp_prove t =
     simpLib.SIMP_PROVE
@@ -1026,9 +1410,14 @@ struct
           (Rewrite.PURE_REWRITE_CONV
             [smtstringz3Theory.seq_eq_def]) target
         val equality_target = boolSyntax.rhs (Thm.concl seq_equality)
-        val orientation = Conv.QCONV
-          (Conv.TOP_DEPTH_CONV
-            SmtReplayCanon.reorient_equality_conv) equality_target
+        val orientation =
+          if mentions_any
+            (const_name_set
+              (smtstring_consts "smtstringz3" ["aut_accept"]))
+            equality_target then Thm.REFL equality_target
+          else Conv.QCONV
+            (Conv.TOP_DEPTH_CONV
+              SmtReplayCanon.reorient_equality_conv) equality_target
         val normalization = Thm.TRANS seq_equality orientation
         val canonical = boolSyntax.rhs (Thm.concl orientation)
         val _ = if Term.aconv equality_target canonical then ()
@@ -1050,7 +1439,9 @@ struct
   val char_word_expansion_theorems =
     [smtstringz3Theory.char_bit_word18,
      smtstringz3Theory.char_is_digit_word18,
-     smtstringz3Theory.char_le_word18]
+     smtstringz3Theory.char_le_word18,
+     smtstringz3Theory.seq_nth_i_mod_2exp18,
+     smtstringz3Theory.unicode_mod_2exp18_eq]
 
   (* Preserve the production character prover's historical syntactic
      admission boundary.  The prototype owner below is intentionally more
@@ -1088,22 +1479,40 @@ struct
      kit.  It recognizes only shapes to which one of the three checked
      word18 bridge theorems actually applies, including the raw
      [w2n c <= w2n d] order shape. *)
-  fun char_word_expansion_domain term =
-    let
-      fun visit term =
-        List.exists (fn theorem => char_theorem_applies_at theorem term)
-          char_word_expansion_theorems orelse
-        if Term.is_comb term then
-          let val (operator, operand) = Term.dest_comb term
-          in visit operator orelse visit operand end
-        else if Term.is_abs term then
-          visit (Lib.snd (Term.dest_abs term))
-        else false
-    in
-      visit term
-    end
+  fun char_word_expansion_domain_scan applies target =
+    SmtResource.with_resource_step_time
+      "String" "char-family-admission"
+      (fn target =>
+        let
+          val maximum = SmtResource.max_skeleton_replay_dag_nodes
+          fun loop _ _ [] = false
+            | loop seen observed (term :: pending) =
+                if HOLset.member (seen, term) then
+                  loop seen observed pending
+                else
+                  let
+                    val seen = HOLset.add (seen, term)
+                    val observed = Int.min (maximum + 1, observed + 1)
+                    val () = SmtResource.check_dag_size_with_limit
+                      "String" "char-family-admission"
+                      maximum observed
+                  in
+                    if applies term then true
+                    else
+                      loop seen observed
+                        (SmtResource.term_children term @ pending)
+                  end
+        in
+          loop (HOLset.empty Term.compare) 0 [target]
+        end) target
 
-  fun char_word_normalization_core t =
+  fun char_word_expansion_domain target =
+    char_word_expansion_domain_scan
+      (fn term => List.exists
+        (fn theorem => char_theorem_applies_at theorem term)
+        char_word_expansion_theorems) target
+
+  fun compact_char_word_core_unbounded t =
     let
       val compacted =
         Conv.TRY_CONV
@@ -1112,14 +1521,63 @@ struct
         handle Conv.UNCHANGED => Thm.REFL t
              | Feedback.HOL_ERR _ => Thm.REFL t
       val compacted_t = boolSyntax.rhs (Thm.concl compacted)
+      val conditional_rewrites =
+        [smtstringz3Theory.int_cond_weight_nonpositive,
+         smtstringz3Theory.int_cond_weight_nonnegative,
+         smtstringz3Theory.int_cond_weight_at_least,
+         smtstringz3Theory.int_cond_weight_upper_endpoint,
+         smtstringz3Theory.int_cond_weight_lower_endpoint]
+      val simplifier =
+        simpLib.++
+          (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss),
+           intSimps.INT_REDUCE_ss)
       val simplified =
-        simpLib.SIMP_CONV
-          (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss))
-          char_word_expansion_theorems compacted_t
-      val normalized = Thm.TRANS compacted simplified
+        (simpLib.SIMP_CONV simplifier
+           (integerTheory.int_ge :: char_word_expansion_theorems @
+            conditional_rewrites) compacted_t
+         handle Conv.UNCHANGED => Thm.REFL compacted_t)
+      val simplified_t = boolSyntax.rhs (Thm.concl simplified)
+      val endpoints =
+        (simpLib.SIMP_CONV simplifier conditional_rewrites simplified_t
+         handle Conv.UNCHANGED => Thm.REFL simplified_t)
+    in
+      Thm.TRANS compacted (Thm.TRANS simplified endpoints)
+    end
+
+  fun compact_char_word_core t =
+    with_string_dag_budget "char-compaction"
+      compact_char_word_core_unbounded t
+
+  fun char_word_normalization_core_unbounded t =
+    let
+      val compacted =
+        Conv.TRY_CONV
+          (Conv.TOP_DEPTH_CONV
+            (Conv.REWR_CONV compact_char_compare)) t
+        handle Conv.UNCHANGED => Thm.REFL t
+             | Feedback.HOL_ERR _ => Thm.REFL t
+      val compacted_t = boolSyntax.rhs (Thm.concl compacted)
+      val summed =
+        Conv.TRY_CONV
+          (Conv.ONCE_DEPTH_CONV
+            (Conv.REWR_CONV smtstringz3Theory.char_bit_sum_18))
+          compacted_t
+        handle Conv.UNCHANGED => Thm.REFL compacted_t
+             | Feedback.HOL_ERR _ => Thm.REFL compacted_t
+      val summed_t = boolSyntax.rhs (Thm.concl summed)
+      val simplified =
+        (simpLib.SIMP_CONV
+           (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss))
+           char_word_expansion_theorems summed_t
+         handle Conv.UNCHANGED => Thm.REFL summed_t)
+      val normalized = Thm.TRANS compacted (Thm.TRANS summed simplified)
     in
       normalized
     end
+
+  fun char_word_normalization_core t =
+    with_string_dag_budget "char-normalization"
+      char_word_normalization_core_unbounded t
 
   fun char_word_expansion_conv t =
     let
@@ -1144,13 +1602,27 @@ struct
     end
 
   fun char_prove t =
-    with_string_budget "char-bitblast" (fn t =>
-      (* E1(a): normalization plus BBLAST decides the selected 18-bit
-         character-decomposition formula fragment. *)
-      profile "char(1)(bitblast)" char_bitblast_prove t
-      handle Feedback.HOL_ERR holerr =>
-        (rethrow_resource holerr;
-         (* E1(b): terminal loud character-family boundary. *)
-         profile "char(2)(unsupported)" (unsupported "char") t)) t
+    SmtResource.with_resource_step_time "String" "char-bitblast"
+      (fn target =>
+        let
+          (* Compact shared word/character structure before measuring the
+             term.  Measuring Z3's DAG-shaped character spelling as an
+             unfolded HOL tree can otherwise reject a small normalized
+             obligation before the checked normalizer gets to see it. *)
+          val normalized = char_word_normalization_core target
+          val normalized_target = boolSyntax.rhs (Thm.concl normalized)
+          val _ = SmtResource.check_resource_goal
+            "String" "char-bitblast" normalized_target
+          val proved =
+            profile "char(1)(bitblast)"
+              (fn t => Tactical.prove (t, blastLib.BBLAST_TAC))
+              normalized_target
+            handle Feedback.HOL_ERR holerr =>
+              (rethrow_resource holerr;
+               profile "char(2)(unsupported)" (unsupported "char")
+                 normalized_target)
+        in
+          Thm.EQ_MP (Thm.SYM normalized) proved
+        end) t
 
 end
