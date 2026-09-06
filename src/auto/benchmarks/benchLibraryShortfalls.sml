@@ -34,7 +34,7 @@ val over_budget =
    "list_L1921_in_set_conv_nth", "list_L2576_dropWhile_id",
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons",
-   "list_L4632_extract_SomeE", "list_L4637_extract_Some_iff",
+   "list_L4632_extract_SomeE",
    "list_L5044_takeWhile_replicate", "list_L5048_dropWhile_replicate",
    "list_L5325_bij_rotate1", "list_L7998_listrel_rtrancl_refl",
    "list_L6138_map_sorted_distinct_set_unique",
@@ -229,14 +229,14 @@ val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
     ("the clasimp method terminates and reports no proof")
     ["list_L2178_snoc_eq_iff_butlast", "list_L2814_map_zip_map",
-     "list_L2818_map_zip_map2", "list_L4637_extract_Some_iff",
+     "list_L2818_map_zip_map2",
      "list_L4707_foldr_fold_remove1",
      "list_L4781_foldr_fold_removeAll", "list_L5409_nths_drop",
      "list_L7247_lex_conv",
      "list_L7321_lex_append_rightI",
      "list_L8044_listrel1_subset_listrel",
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
-     "map_L810_graph_map_add", "string_L178_card_UNIV_char"]
+     "string_L178_card_UNIV_char"]
 
 val take_and_drop_arithmetic =
   classified "take and drop arithmetic"
