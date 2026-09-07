@@ -651,15 +651,8 @@ fun version_compare (left, right) =
   let
     val left_tokens = String.tokens (not o Char.isAlphaNum) left
     val right_tokens = String.tokens (not o Char.isAlphaNum) right
-    fun compare [] [] = EQUAL
-      | compare [] _ = LESS
-      | compare _ [] = GREATER
-      | compare (x :: xs) (y :: ys) =
-          case token_compare (x, y) of
-              EQUAL => compare xs ys
-            | order => order
   in
-    compare left_tokens right_tokens
+    List.collate token_compare (left_tokens, right_tokens)
   end
 
 fun insert_version item [] = [item]

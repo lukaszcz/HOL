@@ -89,10 +89,14 @@ struct
        facts = map (fn (name, tm) => (name, simplify tm)) facts}
     end
 
+  fun effective_mode format mode =
+    if mode = "keep_lams" andalso not (is_full_ho format) then
+      "lifting"
+    else mode
+
   fun pass_lambda format mode ({conjecture, facts} : named_terms) =
     let
-      val mode' = if mode = "keep_lams" andalso not (is_full_ho format)
-                    then "lifting" else mode
+      val mode' = effective_mode format mode
       val formulas = conjecture :: map #2 facts
       val (rewritten, definitions) = hhLamTrans.translate mode' formulas
     in
@@ -1108,8 +1112,7 @@ struct
         else result)
         [] all_types
       val witnesses = map (witness_line encoding) guard_types
-      val helpers = List.filter (is_helper_name o #1) facts
-      val ordinary = List.filter (not o is_helper_name o #1) facts
+      val (helpers, ordinary) = List.partition (is_helper_name o #1) facts
       fun helper_lines facts =
         let
           fun count name [] = 1
@@ -1251,11 +1254,6 @@ struct
     ListPair.allEq (fn ((left_name, left_tm), (right_name, right_tm)) =>
       left_name = right_name andalso Term.aconv left_tm right_tm)
       (#facts left, #facts right)
-
-  fun effective_mode format mode =
-    if mode = "keep_lams" andalso not (is_full_ho format) then
-      "lifting"
-    else mode
 
   fun memoized_lambda ({entries, runs} : export_memo) format mode terms =
     let val key = effective_mode format mode in

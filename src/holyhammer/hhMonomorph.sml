@@ -259,15 +259,14 @@ struct
   fun unique_terms candidates old =
     let
       fun seen tm = List.exists (fn (_, _, prior) => aconv tm prior) old
-      fun loop [] _ result = List.rev result
-        | loop ((round, subst, tm) :: rest) seen_now result =
+      fun loop [] result = List.rev result
+        | loop ((item as (_, _, tm)) :: rest) result =
             if seen tm orelse
-               List.exists (fn (_, _, prior) => aconv tm prior) seen_now then
-              loop rest seen_now result
-            else loop rest ((round, subst, tm) :: seen_now)
-              ((round, subst, tm) :: result)
+               List.exists (fn (_, _, prior) => aconv tm prior) result then
+              loop rest result
+            else loop rest (item :: result)
     in
-      loop candidates [] []
+      loop candidates []
     end
 
   fun grounds_from_instances instances table =
@@ -315,9 +314,7 @@ struct
 
   fun monomorph {max_iters, max_new_instances} goal premises =
     let
-      val infos = ListPair.mapEq (fn (rank, premise) =>
-        classify rank premise)
-        (List.tabulate (length premises, fn index => index), premises)
+      val infos = Portable.mapi classify premises
       val names = schema_names infos
       val initial = add_grounds goal
         (List.foldl (fn (Ground (_, theorem), result) =>

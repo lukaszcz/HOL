@@ -56,17 +56,7 @@ fun simp_deltas_of_theories theories =
     ThmSetData.theory_data {settype = "simp", thy = thy}) theories)
 
 fun target_theories target =
-  let
-    fun add (theory, theories) =
-      if List.exists (fn existing => existing = theory) theories then
-        theories
-      else theory :: theories
-  in
-    rev (foldl add [] (Theory.ancestry target @ [target]))
-  end
-
-fun effective_simp_deltas target =
-  simp_deltas_of_theories (target_theories target)
+  mk_sameorder_set String.compare (Theory.ancestry target @ [target])
 
 fun induction_concls_of thms =
   foldl
@@ -132,7 +122,7 @@ fun create_statures_for current =
   let
     val theories = target_theories current
     val simp_names =
-      simp_set_of_deltas (effective_simp_deltas current)
+      simp_set_of_deltas (simp_deltas_of_theories theories)
     val def_names = definition_set theories
     val induction_conclusions = typebase_induction_concls theories
     val database = List.concat (map DB.thy theories)

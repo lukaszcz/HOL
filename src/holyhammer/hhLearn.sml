@@ -129,17 +129,6 @@ fun canonical_sequence tag values =
 
 val structural_goal_digest_schema = "hh-goal-struct-v1"
 
-fun sorted_distinct_strings values =
-  let
-    fun distinct [] = []
-      | distinct [value] = [value]
-      | distinct (first :: (rest as second :: _)) =
-          if first = second then distinct rest
-          else first :: distinct rest
-  in
-    distinct (Listsort.sort String.compare values)
-  end
-
 fun canonical_type ty =
   if Type.is_vartype ty then
     canonical_sequence "type-variable" [Type.dest_vartype ty]
@@ -197,7 +186,7 @@ fun canonical_term tm =
 fun structural_goal_text (assumptions, conclusion) =
   canonical_sequence structural_goal_digest_schema
     [canonical_sequence "assumption-set"
-       (sorted_distinct_strings (map canonical_term assumptions)),
+       (mk_string_set (map canonical_term assumptions)),
      canonical_sequence "conclusion" [canonical_term conclusion]]
 
 val structural_goal_sha1 = sha1_text o structural_goal_text
@@ -556,14 +545,7 @@ fun nb_scores model {pool, goal_features} =
   end
 
 fun take count items =
-  let
-    fun loop 0 _ result = rev result
-      | loop _ [] result = rev result
-      | loop left (item :: rest) result =
-          loop (left - 1) rest (item :: result)
-  in
-    if count <= 0 then [] else loop count items []
-  end
+  #1 (part_n count items)
 
 fun nb_rank model {pool, goal_features, n} =
   nb_scores model {pool = pool, goal_features = goal_features}
@@ -587,7 +569,7 @@ fun smooth_weight rank =
   #smooth_offset default_constants
 
 fun weight_facts weight facts =
-  ListPair.zip (facts, List.tabulate (length facts, weight))
+  Portable.mapi (fn index => fn fact => (fact, weight index)) facts
 
 val weight_facts_steeply = weight_facts steep_weight
 val weight_facts_smoothly = weight_facts smooth_weight
@@ -652,7 +634,7 @@ fun mesh_facts_by _ max_facts [] = []
                 SOME (_, score) => SOME (weight * score)
               | NONE =>
                   if member_by fact_eq unknown fact then NONE else SOME 0.0
-          fun score (index, fact) =
+          fun score index fact =
             (scaled_average (List.mapPartial (contribution fact) prepared),
              index, fact)
           fun compare ((left, left_index, _),
@@ -661,9 +643,7 @@ fun mesh_facts_by _ max_facts [] = []
                 EQUAL => Int.compare (left_index, right_index)
               | order => order
         in
-          ListPair.zip (List.tabulate (length candidates, fn x => x),
-              candidates)
-          |> map score
+          Portable.mapi score candidates
           |> Listsort.sort compare
           |> take max_facts
           |> map #3
@@ -774,20 +754,16 @@ fun build_context_for current thmdata = make_context_for current
 fun create_context_for current thmdata =
   let
     val key = context_key_for current thmdata
+    fun rebuild () =
+      let val context = build_context_for current thmdata in
+        context_cache := SOME (key, context);
+        context
+      end
   in
     case !context_cache of
         SOME (cached_key, context) =>
-          if same_key (key, cached_key) then context
-          else
-            let val replacement = build_context_for current thmdata in
-              context_cache := SOME (key, replacement);
-              replacement
-            end
-      | NONE =>
-          let val context = build_context_for current thmdata in
-            context_cache := SOME (key, context);
-            context
-          end
+          if same_key (key, cached_key) then context else rebuild ()
+      | NONE => rebuild ()
   end
 
 fun create_context thmdata =
@@ -835,16 +811,17 @@ fun mash_leg ({model, dependencies, fact_eq, ...} : context)
     let
       val (weights, facts) = restricted
       val pool = map #1 facts
+      val features = mlFeature.fea_of_goal true goal
       val goal_features = map
         (fn feature => (feature, #unit_weight default_constants))
-        (mlFeature.fea_of_goal true goal)
+        features
       val max_suggestions =
         #max_suggestions_factor default_constants * max_facts +
         #max_suggestions_extra default_constants
       val nb = nb_rank model
         {pool = pool, goal_features = goal_features, n = max_suggestions}
       val knn = mlNearestNeighbor.thmknn (weights, facts) max_suggestions
-        (mlFeature.fea_of_goal true goal)
+        features
       val learner = mesh_facts max_suggestions
         [(#nb_mesh_weight default_constants,
           (weight_facts_steeply nb, [])),

@@ -120,14 +120,6 @@ and match_patternsT (_, []) = true
 fun match_ptype ((_, patterns), (_, instances)) =
   match_patternsT (patterns, instances)
 
-fun list_compare compare ([], []) = EQUAL
-  | list_compare compare ([], _ :: _) = LESS
-  | list_compare compare (_ :: _, []) = GREATER
-  | list_compare compare (x :: xs, y :: ys) =
-      (case compare (x, y) of
-           EQUAL => list_compare compare (xs, ys)
-         | order => order)
-
 fun patternT_compare (left, right) =
   if Type.is_vartype left then
     if Type.is_vartype right then EQUAL else LESS
@@ -138,12 +130,12 @@ fun patternT_compare (left, right) =
       val (name', arguments') = type_name right
     in
       case String.compare (name, name') of
-          EQUAL => list_compare patternT_compare (arguments, arguments')
+          EQUAL => List.collate patternT_compare (arguments, arguments')
         | order => order
     end
 
 fun ptype_compare ((order, patterns), (order', patterns')) =
-  case list_compare patternT_compare (patterns, patterns') of
+  case List.collate patternT_compare (patterns, patterns') of
       EQUAL => Int.compare (order, order')
     | result => result
 
@@ -476,15 +468,7 @@ fun fact_weight fudge stature frequency_table rel_table chained_table
       end
   end
 
-fun split_at count items =
-  let
-    fun loop 0 prefix after = (rev prefix, after)
-      | loop _ prefix [] = (rev prefix, [])
-      | loop n prefix (item :: rest) =
-          loop (n - 1) (item :: prefix) rest
-  in
-    loop (Int.max (count, 0)) [] items
-  end
+val split_at = part_n
 
 fun take count items = #1 (split_at count items)
 
