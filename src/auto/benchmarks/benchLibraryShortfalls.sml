@@ -30,7 +30,7 @@ val translation : benchLib.shortfall list =
 
 val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
-   "list_L1511_split_list_last_propE", "list_L1789_filter_eq_Cons_iff",
+   "list_L1511_split_list_last_propE",
    "list_L1921_in_set_conv_nth",
    "list_L4065_set_take_disj_set_drop_if_distinct",
    "list_L4406_distinct_adj_Cons_Cons",
@@ -157,7 +157,7 @@ val zip_against_map =
 val over_budget_with_no_residual =
   classified "over budget with no residual"
     ("the assigned tactic did not return within the budget")
-    ["list_L1789_filter_eq_Cons_iff", "list_L1921_in_set_conv_nth",
+    ["list_L1921_in_set_conv_nth",
      "list_L7998_listrel_rtrancl_refl", "map_L899_map_add_subsumed1",
      "list_L4065_set_take_disj_set_drop_if_distinct",
      "list_L4406_distinct_adj_Cons_Cons",
@@ -186,8 +186,7 @@ val filter_normalisation =
     ("FILTER against a composed or negated predicate is not "
      ^ "normalised")
     ["list_L1838_partition_filter_conv",
-     "list_L4762_length_removeAll_less",
-     "list_L4906_inter_list_set_append"]
+     "list_L4762_length_removeAll_less"]
 
 val indexing_through_list_constructors =
   classified "indexing through list constructors"
