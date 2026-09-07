@@ -63,6 +63,36 @@ Proof
   metis_tac [LIST_REL_REVERSE, REVERSE_REVERSE]
 QED
 
+(* src/HOL/List.thy:1616,1635,1638 @ f7e02b7e.  [filter_append] is simp
+   there and declared to no simpset here, and with it the two rules that
+   collapse a filter whose predicate the list itself settles,
+   [filter_True] and [filter_False].  HOL4 states the collapses as
+   equivalences between an equation and an EVERY and declares neither,
+   so a goal that filters across an append keeps the append whole, and
+   the half whose elements the context already decides stays a filter
+   beside the list it would reduce to.  The rest of the family,
+   [length_filter_le] and [distinct_filter], is seeded in
+   rich_listAutoSeed.  [filter_filter] is simp there as well and is
+   left undeclared: a composite filter is settled by the collapses
+   below, which read the inner walk's elements through the ambient
+   MEM_FILTER, so nothing reaches the rule that writes two walks as
+   one. *)
+val _ =
+  export_at "simp"
+    ("FILTER_APPEND_DISTRIB_AUTO", listTheory.FILTER_APPEND_DISTRIB)
+
+Theorem FILTER_NONE_AUTO[simp]:
+  !P l. EVERY (\item. ~P item) l ==> FILTER P l = []
+Proof
+  simp[listTheory.FILTER_EQ_NIL]
+QED
+
+Theorem FILTER_ID_AUTO[simp]:
+  !P l. EVERY P l ==> FILTER P l = l
+Proof
+  simp[listTheory.FILTER_EQ_ID]
+QED
+
 (* src/HOL/List.thy:3475-3481 @ f7e02b7e.  The translated half-open
    interval [start..<finish] is GENLIST (\offset. start + offset)
    (finish - start), written here in the eta-contracted spelling the

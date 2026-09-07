@@ -730,3 +730,20 @@ val _ =
           ([], ``!P xs y.
                    MEM y (takeWhile P (xs:'a list)) /\
                    MEM y (FILTER ($~ o P) xs) ==> F``)])
+
+(* src/HOL/List.thy:1616,1635,1638 @ f7e02b7e, [filter_append] with
+   [filter_False] and [filter_True].  Neither goal is a corpus entry and
+   neither is a rule: each splits a filter at an append and then has to
+   settle one half from what the context says about its elements, which
+   is the step the collapse rules supply.  The first reads the left half
+   away, the second keeps the right half whole. *)
+val _ =
+  check
+    ("a filter splits at an append and each half is settled",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!P xs ys. (!e. MEM e (xs:'a list) ==> ~P e) ==>
+                   FILTER P (xs ++ ys) = FILTER P ys``),
+          ([], ``!P xs ys. EVERY P (ys:'a list) ==>
+                   FILTER P (xs ++ ys) = FILTER P xs ++ ys``)])
