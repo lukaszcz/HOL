@@ -185,6 +185,7 @@ sig
      added_from_dat : string list, conditions : condition list,
      sample : int} -> run_header
   val write_run_header : string -> run_header -> unit
+  val validate_run_header : string -> run_header -> unit
 
   val sample_goal : int -> string -> bool
   val goal_partition : {part : int, parts : int} -> string -> bool

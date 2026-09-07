@@ -67,6 +67,21 @@ fun option_error fragments thunk =
      end
         | _ => false)
 
+fun with_hh_options settings action =
+  let
+    val previous = List.mapPartial (fn (key, value, source) =>
+      if source = "set" andalso
+         List.exists (fn (name, _) => key = name) settings
+      then SOME (key, value) else NONE) (hhConfig.hh_params ())
+    fun restore () =
+      (List.app (hhConfig.hh_unset o #1) settings;
+       List.app hhConfig.hh_set previous)
+    val _ = List.app hhConfig.hh_set settings
+  in
+    (action () before restore ())
+    handle exn => (restore (); raise exn)
+  end
+
 fun test_child root =
   let
     val home = join root "home"
@@ -2414,6 +2429,49 @@ fun test_hhEval root =
       (JSONUtil.asString (JSONUtil.lookupField header_json "expname") =
        "fixture" andalso
        JSONUtil.asInt (JSONUtil.lookupField header_json "schema") = 4)
+    fun resume_header conditions sample corpus : hhEval.run_header =
+      {expname = #expname header, date = "later", host = #host header,
+       hol_commit = #hol_commit header, provers = #provers header,
+       corpus = corpus, added_from_dat = #added_from_dat header,
+       conditions = conditions, sample = sample}
+    fun resume_rejected field requested =
+      ((hhEval.validate_run_header expdir requested; false)
+       handle Fail message => String.isSubstring field message)
+    val _ = hhEval.validate_run_header expdir
+      (resume_header [condition] 1 (#corpus header))
+    fun changed_condition selector engine timeout reconstruct =
+      {cond_id = #cond_id condition, regime = #regime condition,
+       selector = selector, engine = engine, timeout = timeout,
+       reconstruct = reconstruct} : hhEval.condition
+    val changed_conditions =
+      [changed_condition (#selector condition) (#engine condition)
+         (#timeout condition + 1) (#reconstruct condition),
+       changed_condition hhEval.Deps (#engine condition)
+         (#timeout condition) (#reconstruct condition),
+       changed_condition (#selector condition) (hhEval.Prover "vampire")
+         (#timeout condition) (#reconstruct condition),
+       changed_condition (#selector condition) (#engine condition)
+         (#timeout condition) (not (#reconstruct condition))]
+    val _ = expect "resume rejects changed conditions with the same ID"
+      (List.all (fn changed => resume_rejected "conditions"
+        (resume_header [changed] 1 (#corpus header))) changed_conditions)
+    val _ = expect "resume rejects changed sampling and corpus"
+      (resume_rejected "sample"
+         (resume_header [condition] 2 (#corpus header)) andalso
+       resume_rejected "corpus" (resume_header [condition] 1 []))
+    val _ = expect "resume rejects changed runtime hammer options"
+      (with_hh_options [("filter", "mepo")] (fn () =>
+        resume_rejected "hammer_options" header))
+    val legacy_header =
+      case header_json of
+          JSON.OBJECT fields => JSON.OBJECT
+            (List.filter (fn (key, _) => key <> "hammer_options") fields)
+        | _ => raise Fail "expected a run header object"
+    val _ = write_file (join expdir "run.json")
+      (JSONPrinter.valueToString legacy_header)
+    val _ = expect "resume rejects headers without hammer settings"
+      (resume_rejected "hammer_options" header)
+    val _ = hhEval.write_run_header expdir header
     val _ = expect "sample one selects every goal"
       (hhEval.sample_goal 1 "list.nil")
     val _ = expect "sample selection is deterministic"
@@ -2437,8 +2495,25 @@ fun test_hhEval root =
       (((hhEval.set_worker_goal_ids []; false) handle Fail _ => true) andalso
        ((hhEval.set_worker_goal_ids ["list.nil", "list.nil"];
           false) handle Fail _ => true))
-    val script = hhEval.write_evalscript expdir "list" [condition] 7
+    val worker_options =
+      [("filter", "mepo"), ("format", "tf0"),
+       ("type_enc", "mono_native"), ("lam_trans", "lifting"),
+       ("preplay_timeout", "2.5"), ("minimize_timeout", "3.5"),
+       ("mono_instances", "17"), ("debug_dir", "quoted \"directory\"")]
+    val script = with_hh_options worker_options (fn () =>
+      hhEval.write_evalscript expdir "list" [condition] 7)
     val script_text = String.concat (read_lines script)
+    val _ = expect "worker script preserves runtime hammer options"
+      (List.all (fn (key, value) => String.isSubstring
+        ("hhConfig.hh_set (" ^ Portable.mlquote key ^ ", " ^
+         Portable.mlquote value ^ ");") script_text) worker_options)
+    val default_script = hhEval.write_evalscript expdir "list" [condition] 7
+    val _ = expect "worker script preserves the default monomorph cap"
+      (case #mono_instances (hhConfig.snapshot ()) of
+           NONE => not (String.isSubstring
+             "hhConfig.hh_set (\"mono_instances\""
+             (String.concat (read_lines default_script)))
+         | SOME _ => true)
     val _ = expect "worker script is beside its theory"
       (OS.Path.dir script = join src "one")
     val _ = expect "worker script loads hhEval"
@@ -3427,15 +3502,6 @@ val _ = test_schedule_export_wiring ()
 val _ = test_schedule_knn_anchor_export ()
 val _ = test_hhSchedule ()
 
-fun with_hh_options settings action =
-  let
-    fun clear () = List.app (hhConfig.hh_unset o #1) settings
-    val _ = List.app hhConfig.hh_set settings
-  in
-    (action () before clear ())
-    handle exn => (clear (); raise exn)
-  end
-
 fun test_main_hh_lemmas_hook parser =
   let
     val hook : string -> mlThmData.thmdata -> Abbrev.goal ->
@@ -3524,9 +3590,19 @@ fun test_hhEval_integration () =
             {cond_id = "bushy-deps-e", regime = hhEval.Bushy,
              selector = hhEval.Deps, engine = hhEval.Prover "e", timeout = 1,
              reconstruct = false}
-          val _ = hhEval.run_eval
-            {expname = "smoke", ncore = 1, thyl = ["pair", "option"],
-             conditions = [condition]}
+          val scheduled : hhEval.condition =
+            {cond_id = "runtime-options", regime = hhEval.Bushy,
+             selector = hhEval.Deps,
+             engine = hhEval.Sched {provers = ["e"], slices = 1,
+               cores = 1, max_proofs = 1},
+             timeout = 1, reconstruct = true}
+          fun run expname conditions = with_hh_options
+            [("filter", "mepo"), ("format", "tf0"),
+             ("type_enc", "mono_native"), ("lam_trans", "lifting")]
+            (fn () => hhEval.run_eval
+              {expname = expname, ncore = 1, thyl = ["pair", "option"],
+               conditions = conditions})
+          val _ = run "smoke" [condition]
           val expdir = join root "smoke"
           val pair_journal = hhEval.journal_path expdir "pair"
           val option_journal = hhEval.journal_path expdir "option"
@@ -3536,13 +3612,34 @@ fun test_hhEval_integration () =
             (not (null (hhEval.read_journal pair_journal)) andalso
              not (null (hhEval.read_journal option_journal)) andalso
              OS.FileSys.access (join expdir "run.json", [OS.FileSys.A_READ]))
-          val _ = hhEval.run_eval
-            {expname = "smoke", ncore = 1, thyl = ["pair", "option"],
-             conditions = [condition]}
+          val _ = run "smoke" [condition]
           val journal_after = String.concat (read_lines pair_journal) ^
             String.concat (read_lines option_journal)
           val _ = expect "hhEval integration resume is a no-op"
             (journal_before = journal_after)
+          val changed : hhEval.condition =
+            {cond_id = #cond_id condition, regime = #regime condition,
+             selector = #selector condition, engine = #engine condition,
+             timeout = 2, reconstruct = #reconstruct condition}
+          val rejected =
+            ((run "smoke" [changed]; false)
+             handle Fail message =>
+               String.isSubstring "conditions differs" message)
+          val _ = expect "hhEval rejects incompatible completed runs"
+            (rejected andalso journal_before =
+              String.concat (read_lines pair_journal) ^
+              String.concat (read_lines option_journal))
+          val _ = run "worker-options" [scheduled]
+          val worker_dir = join root "worker-options"
+          val worker_slices = List.concat (map #slices
+            (hhEval.read_journal (hhEval.journal_path worker_dir "pair") @
+             hhEval.read_journal (hhEval.journal_path worker_dir "option")))
+          val _ = expect "hhEval workers use runtime schedule settings"
+            (not (null worker_slices) andalso
+             List.all (fn {slice, ...} : hhEval.journal_slice =>
+               #filter slice = "mepo" andalso #format slice = "tf0" andalso
+               #type_enc slice = "mono_native" andalso
+               #lam_trans slice = "lifting") worker_slices)
         in
           ()
         end

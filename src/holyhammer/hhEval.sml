@@ -764,6 +764,18 @@ fun json_corpus_entry {thy, theorem_count, dep_stamp} =
      ("theorem_count", JSON.INT (IntInf.fromInt theorem_count)),
      ("dep_stamp", JSON.STRING dep_stamp)]
 
+(* Preserve effective values across fresh worker processes.  The default
+   mono_instances value is special: setting it would impose an explicit cap
+   instead of allowing each prover's own cap. *)
+fun eval_hammer_options () =
+  List.mapPartial (fn (key, value, source) =>
+    if key = "mono_instances" andalso source = "default" then NONE
+    else SOME (key, value)) (hhConfig.hh_params ())
+
+fun json_hammer_options () =
+  JSON.OBJECT (map (fn (key, value) => (key, JSON.STRING value))
+    (eval_hammer_options ()))
+
 fun header_json
     {expname, date, host, hol_commit, provers, corpus, added_from_dat,
      conditions, sample} =
@@ -775,7 +787,8 @@ fun header_json
      ("corpus", JSON.ARRAY (map json_corpus_entry corpus)),
      ("added_from_dat", JSON.ARRAY (map JSON.STRING added_from_dat)),
      ("conditions", JSON.ARRAY (map json_condition conditions)),
-     ("sample", JSON.INT (IntInf.fromInt sample))]
+     ("sample", JSON.INT (IntInf.fromInt sample)),
+     ("hammer_options", json_hammer_options ())]
 
 fun write_run_header expdir header =
   let
@@ -787,6 +800,24 @@ fun write_run_header expdir header =
     val _ = TextIO.closeOut output
   in
     ()
+  end
+
+fun validate_run_header expdir header =
+  let
+    val saved = JSONParser.parseFile (join expdir "run.json")
+    val requested = header_json header
+    fun check name =
+      case optional_field name saved of
+          NONE => raise Fail ("cannot resume evaluation: run.json lacks " ^
+            name ^ "; use a new experiment name")
+        | SOME value =>
+            if JSONPrinter.valueToString value =
+               JSONPrinter.valueToString (field name requested) then ()
+            else raise Fail ("cannot resume evaluation: " ^ name ^
+              " differs from run.json; use a new experiment name")
+  in
+    app check ["schema", "expname", "conditions", "sample", "corpus",
+      "hammer_options"]
   end
 
 fun sample_hash text =
@@ -2732,6 +2763,9 @@ fun write_evalscript expdir thy conditions sample =
       (".hheval_" ^ safe_component (OS.Path.file expdir) ^ "_" ^
        safe_component thy ^ ".sml")
     val conditions_text = String.concatWith ", " (map condition_text conditions)
+    val hammer_settings = String.concat (map (fn (key, value) =>
+      "val _ = hhConfig.hh_set (" ^ Portable.mlquote key ^ ", " ^
+      Portable.mlquote value ^ ");\n") (eval_hammer_options ()))
     val settings =
       "val _ = hhEval.set_worker_settings {conditions = [" ^
       conditions_text ^ "], sample = " ^ Int.toString sample ^ "};"
@@ -2744,7 +2778,8 @@ fun write_evalscript expdir thy conditions sample =
       "load " ^ Portable.mlquote (thy ^ "Theory") ^ ";\n" ^
       "val _ = Feedback.quiet_messages Theory.new_theory " ^
       Portable.mlquote worker_theory ^ ";\n" ^
-      "load \"hhEval\";\n" ^ settings ^ "\n" ^ action ^ "\n")
+      "load \"hhEval\";\n" ^ hammer_settings ^ settings ^ "\n" ^
+      action ^ "\n")
     val _ = TextIO.closeOut output
   in
     path
@@ -2790,12 +2825,14 @@ fun run_eval {expname, ncore, thyl, conditions} =
         ((load_theory thy; loaded_corpus_entry thy)
          handle Interrupt => raise Interrupt
               | _ => {thy = thy, theorem_count = 0, dep_stamp = ""})
-      val _ =
-        if exists_file (join expdir "run.json") then ()
-        else write_run_header expdir
-          (new_run_header {expname = expname, corpus = map corpus_entry thyl,
+      val header =
+        new_run_header {expname = expname, corpus = map corpus_entry thyl,
             added_from_dat = included_from_dat,
-            conditions = conditions, sample = sample})
+            conditions = conditions, sample = sample}
+      val _ =
+        if exists_file (join expdir "run.json") then
+          validate_run_header expdir header
+        else write_run_header expdir header
       val states = map (fn thy =>
         (thy, theory_cells thy conditions sample)) thyl
       fun pending (thy, NONE) =
@@ -3032,7 +3069,7 @@ fun with_smoke_hh_options timeout action =
     (action () before restore ()) handle error => (restore (); raise error)
   end
 
-fun run_soundness_smoke timeout options =
+fun run_soundness_smoke expdir timeout options =
   let
     fun one (name, goal) =
       let
@@ -3044,7 +3081,7 @@ fun run_soundness_smoke timeout options =
           not (List.exists has_theorem (#slices_run result)) andalso
           matrix_ok andalso null (#suggestions result)
         val public_result = with_smoke_hh_options timeout (fn () =>
-          holyHammer.main_hh_lemmas "/smoke" mlThmData.empty_thmdata
+          holyHammer.main_hh_lemmas expdir mlThmData.empty_thmdata
             ([], goal))
       in
         if no_theorem andalso public_result = NONE then ()
@@ -3103,6 +3140,18 @@ fun run_smoke {expdir, timeout} =
         case #engine sched_condition of
             Sched parameters => parameters
           | Prover _ => raise Fail "smoke schedule condition is a prover cell"
+      (* The first successful schedule cancels its remaining slices, whose
+         results must not enter the cache.  Prime the entire schedule with
+         an unreachable proof limit before testing a process-free replay. *)
+      val primed = schedule_cell_entry expdir sched_thy
+        (sched_name, sched_thm) sched_dependencies sched_condition
+        {provers = #provers sched_parameters,
+         slices = #slices sched_parameters, cores = #cores sched_parameters,
+         max_proofs = #slices sched_parameters + 1}
+      val _ =
+        if #stop primed = SOME "Exhausted" andalso
+           length (#slices primed) = #slices sched_parameters then ()
+        else raise Fail "HolyHammer schedule cache priming did not finish"
       val _ = hhProver.reset_spawn_count ()
       val repeated = schedule_cell_entry expdir sched_thy
         (sched_name, sched_thm) sched_dependencies sched_condition
@@ -3139,7 +3188,7 @@ fun run_smoke {expdir, timeout} =
            " failed and " ^
            Int.toString (length smoke_goals - length results) ^
            " missing; output: " ^ expdir)
-      val _ = run_soundness_smoke timeout options
+      val _ = run_soundness_smoke expdir timeout options
     in
       results
     end
