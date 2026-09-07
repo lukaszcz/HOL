@@ -287,10 +287,17 @@ val pointwise = Tactic.CONV_TAC pointwise_conv
    so no goal that already closes takes a different route.  Where
    simplification reports nothing to do the step still applies if the
    conclusion is a function equation -- that is the case it exists for
-   -- and where neither applies the composite fails as it did.  The
-   safe cascade does not take it: Isabelle's [ext] is an introduction
-   rule and not a safe one, and a safe step that rewrote every function
-   equation would change what SAFE_TAC leaves. *)
+   -- and where neither applies the composite fails as it did.
+
+   It belongs to a method, not to a step of one.  [extensional_normalize]
+   below already puts a goal that arrives as a function equation into
+   pointwise form before the search tactics start; what is left to this
+   one is the equation that only appears once simplification has run,
+   and asking for it again at every node of the classical cascade would
+   pay for a whole simplification at each.  The safe cascade does not
+   take it at all: Isabelle's [ext] is an introduction rule and not a
+   safe one, and a safe step that rewrote every function equation would
+   change what SAFE_TAC leaves. *)
 fun with_extensionality simplify =
   let
     val pointwise_then = Tactical.THEN (pointwise, Tactical.TRY simplify)
@@ -301,8 +308,7 @@ fun with_extensionality simplify =
   end
 
 fun asm_full_simp ss simp_args =
-  with_extensionality
-    (Tactical.THEN (context_first ss, ambient_simp false ss simp_args))
+  Tactical.THEN (context_first ss, ambient_simp false ss simp_args)
 
 fun safe_asm_full_simp ss simp_args =
   Tactical.THEN (context_first ss, ambient_simp true ss simp_args)
@@ -742,7 +748,7 @@ fun auto_with {blast, depth} cs ss simp_args =
     val script =
       Tactical.EVERY
         [Tactical.TRY extensional_normalize,
-         asm_full_simp ss simp_args,
+         with_extensionality (asm_full_simp ss simp_args),
          Tactical.TRY initial_safe,
          Tactical.TRY search,
          Tactical.TRY final_safe]
@@ -775,7 +781,7 @@ fun force_with name cs ss simp_args =
         [Tactical.TRY clarify,
          Tactical.TRY extensional_normalize,
          simpLib.FULL_SIMP_TAC ss simp_args,
-         asm_full_simp ss simp_args,
+         with_extensionality (asm_full_simp ss simp_args),
          Tactical.TRY safe,
          search]
   in

@@ -1780,8 +1780,9 @@ val _ =
    [f ^^ 0 = id], so the goal below and the rule that settles it are the
    same fact at different arities and no rewrite brings them together.
    Neither goal is a benchmark entry.  The first is put to simplification
-   alone, which is the method the source's own [simp] names and the one
-   route that has nothing else to reach the rule by. *)
+   alone, which is the method the source's own [simp] names; the search
+   tactics reach the same goal through their own root-only
+   normalisation, so it says nothing about them. *)
 val extensional_goal : Abbrev.goal =
   ([], ``FUNPOW SUC 0 = (I : num -> num)``)
 
@@ -1790,14 +1791,16 @@ val _ =
     ("an equation between functions meets the applied law that settles it",
      fn () =>
        valid_closes
-         (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) [])
+         (clasimpLib.with_extensionality
+            (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) []))
          extensional_goal)
 
 (* Simplification leaves the equation under whatever quantifiers and
    implications the goal carried, so the step is looked for there and
-   not only at the conclusion's root.  The premise below settles the two
-   functions at every argument and no rewrite reaches the goal, which
-   names neither. *)
+   not only at the conclusion's root.  The goal below arrives as neither
+   -- it is a quantified implication, which the root-only normalisation
+   the search tactics run first declines -- and the equation appears
+   only once simplification has stripped it. *)
 val nested_extensional_goal : Abbrev.goal =
   ([], ``!clasimp_ext_k.
            (!n. (clasimp_ext_f : num -> num -> num) clasimp_ext_k n =

@@ -24,10 +24,11 @@ sig
      equation pointwise and runs [simplify] again.  HOL4's library states
      applied what the source states at the function level, so a goal at
      the function level cannot meet the rule that settles it; this is the
-     one step that brings the two together.  Exported so that a method
-     built from HOL4's simplifier directly -- the parity corpus builds
-     its simp method that way -- takes the step the layer's own
-     simplification takes, rather than restating it. *)
+     one step that brings the two together.  It wraps a method's
+     simplification, not a step inside a search.  Exported so that a
+     method built from HOL4's simplifier directly -- the parity corpus
+     builds its simp method that way -- takes the step the layer's own
+     methods take, rather than restating it. *)
   val with_extensionality : tactic -> tactic
 
   val asm_full_simp : simpLib.simpset -> thm list -> tactic
