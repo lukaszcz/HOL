@@ -801,3 +801,39 @@ val _ =
          (clasimpLib.AUTO_TAC [arithmeticTheory.ADD_COMM])
          ([], ``!n m l. DROP n (DROP m (l : 'a list)) =
                           DROP m (DROP n l)``))
+
+(* src/HOL/List.thy:1348 @ f7e02b7e, [set_map].  The goal is not a
+   corpus entry and is not the rule: what is known about the mapped
+   list's elements is a property of the image, which is reached only
+   once the element the image came from has been named. *)
+val _ =
+  check
+    ("an element of a mapped list is the image of one of its own",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : num list) y. MEM y (MAP SUC xs) ==> y <> 0``))
+
+(* src/HOL/List.thy:1521 @ f7e02b7e, [set_concat].  The goal is not a
+   corpus entry and is not the rule: a claim about every inner list is
+   read off one about the flattened one, which needs the inner list an
+   element sits in to be named. *)
+val _ =
+  check
+    ("what the flattened list omits every inner list omits",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xss : num list list).
+                  ~MEM 0 (FLAT xss) ==> EVERY (\ys. ~MEM 0 ys) xss``))
+
+(* src/HOL/List.thy:1348,1521 @ f7e02b7e, the two together.  The goal is
+   not a corpus entry and is not either rule: the pair has to be placed
+   in the inner list its first component builds, and that list in the
+   flattened one. *)
+val _ =
+  check
+    ("a pair of elements sits in the list of their pairings",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : 'a list) (ys : 'b list) a b.
+                  MEM a xs /\ MEM b ys ==>
+                  MEM (a, b) (FLAT (MAP (\x. MAP (\y. (x, y)) ys) xs))``))

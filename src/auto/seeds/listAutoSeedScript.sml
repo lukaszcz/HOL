@@ -93,6 +93,57 @@ Proof
   simp[listTheory.FILTER_EQ_ID]
 QED
 
+(* src/HOL/List.thy:1348,1521 @ f7e02b7e.  [set_map] and [set_concat]
+   are simp there, so a membership in a mapped or a flattened list is
+   read as one in the image, or the union, the list is built from.  HOL4
+   states the composite readings as MEM_MAP and MEM_FLAT and declares
+   neither, so a membership in [MAP f xs] or [FLAT xss] is inert and the
+   element it would name is never introduced.  The other two of the
+   four, [set_append] and [set_filter], need no analogue: MEM_APPEND and
+   MEM_FILTER are ambient.
+
+   Both are declared in the membership reading rather than the source's
+   set reading, which is where they act: the ambient IN_LIST_TO_SET
+   rewrites [x IN set l] to [MEM x l], so a set-level rewrite would
+   never meet a goal.
+
+   The union is a rewrite and the image is not, which is the split the
+   source makes: [UN_iff] of src/HOL/Complete_Lattices.thy:1052 is simp,
+   while an image membership is left to [image_eqI] and [imageE] of
+   src/HOL/Set.thy:882,893 -- an unsafe introduction and a safe
+   elimination -- and [image_iff] beside them is declared to nothing.
+   The split earns its keep here: a rewrite of the image reading reaches
+   an enclosing membership before the MAP beneath it, and the ambient
+   projections of a zip, which are conditional on the two sides having
+   equal length, then never see the MAP they reduce.
+
+   The elimination is declared unsafe where the source declares it safe,
+   which is the same deviation MEM_takeWhile_HOLDS_AUTO below records and
+   is made for the same reason: what is wanted is strength, and here the
+   safe reading costs more than it earns.  A safe elimination is tried at
+   every node of the tableau, and its major premise is entirely schematic,
+   so it meets the undetermined literals a witness-guessing branch leaves
+   behind.  Declared safe, [set_L1610_Pow_Compl] of the sets corpus --
+   whose source method supplies the witness this layer's recipe has to
+   guess -- goes from 88 branches to 3638 and past its budget; declared
+   unsafe it stays at 88, and the goals the rule exists for still close.
+   The [selim] spelling costs the same, and so does declaring the
+   pre-existing MEM_takeWhile_HOLDS_AUTO below safe, so what costs is the
+   safety class rather than this rule or its shape. *)
+val _ = export_at "simp" ("MEM_FLAT_AUTO", listTheory.MEM_FLAT)
+
+Theorem MEM_MAP_IMAGE_AUTO[intro]:
+  !f y x (xs : 'a list). y = f x /\ MEM x xs ==> MEM y (MAP f xs)
+Proof
+  metis_tac [listTheory.MEM_MAP]
+QED
+
+Theorem MEM_MAP_CASES_AUTO[dest]:
+  !f y (xs : 'a list). MEM y (MAP f xs) ==> ?x. y = f x /\ MEM x xs
+Proof
+  metis_tac [listTheory.MEM_MAP]
+QED
+
 (* src/HOL/List.thy:3475-3481 @ f7e02b7e.  The translated half-open
    interval [start..<finish] is GENLIST (\offset. start + offset)
    (finish - start), written here in the eta-contracted spelling the
