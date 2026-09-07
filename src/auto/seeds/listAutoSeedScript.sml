@@ -99,13 +99,13 @@ QED
    states the composite readings as MEM_MAP and MEM_FLAT and declares
    neither, so a membership in [MAP f xs] or [FLAT xss] is inert and the
    element it would name is never introduced.  The other two of the
-   four, [set_append] and [set_filter], need no analogue: MEM_APPEND and
-   MEM_FILTER are ambient.
+   four, [set_append] and [set_filter], need no analogue here:
+   MEM_APPEND is ambient, and MEM_FILTER is seeded above.
 
    Both are declared in the membership reading rather than the source's
-   set reading, which is where they act: the ambient IN_LIST_TO_SET
-   rewrites [x IN set l] to [MEM x l], so a set-level rewrite would
-   never meet a goal.
+   set reading, which is the reading the goals are in: [MEM x l] is
+   [x IN set l] itself, so the set form is met as a subterm and leaves
+   an image or a union membership where a membership already stood.
 
    The union is a rewrite and the image is not, which is the split the
    source makes: [UN_iff] of src/HOL/Complete_Lattices.thy:1052 is simp,
