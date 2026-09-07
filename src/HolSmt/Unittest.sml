@@ -17633,10 +17633,15 @@ let
   val skeleton = "rewrite(25a)(skeleton-congruence)"
   val word_rung = "rewrite(18)(BBLAST)_OK"
   val x = ``skeleton_boundary_x:word4``
-  val left_atom =
-    ``(skeleton_boundary_x:word4) && (skeleton_boundary_x - 1w) =
-      skeleton_boundary_x -
-        (skeleton_boundary_x && -skeleton_boundary_x)``
+  val y = ``skeleton_boundary_y:word4``
+  fun word_atom word =
+    boolSyntax.mk_eq
+      (wordsSyntax.mk_word_and
+         (word, wordsSyntax.mk_word_sub (word, ``1w:word4``)),
+       wordsSyntax.mk_word_sub
+         (word, wordsSyntax.mk_word_and
+           (word, wordsSyntax.mk_word_2comp word)))
+  val left_atom = word_atom x
   val seq_atom =
     ``REVERSE [skeleton_boundary_a:int; skeleton_boundary_b] =
       [skeleton_boundary_b; skeleton_boundary_a]``
@@ -17655,7 +17660,43 @@ let
   val direct_theorem = replay direct
   val _ = assert (profile_call_count word_rung = 1 andalso
       profile_call_count skeleton = 0,
-    "skeleton congruence pre-empted direct word replay")
+    "skeleton congruence pre-empted binder-free direct word replay")
+  val quantified = boolSyntax.mk_eq
+    (boolSyntax.mk_forall (x, word_atom x),
+     boolSyntax.mk_forall (y, boolSyntax.T))
+  val () = Profile.reset_all ()
+  val quantified_theorem = replay quantified
+  val _ = assert (profile_call_count word_rung = 1 andalso
+      profile_call_count (skeleton ^ "_OK") = 1,
+    "binder-bearing word rewrite did not try congruence before BBLAST")
+  val lowered = boolSyntax.mk_forall (x, word_atom x)
+  val lowered_pre_bblast_calls = ref 0
+  val () = Profile.reset_all ()
+  val lowered_theorem =
+    Z3_ProofReplay.bv_rewrite_lowered_with_pre_bblast_for_test
+      (fn _ =>
+        (lowered_pre_bblast_calls := !lowered_pre_bblast_calls + 1;
+         raise Feedback.mk_HOL_ERR "Unittest"
+           "z3_rewrite_skeleton_congruence_boundaries"
+           "injected ordinary decomposition decline")) lowered
+  val _ = assert (!lowered_pre_bblast_calls = 1 andalso
+      profile_call_count word_rung = 1,
+    "lowered binder decline did not retain its BBLAST fallback")
+  val () = Profile.reset_all ()
+  val lowered_gate =
+    ((ignore
+        (Z3_ProofReplay.bv_rewrite_lowered_with_pre_bblast_for_test
+          (fn _ =>
+            (SmtResource.check_term_size_for "BitVector"
+               "pre-BBLAST-fixture"
+               (SmtResource.max_bv_replay_term_nodes + 1);
+             Thm.ASSUME lowered)) lowered);
+      NONE)
+     handle Feedback.HOL_ERR holerr => SOME holerr)
+  val _ = assert (Option.isSome lowered_gate andalso
+      SmtResource.is_resource_gate (Option.valOf lowered_gate) andalso
+      profile_call_count word_rung = 0,
+    "lowered pre-BBLAST resource gate did not remain terminal")
   val mismatch = boolSyntax.mk_eq
     (boolSyntax.mk_conj (left_atom, seq_atom),
      boolSyntax.mk_disj (boolSyntax.F, boolSyntax.F))
@@ -17678,6 +17719,14 @@ let
 in
   assert_no_hyps ("direct theory rewrite ordering", direct_theorem);
   check_oracle_tags "direct theory rewrite ordering" direct_theorem;
+  assert_no_hyps ("binder-bearing theory rewrite", quantified_theorem);
+  assert_concl_alpha
+    ("binder-bearing theory rewrite", quantified_theorem, quantified);
+  check_oracle_tags "binder-bearing theory rewrite" quantified_theorem;
+  assert_no_hyps ("lowered binder BBLAST fallback", lowered_theorem);
+  assert_concl_alpha
+    ("lowered binder BBLAST fallback", lowered_theorem, lowered);
+  check_oracle_tags "lowered binder BBLAST fallback" lowered_theorem;
   assert (String.isSubstring
       Z3_ProofReplay.unsupported_rewrite_diagnostic failure,
     "nonmatching skeleton did not reach the rewrite diagnostic");

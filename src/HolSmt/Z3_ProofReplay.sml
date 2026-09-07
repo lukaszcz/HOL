@@ -3505,8 +3505,8 @@ local
     bv_resource_prove_after_admission "rewrite(17)"
       (rewrite17_under_budget normalize decide definitions) target
 
-  fun bv_rewrite_prove_with_context rewrite_profile direct_bv lowered_bv
-      definitions target =
+  fun bv_rewrite_prove_with_pre_bblast rewrite_profile direct_bv lowered_bv
+      pre_bblast definitions target =
     let
       val route = classify_bv_rewrite
         direct_bv lowered_bv definitions target
@@ -3522,10 +3522,22 @@ local
           target
       fun rewrite18 case_id target =
         bv_resource_prove_after_admission case_id
-          (rewrite_profile "rewrite(18)(BBLAST)"
-            (word_decider_attempt "z3_rewrite(BBLAST)"
-              (Feedback.trace ("print blast counterexamples", 0)
-                blastLib.BBLAST_PROVE))) target
+          (fn target =>
+            (* BBLAST supports quantifiers, so this is an ordering preference,
+               not a domain rejection.  Let the existing general congruence
+               route remove shared binder structure first; ordinary decline
+               retains the complete BBLAST fallback. *)
+            if #found (term_contains_measure Term.is_abs target) then
+              bv_next_rung pre_bblast
+                (rewrite_profile "rewrite(18)(BBLAST)"
+                  (word_decider_attempt "z3_rewrite(BBLAST)"
+                    (Feedback.trace ("print blast counterexamples", 0)
+                      blastLib.BBLAST_PROVE))) target
+            else
+              rewrite_profile "rewrite(18)(BBLAST)"
+                (word_decider_attempt "z3_rewrite(BBLAST)"
+                  (Feedback.trace ("print blast counterexamples", 0)
+                    blastLib.BBLAST_PROVE)) target) target
     in
       case route of
         DirectBV occurring =>
@@ -3544,9 +3556,18 @@ local
           raise ERR "bv_rewrite_prove" "goal is outside the BV rewrite family"
     end
 
-  fun bv_rewrite_prove rewrite_profile (state : state) =
-    bv_rewrite_prove_with_context rewrite_profile has_word_atom
-      (has_allocated_fp_bv_atom state) (#translation_definitions state)
+  fun no_pre_bblast _ =
+    raise ERR "bv_rewrite_prove" "no pre-BBLAST decomposition"
+
+  fun bv_rewrite_prove_with_context rewrite_profile direct_bv lowered_bv
+      definitions target =
+    bv_rewrite_prove_with_pre_bblast rewrite_profile direct_bv lowered_bv
+      no_pre_bblast definitions target
+
+  fun bv_rewrite_prove rewrite_profile pre_bblast (state : state) =
+    bv_rewrite_prove_with_pre_bblast rewrite_profile has_word_atom
+      (has_allocated_fp_bv_atom state) pre_bblast
+      (#translation_definitions state)
 
   fun fp_bit_decompositions (state : state) =
     List.map
@@ -3903,6 +3924,8 @@ local
     val (l, r) = boolSyntax.dest_eq t
     val attempts = ref ([] : string list)
     val deferred_unification = ref (NONE : (thm * term list) option)
+    val pre_bblast_skeleton_attempted = ref false
+    val pre_bblast_state = ref (NONE : state option)
     fun record_attempt fragment =
       if List.exists (Lib.equal fragment) (!attempts) then ()
       else attempts := !attempts @ [fragment]
@@ -4015,6 +4038,22 @@ local
         val exact = Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) t) theorem
       in
         (state_cache_thm state' exact, exact)
+      end
+    fun pre_bblast_skeleton _ =
+      let
+        (* The state update is transactional: recursive definitions and
+           theorem-cache entries become visible only after the complete
+           congruence proof succeeds.  Ordinary decline leaves BBLAST with
+           the original state, while recursive resource gates stay terminal
+           through [bv_next_rung]. *)
+        val _ = pre_bblast_skeleton_attempted := true
+        val _ = record_measured_target MeasuredSkeletonCongruence t
+        val (state', theorem) =
+          rewrite_profile "boolean/binder-skeleton"
+            "rewrite(25a)(skeleton-congruence)" skeleton_congruence ()
+        val _ = pre_bblast_state := SOME state'
+      in
+        theorem
       end
   in
     (* E1(a): kernel reflexivity decides the reflexive-equality fragment. *)
@@ -4279,7 +4318,8 @@ local
           (simpLib.SIMP_PROVE (bossLib.srw_ss())
             [HolSmtTheory.smt_rdiv_eq_div]) t
       val thm =
-        (bv_rewrite_prove (rewrite_profile "bit-vectors") state t
+        (bv_rewrite_prove (rewrite_profile "bit-vectors")
+           pre_bblast_skeleton state t
          handle Feedback.HOL_ERR holerr =>
            if SmtResource.is_resource_gate holerr then
              raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
@@ -4307,7 +4347,9 @@ local
           SmtDatatypeProve.datatype_prove t
 
     in
-      (state_cache_thm state thm, thm)
+      (case !pre_bblast_state of
+         SOME state' => (state', thm)
+       | NONE => (state_cache_thm state thm, thm))
     end
 
     handle Feedback.HOL_ERR _ =>
@@ -4373,13 +4415,17 @@ local
       "rewrite(25)(eta)" eta_equal (l, r))
     handle Feedback.HOL_ERR _ =>
 
-    (* Recurse only below a shared Boolean/binder head, after every semantic
-       theory rung has declined the complete rewrite.  [child] above proves
-       unchanged positions reflexively and checks that each differing pair is
-       strictly smaller before it re-enters [z3_rewrite]. *)
-    (record_measured_target MeasuredSkeletonCongruence t;
-     rewrite_profile "boolean/binder-skeleton"
-       "rewrite(25a)(skeleton-congruence)" skeleton_congruence ())
+    (* Binder-bearing BV targets already tried this general decomposition
+       before BBLAST.  If both routes declined, do not repeat partially
+       completed recursive work.  Other targets reach the original fallback
+       here after every semantic theory rung has declined. *)
+    (if !pre_bblast_skeleton_attempted then
+       raise ERR "z3_rewrite"
+         "skeleton congruence already declined before BBLAST"
+     else
+       (record_measured_target MeasuredSkeletonCongruence t;
+        rewrite_profile "boolean/binder-skeleton"
+          "rewrite(25a)(skeleton-congruence)" skeleton_congruence ()))
     handle Feedback.HOL_ERR _ =>
 
     (* Proof-local terms have already reached the general unifier before the
@@ -6553,6 +6599,9 @@ in
   fun bv_rewrite_prove_with_definitions_for_test definitions target =
     bv_rewrite_prove_with_context profile has_word_atom (fn _ => false)
       definitions target
+  fun bv_rewrite_lowered_with_pre_bblast_for_test pre_bblast target =
+    bv_rewrite_prove_with_pre_bblast profile (fn _ => false) (fn _ => true)
+      pre_bblast [] target
   fun bv_rewrite_lowered_for_test version packed registered target =
     bv_rewrite_prove_with_context profile (fn _ => false)
       (has_allocated_fp_bv_atom_in version packed registered) [] target
