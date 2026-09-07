@@ -225,14 +225,6 @@ val simplification_and_search_reports_no_proof =
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
      "string_L178_card_UNIV_char"]
 
-val take_and_drop_arithmetic =
-  classified "take and drop arithmetic"
-    ("the residual is a TAKE or DROP identity whose side "
-     ^ "condition is arithmetic the simpset does not discharge")
-    ["list_L2396_butlast_take", "list_L2400_butlast_drop",
-     "list_L2403_take_butlast", "list_L2406_drop_butlast",
-     "list_L4065_set_take_disj_set_drop_if_distinct"]
-
 val list_relation_lifting =
   classified "list relation lifting"
     ("the declared rules take a LIST_REL apart at a nil, a cons or a "
@@ -489,7 +481,6 @@ val execution : benchLib.shortfall list =
   filter_normalisation @
   indexing_through_list_constructors @
   simplification_and_search_reports_no_proof @
-  take_and_drop_arithmetic @
   list_relation_lifting @
   fold_direction @
   fold_against_a_set_aggregate @
