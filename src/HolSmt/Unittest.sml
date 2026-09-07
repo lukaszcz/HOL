@@ -18611,10 +18611,15 @@ in
   List.app assert_replays_raw_z3_proof_rule cases
 end
 
-fun z3_def_axiom_skeleton_preflight_ordering_success () =
+fun z3_def_axiom_bounded_structural_ordering_success () =
 let
-  val skeleton = "def-axiom(1)(skeleton)"
+  val skeleton = "def-axiom(1d)(skeleton)"
   val skeleton_ok = skeleton ^ "_OK"
+  val conjunction_member_route = "def-axiom(1a)(conjunction-member)"
+  val conjunction_clause_route = "def-axiom(1b)(conjunction-clause)"
+  val conjunction_member = conjunction_member_route ^ "_OK"
+  val conjunction_clause = conjunction_clause_route ^ "_OK"
+  val proforma = "def-axiom(1c)(proforma)_OK"
   fun replay name proof_text expected =
     let
       val () = Profile.reset_all ()
@@ -18715,11 +18720,128 @@ let
     \ (declare-fun y () Int)\n\
     \ (proof (def-axiom (or p (= x (ite p y x))))))"
     conditional_target
+  val () = assert
+    (if Library.no_fastpath () then
+       profile_call_count proforma = 0 andalso
+       profile_call_count skeleton = 1 andalso
+       profile_call_count skeleton_ok = 0
+     else
+       profile_call_count proforma = 1 andalso
+       profile_call_count skeleton = 0,
+     "semantic conditional def-axiom used the wrong normal/D-mode route")
+  val () = Profile.reset_all ()
+  val member_target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg
+      (boolSyntax.mk_conj (word_atom, word_other)), word_other)
+  val member_theorem = Z3_ProofReplay.def_axiom_for_test member_target
+  val () = assert
+    (Thm.concl member_theorem ~~ member_target andalso
+     List.null (Thm.hyp member_theorem) andalso
+     profile_call_count conjunction_member = 1 andalso
+     profile_call_count skeleton = 0,
+     "negated conjunction member did not use its bounded structural rule")
+  val () = check_oracle_tags
+    "negated conjunction member" member_theorem
+  val () = Profile.reset_all ()
+  val structural_p = ``task31_structural_p:bool``
+  val structural_q = ``task31_structural_q:bool``
+  fun shared_sum 0 = ``task31_large_shared_atom:num``
+    | shared_sum depth =
+        let val child = shared_sum (depth - 1)
+        in numSyntax.mk_plus (child, child) end
+  val huge_sum = shared_sum 40
+  val huge_atom = boolSyntax.mk_eq (huge_sum, numSyntax.zero_tm)
+  val huge_target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg (boolSyntax.mk_conj (huge_atom, word_atom)),
+     huge_atom)
+  val huge_theorem = Z3_ProofReplay.def_axiom_for_test huge_target
+  val () = assert
+    (SmtResource.term_nodes_up_to 100000 huge_atom > 100000 andalso
+     Portable.pointer_eq
+       (Lib.fst (boolSyntax.dest_conj
+          (boolSyntax.dest_neg (Lib.fst
+            (boolSyntax.dest_disj huge_target)))),
+        Lib.snd (boolSyntax.dest_disj huge_target)) andalso
+     Portable.pointer_eq (Thm.concl huge_theorem, huge_target) andalso
+     profile_call_count conjunction_member = 1 andalso
+     profile_call_count skeleton = 0,
+     "shared huge atom was unfolded or bypassed the structural member rule")
+  val () = assert_no_hyps ("shared huge structural member", huge_theorem)
+  val () = check_oracle_tags "shared huge structural member" huge_theorem
+  val () = Profile.reset_all ()
+  val alpha_x = Term.mk_var ("task31_alpha_x", Type.bool)
+  val alpha_y = Term.mk_var ("task31_alpha_y", Type.bool)
+  val alpha_left = Term.mk_comb
+    (Term.mk_abs (alpha_x, alpha_x), structural_p)
+  val alpha_right = Term.mk_comb
+    (Term.mk_abs (alpha_y, alpha_y), structural_p)
+  val alpha_target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg
+      (boolSyntax.mk_conj (alpha_left, structural_q)), alpha_right)
+  val alpha_theorem = Z3_ProofReplay.def_axiom_for_test alpha_target
+  val () = assert
+    (not (Portable.pointer_eq (alpha_left, alpha_right)) andalso
+     alpha_left ~~ alpha_right andalso
+     Portable.pointer_eq (Thm.concl alpha_theorem, alpha_target) andalso
+     profile_call_count conjunction_member = 1 andalso
+     profile_call_count skeleton = 0,
+     "small independently allocated alpha atoms lost exact transport")
+  val () = assert_no_hyps
+    ("independent alpha structural member", alpha_theorem)
+  val () = check_oracle_tags
+    "independent alpha structural member" alpha_theorem
+  val () = Profile.reset_all ()
+  val many_shared = boolSyntax.list_mk_conj
+    (List.tabulate (520, fn index =>
+      if index = 519 then structural_p else structural_q))
+  val spine_capped_target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg many_shared, structural_p)
+  val spine_capped = Z3_ProofReplay.def_axiom_for_test spine_capped_target
+  val () = assert
+    (Portable.pointer_eq (Thm.concl spine_capped, spine_capped_target) andalso
+     profile_call_count conjunction_member_route = 1 andalso
+     profile_call_count conjunction_member = 0 andalso
+     profile_call_count skeleton_ok = 1,
+     "Boolean spine cap did not fall back to the complete skeleton")
+  val () = check_oracle_tags "spine-cap skeleton fallback" spine_capped
+  val () = Profile.reset_all ()
+  val comparison_atoms = List.tabulate (100, fn index =>
+    Term.mk_var
+      ("task31_compare_" ^ Int.toString index, Type.bool))
+  val comparison_target = boolSyntax.mk_disj
+    (boolSyntax.list_mk_conj comparison_atoms,
+     boolSyntax.list_mk_disj (List.map boolSyntax.mk_neg comparison_atoms))
+  val comparison_capped =
+    Z3_ProofReplay.def_axiom_for_test comparison_target
+  val () = assert
+    (Portable.pointer_eq
+       (Thm.concl comparison_capped, comparison_target) andalso
+     profile_call_count conjunction_member_route = 1 andalso
+     profile_call_count conjunction_member = 0 andalso
+     profile_call_count conjunction_clause_route = 1 andalso
+     profile_call_count conjunction_clause = 0 andalso
+     profile_call_count skeleton_ok = 1,
+     "atom comparison cap did not fall back to the complete skeleton")
+  val () = check_oracle_tags
+    "comparison-cap skeleton fallback" comparison_capped
+  val () = Profile.reset_all ()
+  val p = ``def_axiom_clause_p:bool``
+  val q = ``def_axiom_clause_q:bool``
+  val r = ``def_axiom_clause_r:bool``
+  val clause_target = boolSyntax.mk_disj
+    (boolSyntax.mk_conj
+      (boolSyntax.mk_neg p, boolSyntax.mk_conj (q, r)),
+     boolSyntax.mk_disj
+       (p, boolSyntax.mk_disj
+         (boolSyntax.mk_neg q, boolSyntax.mk_neg r)))
+  val clause_theorem = Z3_ProofReplay.def_axiom_for_test clause_target
 in
-  assert (profile_call_count skeleton_ok = 0 andalso
-      profile_call_count skeleton = 1,
-    "semantic def-axiom did not decline the skeleton exactly once before " ^
-    "the legacy conditional fallback")
+  assert (Thm.concl clause_theorem ~~ clause_target andalso
+      List.null (Thm.hyp clause_theorem) andalso
+      profile_call_count conjunction_clause = 1 andalso
+      profile_call_count skeleton = 0,
+    "conjunction/complement clause did not use its bounded structural rule");
+  check_oracle_tags "conjunction/complement clause" clause_theorem
 end
 
 fun z3_def_axiom_skeleton_resource_gate_ordering () =
@@ -18755,10 +18877,74 @@ in
       String.isSubstring "resource-gate:Skeleton:z3-def-axiom"
         (Feedback.message_of gate),
     "oversized def-axiom did not preserve the skeleton DAG gate");
-  assert (profile_call_count "def-axiom(1)(skeleton)" = 1 andalso
-      profile_call_count "def-axiom(1)(skeleton)_OK" = 0,
-    "oversized def-axiom did not stop at its first skeleton attempt");
+  assert (profile_call_count "def-axiom(1)(bounded)" = 1 andalso
+      profile_call_count "def-axiom(1)(bounded)_OK" = 0,
+    "oversized def-axiom did not stop at bounded admission");
   ()
+end
+
+fun z3_def_axiom_structural_decline_and_exception_contract () =
+let
+  val p = ``task31_structural_contract_p:bool``
+  val q = ``task31_structural_contract_q:bool``
+  val r = ``task31_structural_contract_r:bool``
+  val non_tautology = boolSyntax.mk_disj
+    (boolSyntax.mk_neg (boolSyntax.mk_conj (p, q)), r)
+  val () = Profile.reset_all ()
+  val declined =
+    ((ignore (Z3_ProofReplay.def_axiom_for_test non_tautology); false)
+     handle Feedback.HOL_ERR _ => true)
+  val unexpected = Fail "candidate unexpected"
+  val unexpected_propagated =
+    ((Z3_ProofReplay.def_axiom_candidate_exception_for_test unexpected;
+      false)
+     handle Fail "candidate unexpected" => true)
+  val unexpected_holerr = Feedback.mk_HOL_ERR
+    "Task31Fixture" "candidate" "unexpected HOL error"
+  val unexpected_holerr_propagated =
+    ((Z3_ProofReplay.def_axiom_candidate_exception_for_test
+        unexpected_holerr; false)
+     handle Feedback.HOL_ERR holerr =>
+       Feedback.top_structure_of holerr = "Task31Fixture")
+  val same_name_holerr = Feedback.mk_HOL_ERR
+    "Z3_ProofReplay" "def_axiom_conjunction_clause"
+    "unexpected same-name HOL error"
+  val same_name_holerr_propagated =
+    ((Z3_ProofReplay.def_axiom_candidate_exception_for_test
+        same_name_holerr; false)
+     handle Feedback.HOL_ERR holerr =>
+       Feedback.message_of holerr = "unexpected same-name HOL error")
+  val timeout_propagated =
+    ((Z3_ProofReplay.def_axiom_candidate_exception_for_test
+        (Timeout.TIMEOUT Time.zeroTime); false)
+     handle Timeout.TIMEOUT _ => true)
+  val interrupt_propagated =
+    ((Z3_ProofReplay.def_axiom_candidate_exception_for_test Interrupt;
+      false)
+     handle Interrupt => true)
+  val resource =
+    (SmtResource.check_dag_size_for "Skeleton" "candidate-fixture"
+       (SmtResource.max_skeleton_replay_dag_nodes + 1);
+     raise Fail "resource fixture did not gate")
+    handle exn as Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then exn else raise exn
+  val resource_propagated =
+    ((Z3_ProofReplay.def_axiom_candidate_exception_for_test resource;
+      false)
+     handle Feedback.HOL_ERR holerr => SmtResource.is_resource_gate holerr)
+in
+  assert (declined andalso
+      profile_call_count "def-axiom(1a)(conjunction-member)" = 1 andalso
+      profile_call_count "def-axiom(1a)(conjunction-member)_OK" = 0 andalso
+      profile_call_count "def-axiom(1b)(conjunction-clause)" = 1 andalso
+      profile_call_count "def-axiom(1b)(conjunction-clause)_OK" = 0,
+    "non-tautological structural clause did not decline");
+  assert (Z3_ProofReplay.def_axiom_candidate_decline_for_test () = 17,
+    "candidate loop did not continue after its ordinary decline");
+  assert (unexpected_propagated andalso unexpected_holerr_propagated andalso
+      same_name_holerr_propagated andalso timeout_propagated andalso
+      interrupt_propagated andalso resource_propagated,
+    "candidate loop swallowed an unexpected or terminal exception")
 end
 
 fun z3_def_axiom_proof_local_cache_success () =
@@ -19087,8 +19273,9 @@ let
   val error_then_cap = Z3_ProofReplay.sat_shape_opportunity_for_test 8
     (Term.mk_comb (opaque_function, p) ::
      List.tabulate (2048, fn _ => excluded_middle p))
-  fun skeleton_target left right = boolSyntax.mk_disj
-    (boolSyntax.mk_neg (boolSyntax.mk_conj (left, right)), left)
+  fun skeleton_target left right = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (left, right),
+     boolSyntax.mk_conj (right, left))
   val integrated = Z3_ProofReplay.e0_def_axiom_measurement_for_test
     [skeleton_target p q, skeleton_target q p]
   val direct = Z3_ProofReplay.e0_direct_skeleton_measurement_for_test
@@ -19274,8 +19461,8 @@ let
     {def_axiom_targets = [unique], congruence_targets = [],
      force_invocation_truncation = false, fail = true}
   val disabled = Z3_ProofReplay.e0_disabled_measurement_for_test unique
-  fun def_axiom_target () = boolSyntax.mk_disj
-    (boolSyntax.mk_neg (boolSyntax.mk_conj (p, q)), p)
+  fun def_axiom_target () = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (p, q), boolSyntax.mk_conj (q, p))
   val actual = Z3_ProofReplay.e0_def_axiom_measurement_for_test
     [def_axiom_target (), def_axiom_target ()]
   val timeout_cleanup = Z3_ProofReplay.e0_measurement_exception_for_test
@@ -25421,10 +25608,12 @@ let
       z3_skolem_nary_binders_replay_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
-    ("z3_def_axiom_skeleton_preflight_ordering_success",
-      z3_def_axiom_skeleton_preflight_ordering_success),
+    ("z3_def_axiom_bounded_structural_ordering_success",
+      z3_def_axiom_bounded_structural_ordering_success),
     ("z3_def_axiom_skeleton_resource_gate_ordering",
       z3_def_axiom_skeleton_resource_gate_ordering),
+    ("z3_def_axiom_structural_decline_and_exception_contract",
+      z3_def_axiom_structural_decline_and_exception_contract),
     ("z3_def_axiom_proof_local_cache_success",
       z3_def_axiom_proof_local_cache_success),
     ("z3_def_axiom_cache_gate_precedes_lookup",

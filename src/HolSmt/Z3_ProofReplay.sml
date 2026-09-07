@@ -2523,6 +2523,537 @@ local
         measure target
     end
 
+  val max_def_axiom_boolean_spine_nodes = 512
+  val max_def_axiom_boolean_comparisons = 4096
+  val max_def_axiom_atom_compare_nodes = 256
+  val max_def_axiom_atom_compare_work = 131072
+
+  datatype def_axiom_disjunction_step =
+      DefAxiomDisjunctionLeft of term
+    | DefAxiomDisjunctionRight of term
+
+  datatype def_axiom_conjunction_shape =
+      DefAxiomConjunctionLeaf
+    | DefAxiomConjunctionNode of
+        def_axiom_conjunction_shape * def_axiom_conjunction_shape
+
+  datatype def_axiom_disjunction_shape =
+      DefAxiomDisjunctionLeaf of int
+    | DefAxiomDisjunctionNode of
+        def_axiom_disjunction_shape * def_axiom_disjunction_shape
+
+  datatype def_axiom_conjunction_step =
+      DefAxiomConjunctionLeft of term
+    | DefAxiomConjunctionRight of term
+
+  exception DEF_AXIOM_DECLINE of string * string
+  exception DEF_AXIOM_STRUCTURAL_UNEXPECTED of exn
+
+  fun bounded_def_axiom_work counter maximum kind =
+    (counter := !counter + 1;
+     if !counter <= maximum then ()
+     else raise DEF_AXIOM_DECLINE
+       ("def_axiom_boolean_spine",
+        kind ^ " exceeds its structural bound"))
+
+  fun def_axiom_decline function message =
+    raise DEF_AXIOM_DECLINE (function, message)
+
+  fun try_def_axiom_candidates prove [] =
+        def_axiom_decline "def_axiom_conjunction_clause"
+          "no conjunction candidate has all complementary disjuncts"
+    | try_def_axiom_candidates prove (candidate :: rest) =
+        prove candidate
+        handle decline as DEF_AXIOM_DECLINE (function, _) =>
+          if function = "def_axiom_conjunction_clause" then
+            try_def_axiom_candidates prove rest
+          else raise decline
+
+  fun def_axiom_conjunction_member same_term target =
+    let
+      val _ = boolSyntax.is_disj target orelse
+        def_axiom_decline "def_axiom_conjunction_member"
+          "target is not a disjunction"
+      val (left, right) = boolSyntax.dest_disj target
+      val _ = boolSyntax.is_neg left orelse
+        def_axiom_decline "def_axiom_conjunction_member"
+          "left disjunct is not negated"
+      val conjunction = boolSyntax.dest_neg left
+      val spine_nodes = ref 0
+      fun visit current theorem =
+        (bounded_def_axiom_work spine_nodes
+           max_def_axiom_boolean_spine_nodes "Boolean spine";
+         if same_term (current, right) then SOME theorem
+         else
+           if boolSyntax.is_conj current then
+             let val (left, right) = boolSyntax.dest_conj current
+             in
+               (case visit left (Thm.CONJUNCT1 theorem) of
+                  SOME result => SOME result
+                | NONE => visit right (Thm.CONJUNCT2 theorem))
+             end
+           else NONE)
+      val member =
+        case visit conjunction (Thm.ASSUME conjunction) of
+          SOME theorem => theorem
+        | NONE => def_axiom_decline "def_axiom_conjunction_member"
+            "right disjunct is not a bounded conjunction member"
+    in
+      Drule.IMP_ELIM (Thm.DISCH conjunction member)
+    end
+
+  fun def_axiom_conjunction_clause same_term target =
+    let
+      val disjunction_nodes = ref 0
+      val conjunction_nodes = ref 0
+
+      fun disjuncts path current result =
+        (bounded_def_axiom_work disjunction_nodes
+           max_def_axiom_boolean_spine_nodes "disjunction spine";
+         if boolSyntax.is_disj current then
+           let val (left, right) = boolSyntax.dest_disj current
+           in
+             disjuncts (DefAxiomDisjunctionLeft right :: path) left
+               (disjuncts
+                 (DefAxiomDisjunctionRight left :: path) right result)
+           end
+         else (current, path) :: result)
+
+      fun conjunction current =
+        (bounded_def_axiom_work conjunction_nodes
+           max_def_axiom_boolean_spine_nodes "conjunction spine";
+         if boolSyntax.is_conj current then
+           let
+             val (left, right) = boolSyntax.dest_conj current
+             val (left_shape, left_leaves) = conjunction left
+             val (right_shape, right_leaves) = conjunction right
+           in
+             (DefAxiomConjunctionNode (left_shape, right_shape),
+              left_leaves @ right_leaves)
+           end
+         else (DefAxiomConjunctionLeaf, [current]))
+
+      fun lift_disjunction (step, theorem) =
+        case step of
+          DefAxiomDisjunctionLeft right => Thm.DISJ1 theorem right
+        | DefAxiomDisjunctionRight left => Thm.DISJ2 left theorem
+
+      fun introduce_disjunction path theorem =
+        List.foldl lift_disjunction theorem path
+
+      fun make_conjunction shape theorems =
+        case (shape, theorems) of
+          (DefAxiomConjunctionLeaf, theorem :: rest) => (theorem, rest)
+        | (DefAxiomConjunctionNode (left, right), _) =>
+            let
+              val (left_theorem, rest) = make_conjunction left theorems
+              val (right_theorem, rest) = make_conjunction right rest
+            in
+              (Thm.CONJ left_theorem right_theorem, rest)
+            end
+        | _ => raise ERR "def_axiom_conjunction_clause"
+            "conjunction theorem list has the wrong length"
+
+      fun complement literal candidate =
+        if boolSyntax.is_neg literal then
+          same_term (boolSyntax.dest_neg literal, candidate)
+        else if boolSyntax.is_neg candidate then
+          same_term (literal, boolSyntax.dest_neg candidate)
+        else false
+
+      val target_disjuncts = disjuncts [] target []
+
+      fun prove_candidate (candidate, candidate_path) =
+        let
+          val (shape, leaves) = conjunction candidate
+          fun complement_for literal =
+            case List.find
+                (fn (disjunct, _) => complement literal disjunct)
+                target_disjuncts of
+              SOME result => result
+            | NONE => def_axiom_decline "def_axiom_conjunction_clause"
+                "a conjunction leaf has no complementary disjunct"
+          val leaves_and_complements =
+            List.map (fn leaf => (leaf, complement_for leaf)) leaves
+
+          fun finish assumptions =
+            let
+              val (theorem, rest) =
+                make_conjunction shape (List.rev assumptions)
+              val _ = List.null rest orelse
+                raise ERR "def_axiom_conjunction_clause"
+                  "unused conjunction leaf theorem"
+            in
+              introduce_disjunction candidate_path theorem
+            end
+
+          fun cases [] assumptions = finish assumptions
+            | cases ((literal, (opposite, opposite_path)) :: rest)
+                assumptions =
+                (if boolSyntax.is_neg literal then
+                   let val atom = boolSyntax.dest_neg literal
+                   in
+                     Thm.DISJ_CASES (Thm.SPEC atom boolTheory.EXCLUDED_MIDDLE)
+                       (introduce_disjunction opposite_path
+                         (Thm.ASSUME opposite))
+                       (cases rest (Thm.ASSUME literal :: assumptions))
+                   end
+                 else
+                     Thm.DISJ_CASES
+                       (Thm.SPEC literal boolTheory.EXCLUDED_MIDDLE)
+                       (cases rest (Thm.ASSUME literal :: assumptions))
+                       (introduce_disjunction opposite_path
+                         (Thm.ASSUME opposite)))
+        in
+          cases leaves_and_complements []
+        end
+
+    in
+      try_def_axiom_candidates prove_candidate
+        (List.filter (boolSyntax.is_conj o Lib.fst) target_disjuncts)
+    end
+
+  fun def_axiom_member_schema target =
+    let
+      val _ = boolSyntax.is_disj target orelse
+        def_axiom_decline "def_axiom_conjunction_member"
+          "target is not a disjunction"
+      val (left, right) = boolSyntax.dest_disj target
+      val _ = boolSyntax.is_neg left orelse
+        def_axiom_decline "def_axiom_conjunction_member"
+          "left disjunct is not negated"
+      val actual_conjunction = boolSyntax.dest_neg left
+      val spine_nodes = ref 0
+      val comparison_work = ref 0
+      val member_variable = Term.genvar Type.bool
+      val substitution = ref ([] : {redex : term, residue : term} list)
+
+      fun add_work amount =
+        (comparison_work := !comparison_work + amount;
+         if !comparison_work <= max_def_axiom_atom_compare_work then ()
+         else def_axiom_decline "def_axiom_conjunction_member"
+           "Boolean atom comparison work exceeds its structural bound")
+
+      fun same_member actual =
+        if Portable.pointer_eq (actual, right) then true
+        else
+          let
+            val actual_nodes = SmtResource.term_nodes_up_to
+              max_def_axiom_atom_compare_nodes actual
+            val right_nodes = SmtResource.term_nodes_up_to
+              max_def_axiom_atom_compare_nodes right
+            val _ = add_work (actual_nodes + right_nodes)
+          in
+            actual_nodes <= max_def_axiom_atom_compare_nodes andalso
+            right_nodes <= max_def_axiom_atom_compare_nodes andalso
+            Term.aconv actual right
+          end
+
+      fun opaque actual =
+        let val variable = Term.genvar Type.bool
+        in
+          substitution := {redex = variable, residue = actual} ::
+            !substitution;
+          variable
+        end
+
+      fun search ([], []) = def_axiom_decline
+            "def_axiom_conjunction_member"
+            "right disjunct is not a bounded conjunction member"
+        | search ([], back) = search (List.rev back, [])
+        | search ((actual, path) :: front, back) =
+            (bounded_def_axiom_work spine_nodes
+               max_def_axiom_boolean_spine_nodes "conjunction spine";
+             if same_member actual then (actual, path)
+             else if boolSyntax.is_conj actual then
+               let
+                 val (left, right) = boolSyntax.dest_conj actual
+               in
+                 search (front,
+                   (right, DefAxiomConjunctionRight left :: path) ::
+                   (left, DefAxiomConjunctionLeft right :: path) :: back)
+               end
+             else search (front, back))
+
+      fun rebuild (step, member) =
+        case step of
+          DefAxiomConjunctionLeft right =>
+            boolSyntax.mk_conj (member, opaque right)
+        | DefAxiomConjunctionRight left =>
+            boolSyntax.mk_conj (opaque left, member)
+
+      val (actual_member, path) = search ([(actual_conjunction, [])], [])
+      val _ = substitution :=
+        {redex = member_variable, residue = actual_member} :: !substitution
+      val conjunction = List.foldl rebuild member_variable path
+    in
+      {schematic = boolSyntax.mk_disj
+         (boolSyntax.mk_neg conjunction, member_variable),
+       substitution = !substitution}
+    end
+
+  type def_axiom_schema_binding =
+    {actual : term, schematic : term, tree_nodes : int}
+
+  (* Build only the Boolean structure used by the clause derivation.  Each
+     unrelated disjunct and conjunction leaf is an opaque schematic atom, so
+     a large shared theory term is inspected only when it is a candidate for
+     one of the complementary literals. *)
+  fun def_axiom_clause_schema target =
+    let
+      val disjunction_nodes = ref 0
+      val conjunction_nodes = ref 0
+      val comparisons = ref 0
+      val comparison_work = ref 0
+      val next_id = ref 0
+
+      fun add_work amount =
+        (comparison_work := !comparison_work + amount;
+         if !comparison_work <= max_def_axiom_atom_compare_work then ()
+         else def_axiom_decline "def_axiom_conjunction_clause"
+           "Boolean atom comparison work exceeds its structural bound")
+
+      fun term_nodes actual = SmtResource.term_nodes_up_to
+        max_def_axiom_atom_compare_nodes actual
+
+      fun same_actual (left, left_nodes) (right, right_nodes) =
+        (bounded_def_axiom_work comparisons
+           max_def_axiom_boolean_comparisons "Boolean atom comparisons";
+         if Portable.pointer_eq (left, right) then true
+         else
+           (add_work (left_nodes + right_nodes);
+            left_nodes <= max_def_axiom_atom_compare_nodes andalso
+            right_nodes <= max_def_axiom_atom_compare_nodes andalso
+            Term.aconv left right))
+
+      fun disjunction current entries =
+        (bounded_def_axiom_work disjunction_nodes
+           max_def_axiom_boolean_spine_nodes "disjunction spine";
+         if boolSyntax.is_disj current then
+           let
+             val (left, right) = boolSyntax.dest_disj current
+             val (left_shape, entries) = disjunction left entries
+             val (right_shape, entries) = disjunction right entries
+           in
+             (DefAxiomDisjunctionNode (left_shape, right_shape), entries)
+           end
+         else
+           let
+             val id = !next_id
+             val _ = next_id := id + 1
+           in
+             (DefAxiomDisjunctionLeaf id, (id, current) :: entries)
+           end)
+
+      fun conjunction current =
+        (bounded_def_axiom_work conjunction_nodes
+           max_def_axiom_boolean_spine_nodes "conjunction spine";
+         if boolSyntax.is_conj current then
+           let
+             val (left, right) = boolSyntax.dest_conj current
+             val (left_shape, left_leaves) = conjunction left
+             val (right_shape, right_leaves) = conjunction right
+           in
+             (DefAxiomConjunctionNode (left_shape, right_shape),
+              left_leaves @ right_leaves)
+           end
+         else (DefAxiomConjunctionLeaf, [current]))
+
+      fun make_conjunction shape terms =
+        case (shape, terms) of
+          (DefAxiomConjunctionLeaf, term :: rest) => (term, rest)
+        | (DefAxiomConjunctionNode (left, right), _) =>
+            let
+              val (left_term, rest) = make_conjunction left terms
+              val (right_term, rest) = make_conjunction right rest
+            in
+              (boolSyntax.mk_conj (left_term, right_term), rest)
+            end
+        | _ => def_axiom_decline "def_axiom_conjunction_clause"
+            "conjunction schema list has the wrong length"
+
+      fun literal actual =
+        if boolSyntax.is_neg actual then
+          (true, boolSyntax.dest_neg actual)
+        else (false, actual)
+
+      val (disjunction_shape, reversed_entries) = disjunction target []
+      val entries = List.rev reversed_entries
+
+      fun prove_candidate (candidate_id, candidate) =
+        let
+          val (candidate_shape, leaves) = conjunction candidate
+          val replacements = Array.array (!next_id, NONE : term option)
+          val bindings = ref ([] : def_axiom_schema_binding list)
+          val substitution = ref
+            ([] : {redex : term, residue : term} list)
+
+          fun matching_binding actual actual_nodes
+              ({actual = saved, tree_nodes, ...} :
+               def_axiom_schema_binding) =
+            same_actual (actual, actual_nodes) (saved, tree_nodes)
+
+          fun variable_for actual =
+            let val actual_nodes = term_nodes actual
+            in
+              case List.find (matching_binding actual actual_nodes)
+                  (!bindings) of
+                SOME {schematic, ...} => schematic
+              | NONE =>
+                  let
+                    val schematic = Term.genvar Type.bool
+                    val binding =
+                      {actual = actual, schematic = schematic,
+                       tree_nodes = actual_nodes}
+                  in
+                    bindings := binding :: !bindings;
+                    substitution :=
+                      {redex = schematic, residue = actual} :: !substitution;
+                    schematic
+                  end
+            end
+
+          fun find_opposite negated base base_nodes =
+            case List.find
+                (fn (_, disjunct) =>
+                  let val (other_negated, other_base) = literal disjunct
+                  in
+                    negated <> other_negated andalso
+                    same_actual (base, base_nodes)
+                      (other_base, term_nodes other_base)
+                  end) entries of
+              SOME result => result
+            | NONE => def_axiom_decline "def_axiom_conjunction_clause"
+                "a conjunction leaf has no complementary disjunct"
+
+          fun set_replacement id schematic =
+            case Array.sub (replacements, id) of
+              NONE => Array.update (replacements, id, SOME schematic)
+            | SOME previous =>
+                if Term.aconv previous schematic then ()
+                else def_axiom_decline "def_axiom_conjunction_clause"
+                  "one disjunct has inconsistent complementary literals"
+
+          fun make_leaf actual =
+            let
+              val (negated, base) = literal actual
+              val base_nodes = term_nodes base
+              val variable = variable_for base
+              val schematic =
+                if negated then boolSyntax.mk_neg variable else variable
+              val complement =
+                if negated then variable else boolSyntax.mk_neg variable
+              val (opposite_id, _) =
+                find_opposite negated base base_nodes
+              val _ = set_replacement opposite_id complement
+            in
+              schematic
+            end
+
+          val schematic_leaves = List.map make_leaf leaves
+          val (schematic_candidate, rest) =
+            make_conjunction candidate_shape schematic_leaves
+          val _ = List.null rest orelse
+            raise ERR "def_axiom_conjunction_clause"
+              "unused conjunction schema leaf"
+          val _ = set_replacement candidate_id schematic_candidate
+
+          fun opaque actual =
+            let val variable = Term.genvar Type.bool
+            in
+              substitution := {redex = variable, residue = actual} ::
+                !substitution;
+              variable
+            end
+
+          fun make_disjunction shape =
+            case shape of
+              DefAxiomDisjunctionLeaf id =>
+                (case Array.sub (replacements, id) of
+                   SOME schematic => schematic
+                 | NONE => opaque (Lib.assoc id entries))
+            | DefAxiomDisjunctionNode (left, right) =>
+                boolSyntax.mk_disj
+                  (make_disjunction left, make_disjunction right)
+          val schematic = make_disjunction disjunction_shape
+        in
+          {schematic = schematic, substitution = !substitution}
+        end
+
+      val candidates = List.filter (boolSyntax.is_conj o Lib.snd) entries
+    in
+      try_def_axiom_candidates prove_candidate candidates
+    end
+
+  fun instantiate_def_axiom_schematic target substitution theorem =
+    let
+      val _ = List.null (Thm.hyp theorem) orelse
+        raise ERR "instantiate_def_axiom_schematic"
+          "schematic theorem has hypotheses"
+      val _ = Library.check_oracle_tags "Z3_ProofReplay"
+        "def-axiom-structural" theorem
+      val instantiated = Thm.INST substitution theorem
+      val spine_nodes = ref 0
+      val alpha_work = ref 0
+      fun add_alpha_work amount =
+        (alpha_work := !alpha_work + amount;
+         if !alpha_work <= max_def_axiom_atom_compare_work then ()
+         else raise SmtSkeletonProve.REANCHOR_LIMIT)
+      fun small_alpha left right =
+        let
+          val left_nodes = SmtResource.term_nodes_up_to
+            max_def_axiom_atom_compare_nodes left
+          val right_nodes = SmtResource.term_nodes_up_to
+            max_def_axiom_atom_compare_nodes right
+          val _ = add_alpha_work (left_nodes + right_nodes)
+        in
+          if left_nodes <= max_def_axiom_atom_compare_nodes andalso
+             right_nodes <= max_def_axiom_atom_compare_nodes then
+            Thm.ALPHA left right
+          else raise SmtSkeletonProve.REANCHOR_LIMIT
+        end
+      fun congruence left right child_theorems =
+        let
+          val theorem = SmtSkeletonProve.connective_congruence
+            left child_theorems
+        in
+          Thm.TRANS (Thm.TRANS (Thm.REFL left) theorem) (Thm.REFL right)
+        end
+      fun visit left right =
+        (bounded_def_axiom_work spine_nodes
+           max_def_axiom_boolean_spine_nodes "Boolean transport spine";
+         if Portable.pointer_eq (left, right) then Thm.REFL left
+         else if boolSyntax.is_neg left andalso boolSyntax.is_neg right then
+           congruence left right
+             [visit (boolSyntax.dest_neg left) (boolSyntax.dest_neg right)]
+         else if boolSyntax.is_conj left andalso
+                 boolSyntax.is_conj right then
+           let
+             val (left1, left2) = boolSyntax.dest_conj left
+             val (right1, right2) = boolSyntax.dest_conj right
+           in
+             congruence left right
+               [visit left1 right1, visit left2 right2]
+           end
+         else if boolSyntax.is_disj left andalso
+                 boolSyntax.is_disj right then
+           let
+             val (left1, left2) = boolSyntax.dest_disj left
+             val (right1, right2) = boolSyntax.dest_disj right
+           in
+             congruence left right
+               [visit left1 right1, visit left2 right2]
+           end
+         else small_alpha left right)
+      val occurrence_equality = visit target (Thm.concl instantiated)
+      val result = Thm.EQ_MP (Thm.SYM occurrence_equality) instantiated
+      val _ = Portable.pointer_eq (Thm.concl result, target) orelse
+        raise ERR "instantiate_def_axiom_schematic"
+          "structural theorem lost the exact target occurrence"
+    in
+      result
+    end
+
   fun def_axiom_skeleton_prove state target =
     (record_measured_target MeasuredDefAxiom target;
      SmtResource.with_resource_step_time
@@ -2531,36 +3062,104 @@ local
         let
           val measure = admitted_def_axiom_measure
             SmtSkeletonProve.term_measure target
-          val _ = SmtResource.profile_phase "skeleton/ownership-ownerless"
-            (fn () => ()) ()
-          val cached = probe_def_axiom_cache target
-          fun prove () =
+          fun skeleton_prove () =
             let
-              val _ = note_def_axiom_skeleton_attempt ()
+              val _ = SmtResource.profile_phase
+                "skeleton/ownership-ownerless" (fn () => ()) ()
+              val cached = probe_def_axiom_cache target
+              fun prove () =
+                let
+                  val _ = note_def_axiom_skeleton_attempt ()
+                in
+                  case profile "def-axiom(1)(skeleton-worker)"
+                      (SmtSkeletonProve.with_node_cache_observer
+                        (case !current_replay_measurement of
+                           NONE => NONE
+                         | SOME _ => SOME observe_skeleton_node_cache)
+                        (fn () => SmtSkeletonProve.attempt_with_owners
+                          def_axiom_skeleton_context
+                          def_axiom_skeleton_owners measure target)) () of
+                    SmtSkeletonProve.Proved result =>
+                      let
+                        val theorem = #theorem result
+                        val _ = record_skeleton_metrics (#metrics result)
+                        val _ = insert_def_axiom_cache target theorem
+                      in
+                        theorem
+                      end
+                  | SmtSkeletonProve.Declined =>
+                      raise ERR "z3_def_axiom" "checked skeleton declined"
+                end
             in
-              case profile "def-axiom(1)(skeleton-worker)"
-                  (SmtSkeletonProve.with_node_cache_observer
-                    (case !current_replay_measurement of
-                       NONE => NONE
-                     | SOME _ => SOME observe_skeleton_node_cache)
-                    (fn () => SmtSkeletonProve.attempt_with_owners
-                      def_axiom_skeleton_context def_axiom_skeleton_owners
-                      measure target)) () of
-                SmtSkeletonProve.Proved result =>
-                  let
-                    val theorem = #theorem result
-                    val _ = record_skeleton_metrics (#metrics result)
-                    val _ = insert_def_axiom_cache target theorem
-                  in
-                    theorem
-                  end
-              | SmtSkeletonProve.Declined =>
-                  raise ERR "z3_def_axiom" "checked skeleton declined"
+              case cached of
+                SOME theorem => theorem
+              | NONE => prove ()
+            end
+          fun is_structural_decline function =
+            List.exists (fn name => function = name)
+              ["def_axiom_boolean_spine",
+               "def_axiom_conjunction_member",
+               "def_axiom_conjunction_clause"]
+          fun structural_fallback action fallback =
+            action ()
+            handle SmtSkeletonProve.REANCHOR_LIMIT => fallback ()
+                 | DEF_AXIOM_DECLINE (function, message) =>
+                     if is_structural_decline function then fallback ()
+                     else raise DEF_AXIOM_DECLINE (function, message)
+                 | Feedback.HOL_ERR holerr =>
+                     if SmtResource.is_resource_gate holerr then
+                       raise Feedback.HOL_ERR holerr
+                     else raise DEF_AXIOM_STRUCTURAL_UNEXPECTED
+                       (Feedback.HOL_ERR holerr)
+          fun structural_prove () =
+            let
+              fun skeleton () = profile "def-axiom(1d)(skeleton)"
+                (fn () => skeleton_prove ()) ()
+              fun proforma () =
+                (Library.require_fastpath "Z3 def-axiom proforma" target
+                  (profile "def-axiom(1c)(proforma)"
+                    (Z3_ProformaThms.prove
+                      Z3_ProformaThms.def_axiom_thms)) target)
+                handle Feedback.HOL_ERR holerr =>
+                  if SmtResource.is_resource_gate holerr then
+                    raise Feedback.HOL_ERR holerr
+                  else skeleton ()
+              fun direct () =
+                let
+                  fun prove_schema profile_name schema theorem_prove =
+                    profile profile_name
+                      (fn target =>
+                        let
+                          val {schematic, substitution} = schema target
+                          val comparisons = ref 0
+                          fun same_schematic (left, right) =
+                            (bounded_def_axiom_work comparisons
+                               max_def_axiom_boolean_comparisons
+                               "schematic Boolean comparisons";
+                             Term.aconv left right)
+                        in
+                          instantiate_def_axiom_schematic target substitution
+                            (theorem_prove same_schematic schematic)
+                        end) target
+                  fun conjunction_clause () = structural_fallback
+                    (fn () => prove_schema
+                      "def-axiom(1b)(conjunction-clause)"
+                      def_axiom_clause_schema
+                      def_axiom_conjunction_clause)
+                    proforma
+                in
+                  structural_fallback
+                    (fn () => prove_schema
+                      "def-axiom(1a)(conjunction-member)"
+                      def_axiom_member_schema
+                      def_axiom_conjunction_member)
+                    conjunction_clause
+                end
+            in
+              direct ()
             end
         in
-          case cached of
-            SOME theorem => theorem
-          | NONE => prove ()
+          structural_prove ()
         end) target)
     handle exn as Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
@@ -2627,23 +3226,13 @@ local
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
-    (* A def-axiom is a propositional definition clause.  Abstract its
-       arbitrary theory atoms and discharge the shared Boolean skeleton
-       before any conditional splitting or simplifier search.  With no atom
-       owners this is theory-neutral: a checked SAT theorem is instantiated
-       back to the exact atoms.  An ordinary decline preserves the historical
-       ladder; the bounded Skeleton resource gates remain terminal. *)
-    (state, profile "def-axiom(1)(skeleton)"
+    (* Apply bounded structural definition-clause rules before abstracting
+       arbitrary theory atoms into the generic checked-SAT skeleton.  All
+       routes share the same admission and step-time gate. *)
+    (state, profile "def-axiom(1)(bounded)"
       (def_axiom_skeleton_prove state) t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-    Library.require_fastpath "Z3 def-axiom proforma" t
-      (fn target =>
-        (state,
-         Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms target)) t
-    handle Feedback.HOL_ERR holerr =>
+    handle DEF_AXIOM_STRUCTURAL_UNEXPECTED exn => raise exn
+         | Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
@@ -2662,17 +3251,6 @@ local
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
-    (* (or (not (and ... p ...)) p) *)
-    let
-      val (lhs, rhs) = boolSyntax.dest_disj t
-      val conj = boolSyntax.dest_neg lhs
-      (* conj |- rhs *)
-      val thm = Library.conj_elim (Thm.ASSUME conj, rhs)  (* may fail *)
-    in
-      (* |- lhs \/ rhs *)
-      (state, Drule.IMP_ELIM (Thm.DISCH conj thm))
-    end
-    handle Feedback.HOL_ERR _ =>
     (* ~ALL_DISTINCT [x; y; z] \/ x <> y /\ x <> z /\ y <> z *)
     (* ~(ALL_DISTINCT [x; y; z] /\ T) \/ x <> y /\ x <> z /\ y <> z *)
     let
@@ -6476,6 +7054,14 @@ in
     ground_subterm_eval_max_calls
   val word_decide_for_test = word_decide
   val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
+  fun def_axiom_candidate_exception_for_test raised =
+    try_def_axiom_candidates (fn (_ : unit) => raise raised) [()]
+  fun def_axiom_candidate_decline_for_test () =
+    try_def_axiom_candidates
+      (fn first =>
+        if first then def_axiom_decline
+          "def_axiom_conjunction_clause" "injected ordinary decline"
+        else 17) [true, false]
   val with_e0_replay_boundary = with_e0_replay_boundary
   val max_def_axiom_cache_entries_for_test = max_def_axiom_cache_entries
   val with_def_axiom_cache_boundary_for_test =
