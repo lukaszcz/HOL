@@ -39,12 +39,15 @@ sig
   val idf_entries : idf_table -> (int * real) list
 
   type dep_table
+  (* Explicit dependency lists are assumed complete. *)
   val dep_table_of : (mlThmData.thmid * mlThmData.thmid list) list ->
     dep_table
   val build_dep_table :
     (mlThmData.thmid -> mlThmData.thmid list) ->
     (mlThmData.thmid * mlFeature.fea) list -> dep_table
   val create_dep_table : mlThmData.thmdata -> dep_table
+  (* Ranking sees fetchable names; the table also retains proof completeness
+     and the original dependency count for NB training. *)
   val dependencies_of : dep_table -> mlThmData.thmid ->
     mlThmData.thmid list option
   val dependency_entries : dep_table ->

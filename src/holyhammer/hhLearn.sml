@@ -99,8 +99,11 @@ fun idf_of ({weights, ...} : idf_table) feature =
 
 fun idf_entries ({weights, ...} : idf_table) = dlist weights
 
-type dep_table =
-  (mlThmData.thmid, mlThmData.thmid list) Redblackmap.dict
+(* Ranking can expand the fetchable subset, but training needs the original
+   proof's completeness and size before any missing dependencies are removed. *)
+type dep_info =
+  {fetchable : mlThmData.thmid list, intact : bool, count : int}
+type dep_table = (mlThmData.thmid, dep_info) Redblackmap.dict
 
 fun sha1_text text =
   let
@@ -270,21 +273,54 @@ fun create_thmdata_for target =
           end
   end
 
-fun dep_table_of entries = dnew String.compare entries
+fun intact_dependencies names : dep_info =
+  {fetchable = names, intact = true, count = length names}
+
+fun dep_table_of entries =
+  dnew String.compare (map (fn (name, dependencies) =>
+    (name, intact_dependencies dependencies)) entries)
 
 fun build_dep_table dependencies facts =
   foldl
     (fn ((thmid, _), table) =>
       if dmem thmid table then table
-      else dadd thmid (dependencies thmid) table)
+      else dadd thmid (intact_dependencies (dependencies thmid)) table)
     (dempty String.compare) facts
 
 fun create_dep_table (_, facts) =
-  build_dep_table mlThmData.validdep_of_thmid facts
+  let
+    fun dependency_info thmid =
+      case total mlThmData.thm_of_name thmid of
+          SOME (SOME (_, theorem)) =>
+            let val (theory, _) = split_string "Theory." thmid in
+              if theory = mlThmData.namespace_tag then
+                SOME (intact_dependencies [])
+              else
+                let
+                  val raw = Dep.depidl_of (Tag.dep_of (Thm.tag theorem))
+                  val (intact, fetchable) =
+                    mlThmData.intactdep_of_thm theorem
+                in
+                  SOME {fetchable = fetchable, intact = intact,
+                        count = length raw}
+                end
+            end
+        | _ => NONE
+    fun add ((thmid, _), table) =
+      if dmem thmid table then table
+      else
+        case dependency_info thmid of
+            SOME info => dadd thmid info table
+          | NONE => table
+  in
+    foldl add (dempty String.compare) facts
+  end
 
-fun dependencies_of table thmid = Redblackmap.peek (table, thmid)
+fun dependencies_of (table : dep_table) thmid =
+  Option.map #fetchable (Redblackmap.peek (table, thmid))
 
-val dependency_entries = dlist
+fun dependency_entries (table : dep_table) =
+  map (fn (name, info) => (name, #fetchable info)) (dlist table)
 
 fun pure_logic_concl conclusion =
   let
@@ -376,16 +412,16 @@ fun train_nb constants idf dependencies facts =
       end
 
     fun usable_dependencies (fact : fact_info) =
-      case dependencies_of dependencies (#thmid fact) of
+      case Redblackmap.peek (dependencies, #thmid fact) of
           NONE => []
-        | SOME raw_dependencies =>
-            if #def fact orelse
-               length raw_dependencies > #max_dependencies constants orelse
+        | SOME {fetchable, intact, count} =>
+            if #def fact orelse not intact orelse
+               count > #max_dependencies constants orelse
                not (List.all (fn thmid => dmem thmid indices)
-                 raw_dependencies)
+                 fetchable)
             then []
             else filter (not o pure_dependency)
-              (mk_fast_set String.compare raw_dependencies)
+              (mk_fast_set String.compare fetchable)
 
     fun learn index =
       if index = number then ()
@@ -409,9 +445,9 @@ fun train_nb constants idf dependencies facts =
   end
 
 fun conclusion_of thmid =
-  case mlThmData.thm_of_name thmid of
-      SOME (_, theorem) => SOME (Thm.concl theorem)
-    | NONE => NONE
+  case total mlThmData.thm_of_name thmid of
+      SOME (SOME (_, theorem)) => SOME (Thm.concl theorem)
+    | _ => NONE
 
 fun train_nb_from_thmdata constants idf dependencies statures (_, facts) =
   let

@@ -4546,6 +4546,90 @@ fun test_hhLearn_training_filters () =
 
 val _ = test_hhLearn_training_filters ()
 
+fun test_hhLearn_live_incomplete_dependencies () =
+  let
+    val prefix = Theory.current_theory () ^ "Theory."
+    val bases = List.tabulate (21, fn index =>
+      "hhLearn_dep_target_" ^ Int.toString index)
+    fun save (name, theorem) =
+      Feedback.quiet_messages Theory.save_thm (name, theorem)
+    val targets = map (fn name => save
+      (name, Thm.REFL (numSyntax.mk_suc
+        (Term.mk_var (name, ``:num``))))) bases
+    val small_name = "hhLearn_dep_small"
+    val large_name = "hhLearn_dep_large"
+    val small = save
+      (small_name, Thm.CONJ (hd targets) (List.nth (targets, 1)))
+    val large = save (large_name,
+      foldl (fn (theorem, result) => Thm.CONJ result theorem)
+        (hd targets) (tl targets))
+    val names = map (fn name => prefix ^ name) bases
+    val rows = map (fn name => (name, [1])) names @
+      [(prefix ^ small_name, [2]), (prefix ^ large_name, [3])]
+    val thmdata = (mlFeature.learn_tfidf rows, rows)
+    val idf = hhLearn.create_idf_table rows
+    fun model dependencies = hhLearn.train_nb_from_thmdata
+      hhLearn.default_constants idf dependencies
+      (hhStature.create_statures_for (Theory.current_theory ())) thmdata
+    val originally_intact = #1 (mlThmData.intactdep_of_thm small) andalso
+      #1 (mlThmData.intactdep_of_thm large)
+    val intact_model = model (hhLearn.create_dep_table thmdata)
+    val _ = Theory.delete_binding (List.nth (bases, 1))
+    val dependencies = hhLearn.create_dep_table thmdata
+    val broken_model = model dependencies
+    val surviving = hd names
+  in
+    expect "hhLearn live intact proofs train up to the dependency limit"
+      (originally_intact andalso
+       length (Dep.depidl_of (Tag.dep_of (Thm.tag large))) = 21 andalso
+       hhLearn.nb_tfreq intact_model surviving = SOME 1001);
+    expect "hhLearn keeps fetchable dependencies of incomplete proofs"
+      (not (#1 (mlThmData.intactdep_of_thm small)) andalso
+       not (#1 (mlThmData.intactdep_of_thm large)) andalso
+       hhLearn.dependencies_of dependencies (prefix ^ small_name) =
+         SOME [surviving] andalso
+       length (valOf (hhLearn.dependencies_of dependencies
+         (prefix ^ large_name))) = 20);
+    expect "hhLearn never trains truncated proofs, even with stale facts"
+      (hhLearn.nb_tfreq broken_model surviving = SOME 1000 andalso
+       hhLearn.nb_sfreq broken_model surviving 2 = NONE andalso
+       hhLearn.nb_sfreq broken_model surviving 3 = NONE);
+    List.app Theory.delete_binding
+      (List.filter (fn name => name <> List.nth (bases, 1)) bases @
+       [small_name, large_name])
+  end
+
+val _ = test_hhLearn_live_incomplete_dependencies ()
+
+fun test_hhLearn_unselected_stale_fact () =
+  let
+    val primary = "arithmeticTheory.ADD1"
+    val stale_base = "hhLearn_deleted_fact"
+    val stale = Theory.current_theory () ^ "Theory." ^ stale_base
+    val theorem = DB.fetch "arithmetic" "ADD1"
+    val _ = Feedback.quiet_messages Theory.save_thm
+      (stale_base, Thm.REFL boolSyntax.T)
+    val goal = ([], Thm.concl theorem)
+    val features = mlFeature.fea_of_goal true goal
+    val rows = [(primary, features), (stale, [])]
+    val thmdata = (mlFeature.learn_tfidf rows, rows)
+    val _ = Theory.delete_binding stale_base
+    val legacy = mlNearestNeighbor.thmknn_wdep thmdata 1 features
+    val _ = hhLearn.clean_context_cache ()
+    val context = hhLearn.create_context thmdata
+  in
+    expect "hhLearn skips missing facts when collecting dependencies"
+      (hhLearn.dependencies_of (hhLearn.create_dep_table thmdata) stale =
+       NONE);
+    expect "hhLearn context tolerates unselected stale learning facts"
+      (legacy = [primary] andalso
+       hhLearn.rank context
+         {filter = "knn", pool = NONE, goal = goal, n = 1} = legacy);
+    hhLearn.clean_context_cache ()
+  end
+
+val _ = test_hhLearn_unselected_stale_fact ()
+
 fun test_hhLearn_curves_and_mesh () =
   let
     val normalized = hhLearn.mesh_facts 2
