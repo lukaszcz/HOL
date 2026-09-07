@@ -1583,6 +1583,355 @@ in
   compare_thms (thm, final_thm)
 end
 
+fun remove_definitions_dependency_first_word_success () =
+let
+  fun calls name =
+    case List.find (fn (result_name, _) => result_name = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun variable_set variables =
+    HOLset.addList (Term.empty_tmset, variables)
+  fun theorem_with definitions = List.foldl
+    (fn (definition, theorem) => Drule.ADD_ASSUM definition theorem)
+    boolTheory.TRUTH definitions
+  fun remove variables definitions =
+    Z3_ProofReplay.remove_definitions
+      (HOLset.addList (Term.empty_tmset, definitions),
+       variable_set variables, theorem_with definitions)
+
+  val word = ``task31_remove_word:word8``
+  val word2 = ``task31_remove_word2:word8``
+  val acyclic =
+    [``task31_remove_word:word8 = task31_remove_input + 1w``,
+     ``task31_remove_word2:word8 = task31_remove_word + 2w``]
+  val () = Profile.reset_all ()
+  val acyclic_theorem = remove [word, word2] acyclic
+  val () = assert
+    (List.null (Thm.hyp acyclic_theorem) andalso
+     calls
+       "check_proof(remove_definitions:self-word-identity)" = 0,
+     "acyclic word definitions entered speculative identity proving")
+
+  val reverse_name = ``task31_reverse_definition:num``
+  val reverse_definition = ``task31_reverse_input + 1 =
+    (task31_reverse_definition:num)``
+  val reverse_theorem = remove [reverse_name] [reverse_definition]
+  val () = assert
+    (List.null (Thm.hyp reverse_theorem),
+     "reverse-oriented checked definition survived finalization")
+
+  val mixed_name = ``task31_mixed_definition:num``
+  val mixed_left = ``task31_mixed_left:num``
+  val mixed_right = ``task31_mixed_right:num``
+  val mixed_definitions =
+    [``task31_mixed_definition:num = task31_mixed_left + 1``,
+     ``task31_mixed_right + 1 = (task31_mixed_definition:num)``,
+     ``task31_mixed_left:num = 3``,
+     ``task31_mixed_right:num = 3``]
+  val mixed_theorem = remove
+    [mixed_name, mixed_left, mixed_right] mixed_definitions
+  val () = assert
+    (List.null (Thm.hyp mixed_theorem) andalso
+     Thm.concl mixed_theorem ~~ boolSyntax.T,
+     "mixed-orientation duplicate definitions survived finalization")
+  val () = check_oracle_tags
+    "mixed-orientation duplicate definition finalization" mixed_theorem
+
+  val alignment_inst = ``task31_alignment_inst:word8``
+  val alignment_residue = funpow 80
+    (fn term => wordsSyntax.mk_word_add (term, term))
+    ``task31_alignment_residue:word8``
+  val alignment_generated = Thm.ASSUME
+    (boolSyntax.mk_eq (alignment_inst, alignment_residue))
+  val alignment_theorem =
+    Z3_ProofReplay.align_instantiated_definition_hypothesis_for_test
+      (false, alignment_inst, alignment_residue, alignment_generated)
+  val (alignment_left, alignment_right) =
+    boolSyntax.dest_eq (Thm.concl alignment_theorem)
+  val () = assert
+    (Portable.pointer_eq (alignment_left, alignment_residue) andalso
+     Portable.pointer_eq (alignment_right, alignment_inst) andalso
+     HOLset.equal
+       (Thm.hypset alignment_theorem, Thm.hypset alignment_generated) andalso
+     HOLset.numItems (Thm.hypset alignment_theorem) = 1,
+     "reverse alignment rebuilt or traversed its shared residue")
+  val () = check_oracle_tags
+    "shared-DAG reverse definition alignment" alignment_theorem
+
+  val direct_self_name = ``task31_direct_self_definition:num``
+  val direct_self_definitions =
+    [``task31_direct_self_definition:num =
+        task31_direct_self_definition + 1``,
+     ``task31_direct_self_definition:num = 2``]
+  val direct_self_message =
+    ((ignore (remove [direct_self_name] direct_self_definitions);
+      die "FAIL: direct-self duplicate definition was eliminated")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+  val () = assert
+    (String.isSubstring "definition_count=2" direct_self_message andalso
+     String.isSubstring "direct_self_candidate_count=1"
+       direct_self_message,
+     "direct-self duplicate was not rejected by the bounded occurs-check")
+
+  fun cycle_bits prefix = List.tabulate (4, fn index =>
+    Term.mk_var (prefix ^ Int.toString index, Type.bool))
+  fun packed_cycle word bits semantic extra_variables extra_definitions =
+    let
+      val vector = bitstringSyntax.mk_v2w
+        (listSyntax.mk_list (bits, Type.bool),
+         fcpSyntax.mk_int_numeric_type 4)
+      fun bit_definition (index, bit) = boolSyntax.mk_eq
+        (bit, wordsSyntax.mk_word_bit
+          (numSyntax.term_of_int (3 - index), word))
+      val definitions =
+        boolSyntax.mk_eq (word, semantic) ::
+        boolSyntax.mk_eq (word, vector) :: extra_definitions @
+        List.map bit_definition
+          (ListPair.zip (List.tabulate (4, Lib.I), bits))
+    in
+      (word :: bits @ extra_variables, definitions)
+    end
+  fun check_cycle label (variables, definitions) =
+    let val theorem = remove variables definitions in
+      assert
+        (List.null (Thm.hyp theorem) andalso
+         Thm.concl theorem ~~ boolSyntax.T,
+         label ^ " was not eliminated");
+      check_oracle_tags label theorem
+    end
+  fun plus_one word = wordsSyntax.mk_word_add
+    (word, wordsSyntax.mk_wordii (1, 4))
+
+  val cycle_word = ``task31_cross_cycle_word:word4``
+  val cycle_input = ``task31_cross_cycle_input:word4``
+  val cycle_bits0 = cycle_bits "task31_cross_cycle_bit"
+  val external_cycle = packed_cycle cycle_word cycle_bits0
+    (plus_one cycle_input) [] []
+  val () = check_cycle
+    "external-anchor packed definition cycle" external_cycle
+  val () = check_cycle
+    "undefined-proof-local-anchor packed definition cycle"
+    (packed_cycle cycle_word cycle_bits0 cycle_input
+      [cycle_input] [])
+
+  val intermediate_word = ``task31_intermediate_cycle_word:word4``
+  val intermediate = ``task31_intermediate_cycle_anchor:word4``
+  val intermediate_external = ``task31_intermediate_cycle_input:word4``
+  val intermediate_cycle = packed_cycle intermediate_word
+    (cycle_bits "task31_intermediate_cycle_bit") (plus_one intermediate)
+    [intermediate]
+    [boolSyntax.mk_eq (intermediate, intermediate_external)]
+  val () = check_cycle
+    "defined-intermediary packed definition cycle" intermediate_cycle
+
+  val eligible_a = packed_cycle ``task31_eligible_cycle_a:word4``
+    (cycle_bits "task31_eligible_cycle_a_bit")
+    (plus_one ``task31_eligible_cycle_a_input:word4``) [] []
+  val eligible_b = packed_cycle ``task31_eligible_cycle_b:word4``
+    (cycle_bits "task31_eligible_cycle_b_bit")
+    (plus_one ``task31_eligible_cycle_b_input:word4``) [] []
+  val two_eligible_cycles =
+    (#1 eligible_a @ #1 eligible_b, #2 eligible_a @ #2 eligible_b)
+  val () = check_cycle
+    "two independently eligible packed definition cycles"
+    two_eligible_cycles
+
+  fun malformed_vector bits = bitstringSyntax.mk_v2w
+    (listSyntax.mk_list (bits, Type.bool),
+     fcpSyntax.mk_int_numeric_type 4)
+  val malformed_bits = cycle_bits "task31_malformed_vector_bit"
+  val malformed_word_short = ``task31_malformed_word_short:word4``
+  val malformed_word_long = ``task31_malformed_word_long:word4``
+  val malformed_word_repeated = ``task31_malformed_word_repeated:word4``
+  val malformed_definitions =
+    [boolSyntax.mk_eq (malformed_word_short,
+       malformed_vector (List.take (malformed_bits, 3))),
+     boolSyntax.mk_eq (malformed_word_long,
+       malformed_vector (malformed_bits @ [``task31_malformed_extra:bool``])),
+     boolSyntax.mk_eq (malformed_word_repeated,
+       malformed_vector (List.tabulate (4, fn _ => List.hd malformed_bits)))]
+  val malformed_theorem = remove
+    ([malformed_word_short, malformed_word_long,
+      malformed_word_repeated, ``task31_malformed_extra:bool``] @
+     malformed_bits) malformed_definitions
+  val () = assert
+    (List.null (Thm.hyp malformed_theorem) andalso
+     Thm.concl malformed_theorem ~~ boolSyntax.T,
+     "malformed packed leaves bypassed the ordinary unifier route")
+  val () = check_oracle_tags
+    "ordinary malformed packed definition leaves" malformed_theorem
+
+  val malformed_variables = HOLset.addList
+    (Term.empty_tmset,
+     ``task31_malformed_extra:bool`` :: malformed_bits)
+  fun direct_decline (label, vector) = assert
+    (not (Option.isSome
+       (Z3_ProofReplay.checked_word_list_definition_for_test
+         malformed_variables (true, malformed_word_short, vector))),
+     label ^ " malformed packed family did not decline directly")
+  val () = List.app direct_decline
+    [("short", malformed_vector (List.take (malformed_bits, 3))),
+     ("long", malformed_vector
+       (malformed_bits @ [``task31_malformed_extra:bool``])),
+     ("repeated", malformed_vector
+       (List.tabulate (4, fn _ => List.hd malformed_bits))),
+     ("nonvariable", malformed_vector
+       (List.take (malformed_bits, 3) @ [boolSyntax.T]))]
+
+  val gate_bits = cycle_bits "task31_word_list_gate_bit"
+  val gate_vector = malformed_vector gate_bits
+  val gate_word = funpow 21
+    (fn term => wordsSyntax.mk_word_add (term, term))
+    ``task31_word_list_gate_input:word4``
+  val gate_variables = HOLset.addList
+    (Term.empty_tmset, gate_bits)
+  val gate_propagated =
+    ((ignore (Z3_ProofReplay.checked_word_list_definition_for_test
+        gate_variables (true, gate_word, gate_vector)); false)
+     handle Feedback.HOL_ERR holerr =>
+       SmtResource.is_resource_gate holerr andalso
+       String.isSubstring
+         "resource-gate:BitVector:remove-definitions-word-list-instantiation"
+         (Feedback.message_of holerr))
+  val () = assert
+    (gate_propagated,
+     "concrete packed-word equality did not propagate its BV resource gate")
+
+  val gate_cycle_name = ``task31_word_list_gate_cycle:word4``
+  val gate_cycle = packed_cycle gate_cycle_name gate_bits gate_word [] []
+  val gate_cycle_propagated =
+    ((ignore (remove (#1 gate_cycle) (#2 gate_cycle)); false)
+     handle Feedback.HOL_ERR holerr =>
+       SmtResource.is_resource_gate holerr andalso
+       String.isSubstring
+         "resource-gate:BitVector:remove-definitions-word-list-instantiation"
+         (Feedback.message_of holerr))
+  val () = assert
+    (gate_cycle_propagated,
+     "packed SCC elimination did not gate before global theorem INST")
+
+  val self_identity = boolSyntax.mk_eq (word, word)
+  val () = Profile.reset_all ()
+  val identity_theorem = remove [word] [self_identity]
+  val () = assert
+    (List.null (Thm.hyp identity_theorem) andalso
+     Thm.concl
+       (Option.valOf
+         (Z3_ProofReplay.prove_self_word_identity_for_test
+           (self_identity, word, word, true))) ~~ self_identity andalso
+     calls
+       "check_proof(remove_definitions:self-word-identity)_OK" = 2,
+     "reflexive self-dependent word identity was not discharged directly")
+
+  val packed_word = ``task31_remove_packed_word:word4``
+  val packed_bits = List.tabulate (4, fn index =>
+    wordsSyntax.mk_word_bit
+      (numSyntax.term_of_int (3 - index), packed_word))
+  val packed_vector = bitstringSyntax.mk_v2w
+    (listSyntax.mk_list (packed_bits, Type.bool),
+     fcpSyntax.mk_int_numeric_type 4)
+  val packed_identity = boolSyntax.mk_eq (packed_word, packed_vector)
+  val () = Profile.reset_all ()
+  val packed_theorem = remove [packed_word] [packed_identity]
+  val () = assert
+    (List.null (Thm.hyp packed_theorem) andalso
+     calls
+       "check_proof(remove_definitions:self-word-identity)_OK" = 1,
+     "nontrivial packed/per-bit word identity was not checked")
+
+  fun double_word term = wordsSyntax.mk_word_add (term, term)
+  val deep_external = ``task31_deep_dependency_input:word8``
+  val deep_shared_rhs = funpow 80 double_word deep_external
+  val deep_summary =
+    Z3_ProofReplay.definition_dependency_summary_for_test
+      (boolSyntax.mk_eq (word, deep_shared_rhs))
+  val deep_self_summary =
+    Z3_ProofReplay.definition_dependency_summary_for_test
+      (boolSyntax.mk_eq (word, funpow 80 double_word word))
+  val () = assert
+    (not (#self_dependent deep_summary) andalso
+     #free_variables deep_summary = 1 andalso
+     #self_dependent deep_self_summary andalso
+     #free_variables deep_self_summary = 1,
+     "shared-DAG dependency entry unfolded or misclassified its RHS")
+  val oversized_rhs = funpow 21 double_word word
+  val oversized_definition = boolSyntax.mk_eq (word, oversized_rhs)
+  val oversized_gate =
+    ((ignore (Z3_ProofReplay.prove_self_word_identity_for_test
+       (oversized_definition, word, oversized_rhs, true)); false)
+     handle Feedback.HOL_ERR holerr =>
+       SmtResource.is_resource_gate holerr andalso
+       String.isSubstring "limit=term-size" (Feedback.message_of holerr)
+       andalso String.isSubstring
+         "resource-gate:BitVector:remove-definitions-self-word-identity"
+         (Feedback.message_of holerr))
+
+  val invalid_cycle = ``task31_remove_word:word8 =
+    task31_remove_word + 1w``
+  val invalid_message =
+    ((ignore (remove [word] [invalid_cycle]);
+      die "FAIL: invalid self-dependent word cycle was eliminated")
+     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+
+  val fallback_called = ref false
+  val ordinary_decline = Feedback.mk_HOL_ERR
+    "Library" "gen_instantiation" "injected ordinary decline"
+  val ordinary_result =
+    Z3_ProofReplay.with_expected_instantiation_fallback_for_test
+      (fn () => raise ordinary_decline)
+      (fn () => (fallback_called := true; 17)) ()
+  val resource =
+    (SmtResource.check_dag_size_for "Skeleton" "definition-fixture"
+       (SmtResource.max_skeleton_replay_dag_nodes + 1);
+     raise Fail "definition resource fixture did not gate")
+    handle exn as Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then exn else raise exn
+  val resource_propagated =
+    ((Z3_ProofReplay.with_expected_instantiation_fallback_for_test
+        (fn () => raise resource) (fn () => 0) (); false)
+     handle Feedback.HOL_ERR holerr => SmtResource.is_resource_gate holerr)
+  val interrupt_propagated =
+    ((Z3_ProofReplay.with_expected_instantiation_fallback_for_test
+        (fn () => raise Interrupt) (fn () => 0) (); false)
+     handle Interrupt => true)
+  val unexpected = Feedback.mk_HOL_ERR
+    "Task31Fixture" "gen-instantiation" "unexpected"
+  val unexpected_propagated =
+    ((Z3_ProofReplay.with_expected_instantiation_fallback_for_test
+        (fn () => raise unexpected) (fn () => 0) (); false)
+     handle Feedback.HOL_ERR holerr =>
+       Feedback.top_structure_of holerr = "Task31Fixture")
+  val boundary_unexpected_propagated =
+    ((Z3_ProofReplay.definition_unification_boundary_for_test
+        (fn () => raise unexpected); false)
+     handle Feedback.HOL_ERR holerr =>
+       Feedback.top_structure_of holerr = "Task31Fixture")
+  val boundary_resource_propagated =
+    ((Z3_ProofReplay.definition_unification_boundary_for_test
+        (fn () => raise resource); false)
+     handle Feedback.HOL_ERR holerr => SmtResource.is_resource_gate holerr)
+  val ordinary_boundary_declined =
+    ((Z3_ProofReplay.ordinary_definition_unification_decline_for_test ();
+      false)
+     handle Feedback.HOL_ERR holerr =>
+       Feedback.top_structure_of holerr = "Z3_ProofReplay" andalso
+       Feedback.top_function_of holerr = "z3_rewrite" andalso
+       String.isSubstring "unification declined"
+         (Feedback.message_of holerr))
+in
+  assert (String.isSubstring "definition_count=1" invalid_message andalso
+      String.isSubstring "defined_variable_count=1" invalid_message andalso
+      not (String.isSubstring "task31_remove_word" invalid_message),
+    "invalid word cycle diagnostic was unbounded or lost its counts");
+  assert (ordinary_result = 17 andalso !fallback_called andalso
+      resource_propagated andalso interrupt_propagated andalso
+      unexpected_propagated andalso boundary_unexpected_propagated andalso
+      boundary_resource_propagated andalso ordinary_boundary_declined andalso
+      oversized_gate,
+    "definition fallback swallowed a terminal or unexpected exception")
+end
+
 (*****************************************************************************)
 (* SMT-LIB script AST parser tests                                           *)
 (*****************************************************************************)
@@ -18087,6 +18436,260 @@ in
     "gen_instantiation defined a protected goal variable")
 end
 
+fun z3_checked_definition_names_are_rigid_success () =
+let
+  fun variable_set variables =
+    HOLset.addList (Term.empty_tmset, variables)
+  fun same_definitions actual expected = HOLset.equal
+    (HOLset.addList (Term.empty_tmset, actual),
+     HOLset.addList (Term.empty_tmset, expected))
+  val word_hi = ``task31_word_hi:word8``
+  val word_lo = ``task31_word_lo:word8``
+  val word_x = ``task31_word_x:word8``
+  val word_y = ``task31_word_y:word8``
+  val word_definitions =
+    [boolSyntax.mk_eq (word_hi, word_x),
+     boolSyntax.mk_eq (word_lo, word_y)]
+  val word_target = boolSyntax.mk_eq
+    (boolSyntax.mk_neg ``3w * task31_word_hi + task31_word_lo <=+
+      (task31_word_bound:word8)``,
+     boolSyntax.mk_neg ``task31_word_lo + 3w * task31_word_hi <=+
+      (task31_word_bound:word8)``)
+  val () = Profile.reset_all ()
+  val word_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      (variable_set [word_hi, word_lo]) word_definitions word_target
+  val word_theorem = #theorem word_result
+  val () = assert_no_hyps ("rigid checked word names", word_theorem)
+  val () = assert_concl_alpha
+    ("rigid checked word names", word_theorem, word_target)
+  val () = check_oracle_tags "rigid checked word names" word_theorem
+  val () = assert
+    (same_definitions (#definitions word_result) word_definitions andalso
+     profile_call_count "rewrite(14)(unification)_OK" = 0 andalso
+     (if Library.no_fastpath () then
+        profile_call_count "rewrite(18)(BBLAST)_OK" = 1
+     else
+        profile_call_count "rewrite(16)(WORD_ARITH_CONV)_OK" = 1),
+     "checked word names changed route: definitions=" ^
+     Int.toString (List.length (#definitions word_result)) ^
+     " unification_ok=" ^
+     Int.toString (profile_call_count "rewrite(14)(unification)_OK") ^
+     " word_arith_ok=" ^
+     Int.toString
+       (profile_call_count "rewrite(16)(WORD_ARITH_CONV)_OK") ^
+     " bblast_ok=" ^
+     Int.toString (profile_call_count "rewrite(18)(BBLAST)_OK"))
+
+  (* A checked name may occur beside a still-flexible proof name.  Normalize
+     the checked name first, then let the unifier define only the fresh one. *)
+  val rigid_int = ``task31_rigid_int:int``
+  val fresh_int = ``task31_fresh_int:int``
+  val rigid_definition = ``task31_rigid_int:int = task31_int_input + 1``
+  val mixed_target =
+    ``(task31_int_context:int -> bool)
+        (task31_rigid_int + task31_fresh_int) =
+      task31_int_context ((task31_int_input + 1) + task31_int_residue)``
+  val mixed_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      (variable_set [rigid_int, fresh_int]) [rigid_definition] mixed_target
+  val mixed_theorem = #theorem mixed_result
+  val mixed_fresh_definition =
+    ``task31_fresh_int:int = task31_int_residue``
+  val () = assert_concl_alpha
+    ("normalized rigid plus fresh name", mixed_theorem, mixed_target)
+  val () = assert
+    (HOLset.equal
+       (Thm.hypset mixed_theorem,
+        HOLset.addList (Term.empty_tmset,
+          [rigid_definition, mixed_fresh_definition])) andalso
+     same_definitions (#definitions mixed_result)
+       [rigid_definition, mixed_fresh_definition],
+     "normalization did not preserve the checked name while defining fresh")
+  val () = check_oracle_tags
+    "normalized rigid plus fresh name" mixed_theorem
+
+  val reverse_rigid = ``task31_reverse_rigid:int``
+  val reverse_fresh = ``task31_reverse_fresh:int``
+  val reverse_definition = ``task31_reverse_input + 1 =
+    (task31_reverse_rigid:int)``
+  val reverse_target =
+    ``(task31_reverse_context:int -> bool)
+        (task31_reverse_rigid + task31_reverse_fresh) =
+      task31_reverse_context
+        ((task31_reverse_input + 1) + task31_reverse_residue)``
+  val reverse_fresh_definition =
+    ``task31_reverse_fresh:int = task31_reverse_residue``
+  val reverse_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      (variable_set [reverse_rigid, reverse_fresh])
+      [reverse_definition] reverse_target
+  val reverse_theorem = #theorem reverse_result
+  val () = assert_concl_alpha
+    ("reverse checked definition plus fresh name",
+     reverse_theorem, reverse_target)
+  val () = assert
+    (HOLset.equal
+       (Thm.hypset reverse_theorem,
+        HOLset.addList (Term.empty_tmset,
+          [reverse_definition, reverse_fresh_definition])) andalso
+     same_definitions (#definitions reverse_result)
+       [reverse_definition, reverse_fresh_definition],
+     "reverse checked definition was redefined or lost during unification")
+  val () = check_oracle_tags
+    "reverse checked definition plus fresh name" reverse_theorem
+
+  val alias_left = ``task31_alias_left:word8``
+  val alias_right = ``task31_alias_right:word8``
+  val alias_variables = variable_set [alias_left, alias_right]
+  val left_flexible =
+    Z3_ProofReplay.flexible_rewrite_variables_for_test alias_variables
+      [boolSyntax.mk_eq (alias_left, alias_right)]
+  val right_flexible =
+    Z3_ProofReplay.flexible_rewrite_variables_for_test alias_variables
+      [boolSyntax.mk_eq (alias_right, alias_left)]
+  val reverse_flexible =
+    Z3_ProofReplay.flexible_rewrite_variables_for_test alias_variables
+      [boolSyntax.mk_eq
+        (wordsSyntax.mk_word_add (alias_right, ``1w:word8``), alias_left)]
+  val () = assert
+    (not (HOLset.member (left_flexible, alias_left)) andalso
+     HOLset.member (left_flexible, alias_right) andalso
+     not (HOLset.member (right_flexible, alias_right)) andalso
+     HOLset.member (right_flexible, alias_left) andalso
+     not (HOLset.member (reverse_flexible, alias_left)) andalso
+     HOLset.member (reverse_flexible, alias_right),
+     "stored proof-local alias orientation did not keep its lhs rigid")
+  val alias_fresh = ``task31_alias_fresh:bool``
+  val alias_residue = ``task31_alias_residue:bool``
+  val alias_context = ``task31_alias_context:word8 -> bool -> bool``
+  val alias_definition = boolSyntax.mk_eq (alias_left, alias_right)
+  val alias_target = boolSyntax.mk_eq
+    (list_mk_comb (alias_context, [alias_left, alias_fresh]),
+     list_mk_comb (alias_context, [alias_right, alias_residue]))
+  val alias_fresh_definition =
+    boolSyntax.mk_eq (alias_fresh, alias_residue)
+  val alias_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      (variable_set [alias_left, alias_fresh])
+      [alias_definition] alias_target
+  val alias_theorem = #theorem alias_result
+  val () = assert
+    (Thm.concl alias_theorem ~~ alias_target andalso
+     HOLset.equal
+       (Thm.hypset alias_theorem,
+        HOLset.addList (Term.empty_tmset,
+          [alias_definition, alias_fresh_definition])) andalso
+     same_definitions (#definitions alias_result)
+       [alias_definition, alias_fresh_definition],
+     "prior checked alias forced fresh normalized unification to defer")
+  val () = check_oracle_tags
+    "checked alias plus fresh definition" alias_theorem
+  val duplicate_alias = boolSyntax.mk_eq (alias_left, alias_right)
+  val duplicate_state =
+    Z3_ProofReplay.incremental_definition_state_for_test alias_variables
+      [[duplicate_alias], [duplicate_alias],
+       [boolSyntax.mk_eq (alias_right, alias_left)]]
+  val () = assert
+    (HOLset.isEmpty (#flexible duplicate_state) andalso
+     HOLset.numItems (#definitions duplicate_state) = 2,
+     "duplicate aliases changed incremental rigidity orientation")
+
+  (* One-at-a-time updates make a whole-set difference implementation perform
+     over 134 million element visits.  The production fold deletes only the
+     one newly rigid name at each update. *)
+  val scaling_count = 16384
+  val scaling_input = ``task31_scaling_definition_input:bool``
+  val scaling_names = List.tabulate (scaling_count, fn index =>
+    Term.mk_var ("task31_scaling_definition_" ^ Int.toString index,
+      Type.bool))
+  val scaling_definitions = List.map
+    (fn name => [boolSyntax.mk_eq (name, scaling_input)]) scaling_names
+  val scaling_state =
+    Z3_ProofReplay.incremental_definition_state_for_test
+      (variable_set scaling_names) scaling_definitions
+  val () = assert
+    (HOLset.isEmpty (#flexible scaling_state) andalso
+     HOLset.numItems (#definitions scaling_state) = scaling_count,
+     "one-at-a-time definition updates lost rigidity or definitions")
+
+  val many_count = 2048
+  val many_input = ``task31_many_definition_input:bool``
+  val many_names = List.tabulate (many_count, fn index =>
+    Term.mk_var ("task31_many_definition_" ^ Int.toString index,
+      Type.bool))
+  val many_definitions = List.map
+    (fn name => boolSyntax.mk_eq (name, many_input)) many_names
+  val many_survivor = ``task31_many_definition_survivor:bool``
+  val many_variables = variable_set (many_survivor :: many_names)
+  val incremental =
+    Z3_ProofReplay.incremental_definition_state_for_test many_variables
+      (List.map (fn definition => [definition]) many_definitions)
+  val () = assert
+    (HOLset.numItems (#definitions incremental) = many_count andalso
+     HOLset.numItems (#flexible incremental) = 1 andalso
+     HOLset.member (#flexible incremental, many_survivor),
+     "incremental definition rigidity lost stored definitions or orientation")
+  val many_target = boolSyntax.mk_eq (many_survivor, many_input)
+  val () = Profile.reset_all ()
+  val many_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      many_variables many_definitions many_target
+  val many_theorem = #theorem many_result
+  val () = assert
+    (Thm.concl many_theorem ~~ many_target andalso
+     List.length (Thm.hyp many_theorem) = 1 andalso
+     List.length (#definitions many_result) = many_count + 1 andalso
+     profile_call_count "rewrite(14)(unification)_OK" = 1,
+     "many checked definitions changed incremental unification semantics")
+  val () = check_oracle_tags
+    "many incremental checked definitions" many_theorem
+
+  val int_hi = ``task31_int_hi:int``
+  val int_lo = ``task31_int_lo:int``
+  val int_x = ``task31_int_x:int``
+  val int_y = ``task31_int_y:int``
+  val int_definitions =
+    [boolSyntax.mk_eq (int_hi, int_x),
+     boolSyntax.mk_eq (int_lo, int_y)]
+  val int_target = ``task31_int_hi + task31_int_lo =
+    task31_int_lo + (task31_int_hi:int)``
+  val () = Profile.reset_all ()
+  val int_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      (variable_set [int_hi, int_lo]) int_definitions int_target
+  val int_theorem = #theorem int_result
+  val checked_int_definitions =
+    HOLset.addList (Term.empty_tmset, int_definitions)
+  val () = assert
+    (Thm.concl int_theorem ~~ int_target andalso
+     HOLset.isSubset (Thm.hypset int_theorem, checked_int_definitions) andalso
+     same_definitions (#definitions int_result) int_definitions andalso
+     profile_call_count "rewrite(14)(unification)_OK" = 0,
+     "checked integer definitions changed during commutativity replay")
+  val () = check_oracle_tags "rigid checked integer names" int_theorem
+
+  val fresh = ``task31_fresh_definition:bool``
+  val fresh_target = ``task31_fresh_definition <=>
+    task31_fresh_left /\ task31_fresh_right``
+  val () = Profile.reset_all ()
+  val fresh_result =
+    Z3_ProofReplay.rewrite_with_checked_definitions_for_test
+      (variable_set [fresh]) [] fresh_target
+  val fresh_theorem = #theorem fresh_result
+in
+  assert (Thm.concl fresh_theorem ~~ fresh_target andalso
+      List.length (Thm.hyp fresh_theorem) = 1 andalso
+      List.length (#definitions fresh_result) = 1 andalso
+      HOLset.equal
+        (Thm.hypset fresh_theorem,
+         HOLset.addList
+           (Term.empty_tmset, #definitions fresh_result)) andalso
+      profile_call_count "rewrite(14)(unification)_OK" = 1,
+    "fresh proof-local name was not available to checked unification");
+  check_oracle_tags "fresh checked definition" fresh_theorem
+end
+
 fun replay_canonicalization_success () =
 let
   val alias_source =
@@ -25048,6 +25651,8 @@ let
     ("remove_definitions_tricky2", fn () => remove_defs_test remove_defs_tricky2),
     ("remove_definitions_circular1", fn () => remove_defs_test remove_defs_circular1),
     ("remove_definitions_circular2", fn () => remove_defs_test remove_defs_circular2),
+    ("remove_definitions_dependency_first_word_success",
+      remove_definitions_dependency_first_word_success),
     ("script_ast_locations_success", script_ast_locations_success),
     ("script_ast_locations_syntax_error", script_ast_locations_syntax_error),
     ("script_ast_metadata_decls_success", script_ast_metadata_decls_success),
@@ -25594,6 +26199,8 @@ let
       z3_remove_extra_hyps_reflexive_equality_success),
     ("gen_instantiation_protects_goal_variables_success",
       gen_instantiation_protects_goal_variables_success),
+    ("z3_checked_definition_names_are_rigid_success",
+      z3_checked_definition_names_are_rigid_success),
     ("replay_canonicalization_success",
       replay_canonicalization_success),
     ("cpc_emitted_definition_identity_table_success",

@@ -15,6 +15,7 @@ sig
   val has_free_vars : term -> bool
   val free_vars_lr  : term -> term list
   val FVL           : term list -> term set -> term set
+  val FVL_dag       : term list -> term set -> term set
   val free_in       : term -> term -> bool
   val all_vars      : term -> term list
   val all_atoms     : term -> term set

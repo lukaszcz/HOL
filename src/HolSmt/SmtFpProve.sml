@@ -78,14 +78,14 @@ struct
 
   fun reflexive_lt_prove t =
     Library.require_fastpath "FP reflexive less-than" t
-      reflexive_lt_prove_unbounded t
+      (profile "fp(1)(reflexive-lt)" reflexive_lt_prove_unbounded) t
 
   fun proforma_prove t =
     ((Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
       handle Feedback.HOL_ERR _ =>
         Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms t
       handle Feedback.HOL_ERR _ =>
-        profile "fp(1)(reflexive-lt)" reflexive_lt_prove t))
+        reflexive_lt_prove t))
     handle Feedback.HOL_ERR holerr =>
       raise ERR "proforma_prove"
         ("proforma lookup failed: " ^ Feedback.message_of holerr)

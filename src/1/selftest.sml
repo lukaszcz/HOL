@@ -106,6 +106,84 @@ val _ = let
     (fn term =>
       Term.has_free_vars term = not (List.null (Term.free_vars term)))
     agreement_terms
+  val initial = mk_var("fvl_dag_initial", bool)
+  val typed_bool = mk_var("fvl_dag_typed", bool)
+  val typed_ind = mk_var("fvl_dag_typed", Type.ind)
+  val shared_free = shared_branch 80 free
+  val duplicate_reflexivity = GEN binder
+    (REFL (boolSyntax.mk_conj (binder, binder)))
+  val shallow_lazy_open = concl
+    (Specialize free duplicate_reflexivity)
+  (* The standard kernel retains this as a lazy closure over an exponentially
+     shared residue.  [FVL_dag] must summarize the residue without propagating
+     the explicit substitution.  The experimental kernel substitutes eagerly
+     but preserves the same physical sharing. *)
+  val deep_lazy_open = concl
+    (Specialize shared_free duplicate_reflexivity)
+  (* Construct a closure whose body, rather than its substitution residue, is
+     a deep shared graph.  Instantiating the small schematic abstraction
+     inserts the closed graph without traversing it.  In the standard kernel,
+     propagating this closure would allocate distinct closures for both
+     occurrences at every level and unfold exponentially. *)
+  val deep_body_lazy_closed =
+    if Thm.kernelid = "stdknl" then
+      let
+        val schematic_body =
+          mk_var("fvl_dag_schematic_body", Type.bool)
+        val deep_body_quantified = INST
+          [schematic_body |-> deep_shared_body]
+          (GEN binder (ASSUME schematic_body))
+      in
+        concl (Specialize free deep_body_quantified)
+      end
+    else
+      (* The experimental representation has no lazy [Clos] constructor. *)
+      boolSyntax.T
+  val shifted_reflexivity = GEN binder
+    (GEN other_binder (REFL binder))
+  val shifted_lazy_open = concl
+    (Specialize free shifted_reflexivity)
+  val nested_lazy_open = concl
+    (Specialize boolSyntax.T (Specialize free shifted_reflexivity))
+  val shadowed_reflexivity = GEN binder
+    (GEN other_binder (REFL other_binder))
+  val shadowed_lazy_closed = concl
+    (Specialize boolSyntax.T
+      (Specialize free shadowed_reflexivity))
+  (* Identity lookup is deliberately quadratic in distinct nodes.  This
+     ordinary chain exercises that documented tradeoff without changing the
+     existing [FVL] path used by callers that do not request DAG sharing. *)
+  val large_ordinary_dag = independent_branch 1200
+  val shadowed = mk_abs(binder, mk_abs(binder, binder))
+  val dag_terms =
+    [closed_closure, open_closure, mixed_scope, shared_closed_lambda,
+     shared_open_lambda, shared_free, deep_lazy_open, shifted_lazy_open,
+     deep_body_lazy_closed, nested_lazy_open, shadowed_lazy_closed,
+     independent_equal,
+     large_ordinary_dag, shadowed, typed_bool, typed_ind]
+  val dag_free = Term.FVL_dag dag_terms
+    (HOLset.add(Term.empty_tmset, initial))
+  val expected_dag_free = HOLset.addList (Term.empty_tmset,
+    [initial, free, binder, typed_bool, typed_ind])
+  val bound_initial = Term.FVL_dag [mk_abs(binder, binder)]
+    (HOLset.add(Term.empty_tmset, binder))
+  val general_initial = HOLset.add (Term.empty_tmset, boolSyntax.T)
+  val general_result = Term.FVL_dag [shared_free] general_initial
+  val general_expected =
+    HOLset.addList (Term.empty_tmset, [boolSyntax.T, free])
+  val general_extended = HOLset.add (general_result, boolSyntax.F)
+  val dag_agreement_terms =
+    [binder, mk_abs(binder, binder), closed_closure, open_closure,
+     mixed_scope, shallow_lazy_open, shifted_lazy_open, nested_lazy_open,
+     shadowed_lazy_closed, shared_branch 16 free, independent_branch 100,
+     shadowed,
+     boolSyntax.mk_conj (typed_bool,
+       boolSyntax.mk_eq(mk_abs(typed_ind, typed_ind),
+         mk_abs(typed_ind, typed_ind)))]
+  val dag_agreement = List.all
+    (fn term => HOLset.equal
+      (Term.FVL_dag [term] Term.empty_tmset,
+       Term.FVL [term] Term.empty_tmset)) dag_agreement_terms
 in
   if not (Portable.pointer_eq(shared_left, shared_right)) then
     die "deep DAG body was not physically shared"
@@ -117,6 +195,15 @@ in
     die "Term.has_free_vars classified a fixture incorrectly"
   else if not agreement then
     die "Term.has_free_vars disagreed with Term.free_vars"
+  else if not (HOLset.equal (dag_free, expected_dag_free)) then
+    die "Term.FVL_dag lost initial, scoped, shared, or typed variables"
+  else if not (HOLset.member(bound_initial, binder)) then
+    die "Term.FVL_dag removed a variable from its initial accumulator"
+  else if not (HOLset.equal (general_result, general_expected) andalso
+               HOLset.member (general_extended, boolSyntax.F)) then
+    die "Term.FVL_dag changed the caller's general term-set accumulator"
+  else if not dag_agreement then
+    die "Term.FVL_dag disagreed with Term.FVL"
   else
     OK()
 end

@@ -34,6 +34,7 @@ local
   exception STRING_REWRITE_ERROR of exn
   exception BV_REWRITE_ERROR of exn
   exception DEFINITION_REWRITE_ERROR of exn
+  exception ORDINARY_DEFINITION_UNIFICATION_DECLINE
   exception ASSERTED_EQUALITY_REWRITE_ERROR of exn
 
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
@@ -68,6 +69,29 @@ local
   fun exact_inst thm t =
     Drule.INST_TY_TERM (Term.match_term (Thm.concl thm) t) thm
 
+  (* [Library.gen_instantiation] has one documented ordinary-decline shape.
+     Catch only that shape; kernel failures and resource exceptions must not
+     become invitations to try a more expensive definition procedure. *)
+  fun with_expected_instantiation_fallback instantiate fallback input =
+    instantiate input
+    handle Feedback.HOL_ERR holerr =>
+      if Feedback.top_structure_of holerr = "Library" andalso
+         Feedback.top_function_of holerr = "gen_instantiation" andalso
+         not (SmtResource.is_resource_gate holerr) then
+        fallback input
+      else
+        raise Feedback.HOL_ERR holerr
+
+  fun gen_instantiation_with_expected_fallback fallback input =
+    with_expected_instantiation_fallback Library.gen_instantiation
+      fallback input
+
+  structure Definition_Graph = Graph(
+    type key = Term.term
+    val ord = Term.var_compare
+    val pp = fn _ => HOLPP.add_string "<proof-variable>"
+  )
+
   (***************************************************************************)
   (* functions that manipulate/access "global" state                         *)
   (***************************************************************************)
@@ -81,9 +105,15 @@ local
        final theorem *)
     asserted_hyps : Term.term HOLset.set,
     (* keeps track of definitions introduced by Z3; these get added during the
-       proof and are deleted at the end, just before returning the final theorem.
-       all of them should be of the form: ``name = term`` *)
+       proof and are deleted at the end, just before returning the final
+       theorem.  Each is an equality with a proof variable on at least one
+       side.  Its stored orientation is retained; when both sides are proof
+       variables, the stored left side is the established definition name. *)
     definition_hyps : Term.term HOLset.set,
+    (* Proof variables still eligible for a definition.  [state_define]
+       removes an oriented definition's established left-hand name once,
+       instead of rescanning every prior definition at each rewrite. *)
+    flexible_vars : Term.term HOLset.set,
     (* stores certain theorems (proved by 'rewrite' or 'th_lemma') for
        later retrieval, to avoid re-reproving them *)
     thm_cache : Thm.thm Net.net,
@@ -110,6 +140,7 @@ local
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
       definition_hyps = #definition_hyps s,
+      flexible_vars = #flexible_vars s,
       thm_cache = #thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
@@ -119,11 +150,33 @@ local
       z3_version = #z3_version s
     }
 
+  fun oriented_definition_parts var_set definition =
+    let
+      val (left, right) = boolSyntax.dest_eq definition
+      fun eligible term =
+        Term.is_var term andalso HOLset.member (var_set, term)
+    in
+      if eligible left then SOME (left, right)
+      else if eligible right then SOME (right, left)
+      else NONE
+    end
+    handle Feedback.HOL_ERR _ => NONE
+
+  fun oriented_definition_name var_set definition =
+    Option.map Lib.fst (oriented_definition_parts var_set definition)
+
   fun state_define (s : state) (terms : Term.term list) : state =
-    {
+    let
+      val newly_rigid = List.mapPartial
+        (oriented_definition_name (#var_set s)) terms
+      fun make_rigid (name, flexible) =
+        HOLset.delete (flexible, name)
+        handle HOLset.NotFound => flexible
+    in {
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
+      flexible_vars = List.foldl make_rigid (#flexible_vars s) newly_rigid,
       thm_cache = #thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
@@ -131,13 +184,14 @@ local
       skeleton_context = #skeleton_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
-    }
+    } end
 
   fun state_cache_thm (s : state) (thm : Thm.thm) : state =
     {
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = #definition_hyps s,
+      flexible_vars = #flexible_vars s,
       thm_cache = Net.insert (Thm.concl thm, thm) (#thm_cache s),
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
@@ -4228,46 +4282,76 @@ local
   fun boolean_normalized_unification (lhs, rhs, var_set) =
     let
       fun normalize tm =
-        let
+        if boolSyntax.is_neg tm andalso
+           boolSyntax.is_neg (boolSyntax.dest_neg tm) then let
           val body = boolSyntax.dest_neg (boolSyntax.dest_neg tm)
           val step = Thm.SYM (Thm.SPEC body NOT_NOT_INTRO)
         in
           Thm.TRANS step (normalize body)
-        end
-        handle Feedback.HOL_ERR _ => Thm.REFL tm
+        end else Thm.REFL tm
       val lhs_normalized = normalize lhs
       val rhs_normalized = normalize rhs
       val lhs' = boolSyntax.rhs (Thm.concl lhs_normalized)
       val rhs' = boolSyntax.rhs (Thm.concl rhs_normalized)
-      fun complementary_unification () =
-        let
-          val rhs_body = boolSyntax.dest_neg rhs'
-          val premise = Library.gen_instantiation
-            (rhs_body, boolSyntax.mk_neg lhs', var_set)
-          val p = Term.mk_var ("p", Type.bool)
-          val q = Term.mk_var ("q", Type.bool)
-        in
-          Thm.MP (Thm.INST [p |-> rhs_body, q |-> lhs'] NOT_REVERSE)
-            premise
-        end
-        handle Feedback.HOL_ERR _ =>
+      datatype unification = Direct of Thm.thm
+        | RightNegation of Term.term * Thm.thm
+        | LeftNegation of Term.term * Thm.thm
+      fun no_complementary_unification _ =
+        raise ORDINARY_DEFINITION_UNIFICATION_DECLINE
+      fun left_negation input =
+        if boolSyntax.is_neg lhs' then
           let
             val lhs_body = boolSyntax.dest_neg lhs'
-            val premise = Library.gen_instantiation
-              (lhs_body, boolSyntax.mk_neg rhs', var_set)
-            val p = Term.mk_var ("p", Type.bool)
-            val q = Term.mk_var ("q", Type.bool)
           in
+            with_expected_instantiation_fallback
+              (fn input => LeftNegation
+                (lhs_body, Library.gen_instantiation input))
+              no_complementary_unification
+              (lhs_body, boolSyntax.mk_neg rhs', var_set)
+          end
+        else no_complementary_unification input
+      fun complementary input =
+        if boolSyntax.is_neg rhs' then
+          let
+            val rhs_body = boolSyntax.dest_neg rhs'
+          in
+            with_expected_instantiation_fallback
+              (fn input => RightNegation
+                (rhs_body, Library.gen_instantiation input))
+              left_negation
+              (rhs_body, boolSyntax.mk_neg lhs', var_set)
+          end
+        else left_negation input
+      val plan = with_expected_instantiation_fallback
+        (Direct o Library.gen_instantiation) complementary
+        (lhs', rhs', var_set)
+      val p = Term.mk_var ("p", Type.bool)
+      val q = Term.mk_var ("q", Type.bool)
+      val unified =
+        case plan of
+          Direct theorem => theorem
+        | RightNegation (rhs_body, premise) =>
+            Thm.MP (Thm.INST [p |-> rhs_body, q |-> lhs'] NOT_REVERSE)
+              premise
+        | LeftNegation (lhs_body, premise) =>
             Thm.SYM
               (Thm.MP (Thm.INST [p |-> lhs_body, q |-> rhs'] NOT_REVERSE)
                 premise)
-          end
-      val unified = Library.gen_instantiation (lhs', rhs', var_set)
-        handle Feedback.HOL_ERR _ => complementary_unification ()
     in
       Thm.TRANS lhs_normalized
         (Thm.TRANS unified (Thm.SYM rhs_normalized))
     end
+
+  (* Only exhaustion of the documented unification alternatives is an
+     ordinary ladder decline.  Any HOL_ERR from theorem construction or an
+     unclassified unifier failure must escape the surrounding broad rewrite
+     handlers through [DEFINITION_REWRITE_ERROR]. *)
+  fun definition_unification_boundary action =
+    action ()
+    handle ORDINARY_DEFINITION_UNIFICATION_DECLINE =>
+      raise ERR "z3_rewrite" "proof-local unification declined"
+         | Feedback.HOL_ERR holerr =>
+      raise DEFINITION_REWRITE_ERROR (Feedback.HOL_ERR holerr)
 
   fun has_arithmetic_operator target =
     Lib.can (HolKernel.find_term (fn tm =>
@@ -4325,7 +4409,7 @@ local
      normalized proposition is discharged by its arithmetic owner (including
      the ediv/emod ladder) or by kernel reflexivity; definitions never become
      a general-purpose contextual rewrite set. *)
-  fun definition_normalization_prove var_set definitions target =
+  fun checked_definition_normalization var_set definitions target =
     let
       fun oriented definition =
         let
@@ -4349,6 +4433,19 @@ local
           "no checked proof-local equality definition"
       val normalization = Rewrite.PURE_REWRITE_CONV rewrite_theorems target
       val normalized = boolSyntax.rhs (Thm.concl normalization)
+    in
+      (normalization, normalized)
+    end
+    handle Conv.UNCHANGED =>
+      raise ERR "definition_normalization_prove"
+        "checked definitions do not occur in target"
+
+  fun definition_normalization_prove_with remember
+      var_set definitions target =
+    let
+      val (normalization, normalized) =
+        checked_definition_normalization var_set definitions target
+      val () = remember (normalization, normalized)
       fun reflexive () =
         let val (left, right) = boolSyntax.dest_eq normalized
         in
@@ -4369,9 +4466,9 @@ local
     in
       Thm.EQ_MP (Thm.SYM normalization) decision
     end
-    handle Conv.UNCHANGED =>
-      raise ERR "definition_normalization_prove"
-        "checked definitions do not occur in target"
+
+  fun definition_normalization_prove var_set definitions =
+    definition_normalization_prove_with ignore var_set definitions
 
   val NEGATED_IMPLICATION_ANTECEDENT = Tactical.prove
     (``!p q. ~(p ==> q) ==> p``, tautLib.TAUT_TAC)
@@ -4502,6 +4599,8 @@ local
     val (l, r) = boolSyntax.dest_eq t
     val attempts = ref ([] : string list)
     val deferred_unification = ref (NONE : (thm * term list) option)
+    val checked_normalization =
+      ref (NONE : (thm * term) option)
     val pre_bblast_skeleton_attempted = ref false
     val pre_bblast_state = ref (NONE : state option)
     fun record_attempt fragment =
@@ -4807,7 +4906,9 @@ local
     (let
        val theorem = rewrite_profile "proof-local-definition-normalization"
          "rewrite(13a)(definition-normalization)"
-         (definition_normalization_prove (#var_set state)
+         (definition_normalization_prove_with
+           (fn result => checked_normalization := SOME result)
+           (#var_set state)
            (HOLset.listItems (#definition_hyps state))) t
      in
        (state_cache_thm state theorem, theorem)
@@ -4825,26 +4926,45 @@ local
     (* E1(a): one checked unifier decides proof-local definitions.  Safe
        definitions return immediately; bare aliases are saved for the end so
        semantic theory procedures retain their established priority. *)
-    let
-      val thm = rewrite_profile "proof-local-definitions"
-        "rewrite(14)(unification)"
-        (fn input => Library.gen_instantiation input
-          handle Feedback.HOL_ERR _ => boolean_normalized_unification input)
-        (l, r, #var_set state)
-      val asl = Thm.hyp thm
-      val _ = assert_rewrite_definitions state asl
-      fun is_safe_early_definition tm =
-        let val (name, residue) = boolSyntax.dest_eq tm
-        in Term.type_of name = Type.bool orelse not (Term.is_var residue) end
-      val safe = not (List.null asl) andalso
-        List.all is_safe_early_definition asl
-    in
-      if safe then
-        (state_define (state_cache_thm state thm) asl, thm)
-      else
-        (deferred_unification := SOME (thm, asl);
-         raise ERR "z3_rewrite" "deferred proof-local variable alias")
-    end
+    definition_unification_boundary (fn () =>
+      let
+        fun normalized_unification input =
+          case !checked_normalization of
+            NONE => boolean_normalized_unification input
+          | SOME (normalization, normalized) =>
+              let
+                val (normalized_left, normalized_right) =
+                  boolSyntax.dest_eq normalized
+                val theorem = boolean_normalized_unification
+                  (normalized_left, normalized_right,
+                   #flexible_vars state)
+              in
+                Thm.EQ_MP (Thm.SYM normalization) theorem
+              end
+        val thm = rewrite_profile "proof-local-definitions"
+          "rewrite(14)(unification)"
+          (fn () => gen_instantiation_with_expected_fallback
+            normalized_unification
+            (l, r, #flexible_vars state)) ()
+        val asl = Thm.hyp thm
+        val old_definitions = #definition_hyps state
+        val new_definitions = List.filter
+          (fn definition =>
+            not (HOLset.member (old_definitions, definition))) asl
+        val _ = assert_rewrite_definitions state new_definitions
+        fun is_safe_early_definition tm =
+          let val (name, residue) = boolSyntax.dest_eq tm
+          in Term.type_of name = Type.bool orelse not (Term.is_var residue) end
+        val safe = List.all is_safe_early_definition new_definitions
+      in
+        if List.null new_definitions then
+          (state_cache_thm state thm, thm)
+        else if safe then
+          (state_define (state_cache_thm state thm) new_definitions, thm)
+        else
+          (deferred_unification := SOME (thm, new_definitions);
+           raise ORDINARY_DEFINITION_UNIFICATION_DECLINE)
+      end)
 
     handle Feedback.HOL_ERR _ =>
 
@@ -6697,8 +6817,9 @@ local
      -------------  remove_definitions (defs, var_set)
        A |- t
 
-     Each definition in `defs` must be of the form ``var = term``, where `var`
-     must not be free in `t` nor in `A` and must be in `var_set`.
+     Each definition in `defs` must be an equality with a variable from
+     `var_set` on either side.  That variable must not be free in `t` nor in
+     `A`; its stored equality orientation is preserved.
 
      There is a major complication: some definitions reference variables in
      other definitions and they may even be duplicated (with and without
@@ -6761,7 +6882,160 @@ local
      recurse into this same function, with the new set of definitions that are
      to be removed (corresponding to one less variable). Note that in general,
      at no point we needed to fully expand a definition (unless it's already
-     expanded). *)
+     expanded).  Initial aggregate dependency summaries are computed once per
+     elimination pass.  A pass with no ordinary leaf performs an optional
+     second per-RHS summary pass for the SCC graph.  Recursive passes can
+     therefore rescan surviving definitions, giving a quadratic number of
+     summary computations in the number of definitions in the worst case. *)
+
+  fun prove_self_word_identity
+      (definition, lhs, rhs, self_dependent, _) =
+    (if self_dependent andalso
+        wordsSyntax.is_word_type (Term.type_of lhs) then
+       SOME (profile
+         "check_proof(remove_definitions:self-word-identity)"
+         (fn definition =>
+           if Term.is_var rhs andalso rhs ~~ lhs then
+             Thm.REFL lhs
+           else
+             bv_resource_prove "remove-definitions-self-word-identity"
+               (word_decider_attempt
+                 "remove_definitions:self-word-identity"
+                 (Feedback.trace ("print blast counterexamples", 0)
+                   blastLib.BBLAST_PROVE)) definition) definition)
+     else NONE)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else NONE
+
+  fun with_definition_dependency var_set definition consume =
+    let
+      val (lhs, rhs) = Option.valOf
+        (oriented_definition_parts var_set definition)
+      val (stored_left, stored_right) = boolSyntax.dest_eq definition
+      val name_on_left = Term.is_var stored_left andalso
+        Term.term_eq stored_left lhs
+      val () =
+        if name_on_left orelse
+           (Term.is_var stored_right andalso Term.term_eq stored_right lhs) then
+          ()
+        else
+          raise ERR "with_definition_dependency"
+            "oriented name is absent from stored definition"
+      val dependencies = Term.FVL_dag [rhs] Term.empty_tmset
+      val entry = (definition, lhs, rhs,
+        HOLset.member (dependencies, lhs), name_on_left)
+    in
+      consume (entry, dependencies)
+    end
+
+  fun align_instantiated_definition_hypothesis
+      (name_on_left, inst, residue, theorem) =
+    let
+      (* The selected name does not occur in [residue], by the elimination
+         occurs-check.  Constructing the post-INST hypothesis from these
+         existing nodes therefore avoids substituting through a shared RHS. *)
+      val target =
+        if name_on_left then boolSyntax.mk_eq (inst, residue)
+        else boolSyntax.mk_eq (residue, inst)
+      val candidate = if name_on_left then theorem else Thm.SYM theorem
+    in
+      Thm.EQ_MP (Thm.ALPHA (Thm.concl candidate) target) candidate
+    end
+
+  fun word_list_outer_candidate (left, right) =
+    if bitstringSyntax.is_v2w right then SOME (left, right, true)
+    else if bitstringSyntax.is_v2w left then SOME (right, left, false)
+    else NONE
+
+  fun checked_word_list_definition
+      var_set (name_on_left, left, right) =
+    case word_list_outer_candidate (left, right) of
+      NONE => NONE
+    | SOME (word, vector, vector_on_right) =>
+        SmtResource.with_resource_step_time "BitVector"
+          "remove-definitions-word-list-instantiation"
+          (fn () =>
+            let
+              val concrete = boolSyntax.mk_eq (left, right)
+              val () = SmtResource.check_resource_goal "BitVector"
+                "remove-definitions-word-list-instantiation" concrete
+              val (list_tm, index_ty) = bitstringSyntax.dest_v2w vector
+              val detailed =
+                if listSyntax.is_list list_tm andalso
+                   wordsSyntax.is_word_type (Term.type_of word) andalso
+                   fcpSyntax.is_numeric_type index_ty andalso
+                   fcpSyntax.is_numeric_type
+                     (wordsSyntax.dest_word_type (Term.type_of word)) then
+                  let
+                    val (bits, _) = listSyntax.dest_list list_tm
+                    val width = List.length bits
+                    val word_width = fcpSyntax.dest_int_numeric_type
+                      (wordsSyntax.dest_word_type (Term.type_of word))
+                    val vector_width =
+                      fcpSyntax.dest_int_numeric_type index_ty
+                    val valid_bits = List.all
+                      (fn bit => Term.is_var bit andalso
+                        Term.type_of bit = Type.bool andalso
+                        HOLset.member (var_set, bit)) bits
+                    val valid_dimensions = word_width = width andalso
+                      vector_width = width
+                    val valid =
+                      if not (valid_bits andalso valid_dimensions) then false
+                      else
+                        let
+                          val bit_set = HOLset.addList
+                            (HOLset.empty Term.var_compare, bits)
+                          val word_variables =
+                            Term.FVL_dag [word] Term.empty_tmset
+                        in
+                          HOLset.numItems bit_set = width andalso
+                          List.all
+                            (fn bit => not
+                              (HOLset.member (word_variables, bit))) bits
+                        end
+                  in
+                    if valid then SOME (bits, index_ty) else NONE
+                  end
+                else NONE
+            in
+              case detailed of
+                NONE => NONE
+              | SOME (bits, index_ty) =>
+                  let
+                    val width = List.length bits
+                    val word_var = Term.mk_var
+                      ("packed_definition_word", Term.type_of word)
+                    fun bit_definition (index, bit) =
+                      boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
+                        (numSyntax.term_of_int (width - index - 1),
+                         word_var))
+                    val definitions = List.map bit_definition
+                      (ListPair.zip (List.tabulate (width, Lib.I), bits))
+                    val schema_vector = bitstringSyntax.mk_v2w
+                      (listSyntax.mk_list (bits, Type.bool), index_ty)
+                    val conclusion = boolSyntax.mk_eq
+                      (word_var, schema_vector)
+                    val schema = boolSyntax.list_mk_imp
+                      (definitions, conclusion)
+                    val () = require_bv_family
+                      "remove-definitions-word-list-instantiation" schema
+                    val () = SmtResource.check_resource_goal "BitVector"
+                      "remove-definitions-word-list-instantiation" schema
+                    val theorem = Tactical.TAC_PROOF
+                      ((definitions, conclusion),
+                       Tactical.THEN
+                         (bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [],
+                          blastLib.BBLAST_TAC))
+                    val theorem = Thm.INST [word_var |-> word] theorem
+                    val theorem =
+                      if vector_on_right then theorem else Thm.SYM theorem
+                  in
+                    SOME (align_instantiated_definition_hypothesis
+                      (name_on_left, left, right, theorem))
+                  end
+            end) ()
 
   fun remove_definitions (defs, var_set, thm): Thm.thm =
   let
@@ -6788,10 +7062,12 @@ local
             then SOME (Drule.EQT_ELIM thm)
             else NONE
           end
-          handle Feedback.HOL_ERR _ => NONE
-        fun is_var_def def =
-          boolSyntax.is_eq def andalso
-          Term.is_var (Lib.fst (boolSyntax.dest_eq def))
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else NONE
+        fun is_var_def def = Option.isSome
+          (oriented_definition_parts var_set def)
         val (ground_defs, defs) =
           List.partition (not o is_var_def) (HOLset.listItems defs)
         fun discharge_ground_def (def, thm) =
@@ -6802,33 +7078,35 @@ local
           thm (HOLset.addList (Term.empty_tmset, ground_defs))
         (* Substituting fpa2bv's per-bit definitions can turn its packed-word
            definition into the cyclic-looking but valid identity
-           [w = v2w (GENLIST (flip word_bit w) ...)].  Discharge such checked
-           word identities before searching the remaining definition DAG. *)
-        fun prove_word_identity def =
-          let val (lhs, _) = boolSyntax.dest_eq def in
-            if wordsSyntax.is_word_type (Term.type_of lhs) then
-              SOME (blastLib.BBLAST_PROVE def)
-            else NONE
-          end
-          handle Feedback.HOL_ERR _ => NONE
-               | HolSatLib.SAT_cex _ => NONE
-        fun discharge_word_identity (def, (remaining, thm)) =
-          case prove_word_identity def of
-            SOME def_thm => (remaining, Drule.PROVE_HYP def_thm thm)
-          | NONE => (def :: remaining, thm)
-        val (defs, thm) = List.foldl discharge_word_identity ([], thm) defs
-        val defs = HOLset.addList (Term.empty_tmset, defs)
+           [w = v2w (GENLIST (flip word_bit w) ...)].  Only a definition that
+           actually references its own name can have this role. *)
+        (* Compute the initial aggregate RHS summary once for each definition
+           in this pass.  Its self bit is retained in the compact entry; the
+           full set is immediately folded into the aggregate only when that
+           definition remains.  The cycle-only SCC fallback below may make one
+           additional summarized pass. *)
+        fun process_definition
+            (definition, (remaining, theorem, referenced)) =
+          with_definition_dependency var_set definition
+          (fn (entry, dependencies) =>
+            case prove_self_word_identity entry of
+              SOME identity =>
+                (remaining, Drule.PROVE_HYP identity theorem, referenced)
+            | NONE =>
+                (entry :: remaining, theorem,
+                 HOLset.union (dependencies, referenced)))
+        val (entries, thm, ref_set) = List.foldl process_definition
+          ([], thm, Term.empty_tmset) defs
       in
-        if HOLset.isEmpty defs then thm
+        if List.null entries then thm
         else
       let
-        (* For convenience, `dest_defs` will contain a list of `(lhs, rhs)`
-           pairs, where `lhs` is the var being defined and `rhs` its
-           definition. *)
-        val dest_defs = List.map boolSyntax.dest_eq (HOLset.listItems defs)
-        val (lhs_l, rhs_l) = ListPair.unzip dest_defs
-        (* `ref_set` will contain the set of all variables being referenced *)
-        val ref_set = Term.FVL rhs_l Term.empty_tmset
+        (* Retain both the exact stored equality and its oriented name/residue.
+           The exact orientation is needed after [INST]: reverse definitions
+           become [residue = inst], whereas the generated discharge theorem is
+           naturally proved as [inst = residue]. *)
+        val lhs_l = List.map (fn (_, lhs, _, _, _) => lhs) entries
+        (* `ref_set` contains variables referenced by remaining definitions. *)
         (* `def_set` will contain the set of all variables being defined.
            It should always be a subset of `var_set`. *)
         val def_set = List.foldl (Lib.flip HOLset.add) Term.empty_tmset lhs_l
@@ -6837,23 +7115,91 @@ local
            but not being referenced *)
         val unref_set = HOLset.difference (def_set, ref_set)
 
-        (* A packed fpa2bv word may participate in the benign cycle
+        (* The initial summaries above identify ordinary DAG leaves without
+           retaining one set per definition.  Only when no leaf exists, build
+           temporary per-RHS summaries and an SCC graph.  A packed fpa2bv word
+           may participate in the benign cycle
            [k = pack x], [k = v2w bs], [b_i = bit i k].  If no ordinary DAG
-           leaf exists, select the multiply-defined packed word; the checked
-           word-list fallback below breaks the cycle into Boolean definitions. *)
-        fun multiply_defined var =
-          List.length (List.filter
-            (fn (lhs, _) => Term.aconv lhs var) dest_defs) > 1
-        val duplicate_set = HOLset.filter multiply_defined def_set
+           leaf exists, select a multiply-defined packed word with no direct
+           self-definition and an anchor RHS outside the candidate variable's
+           own SCC.  The checked word-list family below then breaks the cycle
+           into Boolean definitions. *)
+        fun cycle_selection () =
+          let
+            fun summarize (entry as (_, _, residue, _, _)) =
+              (entry, HOLset.intersection
+                (Term.FVL_dag [residue] Term.empty_tmset, def_set))
+            val summaries = List.map summarize entries
+            val graph = HOLset.foldl
+              (fn (name, graph) =>
+                Definition_Graph.new_node (name, ()) graph)
+              Definition_Graph.empty def_set
+            fun add_dependencies
+                (((_, name, _, _, _), dependencies), graph) =
+              HOLset.foldl
+                (fn (dependency, graph) =>
+                  Definition_Graph.add_edge (name, dependency) graph)
+                graph dependencies
+            val graph = List.foldl add_dependencies graph summaries
+            val components = Definition_Graph.strong_conn graph
+            fun own_component var = Option.valOf
+              (List.find (List.exists (fn member => Term.term_eq member var))
+                components)
+            fun classify (var, (candidates, preferred, direct_self_count)) =
+              let
+                val component = own_component var
+                val definitions = List.filter
+                  (fn ((_, lhs, _, _, _), _) => Term.term_eq lhs var)
+                  summaries
+                val directly_self_dependent = List.exists
+                  (fn ((_, _, _, self_dependent, _), _) => self_dependent)
+                  definitions
+                fun outside_own_component (_, dependencies) =
+                  List.all
+                    (fn member => not (HOLset.member (dependencies, member)))
+                    component
+                val independent =
+                  if directly_self_dependent orelse
+                     List.length definitions <= 1 then NONE
+                  else List.find outside_own_component definitions
+                val (candidates, preferred) =
+                  case independent of
+                    SOME ((_, _, residue, _, _), _) =>
+                      (HOLset.add (candidates, var),
+                       (var, residue) :: preferred)
+                  | NONE => (candidates, preferred)
+              in
+                (candidates, preferred,
+                 if directly_self_dependent then direct_self_count + 1
+                 else direct_self_count)
+              end
+          in
+            HOLset.foldl classify (Term.empty_tmset, [], 0) def_set
+          end
+        val cycle_selection =
+          if HOLset.isEmpty unref_set then
+            SOME (cycle_selection ())
+          else NONE
         val elimination_set =
-          if HOLset.isEmpty unref_set then duplicate_set else unref_set
+          case cycle_selection of
+            SOME (duplicate_set, _, _) => duplicate_set
+          | NONE => unref_set
         val () =
           if HOLset.isEmpty elimination_set then
-            raise ERR "remove_definitions"
-              ("no unreferenced variables; definitions=" ^
-               String.concatWith "; "
-                 (List.map Library.term_to_string
-                   (HOLset.listItems defs)))
+            let
+              val direct_self_count =
+                case cycle_selection of
+                  SOME (_, _, count) => count
+                | NONE => 0
+            in
+              raise ERR "remove_definitions"
+                ("no unreferenced variables; definition_count=" ^
+                 Int.toString (List.length entries) ^
+                 "; defined_variable_count=" ^
+                 Int.toString (HOLset.numItems def_set) ^
+                 "; direct_self_candidate_count=" ^
+                 Int.toString direct_self_count)
+            end
           else
             ()
 
@@ -6862,73 +7208,71 @@ local
           (HOLset.find (fn _ => true) elimination_set)
 
         (* Get all the variable's definitions *)
-        fun filter_def (v, d) = if Term.term_eq v var then SOME d else NONE
-        val defs_to_remove = List.mapPartial filter_def dest_defs
+        fun filter_def (_, name, residue, _, name_on_left) =
+          if Term.term_eq name var then SOME (residue, name_on_left) else NONE
+        val defs_to_remove = List.mapPartial filter_def entries
 
-        (* Pick an arbitrary definition for instantiation *)
-        val inst = List.hd defs_to_remove
+        (* An ordinary leaf can use either definition.  In the exceptional
+           duplicate-cycle branch, use the checked residue with no dependency
+           from the candidate variable's own SCC; choosing the packed vector
+           instead would turn its bit definitions into self-cycles. *)
+        val inst =
+          case cycle_selection of
+            NONE => Lib.fst (List.hd defs_to_remove)
+          | SOME (_, preferred, _) =>
+              Lib.snd (Option.valOf
+                (List.find (fn (name, _) => Term.term_eq name var) preferred))
 
-        (* Instantiate the variable with the definition *)
-        val thm = Thm.INST [var |-> inst] thm
-
-        (* fpa2bv can define one packed word both semantically and as [mkbv]
-           over fresh Boolean skolems.  Ordinary syntactic unification cannot
-           solve that word equation; BBLAST can, under the canonical per-bit
-           definitions that checked definition elimination will remove next. *)
-        fun word_list_instantiation (left, right) =
-          let
-            fun dest_bits tm =
-              let
-                val (list_tm, index_ty) = bitstringSyntax.dest_v2w tm
-                val (bits, _) = listSyntax.dest_list list_tm
-                val _ = List.all
-                  (fn bit => Term.is_var bit andalso
-                    HOLset.member (var_set, bit)) bits orelse raise Match
-              in
-                (bits, index_ty)
-              end
-            val (word, bits, index_ty) =
-              case Lib.total dest_bits right of
-                SOME (bits, index_ty) => (left, bits, index_ty)
-              | NONE =>
-                  let val (bits, index_ty) = dest_bits left
-                  in (right, bits, index_ty) end
-            val width = List.length bits
-            val word_var = Term.mk_var
-              ("packed_definition_word", Term.type_of word)
-            fun bit_definition (index, bit) =
-              boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
-                (numSyntax.term_of_int (width - index - 1), word_var))
-            val definitions = List.map bit_definition
-              (ListPair.zip (List.tabulate (width, Lib.I), bits))
-            val vector = bitstringSyntax.mk_v2w
-              (listSyntax.mk_list (bits, Type.bool), index_ty)
-            val conclusion = boolSyntax.mk_eq (word_var, vector)
-            val theorem = Tactical.TAC_PROOF ((definitions, conclusion),
-              Tactical.THEN
-                (bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [],
-                 blastLib.BBLAST_TAC))
-            val theorem = Thm.INST [word_var |-> word] theorem
-          in
-            if Term.aconv (Thm.concl theorem)
-                (boolSyntax.mk_eq (left, right)) then theorem
-            else Thm.SYM theorem
-          end
+        (* For an ordinary leaf, preserve the established unifier-first route.
+           Only the SCC duplicate branch tries the complete packed-word family
+           first, preventing a still-flexible anchor from being redefined as
+           the vector and merely renaming the same cycle. *)
+        fun syntax_decline _ = raise ERR "word_list_instantiation"
+          "definition is not an independent packed-word family"
+        fun checked_family (name_on_left, left, right) =
+          case checked_word_list_definition var_set
+              (name_on_left, left, right) of
+            SOME theorem => theorem
+          | NONE => syntax_decline ()
+        fun ordinary_first (name_on_left, left, right) =
+          with_expected_instantiation_fallback
+            (fn input => align_instantiated_definition_hypothesis
+              (name_on_left, left, right, Library.gen_instantiation input))
+            (fn (left, right, _) =>
+              checked_family (name_on_left, left, right))
+            (left, right, var_set)
+        fun ordinary_after_family (name_on_left, left, right) =
+          with_expected_instantiation_fallback
+            (fn input => align_instantiated_definition_hypothesis
+              (name_on_left, left, right, Library.gen_instantiation input))
+            syntax_decline (left, right, var_set)
+        fun prove_definition (residue, name_on_left) =
+          if Portable.pointer_eq (inst, residue) then
+            align_instantiated_definition_hypothesis
+              (name_on_left, inst, residue, Thm.REFL inst)
+          else
+            case cycle_selection of
+              NONE => ordinary_first (name_on_left, inst, residue)
+            | SOME _ =>
+                (case checked_word_list_definition var_set
+                    (name_on_left, inst, residue) of
+                   SOME theorem => theorem
+                 | NONE =>
+                     ordinary_after_family (name_on_left, inst, residue))
         val hyp_thms = List.map
-          (fn def =>
-            Library.gen_instantiation (inst, def, var_set)
-            handle _ => word_list_instantiation (inst, def))
-          defs_to_remove
+          prove_definition defs_to_remove
 
-        (* Remove all the definitions corresponding to this variable *)
+        (* Build every discharge theorem before traversing the global theorem
+           with INST.  Only then remove the exact post-INST hypotheses. *)
+        val thm = Thm.INST [var |-> inst] thm
         fun remove_hyp (hyp_thm, thm) = Drule.PROVE_HYP hyp_thm thm
         val thm = List.foldl remove_hyp thm hyp_thms
 
         (* Compute the new set of definitions to remove when recursing.
            Basically, it's all the definitions in `thm`, i.e. all hypotheses of
            the form ``var = def``, where ``var`` is in `var_set` *)
-        fun is_definition hyp = boolSyntax.is_eq hyp andalso
-          HOLset.member (var_set, Lib.fst (boolSyntax.dest_eq hyp))
+        fun is_definition hyp = Option.isSome
+          (oriented_definition_parts var_set hyp)
         fun add_def (hyp, set) =
           if is_definition hyp then HOLset.add (set, hyp) else set
         val new_defs = HOLset.foldl add_def Term.empty_tmset (Thm.hypset thm)
@@ -7033,6 +7377,32 @@ in
   val unsupported_hyp_removal_diagnostic =
     unsupported_hyp_removal_diagnostic
   val remove_definitions = remove_definitions
+  fun prove_self_word_identity_for_test
+      (definition, lhs, rhs, self_dependent) =
+    prove_self_word_identity
+      (definition, lhs, rhs, self_dependent, true)
+  val align_instantiated_definition_hypothesis_for_test =
+    align_instantiated_definition_hypothesis
+  val checked_word_list_definition_for_test = checked_word_list_definition
+  fun definition_dependency_summary_for_test definition =
+    let
+      val variables = Term.FVL_dag [definition] Term.empty_tmset
+    in
+    with_definition_dependency variables definition
+      (fn ((_, _, _, self_dependent, _), dependencies) =>
+        {self_dependent = self_dependent,
+         free_variables = HOLset.numItems dependencies})
+    end
+  val gen_instantiation_with_expected_fallback_for_test =
+    gen_instantiation_with_expected_fallback
+  val with_expected_instantiation_fallback_for_test =
+    with_expected_instantiation_fallback
+  fun definition_unification_boundary_for_test action =
+    definition_unification_boundary action
+    handle DEFINITION_REWRITE_ERROR error => raise error
+  fun ordinary_definition_unification_decline_for_test () =
+    definition_unification_boundary
+      (fn () => raise ORDINARY_DEFINITION_UNIFICATION_DECLINE)
   val remove_extra_hyps = remove_extra_hyps
   val remove_hyps_for_test = remove_hyps
   val quantified_boolean_rewrite_prove_for_test =
@@ -7282,6 +7652,7 @@ in
     allowed_asserted_hyps = allowed_asserted_hyps,
     asserted_hyps = Term.empty_tmset,
     definition_hyps = Term.empty_tmset,
+    flexible_vars = proof_vars proof,
     thm_cache = Net.empty,
     var_set = proof_vars proof,
     bit_decompositions = proof_bit_decompositions proof,
@@ -7369,6 +7740,39 @@ in
 
   fun replay_root_for_test proof : Thm.thm =
     replay_root_with_definitions_for_test [] proof
+
+  fun rewrite_with_checked_definitions_for_test
+      variables definitions target =
+    let
+      val proof = update_proof_vars (empty_proof "4.12.4") variables
+      val state = state_define
+        (initial_replay_state Term.empty_tmset [] proof) definitions
+      val (state, theorem) = z3_rewrite (state, target)
+    in
+      {theorem = theorem,
+       definitions = HOLset.listItems (#definition_hyps state)}
+    end
+
+  fun flexible_rewrite_variables_for_test variables definitions =
+    let
+      val proof = update_proof_vars (empty_proof "4.12.4") variables
+      val state = state_define
+        (initial_replay_state Term.empty_tmset [] proof) definitions
+    in
+      #flexible_vars state
+    end
+
+  fun incremental_definition_state_for_test variables batches =
+    let
+      val proof = update_proof_vars (empty_proof "4.12.4") variables
+      val initial = initial_replay_state Term.empty_tmset [] proof
+      val state = List.foldl
+        (fn (definitions, state) => state_define state definitions)
+        initial batches
+    in
+      {flexible = #flexible_vars state,
+       definitions = #definition_hyps state}
+    end
 
   fun def_axiom_for_test target : Thm.thm =
   let

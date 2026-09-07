@@ -1,0 +1,37 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `FVL_dag`
+
+``` hol4
+Term.FVL_dag : term list -> term set -> term set
+```
+
+------------------------------------------------------------------------
+
+Computes the free variables of physically shared term graphs.
+
+An invocation `FVL_dag [t1,...,tn] V` returns the same set as
+`FVL [t1,...,tn] V`.  It adds the free variables of `t1,...,tn` to the
+initial accumulator `V` and preserves variables already in `V`.
+
+During one invocation, the implementation memoizes term nodes by physical
+identity.  This prevents repeated traversal of a shared subterm.  Portable
+physical-identity lookup has a quadratic worst-case cost in the number of
+distinct nodes.  Both kernels retain an intrinsic free-variable summary for
+each visited node.  The standard kernel additionally retains the free de
+Bruijn indices of each node; it interprets only indices referenced by a lazy
+closure body through explicit-substitution lookups, without expanding the
+closure.  Summary storage can be the product of the numbers of nodes and
+variables or indices.  The operation-local memo is discarded when the call
+returns.
+
+Use `FVL` for ordinary term trees.  Use `FVL_dag` when physical sharing can
+make a tree traversal repeat a large subgraph.
+
+### Failure
+
+Never fails on well-formed terms.
+
+### See also
+
+[`Term.FVL`](#Term.FVL), [`Term.empty_varset`](#Term.empty_varset),
+[`Term.free_vars`](#Term.free_vars)

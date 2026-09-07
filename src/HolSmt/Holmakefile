@@ -84,6 +84,10 @@ HOLSMT_SELFTEST_LOGS = $(patsubst %,holsmt-selftest-%.log,\
 
 # The shards are memory-heavy. Keep their individual logs, but chain the
 # full matrix so a parallel jobserver cannot run multiple heaps at once.
+# Poly/ML's direct runner interprets this configurable cap in MiB.
+ifndef HOLSMT_SELFTEST_MAXHEAP
+HOLSMT_SELFTEST_MAXHEAP = 2800
+endif
 holsmt-selftest-1-8.log: holsmt-selftest-0-8.log
 holsmt-selftest-2-8.log: holsmt-selftest-1-8.log
 holsmt-selftest-3-8.log: holsmt-selftest-2-8.log
@@ -94,8 +98,15 @@ holsmt-selftest-7-8.log: holsmt-selftest-6-8.log
 
 all: $(HOLSMT_SELFTEST_LOGS)
 
+ifdef POLY
+holsmt-selftest-%.log: selftest.uo smtheap
+	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) $(HOLDIR)/bin/hol \
+	  --gcthreads=1 --maxheap $(HOLSMT_SELFTEST_MAXHEAP) run \
+	  --holstate=$(HOLHEAP) selftest 2>&1,$@)
+else
 holsmt-selftest-%.log: selftest.exe
 	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) ./selftest.exe 2>&1,$@)
+endif
 endif
 
 EXTRA_CLEANS = selftest.exe smtfloat-diff.exe holsmt-typecheck \

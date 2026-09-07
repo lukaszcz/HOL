@@ -324,6 +324,124 @@ fun FVL [] A = A
   | FVL ((t as Clos _)::rst) A    = FVL (push_clos t::rst) A
   | FVL (_::rst) A                = FVL rst A
 
+(* [FVL_dag] has the same result as [FVL], but computes an intrinsic summary
+   for each physically shared node once per operation.  A summary contains
+   both free variables and the de Bruijn indices that remain free at that
+   node.  This lets [Clos] inspect only indices actually referenced by its
+   body, through [Subst.exp_rel], without expanding an explicit substitution.
+
+   Portable ML exposes pointer equality but no identity hash, so lookup is
+   linear in the number of distinct nodes already seen: the worst-case bound
+   is quadratic in distinct nodes, not linear.  Retained variable/index
+   summaries may also be larger than the node count.  This separate API
+   preserves [FVL]'s linear behavior on ordinary trees. *)
+fun FVL_dag roots initial =
+  let
+    type summary = {fvs : term HOLset.set, bvs : int HOLset.set}
+    datatype action = Visit of term
+      | FinishComb of term * term * term
+      | FinishAbs of term * term
+      | PrepareClos of term * term Subst.subs * term
+      | FinishClos of term * term * int list * (int * term) list
+    val empty_indices = HOLset.empty Int.compare
+    val summaries = ref ([] : (term * summary) list)
+    fun lookup term =
+      case List.find
+          (fn (prior, _) => Portable.pointer_eq (term, prior))
+          (!summaries) of
+        SOME (_, summary) => SOME summary
+      | NONE => NONE
+    fun completed term =
+      case lookup term of
+        SOME summary => summary
+      | NONE => raise Fail "Term.FVL_dag: incomplete traversal"
+    fun save term summary = summaries := (term, summary) :: !summaries
+    fun union_summary ({fvs = left_fvs, bvs = left_bvs},
+        {fvs = right_fvs, bvs = right_bvs}) =
+      {fvs = HOLset.union (left_fvs, right_fvs),
+       bvs = HOLset.union (left_bvs, right_bvs)}
+    fun under_abs index = if index = 0 then NONE else SOME (index - 1)
+    fun close_index environment (index, (direct, residues)) =
+      case Subst.exp_rel (environment, index) of
+        (shift, NONE) => (shift :: direct, residues)
+      | (shift, SOME residue) => (direct, (shift, residue) :: residues)
+    fun add_shift shift (index, indices) =
+      HOLset.add (indices, index + shift)
+    fun add_residue ((shift, residue), summary) =
+      let val residue_summary = completed residue in
+        {fvs = HOLset.union (#fvs summary, #fvs residue_summary),
+         bvs = HOLset.foldl (add_shift shift) (#bvs summary)
+           (#bvs residue_summary)}
+      end
+    fun loop [] = ()
+      | loop (Visit term :: pending) =
+          if Option.isSome (lookup term) then loop pending
+          else
+            (case term of
+               Fv _ =>
+                 (save term
+                    {fvs = HOLset.add (empty_tmset, term),
+                     bvs = empty_indices};
+                  loop pending)
+             | Bv index =>
+                 (save term
+                    {fvs = empty_tmset,
+                     bvs = HOLset.add (empty_indices, index)};
+                  loop pending)
+             | Const _ =>
+                 (save term {fvs = empty_tmset, bvs = empty_indices};
+                  loop pending)
+             | Comb (operator, operand) =>
+                 loop (Visit operator :: Visit operand ::
+                   FinishComb (term, operator, operand) :: pending)
+             | Abs (_, body) =>
+                 loop (Visit body :: FinishAbs (term, body) :: pending)
+             | Clos (environment, body) =>
+                 loop (Visit body ::
+                   PrepareClos (term, environment, body) :: pending))
+      | loop (FinishComb (term, operator, operand) :: pending) =
+          (save term (union_summary
+             (completed operator, completed operand));
+           loop pending)
+      | loop (FinishAbs (term, body) :: pending) =
+          let
+            val body_summary = completed body
+            val indices = HOLset.foldl
+              (fn (index, result) =>
+                case under_abs index of
+                  SOME outer => HOLset.add (result, outer)
+                | NONE => result)
+              empty_indices (#bvs body_summary)
+          in
+            save term {fvs = #fvs body_summary, bvs = indices};
+            loop pending
+          end
+      | loop (PrepareClos (term, environment, body) :: pending) =
+          let
+            val (direct, residues) = HOLset.foldl
+              (close_index environment) ([], []) (#bvs (completed body))
+          in
+            loop (List.map (Visit o Lib.snd) residues @
+              FinishClos (term, body, direct, residues) :: pending)
+          end
+      | loop (FinishClos (term, body, direct, residues) :: pending) =
+          let
+            val body_summary = completed body
+            val base =
+              {fvs = #fvs body_summary,
+               bvs = HOLset.addList (empty_indices, direct)}
+          in
+            save term (List.foldl add_residue base residues);
+            loop pending
+          end
+    val () = loop (List.map Visit roots)
+    fun add_variable (variable, free) = HOLset.add (free, variable)
+    fun add_root (root, free) =
+      HOLset.foldl add_variable free (#fvs (completed root))
+  in
+    List.foldl add_root initial roots
+  end
+
 
 (* ----------------------------------------------------------------------
     free_in tm M : does tm occur free in M?

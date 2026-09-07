@@ -358,6 +358,59 @@ fun FVL0 tlist acc =
 
 fun FVL tlist = FVL0 (map FVTM tlist)
 
+(* Compute one intrinsic free-variable summary for every physical node.  This
+   avoids environment-sensitive cache keys: an abstraction deletes its named
+   binder from its body's summary, so shadowing and capture remain exact.
+   Pointer lookup is portable but linear, hence worst-case quadratic in the
+   number of distinct nodes.  Retained summaries may contain O(nodes * vars)
+   set entries.  [FVL] remains the ordinary-tree implementation. *)
+fun FVL_dag roots initial =
+  let
+    datatype action = Visit of term | FinishApp of term * term * term
+      | FinishAbs of term * term * term
+    val summaries = ref ([] : (term * term HOLset.set) list)
+    fun lookup term =
+      case List.find
+          (fn (prior, _) => Portable.pointer_eq (term, prior))
+          (!summaries) of
+        SOME (_, summary) => SOME summary
+      | NONE => NONE
+    fun completed term =
+      case lookup term of
+        SOME summary => summary
+      | NONE => raise Fail "Term.FVL_dag: incomplete traversal"
+    fun save term summary = summaries := (term, summary) :: !summaries
+    fun without variable summary =
+      HOLset.delete (summary, variable)
+      handle HOLset.NotFound => summary
+    fun loop [] = ()
+      | loop (Visit term :: pending) =
+          if Option.isSome (lookup term) then loop pending
+          else
+            (case term of
+               Var _ =>
+                 (save term (HOLset.add (empty_varset, term)); loop pending)
+             | Const _ => (save term empty_varset; loop pending)
+             | App (operator, operand) =>
+                 loop (Visit operator :: Visit operand ::
+                   FinishApp (term, operator, operand) :: pending)
+             | Abs (binder as Var _, body) =>
+                 loop (Visit body :: FinishAbs (term, binder, body) :: pending)
+             | Abs _ => raise Fail "Term.FVL_dag: malformed abstraction")
+      | loop (FinishApp (term, operator, operand) :: pending) =
+          (save term
+             (HOLset.union (completed operator, completed operand));
+           loop pending)
+      | loop (FinishAbs (term, binder, body) :: pending) =
+          (save term (without binder (completed body)); loop pending)
+    val () = loop (List.map Visit roots)
+    fun add_variable (variable, free) = HOLset.add (free, variable)
+    fun add_root (root, free) =
+      HOLset.foldl add_variable free (completed root)
+  in
+    List.foldl add_root initial roots
+  end
+
 
 local
   fun vars (v as Var _) A = Lib.insert v A
