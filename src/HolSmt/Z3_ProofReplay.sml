@@ -1604,6 +1604,10 @@ local
      node_reanchor_time : Time.time ref,
      sat_time : Time.time ref,
      total_time : Time.time ref}
+  datatype pending_sat_shape =
+      PendingSatShapeUntracked
+    | PendingSatShapeHit
+    | PendingSatShapeMiss of term
   type sat_shape_measurement =
     {cache_limit : int,
      calls : int ref,
@@ -1619,7 +1623,14 @@ local
      cache_lookups : int ref,
      cache_hits : int ref,
      cache_inserts : int ref,
-     cache_capacity_refusals : int ref}
+     cache_capacity_refusals : int ref,
+     pending : pending_sat_shape list ref,
+     pending_calls : int ref,
+     completed_calls : int ref,
+     completed_wall : Time.time ref,
+     cache_hit_completed_calls : int ref,
+     cache_hit_sat_wall : Time.time ref,
+     cache_hit_sat_max_wall : Time.time ref}
   type replay_measurement =
     {def_axiom : route_measurement,
      skeleton_congruence : route_measurement,
@@ -1697,7 +1708,14 @@ local
      cache_lookups = ref 0,
      cache_hits = ref 0,
      cache_inserts = ref 0,
-     cache_capacity_refusals = ref 0}
+     cache_capacity_refusals = ref 0,
+     pending = ref [],
+     pending_calls = ref 0,
+     completed_calls = ref 0,
+     completed_wall = ref Time.zeroTime,
+     cache_hit_completed_calls = ref 0,
+     cache_hit_sat_wall = ref Time.zeroTime,
+     cache_hit_sat_max_wall = ref Time.zeroTime}
 
   fun new_replay_measurement () : replay_measurement =
     {def_axiom = new_route_measurement (),
@@ -1790,7 +1808,9 @@ local
       ({cache_limit, calls, calls_observed, unique, repeats,
         max_multiplicity, untracked, errors, coverage_complete,
         cache_entries, cache_lookups, cache_hits, cache_inserts,
-        cache_capacity_refusals, ...} : sat_shape_measurement) =
+        cache_capacity_refusals, pending_calls, completed_calls,
+        completed_wall, cache_hit_completed_calls, cache_hit_sat_wall,
+        cache_hit_sat_max_wall, ...} : sat_shape_measurement) =
     " sat_shape_calls_started=" ^ Int.toString (!calls) ^
     " sat_shape_calls_observed=" ^ Int.toString (!calls_observed) ^
     " sat_shape_unique_observed=" ^ Int.toString (!unique) ^
@@ -1809,7 +1829,15 @@ local
     " sat_shape_cache_capacity_refusals=" ^
       Int.toString (!cache_capacity_refusals) ^
     " sat_shape_cache_entries=" ^
-      Int.toString (Redblackmap.numItems (!cache_entries))
+      Int.toString (Redblackmap.numItems (!cache_entries)) ^
+    " sat_shape_pending_calls=" ^ Int.toString (!pending_calls) ^
+    " sat_shape_sat_completed_calls=" ^ Int.toString (!completed_calls) ^
+    " sat_shape_sat_completed_wall=" ^ Time.toString (!completed_wall) ^
+    " sat_shape_cache_hit_completed_calls=" ^
+      Int.toString (!cache_hit_completed_calls) ^
+    " sat_shape_cache_hit_sat_wall=" ^ Time.toString (!cache_hit_sat_wall) ^
+    " sat_shape_cache_hit_sat_max_wall=" ^
+      Time.toString (!cache_hit_sat_max_wall)
 
   fun replay_measurement_text statistics =
     "measurement_enabled=true " ^
@@ -2102,15 +2130,20 @@ local
     let
       val calls = #calls measurement
       val _ = calls := !calls + 1
+      fun push pending =
+        (#pending measurement := pending :: !(#pending measurement);
+         #pending_calls measurement := !(#pending_calls measurement) + 1)
       fun mark_error () =
         (#errors measurement := !(#errors measurement) + 1;
          #untracked measurement := !(#untracked measurement) + 1;
          #coverage_complete measurement := false;
+         push PendingSatShapeUntracked;
          false)
       fun record () =
         if !calls > max_measured_sat_shape_calls then
           (#untracked measurement := !(#untracked measurement) + 1;
            #coverage_complete measurement := false;
+           push PendingSatShapeUntracked;
            true)
         else
           let
@@ -2136,19 +2169,69 @@ local
               SOME () =>
                 (#cache_hits measurement :=
                    !(#cache_hits measurement) + 1;
+                 push PendingSatShapeHit;
                  true)
             | NONE =>
-                if Redblackmap.numItems (!cache) <
-                    #cache_limit measurement then
-                  (cache := Redblackmap.insert (!cache, shape, ());
-                   #cache_inserts measurement :=
-                     !(#cache_inserts measurement) + 1;
-                   true)
-                else
-                  (#cache_capacity_refusals measurement :=
-                     !(#cache_capacity_refusals measurement) + 1;
-                   true)
+                (push (PendingSatShapeMiss shape); true)
           end
+    in
+      record () handle exn =>
+        if terminal_diagnostic_exception exn then raise exn else mark_error ()
+    end
+
+  fun record_sat_shape_completion
+      (measurement : sat_shape_measurement) elapsed =
+    let
+      fun mark_error () =
+        (#errors measurement := !(#errors measurement) + 1;
+         #coverage_complete measurement := false;
+         false)
+      fun complete pending =
+        case pending of
+          PendingSatShapeUntracked => true
+        | PendingSatShapeHit =>
+            (#cache_hit_completed_calls measurement :=
+               !(#cache_hit_completed_calls measurement) + 1;
+             #cache_hit_sat_wall measurement := Time.+
+               (!(#cache_hit_sat_wall measurement), elapsed);
+             #cache_hit_sat_max_wall measurement :=
+               if Time.compare
+                    (elapsed, !(#cache_hit_sat_max_wall measurement)) = GREATER
+               then elapsed
+               else !(#cache_hit_sat_max_wall measurement);
+             true)
+        | PendingSatShapeMiss shape =>
+            let val cache = #cache_entries measurement
+            in
+              case Redblackmap.peek (!cache, shape) of
+                SOME () => true
+              | NONE =>
+                  if Redblackmap.numItems (!cache) <
+                      #cache_limit measurement then
+                    (cache := Redblackmap.insert (!cache, shape, ());
+                     #cache_inserts measurement :=
+                       !(#cache_inserts measurement) + 1;
+                     true)
+                  else
+                    (#cache_capacity_refusals measurement :=
+                       !(#cache_capacity_refusals measurement) + 1;
+                     true)
+            end
+      fun record () =
+        let
+          val _ = #completed_calls measurement :=
+            !(#completed_calls measurement) + 1
+          val _ = #completed_wall measurement := Time.+
+            (!(#completed_wall measurement), elapsed)
+        in
+          case !(#pending measurement) of
+            [] => mark_error ()
+          | pending :: rest =>
+              (#pending measurement := rest;
+               #pending_calls measurement :=
+                 !(#pending_calls measurement) - 1;
+               complete pending)
+        end
     in
       record () handle exn =>
         if terminal_diagnostic_exception exn then raise exn else mark_error ()
@@ -2159,6 +2242,14 @@ local
       NONE => ()
     | SOME statistics =>
         if record_sat_shape_target (#sat_shapes statistics) target then ()
+        else #diagnostic_errors statistics :=
+          !(#diagnostic_errors statistics) + 1
+
+  fun observe_skeleton_sat_completion (_, elapsed) =
+    case !current_replay_measurement of
+      NONE => ()
+    | SOME statistics =>
+        if record_sat_shape_completion (#sat_shapes statistics) elapsed then ()
         else #diagnostic_errors statistics :=
           !(#diagnostic_errors statistics) + 1
 
@@ -2379,8 +2470,9 @@ local
         fun run () =
           case !current_replay_measurement of
             NONE => with_e0_replay_boundary_for duration replay input
-          | SOME _ => SmtSkeletonProve.with_sat_target_observer
+          | SOME _ => SmtSkeletonProve.with_sat_observers
               (SOME observe_skeleton_sat_target)
+              (SOME observe_skeleton_sat_completion)
               (with_e0_replay_boundary_for duration replay) input
         fun clear () =
           let
@@ -6814,16 +6906,19 @@ in
 
   fun e0_disabled_sat_observer_for_test target =
   let
-    val calls = ref 0
+    val target_calls = ref 0
+    val completion_calls = ref 0
     val context = SmtSkeletonProve.new_context []
     val owners = Redblackmap.mkDict Term.compare
     fun replay () = #theorem (SmtSkeletonProve.prove_with_owners
       context owners (SmtResource.term_measure target) target)
-    val theorem = SmtSkeletonProve.with_sat_target_observer
-      (SOME (fn _ => calls := !calls + 1))
+    val theorem = SmtSkeletonProve.with_sat_observers
+      (SOME (fn _ => target_calls := !target_calls + 1))
+      (SOME (fn _ => completion_calls := !completion_calls + 1))
       (with_fresh_e0_replay_boundary_for (Time.fromSeconds 30) replay) ()
   in
-    {observer_calls = !calls, theorem = theorem,
+    {observer_calls = !target_calls,
+     completion_observer_calls = !completion_calls, theorem = theorem,
      summary = !last_replay_measurement_summary,
      retained_terms = replay_measurement_state_size_for_test ()}
   end
@@ -6881,12 +6976,63 @@ in
   fun sat_shape_opportunity_for_test cache_limit targets =
   let
     val measurement = new_sat_shape_measurement cache_limit
-    val results = List.map (record_sat_shape_target measurement) targets
+    fun record target =
+      let val result = record_sat_shape_target measurement target
+          val _ = record_sat_shape_completion measurement Time.zeroTime
+      in result end
+    val results = List.map record targets
   in
     {all_recorded = List.all Lib.I results,
      summary = sat_shape_measurement_text measurement,
      retained_shapes = Redblackmap.numItems (!(#shapes measurement)) +
        Redblackmap.numItems (!(#cache_entries measurement))}
+  end
+
+  fun sat_shape_timing_for_test cache_limit observations =
+  let
+    val measurement = new_sat_shape_measurement cache_limit
+    fun record (target, elapsed) =
+      (ignore (record_sat_shape_target measurement target);
+       ignore (record_sat_shape_completion measurement elapsed))
+    val _ = List.app record observations
+  in
+    {summary = sat_shape_measurement_text measurement,
+     completed_calls = !(#completed_calls measurement),
+     completed_wall = !(#completed_wall measurement),
+     cache_hit_completed_calls =
+       !(#cache_hit_completed_calls measurement),
+     cache_hit_sat_wall = !(#cache_hit_sat_wall measurement),
+     cache_hit_sat_max_wall = !(#cache_hit_sat_max_wall measurement)}
+  end
+
+  fun sat_shape_pairing_for_test (repeated_target, nested_target) =
+  let
+    val interrupted = new_sat_shape_measurement 8
+    val _ = record_sat_shape_target interrupted repeated_target
+    val _ = record_sat_shape_target interrupted repeated_target
+    val _ = record_sat_shape_completion interrupted
+      (Time.fromMilliseconds 5)
+    val _ = record_sat_shape_target interrupted repeated_target
+    val _ = record_sat_shape_completion interrupted
+      (Time.fromMilliseconds 7)
+    val nested = new_sat_shape_measurement 8
+    val _ = record_sat_shape_target nested repeated_target
+    val _ = record_sat_shape_completion nested Time.zeroTime
+    val _ = record_sat_shape_target nested repeated_target
+    val _ = record_sat_shape_target nested nested_target
+    val _ = record_sat_shape_completion nested (Time.fromMilliseconds 3)
+    val _ = record_sat_shape_completion nested (Time.fromMilliseconds 11)
+  in
+    {interrupted_summary = sat_shape_measurement_text interrupted,
+     interrupted_hits = !(#cache_hits interrupted),
+     interrupted_hit_completed_calls =
+       !(#cache_hit_completed_calls interrupted),
+     interrupted_hit_wall = !(#cache_hit_sat_wall interrupted),
+     nested_summary = sat_shape_measurement_text nested,
+     nested_hits = !(#cache_hits nested),
+     nested_inserts = !(#cache_inserts nested),
+     nested_hit_completed_calls = !(#cache_hit_completed_calls nested),
+     nested_hit_wall = !(#cache_hit_sat_wall nested)}
   end
 
   fun e0_disabled_measurement_for_test target =

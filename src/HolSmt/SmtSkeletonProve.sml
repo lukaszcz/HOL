@@ -49,6 +49,8 @@ struct
     ref (NONE : (node_cache_event -> unit) option)
 
   val sat_target_observer = ref (NONE : (term -> unit) option)
+  val sat_completion_observer =
+    ref (NONE : ((term * Time.time) -> unit) option)
 
   fun with_node_cache_observer observer action input =
     let
@@ -77,6 +79,21 @@ struct
     case !sat_target_observer of
       NONE => ()
     | SOME observer => observer target
+
+  fun with_sat_observers target_observer completion_observer action input =
+    let
+      val previous_target = !sat_target_observer
+      val previous_completion = !sat_completion_observer
+      fun restore () =
+        (sat_target_observer := previous_target;
+         sat_completion_observer := previous_completion)
+      fun run () =
+        (sat_target_observer := target_observer;
+         sat_completion_observer := completion_observer;
+         action input)
+    in
+      Portable.finally restore run ()
+    end
 
   fun new_context procedures = Context
     {procedures = procedures,
@@ -465,8 +482,20 @@ struct
       val _ = observe_sat_target target
       (* HolSatLib currently exposes search and certificate reconstruction as
          one checked operation, so E0 records that indivisible boundary. *)
-      val target_theorem = phase "skeleton/sat-search+checking"
-        checked_sat_prove target
+      val target_theorem =
+        case !sat_completion_observer of
+          NONE => phase "skeleton/sat-search+checking"
+            checked_sat_prove target
+        | SOME observer =>
+            let
+              val started = Time.now ()
+              val theorem = phase "skeleton/sat-search+checking"
+                checked_sat_prove target
+              val elapsed = Time.- (Time.now (), started)
+              val _ = observer (target, elapsed)
+            in
+              theorem
+            end
       val instantiated = phase "skeleton/combined-instantiation"
         (fn substitution => Thm.INST substitution target_theorem)
         substitution

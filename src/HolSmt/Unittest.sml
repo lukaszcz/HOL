@@ -19044,6 +19044,13 @@ let
     [skeleton_target p q, skeleton_target q p]
   val direct = Z3_ProofReplay.e0_direct_skeleton_measurement_for_test
     [excluded_middle p]
+  val timed = Z3_ProofReplay.sat_shape_timing_for_test 8
+    [(excluded_middle p, Time.fromMilliseconds 7),
+     (excluded_middle q, Time.fromMilliseconds 11),
+     (boolSyntax.mk_conj (p, boolSyntax.mk_neg p),
+      Time.fromMilliseconds 13)]
+  val paired = Z3_ProofReplay.sat_shape_pairing_for_test
+    (excluded_middle p, boolSyntax.mk_conj (p, boolSyntax.mk_neg p))
   val disabled_direct = Z3_ProofReplay.e0_disabled_sat_observer_for_test
     (excluded_middle p)
 in
@@ -19114,9 +19121,33 @@ in
       andalso
       String.isSubstring "sat_shape_coverage_complete=true"
         (#summary direct) andalso
+      String.isSubstring "sat_shape_sat_completed_calls=1"
+        (#summary direct) andalso
       #retained_terms direct = 0,
     "whole-boundary observer missed a non-def checked skeleton target");
+  assert (#completed_calls timed = 3 andalso
+      Time.compare (#completed_wall timed, Time.fromMilliseconds 31) = EQUAL
+      andalso #cache_hit_completed_calls timed = 1 andalso
+      Time.compare
+        (#cache_hit_sat_wall timed, Time.fromMilliseconds 11) = EQUAL
+      andalso Time.compare
+        (#cache_hit_sat_max_wall timed, Time.fromMilliseconds 11) = EQUAL,
+    "completed SAT time was not attributed to exact prior shape hits");
+  assert (#interrupted_hits paired = 1 andalso
+      #interrupted_hit_completed_calls paired = 1 andalso
+      Time.compare
+        (#interrupted_hit_wall paired, Time.fromMilliseconds 7) = EQUAL
+      andalso String.isSubstring "sat_shape_pending_calls=1"
+        (#interrupted_summary paired),
+    "a failed SAT start corrupted later miss/hit timing or was not pending");
+  assert (#nested_hits paired = 1 andalso #nested_inserts paired = 2 andalso
+      #nested_hit_completed_calls paired = 1 andalso
+      Time.compare (#nested_hit_wall paired, Time.fromMilliseconds 11) = EQUAL
+      andalso String.isSubstring "sat_shape_pending_calls=0"
+        (#nested_summary paired),
+    "nested SAT starts and completions were not paired in LIFO order");
   assert (#observer_calls disabled_direct = 1 andalso
+      #completion_observer_calls disabled_direct = 1 andalso
       #summary disabled_direct = "measurement_enabled=false" andalso
       #retained_terms disabled_direct = 0,
     "E0-disabled boundary shadowed or invoked its SAT-shape observer");
