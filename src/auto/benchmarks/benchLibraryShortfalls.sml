@@ -331,12 +331,14 @@ val predicate_and_set_representation =
     ["list_L8638_filter_set", "list_L8705_set_relcomp",
      "product_type_L600_case_prodI2_"]
 
-val pair_membership_after_flattening =
-  classified "pair membership after flattening"
-    ("membership of a pair in a flattened list of maps is not "
-     ^ "reduced")
-    ["list_L7054_set_trans_list_step_subset_trancl",
-     "list_L8687_product_code", "list_L8691_Id_on_set"]
+val transitive_closure_from_a_step_list =
+  classified "transitive closure from a step list"
+    ("the flattened list of steps is taken apart, and what is left is "
+     ^ "a pair drawn from a map over a filter together with the two "
+     ^ "steps of the transitive closure it has to be built into; the "
+     ^ "source method names neither the closure's introduction rules "
+     ^ "nor an induction")
+    ["list_L7054_set_trans_list_step_subset_trancl"]
 
 val blast_search_reports_no_proof =
   classified "blast search reports no proof"
@@ -490,7 +492,7 @@ val execution : benchLib.shortfall list =
   numeral_against_Suc @
   characterisation_is_the_goal @
   predicate_and_set_representation @
-  pair_membership_after_flattening @
+  transitive_closure_from_a_step_list @
   blast_search_reports_no_proof @
   integer_interval_emptiness @
   rotation_by_iteration @
