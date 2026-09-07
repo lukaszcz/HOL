@@ -73,6 +73,7 @@ DIRNAMES += cache_reflink \
             depchain_heap/dir2 \
             dirlock \
             dumpheap \
+            errorbudget \
             gh1979 \
             heap-size \
             hollogs \
@@ -80,6 +81,7 @@ DIRNAMES += cache_reflink \
             issue1903 \
             json-strings \
             local_parallelism_limit \
+            placeholder_regroup \
             projfile_module \
             scan_order_staleness \
 	    target_times
