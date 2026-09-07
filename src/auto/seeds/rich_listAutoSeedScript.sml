@@ -34,6 +34,12 @@ val _ =
      ("LENGTH_FILTER_LEQ_AUTO", rich_listTheory.LENGTH_FILTER_LEQ),
      ("FILTER_ALL_DISTINCT_AUTO", listTheory.FILTER_ALL_DISTINCT)]
 
+(* src/HOL/List.thy:2256 @ f7e02b7e.  [drop_drop] is simp there and
+   declared to no simpset here; HOL4 states the unconditional equation
+   as DROP_DROP_T.  Its [take_take] half is seeded in listAutoSeed. *)
+val _ =
+  export_at "simp" ("DROP_DROP_T_AUTO", rich_listTheory.DROP_DROP_T)
+
 (* src/HOL/List.thy:3231 @ f7e02b7e.  [fold_append] is simp there and
    declared to no simpset here.  HOL4 reverses [rev (xs @ ys)]
    ambiently but leaves the fold over the result alone, so a goal that

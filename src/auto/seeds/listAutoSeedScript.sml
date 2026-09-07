@@ -169,6 +169,27 @@ val _ =
      ("EL_TAKE_AUTO", listTheory.EL_TAKE),
      ("EL_DROP_AUTO", listTheory.EL_DROP)]
 
+(* src/HOL/List.thy:2247 @ f7e02b7e.  [take_take] is simp there and
+   declared to no simpset here, so a take of a take stays two walks
+   down the list and the length that decides it is never formed.  Its
+   [drop_drop] counterpart is seeded in rich_listAutoSeed, which
+   states it. *)
+val _ =
+  export_at "simp" ("TAKE_TAKE_MIN_AUTO", listTheory.TAKE_TAKE_MIN)
+
+(* src/HOL/List.thy:2209 @ f7e02b7e.  [length_take] is simp there and
+   is unconditional, the length being the smaller of the two.  HOL4
+   declares the conditional reading, which says nothing about a take
+   whose length is not already known to be within the list, and states
+   the unconditional one as a conditional expression that no rule about
+   MIN meets.  A bound on the length of a take is where a rule that
+   reaches through the take gets its side condition. *)
+Theorem LENGTH_TAKE_MIN_AUTO[simp]:
+  !n (l : 'a list). LENGTH (TAKE n l) = MIN (LENGTH l) n
+Proof
+  rw[listTheory.LENGTH_TAKE_EQ, arithmeticTheory.MIN_DEF] >> fs[]
+QED
+
 (* src/HOL/List.thy @ f7e02b7e, [drop_append], [take_all] and
    [drop_all], simp there and declared to no simpset here.  Isabelle
    pushes a drop through an append and then reads off each half by its

@@ -747,3 +747,57 @@ val _ =
                    FILTER P (xs ++ ys) = FILTER P ys``),
           ([], ``!P xs ys. EVERY P (ys:'a list) ==>
                    FILTER P (xs ++ ys) = FILTER P xs ++ ys``)])
+
+(* src/HOL/List.thy:2247 @ f7e02b7e, [take_take], with the [min]
+   absorptions of src/HOL/Lattices.thy:556.  The goal is not a corpus
+   entry and is not a rule: two takes in a row have to become one, and
+   the length that decides which one needs the comparison between them
+   settled. *)
+val _ =
+  check
+    ("a take of a take is the shorter take",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!n m l. TAKE n (TAKE (n + m) (l : 'a list)) = TAKE n l``))
+
+(* src/HOL/Nat.thy:2632 @ f7e02b7e, [diff_diff_left].  The goal is not
+   a corpus entry and is not the rule: the same two subtrahends are
+   taken off in the two orders, under a list operation that no
+   arithmetic decision procedure sees into, so the subtractions have to
+   be combined before the AC rule the source method names can reach
+   them. *)
+val _ =
+  check
+    ("two subtractions are one and their order stops mattering",
+     fn () =>
+       closes_within 20
+         (clasimpLib.AUTO_TAC [arithmeticTheory.ADD_COMM])
+         ([], ``!n l. TAKE (LENGTH (l : 'a list) - n - 1) l =
+                        TAKE (LENGTH l - 1 - n) l``))
+
+(* src/HOL/List.thy:2209 @ f7e02b7e, [length_take], with
+   [min_less_iff_conj] of src/HOL/Lattices.thy:573.  The goal is not a
+   corpus entry and is not a rule: an index known only to be inside a
+   take has to be read as inside both the list and the take's length
+   before the rule that pushes the index through the take can fire. *)
+val _ =
+  check
+    ("an index inside a take reaches the list it was taken from",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!n index l.
+                  index < LENGTH (TAKE n (l : 'a list)) ==>
+                  EL index (TAKE n l) = EL index l``))
+
+(* src/HOL/List.thy:2256 @ f7e02b7e, [drop_drop].  The goal is not a
+   corpus entry and is not the rule: two drops in a row are one drop of
+   the sum, and only then does the order they were taken in stop
+   mattering. *)
+val _ =
+  check
+    ("a drop of a drop does not depend on the order",
+     fn () =>
+       closes_within 20
+         (clasimpLib.AUTO_TAC [arithmeticTheory.ADD_COMM])
+         ([], ``!n m l. DROP n (DROP m (l : 'a list)) =
+                          DROP m (DROP n l)``))
