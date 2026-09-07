@@ -48,6 +48,8 @@ struct
   val node_cache_observer =
     ref (NONE : (node_cache_event -> unit) option)
 
+  val sat_target_observer = ref (NONE : (term -> unit) option)
+
   fun with_node_cache_observer observer action input =
     let
       val previous = !node_cache_observer
@@ -61,6 +63,20 @@ struct
     case !node_cache_observer of
       NONE => ()
     | SOME observer => observer event
+
+  fun with_sat_target_observer observer action input =
+    let
+      val previous = !sat_target_observer
+      fun restore () = sat_target_observer := previous
+      fun run () = (sat_target_observer := observer; action input)
+    in
+      Portable.finally restore run ()
+    end
+
+  fun observe_sat_target target =
+    case !sat_target_observer of
+      NONE => ()
+    | SOME observer => observer target
 
   fun new_context procedures = Context
     {procedures = procedures,
@@ -446,6 +462,7 @@ struct
       val {target, substitution, definition_theorem} =
         phase "skeleton/cnf-construction"
           (linear_sat_target actual_nodes residual_substitution) skeleton
+      val _ = observe_sat_target target
       (* HolSatLib currently exposes search and certificate reconstruction as
          one checked operation, so E0 records that indivisible boundary. *)
       val target_theorem = phase "skeleton/sat-search+checking"

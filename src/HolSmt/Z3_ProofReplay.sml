@@ -1604,10 +1604,27 @@ local
      node_reanchor_time : Time.time ref,
      sat_time : Time.time ref,
      total_time : Time.time ref}
+  type sat_shape_measurement =
+    {cache_limit : int,
+     calls : int ref,
+     calls_observed : int ref,
+     shapes : (term, int) Redblackmap.dict ref,
+     unique : int ref,
+     repeats : int ref,
+     max_multiplicity : int ref,
+     untracked : int ref,
+     errors : int ref,
+     coverage_complete : bool ref,
+     cache_entries : (term, unit) Redblackmap.dict ref,
+     cache_lookups : int ref,
+     cache_hits : int ref,
+     cache_inserts : int ref,
+     cache_capacity_refusals : int ref}
   type replay_measurement =
     {def_axiom : route_measurement,
      skeleton_congruence : route_measurement,
      skeleton : skeleton_measurement,
+     sat_shapes : sat_shape_measurement,
      total_sample_scans : int ref,
      total_sampled_observations : int ref,
      diagnostic_errors : int ref}
@@ -1621,6 +1638,10 @@ local
   val max_sample_scans_per_target = 256
   val max_sampled_observations = 131072
   val max_sample_scans = 524288
+  val max_measured_sat_shape_calls = 2048
+  val max_sat_shape_cache_entries = 2048
+  val max_sat_shape_nodes =
+    8 * SmtResource.max_skeleton_replay_dag_nodes + 32
 
   fun new_route_measurement () : route_measurement =
     {calls = ref 0,
@@ -1661,10 +1682,28 @@ local
      sat_time = ref Time.zeroTime,
      total_time = ref Time.zeroTime}
 
+  fun new_sat_shape_measurement cache_limit : sat_shape_measurement =
+    {cache_limit = cache_limit,
+     calls = ref 0,
+     calls_observed = ref 0,
+     shapes = ref (Redblackmap.mkDict Term.compare),
+     unique = ref 0,
+     repeats = ref 0,
+     max_multiplicity = ref 0,
+     untracked = ref 0,
+     errors = ref 0,
+     coverage_complete = ref true,
+     cache_entries = ref (Redblackmap.mkDict Term.compare),
+     cache_lookups = ref 0,
+     cache_hits = ref 0,
+     cache_inserts = ref 0,
+     cache_capacity_refusals = ref 0}
+
   fun new_replay_measurement () : replay_measurement =
     {def_axiom = new_route_measurement (),
      skeleton_congruence = new_route_measurement (),
      skeleton = new_skeleton_measurement (),
+     sat_shapes = new_sat_shape_measurement max_sat_shape_cache_entries,
      total_sample_scans = ref 0,
      total_sampled_observations = ref 0,
      diagnostic_errors = ref 0}
@@ -1747,11 +1786,37 @@ local
     " skeleton_sat_wall=" ^ Time.toString (!sat_time) ^
     " skeleton_total_wall=" ^ Time.toString (!total_time)
 
+  fun sat_shape_measurement_text
+      ({cache_limit, calls, calls_observed, unique, repeats,
+        max_multiplicity, untracked, errors, coverage_complete,
+        cache_entries, cache_lookups, cache_hits, cache_inserts,
+        cache_capacity_refusals, ...} : sat_shape_measurement) =
+    " sat_shape_calls_started=" ^ Int.toString (!calls) ^
+    " sat_shape_calls_observed=" ^ Int.toString (!calls_observed) ^
+    " sat_shape_unique_observed=" ^ Int.toString (!unique) ^
+    " sat_shape_repeats_observed_lower_bound=" ^
+      Int.toString (!repeats) ^
+    " sat_shape_max_multiplicity_observed_lower_bound=" ^
+      Int.toString (!max_multiplicity) ^
+    " sat_shape_untracked=" ^ Int.toString (!untracked) ^
+    " sat_shape_errors=" ^ Int.toString (!errors) ^
+    " sat_shape_coverage_complete=" ^
+      Bool.toString (!coverage_complete) ^
+    " sat_shape_cache_limit=" ^ Int.toString cache_limit ^
+    " sat_shape_cache_lookups=" ^ Int.toString (!cache_lookups) ^
+    " sat_shape_cache_hits=" ^ Int.toString (!cache_hits) ^
+    " sat_shape_cache_inserts=" ^ Int.toString (!cache_inserts) ^
+    " sat_shape_cache_capacity_refusals=" ^
+      Int.toString (!cache_capacity_refusals) ^
+    " sat_shape_cache_entries=" ^
+      Int.toString (Redblackmap.numItems (!cache_entries))
+
   fun replay_measurement_text statistics =
     "measurement_enabled=true " ^
     route_measurement_text "def_attempt" (#def_axiom statistics) ^ " " ^
     route_measurement_text "cong" (#skeleton_congruence statistics) ^
     skeleton_measurement_text (#skeleton statistics) ^
+    sat_shape_measurement_text (#sat_shapes statistics) ^
     " measurement_sample_scans=" ^
       Int.toString (!(#total_sample_scans statistics)) ^
     " measurement_sampled_observations=" ^
@@ -1973,6 +2038,130 @@ local
           else #diagnostic_errors statistics :=
             !(#diagnostic_errors statistics) + 1
 
+  fun canonical_sat_shape target =
+    let
+      val observed = SmtResource.dag_nodes_up_to max_sat_shape_nodes target
+      val _ = if observed <= max_sat_shape_nodes then ()
+        else raise ERR "canonical_sat_shape"
+          "checked SAT target exceeded the diagnostic shape bound"
+      val nodes = ref (Redblackmap.mkDict Term.compare)
+      val variables = ref (Redblackmap.mkDict Term.compare)
+      val next_variable = ref 0
+      fun canonical_variable variable =
+        case Redblackmap.peek (!variables, variable) of
+          SOME result => result
+        | NONE =>
+            let
+              val index = !next_variable
+              val result = Term.mk_var
+                ("__holsmt_sat_shape_" ^ Int.toString index, Type.bool)
+            in
+              next_variable := index + 1;
+              variables := Redblackmap.insert
+                (!variables, variable, result);
+              result
+            end
+      fun visit_children [] result = List.rev result
+        | visit_children (child :: rest) result =
+            visit_children rest (visit child :: result)
+      and visit term =
+        case Redblackmap.peek (!nodes, term) of
+          SOME result => result
+        | NONE =>
+            let
+              val result =
+                if Term.is_var term andalso Term.type_of term = Type.bool then
+                  canonical_variable term
+                else
+                  case SmtSkeletonProve.skeleton_children term of
+                    SOME [] => term
+                  | SOME children =>
+                      let
+                        val (head, _) = boolSyntax.strip_comb term
+                      in
+                        List.foldl
+                          (fn (child, function) =>
+                            Term.mk_comb (function, child))
+                          head (visit_children children [])
+                      end
+                  | NONE => raise ERR "canonical_sat_shape"
+                      "checked SAT target contains an opaque non-variable"
+              val _ = nodes := Redblackmap.insert (!nodes, term, result)
+            in
+              result
+            end
+      val _ = if Term.type_of target = Type.bool then ()
+        else raise ERR "canonical_sat_shape"
+          "checked SAT target is not Boolean"
+    in
+      visit target
+    end
+
+  fun record_sat_shape_target
+      (measurement : sat_shape_measurement) target =
+    let
+      val calls = #calls measurement
+      val _ = calls := !calls + 1
+      fun mark_error () =
+        (#errors measurement := !(#errors measurement) + 1;
+         #untracked measurement := !(#untracked measurement) + 1;
+         #coverage_complete measurement := false;
+         false)
+      fun record () =
+        if !calls > max_measured_sat_shape_calls then
+          (#untracked measurement := !(#untracked measurement) + 1;
+           #coverage_complete measurement := false;
+           true)
+        else
+          let
+            val shape = canonical_sat_shape target
+            val shapes = #shapes measurement
+            val previous = Redblackmap.peek (!shapes, shape)
+            val count = Option.getOpt (previous, 0) + 1
+            val _ = shapes := Redblackmap.insert (!shapes, shape, count)
+            val _ = #calls_observed measurement :=
+              !(#calls_observed measurement) + 1
+            val _ =
+              case previous of
+                NONE => #unique measurement := !(#unique measurement) + 1
+              | SOME _ => #repeats measurement :=
+                  !(#repeats measurement) + 1
+            val _ = #max_multiplicity measurement := Int.max
+              (!(#max_multiplicity measurement), count)
+            val cache = #cache_entries measurement
+            val _ = #cache_lookups measurement :=
+              !(#cache_lookups measurement) + 1
+          in
+            case Redblackmap.peek (!cache, shape) of
+              SOME () =>
+                (#cache_hits measurement :=
+                   !(#cache_hits measurement) + 1;
+                 true)
+            | NONE =>
+                if Redblackmap.numItems (!cache) <
+                    #cache_limit measurement then
+                  (cache := Redblackmap.insert (!cache, shape, ());
+                   #cache_inserts measurement :=
+                     !(#cache_inserts measurement) + 1;
+                   true)
+                else
+                  (#cache_capacity_refusals measurement :=
+                     !(#cache_capacity_refusals measurement) + 1;
+                   true)
+          end
+    in
+      record () handle exn =>
+        if terminal_diagnostic_exception exn then raise exn else mark_error ()
+    end
+
+  fun observe_skeleton_sat_target target =
+    case !current_replay_measurement of
+      NONE => ()
+    | SOME statistics =>
+        if record_sat_shape_target (#sat_shapes statistics) target then ()
+        else #diagnostic_errors statistics :=
+          !(#diagnostic_errors statistics) + 1
+
   fun observe_skeleton_node_cache event =
     case !current_replay_measurement of
       NONE => ()
@@ -2187,7 +2376,12 @@ local
         val _ = latest_proof_step := NONE
         val _ = first_failed_proof_step := NONE
         val _ = reset_replay_measurement ()
-        fun run () = with_e0_replay_boundary_for duration replay input
+        fun run () =
+          case !current_replay_measurement of
+            NONE => with_e0_replay_boundary_for duration replay input
+          | SOME _ => SmtSkeletonProve.with_sat_target_observer
+              (SOME observe_skeleton_sat_target)
+              (with_e0_replay_boundary_for duration replay) input
         fun clear () =
           let
             val detached = detach_replay_measurement ()
@@ -6167,7 +6361,10 @@ in
         Redblackmap.numItems
           (!(#targets (#skeleton_congruence statistics))) +
         Redblackmap.numItems
-          (!(#sampled_subnodes (#skeleton_congruence statistics)))
+          (!(#sampled_subnodes (#skeleton_congruence statistics))) +
+        Redblackmap.numItems (!(#shapes (#sat_shapes statistics))) +
+        Redblackmap.numItems
+          (!(#cache_entries (#sat_shapes statistics)))
   fun last_replay_measurement_for_test () =
     !last_replay_measurement_summary
   fun e0_replay_timeout_for_test duration =
@@ -6601,6 +6798,36 @@ in
      retained_terms = replay_measurement_state_size_for_test ()}
   end
 
+  fun e0_direct_skeleton_measurement_for_test targets =
+  let
+    val context = SmtSkeletonProve.new_context []
+    val owners = Redblackmap.mkDict Term.compare
+    fun replay () = List.app (fn target =>
+      ignore (SmtSkeletonProve.prove_with_owners context owners
+        (SmtResource.term_measure target) target)) targets
+    val _ = SmtResource.with_e0_invocation_for_test
+      (with_fresh_e0_replay_boundary_for (Time.fromSeconds 30) replay) ()
+  in
+    {summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun e0_disabled_sat_observer_for_test target =
+  let
+    val calls = ref 0
+    val context = SmtSkeletonProve.new_context []
+    val owners = Redblackmap.mkDict Term.compare
+    fun replay () = #theorem (SmtSkeletonProve.prove_with_owners
+      context owners (SmtResource.term_measure target) target)
+    val theorem = SmtSkeletonProve.with_sat_target_observer
+      (SOME (fn _ => calls := !calls + 1))
+      (with_fresh_e0_replay_boundary_for (Time.fromSeconds 30) replay) ()
+  in
+    {observer_calls = !calls, theorem = theorem,
+     summary = !last_replay_measurement_summary,
+     retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
   fun e0_measurement_exception_for_test raised target =
   let
     fun replay () =
@@ -6649,6 +6876,17 @@ in
     {failed = failed,
      summary = !last_replay_measurement_summary,
      retained_terms = replay_measurement_state_size_for_test ()}
+  end
+
+  fun sat_shape_opportunity_for_test cache_limit targets =
+  let
+    val measurement = new_sat_shape_measurement cache_limit
+    val results = List.map (record_sat_shape_target measurement) targets
+  in
+    {all_recorded = List.all Lib.I results,
+     summary = sat_shape_measurement_text measurement,
+     retained_shapes = Redblackmap.numItems (!(#shapes measurement)) +
+       Redblackmap.numItems (!(#cache_entries measurement))}
   end
 
   fun e0_disabled_measurement_for_test target =

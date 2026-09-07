@@ -19016,6 +19016,116 @@ in
     "node-cache observer lost partial events when the skeleton declined")
 end
 
+fun z3_e0_sat_shape_opportunity_success () =
+let
+  val p = ``task31_sat_shape_p:bool``
+  val q = ``task31_sat_shape_q:bool``
+  fun excluded_middle atom =
+    boolSyntax.mk_disj (atom, boolSyntax.mk_neg atom)
+  val renamed = Z3_ProofReplay.sat_shape_opportunity_for_test 8
+    [excluded_middle p, excluded_middle q]
+  val repeated_variable = Z3_ProofReplay.sat_shape_opportunity_for_test 8
+    [excluded_middle p,
+     boolSyntax.mk_disj (p, boolSyntax.mk_neg q)]
+  val capped = Z3_ProofReplay.sat_shape_opportunity_for_test 1
+    [excluded_middle p,
+     boolSyntax.mk_conj (p, boolSyntax.mk_neg p),
+     excluded_middle q]
+  val opaque_function = Term.mk_var
+    ("task31_sat_shape_opaque", ``:bool -> bool``)
+  val malformed = Z3_ProofReplay.sat_shape_opportunity_for_test 8
+    [Term.mk_comb (opaque_function, p)]
+  val error_then_cap = Z3_ProofReplay.sat_shape_opportunity_for_test 8
+    (Term.mk_comb (opaque_function, p) ::
+     List.tabulate (2048, fn _ => excluded_middle p))
+  fun skeleton_target left right = boolSyntax.mk_disj
+    (boolSyntax.mk_neg (boolSyntax.mk_conj (left, right)), left)
+  val integrated = Z3_ProofReplay.e0_def_axiom_measurement_for_test
+    [skeleton_target p q, skeleton_target q p]
+  val direct = Z3_ProofReplay.e0_direct_skeleton_measurement_for_test
+    [excluded_middle p]
+  val disabled_direct = Z3_ProofReplay.e0_disabled_sat_observer_for_test
+    (excluded_middle p)
+in
+  assert (#all_recorded renamed andalso
+      String.isSubstring "sat_shape_calls_observed=2" (#summary renamed)
+      andalso
+      String.isSubstring "sat_shape_unique_observed=1" (#summary renamed)
+      andalso
+      String.isSubstring "sat_shape_repeats_observed_lower_bound=1"
+        (#summary renamed) andalso
+      String.isSubstring "sat_shape_cache_hits=1" (#summary renamed),
+    "alpha-renamed SAT variables did not share an exact shape key");
+  assert (#all_recorded repeated_variable andalso
+      String.isSubstring "sat_shape_unique_observed=2"
+        (#summary repeated_variable) andalso
+      String.isSubstring "sat_shape_cache_hits=0"
+        (#summary repeated_variable),
+    "SAT shape key lost repeated-variable identity");
+  assert (#all_recorded capped andalso
+      String.isSubstring "sat_shape_unique_observed=2" (#summary capped)
+      andalso String.isSubstring "sat_shape_cache_limit=1" (#summary capped)
+      andalso String.isSubstring "sat_shape_cache_lookups=3"
+        (#summary capped) andalso
+      String.isSubstring "sat_shape_cache_hits=1" (#summary capped) andalso
+      String.isSubstring "sat_shape_cache_inserts=1" (#summary capped)
+      andalso
+      String.isSubstring "sat_shape_cache_capacity_refusals=1"
+        (#summary capped) andalso
+      String.isSubstring "sat_shape_cache_entries=1" (#summary capped),
+    "bounded SAT shape simulation evicted a hit or exceeded its cap");
+  assert (not (#all_recorded malformed) andalso
+      String.isSubstring "sat_shape_calls_started=1" (#summary malformed)
+      andalso
+      String.isSubstring "sat_shape_calls_observed=0" (#summary malformed)
+      andalso String.isSubstring "sat_shape_untracked=1"
+        (#summary malformed) andalso
+      String.isSubstring "sat_shape_errors=1" (#summary malformed) andalso
+      String.isSubstring "sat_shape_coverage_complete=false"
+        (#summary malformed),
+    "opaque SAT shape diagnostic failure escaped or was not counted");
+  assert (not (#all_recorded error_then_cap) andalso
+      String.isSubstring "sat_shape_calls_started=2049"
+        (#summary error_then_cap) andalso
+      String.isSubstring "sat_shape_calls_observed=2047"
+        (#summary error_then_cap) andalso
+      String.isSubstring "sat_shape_untracked=2"
+        (#summary error_then_cap) andalso
+      String.isSubstring "sat_shape_errors=1" (#summary error_then_cap)
+      andalso
+      String.isSubstring "sat_shape_cache_lookups=2047"
+        (#summary error_then_cap),
+    "failed SAT shapes bypassed the attempt-based observation cap");
+  assert (String.isSubstring "sat_shape_calls_started=2"
+        (#summary integrated) andalso
+      String.isSubstring "sat_shape_calls_observed=2"
+        (#summary integrated) andalso
+      String.isSubstring "sat_shape_unique_observed=1"
+        (#summary integrated) andalso
+      String.isSubstring "sat_shape_cache_hits=1"
+        (#summary integrated) andalso
+      #retained_terms integrated = 0,
+    "def-axiom SAT targets were not measured or retained at the boundary");
+  assert (String.isSubstring "def_attempt_calls_started=0"
+        (#summary direct) andalso
+      String.isSubstring "sat_shape_calls_started=1" (#summary direct)
+      andalso
+      String.isSubstring "sat_shape_calls_observed=1" (#summary direct)
+      andalso
+      String.isSubstring "sat_shape_coverage_complete=true"
+        (#summary direct) andalso
+      #retained_terms direct = 0,
+    "whole-boundary observer missed a non-def checked skeleton target");
+  assert (#observer_calls disabled_direct = 1 andalso
+      #summary disabled_direct = "measurement_enabled=false" andalso
+      #retained_terms disabled_direct = 0,
+    "E0-disabled boundary shadowed or invoked its SAT-shape observer");
+  assert_no_hyps ("E0-disabled direct skeleton", #theorem disabled_direct);
+  assert_concl_alpha ("E0-disabled direct skeleton",
+    #theorem disabled_direct, excluded_middle p);
+  check_oracle_tags "E0-disabled direct skeleton" (#theorem disabled_direct)
+end
+
 fun z3_e0_replay_measurement_aggregate_success () =
 let
   val p = ``task31_measure_p:bool``
@@ -25245,6 +25355,8 @@ let
       skeleton_structural_atom_cache_exact_lhs_success),
     ("skeleton_node_cache_metric_split_success",
       skeleton_node_cache_metric_split_success),
+    ("z3_e0_sat_shape_opportunity_success",
+      z3_e0_sat_shape_opportunity_success),
     ("z3_e0_replay_measurement_aggregate_success",
       z3_e0_replay_measurement_aggregate_success),
     ("z3_e0_diagnostic_exception_precedence_success",
