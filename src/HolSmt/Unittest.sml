@@ -18712,6 +18712,214 @@ in
   ()
 end
 
+fun z3_def_axiom_proof_local_cache_success () =
+let
+  val p = ``task31_def_cache_p:bool``
+  val q = ``task31_def_cache_q:bool``
+  val r = ``task31_def_cache_r:bool``
+  fun target left right = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (left, right),
+     boolSyntax.mk_conj (right, left))
+  val first = target p q
+  val independent = target p q
+  val unique = target p r
+  val repeated = Z3_ProofReplay.def_axiom_cache_sequence_for_test 8
+    [first, independent]
+  val repeated_worker_calls =
+    profile_call_count "def-axiom(1)(skeleton-worker)_OK"
+  val repeated_statistics = #statistics repeated
+  val repeated_theorems = #theorems repeated
+  val first_theorem = List.nth (repeated_theorems, 0)
+  val independent_theorem = List.nth (repeated_theorems, 1)
+  val capped = Z3_ProofReplay.def_axiom_cache_sequence_for_test 1
+    [first, unique, independent]
+  val capped_statistics = #statistics capped
+  val failed = Z3_ProofReplay.def_axiom_cache_failure_for_test 8 [first]
+  val nested = Z3_ProofReplay.def_axiom_cache_nested_for_test 8
+    first unique
+  val nested_statistics = #statistics nested
+  val timeout_propagated =
+    ((Z3_ProofReplay.def_axiom_cache_raise_for_test 8 [first]
+        (Timeout.TIMEOUT Time.zeroTime); false)
+     handle Timeout.TIMEOUT _ => true)
+  val timeout_clean =
+    Z3_ProofReplay.def_axiom_cache_retained_entries_for_test () = 0
+  val interrupt_propagated =
+    ((Z3_ProofReplay.def_axiom_cache_raise_for_test 8 [first] Interrupt;
+      false)
+     handle Interrupt => true)
+  val interrupt_clean =
+    Z3_ProofReplay.def_axiom_cache_retained_entries_for_test () = 0
+  fun validate (label, theorem, expected) =
+    (assert_no_hyps (label, theorem);
+     assert (Portable.pointer_eq (Thm.concl theorem, expected),
+       label ^ " did not retain the exact target occurrence");
+     check_oracle_tags label theorem)
+in
+  List.app validate
+    [("def-axiom cache seed", first_theorem, first),
+     ("def-axiom cache structural hit", independent_theorem, independent)];
+  assert (not (Portable.pointer_eq (first, independent)) andalso
+      Term.aconv first independent,
+    "def-axiom cache fixture did not build independent equal targets");
+  assert (timeout_propagated andalso timeout_clean andalso
+      interrupt_propagated andalso interrupt_clean,
+    "terminal replay exit was swallowed or retained def-axiom cache state");
+  if Library.no_fastpath () then
+    (assert (not (#enabled repeated_statistics) andalso
+        #lookups repeated_statistics = 0 andalso
+        #hits repeated_statistics = 0 andalso
+        #inserts repeated_statistics = 0 andalso
+        #skeleton_attempts repeated_statistics = 0,
+      "no-fastpath mode performed def-axiom cache work");
+     assert (repeated_worker_calls = 2,
+       "no-fastpath mode did not run both complete skeleton procedures");
+     assert (#retained_entries repeated = 0 andalso
+         #retained_entries capped = 0 andalso
+         #retained_entries failed = 0 andalso
+         #retained_entries nested = 0,
+       "no-fastpath def-axiom cache retained proof-local state"))
+  else
+    let
+      val fallback =
+        Z3_ProofReplay.def_axiom_cache_probe_failure_for_test first
+      val fallback_statistics = #statistics fallback
+      val (_, fallback_theorem) = #theorems fallback
+    in
+     assert (#enabled repeated_statistics andalso
+        #limit repeated_statistics = 8 andalso
+        #lookups repeated_statistics = 2 andalso
+        #hits repeated_statistics = 1 andalso
+        #misses repeated_statistics = 1 andalso
+        #inserts repeated_statistics = 1 andalso
+        #skeleton_attempts repeated_statistics = 1 andalso
+        #entries repeated_statistics = 1,
+      "repeated def-axiom did not bypass its second skeleton attempt");
+     assert (repeated_worker_calls = 1,
+       "def-axiom cache hit did not avoid its second skeleton procedure");
+     assert (#lookups capped_statistics = 3 andalso
+         #hits capped_statistics = 1 andalso
+         #misses capped_statistics = 2 andalso
+         #inserts capped_statistics = 1 andalso
+         #capacity_refusals capped_statistics = 1 andalso
+         #skeleton_attempts capped_statistics = 2 andalso
+         #entries capped_statistics = 1,
+       "capped def-axiom cache evicted a hit or inserted past its cap");
+     assert (#failed failed andalso #retained_entries failed = 0 andalso
+         #inserts (#statistics failed) = 1,
+       "failed replay retained or lost def-axiom cache accounting");
+     assert (#lookups nested_statistics = 3 andalso
+         #hits nested_statistics = 1 andalso
+         #inserts nested_statistics = 2 andalso
+         #entries nested_statistics = 2 andalso
+         #retained_entries nested = 0,
+       "nested def-axiom cache boundary reset or retained outer state");
+     assert (#retained_entries repeated = 0 andalso
+         #retained_entries capped = 0,
+       "successful def-axiom replay retained proof-local cache entries");
+     validate ("def-axiom cache failure fallback", fallback_theorem, first);
+     assert (#lookups fallback_statistics = 2 andalso
+         #hits fallback_statistics = 0 andalso
+         #misses fallback_statistics = 2 andalso
+         #failures fallback_statistics = 1 andalso
+         #skeleton_attempts fallback_statistics = 2 andalso
+         #retained_entries fallback = 0,
+       "ordinary cache validation failure did not run the skeleton fallback")
+    end;
+  ()
+end
+
+fun z3_def_axiom_cache_gate_precedes_lookup () =
+let
+  val atom_count = SmtResource.max_skeleton_replay_dag_nodes div 3 + 1
+  val atoms = List.tabulate (atom_count, fn index => boolSyntax.mk_eq
+    (Term.mk_var ("task31_cache_gate_" ^ Int.toString index,
+       intSyntax.int_ty), intSyntax.zero_tm))
+  val conjunction = boolSyntax.list_mk_conj atoms
+  val target = boolSyntax.mk_disj
+    (boolSyntax.mk_neg conjunction, List.hd atoms)
+  val result = Z3_ProofReplay.def_axiom_cache_gate_for_test 8 target
+  val statistics = #statistics result
+in
+  assert (#gated result, "oversized def-axiom did not preserve its gate");
+  assert (#retained_entries result = 0,
+    "gated def-axiom retained proof-local cache state");
+  if Library.no_fastpath () then
+    assert (not (#enabled statistics) andalso #lookups statistics = 0,
+      "no-fastpath gated def-axiom performed cache work")
+  else
+    assert (#enabled statistics andalso #lookups statistics = 0 andalso
+        #hits statistics = 0 andalso #misses statistics = 0 andalso
+        #skeleton_attempts statistics = 0 andalso #entries statistics = 0,
+      "def-axiom cache lookup ran before the unchanged 4096-node gate")
+end
+
+fun z3_def_axiom_cache_cleanup_precedence_success () =
+let
+  val p = ``task31_cache_cleanup_p:bool``
+  val q = ``task31_cache_cleanup_q:bool``
+  val target = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (p, q), boolSyntax.mk_conj (q, p))
+  val timeout = Timeout.TIMEOUT Time.zeroTime
+  val resource =
+    (SmtResource.check_dag_size_for "Skeleton" "cache-cleanup-fixture"
+       (SmtResource.max_skeleton_replay_dag_nodes + 1);
+     Fail "resource fixture did not raise")
+    handle exn => exn
+  fun classify action =
+    (action (); "none")
+    handle Timeout.TIMEOUT _ => "timeout"
+         | Interrupt => "interrupt"
+         | Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then "resource"
+             else "hol-error"
+         | Fail message => message
+         | _ => "other"
+  fun with_cleanup cleanup primary () =
+    let
+      fun hook site =
+        if site = "def-axiom-cache-summary" then raise cleanup else ()
+      fun replay () =
+        (ignore (Z3_ProofReplay.def_axiom_for_test target);
+         case primary of NONE => () | SOME exn => raise exn)
+    in
+      SmtResource.with_e0_diagnostic_hook_for_test hook
+        (Z3_ProofReplay.with_def_axiom_cache_boundary_for_test 8 replay) ()
+    end
+  val success_nonterminal = classify
+    (with_cleanup (Fail "cleanup") NONE)
+  val primary_nonterminal = classify
+    (with_cleanup (Fail "cleanup") (SOME (Fail "primary")))
+  val cleanup_terminal = classify (with_cleanup timeout NONE)
+  val cleanup_terminal_over_nonterminal = classify
+    (with_cleanup timeout (SOME (Fail "primary")))
+  val timeout_primary = classify
+    (with_cleanup Interrupt (SOME timeout))
+  val interrupt_primary = classify
+    (with_cleanup timeout (SOME Interrupt))
+  val resource_primary = classify
+    (with_cleanup timeout (SOME resource))
+  val fresh = Z3_ProofReplay.def_axiom_cache_sequence_for_test 8 [target]
+  val fresh_statistics = #statistics fresh
+in
+  assert (success_nonterminal = "none" andalso
+      primary_nonterminal = "primary",
+    "nonterminal cache cleanup changed the replay result");
+  assert (cleanup_terminal = "timeout" andalso
+      cleanup_terminal_over_nonterminal = "timeout",
+    "terminal cache cleanup exception lost precedence");
+  assert (timeout_primary = "timeout" andalso
+      interrupt_primary = "interrupt" andalso
+      resource_primary = "resource",
+    "terminal replay exception lost precedence during cache cleanup");
+  assert (#retained_entries fresh = 0 andalso
+      (Library.no_fastpath () orelse
+       (#lookups fresh_statistics = 1 andalso
+        #misses fresh_statistics = 1 andalso
+        #inserts fresh_statistics = 1)),
+    "cache cleanup retained entries or prevented a fresh invocation")
+end
+
 fun skeleton_structural_atom_cache_exact_lhs_success () =
 let
   val variable = ``task31_cache_occurrence:num``
@@ -19157,6 +19365,8 @@ in
   case snapshot of
     SOME message =>
       assert (String.isSubstring "measurement_enabled=true" message andalso
+          String.isSubstring "def_cache_enabled=false" message andalso
+          String.isSubstring "def_cache_lookups=0" message andalso
           String.isSubstring "def_attempt_calls_started=2" message andalso
           String.isSubstring "def_attempt_targets_unique_observed=1"
             message andalso
@@ -25025,6 +25235,12 @@ let
       z3_def_axiom_skeleton_preflight_ordering_success),
     ("z3_def_axiom_skeleton_resource_gate_ordering",
       z3_def_axiom_skeleton_resource_gate_ordering),
+    ("z3_def_axiom_proof_local_cache_success",
+      z3_def_axiom_proof_local_cache_success),
+    ("z3_def_axiom_cache_gate_precedes_lookup",
+      z3_def_axiom_cache_gate_precedes_lookup),
+    ("z3_def_axiom_cache_cleanup_precedence_success",
+      z3_def_axiom_cache_cleanup_precedence_success),
     ("skeleton_structural_atom_cache_exact_lhs_success",
       skeleton_structural_atom_cache_exact_lhs_success),
     ("skeleton_node_cache_metric_split_success",

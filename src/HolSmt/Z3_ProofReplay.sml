@@ -1305,6 +1305,245 @@ local
   *)
   val def_axiom_skeleton_context = SmtSkeletonProve.new_context []
   val def_axiom_skeleton_owners = Redblackmap.mkDict Term.compare
+
+  type def_axiom_cache_entry =
+    {target : term, theorem : Thm.thm}
+  type def_axiom_cache_statistics =
+    {enabled : bool,
+     limit : int,
+     lookups : int,
+     hits : int,
+     misses : int,
+     inserts : int,
+     capacity_refusals : int,
+     failures : int,
+     skeleton_attempts : int,
+     entries : int,
+     peak_entries : int}
+  type def_axiom_cache_state =
+    {limit : int,
+     entries : (term, def_axiom_cache_entry) Redblackmap.dict ref,
+     lookups : int ref,
+     hits : int ref,
+     misses : int ref,
+     inserts : int ref,
+     capacity_refusals : int ref,
+     failures : int ref,
+     skeleton_attempts : int ref,
+     cardinality : int ref,
+     peak_cardinality : int ref}
+
+  val max_def_axiom_cache_entries = 2048
+  val current_def_axiom_cache =
+    ref (NONE : def_axiom_cache_state option)
+  val def_axiom_cache_boundary_depth = ref 0
+  val empty_def_axiom_cache_statistics : def_axiom_cache_statistics =
+    {enabled = false, limit = max_def_axiom_cache_entries,
+     lookups = 0, hits = 0, misses = 0, inserts = 0,
+     capacity_refusals = 0, failures = 0, skeleton_attempts = 0,
+     entries = 0, peak_entries = 0}
+  val last_def_axiom_cache_statistics =
+    ref empty_def_axiom_cache_statistics
+
+  fun new_def_axiom_cache limit : def_axiom_cache_state =
+    {limit = Int.max (0, limit),
+     entries = ref (Redblackmap.mkDict Term.compare),
+     lookups = ref 0,
+     hits = ref 0,
+     misses = ref 0,
+     inserts = ref 0,
+     capacity_refusals = ref 0,
+     failures = ref 0,
+     skeleton_attempts = ref 0,
+     cardinality = ref 0,
+     peak_cardinality = ref 0}
+
+  fun def_axiom_cache_statistics enabled
+      ({limit, lookups, hits, misses, inserts, capacity_refusals,
+        failures, skeleton_attempts, cardinality, peak_cardinality, ...}
+       : def_axiom_cache_state) : def_axiom_cache_statistics =
+    {enabled = enabled, limit = limit, lookups = !lookups, hits = !hits,
+     misses = !misses, inserts = !inserts,
+     capacity_refusals = !capacity_refusals, failures = !failures,
+     skeleton_attempts = !skeleton_attempts, entries = !cardinality,
+     peak_entries = !peak_cardinality}
+
+  fun def_axiom_cache_statistics_text
+      ({enabled, limit, lookups, hits, misses, inserts, capacity_refusals,
+        failures, skeleton_attempts, entries, peak_entries}
+       : def_axiom_cache_statistics) =
+    "def_cache_enabled=" ^ Bool.toString enabled ^
+    " def_cache_limit=" ^ Int.toString limit ^
+    " def_cache_lookups=" ^ Int.toString lookups ^
+    " def_cache_hits=" ^ Int.toString hits ^
+    " def_cache_misses=" ^ Int.toString misses ^
+    " def_cache_inserts=" ^ Int.toString inserts ^
+    " def_cache_capacity_refusals=" ^ Int.toString capacity_refusals ^
+    " def_cache_failures=" ^ Int.toString failures ^
+    " def_cache_skeleton_attempts=" ^ Int.toString skeleton_attempts ^
+    " def_cache_entries=" ^ Int.toString entries ^
+    " def_cache_peak_entries=" ^ Int.toString peak_entries
+
+  fun current_def_axiom_cache_statistics () =
+    case !current_def_axiom_cache of
+      NONE => !last_def_axiom_cache_statistics
+    | SOME cache => def_axiom_cache_statistics true cache
+
+  fun current_def_axiom_cache_text () =
+    def_axiom_cache_statistics_text
+      (case !current_def_axiom_cache of
+         NONE => empty_def_axiom_cache_statistics
+       | SOME cache => def_axiom_cache_statistics true cache)
+
+  fun detach_def_axiom_cache () =
+    let
+      val detached = !current_def_axiom_cache
+      val _ = current_def_axiom_cache := NONE
+      val _ = def_axiom_cache_boundary_depth := 0
+    in
+      detached
+    end
+
+  fun finish_def_axiom_cache NONE =
+        (SmtResource.invoke_e0_diagnostic_hook
+           "def-axiom-cache-summary";
+         last_def_axiom_cache_statistics :=
+           empty_def_axiom_cache_statistics)
+    | finish_def_axiom_cache (SOME cache) =
+        (SmtResource.invoke_e0_diagnostic_hook
+           "def-axiom-cache-summary";
+         last_def_axiom_cache_statistics :=
+           def_axiom_cache_statistics true cache)
+
+  fun with_def_axiom_cache_boundary_for limit replay input =
+    if !def_axiom_cache_boundary_depth > 0 then replay input
+    else
+      let
+        val enabled = not (Library.no_fastpath ())
+        val fresh =
+          if enabled then SOME (new_def_axiom_cache limit) else NONE
+        val initial_statistics =
+          (case fresh of
+             SOME cache => def_axiom_cache_statistics true cache
+           | NONE => empty_def_axiom_cache_statistics)
+        val _ = last_def_axiom_cache_statistics := initial_statistics
+        val _ = current_def_axiom_cache := fresh
+        val _ = def_axiom_cache_boundary_depth := 1
+        fun clear () =
+          finish_def_axiom_cache (detach_def_axiom_cache ())
+        val outcome = Exn.capture replay input
+      in
+        case outcome of
+          Exn.Res result =>
+            (case Exn.capture clear () of
+               Exn.Res _ => result
+             | Exn.Exn cleanup_exn =>
+                 SmtResource.resolve_diagnostic_exception cleanup_exn
+                   (fn () => ()) (fn _ => result))
+        | Exn.Exn replay_exn =>
+            SmtResource.resolve_diagnostic_exception replay_exn clear
+              (fn original => raise original)
+      end
+
+  fun with_def_axiom_cache_boundary replay input =
+    with_def_axiom_cache_boundary_for max_def_axiom_cache_entries
+      replay input
+
+  fun validate_def_axiom_cache_theorem target theorem =
+    let
+      val _ = HOLset.isEmpty (Thm.hypset theorem) orelse
+        raise ERR "validate_def_axiom_cache_theorem"
+          "cached def-axiom theorem has hypotheses"
+      val _ = Library.check_oracle_tags "Z3_ProofReplay"
+        "def-axiom-cache" theorem
+      val _ = Term.aconv (Thm.concl theorem) target orelse
+        raise ERR "validate_def_axiom_cache_theorem"
+          "cached def-axiom conclusion is not alpha-equivalent"
+    in
+      theorem
+    end
+
+  fun reanchor_def_axiom_cache_theorem target theorem =
+    let
+      val theorem = validate_def_axiom_cache_theorem target theorem
+      val exact = Thm.EQ_MP
+        (Thm.ALPHA (Thm.concl theorem) target) theorem
+      val _ = validate_def_axiom_cache_theorem target exact
+      val _ = Portable.pointer_eq (Thm.concl exact, target) orelse
+        raise ERR "reanchor_def_axiom_cache_theorem"
+          "kernel alpha transport lost the current target occurrence"
+    in
+      exact
+    end
+
+  fun cache_terminal_exception exn =
+    SmtResource.terminal_diagnostic_exception exn
+
+  fun note_def_axiom_cache_failure cache exn =
+    if cache_terminal_exception exn then raise exn
+    else
+      (#misses cache := !(#misses cache) + 1;
+       #failures cache := !(#failures cache) + 1;
+       NONE)
+
+  fun probe_def_axiom_cache target =
+    case !current_def_axiom_cache of
+      NONE => NONE
+    | SOME cache =>
+        let
+          val _ = #lookups cache := !(#lookups cache) + 1
+          val result =
+            case Redblackmap.peek (!(#entries cache), target) of
+              NONE => NONE
+            | SOME {target = saved, theorem} =>
+                if Term.aconv saved target then
+                  SOME (reanchor_def_axiom_cache_theorem target theorem)
+                else raise ERR "probe_def_axiom_cache"
+                  "Term.compare collision was not alpha-equivalent"
+        in
+          case result of
+            SOME theorem =>
+              (#hits cache := !(#hits cache) + 1; SOME theorem)
+          | NONE => (#misses cache := !(#misses cache) + 1; NONE)
+        end
+        handle exn => note_def_axiom_cache_failure cache exn
+
+  fun insert_def_axiom_cache target theorem =
+    case !current_def_axiom_cache of
+      NONE => ()
+    | SOME cache =>
+        let
+          val theorem = validate_def_axiom_cache_theorem target theorem
+          val cardinality = !(#cardinality cache)
+          val entries = #entries cache
+          val replacing = Option.isSome
+            (Redblackmap.peek (!entries, target))
+        in
+          if cardinality >= #limit cache andalso not replacing then
+            #capacity_refusals cache := !(#capacity_refusals cache) + 1
+          else
+            let
+              val entry = {target = target, theorem = theorem}
+              val next = cardinality + (if replacing then 0 else 1)
+            in
+              entries := Redblackmap.insert
+                (!entries, target, entry);
+              #inserts cache := !(#inserts cache) + 1;
+              #cardinality cache := next;
+              #peak_cardinality cache :=
+                Int.max (!(#peak_cardinality cache), next)
+            end
+        end
+        handle exn =>
+          if cache_terminal_exception exn then raise exn
+          else #failures cache := !(#failures cache) + 1
+
+  fun note_def_axiom_skeleton_attempt () =
+    case !current_def_axiom_cache of
+      NONE => ()
+    | SOME cache => #skeleton_attempts cache :=
+        !(#skeleton_attempts cache) + 1
+
   type local_structure = unit -> string
   type proof_step_state =
     {id : int, rule : string, status : string,
@@ -1913,10 +2152,16 @@ local
             raise diagnostic_exn
           else "measurement_unavailable=true measurement_exception=" ^
             SmtResource.exception_class diagnostic_exn)
+      val cache_text =
+        (current_def_axiom_cache_text () handle diagnostic_exn =>
+          if terminal_diagnostic_exception diagnostic_exn then
+            raise diagnostic_exn
+          else "def_cache_unavailable=true def_cache_exception=" ^
+            SmtResource.exception_class diagnostic_exn)
       val message = SmtResource.bounded_text 4096
         ("replay-snapshot " ^ step ^ " exception=" ^
-         SmtResource.exception_class exn ^ " " ^ measurement_text ^ " " ^
-         local_text)
+         SmtResource.exception_class exn ^ " " ^ cache_text ^ " " ^
+         measurement_text ^ " " ^ local_text)
     in
       SmtResource.emit_e0_replay_snapshot message;
       SmtResource.emit_profile_summary ()
@@ -2002,19 +2247,34 @@ local
             SmtSkeletonProve.term_measure target
           val _ = SmtResource.profile_phase "skeleton/ownership-ownerless"
             (fn () => ()) ()
+          val cached = probe_def_axiom_cache target
+          fun prove () =
+            let
+              val _ = note_def_axiom_skeleton_attempt ()
+            in
+              case profile "def-axiom(1)(skeleton-worker)"
+                  (SmtSkeletonProve.with_node_cache_observer
+                    (case !current_replay_measurement of
+                       NONE => NONE
+                     | SOME _ => SOME observe_skeleton_node_cache)
+                    (fn () => SmtSkeletonProve.attempt_with_owners
+                      def_axiom_skeleton_context def_axiom_skeleton_owners
+                      measure target)) () of
+                SmtSkeletonProve.Proved result =>
+                  let
+                    val theorem = #theorem result
+                    val _ = record_skeleton_metrics (#metrics result)
+                    val _ = insert_def_axiom_cache target theorem
+                  in
+                    theorem
+                  end
+              | SmtSkeletonProve.Declined =>
+                  raise ERR "z3_def_axiom" "checked skeleton declined"
+            end
         in
-          case SmtSkeletonProve.with_node_cache_observer
-              (case !current_replay_measurement of
-                 NONE => NONE
-               | SOME _ => SOME observe_skeleton_node_cache)
-              (fn () => SmtSkeletonProve.attempt_with_owners
-                def_axiom_skeleton_context def_axiom_skeleton_owners
-                measure target) () of
-            SmtSkeletonProve.Proved result =>
-              (record_skeleton_metrics (#metrics result);
-               #theorem result)
-          | SmtSkeletonProve.Declined =>
-              raise ERR "z3_def_axiom" "checked skeleton declined"
+          case cached of
+            SOME theorem => theorem
+          | NONE => prove ()
         end) target)
     handle exn as Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
@@ -5885,6 +6145,15 @@ in
   val word_decide_for_test = word_decide
   val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
   val with_e0_replay_boundary = with_e0_replay_boundary
+  val max_def_axiom_cache_entries_for_test = max_def_axiom_cache_entries
+  val with_def_axiom_cache_boundary_for_test =
+    with_def_axiom_cache_boundary_for
+  fun def_axiom_cache_statistics_for_test () =
+    current_def_axiom_cache_statistics ()
+  fun def_axiom_cache_retained_entries_for_test () =
+    case !current_def_axiom_cache of
+      NONE => 0
+    | SOME cache => !(#cardinality cache)
   fun replay_snapshot_state_for_test () = replay_snapshot_step ()
   fun replay_local_structure_count_for_test () =
     replay_local_structure_count ()
@@ -6185,6 +6454,85 @@ in
     Lib.snd (z3_def_axiom (state, target))
   end
 
+  fun def_axiom_cache_sequence_for_test limit targets =
+  let
+    fun replay () = List.map def_axiom_for_test targets
+    val theorems = with_def_axiom_cache_boundary_for limit replay ()
+  in
+    {theorems = theorems,
+     statistics = !last_def_axiom_cache_statistics,
+     retained_entries = def_axiom_cache_retained_entries_for_test ()}
+  end
+
+  fun def_axiom_cache_failure_for_test limit targets =
+  let
+    fun replay () =
+      (List.app (ignore o def_axiom_for_test) targets;
+       raise Fail "def-axiom cache fixture failure")
+    val failed =
+      ((with_def_axiom_cache_boundary_for limit replay (); false)
+       handle Fail "def-axiom cache fixture failure" => true)
+  in
+    {failed = failed,
+     statistics = !last_def_axiom_cache_statistics,
+     retained_entries = def_axiom_cache_retained_entries_for_test ()}
+  end
+
+  fun def_axiom_cache_raise_for_test limit targets raised =
+  let
+    fun replay () =
+      (List.app (ignore o def_axiom_for_test) targets; raise raised)
+  in
+    with_def_axiom_cache_boundary_for limit replay ()
+  end
+
+  fun def_axiom_cache_gate_for_test limit target =
+  let
+    fun replay () = ignore (def_axiom_for_test target)
+    val gated =
+      ((with_def_axiom_cache_boundary_for limit replay (); false)
+       handle Feedback.HOL_ERR holerr =>
+         if SmtResource.is_resource_gate holerr then true
+         else raise Feedback.HOL_ERR holerr)
+  in
+    {gated = gated,
+     statistics = !last_def_axiom_cache_statistics,
+     retained_entries = def_axiom_cache_retained_entries_for_test ()}
+  end
+
+  fun def_axiom_cache_nested_for_test limit outer_target inner_target =
+  let
+    fun inner () = ignore (def_axiom_for_test inner_target)
+    fun outer () =
+      (ignore (def_axiom_for_test outer_target);
+       with_def_axiom_cache_boundary_for limit inner ();
+       ignore (def_axiom_for_test outer_target))
+    val _ = with_def_axiom_cache_boundary_for limit outer ()
+  in
+    {statistics = !last_def_axiom_cache_statistics,
+     retained_entries = def_axiom_cache_retained_entries_for_test ()}
+  end
+
+  fun def_axiom_cache_probe_failure_for_test target =
+  let
+    fun replay () =
+      let
+        val first = def_axiom_for_test target
+        val cache = valOf (!current_def_axiom_cache)
+        val bad = {target = target, theorem = Thm.ASSUME target}
+        val _ = #entries cache := Redblackmap.insert
+          (!(#entries cache), target, bad)
+        val second = def_axiom_for_test target
+      in
+        (first, second)
+      end
+    val theorems = with_def_axiom_cache_boundary_for 8 replay ()
+  in
+    {theorems = theorems,
+     statistics = !last_def_axiom_cache_statistics,
+     retained_entries = def_axiom_cache_retained_entries_for_test ()}
+  end
+
   fun e0_measurement_targets_for_test
       {def_axiom_targets, congruence_targets, force_invocation_truncation,
        fail} =
@@ -6377,9 +6725,10 @@ in
 
 
   fun check_proof_with_definitions definitions args : Thm.thm =
-    SmtResource.with_e0_invocation
-      (with_e0_replay_boundary
-        (profile "check_proof(total)" (check_proof_impl definitions))) args
+    with_def_axiom_cache_boundary
+      (SmtResource.with_e0_invocation
+        (with_e0_replay_boundary
+          (profile "check_proof(total)" (check_proof_impl definitions)))) args
 
   fun check_proof args : Thm.thm = check_proof_with_definitions [] args
 
