@@ -7,7 +7,10 @@ struct
    says what stands in the way.  A goal listed in [over_budget] was
    cut off by the budget rather than reporting no proof, so its
    classification is the family it belongs to rather than an observed
-   residual. *)
+   residual.  That list is measured, not inherited: the engine work
+   since has brought ten of its goals back inside the budget, and each
+   now carries the class its residual says it belongs to (re-measured
+   2026-09-07). *)
 
 (* Isabelle's [code_unfold] lemmas at List.thy:8259 and 8273 state that
    a set-encoded relation and its predicate encoding agree:
@@ -31,19 +34,12 @@ val translation : benchLib.shortfall list =
 val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
    "list_L1511_split_list_last_propE",
-   "list_L1921_in_set_conv_nth",
-   "list_L4065_set_take_disj_set_drop_if_distinct",
-   "list_L4406_distinct_adj_Cons_Cons",
-   "list_L5325_bij_rotate1", "list_L7998_listrel_rtrancl_refl",
+   "list_L5325_bij_rotate1",
    "list_L6138_map_sorted_distinct_set_unique",
-   "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
-   "list_L6847_sorted_list_of_set_nonempty",
-   "list_L7861_listrel1_converse",
-   "list_L8044_listrel1_subset_listrel", "list_L8705_set_relcomp",
+   "list_L8044_listrel1_subset_listrel",
    "list_L9013_list_all_transfer",
    "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
-   "map_L899_map_add_subsumed1", "product_type_L1031_SigmaE",
-   "product_type_L1109_split_paired_Ball_Sigma",
+   "map_L899_map_add_subsumed1",
    "product_type_L1133_Sigma_Union",
    "string_L34_of_char_Char",
    "string_L357_integer_of_char_code"]
@@ -157,18 +153,29 @@ val zip_against_map =
 val over_budget_with_no_residual =
   classified "over budget with no residual"
     ("the assigned tactic did not return within the budget")
-    ["list_L1921_in_set_conv_nth",
-     "list_L7998_listrel_rtrancl_refl", "map_L899_map_add_subsumed1",
-     "list_L4065_set_take_disj_set_drop_if_distinct",
-     "list_L4406_distinct_adj_Cons_Cons",
-     "list_L5325_bij_rotate1",
+    ["list_L5325_bij_rotate1",
      "list_L6138_map_sorted_distinct_set_unique",
-     "list_L6669_sorted_key_list_of_set_eq_Nil_iff",
-     "list_L6847_sorted_list_of_set_nonempty",
-     "list_L8705_set_relcomp", "map_L723_ran_map_upd",
-     "map_L730_ran_map_upd_Some",
+     "list_L8044_listrel1_subset_listrel",
+     "list_L9013_list_all_transfer",
+     "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
+     "map_L899_map_add_subsumed1",
      "product_type_L1133_Sigma_Union", "string_L34_of_char_Char",
      "string_L357_integer_of_char_code"]
+
+(* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
+   the translated [sorted_key_list_of_set], which is a sort of the set's
+   elements in an arbitrary listing.  The source's facts about it are
+   the locale lemmas of the fold that builds it -- its head is the
+   least element, and it is empty exactly when the set is -- and HOL4
+   has no constant of its own to state them on, so a sort at a set
+   known only to be finite reduces nowhere. *)
+val sorted_list_of_a_set =
+  classified "sorted list of a set"
+    ("the residual is a sort over a set's elements, which the source "
+     ^ "reads through the locale lemmas of the fold that builds it "
+     ^ "and HOL4 states on no constant of its own")
+    ["list_L6669_sorted_key_list_of_set_eq_Nil_iff",
+     "list_L6847_sorted_list_of_set_nonempty"]
 
 val arithmetic_residual_after_unfolding =
   classified "arithmetic residual after unfolding"
@@ -209,12 +216,12 @@ val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
     ("the clasimp method terminates and reports no proof")
     ["list_L2178_snoc_eq_iff_butlast", "list_L2814_map_zip_map",
-     "list_L2818_map_zip_map2",
+     "list_L2818_map_zip_map2", "list_L4406_distinct_adj_Cons_Cons",
+     "list_L7998_listrel_rtrancl_refl",
      "list_L4707_foldr_fold_remove1",
      "list_L4781_foldr_fold_removeAll", "list_L5409_nths_drop",
      "list_L7247_lex_conv",
      "list_L7321_lex_append_rightI",
-     "list_L8044_listrel1_subset_listrel",
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
      "string_L178_card_UNIV_char"]
 
@@ -223,7 +230,8 @@ val take_and_drop_arithmetic =
     ("the residual is a TAKE or DROP identity whose side "
      ^ "condition is arithmetic the simpset does not discharge")
     ["list_L2396_butlast_take", "list_L2400_butlast_drop",
-     "list_L2403_take_butlast", "list_L2406_drop_butlast"]
+     "list_L2403_take_butlast", "list_L2406_drop_butlast",
+     "list_L4065_set_take_disj_set_drop_if_distinct"]
 
 val list_relation_lifting =
   classified "list relation lifting"
@@ -306,11 +314,13 @@ val characterisation_is_the_goal =
   classified "characterisation is the goal"
     ("the HOL4 theorem that is this goal -- the one the Isabelle "
      ^ "method cites, or one the simpset carries, or one a seed file "
-     ^ "declares -- is excluded by A1, up to the orientation of an "
-     ^ "equation or an equivalence or the unfolding of a constant the "
-     ^ "translation introduces, and the assigned tactic has no second "
-     ^ "route")
-    ["list_L6444_stable_sort_key_sort_key", "list_L7318_lenlex_length",
+     ^ "declares -- is withheld as the goal's own statement, by A1 or "
+     ^ "by the recipe's self-citation filter, up to the orientation "
+     ^ "of an equation or an equivalence or the unfolding of a "
+     ^ "constant the translation introduces, and the assigned tactic "
+     ^ "has no second route")
+    ["list_L1921_in_set_conv_nth",
+     "list_L6444_stable_sort_key_sort_key", "list_L7318_lenlex_length",
      "product_type_L785_curry_conv",
      "list_L8167_list_all_iff",
      "list_L8642_image_set", "list_L8660_card_set",
@@ -321,11 +331,13 @@ val predicate_and_set_representation =
   classified "predicate and set representation"
     ("the translation writes a set as a lambda and membership as "
      ^ "application, and the residual reads a list's set that way: "
-     ^ "[set (FILTER P xs) x] is the membership every list rule is "
-     ^ "stated on, written applied, and no rule meets it there.  Its "
-     ^ "companion is a pair taken apart at a variable, where the "
-     ^ "declared UNCURRY clause asks for an explicit pair")
-    ["list_L8638_filter_set", "product_type_L600_case_prodI2_"]
+     ^ "[set (FILTER P xs) x] and [set (FLAT (MAP f xys)) (a, b)] are "
+     ^ "the membership every list rule is stated on, written applied, "
+     ^ "and no rule meets it there.  Their companion is a pair taken "
+     ^ "apart at a variable, where the declared UNCURRY clause asks "
+     ^ "for an explicit pair")
+    ["list_L8638_filter_set", "list_L8705_set_relcomp",
+     "product_type_L600_case_prodI2_"]
 
 val pair_membership_after_flattening =
   classified "pair membership after flattening"
@@ -340,7 +352,6 @@ val blast_search_reports_no_proof =
      ^ "reconstructible proof")
     ["list_L7771_wf_measures",
      "list_L7861_listrel1_converse", "list_L8006_listrel_Nil",
-     "list_L9013_list_all_transfer",
      "map_L828_finite_graph_map_of",
      "option_L59_split_option_ex"]
 
@@ -473,6 +484,7 @@ val execution : benchLib.shortfall list =
   instantiated_fact_not_applied @
   zip_against_map @
   over_budget_with_no_residual @
+  sorted_list_of_a_set @
   arithmetic_residual_after_unfolding @
   filter_normalisation @
   indexing_through_list_constructors @
