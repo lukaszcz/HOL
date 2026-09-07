@@ -93,7 +93,7 @@ fun output_paths directory prover =
       (List.filter is_output (hhConfig.directory_names directory))
   end
 
-fun unverified_line debug_dir (slice, lemmas) =
+fun unverified_line root debug_dir (slice, lemmas) =
   let
     val heading =
       "  " ^ #prover slice ^ ": [" ^ String.concatWith ", " lemmas ^ "]"
@@ -108,12 +108,12 @@ fun unverified_line debug_dir (slice, lemmas) =
                 "-*.out")
               else String.concatWith ", " outputs
           in
-            heading ^ "\n    problem: " ^ problem_path slice ^
+            heading ^ "\n    problem: " ^ problem_path root slice ^
             "\n    output: " ^ output_text
           end
   end
 
-fun failed caller options found =
+fun failed caller root options found =
   if null found then
     (print_endline "  ATPs could not find a proof";
      raise ERR caller "ATPs could not find a proof")
@@ -122,22 +122,23 @@ fun failed caller options found =
       val message =
         "ATPs found proofs, but reconstruction failed for:\n" ^
         String.concatWith "\n"
-          (map (unverified_line (#debug_dir options)) (List.rev found))
+          (map (unverified_line root (#debug_dir options)) (List.rev found))
     in
       print_endline ("  " ^ message);
       raise ERR caller message
     end
 
-fun run_schedule caller options rankings goal =
+fun run_schedule caller parent options rankings goal =
   let
+    val root = hhSchedule.new_problem_dir parent
     val found = ref ([] : unverified list)
-    val result = hhSchedule.run
+    val result = hhSchedule.run_in root
       {options = options, goal = goal, rankings = rankings,
        progress = SOME (progress found)}
   in
     case #suggestions result of
         suggestion :: _ => suggestion
-      | [] => failed caller options (!found)
+      | [] => failed caller root options (!found)
   end
 
 fun distinct_filter_maxima schedule =
@@ -163,16 +164,16 @@ fun options_for caller wanted_atps =
     interactive_options (map #name configs) (hhConfig.snapshot ())
   end
 
-fun hh_pb _ wanted_atps premises goal =
+fun hh_pb directory wanted_atps premises goal =
   let
     val options = options_for "hh_pb" wanted_atps
     val schedule = hhSlice.mk_schedule options
   in
-    #tac (run_schedule "hh_pb" options
+    #tac (run_schedule "hh_pb" directory options
       (explicit_rankings schedule premises) goal)
   end
 
-fun main_hh_result caller thmdata goal =
+fun main_hh_result caller directory thmdata goal =
   let
     val snapshot = hhConfig.snapshot ()
     val configs = available_configs caller
@@ -185,13 +186,14 @@ fun main_hh_result caller thmdata goal =
         {filter = filter, pool = NONE, goal = goal, n = maximum})
     val rankings = map rank (distinct_filter_maxima schedule)
   in
-    run_schedule caller options rankings goal
+    run_schedule caller directory options rankings goal
   end
 
-fun main_hh _ thmdata goal = #tac (main_hh_result "main_hh" thmdata goal)
+fun main_hh directory thmdata goal =
+  #tac (main_hh_result "main_hh" directory thmdata goal)
 
-fun main_hh_lemmas _ thmdata goal =
-  SOME (#lemmas (main_hh_result "main_hh_lemmas" thmdata goal))
+fun main_hh_lemmas directory thmdata goal =
+  SOME (#lemmas (main_hh_result "main_hh_lemmas" directory thmdata goal))
   handle HOL_ERR _ => NONE
 
 fun has_boolty x = type_of x = bool

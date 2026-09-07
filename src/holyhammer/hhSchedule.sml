@@ -61,10 +61,34 @@ fun problem_key (slice : hhProver.slice) =
                        #type_enc slice, #lam_trans slice,
                        Int.toString (#nfacts slice)])
 
-fun problem_dir (slice : hhProver.slice) =
-  join (join (hhConfig.state_dir ()) "problems") (problem_key slice)
+(* mkdir reserves each invocation even across processes and saved heaps. *)
+val directory_mutex = Mutex.mutex ()
+val directory_counter = ref 0
 
-fun problem_path (slice : hhProver.slice) = join (problem_dir slice) "atp_in"
+fun new_problem_dir parent =
+  let
+    val _ = hhConfig.ensure_dir parent
+    fun reserve () =
+      let
+        val serial = with_mutex directory_mutex (fn () =>
+          (directory_counter := !directory_counter + 1; !directory_counter))
+        val directory = join parent
+          (Portable.unique_tmp_suffix () ^ "." ^ Int.toString serial)
+      in
+        (OS.FileSys.mkDir directory; directory)
+        handle error as OS.SysErr _ =>
+          if (OS.FileSys.isDir directory handle OS.SysErr _ => false) then
+            reserve ()
+          else raise error
+      end
+  in
+    reserve ()
+  end
+
+fun problem_dir root (slice : hhProver.slice) =
+  join root (problem_key slice)
+
+fun problem_path root slice = join (problem_dir root slice) "atp_in"
 
 fun same_problem_key (left : hhProver.slice) (right : hhProver.slice) =
   #prover left = #prover right andalso #filter left = #filter right andalso
@@ -90,7 +114,7 @@ fun mono_instances options config =
 
 (* This function is called before any scheduler thread is created.  Both
    thml_of_namel and the exporters touch HOL process-global state. *)
-fun export_problems options goal rankings schedule =
+fun export_problems root options goal rankings schedule =
   let
     val slices = distinct_problem_slices (map #2 schedule)
     val conjecture = list_mk_imp goal
@@ -135,7 +159,7 @@ fun export_problems options goal rankings schedule =
     fun export slice =
       let
         val config = config_for slice
-        val directory = problem_dir slice
+        val directory = problem_dir root slice
         val named = named_for (#filter slice) (#nfacts slice)
         val _ = hhConfig.ensure_dir directory
       in
@@ -149,7 +173,7 @@ fun export_problems options goal rankings schedule =
                (hhTypeEnc.of_string (#type_enc slice)),
              lam_trans = #lam_trans slice, mono_iters = #mono_iters options,
              mono_instances = mono_instances options config}
-            (problem_path slice) (conjecture, named)
+            (problem_path root slice) (conjecture, named)
       end
   in
     List.app export slices
@@ -175,7 +199,7 @@ fun distinct_configs schedule =
     collect [] schedule
   end
 
-fun run {options, goal, rankings, progress} =
+fun run_in root {options, goal, rankings, progress} =
   let
     val started = Time.now ()
     val schedule = hhSlice.mk_schedule options
@@ -188,7 +212,7 @@ fun run {options, goal, rankings, progress} =
          TextIO.output (TextIO.stdErr,
            "HolyHammer progress callback failed: " ^
            General.exnMessage error ^ "\n"))
-    val _ = export_problems options goal rankings schedule
+    val _ = export_problems root options goal rankings schedule
     val _ = if #cache options then hhCache.prune options else ()
     (* Probe once on the calling thread.  Besides keeping version probes out
        of the worker pool, this avoids concurrent access to hhProver's probe
@@ -209,7 +233,7 @@ fun run {options, goal, rankings, progress} =
     val verified = ref 0
     val stopping = ref false
     val reason = ref (NONE : stop_reason option)
-    val running = ref ([] : (int * (unit -> unit)) list)
+    val running = ref ([] : (int * bool ref * (unit -> unit)) list)
     val next_running = ref 0
     val worker_count = Int.min (#cores options, schedule_length)
     val workers_left = ref 0
@@ -244,13 +268,24 @@ fun run {options, goal, rankings, progress} =
         else
           let val id = !next_running in
             next_running := id + 1;
-            running := (id, kill) :: !running;
+            running := (id, ref false, kill) :: !running;
             SOME id
           end)
 
+    (* Removal and cancellation marking share the mutex, so a completed
+       slice cannot race a stop into caching a prematurely killed result. *)
     fun unregister_running id =
       with_mutex state_mutex (fn () =>
-        running := List.filter (fn (other, _) => id <> other) (!running))
+        let
+          val cancelled =
+            case List.find (fn (other, _, _) => id = other) (!running) of
+                SOME (_, flag, _) => !flag
+              | NONE => true
+          val _ = running :=
+            List.filter (fn (other, _, _) => id <> other) (!running)
+        in
+          cancelled
+        end)
 
     fun kill_all stop_reason =
       let
@@ -263,7 +298,8 @@ fun run {options, goal, rankings, progress} =
             val _ = stopping := true
             val _ = work := []
             val _ = recon := []
-            val kills = map #2 (!running)
+            val kills = map (fn (_, cancelled, kill) =>
+              (cancelled := true; kill)) (!running)
             val _ = signal ()
           in
             kills
@@ -312,7 +348,7 @@ fun run {options, goal, rankings, progress} =
         val budget = Real.max (0.001, real_min wanted remaining)
         val request : hhProver.run_request =
           {timeout = Real.ceil budget, format = #format slice,
-           problem = problem_path slice, extra = #extra_opts slice,
+           problem = problem_path root slice, extra = #extra_opts slice,
            debug_dir = #debug_dir options}
         val _ = emit (SliceStarted slice)
         val parts = if #cache options then cache_parts config request else NONE
@@ -327,24 +363,15 @@ fun run {options, goal, rankings, progress} =
                 in
                   case register_running (#kill process) of
                       NONE =>
-                        let
-                          val _ = #kill process ()
-                          val result = #wait process ()
-                          val _ =
-                            case parts of
-                                NONE => ()
-                              | SOME key => hhCache.store options key result
-                        in
-                          result
-                        end
+                        (#kill process (); #wait process ())
                     | SOME id =>
                         let
                           val result =
                             (#wait process ()
                              handle error =>
-                               (unregister_running id; raise error))
-                          val _ = unregister_running id
-                          val _ =
+                               (ignore (unregister_running id); raise error))
+                          val cancelled = unregister_running id
+                          val _ = if cancelled then () else
                             case parts of
                                 NONE => ()
                               | SOME key => hhCache.store options key result
@@ -522,5 +549,8 @@ fun run {options, goal, rankings, progress} =
         finish stopped
       end
   end
+
+fun run request =
+  run_in (new_problem_dir (join (hhConfig.state_dir ()) "problems")) request
 
 end

@@ -19,11 +19,17 @@ sig
      slices_run : (hhProver.slice * hhProver.szs * real * bool) list,
      stopped : stop_reason, t_total : real}
 
-  val problem_path : hhProver.slice -> string
+  (* run_in and export_problems require a root reserved for this invocation. *)
+  val new_problem_dir : string -> string
+  val problem_path : string -> hhProver.slice -> string
   val default_progress : event -> unit
-  val export_problems : hhConfig.hh_options -> goal ->
+  val export_problems : string -> hhConfig.hh_options -> goal ->
     (string * string list) list ->
     (hhProver.prover_config * hhProver.slice) list -> unit
+  val run_in : string ->
+    {options : hhConfig.hh_options, goal : goal,
+     rankings : (string * string list) list,
+     progress : (event -> unit) option} -> result
   val run :
     {options : hhConfig.hh_options, goal : goal,
      rankings : (string * string list) list,

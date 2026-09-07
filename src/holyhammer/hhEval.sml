@@ -2096,10 +2096,10 @@ fun indexed items =
     loop 1 items
   end
 
-fun anchor_row_of goal_id premises timeout prover_versions
+fun anchor_row_of root goal_id premises timeout prover_versions
     (index, (config : hhProver.prover_config, slice : hhProver.slice)) =
   let
-    val problem = hhSchedule.problem_path slice
+    val problem = hhSchedule.problem_path root slice
     val request : hhProver.run_request =
       {timeout = timeout, format = #format slice, problem = problem,
        extra = #extra_opts slice, debug_dir = NONE}
@@ -2144,8 +2144,8 @@ fun derive_anchor_rows_part_core
     val current_rankings = ref ([] : anchor_ranking list)
     fun selected name =
       List.exists (fn requested => requested = name) theorem_names
-    fun rows goal_id premises schedule =
-      map (anchor_row_of goal_id premises timeout prover_versions)
+    fun rows root goal_id premises schedule =
+      map (anchor_row_of root goal_id premises timeout prover_versions)
         (map (fn (offset, slice) =>
           (profile_start + offset, slice)) (indexed schedule))
     fun one name =
@@ -2173,9 +2173,11 @@ fun derive_anchor_rows_part_core
                List.exists (fn allowed => allowed = premise) pool) premises
           then ()
           else raise Fail "anchor ranking binding is stale or malformed"
-        val _ = hhSchedule.export_problems current_options goal
+        val root = hhSchedule.new_problem_dir
+          (join (hhConfig.state_dir ()) "problems")
+        val _ = hhSchedule.export_problems root current_options goal
           [("knn", premises)] current_schedule
-        val after_rows = rows goal_id premises current_schedule
+        val after_rows = rows root goal_id premises current_schedule
         val _ =
           if selected name then
             let
@@ -2906,11 +2908,13 @@ fun run_format_smoke expdir timeout options (config, slice) =
       {cond_id = "smoke-format-" ^ #prover slice, regime = Bushy,
        selector = Deps, engine = Prover (#prover slice), timeout = timeout,
        reconstruct = true}
-    val _ = hhSchedule.export_problems options goal
+    val root = hhSchedule.new_problem_dir
+      (join (hhConfig.state_dir ()) "problems")
+    val _ = hhSchedule.export_problems root options goal
       [(#filter slice, premises)] [(config, slice)]
     val result = hhProver.run config
       {timeout = timeout, format = #format slice,
-       problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
+       problem = hhSchedule.problem_path root slice, extra = #extra_opts slice,
        debug_dir = #debug_dir options}
     val (recon_ok, _, _, recon_detail) = reconstruct condition result goal
     val parsed_axioms =
@@ -2995,11 +2999,13 @@ fun soundness_case options timeout goal (config, slice) =
     (* A short query is enough to catch an unsound immediate theorem while
        keeping the deliberately parser-rejected candidates smoke-friendly. *)
     val query_timeout = Int.min (timeout, 3)
-    val _ = hhSchedule.export_problems options ([], goal)
+    val root = hhSchedule.new_problem_dir
+      (join (hhConfig.state_dir ()) "problems")
+    val _ = hhSchedule.export_problems root options ([], goal)
       [(#filter slice, [])] [(config, slice)]
     val result = hhProver.run config
       {timeout = query_timeout, format = #format slice,
-       problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
+       problem = hhSchedule.problem_path root slice, extra = #extra_opts slice,
        debug_dir = #debug_dir options}
   in
     #szs result <> hhProver.SzsTheorem

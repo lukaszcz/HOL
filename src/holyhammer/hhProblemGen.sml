@@ -1240,7 +1240,8 @@ struct
         (pass_lambda format lam_trans lambda_input)
     end
 
-  type export_memo = {entries : (string * named_terms) list ref, runs : int ref}
+  type export_memo =
+    {entries : (string * named_terms * named_terms) list ref, runs : int ref}
 
   fun new_export_memo () = {entries = ref [], runs = ref 0}
   fun memo_lambda_runs ({runs, ...} : export_memo) = !runs
@@ -1258,12 +1259,12 @@ struct
 
   fun memoized_lambda ({entries, runs} : export_memo) format mode terms =
     let val key = effective_mode format mode in
-      case List.find (fn (old_key, old_terms) => old_key = key andalso
+      case List.find (fn (old_key, old_terms, _) => old_key = key andalso
           same_terms old_terms terms) (!entries) of
-          SOME (_, result) => result
+          SOME (_, _, result) => result
         | NONE =>
             let val result = pass_lambda format mode terms in
-              entries := (key, result) :: !entries;
+              entries := (key, terms, result) :: !entries;
               runs := !runs + 1;
               result
             end

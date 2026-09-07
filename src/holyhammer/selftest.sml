@@ -1137,7 +1137,7 @@ fun test_hhProblemGen () =
       {format = tf0, type_enc = hhTypeEnc.of_string "mono_native",
        lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
     val theorem = DB.fetch "bool" "TRUTH"
-    val exported = (``T`` : Term.term, [("truth", theorem)])
+    val exported = (``free_goal:bool`` : Term.term, [("truth", theorem)])
     val _ = export_pb_in memo export_options output1 exported
     val _ = export_pb_in memo export_options output2 exported
     val first_export = String.concat (read_lines output1)
@@ -2920,7 +2920,9 @@ fun test_schedule_max_proofs parser =
     val slices =
       [fixture_slice name ["0", "schedule-truth.out"] 1,
        fixture_slice name ["0", "schedule-t-def.out"] 1]
-    val config = printer_config name slices (fn _ => ()) parser
+    val paths = ref ([] : string list)
+    val config = printer_config name slices
+      (fn request => paths := #problem request :: !paths) parser
     val _ = hhProver.register config
     val options1 = fixture_options [name] 2 2 5 1 false "" NONE
     val options2 = fixture_options [name] 2 2 5 2 false "" NONE
@@ -2941,9 +2943,8 @@ fun test_schedule_max_proofs parser =
     val _ = expect "scheduler event ordering is sane"
       (schedule_events_sane events2)
     val _ = expect "scheduler exports the zero-fact prefix"
-      (OS.FileSys.access
-        (hhSchedule.problem_path (fixture_slice name [] 1),
-         [OS.FileSys.A_READ]))
+      (not (null (!paths)) andalso List.all (fn path =>
+        OS.FileSys.access (path, [OS.FileSys.A_READ])) (!paths))
   in
     ()
   end
@@ -3019,7 +3020,8 @@ fun test_schedule_early_stop parser =
     val _ = hhProver.register
       (printer_config fast fast_slices (fn _ => ()) parser)
     val _ = hhProver.register (sleeper_config slow2 parser)
-    val options = fixture_options [slow1, fast, slow2] 3 3 12 1 false ""
+    val cache = join debug "cache"
+    val options = fixture_options [slow1, fast, slow2] 3 3 12 1 true cache
       (SOME debug)
     val (result, events) = run_schedule options
     val children_gone =
@@ -3046,6 +3048,8 @@ fun test_schedule_early_stop parser =
       (#t_total result < 8.0)
     val _ = expect "scheduler early stop kills laggard process groups"
       children_gone
+    val _ = expect "proof success caches only the completed slice"
+      (length (hhConfig.directory_names cache) = 1)
     val _ = remove_tree debug
   in
     ()
@@ -3105,6 +3109,105 @@ fun test_schedule_cache parser =
     ()
   end
 
+fun await_schedule_test message ready =
+  let
+    val deadline = Time.+ (Time.now (), Time.fromSeconds 10)
+    fun loop () =
+      if ready () then ()
+      else if Time.compare (Time.now (), deadline) <> LESS then
+        raise Fail message
+      else (OS.Process.sleep (Time.fromMilliseconds 10); loop ())
+  in
+    loop ()
+  end
+
+fun test_schedule_cancelled_cache parser =
+  let
+    val name = "hh-schedule-cancelled-cache"
+    val slice = fixture_slice name ["1", "e-gave-up.out"] 1
+    val root = hhSchedule.new_problem_dir (hhConfig.state_dir ())
+    val options = fixture_options [name] 1 1 5 1 true root NONE
+    val _ = hhProver.register
+      (printer_config name [slice] (fn _ => ()) parser)
+    val _ = ignore (hhProver.probe (valOf (hhProver.lookup name)))
+    val result = ref NONE
+    val _ = hhProver.reset_spawn_count ()
+    val thread = Thread.fork
+      (fn () => result := SOME (#1 (run_schedule options)), [])
+    val _ = await_schedule_test "cancelled slice never started"
+      (fn () => hhProver.spawn_count () > 0)
+    val _ = OS.Process.sleep (Time.fromMilliseconds 200)
+    val _ = Thread.interrupt thread
+    val _ = await_schedule_test "interrupted scheduler did not finish"
+      (fn () => not (Thread.isActive thread))
+    val _ = expect "scheduler interrupt cancels the running slice"
+      (case !result of
+           SOME value => #stopped value = hhSchedule.Interrupted
+         | NONE => false)
+    val _ = hhProver.reset_spawn_count ()
+    val (retry, _) = run_schedule options
+    val _ = expect "cancelled slices retry instead of caching a timeout"
+      (hhProver.spawn_count () = 1 andalso
+       case #slices_run retry of
+           [(_, hhProver.SzsGaveUp, _, false)] => true
+         | _ => false)
+    val _ = hhProver.reset_spawn_count ()
+    val (cached, _) = run_schedule options
+    val _ = expect "completed retry remains cacheable"
+      (hhProver.spawn_count () = 0 andalso
+       List.all #4 (#slices_run cached))
+  in
+    remove_tree root
+  end
+
+fun test_schedule_isolation parser =
+  let
+    val name = "hh-schedule-isolation"
+    val slice = fixture_slice name ["0", "e-gave-up.out"] 1
+    val mutex = Mutex.mutex ()
+    fun locked action = hhProver.with_mutex mutex action
+    val first_path = ref NONE
+    val second_path = ref NONE
+    val first_text = ref ""
+    val release = ref false
+    val intact = ref false
+    fun note (request : hhProver.run_request) =
+      let
+        val path = #problem request
+        val first = locked (fn () =>
+          case !first_path of
+              NONE => (first_path := SOME path; true)
+            | SOME _ => (second_path := SOME path; false))
+      in
+        if first then
+          (first_text := String.concat (read_lines path);
+           await_schedule_test "overlapping export did not finish"
+             (fn () => locked (fn () => !release));
+           intact := !first_text = String.concat (read_lines path))
+        else ()
+      end
+    val _ = hhProver.register (printer_config name [slice] note parser)
+    val options = fixture_options [name] 1 1 5 1 false "" NONE
+    val first_result = ref NONE
+    val thread = Thread.fork
+      (fn () => first_result := SOME (#1 (run_schedule options)), [])
+    val _ = await_schedule_test "first export did not reach the prover"
+      (fn () => locked (fn () => Option.isSome (!first_path)))
+    val (second_result, _) = run_schedule_on ([], boolSyntax.F) options
+    val _ = locked (fn () => release := true)
+    val _ = await_schedule_test "first scheduler did not finish"
+      (fn () => not (Thread.isActive thread))
+    val _ = expect "overlapping schedulers preserve their own prover inputs"
+      (!first_path <> !second_path andalso !intact andalso
+       !first_text <> String.concat (read_lines (valOf (!second_path)))
+       andalso Option.isSome (!first_result) andalso
+       #stopped second_result = hhSchedule.Exhausted)
+    val roots = map (OS.Path.dir o OS.Path.dir o valOf)
+      [!first_path, !second_path]
+  in
+    List.app remove_tree roots
+  end
+
 fun test_schedule_timeout parser =
   let
     val name = "hh-schedule-timeout"
@@ -3125,6 +3228,7 @@ fun test_schedule_timeout parser =
 
 fun test_schedule_filter_rankings parser =
   let
+    val root = hhSchedule.new_problem_dir (hhConfig.state_dir ())
     val name = "hh-schedule-filter-rankings"
     val knn = ranking_fixture_slice name "knn" 1
     val mepo = ranking_fixture_slice name "mepo" 1
@@ -3137,14 +3241,14 @@ fun test_schedule_filter_rankings parser =
        mono_instances = NONE, minimize = true, preplay_timeout = 1.0,
        minimize_timeout = 1.0, cache = false, cache_dir = "",
        cache_max_entries = 100, debug_dir = NONE}
-    val knn_path = hhSchedule.problem_path knn
-    val mepo_path = hhSchedule.problem_path mepo
+    val knn_path = hhSchedule.problem_path root knn
+    val mepo_path = hhSchedule.problem_path root mepo
     fun clean () = List.app (remove_tree o OS.Path.dir)
       [knn_path, mepo_path]
     val _ = clean ()
     val _ = hhProver.register config
     val missing =
-      ((ignore (hhSchedule.run
+      ((ignore (hhSchedule.run_in root
           {options = options, goal = ([], boolSyntax.T),
            rankings = [("knn", ["boolTheory.TRUTH"])],
            progress = NONE}); false)
@@ -3155,7 +3259,7 @@ fun test_schedule_filter_rankings parser =
        not (OS.FileSys.access (knn_path, [])) andalso
        not (OS.FileSys.access (mepo_path, [])))
       handle OS.SysErr _ => OK ()
-    val result = hhSchedule.run
+    val result = hhSchedule.run_in root
       {options = options, goal = ([], boolSyntax.T),
        rankings =
          [("knn", ["boolTheory.TRUTH"]),
@@ -3172,11 +3276,12 @@ fun test_schedule_filter_rankings parser =
        length (#slices_run result) = 2 andalso knn_text <> mepo_text)
     val _ = clean ()
   in
-    ()
+    remove_tree root
   end
 
 fun test_schedule_knn_anchor_export () =
   let
+    val root = hhSchedule.new_problem_dir (hhConfig.state_dir ())
     val e = prover "e"
     val name = "e"
     fun slice nfacts : hhProver.slice =
@@ -3205,24 +3310,26 @@ fun test_schedule_knn_anchor_export () =
     val _ = hhExportFof.fof_export_pb expected_two
       (boolSyntax.T, named 2)
     val _ = List.app (remove_tree o OS.Path.dir)
-      [hhSchedule.problem_path one, hhSchedule.problem_path two]
-    val _ = hhSchedule.export_problems options ([], boolSyntax.T)
+      [hhSchedule.problem_path root one, hhSchedule.problem_path root two]
+    val _ = hhSchedule.export_problems root options ([], boolSyntax.T)
       [("knn", ranking)] schedule
     val _ = expect "all-knn export preserves longest-ranking prefixes"
-      (hhSchedule.problem_path one <> hhSchedule.problem_path two andalso
-       String.concat (read_lines (hhSchedule.problem_path one)) =
+      (hhSchedule.problem_path root one <> hhSchedule.problem_path root two
+       andalso
+       String.concat (read_lines (hhSchedule.problem_path root one)) =
          String.concat (read_lines (join expected_one "atp_in")) andalso
-       String.concat (read_lines (hhSchedule.problem_path two)) =
+       String.concat (read_lines (hhSchedule.problem_path root two)) =
          String.concat (read_lines (join expected_two "atp_in")))
     val _ = List.app remove_tree [expected_one, expected_two]
     val _ = List.app (remove_tree o OS.Path.dir)
-      [hhSchedule.problem_path one, hhSchedule.problem_path two]
+      [hhSchedule.problem_path root one, hhSchedule.problem_path root two]
   in
-    ()
+    remove_tree root
   end
 
 fun test_schedule_export_wiring () =
   let
+    val root = hhSchedule.new_problem_dir (hhConfig.state_dir ())
     val e = prover "e"
     val vampire = prover "vampire"
     fun options mono_instances : hhConfig.hh_options =
@@ -3240,26 +3347,26 @@ fun test_schedule_export_wiring () =
     val lifting = slice "mono_guards" "lifting"
     val combs = slice "mono_guards" "combs"
     val goal = ([], boolSyntax.T)
-    val legacy_path = hhSchedule.problem_path legacy
-    val lifting_path = hhSchedule.problem_path lifting
-    val combs_path = hhSchedule.problem_path combs
+    val legacy_path = hhSchedule.problem_path root legacy
+    val lifting_path = hhSchedule.problem_path root lifting
+    val combs_path = hhSchedule.problem_path root combs
     val _ = List.app (remove_tree o OS.Path.dir)
       [legacy_path, lifting_path, combs_path]
     val expected_dir = OS.FileSys.tmpName ()
     val _ = OS.FileSys.remove expected_dir
     val _ = mkdir expected_dir
     val _ = hhExportFof.fof_export_pb expected_dir (boolSyntax.T, [])
-    val _ = hhSchedule.export_problems (options NONE) goal
+    val _ = hhSchedule.export_problems root (options NONE) goal
       [("none", [])] [(e, legacy)]
     val legacy_empty_text = String.concat (read_lines legacy_path)
     val _ = expect "legacy scheduler dispatch is byte-identical"
       (legacy_empty_text =
        String.concat (read_lines (join expected_dir "atp_in")))
-    val _ = hhSchedule.export_problems (options NONE) goal
+    val _ = hhSchedule.export_problems root (options NONE) goal
       [("none", ["boolTheory.TRUTH"])] [(e, legacy)]
     val _ = expect "filter=none exports premises beyond the slice fact count"
       (legacy_empty_text <> String.concat (read_lines legacy_path))
-    val _ = hhSchedule.export_problems (options NONE) goal [("none", [])]
+    val _ = hhSchedule.export_problems root (options NONE) goal [("none", [])]
       [(e, lifting), (e, combs), (e, lifting)]
     val lifting_text = String.concat (read_lines lifting_path)
     val _ = expect "problem exports re-key full triples"
@@ -3269,7 +3376,7 @@ fun test_schedule_export_wiring () =
       (contains "generated by hhProblemGen" lifting_text)
     val _ = expect "registry mono-instance override wins over default"
       (contains "mono_instances=128" lifting_text)
-    val _ = hhSchedule.export_problems
+    val _ = hhSchedule.export_problems root
       (options (SOME 77)) goal [("none", [])] [(e, lifting)]
     val _ = expect "explicit mono-instance option beats registry override"
       (contains "mono_instances=77" (String.concat (read_lines lifting_path)))
@@ -3279,10 +3386,10 @@ fun test_schedule_export_wiring () =
        extra_opts = [], slice_size = 1}
     val e_mono = mono_slice "e"
     val vampire_mono = mono_slice "vampire"
-    val _ = hhSchedule.export_problems (options NONE) goal [("none", [])]
+    val _ = hhSchedule.export_problems root (options NONE) goal [("none", [])]
       [(e, e_mono), (vampire, vampire_mono)]
-    val e_mono_path = hhSchedule.problem_path e_mono
-    val vampire_mono_path = hhSchedule.problem_path vampire_mono
+    val e_mono_path = hhSchedule.problem_path root e_mono
+    val vampire_mono_path = hhSchedule.problem_path root vampire_mono
     val _ = expect "prover-specific monomorphization exports stay distinct"
       (e_mono_path <> vampire_mono_path andalso
        contains "mono_instances=128"
@@ -3291,7 +3398,7 @@ fun test_schedule_export_wiring () =
          (String.concat (read_lines vampire_mono_path)))
     val _ = remove_tree expected_dir
   in
-    ()
+    remove_tree root
   end
 
 fun test_hhSchedule () =
@@ -3307,6 +3414,8 @@ fun test_hhSchedule () =
           val _ = test_schedule_early_stop parser
           val _ = test_schedule_budget_truncation parser
           val _ = test_schedule_cache parser
+          val _ = test_schedule_cancelled_cache parser
+          val _ = test_schedule_isolation parser
           val _ = test_schedule_timeout parser
           val _ = test_schedule_filter_rankings parser
         in
@@ -3344,7 +3453,7 @@ fun test_main_hh_lemmas_hook parser =
       [("provers", name), ("slices", "3"), ("cores", "1"),
        ("timeout", "5"), ("filter", "none"), ("debug_dir", "")]
     val lemmas = with_hh_options settings (fn () =>
-      hook "/ignored" mlThmData.empty_thmdata
+      hook (hhConfig.state_dir ()) mlThmData.empty_thmdata
         ([], boolSyntax.T))
     val _ = expect "main_hh_lemmas returns scheduler suggestion lemmas"
       (lemmas = SOME ["boolTheory.TRUTH"])
@@ -3361,23 +3470,27 @@ fun test_holyHammer_unverified_failure parser =
       ["0", "schedule-unreconstructable.out"] 1
     val debug = OS.FileSys.tmpName ()
     val _ = remove_tree debug
+    val problem = ref ""
     val _ = hhProver.register
-      (printer_config name [slice] (fn _ => ()) parser)
+      (printer_config name [slice]
+        (fn request => problem := #problem request) parser)
     val settings =
       [("provers", name), ("slices", "1"), ("cores", "1"),
        ("timeout", "5"), ("filter", "none"), ("debug_dir", debug)]
     val goal = ([], Thm.concl (DB.fetch "arithmetic" "ADD1"))
     val message = with_hh_options settings (fn () =>
       hh_error (fn () => ignore
-        (holyHammer.main_hh "/ignored" mlThmData.empty_thmdata
+        (holyHammer.main_hh debug mlThmData.empty_thmdata
           goal)))
-    val problem = hhSchedule.problem_path (fixture_slice name [] 1)
     val _ = expect "unverified ATP proofs are reported with diagnostics"
       (case message of
            SOME text =>
              contains name text andalso
              contains "fixtureTheory.unreconstructable" text andalso
-             contains problem text andalso contains debug text andalso
+             contains (!problem) text andalso
+             String.isPrefix (debug ^ "/") (!problem) andalso
+             OS.FileSys.access (!problem, []) andalso
+             contains debug text andalso
              contains "output:" text
          | NONE => false)
     val _ = remove_tree debug
