@@ -1815,3 +1815,62 @@ val _ =
          (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
             clasetLib.empty_cs (clasimpLib.clasimp_ss ()))
          nested_extensional_goal)
+
+(* HOL4 states its set and list facts on [x IN s] -- [x IN set l] is
+   [MEM x l] itself -- while an equation taken pointwise as an application
+   produces [set (FILTER P xs) x], which none of those facts meet.  Neither
+   reading below is a benchmark entry.  The first is put to simplification
+   alone, which is the method the source's own [simp] names; the second
+   reaches the same reading through the root-only normalisation the search
+   tactics run first.  MEM_FILTER is named because it is not ambient in the
+   bare simpset the layer's own tests run against; what is under test is
+   the reading the equation is given, not which membership facts are
+   declared. *)
+val membership_goal : Abbrev.goal =
+  ([], ``(\clasimp_member. clasimp_ext_p clasimp_member /\
+                           MEM clasimp_member clasimp_ext_xs) =
+         set (FILTER clasimp_ext_p clasimp_ext_xs)``)
+
+val membership_ss =
+  simpLib.++ (BasicProvers.srw_ss (),
+              simpLib.rewrites [listTheory.MEM_FILTER])
+
+val _ =
+  check
+    ("an equation between sets meets the rules stated on membership",
+     fn () =>
+       valid_closes
+         (clasimpLib.with_extensionality
+            (clasimpLib.asm_full_simp membership_ss []))
+         membership_goal)
+
+val _ =
+  check
+    ("the search tactics reach the membership reading as well",
+     fn () =>
+       valid_closes
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            clasetLib.empty_cs membership_ss)
+         membership_goal)
+
+(* The other side of the same choice: where neither side of the equation
+   is a set HOL4 states facts about, the applied reading is the one the
+   goal's own context is in.  The goal is not a benchmark entry; the
+   source's [Collect_cong] is the shape it stands for. *)
+val applied_goal : Abbrev.goal =
+  ([``!clasimp_ext_element.
+        clasimp_ext_p clasimp_ext_element <=>
+        clasimp_ext_q clasimp_ext_element /\
+        clasimp_ext_r clasimp_ext_element``],
+   ``(clasimp_ext_p : 'a -> bool) =
+     \clasimp_member.
+       clasimp_ext_q clasimp_member /\ clasimp_ext_r clasimp_member``)
+
+val _ =
+  check
+    ("an equation between predicates keeps the reading its context has",
+     fn () =>
+       valid_closes
+         (clasimpLib.with_extensionality
+            (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) []))
+         applied_goal)

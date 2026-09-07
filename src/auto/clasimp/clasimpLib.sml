@@ -264,6 +264,46 @@ fun ambient_simp safe ss =
 fun context_first ss =
   Tactical.TRY (ambient_simp false (simpLib.clear_rules ss) [])
 
+(* Where the two sides are sets -- functions into bool -- the pointwise
+   reading is membership and not application.  Every set and list fact
+   HOL4 states is headed by [IN]: [MEM x l] is [x IN set l] itself, and
+   [x IN s] is an application of [IN] rather than the application [s x]
+   that FUN_EQ_THM produces.  Left applied, a set equation meets only
+   what unfolds on its own -- an intersection is a comprehension
+   underneath and reaches the membership reading anyway, while [set l]
+   is opaque and stays as it is.  Isabelle needs no such step: its
+   [set_eq_iff] is the membership reading outright. *)
+val membership_extensionality =
+  Tactical.prove
+    (``!(left : 'a -> bool) right.
+         (left = right) <=>
+         !element. element IN left <=> element IN right``,
+     Tactical.EVERY
+       [Rewrite.REWRITE_TAC [boolTheory.IN_DEF, boolTheory.FUN_EQ_THM],
+        Tactic.BETA_TAC,
+        Rewrite.REWRITE_TAC []])
+
+(* Which of the two readings an equation is given is decided by its
+   sides.  A side headed by a constant -- [set l], an image, an
+   intersection -- is one HOL4 states facts about, and states them on
+   the membership; where neither side is, there is no such fact to meet,
+   and the applied reading is the one the goal's own context is in.  The
+   source's [Collect_cong] is that case: it arrives with an applied
+   premise about a predicate variable, and reading its conclusion as a
+   membership puts the two out of each other's reach. *)
+fun extensional_rule term =
+  let
+    fun constant_headed side =
+      Term.is_const (fst (boolSyntax.strip_comb side))
+    fun membership_reading (left, right) =
+      snd (Type.dom_rng (Term.type_of left)) = Type.bool andalso
+      (constant_headed left orelse constant_headed right)
+  in
+    case Lib.total (Lib.assert membership_reading o boolSyntax.dest_eq) term of
+        SOME _ => membership_extensionality
+      | NONE => boolTheory.FUN_EQ_THM
+  end
+
 (* An equation between two functions is decided pointwise.  The source
    states its laws at the function level -- [f ^^ 0 = id],
    [set (filter P xs) = {x : set xs. P x}] -- where HOL4 states the same
@@ -279,7 +319,7 @@ fun context_first ss =
 fun pointwise_conv term =
   if boolSyntax.is_forall term then Conv.QUANT_CONV pointwise_conv term
   else if boolSyntax.is_imp_only term then Conv.RAND_CONV pointwise_conv term
-  else Conv.REWR_CONV boolTheory.FUN_EQ_THM term
+  else Conv.REWR_CONV (extensional_rule term) term
 
 val pointwise = Tactic.CONV_TAC pointwise_conv
 
@@ -670,14 +710,15 @@ fun must_close name =
     (fn (_, goals) => null goals)
 
 (* Search tactics benefit from putting extensional equalities into their
-   pointwise form before simplification and rule search.  FUN_EQ_CONV is
-   proof-producing and applies equally to ordinary functions and sets.
-   The conversion is deliberately root-only: expanding a nested test such
-   as [f = EMPTY] would lose a useful case split, and a pointwise goal must
-   not be extensionalized again. *)
+   pointwise form before simplification and rule search, in the same two
+   readings the terminal step takes.  The conversion is deliberately
+   root-only: expanding a nested test such as [f = EMPTY] would lose a
+   useful case split, and a pointwise goal must not be extensionalized
+   again. *)
 val extensional_normalize =
   Tactical.CONV_TAC
-    (Conv.CHANGED_CONV boolLib.FUN_EQ_CONV)
+    (Conv.CHANGED_CONV
+       (fn term => Conv.REWR_CONV (extensional_rule term) term))
 
 fun search_stages limit =
   let
