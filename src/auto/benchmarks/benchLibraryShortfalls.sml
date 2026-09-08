@@ -197,11 +197,11 @@ val indexing_through_list_constructors =
     ("the goal characterises a list operation by index.  The "
      ^ "simpset pushes EL through MAP, ZIP, LUPDATE, TAKE and DROP, "
      ^ "so what is left is a constructor it does not push EL "
-     ^ "through -- :: against an index written [n - 1] or [PRE n] -- "
-     ^ "a side condition on one of those rules that the goal does "
-     ^ "not supply, or the index characterisation itself, which "
-     ^ "neither simplification nor search reduces")
-    ["list_L1856_nth_Cons_pos", "list_L2163_last_list_update",
+     ^ "through -- a cons against an index known only to be "
+     ^ "non-zero -- a side condition on one of those rules that the "
+     ^ "goal does not supply, or the index characterisation itself, "
+     ^ "which neither simplification nor search reduces")
+    ["list_L1856_nth_Cons_pos",
      "list_L2480_take_update_cancel", "list_L2483_drop_update_cancel",
      "list_L2834_set_zip", "list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth",
