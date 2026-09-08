@@ -721,6 +721,29 @@ val _ =
             ``!l1 l2. LENGTH (l1 ++ l2) = LENGTH l1 + LENGTH l2``
             listTheory.APPEND))
 
+(* A rule need not put its whole prefix in one place.  It can quantify
+   what its premise speaks about, discharge it, and quantify again over
+   what the conclusion adds -- [DIVISION] binds the divisor, asks it to
+   be positive, and only then binds the dividend.  Taking the prefix off
+   once leaves the second one standing in the conclusion, where it is
+   nothing the goal says, and the rule reads as no reading of the goal
+   at all.  Two corpus goals that are such a rule were measured with
+   their own statement left in the simpset. *)
+val _ =
+  check
+    ("A1 catches a theorem that quantifies again after its premise",
+     fn () =>
+       benchLib.theorem_is_goal ``!n k. 0 < n ==> k MOD n < n``
+         arithmeticTheory.DIVISION)
+
+val _ =
+  check
+    ("A1 leaves such a theorem alone where the conclusion is not the goal",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal ``!n k. 0 < n ==> k MOD n < SUC n``
+            arithmeticTheory.DIVISION))
+
 val _ =
   check
     ("A1 catches a goal-as-truth wrapper through the cheap pre-filter",

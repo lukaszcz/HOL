@@ -469,7 +469,22 @@ fun contentless term =
    premise it carries is one the goal carries too.  Coverage runs that
    way only: a reading with fewer premises is stronger than the goal and
    supplies it outright, while one with a premise the goal does not have
-   leaves work and is not the goal. *)
+   leaves work and is not the goal.
+
+   A prefix is not always one prefix.  A rule can quantify what its
+   premise speaks about, discharge it, and quantify again over what is
+   left -- [!x s. x NOTIN s ==> !t. s SUBSET x INSERT t <=> s SUBSET t]
+   -- and taking the prefix off once leaves the inner one standing in
+   the conclusion, where it is nothing the goal says.  Such a rule was
+   read as no reading of the goal at all, and two goals that are one of
+   these rules were measured with their own statement left in the
+   simpset.  So a reading with premises is read on beyond them, for as
+   often as a prefix reappears.  The readings that stop there are kept
+   beside the ones that go on, because a conclusion that is the whole
+   goal is a reading of it in its own right and reading past its prefix
+   loses it.  Moving a prefix out past a premise is an equivalence, so
+   this adds readings without admitting any statement the rule does not
+   make. *)
 fun statement_is_goal goal statement =
   let
     val goal = strip_truth_equivalence goal
@@ -487,12 +502,18 @@ fun statement_is_goal goal statement =
     fun readings term =
       let
         val (premises, conclusion) = parts term
+        val here =
+          case total boolSyntax.dest_conj conclusion of
+              SOME (left, right) =>
+                map (fn (rest, c) => (premises @ rest, c))
+                  (readings left @ readings right)
+            | NONE => [(premises, strip_truth_equivalence conclusion)]
+        val beyond =
+          if List.null premises then []
+          else
+            map (fn (rest, c) => (premises @ rest, c)) (readings conclusion)
       in
-        case total boolSyntax.dest_conj conclusion of
-            SOME (left, right) =>
-              map (fn (rest, c) => (premises @ rest, c))
-                (readings left @ readings right)
-          | NONE => [(premises, strip_truth_equivalence conclusion)]
+        here @ beyond
       end
     val (goal_premises, goal_body) = parts goal
     val goal_conclusion = strip_truth_equivalence goal_body
