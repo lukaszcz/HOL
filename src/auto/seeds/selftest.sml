@@ -889,6 +889,14 @@ val _ =
    to the rest, so the append has to be walked into a cons before the
    rule can reach the index at all, and the index is then read on the
    source's side in the spelling the rule does not use. *)
+val _ =
+  check
+    ("an index reaches past a singleton appended to a list",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : 'a list) x n.
+                  0 < n ==> EL n ([x] ++ xs) = EL (n - 1) xs``))
+
 (* [adjacent_thm] settles a pair that is the head of the list, and
    [adjacent_iff] is what walks one further in.  The goal below asks for
    a pair one place beyond the head of a list with an arbitrary tail, so
@@ -899,11 +907,3 @@ val _ =
      fn () =>
        closes_within 20 (clasimpLib.AUTO_TAC [])
          ([], ``!(xs : 'a list) x y z. adjacent (x::y::z::xs) y z``))
-
-val _ =
-  check
-    ("an index reaches past a singleton appended to a list",
-     fn () =>
-       closes_within 20 (clasimpLib.AUTO_TAC [])
-         ([], ``!(xs : 'a list) x n.
-                  0 < n ==> EL n ([x] ++ xs) = EL (n - 1) xs``))
