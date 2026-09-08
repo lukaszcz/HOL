@@ -57,6 +57,17 @@ existing HOL4 integer regression goals are added, for 1,072 executable goals
 in total.  They come from six Isabelle theories plus a handful of `ex/`
 files: this is Isabelle's base library, not Isabelle/HOL.
 
+Each goal is run under a wall-clock budget, enforced by `Timeout.apply`
+under thread attributes that admit asynchronous interrupts: a runaway
+computation is cut off, and the selftest checks that directly.  The
+interrupt still has to reach the tactic, and a handler that treats every
+exception alike swallows it.  The budget then bounds nothing: the
+elapsed time is compared against it when the payload finally returns, so
+such an overrun is reported rather than prevented, and it has been seen
+to run for many minutes on a goal whose budget is thirty seconds.  A run
+that goes quiet with one goal named is that goal still running, not a
+lost harness.
+
 To build and run both test levels from this directory:
 
 ```sh
