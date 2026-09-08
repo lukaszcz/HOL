@@ -56,11 +56,10 @@ fun classified classification note ids =
 
 val conditional_list_rewrites =
   classified "conditional list rewrites"
-    ("the residual is a conditional equation about TL, LAST, "
-     ^ "FRONT, NULL, nub or dropWhile that the simpset does not "
-     ^ "carry")
+    ("the residual is a conditional equation about TL, LAST or nub "
+     ^ "that the simpset does not carry")
     ["list_L1010_tl_append_if", "list_L2100_last_ConsR",
-     "list_L4481_insert_remdups", "list_L8603_is_empty_set"]
+     "list_L4481_insert_remdups"]
 
 val congruence_rules =
   classified "congruence rules"
@@ -224,14 +223,13 @@ val list_relation_lifting =
     ("the declared rules take a LIST_REL apart at a nil, a cons or a "
      ^ "REVERSE, and trade a SHORTLEX for a length comparison; these "
      ^ "goals are about the relation as a whole -- an append, a "
-     ^ "transitivity chain, asymmetry, well-foundedness, an "
-     ^ "equivalence, or NULL carried across -- and need an induction "
-     ^ "over the list rather than a rule application")
+     ^ "transitivity chain, asymmetry, well-foundedness or an "
+     ^ "equivalence -- and need an induction over the list rather "
+     ^ "than a rule application")
     ["list_L3089_list_all2_appendI",
      "list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
      "list_L7401_lexord_append_leftD", "list_L7508_lexord_trans",
-     "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff",
-     "list_L9009_null_transfer"]
+     "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff"]
 
 (* The earlier reading -- that the translation renders foldr as FOLDL
    over REVERSE -- was wrong: [source_foldr] is FOLDR.  The FOLDL over
