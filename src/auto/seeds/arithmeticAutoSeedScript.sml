@@ -68,6 +68,21 @@ val _ =
   export_at "simp"
     ("SUB_SUB_LEFT_AUTO", GSYM arithmeticTheory.SUB_PLUS)
 
+(* Isabelle has no predecessor constant: src/HOL/Nat.thy writes the
+   predecessor as [n - 1] throughout, so every goal translated from the
+   source spells an index one below another that way, while HOL4's own
+   rules about the same index -- EL_CONS, LAST_EL, the LUPDATE and TAKE
+   rules -- spell it [PRE n].  Neither simpset carries a step between
+   the two spellings, and a goal and the rule that would settle it then
+   stand side by side unrelated: [EL (PRE n) xs = EL (n - 1) xs] is
+   what an index characterisation with every other part in place is
+   left holding.  Declared towards the source's spelling, which is
+   also the one the layer's linear arithmetic decomposes: the num
+   instance splits a subtraction and has no rule for PRE, which is an
+   atom to it. *)
+val _ =
+  export_at "simp" ("PRE_SUB1_AUTO", arithmeticTheory.PRE_SUB1)
+
 (* src/HOL/Lattices.thy:556-557 @ f7e02b7e.  Isabelle declares
    [min.absorb1] and [min.absorb2] simp with their [max] counterparts:
    a MIN whose comparison the context settles is one of its arguments.

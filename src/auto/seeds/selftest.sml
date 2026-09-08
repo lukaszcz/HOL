@@ -870,3 +870,16 @@ val _ =
          ([], ``!(xs : ('a # 'b) list) (f : 'c -> 'd) (g : 'a -> 'c).
                   MAP (\(a, b). f a) (MAP (\(a, b). (g a, b)) xs) =
                   MAP (\(a, b). f (g a)) xs``))
+
+(* The predecessor's two spellings.  The goal is not a corpus entry and
+   is not the rule: it is the split of a list at one index, written
+   [PRE n] on the side a HOL4 rule would write it and [n - 1] on the
+   side a translated goal would, and the rule that puts the halves back
+   together needs the two indices to be one term. *)
+val _ =
+  check
+    ("a list splits at an index written both ways",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : 'a list) n.
+                  TAKE (PRE n) xs ++ DROP (n - 1) xs = xs``))
