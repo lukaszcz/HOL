@@ -40,9 +40,7 @@ val over_budget =
    "list_L9013_list_all_transfer",
    "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
    "map_L899_map_add_subsumed1",
-   "product_type_L1133_Sigma_Union",
-   "string_L34_of_char_Char",
-   "string_L357_integer_of_char_code"]
+   "product_type_L1133_Sigma_Union"]
 
 fun record note id : benchLib.shortfall =
   {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
@@ -159,8 +157,7 @@ val over_budget_with_no_residual =
      "list_L9013_list_all_transfer",
      "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
      "map_L899_map_add_subsumed1",
-     "product_type_L1133_Sigma_Union", "string_L34_of_char_Char",
-     "string_L357_integer_of_char_code"]
+     "product_type_L1133_Sigma_Union"]
 
 (* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
    the translated [sorted_key_list_of_set], which is a sort of the set's

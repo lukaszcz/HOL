@@ -1665,6 +1665,64 @@ val _ =
        valid_closes (linarithLib.LINARITH_TAC [])
          ([], div_equation))
 
+(* A conditional of the carrier is an atom: the decomposition cannot
+   see into either branch until the condition is decided, so a bound
+   that holds of both is out of reach and only a case split reaches it.
+   Where the branches are literals the atom lies between them whatever
+   the condition is, which is a linear fact and costs no split.  The
+   three-bit goal below needs that of each of its three conditionals at
+   once, and the seven it falls one short of is the same goal with the
+   bound the atoms do not support. *)
+fun cond_bit name high low =
+  boolSyntax.mk_cond (Term.mk_var (name, Type.bool), high, low)
+
+val cond_horner =
+  numSyntax.mk_plus
+    (cond_bit "linarith_cond_first" num_one num_zero,
+     numSyntax.mk_mult
+       (num_two,
+        numSyntax.mk_plus
+          (cond_bit "linarith_cond_second" num_one num_zero,
+           numSyntax.mk_mult
+             (num_two, cond_bit "linarith_cond_third" num_one num_zero))))
+
+val cond_horner_bound =
+  num_less cond_horner (numSyntax.mk_numeral (Arbnum.fromInt 8))
+val cond_horner_short =
+  num_less cond_horner (numSyntax.mk_numeral (Arbnum.fromInt 7))
+
+(* The branches the other way round: which of the two is the bound
+   below and which above is read off their values and not their
+   position. *)
+val cond_descending = cond_bit "linarith_cond_fourth" num_zero num_one
+
+val _ =
+  check
+    ("LINARITH_TAC bounds a conditional by its literal branches",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC []) ([], cond_horner_bound)
+         andalso
+       tactic_fails (linarithLib.LINARITH_TAC []) ([], cond_horner_short)
+         andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], num_leq cond_descending num_one)
+         andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], num_leq num_zero cond_descending))
+
+(* Neither branch bounds a conditional on its own, and the bound is
+   read off the branches' values: between variables there are no values
+   to read, and the goal below is false. *)
+val cond_variables =
+  cond_bit "linarith_cond_fifth" public_x public_y
+
+val _ =
+  check
+    ("neither branch of a conditional is taken for its bound",
+     fn () =>
+       tactic_fails (linarithLib.LINARITH_TAC [])
+         ([], num_leq cond_variables public_x))
+
 val one_pipeline_round : linarithLib.linarith_config =
   {neq_limit = 9, split_limit = 1}
 val zero_pipeline_rounds : linarithLib.linarith_config =

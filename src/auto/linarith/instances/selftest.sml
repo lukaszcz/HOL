@@ -337,6 +337,25 @@ val _ =
        valid_closes (linarithLib.LINARITH_TAC [])
          ([], rleq r0 (realSyntax.mk_absval rx)))
 
+(* The bound on a conditional between literals is the registry's and
+   not one instance's: the carrier is the conditional's own type, so a
+   registered instance has it without declaring anything.  The negative
+   branch is the case the naturals cannot state. *)
+val int_conditional =
+  boolSyntax.mk_cond (Term.mk_var ("linarith_int_condition", Type.bool),
+                      i3, im3)
+
+val _ =
+  check
+    ("a conditional between int literals is bounded by both branches",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], ileq int_conditional i3) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], ileq im3 int_conditional) andalso
+       tactic_fails (linarithLib.LINARITH_TAC [])
+         ([], iless int_conditional i3))
+
 val rat_transitivity =
   boolSyntax.mk_imp
     (boolSyntax.mk_conj (qleq qx qy, qless qy qz),

@@ -431,10 +431,81 @@ fun connected_split_goal (assumptions, conclusion) =
     (map (fn (_, (assumption, _)) => assumption) ordered, conclusion)
   end
 
+(* A conditional is opaque to the decomposition: until the condition is
+   decided neither branch is the term's value, so the atom carries no
+   arithmetic and a bound both branches satisfy is out of reach.  The
+   condition can be split -- the operator-splitting rules below take a
+   COND rule like any other -- but a split duplicates the whole formula
+   and turns the rule's two implications into disjunctions to split
+   again, so a term with eight of them is a search rather than a
+   calculation.  Where both branches are literals the atom lies between
+   them whatever the condition is, which is the linear fact the search
+   wanted and costs no split at all.  A branch that is not a literal
+   raises out of the instance's dest_lit and the atom is declined, as
+   an atom_facts declines the terms it does not recognize.  The
+   operator constant is read off the kit as replay reads it, the record
+   carrying destructors only.
+
+   Isabelle does not have this: Tools/lin_arith.ML splits the operators
+   its is_split_thm lists, and a conditional is not among them. *)
+fun leq_operator instance =
+  let
+    fun operator_of theorem =
+      Lib.total
+        (fn () =>
+          #1 (linarithDecomp.binary_parts
+                (find_term (Lib.can (#dest_leq (#dest instance)))
+                   (Thm.concl theorem))))
+        ()
+  in
+    Lib.get_first operator_of (#add_mono (#kit instance))
+  end
+
+fun literal_bounds instance operator tm (left, right) =
+  let
+    fun leq (l, r) = Term.list_mk_comb (operator, [l, r])
+    val dest = #dest instance
+    val (lower, upper) =
+      if Arbrat.<= (#dest_lit dest left, #dest_lit dest right) then
+        (left, right)
+      else
+        (right, left)
+    fun ground relation goal =
+      Tactic.ACCEPT_TAC
+        (EQT_ELIM (Conv.QCONV (#norm_conv instance) relation)) goal
+    val branches =
+      [leq (lower, left), leq (lower, right),
+       leq (left, upper), leq (right, upper)]
+    fun bound relation =
+      Tactical.prove
+        (relation,
+         Tactical.THEN
+           (Tactic.COND_CASES_TAC, Tactical.FIRST (map ground branches)))
+  in
+    List.mapPartial (Lib.total bound) [leq (lower, tm), leq (tm, upper)]
+  end
+
+fun conditional_bounds tm =
+  case Lib.total boolSyntax.dest_cond tm of
+      NONE => []
+    | SOME (_, left, right) =>
+        (case linarithData.instance_for (Term.type_of tm) of
+             NONE => []
+           | SOME instance =>
+               case leq_operator instance of
+                   NONE => []
+                 | SOME operator =>
+                     (literal_bounds instance operator tm (left, right)
+                      handle HOL_ERR _ => []))
+
 (* Every instance sees every atom: an instance's atom_facts declines the
    atoms outside its own carrier, and the ones it accepts need not live
-   in that carrier either (int accepts Num i : num). *)
+   in that carrier either (int accepts Num i : num).  The conditional
+   bounds are the instance registry's rather than any one instance's:
+   the carrier is the conditional's own type, so every registered
+   carrier has them without declaring anything. *)
 fun facts_for tm =
+  conditional_bounds tm @
   List.concat
     (map (fn i => #atom_facts i tm) (linarithData.all_instances ()))
 
