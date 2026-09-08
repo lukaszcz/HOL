@@ -2703,6 +2703,27 @@ fun read_all path =
     text
   end
 
+(* The measurement a report records beside its results: the times, and
+   the date the run was made.  Two reports of the same corpus differ in
+   both and agree on everything else, so the comparison below has to
+   read past them -- and the date is the half that used to be a literal
+   in the prose, which is how it came to date the numbers beside it
+   eleven days early. *)
+fun report date costs tail =
+  "# Report\n\nThe report was generated on " ^ date ^
+  " with a budget.\n\n## Cost of the solutions\n\n| a | " ^ costs ^
+  " |\n\n## Next\n\n" ^ tail ^ "\n"
+
+val _ =
+  check
+    ("the report comparison reads past the date and the costs",
+     fn () =>
+       parityLib.without_measurement (report "2026-01-02" "1" "kept") =
+       parityLib.without_measurement (report "2026-09-08" "2" "kept")
+         andalso
+       parityLib.without_measurement (report "2026-01-02" "1" "kept") <>
+       parityLib.without_measurement (report "2026-01-02" "1" "changed"))
+
 (* The comparison measures the whole corpus, so it can only run where
    the whole corpus is what this run measures: a family run and a run
    without the battery each measure a part of it, and level 1 measures
@@ -2719,10 +2740,10 @@ val _ =
   if whole_corpus_measured then
     check
       ("level-2 generated parity report matches the committed file \
-       \outside its timings",
+       \outside its measurement",
        fn () =>
-         parityLib.without_costs (read_all "../PARITY.md") =
-         parityLib.without_costs (parityLib.render ()))
+         parityLib.without_measurement (read_all "../PARITY.md") =
+         parityLib.without_measurement (parityLib.render ()))
   else
     TextIO.print
       ("skipping the generated parity report comparison: this run \

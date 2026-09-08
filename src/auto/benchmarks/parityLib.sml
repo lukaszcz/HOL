@@ -342,6 +342,31 @@ fun withheld_section () =
    the cut section's own solved column repeats the table above it. *)
 val cost_heading = "## Cost of the solutions"
 
+(* The date the run was made is measurement as much as the times are,
+   and it was a literal in the prose above until it went stale: the
+   thirty-two re-measures since it was last written changed the numbers
+   and left the sentence dating them eleven days early.  It is written
+   by the clock now, which puts it outside what two reports of the same
+   corpus have to agree on -- so the comparison replaces it on both
+   sides rather than reading it.  The written form is fixed, so its
+   length is. *)
+val date_prefix = "The report was generated on "
+val date_size = size "2026-08-28"
+
+fun generation_date () =
+  Date.fmt "%Y-%m-%d" (Date.fromTimeLocal (Time.now ()))
+
+fun without_date text =
+  let
+    val (kept, rest) = Substring.position date_prefix (Substring.full text)
+  in
+    if Substring.isEmpty rest then text
+    else
+      Substring.concat
+        [kept, Substring.full date_prefix, Substring.full "<measured>",
+         Substring.triml (size date_prefix + date_size) rest]
+  end
+
 fun without_costs text =
   let
     val (kept, rest) =
@@ -356,6 +381,9 @@ fun without_costs text =
         Substring.concat [kept, tail]
       end
   end
+
+(* What two reports of the same corpus have to agree on. *)
+fun without_measurement text = without_date (without_costs text)
 
 fun render () =
   let
@@ -393,7 +421,8 @@ fun render () =
       "The comparison data was mined from Isabelle/HOL commit ",
       "`f7e02b7e`. Each in-repository benchmark entry records its source ",
       "file, line, method, and commit. The report was generated on ",
-      "2026-08-28 with a 30-second limit for each tactic attempt. The ",
+      generation_date (),
+      " with a 30-second limit for each tactic attempt. The ",
       "limit is an asynchronous interrupt, so a goal can overrun it by ",
       "the time its search takes to reach an interruptible point; the ",
       "times below are wall-clock and record the overrun where it ",
