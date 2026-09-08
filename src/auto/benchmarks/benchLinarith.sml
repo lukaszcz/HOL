@@ -80,7 +80,7 @@ val goals = benchDerive.prepare "linarith" raw_goals
 val shortfalls : benchLib.shortfall list = []
 
 fun run level =
-  benchLib.run_family
+  benchLib.run_corpus_family
     {family = "linarith", goals = goals, shortfalls = shortfalls,
      budget = benchLib.default_budget,
      battery = [benchLib.Auto, benchLib.Aesop], level = level}

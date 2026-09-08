@@ -125,7 +125,13 @@ swept.  Each restriction is recorded in the generated header.
 Set `HOLBENCHDIAGNOSTICS=1` to emit a diagnostic block for every selected
 goal.  Set it to a path instead to append those blocks to a manifest file.
 Set `HOLBENCHSHORTFALLSONLY=1` to select only executable registered
-shortfalls in the requested family.
+shortfalls in the requested family.  A run restricted this way measures
+part of the corpus, so the suite's corpus accounting -- the exact
+per-family slice sizes -- does not hold and the run reports a failure
+saying so.  Read the manifest it wrote, not its exit status.  The
+restriction reaches the corpus families only: the hand-built families
+the suite measures the harness itself with go through
+`benchLib.run_family`, which restricts nothing.
 Diagnostics report the source method, legally translated recipe, excluded
 ambient analogues, residual outcome, elapsed time, exposed search statistics,
 and the working root-cause classification.  This mode observes the ordinary

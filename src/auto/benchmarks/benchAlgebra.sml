@@ -95,7 +95,7 @@ val shortfalls : benchLib.shortfall list =
       ^ "translation's notation, not the automation"}]
 
 fun run level =
-  benchLib.run_family
+  benchLib.run_corpus_family
     {family = "algebra", goals = goals, shortfalls = shortfalls,
      budget = benchLib.default_budget,
      battery = [benchLib.Auto, benchLib.Aesop], level = level}

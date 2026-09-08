@@ -1505,24 +1505,46 @@ fun assert_accounting {family, goals, shortfalls, gated} =
 fun selected level ({representative, ...} : corpus_goal) =
   level >= 2 orelse representative
 
+(* Which goals of a corpus family a debugging run wants to see.  This
+   restricts the corpus and nothing else: it was read inside
+   [run_family], where it also reached the hand-built families the
+   selftest measures the harness itself with, and emptying one of those
+   made it fail an exact-set check that has nothing to do with the
+   corpus.  [restrict] takes the restriction rather than reading it, so
+   what it does is checkable without an environment. *)
+type restriction = {
+  shortfalls_only : bool,
+  goals_wanted : (string * string list) option
+}
+
+fun restrict ({shortfalls_only, goals_wanted} : restriction)
+      {family, goals, shortfalls} =
+  List.filter
+    (fn (goal : corpus_goal) =>
+      (not shortfalls_only orelse
+       List.exists
+         (fn ({id, cause, ...} : shortfall) =>
+           id = #id goal andalso cause <> TranslationGap)
+         shortfalls) andalso
+      (case goals_wanted of
+           SOME (selected_family, ids) =>
+             selected_family <> family orelse
+             List.exists (equal (#id goal)) ids
+         | NONE => true)) goals
+
+fun environment_restriction () =
+  {shortfalls_only =
+     OS.Process.getEnv "HOLBENCHSHORTFALLSONLY" = SOME "1",
+   goals_wanted =
+     case (OS.Process.getEnv "HOLBENCHFAMILY",
+           OS.Process.getEnv "HOLBENCHGOAL") of
+         (SOME family, SOME ids) =>
+           SOME (family, String.tokens (equal #",") ids)
+       | _ => NONE}
+
 fun run_family {family, goals, shortfalls, budget, battery, level} =
   let
-    val selected_goals =
-      List.filter
-        (fn (goal : corpus_goal) =>
-          selected level goal andalso
-          (OS.Process.getEnv "HOLBENCHSHORTFALLSONLY" <> SOME "1" orelse
-           List.exists
-             (fn ({id, cause, ...} : shortfall) =>
-               id = #id goal andalso cause <> TranslationGap)
-             shortfalls) andalso
-          (case (OS.Process.getEnv "HOLBENCHFAMILY",
-                 OS.Process.getEnv "HOLBENCHGOAL") of
-               (SOME selected_family, SOME id) =>
-                 selected_family <> family orelse
-                 List.exists (equal (#id goal))
-                   (String.tokens (equal #",") id)
-             | _ => true)) goals
+    val selected_goals = List.filter (selected level) goals
     val selected_ids = map #id selected_goals
     val selected_shortfalls =
       List.filter
@@ -1673,5 +1695,16 @@ fun run_family {family, goals, shortfalls, budget, battery, level} =
   in
     {gated = gated, work = work_done, battery = battery_results}
   end
+
+(* A corpus family is measured under whatever restriction the run asked
+   for; a family built by hand is measured as it is given. *)
+fun run_corpus_family {family, goals, shortfalls, budget, battery, level} =
+  run_family
+    {family = family,
+     goals =
+       restrict (environment_restriction ())
+         {family = family, goals = goals, shortfalls = shortfalls},
+     shortfalls = shortfalls, budget = budget, battery = battery,
+     level = level}
 
 end

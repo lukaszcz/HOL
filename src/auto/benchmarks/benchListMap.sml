@@ -28,7 +28,7 @@ val shortfalls : benchLib.shortfall list =
   benchLibraryShortfalls.translation @ benchLibraryShortfalls.execution
 
 fun run level =
-  benchLib.run_family
+  benchLib.run_corpus_family
     {family = "listmap", goals = goals, shortfalls = shortfalls,
      budget = benchLib.default_budget,
      battery = [benchLib.Auto, benchLib.Aesop], level = level}

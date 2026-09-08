@@ -104,7 +104,7 @@ val goals = benchDerive.prepare "classical" raw_goals
 val shortfalls : benchLib.shortfall list = []
 
 fun run level =
-  benchLib.run_family
+  benchLib.run_corpus_family
     {family = "classical", goals = goals, shortfalls = shortfalls,
      budget = benchLib.default_budget,
      battery = [benchLib.Auto, benchLib.Aesop], level = level}

@@ -188,7 +188,32 @@ sig
     gated : (string * outcome) list
   } -> unit
 
+  (* [run_family] measures the family it is given.  [run_corpus_family]
+     first drops the goals the run's environment restricts it to --
+     HOLBENCHSHORTFALLSONLY and HOLBENCHFAMILY with HOLBENCHGOAL -- so
+     a debugging restriction reaches the corpus and not the families
+     the selftest builds by hand to measure the harness with. *)
+  type restriction = {
+    shortfalls_only : bool,
+    goals_wanted : (string * string list) option
+  }
+
+  val restrict : restriction -> {
+    family : string,
+    goals : corpus_goal list,
+    shortfalls : shortfall list
+  } -> corpus_goal list
+
   val run_family : {
+    family : string,
+    goals : corpus_goal list,
+    shortfalls : shortfall list,
+    budget : Time.time,
+    battery : tactic_id list,
+    level : int
+  } -> family_result
+
+  val run_corpus_family : {
     family : string,
     goals : corpus_goal list,
     shortfalls : shortfall list,

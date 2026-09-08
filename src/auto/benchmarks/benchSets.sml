@@ -99,7 +99,7 @@ val goals = benchDerive.prepare "sets" raw_goals
 val shortfalls : benchLib.shortfall list = benchSetShortfalls.entries
 
 fun run level =
-  benchLib.run_family
+  benchLib.run_corpus_family
     {family = "sets", goals = goals, shortfalls = shortfalls,
      budget = benchLib.default_budget,
      battery = [benchLib.Blast, benchLib.Aesop], level = level}

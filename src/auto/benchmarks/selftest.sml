@@ -143,6 +143,52 @@ val _ =
          length (#gated result) = 2 andalso null (#battery result)
        end)
 
+(* HOLBENCHSHORTFALLSONLY and HOLBENCHFAMILY with HOLBENCHGOAL restrict
+   a debugging run to part of the corpus.  They were read inside
+   [run_family], which measures the hand-built families above as well:
+   with the first set, the family two checks up lost the goal it
+   asserts an exact set for and the suite failed on a switch that is
+   supposed to select goals.  The restriction is an argument now, so
+   what it selects is checkable here without an environment. *)
+val restriction_family =
+  {family = "unit", goals = map prepared [solved_goal, failed_goal],
+   shortfalls = [failed_shortfall]}
+
+fun restricted_ids restriction =
+  map #id (benchLib.restrict restriction restriction_family)
+
+val _ =
+  check
+    ("an unrestricted corpus run keeps every goal of the family",
+     fn () =>
+       restricted_ids {shortfalls_only = false, goals_wanted = NONE} =
+         ["unit-solved", "unit-failed"])
+
+val _ =
+  check
+    ("a shortfalls-only run keeps the goals with a record and no others",
+     fn () =>
+       restricted_ids {shortfalls_only = true, goals_wanted = NONE} =
+         ["unit-failed"])
+
+val _ =
+  check
+    ("a named-goal restriction selects within its own family",
+     fn () =>
+       restricted_ids
+         {shortfalls_only = false,
+          goals_wanted = SOME ("unit", ["unit-failed"])} =
+         ["unit-failed"])
+
+val _ =
+  check
+    ("a named-goal restriction leaves another family whole",
+     fn () =>
+       restricted_ids
+         {shortfalls_only = false,
+          goals_wanted = SOME ("listmap", ["unit-failed"])} =
+         ["unit-solved", "unit-failed"])
+
 val _ =
   check
     ("benchmark accounting rejects a newly solved registered shortfall",
