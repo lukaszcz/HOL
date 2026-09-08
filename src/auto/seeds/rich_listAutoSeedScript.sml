@@ -57,6 +57,17 @@ val _ =
 val _ =
   export_at "simp" ("EL_LENGTH_APPEND_AUTO", rich_listTheory.EL_LENGTH_APPEND)
 
+(* src/HOL/List.thy:1807 @ f7e02b7e.  [nth_Cons_pos] is simp there and
+   declared to no simpset here.  It is the constructor the indexing
+   family in listAutoSeed leaves out -- a cons against an index known
+   only to be non-zero, which is what a case split on the index leaves
+   standing on the branch it does not settle.  HOL4 states it as
+   EL_CONS, spelling the index below as [PRE n] where a translated goal
+   spells it [n - 1]; the seeded step between the two spellings is what
+   lets the rule meet such a goal at all. *)
+val _ =
+  export_at "simp" ("EL_CONS_AUTO", rich_listTheory.EL_CONS)
+
 (* src/HOL/List.thy @ f7e02b7e.  [hd_replicate] is simp there and HOL4
    states it nowhere: the walk down a replicate reads its head off the
    count, and a source result about [takeWhile] or [dropWhile] of a

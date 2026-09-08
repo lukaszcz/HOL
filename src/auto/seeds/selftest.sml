@@ -883,3 +883,16 @@ val _ =
        closes_within 20 (clasimpLib.AUTO_TAC [])
          ([], ``!(xs : 'a list) n.
                   TAKE (PRE n) xs ++ DROP (n - 1) xs = xs``))
+
+(* src/HOL/List.thy:1807 @ f7e02b7e, [nth_Cons_pos].  The goal is not a
+   corpus entry and is not the rule: the list is a singleton appended
+   to the rest, so the append has to be walked into a cons before the
+   rule can reach the index at all, and the index is then read on the
+   source's side in the spelling the rule does not use. *)
+val _ =
+  check
+    ("an index reaches past a singleton appended to a list",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : 'a list) x n.
+                  0 < n ==> EL n ([x] ++ xs) = EL (n - 1) xs``))

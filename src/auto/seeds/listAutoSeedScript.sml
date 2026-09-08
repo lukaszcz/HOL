@@ -236,10 +236,10 @@ val _ =
    index reaches through a list however the list was built: nth_map,
    nth_list_update_eq and _neq, nth_take, nth_drop.  HOL4 states each
    and declares none, which leaves a goal that characterises an
-   operation by index with the two spellings of the index side by side
-   and nothing to push the index through the constructor between them.
-   EL_LUPDATE is the two Isabelle update rules in one conditional
-   equation; the zip case is seeded above with map_snd_zip. *)
+   operation by index with nothing to push the index through the
+   constructor it was built with.  EL_LUPDATE is the two Isabelle
+   update rules in one conditional equation; the zip case is seeded
+   above with map_snd_zip. *)
 val _ =
   List.app (export_at "simp")
     [("EL_MAP_AUTO", listTheory.EL_MAP),
