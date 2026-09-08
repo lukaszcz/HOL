@@ -92,17 +92,17 @@ A **family** is a subject-area group:
 
 ## Cost of the solutions
 
-A solve at 28 seconds is not the same result as a solve in milliseconds, and the count above cannot tell them apart. The columns below split the solved goals by elapsed time and report the search work the engines metered while solving them: node expansions, tableau branches, inferences and rule applications, summed. Zero search work means the goal was closed by rewriting rather than by search. Goals that overran the budget are counted as limitations, not here, so this distribution is bounded by the budget by construction.
+A solve at 28 seconds is not the same result as a solve in milliseconds, and the count above cannot tell them apart. The columns below split the solved goals by elapsed time and report the search work the engines metered while solving them: node expansions, tableau branches, inferences and rule applications, summed. Zero search work means the goal was closed by rewriting rather than by search. The time is the tactic's alone: deriving the goal's invocation-local simpset is the harness reading its own declarations, and it happens before the clock starts. Goals that overran the budget are counted as limitations, not here, so this distribution is bounded by the budget by construction.
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 1 | 24 | 0 | 0 | 0.6 | 39 | 516 |
-| Sets | 334 | 30 | 299 | 5 | 0 | 3.3 | 3 | 2430 |
-| List/map | 469 | 0 | 450 | 19 | 0 | 2.9 | 0 | 1868 |
+| Classical | 25 | 23 | 2 | 0 | 0 | 0.4 | 39 | 516 |
+| Sets | 334 | 295 | 35 | 4 | 0 | 2.6 | 3 | 2430 |
+| List/map | 469 | 391 | 78 | 0 | 0 | 0.8 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **916** | **113** | **778** | **25** | **0** | **3.3** | **0** | **2430** |
+| **Total** | **916** | **791** | **120** | **5** | **0** | **2.6** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
