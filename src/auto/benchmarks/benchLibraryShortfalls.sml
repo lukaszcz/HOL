@@ -211,7 +211,6 @@ val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
     ("the clasimp method terminates and reports no proof")
     ["list_L2178_snoc_eq_iff_butlast",
-     "list_L4406_distinct_adj_Cons_Cons",
      "list_L7998_listrel_rtrancl_refl",
      "list_L4707_foldr_fold_remove1",
      "list_L4781_foldr_fold_removeAll", "list_L5409_nths_drop",
