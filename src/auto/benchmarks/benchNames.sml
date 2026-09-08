@@ -960,7 +960,7 @@ val table : (string * (unit -> resolution)) list =
   ("sup_fun_def",
    library "pred_set" "UNION_DEF"),
   ("sym_def",
-   library "relation" "symmetric_def"),
+   translated "source_sym_def"),
   ("take_Cons'",
    library "list" "TAKE_def"),
   ("take_bit_eq_mod",

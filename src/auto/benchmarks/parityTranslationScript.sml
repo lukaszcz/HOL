@@ -4071,6 +4071,24 @@ Definition source_refl_on_def:
     !value. value IN domain ==> relation value value
 End
 
+(* Isabelle/HOL src/HOL/Relation.thy:456, [sym_def].  Isabelle states
+   symmetry as an implication where HOL4's [symmetric_def] states it as
+   an equivalence.  The two predicates agree, but a method that rewrites
+   with the equivalence gets a goal whose two sides are one statement
+   under two spellings, and no simplifier reads one side of an
+   equivalence as context for the other; an implication hands its
+   antecedent to its consequent, which both do.  So the citation is
+   rendered as the source states it rather than as HOL4 defines the
+   predicate. *)
+Theorem source_sym_def:
+  !relation.
+    relation$symmetric relation <=>
+    !left right. relation left right ==> relation right left
+Proof
+  simp[relationTheory.symmetric_def]
+  >> metis_tac[]
+QED
+
 (* Isabelle/HOL src/HOL/Equiv_Relations.thy, [equiv_def]. *)
 Definition source_equiv_def:
   source_equiv domain relation <=>

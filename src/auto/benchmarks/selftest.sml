@@ -1610,6 +1610,37 @@ val _ =
        handle Portable.Interrupt => raise Portable.Interrupt
             | HOL_ERR _ => false)
 
+(* src/HOL/Relation.thy:456 @ Isabelle2025-2: [sym_def] states symmetry
+   as an implication, where HOL4's [symmetric_def] states it as an
+   equivalence.  Rewriting with the equivalence leaves the two sides of
+   one statement facing each other under two spellings of a bound, and
+   no simplifier reads one side of an equivalence as context for the
+   other.  The goal below is not a corpus entry and is neither
+   statement: it is symmetry of a relation characterised by an equation
+   and a bound that the equation moves. *)
+val symmetry_through_a_moved_bound : Abbrev.goal =
+  ([], ``!(measure : 'a -> num) (relation : num -> num -> bool).
+           relation$symmetric
+             (\left right.
+                measure left = measure right /\
+                !index. index < measure left ==> relation index index)``)
+
+fun simp_closes theorems =
+  (case Tactical.VALID
+          (simpLib.SIMP_TAC (clasimpLib.clasimp_ss ()) theorems)
+          symmetry_through_a_moved_bound of
+       ([], _) => true
+     | _ => false)
+  handle Portable.Interrupt => raise Portable.Interrupt
+       | HOL_ERR _ => false
+
+val _ =
+  check
+    ("the symmetry citation resolves to the implication",
+     fn () =>
+       not (simp_closes [relationTheory.symmetric_def]) andalso
+       simp_closes (map #theorem (benchNames.theorems "sym_def")))
+
 (* [source_dropWhile_eq_self_iff] reads the walk stopping where it
    started as the list being empty or its head being kept, and states
    that head as HOL4's HD, the way its [takeWhile] counterpart does.
