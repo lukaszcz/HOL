@@ -714,11 +714,11 @@ fun preserve_target tactic (original as (_, target)) =
     (goals, restore)
   end
 
-fun processed_clasimp goal body arguments =
+fun processed_clasimp simpset body arguments =
   clasimpLib.process_clasimp_args
     (fn claset => fn processed_simpset => fn _ =>
       preserve_target (body claset processed_simpset))
-    (clasetLib.the_claset ()) (clean_simpset goal) arguments
+    (clasetLib.the_claset ()) simpset arguments
 
 (* Preparation derives only the clean invocation-local context.  Raw recipe
    validation happens before any ambient declarations are inspected, so a
@@ -1058,30 +1058,28 @@ fun across_correspondence entry args =
   args @
   List.filter (permitted_arg entry) (List.mapPartial crossed_arg args)
 
-fun tactic_for goal Simp args exclusions =
+fun tactic_for simpset _ Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
         val simplify =
           clasimpLib.with_extensionality
-            (simpLib.FULL_SIMP_TAC
-               (clean_simpset goal)
+            (simpLib.FULL_SIMP_TAC simpset
                (simps @ simp_controls exclusions))
       in
         Tactical.THEN
           (insert_facts facts, simplify)
       end
-  | tactic_for goal Auto args exclusions =
+  | tactic_for simpset _ Auto args exclusions =
       let
         val automatic =
-          processed_clasimp goal
+          processed_clasimp simpset
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
             (all_class_args args @ simp_controls exclusions)
         val prepare =
           Tactical.THEN
             (Tactical.TRY hurdUtils.SET_EQ_TAC,
-             simpLib.FULL_SIMP_TAC
-               (clean_simpset goal)
+             simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
                 simp_controls exclusions))
       in
@@ -1097,10 +1095,9 @@ fun tactic_for goal Simp args exclusions =
                   Tactical.ORELSE
                     (predicate_abstraction_tac, automatic))))
       end
-  | tactic_for goal Blast args exclusions =
+  | tactic_for simpset goal Blast args exclusions =
       let
         val simps = List.mapPartial simp_arg args
-        val benchmark_simpset = clean_simpset goal
         val supplied_rules = List.mapPartial supplied_rule args
         val accept_supplied =
           Tactical.FIRST
@@ -1112,8 +1109,7 @@ fun tactic_for goal Simp args exclusions =
                (accept_supplied,
                 Tactical.THEN (Tactic.EQ_TAC, accept_supplied)))
         val simplify =
-          simpLib.SIMP_TAC benchmark_simpset
-            (simps @ simp_controls exclusions)
+          simpLib.SIMP_TAC simpset (simps @ simp_controls exclusions)
         val preprocess =
           if null args then
             Tactical.TRY
@@ -1154,71 +1150,70 @@ fun tactic_for goal Simp args exclusions =
                                     blast_translation_args goal @
                                     controls exclusions))))))))))
       end
-  | tactic_for goal Force args exclusions =
+  | tactic_for simpset _ Force args exclusions =
       let
         val prepare =
           Tactical.THEN
             (Tactical.TRY hurdUtils.SET_EQ_TAC,
-             simpLib.FULL_SIMP_TAC
-               (clean_simpset goal)
+             simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
                 simp_controls exclusions))
       in
         with_facts args
           (Tactical.THEN
             (prepare,
-             processed_clasimp goal clasimpLib.CS_FORCE_TAC
+             processed_clasimp simpset clasimpLib.CS_FORCE_TAC
                (all_class_args args @ simp_controls exclusions)))
       end
-  | tactic_for goal Fastforce args exclusions =
+  | tactic_for simpset _ Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
           (Tactical.TRY hurdUtils.SET_EQ_TAC,
-           processed_clasimp goal clasimpLib.CS_FASTFORCE_TAC
+           processed_clasimp simpset clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls exclusions)))
-  | tactic_for _ Safe args exclusions =
+  | tactic_for _ _ Safe args exclusions =
       with_facts args
         (classicalLib.SAFE_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for _ Clarify args exclusions =
+  | tactic_for _ _ Clarify args exclusions =
       with_facts args
         (classicalLib.CLARIFY_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for goal Clarsimp args exclusions =
+  | tactic_for simpset _ Clarsimp args exclusions =
       with_facts args
-        (processed_clasimp goal clasimpLib.CS_CLARSIMP_TAC
+        (processed_clasimp simpset clasimpLib.CS_CLARSIMP_TAC
           (all_class_args args @ simp_controls exclusions))
-  | tactic_for goal Aesop args exclusions =
+  | tactic_for simpset _ Aesop args exclusions =
       with_facts args
-        (processed_clasimp goal
+        (processed_clasimp simpset
           (aesopLib.CS_AESOP_TAC aesopLib.default_config)
           (all_class_args args @ simp_controls exclusions))
   (* Isabelle's metis reads its facts in the normal form its simp leaves
      goals in; the ambient simpset here imposes normal forms the library
      does not state its lemmas in, so the facts enter in both. *)
-  | tactic_for _ Metis args _ =
+  | tactic_for _ _ Metis args _ =
       clasimpLib.AMBIENT_METIS_TAC (List.mapPartial fact_arg args)
-  | tactic_for _ Linarith args _ =
+  | tactic_for _ _ Linarith args _ =
       with_facts args
         (linarithLib.LINARITH_TAC
           (all_class_args args))
   (* Bind the current integer backends into the benchmark image. *)
-  | tactic_for _ IntArith args _ =
+  | tactic_for _ _ IntArith args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.ARITH_TAC)
-  | tactic_for _ Cooper args _ =
+  | tactic_for _ _ Cooper args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.COOPER_TAC)
-  | tactic_for _ NumRing args _ =
+  | tactic_for _ _ NumRing args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      Tactical.CONV_TAC Grobner.NUM_RING)
-  | tactic_for _ IntRing args _ =
+  | tactic_for _ _ IntRing args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.INT_RING_TAC)
-  | tactic_for _ IntIdeal args _ =
+  | tactic_for _ _ IntIdeal args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      intLib.INTEGER_TAC)
-  | tactic_for _ ExplicitRing args _ =
+  | tactic_for _ _ ExplicitRing args _ =
       Tactical.THEN
         (Tactical.REPEAT Tactic.STRIP_TAC,
          Tactical.THEN
@@ -1228,34 +1223,42 @@ fun tactic_for goal Simp args exclusions =
                  (clasimpLib.clasimp_ss ())
                  (List.mapPartial simp_arg args),
                ringLib.EXPLICIT_RING_TAC)))
-  | tactic_for _ RealRing args _ =
+  | tactic_for _ _ RealRing args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      Tactical.CONV_TAC RealField.REAL_RING)
-  | tactic_for _ RealField args _ =
+  | tactic_for _ _ RealField args _ =
       Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
                      RealField.REAL_FIELD_TAC)
 
-fun compile_recipe entry recipe =
+(* The simpset is prepared once for the goal and handed to every
+   tactic the recipe composes, which each built their own before.  A
+   recipe cannot change what it would contain: it is derived from the
+   goal and the ambient declarations, and compiling a recipe reads
+   both without touching either. *)
+fun compile_recipe simpset entry recipe =
   case recipe of
       Invoke (tactic_id, args) =>
-        tactic_for (#goal entry) tactic_id
+        tactic_for simpset (#goal entry) tactic_id
           (recipe_args entry (across_correspondence entry args))
           (#excl entry)
     | Then (left, right) =>
         Tactical.THEN1
-          (compile_recipe entry left, compile_recipe entry right)
+          (compile_recipe simpset entry left,
+           compile_recipe simpset entry right)
     | AllGoals (left, right) =>
         Tactical.THEN
-          (compile_recipe entry left, compile_recipe entry right)
+          (compile_recipe simpset entry left,
+           compile_recipe simpset entry right)
     (* [Tactical.ORELSE] catches [HOL_ERR] and nothing else, so a
        budget interrupt still passes through the alternation. *)
     | Otherwise (left, right) =>
         Tactical.ORELSE
-          (compile_recipe entry left, compile_recipe entry right)
+          (compile_recipe simpset entry left,
+           compile_recipe simpset entry right)
     (* Isabelle's [+] applies its method once and then repeats it, so a
        recipe that never applies fails rather than passing the goal on. *)
     | Repeat inner =>
-        let val step = compile_recipe entry inner
+        let val step = compile_recipe simpset entry inner
         in Tactical.THEN (step, Tactical.REPEAT step)
         end
 
@@ -1342,8 +1345,17 @@ fun within_budget budget work =
   SOME (Timeout.apply budget work ())
   handle Timeout.TIMEOUT _ => NONE
 
+(* What is timed, and what the budget is spent on, is the tactic.
+   Preparing the goal's simpset is neither: it asks the circularity
+   guard about every ambient rewrite, which costs a tenth of a second
+   a goal -- more than the shortest bucket the cost table reports, so
+   with it inside no recipe that builds a simpset could be measured
+   below that at all.  It depends on the goal and the ambient
+   declarations and on nothing the proof does, so it is done before
+   the clock starts. *)
 fun run_goal budget recipe (entry : corpus_goal) =
   let
+    val simpset = clean_simpset (#goal entry)
     val started = Time.now ()
     val residual = ref "tactic returned residual goals or failed"
     fun goal_text (assumptions, conclusion) =
@@ -1352,7 +1364,8 @@ fun run_goal budget recipe (entry : corpus_goal) =
             " |- ") ^
       Parse.term_to_string conclusion
     fun run () =
-      case Tactical.VALID (preserve_target (compile_recipe entry recipe))
+      case Tactical.VALID
+             (preserve_target (compile_recipe simpset entry recipe))
              ([], #goal entry) of
           ([], validation) => (ignore (validation []); true)
         | (goals, _) =>

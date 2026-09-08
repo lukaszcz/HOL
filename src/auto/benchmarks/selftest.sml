@@ -93,6 +93,32 @@ val _ =
          (benchLib.run_goal (Time.fromSeconds 5)
             (benchLib.Invoke (benchLib.Simp, [])) solved_goal))
 
+(* Preparing a goal's simpset asks the circularity guard about every
+   ambient rewrite, and that is the harness reading its own
+   declarations, not the tactic proving anything.  It was inside the
+   region [run_goal] times, where it cost more than a solve of this
+   goal does and more than the shortest bucket the cost table reports.
+   The check does not name a time: it takes the whole call's wall
+   clock, which pays for the preparation either way, and asks that the
+   time [run_goal] reports be a fraction of it.  Reported and total
+   coincide when the preparation is timed too. *)
+val _ =
+  check
+    ("the time reported for a goal is not the time spent preparing it",
+     fn () =>
+       let
+         val started = Time.now ()
+         val outcome =
+           benchLib.run_goal (Time.fromSeconds 5)
+             (benchLib.Invoke (benchLib.Simp, [])) solved_goal
+         val total = Time.- (Time.now (), started)
+       in
+         case outcome of
+             benchLib.SOLVED reported =>
+               Time.< (Time.+ (reported, reported), total)
+           | _ => false
+       end)
+
 val _ =
   check
     ("benchmark harness enforces a zero time budget",
