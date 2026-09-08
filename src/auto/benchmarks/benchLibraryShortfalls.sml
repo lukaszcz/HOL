@@ -195,14 +195,12 @@ val filter_normalisation =
 val indexing_through_list_constructors =
   classified "indexing through list constructors"
     ("the goal characterises a list operation by index.  The "
-     ^ "simpset pushes EL through MAP, ZIP, LUPDATE, TAKE and DROP, "
-     ^ "so what is left is a constructor it does not push EL "
-     ^ "through -- a cons against an index known only to be "
-     ^ "non-zero -- a side condition on one of those rules that the "
-     ^ "goal does not supply, or the index characterisation itself, "
-     ^ "which neither simplification nor search reduces")
-    ["list_L1856_nth_Cons_pos",
-     "list_L2480_take_update_cancel", "list_L2483_drop_update_cancel",
+     ^ "simpset pushes EL through MAP, ZIP, LUPDATE, TAKE, DROP and "
+     ^ "a cons, so what is left is a side condition on one of those "
+     ^ "rules that the goal does not supply, or the index "
+     ^ "characterisation itself, which neither simplification nor "
+     ^ "search reduces")
+    ["list_L2480_take_update_cancel", "list_L2483_drop_update_cancel",
      "list_L2834_set_zip", "list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth",
      "list_L6487_nth_nth_transpose_sorted",
@@ -308,7 +306,7 @@ val characterisation_is_the_goal =
      ^ "of an equation or an equivalence or the unfolding of a "
      ^ "constant the translation introduces, and the assigned tactic "
      ^ "has no second route")
-    ["list_L1921_in_set_conv_nth",
+    ["list_L1856_nth_Cons_pos", "list_L1921_in_set_conv_nth",
      "list_L6444_stable_sort_key_sort_key", "list_L7318_lenlex_length",
      "product_type_L785_curry_conv",
      "list_L8167_list_all_iff",
@@ -438,17 +436,23 @@ val sigma_over_budget =
      "product_type_L1109_split_paired_Ball_Sigma",
      "product_type_L1112_split_paired_Bex_Sigma"]
 
-(* Eight goals the corrected circularity guard newly withholds a rule
+(* Seven goals the corrected circularity guard newly withholds a rule
    from, all in the [characterisation is the goal] class above and
-   dated to the measurement that found them.  Seven are one conjunct of
-   a conjunctive rule -- [listTheory.EL], [ZIP], [LIST_REL_NIL],
-   [EVERY_DEF], [EXISTS_DEF] and the translation's own
-   [source_measures_def], which the cited method unfolds -- and the
-   simpset splits each into a rewrite that is the goal.  The eighth is
+   dated to the measurement that found them.  Six are one conjunct of a
+   conjunctive rule -- [listTheory.ZIP], [LIST_REL_NIL], [EVERY_DEF],
+   [EXISTS_DEF] and the translation's own [source_measures_def], which
+   the cited method unfolds -- and the simpset splits each into a
+   rewrite that is the goal.  The seventh is
    [listTheory.SHORTLEX_NIL2], which is the goal once the translation
    of [lenlex] is unfolded; the guard used to compare a rule's
    conclusion against the goal with the goal's quantifier prefix still
-   on, so neither reading matched. *)
+   on, so neither reading matched.
+
+   The eighth was [list_L1851_nth_Cons_Suc], whose withheld rule is one
+   conjunct of [listTheory.EL].  A withheld rule leaves the goal to the
+   rest of the layer rather than closing the class, and the seeded cons
+   rule is a second route to it: EL_CONS reaches a cons at an index
+   known only to be non-zero, which the successor in the goal is. *)
 val a_reading_of_the_characterisation_is_the_goal =
   map
     (fn id =>
@@ -459,7 +463,7 @@ val a_reading_of_the_characterisation_is_the_goal =
          "conjunction, or states it with its quantifiers in another " ^
          "order, and A1 withholds it under either reading; the " ^
          "assigned tactic has no second route"} : benchLib.shortfall)
-    ["list_L1851_nth_Cons_Suc", "list_L2740_zip_Cons_Cons",
+    ["list_L2740_zip_Cons_Cons",
      "list_L3014_list_all2_Nil", "list_L3017_list_all2_Nil2",
      "list_L7300_Nil_lenlex_iff2", "list_L7775_in_measures_2",
      "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
