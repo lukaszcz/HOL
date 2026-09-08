@@ -163,9 +163,11 @@ struct
   type parser_cfg = {
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
+    mk_bound_var: string * Type.hol_type -> Term.term,
     lookup_binder_list: string -> Term.term list option,
     record_binder_block: string * int * Term.term -> unit,
     symbol_key: string -> string,
+    type_symbol_key: string -> string,
     parse_choice: bool,
     parse_lambda: bool
   }
@@ -254,6 +256,7 @@ local
   val unlocated_span = mk_point_span unlocated_pos
 
   fun make_tokenizer_from_input track_locations cpc_lexical_policy
+      z3_quoted_escapes token_byte_gate
       (input: unit -> char option) : unit -> located_token option =
   let
     datatype lookahead = NeedChar | NextChar of char | EndOfInput
@@ -262,6 +265,17 @@ local
     val index = ref 0
     val line = ref 1
     val column = ref 1
+    val token_bytes = ref 0
+
+    fun begin_token bytes = token_bytes := bytes
+    fun add_token_char c chars =
+      let
+        val bytes = !token_bytes + 1
+        val _ = token_bytes := bytes
+        val _ = case token_byte_gate of SOME gate => gate bytes | NONE => ()
+      in
+        c :: chars
+      end
 
     fun pos () = {line = !line, column = !column, offset = !index}
 
@@ -336,14 +350,27 @@ local
           if c = #" " orelse c = #"\t" orelse c = #"\n" orelse
              c = #"\r" orelse c = #"(" orelse c = #")" orelse c = #";"
           then token AtomToken start chars
-          else (ignore (advance ()); atom start (c :: chars))
+          else (ignore (advance ()); atom start (add_token_char c chars))
 
     fun quoted_symbol start chars =
       case advance () of
         NONE => syntax_error "get_token" (mk_point_span (pos ()))
           "unterminated quoted symbol"
       | SOME #"|" => token QuotedSymbolToken start chars
-      | SOME c => quoted_symbol start (c :: chars)
+      | SOME #"\\" =>
+          if not z3_quoted_escapes then
+            quoted_symbol start (add_token_char #"\\" chars)
+          else
+            (case advance () of
+               SOME #"\\" => quoted_symbol start (add_token_char #"\\" chars)
+             | SOME #"|" => quoted_symbol start (add_token_char #"|" chars)
+             | SOME escaped =>
+                 syntax_error "get_token" (mk_point_span (pos ()))
+                   ("unsupported Z3 quoted-symbol escape '\\" ^
+                    String.str escaped ^ "'")
+             | NONE => syntax_error "get_token" (mk_point_span (pos ()))
+                 "truncated Z3 quoted-symbol escape")
+      | SOME c => quoted_symbol start (add_token_char c chars)
 
     fun string_lit start chars =
       case advance () of
@@ -352,12 +379,13 @@ local
       | SOME #"\"" =>
           (case peek () of
              SOME #"\"" =>
-               (ignore (advance ()); string_lit start (#"\"" :: chars))
+               (ignore (advance ());
+                string_lit start (add_token_char #"\"" chars))
            | _ => token StringToken start chars)
       (* SMT-LIB 2.6 string literals have no backslash escapes; the only
          in-string escape is a doubled quote ("") handled above, so every
          other character (backslash included) is taken literally. *)
-      | SOME c => string_lit start (c :: chars)
+      | SOME c => string_lit start (add_token_char c chars)
   in
     fn () =>
       (skip_space_and_comments ();
@@ -374,14 +402,17 @@ local
        | SOME #"|" =>
            let val start = token_start ()
                val _ = advance ()
+               val _ = begin_token 0
            in SOME (quoted_symbol start []) end
        | SOME #"\"" =>
            let val start = token_start ()
                val _ = advance ()
+               val _ = begin_token 0
            in SOME (string_lit start []) end
        | SOME c =>
            let val start = token_start ()
                val _ = advance ()
+               val _ = begin_token 1
            in SOME (atom start [c]) end)
   end
 
@@ -396,7 +427,7 @@ local
         let val c = String.sub (text, !index)
         in index := !index + 1; SOME c end
   in
-    make_tokenizer_from_input true false input
+    make_tokenizer_from_input true false false NONE input
   end
 
   (* Proof tokens reach the legacy proof dictionaries as plain strings.
@@ -411,9 +442,11 @@ local
     String.isPrefix proof_string_token_prefix text orelse
     String.isPrefix proof_quoted_symbol_token_prefix text
 
-  fun make_proof_tokenizer_from_input preserve_quoted cpc_eof input =
+  fun make_proof_tokenizer_from_input preserve_quoted cpc_eof
+      z3_quoted_escapes token_byte_gate input =
     let
-      val next_token = make_tokenizer_from_input false cpc_eof input
+      val next_token = make_tokenizer_from_input false cpc_eof
+        z3_quoted_escapes token_byte_gate input
     in
       fn () =>
         case next_token () of
@@ -435,7 +468,7 @@ local
     end
 
   fun make_proof_stream_tokenizer_with_policy preserve_quoted cpc_eof
-      instream =
+      z3_quoted_escapes token_byte_gate instream =
   let
     val chunk = ref ""
     val index = ref 0
@@ -454,13 +487,18 @@ local
              SOME (String.sub (next, 0)))
         end
   in
-    make_proof_tokenizer_from_input preserve_quoted cpc_eof input
+    make_proof_tokenizer_from_input preserve_quoted cpc_eof
+      z3_quoted_escapes token_byte_gate input
   end
 
   val make_proof_stream_tokenizer =
-    make_proof_stream_tokenizer_with_policy false false
+    make_proof_stream_tokenizer_with_policy false false false NONE
   val make_cpc_proof_stream_tokenizer =
-    make_proof_stream_tokenizer_with_policy true true
+    make_proof_stream_tokenizer_with_policy true true false NONE
+  val make_z3_proof_stream_tokenizer =
+    make_proof_stream_tokenizer_with_policy true false true NONE
+  fun make_bounded_z3_proof_stream_tokenizer gate =
+    make_proof_stream_tokenizer_with_policy true false true (SOME gate)
 
   fun decoded_proof_token prefix token =
     if String.isPrefix prefix token then
@@ -1462,8 +1500,8 @@ local
 
   val unknown_symbol_origin = "t_with_args_unknown_symbol"
 
-  fun t_with_args dict (marked_token : string) (indices : Term.term list)
-      (args : 'a list) : 'a =
+  fun t_with_args_raw_key dict (marked_token : string) (key : string)
+      (indices : Term.term list) (args : 'a list) : 'a =
   let
     (* A CPC quoted symbol is keyed by its marked spelling.  Its parse
        function receives only the decoded display spelling, but lookup never
@@ -1474,16 +1512,20 @@ local
       | try_fns (f :: fs) last_err =
           (SOME (f token indices args), last_err)
           handle Interrupt => raise Interrupt
-               | Feedback.HOL_ERR holerr => try_fns fs (SOME holerr)
-               | _ => try_fns fs last_err
-    val primary_fns = Redblackmap.find (dict, marked_token)
+               | SmtLib_Theories.ParseDecline
+                   (Feedback.HOL_ERR holerr) => try_fns fs (SOME holerr)
+               | SmtLib_Theories.ParseDecline exn => raise exn
+               | error as Timeout.TIMEOUT _ => raise error
+               | error as Feedback.HOL_ERR _ => raise error
+    val primary_fns = Redblackmap.find (dict, key)
       handle Redblackmap.NotFound => []
     val catch_all_fns =
       if Option.isSome quoted then []
       else Redblackmap.find (dict, "_")
         handle Redblackmap.NotFound => []
-    val diagnostic_token =
-      case quoted of SOME text => "|" ^ text ^ "|" | NONE => token
+    (* Diagnostics use the decoded symbol spelling used by callbacks.  The
+       separate [quoted] bit above still controls lexical fall-through. *)
+    val diagnostic_token = token
     fun generic_msg detail =
       "failed to parse '" ^ diagnostic_token ^ "' (with indices [" ^
       String.concatWith ", " (List.map Hol_pp.term_to_string indices) ^
@@ -1502,20 +1544,32 @@ local
                 reason, so an enumerated diagnostic is not masked by a
                 generic one. *)
              if List.null primary_fns then
-               raise Feedback.mk_HOL_ERR "SmtLib_Parser"
-                 unknown_symbol_origin
-                 (generic_msg (": " ^ unknown_symbol_diagnostic))
+               raise SmtLib_Theories.ParseDecline
+                 (Feedback.mk_HOL_ERR "SmtLib_Parser"
+                   unknown_symbol_origin
+                   (generic_msg (": " ^ unknown_symbol_diagnostic)))
              else
                (case (primary_err, catch_all_err) of
                   (SOME holerr, _) =>
-                    raise ERR "t_with_args"
-                      (generic_msg (": " ^ Feedback.message_of holerr))
+                    raise SmtLib_Theories.ParseDecline
+                      (Feedback.mk_HOL_ERR "SmtLib_Parser" "t_with_args"
+                        (generic_msg (": " ^ Feedback.message_of holerr)))
                 | (NONE, SOME holerr) =>
-                    raise ERR "t_with_args"
-                      (generic_msg (": " ^ Feedback.message_of holerr))
+                    raise SmtLib_Theories.ParseDecline
+                      (Feedback.mk_HOL_ERR "SmtLib_Parser" "t_with_args"
+                        (generic_msg (": " ^ Feedback.message_of holerr)))
                 | (NONE, NONE) =>
-                    raise ERR "t_with_args" (generic_msg "")))
+                    raise SmtLib_Theories.ParseDecline
+                      (Feedback.mk_HOL_ERR "SmtLib_Parser" "t_with_args"
+                        (generic_msg ""))))
   end
+
+  fun t_with_args_raw dict token indices args =
+    t_with_args_raw_key dict token token indices args
+
+  fun t_with_args dict token indices args =
+    t_with_args_raw dict token indices args
+    handle SmtLib_Theories.ParseDecline exn => raise exn
 
   fun declared_sort_parsefn sort_name arity =
   let
@@ -1534,13 +1588,13 @@ local
             ty
           end
     fun arity_mismatch actual =
-      raise ERR ("<" ^ sort_name ^ ">")
+      SmtLib_Theories.decline ("<" ^ sort_name ^ ">")
         ("declare-sort arity mismatch for '" ^ sort_name ^ "': expected " ^
          Int.toString arity ^ ", actual " ^ Int.toString actual)
   in
     fn token => fn indices => fn args =>
       if not (List.null indices) then
-        raise ERR ("<" ^ sort_name ^ ">")
+        SmtLib_Theories.decline ("<" ^ sort_name ^ ">")
           ("declare-sort arity mismatch for '" ^ sort_name ^
            "': expected no indices, actual " ^
            Int.toString (List.length indices))
@@ -1581,18 +1635,30 @@ local
   fun list_mk_comb_coerce_int_to_real tm domain args =
     Term.list_mk_comb (tm, coerce_args_to_expected domain args)
 
-  fun t_with_term_args dict token indices args =
-    t_with_args dict token indices args
-    handle original as Feedback.HOL_ERR _ =>
+  fun t_with_term_args_raw_key dict marked_token key indices args =
+    t_with_args_raw_key dict marked_token key indices args
+    handle decline as SmtLib_Theories.ParseDecline _ =>
       let
         val (coerced_args, changed) = coerce_int_args_to_real args
       in
         if changed then
-          t_with_args dict token indices coerced_args
-          handle Feedback.HOL_ERR _ => raise original
+          (t_with_args_raw_key dict marked_token key indices coerced_args
+           handle SmtLib_Theories.ParseDecline _ => raise decline)
         else
-          raise original
+          raise decline
       end
+
+
+  fun t_with_term_args_raw dict token indices args =
+    t_with_term_args_raw_key dict token token indices args
+
+  fun t_with_term_args dict token indices args =
+    t_with_term_args_raw dict token indices args
+    handle SmtLib_Theories.ParseDecline exn => raise exn
+
+  fun t_with_term_args_key dict marked_token key indices args =
+    t_with_term_args_raw_key dict marked_token key indices args
+    handle SmtLib_Theories.ParseDecline exn => raise exn
 
   (***************************************************************************)
   (* type-specific parsing functions                                         *)
@@ -1618,7 +1684,8 @@ local
           Library.parse_arbnum) tl)
   end
 
-  fun parse_type_operands get_token tydict acc : Type.hol_type list =
+  fun parse_type_operands_with_key symbol_key get_token tydict acc
+      : Type.hol_type list =
   let
     val token = get_token ()
   in
@@ -1627,17 +1694,20 @@ local
     else
       let
         (* operands don't take arguments *)
-        val operand = parse_type_aux get_token tydict token []
+        val operand = parse_type_aux_with_key symbol_key get_token tydict
+          token []
       in
-        parse_type_operands get_token tydict (operand :: acc)
+        parse_type_operands_with_key symbol_key get_token tydict
+          (operand :: acc)
       end
   end
 
-  and parse_compound_type get_token tydict (token : string) : Type.hol_type =
+  and parse_compound_type_with_key symbol_key get_token tydict
+      (token : string) : Type.hol_type =
   let
-    val headfn = parse_type_aux get_token tydict token
+    val headfn = parse_type_aux_with_key symbol_key get_token tydict token
     fun ordinary tokens =
-      headfn (parse_type_operands
+      headfn (parse_type_operands_with_key symbol_key
         (Library.undo_look_ahead tokens get_token) tydict [])
   in
     (* A proof parser can distinguish Z3's `(Seq Char)` from a sequence of
@@ -1650,17 +1720,19 @@ local
         val close = get_token ()
       in
         if first = "Char" andalso close = ")" then
-          let val char_ty = parse_type_aux get_token tydict first [] in
-            t_with_args tydict "Seq Char" [] [char_ty]
-            handle Feedback.HOL_ERR _ => ordinary [first, close]
+          let val char_ty = parse_type_aux_with_key symbol_key get_token
+              tydict first [] in
+            (t_with_args_raw tydict "Seq Char" [] [char_ty]
+             handle SmtLib_Theories.ParseDecline _ =>
+               ordinary [first, close])
           end
         else ordinary [first, close]
       end
     else
-      headfn (parse_type_operands get_token tydict [])
+      headfn (parse_type_operands_with_key symbol_key get_token tydict [])
   end
 
-  and parse_indexed_or_compound_type get_token tydict
+  and parse_indexed_or_compound_type_with_key symbol_key get_token tydict
     : Type.hol_type list -> Type.hol_type =
   let
     val token = get_token ()
@@ -1669,7 +1741,7 @@ local
       parse_indexed_type get_token tydict
     else
       let
-        val t = parse_compound_type get_token tydict token
+        val t = parse_compound_type_with_key symbol_key get_token tydict token
       in
         (* compounds don't take arguments *)
         fn [] => t
@@ -1678,20 +1750,25 @@ local
       end
   end
 
-  and parse_type_aux get_token tydict (token : string)
+  and parse_type_aux_with_key symbol_key get_token tydict (token : string)
     : Type.hol_type list -> Type.hol_type =
     if token = "(" then
-      parse_indexed_or_compound_type get_token tydict
+      parse_indexed_or_compound_type_with_key symbol_key get_token tydict
     else
-      t_with_args tydict token []
+      fn args =>
+        (t_with_args_raw_key tydict token (symbol_key token) [] args
+         handle SmtLib_Theories.ParseDecline exn => raise exn)
+
+  fun parse_type_with_key symbol_key get_token tydict : Type.hol_type =
+    parse_type_aux_with_key symbol_key get_token tydict (get_token ()) []
 
   fun parse_type get_token tydict : Type.hol_type =
-    parse_type_aux get_token tydict (get_token ()) []
+    parse_type_with_key Lib.I get_token tydict
 
   fun parse_type_list get_token tydict : Type.hol_type list =
   (
     Library.expect_token "(" (get_token ());
-    parse_type_operands get_token tydict []
+    parse_type_operands_with_key Lib.I get_token tydict []
   )
 
   (***************************************************************************)
@@ -1785,7 +1862,7 @@ local
     val bindings = parse_var_bindings cfg get_token (tydict, tmdict)
     val bindings = List.map
       (fn (key, name, term) =>
-        (key, Term.mk_var (name, Term.type_of term), term)) bindings
+        (key, (#mk_bound_var cfg) (name, Term.type_of term), term)) bindings
     val tmdict = (#mk_let_bindings cfg) ((tydict, tmdict), bindings)
     val body = parse_term_with_cfg cfg get_token (tydict, tmdict)
     val _ = Library.expect_token ")" (get_token ())
@@ -1812,7 +1889,7 @@ local
               "string literal used as a bound-variable name"
           val key = (#symbol_key cfg) marked_symbol
           val name = proof_symbol_text marked_symbol
-          val typ = parse_type get_token tydict
+          val typ = parse_type_with_key (#type_symbol_key cfg) get_token tydict
           val _ = Library.expect_token ")" (get_token ())
         in
           aux ((key, name, typ) :: acc)
@@ -1869,7 +1946,7 @@ local
             in
               (List.map
                  (fn (key, name, typ) =>
-                   (key, Term.mk_var (name, typ))) sorted_vars,
+                   (key, (#mk_bound_var cfg) (name, typ))) sorted_vars,
                false, get_token)
             end
     (* variables don't take arguments *)
@@ -1877,7 +1954,7 @@ local
       if List.null indices andalso List.null args then
         var
       else
-        raise ERR ("<" ^ Hol_pp.term_to_string var ^ ">")
+        SmtLib_Theories.decline ("<" ^ Hol_pp.term_to_string var ^ ">")
           "wrong number of arguments"
     val tmdict = if cpc_binders then tmdict else
       List.foldl Library.extend_dict tmdict
@@ -1930,8 +2007,8 @@ local
           else raise ERR "parse_ascribed_term"
             (description ^ " expects a " ^ constructor ^ " sort")
       in
-        parse_type (Library.undo_look_ahead [open_paren, head] get_token)
-          tydict
+        parse_type_with_key (#type_symbol_key cfg)
+          (Library.undo_look_ahead [open_paren, head] get_token) tydict
       end
     val name = get_token ()
   in
@@ -2117,7 +2194,7 @@ local
     if token = "(" then
       parse_indexed_or_compound_term cfg get_token (tydict, tmdict)
     else
-      t_with_term_args tmdict token []
+      t_with_term_args_key tmdict token ((#symbol_key cfg) token) []
 
   and parse_term_with_cfg cfg get_token (tydict, tmdict) : Term.term =
     parse_term_aux cfg get_token (tydict, tmdict) (get_token ()) []
@@ -2131,7 +2208,7 @@ local
       if List.null indices andalso List.null args then
         var
       else
-        raise ERR ("<" ^ Hol_pp.term_to_string var ^ ">")
+        SmtLib_Theories.decline ("<" ^ Hol_pp.term_to_string var ^ ">")
           "wrong number of arguments"
   in
     List.foldl Library.extend_dict tmdict
@@ -2145,9 +2222,11 @@ local
   val smtlib_cfg = {
     mk_let_bindings = smtlib_mk_let_bindings,
     mk_let = smtlib_mk_let,
+    mk_bound_var = Term.mk_var,
     lookup_binder_list = fn _ => NONE,
     record_binder_block = fn _ => (),
     symbol_key = proof_symbol_text,
+    type_symbol_key = Lib.I,
     parse_choice = false,
     parse_lambda = false
   }
@@ -2194,9 +2273,11 @@ local
   end
 
   (* returns an extended 'tydict' *)
-  fun parse_declare_sort get_token tydict =
+  fun parse_declare_sort_with_names key_of name_of get_token tydict =
   let
-    val name = get_token ()
+    val source_name = get_token ()
+    val key = key_of source_name
+    val name = name_of source_name
     val arity_text = get_token ()
     val arity =
       case Int.fromString arity_text of
@@ -2210,8 +2291,12 @@ local
     val _ = Library.expect_token ")" (get_token ())
     val parsefn = declared_sort_parsefn name arity
   in
-    Library.extend_dict ((name, parsefn), tydict)
+    Library.extend_dict ((key, parsefn), tydict)
   end
+
+
+  fun parse_declare_sort get_token tydict =
+    parse_declare_sort_with_names Lib.I Lib.I get_token tydict
 
   fun parse_define_sort get_token tydict =
   let
@@ -2239,15 +2324,17 @@ local
   end
 
   (* returns an extended 'tmdict' *)
-  fun parse_declare_const_fun parse_types get_token (tydict, tmdict) =
+  fun parse_declare_const_fun_with_type_key symbol_key parse_types get_token
+      (tydict, tmdict) =
   let
     val name = get_token ()
     val domain_types =
       if parse_types then
-        parse_type_list get_token tydict
+        (Library.expect_token "(" (get_token ());
+         parse_type_operands_with_key symbol_key get_token tydict [])
       else
         []
-    val range_type = parse_type get_token tydict
+    val range_type = parse_type_with_key symbol_key get_token tydict
     val _ = Library.expect_token ")" (get_token ())
     val tm = Term.mk_var (name,
       boolSyntax.list_mk_fun (domain_types, range_type))
@@ -2256,11 +2343,12 @@ local
       if List.null indices andalso List.length args = args_count then
         list_mk_comb_coerce_int_to_real tm domain_types args
       else
-        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+        SmtLib_Theories.decline ("<" ^ name ^ ">") "wrong number of arguments"
   in
     (tm, Library.extend_dict ((name, parsefn), tmdict))
   end
 
+  val parse_declare_const_fun = parse_declare_const_fun_with_type_key Lib.I
   val parse_declare_const = parse_declare_const_fun false
   val parse_declare_fun = parse_declare_const_fun true
 
@@ -2285,7 +2373,7 @@ local
       if List.null indices andalso List.null args then
         datatype_ty
       else
-        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+        SmtLib_Theories.decline ("<" ^ name ^ ">") "wrong number of arguments"
   in
     Library.extend_dict ((name, parse_ty), tydict)
   end
@@ -2302,7 +2390,7 @@ local
           if List.null indices andalso List.length args = args_count then
             list_mk_comb_coerce_int_to_real ctor_tm arg_tys args
           else
-            raise ERR ("<" ^ ctor_name ^ ">") "wrong number of arguments"
+            SmtLib_Theories.decline ("<" ^ ctor_name ^ ">") "wrong number of arguments"
         fun selector_entry ((selector_name, selector_ty), tmdict) =
           let
             val selector_tm = Term.mk_var (selector_name,
@@ -2311,7 +2399,7 @@ local
               if List.null indices andalso List.length args = 1 then
                 list_mk_comb_coerce_int_to_real selector_tm [datatype_ty] args
               else
-                raise ERR ("<" ^ selector_name ^ ">")
+                SmtLib_Theories.decline ("<" ^ selector_name ^ ">")
                   "wrong number of arguments"
           in
             Library.extend_dict ((selector_name, selector_parse), tmdict)
@@ -2328,10 +2416,10 @@ local
                        Type.--> (datatype_ty, Type.bool)),
                      [arg])
                 else
-                  raise ERR ("<is " ^ ctor_name ^ ">")
+                  SmtLib_Theories.decline ("<is " ^ ctor_name ^ ">")
                     "tester constructor mismatch"
               end
-          | _ => raise ERR ("<is " ^ ctor_name ^ ">")
+          | _ => SmtLib_Theories.decline ("<is " ^ ctor_name ^ ">")
               "one constructor index and one argument expected"
         val tmdict = Library.extend_dict ((ctor_name, ctor_parse), tmdict)
         val tmdict = Library.extend_dict (("is", tester_parse), tmdict)
@@ -2466,7 +2554,7 @@ local
       if List.null indices andalso List.length args = args_count then
         list_mk_comb_coerce_int_to_real tm domain_types args
       else
-        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+        SmtLib_Theories.decline ("<" ^ name ^ ">") "wrong number of arguments"
     val tmdict = Library.extend_dict ((name, parsefn), tmdict)
   in
     (tm, tmdict)
@@ -2511,7 +2599,7 @@ local
       if List.null indices andalso List.null args then
         var
       else
-        raise ERR ("<" ^ Hol_pp.term_to_string var ^ ">")
+        SmtLib_Theories.decline ("<" ^ Hol_pp.term_to_string var ^ ">")
           "wrong number of arguments"
     val definiens_tmdict = List.foldl Library.extend_dict tmdict
       (List.map (Lib.apsnd var_parsefn) vars)
@@ -2527,7 +2615,7 @@ local
       if List.null indices andalso List.null args then
         var
       else
-        raise ERR ("<" ^ Hol_pp.term_to_string var ^ ">")
+        SmtLib_Theories.decline ("<" ^ Hol_pp.term_to_string var ^ ">")
           "wrong number of arguments"
   in
     List.foldl Library.extend_dict tmdict
@@ -3849,7 +3937,7 @@ local
     if List.null indices andalso List.length args = args_count then
       Term.list_mk_comb (tm, args)
     else
-      raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+      SmtLib_Theories.decline ("<" ^ name ^ ">") "wrong number of arguments"
 
   fun add_value_signature_with_surface name domain domain_surface range
       range_surface (tmdict, sigdict) =
@@ -4476,8 +4564,9 @@ local
           val arg_terms = List.map checked_term args
           val arg_sorts = List.map checked_sort args
           val t =
-            t_with_term_args tmdict name [] arg_terms
-            handle Feedback.HOL_ERR holerr =>
+            t_with_term_args_raw tmdict name [] arg_terms
+            handle SmtLib_Theories.ParseDecline
+                (Feedback.HOL_ERR holerr) =>
               type_error fn_name context loc NONE NONE
                 ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
                  sort_list_to_string arg_sorts ^ ": " ^
@@ -4503,7 +4592,7 @@ local
                         pred_setSyntax.mk_in
                           (checked_term element, checked_term set_tm)
                       else
-                        t_with_term_args tmdict name [] arg_terms
+                        t_with_term_args_raw tmdict name [] arg_terms
                   | ("store", [set_tm, element, value]) =>
                       if is_set_surface (checked_surface_sort set_tm) andalso
                          #solver context <> SOME "cvc5" andalso
@@ -4516,9 +4605,10 @@ local
                         pred_setSyntax.mk_delete
                           (checked_term set_tm, checked_term element)
                       else
-                        t_with_term_args tmdict name [] arg_terms
-                  | _ => t_with_term_args tmdict name [] arg_terms)
-                 handle Feedback.HOL_ERR holerr =>
+                        t_with_term_args_raw tmdict name [] arg_terms
+                  | _ => t_with_term_args_raw tmdict name [] arg_terms)
+                 handle SmtLib_Theories.ParseDecline
+                     (Feedback.HOL_ERR holerr) =>
                    type_error fn_name context loc NONE NONE
                      ("could not resolve symbol '" ^ name ^
                       "' for actual sorts " ^ sort_list_to_string arg_sorts ^
@@ -4549,8 +4639,9 @@ local
           val arg_terms = List.map checked_term args
           val arg_sorts = List.map checked_sort args
           val t =
-            t_with_term_args tmdict name indices arg_terms
-            handle Feedback.HOL_ERR holerr =>
+            t_with_term_args_raw tmdict name indices arg_terms
+            handle SmtLib_Theories.ParseDecline
+                (Feedback.HOL_ERR holerr) =>
               type_error fn_name context loc NONE NONE
                 ("could not resolve indexed symbol '" ^ name ^
                  "' for actual sorts " ^ sort_list_to_string arg_sorts ^
@@ -5338,7 +5429,7 @@ local
           val ty = Type.gen_tyvar ()
           fun parsefn token indices args =
             if List.null indices andalso List.null args then ty
-            else raise ERR ("<" ^ pname ^ ">") "wrong number of arguments"
+            else SmtLib_Theories.decline ("<" ^ pname ^ ">") "wrong number of arguments"
         in
           (Library.extend_dict ((pname, parsefn), tydict),
            (pname, ty) :: param_tys)
@@ -5392,7 +5483,7 @@ local
             Type.type_subst subst body_ty
           end
         else
-          raise ERR ("<" ^ alias_name ^ ">") "wrong number of arguments"
+          SmtLib_Theories.decline ("<" ^ alias_name ^ ">") "wrong number of arguments"
     in
       surface_aliases := (alias_name, (param_tys, body_surface)) ::
         List.filter (fn (alias, _) => alias <> alias_name) (!surface_aliases);
@@ -5449,7 +5540,7 @@ local
       fun parse_ty token indices args =
         if List.null indices andalso List.length args = arity then
           datatype_type datatype_name args
-        else raise ERR ("<" ^ datatype_name ^ ">") "wrong number of arguments"
+        else SmtLib_Theories.decline ("<" ^ datatype_name ^ ">") "wrong number of arguments"
     in
       Library.extend_dict ((datatype_name, parse_ty), tydict)
     end
@@ -5462,7 +5553,7 @@ local
           val ty = Type.mk_vartype ("'" ^ pname)
           fun parsefn token indices args =
             if List.null indices andalso List.null args then ty
-            else raise ERR ("<" ^ pname ^ ">") "wrong number of arguments"
+            else SmtLib_Theories.decline ("<" ^ pname ^ ">") "wrong number of arguments"
         in
           Library.extend_dict ((pname, parsefn), tydict)
         end)
@@ -5553,10 +5644,12 @@ local
                                Type.bool)),
                            [arg])
                       else
-                        raise ERR ("<is " ^ ctor_name_s ^ ">")
+                        SmtLib_Theories.decline
+                          ("<is " ^ ctor_name_s ^ ">")
                           "tester constructor mismatch"
                     end
-                | _ => raise ERR ("<is " ^ ctor_name_s ^ ">")
+                | _ => SmtLib_Theories.decline
+                    ("<is " ^ ctor_name_s ^ ">")
                     "one constructor index and one argument expected"
               val tmdict = Library.extend_dict (("is", tester_parse), tmdict)
             in
@@ -5588,12 +5681,12 @@ local
       val {Thy, Tyop, Args} = Type.dest_thy_type base_ty
       val arity = List.length Args
       fun arity_error actual =
-        raise ERR ("<" ^ smt_name ^ ">")
+        SmtLib_Theories.decline ("<" ^ smt_name ^ ">")
           ("datatype arity mismatch for '" ^ smt_name ^ "': expected " ^
            Int.toString arity ^ ", actual " ^ Int.toString actual)
     in
       if not (List.null indices) then
-        raise ERR ("<" ^ smt_name ^ ">")
+        SmtLib_Theories.decline ("<" ^ smt_name ^ ">")
           ("datatype sort '" ^ smt_name ^ "' does not take indices")
       else if List.length args = arity then
         if arity = 0 then base_ty
@@ -5633,7 +5726,7 @@ local
                 scrutinee = arg
               }
             end
-        | _ => raise ERR ("<" ^ smt_name ^ ">")
+        | _ => SmtLib_Theories.decline ("<" ^ smt_name ^ ">")
             "one datatype selector argument expected"
     in
       Library.extend_dict ((smt_name, parsefn), tmdict)
@@ -5651,7 +5744,7 @@ local
               constructor = constructor_index_name index,
               scrutinee = arg
             }
-        | _ => raise ERR "<is>"
+        | _ => SmtLib_Theories.decline "<is>"
             "one constructor index and one datatype tester argument expected"
     in
       Library.extend_dict (("is", parsefn), tmdict)
@@ -6585,8 +6678,13 @@ in
   val smtlib_mk_let = smtlib_mk_let
 
   val parse_declare_fun = parse_declare_fun
+  val parse_declare_sort = parse_declare_sort
+  val parse_declare_sort_with_names = parse_declare_sort_with_names
+  val parse_declare_const_fun_with_type_key =
+    parse_declare_const_fun_with_type_key
 
   val parse_type = parse_type
+  val parse_type_with_key = parse_type_with_key
   val parse_type_list = parse_type_list
 
   (* Apply a dictionary symbol when a client parser has already separated
@@ -6602,6 +6700,9 @@ in
   val parse_term_list = parse_term_list
   val make_proof_stream_tokenizer = make_proof_stream_tokenizer
   val make_cpc_proof_stream_tokenizer = make_cpc_proof_stream_tokenizer
+  val make_z3_proof_stream_tokenizer = make_z3_proof_stream_tokenizer
+  val make_bounded_z3_proof_stream_tokenizer =
+    make_bounded_z3_proof_stream_tokenizer
   val proof_string_token = proof_string_token
   val proof_quoted_symbol_token = proof_quoted_symbol_token
   val proof_symbol_text = proof_symbol_text

@@ -5,6 +5,13 @@
 structure Z3_ProofParser =
 struct
 
+datatype proof_dialect = LegacyDecimal | CompactTyped
+
+type semantic_context = {
+  dicts : SmtLib_Parser.dicts,
+  introduced_free_variable_names : string list
+}
+
   (* I tried to implement this parser in ML-Lex/ML-Yacc, but gave up
      on that -- mainly for two reasons: 1. The whole toolchain/build
      process gets more complicated. 2. Performance and memory usage of
@@ -47,7 +54,8 @@ local
   (* Z3 proofterms are essentially encoded in SMT-LIB term syntax, so
      we re-use the SMT-LIB parser. *)
 
-  (* Limitation: the Z3 proof format does not syntactically separate a rule's
+  (* LegacyDecimal limitation: the Z3 proof format does not syntactically
+     separate a rule's
      premise proofterms from its final conclusion term.  The parser therefore
      parses proofterms and conclusion terms through one SMT-LIB term grammar,
      encoding proofterms as HOL terms of type :'pt.  If a conclusion term uses
@@ -56,7 +64,9 @@ local
 
      A format-level fix would make premises an explicit list, e.g. by
      parenthesizing the premises before the conclusion.  That is an upstream
-     Z3 change; nothing here can remove the ambiguity on its own. *)
+     Z3 change; the legacy HOL-term encoding cannot remove the ambiguity on
+     its own.  CompactTyped instead uses registry-owned positional layouts and
+     typed proof/semantic environments, without this intermediate encoding. *)
 
   val pt_ty = Type.mk_vartype "'pt"
   val th_lemma_metadata_ty = listSyntax.mk_list_type stringSyntax.string_ty
@@ -158,7 +168,7 @@ local
       first :: second :: rest =>
         List.foldl (fn (next, result) => make (result, next))
           (make (first, second)) rest
-    | _ => raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+    | _ => SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
         "at least two arguments expected"
 
   (***************************************************************************)
@@ -191,7 +201,7 @@ local
     if Type.compare (Term.type_of c, z3_char_ty) = EQUAL then
       Term.mk_comb (intSyntax.int_injection, z3_char_to_num c)
     else
-      raise ERR "<z3_string_dict.char.to_int>"
+      SmtLib_Theories.decline "<z3_string_dict.char.to_int>"
         "expected one Char argument"
 
   fun z3_num_to_char n =
@@ -328,9 +338,9 @@ local
         | ([], [x]) => make x
         | ([index], [x]) =>
             if z3_same_index marker index then make x
-            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+            else SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
               "unexpected self index"
-        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+        | _ => SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
             "at most one self index and one argument expected"
     end
 
@@ -343,9 +353,9 @@ local
         | ([], [x, y]) => make (x, y)
         | ([index], [x, y]) =>
             if z3_same_index marker index then make (x, y)
-            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+            else SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
               "unexpected self index"
-        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+        | _ => SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
             "at most one self index and two arguments expected"
     end
 
@@ -358,9 +368,9 @@ local
         | ([index], [x]) =>
             if Term.is_var index andalso
                Lib.fst (Term.dest_var index) = name then make x
-            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+            else SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
               "unexpected self index"
-        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+        | _ => SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
             "one self index and one argument expected"
     end
 
@@ -373,9 +383,9 @@ local
         | ([], [x, y]) => make (x, y)
         | ([index], [x, y]) =>
             if z3_same_index marker index then make (x, y)
-            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+            else SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
               "unexpected self index"
-        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+        | _ => SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
           "at most one self index and two arguments expected"
     end
 
@@ -417,9 +427,9 @@ local
           if Term.aconv index witness then
             Term.list_mk_comb (witness, [x, y])
           else
-            raise ERR ("<z3_string_dict." ^ name ^ ">")
+            SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
               "unexpected self index"
-      | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+      | _ => SmtLib_Theories.decline ("<z3_string_dict." ^ name ^ ">")
           "one self index and two arguments expected")
 
   fun z3_bits2char bits =
@@ -437,7 +447,7 @@ local
               add_bit (rest, index + 1,
                 wordsSyntax.mk_word_or (sum, contribution))
             end
-        | add_bit _ = raise ERR "<z3_string_dict.bits2char>"
+        | add_bit _ = SmtLib_Theories.decline "<z3_string_dict.bits2char>"
             "exactly 18 Boolean arguments expected"
     in
       z3_char_result (add_bit (bits, 0, zero))
@@ -471,19 +481,19 @@ local
     else
       case Lib.total listSyntax.dest_list_type (Term.type_of marker) of
         SOME element => listSyntax.mk_nil element
-      | NONE => raise ERR "<z3_string_dict.seq.empty>"
+      | NONE => SmtLib_Theories.decline "<z3_string_dict.seq.empty>"
           "expected a Seq sort marker"
 
   val z3_empty_marker = listSyntax.mk_nil intSyntax.int_ty
 
   fun z3_as_seq_empty (empty, marker) =
     if Term.aconv empty z3_empty_marker then z3_seq_empty marker
-    else raise ERR "<z3_string_dict.as>" "not a seq.empty annotation"
+    else SmtLib_Theories.decline "<z3_string_dict.as>" "not a seq.empty annotation"
 
   fun z3_char_type _ indices args =
     if List.null indices andalso List.null args then
       (z3_seen_char_sort := true; z3_char_ty)
-    else raise ERR "<z3_string_tydict.Char>" "no arguments expected"
+    else SmtLib_Theories.decline "<z3_string_tydict.Char>" "no arguments expected"
 
   val z3_string_tydict = Library.dict_from_list [
     ("Char", z3_char_type),
@@ -500,8 +510,8 @@ local
             SOME value =>
               (SmtLib_String_Literal.mk_string_term value
                handle SmtLib_String_Literal.InvalidStringLiteral detail =>
-                 raise ERR "<z3_string_dict._>" detail)
-          | NONE => raise ERR "<z3_string_dict._>"
+                 SmtLib_Theories.decline "<z3_string_dict._>" detail)
+          | NONE => SmtLib_Theories.decline "<z3_string_dict._>"
               "not a proof string literal")),
         ("re.diff", SmtLib_Theories.K_zero_two (fn (x, y) =>
           if Library.same_const
@@ -523,7 +533,7 @@ local
               let val char = z3_num_to_char (z3_natural code)
               in z3_char_terms := char :: !z3_char_terms; char end
           | ([], []) => z3_char_sort_marker
-          | _ => raise ERR "<z3_string_dict.Char>"
+          | _ => SmtLib_Theories.decline "<z3_string_dict.Char>"
               "one code-point index or a sort marker expected"),
         ("Int", SmtLib_Theories.K_zero_zero z3_int_sort_marker),
         ("Seq", SmtLib_Theories.K_zero_one z3_seq_sort_marker),
@@ -532,7 +542,7 @@ local
             ([], []) => z3_empty_marker
           | ([marker], []) => z3_seq_empty marker
           | ([], [marker]) => z3_seq_empty marker
-          | _ => raise ERR "<z3_string_dict.seq.empty>"
+          | _ => SmtLib_Theories.decline "<z3_string_dict.seq.empty>"
               "one Seq sort annotation and no arguments expected"),
         ("as", SmtLib_Theories.K_zero_two z3_as_seq_empty),
         (* These aliases keep Z3's public (Seq Char) surface on the same
@@ -626,9 +636,9 @@ local
                  Lib.fst (Term.dest_var marker) = "bits2char" then
                 z3_bits2char bits
               else
-                raise ERR "<z3_string_dict.bits2char>"
+                SmtLib_Theories.decline "<z3_string_dict.bits2char>"
                   "unexpected self index"
-          | _ => raise ERR "<z3_string_dict.bits2char>"
+          | _ => SmtLib_Theories.decline "<z3_string_dict.bits2char>"
               "one self index and 18 arguments expected"),
         ("char.bit", fn _ => fn indices => fn args =>
           case (indices, args) of
@@ -638,10 +648,10 @@ local
                 z3_string_app "char_bit"
                   [z3_natural bit, z3_char_to_num c]
               else
-                raise ERR "<z3_string_dict.char.bit>"
+                SmtLib_Theories.decline "<z3_string_dict.char.bit>"
                   "unexpected self index"
           | ([], []) => Term.mk_var ("char.bit", Type.alpha)
-          | _ => raise ERR "<z3_string_dict.char.bit>"
+          | _ => SmtLib_Theories.decline "<z3_string_dict.char.bit>"
               "self index, bit index, and one argument expected"),
         ("aut.accept", fn _ => fn indices => fn args =>
           case (indices, args) of
@@ -651,10 +661,10 @@ local
                 z3_string_app "aut_accept"
                   [s, z3_natural state, re]
               else
-                raise ERR "<z3_string_dict.aut.accept>"
+                SmtLib_Theories.decline "<z3_string_dict.aut.accept>"
                   "unexpected self index"
           | ([], []) => Term.mk_var ("aut.accept", Type.alpha)
-          | _ => raise ERR "<z3_string_dict.aut.accept>"
+          | _ => SmtLib_Theories.decline "<z3_string_dict.aut.accept>"
               "one self index and three arguments expected")
       ]
     in
@@ -698,11 +708,11 @@ local
       val actual = fcpLib.index_to_num (wordsSyntax.dim_of tm)
     in
       if actual = Arbnum.fromInt width then ()
-      else raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+      else SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
         (Int.toString width ^ "-bit bit-vector expected")
     end
     handle Feedback.HOL_ERR _ =>
-      raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+      SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
         (Int.toString width ^ "-bit bit-vector expected")
 
   fun z3_smtfp_packed_type x =
@@ -710,7 +720,7 @@ local
       val {Thy, Tyop, Args, ...} =
         Type.dest_thy_type (Term.type_of x)
       val _ = Thy = "smtfloat" andalso Tyop = "smtfp" orelse
-        raise ERR "<z3_builtin_dict.bv_wrap>"
+        SmtLib_Theories.decline "<z3_builtin_dict.bv_wrap>"
           "FloatingPoint or RoundingMode operand expected"
       val (significand_index, exponent_index) = Lib.pair_of_list Args
       val significand_width = fcpLib.index_to_num significand_index
@@ -724,7 +734,7 @@ local
   fun z3_positive_word_index name width =
     let
       fun invalid () =
-        raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
           (name ^ ": positive numeric bit-vector width index expected")
     in
       ((let val value = SmtLib_Theories.natural_of_index width in
@@ -743,7 +753,7 @@ local
     else if z3_is_rounding_type (Term.type_of x) then
       SmtLib_Theories.smtfloat_app "smtfp_pack_rounding" [x]
     else
-      raise ERR "<z3_builtin_dict.bv_wrap>"
+      SmtLib_Theories.decline "<z3_builtin_dict.bv_wrap>"
         "FloatingPoint or RoundingMode operand expected"
 
   fun z3_bv2rm name bits =
@@ -756,7 +766,7 @@ local
        Type.compare (Term.type_of x, Term.type_of y) = EQUAL then
       SmtLib_Theories.smtfloat_app hol_name [x, y]
     else
-      raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+      SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
         "equal FloatingPoint operand sorts expected"
 
   fun z3_fp_to_bv_i name hol_name indices args =
@@ -768,18 +778,18 @@ local
             (wordsSyntax.mk_word_type
               (z3_positive_word_index name width)) [mode, x]
         else
-          raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+          SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
             "RoundingMode and FloatingPoint operands expected"
-    | ([_], _) => raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+    | ([_], _) => SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
         "two arguments expected"
-    | _ => raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+    | _ => SmtLib_Theories.decline ("<z3_builtin_dict." ^ name ^ ">")
         "one bit-vector width index expected"
 
   fun z3_fp_to_real_i x =
     if z3_is_smtfp_type (Term.type_of x) then
       SmtLib_Theories.smtfloat_app "smtfp_to_real" [x]
     else
-      raise ERR "<z3_builtin_dict.fp.to_real_I>"
+      SmtLib_Theories.decline "<z3_builtin_dict.fp.to_real_I>"
         "FloatingPoint operand expected"
 
   val z3_hi_fp_unspecified_diagnostic =
@@ -794,7 +804,7 @@ local
        contains zero occurrences of the token as a proof term.  It therefore
        has no term type or HOL denotation to reconstruct.  Keep the exact
        token enumerated so it cannot fall through to the proof catch-all. *)
-    raise ERR "<z3_builtin_dict.hi_fp_unspecified>"
+    SmtLib_Theories.decline "<z3_builtin_dict.hi_fp_unspecified>"
       (z3_hi_fp_unspecified_diagnostic ^
        ": Z3 configuration parameter is not a proof term")
 
@@ -926,8 +936,20 @@ local
        syntax *)
     ("_", SmtLib_Theories.zero_zero (fn token =>
       let
-        val negated = String.isPrefix "-" token
-        val fraction = String.isSubstring "/" token
+        fun digits text = String.size text > 0 andalso
+          List.all Char.isDigit (String.explode text)
+        fun signed_integer text =
+          if String.isPrefix "-" text then
+            digits (String.extract (text, 1, NONE))
+          else digits text
+        val fields = String.fields (Lib.equal #"/") token
+        val fraction =
+          case fields of
+            [numerator, denominator] =>
+              signed_integer numerator andalso digits denominator
+          | _ => false
+        val negated = String.isPrefix "-" token andalso
+          signed_integer token
       in
         if negated orelse fraction then
           let
@@ -949,11 +971,13 @@ local
                 realSyntax.term_of_int denominator)
           end
         else
-          raise ERR "<z3_builtin_dict._>" "not a negated numeral or fraction"
+          SmtLib_Theories.decline "<z3_builtin_dict._>" "not a negated numeral or fraction"
       end)),
     (* bit-vector constants: bvm[n] *)
     ("_", SmtLib_Theories.zero_zero (fn token =>
-      if String.isPrefix "bv" token then
+      if String.size token > 2 andalso String.isPrefix "bv" token andalso
+         Char.isDigit (String.sub (token, 2)) andalso
+         String.isSubstring "[" token then
         let
           val args = String.extract (token, 2, NONE)
           val (value, args) = Lib.pair_of_list (String.fields (Lib.equal #"[")
@@ -961,14 +985,14 @@ local
           val (size, args) = Lib.pair_of_list (String.fields (Lib.equal #"]")
             args)
           val _ = args = "" orelse
-            raise ERR "<z3_builtin_dict._>" "not a bit-vector constant"
+            SmtLib_Theories.decline "<z3_builtin_dict._>" "not a bit-vector constant"
           val value = Library.parse_arbnum value
           val size = Library.parse_arbnum size
         in
           wordsSyntax.mk_word (value, size)
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not a bit-vector constant")),
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not a bit-vector constant")),
     (* Z3's internal mkbv arguments run from LSB to MSB, whereas HOL's
        v2w list runs from MSB to LSB. *)
     ("mkbv", SmtLib_Theories.K_zero_list (fn l =>
@@ -982,7 +1006,7 @@ local
           val (m, args) = Lib.pair_of_list (String.fields (Lib.equal #":") args)
           val (n, args) = Lib.pair_of_list (String.fields (Lib.equal #"]") args)
           val _ = args = "" orelse
-            raise ERR "<z3_builtin_dict._>" "not extract[m:n]"
+            SmtLib_Theories.decline "<z3_builtin_dict._>" "not extract[m:n]"
           val m = Library.parse_arbnum m
           val n = Library.parse_arbnum n
           val index_type = fcpLib.index_type (Arbnum.plus1 (Arbnum.- (m, n)))
@@ -992,7 +1016,7 @@ local
           fn t => wordsSyntax.mk_word_extract (m, n, t, index_type)
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not extract[m:n]")),
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not extract[m:n]")),
     (* (_ extractm n) t *)
     ("_", SmtLib_Theories.one_one (fn token => fn n_tm =>
       if String.isPrefix "extract" token then
@@ -1006,7 +1030,7 @@ local
           fn t => wordsSyntax.mk_word_extract (m, n, t, index_type)
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not extract<m> n")),
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not extract<m> n")),
     ("bvudiv_i", SmtLib_Theories.K_zero_two wordsSyntax.mk_word_div),
     ("bvurem_i", SmtLib_Theories.K_zero_two wordsSyntax.mk_word_mod),
     ("bvsmod_i", SmtLib_Theories.K_zero_two integer_wordSyntax.mk_word_smod),
@@ -1030,16 +1054,16 @@ local
        those observed typed operators for the checked pointwise lowering. *)
     ("+", SmtLib_Theories.zero_zero (fn token =>
       if token = "+" then intSyntax.plus_tm
-      else raise ERR "<z3_builtin_dict.+>" "not an Int addition")),
+      else SmtLib_Theories.decline "<z3_builtin_dict.+>" "not an Int addition")),
     ("and", SmtLib_Theories.zero_zero (fn token =>
       if token = "and" then boolSyntax.conjunction
-      else raise ERR "<z3_builtin_dict.and>" "not a Boolean conjunction")),
+      else SmtLib_Theories.decline "<z3_builtin_dict.and>" "not a Boolean conjunction")),
     ("or", SmtLib_Theories.zero_zero (fn token =>
       if token = "or" then boolSyntax.disjunction
-      else raise ERR "<z3_builtin_dict.or>" "not a Boolean disjunction")),
+      else SmtLib_Theories.decline "<z3_builtin_dict.or>" "not a Boolean disjunction")),
     ("not", SmtLib_Theories.zero_zero (fn token =>
       if token = "not" then boolSyntax.negation
-      else raise ERR "<z3_builtin_dict.not>" "not a Boolean negation")),
+      else SmtLib_Theories.decline "<z3_builtin_dict.not>" "not a Boolean negation")),
     (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
        It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
        the Int-array representation of bags.  Reconstructing the lambda is
@@ -1049,15 +1073,15 @@ local
     ("_", fn token => fn indices => fn arrays =>
       let
         val _ = token = "map" orelse
-          raise ERR "<z3_builtin_dict._>" "not an array map"
+          SmtLib_Theories.decline "<z3_builtin_dict._>" "not an array map"
         val f =
           case indices of
             [f] => f
-          | _ => raise ERR "<z3_builtin_dict._>" "map needs one function"
+          | _ => SmtLib_Theories.decline "<z3_builtin_dict._>" "map needs one function"
         val first =
           case arrays of
             first :: _ => first
-          | [] => raise ERR "<z3_builtin_dict._>" "map needs arrays"
+          | [] => SmtLib_Theories.decline "<z3_builtin_dict._>" "map needs arrays"
         val (domain, _) = Type.dom_rng (Term.type_of first)
         val x = Term.variant
           (List.concat (List.map Term.free_vars (f :: arrays)))
@@ -1094,7 +1118,7 @@ local
            | _ => false)
           handle Feedback.HOL_ERR _ => false
         val _ = if (legacy andalso List.null indices) orelse indexed then ()
-          else raise ERR "<z3_builtin_dict._>" "not array_ext..."
+          else SmtLib_Theories.decline "<z3_builtin_dict._>" "not array_ext..."
       in
         SmtLib_Theories.two_args (fn (t1, t2) =>
           Term.mk_comb (boolSyntax.mk_icomb
@@ -1111,7 +1135,7 @@ local
           fn t => wordsSyntax.mk_word_replicate (n, t)
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not repeat<n>")),
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not repeat<n>")),
     (* zero_extendn t *)
     ("_", SmtLib_Theories.zero_one (fn token =>
       if String.isPrefix "zero_extend" token then
@@ -1122,7 +1146,7 @@ local
             (Arbnum.+ (fcpLib.index_to_num (wordsSyntax.dim_of t), n)))
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not zero_extend<n>")),
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not zero_extend<n>")),
     (* sign_extendn t *)
     ("_", SmtLib_Theories.zero_one (fn token =>
       if String.isPrefix "sign_extend" token then
@@ -1133,7 +1157,7 @@ local
             (Arbnum.+ (fcpLib.index_to_num (wordsSyntax.dim_of t), n)))
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not sign_extend<n>")),
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not sign_extend<n>")),
     (* rotate_leftn t *)
     ("_", SmtLib_Theories.zero_one (fn token =>
       if String.isPrefix "rotate_left" token then
@@ -1144,7 +1168,7 @@ local
           fn t => wordsSyntax.mk_word_rol (t, n)
         end
       else
-        raise ERR "<z3_builtin_dict._>" "not rotate_left<n>"))
+        SmtLib_Theories.decline "<z3_builtin_dict._>" "not rotate_left<n>"))
   ])
 
   (***************************************************************************)
@@ -1371,8 +1395,9 @@ local
           end
     end
 
-  fun discover_bit_decompositions proof =
+  fun discover_bit_decompositions_with_work proof =
   let
+    val work = ref 0
     val vars = proof_vars proof
     val version = proof_version proof
     fun add_decomposition decomposition decompositions =
@@ -1382,7 +1407,24 @@ local
         decompositions
       else
         decomposition :: decompositions
+    (* Count each retained source node once.  Balanced integer membership
+       makes the total bookkeeping O((nodes + edges) log nodes); [work]
+       below counts structural visits, not map comparisons. *)
+    val visited_local_nodes = ref (Redblackmap.mkDict Int.compare)
+    fun first_local id =
+      if Option.isSome (Redblackmap.peek (!visited_local_nodes, id)) then false
+      else (visited_local_nodes := Redblackmap.insert
+              (!visited_local_nodes, id, ()); true)
     fun collect (pt, decompositions) =
+      (work := !work + 1;
+      case pt of
+        PROOF_BIND (_, body) => collect (body, decompositions)
+      | LOCAL_SCOPE (nodes, body) =>
+          collect (body, List.foldl
+            (fn ((id, node), found) =>
+              if first_local id then collect (node, found) else found)
+            decompositions nodes)
+      | _ =>
       let
         val decompositions =
           case pt of
@@ -1394,12 +1436,1124 @@ local
           | _ => decompositions
       in
         List.foldl collect decompositions (proofterm_premises pt)
-      end
+      end)
     val decompositions = Redblackmap.foldl
       (fn (_, pt, found) => collect (pt, found)) [] (proof_steps proof)
   in
-    update_proof_bit_decompositions proof (List.rev decompositions)
+    (update_proof_bit_decompositions proof (List.rev decompositions), !work)
   end
+
+  fun discover_bit_decompositions proof =
+    Lib.fst (discover_bit_decompositions_with_work proof)
+
+  (***************************************************************************)
+  (* direct parser for the native compact proof dialect                      *)
+  (***************************************************************************)
+
+  datatype compact_value =
+      CompactSemantic of Term.term
+    | CompactProof of int
+    | CompactLocalProof of int
+    | CompactBoundProof of Term.term list * proofterm
+    | CompactClosure of Term.term list * proofterm
+
+  datatype compact_pending_value =
+      PendingSemantic of Term.term
+    | PendingProof of proofterm
+    | PendingClosure of Term.term list * proofterm
+
+  type compact_runtime = {
+    reserved_names : string HOLset.set ref,
+    reserved_type_names : string HOLset.set,
+    fresh_index : int ref,
+    token_count : int ref,
+    binding_count : int ref,
+    graph_edges : int ref,
+    next_id : int ref
+  }
+
+  type compact_state = {
+    tydict : Type.hol_type SmtLib_Parser.dict,
+    tmdict : Term.term SmtLib_Parser.dict,
+    env : (string, compact_value) Redblackmap.dict,
+    proof : proof,
+    runtime : compact_runtime
+  }
+
+  val compact_max_tokens = 8 * 1024 * 1024
+  val compact_max_bindings = 262144
+  val compact_max_graph_nodes = 262144
+  val compact_max_graph_edges = 8 * 1024 * 1024
+  val compact_max_pending_children = 65536
+  val compact_max_token_bytes = 1024 * 1024
+  val compact_max_literal_digits = 65536
+  val compact_max_local_tokens = 262144
+  val compact_max_local_depth = 4096
+
+  fun compact_gate limit observed =
+    SmtResource.raise_gate "compact_parser"
+      ("resource-gated: z3-compact-parser; limit=" ^ limit ^
+       "; observed=" ^ Int.toString observed)
+
+  fun compact_bare token =
+    not (Option.isSome (SmtLib_Parser.proof_string_token token)) andalso
+    not (Option.isSome (SmtLib_Parser.proof_quoted_symbol_token token))
+
+  fun compact_bare_is expected token =
+    compact_bare token andalso token = expected
+
+  fun compact_symbol where_ token =
+    if Option.isSome (SmtLib_Parser.proof_string_token token) then
+      raise ERR where_ "string literal used where a symbol was required"
+    else
+      SmtLib_Parser.proof_symbol_text token
+
+  fun compact_annotated_name where_ token =
+    let
+      val name = compact_symbol where_ token
+      val _ = compact_bare token orelse
+        raise ERR where_ "compact binding annotation must be a bare symbol"
+      val _ = String.size name > 1 orelse
+        raise ERR where_ "compact binding name has no opaque suffix"
+      val category = String.sub (name, 0)
+      val _ = List.exists (Lib.equal category) [#"@", #"&", #"$", #"?"]
+        orelse raise ERR where_ "unknown compact binding category"
+    in
+      (category, name)
+    end
+
+  fun compact_literal_digits token =
+    if not (compact_bare token) then NONE
+    else
+      let
+        val n = String.size token
+        fun all predicate start =
+          start < n andalso
+          List.all predicate
+            (List.drop (String.explode token, start))
+        fun decimal () =
+          let
+            val chars = String.explode token
+            val digits = List.filter Char.isDigit chars
+          in
+            if List.exists (Lib.equal #".") chars andalso
+               List.all (fn c => Char.isDigit c orelse c = #"." orelse
+                 c = #"-" orelse c = #"+") chars
+            then SOME (List.length digits) else NONE
+          end
+      in
+        if all Char.isDigit 0 then SOME n
+        else if n > 2 andalso String.isPrefix "#b" token andalso
+            all (fn c => c = #"0" orelse c = #"1") 2 then SOME (n - 2)
+        else if n > 2 andalso String.isPrefix "#x" token andalso
+            all Char.isHexDigit 2 then SOME (n - 2)
+        else if n > 2 andalso String.isPrefix "bv" token andalso
+            all Char.isDigit 2 then SOME (n - 2)
+        else decimal ()
+      end
+
+  fun compact_counted_token runtime get_token () =
+    let
+      val token = get_token ()
+      val count = !(#token_count runtime) + 1
+      val bytes = String.size token
+      val _ = #token_count runtime := count
+      val _ = count <= compact_max_tokens orelse
+        compact_gate "tokens" count
+      val _ = bytes <= compact_max_token_bytes orelse
+        compact_gate "token-bytes" bytes
+      val _ =
+        case compact_literal_digits token of
+          SOME digits => if digits <= compact_max_literal_digits then ()
+            else compact_gate "literal-digits" digits
+        | NONE => ()
+    in
+      token
+    end
+
+  fun compact_take_expression where_ tokens =
+    case tokens of
+      [] => raise ERR where_ "expected expression"
+    | first :: rest =>
+        if not (compact_bare_is "(" first) then ([first], rest)
+        else
+          let
+            fun take depth count acc remaining =
+              case remaining of
+                [] => raise ERR where_ "truncated expression"
+              | token :: tail =>
+                  let
+                    val depth =
+                      if compact_bare_is "(" token then depth + 1
+                      else if compact_bare_is ")" token then depth - 1
+                      else depth
+                    val count = count + 1
+                    val _ = depth <= compact_max_local_depth orelse
+                      compact_gate "local-nesting" depth
+                    val _ = count <= compact_max_local_tokens orelse
+                      compact_gate "local-tokens" count
+                    val acc = token :: acc
+                  in
+                    if depth = 0 then (List.rev acc, tail)
+                    else if depth < 0 then
+                      raise ERR where_ "unexpected close parenthesis"
+                    else take depth count acc tail
+                  end
+          in
+            take 1 1 [first] rest
+          end
+
+  fun compact_application where_ expression =
+    case expression of
+      open_token :: rest =>
+        if not (compact_bare_is "(" open_token) then
+          raise ERR where_ "application expected"
+        else
+          let
+            fun items count acc remaining =
+              case remaining of
+                [close_token] =>
+                  if compact_bare_is ")" close_token then List.rev acc
+                  else raise ERR where_ "close parenthesis expected"
+              | [] => raise ERR where_ "truncated application"
+              | _ =>
+                  let
+                    val count = count + 1
+                    val _ = count <= compact_max_pending_children orelse
+                      compact_gate "pending-children" count
+                    val (item, tail) = compact_take_expression where_ remaining
+                  in items count (item :: acc) tail end
+          in
+            items 0 [] rest
+          end
+    | [] => raise ERR where_ "empty expression"
+
+  fun compact_single_symbol where_ expression =
+    case expression of
+      [token] => compact_symbol where_ token
+    | _ => raise ERR where_ "symbol expected"
+
+  fun compact_finish_stream_expression runtime aggregate_base get_token
+      depth count acc =
+    let
+      val token = get_token ()
+      val depth =
+        if compact_bare_is "(" token then depth + 1
+        else if compact_bare_is ")" token then depth - 1
+        else depth
+      val count = count + 1
+      val _ = depth <= compact_max_local_depth orelse
+        compact_gate "local-nesting" depth
+      val _ = count <= compact_max_local_tokens orelse
+        compact_gate "local-tokens" count
+      val _ = aggregate_base + count <= compact_max_local_tokens orelse
+        compact_gate "pending-group-tokens" (aggregate_base + count)
+      val acc = token :: acc
+    in
+      if depth = 0 then List.rev acc
+      else if depth < 0 then
+        raise ERR "compact_stream_expression"
+          "unexpected close parenthesis"
+      else compact_finish_stream_expression runtime aggregate_base get_token
+        depth count acc
+    end
+
+  fun compact_stream_expression runtime aggregate_base get_token first =
+    let
+      val _ = aggregate_base + 1 <= compact_max_local_tokens orelse
+        compact_gate "pending-group-tokens" (aggregate_base + 1)
+    in
+      if not (compact_bare_is "(" first) then [first]
+      else compact_finish_stream_expression runtime aggregate_base get_token
+        1 1 [first]
+    end
+
+  fun compact_stream_expression_after_head runtime get_token first head =
+    let
+      val depth = 1 + (if compact_bare_is "(" head then 1 else 0)
+    in
+      compact_finish_stream_expression runtime 0 get_token depth 2
+        [head, first]
+    end
+
+  fun compact_parsefn value token indices args =
+    if List.null indices andalso List.null args then value
+    else raise ERR "compact_parsefn"
+      ("compact alias '" ^ SmtLib_Parser.proof_symbol_text token ^
+       "' does not take arguments")
+
+  fun compact_wrong_category category token _ _ =
+    raise ERR "compact_wrong_category"
+      ("compact " ^ category ^ " binding '" ^
+       SmtLib_Parser.proof_symbol_text token ^
+       "' used as a semantic term")
+
+  fun compact_set_parsefn name parsefn tmdict =
+    Redblackmap.insert (tmdict, name, [parsefn])
+
+  fun compact_fresh_var runtime (_, ty) =
+    let
+      fun choose () =
+        let
+          val index = !(#fresh_index runtime)
+          val _ = #fresh_index runtime := index + 1
+          val name = "holsmt_z3_bound" ^ Int.toString index
+        in
+          if HOLset.member (!(#reserved_names runtime), name) then choose ()
+          else
+            (#reserved_names runtime :=
+               HOLset.add (!(#reserved_names runtime), name);
+             Term.mk_var (name, ty))
+        end
+    in
+      choose ()
+    end
+
+  fun compact_type_key (runtime : compact_runtime) token =
+    case SmtLib_Parser.proof_quoted_symbol_token token of
+      SOME name =>
+        if HOLset.member (#reserved_type_names runtime, name) then token
+        else name
+    | NONE => token
+
+  fun compact_cfg runtime : SmtLib_Parser.parser_cfg = {
+    (* Native category prefixes belong only to the surrounding proof-let
+       grammar.  An SMT-LIB semantic let has ordinary source identifiers. *)
+    mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
+    (* The compact stream has already retained the old environment while it
+       parsed every RHS.  Substitute the fresh placeholders simultaneously;
+       this is SMT-LIB let semantics and avoids retaining administrative HOL
+       lets in proof conclusions. *)
+    mk_let = fn (bindings, body) =>
+      Term.subst (List.map (fn (_, redex, residue) =>
+        {redex = redex, residue = residue}) bindings) body,
+    mk_bound_var = compact_fresh_var runtime,
+    lookup_binder_list = fn _ => NONE,
+    record_binder_block = fn _ => (),
+    symbol_key = SmtLib_Parser.proof_symbol_text,
+    type_symbol_key = compact_type_key runtime,
+    parse_choice = false,
+    parse_lambda = true
+  }
+
+  fun compact_state_with_dicts (state : compact_state) tydict tmdict env = {
+    tydict = tydict,
+    tmdict = tmdict,
+    env = env,
+    proof = #proof state,
+    runtime = #runtime state
+  }
+
+  fun compact_state_with_proof (state : compact_state) proof env tmdict = {
+    tydict = #tydict state,
+    tmdict = tmdict,
+    env = env,
+    proof = proof,
+    runtime = #runtime state
+  }
+
+  fun compact_lookup (state : compact_state) where_ name =
+    case Redblackmap.peek (#env state, name) of
+      SOME value => value
+    | NONE => raise ERR where_
+        ("undefined or out-of-scope compact binding '" ^ name ^ "'")
+
+  fun compact_record_edge (state : compact_state) =
+    let
+      val edges = !(#graph_edges (#runtime state)) + 1
+      val _ = #graph_edges (#runtime state) := edges
+    in
+      edges <= compact_max_graph_edges orelse compact_gate "graph-edges" edges
+    end
+
+  fun compact_parse_semantic (state : compact_state) expression =
+    let
+      val tokens = ref expression
+      fun get_token () =
+        case !tokens of
+          token :: rest => (tokens := rest; token)
+        | [] => raise ERR "compact_parse_semantic" "truncated semantic term"
+      val term = SmtLib_Parser.parse_term_with_cfg
+        (compact_cfg (#runtime state)) get_token (#tydict state, #tmdict state)
+      val _ = List.null (!tokens) orelse
+        raise ERR "compact_parse_semantic"
+          "trailing material after semantic term"
+    in
+      term
+    end
+
+  fun compact_extend_local (state : compact_state) name value =
+    let
+      val env = Redblackmap.insert (#env state, name, value)
+      val parsefn =
+        case value of
+          CompactSemantic term => compact_parsefn term
+        | CompactProof _ => compact_wrong_category "proof"
+        | CompactLocalProof _ => compact_wrong_category "local proof"
+        | CompactBoundProof _ => compact_wrong_category "bound proof"
+        | CompactClosure _ => compact_wrong_category "proof-closure"
+      val tmdict = compact_set_parsefn name parsefn (#tmdict state)
+    in
+      compact_state_with_dicts state (#tydict state) tmdict env
+    end
+
+  fun compact_parse_proof (state : compact_state) expression =
+    let
+      fun checked_bind accepts pt =
+        case pt of
+          PROOF_BIND _ => if accepts then pt else
+            raise ERR "compact_parse_proof"
+              "proof-bind annotation used by an unsupported consumer"
+        | _ => pt
+
+      fun proof_argument accepts expression =
+        case expression of
+          [token] =>
+            if compact_bare token then
+              let val name = compact_symbol "compact proof argument" token in
+                case Redblackmap.peek (#env state, name) of
+                  SOME (CompactBoundProof (vars, body)) =>
+                    if accepts then PROOF_BIND (vars, body)
+                    else raise ERR "compact_parse_proof"
+                      "bound proof alias used by an unsupported consumer"
+                | _ => checked_bind accepts
+                    (compact_parse_proof state expression)
+              end
+            else checked_bind accepts (compact_parse_proof state expression)
+        | _ => checked_bind accepts (compact_parse_proof state expression)
+
+      fun semantic expression = compact_parse_semantic state expression
+
+      fun exact_args where_ expected args =
+        if List.length args = expected then args
+        else raise ERR where_
+          (Int.toString expected ^ " argument(s) expected")
+
+      fun front_last where_ args =
+        if List.null args then raise ERR where_ "non-empty argument list expected"
+        else Lib.front_last args
+
+      fun indexed_head head_expression =
+        case head_expression of
+          [token] =>
+            if compact_bare token then (token, [])
+            else raise ERR "compact_parse_proof" "bare proof rule expected"
+        | _ =>
+            (case compact_application "compact indexed proof rule"
+                head_expression of
+             marker :: name :: indices =>
+                 if case marker of [token] => compact_bare_is "_" token
+                                      | _ => false then
+                   (case name of
+                      [token] =>
+                        if compact_bare token then
+                          (compact_symbol "compact indexed proof rule" token,
+                           indices)
+                        else raise ERR "compact_parse_proof"
+                          "indexed proof rule name must be bare"
+                    | _ => raise ERR "compact_parse_proof"
+                        "indexed proof rule name expected")
+                 else raise ERR "compact_parse_proof"
+                   "indexed proof rule must start with '_'"
+             | _ => raise ERR "compact_parse_proof"
+                 "malformed indexed proof rule")
+
+      fun metadata indices =
+        th_lemma_metadata_of_index_terms (List.map semantic indices)
+
+      fun rule_and_indices head_expression =
+        let
+          val (printed_name, indices) = indexed_head head_expression
+          val lookup_name =
+            if printed_name = "th-lemma" then
+              "th-lemma-" ^ #theory (metadata indices)
+            else printed_name
+          val rule =
+            case lookup_rule (proof_version (#proof state)) lookup_name of
+              SOME rule => rule
+            | NONE => raise ERR "compact_parse_proof"
+                (registry_lookup_failure (proof_version (#proof state))
+                  lookup_name)
+        in
+          (rule, indices)
+        end
+
+      fun make_rule (rule : proof_rule) indices args =
+        let
+          val handler = #replay_handler rule
+          val child_count = List.length args
+          val _ = child_count <= compact_max_pending_children orelse
+            compact_gate "pending-children" child_count
+          val _ =
+            case #compact_index_layout rule of
+              CompactNoIndices =>
+                if List.null indices then ()
+                else raise ERR "compact_parse_proof"
+                  ("proof rule '" ^ #name rule ^ "' does not take indices")
+            | CompactRewriteIndices =>
+                if List.null indices then ()
+                else raise ERR "compact_parse_proof"
+                  ("proof rule '" ^ #name rule ^
+                   "' does not take indices in Z3 4.11.2")
+            | CompactQuantifierIndices => ()
+            | CompactTheoryLemmaIndices =>
+                if List.null indices then
+                  raise ERR "compact_parse_proof"
+                    "theory lemma requires a theory index"
+                else ()
+          val accepts_bind =
+            case #compact_premise_layout rule of
+              CompactOnePremise {accepts_bound_proof} => accepts_bound_proof
+            | CompactListPremises {accepts_bound_proof} =>
+                accepts_bound_proof
+            | _ => false
+          val expected_arity =
+            case #compact_premise_layout rule of
+              CompactZeroPremises => SOME 1
+            | CompactOnePremise _ => SOME 2
+            | CompactTwoPremises => SOME 3
+            | CompactListPremises _ => NONE
+            | CompactProofClosure => SOME 1
+            | CompactTermArguments => SOME 1
+          val _ =
+            case expected_arity of
+              SOME expected => ignore (exact_args handler expected args)
+            | NONE => if List.null args then
+                raise ERR "compact_parse_proof"
+                  ("proof rule '" ^ #name rule ^
+                   "' requires a conclusion")
+              else ()
+          fun one constructor =
+            case exact_args handler 2 args of
+              [premise, conclusion] =>
+                constructor (proof_argument accepts_bind premise,
+                  semantic conclusion)
+            | _ => raise ERR "compact_parse_proof" "impossible one-premise"
+          fun two constructor =
+            case exact_args handler 3 args of
+              [left, right, conclusion] =>
+                constructor (proof_argument accepts_bind left,
+                  proof_argument accepts_bind right, semantic conclusion)
+            | _ => raise ERR "compact_parse_proof" "impossible two-premise"
+          fun many constructor =
+            let val (premises, conclusion) = front_last handler args in
+              constructor (List.map (proof_argument accepts_bind) premises,
+                semantic conclusion)
+            end
+          fun zero constructor =
+            case exact_args handler 1 args of
+              [conclusion] => constructor (semantic conclusion)
+            | _ => raise ERR "compact_parse_proof" "impossible zero-premise"
+          fun thlemma constructor =
+            let val (premises, conclusion) = front_last handler args in
+              constructor (metadata indices,
+                List.map (proof_argument false) premises,
+                semantic conclusion)
+            end
+        in
+          case handler of
+            "and_elim" => one AND_ELIM
+          | "apply_def" => one APPLY_DEF
+          | "asserted" => zero ASSERTED
+          | "commutativity" => zero COMMUTATIVITY
+          | "def_axiom" => zero DEF_AXIOM
+          | "elim_unused" => zero ELIM_UNUSED
+          | "hypothesis" => zero HYPOTHESIS
+          | "iff_false" => one IFF_FALSE
+          | "iff_true" => one IFF_TRUE
+          | "intro_def" => zero INTRO_DEF
+          | "lemma" => one LEMMA
+          | "monotonicity" => many MONOTONICITY
+          | "mp" => two MP
+          | "mp_eq" => two MP_EQ
+          | "nnf_neg" => many NNF_NEG
+          | "nnf_pos" => many NNF_POS
+          | "not_or_elim" => one NOT_OR_ELIM
+          | "quant_inst" =>
+              (case exact_args handler 1 args of
+                 [conclusion] =>
+                   QUANT_INST (List.map semantic indices, semantic conclusion)
+               | _ => raise ERR "compact_parse_proof"
+                   "impossible quant-inst")
+          | "quant_intro" => one QUANT_INTRO
+          | "refl" => zero REFL
+          | "rewrite" => zero REWRITE
+          | "skolem" => zero SKOLEM
+          | "symm" => one SYMM
+          | "th_lemma[arith]" => thlemma TH_LEMMA_ARITH
+          | "th_lemma[array]" => thlemma TH_LEMMA_ARRAY
+          | "th_lemma[basic]" => thlemma TH_LEMMA_BASIC
+          | "th_lemma[bv]" => thlemma TH_LEMMA_BV
+          | "th_lemma[datatype]" => thlemma TH_LEMMA_DATATYPE
+          | "th_lemma[seq]" => thlemma TH_LEMMA_SEQ
+          | "th_lemma[char]" => thlemma TH_LEMMA_CHAR
+          | "th_lemma[advanced]" => thlemma TH_LEMMA_ADVANCED
+          | "trans" => two TRANS
+          | "trans_star" => many TRANS_STAR
+          | "true_axiom" => zero TRUE_AXIOM
+          | "unit_resolution" => many UNIT_RESOLUTION
+          | "proof_bind" => raise ERR "compact_parse_proof"
+              "proof-bind requires a proof-closure operand"
+          | _ => raise ERR "compact_parse_proof"
+              ("no direct parser for replay handler '" ^ handler ^ "'")
+        end
+
+      fun proof_application expression =
+        case compact_application "compact proof application" expression of
+          [] => raise ERR "compact_parse_proof" "empty proof application"
+        | head :: args =>
+            let
+              val (printed_name, _) = indexed_head head
+            in
+              if (case head of [token] => compact_bare_is "let" token
+                             | _ => false) then
+                compact_parse_local_let state args
+              else if (case head of
+                         [token] => compact_bare_is "proof-bind" token
+                       | _ => false) then
+                let
+                  val (rule, indices) = rule_and_indices head
+                  val _ = #compact_premise_layout rule = CompactProofClosure
+                    orelse raise ERR "compact_parse_proof"
+                      "proof-bind registry layout is not a proof closure"
+                  val _ = List.null indices orelse
+                    raise ERR "compact_parse_proof"
+                      "proof-bind does not take indices"
+                in
+                  case exact_args "proof-bind" 1 args of
+                    [operand] =>
+                      let
+                        val (vars, body) =
+                          compact_parse_closure state operand
+                      in
+                        if List.null vars then body
+                        else PROOF_BIND (vars, body)
+                      end
+                  | _ => raise ERR "compact_parse_proof"
+                      "impossible proof-bind"
+                end
+              else
+                let val (rule, indices) = rule_and_indices head
+                in make_rule rule indices args end
+            end
+    in
+      case expression of
+        [token] =>
+          let val name = compact_symbol "compact_parse_proof" token in
+            if not (compact_bare token) then
+              raise ERR "compact_parse_proof" "quoted proof reference"
+            else
+              case compact_lookup state "compact_parse_proof" name of
+                CompactProof id => (compact_record_edge state; ID id)
+              | CompactLocalProof id =>
+                  (compact_record_edge state; LOCAL_REF id)
+              | CompactBoundProof (vars, body) => PROOF_BIND (vars, body)
+              | CompactSemantic _ => raise ERR "compact_parse_proof"
+                  ("semantic binding '" ^ name ^ "' used as a proof")
+              | CompactClosure _ => raise ERR "compact_parse_proof"
+                  ("proof closure '" ^ name ^ "' used as a proof")
+          end
+      | _ => proof_application expression
+    end
+
+  and compact_parse_closure (state : compact_state) expression =
+    case expression of
+      [token] =>
+        let val name = compact_symbol "compact_parse_closure" token in
+          if not (compact_bare token) then
+            raise ERR "compact_parse_closure" "quoted closure reference"
+          else
+            case compact_lookup state "compact_parse_closure" name of
+              CompactClosure closure => closure
+            | CompactProof _ => raise ERR "compact_parse_closure"
+                ("proof binding '" ^ name ^ "' used as a closure")
+            | CompactLocalProof _ => raise ERR "compact_parse_closure"
+                ("local proof binding '" ^ name ^ "' used as a closure")
+            | CompactBoundProof _ => raise ERR "compact_parse_closure"
+                ("bound proof binding '" ^ name ^ "' used as a closure")
+            | CompactSemantic _ => raise ERR "compact_parse_closure"
+                ("semantic binding '" ^ name ^ "' used as a closure")
+        end
+    | _ =>
+        (case compact_application "compact proof closure" expression of
+           [head, binders_expression, body_expression] =>
+             if not (case head of
+                       [token] => compact_bare_is "lambda" token
+                     | _ => false) then
+               raise ERR "compact_parse_closure" "lambda expected"
+             else
+               let
+                 val binder_expressions =
+                   compact_application "compact closure binders"
+                     binders_expression
+                 fun parse_binder (binder_expression, (vars, body_state)) =
+                   case compact_application "compact closure binder"
+                       binder_expression of
+                     [name_expression, type_expression] =>
+                       let
+                         val name = compact_single_symbol
+                           "compact closure binder" name_expression
+                         val type_tokens = ref type_expression
+                         fun get_type_token () =
+                           case !type_tokens of
+                             token :: rest => (type_tokens := rest; token)
+                           | [] => raise ERR "compact_parse_closure"
+                               "truncated closure binder type"
+                        val ty = SmtLib_Parser.parse_type_with_key
+                          (compact_type_key (#runtime body_state))
+                          get_type_token (#tydict body_state)
+                         val _ = List.null (!type_tokens) orelse
+                           raise ERR "compact_parse_closure"
+                             "trailing closure binder type material"
+                         val var = compact_fresh_var (#runtime state) (name, ty)
+                         val next_state = compact_extend_local body_state name
+                           (CompactSemantic var)
+                       in
+                         (var :: vars, next_state)
+                       end
+                   | _ => raise ERR "compact_parse_closure"
+                       "malformed closure binder"
+                 val (rev_vars, body_state) =
+                   List.foldl parse_binder ([], state) binder_expressions
+                 val nested_lambda =
+                   case body_expression of
+                     open_token :: _ =>
+                       compact_bare_is "(" open_token andalso
+                       (case compact_application "compact closure body"
+                           body_expression of
+                          [head, _, _] =>
+                            (case head of
+                               [token] => compact_bare_is "lambda" token
+                             | _ => false)
+                        | _ => false)
+                   | [] => false
+                 val (more_vars, body) =
+                   if nested_lambda then
+                     compact_parse_closure body_state body_expression
+                   else ([], compact_parse_proof body_state body_expression)
+                 val runtime = #runtime state
+                 val id = !(#next_id runtime)
+                 val _ = #next_id runtime := id + 1
+                 val _ = id <= compact_max_graph_nodes orelse
+                   compact_gate "graph-nodes" id
+               in
+                 (List.rev rev_vars @ more_vars,
+                  LOCAL_SCOPE ([(id, body)], LOCAL_REF id))
+               end
+         | _ => raise ERR "compact_parse_closure"
+             "proof closure expects binders and a body")
+
+  and compact_parse_local_pending state (category, _, expression) =
+    case category of
+      #"@" => PendingProof (compact_parse_proof state expression)
+    | #"&" => PendingClosure (compact_parse_closure state expression)
+    | #"$" =>
+        let val term = compact_parse_semantic state expression in
+          if Type.compare (Term.type_of term, Type.bool) = EQUAL then
+            PendingSemantic term
+          else raise ERR "compact_parse_local_pending"
+            "Boolean compact binding has a non-Boolean term"
+        end
+    | #"?" =>
+        let val term = compact_parse_semantic state expression in
+          if Type.compare (Term.type_of term, Type.bool) <> EQUAL then
+            PendingSemantic term
+          else raise ERR "compact_parse_local_pending"
+            "other-term compact binding has a Boolean term"
+        end
+    | _ => raise ERR "compact_parse_local_pending"
+        "unknown compact category"
+
+  and compact_parse_local_let state args =
+    case args of
+      [bindings_expression, body_expression] =>
+        let
+          val binding_expressions =
+            compact_application "compact local let bindings"
+              bindings_expression
+          fun raw_binding expression =
+            case compact_application "compact local let binding" expression of
+              [name_expression, value_expression] =>
+                let
+                  val token =
+                    case name_expression of
+                      [token] => token
+                    | _ => raise ERR "compact_parse_local_let"
+                        "binding name expected"
+                  val (category, name) = compact_annotated_name
+                    "compact_parse_local_let" token
+                in
+                  (category, name, value_expression)
+                end
+            | _ => raise ERR "compact_parse_local_let"
+                "malformed compact local binding"
+          val raw = List.map raw_binding binding_expressions
+          fun add_name ((_, name, _), names) =
+            if HOLset.member (names, name) then
+              raise ERR "compact_parse_local_let"
+                ("duplicate simultaneous compact binding '" ^ name ^ "'")
+            else HOLset.add (names, name)
+          val _ = List.foldl add_name (HOLset.empty String.compare) raw
+          val runtime = #runtime (state : compact_state)
+          val count = !(#binding_count runtime) + List.length raw
+          val _ = #binding_count runtime := count
+          val _ = count <= compact_max_bindings orelse
+            compact_gate "bindings" count
+          val parsed = List.map
+            (fn raw_binding as (_, name, _) =>
+              (name, compact_parse_local_pending state raw_binding)) raw
+          fun commit ((name, pending), (body_state, nodes)) =
+            case pending of
+              PendingSemantic term =>
+                (compact_extend_local body_state name (CompactSemantic term),
+                 nodes)
+            | PendingClosure closure =>
+                (compact_extend_local body_state name
+                   (CompactClosure closure), nodes)
+            | PendingProof proofterm =>
+                (case proofterm of
+                   PROOF_BIND (vars, body) =>
+                     (* An open annotation owns its embedded graph and gets a
+                        fresh replay activation at each binder-aware use. *)
+                     (compact_extend_local body_state name
+                        (CompactBoundProof (vars, body)), nodes)
+                 | _ =>
+                     let
+                       val id = !(#next_id runtime)
+                       val _ = #next_id runtime := id + 1
+                       val _ = id <= compact_max_graph_nodes orelse
+                         compact_gate "graph-nodes" id
+                     in
+                       (compact_extend_local body_state name
+                          (CompactLocalProof id), (id, proofterm) :: nodes)
+                     end)
+          val (body_state, rev_nodes) = List.foldl commit (state, []) parsed
+          val body = compact_parse_proof body_state body_expression
+        in
+          if List.null rev_nodes then body
+          else
+            (case body of
+               PROOF_BIND (vars, bound_body) =>
+                 PROOF_BIND
+                   (vars, LOCAL_SCOPE (List.rev rev_nodes, bound_body))
+             | _ => LOCAL_SCOPE (List.rev rev_nodes, body))
+        end
+    | _ => raise ERR "compact_parse_local_let"
+        "compact proof let expects bindings and a body"
+
+  fun compact_extend_proofterm proof (id, proofterm) =
+    let val steps = proof_steps proof in
+      if Option.isSome (Redblackmap.peek (steps, id)) then
+        raise ERR "compact_extend_proofterm" "duplicate internal proof ID"
+      else update_proof_steps proof (Redblackmap.insert (steps, id, proofterm))
+    end
+
+  fun compact_parse_pending (state : compact_state) (category, _, expression) =
+    case category of
+      #"@" => PendingProof (compact_parse_proof state expression)
+    | #"&" => PendingClosure (compact_parse_closure state expression)
+    | #"$" =>
+        let val term = compact_parse_semantic state expression in
+          if Type.compare (Term.type_of term, Type.bool) = EQUAL then
+            PendingSemantic term
+          else raise ERR "compact_parse_pending"
+            "Boolean compact binding has a non-Boolean term"
+        end
+    | #"?" =>
+        let val term = compact_parse_semantic state expression in
+          if Type.compare (Term.type_of term, Type.bool) <> EQUAL then
+            PendingSemantic term
+          else raise ERR "compact_parse_pending"
+            "other-term compact binding has a Boolean term"
+        end
+    | _ => raise ERR "compact_parse_pending" "unknown compact category"
+
+  fun compact_commit_pending ((name, pending), state : compact_state) =
+    case pending of
+      PendingSemantic term =>
+        compact_extend_local state name (CompactSemantic term)
+    | PendingClosure closure =>
+        compact_extend_local state name (CompactClosure closure)
+    | PendingProof proofterm =>
+        (case proofterm of
+           PROOF_BIND (vars, body) =>
+             compact_extend_local state name (CompactBoundProof (vars, body))
+         | _ =>
+            let
+              val runtime = #runtime state
+              val id = !(#next_id runtime)
+              val _ = #next_id runtime := id + 1
+              val _ = id <= compact_max_graph_nodes orelse
+                compact_gate "graph-nodes" id
+              val proof =
+                (compact_extend_proofterm (#proof state) (id, proofterm),
+                 CompactProof id)
+              val state = compact_state_with_proof state (Lib.fst proof)
+                (#env state) (#tmdict state)
+            in
+              compact_extend_local state name (Lib.snd proof)
+            end)
+
+  fun compact_parse_binding_group state get_token =
+    let
+      val _ = Library.expect_token "(" (get_token ())
+      val runtime = #runtime (state : compact_state)
+      fun bindings seen pending_tokens acc =
+        let val token = get_token () in
+          if compact_bare_is ")" token then List.rev acc
+          else
+            let
+              val _ = Library.expect_token "(" token
+              val count = !(#binding_count runtime) + 1
+              val _ = #binding_count runtime := count
+              val _ = count <= compact_max_bindings orelse
+                compact_gate "bindings" count
+              val name_token = get_token ()
+              val (category, name) = compact_annotated_name
+                "compact_parse_binding_group" name_token
+              val _ = not (HOLset.member (seen, name)) orelse
+                raise ERR "compact_parse_binding_group"
+                  ("duplicate simultaneous compact binding '" ^ name ^ "'")
+              val first = get_token ()
+              val expression = compact_stream_expression
+                (#runtime state) pending_tokens get_token first
+              val pending_tokens = pending_tokens + List.length expression
+              val _ = pending_tokens <= compact_max_local_tokens orelse
+                compact_gate "pending-group-tokens" pending_tokens
+              val _ = Library.expect_token ")" (get_token ())
+            in
+              bindings (HOLset.add (seen, name)) pending_tokens
+                ((category, name, expression) :: acc)
+            end
+        end
+      val raw = bindings (HOLset.empty String.compare) 0 []
+      val parsed = List.map (fn raw_binding as (_, name, _) =>
+        (name, compact_parse_pending state raw_binding)) raw
+    in
+      List.foldl compact_commit_pending state parsed
+    end
+
+  fun compact_parse_outer_proof state get_token first =
+    let
+      fun close_lets 0 = ()
+        | close_lets count =
+            (Library.expect_token ")" (get_token ()); close_lets (count - 1))
+      fun loop state open_lets first =
+        if compact_bare_is "(" first then
+          let val head = get_token () in
+            if compact_bare_is "let" head then
+              let
+                val state = compact_parse_binding_group state get_token
+                val body = get_token ()
+              in
+                loop state (open_lets + 1) body
+              end
+            else
+              let
+                (* Account for a parenthesized indexed rule head while reading
+                   the enclosing application.  Treating the consumed head as
+                   depth-neutral truncates the expression at the index close. *)
+                val expression = compact_stream_expression_after_head
+                  (#runtime state) get_token first head
+                val root = compact_parse_proof state expression
+                val _ = case root of PROOF_BIND _ =>
+                    raise ERR "compact_parse_outer_proof"
+                      "proof-bind annotation used as a proof root"
+                  | _ => ()
+                val proof = compact_extend_proofterm (#proof state) (0, root)
+                val _ = close_lets open_lets
+              in
+                compact_state_with_proof state proof (#env state)
+                  (#tmdict state)
+              end
+          end
+        else
+          let
+            val root = compact_parse_proof state [first]
+            val _ = case root of PROOF_BIND _ =>
+                raise ERR "compact_parse_outer_proof"
+                  "proof-bind annotation used as a proof root"
+              | _ => ()
+            val proof = compact_extend_proofterm (#proof state) (0, root)
+            val _ = close_lets open_lets
+          in
+            compact_state_with_proof state proof (#env state) (#tmdict state)
+          end
+    in
+      loop state 0 first
+    end
+
+  fun compact_expect_eof get_token =
+    case Exn.capture get_token () of
+      Exn.Res token => raise ERR "compact_expect_eof"
+        ("trailing proof material beginning with '" ^
+         SmtResource.bounded_text 80 token ^ "'")
+    | Exn.Exn (Feedback.HOL_ERR holerr) =>
+        if Feedback.top_structure_of holerr = "SmtLib_Parser" andalso
+           Feedback.top_function_of holerr =
+             "make_proof_tokenizer_from_input" andalso
+           Feedback.message_of holerr = "end of stream" then ()
+        else raise Feedback.HOL_ERR holerr
+    | Exn.Exn exn => raise exn
+
+  fun compact_parse_proof_stream context z3_version instream =
+    let
+      val z3_version = resolve_version z3_version
+      val _ = z3_char_terms := []
+      val _ = z3_char_result_terms := []
+      val string_witnesses = z3_string_witness_specs z3_version
+      val _ = z3_char_result_terms :=
+        List.mapPartial (fn (_, witness) =>
+          if Type.compare
+              (z3_result_type (Term.type_of witness), z3_char_ty) = EQUAL
+          then SOME witness
+          else NONE) string_witnesses
+      val (base_tydict, base_tmdict) = #dicts context
+      val tydict = Library.union_dict base_tydict z3_string_tydict
+      val (builtin_tydict, _) = SmtLib_Logics.parsedicts_of_logic "ALL"
+      val reserved_tydict = Library.union_dict builtin_tydict z3_string_tydict
+      fun type_keys dict = Redblackmap.foldl
+        (fn (name, _, names) => HOLset.add (names, name))
+        (HOLset.empty String.compare) dict
+      val runtime : compact_runtime = {
+        reserved_names = ref (HOLset.fromList String.compare
+          (#introduced_free_variable_names context @
+           ["z3_seq_type_marker", "bits2char", "char.bit", "aut.accept",
+            "z3_real_pow", "array_map_x"])),
+        reserved_type_names = type_keys reserved_tydict,
+        fresh_index = ref 0,
+        token_count = ref 0,
+        binding_count = ref 0,
+        graph_edges = ref 0,
+        next_id = ref 1
+      }
+      val raw_get_token =
+        SmtLib_Parser.make_bounded_z3_proof_stream_tokenizer
+          (fn bytes => if bytes <= compact_max_token_bytes then ()
+            else compact_gate "token-bytes" bytes) instream
+      val get_token = compact_counted_token runtime raw_get_token
+      (* Type dictionary entries are arbitrary arity-aware closures.  Never
+         probe them with zero arguments to manufacture term-level markers. *)
+      val tmdict = base_tmdict
+      val tmdict = Library.union_dict tmdict
+        (z3_string_tmdict z3_version)
+      val tmdict = Library.union_dict tmdict z3_builtin_dict
+      val initial_proof = update_proof_vars (empty_proof z3_version)
+        (List.foldl (fn ((_, witness), vars) => HOLset.add (vars, witness))
+          Term.empty_tmset string_witnesses)
+      val initial : compact_state = {
+        tydict = tydict,
+        tmdict = tmdict,
+        env = Redblackmap.mkDict String.compare,
+        proof = initial_proof,
+        runtime = runtime
+      }
+      val _ = Library.expect_token "(" (get_token ())
+      fun declarations state =
+        let
+          val _ = Library.expect_token "(" (get_token ())
+          val head = get_token ()
+        in
+          if compact_bare_is "set-logic" head then
+            (ignore (get_token ());
+             Library.expect_token ")" (get_token ());
+             declarations state)
+          else if compact_bare_is "declare-fun" head then
+            let
+              val declaration_tokens = ref ([] : string list)
+              val first_token = ref true
+              val declaration_depth = ref 0
+              fun tracked_token () =
+                let
+                  val token = get_token ()
+                  val depth =
+                    if compact_bare_is "(" token then !declaration_depth + 1
+                    else if compact_bare_is ")" token then
+                      !declaration_depth - 1
+                    else !declaration_depth
+                  val _ = declaration_depth := depth
+                  val _ = depth <= compact_max_local_depth orelse
+                    compact_gate "declaration-nesting" depth
+                in
+                  declaration_tokens := token :: !declaration_tokens;
+                  if !first_token then
+                    (first_token := false;
+                     compact_symbol "compact declare-fun name" token)
+                  else token
+                end
+              fun char_range (name :: open_token :: rest) =
+                    if not (compact_bare_is "(" open_token) then false
+                    else
+                      let
+                        fun after_domain 0 tokens = tokens
+                          | after_domain depth (token :: tokens) =
+                              if compact_bare_is "(" token then
+                                after_domain (depth + 1) tokens
+                              else if compact_bare_is ")" token then
+                                after_domain (depth - 1) tokens
+                              else after_domain depth tokens
+                          | after_domain _ [] = []
+                      in
+                        case after_domain 1 rest of
+                          token :: _ => compact_bare_is "Char" token
+                        | [] => false
+                      end
+                | char_range _ = false
+              val _ = z3_seen_char_sort := false
+              val (term, tmdict) =
+                SmtLib_Parser.parse_declare_const_fun_with_type_key
+                  (compact_type_key runtime) true tracked_token
+                (#tydict state, #tmdict state)
+              val _ =
+                if char_range (List.rev (!declaration_tokens)) andalso
+                   Type.compare
+                     (z3_result_type (Term.type_of term), z3_char_ty) = EQUAL
+                then
+                  if Lib.can Type.dom_rng (Term.type_of term) then
+                    z3_char_result_terms := term :: !z3_char_result_terms
+                  else z3_char_terms := term :: !z3_char_terms
+                else ()
+              val proof = update_proof_vars (#proof state)
+                (HOLset.add (proof_vars (#proof state), term))
+              val _ =
+                if Term.is_var term then
+                  #reserved_names runtime := HOLset.add
+                    (!(#reserved_names runtime), Lib.fst (Term.dest_var term))
+                else ()
+              val state = compact_state_with_proof state proof (#env state)
+                tmdict
+            in
+              declarations state
+            end
+          else if compact_bare_is "declare-sort" head then
+            let
+              val tydict = SmtLib_Parser.parse_declare_sort_with_names
+                (compact_type_key runtime)
+                (compact_symbol "compact declare-sort name") get_token
+                (#tydict state)
+              val state = compact_state_with_dicts state tydict
+                (#tmdict state) (#env state)
+            in
+              declarations state
+            end
+          else if compact_bare_is "proof" head then
+            let
+              val first = get_token ()
+              val state = compact_parse_outer_proof state get_token first
+              val _ = Library.expect_token ")" (get_token ())
+            in
+              state
+            end
+          else raise ERR "compact_parse_proof_stream"
+            ("unsupported compact proof declaration '" ^
+             SmtLib_Parser.proof_symbol_text head ^ "'")
+        end
+      val final_state = declarations initial
+      val _ = Library.expect_token ")" (get_token ())
+      val _ = compact_expect_eof get_token
+    in
+      discover_bit_decompositions (#proof final_state)
+    end
 
   (***************************************************************************)
   (* parsing of let definitions                                              *)
@@ -1463,9 +2617,11 @@ local
   val z3_proof_cfg = {
     mk_let_bindings = z3_mk_let_bindings,
     mk_let = z3_mk_let,
+    mk_bound_var = Term.mk_var,
     lookup_binder_list = fn _ => NONE,
     record_binder_block = fn _ => (),
     symbol_key = SmtLib_Parser.proof_symbol_text,
+    type_symbol_key = Lib.I,
     parse_choice = false,
     parse_lambda = true
   }
@@ -1539,7 +2695,14 @@ local
           handle Feedback.HOL_ERR holerr =>
             if String.isPrefix "@x" head orelse
                Option.isSome (lookup_rule version head) then
-              raise Feedback.HOL_ERR holerr
+              if SmtResource.is_resource_gate holerr orelse
+                 Feedback.top_function_of holerr =
+                   SmtLib_Parser.unknown_symbol_origin then
+                raise Feedback.HOL_ERR holerr
+              else
+                raise ERR "parse_proof_expression"
+                  ("proof rule '" ^ head ^ "' term parse failed: " ^
+                   Feedback.message_of holerr)
             else
               raise ERR "parse_proof_expression"
                 (registry_lookup_failure version head ^
@@ -1644,13 +2807,17 @@ local
 
 in
 
+  val discover_bit_decompositions_with_work_for_test =
+    discover_bit_decompositions_with_work
+
   val z3_hi_fp_unspecified_diagnostic =
     z3_hi_fp_unspecified_diagnostic
 
   (* Similar to 'parse_file' below, but for instreams.  Does not close
      the instream. *)
 
-  fun parse_stream_with_version ((tydict, tmdict): SmtLib_Parser.dicts)
+  fun parse_legacy_stream_with_version
+    ((tydict, tmdict): SmtLib_Parser.dicts)
     (z3_version : string) (instream : TextIO.instream) : proof =
   let
     (* Resolve once, here: everything downstream -- rule lookup, gating and
@@ -1706,8 +2873,34 @@ in
     proof
   end
 
-  fun parse_stream dicts instream =
-    parse_stream_with_version dicts unknown_z3_version instream
+  fun semantic_context_from_dicts dicts introduced_free_variable_names =
+    {dicts = dicts,
+     introduced_free_variable_names = introduced_free_variable_names}
+
+  fun semantic_context_from_translation translation =
+    let
+      val {tmdict, ...} : SmtLib.translation = translation
+      val source_terms = Redblackmap.foldl
+        (fn ((term, _), _, terms) => term :: terms) [] tmdict
+      val variables = Term.FVL_dag source_terms Term.empty_tmset
+      val names = List.map (Lib.fst o Term.dest_var)
+        (HOLset.listItems variables)
+    in
+      semantic_context_from_dicts
+        (SmtLib.parser_dicts_for_solver_translation "Z3" translation) names
+    end
+
+  fun parse_stream_with_context (context : semantic_context)
+      dialect z3_version instream =
+    case dialect of
+      LegacyDecimal =>
+        parse_legacy_stream_with_version (#dicts context) z3_version instream
+    | CompactTyped =>
+        SmtResource.profile_phase "z3/parser-core+graph"
+          (compact_parse_proof_stream context z3_version) instream
+
+  fun parse_stream context dialect instream =
+    parse_stream_with_context context dialect unknown_z3_version instream
 
   (* Function 'parse_file' parses Z3's response to the SMT2
      (get-proof) command (for an unsatisfiable problem, with proofs
@@ -1718,17 +2911,17 @@ in
      (cf. 'SmtLib_Parser.parse_file'); and the name of the proof
      file. *)
 
-  fun parse_file_with_version (tydict, tmdict) (z3_version : string)
+  fun parse_file_with_context context dialect (z3_version : string)
     (path : string) : proof =
   let
     val instream = TextIO.openIn path
   in
-    parse_stream_with_version (tydict, tmdict) z3_version instream
+    parse_stream_with_context context dialect z3_version instream
       before TextIO.closeIn instream
   end
 
-  fun parse_file dicts path =
-    parse_file_with_version dicts unknown_z3_version path
+  fun parse_file context dialect path =
+    parse_file_with_context context dialect unknown_z3_version path
 
 end  (* local *)
 

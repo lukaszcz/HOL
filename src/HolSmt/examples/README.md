@@ -7,7 +7,12 @@ built independently.
 ## Prerequisites
 
 Install a supported Z3 4.x release and set `$HOL4_Z3_EXECUTABLE` to its
-path.  Install cvc5 1.3.4 as well to build the cvc5 example.  HolSmt checks
+path. Building every example, including the complete word32 midpoint family,
+requires the native compact Z3 replacement version
+`4.11.2.0-holsmt-compact-prototype2`. Its pinned source, patch, build command,
+and conformance tests are in the
+[`native-compact` recipe](../../../developers/holsmt/solvers/native-compact/README.md).
+Install cvc5 1.3.4 as well to build the cvc5 example. HolSmt checks
 `$HOL4_CVC_EXECUTABLE`, then `$CVC5`, then looks for `cvc5` on `$PATH`.
 The exact tested solver versions and feature coverage are documented in the
 parent [`README`](../README).
@@ -57,6 +62,7 @@ discharge them with the checked tactics:
 | `HolSmtJobShopScript.sml` | Job-shop scheduling: checking a concrete schedule and proving the optimal makespan's lower bound |
 | `HolSmtArraySwapScript.sml` | Array reasoning: swapping the same two entries twice restores the original array |
 | `HolSmtBitTricksScript.sml` | Bit-level programming tricks over `word32`: the XOR swap and an alignment round trip |
+| `HolSmtWordMidpointScript.sml` | Hacker's Delight midpoint and average identities over `word32`, plus the carry decomposition of `word8` addition |
 | `HolSmtVerificationScript.sml` | Verifier-style proof obligations: binary-search midpoint bounds, a clamp routine, and array swap via the theory of arrays |
 | `HolSmtStringSanitizerScript.sml` | Quote-free string sanitization and concatenation, checked with Z3 and cvc5 |
 | `HolSmtRegexValidationScript.sml` | Natural `[0-9]{2}` validation, with checked Z3/cvc5 arithmetic rows and a reusable HOL regex reduction |

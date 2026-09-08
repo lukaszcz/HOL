@@ -324,17 +324,22 @@ fun FVL [] A = A
   | FVL ((t as Clos _)::rst) A    = FVL (push_clos t::rst) A
   | FVL (_::rst) A                = FVL rst A
 
-(* [FVL_dag] has the same result as [FVL], but computes an intrinsic summary
-   for each physically shared node once per operation.  A summary contains
+local
+exception TreeComplete of term HOLset.set
+in
+(* [FVL_dag] has the same result as [FVL].  It cooperatively advances the
+   ordinary tree visitor while computing an intrinsic summary for each
+   physically shared node once per operation.  A summary contains
    both free variables and the de Bruijn indices that remain free at that
    node.  This lets [Clos] inspect only indices actually referenced by its
    body, through [Subst.exp_rel], without expanding an explicit substitution.
 
    Portable ML exposes pointer equality but no identity hash, so lookup is
-   linear in the number of distinct nodes already seen: the worst-case bound
-   is quadratic in distinct nodes, not linear.  Retained variable/index
-   summaries may also be larger than the node count.  This separate API
-   preserves [FVL]'s linear behavior on ordinary trees. *)
+   linear in the number of distinct nodes already seen.  One resumable tree
+   step runs at lookup start and before every pointer comparison, preventing
+   that quadratic lookup from starving an ordinary tree traversal.  The first
+   visitor to finish supplies the exact result.  Set operations, closure work,
+   and pointer steps do not have a claimed constant-time bound. *)
 fun FVL_dag roots initial =
   let
     type summary = {fvs : term HOLset.set, bvs : int HOLset.set}
@@ -345,12 +350,32 @@ fun FVL_dag roots initial =
       | FinishClos of term * term * int list * (int * term) list
     val empty_indices = HOLset.empty Int.compare
     val summaries = ref ([] : (term * summary) list)
+    val tree_pending = ref roots
+    val tree_free = ref initial
+    fun tree_step () =
+      case !tree_pending of
+        [] => raise TreeComplete (!tree_free)
+      | term :: pending =>
+          (case term of
+             Fv _ =>
+               (tree_pending := pending;
+                tree_free := HOLset.add (!tree_free, term))
+           | Comb (operator, operand) =>
+               tree_pending := operator :: operand :: pending
+           | Abs (_, body) => tree_pending := body :: pending
+           | Clos _ => tree_pending := push_clos term :: pending
+           | _ => tree_pending := pending)
     fun lookup term =
-      case List.find
-          (fn (prior, _) => Portable.pointer_eq (term, prior))
-          (!summaries) of
-        SOME (_, summary) => SOME summary
-      | NONE => NONE
+      let
+        fun seek [] = NONE
+          | seek ((prior, summary) :: rest) =
+              (tree_step ();
+               if Portable.pointer_eq (term, prior) then SOME summary
+               else seek rest)
+      in
+        tree_step ();
+        seek (!summaries)
+      end
     fun completed term =
       case lookup term of
         SOME summary => summary
@@ -440,7 +465,8 @@ fun FVL_dag roots initial =
       HOLset.foldl add_variable free (#fvs (completed root))
   in
     List.foldl add_root initial roots
-  end
+  end handle TreeComplete result => result
+end
 
 
 (* ----------------------------------------------------------------------

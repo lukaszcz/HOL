@@ -89,8 +89,8 @@ val _ = let
     end
   fun balanced [term] = term
     | balanced terms = balanced (pair_round terms)
-  (* A list-based visited cache would perform quadratically many lookups on
-     these independently allocated nodes. *)
+  (* Independently allocated trees exercise the competing ordinary visitor;
+     deep physical sharing exercises the intrinsic-summary visitor. *)
   val large_closed = balanced (List.tabulate(6000, leaf))
   val classifications = List.map Term.has_free_vars
     [binder, mk_abs(binder, binder), closed_closure, open_closure,
@@ -154,13 +154,16 @@ val _ = let
      ordinary chain exercises that documented tradeoff without changing the
      existing [FVL] path used by callers that do not request DAG sharing. *)
   val large_ordinary_dag = independent_branch 1200
+  val larger_ordinary_dag = independent_branch 3000
+  val deeper_shared_free = shared_branch 120 free
   val shadowed = mk_abs(binder, mk_abs(binder, binder))
   val dag_terms =
     [closed_closure, open_closure, mixed_scope, shared_closed_lambda,
      shared_open_lambda, shared_free, deep_lazy_open, shifted_lazy_open,
      deep_body_lazy_closed, nested_lazy_open, shadowed_lazy_closed,
      independent_equal,
-     large_ordinary_dag, shadowed, typed_bool, typed_ind]
+     large_ordinary_dag, larger_ordinary_dag, deeper_shared_free,
+     shadowed, typed_bool, typed_ind]
   val dag_free = Term.FVL_dag dag_terms
     (HOLset.add(Term.empty_tmset, initial))
   val expected_dag_free = HOLset.addList (Term.empty_tmset,
@@ -172,6 +175,17 @@ val _ = let
   val general_expected =
     HOLset.addList (Term.empty_tmset, [boolSyntax.T, free])
   val general_extended = HOLset.add (general_result, boolSyntax.F)
+  fun reverse_compare (left, right) = Term.compare (right, left)
+  val custom_initial = HOLset.add
+    (HOLset.empty reverse_compare, initial)
+  val custom_result = Term.FVL_dag [shared_branch 100 free] custom_initial
+  val ordinary_small_result = Term.FVL_dag [large_ordinary_dag]
+    (HOLset.add (Term.empty_tmset, initial))
+  val ordinary_large_result = Term.FVL_dag [large_closed]
+    (HOLset.add (Term.empty_tmset, initial))
+  val mixed_result = Term.FVL_dag
+    [large_ordinary_dag, deeper_shared_free]
+    (HOLset.add (Term.empty_tmset, initial))
   val dag_agreement_terms =
     [binder, mk_abs(binder, binder), closed_closure, open_closure,
      mixed_scope, shallow_lazy_open, shifted_lazy_open, nested_lazy_open,
@@ -202,6 +216,17 @@ in
   else if not (HOLset.equal (general_result, general_expected) andalso
                HOLset.member (general_extended, boolSyntax.F)) then
     die "Term.FVL_dag changed the caller's general term-set accumulator"
+  else if not (HOLset.member (custom_result, initial) andalso
+               HOLset.member (custom_result, free) andalso
+               HOLset.numItems custom_result = 2) then
+    die "Term.FVL_dag changed a custom-comparator initial accumulator"
+  else if not (HOLset.equal (ordinary_small_result,
+                 HOLset.add (Term.empty_tmset, initial)) andalso
+               HOLset.equal (ordinary_large_result,
+                 HOLset.add (Term.empty_tmset, initial)) andalso
+               HOLset.equal (mixed_result,
+                 HOLset.addList (Term.empty_tmset, [initial, free]))) then
+    die "Term.FVL_dag adaptive tree/DAG regimes changed exact variables"
   else if not dag_agreement then
     die "Term.FVL_dag disagreed with Term.FVL"
   else

@@ -6292,9 +6292,14 @@ local
     | proofterm_replay_handler (TRUE_AXIOM _) = "true_axiom"
     | proofterm_replay_handler (UNIT_RESOLUTION _) = "unit_resolution"
     | proofterm_replay_handler (ID id) = "@" ^ Int.toString id
+    | proofterm_replay_handler (LOCAL_SCOPE _) = "local_scope"
+    | proofterm_replay_handler (LOCAL_REF id) =
+        "local@" ^ Int.toString id
     | proofterm_replay_handler (THEOREM _) = "<replayed theorem>"
 
   fun proofterm_rule (ID id) = "@" ^ Int.toString id
+    | proofterm_rule (LOCAL_REF id) = "local@" ^ Int.toString id
+    | proofterm_rule (LOCAL_SCOPE _) = "local-scope"
     | proofterm_rule (THEOREM _) = "<replayed theorem>"
     | proofterm_rule (TH_LEMMA_ARITH (metadata, _, _)) =
         th_lemma_rule_name metadata
@@ -6354,6 +6359,8 @@ local
     | proofterm_concl (TRUE_AXIOM concl) = SOME concl
     | proofterm_concl (UNIT_RESOLUTION (_, concl)) = SOME concl
     | proofterm_concl (ID _) = NONE
+    | proofterm_concl (LOCAL_SCOPE (_, body)) = proofterm_concl body
+    | proofterm_concl (LOCAL_REF _) = NONE
     | proofterm_concl (THEOREM thm) = SOME (Thm.concl thm)
 
   (* Construct timeout attribution only while unwinding the E0 boundary.
@@ -6363,6 +6370,7 @@ local
     let
       val premise_limit = 64
       fun premise_ref (ID id) = "@" ^ Int.toString id
+        | premise_ref (LOCAL_REF id) = "local@" ^ Int.toString id
         | premise_ref (THEOREM _) = "theorem"
         | premise_ref premise = proofterm_replay_handler premise
       fun sample (0, rest, refs, count) =
@@ -6420,6 +6428,7 @@ local
     end
 
   fun proofterm_ref (ID id) = "ID " ^ Int.toString id
+    | proofterm_ref (LOCAL_REF id) = "LOCAL_REF " ^ Int.toString id
     | proofterm_ref (THEOREM thm) = "THEOREM(" ^ term_diag (Thm.concl thm) ^ ")"
     | proofterm_ref pt =
         case proofterm_concl pt of
@@ -6758,6 +6767,48 @@ local
     | thm_of_proofterm (state_proof, UNIT_RESOLUTION x) continuation =
         list_prems state_proof "unit_resolution" z3_unit_resolution x
           continuation []
+    | thm_of_proofterm ((state, proof), LOCAL_SCOPE (nodes, body))
+        continuation =
+        let
+          fun install ((id, node), steps) =
+            if Option.isSome (Redblackmap.peek (steps, id)) then
+              raise ERR "local_scope" "local proof node identity collision"
+            else Redblackmap.insert (steps, id, node)
+          val ids = List.map Lib.fst nodes
+          val steps = List.foldl install (proof_local_steps proof) nodes
+          val proof = update_proof_local_steps proof steps
+          fun leave ((state, proof), thm) =
+            let
+              val steps = List.foldl
+                (fn (id, steps) => Lib.fst (Redblackmap.remove (steps, id)))
+                (proof_local_steps proof) ids
+              val proof = update_proof_local_steps proof steps
+            in
+              continuation ((state, proof), thm)
+            end
+        in
+          thm_of_proofterm ((state, proof), body) leave
+        end
+    | thm_of_proofterm ((state, proof), LOCAL_REF id) continuation =
+        (case Redblackmap.peek (proof_local_steps proof, id) of
+          SOME (THEOREM thm) => continuation ((state, proof), thm)
+        | SOME pt =>
+            let
+              fun cache_result ((state, proof), thm) =
+                let
+                  val steps = Redblackmap.insert
+                    (proof_local_steps proof, id, THEOREM thm)
+                  val proof = update_proof_local_steps proof steps
+                in
+                  ((state, proof), thm)
+                end
+            in
+              thm_of_proofterm ((state, proof), pt)
+                (continuation o cache_result)
+            end
+        | NONE => raise ERR "thm_of_proofterm"
+            ("inactive or out-of-scope local proof reference " ^
+             Int.toString id))
     | thm_of_proofterm ((state, proof), ID id) continuation =
         (case Redblackmap.peek (proof_steps proof, id) of
           SOME (THEOREM thm) =>
@@ -7666,10 +7717,19 @@ in
      set from the complete synthetic proof value so they continue to exercise
      individual rules.  Production replay never uses this helper: it supplies
      the original goal's assertions explicitly below. *)
-  fun proof_asserted_hyps proof =
+  fun proof_asserted_hyps_with_work proof =
   let
+    val work = ref 0
+    (* Stable parser IDs avoid expanding a shared annotation body.  The
+       visit count is linear; balanced-map bookkeeping is O(V log V). *)
+    val visited_local_nodes = ref (Redblackmap.mkDict Int.compare)
+    fun first_local id =
+      if Option.isSome (Redblackmap.peek (!visited_local_nodes, id)) then false
+      else (visited_local_nodes := Redblackmap.insert
+              (!visited_local_nodes, id, ()); true)
     fun add_list pts set = List.foldl (fn (pt, set) => add pt set) set pts
     and add pt set =
+      (work := !work + 1;
       case pt of
         AND_ELIM (p, _) => add p set
       | APPLY_DEF (p, _) => add p set
@@ -7708,11 +7768,19 @@ in
       | TRUE_AXIOM _ => set
       | UNIT_RESOLUTION (ps, _) => add_list ps set
       | ID _ => set
-      | THEOREM _ => set
+      | LOCAL_SCOPE (nodes, body) =>
+          add body (List.foldl
+            (fn ((id, p), found) =>
+              if first_local id then add p found else found)
+            set nodes)
+      | LOCAL_REF _ => set
+      | THEOREM _ => set)
   in
-    Redblackmap.foldl (fn (_, pt, set) => add pt set)
-      Term.empty_tmset (proof_steps proof)
+    (Redblackmap.foldl (fn (_, pt, set) => add pt set)
+       Term.empty_tmset (proof_steps proof), !work)
   end
+
+  fun proof_asserted_hyps proof = Lib.fst (proof_asserted_hyps_with_work proof)
 
   (* Exercise the semantic advanced-family cache policy without manufacturing
      an otherwise unsupported Z3 proof node.  The same finite checked-state

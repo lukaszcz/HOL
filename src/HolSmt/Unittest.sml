@@ -8434,9 +8434,8 @@ let
       val (_, tm_dict) =
         SmtLib.parser_dicts_for_translation translation
       val name = generated_name translation wanted
-      val parsefn = List.hd (Redblackmap.find (tm_dict, name))
     in
-      parsefn name [] args
+      SmtLib_Parser.apply_term tm_dict name [] args
     end
   fun has_native_ho_core_audit translation =
     List.exists
@@ -10727,17 +10726,739 @@ end
 fun parse_z3_proof_string version contents =
 let
   val dicts = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val context = Z3_ProofParser.semantic_context_from_dicts dicts []
   val instream = TextIO.openString contents
 in
-  Z3_ProofParser.parse_stream_with_version dicts version instream
+  Z3_ProofParser.parse_stream_with_context context
+    Z3_ProofParser.LegacyDecimal version instream
 end
 
 fun parse_z3_proof_string_with_dicts dicts version contents =
 let
+  val context = Z3_ProofParser.semantic_context_from_dicts dicts []
   val instream = TextIO.openString contents
 in
-  Z3_ProofParser.parse_stream_with_version dicts version instream
+  Z3_ProofParser.parse_stream_with_context context
+    Z3_ProofParser.LegacyDecimal version instream
 end
+
+fun parse_z3_compact_proof_string_with_context context contents =
+let
+  val instream = TextIO.openString contents
+in
+  Z3_ProofParser.parse_stream_with_context context
+    Z3_ProofParser.CompactTyped
+    "4.11.2.0-holsmt-compact-prototype2" instream
+end
+
+fun parse_z3_compact_proof_string contents =
+  parse_z3_compact_proof_string_with_context
+    (Z3_ProofParser.semantic_context_from_dicts
+      (SmtLib_Logics.parsedicts_of_logic "ALL") []) contents
+
+fun z3_compact_context_with_terms entries introduced_names =
+let
+  val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val tmdict = List.foldl
+    (fn ((name, term), dict) => Library.extend_dict
+      ((name, SmtLib_Theories.K_zero_zero term), dict)) tmdict entries
+in
+  Z3_ProofParser.semantic_context_from_dicts
+    (tydict, tmdict) introduced_names
+end
+
+fun z3_compact_parser_direct_graph_success () =
+let
+  val compact = parse_z3_compact_proof_string
+    "((proof (let (($a (= false false)))\
+    \ (let ((@a (refl $a))) @a))))"
+  val legacy = parse_z3_proof_string "4.11.2"
+    "((proof (refl (= false false))))"
+  val indexed = parse_z3_compact_proof_string
+    "((proof ((_ th-lemma basic eq-propagate 0) true)))"
+  val quoted_sort = parse_z3_compact_proof_string
+    "((declare-sort |pt type| 0)\
+    \ (declare-fun x () |pt type|) (proof (refl (= x x))))"
+  fun replay proof = Z3_ProofReplay.replay_root_for_test proof
+  val compact_thm = replay compact
+  val legacy_thm = replay legacy
+in
+  assert (Redblackmap.numItems (Z3_Proof.proof_steps compact) = 2,
+    "compact proof alias was not assigned a fresh graph ID");
+  assert (Thm.concl compact_thm ~~ Thm.concl legacy_thm andalso
+      HOLset.isEmpty (Thm.hypset compact_thm),
+    "compact and legacy direct proofs did not reconstruct the same theorem");
+  (case Redblackmap.find (Z3_Proof.proof_steps indexed, 0) of
+     Z3_Proof.TH_LEMMA_BASIC _ => ()
+   | _ => die "FAIL: compact indexed root rule parsed unexpected proof step");
+  let
+    val (left, right) = boolSyntax.dest_eq (Thm.concl (replay quoted_sort))
+  in
+    assert (left ~~ right andalso
+        Type.dest_vartype (Term.type_of left) = "'pt type",
+      "quoted source sort declaration/use lost its decoded identity")
+  end;
+  check_oracle_tags "Z3 compact direct graph" compact_thm
+end
+
+fun z3_compact_parser_category_diagnostics () =
+let
+  fun reject label expected text =
+    expect_hol_error_contains label expected
+      (fn () => ignore (parse_z3_compact_proof_string text))
+in
+  reject "compact semantic alias used as proof" "used as a proof"
+    "((proof (let (($a false)) $a)))";
+  reject "compact proof alias used as term" "used as a semantic term"
+    "((proof (let ((@a (asserted false))) (refl (= @a @a)))))";
+  reject "compact undefined proof alias" "undefined or out-of-scope"
+    "((proof @a))";
+  reject "compact wrong Boolean category" "non-Boolean"
+    "((proof (let (($a 0)) (asserted false))))";
+  reject "compact wrong other category" "has a Boolean"
+    "((proof (let ((?a false)) (asserted false))))"
+end
+
+fun z3_compact_parser_scope_and_lexing_success () =
+let
+  val source = Term.mk_var ("holsmt_z3_bound0", Type.bool)
+  val escaped = Term.mk_var ("escaped_source", Type.bool)
+  val context = z3_compact_context_with_terms
+    [("source_key", source), ("let", boolSyntax.T),
+     ("p\\|  (x)", escaped), ("@a", boolSyntax.T),
+     ("&a", boolSyntax.T)] ["holsmt_z3_bound0"]
+  fun parse text = parse_z3_compact_proof_string_with_context context text
+  val captured = parse
+    "((proof (let (($a source_key))\
+    \ (asserted (forall ((x Bool)) (= $a x))))))"
+  val simultaneous = parse
+    "((proof (let (($a true))\
+    \ (let (($c (let (($a false) ($b $a)) (= $b true))))\
+    \ (asserted $c)))))"
+  val quoted = parse
+    "((proof (asserted (and |let| |p\\\\\\|  (x)| @a &a))))"
+  val semantic_at = parse
+    "((proof (asserted (let ((@source true)) @source))))"
+  val declared = parse
+    "((declare-fun |fresh name| () Bool)\
+    \ (proof (asserted |fresh name|)))"
+  fun root proof = Redblackmap.find (Z3_Proof.proof_steps proof, 0)
+in
+  (case root captured of
+     Z3_Proof.ASSERTED conclusion =>
+       let
+         val (binder, body) = boolSyntax.dest_forall conclusion
+         val (left, right) = boolSyntax.dest_eq body
+       in
+         assert (left ~~ source andalso right ~~ binder,
+           "compact binder capture changed a source free variable");
+         assert (Lib.fst (Term.dest_var binder) <> "holsmt_z3_bound0",
+           "compact binder allocator reused a reserved HOL name")
+       end
+   | _ => die "FAIL: compact capture fixture parsed unexpected root");
+  (case root simultaneous of
+     Z3_Proof.ASSERTED conclusion =>
+       assert (conclusion ~~ boolSyntax.mk_eq (boolSyntax.T, boolSyntax.T),
+         "compact simultaneous semantic let did not use the old environment")
+   | _ => die "FAIL: compact simultaneous let parsed unexpected root");
+  (case root quoted of
+     Z3_Proof.ASSERTED conclusion =>
+       assert (List.exists (Term.aconv escaped) (Term.free_vars conclusion),
+         "Z3 quoted-symbol escape did not recover source identity")
+   | _ => die "FAIL: compact quoted fixture parsed unexpected root");
+  (case root semantic_at of
+     Z3_Proof.ASSERTED conclusion =>
+       assert (conclusion ~~ boolSyntax.T,
+         "semantic let classified an @-prefixed source name as proof syntax")
+   | _ => die "FAIL: compact semantic @ let parsed unexpected root");
+  (case root declared of
+     Z3_Proof.ASSERTED conclusion =>
+       assert (Lib.fst (Term.dest_var conclusion) = "fresh name",
+         "quoted declaration and use did not preserve one decoded identity")
+   | _ => die "FAIL: compact quoted declaration parsed unexpected root")
+end
+
+fun z3_compact_parser_closure_scope_success () =
+let
+  val proof = parse_z3_compact_proof_string
+    "((proof (quant-intro\
+    \ (proof-bind (lambda ((x Bool))\
+    \   (let ((@a (refl (= x x)))) @a)))\
+    \ (= (forall ((x Bool)) x) (forall ((x Bool)) x)))))"
+  val theorem = Z3_ProofReplay.replay_root_for_test proof
+  val aliased = parse_z3_compact_proof_string
+    "((proof (let ((@bound (proof-bind (lambda ((x Bool))\
+    \ (let ((@r (refl (= x x)))) @r)))))\
+    \ (quant-intro @bound\
+    \ (= (forall ((x Bool)) x) (forall ((x Bool)) x))))))"
+  val aliased_theorem = Z3_ProofReplay.replay_root_for_test aliased
+  val discharged = parse_z3_compact_proof_string
+    "((proof (quant-intro (proof-bind (lambda ((x Bool))\
+    \ (let ((@h (hypothesis (not (= x x)))))\
+    \ (let ((@r (refl (= x x))))\
+    \ (let ((@u (unit-resolution @h @r false)))\
+    \ (let ((@l (lemma @u (= x x)))) @l))))))\
+    \ (= (forall ((x Bool)) x)\
+    \    (forall ((x Bool)) x)))))"
+  val discharged_theorem = Z3_ProofReplay.replay_root_for_test discharged
+  val twice = parse_z3_compact_proof_string
+    "((proof (let ((@bound (proof-bind (lambda ((x Bool))\
+    \ (let ((@r (refl (= x x)))) @r)))))\
+    \ (let ((@q1 (quant-intro @bound\
+    \              (= (forall ((x Bool)) x) (forall ((x Bool)) x))))\
+    \       (@q2 (quant-intro @bound\
+    \              (= (forall ((x Bool)) x) (forall ((x Bool)) x)))))\
+    \ (trans @q1 @q2\
+    \   (= (forall ((x Bool)) x) (forall ((x Bool)) x)))))))"
+  val _ = Profile.reset_all ()
+  val twice_theorem = Z3_ProofReplay.replay_root_for_test twice
+  val twice_refl_calls =
+    case List.find (fn (name, _) => name = "refl") (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val returned = parse_z3_compact_proof_string
+    "((proof (quant-intro\
+    \ (let ((@r (refl (= true true))))\
+    \   (proof-bind (lambda ((x Bool)) @r)))\
+    \ (= (forall ((x Bool)) true) (forall ((x Bool)) true)))))"
+  val returned_theorem = Z3_ProofReplay.replay_root_for_test returned
+  val chained = parse_z3_compact_proof_string
+    "((proof (let ((@a (proof-bind (lambda ((x Bool))\
+    \ (let ((@r (refl (= x x)))) @r)))))\
+    \ (let ((@b @a)) (quant-intro @b\
+    \ (= (forall ((x Bool)) x) (forall ((x Bool)) x)))))))"
+  val chained_theorem = Z3_ProofReplay.replay_root_for_test chained
+  val returned_alias = parse_z3_compact_proof_string
+    "((proof (quant-intro\
+    \ (let ((@a (proof-bind (lambda ((x Bool))\
+    \   (let ((@r (refl (= x x)))) @r))))) @a)\
+    \ (= (forall ((x Bool)) x) (forall ((x Bool)) x)))))"
+  val returned_alias_theorem =
+    Z3_ProofReplay.replay_root_for_test returned_alias
+  val nested = parse_z3_compact_proof_string
+    "((declare-sort OuterShadow 0) (declare-sort InnerShadow 0)\
+    \ (proof (quant-intro (proof-bind (lambda ((x OuterShadow))\
+    \ (lambda ((x InnerShadow)) (refl (= (= x x) (= x x))))))\
+    \ (= (forall ((o OuterShadow)) (forall ((i InnerShadow)) (= i i)))\
+    \    (forall ((o OuterShadow)) (forall ((i InnerShadow)) (= i i)))))))"
+  val nested_theorem = Z3_ProofReplay.replay_root_for_test nested
+  val outer_shadow = Term.mk_var
+    ("o", Type.mk_vartype "'OuterShadow")
+  val inner_shadow = Term.mk_var
+    ("i", Type.mk_vartype "'InnerShadow")
+  val nested_expected = boolSyntax.mk_eq
+    (boolSyntax.mk_forall (outer_shadow,
+       boolSyntax.mk_forall (inner_shadow,
+         boolSyntax.mk_eq (inner_shadow, inner_shadow))),
+     boolSyntax.mk_forall (outer_shadow,
+       boolSyntax.mk_forall (inner_shadow,
+         boolSyntax.mk_eq (inner_shadow, inner_shadow))))
+  fun sort_case declaration use =
+    Z3_ProofReplay.replay_root_for_test
+      (parse_z3_compact_proof_string
+        ("((declare-sort " ^ declaration ^ " 0)\
+         \ (declare-fun a () " ^ use ^ ")\
+         \ (proof (refl (= a a))))"))
+  fun applied_sort_case declaration use =
+    Z3_ProofReplay.replay_root_for_test
+      (parse_z3_compact_proof_string
+        ("((declare-sort " ^ declaration ^ " 1)\
+         \ (declare-fun a () (" ^ use ^ " Bool))\
+         \ (proof (refl (= a a))))"))
+  val sort_theorems =
+    [sort_case "|A|" "A", sort_case "B" "|B|",
+     applied_sort_case "|F|" "F", applied_sort_case "G" "|G|"]
+  fun semantic_sort_case text = Z3_ProofReplay.replay_root_for_test
+    (parse_z3_compact_proof_string text)
+  val semantic_sort_theorems = [
+    semantic_sort_case
+      "((declare-sort H 0) (proof (refl\
+      \ (= (forall ((x |H|)) true) (forall ((x H)) true)))))",
+    semantic_sort_case
+      "((declare-sort J 0) (proof (refl\
+      \ (= (lambda ((x |J|)) x) (lambda ((x J)) x)))))",
+    semantic_sort_case
+      "((declare-sort K 1) (proof (refl\
+      \ (= (as seq.empty (Seq (|K| Bool)))\
+      \    (as seq.empty (Seq (K Bool)))))))"]
+  val (source_tydict, source_tmdict) =
+    SmtLib_Logics.parsedicts_of_logic "ALL"
+  val source_ty = Type.mk_vartype "'SourceA"
+  fun source_applied _ indices args =
+    if List.null indices andalso List.length args = 1 then
+      listSyntax.mk_list_type (List.hd args)
+    else SmtLib_Theories.decline "<SourceF>" "one sort argument expected"
+  val source_tydict = Library.extend_dict
+    (("SourceF", source_applied), Library.extend_dict
+      (("SourceA", SmtLib_Theories.K_zero_zero source_ty), source_tydict))
+  val source_context = Z3_ProofParser.semantic_context_from_dicts
+    (source_tydict, source_tmdict) []
+  val source_sort_theorem = Z3_ProofReplay.replay_root_for_test
+    (parse_z3_compact_proof_string_with_context source_context
+      "((declare-fun a () |SourceA|) (proof (refl (= a a))))")
+  val source_bare_theorem = Z3_ProofReplay.replay_root_for_test
+    (parse_z3_compact_proof_string_with_context source_context
+      "((declare-fun a () SourceA) (proof (refl (= a a))))")
+  val source_applied_theorem = Z3_ProofReplay.replay_root_for_test
+    (parse_z3_compact_proof_string_with_context source_context
+      "((declare-fun a () (|SourceF| Bool)) (proof (refl (= a a))))")
+  val source_binder_theorem = Z3_ProofReplay.replay_root_for_test
+    (parse_z3_compact_proof_string_with_context source_context
+      "((proof (refl (= (forall ((x |SourceA|)) (= x x))\
+      \ (forall ((x SourceA)) (= x x))))))")
+  val source_qualified_theorem = Z3_ProofReplay.replay_root_for_test
+    (parse_z3_compact_proof_string_with_context source_context
+      "((proof (refl (= (as seq.empty (Seq (|SourceF| Bool)))\
+      \ (as seq.empty (Seq (SourceF Bool)))))))")
+in
+  assert (HOLset.isEmpty (Thm.hypset theorem),
+    "compact scoped inline proof retained a binder hypothesis");
+  assert (Thm.concl theorem ~~ ``(!x:bool. x) = (!x:bool. x)``,
+    "compact scoped inline proof reconstructed the wrong conclusion");
+  assert (HOLset.isEmpty (Thm.hypset aliased_theorem) andalso
+      Thm.concl aliased_theorem ~~ ``(!x:bool. x) = (!x:bool. x)``,
+    "compact aliased proof annotation lost its lexical scope");
+  assert (HOLset.isEmpty (Thm.hypset discharged_theorem) andalso
+      Thm.concl discharged_theorem ~~ ``(!x:bool. x) = (!x:bool. x)``,
+    "compact scoped hypothesis was not discharged before quantification");
+  assert (HOLset.isEmpty (Thm.hypset twice_theorem) andalso
+      Thm.concl twice_theorem ~~ ``(!x:bool. x) = (!x:bool. x)``,
+    "compact bound alias activations leaked or reused a local theorem cache");
+  assert (twice_refl_calls = 2,
+    "compact repeated bound alias reused an open local theorem activation");
+  assert (HOLset.isEmpty (Thm.hypset returned_theorem) andalso
+      Thm.concl returned_theorem ~~ ``(!x:bool. T) = (!x:bool. T)``,
+    "compact let result hid its proof-bind annotation");
+  assert (HOLset.isEmpty (Thm.hypset chained_theorem) andalso
+      Thm.concl chained_theorem ~~ ``(!x:bool. x) = (!x:bool. x)``,
+    "compact annotation alias chain lost its captured local body");
+  assert (HOLset.isEmpty (Thm.hypset returned_alias_theorem) andalso
+      Thm.concl returned_alias_theorem ~~ ``(!x:bool. x) = (!x:bool. x)``,
+    "compact local let did not return an annotation value");
+  assert (HOLset.isEmpty (Thm.hypset nested_theorem) andalso
+      Thm.concl nested_theorem ~~ nested_expected,
+    "compact nested/shadowed binder occurrence resolved to the wrong sort");
+  List.app (fn thm =>
+    assert (HOLset.isEmpty (Thm.hypset thm),
+      "compact sort cross-spelling retained hypotheses")) sort_theorems;
+  List.app (fn thm => assert (HOLset.isEmpty (Thm.hypset thm),
+    "compact semantic sort cross-spelling retained hypotheses"))
+    semantic_sort_theorems;
+  assert (HOLset.isEmpty (Thm.hypset source_sort_theorem),
+    "compact initial source sort cross-spelling retained hypotheses");
+  let
+    fun operand_type thm = Term.type_of
+      (Lib.fst (boolSyntax.dest_eq (Thm.concl thm)))
+  in
+    assert (operand_type source_sort_theorem = source_ty andalso
+        operand_type source_bare_theorem = source_ty,
+      "compact initial nullary source sort resolved to the wrong HOL type");
+    assert (operand_type source_applied_theorem =
+        listSyntax.mk_list_type Type.bool,
+      "compact initial applied source sort resolved to the wrong HOL type");
+    assert (operand_type source_binder_theorem = Type.bool andalso
+        operand_type source_qualified_theorem =
+          listSyntax.mk_list_type (listSyntax.mk_list_type Type.bool),
+      "compact initial source sort binder/qualifier resolved incorrectly")
+  end;
+  check_oracle_tags "Z3 compact closure scope" theorem;
+  check_oracle_tags "Z3 compact aliased closure scope" aliased_theorem;
+  check_oracle_tags "Z3 compact discharged closure scope" discharged_theorem;
+  check_oracle_tags "Z3 compact repeated closure activation" twice_theorem
+  ; check_oracle_tags "Z3 compact returned annotation" returned_theorem
+  ; check_oracle_tags "Z3 compact annotation alias chain" chained_theorem
+  ; check_oracle_tags "Z3 compact returned alias" returned_alias_theorem
+  ; check_oracle_tags "Z3 compact nested binders" nested_theorem
+  ; List.app (check_oracle_tags "Z3 compact sort cross-spelling")
+      sort_theorems
+  ; List.app (check_oracle_tags "Z3 compact semantic sort cross-spelling")
+      semantic_sort_theorems
+  ; check_oracle_tags "Z3 compact initial source sort" source_sort_theorem
+  ; check_oracle_tags "Z3 compact bare initial source sort"
+      source_bare_theorem
+  ; check_oracle_tags "Z3 compact applied initial source sort"
+      source_applied_theorem
+  ; check_oracle_tags "Z3 compact initial source binder"
+      source_binder_theorem
+  ; check_oracle_tags "Z3 compact initial source qualifier"
+      source_qualified_theorem
+end
+
+fun z3_compact_parser_local_dag_success () =
+let
+  fun alias i = "@a" ^ Int.toString i
+  fun loop n i =
+    if i > n then alias n
+    else "(let ((" ^ alias i ^ " (trans " ^ alias (i - 1) ^ " " ^
+      alias (i - 1) ^ " (= false false)))) " ^ loop n (i + 1) ^ ")"
+  fun calls name =
+    case List.find (fn (profile_name, _) => profile_name = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun run depth =
+    let
+      val text = "((proof (symm (let ((@a0 (refl (= false false)))) " ^
+        loop depth 1 ^ ") (= false false))))"
+      val proof = parse_z3_compact_proof_string text
+      val _ = Profile.reset_all ()
+      val theorem = Z3_ProofReplay.replay_root_for_test proof
+      val work = (calls "trans", calls "refl")
+    in
+      (proof, theorem, work)
+    end
+  val (_, theorem12, work12) = run 12
+  val (proof, theorem, work) = run 24
+  fun bound_alias i = "@shared" ^ Int.toString i
+  fun repeated_bindings n =
+    let
+      val first = "(let ((@shared0 (proof-bind (lambda ((x Bool))\
+        \ (asserted true))))) "
+      fun binding i = "(let ((" ^ bound_alias i ^
+        " (proof-bind (lambda ((x Bool)) (nnf-pos " ^
+        bound_alias (i - 1) ^ " " ^ bound_alias (i - 1) ^
+        " (= true true)))))) "
+    in
+      first ^ String.concat (List.tabulate (n, fn i => binding (i + 1))) ^
+      "(nnf-pos " ^ bound_alias n ^ " (= true true))" ^
+      String.implode (List.tabulate (n + 1, fn _ => #")"))
+    end
+  fun independent_bindings n =
+    let
+      fun binding i = "(let ((@ind" ^ Int.toString i ^
+        " (proof-bind (lambda ((x Bool)) (refl (= true true)))))) "
+      val names = String.concatWith " "
+        (List.tabulate (n, fn i => "@ind" ^ Int.toString i))
+    in
+      String.concat (List.tabulate (n, binding)) ^
+      "(nnf-pos " ^ names ^ " (= true true))" ^
+      String.implode (List.tabulate (n, fn _ => #")"))
+    end
+  fun closure_bindings n =
+    let
+      fun name i = "&closure" ^ Int.toString i
+      val first = "(let ((" ^ name 0 ^
+        " (lambda ((x Bool)) (asserted true)))) "
+      fun binding i = "(let ((" ^ name i ^
+        " (lambda ((x Bool)) (nnf-pos (proof-bind " ^ name (i - 1) ^
+        ") (proof-bind " ^ name (i - 1) ^ ") (= true true))))) "
+    in
+      first ^ String.concat (List.tabulate (n, fn i => binding (i + 1))) ^
+      "(nnf-pos (proof-bind " ^ name n ^ ") (= true true))" ^
+      String.implode (List.tabulate (n + 1, fn _ => #")"))
+    end
+  fun structural expected_asserted text =
+    let
+      val p = parse_z3_compact_proof_string ("((proof " ^ text ^ "))")
+      val (asserted, asserted_work) =
+        Z3_ProofReplay.proof_asserted_hyps_with_work p
+      val (_, decomposition_work) =
+        Z3_ProofParser.discover_bit_decompositions_with_work_for_test p
+    in
+      assert (HOLset.numItems asserted = List.length expected_asserted andalso
+          List.all (fn tm => HOLset.member (asserted, tm)) expected_asserted,
+        "compact structural collector returned the wrong asserted set");
+      (asserted_work, decomposition_work)
+    end
+  val repeated32 = structural [boolSyntax.T] (repeated_bindings 32)
+  val repeated64 = structural [boolSyntax.T] (repeated_bindings 64)
+  val independent32 = structural [] (independent_bindings 32)
+  val independent64 = structural [] (independent_bindings 64)
+  val closure32 = structural [boolSyntax.T] (closure_bindings 32)
+  val closure64 = structural [boolSyntax.T] (closure_bindings 64)
+  fun scales (small_asserted, small_bits) (large_asserted, large_bits) =
+    large_asserted <= 3 * small_asserted andalso
+    large_bits <= 3 * small_bits
+in
+  assert (Thm.concl theorem ~~ ``F = F`` andalso
+      HOLset.isEmpty (Thm.hypset theorem),
+    "compact local proof DAG did not replay exactly");
+  assert (work12 = (12, 1) andalso work = (24, 1),
+    "compact local proof DAG replay work was not linear and memoized");
+  assert (scales repeated32 repeated64,
+    "compact repeated-annotation collector node visits did not scale linearly");
+  assert (scales independent32 independent64,
+    "compact independent-body collector node visits did not scale linearly");
+  assert (scales closure32 closure64,
+    "compact repeated-closure collector node visits did not scale linearly");
+  (case Redblackmap.find (Z3_Proof.proof_steps proof, 0) of
+     Z3_Proof.SYMM (Z3_Proof.LOCAL_SCOPE _, _) => ()
+   | _ => die "FAIL: compact local aliases were expanded instead of retained");
+  check_oracle_tags "Z3 compact local DAG depth 12" theorem12;
+  check_oracle_tags "Z3 compact local DAG depth 24" theorem
+end
+
+fun z3_compact_parser_terminal_callbacks () =
+let
+  val (tydict, base) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val fallback_calls = ref 0
+  fun fallback _ _ _ = (fallback_calls := !fallback_calls + 1; boolSyntax.T)
+  fun parse_with first name =
+    let
+      val dict = Redblackmap.insert (base, name, [first, fallback])
+      val context = Z3_ProofParser.semantic_context_from_dicts
+        (tydict, dict) []
+    in
+      parse_z3_compact_proof_string_with_context context
+        ("((proof (asserted (" ^ name ^ " true))))")
+    end
+  fun terminal label first accepts =
+    let
+      val _ = fallback_calls := 0
+      val stopped = (ignore (parse_with first label); false) handle exn => accepts exn
+    in
+      assert (stopped andalso !fallback_calls = 0,
+        "compact parser retried after terminal " ^ label)
+    end
+  fun unary f = SmtLib_Theories.K_zero_one f
+  val unexpected = Feedback.mk_HOL_ERR "Unittest" "terminal_callback"
+    "unexpected semantic callback failure"
+  val type_fallback_calls = ref 0
+  fun type_fallback _ _ _ =
+    (type_fallback_calls := !type_fallback_calls + 1; Type.bool)
+  fun parse_seq_char first =
+    let
+      val char_dict = Redblackmap.insert
+        (tydict, "Char", [SmtLib_Theories.K_zero_zero Type.bool])
+      val dict = Redblackmap.insert
+        (char_dict, "Seq Char", [first, type_fallback])
+      val tokens = ref ["(", "Seq", "Char", ")"]
+      fun get_token () =
+        case !tokens of token :: rest => (tokens := rest; token)
+        | [] => raise Fail "truncated Seq Char fixture"
+    in
+      SmtLib_Parser.parse_type get_token dict
+    end
+  fun terminal_type label first accepts =
+    let
+      val _ = type_fallback_calls := 0
+      val stopped = (ignore (parse_seq_char first); false)
+        handle exn => accepts exn
+    in
+      assert (stopped andalso !type_fallback_calls = 0,
+        "Seq Char parser retried after terminal " ^ label)
+    end
+in
+  fallback_calls := 0;
+  ignore (parse_with
+    (fn _ => fn _ => fn _ => SmtLib_Theories.decline
+      "ordinary_callback" "not this overload") "ordinaryDecline");
+  assert (!fallback_calls = 1,
+    "explicit ordinary decline did not advance to the next callback");
+  terminal "resourceGate"
+    (unary (fn _ => SmtResource.raise_gate "Unittest"
+      "resource-gated: callback gate"))
+    SmtResource.terminal_diagnostic_exception;
+  terminal "unexpectedHol"
+    (unary (fn _ => raise unexpected))
+    (fn Feedback.HOL_ERR holerr =>
+          Feedback.top_function_of holerr = "terminal_callback"
+      | _ => false);
+  terminal "callbackFail" (unary (fn _ => raise Fail "callback fail"))
+    (fn Fail "callback fail" => true | _ => false);
+  terminal "callbackTimeout"
+    (unary (fn _ => raise Timeout.TIMEOUT Time.zeroTime))
+    (fn Timeout.TIMEOUT _ => true | _ => false);
+  terminal "callbackInterrupt" (unary (fn _ => raise Interrupt))
+    (fn Interrupt => true | _ => false);
+  type_fallback_calls := 0;
+  ignore (parse_seq_char (fn _ => fn _ => fn _ =>
+    SmtLib_Theories.decline "seq-char" "ordinary specialization decline"));
+  assert (!type_fallback_calls = 1,
+    "Seq Char ordinary decline did not reach its fallback");
+  terminal_type "resource gate"
+    (fn _ => fn _ => fn _ => SmtResource.raise_gate "Unittest"
+      "resource-gated: Seq Char callback")
+    SmtResource.terminal_diagnostic_exception;
+  terminal_type "unexpected HOL_ERR"
+    (fn _ => fn _ => fn _ => raise unexpected)
+    (fn Feedback.HOL_ERR holerr =>
+          Feedback.top_function_of holerr = "terminal_callback"
+      | _ => false);
+  terminal_type "Fail" (fn _ => fn _ => fn _ => raise Fail "seq fail")
+    (fn Fail "seq fail" => true | _ => false);
+  terminal_type "Timeout"
+    (fn _ => fn _ => fn _ => raise Timeout.TIMEOUT Time.zeroTime)
+    (fn Timeout.TIMEOUT _ => true | _ => false);
+  terminal_type "Interrupt" (fn _ => fn _ => fn _ => raise Interrupt)
+    (fn Interrupt => true | _ => false)
+end
+
+fun z3_compact_parser_source_arity_success () =
+let
+  val (tydict, base) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val calls = ref 0
+  val unary = SmtLib_Theories.K_zero_one
+    (fn term => (calls := !calls + 1; boolSyntax.mk_neg term))
+  val dict = Redblackmap.insert (base, "sourceUnary", [unary])
+  val context = Z3_ProofParser.semantic_context_from_dicts
+    (tydict, dict) ["holsmt_z3_bound0"]
+  fun parse text = parse_z3_compact_proof_string_with_context context text
+  val proof = parse "((proof (asserted (sourceUnary false))))"
+  val _ = expect_hol_error_contains "compact source closure arity"
+    "one argument expected"
+    (fn () => ignore (parse "((proof (asserted sourceUnary)))"))
+in
+  assert (!calls = 1,
+    "compact parser probed a non-nullary source closure at zero arguments");
+  (case Redblackmap.find (Z3_Proof.proof_steps proof, 0) of
+     Z3_Proof.ASSERTED conclusion =>
+       assert (conclusion ~~ boolSyntax.mk_neg boolSyntax.F,
+         "compact parser changed a source closure application")
+   | _ => die "FAIL: source closure parsed unexpected proof root")
+end
+
+fun z3_compact_parser_scope_diagnostics () =
+let
+  fun reject label expected text =
+    expect_hol_error_contains label expected
+      (fn () => ignore (parse_z3_compact_proof_string text))
+in
+  reject "compact duplicate simultaneous binding" "duplicate simultaneous"
+    "((proof (let (($a true) ($a false)) (asserted $a))))";
+  reject "compact forward proof reference" "undefined or out-of-scope"
+    "((proof (let ((@a @b) (@b (asserted false))) @a)))";
+  reject "compact sibling scope escape" "undefined or out-of-scope"
+    "((proof (let ((@a (let ((@inner (refl (= true true)))) @inner)))\
+    \ @inner)))";
+  reject "compact self proof reference" "undefined or out-of-scope"
+    "((proof (let ((@a @a)) @a)))";
+  reject "compact closure direct proof use" "used as a proof"
+    "((proof (let ((&a (lambda ((x Bool)) (refl (= x x))))) &a)))";
+  reject "compact annotation root" "used as a proof root"
+    "((proof (let ((@a (proof-bind (lambda ((x Bool))\
+    \ (refl (= x x)))))) @a)))";
+  reject "compact proof used as closure" "used as a closure"
+    "((proof (let ((@a (asserted false))) (proof-bind @a))))";
+  reject "compact trailing material" "trailing proof material"
+    "((proof (asserted false))) trailing";
+  reject "compact malformed Z3 escape" "unsupported Z3 quoted-symbol escape"
+    "((proof (asserted |bad\\q|)))";
+  reject "compact quoted proof keyword" "bare proof rule"
+    "((proof (|refl| (= true true))))";
+  reject "compact quoted indexed marker" "must start with '_'"
+    "((proof ((|_| refl) (= true true))))";
+  reject "compact quoted builtin sort" "unknown symbol"
+    "((declare-fun x () |Bool|) (proof (refl (= x x))))";
+  reject "compact quoted closure keyword" "lambda expected"
+    "((proof (quant-intro (proof-bind (|lambda| ((x Bool))\
+    \ (refl (= x x)))) (= true true))))"
+end
+
+fun z3_compact_parser_shadow_and_collision_success () =
+let
+  val asserted_source = Term.mk_var ("source_asserted", Type.bool)
+  val refl_source = Term.mk_var ("source_refl", Type.bool)
+  val context = z3_compact_context_with_terms
+    [("asserted", asserted_source), ("refl", refl_source),
+     ("@x", boolSyntax.T), ("&x", boolSyntax.F)]
+    ["source_asserted", "source_refl"]
+  fun parse text = parse_z3_compact_proof_string_with_context context text
+  val shadowed = parse
+    "((proof (let ((@a (refl (= false false))))\
+    \ (let ((@b (symm @a (= false false))))\
+    \ (let ((@a (refl (= true true)))) @b)))))"
+  val collision = parse
+    "((proof (asserted (and asserted refl @x (not &x)))))"
+  val shadowed_theorem = Z3_ProofReplay.replay_root_for_test shadowed
+  fun root proof = Redblackmap.find (Z3_Proof.proof_steps proof, 0)
+in
+  assert (Thm.concl shadowed_theorem ~~ ``F = F``,
+    "compact shadowing changed an earlier graph dependency");
+  (case root collision of
+     Z3_Proof.ASSERTED conclusion =>
+       assert (List.exists (Term.aconv asserted_source)
+           (Term.free_vars conclusion) andalso
+         List.exists (Term.aconv refl_source) (Term.free_vars conclusion),
+         "rule-like source names were classified as proof syntax")
+   | _ => die "FAIL: compact collision fixture parsed unexpected root")
+end
+
+fun z3_compact_parser_extended_diagnostics () =
+let
+  fun reject label expected text =
+    expect_hol_error_contains label expected
+      (fn () => ignore (parse_z3_compact_proof_string text))
+  val oversized_digits = String.implode
+    (List.tabulate (65537, fn _ => #"1"))
+  val deep = String.concat
+    (List.tabulate (4097, fn _ => "(not ")) ^ "false" ^
+    String.concat (List.tabulate (4097, fn _ => ")"))
+  val oversized_token = String.implode
+    (List.tabulate (1048577, fn _ => #"a"))
+  val many_children = String.concatWith " "
+    (List.tabulate (65537, fn _ => "@a"))
+  val deep_sort = String.concat
+    (List.tabulate (4097, fn _ => "(S ")) ^ "Bool" ^
+    String.concat (List.tabulate (4097, fn _ => ")"))
+in
+  reject "compact closure wrong result" "used as a proof"
+    "((proof (let ((&a (lambda ((x Bool)) x))) (proof-bind &a)))))";
+  reject "compact closure unsupported consumer" "used as a proof"
+    "((proof (let ((&a (lambda ((x Bool)) (refl (= x x)))))\
+    \ (symm &a (= false false))))))";
+  reject "compact returned annotation unsupported consumer"
+    "unsupported consumer"
+    "((proof (symm (let ((@r (refl (= true true))))\
+    \ (proof-bind (lambda ((x Bool)) @r))) (= true true))))";
+  reject "compact truncated wrapper" "end of stream"
+    "((proof (asserted false))";
+  reject "compact oversized numeral" "literal-digits"
+    ("((proof (asserted (= " ^ oversized_digits ^ " 0))))");
+  reject "compact oversized decimal" "literal-digits"
+    ("((proof (asserted (= 1." ^ oversized_digits ^ " 0.0))))");
+  reject "compact oversized indexed bit-vector numeral" "literal-digits"
+    ("((proof (asserted (= (_ bv" ^ oversized_digits ^ " 8)\
+    \ (_ bv0 8)))))");
+  reject "compact oversized binary literal" "literal-digits"
+    ("((proof (asserted (= #b" ^ oversized_digits ^ " #b0))))");
+  reject "compact oversized hexadecimal literal" "literal-digits"
+    ("((proof (asserted (= #x" ^ oversized_digits ^ " #x0))))");
+  reject "compact excessive local nesting" "local-nesting"
+    ("((proof (asserted " ^ deep ^ ")))" );
+  reject "compact rewrite indices" "does not take indices"
+    "((proof ((_ rewrite 0) (= true true))))";
+  reject "compact oversized token" "token-bytes"
+    ("((proof (asserted " ^ oversized_token ^ ")))" );
+  reject "compact pending children" "pending-children"
+    ("((proof (let ((@a (refl (= true true))))\
+    \ (unit-resolution " ^ many_children ^ " false))))" );
+  reject "compact declaration nesting" "declaration-nesting"
+    ("((declare-sort S 1) (declare-fun f () " ^ deep_sort ^ ")\
+    \ (proof (refl (= f f))))")
+end
+
+fun run_compact_parser_unittests () = List.app
+  (fn (name, test) =>
+    (print ("test " ^ name ^ "..."); test (); print " OK\n"))
+  [("z3_compact_parser_direct_graph_success",
+      z3_compact_parser_direct_graph_success),
+   ("z3_compact_parser_category_diagnostics",
+      z3_compact_parser_category_diagnostics),
+   ("z3_compact_parser_scope_and_lexing_success",
+      z3_compact_parser_scope_and_lexing_success),
+   ("z3_compact_parser_closure_scope_success",
+      z3_compact_parser_closure_scope_success),
+   ("z3_compact_parser_local_dag_success",
+      z3_compact_parser_local_dag_success),
+   ("z3_compact_parser_terminal_callbacks",
+      z3_compact_parser_terminal_callbacks),
+   ("z3_compact_parser_source_arity_success",
+      z3_compact_parser_source_arity_success),
+   ("z3_compact_parser_scope_diagnostics",
+      z3_compact_parser_scope_diagnostics),
+   ("z3_compact_parser_shadow_and_collision_success",
+      z3_compact_parser_shadow_and_collision_success),
+   ("z3_compact_parser_extended_diagnostics",
+      z3_compact_parser_extended_diagnostics)]
+
+fun run_compact_parser_boundary_unittests () =
+  (smtlib_int_real_operator_coercion_success ();
+   smtlib_int_real_user_function_coercion_success ();
+   smtlib_int_only_no_spurious_coercion_success ();
+   smtlib_typecheck_overloaded_and_indexed_success ();
+   smtlib_apply_operators_success ();
+   smtlib_apply_operator_diagnostics ())
 
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
@@ -11531,8 +12252,12 @@ let
       : SmtLib_Theories.symbol_metadata, dict) =
     let
       val expected = arity metadata
-      fun parse _ indices args =
-        if List.length indices = expected andalso
+      fun parse token indices args =
+        if name = "_" andalso token <> "_" then
+          SmtLib_Theories.decline
+            "<cpc_registry_deindexing_complete_success>"
+            "generic indexed fixture does not match this token"
+        else if List.length indices = expected andalso
            List.length args = 1 andalso List.hd args ~~ boolSyntax.F then
           boolSyntax.T
         else raise Feedback.mk_HOL_ERR "Unittest"
@@ -11551,9 +12276,13 @@ let
         fn index => numSyntax.mk_numeral (Arbnum.fromInt (index + 1)))
       val parsed = SmtLib_Parser.apply_term adapted name []
         (indices @ [boolSyntax.F])
+      val indexed = SmtLib_Parser.apply_term adapted name indices
+        [boolSyntax.F]
     in
       assert (parsed ~~ boolSyntax.T,
-        "CPC registry adapter missed indexed entry " ^ name)
+        "CPC registry adapter missed flattened indexed entry " ^ name);
+      assert (indexed ~~ boolSyntax.T,
+        "CPC registry adapter missed explicit indexed entry " ^ name)
     end
 in
   assert (List.length registry = 23,
@@ -16850,7 +17579,8 @@ fun z3_proof_parser_rule_name_term_boundary () =
         "rule-name term boundary diagnostic did not include the enclosing \
         \proof rule: " ^ msg);
       assert (String.isSubstring "not a numeral" msg orelse
-              String.isSubstring "argument" msg,
+              String.isSubstring "argument" msg orelse
+              String.isSubstring "term parse failed" msg,
         "rule-name term boundary diagnostic did not identify proof parsing: " ^
         msg)
     end
@@ -17231,7 +17961,7 @@ in
   rejected "fpa2bv bv_wrap type" "(bv_wrap true)"
     "FloatingPoint or RoundingMode operand expected";
   rejected_equality "fpa2bv bv_wrap exact result width"
-    "(bv_wrap x)" "#b0" "different types";
+    "(bv_wrap x)" "#b0" "operand sorts do not match this overload";
   rejected "fpa2bv rm width" "(rm #b0000)"
     "3-bit bit-vector expected";
   rejected "fpa2bv bv2rm arity" "(bv2rm #b000 #b001)"
@@ -26113,6 +26843,26 @@ let
       z3_asserted_membership_diagnostic),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_compact_parser_direct_graph_success",
+      z3_compact_parser_direct_graph_success),
+    ("z3_compact_parser_category_diagnostics",
+      z3_compact_parser_category_diagnostics),
+    ("z3_compact_parser_scope_and_lexing_success",
+      z3_compact_parser_scope_and_lexing_success),
+    ("z3_compact_parser_closure_scope_success",
+      z3_compact_parser_closure_scope_success),
+    ("z3_compact_parser_local_dag_success",
+      z3_compact_parser_local_dag_success),
+    ("z3_compact_parser_terminal_callbacks",
+      z3_compact_parser_terminal_callbacks),
+    ("z3_compact_parser_source_arity_success",
+      z3_compact_parser_source_arity_success),
+    ("z3_compact_parser_scope_diagnostics",
+      z3_compact_parser_scope_diagnostics),
+    ("z3_compact_parser_shadow_and_collision_success",
+      z3_compact_parser_shadow_and_collision_success),
+    ("z3_compact_parser_extended_diagnostics",
+      z3_compact_parser_extended_diagnostics),
     ("z3_fpa2bv_proof_dictionary_replay_success",
       z3_fpa2bv_proof_dictionary_replay_success),
     ("z3_fpa2bv_proof_dictionary_strictness",

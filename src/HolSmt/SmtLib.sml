@@ -3100,14 +3100,15 @@ local
             if List.null indices andalso List.length args = arity then
               Term.list_mk_comb (constructor, args)
             else
-              raise ERR ("<" ^ token ^ ">") "wrong number of arguments"
+              SmtLib_Theories.decline ("<" ^ token ^ ">")
+                "wrong number of arguments"
           fun selector_entry ((selector_index, (selector_name, _)), dict) =
             let
               fun selector_parse token indices args =
                 case (indices, args) of
                   ([], [arg]) =>
                     datatype_selector_term ty constructor selector_index arg
-                | _ => raise ERR ("<" ^ token ^ ">")
+                | _ => SmtLib_Theories.decline ("<" ^ token ^ ">")
                     "one argument expected"
             in
               Library.extend_dict ((selector_name, selector_parse), dict)
@@ -3127,10 +3128,12 @@ local
                   if index_name = cname orelse index_matches_constructor then
                     datatype_tester_term ty constructor arg
                   else
-                    raise ERR ("<" ^ token ^ " " ^ cname ^ ">")
+                    SmtLib_Theories.decline
+                      ("<" ^ token ^ " " ^ cname ^ ">")
                       "tester constructor mismatch"
                 end
-            | _ => raise ERR ("<" ^ token ^ " " ^ cname ^ ">")
+            | _ => SmtLib_Theories.decline
+                ("<" ^ token ^ " " ^ cname ^ ">")
                 "one constructor index and one argument expected"
           val dict = Library.extend_dict ((cname, constructor_parse), dict)
           val dict = Library.extend_dict (("is", tester_parse), dict)
@@ -3182,7 +3185,8 @@ local
               if accepted_arity args then
                 Term.list_mk_comb (tm, args)
               else
-                raise ERR ("<" ^ s ^ ">") "wrong number of arguments"))])
+                SmtLib_Theories.decline ("<" ^ s ^ ">")
+                  "wrong number of arguments"))])
         end)
         (Redblackmap.mkDict String.compare) tmdict
       val tm_dict = Redblackmap.foldl (fn (ty, name, dict) =>

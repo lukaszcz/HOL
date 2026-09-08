@@ -358,23 +358,53 @@ fun FVL0 tlist acc =
 
 fun FVL tlist = FVL0 (map FVTM tlist)
 
-(* Compute one intrinsic free-variable summary for every physical node.  This
-   avoids environment-sensitive cache keys: an abstraction deletes its named
-   binder from its body's summary, so shadowing and capture remain exact.
-   Pointer lookup is portable but linear, hence worst-case quadratic in the
-   number of distinct nodes.  Retained summaries may contain O(nodes * vars)
-   set entries.  [FVL] remains the ordinary-tree implementation. *)
+local
+exception TreeComplete of term HOLset.set
+in
+(* Cooperatively run the ordinary delayed-delete visitor and one intrinsic
+   free-variable summary for every physical node.  An abstraction deletes its
+   named binder from its body's summary, so shadowing and capture remain exact.
+   Pointer lookup is portable but linear.  One resumable tree step runs at
+   lookup start and before every pointer comparison, so a long memo search
+   cannot starve the ordinary traversal.  The first exact visitor to finish
+   supplies the result.  No constant-time claim is made for set operations. *)
 fun FVL_dag roots initial =
   let
     datatype action = Visit of term | FinishApp of term * term * term
       | FinishAbs of term * term * term
     val summaries = ref ([] : (term * term HOLset.set) list)
+    val tree_pending = ref (map FVTM roots)
+    val tree_free = ref initial
+    fun tree_step () =
+      case !tree_pending of
+        [] => raise TreeComplete (!tree_free)
+      | FVTM term :: pending =>
+          (case term of
+             Var _ =>
+               (tree_pending := pending;
+                tree_free := HOLset.add (!tree_free, term))
+           | Const _ => tree_pending := pending
+           | App (operator, operand) =>
+               tree_pending := FVTM operator :: FVTM operand :: pending
+           | Abs (binder, body) =>
+               if HOLset.member (!tree_free, binder) then
+                 tree_pending := FVTM body :: pending
+               else
+                 tree_pending := FVTM body :: DELvar binder :: pending)
+      | DELvar binder :: pending =>
+          (tree_pending := pending;
+           tree_free := safe_delete (!tree_free, binder))
     fun lookup term =
-      case List.find
-          (fn (prior, _) => Portable.pointer_eq (term, prior))
-          (!summaries) of
-        SOME (_, summary) => SOME summary
-      | NONE => NONE
+      let
+        fun seek [] = NONE
+          | seek ((prior, summary) :: rest) =
+              (tree_step ();
+               if Portable.pointer_eq (term, prior) then SOME summary
+               else seek rest)
+      in
+        tree_step ();
+        seek (!summaries)
+      end
     fun completed term =
       case lookup term of
         SOME summary => summary
@@ -409,7 +439,8 @@ fun FVL_dag roots initial =
       HOLset.foldl add_variable free (completed root)
   in
     List.foldl add_root initial roots
-  end
+  end handle TreeComplete result => result
+end
 
 
 local

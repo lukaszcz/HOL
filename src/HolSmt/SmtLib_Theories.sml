@@ -14,6 +14,10 @@ local
 
 in
 
+  exception ParseDecline of exn
+
+  fun decline function message = raise ParseDecline (ERR function message)
+
   datatype symbol_source =
       Official
     | Extension of string
@@ -203,25 +207,55 @@ in
     if List.null xs then
       x
     else
-      raise ERR "zero_args" "no arguments expected"
+      decline "zero_args" "no arguments expected"
 
   fun one_arg f xs =
     f (Lib.singleton_of_list xs handle Feedback.HOL_ERR _ =>
-      raise ERR "one_arg" "one argument expected")
+      decline "one_arg" "one argument expected")
 
   fun two_args f xs =
     f (Lib.pair_of_list xs handle Feedback.HOL_ERR _ =>
-      raise ERR "two_args" "two arguments expected")
+      decline "two_args" "two arguments expected")
 
   fun three_args f xs =
     f (Lib.triple_of_list xs handle Feedback.HOL_ERR _ =>
-      raise ERR "three_args" "three arguments expected")
+      decline "three_args" "three arguments expected")
 
   fun list_args f xs =
     if List.null xs then
-      raise ERR "list_args" "non-empty argument list expected"
+      decline "list_args" "non-empty argument list expected"
     else
       f xs
+
+  fun typed_unary expected f x =
+    if Type.compare (Term.type_of x, expected) = EQUAL then f x
+    else decline "typed_unary" "operand sort does not match this overload"
+
+  fun typed_binary expected f (x, y) =
+    if Type.compare (Term.type_of x, expected) = EQUAL andalso
+       Type.compare (Term.type_of y, expected) = EQUAL
+    then f (x, y)
+    else decline "typed_binary" "operand sorts do not match this overload"
+
+  fun same_type_binary f (x, y) =
+    if Type.compare (Term.type_of x, Term.type_of y) = EQUAL then f (x, y)
+    else decline "same_type_binary"
+      "operand sorts do not match this overload"
+
+  fun typed_cond (condition, left, right) =
+    if Type.compare (Term.type_of condition, Type.bool) = EQUAL andalso
+       Type.compare (Term.type_of left, Term.type_of right) = EQUAL
+    then boolSyntax.mk_cond (condition, left, right)
+    else decline "typed_cond" "operand sorts do not match this overload"
+
+  fun typed_comb (rator, arg) =
+    let val (domain, _) = Type.dom_rng (Term.type_of rator) in
+      if Type.compare (domain, Term.type_of arg) = EQUAL then
+        Term.mk_comb (rator, arg)
+      else decline "typed_comb" "operand sort does not match this overload"
+    end
+    handle Feedback.HOL_ERR _ =>
+      decline "typed_comb" "function operand expected"
 
   fun zero_zero f x = zero_args (zero_args (f x))
   fun zero_one f x = zero_args (one_arg (f x))
@@ -253,7 +287,7 @@ in
   in
     Lib.K (zero_args (list_args
       (fn x::y::zs => aux (f (x, y)) (y::zs)
-        | _ => raise ERR "chainable" "at least two arguments expected")))
+        | _ => decline "chainable" "at least two arguments expected")))
   end
 
   fun leftassoc f =
@@ -263,7 +297,7 @@ in
   in
     Lib.K (zero_args (list_args
       (fn x::y::zs => aux x (y::zs)
-        | _ => raise ERR "leftassoc" "at least two arguments expected")))
+        | _ => decline "leftassoc" "at least two arguments expected")))
   end
 
   fun rightassoc f =
@@ -274,7 +308,7 @@ in
   in
     Lib.K (zero_args (list_args
       (fn x::y::zs => aux Lib.I (x::y::zs)
-        | _ => raise ERR "rightassoc" "at least two arguments expected")))
+        | _ => decline "rightassoc" "at least two arguments expected")))
   end
 
   (* A <numeral> is the digit 0 or a non-empty sequence of digits not
@@ -293,12 +327,12 @@ in
   let
     val (left, right) = Lib.pair_of_list (String.fields (Lib.equal #".") token)
     val _ = is_numeral left orelse
-      raise ERR "real_of_decimal" "not a decimal"
+      decline "real_of_decimal" "not a decimal"
     val right = String.explode right
     fun is_zerostar_numeral (#"0" :: c :: cs) = is_zerostar_numeral (c :: cs)
       | is_zerostar_numeral cs                = is_numeral (String.implode cs)
     val _ = is_zerostar_numeral right orelse
-      raise ERR "real_of_decimal" "not a decimal"
+      decline "real_of_decimal" "not a decimal"
     (* drop trailing 0's *)
     fun drop_zeros (#"0" :: cs) = drop_zeros cs
       | drop_zeros cs           = cs
@@ -315,7 +349,7 @@ in
         realSyntax.term_of_int denominator)
   end
   handle Feedback.HOL_ERR _ =>
-    raise ERR "real_of_decimal" "not a decimal"
+    decline "real_of_decimal" "not a decimal"
 
   (* The legacy parser represents numeric indices as Int terms.  The checked
      sort elaborator may preserve decimal indices as Num terms; accept both.
@@ -341,7 +375,7 @@ in
         wordsSyntax.mk_word (value, n)
       end
     else
-      raise ERR "bv_decimal_constant" "not a decimal bit-vector constant"
+      decline "bv_decimal_constant" "not a decimal bit-vector constant"
 
   fun mk_word_size_add n_tm t =
     fcpLib.index_type
@@ -522,14 +556,14 @@ in
     if List.length args = n then
       abstract_const name ret_ty args
     else
-      raise ERR ("<" ^ name ^ ">")
+      decline ("<" ^ name ^ ">")
         (Int.toString n ^ " argument(s) expected")
 
   fun abstract_bool name args = abstract_const name Type.bool args
 
   fun abstract_same name args =
     case args of
-      [] => raise ERR ("<" ^ name ^ ">") "at least one argument expected"
+      [] => decline ("<" ^ name ^ ">") "at least one argument expected"
     | x :: _ => abstract_const name (Term.type_of x) args
 
   fun abstract_indexed_const name indices ret_ty args =
@@ -624,7 +658,7 @@ in
       (SmtLib_String_Literal.check_code_point "character index"
         (natural_of_index index))
     handle SmtLib_String_Literal.InvalidCodePoint detail =>
-      raise ERR "<UnicodeStrings.char>" detail
+      decline "<UnicodeStrings.char>" detail
 
   fun sequence_ty elem_ty =
     Type.mk_thy_type {Thy = "list", Tyop = "list", Args = [elem_ty]}
@@ -653,21 +687,27 @@ in
               intrealSyntax.mk_real_of_int arg
             else arg
           val subst = Type.match_type domain (Term.type_of arg)
+            handle holerr as Feedback.HOL_ERR _ => raise ParseDecline holerr
           val rator = Term.inst subst rator
         in
-          Term.mk_comb (rator, arg)
+          if Type.compare
+              (Lib.fst (Type.dom_rng (Term.type_of rator)), Term.type_of arg) =
+              EQUAL
+          then Term.mk_comb (rator, arg)
+          else decline ("<HO-Core." ^ operator ^ ">")
+            "application operand sort does not match this overload"
         end
     in
       if token <> operator then
-        raise ERR ("<HO-Core." ^ operator ^ ">")
+        decline ("<HO-Core." ^ operator ^ ">")
           "operator name mismatch"
       else if not (List.null indices) then
-        raise ERR ("<HO-Core." ^ operator ^ ">")
+        decline ("<HO-Core." ^ operator ^ ">")
           "no indices expected"
       else
         case terms of
           rator :: arg :: args => List.foldl apply_one rator (arg :: args)
-        | _ => raise ERR ("<HO-Core." ^ operator ^ ">")
+        | _ => decline ("<HO-Core." ^ operator ^ ">")
             "a map term and at least one argument expected"
     end
 
@@ -686,7 +726,7 @@ in
         ["((_ FloatingPoint eb sb) 0)"]
         (fn _ => fn indices => fn args =>
           if List.null args then fp_type_from_indices indices
-          else raise ERR "<FloatingPoint>" "no arguments expected"),
+          else decline "<FloatingPoint>" "no arguments expected"),
       official_entry "Float16" no_attributes ["(Float16 0)"]
         (K_zero_zero (smtfp_type
           (Arbnum.fromInt 5, Arbnum.fromInt 11))),
@@ -744,7 +784,7 @@ in
             smtfloat_const_result (special_const name)
               (fp_type_from_indices indices)
           else
-            raise ERR ("<" ^ name ^ ">") "no arguments expected")
+            decline ("<" ^ name ^ ">") "no arguments expected")
 
     fun fp_unary smt_name hol_name =
       official_entry smt_name no_attributes
@@ -791,7 +831,7 @@ in
         val _ =
           if input_width = expected_width then ()
           else
-            raise ERR "<to_fp>"
+            decline "<to_fp>"
               ("IEEE bit-vector width " ^ Arbnum.toString input_width ^
                " does not match target floating-point width " ^
                Arbnum.toString expected_width)
@@ -819,9 +859,9 @@ in
             else if wordsSyntax.is_word_type (Term.type_of x) then
               smtfloat_app_result "smtfp_from_sbv" fp_ty [rm, x]
             else
-              raise ERR "<to_fp>"
+              decline "<to_fp>"
                 "expected an IEEE bit-vector, FP, Real, or signed BV operand"
-        | _ => raise ERR "<to_fp>" "one or two arguments expected"
+        | _ => decline "<to_fp>" "one or two arguments expected"
       end
 
     fun to_fp_unsigned indices args =
@@ -831,8 +871,8 @@ in
             if wordsSyntax.is_word_type (Term.type_of x) then
               smtfloat_app_result "smtfp_from_ubv" fp_ty [rm, x]
             else
-              raise ERR "<to_fp_unsigned>" "bit-vector operand expected"
-        | _ => raise ERR "<to_fp_unsigned>" "two arguments expected"
+              decline "<to_fp_unsigned>" "bit-vector operand expected"
+        | _ => decline "<to_fp_unsigned>" "two arguments expected"
       end
 
     fun fp_to_bv smt_name hol_name indices args =
@@ -841,8 +881,8 @@ in
           smtfloat_app_result hol_name
             (wordsSyntax.mk_word_type (word_index_type width)) [rm, x]
       | ([_], _) =>
-          raise ERR ("<" ^ smt_name ^ ">") "two arguments expected"
-      | _ => raise ERR ("<" ^ smt_name ^ ">") "one index expected"
+          decline ("<" ^ smt_name ^ ">") "two arguments expected"
+      | _ => decline ("<" ^ smt_name ^ ">") "one index expected"
 
     val tmentries =
       List.map rounding_entry rounding_modes @
@@ -888,7 +928,7 @@ in
           (Lib.K (zero_args (fn args =>
             case args of
               [rm, x, y, z] => smtfloat_app "smtfp_fma" [rm, x, y, z]
-            | _ => raise ERR "<fp.fma>" "four arguments expected"))),
+            | _ => decline "<fp.fma>" "four arguments expected"))),
         fp_rounding_binary "fp.sqrt" "smtfp_sqrt",
         fp_rounding_binary "fp.roundToIntegral"
           "smtfp_round_to_integral",
@@ -1090,7 +1130,7 @@ in
             ([lo, hi], [re]) =>
               smtstring_app "reglan_loop"
                 [re, smtstring_index lo, smtstring_index hi]
-          | _ => raise ERR "<re.loop>"
+          | _ => decline "<re.loop>"
               "two indices and one argument expected")
     ]
 
@@ -1230,7 +1270,7 @@ in
         (K_zero_two
           (fn (s, i) =>
             if is_string s then
-              raise ERR "seq.nth" "String is supported only by Z3"
+              decline "seq.nth" "String is supported only by Z3"
             else holsmt_app "smt_seq_nth" [s, i])),
       shared_term "seq.contains" no_attributes
         ["(seq.contains (Seq A) (Seq A) Bool)"]
@@ -1404,7 +1444,7 @@ in
         s :: element :: elements =>
           List.foldr (fn (x, acc) => pred_setSyntax.mk_insert (x, acc))
             s (List.rev (element :: elements))
-      | _ => raise ERR "<set.insert>" "at least two arguments expected"
+      | _ => decline "<set.insert>" "at least two arguments expected"
 
     fun strip_abs tm =
       let
@@ -1424,7 +1464,7 @@ in
           if List.length predicate_vars = List.length value_vars andalso
              ListPair.allEq (Lib.uncurry Term.aconv)
                (predicate_vars, value_vars) then ()
-          else raise ERR "<set.comprehension>"
+          else decline "<set.comprehension>"
             "predicate and value must bind the same variables"
         val result_var = Term.variant (Term.all_varsl [predicate, value])
           (Term.mk_var ("set_comprehension_x", Term.type_of value_body))
@@ -1765,7 +1805,7 @@ in
           if List.null indices then
             function_ty args
           else
-            raise ERR "<HO-Core.->>" "no indices expected")
+            decline "<HO-Core.->>" "no indices expected")
     ]
 
     (* The official apply spelling [_] is also the dictionary catch-all key.
@@ -1805,7 +1845,7 @@ in
       (* array lookup is translated as function application *)
       official_entry "select" no_attributes
         ["(par (Index Element) (select (Array Index Element) Index Element))"]
-        (K_zero_two Term.mk_comb),
+        (K_zero_two typed_comb),
       (* array update is translated as function update *)
       official_entry "store" no_attributes
         ["(par (Index Element) (store (Array Index Element) Index Element Element (Array Index Element)))"]
@@ -1855,7 +1895,7 @@ in
             wordsSyntax.mk_word (value, size)
           end
         else
-          raise ERR "<Fixed_Size_BitVectors.tmdict._>"
+          decline "<Fixed_Size_BitVectors.tmdict._>"
             "not a bit-vector constant")),
       official_entry "_" (indexed_attributes ["m"])
         ["((_ bv<numeral> m) (_ BitVec m))"]
@@ -2066,7 +2106,7 @@ in
           (Term.prim_mk_const {Thy="HolSmt", Name="xor"}, t1), t2))),
       official_entry "=" (overloaded_attributes chainable_attributes)
         ["(par (A) (= A A Bool :chainable))"]
-        (chainable boolSyntax.mk_eq),
+        (chainable (same_type_binary boolSyntax.mk_eq)),
       (* "distinct" is declared as :pairwise in SMT-LIB, but rather
          than unfolding the definition of :pairwise, we use
          'mk_all_distinct' *)
@@ -2075,7 +2115,7 @@ in
         (K_zero_list (fn ts => listSyntax.mk_all_distinct
           (listSyntax.mk_list (ts, Term.type_of (List.hd ts))))),
       official_entry "ite" (overloaded_attributes (parametric_attributes ["A"]))
-        ["(par (A) (ite Bool A A A))"] (K_zero_three boolSyntax.mk_cond)
+        ["(par (A) (ite Bool A A A))"] (K_zero_three typed_cond)
     ]
 
     val tydict = dictionary_of_entries tyentries
@@ -2102,15 +2142,15 @@ in
         if is_numeral token then
           intSyntax.term_of_int (Arbint.fromString token)
         else
-          raise ERR "<Ints.tmdict._>" "not a numeral")),
+          decline "<Ints.tmdict._>" "not a numeral")),
       official_entry "-" no_attributes ["(- Int Int)"]
-        (K_zero_one intSyntax.mk_negated),
+        (K_zero_one (typed_unary intSyntax.int_ty intSyntax.mk_negated)),
       official_entry "-" left_assoc_attributes ["(- Int Int Int)"]
-        (leftassoc intSyntax.mk_minus),
+        (leftassoc (typed_binary intSyntax.int_ty intSyntax.mk_minus)),
       official_entry "+" left_assoc_attributes ["(+ Int Int Int :left-assoc)"]
-        (leftassoc intSyntax.mk_plus),
+        (leftassoc (typed_binary intSyntax.int_ty intSyntax.mk_plus)),
       official_entry "*" left_assoc_attributes ["(* Int Int Int :left-assoc)"]
-        (leftassoc intSyntax.mk_mult),
+        (leftassoc (typed_binary intSyntax.int_ty intSyntax.mk_mult)),
       official_entry "**" no_attributes ["(** Int Int Int)"]
         (K_zero_two (fn (base, exponent) =>
           intSyntax.mk_exp (base, intSyntax.mk_Num exponent))),
@@ -2125,18 +2165,18 @@ in
         ["(mod0 Int Int Int :left-assoc)"]
         (leftassoc mk_int_emod),
       official_entry "abs" no_attributes ["(abs Int Int)"]
-        (K_zero_one intSyntax.mk_absval),
+        (K_zero_one (typed_unary intSyntax.int_ty intSyntax.mk_absval)),
       official_entry "divisible" (indexed_attributes ["n"])
         ["((_ divisible n) Int Bool)"]
         (K_one_one (fn n => fn t => intSyntax.mk_divides (n, t))),
       official_entry "<=" chainable_attributes ["(<= Int Int Bool :chainable)"]
-        (chainable intSyntax.mk_leq),
+        (chainable (typed_binary intSyntax.int_ty intSyntax.mk_leq)),
       official_entry "<" chainable_attributes ["(< Int Int Bool :chainable)"]
-        (chainable intSyntax.mk_less),
+        (chainable (typed_binary intSyntax.int_ty intSyntax.mk_less)),
       official_entry ">=" chainable_attributes ["(>= Int Int Bool :chainable)"]
-        (chainable intSyntax.mk_geq),
+        (chainable (typed_binary intSyntax.int_ty intSyntax.mk_geq)),
       official_entry ">" chainable_attributes ["(> Int Int Bool :chainable)"]
-        (chainable intSyntax.mk_greater)
+        (chainable (typed_binary intSyntax.int_ty intSyntax.mk_greater))
     ]
 
     val tydict = dictionary_of_entries tyentries
@@ -2163,28 +2203,29 @@ in
         if is_numeral token then
           realSyntax.term_of_int (Arbint.fromString token)
         else
-          raise ERR "<Reals.tmdict._>" "not a numeral")),
+          decline "<Reals.tmdict._>" "not a numeral")),
       (* decimals *)
       official_entry "_" no_attributes ["<decimal>"] (zero_zero real_of_decimal),
       official_entry "-" no_attributes ["(- Real Real)"]
-        (K_zero_one realSyntax.mk_negated),
+        (K_zero_one (typed_unary realSyntax.real_ty realSyntax.mk_negated)),
       official_entry "-" left_assoc_attributes ["(- Real Real Real)"]
-        (leftassoc realSyntax.mk_minus),
+        (leftassoc (typed_binary realSyntax.real_ty realSyntax.mk_minus)),
       official_entry "+" left_assoc_attributes ["(+ Real Real Real :left-assoc)"]
-        (leftassoc realSyntax.mk_plus),
+        (leftassoc (typed_binary realSyntax.real_ty realSyntax.mk_plus)),
       official_entry "*" left_assoc_attributes ["(* Real Real Real :left-assoc)"]
-        (leftassoc realSyntax.mk_mult),
+        (leftassoc (typed_binary realSyntax.real_ty realSyntax.mk_mult)),
       official_entry "/" left_assoc_attributes ["(/ Real Real Real :left-assoc)"]
-        (leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-          (Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}, t1), t2))),
+        (leftassoc (typed_binary realSyntax.real_ty (fn (t1, t2) =>
+          Term.mk_comb (Term.mk_comb
+          (Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}, t1), t2)))),
       official_entry "<=" chainable_attributes ["(<= Real Real Bool :chainable)"]
-        (chainable realSyntax.mk_leq),
+        (chainable (typed_binary realSyntax.real_ty realSyntax.mk_leq)),
       official_entry "<" chainable_attributes ["(< Real Real Bool :chainable)"]
-        (chainable realSyntax.mk_less),
+        (chainable (typed_binary realSyntax.real_ty realSyntax.mk_less)),
       official_entry ">=" chainable_attributes ["(>= Real Real Bool :chainable)"]
-        (chainable realSyntax.mk_geq),
+        (chainable (typed_binary realSyntax.real_ty realSyntax.mk_geq)),
       official_entry ">" chainable_attributes ["(> Real Real Bool :chainable)"]
-        (chainable realSyntax.mk_greater)
+        (chainable (typed_binary realSyntax.real_ty realSyntax.mk_greater))
     ]
 
     val tydict = dictionary_of_entries tyentries
@@ -2211,35 +2252,36 @@ in
         if is_numeral token then
           intSyntax.term_of_int (Arbint.fromString token)
         else
-          raise ERR "<Reals_Ints.tmdict._>" "not a numeral")),
-      ("-", K_zero_one intSyntax.mk_negated),
-      ("-", leftassoc intSyntax.mk_minus),
-      ("+", leftassoc intSyntax.mk_plus),
-      ("*", leftassoc intSyntax.mk_mult),
+          decline "<Reals_Ints.tmdict._>" "not a numeral")),
+      ("-", K_zero_one (typed_unary intSyntax.int_ty intSyntax.mk_negated)),
+      ("-", leftassoc (typed_binary intSyntax.int_ty intSyntax.mk_minus)),
+      ("+", leftassoc (typed_binary intSyntax.int_ty intSyntax.mk_plus)),
+      ("*", leftassoc (typed_binary intSyntax.int_ty intSyntax.mk_mult)),
       ("**", K_zero_two (fn (base, exponent) =>
         intSyntax.mk_exp (base, intSyntax.mk_Num exponent))),
       ("div", leftassoc mk_int_ediv),
       ("div0", leftassoc mk_int_ediv),
       ("mod", leftassoc mk_int_emod),
       ("mod0", leftassoc mk_int_emod),
-      ("abs", K_zero_one intSyntax.mk_absval),
+      ("abs", K_zero_one (typed_unary intSyntax.int_ty intSyntax.mk_absval)),
       ("divisible", K_one_one (fn n => fn t => intSyntax.mk_divides (n, t))),
-      ("<=", chainable intSyntax.mk_leq),
-      ("<", chainable intSyntax.mk_less),
-      (">=", chainable intSyntax.mk_geq),
-      (">", chainable intSyntax.mk_greater),
+      ("<=", chainable (typed_binary intSyntax.int_ty intSyntax.mk_leq)),
+      ("<", chainable (typed_binary intSyntax.int_ty intSyntax.mk_less)),
+      (">=", chainable (typed_binary intSyntax.int_ty intSyntax.mk_geq)),
+      (">", chainable (typed_binary intSyntax.int_ty intSyntax.mk_greater)),
       (* decimals *)
       ("_", zero_zero real_of_decimal),
-      ("-", K_zero_one realSyntax.mk_negated),
-      ("-", leftassoc realSyntax.mk_minus),
-      ("+", leftassoc realSyntax.mk_plus),
-      ("*", leftassoc realSyntax.mk_mult),
-      ("/", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-          (Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}, t1), t2))),
-      ("<=", chainable realSyntax.mk_leq),
-      ("<", chainable realSyntax.mk_less),
-      (">=", chainable realSyntax.mk_geq),
-      (">", chainable realSyntax.mk_greater),
+      ("-", K_zero_one (typed_unary realSyntax.real_ty realSyntax.mk_negated)),
+      ("-", leftassoc (typed_binary realSyntax.real_ty realSyntax.mk_minus)),
+      ("+", leftassoc (typed_binary realSyntax.real_ty realSyntax.mk_plus)),
+      ("*", leftassoc (typed_binary realSyntax.real_ty realSyntax.mk_mult)),
+      ("/", leftassoc (typed_binary realSyntax.real_ty (fn (t1, t2) =>
+        Term.mk_comb (Term.mk_comb
+          (Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}, t1), t2)))),
+      ("<=", chainable (typed_binary realSyntax.real_ty realSyntax.mk_leq)),
+      ("<", chainable (typed_binary realSyntax.real_ty realSyntax.mk_less)),
+      (">=", chainable (typed_binary realSyntax.real_ty realSyntax.mk_geq)),
+      (">", chainable (typed_binary realSyntax.real_ty realSyntax.mk_greater)),
       ("to_real", K_zero_one intrealSyntax.mk_real_of_int),
       ("to_int", K_zero_one intrealSyntax.mk_INT_FLOOR),
       ("is_int", K_zero_one intrealSyntax.mk_is_int)

@@ -360,7 +360,21 @@ structure Z3 = struct
      goal's assumption list *)
   val proof_option = " proof=true pp.simplify_implies=false"
 
-  val proof_cmd_stem = proof_option ^ " -smt2 -file:"
+  val compact_proof_version = "4.11.2.0-holsmt-compact-prototype2"
+
+  fun configured_proof_dialect () =
+    if configured_version () = SOME compact_proof_version then
+      Z3_ProofParser.CompactTyped
+    else
+      Z3_ProofParser.LegacyDecimal
+
+  fun compact_proof_option () =
+    case configured_proof_dialect () of
+      Z3_ProofParser.CompactTyped => " pp.compact_proof_names=true"
+    | Z3_ProofParser.LegacyDecimal => ""
+
+  val proof_cmd_stem =
+    proof_option ^ compact_proof_option () ^ " -smt2 -file:"
 
   fun current_proof_cmd_stem () = with_timeout_option proof_cmd_stem
 
@@ -488,9 +502,8 @@ structure Z3 = struct
                        "underlying exception: " ^ General.exnMessage exn)
             fun parse_proof proof_start =
               (let
-                 val (ty_dict, tm_dict) =
-                   SmtLib.parser_dicts_for_solver_translation
-                     "Z3" translation
+                 val semantic_context =
+                   Z3_ProofParser.semantic_context_from_translation translation
                  (* Reject oversized proof text before the untrusted proof
                     parser reads even its first token. *)
                  val proof_bytes = SmtResource.remaining_file_bytes
@@ -502,8 +515,9 @@ structure Z3 = struct
                    ("proof bytes=" ^ Int.toString proof_bytes)
                  val proof =
                    SmtResource.profile_phase "z3/parse+graph-construction"
-                     (Z3_ProofParser.parse_stream_with_version
-                       (ty_dict, tm_dict) (version_string ())) instream
+                     (Z3_ProofParser.parse_stream_with_context
+                       semantic_context (configured_proof_dialect ())
+                       (version_string ())) instream
                  (* Graph metrics are observation only.  Keep their traversal
                     entirely out of the ordinary checked path. *)
                  val _ =
@@ -512,8 +526,9 @@ structure Z3 = struct
                      ((let val graph = Z3_Proof.proof_graph_metrics proof
                        in
                          SmtResource.emit_e0
-                           ("proof_graph nodes=" ^
-                            Int.toString (#nodes graph) ^ " edges=" ^
+                          ("proof_graph outer_nodes=" ^
+                            Int.toString (#nodes graph) ^
+                            " outer_direct_edges=" ^
                             Int.toString (#edges graph) ^ " variables=" ^
                             Int.toString (#variables graph) ^
                             " bit_decompositions=" ^

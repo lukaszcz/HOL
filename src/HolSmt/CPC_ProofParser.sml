@@ -95,9 +95,11 @@ local
   val cpc_cfg : SmtLib_Parser.parser_cfg = {
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
     mk_let = SmtLib_Parser.smtlib_mk_let,
+    mk_bound_var = Term.mk_var,
     lookup_binder_list = lookup_cpc_list,
     record_binder_block = record_cpc_binder_block,
     symbol_key = quoted_symbol_key,
+    type_symbol_key = quoted_symbol_key,
     parse_choice = false,
     parse_lambda = true
   }
@@ -179,7 +181,8 @@ local
      still fail loudly. *)
   fun cpc_literal_parsefn token indices args =
     if not (List.null indices) orelse not (List.null args) then
-      raise ERR "cpc_literal_parsefn" "not a nullary CPC literal"
+      SmtLib_Theories.decline "<cpc_literal_parsefn>"
+        "not a nullary CPC literal"
     else case SmtLib_Parser.proof_string_token token of
       SOME value =>
         (SmtLib_String_Literal.mk_string_term value
@@ -203,7 +206,8 @@ local
         else realSyntax.mk_div (realSyntax.term_of_int numerator,
           realSyntax.term_of_int denominator)
       end
-    else raise ERR "cpc_literal_parsefn" "not a CPC rational literal"
+    else SmtLib_Theories.decline "<cpc_literal_parsefn>"
+      "not a CPC rational literal"
 
   fun numeral_of_term where_ tm =
     numSyntax.dest_numeral tm
@@ -217,7 +221,8 @@ local
      HOL bit-vector terms. *)
   fun cpc_bv_parsefn token indices args =
     if not (List.null indices) then
-      raise ERR "cpc_bv_parsefn" "unexpected indexed CPC bit-vector term"
+      SmtLib_Theories.decline "<cpc_bv_parsefn>"
+        "unexpected indexed CPC bit-vector term"
     else
       case (token, args) of
         ("@bv", [value, width]) =>
@@ -243,18 +248,21 @@ local
              wordsSyntax.mk_word (Arbnum.zero, Arbnum.one))
       | ("concat", first :: rest) =>
           if List.null rest then
-            raise ERR "cpc_bv_parsefn" "concat expects at least two words"
+            SmtLib_Theories.decline "<cpc_bv_parsefn>"
+              "concat expects at least two words"
           else List.foldl
             (fn (right, left) => wordsSyntax.mk_word_concat (left, right))
             first rest
-      | _ => raise ERR "cpc_bv_parsefn" "malformed CPC bit-vector term"
+      | _ => SmtLib_Theories.decline "<cpc_bv_parsefn>"
+          "malformed CPC bit-vector term"
 
   (* A linear-integer source proof can introduce real-valued rational
      coefficients.  cvc5 writes the corresponding floor/coercion operators
      even though the input logic did not need the mixed Int/Real dictionary. *)
   fun cpc_intreal_parsefn token indices args =
     if not (List.null indices) then
-      raise ERR "cpc_intreal_parsefn" "unexpected indexed CPC arithmetic term"
+      SmtLib_Theories.decline "<cpc_intreal_parsefn>"
+        "unexpected indexed CPC arithmetic term"
     else
       case (token, args) of
         ("to_int", [real]) => intrealSyntax.mk_INT_FLOOR real
@@ -263,7 +271,8 @@ local
           intSyntax.mk_exp
             (intSyntax.term_of_int (Arbint.fromInt 2),
              intSyntax.mk_Num exponent)
-      | _ => raise ERR "cpc_intreal_parsefn" "malformed CPC arithmetic term"
+      | _ => SmtLib_Theories.decline "<cpc_intreal_parsefn>"
+          "malformed CPC arithmetic term"
 
   (* CPC prints every indexed SMT-LIB term identifier as an ordinary
      application whose leading arguments are the indices.  Derive the
@@ -320,16 +329,19 @@ local
   val cpc_indexed_term_families =
     indexed_family_arities cpc_indexed_term_registry
 
-  fun cpc_deindexed_parsefn source_dict index_arity token indices args =
-    if not (List.null indices) then
-      raise ERR "cpc_deindexed_parsefn"
-        (token ^ " already has explicit indices")
+  fun cpc_deindexed_parsefn source_dict source_name index_arity token
+      indices args =
+    if source_name = "_" andalso token <> "_" then
+      SmtLib_Theories.decline "<cpc_deindexed_parsefn>"
+        "generic indexed adapter does not match this token"
+    else if not (List.null indices) then
+      SmtLib_Parser.apply_term source_dict source_name indices args
     else if List.length args < index_arity then
-      raise ERR "cpc_deindexed_parsefn"
+      SmtLib_Theories.decline "<cpc_deindexed_parsefn>"
         (token ^ " expects " ^ Int.toString index_arity ^
          " flattened index argument(s)")
     else
-      SmtLib_Parser.apply_term source_dict token
+      SmtLib_Parser.apply_term source_dict source_name
         (List.take (args, index_arity)) (List.drop (args, index_arity))
 
   fun with_cpc_deindexed_entries tmdict =
@@ -337,7 +349,7 @@ local
       (fn ((name, arity), dict) =>
         if Option.isSome (Redblackmap.peek (tmdict, name)) then
           let
-            val adapter = cpc_deindexed_parsefn tmdict arity
+            val adapter = cpc_deindexed_parsefn tmdict name arity
             (* [_] is also the parser's generic literal pseudo-entry.  Its
                non-indexed alternatives must remain available for atoms such
                as [#b0]; every real indexed family is replaced outright so
@@ -1232,14 +1244,22 @@ local
 
   fun parse_term dicts_ref raw_get_token =
     let
-      val get_token = cpc_get_token raw_get_token
+      (* Keep the lexical spelling through the shared term parser.  Its
+         [symbol_key] callback selects the semantic dictionary key, while
+         the marked spelling tells overload dispatch that a quoted atom may
+         not fall through to the unquoted literal catch-all. *)
+      val get_token = raw_get_token
       val first = get_token ()
+      val first_semantic = cpc_semantic_token first
       fun ordinary tokens = SmtLib_Parser.parse_term_with_cfg cpc_cfg
         (Library.undo_look_ahead tokens get_token) (!dicts_ref)
     in
-      if first <> "(" then ordinary [first]
+      if first_semantic <> "(" then ordinary [first]
       else
-        let val head = get_token () in
+        let
+          val marked_head = get_token ()
+          val head = cpc_semantic_token marked_head
+        in
           if head = "_" then
             let
               fun application_terms terms =
@@ -1338,14 +1358,15 @@ local
                         in
                           bind vars body
                         end
-                      else ordinary ["(", head, binders, binder_head]
+                      else ordinary
+                        ["(", marked_head, binders, binder_head]
                     end
                   else raise ERR "parse_term"
                     ("undefined CPC @list alias " ^ binders ^
                      " (known aliases: " ^
                      String.concatWith ", " (List.rev (!cpc_list_names)) ^ ")")
             end
-          else ordinary ["(", head]
+          else ordinary ["(", marked_head]
         end
     end
 

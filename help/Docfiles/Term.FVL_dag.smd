@@ -13,16 +13,23 @@ An invocation `FVL_dag [t1,...,tn] V` returns the same set as
 `FVL [t1,...,tn] V`.  It adds the free variables of `t1,...,tn` to the
 initial accumulator `V` and preserves variables already in `V`.
 
-During one invocation, the implementation memoizes term nodes by physical
-identity.  This prevents repeated traversal of a shared subterm.  Portable
-physical-identity lookup has a quadratic worst-case cost in the number of
-distinct nodes.  Both kernels retain an intrinsic free-variable summary for
-each visited node.  The standard kernel additionally retains the free de
-Bruijn indices of each node; it interprets only indices referenced by a lazy
-closure body through explicit-substitution lookups, without expanding the
-closure.  Summary storage can be the product of the numbers of nodes and
-variables or indices.  The operation-local memo is discarded when the call
-returns.
+During one invocation, an ordinary tree visitor and an intrinsic DAG-summary
+visitor advance cooperatively.  The first to complete supplies the exact
+result, and both operation-local states are then discarded.  The scheduler
+advances the tree visitor at each memo lookup start and before each physical
+pointer comparison, so a long linear memo lookup cannot starve it.
+
+The DAG visitor memoizes term nodes by physical identity, preventing repeated
+traversal of a shared subterm.  Portable physical-identity lookup still has a
+quadratic worst-case cost in the number of distinct nodes.  Both kernels
+retain an intrinsic free-variable summary for each visited node.  The standard
+kernel additionally retains the free de Bruijn indices of each node; it
+interprets only indices referenced by a lazy closure body through
+explicit-substitution lookups, without expanding that closure.  Summary
+storage can be the product of the numbers of nodes and variables or indices.
+Set and closure operations have their usual costs; the cooperative schedule
+does not establish a universal linear or wall-time bound.  The initial set and
+its comparator are preserved whichever visitor finishes first.
 
 Use `FVL` for ordinary term trees.  Use `FVL_dag` when physical sharing can
 make a tree traversal repeat a large subgraph.

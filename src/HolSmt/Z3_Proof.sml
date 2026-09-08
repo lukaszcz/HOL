@@ -96,6 +96,8 @@ struct
                      | TRUE_AXIOM of Term.term
                      | UNIT_RESOLUTION of proofterm list * Term.term
                      | ID of int
+                     | LOCAL_SCOPE of (int * proofterm) list * proofterm
+                     | LOCAL_REF of int
                      | THEOREM of Thm.thm
 
   fun proofterm_rule_name proofterm =
@@ -137,6 +139,8 @@ struct
     | TRUE_AXIOM _ => "true-axiom"
     | UNIT_RESOLUTION _ => "unit-resolution"
     | ID _ => "id"
+    | LOCAL_SCOPE _ => "local-scope"
+    | LOCAL_REF _ => "local-ref"
     | THEOREM _ => "theorem"
 
   datatype proof_premise_shape = ZeroPremises
@@ -147,6 +151,20 @@ struct
 
   datatype proof_conclusion_shape = BooleanConclusion
 
+  datatype compact_premise_layout =
+      CompactZeroPremises
+    | CompactOnePremise of {accepts_bound_proof : bool}
+    | CompactTwoPremises
+    | CompactListPremises of {accepts_bound_proof : bool}
+    | CompactProofClosure
+    | CompactTermArguments
+
+  datatype compact_index_layout =
+      CompactNoIndices
+    | CompactRewriteIndices
+    | CompactQuantifierIndices
+    | CompactTheoryLemmaIndices
+
   datatype proof_version_support = AllZ3Versions
                                  | Z3VersionPrefixes of string list
                                  | Z3Versions of string list
@@ -156,6 +174,8 @@ struct
     aliases : string list,
     version_support : proof_version_support,
     premise_shape : proof_premise_shape,
+    compact_premise_layout : compact_premise_layout,
+    compact_index_layout : compact_index_layout,
     conclusion_shape : proof_conclusion_shape,
     replay_handler : string
   }
@@ -197,6 +217,28 @@ struct
     aliases = aliases,
     version_support = version_support,
     premise_shape = premise_shape,
+    compact_premise_layout =
+      if replay_handler = "proof_bind" then CompactProofClosure
+      else
+        (case premise_shape of
+           ZeroPremises => CompactZeroPremises
+         | OnePremise => CompactOnePremise {
+             accepts_bound_proof =
+               replay_handler = "nnf_neg" orelse
+               replay_handler = "nnf_pos" orelse
+               replay_handler = "quant_intro"}
+         | TwoPremises => CompactTwoPremises
+         | ListPremises => CompactListPremises {
+             accepts_bound_proof =
+               replay_handler = "nnf_neg" orelse
+               replay_handler = "nnf_pos"}
+         | TermArguments => CompactTermArguments),
+    compact_index_layout =
+      if replay_handler = "rewrite" then CompactRewriteIndices
+      else if replay_handler = "quant_inst" then CompactQuantifierIndices
+      else if String.isPrefix "th_lemma[" replay_handler then
+        CompactTheoryLemmaIndices
+      else CompactNoIndices,
     conclusion_shape = BooleanConclusion,
     replay_handler = replay_handler
   }
@@ -347,6 +389,7 @@ struct
 
   type proof = {
     steps : proof_steps,
+    local_steps : proof_steps,
     vars : Term.term HOLset.set,
     bit_decompositions : bit_decomposition list,
     z3_version : string
@@ -354,6 +397,7 @@ struct
 
   fun mk_proof (steps, vars, bit_decompositions, z3_version) : proof = {
     steps = steps,
+    local_steps = Redblackmap.mkDict Int.compare,
     vars = vars,
     bit_decompositions = bit_decompositions,
     z3_version = z3_version
@@ -363,12 +407,22 @@ struct
     (Redblackmap.mkDict Int.compare, Term.empty_tmset, [], z3_version)
 
   fun proof_steps (proof : proof) = #steps proof
+  fun proof_local_steps (proof : proof) = #local_steps proof
   fun proof_vars (proof : proof) = #vars proof
   fun proof_bit_decompositions (proof : proof) = #bit_decompositions proof
   fun proof_version (proof : proof) = #z3_version proof
 
   fun update_proof_steps (proof : proof) steps = {
     steps = steps,
+    local_steps = #local_steps proof,
+    vars = #vars proof,
+    bit_decompositions = #bit_decompositions proof,
+    z3_version = #z3_version proof
+  }
+
+  fun update_proof_local_steps (proof : proof) local_steps = {
+    steps = #steps proof,
+    local_steps = local_steps,
     vars = #vars proof,
     bit_decompositions = #bit_decompositions proof,
     z3_version = #z3_version proof
@@ -376,6 +430,7 @@ struct
 
   fun update_proof_vars (proof : proof) vars = {
     steps = #steps proof,
+    local_steps = #local_steps proof,
     vars = vars,
     bit_decompositions = #bit_decompositions proof,
     z3_version = #z3_version proof
@@ -383,6 +438,7 @@ struct
 
   fun update_proof_bit_decompositions (proof : proof) bit_decompositions = {
     steps = #steps proof,
+    local_steps = #local_steps proof,
     vars = #vars proof,
     bit_decompositions = bit_decompositions,
     z3_version = #z3_version proof
@@ -413,8 +469,13 @@ struct
     | proofterm_premises (TRANS (pt1, pt2, _)) = [pt1, pt2]
     | proofterm_premises (TRANS_STAR (pts, _)) = pts
     | proofterm_premises (UNIT_RESOLUTION (pts, _)) = pts
+    | proofterm_premises (LOCAL_SCOPE (nodes, body)) =
+        body :: List.map Lib.snd nodes
     | proofterm_premises _ = []
 
+  (* Observation of the outer ID table only.  Embedded LOCAL_SCOPE nodes and
+     references have their own parser admission counters and are deliberately
+     not presented as outer graph nodes or direct premise edges. *)
   fun proof_graph_metrics proof =
     let
       val edges = Redblackmap.foldl

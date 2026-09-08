@@ -931,6 +931,41 @@ Updating the Z3 version matrix:
      manifest, regenerate the matrix, and adjust the "Supported Z3 versions"
      table above.
 
+Native compact Z3 certificates:
+
+  The explicitly patched Z3 version
+  `4.11.2.0-holsmt-compact-prototype2` uses the `CompactTyped` proof dialect
+  and enables `pp.compact_proof_names=true`.  Other Z3 versions retain the
+  legacy decimal-name dialect and options.  Compact parsing never falls back
+  to legacy parsing after an error.
+
+  The compact parser assigns internal graph identifiers independently of the
+  opaque external names and keeps one typed nearest-binding environment.
+  Local proof lets remain embedded DAG scopes: replay uses a separate active
+  local table, memoizes each node within one activation, and removes that table
+  on exit.  Proof-bind annotations retain their binder blocks through aliases;
+  each registered consumer activates its open local graph independently.
+
+  Semantic helper variables use the `smtlib_` namespace.  Compact binder
+  allocation uses `holsmt_z3_bound` and reserves every free source variable,
+  declaration and fixed parser helper name before reuse; the two namespaces
+  are disjoint.  Source dictionary callbacks retain their declared arity and
+  are never probed with zero arguments to infer a sort.
+
+  The parser bounds the raw proof
+  before lexing and separately bounds tokens, token and numeral sizes,
+  bindings, graph nodes and edges, local expression depth and tokens, and
+  pending children, declaration depth and aggregate simultaneously pending
+  binding syntax.  Each binding RHS and its child expressions are buffered
+  only within those fixed local limits; the long outer let chain is processed
+  tail-recursively.  This is bounded-memory parsing, not a constant-memory or
+  one-pending-child claim.
+
+  Reproducible native patches, source pins, build recipes and producer tests
+  are under `developers/holsmt/solvers/native-compact`.  The cvc5 patch is
+  retained there for future semantic-component integration; the HOL cvc5
+  driver does not enable its compact format.
+
 The HolSmt selftest is part of that build.  `Z3_SMT_Prover` and selftest
 theorem checks reject unexpected oracle/axiom tags on `Z3_TAC` outputs; `sat`
 and `unknown` solver results are negative outcomes and must not produce HOL
