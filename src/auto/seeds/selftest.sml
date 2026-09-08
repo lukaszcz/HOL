@@ -889,6 +889,17 @@ val _ =
    to the rest, so the append has to be walked into a cons before the
    rule can reach the index at all, and the index is then read on the
    source's side in the spelling the rule does not use. *)
+(* [adjacent_thm] settles a pair that is the head of the list, and
+   [adjacent_iff] is what walks one further in.  The goal below asks for
+   a pair one place beyond the head of a list with an arbitrary tail, so
+   it needs the walk and not the head equation. *)
+val _ =
+  check
+    ("an adjacent pair one place past the head of a list is found",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : 'a list) x y z. adjacent (x::y::z::xs) y z``))
+
 val _ =
   check
     ("an index reaches past a singleton appended to a list",

@@ -379,3 +379,21 @@ val _ =
 
 val _ =
   export_at "dest" ("SHORTLEX_LENGTH_LE_AUTO", listTheory.SHORTLEX_LENGTH_LE)
+
+(* src/HOL/List.thy:254-257 @ f7e02b7e.  [successively] is a fun there,
+   so its three defining equations are simp by construction, and it is
+   the third of them --
+
+     successively P (x # y # xs) = (P x y /\ successively P (y # xs))
+
+   -- that [auto simp: distinct_adj_def] rewrites a successively over a
+   cons with.  HOL4 has no such constant, and the translation states
+   successively through [adjacent].  Its declared equations
+   ([adjacent_thm]) settle the empty list, the singleton, and a pair
+   that is the head of the list; a pair anywhere else is [adjacent_iff],
+   which HOL4 states and declares to no simpset.  So unfolding a
+   successively over a cons left an [adjacent] on that cons with nothing
+   to take it apart.  The rule recurses into the tail, so it terminates
+   where the list does. *)
+val _ =
+  export_at "simp" ("adjacent_iff_AUTO", listTheory.adjacent_iff)
