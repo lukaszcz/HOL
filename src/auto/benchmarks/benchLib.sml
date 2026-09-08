@@ -343,8 +343,32 @@ fun symmetry_normalise term =
           Term.mk_abs (variable, symmetry_normalise body)
       | _ => term
 
+(* Isabelle has no predecessor constant -- src/HOL/Nat.thy writes the
+   predecessor as [n - 1] throughout -- so a translated goal spells an
+   index one below another that way where a HOL4 rule spells it
+   [PRE n].  The layer's simpset carries the step between the two, so
+   they are one term to every tactic that reads a rule, and a
+   comparison that counted them as two statements would let a rule be
+   the goal in one spelling and not in the other. *)
+val predecessor = prim_mk_const {Thy = "prim_rec", Name = "PRE"}
+
+fun predecessor_normalise term =
+  case Term.dest_term term of
+      COMB (rator, rand) =>
+        let
+          val rand = predecessor_normalise rand
+        in
+          if Term.is_const rator andalso Term.same_const rator predecessor
+          then numSyntax.mk_minus (rand, numSyntax.term_of_int 1)
+          else Term.mk_comb (predecessor_normalise rator, rand)
+        end
+    | LAMB (variable, body) =>
+        Term.mk_abs (variable, predecessor_normalise body)
+    | _ => term
+
 fun statement_normal_form term =
-  symmetry_normalise (rename_free (beta_eta_normalise term))
+  symmetry_normalise
+    (rename_free (predecessor_normalise (beta_eta_normalise term)))
 
 (* A rule and the goal can state the same thing and still not look
    alike.  A corpus goal wears the translation's constants and a library

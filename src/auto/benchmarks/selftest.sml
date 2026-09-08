@@ -744,6 +744,28 @@ val _ =
          (benchLib.theorem_is_goal ``!n k. 0 < n ==> k MOD n < SUC n``
             arithmeticTheory.DIVISION))
 
+(* The same index has two spellings, and which one a statement wears
+   says where it was written rather than what it says: a translated
+   goal spells it [n - 1], because Isabelle has no predecessor
+   constant, and a HOL4 rule spells it [PRE n].  The layer's simpset
+   carries the step between them, so a rule that is the goal in one
+   spelling is the goal in the other, and A1 has to read past the
+   difference. *)
+val _ =
+  check
+    ("A1 reads past the two spellings of a predecessor",
+     fn () =>
+       benchLib.theorem_is_goal ``!n. 0 < n <=> SUC (n - 1) = n``
+         arithmeticTheory.SUC_PRE)
+
+val _ =
+  check
+    ("A1 leaves a predecessor statement that is not the goal alone",
+     fn () =>
+       not
+         (benchLib.theorem_is_goal ``!n. 0 < n <=> SUC (n - 1) = SUC n``
+            arithmeticTheory.SUC_PRE))
+
 val _ =
   check
     ("A1 catches a goal-as-truth wrapper through the cheap pre-filter",
