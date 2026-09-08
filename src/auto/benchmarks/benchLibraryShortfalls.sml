@@ -203,8 +203,7 @@ val indexing_through_list_constructors =
      "list_L2834_set_zip", "list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth",
      "list_L6487_nth_nth_transpose_sorted",
-     "list_L6873_nth_sorted_list_of_set_greaterThanAtMost",
-     "list_L7978_listrel_sym"]
+     "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
 
 val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
