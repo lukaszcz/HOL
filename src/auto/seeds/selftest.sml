@@ -907,3 +907,15 @@ val _ =
      fn () =>
        closes_within 20 (clasimpLib.AUTO_TAC [])
          ([], ``!(xs : 'a list) x y z. adjacent (x::y::z::xs) y z``))
+
+(* A null and an empty list are one thing to Isabelle's simpset and
+   were two to HOL4's.  The goal below states a hypothesis with one
+   spelling and its conclusion with the other, so it closes only if the
+   step between them is declared. *)
+val _ =
+  check
+    ("a null list meets a list stated empty",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : 'a list) (ys : 'a list).
+                  NULL xs /\ LENGTH ys = LENGTH xs ==> ys = []``))

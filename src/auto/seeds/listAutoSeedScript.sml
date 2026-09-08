@@ -397,3 +397,15 @@ val _ =
    where the list does. *)
 val _ =
   export_at "simp" ("adjacent_iff_AUTO", listTheory.adjacent_iff)
+
+(* src/HOL/List.thy:8499-8500 @ f7e02b7e.  Isabelle's [null] is defined
+   by [null_iff], and that equation carries [simp]: a null is a list
+   being empty, everywhere, before anything else is tried.  HOL4 states
+   the same equation as [NULL_EQ] and declares it to no simpset, so
+   NULL and [= []] are two spellings that never meet -- a goal reduced
+   to the one is left standing against a rule or a hypothesis wearing
+   the other.  HOL4's own NULL rules ([NULL_MAP], [NULL_APPEND],
+   [NULL_GENLIST]) push a NULL through a list operation, which is not
+   the step that is missing: they leave a NULL. *)
+val _ =
+  export_at "simp" ("NULL_EQ_AUTO", listTheory.NULL_EQ)
