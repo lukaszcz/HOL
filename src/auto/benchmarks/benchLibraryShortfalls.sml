@@ -66,7 +66,7 @@ val congruence_rules =
   classified "congruence rules"
     ("the goal is a congruence rule for a list combinator and "
      ^ "the simpset carries no corresponding congruence")
-    ["list_L1119_map_cong", "list_L8236_list_ex_cong"]
+    ["list_L8236_list_ex_cong"]
 
 val prefix_from_its_indices =
   classified "prefix from its indices"
@@ -212,8 +212,8 @@ val indexing_through_list_constructors =
 val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
     ("the clasimp method terminates and reports no proof")
-    ["list_L2178_snoc_eq_iff_butlast", "list_L2814_map_zip_map",
-     "list_L2818_map_zip_map2", "list_L4406_distinct_adj_Cons_Cons",
+    ["list_L2178_snoc_eq_iff_butlast",
+     "list_L4406_distinct_adj_Cons_Cons",
      "list_L7998_listrel_rtrancl_refl",
      "list_L4707_foldr_fold_remove1",
      "list_L4781_foldr_fold_removeAll", "list_L5409_nths_drop",
@@ -380,7 +380,6 @@ val definitional_unfolding_stops_short =
     ["list_L5441_distinct_set_subseqs", "list_L5470_subset_subseqs",
      "list_L5527_Nil_in_shufflesI",
      "list_L6367_insort_insert_insort_key", "list_L8247_anon_L8247",
-     "list_L8543_map_filter_map_filter",
      "list_L8701_trancl_set_ntrancl"]
 
 val injectivity_and_surjectivity =

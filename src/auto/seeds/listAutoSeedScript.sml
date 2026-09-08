@@ -32,6 +32,20 @@ val _ =
      ("APPEND_11_RIGHT_AUTO", CONJUNCT2 listTheory.APPEND_11),
      ("SNOC_11_AUTO", listTheory.SNOC_11)]
 
+(* src/HOL/List.thy:1106,1115 @ f7e02b7e.  [map_map] and [map_eq_conv]
+   are simp there and declared to no simpset here.  Without the first a
+   map of a map stays two walks down the list; without the second an
+   equality between two maps over one list is left as it stands, and
+   the two mapped functions are never brought together -- neither
+   simplification nor search has a step that relates them.  Together
+   they read such an equality as the pointwise equality of the two
+   functions on the list's elements, which the seeded pair quantifier
+   takes apart where the elements are pairs. *)
+val _ =
+  List.app (export_at "simp")
+    [("MAP_MAP_o_AUTO", listTheory.MAP_MAP_o),
+     ("MAP_EQ_f_AUTO", listTheory.MAP_EQ_f)]
+
 (* src/HOL/List.thy:1123-1292 @ f7e02b7e *)
 val _ =
   List.app export_iff

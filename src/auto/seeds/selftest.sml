@@ -853,3 +853,20 @@ val _ =
          ([], ``!(xs : num list) P Q.
                   (!x. MEM x xs /\ P x <=> Q x) ==>
                   !y. MEM y (FILTER P xs) ==> Q y``))
+
+(* src/HOL/List.thy:1106,1115 @ f7e02b7e, [map_map] and [map_eq_conv].
+   The goal is not a corpus entry and is not either rule: the two sides
+   walk the list a different number of times, so the fusion has to
+   happen before the mapped functions can be compared, and comparing
+   them is a step of its own -- as whole functions they are two
+   different lambdas.  The pair is there because the elements the
+   functions are compared on have to be taken apart before either
+   lambda evaluates. *)
+val _ =
+  check
+    ("a map of a map meets a single map through its elements",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!(xs : ('a # 'b) list) (f : 'c -> 'd) (g : 'a -> 'c).
+                  MAP (\(a, b). f a) (MAP (\(a, b). (g a, b)) xs) =
+                  MAP (\(a, b). f (g a)) xs``))
