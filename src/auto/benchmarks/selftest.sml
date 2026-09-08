@@ -2703,13 +2703,27 @@ fun read_all path =
     text
   end
 
+(* The comparison measures the whole corpus, so it can only run where
+   the whole corpus is what this run measures: a family run and a run
+   without the battery each measure a part of it, and level 1 measures
+   none.  Skipped rather than answered true in those runs -- answering
+   true prints the same green row as a comparison that happened, and
+   the family run is how the corpus is measured here, so the row has
+   never meant what it says. *)
+val whole_corpus_measured =
+  benchLib.selftest_level () >= 2 andalso
+  not (Option.isSome (OS.Process.getEnv "HOLBENCHFAMILY")) andalso
+  OS.Process.getEnv "HOLBENCHNOBATTERY" <> SOME "1"
+
 val _ =
-  check
-    ("level-2 generated parity report matches the committed file \
-      \outside its timings",
-     fn () =>
-       Option.isSome (OS.Process.getEnv "HOLBENCHFAMILY") orelse
-       OS.Process.getEnv "HOLBENCHNOBATTERY" = SOME "1" orelse
-       benchLib.selftest_level () < 2 orelse
-       parityLib.without_costs (read_all "../PARITY.md") =
-       parityLib.without_costs (parityLib.render ()))
+  if whole_corpus_measured then
+    check
+      ("level-2 generated parity report matches the committed file \
+       \outside its timings",
+       fn () =>
+         parityLib.without_costs (read_all "../PARITY.md") =
+         parityLib.without_costs (parityLib.render ()))
+  else
+    TextIO.print
+      ("skipping the generated parity report comparison: this run \
+       \measures part of the corpus\n")
