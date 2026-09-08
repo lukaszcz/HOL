@@ -319,17 +319,20 @@ val characterisation_is_the_goal =
      "list_L8683_can_select_set_list_ex1",
      "option_L361_equal_None_code_unfold_1", "string_L728_anon_L728"]
 
-val predicate_and_set_representation =
-  classified "predicate and set representation"
-    ("the translation writes a set as a lambda and membership as "
-     ^ "application, and the residual reads a list's set that way: "
-     ^ "[set (FILTER P xs) x] and [set (FLAT (MAP f xys)) (a, b)] are "
-     ^ "the membership every list rule is stated on, written applied, "
-     ^ "and no rule meets it there.  Their companion is a pair taken "
-     ^ "apart at a variable, where the declared UNCURRY clause asks "
+val membership_through_a_guarded_flatten =
+  classified "membership through a guarded flatten"
+    ("the membership is in a flatten over a map whose body maps each "
+     ^ "element to a singleton or to nothing according to a test, so "
+     ^ "the pair has to be placed in the branch the test selects and, "
+     ^ "in the other direction, read back out of it; the search "
+     ^ "reports no proof well inside its budget")
+    ["list_L8705_set_relcomp"]
+
+val pair_taken_apart_at_a_variable =
+  classified "pair taken apart at a variable"
+    ("the pair is a variable where the declared UNCURRY clause asks "
      ^ "for an explicit pair")
-    ["list_L8638_filter_set", "list_L8705_set_relcomp",
-     "product_type_L600_case_prodI2_"]
+    ["product_type_L600_case_prodI2_"]
 
 val transitive_closure_from_a_step_list =
   classified "transitive closure from a step list"
@@ -491,7 +494,8 @@ val execution : benchLib.shortfall list =
   sortedness_beyond_the_bridge @
   numeral_against_Suc @
   characterisation_is_the_goal @
-  predicate_and_set_representation @
+  membership_through_a_guarded_flatten @
+  pair_taken_apart_at_a_variable @
   transitive_closure_from_a_step_list @
   blast_search_reports_no_proof @
   integer_interval_emptiness @

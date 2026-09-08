@@ -837,3 +837,19 @@ val _ =
          ([], ``!(xs : 'a list) (ys : 'b list) a b.
                   MEM a xs /\ MEM b ys ==>
                   MEM (a, b) (FLAT (MAP (\x. MAP (\y. (x, y)) ys) xs))``))
+
+(* src/HOL/List.thy:1351 @ f7e02b7e, [set_filter].  The goal is not a
+   corpus entry and is not the rule: what the context states about the
+   list's own elements is stated the source's way round, and only a
+   filtered membership read the same way round meets it.  The tactic is
+   simplification alone, a search being free to reorder the conjunction
+   the check is about. *)
+val _ =
+  check
+    ("a filtered membership is read the way the source states it",
+     fn () =>
+       closes_within 20
+         (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) [])
+         ([], ``!(xs : num list) P Q.
+                  (!x. MEM x xs /\ P x <=> Q x) ==>
+                  !y. MEM y (FILTER P xs) ==> Q y``))

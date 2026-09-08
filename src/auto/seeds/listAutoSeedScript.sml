@@ -53,8 +53,21 @@ val _ =
      ("LIST_REL_CONS1_AUTO", listTheory.LIST_REL_CONS1),
      ("LIST_REL_CONS2_AUTO", listTheory.LIST_REL_CONS2),
      ("EVERY_APPEND_AUTO", listTheory.EVERY_APPEND),
-     ("EVERY_MEM_AUTO", listTheory.EVERY_MEM),
-     ("MEM_FILTER_AUTO", listTheory.MEM_FILTER)]
+     ("EVERY_MEM_AUTO", listTheory.EVERY_MEM)]
+
+(* src/HOL/List.thy:1351 @ f7e02b7e.  [set_filter] reads a membership in
+   a filtered list as the membership in the list and then the predicate;
+   HOL4's MEM_FILTER states the predicate first.  A goal translated from
+   the source states its own comprehensions the source's way round, so
+   the two readings meet as an iff between the same two conjuncts in
+   opposite orders -- which neither system's simplifier closes, both
+   declaring associativity of the conjunction and not commutativity.
+   The seed states the source's orientation. *)
+Theorem MEM_FILTER_AUTO[iff]:
+  !P L x. MEM x (FILTER P L) <=> MEM x L /\ P x
+Proof
+  metis_tac [listTheory.MEM_FILTER]
+QED
 
 Theorem LIST_REL_REVERSE_AUTO[iff]:
   !R left right.
@@ -74,8 +87,8 @@ QED
    [length_filter_le] and [distinct_filter], is seeded in
    rich_listAutoSeed.  [filter_filter] is simp there as well and is
    left undeclared: a composite filter is settled by the collapses
-   below, which read the inner walk's elements through the ambient
-   MEM_FILTER, so nothing reaches the rule that writes two walks as
+   below, which read the inner walk's elements through the seeded
+   MEM_FILTER_AUTO, so nothing reaches the rule that writes two walks as
    one. *)
 val _ =
   export_at "simp"
