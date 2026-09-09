@@ -639,72 +639,98 @@ val _ =
          (benchLib.recipe_name
            (benchDerive.recipe_of ``!i : int. i * 1 = i`` "by algebra")))
 
-(* ---- The stricter ambient set ------------------------------------ *)
+(* ---- The ambient set --------------------------------------------- *)
 
-(* Isabelle makes a [fun] definition ambient and a plain [definition]
-   not.  The corpus does not record which introduced a constant, so
-   recursion stands in, and the report measures the corpus under both
-   sets.  What has to hold is that the strict set is a subset -- it can
-   only withhold -- and that withholding actually reaches the recipes
-   of the methods that read the ambient context. *)
+(* Isabelle's simpset carries a [fun]'s equations and not a plain
+   [definition]'s, and the corpus is measured under the definitions that
+   line leaves.  A mined table draws it and is also what supplies the
+   ambient set, so what the translation theory records has to be
+   covered: a definition added with no row would otherwise be measured
+   under neither side, silently absent from every goal's context. *)
 val _ =
   check
-    ("the strict ambient set withholds and never adds",
+    ("every translated definition has a mined introduction",
      fn () =>
        let
-         val strict = map #name benchAmbient.recursive_definitions
-         val generous = map #name benchAmbient.definitions
+         val recorded =
+           map #1
+             (List.filter (benchAmbient.equational o concl o #2)
+               (DB.definitions "parityTranslation"))
+         val mined =
+           map (fn (name, _, _) => name)
+             benchIsabelleAmbient.introductions
+       in
+         List.all (fn name => List.exists (equal name) mined) recorded
+       end)
+
+val _ =
+  check
+    ("the ambient set is a proper part of the definitions",
+     fn () =>
+       let
+         val ambient = map #name benchAmbient.ambient_definitions
+         val defined = map #name benchAmbient.definitions
          val _ =
            TextIO.print
-             (" [strict " ^ Int.toString (length strict) ^ " of " ^
-              Int.toString (length generous) ^ "] ")
+             (" [ambient " ^ Int.toString (length ambient) ^ " of " ^
+              Int.toString (length defined) ^ "] ")
        in
-         not (null strict) andalso
-         length strict < length generous andalso
-         List.all (fn name => List.exists (equal name) generous) strict
+         not (null ambient) andalso
+         length ambient < length defined andalso
+         List.all (fn name => List.exists (equal name) defined) ambient
        end)
 
+(* The set is a context rather than a list, so what has to hold is that
+   a method consulting a simpset is handed the mined definitions and
+   stops at the line: [sorted_wrt] is Isabelle's [fun], [map_filter] its
+   plain [definition] whose recursive equations it declares separately
+   and the translation does not carry. *)
 val _ =
   check
-    ("restricting the ambient set narrows the recipes that read it",
+    ("the ambient set reaches a simp method and stops at the line",
      fn () =>
        let
-         val goals = benchSets.goals
-         val restricted =
-           benchDerive.restrict_ambient benchAmbient.recursive_arguments
-             goals
-         fun width (entry : benchLib.corpus_goal) =
-           length (benchLib.recipe_arguments (#recipe entry))
-         val widths = ListPair.zip (map width goals, map width restricted)
+         val recipe =
+           benchDerive.recipe_of ``!xs : 'a list. xs = xs`` "by simp"
+         val names =
+           List.mapPartial
+             (fn benchLib.RewriteAdd {name, ...} => SOME name
+               | _ => NONE)
+             (benchLib.recipe_arguments recipe)
        in
-         length goals = length restricted andalso
-         List.all (fn (generous, strict) => strict <= generous) widths
-         andalso List.exists (fn (generous, strict) => strict < generous)
-           widths
+         List.exists (equal "source_sorted_wrt_def") names andalso
+         not (List.exists (equal "source_map_filter_def") names)
        end)
 
-(* A goal the corpus did not derive has no Isabelle method to re-derive
-   from, so restricting the context must leave it exactly as it was. *)
+(* A declared result is tried against a goal the ambient set has
+   already rewritten, so it has to be stated the way that leaves it.
+   [source_code_roundtrip] is Isabelle's [of_char_of], stated on
+   [source_of_char], which is an alias the ambient set unfolds to ORD:
+   as the translation states it the rule reaches no residual, and the
+   goal it should close is [n MOD 256 = ORD (source_char_of n)]. *)
 val _ =
   check
-    ("restricting the ambient set leaves a HOL4-native goal alone",
+    ("a declared result is read through the ambient aliases",
      fn () =>
        let
-         val native =
-           List.filter
-             (fn (entry : benchLib.corpus_goal) =>
-               not (String.isPrefix "src/HOL/" (#file (#provenance entry))))
-             benchPresburger.goals
-         val restricted =
-           benchDerive.restrict_ambient benchAmbient.recursive_arguments
-             native
+         val ambient =
+           List.mapPartial
+             (fn benchLib.RewriteAdd named => SOME named | _ => NONE)
+             benchAmbient.arguments
+         val roundtrip =
+           List.find
+             (fn {name, ...} : benchLib.named_thm =>
+               name = "parityTranslation$source_code_roundtrip")
+             ambient
+         val residual =
+           ``!n. n MOD 256 = ORD (parityTranslation$source_char_of n)``
        in
-         not (null native) andalso
-         ListPair.all
-           (fn (before_cut, after_cut) =>
-             benchLib.recipe_name (#recipe before_cut) =
-             benchLib.recipe_name (#recipe after_cut))
-           (native, restricted)
+         case roundtrip of
+             NONE => false
+           | SOME {theorem, ...} =>
+               Lib.can Tactical.TAC_PROOF
+                 (([], residual),
+                  simpLib.SIMP_TAC boolSimps.bool_ss [theorem])
        end)
 
 (* ---- Phase A detectors ------------------------------------------- *)

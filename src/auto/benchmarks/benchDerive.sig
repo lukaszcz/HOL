@@ -31,17 +31,6 @@ sig
      goals the corpus adds alongside them. *)
   val derivable : benchLib.source_goal -> bool
 
-  (* The same goals with their recipes re-derived under a different
-     ambient context.  Nothing else changes: the exclusions belong to
-     the goal and the provenance to the corpus file.  This is how the
-     report measures the corpus a second time under the stricter
-     ambient set without keeping a second corpus.  Goals that came from
-     HOL4 rather than Isabelle have no method to re-derive from and are
-     returned unchanged. *)
-  val restrict_ambient :
-    benchLib.method_arg list -> benchLib.corpus_goal list ->
-    benchLib.corpus_goal list
-
   (* Every authored goal of one family, with its derived recipe and
      exclusions attached and checked.  This is the only route from what
      a corpus file writes to what the harness runs; [family] appears in

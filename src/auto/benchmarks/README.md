@@ -32,23 +32,24 @@ that order rather than reading the goal to pick a side.  A method string
 the parser does not understand is a hard error, never a silent fallback to
 a bare tactic.  `benchNames` is a single global table from
 Isabelle theorem name to HOL4 theorem; it is keyed by name only and knows
-nothing about which goal is asking.  `benchAmbient` supplies every
-equational definition the translation introduces, as a rewrite, identically
-for every goal, and only to the methods that consult a simpset -- Isabelle's
-`blast`, `safe`, `clarify`, `metis` and its decision procedures do not.  It
-stands in for the ambient simpset an Isabelle method reads without naming
-it, and is more generous than Isabelle in one direction: Isabelle adds a
-`fun` definition to its simpset by default but not a plain `definition`.
-The corpus does not record which of the two introduced a constant, so
-`benchAmbient.recursive_definitions` uses self-reference as a proxy for
-`fun` and the report measures the corpus under both sets, giving both
-counts rather than guessing.
+nothing about which goal is asking.  `benchAmbient` supplies the
+translation's definitions as rewrites, identically for every goal, and only
+to the methods that consult a simpset -- Isabelle's `blast`, `safe`,
+`clarify`, `metis` and its decision procedures do not.  It stands in for the
+ambient simpset an Isabelle method reads without naming it, and is cut to
+what that simpset carries: `benchIsabelleAmbient` records, per constant,
+how Isabelle introduces it and the source line that says so.  A `fun`, a
+`primrec`, a datatype's selectors and predicator, and a `definition` whose
+characterisation Isabelle separately declares simp are in; a plain
+`definition` is out.  Alongside them the set carries a few results
+Isabelle declares `simp` or `iff` about a constant whose definition it
+withholds, each citing the declaration it transplants; the selftest
+checks that none of them states a corpus goal.
 
 `HOLSELFTESTLEVEL=1` runs the explicitly marked representative goals.  This
 is a fixed subset, not random sampling.  Level 2 or higher runs every
-executable goal, measures it a second time under the stricter ambient
-set, and also tries selected alternative tactics -- counting a goal only
-where the alternative closed it and the assigned tactic did not.
+executable goal and also tries selected alternative tactics -- counting a
+goal only where the alternative closed it and the assigned tactic did not.
 Alternative-tactic results never decide whether the test passes.
 
 Source mining produced 1,061 distinct executable Isabelle results after

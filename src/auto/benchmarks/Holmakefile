@@ -6,7 +6,8 @@ all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe guards.exe
 .PHONY: all
 
 selftest.uo: benchLib.uo benchGuards.uo benchRecipe.uo benchNames.uo \
-             benchTactics.uo benchAmbient.uo benchDerive.uo \
+             benchTactics.uo benchIsabelleAmbient.uo \
+             benchAmbient.uo benchDerive.uo \
              benchClassical.uo benchSetCorpus.uo \
              benchSetShortfalls.uo benchSets.uo \
              benchListCorpus.uo benchListSorted.uo benchListNumeric.uo \
@@ -37,7 +38,8 @@ benchGuards.uo: benchLib.uo benchExplicit.uo
 benchRecipe.uo: benchLib.uo
 benchNames.uo: benchLib.uo
 benchTactics.uo: benchLib.uo
-benchAmbient.uo: benchLib.uo parityTranslationTheory.uo
+benchAmbient.uo: benchLib.uo benchIsabelleAmbient.uo \
+                 parityTranslationTheory.uo
 benchDerive.uo: benchLib.uo benchRecipe.uo benchNames.uo benchTactics.uo \
                 benchAmbient.uo
 benchListSorted.uo: parityTranslationTheory.uo

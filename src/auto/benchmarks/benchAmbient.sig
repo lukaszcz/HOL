@@ -6,15 +6,17 @@ sig
      [fun] or [definition]; the source proof never names their
      equations because an Isabelle method reads its simpset without
      naming it.  Supplying them here restores that much of the source
-     context and no more.  It is generous in one direction: Isabelle
-     puts a [fun] definition in the default simpset and a plain
-     [definition] not, and this makes no such distinction.
+     context and no more.  Isabelle puts a [fun] definition in the
+     default simpset and a plain [definition] not, and
+     [ambient_definitions] is the subset that distinction leaves.
 
-     The set is read out of the translation theory rather than listed,
-     so it grows only when a definition is added.  It is also the same
-     set for every goal, so it cannot be tuned against one.
+     The set is one theorem per mined constant, and the selftest holds
+     it against what the translation theory records, so it grows only
+     when a definition is added.  It is also the same set for every
+     goal, so it cannot be tuned against one.
 
-     [arguments] adds one lemma to it, and one only:
+     [arguments] adds the lemmas below to it -- the declared results
+     and one correspondence.  That correspondence is
      [source_sorted_wrt_bridge].  Isabelle's [sorted] is
      [sorted_wrt (<=)], so its simpset's facts about sorted lists reach
      the [sorted_wrt] reading with nobody naming them; HOL4 states the
@@ -31,27 +33,30 @@ sig
      what keeps those rules usable. *)
   val definitions : benchLib.named_thm list
 
-  (* [definitions] as recipe arguments, in the order a recipe takes. *)
+  (* True of a theorem that states equations, which is what a definition
+     contributes to a simpset.  A translated type's [TY_DEF] predicate
+     is not one.  The selftest reads the translation theory through it
+     to check nothing the theory defines is missing above. *)
+  val equational : Term.term -> bool
+
+  (* The subset of [definitions] whose equations Isabelle's own simpset
+     carries.  [benchIsabelleAmbient] records how Isabelle introduces
+     each translated constant, one constant at a time, with the source
+     line that says so, and this is the set the corpus is measured
+     under. *)
+  val ambient_definitions : benchLib.named_thm list
+
+  (* The ambient context as recipe arguments -- [ambient_definitions]
+     and the lemmas below -- in the order a recipe takes. *)
   val arguments : benchLib.method_arg list
 
   (* The results Isabelle declares simp about a translated constant,
      which its simp step has and a context of definitions alone does
-     not.  Each is part of [arguments]; none states a corpus goal. *)
+     not.  Each is part of [arguments]; none states a corpus goal.
+     [arguments] carries them read through the ambient alias
+     definitions, which have already rewritten the goal by the time one
+     of them is tried. *)
   val declared_results : benchLib.named_thm list
-
-  (* The subset Isabelle would have made ambient by itself.  The corpus
-     does not record whether a constant arrived by [fun] or by
-     [definition], so recursion stands in for the distinction: a
-     definition whose right-hand side mentions the constant it defines
-     is one no plain [definition] could have made.  The proxy errs
-     towards the strict side -- a non-recursive [fun] is counted as a
-     [definition] -- which is the direction that cannot flatter HOL4.
-
-     The report measures the corpus under both sets and gives both
-     counts, because choosing one would mean guessing which side of a
-     distinction each constant fell on. *)
-  val recursive_definitions : benchLib.named_thm list
-  val recursive_arguments : benchLib.method_arg list
 
   (* The entries of [definitions] that define one constant: every
      clause heads on the same one.  A [define_new_type_bijections]

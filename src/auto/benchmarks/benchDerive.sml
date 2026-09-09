@@ -69,27 +69,6 @@ fun self_supplied (entry : benchLib.source_goal) =
 fun recipe (entry : benchLib.source_goal) =
   recipe_of (#goal entry) (#source_method entry)
 
-fun restrict_ambient ambient goals =
-  let
-    val restricted =
-      {theorems = benchNames.theorems, tactics = benchTactics.tactics,
-       ambient = ambient}
-    fun rederive (entry : benchLib.corpus_goal) =
-      if not (String.isPrefix "src/HOL/" (#file (#provenance entry)))
-      then entry
-      else
-        {id = #id entry, goal = #goal entry,
-         source_method = #source_method entry,
-         recipe =
-           without_self (#goal entry)
-             (benchRecipe.to_recipe restricted (#goal entry)
-               (benchRecipe.parse (#source_method entry))),
-         excl = #excl entry, provenance = #provenance entry,
-         representative = #representative entry}
-  in
-    map rederive goals
-  end
-
 (* [family] names the corpus in the error a bad entry raises; the check
    itself is [benchLib.prepare_goal]'s, one goal at a time. *)
 fun prepare family entries =

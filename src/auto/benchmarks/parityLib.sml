@@ -48,8 +48,7 @@ type measured_family = {
   shortfalls : benchLib.shortfall list,
   gated : (string * benchLib.outcome) list,
   work : (string * searchWork.work) list,
-  battery : (string * benchLib.tactic_id * benchLib.outcome) list,
-  strict : int
+  battery : (string * benchLib.tactic_id * benchLib.outcome) list
 }
 
 fun representative_count goals =
@@ -87,36 +86,15 @@ val families : family list =
     shortfalls = benchAlgebra.shortfalls,
     run = benchAlgebra.run}]
 
-(* The corpus again, with the ambient context cut back to what
-   Isabelle would have made ambient by itself.  Only the count is
-   taken: the accounting, the exclusion checks and the battery all
-   belong to the measurement proper, and repeating them here would
-   assert a ledger written against the other ambient set.  Goals are
-   run at the same budget, so the two numbers differ in one thing. *)
-fun strict_solved ({goals, ...} : family) =
-  let
-    fun solved_goal (entry : benchLib.corpus_goal) =
-      benchLib.outcome_solved
-        (benchLib.run_goal benchLib.default_budget (#recipe entry) entry)
-  in
-    length
-      (List.filter solved_goal
-        (benchDerive.restrict_ambient benchAmbient.recursive_arguments
-          goals))
-  end
-
-fun measure_family (entry as {name, size, slice, shortfalls, run, ...}
-                      : family) =
+fun measure_family ({name, size, slice, shortfalls, run, ...} : family) =
   let
     val _ = PolyML.fullGC ()
     val result = run 2
     val _ = PolyML.fullGC ()
-    val strict = strict_solved entry
   in
     {name = name, size = size, slice = slice,
      shortfalls = shortfalls, gated = #gated result,
-     work = #work result, battery = #battery result,
-     strict = strict}
+     work = #work result, battery = #battery result}
   end
 
 (* Milliseconds each solved goal took.  A goal that overran the budget
@@ -183,13 +161,12 @@ fun cost_row (row as {name, gated, ...} : measured_family) =
   end
 
 fun primary_row
-      ({name, size, slice, gated, strict, ...} : measured_family) =
+      ({name, size, slice, gated, ...} : measured_family) =
   let
     fun number value = Int.toString value
   in
     "| " ^ name ^ " | " ^ number size ^ " | " ^
-    number (solved gated) ^ " | " ^ number strict ^ " | " ^
-    number slice ^ " |\n"
+    number (solved gated) ^ " | " ^ number slice ^ " |\n"
   end
 
 fun accounting_row
@@ -226,11 +203,6 @@ fun total_solved rows =
   List.foldl
     (fn ({gated, ...} : measured_family, total) =>
       solved gated + total)
-    0 rows
-
-fun total_strict rows =
-  List.foldl
-    (fn ({strict, ...} : measured_family, total) => strict + total)
     0 rows
 
 fun total_slice rows =
@@ -410,14 +382,20 @@ fun render () =
       "The assigned tactic and its arguments are derived from the ",
       "recorded Isabelle method string rather than authored per goal, ",
       "so a goal cannot be handed a fact its source proof did not name. ",
-      "One context is added on top of that: every equational definition ",
-      "the translation introduces, as a rewrite, identically for every ",
-      "goal, and only to the methods that consult a simpset. This ",
-      "stands in for the ambient simpset an Isabelle method reads ",
-      "without naming it. It is more generous than Isabelle in one ",
-      "direction -- Isabelle adds a `fun` definition to its simpset by ",
-      "default but not a plain `definition` -- and the numbers below ",
-      "should be read with that in mind.\n\n",
+      "One context is added on top of that: the definitions the ",
+      "translation introduces whose equations Isabelle's own simpset ",
+      "would carry, as rewrites, identically for every goal, and only ",
+      "to the methods that consult a simpset. This stands in for the ",
+      "ambient simpset an Isabelle method reads without naming it. ",
+      "Which definitions those are is recorded per constant against the ",
+      "Isabelle source line that introduces it: a `fun`, a `primrec`, a ",
+      "datatype's selectors and predicator, and a `definition` whose ",
+      "characterisation Isabelle separately declares simp are in; a ",
+      "plain `definition` is out. A few results Isabelle declares ",
+      "`simp` or `iff` about a constant whose definition it withholds ",
+      "are carried alongside, each citing the declaration it ",
+      "transplants; the selftest checks that none of them states a ",
+      "corpus goal.\n\n",
       "The comparison data was mined from Isabelle/HOL commit ",
       "`f7e02b7e`. Each in-repository benchmark entry records its source ",
       "file, line, method, and commit. The report was generated on ",
@@ -455,19 +433,8 @@ fun render () =
       "**Executable goals** is the number of runnable HOL4 statements. ",
       "**Solved by assigned tactic** counts statements proved by the ",
       "HOL4 counterpart selected for their Isabelle method, with the ",
-      "ambient context described above. **Solved under Isabelle's own ",
-      "ambient set** is the same measurement with that context cut back ",
-      "to the definitions Isabelle would have made ambient by itself. ",
-      "Isabelle puts a `fun` definition in the default simpset and a ",
-      "plain `definition` not, and the corpus does not record which of ",
-      "the two introduced each constant, so recursion stands in for the ",
-      "distinction: a definition whose right-hand side mentions the ",
-      "constant it defines is one no plain `definition` could have "
-      ^ "made. ",
-      "The proxy errs strict, which is the direction that cannot ",
-      "flatter HOL4. Both numbers are given because choosing one would ",
-      "mean guessing which side of that distinction each constant fell ",
-      "on. **Routine selftest goals** is a fixed, explicitly marked ",
+      "ambient context described above. ",
+      "**Routine selftest goals** is a fixed, explicitly marked ",
       "subset run when `HOLSELFTESTLEVEL=1`; it is not a random ",
       "sample. At level 2 or higher, all executable goals run.\n\n",
       "A **family** is a subject-area group:\n\n",
@@ -481,12 +448,10 @@ fun render () =
       "natural numbers and integers.\n",
       "- **Algebra** contains polynomial, ring, and field identities.\n\n",
       "| Family | Executable goals | Solved by assigned tactic | ",
-      "Solved under Isabelle's own ambient set | ",
       "Routine selftest goals |\n",
-      "|---|---:|---:|---:|---:|\n"] @
+      "|---|---:|---:|---:|\n"] @
      map primary_row rows @
      ["| **Total** | **", executable, "** | **", assigned_solved,
-      "** | **", number (total_strict rows),
       "** | **", routine, "** |\n\n",
       "## Cost of the solutions\n\n",
       "A solve at 28 seconds is not the same result as a solve in ",

@@ -5,35 +5,37 @@ open HolKernel boolSyntax
 
 (* True of a theorem that states equations, which is what a definition
    contributes to a simpset.  A translated type's [TY_DEF] predicate is
-   not one; it would sit in every rewrite set matching nothing. *)
+   not one; it would sit in every rewrite set matching nothing.  The
+   selftest reads the translation theory through this. *)
 fun equational term =
   case strip_conj (snd (strip_forall term)) of
       [single] => is_eq single
     | conjuncts => List.all equational conjuncts
 
+(* One theorem per mined constant.  Reading [DB.definitions] instead
+   would miss four: HOL4 keeps the equations of a definition made by
+   well-founded recursion in the theorem class, so [source_alookup],
+   [source_lexordp], [source_lexordp_eq] and [source_upto] never appear
+   there.  The theory read is the check rather than the construction --
+   the selftest requires every definition it records to have a mined
+   row -- and a row naming nothing raises here, at load. *)
 val definitions =
-  let
-    fun named (name, theorem) = {name = name, theorem = theorem}
-    fun by_name ({name = left, ...} : benchLib.named_thm,
-                 {name = right, ...} : benchLib.named_thm) =
-      String.compare (left, right)
-  in
-    Listsort.sort by_name
-      (map named
-        (List.filter (equational o concl o #2)
-          (DB.definitions "parityTranslation")))
-  end
+  map
+    (fn (name, _, _) =>
+      {name = name, theorem = DB.fetch "parityTranslation" name})
+    benchIsabelleAmbient.introductions
 
 (* The one lemma in the ambient set.  Isabelle's [sorted] *is*
    [sorted_wrt (<=)], so every fact its simpset carries about a sorted
    list -- [sorted_upt] and the rest -- applies to the [sorted_wrt]
    reading without anyone naming it.  HOL4 states those facts about its
    own adjacent SORTED, and the translation's [source_sorted] unfolds
-   to [source_sorted_wrt], whose definition is recursive and so is not
-   a rewrite; without the correspondence the predicate is opaque and
-   the ambient facts cannot reach it.  The bridge is conditional on
-   transitivity, which is what the source linorder supplies, so it
-   hands a goal nothing that Isabelle's [sorted] did not already have. *)
+   to [source_sorted_wrt], whose definition takes a nil or a cons apart
+   and says nothing about a list variable; without the correspondence
+   the predicate is opaque and the ambient facts cannot reach it.  The
+   bridge is conditional on transitivity, which is what the source
+   linorder supplies, so it hands a goal nothing that Isabelle's
+   [sorted] did not already have. *)
 val sorted_wrt_correspondence =
   {name = "parityTranslation$source_sorted_wrt_bridge",
    theorem = DB.fetch "parityTranslation" "source_sorted_wrt_bridge"}
@@ -53,7 +55,15 @@ val sorted_wrt_correspondence =
    how a source proof that pushes a takeWhile across an append never
    names them: List.thy:2545 [takeWhile_append] states the two together
    and still cites them, and List.thy:4637 [extract_Some_iff] reaches
-   one after unfolding [extract]. *)
+   one after unfolding [extract].
+
+   Relation.thy:1572 declares [Image_singleton_iff] [iff]: the simpset
+   takes a relational image of a singleton apart, though [Image] itself
+   is a plain definition and stays folded.  String.thy:63 [char_of_char]
+   and String.thy:89 [of_char_of] are the roundtrip pair Isabelle
+   declares simp about [char_of], whose own definition it withholds;
+   neither line was mined into the corpus, so transplanting them hands
+   no goal its own statement. *)
 val declared_results =
   let
     fun named name =
@@ -63,36 +73,53 @@ val declared_results =
     map named
       ["source_fold_append",
        "source_takeWhile_append1",
-       "source_takeWhile_append2"]
+       "source_takeWhile_append2",
+       "source_rel_image_singleton",
+       "source_char_roundtrip",
+       "source_code_roundtrip"]
   end
 
-val ambient_lemmas = sorted_wrt_correspondence :: declared_results
+(* An alias definition is ambient, so by the time one of the lemmas
+   above is tried the goal no longer spells the alias: [source_of_char]
+   is gone and ORD stands where it was.  A lemma still stated on the
+   alias then matches nothing -- [source_code_roundtrip] is the ambient
+   reading of Isabelle's [of_char_of], and the residual it has to close
+   spells the same term with ORD.  Reading the lemmas through the
+   aliases states them in the vocabulary the ambient set leaves, and
+   makes which of the two rules reaches a term first stop mattering.
+   Only the aliases are unfolded: they rename a constant argument for
+   argument, so the reading is the same statement. *)
+val alias_definitions =
+  List.filter
+    (fn {name, ...} : benchLib.named_thm =>
+      List.exists
+        (fn (entry, introduction, _) =>
+          entry = name andalso introduction = benchIsabelleAmbient.Alias)
+        benchIsabelleAmbient.introductions)
+    definitions
+
+fun through_aliases ({name, theorem} : benchLib.named_thm) =
+  {name = name,
+   theorem =
+     Rewrite.PURE_REWRITE_RULE (map #theorem alias_definitions) theorem}
+
+val ambient_lemmas =
+  map through_aliases (sorted_wrt_correspondence :: declared_results)
+
+(* Isabelle's simpset carries a [fun]'s equations and not a plain
+   [definition]'s, so the ambient set is the translation's definitions
+   cut to that line.  [benchIsabelleAmbient] draws it one constant at a
+   time against the Isabelle source, and raises on a definition it does
+   not cover: a definition added to the translation is measured only
+   once someone has read how Isabelle introduces it. *)
+val ambient_definitions =
+  List.filter
+    (fn {name, ...} : benchLib.named_thm =>
+      benchIsabelleAmbient.is_ambient name)
+    definitions
 
 val arguments =
-  map benchLib.RewriteAdd (definitions @ ambient_lemmas)
-
-(* Self-reference in any clause, read off the constant the first clause
-   defines.  A definition of several constants at once -- a [fun ... and
-   ...] -- is judged by the first, which is how mutual recursion stays
-   on the recursive side. *)
-fun recursive term =
-  let
-    fun sides clause = Lib.total dest_eq (snd (strip_forall clause))
-    val clauses = List.mapPartial sides (strip_conj (snd (strip_forall term)))
-    fun defined (left, _) = fst (strip_comb left)
-    fun mentions constant (_, right) = can (find_term (aconv constant)) right
-  in
-    case clauses of
-        [] => false
-      | first :: _ => List.exists (mentions (defined first)) clauses
-  end
-
-val recursive_definitions =
-  List.filter (recursive o concl o #theorem) definitions
-
-val recursive_arguments =
-  map benchLib.RewriteAdd
-    (recursive_definitions @ ambient_lemmas)
+  map benchLib.RewriteAdd (ambient_definitions @ ambient_lemmas)
 
 (* A definition unfolds one constant; a characterisation relates
    several.  [define_new_type_bijections] yields a single theorem whose
@@ -122,10 +149,10 @@ val wrapper_definitions =
   List.filter (clausal o concl o #theorem) definitions
 
 (* The comparison that withholds a rule stating the goal reads these,
-   and it lives in a module built below the translation theory.  The
-   generous ambient set is the one filtered: a goal measured under the
-   strict set is measured under fewer definitions, but the rule it must
-   not be handed is the same rule either way. *)
+   and it lives in a module built below the translation theory.  Every
+   definition is filtered, not just the ambient ones: a rule states a
+   goal, or does not, whether or not the goal's context could have
+   unfolded its way there. *)
 val _ = benchLib.set_definitional_context (map #theorem wrapper_definitions)
 
 (* The bridge is also the correspondence a recipe's own rules are
