@@ -200,7 +200,7 @@ val indexing_through_list_constructors =
      ^ "characterisation itself, which neither simplification nor "
      ^ "search reduces")
     ["list_L2480_take_update_cancel", "list_L2483_drop_update_cancel",
-     "list_L2834_set_zip", "list_L3168_list_eq_iff_zip_eq",
+     "list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth",
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
