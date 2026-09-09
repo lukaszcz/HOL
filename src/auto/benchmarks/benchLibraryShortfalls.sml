@@ -332,6 +332,20 @@ val transitive_closure_from_a_step_list =
      ^ "nor an induction")
     ["list_L7054_set_trans_list_step_subset_trancl"]
 
+(* src/HOL/List.thy:1213 @ f7e02b7e.  Isabelle closes this from the
+   three rules its method names and nothing else; the recipe carries
+   all three, and the tableau reaches 37144 branches at depth 11 inside
+   the budget.  It was counted as a solve until the blast recipe
+   stopped simplifying for arguments that are not rewrites: the
+   simplification pass it was leaning on is one Isabelle's [blast]
+   never runs, and closing the goal without it is the parity claim. *)
+val blast_needs_a_pass_isabelle_does_not_run =
+  classified "blast needs a pass Isabelle does not run"
+    ("Isabelle's blast closes this from inj_onI, inj_onD and "
+     ^ "map_inj_on; ours reaches 37144 tableau branches with the same "
+     ^ "three rules")
+    ["list_L1213_inj_on_mapI"]
+
 val blast_search_reports_no_proof =
   classified "blast search reports no proof"
     ("the tableau search exhausts its depths without a "
@@ -402,18 +416,21 @@ val the_ambient_rule_is_the_goal =
      ^ "withholds it here")
     ["map_L887_map_le_map_add"]
 
-(* src/HOL/Map.thy:366 @ f7e02b7e.  Isabelle reads [map_add_None],
-   declared [iff], and the ambient set carries it.  What is left of
-   map_L611 is three contradiction subgoals in which the map sum stands
-   under [= SOME x], and the transplanted equation matches it only
-   under [= NONE]; map_L810 reaches the same wall after [graph_def],
-   and its own citation [map_add_comm] is not rendered. *)
-val map_sum_under_a_witness =
-  classified "map sum under a witness"
-    ("the residual states the map sum under = SOME x, and the ambient "
-     ^ "equation Isabelle reads for it -- map_add_None -- matches only "
-     ^ "under = NONE")
-    ["map_L611_dom_map_add", "map_L810_graph_map_add"]
+(* src/HOL/Map.thy:610 @ f7e02b7e.  The citation is rendered now that
+   [map_add] is a constant, and it reaches the tactic: the goal stopped
+   failing outright and started running out the budget.  [map_add_comm]
+   goes in as a fact, so it stands as a universal assumption with a
+   set-equality condition, and every branch the tableau opens
+   instantiates it afresh -- 4254 branches and 17349 inferences at
+   depth 8 in thirty seconds.  Isabelle inserts the same fact and its
+   [force] closes the goal, so this is a search-discipline gap and not
+   a missing fact. *)
+val map_sum_commuted_under_a_fact =
+  classified "map sum commuted under a fact"
+    ("map_add_comm goes in as a universal assumption and the tableau "
+     ^ "instantiates it on every branch, 4254 of them inside the "
+     ^ "budget")
+    ["map_L810_graph_map_add"]
 
 val option_relations =
   classified "option relations"
@@ -517,6 +534,7 @@ val execution : benchLib.shortfall list =
   pair_taken_apart_at_a_variable @
   transitive_closure_from_a_step_list @
   blast_search_reports_no_proof @
+  blast_needs_a_pass_isabelle_does_not_run @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @
@@ -524,7 +542,7 @@ val execution : benchLib.shortfall list =
   injectivity_and_surjectivity @
   finite_map_update @
   the_ambient_rule_is_the_goal @
-  map_sum_under_a_witness @
+  map_sum_commuted_under_a_fact @
   option_relations @
   character_arithmetic @
   sigma_and_times_rule_forms @
