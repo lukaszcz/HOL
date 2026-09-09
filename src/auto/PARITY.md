@@ -4,7 +4,7 @@
 
 Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used for the corresponding source result, and the HOL4 tactic chosen as that method's closest counterpart. This report calls that HOL4 tactic the **assigned tactic**.
 
-The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: the definitions the translation introduces whose equations Isabelle's own simpset would carry, as rewrites, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. Which definitions those are is recorded per constant against the Isabelle source line that introduces it: a `fun`, a `primrec`, a datatype's selectors and predicator, and a `definition` whose characterisation Isabelle separately declares simp are in; a plain `definition` is out. A few results Isabelle declares `simp` or `iff` about a constant whose definition it withholds are carried alongside, each citing the declaration it transplants. Two Isabelle facts can translate onto one HOL4 theorem, so one of them can be a corpus goal's statement; the measurement then withholds it on that goal, as it withholds a citation that states its goal, and the selftest checks that it does.
+The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: the definitions the translation introduces whose equations Isabelle's own simpset would carry, as rewrites, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. Which definitions those are is recorded per constant against the Isabelle source line that introduces it: a `fun`, a `primrec`, a datatype's selectors and predicator, and a `definition` whose characterisation Isabelle separately declares simp are in; a plain `definition` is out. A few results Isabelle declares `simp` or `iff` about a constant whose definition it withholds are carried alongside, each citing the declaration it transplants. Two Isabelle facts can translate onto one HOL4 theorem, so one of them can be a corpus goal's statement; the measurement then withholds it on that goal, as it withholds a citation that states its goal, and the selftest checks that it does. A second, smaller half stands in for the ambient claset: the rules Isabelle declares `intro`, `elim` or `dest` about a constant whose definition it withholds, carried with the safety Isabelle gives them and only to the methods that consult a claset, which is a different set -- `simp` reads none.
 
 The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-09 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
 
@@ -51,7 +51,6 @@ An Isabelle proof can name a fact HOL4 states nowhere -- neither in a library no
 - `list_L7570_asym_lenlex (asym_inv_image, asym_less_than, asym_lex)`
 - `list_L8999_set_Cons_transfer (rel_set_def)`
 - `map_L308_dom_map_option_comp (dom_map_option[of "\<lambda>_. g" m])`
-- `map_L810_graph_map_add (map_add_comm)`
 - `map_L816_fst_graph_eq_dom (graph_eq_to_snd_dom)`
 - `map_L828_finite_graph_map_of (finite_dom_map_of, graph_eq_to_snd_dom)`
 - `string_L60_char_of_take_bit_eq (bit_take_bit_iff)`
@@ -99,13 +98,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 23 | 2 | 0 | 0 | 0.4 | 39 | 516 |
-| Sets | 334 | 315 | 15 | 4 | 0 | 3.9 | 3 | 2430 |
-| List/map | 473 | 408 | 65 | 0 | 0 | 0.9 | 0 | 1868 |
+| Classical | 25 | 23 | 2 | 0 | 0 | 0.5 | 39 | 516 |
+| Sets | 334 | 314 | 15 | 5 | 0 | 2.6 | 3 | 2430 |
+| List/map | 473 | 441 | 31 | 1 | 0 | 4.6 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **920** | **828** | **87** | **5** | **0** | **3.9** | **0** | **2430** |
+| **Total** | **920** | **860** | **53** | **7** | **0** | **4.6** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
