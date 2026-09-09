@@ -6551,6 +6551,30 @@ Proof
   >> simp[]
 QED
 
+(* Isabelle/HOL src/HOL/Map.thy:610 [map_add_comm].  A map sum
+   commutes where the two domains are disjoint.  The statement needs
+   [map_add] as a term, so it was unstatable while the corpus carried
+   the sum as a beta-redex; map_L810 names it, and Map.thy:610 is not
+   itself a corpus goal.  [dom] stays inlined, as the corpus renders
+   it -- the goal that cites this states its own hypothesis that way. *)
+Theorem source_map_add_comm:
+  !left right.
+    (\candidate. left candidate <> NONE) INTER
+    (\candidate. right candidate <> NONE) = {} ==>
+    source_map_add left right = source_map_add right left
+Proof
+  rpt gen_tac
+  >> rewrite_tac[pred_setTheory.EXTENSION, pred_setTheory.IN_INTER,
+                 pred_setTheory.NOT_IN_EMPTY, boolTheory.IN_DEF]
+  >> strip_tac
+  >> simp[source_map_add_def, boolTheory.FUN_EQ_THM]
+  >> gen_tac
+  >> first_x_assum (qspec_then `x` mp_tac)
+  >> Cases_on `left x`
+  >> Cases_on `right x`
+  >> simp[]
+QED
+
 (* Isabelle/HOL src/HOL/Map.thy:846 [map_le_refl], declared [simp]. *)
 Theorem source_map_le_refl:
   !mapping. source_map_le mapping mapping
