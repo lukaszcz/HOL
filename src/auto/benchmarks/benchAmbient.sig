@@ -52,7 +52,9 @@ sig
 
   (* The results Isabelle declares simp about a translated constant,
      which its simp step has and a context of definitions alone does
-     not.  Each is part of [arguments]; none states a corpus goal.
+     not.  Each is part of [arguments].  One that states a corpus goal
+     -- two Isabelle facts can translate onto one HOL4 theorem -- is
+     withheld on that goal, as a citation stating its goal is.
      [arguments] carries them read through the ambient alias
      definitions, which have already rewritten the goal by the time one
      of them is tried. *)

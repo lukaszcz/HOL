@@ -44,10 +44,13 @@ val sorted_wrt_correspondence =
    carries.  Its ambient context is its simpset and so has them; ours
    is the translation's definitions, so a method whose simp step leans
    on one reaches a residual that is the declared result itself, stated
-   and out of reach.  Every entry cites the declaration it transplants
-   and none is any corpus goal's statement, which the selftest checks:
-   the list is the source's own ambient context and never a goal's
-   answer.
+   and out of reach.  Every entry cites the declaration it transplants.
+   An entry may be a corpus goal's statement -- two Isabelle facts can
+   translate onto one HOL4 theorem, and [map_add_find_right] is
+   map_L887 once [map_le] is unfolded -- and the measurement then
+   withholds it on that one goal, exactly as it withholds a citation
+   that states its goal.  The list is the source's own ambient context
+   and never a goal's answer.
 
    src/HOL/List.thy @ f7e02b7e declares [fold_append] simp, and
    List.thy:3424 [foldl_append] is reached through it.  The same file
@@ -68,7 +71,14 @@ val sorted_wrt_correspondence =
    List.thy:2789 declares [nth_zip] simp, which is how a source proof
    that indexes into a zip never names it; HOL4's [EL_ZIP] asks for
    equal lengths instead of the two bounds the truncating ZIP needs,
-   so the translation states Isabelle's form. *)
+   so the translation states Isabelle's form.
+
+   Map.thy declares [map_add_find_right], [map_add_assoc],
+   [map_le_refl] and [map_le_map_add] simp and [map_add_None] iff,
+   about [map_add] and [map_le], whose definitions it withholds: a
+   method that never names [map_add_def] still reads a value out of the
+   right-hand map, reassociates two of them, and settles the order
+   between a map and a sum it is part of. *)
 val declared_results =
   let
     fun named name =
@@ -80,6 +90,11 @@ val declared_results =
        "source_takeWhile_append1",
        "source_takeWhile_append2",
        "source_nth_zip",
+       "source_map_add_find_right",
+       "source_map_add_assoc",
+       "source_map_add_None",
+       "source_map_le_refl",
+       "source_map_le_map_add",
        "source_rel_image_singleton",
        "source_char_roundtrip",
        "source_code_roundtrip"]

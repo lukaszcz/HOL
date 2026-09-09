@@ -6436,18 +6436,34 @@ Proof
        MATCH_ACCEPT_TAC source_ran_update_injective_pointwise
 QED
 
+(* Isabelle/HOL src/HOL/Map.thy:26 [map_add] and :49 [map_le], both
+   plain definitions.  They are constants there, and an Isabelle goal
+   about them is headed by the constant; a method reaches their bodies
+   only by naming [map_add_def] or [map_le_def].  [source_map_add] is
+   stated at two arguments, as Isabelle states it, so its equation
+   rewrites the partial application the goals carry.  [source_map_le]
+   keeps the translated body -- Isabelle's bounded quantifier over
+   [dom m1] says exactly this about a map the translation renders as a
+   function into option. *)
+Definition source_map_add_def:
+  source_map_add left right =
+    \key. option_CASE (right key) (left key) SOME
+End
+
+Definition source_map_le_def:
+  source_map_le left right <=>
+    !key value. left key = SOME value ==> right key = SOME value
+End
+
 (* src/HOL/Map.thy: map_le_antisym and map_add_le_mapI. *)
 Theorem source_map_le_antisym:
   !left right.
-    (!key value.
-       left key = SOME value ==>
-       right key = SOME value) ==>
-    (!key value.
-       right key = SOME value ==>
-       left key = SOME value) ==>
+    source_map_le left right ==>
+    source_map_le right left ==>
     left = right
 Proof
   rpt gen_tac
+  >> rewrite_tac[source_map_le_def]
   >> strip_tac
   >> strip_tac
   >> simp[boolTheory.FUN_EQ_THM]
@@ -6460,17 +6476,12 @@ QED
 
 Theorem source_map_add_le_mapI:
   !left right upper.
-    (!key value.
-       left key = SOME value ==>
-       upper key = SOME value) ==>
-    (!key value.
-       right key = SOME value ==>
-       upper key = SOME value) ==>
-    !key value.
-      option_CASE (right key) (left key) SOME = SOME value ==>
-      upper key = SOME value
+    source_map_le left upper ==>
+    source_map_le right upper ==>
+    source_map_le (source_map_add left right) upper
 Proof
   rpt gen_tac
+  >> rewrite_tac[source_map_le_def, source_map_add_def]
   >> strip_tac
   >> strip_tac
   >> rpt gen_tac
@@ -6478,11 +6489,70 @@ Proof
   >> fs[]
 QED
 
+(* Isabelle/HOL src/HOL/Map.thy:363 [map_add_find_right], declared
+   [simp].  Isabelle withholds [map_add]'s definition and declares this
+   about it instead, so a method that never names [map_add_def] still
+   reads a value out of the right-hand map. *)
+Theorem source_map_add_find_right:
+  !left right key value.
+    right key = SOME value ==> source_map_add left right key = SOME value
+Proof
+  rw[source_map_add_def]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:99 [map_upds], a plain definition
+   stated through [map_add]: [m(xs [|->] ys) = m ++ map_of (rev (zip xs
+   ys))].  Rendering it that way rather than writing the option case out
+   is what lets the results Isabelle declares about [map_add] reach a
+   goal about a list update, as they do in the source. *)
+Definition source_map_upds_def:
+  source_map_upds func keys values =
+    source_map_add func (ALOOKUP (REVERSE (ZIP (keys,values))))
+End
+
+(* Isabelle/HOL src/HOL/Map.thy:352 [map_add_assoc], declared [simp]. *)
+Theorem source_map_add_assoc:
+  !left middle right.
+    source_map_add left (source_map_add middle right) =
+    source_map_add (source_map_add left middle) right
+Proof
+  rw[source_map_add_def, FUN_EQ_THM]
+  >> Cases_on `right x`
+  >> simp[]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:366 [map_add_None], declared [iff]. *)
+Theorem source_map_add_None:
+  !left right key.
+    (source_map_add left right key = NONE) <=>
+    right key = NONE /\ left key = NONE
+Proof
+  rw[source_map_add_def]
+  >> Cases_on `right key`
+  >> simp[]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:846 [map_le_refl], declared [simp]. *)
+Theorem source_map_le_refl:
+  !mapping. source_map_le mapping mapping
+Proof
+  rw[source_map_le_def]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:856 [map_le_map_add], declared [simp].
+   Isabelle proves it from [map_add_find_right], and the two say the
+   same thing once [map_le] is unfolded; the corpus states it as
+   map_L887, which is why the measurement withholds the ambient reading
+   there. *)
+Theorem source_map_le_map_add:
+  !left right. source_map_le right (source_map_add left right)
+Proof
+  rw[source_map_le_def, source_map_add_def]
+QED
+
 Theorem source_map_add_subsumed_step:
   !left right.
-    (!key value.
-       left key = SOME value ==>
-       right key = SOME value) ==>
+    source_map_le left right ==>
     !key.
       (right key = NONE /\ left key = right key) \/
       (?value.
@@ -6490,6 +6560,7 @@ Theorem source_map_add_subsumed_step:
          SOME value = right key)
 Proof
   rpt gen_tac
+  >> rewrite_tac[source_map_le_def]
   >> strip_tac
   >> gen_tac
   >> Cases_on `left key`

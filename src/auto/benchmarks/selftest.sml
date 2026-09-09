@@ -766,6 +766,44 @@ val _ =
                     pairSimps.PAIR_ss)) [theorem])
        end)
 
+(* [map_add] is a plain Isabelle definition, so the ambient set does
+   not carry it and a goal that never names [map_add_def] sees the
+   constant and nothing else.  What Isabelle gives such a goal instead
+   is [map_add_find_right], declared [simp].  The check below asks for
+   a nested instance rather than for the rule itself, and confirms the
+   same goal is out of reach without it. *)
+val _ =
+  check
+    ("the ambient set reads a value out of the right-hand map",
+     fn () =>
+       let
+         val ambient =
+           List.mapPartial
+             (fn benchLib.RewriteAdd named => SOME named | _ => NONE)
+             benchAmbient.arguments
+         val found =
+           List.find
+             (fn {name, ...} : benchLib.named_thm =>
+               name = "parityTranslation$source_map_add_find_right")
+             ambient
+         val goal =
+           ``!left middle right key value.
+               right key = SOME value ==>
+               parityTranslation$source_map_add left
+                 (parityTranslation$source_map_add middle right) key =
+               SOME value``
+         fun closes rules =
+           Lib.can Tactical.TAC_PROOF
+             (([], goal),
+              Tactical.THEN
+                (Tactical.REPEAT Tactic.STRIP_TAC,
+                 simpLib.ASM_SIMP_TAC boolSimps.bool_ss rules))
+       in
+         case found of
+             NONE => false
+           | SOME {theorem, ...} => closes [theorem] andalso not (closes [])
+       end)
+
 (* ---- Phase A detectors ------------------------------------------- *)
 
 fun guard_entry id method arguments goal : benchLib.corpus_goal =
@@ -1536,11 +1574,14 @@ val _ =
 (* The ambient context carries a few results Isabelle declares simp
    about a translated constant, which its simp step has and a context
    of definitions alone does not.  That is the source's own context and
-   never a goal's answer, so none of them may state a corpus goal --
-   the same test rule A1 applies to a supplied fact. *)
+   never a goal's answer.  Two Isabelle facts can translate onto one
+   HOL4 theorem, so a declared result can be a corpus goal's statement
+   -- [map_add_find_right] is map_L887 once [map_le] is unfolded -- and
+   what has to hold is that the goal is then measured without it, the
+   same test rule A1 applies to a supplied fact. *)
 val _ =
   check
-    ("no ambient declared result states a corpus goal",
+    ("a declared result that states a corpus goal is withheld there",
      fn () =>
        let
          val goals =
@@ -1550,11 +1591,34 @@ val _ =
          fun states ({theorem, ...} : benchLib.named_thm)
                     ({goal, ...} : benchLib.corpus_goal) =
            benchLib.theorem_is_goal goal theorem
+         fun offered ({goal, ...} : benchLib.corpus_goal) argument =
+           benchLib.permitted_for goal argument
+         val ambient =
+           List.mapPartial
+             (fn benchLib.RewriteAdd named =>
+                   SOME (named, benchLib.RewriteAdd named)
+               | _ => NONE)
+             benchAmbient.arguments
+         fun declared (named : benchLib.named_thm) =
+           List.exists
+             (fn other : benchLib.named_thm => #name other = #name named)
+             benchAmbient.declared_results
+         val declarations =
+           List.filter (fn (named, _) => declared named) ambient
+         fun withheld_where_it_states (named, argument) =
+           List.all
+             (fn entry =>
+               not (states named entry) orelse not (offered entry argument))
+             goals
+         fun states_some (named, _) =
+           List.exists (states named) goals
+         fun offered_somewhere (_, argument) =
+           List.exists (fn entry => offered entry argument) goals
+         val conflicting = List.filter states_some declarations
        in
-         not
-           (List.exists
-              (fn result => List.exists (states result) goals)
-              benchAmbient.declared_results)
+         not (null conflicting) andalso
+         List.all withheld_where_it_states declarations andalso
+         List.all offered_somewhere conflicting
        end)
 
 (* A goal identifier in the table would make it a per-goal hint table. *)
@@ -2885,7 +2949,7 @@ val _ =
    updated pin. *)
 val goal_term_pins =
   [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "5BCE22FA"), ("Linarith", "E9DDA580"),
+   ("List/map", "16B90F27"), ("Linarith", "E9DDA580"),
    ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
 
 val _ =

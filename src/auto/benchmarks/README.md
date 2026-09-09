@@ -43,8 +43,11 @@ how Isabelle introduces it and the source line that says so.  A `fun`, a
 characterisation Isabelle separately declares simp are in; a plain
 `definition` is out.  Alongside them the set carries a few results
 Isabelle declares `simp` or `iff` about a constant whose definition it
-withholds, each citing the declaration it transplants; the selftest
-checks that none of them states a corpus goal.
+withholds, each citing the declaration it transplants.  Two Isabelle
+facts can translate onto one HOL4 theorem, so one of them can be a
+corpus goal's statement; the measurement then withholds it on that
+goal, as it withholds a citation that states its goal, and the
+selftest checks that it does.
 
 `HOLSELFTESTLEVEL=1` runs the explicitly marked representative goals.  This
 is a fixed subset, not random sampling.  Level 2 or higher runs every
