@@ -4,9 +4,9 @@
 
 Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used for the corresponding source result, and the HOL4 tactic chosen as that method's closest counterpart. This report calls that HOL4 tactic the **assigned tactic**.
 
-The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: every equational definition the translation introduces, as a rewrite, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. It is more generous than Isabelle in one direction -- Isabelle adds a `fun` definition to its simpset by default but not a plain `definition` -- and the numbers below should be read with that in mind.
+The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: the definitions the translation introduces whose equations Isabelle's own simpset would carry, as rewrites, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. Which definitions those are is recorded per constant against the Isabelle source line that introduces it: a `fun`, a `primrec`, a datatype's selectors and predicator, and a `definition` whose characterisation Isabelle separately declares simp are in; a plain `definition` is out. A few results Isabelle declares `simp` or `iff` about a constant whose definition it withholds are carried alongside, each citing the declaration it transplants; the selftest checks that none of them states a corpus goal.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-08 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-09 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
 
 ## Scope
 
@@ -69,7 +69,7 @@ The selftest checks this accounting in both directions. An unexpected failure is
 
 ## Results from the assigned tactics
 
-**Executable goals** is the number of runnable HOL4 statements. **Solved by assigned tactic** counts statements proved by the HOL4 counterpart selected for their Isabelle method, with the ambient context described above. **Solved under Isabelle's own ambient set** is the same measurement with that context cut back to the definitions Isabelle would have made ambient by itself. Isabelle puts a `fun` definition in the default simpset and a plain `definition` not, and the corpus does not record which of the two introduced each constant, so recursion stands in for the distinction: a definition whose right-hand side mentions the constant it defines is one no plain `definition` could have made. The proxy errs strict, which is the direction that cannot flatter HOL4. Both numbers are given because choosing one would mean guessing which side of that distinction each constant fell on. **Routine selftest goals** is a fixed, explicitly marked subset run when `HOLSELFTESTLEVEL=1`; it is not a random sample. At level 2 or higher, all executable goals run.
+**Executable goals** is the number of runnable HOL4 statements. **Solved by assigned tactic** counts statements proved by the HOL4 counterpart selected for their Isabelle method, with the ambient context described above. **Routine selftest goals** is a fixed, explicitly marked subset run when `HOLSELFTESTLEVEL=1`; it is not a random sample. At level 2 or higher, all executable goals run.
 
 A **family** is a subject-area group:
 
@@ -80,15 +80,15 @@ A **family** is a subject-area group:
 - **Presburger** contains quantified additive arithmetic over natural numbers and integers.
 - **Algebra** contains polynomial, ring, and field identities.
 
-| Family | Executable goals | Solved by assigned tactic | Solved under Isabelle's own ambient set | Routine selftest goals |
-|---|---:|---:|---:|---:|
-| Classical | 25 | 25 | 25 | 4 |
-| Sets | 353 | 334 | 333 | 4 |
-| List/map | 602 | 473 | 419 | 5 |
-| Linarith | 46 | 46 | 46 | 4 |
-| Presburger | 34 | 34 | 34 | 8 |
-| Algebra | 10 | 8 | 8 | 3 |
-| **Total** | **1070** | **920** | **865** | **28** |
+| Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
+|---|---:|---:|---:|
+| Classical | 25 | 25 | 4 |
+| Sets | 353 | 334 | 4 |
+| List/map | 602 | 474 | 5 |
+| Linarith | 46 | 46 | 4 |
+| Presburger | 34 | 34 | 8 |
+| Algebra | 10 | 8 | 3 |
+| **Total** | **1070** | **921** | **28** |
 
 ## Cost of the solutions
 
@@ -96,13 +96,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 39 | 516 |
-| Sets | 334 | 294 | 36 | 4 | 0 | 3.7 | 3 | 2430 |
-| List/map | 473 | 373 | 100 | 0 | 0 | 0.9 | 0 | 1868 |
+| Classical | 25 | 23 | 2 | 0 | 0 | 0.5 | 39 | 516 |
+| Sets | 334 | 317 | 13 | 4 | 0 | 2.5 | 3 | 2430 |
+| List/map | 474 | 443 | 31 | 0 | 0 | 0.8 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **920** | **771** | **144** | **5** | **0** | **3.7** | **0** | **2430** |
+| **Total** | **921** | **865** | **51** | **5** | **0** | **2.5** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -115,11 +115,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 19 | 0 | 0 |
-| List/map | 0 | 129 | 2 | 0 |
+| List/map | 0 | 128 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **150** | **2** | **0** |
+| **Total** | **0** | **149** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
