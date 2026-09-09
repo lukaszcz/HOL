@@ -942,7 +942,7 @@ val table : (string * (unit -> resolution)) list =
   ("rev_nth",
    library "rich_list" "EL_REVERSE"),
   ("rotate_add",
-   library "arithmetic" "FUNPOW_ADD"),
+   translated "source_rotate_add"),
   ("set_eq_iff",
    library "pred_set" "EXTENSION"),
   ("set_map[symmetric]",

@@ -2711,6 +2711,18 @@ Definition source_rotate_def:
     FUNPOW source_rotate1 count xs
 End
 
+(* Isabelle/HOL src/HOL/List.thy:5141 [rotate_add].  Stated on
+   [source_rotate], as Isabelle states it: a method citing it reads a
+   fact about rotation, not one about FUNPOW that only reaches the
+   goal once the definition is unfolded. *)
+Theorem source_rotate_add:
+  !left right.
+    source_rotate (left + right) =
+    source_rotate left o source_rotate right
+Proof
+  simp[FUN_EQ_THM, source_rotate_def, arithmeticTheory.FUNPOW_ADD]
+QED
+
 Theorem source_rotate1_length:
   !xs. LENGTH (source_rotate1 xs) = LENGTH xs
 Proof
@@ -4029,6 +4041,16 @@ Definition source_rel_image_def:
   source_rel_image relation domain =
     {right | ?left. left IN domain /\ relation left right}
 End
+
+(* Isabelle/HOL src/HOL/Relation.thy:1572 [Image_singleton_iff],
+   declared [iff]: the simpset takes a relational image of a singleton
+   apart without being told, though [Image] itself stays folded. *)
+Theorem source_rel_image_singleton:
+  !relation left right.
+    right IN source_rel_image relation {left} <=> relation left right
+Proof
+  simp[source_rel_image_def]
+QED
 
 Definition source_set_Cons_def:
   source_set_Cons heads tails =
