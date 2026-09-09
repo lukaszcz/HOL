@@ -39,7 +39,6 @@ val over_budget =
    "list_L8044_listrel1_subset_listrel",
    "list_L9013_list_all_transfer",
    "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
-   "map_L899_map_add_subsumed1",
    "product_type_L1133_Sigma_Union"]
 
 fun record note id : benchLib.shortfall =
@@ -155,7 +154,6 @@ val over_budget_with_no_residual =
      "list_L8044_listrel1_subset_listrel",
      "list_L9013_list_all_transfer",
      "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some",
-     "map_L899_map_add_subsumed1",
      "product_type_L1133_Sigma_Union"]
 
 (* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
@@ -391,6 +389,32 @@ val finite_map_update =
     ["map_L467_map_upds_Nil1",
      "map_L470_map_upds_Nil2", "map_L473_map_upds_Cons"]
 
+(* src/HOL/Map.thy:363 @ f7e02b7e.  Isabelle closes this one from its
+   simpset, by [map_add_find_right], and that declaration's translated
+   statement is this goal once [map_le] is unfolded -- two source facts
+   onto one HOL4 theorem.  The measurement withholds a rule that states
+   the goal it is offered on, so the goal runs without the fact the
+   source proof read. *)
+val the_ambient_rule_is_the_goal =
+  classified "the ambient rule is the goal"
+    ("Isabelle reads this from its simpset as map_add_find_right, "
+     ^ "whose translated statement is the goal, so the measurement "
+     ^ "withholds it here")
+    ["map_L887_map_le_map_add"]
+
+(* src/HOL/Map.thy:366 @ f7e02b7e.  Isabelle reads [map_add_None],
+   declared [iff], and the ambient set carries it.  What is left of
+   map_L611 is three contradiction subgoals in which the map sum stands
+   under [= SOME x], and the transplanted equation matches it only
+   under [= NONE]; map_L810 reaches the same wall after [graph_def],
+   and its own citation [map_add_comm] is not rendered. *)
+val map_sum_under_a_witness =
+  classified "map sum under a witness"
+    ("the residual states the map sum under = SOME x, and the ambient "
+     ^ "equation Isabelle reads for it -- map_add_None -- matches only "
+     ^ "under = NONE")
+    ["map_L611_dom_map_add", "map_L810_graph_map_add"]
+
 val option_relations =
   classified "option relations"
     ("OPTREL and the option-set constructions carry no claset "
@@ -499,6 +523,8 @@ val execution : benchLib.shortfall list =
   definitional_unfolding_stops_short @
   injectivity_and_surjectivity @
   finite_map_update @
+  the_ambient_rule_is_the_goal @
+  map_sum_under_a_witness @
   option_relations @
   character_arithmetic @
   sigma_and_times_rule_forms @
