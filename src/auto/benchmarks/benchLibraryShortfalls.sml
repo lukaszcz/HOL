@@ -404,8 +404,7 @@ val character_arithmetic =
      ^ "HOL4's char is a numeral typedef and the source proof "
      ^ "reasons about bits")
     ["string_L344_char_of_integer_code",
-     "string_L60_char_of_take_bit_eq",
-     "string_L68_char_of_comp_of_char"]
+     "string_L60_char_of_take_bit_eq"]
 
 val sigma_and_times_rule_forms =
   classified "Sigma and Times rule forms"
