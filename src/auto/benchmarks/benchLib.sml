@@ -610,6 +610,21 @@ fun consults_simpset Simp = true
   | consults_simpset Aesop = true
   | consults_simpset _ = false
 
+fun consults_claset Auto = true
+  | consults_claset Blast = true
+  | consults_claset Force = true
+  | consults_claset Fastforce = true
+  | consults_claset Safe = true
+  | consults_claset Clarify = true
+  | consults_claset Clarsimp = true
+  | consults_claset Aesop = true
+  | consults_claset _ = false
+
+fun claset_argument (IntroAdd _) = true
+  | claset_argument (ElimAdd _) = true
+  | claset_argument (DestAdd _) = true
+  | claset_argument _ = false
+
 fun recipe_arguments (Invoke (_, arguments)) = arguments
   | recipe_arguments (Then (left, right)) =
       recipe_arguments left @ recipe_arguments right
@@ -1110,8 +1125,20 @@ fun tactic_for simpset _ Simp args exclusions =
                 Tactical.THEN (Tactic.EQ_TAC, accept_supplied)))
         val simplify =
           simpLib.SIMP_TAC simpset (simps @ simp_controls exclusions)
+        (* Isabelle's [blast] never simplifies, so the pass below is
+           the [unfolding] the method asked for and nothing else: it
+           runs unconditionally exactly where there is a rewrite to run
+           it with, and otherwise only where the goal is the set
+           equality [SET_EQ_TAC] takes apart.  Gating it on the
+           argument list instead would make it depend on arguments that
+           are not rewrites -- a [dest:] the method named, or the
+           ambient claset, which by construction the method did not
+           name.  It did, until the ambient claset arrived: it turned
+           the pass on for every blast goal at once, and
+           [classical_L803], a Hilbert-system goal with no rewrite in
+           sight, went from 0.029s to past fifteen minutes. *)
         val preprocess =
-          if null args then
+          if null simps then
             Tactical.TRY
               (Tactical.THEN
                 (hurdUtils.SET_EQ_TAC, simplify))

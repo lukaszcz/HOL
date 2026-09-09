@@ -804,6 +804,90 @@ val _ =
            | SOME {theorem, ...} => closes [theorem] andalso not (closes [])
        end)
 
+(* Isabelle declares [map_add_SomeD] [dest!] -- in its claset, not in
+   its simpset -- and no rewrite stands in for it: the ambient rewrites
+   match a map sum under [= NONE] or build one from a value, and this
+   is what takes one apart under [= SOME].  The goal below asks for two
+   nested instances rather than for the rule itself, and is not a corpus
+   entry.  The ablation is the gating: [simp] reads no claset, so the
+   same goal under [by simp] is the same measurement with the claset
+   half removed, and it must not close. *)
+val ambient_claset_goal =
+  ``!left middle right key value.
+      parityTranslation$source_map_add left
+        (parityTranslation$source_map_add middle right) key = SOME value ==>
+      right key = SOME value \/ middle key = SOME value \/
+      left key = SOME value``
+
+val _ =
+  check
+    ("the ambient claset takes a map sum apart under a witness",
+     fn () =>
+       let
+         fun closes method =
+           let
+             val recipe =
+               benchDerive.recipe_of ambient_claset_goal method
+           in
+             benchLib.outcome_solved
+               (benchLib.run_goal (Time.fromSeconds 5) recipe
+                 (recipe_goal "unit-ambient-claset" recipe
+                    ambient_claset_goal))
+           end
+       in
+         closes "by force" andalso not (closes "by simp")
+       end)
+
+(* Isabelle's [blast] never simplifies, so the harness simplifies a
+   blast goal for the [unfolding] the method asked for and for nothing
+   else.  The goal below is one the simpset closes and the tableau does
+   not, which is what makes the last two rows mean anything: the
+   recipe must leave it open when what it carries is a classical rule
+   -- and the ambient claset is a classical rule every blast goal now
+   carries -- and must still close it when what it carries is the
+   rewrite an [unfolding] resolves to.  The first two rows keep the
+   others honest: a tableau that closed the goal itself, or a simpset
+   that did not, would let them pass. *)
+val blast_gate_goal = ``LENGTH [bench_gate_a; bench_gate_b; bench_gate_c] = 3``
+
+val blast_gate_rule =
+  benchLib.DestAdd
+    (benchLib.UnsafeRule,
+     {name = "parityTranslation$source_map_add_SomeD",
+      theorem = DB.fetch "parityTranslation" "source_map_add_SomeD"})
+
+val blast_gate_rewrite =
+  benchLib.RewriteAdd {name = "list$LENGTH", theorem = listTheory.LENGTH}
+
+fun blast_gate_solves recipe =
+  benchLib.outcome_solved
+    (benchLib.run_goal (Time.fromSeconds 5) recipe
+      (recipe_goal "unit-blast-gate" recipe blast_gate_goal))
+
+val _ =
+  check
+    ("the tableau alone leaves the blast gate goal open",
+     fn () => not (blast_gate_solves (benchLib.Invoke (benchLib.Blast, []))))
+
+val _ =
+  check
+    ("the simpset alone closes the blast gate goal",
+     fn () => blast_gate_solves (benchLib.Invoke (benchLib.Simp, [])))
+
+val _ =
+  check
+    ("a blast recipe does not simplify for a rule it was handed",
+     fn () =>
+       not (blast_gate_solves
+              (benchLib.Invoke (benchLib.Blast, [blast_gate_rule]))))
+
+val _ =
+  check
+    ("a blast recipe still simplifies for an unfolding",
+     fn () =>
+       blast_gate_solves
+         (benchLib.Invoke (benchLib.Blast, [blast_gate_rewrite])))
+
 (* ---- Phase A detectors ------------------------------------------- *)
 
 fun guard_entry id method arguments goal : benchLib.corpus_goal =

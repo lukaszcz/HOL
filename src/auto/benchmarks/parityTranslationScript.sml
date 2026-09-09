@@ -6489,6 +6489,25 @@ Proof
   >> fs[]
 QED
 
+(* Isabelle/HOL src/HOL/Map.thy:359 [map_add_SomeD], declared [dest!]
+   -- a safe destruction rule in Isabelle's ambient claset, not in its
+   simpset.  It is the reading of a map sum that the rewrites cannot
+   give: they match the sum under [= NONE] or produce it from a value,
+   and this takes one apart.  Map.thy:355 [map_add_Some_iff] is the
+   equivalence it is derived from and carries no attribute; the corpus
+   states that one as map_L355, so only the declared direction is
+   ambient. *)
+Theorem source_map_add_SomeD:
+  !left right key value.
+    source_map_add left right key = SOME value ==>
+    right key = SOME value \/
+    right key = NONE /\ left key = SOME value
+Proof
+  rw[source_map_add_def]
+  >> Cases_on `right key`
+  >> fs[]
+QED
+
 (* Isabelle/HOL src/HOL/Map.thy:363 [map_add_find_right], declared
    [simp].  Isabelle withholds [map_add]'s definition and declares this
    about it instead, so a method that never names [map_add_def] still

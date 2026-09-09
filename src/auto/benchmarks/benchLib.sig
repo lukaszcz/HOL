@@ -159,6 +159,16 @@ sig
      proof using one of those methods never had. *)
   val consults_simpset : tactic_id -> bool
 
+  (* True of the methods that consult the source theory's default
+     claset.  It is a different set: Isabelle's [simp] does not read
+     one, and [blast], [safe] and [clarify] read nothing else.  The two
+     halves of the ambient context go to their own methods. *)
+  val consults_claset : tactic_id -> bool
+
+  (* True of an argument that goes to a claset rather than a simpset,
+     which is what decides which half of the ambient context it is. *)
+  val claset_argument : method_arg -> bool
+
   (* False of an argument whose theorem is the goal being measured --
      the check [validate_raw_goal] raises on.  Exported so that a
      caller deriving a recipe can drop such an argument rather than

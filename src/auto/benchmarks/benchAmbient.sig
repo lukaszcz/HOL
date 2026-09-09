@@ -47,7 +47,10 @@ sig
   val ambient_definitions : benchLib.named_thm list
 
   (* The ambient context as recipe arguments -- [ambient_definitions]
-     and the lemmas below -- in the order a recipe takes. *)
+     and the lemmas below, then [declared_rules] -- in the order a
+     recipe takes.  It has two halves, and each reaches only the
+     methods that consult it: the rewrites go to the methods that read
+     a simpset, the classical rules to those that read a claset. *)
   val arguments : benchLib.method_arg list
 
   (* The results Isabelle declares simp about a translated constant,
@@ -59,6 +62,17 @@ sig
      definitions, which have already rewritten the goal by the time one
      of them is tried. *)
   val declared_results : benchLib.named_thm list
+
+  (* The results Isabelle declares [intro]/[elim]/[dest] about a
+     translated constant whose definition it withholds.  Its claset has
+     them and a context of rewrites does not, and no rewrite stands in
+     for one: a classical rule takes a term apart in a direction the
+     simplifier will not run.  Each cites the declaration it
+     transplants and each is unsafe, whatever Isabelle's [!] says: a
+     safe elimination is applied at every tableau node, which this
+     layer's search cannot afford even for a rule that cannot match the
+     goal. *)
+  val declared_rules : benchLib.method_arg list
 
   (* The entries of [definitions] that define one constant: every
      clause heads on the same one.  A [define_new_type_bijections]

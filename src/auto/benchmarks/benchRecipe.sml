@@ -392,11 +392,13 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
     val common =
       resolved benchLib.FactAdd facts @
       resolved benchLib.RewriteAdd unfolded
-    (* The ambient context stands in for the simpset an Isabelle method
-       reads without naming it, so it reaches only the methods that
-       consult one.  Giving it to [blast] or to a decision procedure
-       would hand the HOL4 tactic a simplification pass the Isabelle
-       proof never had.
+    (* The ambient context stands in for the simpset and the claset an
+       Isabelle method reads without naming them, and each half reaches
+       only the methods that consult that half.  Giving the rewrites to
+       [blast] or to a decision procedure would hand the HOL4 tactic a
+       simplification pass the Isabelle proof never had; giving the
+       classical rules to [simp] would hand it a claset Isabelle's
+       [simp] does not read.
 
        It goes last.  Where two arguments rewrite the same constant
        the earlier one wins, and the translation's own wrapper for a
@@ -408,7 +410,13 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
     fun step modifiers identifier =
       let
         val context =
-          if benchLib.consults_simpset identifier then ambient else []
+          List.filter
+            (fn argument =>
+              if benchLib.claset_argument argument then
+                benchLib.consults_claset identifier
+              else
+                benchLib.consults_simpset identifier)
+            ambient
       in
         benchLib.Invoke
           (identifier,

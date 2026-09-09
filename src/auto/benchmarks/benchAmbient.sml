@@ -139,8 +139,39 @@ val ambient_definitions =
       benchIsabelleAmbient.is_ambient name)
     definitions
 
+(* The claset half.  Isabelle declares these about a constant whose
+   definition it withholds, with a classical attribute rather than
+   [simp], and its [blast], [safe], [clarify], [auto] and [force] read
+   them without naming them.  A rewrite cannot stand in for one: the
+   rules above match a map sum under [= NONE] or build one from a
+   value, and none of them takes a sum apart under [= SOME x], which is
+   the residual Isabelle's [dest!] rule closes.  As with the rewrites,
+   a rule that states a corpus goal is withheld on that goal.
+
+   Every entry is unsafe, whatever Isabelle's [!] says.  A safe
+   elimination is applied at every tableau node and its major premise
+   is entirely schematic, so it meets the undetermined literals a
+   witness-guessing branch leaves behind: the seed clasets measured
+   [set_L1610_Pow_Compl] at 88 tableau branches with such a rule
+   unsafe and 3638 and past budget with the same rule [sdest].  That
+   is the rule the seeds already follow, and it costs nothing here --
+   [map_L611] closes in 0.107s safe and 0.100s unsafe. *)
+val declared_rules =
+  let
+    fun named constructor name =
+      constructor
+        (benchLib.UnsafeRule,
+         through_aliases
+           {name = "parityTranslation$" ^ name,
+            theorem = DB.fetch "parityTranslation" name})
+  in
+    (* src/HOL/Map.thy:359 [map_add_SomeD], declared [dest!]. *)
+    [named benchLib.DestAdd "source_map_add_SomeD"]
+  end
+
 val arguments =
-  map benchLib.RewriteAdd (ambient_definitions @ ambient_lemmas)
+  map benchLib.RewriteAdd (ambient_definitions @ ambient_lemmas) @
+  declared_rules
 
 (* A definition unfolds one constant; a characterisation relates
    several.  [define_new_type_bijections] yields a single theorem whose

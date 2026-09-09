@@ -49,6 +49,15 @@ corpus goal's statement; the measurement then withholds it on that
 goal, as it withholds a citation that states its goal, and the
 selftest checks that it does.
 
+The ambient context has a second half, for Isabelle's claset: the
+rules it declares `intro`, `elim` or `dest` about a constant whose
+definition it withholds.  No rewrite stands in for one -- a classical
+rule takes a term apart in a direction the simplifier will not run --
+and each carries the safety Isabelle gives it, `!` being safe.  The
+two halves go to their own methods: `benchLib.consults_claset` is not
+`benchLib.consults_simpset`, and Isabelle's `simp` reads no claset
+while its `blast`, `safe` and `clarify` read nothing else.
+
 `HOLSELFTESTLEVEL=1` runs the explicitly marked representative goals.  This
 is a fixed subset, not random sampling.  Level 2 or higher runs every
 executable goal and also tries selected alternative tactics -- counting a
