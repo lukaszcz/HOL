@@ -63,7 +63,12 @@ val sorted_wrt_correspondence =
    and String.thy:89 [of_char_of] are the roundtrip pair Isabelle
    declares simp about [char_of], whose own definition it withholds;
    neither line was mined into the corpus, so transplanting them hands
-   no goal its own statement. *)
+   no goal its own statement.
+
+   List.thy:2789 declares [nth_zip] simp, which is how a source proof
+   that indexes into a zip never names it; HOL4's [EL_ZIP] asks for
+   equal lengths instead of the two bounds the truncating ZIP needs,
+   so the translation states Isabelle's form. *)
 val declared_results =
   let
     fun named name =
@@ -74,6 +79,7 @@ val declared_results =
       ["source_fold_append",
        "source_takeWhile_append1",
        "source_takeWhile_append2",
+       "source_nth_zip",
        "source_rel_image_singleton",
        "source_char_roundtrip",
        "source_code_roundtrip"]

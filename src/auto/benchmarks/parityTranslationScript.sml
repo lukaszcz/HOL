@@ -2457,6 +2457,21 @@ Proof
   >> simp[source_el_zip_min]
 QED
 
+(* Isabelle/HOL src/HOL/List.thy:2789 [nth_zip], declared [simp]: the
+   simpset takes an index through a zip with no method naming it.
+   Stated with two bounds, as Isabelle states it -- HOL4's [EL_ZIP]
+   asks instead for equal lengths, which the truncating ZIP does not
+   need. *)
+Theorem source_nth_zip:
+  !xs ys index.
+    index < LENGTH xs ==> index < LENGTH ys ==>
+    EL index (ZIP (xs, ys)) = (EL index xs, EL index ys)
+Proof
+  rpt strip_tac
+  >> `index < MIN (LENGTH xs) (LENGTH ys)` by simp[]
+  >> simp[source_el_zip_min]
+QED
+
 (* Stated as membership rather than as the set applied to a point.
    Isabelle's [set_conv_nth] is a rewrite the source proofs hand to
    [auto]; a set-applied statement matches nothing in a goal that says

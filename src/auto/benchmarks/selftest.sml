@@ -733,6 +733,39 @@ val _ =
                   simpLib.SIMP_TAC boolSimps.bool_ss [theorem])
        end)
 
+(* Isabelle declares [nth_zip] simp, so its simpset takes an index
+   through a zip with nothing named.  HOL4's [EL_ZIP] asks for equal
+   lengths, which a truncating ZIP does not give, and the goal below --
+   no corpus entry -- is the shape that leaves: two bounds in the
+   premises and a projection of the indexed pair in the conclusion. *)
+val _ =
+  check
+    ("the ambient set takes an index through a zip",
+     fn () =>
+       let
+         val ambient =
+           List.mapPartial
+             (fn benchLib.RewriteAdd named => SOME named | _ => NONE)
+             benchAmbient.arguments
+         val indexed =
+           List.find
+             (fn {name, ...} : benchLib.named_thm =>
+               name = "parityTranslation$source_nth_zip")
+             ambient
+         val goal =
+           ``!xs ys index.
+               index < LENGTH xs ==> index < LENGTH ys ==>
+               FST (EL index (ZIP (xs, ys))) = EL index xs``
+       in
+         case indexed of
+             NONE => false
+           | SOME {theorem, ...} =>
+               Lib.can Tactical.TAC_PROOF
+                 (([], goal),
+                  simpLib.SIMP_TAC (simpLib.++ (boolSimps.bool_ss,
+                    pairSimps.PAIR_ss)) [theorem])
+       end)
+
 (* ---- Phase A detectors ------------------------------------------- *)
 
 fun guard_entry id method arguments goal : benchLib.corpus_goal =
