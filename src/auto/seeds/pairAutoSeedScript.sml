@@ -33,6 +33,18 @@ Proof
   Cases_on `p` >> simp [UNCURRY_DEF]
 QED
 
+(* src/HOL/Product_Type.thy:600,607 @ f7e02b7e.  Isabelle states
+   [case_prodI2'] and [case_prodE'] separately from the two above, and
+   declares both safe, because a paired abstraction can be applied to
+   further arguments: the rule above is about a proposition and this one
+   about a predicate.  The two do not overlap -- [UNCURRY c p] there is
+   a boolean and here it is a function. *)
+Theorem UNCURRY_APPLIED_AUTO_IFF[iff]:
+  !c p z. UNCURRY c p z <=> !x y. p = (x,y) ==> c x y z
+Proof
+  Cases_on `p` >> simp [UNCURRY_DEF]
+QED
+
 (* src/HOL/Product_Type.thy:788-791 @ f7e02b7e *)
 Theorem CURRY_AUTO_IFF[iff]:
   !f x y. CURRY f x y <=> f (x,y)

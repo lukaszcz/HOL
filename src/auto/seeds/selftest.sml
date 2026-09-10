@@ -271,6 +271,26 @@ val _ =
          [``!Q. (!p : 'a # 'b. Q (FST p) (SND p)) <=> (!x y. Q x y)``,
           ``!Q. (?p : 'a # 'b. Q (FST p) (SND p)) <=> (?x y. Q x y)``])
 
+(* src/HOL/Product_Type.thy:600,607 @ f7e02b7e.  Isabelle decides
+   [case_prodI2'] and [case_prodE'] ambiently: a paired abstraction
+   applied to further arguments is still read at the components of the
+   pair.  Neither goal below is a corpus entry and neither is the rule
+   itself -- one carries a conjunct across the application and the other
+   reads a nested application at the swapped components -- and the pair
+   is left free in both, as the corpus leaves what Isabelle binds with a
+   meta-quantifier.  That is what the seed is for: a bound pair is taken
+   apart by [FORALL_PROD_AUTO] and needs none of this. *)
+val _ =
+  check
+    ("the applied paired-abstraction seed view is usable",
+     fn () =>
+       List.all
+         (solved (clasimpLib.AUTO_TAC []))
+         [``(\(a,b). \n. qa a /\ qb b /\ qn n) p k ==>
+            (\(a,b). \n. qn n /\ qb b) p k``,
+          ``(\(a,b). \n. (\(c,d). \m. qq c d m) (b,a) n) p k ==>
+            (\(a,b). \n. qq b a n) p k``])
+
 (* src/HOL/List.thy:3231 @ f7e02b7e.  Isabelle decides [fold_append]
    ambiently: a fold across an append is the two folds in sequence.
    Neither goal below is a corpus entry, and neither is [fold_append]
