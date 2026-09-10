@@ -317,12 +317,6 @@ val membership_through_a_guarded_flatten =
      ^ "reports no proof well inside its budget")
     ["list_L8705_set_relcomp"]
 
-val pair_taken_apart_at_a_variable =
-  classified "pair taken apart at a variable"
-    ("the pair is a variable where the declared UNCURRY clause asks "
-     ^ "for an explicit pair")
-    ["product_type_L600_case_prodI2_"]
-
 val transitive_closure_from_a_step_list =
   classified "transitive closure from a step list"
     ("the flattened list of steps is taken apart, and what is left is "
@@ -531,7 +525,6 @@ val execution : benchLib.shortfall list =
   numeral_against_Suc @
   characterisation_is_the_goal @
   membership_through_a_guarded_flatten @
-  pair_taken_apart_at_a_variable @
   transitive_closure_from_a_step_list @
   blast_search_reports_no_proof @
   blast_needs_a_pass_isabelle_does_not_run @
