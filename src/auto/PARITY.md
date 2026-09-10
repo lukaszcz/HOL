@@ -86,11 +86,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
 | Sets | 353 | 334 | 4 |
-| List/map | 602 | 473 | 5 |
+| List/map | 602 | 474 | 5 |
 | Linarith | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 3 |
-| **Total** | **1070** | **920** | **28** |
+| **Total** | **1070** | **921** | **28** |
 
 ## Cost of the solutions
 
@@ -98,13 +98,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 23 | 2 | 0 | 0 | 0.5 | 39 | 516 |
-| Sets | 334 | 314 | 15 | 5 | 0 | 2.6 | 3 | 2430 |
-| List/map | 473 | 441 | 31 | 1 | 0 | 4.6 | 0 | 1868 |
+| Classical | 25 | 23 | 2 | 0 | 0 | 0.8 | 39 | 516 |
+| Sets | 334 | 316 | 14 | 4 | 0 | 2.8 | 3 | 2430 |
+| List/map | 474 | 432 | 40 | 2 | 0 | 4.5 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **920** | **860** | **53** | **7** | **0** | **4.6** | **0** | **2430** |
+| **Total** | **921** | **853** | **61** | **7** | **0** | **4.5** | **0** | **2430** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -117,11 +117,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 19 | 0 | 0 |
-| List/map | 0 | 129 | 2 | 0 |
+| List/map | 0 | 128 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **150** | **2** | **0** |
+| **Total** | **0** | **149** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
