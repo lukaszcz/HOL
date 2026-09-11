@@ -9,12 +9,11 @@ struct
    the family it belongs to rather than an observed residual. *)
 
 val over_budget =
-  ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
+  ["set_L1125_image_Pow_surj",
    "set_L1607_Pow_insert",
    "set_L1847_is_singleton_the_elem",
    "set_L928_subset_image_iff", "set_L994_image_add_0",
-   "set_theory_L168", "set_theory_L184", "set_theory_L36",
-   "set_theory_L44", "set_theory_L48"]
+   "set_theory_L168", "set_theory_L184", "set_theory_L48"]
 
 fun record note id : benchLib.shortfall =
   {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
@@ -35,10 +34,10 @@ val blast_set_rule_forms =
      ^ "excluding the goal's own characterisation left no second "
      ^ "route -- was wrong for them.  The search reports no proof on "
      ^ "some and does not return within the budget on the rest")
-    ["set_L1091_psubset_insert_iff", "set_L1125_image_Pow_surj",
+    ["set_L1125_image_Pow_surj",
      "set_L1607_Pow_insert",
      "set_L928_subset_image_iff", "set_L994_image_add_0",
-     "set_theory_L36", "set_theory_L44", "set_theory_L48",
+     "set_theory_L48",
      "set_theory_L168", "set_theory_L184"]
 
 val disjnt =

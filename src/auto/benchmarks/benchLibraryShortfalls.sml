@@ -248,8 +248,7 @@ val fold_against_a_set_aggregate =
      ^ "with that set, and the residual still carries the aggregate: "
      ^ "nothing turns the hypothesis about every list into the "
      ^ "instance the goal needs")
-    ["list_L3340_inter_coset_fold", "list_L3381_anon_L3381",
-     "list_L3385_anon_L3385"]
+    ["list_L3381_anon_L3381", "list_L3385_anon_L3385"]
 
 val finite_cardinality =
   classified "finite cardinality"
@@ -345,7 +344,7 @@ val blast_search_reports_no_proof =
     ("the tableau search exhausts its depths without a "
      ^ "reconstructible proof")
     ["list_L7771_wf_measures",
-     "list_L7861_listrel1_converse", "list_L8006_listrel_Nil",
+     "list_L7861_listrel1_converse",
      "map_L828_finite_graph_map_of",
      "option_L59_split_option_ex"]
 
@@ -443,28 +442,34 @@ val character_arithmetic =
 
 val sigma_and_times_rule_forms =
   classified "Sigma and Times rule forms"
-    ("the translation inlines Sigma, so the goal reaching HOL4 is "
-     ^ "about FST and SND of an explicit pair; the engines reduce a "
-     ^ "projection applied to a pair, and these two are what is left "
-     ^ "-- the search reports no proof rather than running out of "
-     ^ "budget")
+    ("the goal equates a set written as a paired abstraction with one "
+     ^ "written another way -- a Sigma on one side, a choice over the "
+     ^ "abstraction on the other -- and nothing relates the two "
+     ^ "spellings")
     ["product_type_L1088_Collect_case_prod_Sigma",
      "product_type_L688_The_split_eq"]
 
-(* Four of what used to be one class are budget, not shape: each
-   returns nothing within the budget rather than reporting no proof,
-   so what stands in the way is not established.  Two of them --
-   split_paired_Ball_Sigma and its Bex twin -- relate a quantifier over
-   a pair to quantifiers over its components, which Isabelle decides
-   with split_paired_All. *)
-val sigma_over_budget =
-  classified "Sigma over budget"
-    ("the goal is about a quantifier or a subset over an inlined "
-     ^ "Sigma and the search does not return within the budget")
-    ["product_type_L1031_SigmaE",
-     "product_type_L1082_Times_subset_cancel2",
-     "product_type_L1109_split_paired_Ball_Sigma",
-     "product_type_L1112_split_paired_Bex_Sigma"]
+(* Isabelle proves this with [blast elim: equalityE] from a claset
+   carrying [SigmaI] intro!, [SigmaE] elim! and [mem_Sigma_iff] iff.
+   Measured here, the ambient [SigmaE] is what stops it: with it the
+   tableau reaches depth 12 and 8226 branches without a proof in 60s,
+   and with it dropped the same goal closes at depth 4 in 25 branches
+   and 0.09s.  [SigmaE] splits every Sigma membership into two fresh
+   parameters and an equation between the member and their pair, and
+   the tableau substitutes an equation only where one side is a
+   variable, which neither side of that one is.  The forced safe step
+   is therefore pure cost, and the witness the goal turns on -- the
+   second component, which only the side hypothesis names -- is no
+   longer reached inside the deepening budget. *)
+val safe_elim_eigenvariable_equation : benchLib.shortfall list =
+  [{id = "product_type_L1085_Times_eq_cancel2",
+    cause = benchLib.EngineLimitation, date = "2026-09-11",
+    note =
+      "safe elim eigenvariable equation: an ambient safe elimination " ^
+      "splits the member into fresh parameters and an equation the " ^
+      "tableau does not substitute, and the search no longer reaches " ^
+      "the goal's witness within its depths (the search did not " ^
+      "return within the budget rather than reporting no proof)"}]
 
 (* Seven goals the corrected circularity guard newly withholds a rule
    from, all in the [characterisation is the goal] class above and
@@ -539,7 +544,7 @@ val execution : benchLib.shortfall list =
   option_relations @
   character_arithmetic @
   sigma_and_times_rule_forms @
-  sigma_over_budget @
+  safe_elim_eigenvariable_equation @
   a_reading_of_the_characterisation_is_the_goal
 
 end
