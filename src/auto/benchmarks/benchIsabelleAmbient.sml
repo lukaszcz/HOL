@@ -37,6 +37,7 @@ val introductions =
    ("source_Literal_def", Constructor, "src/HOL/String.thy:522"),
    ("source_Literal_prime_def", Simp, "src/HOL/String.thy:712"),
    ("source_SUP_def", Notation, "src/HOL/Complete_Lattices.thy:24"),
+   ("source_Sigma_def", Definition, "src/HOL/Product_Type.thy:1005"),
    ("source_abort_def", Simp, "src/HOL/String.thy:914"),
    ("source_abort_empty_set_def", Simp, "src/HOL/List.thy:3307"),
    ("source_add_image_def", Notation, "src/HOL/Set.thy:994"),
@@ -105,6 +106,7 @@ val introductions =
    ("source_numeral_def", Primrec, "src/HOL/Num.thy:255"),
    ("source_of_char_def", Alias, "src/HOL/String.thy:31"),
    ("source_of_nat_def", Representation, "src/HOL/Nat.thy:1696"),
+   ("source_product_def", Definition, "src/HOL/Product_Type.thy:1238"),
    ("source_refl_on_def", Definition, "src/HOL/Relation.thy:153"),
    ("source_rel_image_def", Definition, "src/HOL/Relation.thy:1563"),
    ("source_remove1_def", Primrec, "src/HOL/List.thy:233"),
@@ -155,5 +157,151 @@ fun is_ambient name =
     | NONE =>
         raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "is_ambient"
           ("no mined introduction for " ^ name)
+
+fun location name =
+  case List.find (fn (entry, _, _) => entry = name) introductions of
+      SOME (_, _, where_) => where_
+    | NONE =>
+        raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "location"
+          ("no mined introduction for " ^ name)
+
+(* Isabelle's ambient context is what the goal's own theory has declared
+   by the goal's line together with what its ancestors declare, and not
+   what the library declares somewhere.  [Pow_Compl] is proved at
+   Set.thy:1610 and [Sigma] is introduced at Product_Type.thy:1005;
+   Product_Type imports Fun and Fun imports Set, so nothing about
+   [Sigma] was in scope for that proof.  Handing it those rules anyway
+   is handing it a claset its source method never read, and it is not
+   free: with them the tableau deepens from 88 branches to 1181 and the
+   proof is lost.
+
+   [declaring_theories] is the theories the ambient set declares from
+   and [ancestry] the import closure of each theory the corpus draws a
+   goal from, cut to those.  Both are read off the Isabelle2025-2
+   sources, and both raise rather than default: a goal from an unlisted
+   theory, or a declaration in one, is a gap in the mining and not an
+   entry to drop silently. *)
+val declaring_theories =
+  ["src/HOL/Bit_Operations.thy",
+   "src/HOL/Code_Numeral.thy",
+   "src/HOL/Complete_Lattices.thy",
+   "src/HOL/Equiv_Relations.thy",
+   "src/HOL/Fun.thy",
+   "src/HOL/Lattices_Big.thy",
+   "src/HOL/List.thy",
+   "src/HOL/Map.thy",
+   "src/HOL/Nat.thy",
+   "src/HOL/Num.thy",
+   "src/HOL/Option.thy",
+   "src/HOL/Product_Type.thy",
+   "src/HOL/Relation.thy",
+   "src/HOL/Set.thy",
+   "src/HOL/Set_Interval.thy",
+   "src/HOL/String.thy",
+   "src/HOL/Transitive_Closure.thy"]
+
+val ancestry =
+  let
+    (* The [ex/] and [Examples/] files import [Main], so every theory
+       the ambient set declares from precedes them. *)
+    val after_everything = declaring_theories
+  in
+    [("src/HOL/HOL.thy", []),
+     ("src/HOL/Set.thy", []),
+     ("src/HOL/Product_Type.thy",
+      ["src/HOL/Complete_Lattices.thy",
+       "src/HOL/Fun.thy",
+       "src/HOL/Set.thy"]),
+     ("src/HOL/Option.thy",
+      ["src/HOL/Complete_Lattices.thy",
+       "src/HOL/Equiv_Relations.thy",
+       "src/HOL/Fun.thy",
+       "src/HOL/Nat.thy",
+       "src/HOL/Product_Type.thy",
+       "src/HOL/Relation.thy",
+       "src/HOL/Set.thy",
+       "src/HOL/Transitive_Closure.thy"]),
+     ("src/HOL/List.thy",
+      ["src/HOL/Complete_Lattices.thy",
+       "src/HOL/Equiv_Relations.thy",
+       "src/HOL/Fun.thy",
+       "src/HOL/Lattices_Big.thy",
+       "src/HOL/Nat.thy",
+       "src/HOL/Num.thy",
+       "src/HOL/Option.thy",
+       "src/HOL/Product_Type.thy",
+       "src/HOL/Relation.thy",
+       "src/HOL/Set.thy",
+       "src/HOL/Set_Interval.thy",
+       "src/HOL/Transitive_Closure.thy"]),
+     ("src/HOL/Map.thy",
+      ["src/HOL/Complete_Lattices.thy",
+       "src/HOL/Equiv_Relations.thy",
+       "src/HOL/Fun.thy",
+       "src/HOL/Lattices_Big.thy",
+       "src/HOL/List.thy",
+       "src/HOL/Nat.thy",
+       "src/HOL/Num.thy",
+       "src/HOL/Option.thy",
+       "src/HOL/Product_Type.thy",
+       "src/HOL/Relation.thy",
+       "src/HOL/Set.thy",
+       "src/HOL/Set_Interval.thy",
+       "src/HOL/Transitive_Closure.thy"]),
+     ("src/HOL/String.thy",
+      ["src/HOL/Bit_Operations.thy",
+       "src/HOL/Code_Numeral.thy",
+       "src/HOL/Complete_Lattices.thy",
+       "src/HOL/Equiv_Relations.thy",
+       "src/HOL/Fun.thy",
+       "src/HOL/Lattices_Big.thy",
+       "src/HOL/List.thy",
+       "src/HOL/Map.thy",
+       "src/HOL/Nat.thy",
+       "src/HOL/Num.thy",
+       "src/HOL/Option.thy",
+       "src/HOL/Product_Type.thy",
+       "src/HOL/Relation.thy",
+       "src/HOL/Set.thy",
+       "src/HOL/Set_Interval.thy",
+       "src/HOL/Transitive_Closure.thy"]),
+     ("src/HOL/Examples/Groebner_Examples.thy", after_everything),
+     ("src/HOL/ex/Arith_Examples.thy", after_everything),
+     ("src/HOL/ex/Classical.thy", after_everything),
+     ("src/HOL/ex/PresburgerEx.thy", after_everything),
+     ("src/HOL/ex/Set_Theory.thy", after_everything)]
+  end
+
+fun split_location function where_ =
+  case String.fields (fn c => c = #":") where_ of
+      [file, line] =>
+        (case Int.fromString line of
+             SOME value => (file, value)
+           | NONE =>
+               raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" function
+                 ("no line number in " ^ where_))
+    | _ =>
+        raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" function
+          ("not an Isabelle source location: " ^ where_)
+
+fun in_scope {declared, goal} =
+  let
+    val (declared_file, declared_line) = split_location "in_scope" declared
+    val (goal_file, goal_line) = split_location "in_scope" goal
+  in
+    if declared_file = goal_file then declared_line < goal_line
+    else if not (List.exists (fn file => file = declared_file)
+                   declaring_theories)
+    then
+      raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
+        ("no mined theory order for the declaring " ^ declared_file)
+    else
+      case List.find (fn (file, _) => file = goal_file) ancestry of
+          SOME (_, ancestors) =>
+            List.exists (fn file => file = declared_file) ancestors
+        | NONE =>
+            raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
+              ("no mined ancestry for " ^ goal_file)
+  end
 
 end

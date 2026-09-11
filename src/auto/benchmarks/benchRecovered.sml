@@ -46,13 +46,9 @@ val goals =
    entry "product_type_L1061_Sigma_insert"
      "src/HOL/Product_Type.thy" 1061 "by auto"
      ``!value domain fibres.
-         {pair |
-            FST pair IN value INSERT domain /\
-            SND pair IN fibres (FST pair)} =
+         parityTranslation$source_Sigma (value INSERT domain) fibres =
          IMAGE (\item. (value, item)) (fibres value) UNION
-         {pair |
-            FST pair IN domain /\
-            SND pair IN fibres (FST pair)}``,
+         parityTranslation$source_Sigma domain fibres``,
    entry "list_L8543_map_filter_map_filter" "src/HOL/List.thy" 8543
      "by (simp add: map_filter_def)"
      ``!function predicate xs.

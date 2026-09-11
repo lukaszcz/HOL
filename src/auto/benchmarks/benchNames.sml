@@ -589,8 +589,9 @@ val table : (string * (unit -> resolution)) list =
 
   (* ---- Isabelle definitions the translated goal writes out in full ---- *)
   ("List.insert_def", inlined),
-  ("Product_Type.product_def", inlined),
-  ("Sigma_def", inlined),
+  ("Product_Type.product_def", translated "source_product_def"),
+  ("Sigma_def",
+   translated "source_Sigma_def"),
   ("graph_def", inlined),
   ("Uniq_def", inlined),
   ("apfst_def", inlined),
@@ -607,7 +608,7 @@ val table : (string * (unit -> resolution)) list =
   ("minus_list_set_eq_filter", inlined),
   ("override_on_def", inlined),
   ("prod.swap_def", inlined),
-  ("product_def", inlined),
+  ("product_def", translated "source_product_def"),
   ("ran_def", inlined),
   ("relcomp_unfold", inlined),
   ("restrict_map_def", inlined),

@@ -7270,6 +7270,69 @@ Proof
      simpLib.Cong source_rev_conj_cong]
 QED
 
+(* Isabelle/HOL src/HOL/Product_Type.thy:1005 [Sigma], a plain
+   definition.  It is a constant there and a method reaches its body
+   only by naming [Sigma_def]; the corpus carried the body instead,
+   which handed every Sigma goal an unfolding its source proof never
+   saw.  Stated at two arguments, as Isabelle states it.  [Times] is an
+   abbreviation for [Sigma A (\_. B)] and stays inlined, as Isabelle
+   inlines it. *)
+Definition source_Sigma_def:
+  source_Sigma domain fibre =
+    \pair. FST pair IN domain /\ SND pair IN fibre (FST pair)
+End
+
+(* src/HOL/Product_Type.thy:1027 [SigmaI], declared [intro!], and :1030
+   [SigmaE], declared [elim!] -- the pair Isabelle's classical search
+   reads about the constant without naming it.  Between them they are
+   the whole of what a claset knows about a Sigma: one builds a member
+   from its two components and the other takes a member apart into
+   them, naming the equation that says the member is that pair. *)
+Theorem source_SigmaI:
+  !domain fibre first second.
+    first IN domain ==>
+    second IN fibre first ==>
+    (first,second) IN source_Sigma domain fibre
+Proof
+  rw[source_Sigma_def, boolTheory.IN_DEF]
+QED
+
+Theorem source_SigmaE:
+  !domain fibre member consequence.
+    member IN source_Sigma domain fibre ==>
+    (!first second.
+       first IN domain ==>
+       second IN fibre first ==>
+       member = (first,second) ==>
+       consequence) ==>
+    consequence
+Proof
+  rw[source_Sigma_def, boolTheory.IN_DEF]
+  >> first_x_assum (qspecl_then [`FST member`, `SND member`] mp_tac)
+  >> simp[pairTheory.PAIR]
+QED
+
+(* src/HOL/Product_Type.thy:1069 [mem_Sigma_iff], declared [iff].  It is
+   what Isabelle's simpset reads about a [Sigma] whose definition it
+   withholds: the membership of a pair literal, and of nothing else. *)
+Theorem source_mem_Sigma_iff:
+  !first second domain fibre.
+    (first,second) IN source_Sigma domain fibre <=>
+    first IN domain /\ second IN fibre first
+Proof
+  rw[source_Sigma_def, boolTheory.IN_DEF]
+QED
+
+(* src/HOL/Product_Type.thy:1238 [Product_Type.product], a qualified
+   definition standing for [A * B].  It is a constant there and
+   [member_product] is proved by naming [product_def]; the corpus
+   carried the body instead, and unfolded past [Sigma] at that, which
+   left the lemma stating a Sigma against its own unfolding while every
+   other [*] in the corpus kept the constant. *)
+Definition source_product_def:
+  source_product left right = source_Sigma left (\unused. right)
+End
+
 (* src/HOL/Product_Type.thy: unique pair selection used by The_split_eq. *)
 Theorem source_choice_unique_pair:
   !predicate first second.

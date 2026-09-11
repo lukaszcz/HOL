@@ -61,21 +61,26 @@ sig
      does.  An unknown citation is the resolver's error to raise, not
      a silent empty list.
 
-     [ambient] is the context the source theory had in scope without
-     anyone naming it.  It is one list for the whole corpus, not a
-     per-goal field, which is what keeps it from becoming a hint. *)
+     [ambient] is the context the source proof had in scope without
+     anyone naming it, at the Isabelle line the proof sits on.  It
+     reads that line and nothing else about the goal -- one context
+     for the whole corpus, cut by mined provenance rather than chosen
+     per goal, which is what keeps it from becoming a hint. *)
   type resolver = {
     theorems : string -> benchLib.named_thm list,
     tactics : string -> Term.term -> benchLib.tactic_id list,
-    ambient : benchLib.method_arg list
+    ambient : string -> benchLib.method_arg list
   }
 
   (* The recipe the method denotes.  [resolver] supplies the HOL4 theorem
      for an Isabelle name and the HOL4 tactics for a method name at this
      goal; the goal is passed because Isabelle's [algebra] and [arith] are
-     polymorphic where HOL4's counterparts are carrier-indexed.  A method
+     polymorphic where HOL4's counterparts are carrier-indexed, and
+     [source] -- the goal's Isabelle line, "src/HOL/<theory>.thy:<line>"
+     -- because the ambient context answers to where the proof sits.  A method
      naming more than one tactic becomes an [Otherwise] chain in the
      order the resolver gives them. *)
   val to_recipe :
-    resolver -> Term.term -> parsed -> benchLib.method_recipe
+    resolver -> {goal : Term.term, source : string} -> parsed ->
+    benchLib.method_recipe
 end

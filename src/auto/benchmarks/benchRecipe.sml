@@ -349,7 +349,7 @@ fun method_heads ({methods, ...} : parsed) = map #name methods
 type resolver = {
   theorems : string -> benchLib.named_thm list,
   tactics : string -> term -> benchLib.tactic_id list,
-  ambient : benchLib.method_arg list
+  ambient : string -> benchLib.method_arg list
 }
 
 (* A deletion names a simpset entry, not a theorem: the display name of
@@ -380,8 +380,8 @@ fun argument_of resolve modifier =
       | Facts names => each benchLib.FactAdd names
   end
 
-fun to_recipe ({theorems, tactics, ambient} : resolver) goal
-              ({facts, unfolded, methods} : parsed) =
+fun to_recipe ({theorems, tactics, ambient} : resolver)
+              {goal, source} ({facts, unfolded, methods} : parsed) =
   let
     (* [using] premises enter as facts, [unfolding] names as rewrites.
        Neither becomes a DefinitionAdd: that constructor exists only to
@@ -406,17 +406,19 @@ fun to_recipe ({theorems, tactics, ambient} : resolver) goal
        named about it -- [source_lexord_def] unfolding [source_lexord]
        to [LLEX] before the cited characterisation of [source_lexord]
        can fire.  A method that names a fact has said which one
-       applies; the ambient set is what it did not name. *)
+       applies; the ambient set is what it did not name.
+
+       [source] is the goal's own Isabelle line, and the ambient set
+       answers to it: Isabelle reads a theory in order and sees only
+       what it imports, so a declaration below the proof or in a
+       theory that imports the proof's was not in that proof's
+       context.  The line is mined provenance, so this is still one
+       context for the corpus and not a per-goal field. *)
+    val in_scope = ambient source
     fun step modifiers identifier =
       let
         val context =
-          List.filter
-            (fn argument =>
-              if benchLib.claset_argument argument then
-                benchLib.consults_claset identifier
-              else
-                benchLib.consults_simpset identifier)
-            ambient
+          List.filter (benchLib.argument_reaches identifier) in_scope
       in
         benchLib.Invoke
           (identifier,

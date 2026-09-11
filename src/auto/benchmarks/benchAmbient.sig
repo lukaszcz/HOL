@@ -12,8 +12,9 @@ sig
 
      The set is one theorem per mined constant, and the selftest holds
      it against what the translation theory records, so it grows only
-     when a definition is added.  It is also the same set for every
-     goal, so it cannot be tuned against one.
+     when a definition is added.  What reaches a goal is this same set
+     cut by where the goal sits in Isabelle's theory order and by
+     nothing else, so it cannot be tuned against one goal.
 
      [arguments] adds the lemmas below to it -- the declared results
      and one correspondence.  That correspondence is
@@ -46,12 +47,34 @@ sig
      under. *)
   val ambient_definitions : benchLib.named_thm list
 
-  (* The ambient context as recipe arguments -- [ambient_definitions]
-     and the lemmas below, then [declared_rules] -- in the order a
-     recipe takes.  It has two halves, and each reaches only the
-     methods that consult it: the rewrites go to the methods that read
-     a simpset, the classical rules to those that read a claset. *)
+  (* The whole ambient context as recipe arguments --
+     [ambient_definitions] and the lemmas below, then [declared_rules]
+     -- in the order a recipe takes.  It has two halves, and each
+     reaches only the methods that consult it: the rewrites go to the
+     methods that read a simpset, the classical rules to those that
+     read a claset. *)
   val arguments : benchLib.method_arg list
+
+  (* [arguments] cut to what was in scope where the goal was proved,
+     which is what the measurement hands a goal.  The argument is the
+     goal's own Isabelle line, "src/HOL/<theory>.thy:<line>".  Isabelle
+     reads a theory in order and sees only what it imports, so a result
+     declared below a proof, or in a theory that imports the proof's
+     rather than the other way round, was not in that proof's simpset
+     or claset: [Pow_Compl] at Set.thy:1610 had nothing about [Sigma],
+     which Product_Type introduces.  Neither half is free of the other
+     -- a rule that cannot fire still costs a classical search the
+     nodes it is tried at -- so the cut runs over both.
+
+     The cut reads mined provenance and never the goal's statement, so
+     the context still cannot be tuned against a goal.  It raises on a
+     theory [benchIsabelleAmbient] has no order for. *)
+  val arguments_at : string -> benchLib.method_arg list
+
+  (* The Isabelle line each of the results and rules below is declared
+     at.  Definitions answer from [benchIsabelleAmbient]; this raises on
+     an argument neither table covers. *)
+  val declaration_site : string -> string
 
   (* The results Isabelle declares simp about a translated constant,
      which its simp step has and a context of definitions alone does
@@ -68,10 +91,9 @@ sig
      them and a context of rewrites does not, and no rewrite stands in
      for one: a classical rule takes a term apart in a direction the
      simplifier will not run.  Each cites the declaration it
-     transplants and each is unsafe, whatever Isabelle's [!] says: a
-     safe elimination is applied at every tableau node, which this
-     layer's search cannot afford even for a rule that cannot match the
-     goal. *)
+     transplants and carries the safety Isabelle gives it, [!] being
+     safe.  The [map_add_SomeD] entry is the exception, and says in
+     [benchAmbient] why its own measurement puts it the other way. *)
   val declared_rules : benchLib.method_arg list
 
   (* The entries of [definitions] that define one constant: every

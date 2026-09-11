@@ -1132,9 +1132,7 @@ if v_P0 v_x0 then [] else REPLICATE v_n0 v_x0``,
 {id = "list_L5788_lists_length_Suc_eq",
  goal = ``(λb_xs. set b_xs ⊆ v_A0 ∧ LENGTH b_xs = SUC v_n0) =
 IMAGE (λ(b_xs,b_n). b_n::b_xs)
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ (λb_xs. set b_xs ⊆ v_A0 ∧ LENGTH b_xs = v_n0) ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair))``,
+  (source_Sigma (λb_xs. set b_xs ⊆ v_A0 ∧ LENGTH b_xs = v_n0) (λb_uu_. v_A0))``,
  source_method = "by (auto simp: length_Suc_conv)",
  provenance = {file = "src/HOL/List.thy", line = 5788, commit = "f7e02b7e"},
  representative = false},
@@ -1338,9 +1336,7 @@ IMAGE (λb_x. [b_x]) v_A0``,
  provenance = {file = "src/HOL/List.thy", line = 8664, commit = "f7e02b7e"},
  representative = false},
 {id = "list_L8687_product_code",
- goal = ``(λb_product_left b_product_right b_product_pair.
-     FST b_product_pair ∈ b_product_left ∧
-     SND b_product_pair ∈ b_product_right) (set v_xs0) (set v_ys0) =
+ goal = ``source_product (set v_xs0) (set v_ys0) =
 set (FLAT (MAP (λb_x. MAP (λb_y. (b_x,b_y)) v_ys0) v_xs0))``,
  source_method = "by (auto simp add: Product_Type.product_def)",
  provenance = {file = "src/HOL/List.thy", line = 8687, commit = "f7e02b7e"},

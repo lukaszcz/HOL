@@ -239,7 +239,9 @@ fun dropped_citations ({goals, ...} : family) =
            : benchLib.corpus_goal) =>
       if not (String.isPrefix "src/HOL/" (#file provenance)) then NONE
       else
-        case benchDerive.self_supplied_of goal source_method of
+        case benchDerive.self_supplied_of
+               (#file provenance ^ ":" ^ Int.toString (#line provenance))
+               goal source_method of
             [] => NONE
           | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
     goals
@@ -384,7 +386,7 @@ fun render () =
       "so a goal cannot be handed a fact its source proof did not name. ",
       "One context is added on top of that: the definitions the ",
       "translation introduces whose equations Isabelle's own simpset ",
-      "would carry, as rewrites, identically for every goal, and only ",
+      "would carry, as rewrites, and only ",
       "to the methods that consult a simpset. This stands in for the ",
       "ambient simpset an Isabelle method reads without naming it. ",
       "Which definitions those are is recorded per constant against the ",
@@ -403,6 +405,20 @@ fun render () =
       "constant whose definition it withholds, carried with the safety ",
       "Isabelle gives them and only to the methods that consult a ",
       "claset, which is a different set -- `simp` reads none.\n\n",
+      "Both halves are cut by Isabelle's theory order. Isabelle reads a ",
+      "theory in order and sees only the theories it imports, so a ",
+      "result declared below a proof, or in a theory that imports the ",
+      "proof's rather than the other way round, was not in that ",
+      "proof's simpset or claset: `Pow_Compl` is proved at ",
+      "`Set.thy:1610` and knows nothing of `Sigma`, which ",
+      "`Product_Type.thy` introduces. The cut reads the goal's mined ",
+      "source line and nothing about its statement, so the context is ",
+      "one set for the whole corpus rather than a per-goal choice. It ",
+      "is a formality on neither side: an out-of-scope rewrite is a ",
+      "fact the source proof did not have, and an out-of-scope ",
+      "classical rule is search the source proof was not paying for -- ",
+      "given the two `Sigma` rules, `Pow_Compl`'s tableau goes from 88 ",
+      "branches to 1181 and the proof is lost.\n\n",
       "The comparison data was mined from Isabelle/HOL commit ",
       "`f7e02b7e`. Each in-repository benchmark entry records its source ",
       "file, line, method, and commit. The report was generated on ",

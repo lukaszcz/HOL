@@ -3,7 +3,12 @@ struct
 
 val resolver =
   {theorems = benchNames.theorems, tactics = benchTactics.tactics,
-   ambient = benchAmbient.arguments}
+   ambient = benchAmbient.arguments_at}
+
+(* The Isabelle line a goal was proved at, which is what the ambient
+   context is cut by. *)
+fun source_of ({file, line, ...} : benchLib.provenance) =
+  file ^ ":" ^ Int.toString line
 
 (* Everything the corpus took from Isabelle carries an Isabelle method
    to derive from.  The HOL4 regression goals the corpus adds alongside
@@ -34,9 +39,10 @@ fun without_self goal recipe =
     strip recipe
   end
 
-fun recipe_of goal source_method =
+fun recipe_of source goal source_method =
   without_self goal
-    (benchRecipe.to_recipe resolver goal (benchRecipe.parse source_method))
+    (benchRecipe.to_recipe resolver {goal = goal, source = source}
+      (benchRecipe.parse source_method))
 
 (* One recipe can carry a theorem twice -- an [unfolding] naming it and
    the ambient context repeating it under a qualified spelling -- and
@@ -55,19 +61,21 @@ fun distinct_arguments arguments =
     List.foldl keep [] arguments
   end
 
-fun self_supplied_of goal source_method =
+fun self_supplied_of source goal source_method =
   map benchLib.argument_name
     (distinct_arguments
       (List.filter (not o benchLib.permitted_for goal)
         (benchLib.recipe_arguments
-          (benchRecipe.to_recipe resolver goal
+          (benchRecipe.to_recipe resolver {goal = goal, source = source}
             (benchRecipe.parse source_method)))))
 
 fun self_supplied (entry : benchLib.source_goal) =
-  self_supplied_of (#goal entry) (#source_method entry)
+  self_supplied_of (source_of (#provenance entry)) (#goal entry)
+    (#source_method entry)
 
 fun recipe (entry : benchLib.source_goal) =
-  recipe_of (#goal entry) (#source_method entry)
+  recipe_of (source_of (#provenance entry)) (#goal entry)
+    (#source_method entry)
 
 (* [family] names the corpus in the error a bad entry raises; the check
    itself is [benchLib.prepare_goal]'s, one goal at a time. *)

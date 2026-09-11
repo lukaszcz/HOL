@@ -33,7 +33,7 @@ the parser does not understand is a hard error, never a silent fallback to
 a bare tactic.  `benchNames` is a single global table from
 Isabelle theorem name to HOL4 theorem; it is keyed by name only and knows
 nothing about which goal is asking.  `benchAmbient` supplies the
-translation's definitions as rewrites, identically for every goal, and only
+translation's definitions as rewrites, and only
 to the methods that consult a simpset -- Isabelle's `blast`, `safe`,
 `clarify`, `metis` and its decision procedures do not.  It stands in for the
 ambient simpset an Isabelle method reads without naming it, and is cut to
@@ -57,6 +57,20 @@ and each carries the safety Isabelle gives it, `!` being safe.  The
 two halves go to their own methods: `benchLib.consults_claset` is not
 `benchLib.consults_simpset`, and Isabelle's `simp` reads no claset
 while its `blast`, `safe` and `clarify` read nothing else.
+
+Both halves are cut by Isabelle's theory order.  Isabelle reads a
+theory in order and sees only the theories it imports, so a result
+declared below a proof, or in a theory that imports the proof's rather
+than the other way round, was not in that proof's context: `Pow_Compl`
+is proved at `Set.thy:1610` and knows nothing of `Sigma`, which
+`Product_Type.thy` introduces.  `benchIsabelleAmbient.in_scope` is the
+cut and `benchAmbient.arguments_at` applies it; the import order is
+mined alongside the introductions.  The cut reads the goal's mined
+source line and nothing about its statement, so the context is one set
+for the whole corpus rather than a per-goal choice.  It is a formality
+on neither side: an out-of-scope rewrite is a fact the source proof did
+not have, and an out-of-scope classical rule is search the source proof
+was not paying for.
 
 `HOLSELFTESTLEVEL=1` runs the explicitly marked representative goals.  This
 is a fixed subset, not random sampling.  Level 2 or higher runs every

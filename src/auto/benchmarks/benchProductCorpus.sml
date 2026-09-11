@@ -328,15 +328,13 @@ v_f0 v_x0``,
  goal = ``v_a0 ∈ v_A0 ⇒
 v_b0 ∈ v_B0 v_a0 ⇒
 (v_a0,v_b0) ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair))``,
+(source_Sigma v_A0 v_B0)``,
  source_method = "unfolding Sigma_def by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1028, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1031_SigmaE",
  goal = ``v_c0 ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇒
+(source_Sigma v_A0 v_B0) ⇒
 (∀b_x b_y. b_x ∈ v_A0 ⇒ b_y ∈ v_B0 b_x ⇒ v_c0 = (b_x,b_y) ⇒ v_P0) ⇒
 v_P0``,
  source_method = "unfolding Sigma_def by blast",
@@ -344,24 +342,21 @@ v_P0``,
  representative = false},
 {id = "product_type_L1040_SigmaD1",
  goal = ``(v_a0,v_b0) ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇒
+(source_Sigma v_A0 v_B0) ⇒
 v_a0 ∈ v_A0``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1040, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1043_SigmaD2",
  goal = ``(v_a0,v_b0) ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇒
+(source_Sigma v_A0 v_B0) ⇒
 v_b0 ∈ v_B0 v_a0``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1043, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1046_SigmaE2",
  goal = ``(v_a0,v_b0) ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇒
+(source_Sigma v_A0 v_B0) ⇒
 (v_a0 ∈ v_A0 ⇒ v_b0 ∈ v_B0 v_a0 ⇒ v_P0) ⇒
 v_P0``,
  source_method = "by blast",
@@ -370,110 +365,78 @@ v_P0``,
 {id = "product_type_L1049_Sigma_cong",
  goal = ``v_A0 = v_B0 ⇒
 (∀b_x. b_x ∈ v_B0 ⇒ v_C0 b_x = v_D0 b_x) ⇒
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_x. v_C0 b_x) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_B0 ∧
-     SND b_sigma_pair ∈ (λb_x. v_D0 b_x) (FST b_sigma_pair))``,
+(source_Sigma v_A0 (λb_x. v_C0 b_x)) =
+(source_Sigma v_B0 (λb_x. v_D0 b_x))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1049, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1052_Sigma_mono",
  goal = ``v_A0 ⊆ v_C0 ⇒
 (∀b_x. b_x ∈ v_A0 ⇒ v_B0 b_x ⊆ v_D0 b_x) ⇒
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⊆
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_C0 ∧ SND b_sigma_pair ∈ v_D0 (FST b_sigma_pair))``,
+(source_Sigma v_A0 v_B0) ⊆
+(source_Sigma v_C0 v_D0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1052, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1055_Sigma_empty1",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ ∅ ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) = ∅``,
+ goal = ``(source_Sigma ∅ v_B0) = ∅``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1055, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1058_Sigma_empty2",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. ∅) (FST b_sigma_pair)) = ∅``,
+ goal = ``(source_Sigma v_A0 (λb_uu_. ∅)) = ∅``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1058, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1064_UNIV_Times_UNIV",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ 𝕌(:α) ∧
-     SND b_sigma_pair ∈ (λb_uu_. 𝕌(:β)) (FST b_sigma_pair)) = 𝕌(:α # β)``,
+ goal = ``(source_Sigma 𝕌(:α) (λb_uu_. 𝕌(:β))) = 𝕌(:α # β)``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1064, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1067_Compl_Times_UNIV1",
  goal = ``COMPL
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ 𝕌(:α) ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ 𝕌(:α) ∧
-     SND b_sigma_pair ∈ (λb_uu_. COMPL v_A0) (FST b_sigma_pair))``,
+  (source_Sigma 𝕌(:α) (λb_uu_. v_A0)) =
+(source_Sigma 𝕌(:α) (λb_uu_. COMPL v_A0))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1067, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1070_Compl_Times_UNIV2",
  goal = ``COMPL
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. 𝕌(:β)) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ COMPL v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. 𝕌(:β)) (FST b_sigma_pair))``,
+  (source_Sigma v_A0 (λb_uu_. 𝕌(:β))) =
+(source_Sigma (COMPL v_A0) (λb_uu_. 𝕌(:β)))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1070, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1073_mem_Sigma_iff",
  goal = ``(v_a0,v_b0) ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇔
+(source_Sigma v_A0 v_B0) ⇔
 v_a0 ∈ v_A0 ∧ v_b0 ∈ v_B0 v_a0``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1073, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1079_Sigma_empty_iff",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧
-     SND b_sigma_pair ∈ (λb_i. v_X0 b_i) (FST b_sigma_pair)) = ∅ ⇔
+ goal = ``(source_Sigma v_I0 (λb_i. v_X0 b_i)) = ∅ ⇔
 ∀b_i. b_i ∈ v_I0 ⇒ v_X0 b_i = ∅``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1079, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1082_Times_subset_cancel2",
  goal = ``v_x0 ∈ v_C0 ⇒
-((λb_sigma_pair.
-      FST b_sigma_pair ∈ v_A0 ∧
-      SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair)) ⊆
- (λb_sigma_pair.
-      FST b_sigma_pair ∈ v_B0 ∧
-      SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair)) ⇔ v_A0 ⊆ v_B0)``,
+((source_Sigma v_A0 (λb_uu_. v_C0)) ⊆
+ (source_Sigma v_B0 (λb_uu_. v_C0)) ⇔ v_A0 ⊆ v_B0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1082, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1085_Times_eq_cancel2",
  goal = ``v_x0 ∈ v_C0 ⇒
-((λb_sigma_pair.
-      FST b_sigma_pair ∈ v_A0 ∧
-      SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair)) =
- (λb_sigma_pair.
-      FST b_sigma_pair ∈ v_B0 ∧
-      SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair)) ⇔ v_A0 = v_B0)``,
+((source_Sigma v_A0 (λb_uu_. v_C0)) =
+ (source_Sigma v_B0 (λb_uu_. v_C0)) ⇔ v_A0 = v_B0)``,
  source_method = "by (blast elim: equalityE)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1085, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1088_Collect_case_prod_Sigma",
  goal = ``(λ(b_x,b_y). v_P0 b_x ∧ v_Q0 b_x b_y) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_P0 ∧
-     SND b_sigma_pair ∈ (λb_x. v_Q0 b_x) (FST b_sigma_pair))``,
+(source_Sigma v_P0 (λb_x. v_Q0 b_x))``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1088, commit = "f7e02b7e"},
  representative = false},
@@ -499,8 +462,7 @@ v_A0 ⊆ UNCURRY v_Q0``,
 {id = "product_type_L1109_split_paired_Ball_Sigma",
  goal = ``(∀b_z.
    b_z ∈
-   (λb_sigma_pair.
-        FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ⇒
+   (source_Sigma v_A0 v_B0) ⇒
    v_P0 b_z) ⇔ ∀b_x. b_x ∈ v_A0 ⇒ ∀b_y. b_y ∈ v_B0 b_x ⇒ v_P0 (b_x,b_y)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1109, commit = "f7e02b7e"},
@@ -508,272 +470,187 @@ v_A0 ⊆ UNCURRY v_Q0``,
 {id = "product_type_L1112_split_paired_Bex_Sigma",
  goal = ``(∃b_z.
    b_z ∈
-   (λb_sigma_pair.
-        FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) ∧
+   (source_Sigma v_A0 v_B0) ∧
    v_P0 b_z) ⇔ ∃b_x. b_x ∈ v_A0 ∧ ∃b_y. b_y ∈ v_B0 b_x ∧ v_P0 (b_x,b_y)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1112, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1115_Sigma_Un_distrib1",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∪ v_J0 ∧
-     SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) ∪
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_J0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair))``,
+ goal = ``(source_Sigma (v_I0 ∪ v_J0) v_C0) =
+(source_Sigma v_I0 v_C0) ∪
+(source_Sigma v_J0 v_C0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1115, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1118_Sigma_Un_distrib2",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧
-     SND b_sigma_pair ∈ (λb_i. v_A0 b_i ∪ v_B0 b_i) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_A0 (FST b_sigma_pair)) ∪
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair))``,
+ goal = ``(source_Sigma v_I0 (λb_i. v_A0 b_i ∪ v_B0 b_i)) =
+(source_Sigma v_I0 v_A0) ∪
+(source_Sigma v_I0 v_B0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1118, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1121_Sigma_Int_distrib1",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∩ v_J0 ∧
-     SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) ∩
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_J0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair))``,
+ goal = ``(source_Sigma (v_I0 ∩ v_J0) v_C0) =
+(source_Sigma v_I0 v_C0) ∩
+(source_Sigma v_J0 v_C0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1121, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1124_Sigma_Int_distrib2",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧
-     SND b_sigma_pair ∈ (λb_i. v_A0 b_i ∩ v_B0 b_i) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_A0 (FST b_sigma_pair)) ∩
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair))``,
+ goal = ``(source_Sigma v_I0 (λb_i. v_A0 b_i ∩ v_B0 b_i)) =
+(source_Sigma v_I0 v_A0) ∩
+(source_Sigma v_I0 v_B0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1124, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1127_Sigma_Diff_distrib1",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 DIFF v_J0 ∧
-     SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) DIFF
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_J0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair))``,
+ goal = ``(source_Sigma (v_I0 DIFF v_J0) v_C0) =
+(source_Sigma v_I0 v_C0) DIFF
+(source_Sigma v_J0 v_C0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1127, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1130_Sigma_Diff_distrib2",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧
-     SND b_sigma_pair ∈ (λb_i. v_A0 b_i DIFF v_B0 b_i) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_A0 (FST b_sigma_pair)) DIFF
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_I0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair))``,
+ goal = ``(source_Sigma v_I0 (λb_i. v_A0 b_i DIFF v_B0 b_i)) =
+(source_Sigma v_I0 v_A0) DIFF
+(source_Sigma v_I0 v_B0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1130, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1133_Sigma_Union",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ BIGUNION v_X0 ∧
-     SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) =
+ goal = ``(source_Sigma (BIGUNION v_X0) v_B0) =
 BIGUNION
   (IMAGE
-     (λb_A b_sigma_pair.
-          FST b_sigma_pair ∈ b_A ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair))
+     (λb_A. source_Sigma b_A v_B0)
      v_X0)``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1133, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1136_Pair_vimage_Sigma",
  goal = ``PREIMAGE ((λb_pair_left b_pair_right. (b_pair_left,b_pair_right)) v_x0)
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_f0 (FST b_sigma_pair)) =
+  (source_Sigma v_A0 v_f0) =
 if v_x0 ∈ v_A0 then v_f0 v_x0 else ∅``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1136, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1153_Times_empty",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) = ∅ ⇔
+ goal = ``(source_Sigma v_A0 (λb_uu_. v_B0)) = ∅ ⇔
 v_A0 = ∅ ∨ v_B0 = ∅``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1153, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1156_times_subset_iff",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair)) ⊆
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_B0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_D0) (FST b_sigma_pair)) ⇔
+ goal = ``(source_Sigma v_A0 (λb_uu_. v_C0)) ⊆
+(source_Sigma v_B0 (λb_uu_. v_D0)) ⇔
 v_A0 = ∅ ∨ v_C0 = ∅ ∨ v_A0 ⊆ v_B0 ∧ v_C0 ⊆ v_D0``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1156, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1159_times_eq_iff",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_C0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_D0) (FST b_sigma_pair)) ⇔
+ goal = ``(source_Sigma v_A0 (λb_uu_. v_B0)) =
+(source_Sigma v_C0 (λb_uu_. v_D0)) ⇔
 v_A0 = v_C0 ∧ v_B0 = v_D0 ∨ (v_A0 = ∅ ∨ v_B0 = ∅) ∧ (v_C0 = ∅ ∨ v_D0 = ∅)``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1159, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1162_fst_image_times",
  goal = ``IMAGE FST
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
+  (source_Sigma v_A0 (λb_uu_. v_B0)) =
 if v_B0 = ∅ then ∅ else v_A0``,
  source_method = "by force",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1162, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1165_snd_image_times",
  goal = ``IMAGE SND
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
+  (source_Sigma v_A0 (λb_uu_. v_B0)) =
 if v_A0 = ∅ then ∅ else v_B0``,
  source_method = "by force",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1165, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1168_fst_image_Sigma",
  goal = ``IMAGE FST
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) =
+  (source_Sigma v_A0 v_B0) =
 (λb_x. b_x ∈ v_A0 ∧ v_B0 b_x ≠ ∅)``,
  source_method = "by force",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1168, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1171_snd_image_Sigma",
  goal = ``IMAGE SND
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_B0 (FST b_sigma_pair)) =
+  (source_Sigma v_A0 v_B0) =
 BIGUNION (IMAGE (λb_x. v_B0 b_x) v_A0)``,
  source_method = "by force",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1171, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1174_vimage_fst",
  goal = ``PREIMAGE FST v_A0 =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. 𝕌(:β)) (FST b_sigma_pair))``,
+(source_Sigma v_A0 (λb_uu_. 𝕌(:β)))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1174, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1177_vimage_snd",
  goal = ``PREIMAGE SND v_A0 =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ 𝕌(:α) ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair))``,
+(source_Sigma 𝕌(:α) (λb_uu_. v_A0))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1177, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1180_insert_Times_insert",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_a0 INSERT v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_b0 INSERT v_B0) (FST b_sigma_pair)) =
+ goal = ``(source_Sigma (v_a0 INSERT v_A0) (λb_uu_. v_b0 INSERT v_B0)) =
 (v_a0,v_b0) INSERT
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_b0 INSERT v_B0) (FST b_sigma_pair)) ∪
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ {v_a0} ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair))``,
+(source_Sigma v_A0 (λb_uu_. v_b0 INSERT v_B0)) ∪
+(source_Sigma {v_a0} (λb_uu_. v_B0))``,
  source_method = "by blast",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1180, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1184_sing_Times_sing",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ {v_x0} ∧
-     SND b_sigma_pair ∈ (λb_uu_. {v_y0}) (FST b_sigma_pair)) = {(v_x0,v_y0)}``,
+ goal = ``(source_Sigma {v_x0} (λb_uu_. {v_y0})) = {(v_x0,v_y0)}``,
  source_method = "by simp",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1184, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1193_Times_Int_Times",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) ∩
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_C0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_D0) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∩ v_C0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0 ∩ v_D0) (FST b_sigma_pair))``,
+ goal = ``(source_Sigma v_A0 (λb_uu_. v_B0)) ∩
+(source_Sigma v_C0 (λb_uu_. v_D0)) =
+(source_Sigma (v_A0 ∩ v_C0) (λb_uu_. v_B0 ∩ v_D0))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1193, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1196_image_paired_Times",
  goal = ``IMAGE (λ(b_x,b_y). (v_f0 b_x,v_g0 b_y))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ IMAGE v_f0 v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. IMAGE v_g0 v_B0) (FST b_sigma_pair))``,
+  (source_Sigma v_A0 (λb_uu_. v_B0)) =
+(source_Sigma (IMAGE v_f0 v_A0) (λb_uu_. IMAGE v_g0 v_B0))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1196, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1200_Times_insert_right",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_y0 INSERT v_B0) (FST b_sigma_pair)) =
+ goal = ``(source_Sigma v_A0 (λb_uu_. v_y0 INSERT v_B0)) =
 IMAGE (λb_x. (b_x,v_y0)) v_A0 ∪
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair))``,
+(source_Sigma v_A0 (λb_uu_. v_B0))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1200, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1203_Times_insert_left",
- goal = ``(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_x0 INSERT v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
+ goal = ``(source_Sigma (v_x0 INSERT v_A0) (λb_uu_. v_B0)) =
 IMAGE (λb_y. (v_x0,b_y)) v_B0 ∪
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair))``,
+(source_Sigma v_A0 (λb_uu_. v_B0))``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1203, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1206_product_swap",
  goal = ``IMAGE (λb_swap_pair. (SND b_swap_pair,FST b_swap_pair))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_B0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair))``,
+  (source_Sigma v_A0 (λb_uu_. v_B0)) =
+(source_Sigma v_B0 (λb_uu_. v_A0))``,
  source_method = "by (auto simp add: set_eq_iff)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1206, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1209_swap_product",
  goal = ``IMAGE (λ(b_i,b_j). (b_j,b_i))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) =
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_B0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair))``,
+  (source_Sigma v_A0 (λb_uu_. v_B0)) =
+(source_Sigma v_B0 (λb_uu_. v_A0))``,
  source_method = "by (auto simp add: set_eq_iff)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1209, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1220_subset_fst_snd",
  goal = ``v_A0 ⊆
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ IMAGE FST v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. IMAGE SND v_A0) (FST b_sigma_pair))``,
+(source_Sigma (IMAGE FST v_A0) (λb_uu_. IMAGE SND v_A0))``,
  source_method = "by force",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1220, commit = "f7e02b7e"},
  representative = false},
@@ -781,9 +658,7 @@ IMAGE (λb_y. (v_x0,b_y)) v_B0 ∪
  goal = ``(λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:γ # β))
   ((λb_apfst_func b_apfst_pair.
         (b_apfst_func (FST b_apfst_pair),SND b_apfst_pair)) v_f0)
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. 𝕌(:β)) (FST b_sigma_pair)) ⇔
+  (source_Sigma v_A0 (λb_uu_. 𝕌(:β))) ⇔
 (λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:γ)) v_f0 v_A0``,
  source_method = "by (auto simp add: inj_on_def)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1223, commit = "f7e02b7e"},
@@ -800,9 +675,7 @@ IMAGE (λb_y. (v_x0,b_y)) v_B0 ∪
  goal = ``(λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:α # γ))
   ((λb_apsnd_func b_apsnd_pair.
         (FST b_apsnd_pair,b_apsnd_func (SND b_apsnd_pair))) v_f0)
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ 𝕌(:α) ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair)) ⇔
+  (source_Sigma 𝕌(:α) (λb_uu_. v_A0)) ⇔
 (λb_inj_func b_inj_set. INJ b_inj_func b_inj_set 𝕌(:γ)) v_f0 v_A0``,
  source_method = "by (auto simp add: inj_on_def)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1229, commit = "f7e02b7e"},
@@ -816,14 +689,9 @@ IMAGE (λb_y. (v_x0,b_y)) v_B0 ∪
  provenance = {file = "src/HOL/Product_Type.thy", line = 1232, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1241_member_product",
- goal = ``v_x0 ∈
-(λb_product_left b_product_right b_product_pair.
-     FST b_product_pair ∈ b_product_left ∧
-     SND b_product_pair ∈ b_product_right) v_A0 v_B0 ⇔
+ goal = ``v_x0 ∈ (source_product v_A0 v_B0) ⇔
 v_x0 ∈
-(λb_sigma_pair.
-     FST b_sigma_pair ∈ v_A0 ∧
-     SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair))``,
+(source_Sigma v_A0 (λb_uu_. v_B0))``,
  source_method = "by (simp add: product_def)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1241, commit = "f7e02b7e"},
  representative = false},
@@ -833,45 +701,31 @@ BIJ v_g0 v_B0 v_D0 ⇒
 BIJ
   ((λb_map_left b_map_right b_map_pair.
         (b_map_left (FST b_map_pair),b_map_right (SND b_map_pair))) v_f0 v_g0)
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_C0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_D0) (FST b_sigma_pair))``,
+  (source_Sigma v_A0 (λb_uu_. v_B0))
+  (source_Sigma v_C0 (λb_uu_. v_D0))``,
  source_method = "using assms unfolding bij_betw_def inj_on_def by auto",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1329, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1364_disjnt_Times1_iff",
  goal = ``DISJOINT
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_C0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_A0) (FST b_sigma_pair))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_C0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_B0) (FST b_sigma_pair)) ⇔
+  (source_Sigma v_C0 (λb_uu_. v_A0))
+  (source_Sigma v_C0 (λb_uu_. v_B0)) ⇔
 v_C0 = ∅ ∨ DISJOINT v_A0 v_B0``,
  source_method = "by (auto simp: disjnt_def)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1364, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1367_disjnt_Times2_iff",
  goal = ``DISJOINT
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_B0 ∧
-       SND b_sigma_pair ∈ (λb_uu_. v_C0) (FST b_sigma_pair)) ⇔
+  (source_Sigma v_A0 (λb_uu_. v_C0))
+  (source_Sigma v_B0 (λb_uu_. v_C0)) ⇔
 v_C0 = ∅ ∨ DISJOINT v_A0 v_B0``,
  source_method = "by (auto simp: disjnt_def)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1367, commit = "f7e02b7e"},
  representative = false},
 {id = "product_type_L1370_disjnt_Sigma_iff",
  goal = ``DISJOINT
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_A0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair))
-  (λb_sigma_pair.
-       FST b_sigma_pair ∈ v_B0 ∧ SND b_sigma_pair ∈ v_C0 (FST b_sigma_pair)) ⇔
+  (source_Sigma v_A0 v_C0)
+  (source_Sigma v_B0 v_C0) ⇔
 (∀b_i. b_i ∈ v_A0 ∩ v_B0 ⇒ v_C0 b_i = ∅) ∨ DISJOINT v_A0 v_B0``,
  source_method = "by (auto simp: disjnt_def)",
  provenance = {file = "src/HOL/Product_Type.thy", line = 1370, commit = "f7e02b7e"},

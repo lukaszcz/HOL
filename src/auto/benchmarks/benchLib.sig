@@ -39,6 +39,10 @@ sig
     | CongruenceAdd of named_thm
     | FactAdd of named_thm
     | DefinitionAdd of named_thm
+      (* Isabelle's [iff]: one attribute that puts the equivalence in
+         the simpset and the rules derived from it in the claset, so
+         the argument reaches a method reading either half. *)
+    | IffAdd of named_thm
 
   (* [Otherwise] is Isabelle's [ORELSE] between two whole recipes: the
      right one runs only where the left declines.  It exists because
@@ -168,6 +172,15 @@ sig
   (* True of an argument that goes to a claset rather than a simpset,
      which is what decides which half of the ambient context it is. *)
   val claset_argument : method_arg -> bool
+
+  (* True of an [iff] argument, which goes to both halves. *)
+  val iff_argument : method_arg -> bool
+
+  (* Whether an argument reaches a method at all: a claset argument
+     only where the method reads a claset, a simpset one only where it
+     reads a simpset, and an [iff] wherever either holds.  This is the
+     filter the ambient context passes through. *)
+  val argument_reaches : tactic_id -> method_arg -> bool
 
   (* False of an argument whose theorem is the goal being measured --
      the check [validate_raw_goal] raises on.  Exported so that a

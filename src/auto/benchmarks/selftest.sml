@@ -613,6 +613,13 @@ val _ =
              (split_safe, benchLib.Invoke (benchLib.Safe, [])))
            paired_length_reverse))
 
+(* A recipe is derived at the Isabelle line its goal was proved on,
+   because the ambient context is cut by Isabelle's theory order.  The
+   goals below are not corpus entries, so they are stated at the line
+   of the source file the corpus draws their kind of goal from. *)
+val groebner_source = "src/HOL/Examples/Groebner_Examples.thy:1"
+val classical_source = "src/HOL/ex/Classical.thy:1"
+
 val recipe_constructor_names =
   benchLib.recipe_name
     (benchLib.Invoke
@@ -637,7 +644,8 @@ val _ =
           "cong(list$LENGTH_REVERSE)"] andalso
        String.isSubstring "otherwise("
          (benchLib.recipe_name
-           (benchDerive.recipe_of ``!i : int. i * 1 = i`` "by algebra")))
+           (benchDerive.recipe_of groebner_source ``!i : int. i * 1 = i``
+              "by algebra")))
 
 (* ---- The ambient set --------------------------------------------- *)
 
@@ -691,7 +699,8 @@ val _ =
      fn () =>
        let
          val recipe =
-           benchDerive.recipe_of ``!xs : 'a list. xs = xs`` "by simp"
+           benchDerive.recipe_of "src/HOL/List.thy:9999"
+             ``!xs : 'a list. xs = xs`` "by simp"
          val names =
            List.mapPartial
              (fn benchLib.RewriteAdd {name, ...} => SOME name
@@ -827,7 +836,8 @@ val _ =
          fun closes method =
            let
              val recipe =
-               benchDerive.recipe_of ambient_claset_goal method
+               benchDerive.recipe_of "src/HOL/Map.thy:9999"
+                 ambient_claset_goal method
            in
              benchLib.outcome_solved
                (benchLib.run_goal (Time.fromSeconds 5) recipe
@@ -836,6 +846,129 @@ val _ =
            end
        in
          closes "by force" andalso not (closes "by simp")
+       end)
+
+(* Isabelle reads a theory in order and sees only the theories it
+   imports, so the ambient context is cut by where the goal sits.
+   [Sigma] is introduced at Product_Type.thy:1005 and its two classical
+   rules at :1027 and :1030; Product_Type imports Fun and Fun imports
+   Set, so a Set.thy proof had none of them, and a List.thy proof had
+   nothing [Map] declares.  Both halves are cut: an out-of-scope rewrite
+   is a fact the source proof did not have, and an out-of-scope rule is
+   one its search was not paying for. *)
+val _ =
+  check
+    ("the ambient context stops at the goal's place in the theory order",
+     fn () =>
+       let
+         fun named source =
+           map benchLib.argument_name (benchAmbient.arguments_at source)
+         fun carries source name =
+           List.exists (equal name) (named source)
+         val sigma = "parityTranslation$source_SigmaE"
+         val map_add = "parityTranslation$source_map_add_SomeD"
+         val fold_append = "parityTranslation$source_fold_append"
+       in
+         (* Later in the same theory sees it; earlier does not. *)
+         carries "src/HOL/Product_Type.thy:1082" sigma andalso
+         not (carries "src/HOL/Product_Type.thy:1020" sigma) andalso
+         (* A theory the declaring one imports does not. *)
+         not (carries "src/HOL/Set.thy:1610" sigma) andalso
+         not (carries "src/HOL/List.thy:9999" map_add) andalso
+         not (carries "src/HOL/Set.thy:9999" fold_append) andalso
+         (* A theory that imports the declaring one does. *)
+         carries "src/HOL/String.thy:1" map_add andalso
+         carries "src/HOL/Map.thy:1" fold_append
+       end)
+
+(* The cut is what a method reads, not just what a table says.  The
+   goal below is not a corpus entry: it takes a Sigma apart and builds
+   another one over a wider fibre, which needs both declared rules and
+   which no ambient rewrite reaches, [Sigma] being a plain definition
+   Isabelle's simpset leaves folded.  Stated at a Product_Type line
+   after :1030 the assigned [blast] closes it; stated at the Set.thy
+   line [Pow_Compl] is proved on it must not, the rules not yet
+   existing there. *)
+val ambient_order_goal =
+  ``!pair left fibre other.
+      pair IN parityTranslation$source_Sigma left fibre ==>
+      pair IN
+        parityTranslation$source_Sigma left (\item. fibre item UNION other)``
+
+val _ =
+  check
+    ("a rule out of scope where the goal sits does not reach it",
+     fn () =>
+       let
+         fun closes source =
+           let
+             val recipe =
+               benchDerive.recipe_of source ambient_order_goal "by blast"
+           in
+             benchLib.outcome_solved
+               (benchLib.run_goal (Time.fromSeconds 5) recipe
+                 (recipe_goal "unit-ambient-order" recipe
+                    ambient_order_goal))
+           end
+       in
+         closes "src/HOL/Product_Type.thy:1082" andalso
+         not (closes "src/HOL/Set.thy:1610")
+       end)
+
+(* Isabelle's [iff] is one attribute with two effects, and a method
+   reading no simpset still has the rules the declaration derived: the
+   goal below is [safe], which never simplifies, over two relational
+   images of singletons.  [Image_singleton_iff] is what takes them
+   apart, and it is declared [iff] and nothing else -- no [dest] states
+   it -- so without the claset half of the declaration both conjuncts
+   are left open.  Stated at a List.thy line, which imports
+   Relation.thy, so the declaration is in scope there. *)
+val ambient_iff_goal =
+  ``!relation left right second.
+      right IN parityTranslation$source_rel_image relation {left} /\
+      second IN parityTranslation$source_rel_image relation {right} ==>
+      relation left right /\ relation right second``
+
+val _ =
+  check
+    ("an ambient [iff] reaches a method that reads no simpset",
+     fn () =>
+       let
+         val recipe =
+           benchDerive.recipe_of "src/HOL/List.thy:9999" ambient_iff_goal
+             "by safe"
+       in
+         benchLib.outcome_solved
+           (benchLib.run_goal (Time.fromSeconds 5) recipe
+             (recipe_goal "unit-ambient-iff" recipe ambient_iff_goal))
+       end)
+
+(* A primitive set operation is carried by its membership rewrite, not
+   by the equation defining it, and unfolding the definition costs the
+   operator every rule that keys on it.  The goal below is [blast],
+   which reads no simpset, so the difference has to reach the search
+   intact for the claset's rules about it to meet it -- and it sits in
+   the domain argument of [source_Sigma], where no membership rewrite
+   would put it back.  It is a set equality, which is what makes the
+   pre-pass run at all.  Stated at a Product_Type.thy line, so [SigmaI]
+   and [SigmaE] are in scope. *)
+val withheld_definition_goal =
+  ``parityTranslation$source_Sigma (v_A0 DIFF (v_B0 DIFF v_A0)) v_C0 =
+    parityTranslation$source_Sigma v_A0 v_C0``
+
+val _ =
+  check
+    ("a set operation the goal does not state survives the blast pre-pass",
+     fn () =>
+       let
+         val recipe =
+           benchDerive.recipe_of "src/HOL/Product_Type.thy:9999"
+             withheld_definition_goal "by blast"
+       in
+         benchLib.outcome_solved
+           (benchLib.run_goal (Time.fromSeconds 5) recipe
+             (recipe_goal "unit-withheld-definition" recipe
+                withheld_definition_goal))
        end)
 
 (* Isabelle's [blast] never simplifies, so the harness simplifies a
@@ -1486,10 +1619,12 @@ val _ =
        let
          val once =
            benchLib.recipe_name
-             (benchDerive.recipe_of ``!x : bool. x \/ ~x`` "by blast")
+             (benchDerive.recipe_of classical_source ``!x : bool. x \/ ~x``
+                "by blast")
          val repeated =
            benchLib.recipe_name
-             (benchDerive.recipe_of ``!x : bool. x \/ ~x`` "by blast+")
+             (benchDerive.recipe_of classical_source ``!x : bool. x \/ ~x``
+                "by blast+")
        in
          repeated = "repeat(" ^ once ^ ")"
        end)
@@ -1972,7 +2107,8 @@ val _ =
   check
     ("an integer algebra method derives an Otherwise chain",
      fn () =>
-       case benchDerive.recipe_of ``!i : int. i * 1 = i`` "by algebra" of
+       case benchDerive.recipe_of groebner_source ``!i : int. i * 1 = i``
+              "by algebra" of
            benchLib.Otherwise
              (benchLib.Invoke (benchLib.IntRing, []),
               benchLib.Invoke (benchLib.IntIdeal, [])) => true
@@ -1989,7 +2125,8 @@ val _ =
   check
     ("the second alternative closes what the first declines",
      fn () =>
-       recipe_solves (benchDerive.recipe_of divides_goal "by algebra")
+       recipe_solves
+         (benchDerive.recipe_of groebner_source divides_goal "by algebra")
          divides_goal andalso
        not
          (recipe_solves (benchLib.Invoke (benchLib.IntRing, []))
@@ -2012,7 +2149,10 @@ val _ =
 fun derivation_mismatch (entry : benchLib.corpus_goal) =
   let
     val derived =
-      benchDerive.recipe_of (#goal entry) (#source_method entry)
+      benchDerive.recipe_of
+        (#file (#provenance entry) ^ ":" ^
+         Int.toString (#line (#provenance entry)))
+        (#goal entry) (#source_method entry)
   in
     if benchLib.recipe_name derived = benchLib.recipe_name (#recipe entry)
     then NONE
@@ -2089,6 +2229,7 @@ fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.FactAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.DefinitionAdd {theorem, ...}) =
       if registered_definition theorem then NONE else SOME theorem
+  | argument_theorem (benchLib.IffAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.RewriteDelete _) = NONE
 
 fun argument_name (benchLib.RewriteAdd {name, ...}) = SOME name
@@ -2099,6 +2240,7 @@ fun argument_name (benchLib.RewriteAdd {name, ...}) = SOME name
   | argument_name (benchLib.CongruenceAdd {name, ...}) = SOME name
   | argument_name (benchLib.FactAdd {name, ...}) = SOME name
   | argument_name (benchLib.DefinitionAdd {name, ...}) = SOME name
+  | argument_name (benchLib.IffAdd {name, ...}) = SOME name
   | argument_name (benchLib.RewriteDelete _) = NONE
 
 fun recipe_theorems (benchLib.Invoke (_, arguments)) =
@@ -3033,7 +3175,7 @@ val _ =
    updated pin. *)
 val goal_term_pins =
   [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "16B90F27"), ("Linarith", "E9DDA580"),
+   ("List/map", "9CB5FD16"), ("Linarith", "E9DDA580"),
    ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
 
 val _ =

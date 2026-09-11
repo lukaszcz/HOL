@@ -46,6 +46,7 @@ datatype method_arg =
   | CongruenceAdd of named_thm
   | FactAdd of named_thm
   | DefinitionAdd of named_thm
+  | IffAdd of named_thm
 
 datatype method_recipe =
     Invoke of tactic_id * method_arg list
@@ -150,6 +151,7 @@ fun method_arg_name (RewriteAdd theorem) = named_arg "rewrite" theorem
   | method_arg_name (CongruenceAdd theorem) = named_arg "cong" theorem
   | method_arg_name (FactAdd theorem) = named_arg "fact" theorem
   | method_arg_name (DefinitionAdd theorem) = named_arg "definition" theorem
+  | method_arg_name (IffAdd theorem) = named_arg "iff" theorem
 
 fun recipe_name recipe =
   let
@@ -225,19 +227,35 @@ fun claset_names name =
    name ^ ".__clasimp_iff_dest",
    name ^ ".__clasimp_iff_elim"]
 
-(* Isabelle's Set.thy automation unfolds these primitive set operations
-   while proving their public membership rewrites.  Supply the same
-   foundational view here; this is translation support, not a corpus
-   theorem or a persistent simpset change. *)
+(* The view of the product type the translation needs: [prod.case],
+   [prod.collapse], [split_paired_All] and [split_paired_Ex] are [simp]
+   in Isabelle, and [prod_eq_iff] is the equation it states a pair
+   equality by.  This is translation support, not a corpus theorem or a
+   persistent simpset change. *)
 val translation_frag =
   simpLib.name_ss "bench-translation-base"
     (simpLib.rewrites
-       [pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF,
-       pred_setTheory.DIFF_DEF, pairTheory.UNCURRY_DEF,
-       pairTheory.PAIR, pairTheory.FORALL_PROD,
+       [pairTheory.UNCURRY_DEF, pairTheory.PAIR, pairTheory.FORALL_PROD,
        pairTheory.EXISTS_PROD, pairTheory.PAIR_FST_SND_EQ])
 val translation_frag = simpLib.register_frag translation_frag
 val translation_base = simpLib.SF translation_frag
+
+(* Each primitive set operation with the membership rewrite Isabelle
+   states it by.  Isabelle carries the rewrites -- [Un_iff], [Int_iff]
+   and [Diff_iff] are [simp] in Set.thy -- and not the defining
+   equations, and the difference is not cosmetic: unfolding a definition
+   replaces the operator by a set comprehension, and every rule that
+   takes a union apart, in the claset and in the simpset alike, keys on
+   the operator.  Where the union sits under a constant no membership
+   rewrite reaches into -- [Sigma (I UNION J) C] -- the comprehension is
+   simply lost work, and [blast] is left with a goal it has no rule for.
+   So the definition is supplied exactly where the goal being measured
+   is the membership rewrite itself, which withholds it and leaves the
+   definition the only thing to reason from. *)
+val primitive_definitions =
+  [(pred_setTheory.UNION_DEF, pred_setTheory.IN_UNION),
+   (pred_setTheory.INTER_DEF, pred_setTheory.IN_INTER),
+   (pred_setTheory.DIFF_DEF, pred_setTheory.IN_DIFF)]
 
 fun controls exclusions =
   List.concat
@@ -245,8 +263,6 @@ fun controls exclusions =
       (fn ({name, ...} : exclusion) =>
         map clasetLib.Del (claset_names name) @ [markerLib.Excl name])
       exclusions)
-
-fun simp_controls exclusions = translation_base :: controls exclusions
 
 fun beta_eta_normalise term =
   boolSyntax.rhs
@@ -567,6 +583,15 @@ fun theorem_is_goal goal theorem =
      end)
   end
 
+fun withheld_primitives goal =
+  List.mapPartial
+    (fn (definition, rewrite) =>
+      if theorem_is_goal goal rewrite then SOME definition else NONE)
+    primitive_definitions
+
+fun simp_controls goal exclusions =
+  translation_base :: withheld_primitives goal @ controls exclusions
+
 fun named_theorem (RewriteAdd theorem) = SOME theorem
   | named_theorem (SplitAdd theorem) = SOME theorem
   | named_theorem (IntroAdd (_, theorem)) = SOME theorem
@@ -575,6 +600,7 @@ fun named_theorem (RewriteAdd theorem) = SOME theorem
   | named_theorem (CongruenceAdd theorem) = SOME theorem
   | named_theorem (FactAdd theorem) = SOME theorem
   | named_theorem (DefinitionAdd theorem) = SOME theorem
+  | named_theorem (IffAdd theorem) = SOME theorem
   | named_theorem (RewriteDelete _) = NONE
 
 (* A direct analogue is excluded by theorem shape as well as by its
@@ -624,6 +650,21 @@ fun claset_argument (IntroAdd _) = true
   | claset_argument (ElimAdd _) = true
   | claset_argument (DestAdd _) = true
   | claset_argument _ = false
+
+fun iff_argument (IffAdd _) = true
+  | iff_argument _ = false
+
+(* Isabelle's [iff] is one attribute with two effects: the equivalence
+   goes to the simpset and the rules derived from it to the claset.  An
+   entry declared that way therefore reaches a method that reads either
+   half, and carrying it as a rewrite alone leaves [blast], [safe] and
+   [clarify] -- which read no simpset -- without a declaration Isabelle
+   gave them. *)
+fun argument_reaches identifier argument =
+  if claset_argument argument then consults_claset identifier
+  else if iff_argument argument then
+    consults_claset identifier orelse consults_simpset identifier
+  else consults_simpset identifier
 
 fun recipe_arguments (Invoke (_, arguments)) = arguments
   | recipe_arguments (Then (left, right)) =
@@ -770,6 +811,30 @@ fun prepare_goal recipe
      provenance = provenance, representative = representative}
   end
 
+(* Isabelle's [iff] is a theory declaration, not a method modifier: its
+   [blast], [safe] and [clarify] take intro:, elim: and dest: and nothing
+   else, and what they see of an [iff] is the rules it derived into the
+   claset.  A claset-only front end is therefore handed those rules, one
+   marker apiece, where a front end holding a simpset is handed the
+   declaration itself and derives them for both halves.  Dropping the
+   declaration instead would leave the claset without rules Isabelle's
+   had; passing it on would be rejected, a claset alone having nowhere
+   to put the equivalence. *)
+fun iff_markers ({name, theorem} : named_thm) =
+  map
+    (fn ({kind, safe, ...} : clasetLib.rulespec, (_, rule)) =>
+      case kind of
+          clasetRules.Intro =>
+            if safe then clasetLib.SIntro rule else clasetLib.Intro rule
+        | clasetRules.Elim =>
+            if safe then clasetLib.SElim rule else clasetLib.Elim rule
+        | clasetRules.Dest =>
+            if safe then clasetLib.SDest rule else clasetLib.Dest rule
+        | _ =>
+            raise mk_HOL_ERR "benchLib" "iff_markers"
+              ("[iff] derived a rule no classical marker names: " ^ name))
+    (clasetLib.iff_rules name theorem)
+
 fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
   | class_args (RewriteDelete name) =
       map clasetLib.Del (claset_names name) @ [markerLib.Excl name]
@@ -790,6 +855,7 @@ fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
   | class_args (FactAdd _) = []
   | class_args (DefinitionAdd {theorem, ...}) =
       [clasetLib.Simp theorem]
+  | class_args (IffAdd {theorem, ...}) = [clasetLib.Iff theorem]
 
 fun all_class_args args = List.concat (map class_args args)
 
@@ -807,6 +873,7 @@ fun classical_arg (RewriteDelete name) =
       [clasetLib.SDest theorem]
   | classical_arg (DestAdd (UnsafeRule, {theorem, ...})) =
       [clasetLib.Dest theorem]
+  | classical_arg (IffAdd named) = iff_markers named
   | classical_arg _ = []
 
 fun all_classical_args args = List.concat (map classical_arg args)
@@ -830,6 +897,7 @@ fun blast_arg (IntroAdd (SafeRule, {theorem, ...})) =
       [clasetLib.SDest theorem]
   | blast_arg (DestAdd (UnsafeRule, {theorem, ...})) =
       [clasetLib.Dest theorem]
+  | blast_arg (IffAdd named) = iff_markers named
   | blast_arg (FactAdd _) = []
   | blast_arg _ = []
 
@@ -865,6 +933,10 @@ fun simp_arg (RewriteAdd {theorem, ...}) = SOME theorem
   | simp_arg (SplitAdd {theorem, ...}) = SOME (simpLib.Split theorem)
   | simp_arg (CongruenceAdd {theorem, ...}) = SOME (simpLib.Cong theorem)
   | simp_arg (DefinitionAdd {theorem, ...}) = SOME theorem
+  (* The other half of the same declaration: Isabelle's [iff] is a simp
+     rule as well as a source of classical rules, so a front end reading
+     its arguments as rewrites sees the equivalence. *)
+  | simp_arg (IffAdd {theorem, ...}) = SOME theorem
   | simp_arg _ = NONE
 
 fun fact_arg (FactAdd {theorem, ...}) = SOME theorem
@@ -1054,6 +1126,7 @@ fun crossed ({name, theorem} : named_thm) =
 fun crossed_arg arg =
   case arg of
       RewriteAdd entry => Option.map RewriteAdd (crossed entry)
+    | IffAdd entry => Option.map IffAdd (crossed entry)
     | IntroAdd (strength, entry) =>
         Option.map (fn crossing => IntroAdd (strength, crossing))
           (crossed entry)
@@ -1073,30 +1146,30 @@ fun across_correspondence entry args =
   args @
   List.filter (permitted_arg entry) (List.mapPartial crossed_arg args)
 
-fun tactic_for simpset _ Simp args exclusions =
+fun tactic_for simpset goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
         val simplify =
           clasimpLib.with_extensionality
             (simpLib.FULL_SIMP_TAC simpset
-               (simps @ simp_controls exclusions))
+               (simps @ simp_controls goal exclusions))
       in
         Tactical.THEN
           (insert_facts facts, simplify)
       end
-  | tactic_for simpset _ Auto args exclusions =
+  | tactic_for simpset goal Auto args exclusions =
       let
         val automatic =
           processed_clasimp simpset
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2})
-            (all_class_args args @ simp_controls exclusions)
+            (all_class_args args @ simp_controls goal exclusions)
         val prepare =
           Tactical.THEN
             (Tactical.TRY hurdUtils.SET_EQ_TAC,
              simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
-                simp_controls exclusions))
+                simp_controls goal exclusions))
       in
         with_facts args
           (Tactical.ORELSE
@@ -1112,7 +1185,14 @@ fun tactic_for simpset _ Simp args exclusions =
       end
   | tactic_for simpset goal Blast args exclusions =
       let
-        val simps = List.mapPartial simp_arg args
+        (* Isabelle's [blast] has no [iff:] modifier, so an [iff]
+           argument here is ambient and reaches the search as the
+           rules the declaration derived, never as an equivalence.
+           Letting it into the pass below would turn that pass on for
+           every blast goal an [iff] is in scope of, which is what it
+           was gated away from. *)
+        val simps =
+          List.mapPartial simp_arg (List.filter (not o iff_argument) args)
         val supplied_rules = List.mapPartial supplied_rule args
         val accept_supplied =
           Tactical.FIRST
@@ -1124,7 +1204,7 @@ fun tactic_for simpset _ Simp args exclusions =
                (accept_supplied,
                 Tactical.THEN (Tactic.EQ_TAC, accept_supplied)))
         val simplify =
-          simpLib.SIMP_TAC simpset (simps @ simp_controls exclusions)
+          simpLib.SIMP_TAC simpset (simps @ simp_controls goal exclusions)
         (* Isabelle's [blast] never simplifies, so the pass below is
            the [unfolding] the method asked for and nothing else: it
            runs unconditionally exactly where there is a rewrite to run
@@ -1177,27 +1257,27 @@ fun tactic_for simpset _ Simp args exclusions =
                                     blast_translation_args goal @
                                     controls exclusions))))))))))
       end
-  | tactic_for simpset _ Force args exclusions =
+  | tactic_for simpset goal Force args exclusions =
       let
         val prepare =
           Tactical.THEN
             (Tactical.TRY hurdUtils.SET_EQ_TAC,
              simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
-                simp_controls exclusions))
+                simp_controls goal exclusions))
       in
         with_facts args
           (Tactical.THEN
             (prepare,
              processed_clasimp simpset clasimpLib.CS_FORCE_TAC
-               (all_class_args args @ simp_controls exclusions)))
+               (all_class_args args @ simp_controls goal exclusions)))
       end
-  | tactic_for simpset _ Fastforce args exclusions =
+  | tactic_for simpset goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
           (Tactical.TRY hurdUtils.SET_EQ_TAC,
            processed_clasimp simpset clasimpLib.CS_FASTFORCE_TAC
-             (all_class_args args @ simp_controls exclusions)))
+             (all_class_args args @ simp_controls goal exclusions)))
   | tactic_for _ _ Safe args exclusions =
       with_facts args
         (classicalLib.SAFE_TAC
@@ -1206,15 +1286,15 @@ fun tactic_for simpset _ Simp args exclusions =
       with_facts args
         (classicalLib.CLARIFY_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for simpset _ Clarsimp args exclusions =
+  | tactic_for simpset goal Clarsimp args exclusions =
       with_facts args
         (processed_clasimp simpset clasimpLib.CS_CLARSIMP_TAC
-          (all_class_args args @ simp_controls exclusions))
-  | tactic_for simpset _ Aesop args exclusions =
+          (all_class_args args @ simp_controls goal exclusions))
+  | tactic_for simpset goal Aesop args exclusions =
       with_facts args
         (processed_clasimp simpset
           (aesopLib.CS_AESOP_TAC aesopLib.default_config)
-          (all_class_args args @ simp_controls exclusions))
+          (all_class_args args @ simp_controls goal exclusions))
   (* Isabelle's metis reads its facts in the normal form its simp leaves
      goals in; the ambient simpset here imposes normal forms the library
      does not state its lemmas in, so the facts enter in both. *)

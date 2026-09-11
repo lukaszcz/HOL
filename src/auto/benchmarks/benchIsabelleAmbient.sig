@@ -59,4 +59,22 @@ sig
      would decide the measurement instead. *)
   val is_ambient : string -> bool
 
+  (* The Isabelle line a definition is mined from.  Raises on a
+     definition the table does not cover, as [is_ambient] does. *)
+  val location : string -> string
+
+  (* Isabelle's theory order, which is what decides whether a
+     declaration was in scope where a goal was proved.  [declaring_
+     theories] is the theories the ambient set declares from;
+     [ancestry] pairs each theory the corpus draws a goal from with
+     those of them that precede it in the import graph. *)
+  val declaring_theories : string list
+  val ancestry : (string * string list) list
+
+  (* Whether a declaration at [declared] was in scope at [goal], both
+     written "src/HOL/<theory>.thy:<line>".  Within one theory that is
+     the line order; across two it is the import order.  Raises on a
+     declaring theory or a goal theory the tables do not cover. *)
+  val in_scope : {declared : string, goal : string} -> bool
+
 end
