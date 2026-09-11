@@ -304,14 +304,29 @@ fun recipe_solves recipe goal =
 val conjunction_commute = boolTheory.CONJ_COMM
 val disjunction_commute = boolTheory.DISJ_COMM
 val r = mk_var ("bench_unit_r", bool)
-val nested_conjunction_commute =
+val s = mk_var ("bench_unit_s", bool)
+
+(* An instance measuring what a recipe-local schema adds has to be one
+   the ambient simpset cannot close by itself.  A permutation is no
+   longer such an instance: an equivalence between a term and a
+   permutation of itself is decided ambiently.  So the schemas measured
+   here distribute rather than commute, and each instance nests one
+   distributed operand so that it is an instance of the schema and not
+   the schema's own statement. *)
+val conjunction_over_disjunction = boolTheory.LEFT_AND_OVER_OR
+val disjunction_over_conjunction = boolTheory.LEFT_OR_OVER_AND
+val nested_conjunction_distribute =
   boolSyntax.mk_eq
-    (boolSyntax.mk_conj (p, boolSyntax.mk_conj (q, r)),
-     boolSyntax.mk_conj (boolSyntax.mk_conj (q, r), p))
-val nested_disjunction_commute =
+    (boolSyntax.mk_conj (p, boolSyntax.mk_disj (boolSyntax.mk_conj (q, s), r)),
+     boolSyntax.mk_disj
+       (boolSyntax.mk_conj (p, boolSyntax.mk_conj (q, s)),
+        boolSyntax.mk_conj (p, r)))
+val nested_disjunction_distribute =
   boolSyntax.mk_eq
-    (boolSyntax.mk_disj (p, boolSyntax.mk_disj (q, r)),
-     boolSyntax.mk_disj (boolSyntax.mk_disj (q, r), p))
+    (boolSyntax.mk_disj (p, boolSyntax.mk_conj (boolSyntax.mk_disj (q, s), r)),
+     boolSyntax.mk_conj
+       (boolSyntax.mk_disj (p, boolSyntax.mk_disj (q, s)),
+        boolSyntax.mk_disj (p, r)))
 
 val rewrite_recipe =
   benchLib.Invoke
@@ -507,18 +522,33 @@ val _ =
                (recipe_goal "unit-raw-prepare" rewrite_recipe
                   (Thm.concl conjunction_commute)))))
 
+val distribution_rewrite_recipe =
+  benchLib.Invoke
+    (benchLib.Simp,
+     [benchLib.RewriteAdd
+        {name = "unit$conjunction_over_disjunction",
+         theorem = conjunction_over_disjunction}])
+val distribution_definition_recipe =
+  benchLib.Invoke
+    (benchLib.Simp,
+     [benchLib.DefinitionAdd
+        {name = "unit$disjunction_over_conjunction",
+         theorem = disjunction_over_conjunction}])
+
 val _ =
   check
     ("recipe-local schemas still close non-analogue instances",
      fn () =>
-       recipe_solves rewrite_recipe nested_conjunction_commute andalso
-       recipe_solves definition_recipe nested_disjunction_commute andalso
+       recipe_solves distribution_rewrite_recipe
+         nested_conjunction_distribute andalso
+       recipe_solves distribution_definition_recipe
+         nested_disjunction_distribute andalso
        not
          (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
-            nested_conjunction_commute) andalso
+            nested_conjunction_distribute) andalso
        not
          (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
-            nested_disjunction_commute))
+            nested_disjunction_distribute))
 
 val length_reverse =
   {name = "list$LENGTH_REVERSE", theorem = listTheory.LENGTH_REVERSE}

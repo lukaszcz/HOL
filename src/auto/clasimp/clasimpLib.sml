@@ -108,6 +108,80 @@ val list_equation_ss =
                 end),
         conv = K (K list_equation_conv)})
 
+(* Two spellings of one statement reach a rewrite as two terms.
+   Isabelle never meets the difference -- its rule and its goal are
+   stated in the same theory and already agree on the order of a
+   conjunction and the side an equation is written on, so its
+   simplifier needs no ordering step and carries none: [conj_ac],
+   [disj_ac] and [eq_ac] are all stated in HOL.thy and none of them is
+   [simp] there.  A translated goal does meet it, because the HOL4
+   result answering the source's states the same fact in its own order,
+   and what is left is an equivalence between a term and a permutation
+   of itself.
+
+   Ordering the goal instead is not open to this layer.  A conjunction
+   carries its left conjuncts into the right one's context -- that is
+   what [rev_conj_cong] is, and the corpus names it -- so reordering a
+   conjunction takes away the context a conditional rewrite is
+   discharged in; measured, an ambient AC fragment costs the
+   translation theory's own proof of [source_set_zip].  So the
+   permutation is *decided* rather than imposed: the two sides are
+   ordered privately, and if they agree the equivalence is closed.  The
+   goal is either proved or untouched, and no term anywhere is
+   reordered. *)
+local
+  val permutation_frag =
+    simpLib.SSFRAG
+      {name = SOME "AUTOPERMNF",
+       convs = [], congs = [], filter = NONE, dprocs = [],
+       ac = [(boolTheory.CONJ_ASSOC, boolTheory.CONJ_COMM),
+             (boolTheory.DISJ_ASSOC, boolTheory.DISJ_COMM)],
+       rewrs = [(NONE, boolTheory.EQ_SYM_EQ)]}
+  val permutation_ss = simpLib.mk_simpset [permutation_frag]
+in
+  fun ordered term =
+    simpLib.SIMP_CONV permutation_ss [] term
+    handle Conv.UNCHANGED => Thm.REFL term
+end
+
+(* The two cheap conditions a permutation satisfies, tested before
+   anything is ordered: the equation is an equivalence -- the net keys
+   on [=], which is polymorphic, so most of what reaches here is an
+   equation between terms of some other type -- and reordering and
+   turning round both preserve the size of a term. *)
+fun could_be_permuted (left, right) =
+  Type.compare (type_of left, Type.bool) = EQUAL andalso
+  Term.term_size left = Term.term_size right andalso
+  not (aconv left right)
+
+fun permuted_equivalence_conv term =
+  let
+    val (left, right) = boolSyntax.dest_eq term
+    val _ =
+      if could_be_permuted (left, right) then ()
+      else raise ERR "permuted_equivalence_conv" "not a permutation"
+    val ordered_left = ordered left
+    val ordered_right = ordered right
+  in
+    if aconv (boolSyntax.rhs (Thm.concl ordered_left))
+             (boolSyntax.rhs (Thm.concl ordered_right))
+    then
+      Drule.EQT_INTRO (Thm.TRANS ordered_left (Thm.SYM ordered_right))
+    else raise ERR "permuted_equivalence_conv" "not one statement"
+  end
+
+val permuted_equivalence_ss =
+  simpLib.name_ss "AUTO permuted equivalence"
+    (simpLib.conv_ss
+       {name = "PERMUTED_EQUIVALENCE_CONV",
+        trace = 2,
+        key =
+          SOME ([],
+                boolSyntax.mk_eq
+                  (mk_var ("permuted_left", Type.bool),
+                   mk_var ("permuted_right", Type.bool))),
+        conv = K (K permuted_equivalence_conv)})
+
 (* [remove_ssfrags] signals an absent fragment by raising UNCHANGED.
    Reporting that is what keeps the replacement honest: a caught
    exception here would leave the strong congruence in place under a
@@ -185,6 +259,9 @@ fun derive_clasimp_ss ss _ =
   |> (fn ss' =>
         simpLib.++ (ss',
           simpLib.rewrites [Conv.GSYM boolTheory.IMP_DISJ_THM]))
+  (* The permutation decision, for the reason given at
+     [permuted_equivalence_conv]. *)
+  |> (fn ss' => simpLib.++ (ss', permuted_equivalence_ss))
   (* HOL4 carries no order reasoning ambiently: a goal that supplies its
      own order -- as a [WeakLinearOrder] premise, say -- has the axioms
      and the steps in the assumptions and nothing chains them.  Isabelle

@@ -1682,6 +1682,40 @@ val _ =
                ``((as:'a list) ++ (bs ++ cs) = ds) /\ (x:'a) = y``
          | NONE => false)
 
+(* One statement written twice.  The HOL4 result answering an Isabelle
+   one states the same fact in its own conjunct order and on its own
+   side of an equation, and the residual is then an equivalence between
+   a term and a permutation of itself.  The decision closes it; it does
+   not reorder anything, which is what the two assertions above depend
+   on.  None of the terms below is a benchmark entry. *)
+val _ =
+  check
+    ("an equivalence between two permutations of one statement closes",
+     fn () =>
+       List.all
+         (fn term =>
+           case simplifies term of
+               SOME result => aconv result boolSyntax.T
+             | NONE => false)
+         [``(clasimp_perm_y = clasimp_perm_x) /\ 0 < clasimp_perm_n <=>
+            (clasimp_perm_x = clasimp_perm_y) /\ 0 < clasimp_perm_n``,
+          ``0 < clasimp_perm_n /\ clasimp_perm_p clasimp_perm_a <=>
+            clasimp_perm_p clasimp_perm_a /\ 0 < clasimp_perm_n``,
+          ``(?value.
+               clasimp_perm_opt = SOME value /\
+               clasimp_perm_y = clasimp_perm_f value) <=>
+            ?value.
+              clasimp_perm_opt = SOME value /\
+              clasimp_perm_f value = clasimp_perm_y``])
+
+val _ =
+  check
+    ("an equivalence that is not a permutation is left alone",
+     fn () =>
+       not (isSome (simplifies
+         ``(clasimp_perm_p /\ clasimp_perm_q) <=>
+           (clasimp_perm_p \/ clasimp_perm_q)``)))
+
 (* src/HOL/HOL.thy declares [disj_not1] simp and HOL4 declares nothing
    in either direction, so a negated existential arrives at a source
    rule as a disjunction where the source states it as an implication.
