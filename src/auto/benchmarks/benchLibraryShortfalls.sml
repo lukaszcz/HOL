@@ -257,13 +257,19 @@ val finite_cardinality =
     ["list_L4011_length_remdups_concat",
      "list_L6770_sorted_key_list_of_set_unique"]
 
-val propositional_rearrangement =
-  classified "propositional rearrangement"
-    ("the residual is a propositional rearrangement the "
-     ^ "simplifier does not orient; Isabelle's simplifier orders "
-     ^ "such equations by its term order")
-    ["list_L5001_in_set_replicate", "list_L5008_Ball_set_replicate",
-     "list_L5012_Bex_set_replicate", "option_L111_map_option_eq_Some"]
+(* Three of what used to be one class were permutations of a single
+   statement and now close.  What is left is not propositional: the
+   residual is [0 < n ==> P a <=> P a \/ n = 0], and the two sides
+   agree only once [n = 0] is read as the complement of [0 < n].  The
+   note this class carried -- that Isabelle's simplifier orders such
+   equations by its term order -- was false: [conj_ac], [disj_ac] and
+   [eq_ac] are all stated in HOL.thy and none is declared [simp]. *)
+val arithmetic_complement_in_a_disjunct =
+  classified "arithmetic complement in a disjunct"
+    ("the residual is an equivalence whose two sides agree only "
+     ^ "once a disjunct is read as the complement of a bound, "
+     ^ "which is arithmetic and not a propositional rearrangement")
+    ["list_L5008_Ball_set_replicate"]
 
 (* [source_sorted] is now [source_sorted_wrt], and the ambient bridge
    has crossed: every residual below is stated on HOL4's own adjacent
@@ -525,7 +531,7 @@ val execution : benchLib.shortfall list =
   fold_direction @
   fold_against_a_set_aggregate @
   finite_cardinality @
-  propositional_rearrangement @
+  arithmetic_complement_in_a_disjunct @
   sortedness_beyond_the_bridge @
   numeral_against_Suc @
   characterisation_is_the_goal @
