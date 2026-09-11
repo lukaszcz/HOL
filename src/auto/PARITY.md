@@ -4,9 +4,11 @@
 
 Each benchmark entry contains a HOL4 theorem statement, the Isabelle method used for the corresponding source result, and the HOL4 tactic chosen as that method's closest counterpart. This report calls that HOL4 tactic the **assigned tactic**.
 
-The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: the definitions the translation introduces whose equations Isabelle's own simpset would carry, as rewrites, identically for every goal, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. Which definitions those are is recorded per constant against the Isabelle source line that introduces it: a `fun`, a `primrec`, a datatype's selectors and predicator, and a `definition` whose characterisation Isabelle separately declares simp are in; a plain `definition` is out. A few results Isabelle declares `simp` or `iff` about a constant whose definition it withholds are carried alongside, each citing the declaration it transplants. Two Isabelle facts can translate onto one HOL4 theorem, so one of them can be a corpus goal's statement; the measurement then withholds it on that goal, as it withholds a citation that states its goal, and the selftest checks that it does. A second, smaller half stands in for the ambient claset: the rules Isabelle declares `intro`, `elim` or `dest` about a constant whose definition it withholds, carried with the safety Isabelle gives them and only to the methods that consult a claset, which is a different set -- `simp` reads none.
+The assigned tactic and its arguments are derived from the recorded Isabelle method string rather than authored per goal, so a goal cannot be handed a fact its source proof did not name. One context is added on top of that: the definitions the translation introduces whose equations Isabelle's own simpset would carry, as rewrites, and only to the methods that consult a simpset. This stands in for the ambient simpset an Isabelle method reads without naming it. Which definitions those are is recorded per constant against the Isabelle source line that introduces it: a `fun`, a `primrec`, a datatype's selectors and predicator, and a `definition` whose characterisation Isabelle separately declares simp are in; a plain `definition` is out. A few results Isabelle declares `simp` or `iff` about a constant whose definition it withholds are carried alongside, each citing the declaration it transplants. Two Isabelle facts can translate onto one HOL4 theorem, so one of them can be a corpus goal's statement; the measurement then withholds it on that goal, as it withholds a citation that states its goal, and the selftest checks that it does. A second, smaller half stands in for the ambient claset: the rules Isabelle declares `intro`, `elim` or `dest` about a constant whose definition it withholds, carried with the safety Isabelle gives them and only to the methods that consult a claset, which is a different set -- `simp` reads none.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-09 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
+Both halves are cut by Isabelle's theory order. Isabelle reads a theory in order and sees only the theories it imports, so a result declared below a proof, or in a theory that imports the proof's rather than the other way round, was not in that proof's simpset or claset: `Pow_Compl` is proved at `Set.thy:1610` and knows nothing of `Sigma`, which `Product_Type.thy` introduces. The cut reads the goal's mined source line and nothing about its statement, so the context is one set for the whole corpus rather than a per-goal choice. It is a formality on neither side: an out-of-scope rewrite is a fact the source proof did not have, and an out-of-scope classical rule is search the source proof was not paying for -- given the two `Sigma` rules, `Pow_Compl`'s tableau goes from 88 branches to 1181 and the proof is lost.
+
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-11 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
 
 ## Scope
 
@@ -27,11 +29,13 @@ Two distinct Isabelle facts can translate onto one HOL4 theorem, and a proof cit
 - `list_L6761_anon_L6761 (parityTranslation$source_strict_sorted_equal_unique)`
 - `list_L8683_can_select_set_list_ex1 (parityTranslation$source_list_ex1_def)`
 - `list_L7775_in_measures_2 (parityTranslation$source_measures_def)`
-- `map_L366_map_add_None (parityTranslation$source_map_add_None)`
 - `map_L877_map_le_refl (parityTranslation$source_map_le_refl)`
 - `map_L887_map_le_map_add (parityTranslation$source_map_add_find_right, parityTranslation$source_map_le_map_add)`
 - `string_L728_anon_L728 (source_Literal_prime_def)`
 - `product_type_L785_curry_conv (pair$CURRY_DEF)`
+- `product_type_L1028_SigmaI (parityTranslation$source_SigmaI)`
+- `product_type_L1031_SigmaE (parityTranslation$source_SigmaE)`
+- `product_type_L1073_mem_Sigma_iff (parityTranslation$source_mem_Sigma_iff)`
 
 ## Facts the translation does not render
 
@@ -85,12 +89,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
-| Sets | 353 | 334 | 4 |
-| List/map | 602 | 474 | 5 |
+| Sets | 353 | 337 | 4 |
+| List/map | 602 | 479 | 5 |
 | Linarith | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 3 |
-| **Total** | **1070** | **921** | **28** |
+| **Total** | **1070** | **929** | **28** |
 
 ## Cost of the solutions
 
@@ -98,13 +102,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Classical | 25 | 23 | 2 | 0 | 0 | 0.8 | 39 | 516 |
-| Sets | 334 | 316 | 14 | 4 | 0 | 2.8 | 3 | 2430 |
-| List/map | 474 | 432 | 40 | 2 | 0 | 4.5 | 0 | 1868 |
+| Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 39 | 516 |
+| Sets | 337 | 327 | 5 | 4 | 1 | 13.3 | 3 | 48937 |
+| List/map | 479 | 453 | 25 | 1 | 0 | 4.6 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **921** | **853** | **61** | **7** | **0** | **4.5** | **0** | **2430** |
+| **Total** | **929** | **884** | **38** | **6** | **1** | **13.3** | **0** | **48937** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -116,12 +120,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 19 | 0 | 0 |
-| List/map | 0 | 128 | 2 | 0 |
+| Sets | 0 | 16 | 0 | 0 |
+| List/map | 0 | 123 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **149** | **2** | **0** |
+| **Total** | **0** | **141** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -132,12 +136,12 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 | Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
-| Sets | 0 | 2 | 5 |
-| List/map | 14 | 0 | 9 |
+| Sets | 0 | 2 | 4 |
+| List/map | 9 | 0 | 8 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **14** | **2** | **14** |
+| **Total** | **9** | **2** | **12** |
 
 ## Seed-rule safety check
 
