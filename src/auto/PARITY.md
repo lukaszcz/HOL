@@ -90,11 +90,11 @@ A **family** is a subject-area group:
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
 | Sets | 353 | 337 | 4 |
-| List/map | 602 | 479 | 5 |
+| List/map | 602 | 482 | 5 |
 | Linarith | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 3 |
-| **Total** | **1070** | **929** | **28** |
+| **Total** | **1070** | **932** | **28** |
 
 ## Cost of the solutions
 
@@ -103,12 +103,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 39 | 516 |
-| Sets | 337 | 327 | 5 | 4 | 1 | 13.3 | 3 | 48937 |
-| List/map | 479 | 453 | 25 | 1 | 0 | 4.6 | 0 | 1868 |
+| Sets | 337 | 326 | 6 | 4 | 1 | 14.8 | 0 | 48937 |
+| List/map | 482 | 459 | 22 | 1 | 0 | 4.6 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **929** | **884** | **38** | **6** | **1** | **13.3** | **0** | **48937** |
+| **Total** | **932** | **889** | **36** | **6** | **1** | **14.8** | **0** | **48937** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -121,11 +121,11 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
 | Sets | 0 | 16 | 0 | 0 |
-| List/map | 0 | 123 | 2 | 0 |
+| List/map | 0 | 120 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **141** | **2** | **0** |
+| **Total** | **0** | **138** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -137,11 +137,11 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 |---|---:|---:|---:|
 | Classical | 0 | 0 | 0 |
 | Sets | 0 | 2 | 4 |
-| List/map | 9 | 0 | 8 |
+| List/map | 6 | 0 | 5 |
 | Linarith | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 |
 | Algebra | 0 | 0 | 0 |
-| **Total** | **9** | **2** | **12** |
+| **Total** | **6** | **2** | **9** |
 
 ## Seed-rule safety check
 
