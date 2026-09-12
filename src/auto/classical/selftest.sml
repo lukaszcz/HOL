@@ -3037,6 +3037,72 @@ val _ =
          clasetMeta.is_meta (child_target (List.nth (slow, 1)))
        end)
 
+(* The rung reads its alternatives guess-free first.  Read with
+   unification, [¬¬t ⇒ t] takes the assumption metavariable for the
+   negation its premise wants and leaves it standing for the negation of a
+   new metavariable -- a guess the next expansion can guess again.
+   [OR_INTRO_THM1] determines nothing the goal has not already fixed, and
+   goes first, although a unifying step normally cuts the unsafe ones out
+   altogether.  Its swapped form, which reads the same assumption
+   metavariable as a disjunction, is a guess and waits with the other one:
+   the order changes, the alternatives do not. *)
+val guess_order_p = Term.mk_var ("guess_order_p", Type.bool)
+
+val guess_order_dest =
+  Drule.GEN_ALL
+    (fst (Thm.EQ_IMP_RULE
+      (Drule.SPEC_ALL (Thm.CONJUNCT1 boolTheory.NOT_CLAUSES))))
+
+val guess_order_cs =
+  clasetLib.add_intros [("guess-order-free", boolTheory.OR_INTRO_THM1)]
+    (clasetLib.add_sdests [("guess-order-guess", guess_order_dest)]
+      clasetLib.empty_cs)
+
+fun guess_order_node assumption store =
+  clasetGoal.create
+    {goals =
+       [{params = [], asl = [assumption],
+         w = boolSyntax.mk_disj (guess_order_p, guess_order_p)}],
+     store = store, level = 0}
+
+fun guess_order_rules results =
+  List.mapPartial
+    (fn (record, _) =>
+      case clasetStep.kind_of record of
+          clasetStep.RuleApplication {original, ...} => SOME (concl original)
+        | _ => NONE)
+    results
+
+fun guess_order_offered rung =
+  let
+    val (meta, store) =
+      clasetMeta.new_meta {allow = [], ty = Type.bool} clasetMeta.empty
+  in
+    guess_order_rules
+      (drain_steps
+        (rung guess_order_cs
+          (guess_order_node (boolSyntax.mk_neg meta) store, 1)))
+  end
+
+fun guess_order_expected rules =
+  case rules of
+      [free, guess, swapped] =>
+        aconv free (concl boolTheory.OR_INTRO_THM1) andalso
+        aconv guess (concl guess_order_dest) andalso
+        aconv swapped (concl boolTheory.OR_INTRO_THM1)
+    | _ => false
+
+val _ =
+  test
+    ("an unsafe step that guesses nothing precedes a unifying guess",
+     fn () => guess_order_expected (guess_order_offered clasetStep.step))
+
+val _ =
+  test
+    ("the slow rung keeps every alternative and defers the guesses",
+     fn () =>
+       guess_order_expected (guess_order_offered clasetStep.slow_step))
+
 val _ =
   test
     ("metavariable hyp-subst eliminates only the rigid variable side",

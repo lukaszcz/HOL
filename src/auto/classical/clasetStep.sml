@@ -2079,9 +2079,123 @@ fun safe_saturate_all cs node =
       [] => NONE
     | (_, record, next) :: _ => SOME (record, next)
 
-fun unsafe_rung fast cs input =
-  if fast then first_nonempty [inst_cascade cs, unsafe_cascade cs] input
-  else append_results (inst_cascade cs) (unsafe_cascade cs) input
+(* The unknowns the node's goals still stand on.  A metavariable the store
+   has bound since is no longer one of them, and one reachable only through
+   such a binding is, so surface occurrences are read through the store. *)
+fun undetermined_metas node =
+  let
+    val store = clasetGoal.store node
+    fun goal_terms ({asl, w, ...} : clasetGoal.cgoal) = w :: asl
+    val surface =
+      List.filter clasetMeta.is_meta
+        (free_varsl (List.concat (map goal_terms (clasetGoal.goals node))))
+  in
+    Lib.op_U clasetMeta.same_meta (map (clasetMeta.metas_of store) surface)
+  end
+
+(* Isabelle names the unsafe steps for what they may do: instantiate
+   variables.  A step that leaves an unknown the goal already carries
+   standing for a term built out of the rule's own new metavariables has not
+   determined that unknown: it has guessed a shape, and the guess can be
+   guessed again at the next expansion, so a depth-first search can follow
+   one indefinitely.  Isabelle is spared this by its rule set rather than by
+   its search -- the membership rules whose premise unifies with a flexible
+   argument are simplification rules there and elimination rules here -- so
+   it is the search that has to keep the two apart. *)
+fun guessed_meta metas direct =
+  case #terms (direct_created direct) of
+      [] => false
+    | created =>
+        let
+          val store = direct_store direct
+          fun created_meta meta =
+            List.exists (fn made => clasetMeta.same_meta made meta) created
+        in
+          List.exists
+            (fn meta =>
+              List.exists created_meta (clasetMeta.metas_of store meta))
+            metas
+        end
+
+fun sift keep metas sequence =
+  let
+    fun sifted current =
+      seq.delay
+        (fn () =>
+          case seq.cases current of
+              NONE => seq.empty
+            | SOME (direct, rest) =>
+                if keep (guessed_meta metas direct) then
+                  seq.cons direct (sifted rest)
+                else sifted rest)
+  in
+    sifted sequence
+  end
+
+fun guess_free metas = sift not metas
+fun guessing metas = sift (fn guessed => guessed) metas
+
+(* Stable: the deferred alternatives keep their order among themselves,
+   and reaching the first guess-free one costs only the guesses it passes
+   -- the very alternatives the search would otherwise have expanded
+   first. *)
+fun guesses_last metas sequence =
+  if List.null metas then sequence
+  else
+    let
+      fun ordered deferred current =
+        seq.delay
+          (fn () =>
+            case seq.cases current of
+                NONE => seq.fromList (List.rev deferred)
+              | SOME (direct, rest) =>
+                  if guessed_meta metas direct then
+                    ordered (direct :: deferred) rest
+                  else seq.cons direct (ordered deferred rest))
+    in
+      ordered [] sequence
+    end
+
+fun guess_free_first cascade cs (input as (node, _)) =
+  guesses_last (undetermined_metas node) (cascade cs input)
+
+fun lazy_append left right =
+  seq.append left (seq.delay right)
+
+(* Isabelle's [inst_step_tac ORELSE' unsafe_step_tac]: the unifying steps,
+   and the unsafe rules only where no unifying step applies.  The cut is
+   what the guess-free order has to reach past.  The rules whose premise
+   unifies with a flexible argument -- the seeded membership eliminations
+   -- are safe rules read in Unify mode, so they are unifying steps, and a
+   goal whose every unifying step guesses an unknown never sees an unsafe
+   step that guesses none.  So where the unifying steps guess without
+   exception, the unsafe steps that guess nothing are offered first and the
+   guesses are kept behind them: strictly the alternatives the cut offered
+   before, reordered, with the guess-free unsafe steps added in front. *)
+fun unsafe_rung fast cs (input as (node, _)) =
+  if not fast then
+    guesses_last (undetermined_metas node)
+      (append_results (inst_cascade cs) (unsafe_cascade cs) input)
+  else
+    let
+      val metas = undetermined_metas node
+    in
+      if List.null metas then
+        first_nonempty [inst_cascade cs, unsafe_cascade cs] input
+      else
+        seq.delay
+          (fn () =>
+            case seq.cases (guesses_last metas (inst_cascade cs input)) of
+                NONE => guesses_last metas (unsafe_cascade cs input)
+              | SOME (first, rest) =>
+                  if guessed_meta metas first then
+                    lazy_append (guess_free metas (unsafe_cascade cs input))
+                      (fn () =>
+                        lazy_append (seq.cons first rest)
+                          (fn () =>
+                            guessing metas (unsafe_cascade cs input)))
+                  else seq.cons first rest)
+    end
 
 fun general_step fast cs (input as (node, _)) =
   case safe_saturate_all cs node of
@@ -2112,7 +2226,8 @@ fun depth_step cs part bound (node, pos) =
                 else
                   seq.bind
                     (wrapped_step clasetLib.app_unsafe_wrappers
-                      (depth_cascade part) cs (current, target))
+                      (guess_free_first (depth_cascade part)) cs
+                      (current, target))
                     (fn result as (_, next) =>
                       solve_many (m - 1)
                         (clasetGoal.child_count current next) result)
