@@ -73,6 +73,45 @@ Proof
   MATCH_ACCEPT_TAC pred_setTheory.IN_UNIV
 QED
 
+(* src/HOL/Complete_Lattices.thy:950,955,1055,1060 @ f7e02b7e.  Isabelle
+   keeps a union membership in the claset as rules, not as the [simp]
+   equivalence [Union_iff] beside them, and declares the plain and the
+   indexed union separately: HOL4 writes the indexed one as a union over
+   an image, so the pair over [BIGUNION (IMAGE f sos)] is the one a goal
+   stated with a set-valued function meets.  Without them a membership in
+   a BIGUNION is inert in a claset search -- the tableau leg has no
+   simpset, so it can only carry such a literal along. *)
+Theorem BIGUNION_I_AUTO[intro]:
+  !item s sos. s IN sos ==> item IN s ==> item IN BIGUNION sos
+Proof
+  SIMP_TAC bool_ss [pred_setTheory.IN_BIGUNION] THEN METIS_TAC []
+QED
+
+Theorem BIGUNION_E_AUTO[selim]:
+  !item sos conclusion.
+    item IN BIGUNION sos ==>
+    (!s. item IN s ==> s IN sos ==> conclusion) ==>
+    conclusion
+Proof
+  SIMP_TAC bool_ss [pred_setTheory.IN_BIGUNION] THEN METIS_TAC []
+QED
+
+Theorem BIGUNION_IMAGE_I_AUTO[intro]:
+  !item f sos index.
+    index IN sos ==> item IN f index ==> item IN BIGUNION (IMAGE f sos)
+Proof
+  SIMP_TAC bool_ss [pred_setTheory.IN_BIGUNION_IMAGE] THEN METIS_TAC []
+QED
+
+Theorem BIGUNION_IMAGE_E_AUTO[selim]:
+  !item f sos conclusion.
+    item IN BIGUNION (IMAGE f sos) ==>
+    (!index. index IN sos ==> item IN f index ==> conclusion) ==>
+    conclusion
+Proof
+  SIMP_TAC bool_ss [pred_setTheory.IN_BIGUNION_IMAGE] THEN METIS_TAC []
+QED
+
 (* src/HOL/Set.thy:1746-1752 @ f7e02b7e. *)
 val _ =
   export_iff ("IN_PREIMAGE_AUTO", pred_setTheory.IN_PREIMAGE)
