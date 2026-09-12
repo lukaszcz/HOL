@@ -785,25 +785,37 @@ val _ =
 
 val _ =
   test
-    ("goals that are unknowns query no introduction nets",
+    ("a shape is chosen only outside the rule's own variables",
      fn () =>
        let
-         val cache = blastRule.newCache ()
-         val p = mk_var ("p", bool)
-         val reflexive = GEN p (DISCH p (ASSUME p))
-         val cs =
-           clasetLib.add_sintros [("selftest_reflexive", reflexive)]
-             clasetLib.empty_cs
-         val unknown = mkGoal (Var (ref NONE))
+         val chosen = ref NONE
+         val shared = ref NONE
+         val matched = ref NONE
+         val other = ref NONE
+         val constant = Const ({Thy = "bool", Name = "T"}, [])
+         val _ = chosen := SOME constant
+         val _ = shared := SOME (Var other)
+         val _ = matched := SOME constant
+         fun guessed assigned rule_vars =
+           blastSearch.guessedShape
+             {assigned = assigned, rule_vars = rule_vars}
        in
-         null (blastRule.safeRules cache cs [] unknown) andalso
-         null (blastRule.unsafeRules cache cs [] unknown) andalso
-         blastRule.conversionCount cache = 0
+         guessed [chosen] [matched] andalso
+         not (guessed [matched] [matched]) andalso
+         not (guessed [shared] [matched]) andalso
+         not (guessed [other] [matched]) andalso
+         not (guessed [] [matched])
        end)
 
+(* A rule that leaves one of the branch's unknowns bound to a rigid term
+   has chosen a shape for the formula rather than matched it, and the
+   choice costs a level.  Here the only rules under IN are the two sides
+   of a union, so nothing ever closes [a IN ?s]: what the search does
+   with the remaining levels is enumerate unions, and the charge is what
+   bounds that enumeration. *)
 val _ =
   test
-    ("unselective goals keep only the rules that close them",
+    ("a chosen shape costs a level and bounds the enumeration",
      fn () =>
        let
          val item = Type.mk_vartype "'a"
@@ -816,47 +828,29 @@ val _ =
              (mk_thy_const
                 {Thy = "bool", Name = "IN",
                  Ty = item --> collection --> bool}, [element, set])
-         val union =
+         fun union (left, right) =
            Term.list_mk_comb
              (mk_thy_const
                 {Thy = "pred_set", Name = "UNION",
-                 Ty = collection --> collection --> collection}, [s, t])
-         val universe =
-           mk_thy_const {Thy = "pred_set", Name = "UNIV", Ty = collection}
-         val union_left =
+                 Ty = collection --> collection --> collection},
+              [left, right])
+         fun side chosen =
            prove (list_mk_forall ([x, s, t],
-                    mk_imp (mk_mem (x, s), mk_mem (x, union))),
+                    mk_imp (mk_mem (x, chosen), mk_mem (x, union (s, t)))),
                   PROVE_TAC [IN_UNION])
-         val in_universe =
-           prove (mk_forall (x, mk_mem (x, universe)),
-                  REWRITE_TAC [IN_UNIV])
          val cs =
            clasetLib.add_intros
-             [("selftest_union_left", union_left),
-              ("selftest_in_universe", in_universe)] clasetLib.empty_cs
-         val (head, _) =
-           strip_comb (blastRule.fromGoalTerm (mk_mem (x, s)))
-         val unknown = mkGoal (head $ Var (ref NONE) $ Var (ref NONE))
-         val known =
-           mkGoal (blastRule.fromGoalTerm (mk_mem (x, union)))
-         fun stored formula =
-           List.mapPartial
-             (fn (rule : blastRule.tableau_rule) =>
-                case #origin rule of
-                    blastRule.Stored {theorem, ...} => SOME (concl theorem)
-                  | _ => NONE)
-             (blastRule.unsafeRules (blastRule.newCache ()) cs [] formula)
+             [("selftest_union_left", side s),
+              ("selftest_union_right", side t)] (clasetLib.the_claset ())
+         val a = mk_var ("a", item)
+         val q = mk_var ("q", bool)
+         val goal = ([mk_forall (s, mk_imp (mk_mem (a, s), q))], q)
+         fun branches depth =
+           #branches_created
+             (#statistics
+                (blastSearch.searchGoalWithStats cs depth goal (fn p => p)))
        in
-         (* Every rule under IN unifies with a goal whose element and set
-            are both undetermined, so only the one that closes it outright
-            is kept; where the set is rigid, the rule with a premise is
-            selected as before. *)
-         (case stored unknown of
-              [only] => Term.aconv only (concl in_universe)
-            | _ => false) andalso
-         (case stored known of
-              [only] => Term.aconv only (concl union_left)
-            | _ => false)
+         branches 5 = 12 andalso branches 8 = 87
        end)
 
 val _ =

@@ -179,6 +179,11 @@ sig
 
   (* Focused observations of the port's search heuristics. *)
   val instantiationPenalty : int -> int
+  (* True when a step's assignments, those outside the rule's own
+     variables, left a branch unknown bound to a term with a rigid
+     head: a shape chosen for the formula, which costs a level. *)
+  val guessedShape :
+    {assigned : var list, rule_vars : var list} -> bool
   val recursivePremise : pterm -> pterm list -> bool
   val requeueGamma :
     pterm * bool -> (pterm * bool) list -> bool ->

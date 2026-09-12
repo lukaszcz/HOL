@@ -427,6 +427,53 @@ fun log4 n = if n < 4 then 0 else 1 + log4 (n div 4)
 
 fun instantiationPenalty n = 1 + log4 n
 
+(* An instantiating step that leaves one of the branch's unknowns bound
+   to a term with a rigid head has not answered the formula: it has
+   chosen a shape for it, out of as many shapes as the claset has rules
+   to offer there.  Isabelle's charge reads that supply off a
+   library-wide claset, where the same choice costs a level more than it
+   does under a per-theory one; the choice itself is what is dear, so
+   charge the level here instead of inheriting it from a rule count.
+   Assignments to the rule's own variables are how a rule is matched,
+   not how a formula is guessed, and are not charged. *)
+fun guessedShapeWith checkpoint {assigned, rule_vars} =
+  let
+    fun rigid term =
+      (checkpoint ();
+       case head_of term of
+           Var assignment =>
+             (case !assignment of
+                  NONE => false
+                | SOME body => rigid body)
+         | _ => true)
+
+    fun chosen variable =
+      (checkpoint ();
+       not (mem_var (variable, rule_vars)) andalso
+       (case !variable of
+            NONE => false
+          | SOME body => rigid body))
+  in
+    existsMeasured checkpoint chosen assigned
+  end
+
+fun guessedShape query = guessedShapeWith (fn () => ()) query
+
+fun assignedSinceWith checkpoint state mark =
+  let
+    fun take (_, 0) = []
+      | take ([], _) = []
+      | take (variable :: rest, remaining) =
+          (checkpoint (); variable :: take (rest, remaining - 1))
+  in
+    take (trailVars state, trailSize state - mark)
+  end
+
+fun guessedAt checkpoint state mark rule_vars =
+  guessedShapeWith checkpoint
+    {assigned = assignedSinceWith checkpoint state mark,
+     rule_vars = rule_vars}
+
 fun recursivePremiseMeasured checkpoint pattern premise =
   let
     fun matches (Var _) _ = (checkpoint (); true)
@@ -1347,7 +1394,10 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                           val unified = trailSize state
                           val lim' =
                             if updated then
-                              lim - instantiationPenalty rule_count
+                              lim - instantiationPenalty rule_count -
+                              (if guessedAt (fn () => checkpointAt mark)
+                                    state mark rule_vars
+                               then 1 else 0)
                             else lim
                           val vars0 = varsInVarsAt mark vars
                           val choices' =
@@ -1648,7 +1698,10 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                           val duplicate = md
                           val lim' =
                             if updated then
-                              lim - instantiationPenalty rule_count
+                              lim - instantiationPenalty rule_count -
+                              (if guessedAt (fn () => checkpointAt mark)
+                                    state mark rule_vars
+                               then 1 else 0)
                             else lim - 1
                           val undo =
                             mayUndoAt mark

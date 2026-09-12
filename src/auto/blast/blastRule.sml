@@ -826,36 +826,13 @@ fun pseudoRulesMeasured checkpoint cache vars formula =
                | NONE => [])
     end
 
-fun undeterminedMeasured checkpoint term =
-  (checkpoint ();
-   case term of
-       Var assignment =>
-         (case !assignment of
-              NONE => true
-            | SOME body => undeterminedMeasured checkpoint body)
-     | _ => false)
-
-(* src/Provers/blast.ML:564-567 @ Isabelle2025-2 rejects a formula that is
-   an unknown, or the negation of one: nothing in it selects a rule.  A
-   goal is rejected on the same ground: no rule answers an unknown, it
-   only replaces it. *)
-fun isVarFormMeasured checkpoint formula =
-  let
-    fun reject term =
-      (checkpoint ();
-       case strip_comb term of
-           (Var _, []) => true
-         | (Const ({Thy = "bool", Name = "~"}, _), [negated]) =>
-             reject negated
-         | _ => false)
-  in
-    reject formula
-  end
+fun isVarForm (Var _) = true
+  | isVarForm (Const (name, _) $ Var _) =
+      name = {Thy = "bool", Name = "~"}
+  | isVarForm _ = false
 
 fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
-  if isVarFormMeasured checkpoint
-       (if isGoal formula then rand formula else formula)
-  then []
+  if not (isGoal formula) andalso isVarForm formula then []
   else
     let
       val query = query_skeleton_measured checkpoint formula
@@ -879,40 +856,6 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
     in
       clasetRules.candidate_order_measured checkpoint tagged
     end
-
-(* Isabelle rejects the formula that selects no rule at all.  A rule can
-   also fail to be selected by a formula that has a fixed head: where the
-   formula holds an undetermined unknown and the rule is rigid, the rule
-   does not answer the formula but replaces it by its own shape, chosen
-   from as many shapes as the claset has rules there.  A rule that closes
-   the branch outright is still worth that choice; one with premises
-   enumerates.  The formula keeps its literal, so unification -- tried
-   before rules -- can still close it. *)
-fun guessesMeasured checkpoint formula (rule : tableau_rule) =
-  let
-    fun body term = if isGoal term then rand term else term
-
-    fun rigid term =
-      (checkpoint ();
-       case head_of term of
-           Var assignment =>
-             (case !assignment of
-                  NONE => false
-                | SOME assigned => rigid assigned)
-         | _ => true)
-
-    fun guessed ([], []) = false
-      | guessed (argument :: arguments, shape :: shapes) =
-          (checkpoint ();
-           (undeterminedMeasured checkpoint argument andalso rigid shape)
-           orelse guessed (arguments, shapes))
-      | guessed _ = false
-
-    val (_, arguments) = strip_comb (body formula)
-    val (_, shapes) = strip_comb (body (#pattern rule))
-  in
-    not (null (#premises rule)) andalso guessed (arguments, shapes)
-  end
 
 (* Rule variables are assigned destructively and off-trail by unify.  Keep
    pristine templates in a search cache, and give every acquisition fresh
@@ -1079,12 +1022,8 @@ fun acquireMeasured (monitor as {candidate, conversion, checkpoint})
             weight <= 1
           val (early, late) =
             partitionMeasured checkpoint weight_at_most_one tagged
-          fun selected candidates =
-            #1 (partitionMeasured checkpoint
-                  (fn rule => not (guessesMeasured checkpoint formula rule))
-                  (mapPartialMeasured checkpoint convert candidates))
-          val early_rules = selected early
-          val late_rules = selected late
+          val early_rules = mapPartialMeasured checkpoint convert early
+          val late_rules = mapPartialMeasured checkpoint convert late
           val rules =
             if safe then
               appendMeasured checkpoint early_rules
