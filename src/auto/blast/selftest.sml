@@ -785,6 +785,82 @@ val _ =
 
 val _ =
   test
+    ("goals that are unknowns query no introduction nets",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val p = mk_var ("p", bool)
+         val reflexive = GEN p (DISCH p (ASSUME p))
+         val cs =
+           clasetLib.add_sintros [("selftest_reflexive", reflexive)]
+             clasetLib.empty_cs
+         val unknown = mkGoal (Var (ref NONE))
+       in
+         null (blastRule.safeRules cache cs [] unknown) andalso
+         null (blastRule.unsafeRules cache cs [] unknown) andalso
+         blastRule.conversionCount cache = 0
+       end)
+
+val _ =
+  test
+    ("unselective goals keep only the rules that close them",
+     fn () =>
+       let
+         val item = Type.mk_vartype "'a"
+         val collection = item --> bool
+         val x = mk_var ("x", item)
+         val s = mk_var ("s", collection)
+         val t = mk_var ("t", collection)
+         fun mk_mem (element, set) =
+           Term.list_mk_comb
+             (mk_thy_const
+                {Thy = "bool", Name = "IN",
+                 Ty = item --> collection --> bool}, [element, set])
+         val union =
+           Term.list_mk_comb
+             (mk_thy_const
+                {Thy = "pred_set", Name = "UNION",
+                 Ty = collection --> collection --> collection}, [s, t])
+         val universe =
+           mk_thy_const {Thy = "pred_set", Name = "UNIV", Ty = collection}
+         val union_left =
+           prove (list_mk_forall ([x, s, t],
+                    mk_imp (mk_mem (x, s), mk_mem (x, union))),
+                  PROVE_TAC [IN_UNION])
+         val in_universe =
+           prove (mk_forall (x, mk_mem (x, universe)),
+                  REWRITE_TAC [IN_UNIV])
+         val cs =
+           clasetLib.add_intros
+             [("selftest_union_left", union_left),
+              ("selftest_in_universe", in_universe)] clasetLib.empty_cs
+         val (head, _) =
+           strip_comb (blastRule.fromGoalTerm (mk_mem (x, s)))
+         val unknown = mkGoal (head $ Var (ref NONE) $ Var (ref NONE))
+         val known =
+           mkGoal (blastRule.fromGoalTerm (mk_mem (x, union)))
+         fun stored formula =
+           List.mapPartial
+             (fn (rule : blastRule.tableau_rule) =>
+                case #origin rule of
+                    blastRule.Stored {theorem, ...} => SOME (concl theorem)
+                  | _ => NONE)
+             (blastRule.unsafeRules (blastRule.newCache ()) cs [] formula)
+       in
+         (* Every rule under IN unifies with a goal whose element and set
+            are both undetermined, so only the one that closes it outright
+            is kept; where the set is rigid, the rule with a premise is
+            selected as before. *)
+         (case stored unknown of
+              [only] => Term.aconv only (concl in_universe)
+            | _ => false) andalso
+         (case stored known of
+              [only] => Term.aconv only (concl union_left)
+            | _ => false)
+       end)
+
+val _ =
+  test
     ("weight-zero stored rules precede goal-directed pseudo-rules",
      fn () =>
        let
