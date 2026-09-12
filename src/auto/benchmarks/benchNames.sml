@@ -580,8 +580,12 @@ val table : (string * (unit -> resolution)) list =
    translated "source_sorted_list_of_set_less_than_suc"),
   ("sorted_list_of_set_range",
    translated "source_sorted_list_of_set_range"),
-  ("foldr_fold[of _ remove1]", translated "source_foldr_fold"),
-  ("foldr_fold[of _ removeAll]", translated "source_foldr_fold"),
+  ("foldr_fold[of _ remove1]",
+   instantiated [("operation", ``parityTranslation$source_remove1``)]
+     (translated "source_foldr_fold")),
+  ("foldr_fold[of _ removeAll]",
+   instantiated [("operation", ``parityTranslation$source_removeAll``)]
+     (translated "source_foldr_fold")),
   (* [OF i] and [OF j] discharge a premise with a label the enclosing
      Isar block bound, and the translated goal carries that label's
      content as a hypothesis, so the citation is the general theorem. *)
