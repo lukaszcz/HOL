@@ -214,28 +214,6 @@ val simplification_and_search_reports_no_proof =
      "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
      "string_L178_card_UNIV_char"]
 
-(* src/HOL/List.thy:4707 and :4781 @ f7e02b7e.  The cited [foldr_fold]
-   reaches these goals now: the method names it at [remove1] and at
-   [removeAll], the corpus names the same instances, and [foldr] is
-   stated by the recursion Isabelle states it by, so the goal stays in
-   the vocabulary the instance speaks of instead of being unfolded into
-   another combinator.  Against the layer's own claset the assigned
-   tactic then closes both in a fraction of a second.  What it does not
-   survive is the claset the corpus measures under: the seed
-   declarations add 269 rules to the 56 the layer carries, and with
-   them in scope the search runs out its budget on a goal it closes at
-   once without them.  Isabelle's [fastforce] reads a claset of
-   comparable size, so what is left is search discipline under a large
-   rule set and not a missing fact.  Measured on
-   [list_L4707_foldr_fold_remove1]; the other is the same statement at
-   [removeAll]. *)
-val search_under_the_ambient_claset =
-  classified "search under the ambient claset"
-    ("the cited instance reaches the goal and closes it at once "
-     ^ "against the layer's own claset; the search runs out its "
-     ^ "budget once the ambient seed declarations are in scope")
-    ["list_L4707_foldr_fold_remove1", "list_L4781_foldr_fold_removeAll"]
-
 val list_relation_lifting =
   classified "list relation lifting"
     ("the declared rules take a LIST_REL apart at a nil, a cons or a "
@@ -549,7 +527,6 @@ val execution : benchLib.shortfall list =
   filter_normalisation @
   indexing_through_list_constructors @
   simplification_and_search_reports_no_proof @
-  search_under_the_ambient_claset @
   list_relation_lifting @
   fold_direction @
   fold_against_a_set_aggregate @
