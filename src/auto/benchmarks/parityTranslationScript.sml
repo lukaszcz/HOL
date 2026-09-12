@@ -1968,9 +1968,25 @@ Proof
   >> metis_tac[]
 QED
 
+(* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
+   src/HOL/List.thy:113-115.  [foldr] is a primrec there, so what its
+   simpset carries is the recursion, not an equation collapsing the
+   constant into another combinator: a goal stated at [foldr] over a
+   variable list stays at [foldr], which is what lets a cited
+   [foldr_fold] reach it.  [source_foldr_FOLDR] is the characterisation
+   the results below are proved through. *)
 Definition source_foldr_def:
-  source_foldr operation xs initial = FOLDR operation initial xs
+  source_foldr operation [] initial = initial /\
+  source_foldr operation (value :: values) initial =
+    operation value (source_foldr operation values initial)
 End
+
+Theorem source_foldr_FOLDR:
+  !operation xs initial.
+    source_foldr operation xs initial = FOLDR operation initial xs
+Proof
+  gen_tac >> Induct >> simp[source_foldr_def]
+QED
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
    src/HOL/List.thy:109-111.  [fold] is a primrec there, which is why
