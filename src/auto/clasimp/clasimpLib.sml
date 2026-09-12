@@ -424,8 +424,134 @@ fun with_extensionality simplify =
        Tactical.REPEAT pointwise_then)
   end
 
+(* Isabelle reads an ordered rewrite by its schematic variables.  Stated
+   with them a rule is permutative, and the simplifier applies it only in
+   the direction its term order takes downwards; the same rule
+   instantiated at the goal's own fixed terms has no schematic variable
+   left, is not permutative, and rewrites left to right.  That is how
+   [force] closes a goal whose supplied fact commutes an operation: its
+   search instantiates the fact at the goal's terms, and the simplifier
+   it runs before each unsafe step reads the instance as an ordinary
+   rewrite.
+
+   HOL4 has no Free/Var distinction in a term, but it has one in a
+   theorem: a variable free in a theorem's hypotheses is a local constant
+   to matching, which is what [HO_PART_MATCH] computes its [lconsts]
+   from.  So an instance is made rigid the way Isabelle's search makes
+   one: the rule's conditions are discharged from the goal's own
+   assumptions, and the terms those assumptions speak of can no longer be
+   matched away.  A rule with nothing to discharge yields nothing here,
+   which is right -- Isabelle refuses an uninstantiated permutative rule
+   just as HOL4 does, and the parity gap is only about the instance a
+   condition pins down.
+
+   What the ordering guard sees is still a permutation, so the instance
+   goes in *bounded*, which is that guard's own escape: bounded once per
+   occurrence of the redex, since the rewrite removes the left-hand side
+   it fires on and nothing else can reach it.  Every hypothesis of an
+   instance is one of the goal's assumptions, so a proof that uses it
+   still answers the goal it was read from. *)
+local
+  fun permutative_equation theorem =
+    let
+      val specialised = Drule.SPEC_ALL theorem
+      val (_, equation) = boolSyntax.strip_imp (Thm.concl specialised)
+      val (left, right) = boolSyntax.dest_eq equation
+      val (head, _) = boolSyntax.strip_comb left
+    in
+      if Cond_rewr.is_var_perm (left, right) then SOME (specialised, head)
+      else NONE
+    end
+    handle HOL_ERR _ => NONE
+
+  (* The head of an operation the goal fixes is as often one of its own
+     variables as it is a constant. *)
+  fun headed_by head term =
+    is_comb term andalso
+    (let val (candidate, _) = boolSyntax.strip_comb term
+     in
+       if is_const head then is_const candidate andalso
+                             same_const head candidate
+       else aconv head candidate
+     end)
+
+  fun redexes head terms =
+    let
+      val found =
+        List.concat (map (find_terms (headed_by head)) terms)
+      fun occurrences term = length (List.filter (aconv term) found)
+    in
+      map (fn term => (term, occurrences term)) (Lib.op_mk_set aconv found)
+    end
+
+  fun discharge theorems matched =
+    let
+      val (conditions, _) = boolSyntax.strip_imp (Thm.concl matched)
+      fun step (condition, theorem) =
+        case List.find (fn fact => aconv (Thm.concl fact) condition)
+               theorems of
+            SOME fact => Thm.MP theorem fact
+          | NONE => raise ERR "permutation_instances" "condition not assumed"
+    in
+      List.foldl step matched conditions
+    end
+
+  fun instance theorems specialised (redex, occurrences) =
+    let
+      val matched =
+        Drule.PART_MATCH (boolSyntax.lhs o snd o boolSyntax.strip_imp)
+          specialised redex
+      val rewrite = discharge theorems matched
+      val (left, right) = boolSyntax.dest_eq (Thm.concl rewrite)
+    in
+      if HOLset.equal (Thm.hypset matched, Thm.hypset specialised) andalso
+         not (aconv left right) andalso
+         Cond_rewr.ac_term_ord (left, right) <> GREATER andalso
+         HOLset.isSubset (FVL [left] empty_tmset, Thm.hyp_frees rewrite)
+      then SOME (BoundedRewrites.Ntimes rewrite occurrences)
+      else NONE
+    end
+    handle HOL_ERR _ => NONE
+in
+  fun permutation_instances theorems (assumptions, conclusion) =
+    let
+      fun instances theorem =
+        case permutative_equation theorem of
+            NONE => []
+          | SOME (specialised, head) =>
+              List.mapPartial (instance theorems specialised)
+                (redexes head (conclusion :: assumptions))
+    in
+      List.concat (map instances theorems)
+    end
+end
+
+(* The instances are read off the goal the step is handed, before
+   [context_first] has simplified it: an assumption that states a
+   permutation is its own decreasing rewrite, so the pass that reads the
+   goal's own equations turns it into T and drops it. *)
+fun with_permutation_instances step simp_args =
+  Tactical.ASSUM_LIST
+    (fn theorems =>
+       fn goal =>
+         let
+           val instances = permutation_instances theorems goal
+           val _ =
+             if null instances then ()
+             else
+               trace 2
+                 (fn () =>
+                    "permutation instances: " ^
+                    String.concatWith ", "
+                      (map (Parse.term_to_string o Thm.concl) instances))
+         in
+           step (simp_args @ instances) goal
+         end)
+
 fun asm_full_simp ss simp_args =
-  Tactical.THEN (context_first ss, ambient_simp false ss simp_args)
+  with_permutation_instances
+    (fn args => Tactical.THEN (context_first ss, ambient_simp false ss args))
+    simp_args
 
 fun safe_asm_full_simp ss simp_args =
   Tactical.THEN (context_first ss, ambient_simp true ss simp_args)

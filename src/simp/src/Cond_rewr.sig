@@ -37,6 +37,12 @@ sig
   include Abbrev
   type controlled_thm = BoundedRewrites.controlled_thm
   val ac_term_ord    : term * term -> order
+
+  (* Whether an equation is permutative: its two sides are the same term
+     up to where the variables sit, and they carry the same variables.
+     This is the test COND_REWR_CONV applies before refusing a rewrite
+     that a term ordering does not take downwards. *)
+  val is_var_perm    : term * term -> bool
   val mk_cond_rewrs  : controlled_thm -> controlled_thm list
   val IMP_EQ_CANON   : controlled_thm -> controlled_thm list
   val COND_REWR_CONV : string * thm -> bool ->

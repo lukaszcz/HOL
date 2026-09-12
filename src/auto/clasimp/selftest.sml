@@ -1208,6 +1208,49 @@ val _ =
          (valid_closes (clasimpLib.AUTO_TAC []))
          auto_goals)
 
+(* A commuting assumption applied in the direction the term order does
+   not take downwards.  Read schematically the rule is permutative and is
+   refused; with its condition discharged from the goal's own assumption
+   the terms it speaks of are local constants to matching, and what is
+   left is an ordinary rewrite at one redex.  Only after it has fired
+   does the conditional assumption close the goal -- the condition holds
+   of [clasimp_perm_a], which the commutation moves into the argument
+   that assumption reads.  Dropping the condition's assumption takes the
+   instance away and nothing else closes the goal, which is what says the
+   rewrite is doing the work.  Nothing here is a benchmark entry. *)
+val permutation_rule =
+  ``!x y : num. clasimp_perm_R x y ==> (x - y = y - x)``
+
+val permutation_condition =
+  ``clasimp_perm_R (clasimp_perm_a : num) (clasimp_perm_b : num) : bool``
+
+val permutation_context =
+  [``EVEN (clasimp_perm_a : num)``,
+   ``!x y : num. EVEN y ==> EVEN (x - y)``]
+
+val permutation_target =
+  ``EVEN ((clasimp_perm_a : num) - (clasimp_perm_b : num))``
+
+val _ =
+  check
+    ("AUTO_TAC commutes an assumption at the redex its condition pins",
+     fn () =>
+       valid_closes (clasimpLib.AUTO_TAC [])
+         (permutation_rule :: permutation_condition :: permutation_context,
+          permutation_target))
+
+val _ =
+  check
+    ("AUTO_TAC leaves a commuting assumption alone with nothing to pin it",
+     fn () =>
+       let
+         val goal = (permutation_rule :: permutation_context,
+                     permutation_target)
+       in
+         tactic_fails (clasimpLib.AUTO_TAC []) goal orelse
+         not (valid_closes (clasimpLib.AUTO_TAC []) goal)
+       end)
+
 val auto_linarith_rewrite =
   hd (Drule.CONJUNCTS arithmeticTheory.MIN_EQ_LE)
 
