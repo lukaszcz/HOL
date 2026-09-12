@@ -89,12 +89,12 @@ A **family** is a subject-area group:
 | Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
-| Sets | 353 | 337 | 4 |
-| List/map | 602 | 484 | 5 |
+| Sets | 353 | 338 | 4 |
+| List/map | 602 | 485 | 5 |
 | Linarith | 46 | 46 | 4 |
 | Presburger | 34 | 34 | 8 |
 | Algebra | 10 | 8 | 3 |
-| **Total** | **1070** | **934** | **28** |
+| **Total** | **1070** | **936** | **28** |
 
 ## Cost of the solutions
 
@@ -103,12 +103,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 39 | 516 |
-| Sets | 337 | 324 | 8 | 4 | 1 | 13.1 | 0 | 48937 |
-| List/map | 484 | 462 | 21 | 1 | 0 | 4.6 | 0 | 1868 |
+| Sets | 338 | 327 | 6 | 5 | 0 | 5.4 | 0 | 20556 |
+| List/map | 485 | 461 | 23 | 1 | 0 | 4.6 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **934** | **890** | **37** | **6** | **1** | **13.1** | **0** | **48937** |
+| **Total** | **936** | **892** | **37** | **7** | **0** | **5.4** | **0** | **20556** |
 
 ## Documented results not solved by the assigned tactic
 
@@ -120,12 +120,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Accepted scope exclusions | Assigned-tactic limitations | Unavailable translations | Unaccounted source results |
 |---|---:|---:|---:|---:|
 | Classical | 0 | 0 | 0 | 0 |
-| Sets | 0 | 16 | 0 | 0 |
-| List/map | 0 | 118 | 2 | 0 |
+| Sets | 0 | 15 | 0 | 0 |
+| List/map | 0 | 117 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
 | Presburger | 0 | 0 | 0 | 0 |
 | Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **136** | **2** | **0** |
+| **Total** | **0** | **134** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
