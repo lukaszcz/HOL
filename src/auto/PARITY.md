@@ -103,12 +103,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 39 | 516 |
-| Sets | 337 | 327 | 5 | 4 | 1 | 14.4 | 0 | 48937 |
-| List/map | 482 | 457 | 24 | 1 | 0 | 4.5 | 0 | 1868 |
+| Sets | 337 | 324 | 8 | 4 | 1 | 13.8 | 0 | 48937 |
+| List/map | 482 | 457 | 23 | 2 | 0 | 4.5 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **932** | **888** | **37** | **6** | **1** | **14.4** | **0** | **48937** |
+| **Total** | **932** | **885** | **39** | **7** | **1** | **13.8** | **0** | **48937** |
 
 ## Documented results not solved by the assigned tactic
 
