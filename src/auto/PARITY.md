@@ -8,7 +8,7 @@ The assigned tactic and its arguments are derived from the recorded Isabelle met
 
 Both halves are cut by Isabelle's theory order. Isabelle reads a theory in order and sees only the theories it imports, so a result declared below a proof, or in a theory that imports the proof's rather than the other way round, was not in that proof's simpset or claset: `Pow_Compl` is proved at `Set.thy:1610` and knows nothing of `Sigma`, which `Product_Type.thy` introduces. The cut reads the goal's mined source line and nothing about its statement, so the context is one set for the whole corpus rather than a per-goal choice. It is a formality on neither side: an out-of-scope rewrite is a fact the source proof did not have, and an out-of-scope classical rule is search the source proof was not paying for -- given the two `Sigma` rules, `Pow_Compl`'s tableau goes from 88 branches to 1181 and the proof is lost.
 
-The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-11 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
+The comparison data was mined from Isabelle/HOL commit `f7e02b7e`. Each in-repository benchmark entry records its source file, line, method, and commit. The report was generated on 2026-09-12 with a 30-second limit for each tactic attempt. The limit is an asynchronous interrupt, so a goal can overrun it by the time its search takes to reach an interruptible point; the times below are wall-clock and record the overrun where it happened.
 
 ## Scope
 
@@ -103,12 +103,12 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | Slowest | Median search work | Largest search work |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 39 | 516 |
-| Sets | 337 | 326 | 6 | 4 | 1 | 14.8 | 0 | 48937 |
-| List/map | 482 | 459 | 22 | 1 | 0 | 4.6 | 0 | 1868 |
+| Sets | 337 | 327 | 5 | 4 | 1 | 14.4 | 0 | 48937 |
+| List/map | 482 | 457 | 24 | 1 | 0 | 4.5 | 0 | 1868 |
 | Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
 | Presburger | 34 | 31 | 2 | 1 | 0 | 1.4 | 0 | 0 |
 | Algebra | 8 | 7 | 1 | 0 | 0 | 0.9 | 0 | 0 |
-| **Total** | **932** | **889** | **36** | **6** | **1** | **14.8** | **0** | **48937** |
+| **Total** | **932** | **888** | **37** | **6** | **1** | **14.4** | **0** | **48937** |
 
 ## Documented results not solved by the assigned tactic
 
