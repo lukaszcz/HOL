@@ -12,8 +12,8 @@ val over_budget =
   ["set_L1125_image_Pow_surj",
    "set_L1607_Pow_insert",
    "set_L1847_is_singleton_the_elem",
-   "set_L928_subset_image_iff", "set_L994_image_add_0",
-   "set_theory_L168", "set_theory_L184", "set_theory_L48"]
+   "set_L1610_Pow_Compl", "set_L994_image_add_0",
+   "set_theory_L168", "set_theory_L184"]
 
 fun record note id : benchLib.shortfall =
   {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
@@ -36,8 +36,7 @@ val blast_set_rule_forms =
      ^ "some and does not return within the budget on the rest")
     ["set_L1125_image_Pow_surj",
      "set_L1607_Pow_insert",
-     "set_L928_subset_image_iff", "set_L994_image_add_0",
-     "set_theory_L48",
+     "set_L994_image_add_0",
      "set_theory_L168", "set_theory_L184"]
 
 val disjnt =
@@ -93,6 +92,29 @@ val instantiated_fact_citation =
      ^ "citation but not its instantiation")
     ["set_theory_L79"]
 
+(* src/HOL/Set.thy:1610 @ f7e02b7e.  The source method supplies the
+   existential witness ([blast intro: exI [where ?x = "- u" for u]]) and
+   the recipe compiler represents a citation but not its instantiation,
+   so the search has to guess it.  The guess is what the union
+   membership rules meet: a branch guessing a witness leaves a
+   membership whose set it has not decided, and [BIGUNION_E_AUTO]'s
+   major premise unifies with such a literal by deciding it.  Measured:
+   89 tableau branches and 0.038s with the two eliminations out of the
+   claset, 1370 branches and past the budget with them.  They stay --
+   Isabelle declares both [elim!] and they are what closes
+   [set_L928_subset_image_iff] and [set_theory_L48] -- so what is left
+   here is the witness the method was given and the recipe was not. *)
+val witness_the_method_supplies : benchLib.shortfall list =
+  [{id = "set_L1610_Pow_Compl", cause = benchLib.EngineLimitation,
+    date = "2026-09-12",
+    note =
+      "witness the method supplies: the source method instantiates " ^
+      "exI with the witness; the recipe compiler represents a " ^
+      "citation but not its instantiation, so the search guesses it, " ^
+      "and the union membership rules Isabelle declares [elim!] meet " ^
+      "the undetermined membership the guess leaves behind (the " ^
+      "search exceeded the budget rather than reporting no proof)"}]
+
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
   disjnt @
@@ -100,6 +122,7 @@ val entries : benchLib.shortfall list =
   definite_description @
   image_comprehension @
   boolean_induction_rule @
-  instantiated_fact_citation
+  instantiated_fact_citation @
+  witness_the_method_supplies
 
 end
