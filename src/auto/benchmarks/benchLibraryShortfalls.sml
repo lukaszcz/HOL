@@ -415,20 +415,21 @@ val the_ambient_rule_is_the_goal =
      ^ "withholds it here")
     ["map_L887_map_le_map_add"]
 
-(* src/HOL/Map.thy:610 @ f7e02b7e.  The citation is rendered now that
-   [map_add] is a constant, and it reaches the tactic: the goal stopped
-   failing outright and started running out the budget.  [map_add_comm]
-   goes in as a fact, so it stands as a universal assumption with a
-   set-equality condition, and every branch the tableau opens
-   instantiates it afresh -- 4254 branches and 17349 inferences at
-   depth 8 in thirty seconds.  Isabelle inserts the same fact and its
-   [force] closes the goal, so this is a search-discipline gap and not
-   a missing fact. *)
+(* src/HOL/Map.thy:810 @ f7e02b7e.  [map_add_comm] reaches the goal as a
+   rewrite now.  It goes in as a fact, so it stands as a universal
+   assumption with a domain-disjointness condition, and the simplifier
+   the search runs before each unsafe step instantiates it at the redex
+   that condition pins and commutes there.  That step is the one the
+   source proof needs: the membership branch it serves -- a value held
+   by one map read out of the sum -- closes outright once the commuted
+   sum is in reach of the ambient [map_add_find_right].  What is left is
+   the set equality the goal is stated as, on which the recipe still
+   runs out a budget ten times the measurement's. *)
 val map_sum_commuted_under_a_fact =
   classified "map sum commuted under a fact"
-    ("map_add_comm goes in as a universal assumption and the tableau "
-     ^ "instantiates it on every branch, 4254 of them inside the "
-     ^ "budget")
+    ("the commuting fact now reaches its redex and the membership "
+     ^ "branch it serves closes, and the set equality around it still "
+     ^ "runs out a budget ten times the measurement's")
     ["map_L810_graph_map_add"]
 
 val option_relations =
