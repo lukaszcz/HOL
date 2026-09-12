@@ -3103,6 +3103,52 @@ val _ =
      fn () =>
        guess_order_expected (guess_order_offered clasetStep.slow_step))
 
+(* The other way a step leaves an unknown undetermined: [FORALL_ELIM_THM]
+   settles the assumption it reads and the goal it leaves, but the instance
+   it picks is a metavariable of its own that the goal says nothing about,
+   and the next expansion can pick again inside it.  It is declared after
+   the introduction rule, so recency offers it first; the guess-free order
+   puts it back behind.  The spare unknown in the assumptions is what puts
+   the node in the regime where the rung reads both classes. *)
+val guess_created_g =
+  Term.mk_var ("guess_created_g", Type.ind --> Type.bool)
+
+val guess_created_cs =
+  clasetLib.add_elims
+    [("guess-created-forall", clasetSeedTheory.FORALL_ELIM_THM)]
+    (clasetLib.add_intros
+      [("guess-created-free", boolTheory.OR_INTRO_THM1)]
+      clasetLib.empty_cs)
+
+val _ =
+  test
+    ("an instance the goal does not fix is a guess and waits",
+     fn () =>
+       let
+         val y = Term.mk_var ("guess_created_y", Type.ind)
+         val universal =
+           boolSyntax.mk_forall (y, Term.mk_comb (guess_created_g, y))
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.ind} clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals =
+                [{params = [],
+                  asl = [universal, Term.mk_comb (guess_created_g, meta)],
+                  w = boolSyntax.mk_disj (guess_order_p, guess_order_p)}],
+              store = store, level = 0}
+         val rules =
+           guess_order_rules
+             (drain_steps (clasetStep.step guess_created_cs (node, 1)))
+         fun stated theorem = List.exists (aconv (concl theorem))
+       in
+         case rules of
+             first :: rest =>
+               aconv first (concl boolTheory.OR_INTRO_THM1) andalso
+               stated clasetSeedTheory.FORALL_ELIM_THM rest
+           | [] => false
+       end)
+
 val _ =
   test
     ("metavariable hyp-subst eliminates only the rigid variable side",

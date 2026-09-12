@@ -2094,14 +2094,18 @@ fun undetermined_metas node =
   end
 
 (* Isabelle names the unsafe steps for what they may do: instantiate
-   variables.  A step that leaves an unknown the goal already carries
-   standing for a term built out of the rule's own new metavariables has not
-   determined that unknown: it has guessed a shape, and the guess can be
-   guessed again at the next expansion, so a depth-first search can follow
-   one indefinitely.  Isabelle is spared this by its rule set rather than by
-   its search -- the membership rules whose premise unifies with a flexible
-   argument are simplification rules there and elimination rules here -- so
-   it is the search that has to keep the two apart. *)
+   variables.  A step guesses when it leaves an unknown undetermined, and
+   there are two ways to do that: it can leave an unknown the goal already
+   carries standing for a term built out of the rule's own new
+   metavariables, and it can leave one of those new metavariables standing
+   in the children with nothing there to fix it.  Either way the guess can
+   be guessed again at the next expansion, so a depth-first search can
+   follow one indefinitely, while a step whose new metavariables the goal
+   settles as it applies them has guessed nothing.  Isabelle is spared the
+   first way by its rule set rather than by its search -- the membership
+   rules whose premise unifies with a flexible argument are simplification
+   rules there and elimination rules here -- so it is the search that has to
+   keep the two apart. *)
 fun guessed_meta metas direct =
   case #terms (direct_created direct) of
       [] => false
@@ -2110,11 +2114,15 @@ fun guessed_meta metas direct =
           val store = direct_store direct
           fun created_meta meta =
             List.exists (fn made => clasetMeta.same_meta made meta) created
+          fun refines meta =
+            List.exists created_meta (clasetMeta.metas_of store meta)
+          val children =
+            List.concat
+              (map (fn (asl, w) => w :: asl) (#1 (direct_result direct)))
         in
-          List.exists
-            (fn meta =>
-              List.exists created_meta (clasetMeta.metas_of store meta))
-            metas
+          List.exists refines metas orelse
+          List.exists created_meta
+            (List.filter clasetMeta.is_meta (free_varsl children))
         end
 
 fun sift keep metas sequence =
