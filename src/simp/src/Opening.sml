@@ -117,7 +117,7 @@ fun strip_imp_until_rel genvars tm =
     end handle HOL_ERR _ => ([],tm);
 
 (* ---------------------------------------------------------------------
- * beta_reduce_applications
+ * beta_reduce_rebuilt
  *
  * A congruence rule whose conclusion applies a higher-order variable to
  * the bound variables of the subterm that variable stands for -- as
@@ -128,17 +128,26 @@ fun strip_imp_until_rel genvars tm =
  * the result and no rule stated in the source spelling could read it.
  * Rules that mention the variable unapplied -- MAP_CONG's MAP f' l2 --
  * instantiate to no redex and are left alone.
+ *
+ * Only the rebuilt term is reduced.  The conclusion's left-hand side is
+ * the term the traversal asked about; it can hold redexes of its own,
+ * and an equation about a reduced form of it answers a question nobody
+ * asked -- the caller that composes the result rejects it.  The integer
+ * is the number of antecedents still to be discharged, which is how deep
+ * the rebuilt term sits under the conclusion's implications.
  * ---------------------------------------------------------------------*)
 
-fun beta_reduce_applications abstraction thm =
+fun beta_reduce_rebuilt nconds abstraction thm =
   if not (is_abs abstraction) then thm
   else
     let
       fun reduce term =
         if aconv (rator term) abstraction then BETA_CONV term
-        else failwith "beta_reduce_applications"
+        else failwith "beta_reduce_rebuilt"
+      fun rebuilt 0 = RAND_CONV (DEPTH_CONV reduce)
+        | rebuilt n = RAND_CONV (rebuilt (n - 1))
     in
-      CONV_RULE (DEPTH_CONV reduce) thm
+      CONV_RULE (rebuilt nconds) thm
       handle HOL_ERR _ => thm | UNCHANGED => thm
     end
 
@@ -264,7 +273,7 @@ in fn relation =>
                     funpow (length ho_vars) rator (rand (concl abs_rewr_thm))
                 val spec_match_thm = SPEC gen_abs_res (GEN genv match_thm)
                 val new_match_thm =
-                    beta_reduce_applications gen_abs_res
+                    beta_reduce_rebuilt (n - 1) gen_abs_res
                       (MP spec_match_thm gen_abs_rewr_thm)
             in process_subgoals (n-1,new_match_thm,more_flags,
                                  allunch andalso not changed)

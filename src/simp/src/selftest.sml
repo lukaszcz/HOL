@@ -132,6 +132,30 @@ in
             ``?x:'a. T /\ C x``)
 end
 
+(* The term the traversal asked about is the equation's left-hand side.
+   It can hold redexes of its own -- here one whose abstraction is the
+   very form the first antecedent's result is generalised into -- and
+   reducing those answers about a term nobody asked about. *)
+val _ = let
+  val bounded_exists_cong = prove(
+    ``(!x:'a. P x = Q x) ==> (!x:'a. Q x ==> (f x = g x)) ==>
+      ((?x:'a. P x /\ f x) = (?x:'a. Q x /\ g x))``,
+    REPEAT DISCH_TAC THEN AP_TERM_TAC THEN ABS_TAC THEN
+    ASM_REWRITE_TAC [] THEN ASM_CASES_TAC ``Q (x:'a) : bool`` THEN
+    RES_TAC THEN ASM_REWRITE_TAC [])
+  val cong_ss =
+    SSFRAG {name = SOME "BOUNDEDEXISTS", congs = [bounded_exists_cong],
+            convs = [], rewrs = [], ac = [], filter = NONE, dprocs = []}
+  val redex_term = ``?x:'a. (x = x) /\ D ((\y:'a. T) x)``
+  val _ = tprint "congruence answers about the term it was given"
+in
+  case Lib.total (SIMP_CONV (bool_ss ++ cong_ss) []) redex_term of
+      NONE => die "simplification failed"
+    | SOME th =>
+        if aconv (lhs (concl th)) redex_term then OK ()
+        else die ("left-hand side became " ^ term_to_string (lhs (concl th)))
+end
+
 (* An antecedent stating an intermediate result -- one a later
    antecedent consumes rather than the conclusion naming it -- is a
    sub-congruence for the traversal to supply, not a side condition for
