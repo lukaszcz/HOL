@@ -66,10 +66,10 @@ fun apply_rule cs duplicate major rule node =
 
 fun execute cs step node =
   case step of
-      blastSearch.HypSubst {equality, changed} =>
+      blastSearch.HypSubst {equality, changed, side} =>
         apply
           (clasetStep.blast_hyp_subst_step_at
-            {equality = equality, changed = changed}) node
+            {equality = equality, changed = changed, side = side}) node
     | blastSearch.CloseAssume {assumption} =>
         apply (clasetStep.blast_assumption_step_at assumption) node
     | blastSearch.CloseContradiction positions =>

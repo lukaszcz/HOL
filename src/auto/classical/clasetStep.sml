@@ -11,6 +11,7 @@ type goalpos = int
 
 datatype rule_variant = datatype clasetReplay.rule_variant
 datatype step_kind = datatype clasetReplay.step_kind
+datatype hyp_subst_side = datatype clasetReplay.hyp_subst_side
 
 type created = clasetReplay.created
 val no_created : created = {terms = [], types = []}
@@ -1341,20 +1342,21 @@ fun prepare_blast_hyp_subst node pos : blast_hyp_subst_context =
 
 fun blast_hyp_subst_in
       ({store, params, assumption_count, goal} :
-        blast_hyp_subst_context) {position, changed} =
+        blast_hyp_subst_context) {position, recorded} =
   if position <= 0 orelse position > assumption_count then NONE
   else
     case total
       (fn () =>
-        case changed of
+        case recorded of
             NONE =>
               clasetReplay.COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal
-          | SOME mask =>
-              (mask,
+          | SOME (fields as {changed, side}) =>
+              (fields,
                clasetReplay.BLAST_HYP_SUBST_TAC_AT
-                 {position = position, changed = mask} goal)) () of
+                 {position = position, changed = changed, side = side}
+                 goal)) () of
         NONE => NONE
-      | SOME (changed, unaligned) =>
+      | SOME ({changed, side}, unaligned) =>
           let
             val result as (goals, _) = aligned_result unaligned
             fun child (child_asl, child_w) =
@@ -1368,7 +1370,8 @@ fun blast_hyp_subst_in
                  result = result, children = SOME (map child goals),
                  action =
                    clasetReplay.blast_hyp_subst_action_at
-                     {position = position, changed = changed},
+                     {position = position, changed = changed,
+                      side = side},
                  closed = map (fn _ => NONE) goals, store = store})
           end
 
@@ -1384,14 +1387,15 @@ fun blast_hyp_subst_results (node, pos) =
         List.mapPartial
           (fn position =>
             blast_hyp_subst_in prepared
-              {position = position, changed = NONE}) positions
+              {position = position, recorded = NONE}) positions
       end)
 
-fun blast_hyp_subst_results_at {equality, changed} (node, pos) =
+fun blast_hyp_subst_results_at {equality, changed, side} (node, pos) =
   list_seq
     (fn () =>
       case blast_hyp_subst_in (prepare_blast_hyp_subst node pos)
-        {position = equality, changed = SOME changed} of
+        {position = equality,
+         recorded = SOME {changed = changed, side = side}} of
           NONE => []
         | SOME direct => [direct])
 

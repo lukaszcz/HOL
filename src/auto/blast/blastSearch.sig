@@ -18,7 +18,9 @@ sig
   (* T1--T6 of the blast report.  Rule steps always rotate their new
      material; this is implicit because the search has no other mode. *)
   datatype script_step =
-      HypSubst of {equality : int, changed : bool list}
+      HypSubst of
+        {equality : int, changed : bool list,
+         side : clasetStep.hyp_subst_side}
     | CloseAssume of {assumption : int}
     | CloseContradiction of {negative : int, positive : int}
     | SafeRule of

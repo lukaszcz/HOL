@@ -7,6 +7,7 @@ sig
 
   datatype rule_variant = datatype clasetReplay.rule_variant
   datatype step_kind = datatype clasetReplay.step_kind
+  datatype hyp_subst_side = datatype clasetReplay.hyp_subst_side
 
   type created = clasetReplay.created
   type step_record = clasetReplay.step_record
@@ -83,7 +84,8 @@ sig
   val blast_ccontr_step : step
   val blast_hyp_subst_step : step
   val blast_hyp_subst_step_at :
-    {equality : int, changed : bool list} -> step
+    {equality : int, changed : bool list,
+     side : hyp_subst_side} -> step
   val blast_move_back_step : int -> step
 
   (* [depth_step cs part m] selects the duplicating or non-duplicating

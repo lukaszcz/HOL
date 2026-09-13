@@ -10,6 +10,8 @@ fun trace level message =
 
 datatype rule_variant = Plain | Swapped | Duplicate | MakeElim
 
+datatype hyp_subst_side = EliminateLeft | EliminateRight
+
 datatype step_kind =
     Assumption of int
   | Contradiction of int * int
@@ -527,7 +529,15 @@ fun eta_atom_conv tm =
     | SOME theorem =>
         TRANS theorem (eta_atom_conv (rhs (concl theorem)))
 
-fun blast_hyp_orientation equality =
+(* The side a substitution eliminates is part of the recorded step, and is
+   preferred here over the default left-first choice: an equality whose
+   metavariable was instantiated after the step was recorded has two
+   substitutable sides where it had one, and choosing afresh then reverses
+   the substitution the rest of the script was recorded against.  It is a
+   preference and not a constraint because the search sees a beta-reduced
+   equality where the goal has a redex, so the recorded side can be
+   unsubstitutable here -- and then the other side is the only choice. *)
+fun blast_hyp_orientation_for recorded equality =
   let
     val equality_conversion =
       Conv.THENC
@@ -544,20 +554,39 @@ fun blast_hyp_orientation equality =
               is_var variable andalso
               not (clasetMeta.is_meta variable) andalso
               not (free_in variable other)
+            val eliminate_left =
+              SOME (EliminateLeft, left, right, contracted_thm)
+            val eliminate_right =
+              SOME (EliminateRight, right, left, SYM contracted_thm)
+            fun first_suitable [] = NONE
+              | first_suitable (EliminateLeft :: rest) =
+                  if suitable left right then eliminate_left
+                  else first_suitable rest
+              | first_suitable (EliminateRight :: rest) =
+                  if suitable right left then eliminate_right
+                  else first_suitable rest
+            fun preference NONE = [EliminateLeft, EliminateRight]
+              | preference (SOME EliminateLeft) =
+                  [EliminateLeft, EliminateRight]
+              | preference (SOME EliminateRight) =
+                  [EliminateRight, EliminateLeft]
           in
-            if suitable left right then
-              SOME (left, right, contracted_thm)
-            else if suitable right left then
-              SOME (right, left, SYM contracted_thm)
-            else NONE
+            first_suitable (preference recorded)
           end
   end
 
-fun blast_hyp_subst_tac_at position recorded_changed (asl, w) =
+fun blast_hyp_orientation equality =
+  case blast_hyp_orientation_for NONE equality of
+      NONE => NONE
+    | SOME (_, old, replacement, equality_thm) =>
+        SOME (old, replacement, equality_thm)
+
+fun blast_hyp_subst_tac_at position recorded (asl, w) =
   let
     val equality = nth1 "BLAST_HYP_SUBST_TAC_AT" asl position
-    val (old, replacement, equality_thm) =
-      case blast_hyp_orientation equality of
+    val recorded_changed = Option.map #changed recorded
+    val (side, old, replacement, equality_thm) =
+      case blast_hyp_orientation_for (Option.map #side recorded) equality of
           SOME oriented => oriented
         | NONE =>
             raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
@@ -619,11 +648,13 @@ fun blast_hyp_subst_tac_at position recorded_changed (asl, w) =
           raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
             "validation received the wrong number of theorems"
   in
-    (changed_mask, ([(reordered, target)], validation))
+    ({changed = changed_mask, side = side},
+     ([(reordered, target)], validation))
   end
 
-fun BLAST_HYP_SUBST_TAC_AT {position, changed} goal =
-  #2 (blast_hyp_subst_tac_at position (SOME changed) goal)
+fun BLAST_HYP_SUBST_TAC_AT {position, changed, side} goal =
+  #2 (blast_hyp_subst_tac_at position
+        (SOME {changed = changed, side = side}) goal)
 
 fun COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal =
   blast_hyp_subst_tac_at position NONE goal

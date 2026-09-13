@@ -39,7 +39,9 @@ type branch =
    lim : int}
 
 datatype script_step =
-    HypSubst of {equality : int, changed : bool list}
+    HypSubst of
+      {equality : int, changed : bool list,
+       side : clasetStep.hyp_subst_side}
   | CloseAssume of {assumption : int}
   | CloseContradiction of {negative : int, positive : int}
   | SafeRule of
@@ -756,12 +758,22 @@ fun destEqWith checkpoint equal term =
       if occurs old replacement then raise DEST_EQ
       else (old, replacement)
 
+    (* The eliminated side is reported, not left to be recomputed: by the
+       time the script is replayed a metavariable in the equality may have
+       been instantiated, making the other side substitutable too. *)
+    fun eliminate_left (left, right) =
+      let val (old, replacement) = checked (left, right)
+      in (clasetStep.EliminateLeft, old, replacement) end
+    fun eliminate_right (left, right) =
+      let val (old, replacement) = checked (right, left)
+      in (clasetStep.EliminateRight, old, replacement) end
+
     fun orient (left, right) =
       case (left, right) of
-          (Skolem _, _) => checked (left, right)
-        | (_, Skolem _) => checked (right, left)
-        | (Fvar _, _) => checked (left, right)
-        | (_, Fvar _) => checked (right, left)
+          (Skolem _, _) => eliminate_left (left, right)
+        | (_, Skolem _) => eliminate_right (left, right)
+        | (Fvar _, _) => eliminate_left (left, right)
+        | (_, Fvar _) => eliminate_right (left, right)
         | _ => raise DEST_EQ
   in
     checkpoint ();
@@ -782,7 +794,7 @@ fun equalTrackedSubstWith checkpoint equal function
       (formula,
        {pairs, lits, vars, lim, assumptions} : search_branch) =
   let
-    val (old, replacement) =
+    val (side, old, replacement) =
       destEqWith checkpoint equal (trackedTerm formula)
     val equality = trackedPosition function formula assumptions
     val token = valOf (trackedToken formula)
@@ -836,7 +848,7 @@ fun equalTrackedSubstWith checkpoint equal function
     val (changed', pairs') = List.foldr subFrame (changed, []) pairs
     val _ = checkpoint ()
   in
-    (equality, changed_mask,
+    (equality, changed_mask, side,
      {pairs = (changed', []) :: pairs', lits = lits', vars = vars,
       lim = lim,
       assumptions = changed_assumptions @ unchanged_assumptions})
@@ -1550,7 +1562,7 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                   (let
                      val _ = checkpointAt mark
                      val _ = noteEqualityAttempt ()
-                     val (equality, changed, substituted) =
+                     val (equality, changed, side, substituted) =
                        equalSubstAt mark
                          (formula,
                           {pairs = (safe, unsafe) :: pairs,
@@ -1561,7 +1573,8 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                    in
                      prv
                        (HypSubst
-                          {equality = equality, changed = changed} :: tacs,
+                          {equality = equality, changed = changed,
+                           side = side} :: tacs,
                         brs0 :: trace, choices,
                         substituted :: brs)
                    end

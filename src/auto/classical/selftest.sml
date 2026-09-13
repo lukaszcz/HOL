@@ -5826,7 +5826,8 @@ val _ =
          val (_, substituted) =
            case seq.cases
              (clasetStep.blast_hyp_subst_step_at
-               {equality = 1, changed = [false, true, false]}
+               {equality = 1, changed = [false, true, false],
+                side = clasetStep.EliminateLeft}
                (root, 1)) of
                SOME (result, _) => result
              | NONE => raise Fail "recorded late-binding substitution"
@@ -5851,6 +5852,79 @@ val _ =
              SOME ([], validation) =>
                (ignore (validation []); true)
            | _ => false
+       end)
+
+val _ =
+  let
+    val x = Term.mk_var ("recorded_side_x", Type.bool)
+    val y = Term.mk_var ("recorded_side_y", Type.bool)
+    val p = Term.mk_var ("recorded_side_P", Type.bool --> Type.bool)
+    val q = Term.mk_var ("recorded_side_Q", Type.bool --> Type.bool)
+    fun app operator operand = Term.mk_comb (operator, operand)
+    val goal = ([boolSyntax.mk_eq (x, y), app p x, app q y], app q y)
+    val node = clasetGoal.from_goal goal
+    fun exact expected results =
+      case results of
+          [(record, next)] =>
+            (case rendered_goals next of
+                 [(assumptions, conclusion)] =>
+                   ListPair.allEq (fn (l, r) => Term.aconv l r)
+                     (assumptions, #1 expected) andalso
+                   Term.aconv conclusion (#2 expected) andalso
+                   valid_open_replay goal (record, next)
+               | _ => false)
+        | _ => false
+  in
+    (* Both sides of this equality are substitutable, which is the state a
+       metavariable binding made of the equality the search recorded its
+       step against; the recorded side decides, not the left-first
+       default. *)
+    test
+      ("a recorded hyp-subst side outranks the left-first orientation",
+       fn () =>
+         exact ([app q x, app p x], app q x)
+           (drain_exact
+             (clasetStep.blast_hyp_subst_step_at
+               {equality = 1, changed = [false, true],
+                side = clasetStep.EliminateRight}
+               (node, 1))));
+    test
+      ("an unrecorded hyp-subst keeps the left-first orientation",
+       fn () =>
+         exact ([app p y, app q y], app q y)
+           [hd (drain_exact (clasetStep.blast_hyp_subst_step (node, 1)))])
+  end
+
+val _ =
+  test
+    ("an unsubstitutable recorded hyp-subst side falls back to the other",
+     fn () =>
+       let
+         val x = Term.mk_var ("fallback_side_x", Type.bool)
+         val y = Term.mk_var ("fallback_side_y", Type.bool)
+         val a = Term.mk_var ("fallback_side_a", Type.bool)
+         val z = Term.mk_var ("fallback_side_z", Type.bool)
+         val p = Term.mk_var ("fallback_side_P", Type.bool --> Type.bool)
+         val q = Term.mk_var ("fallback_side_Q", Type.bool --> Type.bool)
+         fun app operator operand = Term.mk_comb (operator, operand)
+         val redex = app (Term.mk_abs (z, x)) a
+         (* The search orients the beta-reduced equality and so records the
+            left side; the goal keeps the redex, where only the right side
+            is substitutable and the recorded preference cannot be met. *)
+         val goal =
+           ([boolSyntax.mk_eq (redex, y), app p x, app q y], app q y)
+         val (children, validation) =
+           clasetReplay.BLAST_HYP_SUBST_TAC_AT
+             {position = 1, changed = [false, true],
+              side = clasetReplay.EliminateLeft} goal
+         val expected = ([app q redex, app p x], app q redex)
+         val child_ok =
+           case children of
+               [child] => same_goal (child, expected)
+             | _ => false
+         val replayed = validation [ASSUME (app q redex)]
+       in
+         child_ok andalso Term.aconv (concl replayed) (app q y)
        end)
 
 val _ =
@@ -6153,12 +6227,14 @@ val _ =
          val results =
            drain_exact
              (clasetStep.blast_hyp_subst_step_at
-               {equality = 2, changed = [true, false, true]}
+               {equality = 2, changed = [true, false, true],
+                side = clasetStep.EliminateLeft}
                (node, 1))
          val wrong =
            seq.null
              (clasetStep.blast_hyp_subst_step_at
-               {equality = 5, changed = []} (node, 1))
+               {equality = 5, changed = [],
+                side = clasetStep.EliminateLeft} (node, 1))
        in
          case results of
              [(record, next)] =>
@@ -6220,7 +6296,8 @@ val _ =
                (fn (equality, changed) =>
                  drain_exact
                    (clasetStep.blast_hyp_subst_step_at
-                     {equality = equality, changed = changed}
+                     {equality = equality, changed = changed,
+                      side = clasetStep.EliminateLeft}
                      (substitution_node, 1)))
                [(1, [false, true]), (2, [true, false]), (3, [])])
          fun same_nodes ([], []) = true

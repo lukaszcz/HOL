@@ -1558,7 +1558,7 @@ fun script_view (proof : blastSearch.proof) =
       String.concat (map Bool.toString changed)
     fun hidden rule =
       String.concatWith "," (map option (#hidden_assumptions rule))
-    fun step (blastSearch.HypSubst {equality, changed}) =
+    fun step (blastSearch.HypSubst {equality, changed, ...}) =
           "subst:" ^ Int.toString equality ^ ":" ^ mask changed
       | step (blastSearch.CloseAssume {assumption}) =
           "assume:" ^ Int.toString assumption
@@ -1585,7 +1585,7 @@ fun selector_view ({script, ...} : blastSearch.proof) =
       | option (SOME position) = Int.toString position
     fun mask changed =
       String.concat (map Bool.toString changed)
-    fun step (blastSearch.HypSubst {equality, changed}) =
+    fun step (blastSearch.HypSubst {equality, changed, ...}) =
           "subst:" ^ Int.toString equality ^ ":" ^ mask changed
       | step (blastSearch.CloseAssume {assumption}) =
           "assume:" ^ Int.toString assumption
@@ -3662,6 +3662,40 @@ val _ =
            | _ => false
        end)
 
+(* blast.ML:749--755 substitutes a metavariable away on neither side, so
+   a metavariable equated with a Skolem parameter is eliminated on the
+   right.  The replay sees that equation only once the metavariable is
+   bound, when both sides can be substitutable, and the recorded side is
+   the only record of which one the search removed; what the replay then
+   does with it is pinned in clasetReplay's own tests. *)
+val _ =
+  test
+    ("blast records the side a metavariable equation substitutes away",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'a"
+         val x = mk_var ("recorded_side_x", alpha)
+         val y = mk_var ("recorded_side_y", alpha)
+         val c = mk_var ("recorded_side_c", alpha)
+         val p = mk_var ("recorded_side_P", alpha --> bool)
+         val goal =
+           ([mk_forall
+               (x,
+                mk_exists
+                  (y, mk_conj (mk_eq (x, y), mk_comb (p, y))))],
+            mk_comb (p, c))
+       in
+         case blastReconstruct.searchGoal (clasetLib.the_claset ()) 1 goal of
+             SOME (proof, ([], validation)) =>
+               has_step
+                 (fn blastSearch.HypSubst
+                       {side = clasetStep.EliminateRight, ...} => true
+                   | _ => false)
+                 proof andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
 val _ =
   test
     ("blast hyp-subst reorders affected assumptions before replay",
@@ -3687,12 +3721,13 @@ val _ =
              SOME (proof, ([], validation)) =>
                has_step
                  (fn blastSearch.HypSubst
-                       {equality = 1, changed = [false, true]} => true
+                       {equality = 1, changed = [false, true], ...} => true
                    | _ => false)
                  proof andalso
                (case #script proof of
                     blastSearch.HypSubst
-                      {equality = 1, changed = [false, true]} :: _ => true
+                      {equality = 1, changed = [false, true], ...} :: _ =>
+                      true
                   | _ => false) andalso
                (ignore (validation []); true)
            | _ => false
