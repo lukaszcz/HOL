@@ -140,10 +140,12 @@ val instantiated_fact_not_applied =
      ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
-val zip_against_map =
-  classified "zip against map"
-    ("ZIP against MAP is not normalised")
-    ["list_L1569_concat_injective", "list_L2751_zip_Cons1"]
+val premise_read_without_the_later_premises =
+  classified "premise read without the later premises"
+    ("the cited rewrite applies to the first premise and its side "
+     ^ "conditions are the premises after it, which the implication "
+     ^ "congruence does not offer")
+    ["list_L1569_concat_injective"]
 
 val over_budget_with_no_residual =
   classified "over budget with no residual"
@@ -439,23 +441,27 @@ val sigma_and_times_rule_forms =
     ["product_type_L1088_Collect_case_prod_Sigma",
      "product_type_L688_The_split_eq"]
 
-(* Seven goals the corrected circularity guard newly withholds a rule
+(* Five goals the corrected circularity guard newly withholds a rule
    from, all in the [characterisation is the goal] class above and
-   dated to the measurement that found them.  Six are one conjunct of a
-   conjunctive rule -- [listTheory.ZIP], [LIST_REL_NIL], [EVERY_DEF],
-   [EXISTS_DEF] and the translation's own [source_measures_def], which
-   the cited method unfolds -- and the simpset splits each into a
-   rewrite that is the goal.  The seventh is
-   [listTheory.SHORTLEX_NIL2], which is the goal once the translation
-   of [lenlex] is unfolded; the guard used to compare a rule's
-   conclusion against the goal with the goal's quantifier prefix still
-   on, so neither reading matched.
+   dated to the measurement that found them.  Four are one conjunct of
+   a conjunctive rule -- [listTheory.ZIP], [EVERY_DEF], [EXISTS_DEF]
+   and the translation's own [source_measures_def], which the cited
+   method unfolds -- and the simpset splits each into a rewrite that is
+   the goal.  The fifth is [listTheory.SHORTLEX_NIL2], which is the
+   goal once the translation of [lenlex] is unfolded; the guard used to
+   compare a rule's conclusion against the goal with the goal's
+   quantifier prefix still on, so neither reading matched.
 
-   The eighth was [list_L1851_nth_Cons_Suc], whose withheld rule is one
-   conjunct of [listTheory.EL].  A withheld rule leaves the goal to the
-   rest of the layer rather than closing the class, and the seeded cons
-   rule is a second route to it: EL_CONS reaches a cons at an index
-   known only to be non-zero, which the successor in the goal is. *)
+   Three have left the class since, none of them because the guard
+   released the rule: a withheld rule leaves the goal to the rest of
+   the layer, and each of the three is reached by a second route.
+   [list_L1851_nth_Cons_Suc] withholds one conjunct of [listTheory.EL]
+   and is reached by the seeded EL_CONS, which takes a cons at an index
+   known only to be non-zero, as the successor in the goal is.  The two
+   [LIST_REL_NIL] readings, [list_L3014_list_all2_Nil] and
+   [list_L3017_list_all2_Nil2], are reached once the seeded one-sided
+   nil equations for ZIP empty the [set (zip xs ys)] the cited
+   [list_all2_iff] expands to. *)
 val a_reading_of_the_characterisation_is_the_goal =
   map
     (fn id =>
@@ -467,7 +473,6 @@ val a_reading_of_the_characterisation_is_the_goal =
          "order, and A1 withholds it under either reading; the " ^
          "assigned tactic has no second route"} : benchLib.shortfall)
     ["list_L2740_zip_Cons_Cons",
-     "list_L3014_list_all2_Nil", "list_L3017_list_all2_Nil2",
      "list_L7300_Nil_lenlex_iff2", "list_L7775_in_measures_2",
      "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
 
@@ -482,7 +487,7 @@ val execution : benchLib.shortfall list =
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
   instantiated_fact_not_applied @
-  zip_against_map @
+  premise_read_without_the_later_premises @
   over_budget_with_no_residual @
   sorted_list_of_a_set @
   arithmetic_residual_after_unfolding @

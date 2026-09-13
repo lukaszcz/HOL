@@ -215,6 +215,18 @@ Proof
   rpt gen_tac >> simp[listTheory.MEM_GENLIST]
 QED
 
+(* src/HOL/List.thy:174-176,2700-2703 @ f7e02b7e.  zip is primrec on its
+   second argument, so [zip xs [] = []] is simp there, [zip_Nil] and
+   [zip_Cons_Cons] are declared beside it, and only [zip_Cons], the case
+   split, is simp del.  HOL4 exports [ZIP], which is the cons/cons
+   equation and the nil/nil instance of the other two, so a zip against a
+   list empty on one side only stays whole.  Both general equations are
+   conjuncts of ZIP_def. *)
+val _ =
+  List.app (export_at "simp")
+    [("ZIP_NIL_LEFT_AUTO", CONJUNCT1 listTheory.ZIP_def),
+     ("ZIP_NIL_RIGHT_AUTO", CONJUNCT1 (CONJUNCT2 listTheory.ZIP_def))]
+
 (* src/HOL/List.thy:1222-1228,2826-2827 @ f7e02b7e.  [map_fst_zip],
    [map_snd_zip] and [nth_zip] are simp there and undeclared here; HOL4's
    MAP_ZIP carries the two composed forms as well, which Isabelle reaches
