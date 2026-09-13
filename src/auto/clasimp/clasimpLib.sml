@@ -292,15 +292,22 @@ val {get = clasimp_ss, set = _} =
                     simplification does;
    oldestfirst=true visits assumptions in their original implication order.
 
-   The two extended flags supply mut_impc parity: the conclusion participates
-   in the fixpoint and implication-shaped rewrites can rebuild the goal. *)
+   The extended flags supply mut_impc parity: the conclusion participates
+   in the fixpoint and implication-shaped rewrites can rebuild the goal.
+   The premises mut_impc is mutual over are the subgoal's, which a
+   translated source result states as the antecedents of its conclusion,
+   so imp_premises discharges those before the fixpoint; without it a
+   goal stating its premises that way reaches the simplifier through the
+   implication congruence alone, which offers a premise only the ones
+   before it. *)
 val asm_full_simp_base : simpLib.simptac_config =
   {strip = true, elimvars = false, droptrues = true, oldestfirst = true}
 
 val asm_full_simp_config : simpLib.xsimptac_config =
   {base = asm_full_simp_base,
    concl_in_fixpoint = true,
-   imp_rebuild = true}
+   imp_rebuild = true,
+   imp_premises = true}
 
 fun ambient_simp safe ss =
   simpLib.GEN_GLOBAL_SIMP_TAC {safe = safe} asm_full_simp_config ss
@@ -562,11 +569,15 @@ fun safe_asm_full_simp ss simp_args =
    as [~p].  Safe saturation repeats while any step applies, so a
    wrapper that inverts one of its steps gives the two a cycle it never
    leaves; simplification participating in the cascade therefore
-   normalises in place. *)
+   normalises in place.  Discharging the conclusion's antecedents is
+   left out for the same reason and costs nothing: the cascade's own
+   implication introduction moves them into the assumptions, where the
+   fixpoint reads them. *)
 val cascade_simp_config : simpLib.xsimptac_config =
   {base = asm_full_simp_base,
    concl_in_fixpoint = true,
-   imp_rebuild = false}
+   imp_rebuild = false,
+   imp_premises = false}
 
 fun cascade_safe_simp ss =
   simpLib.GEN_GLOBAL_SIMP_TAC {safe = true} cascade_simp_config ss

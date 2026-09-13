@@ -1146,13 +1146,18 @@ fun across_correspondence entry args =
   args @
   List.filter (permitted_arg entry) (List.mapPartial crossed_arg args)
 
+(* The layer's own [asm_full_simp] is the analogue of the method being
+   measured -- asm_full_simp_tac, premises simplified mutually -- where
+   HOL4's [FULL_SIMP_TAC] offers a premise only the premises before it.
+   A source result states its premises as the antecedents of its
+   conclusion, which is where the difference is felt. *)
 fun tactic_for simpset goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
         val simplify =
           clasimpLib.with_extensionality
-            (simpLib.FULL_SIMP_TAC simpset
+            (clasimpLib.asm_full_simp simpset
                (simps @ simp_controls goal exclusions))
       in
         Tactical.THEN

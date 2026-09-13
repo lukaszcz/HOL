@@ -203,6 +203,34 @@ val _ =
             chain_goal)
          chain_expected)
 
+(* A source result states its premises as the antecedents of its
+   conclusion, and mut_impc is mutual over exactly those.  Here the
+   first antecedent is the one [LENGTH_TAKE] applies to and the second
+   is its side condition, so the implication congruence -- which offers
+   an antecedent only the ones before it -- leaves the goal standing. *)
+val antecedent_goal =
+  ([] : term list,
+   ``LENGTH (TAKE n (l:'a list)) = k ==> n <= LENGTH l ==> n = k``)
+
+val _ =
+  check
+    ("asm_full_simp simplifies an antecedent with the ones after it",
+     fn () =>
+       valid_closes
+         (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) [])
+         antecedent_goal)
+
+val _ =
+  check
+    ("the ambient simplifier alone leaves that goal standing",
+     fn () =>
+       same_goals
+         (residual
+            (Tactical.TRY
+               (simpLib.FULL_SIMP_TAC (clasimpLib.clasimp_ss ()) []))
+            antecedent_goal)
+         [antecedent_goal])
+
 fun local_clasimp body base_cs base_ss controls =
   clasimpLib.process_clasimp_args body base_cs base_ss controls
 

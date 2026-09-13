@@ -140,13 +140,6 @@ val instantiated_fact_not_applied =
      ^ "unrelated component of the cited theorem")
     ["list_L2806_zip_map1", "list_L2810_zip_map2"]
 
-val premise_read_without_the_later_premises =
-  classified "premise read without the later premises"
-    ("the cited rewrite applies to the first premise and its side "
-     ^ "conditions are the premises after it, which the implication "
-     ^ "congruence does not offer")
-    ["list_L1569_concat_injective"]
-
 val over_budget_with_no_residual =
   classified "over budget with no residual"
     ("the assigned tactic did not return within the budget")
@@ -487,7 +480,6 @@ val execution : benchLib.shortfall list =
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
   instantiated_fact_not_applied @
-  premise_read_without_the_later_premises @
   over_budget_with_no_residual @
   sorted_list_of_a_set @
   arithmetic_residual_after_unfolding @

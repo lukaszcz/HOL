@@ -1896,7 +1896,8 @@ fun psr (cfg : simptac_config) ss =
 fun allasms cfg ss (g as (asl,_)) = ntac (length asl) (psr cfg ss) g
 
 type xsimptac_config =
-     {base : simptac_config, concl_in_fixpoint : bool, imp_rebuild : bool}
+     {base : simptac_config, concl_in_fixpoint : bool, imp_rebuild : bool,
+      imp_premises : bool}
 
 fun same_goals (goals1,goals2) = boolSyntax.goals_eq goals1 goals2
 
@@ -2008,7 +2009,8 @@ fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
     end
 
 fun GEN_GLOBAL_SIMP_TAC mode
-      ({base,concl_in_fixpoint,imp_rebuild} : xsimptac_config) ss0 =
+      ({base,concl_in_fixpoint,imp_rebuild,imp_premises} : xsimptac_config)
+      ss0 =
     markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
         markerLib.LLABEL_RES_THEN (
@@ -2151,7 +2153,8 @@ fun GEN_GLOBAL_SIMP_TAC mode
                           fixpoint ~1) goal
                        end
              in
-               fixpoint ~1
+               if imp_premises then strip_implications THEN fixpoint ~1
+               else fixpoint ~1
              end
         )
       )
@@ -2159,7 +2162,8 @@ fun GEN_GLOBAL_SIMP_TAC mode
 
 fun global_simp_tac cfg =
     GEN_GLOBAL_SIMP_TAC {safe=false}
-      {base=cfg,concl_in_fixpoint=false,imp_rebuild=false}
+      {base=cfg,concl_in_fixpoint=false,imp_rebuild=false,
+       imp_premises=false}
 
 
 

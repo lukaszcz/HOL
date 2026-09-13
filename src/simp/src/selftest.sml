@@ -2359,7 +2359,8 @@ val _ = let
     {droptrues=true,elimvars=false,strip=false,oldestfirst=true}
   fun mode_xcfg mode concl rebuild =
     GEN_GLOBAL_SIMP_TAC mode
-      {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild}
+      {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild,
+       imp_premises=false}
   val xcfg = mode_xcfg {safe=false}
   fun result tac goal = #1 (VALID tac goal)
   fun check msg expected tac goal =
@@ -2391,6 +2392,25 @@ val _ = let
     check "GEN_GLOBAL_SIMP_TAC closes a three-assumption mutual chain"
       chain_expected
       (xcfg false false bool_ss []) chain_goal
+
+  (* A premise written as an antecedent of the conclusion reaches the
+     simplifier through the implication congruence, which offers it only
+     the antecedents before it; imp_premises discharges them first, so
+     the fixpoint has them all. *)
+  fun premise_xcfg concl rebuild =
+    GEN_GLOBAL_SIMP_TAC {safe=false}
+      {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild,
+       imp_premises=true}
+  val premise_goal =
+    ([] : term list, ``P (a:'a) ==> (a:'a = b) ==> mutual_q:bool``)
+  val _ =
+    check "antecedents stay out of the fixpoint without imp_premises"
+      [premise_goal]
+      (Tactical.TRY (xcfg false false bool_ss [])) premise_goal
+  val _ =
+    check "imp_premises brings the antecedents into the fixpoint"
+      [([``a:'a = b``, ``P (b:'a) : bool``], ``mutual_q:bool``)]
+      (premise_xcfg false false bool_ss []) premise_goal
 
   val mode_goal =
     ([``global_mode_assumption:bool``],``?b:bool. b``)
@@ -2520,7 +2540,8 @@ val _ = let
       [([noop_a],``global_noop_goal:bool``)]
       (GEN_GLOBAL_SIMP_TAC
          {safe=false}
-         {base=noop_cfg,concl_in_fixpoint=false,imp_rebuild=false}
+         {base=noop_cfg,concl_in_fixpoint=false,imp_rebuild=false,
+          imp_premises=false}
          noop_ss [])
       ([noop_a],``global_noop_goal:bool``)
 

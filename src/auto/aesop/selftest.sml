@@ -44,7 +44,8 @@ val _ =
              {base =
                 {strip = false, elimvars = false, droptrues = false,
                  oldestfirst = false},
-              concl_in_fixpoint = false, imp_rebuild = false}
+              concl_in_fixpoint = false, imp_rebuild = false,
+              imp_premises = false}
              (simpLib.clear_rules (aesopData.aesop_ss ())) [])
            ([boolSyntax.F], ``aesop_safe_solver_goal:bool``)))
 

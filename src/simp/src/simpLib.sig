@@ -245,7 +245,11 @@ sig
      (* do the above to all the assumptions in turn *)
    type xsimptac_config =
         {base : simptac_config, concl_in_fixpoint : bool,
-         imp_rebuild : bool}
+         imp_rebuild : bool, imp_premises : bool}
+     (* imp_premises discharges the conclusion's leading implications
+        into the assumptions before the fixpoint, so that a premise
+        written as an antecedent is simplified with the others in
+        context rather than only with the ones before it. *)
    val GEN_GLOBAL_SIMP_TAC :
      simp_mode -> xsimptac_config -> simpset -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
