@@ -109,6 +109,29 @@ val _ =
               “f(a:'a) = z:'c”,
               “f(x:'a) = z:'c”);
 
+(* A congruence rule whose conclusion applies a higher-order variable to
+   the bound variable of the subterm that variable stands for has the
+   variable instantiated with an abstraction, and every such application
+   is then a beta redex.  A rebuilt term is not traversed again, so an
+   unreduced redex survives into the result and no rule stated in the
+   ordinary spelling can read it. *)
+val _ = let
+  val bounded_exists_cong = prove(
+    ``(!x:'a. P x = Q x) ==> (!x:'a. Q x ==> (f x = g x)) ==>
+      ((?x:'a. P x /\ f x) = (?x:'a. Q x /\ g x))``,
+    REPEAT DISCH_TAC THEN AP_TERM_TAC THEN ABS_TAC THEN
+    ASM_REWRITE_TAC [] THEN ASM_CASES_TAC ``Q (x:'a) : bool`` THEN
+    RES_TAC THEN ASM_REWRITE_TAC [])
+  val cong_ss =
+    SSFRAG {name = SOME "BOUNDEDEXISTS", congs = [bounded_exists_cong],
+            convs = [], rewrs = [], ac = [], filter = NONE, dprocs = []}
+in
+  convtest ("congruence rebuilds a beta reduced term",
+            SIMP_CONV (bool_ss ++ cong_ss) [],
+            ``?x:'a. (x = x) /\ C x``,
+            ``?x:'a. T /\ C x``)
+end
+
 (* test that a bounded rewrite on a variable gets a chance to fire at all *)
 val _ = let
   open pureSimps

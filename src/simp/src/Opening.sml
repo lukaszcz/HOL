@@ -117,6 +117,32 @@ fun strip_imp_until_rel genvars tm =
     end handle HOL_ERR _ => ([],tm);
 
 (* ---------------------------------------------------------------------
+ * beta_reduce_applications
+ *
+ * A congruence rule whose conclusion applies a higher-order variable to
+ * the bound variables of the subterm that variable stands for -- as
+ * (?x. P x /\ f x) = (?x. Q x /\ g x) applies Q and g -- has that
+ * variable instantiated below with the abstraction the sub-rewrite was
+ * generalised into, which leaves every such application a beta redex.
+ * A rebuilt term is not traversed again, so the redex would survive into
+ * the result and no rule stated in the source spelling could read it.
+ * Rules that mention the variable unapplied -- MAP_CONG's MAP f' l2 --
+ * instantiate to no redex and are left alone.
+ * ---------------------------------------------------------------------*)
+
+fun beta_reduce_applications abstraction thm =
+  if not (is_abs abstraction) then thm
+  else
+    let
+      fun reduce term =
+        if aconv (rator term) abstraction then BETA_CONV term
+        else failwith "beta_reduce_applications"
+    in
+      CONV_RULE (DEPTH_CONV reduce) thm
+      handle HOL_ERR _ => thm | UNCHANGED => thm
+    end
+
+(* ---------------------------------------------------------------------
  * CONGPROC : REFL -> congrule -> congproc
  *
  * ---------------------------------------------------------------------*)
@@ -231,7 +257,9 @@ in fn relation =>
                 val gen_abs_res =
                     funpow (length ho_vars) rator (rand (concl abs_rewr_thm))
                 val spec_match_thm = SPEC gen_abs_res (GEN genv match_thm)
-                val new_match_thm = MP spec_match_thm gen_abs_rewr_thm
+                val new_match_thm =
+                    beta_reduce_applications gen_abs_res
+                      (MP spec_match_thm gen_abs_rewr_thm)
             in process_subgoals (n-1,new_match_thm,more_flags,
                                  allunch andalso not changed)
             end
