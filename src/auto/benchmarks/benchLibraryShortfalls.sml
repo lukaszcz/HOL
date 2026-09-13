@@ -52,13 +52,6 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-val conditional_list_rewrites =
-  classified "conditional list rewrites"
-    ("the residual is a conditional equation about TL, LAST or nub "
-     ^ "that the simpset does not carry")
-    ["list_L1010_tl_append_if", "list_L2100_last_ConsR",
-     "list_L4481_insert_remdups"]
-
 val congruence_rules =
   classified "congruence rules"
     ("the goal is a congruence rule for a list combinator and "
@@ -470,7 +463,6 @@ val a_reading_of_the_characterisation_is_the_goal =
      "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
 
 val execution : benchLib.shortfall list =
-  conditional_list_rewrites @
   congruence_rules @
   prefix_from_its_indices @
   distinctness_through_a_zip @

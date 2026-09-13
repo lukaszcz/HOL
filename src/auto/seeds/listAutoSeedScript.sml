@@ -421,3 +421,28 @@ val _ =
    the step that is missing: they leave a NULL. *)
 val _ =
   export_at "simp" ("NULL_EQ_AUTO", listTheory.NULL_EQ)
+
+(* src/HOL/List.thy:70-71,262-264 @ f7e02b7e.  [last] and [remdups] are
+   primrec there, so the cons equation of each is simp and reads a walk
+   down a list whose tail is a variable: [last (x # xs)] becomes a
+   choice on whether that tail is empty, and [remdups (x # xs)] one on
+   whether the head recurs.  HOL4 states both equations -- the first as
+   [LAST_CONS_cond], the second as the second conjunct of [nub_def] --
+   and declares neither.  What it declares of LAST instead
+   ([LAST_CONS]) settles a tail spelled [] or spelled as a cons and
+   leaves a variable tail alone, and of nub only the empty list. *)
+val _ =
+  List.app (export_at "simp")
+    [("LAST_CONS_COND_AUTO", listTheory.LAST_CONS_cond),
+     ("NUB_CONS_AUTO", CONJUNCT2 listTheory.nub_def)]
+
+(* src/HOL/List.thy:1007 @ f7e02b7e.  [tl_append2] is simp there: a tail
+   of an append reads as the tail of the first list wherever that list
+   is known to be non-empty.  HOL4 states no equation about TL of an
+   append at all, so the walk stops at the append and the non-emptiness
+   in hand is never used. *)
+Theorem TL_APPEND2_AUTO[simp]:
+  !xs ys. xs <> [] ==> TL (xs ++ ys) = TL xs ++ ys
+Proof
+  Cases >> simp[]
+QED
