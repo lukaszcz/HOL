@@ -52,12 +52,6 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-val congruence_rules =
-  classified "congruence rules"
-    ("the goal is a congruence rule for a list combinator and "
-     ^ "the simpset carries no corresponding congruence")
-    ["list_L8236_list_ex_cong"]
-
 val prefix_from_its_indices =
   classified "prefix from its indices"
     ("the residual is [GENLIST (\\index. EL index xs) count = TAKE "
@@ -354,8 +348,7 @@ val definitional_unfolding_stops_short =
     ("the cited definition unfolds one constant and nothing "
      ^ "reduces what it exposes")
     ["list_L5441_distinct_set_subseqs", "list_L5470_subset_subseqs",
-     "list_L5527_Nil_in_shufflesI",
-     "list_L6367_insort_insert_insort_key", "list_L8247_anon_L8247",
+     "list_L5527_Nil_in_shufflesI", "list_L8247_anon_L8247",
      "list_L8701_trancl_set_ntrancl"]
 
 val injectivity_and_surjectivity =
@@ -463,7 +456,6 @@ val a_reading_of_the_characterisation_is_the_goal =
      "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
 
 val execution : benchLib.shortfall list =
-  congruence_rules @
   prefix_from_its_indices @
   distinctness_through_a_zip @
   zip_over_an_append @
