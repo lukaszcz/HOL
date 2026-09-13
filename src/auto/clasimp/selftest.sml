@@ -231,6 +231,52 @@ val _ =
             antecedent_goal)
          [antecedent_goal])
 
+(* Isabelle simplifies the body of a bounded existential with its bound
+   in context, [bex_cong_simp] being a default congruence there.  HOL4
+   spells a bounded existential unfolded, so the fragment that carries
+   the bound in is the congruence over the conjunction it unfolds to;
+   with the fragment gone nothing offers the body its bound and the
+   equivalence stands. *)
+val bounded_goal =
+  ([``!b:'a. MEM b zs ==> (p b <=> q b)``],
+   ``(?e:'a. MEM e zs /\ p e) <=> (?e:'a. MEM e zs /\ q e)``)
+
+val _ =
+  check
+    ("asm_full_simp simplifies a bounded body with its bound in context",
+     fn () =>
+       valid_closes
+         (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) [])
+         bounded_goal)
+
+val _ =
+  check
+    ("without the congruence fragment that equivalence stands",
+     fn () =>
+       same_goals
+         (residual
+            (Tactical.TRY
+               (clasimpLib.asm_full_simp
+                  (simpLib.remove_ssfrags ["CONGWEAK"]
+                     (clasimpLib.clasimp_ss ())) []))
+            bounded_goal)
+         [bounded_goal])
+
+(* The rule hands the rebuilt conjunction back to the traversal, so the
+   conjunction a bounded existential binds is still a term the rewrites
+   reach -- the bound included.  A congruence that kept the node would
+   leave the membership as it found it, this goal unchanged. *)
+val _ =
+  check
+    ("the bound of a bounded existential is still rewritten",
+     fn () =>
+       aconv
+         (boolSyntax.rhs
+            (Thm.concl
+               (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) []
+                  ``?w:'a. MEM w (v::vs) /\ bounded_c w``)))
+         ``?w:'a. ((w = v) \/ MEM w vs) /\ bounded_c (w:'a)``)
+
 fun local_clasimp body base_cs base_ss controls =
   clasimpLib.process_clasimp_args body base_cs base_ss controls
 

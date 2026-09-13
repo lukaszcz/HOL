@@ -52,6 +52,115 @@ val cond_weak_cong =
      Rewrite.ASM_REWRITE_TAC [])
 end
 
+(* src/HOL/Set.thy:461,471 @ f7e02b7e.  [ball_cong_simp] and
+   [bex_cong_simp] are default congruences there, so the body of a
+   bounded quantifier is simplified with its bound in context.  HOL4
+   spells a bounded quantifier unfolded -- [EXISTS_MEM] states
+   [EXISTS P l] as [?e. MEM e l /\ P e], [IN_IMAGE] leaves the
+   membership on the other side of the conjunction -- so the rule has to
+   be stated of the conjunction the quantifier binds, once per
+   membership and once per side.  Neither side subsumes the other: with
+   the membership on the left the body is what its bound simplifies, and
+   with the membership on the right the body is the context the
+   membership simplifies in, which is where an assumption constraining
+   the elements that answer an equation gets to fire.
+
+   What it must not be stated of is every conjunction, which is
+   Isabelle's [conj_cong]: Isabelle declines to make that a default
+   congruence and a measurement agrees, the four-square identity of the
+   algebra corpus going from 0.9s to 483s against a 30s budget as the
+   conjunctive side conditions of the ring rewrites each acquire a
+   context.  Keeping the bound rigid is not a weakening towards that
+   measurement but the source's own shape: a bounded quantifier is what
+   Isabelle carries a congruence for.  It also keeps the rule away from
+   an existential a *rewrite* is conditional on -- [submonoid_element]
+   in src/algebra states [x IN H] under [?h. h << g /\ ...], whose
+   conjuncts are not a bound on the variable -- where opening the body
+   re-enables the rewrite that raised the condition and the search
+   recurses to the conditional depth.
+
+   The last premise is what keeps the rule from taking the conjunction
+   away from everything else.  A congruence decides the descent at the
+   node it matches, so without it the conjunction under the quantifier
+   would never again be a term the rewrites and the caller's own
+   congruences see -- a [Cong] argument stated of a conjunction stops
+   working under an existential, and the bound itself stops being
+   rewritten.  Handing the rebuilt conjunction back to the traversal
+   restores both, at one further pass over a body that is already in
+   normal form.
+
+   The bounded universal needs nothing: it unfolds to an implication,
+   which [IMP_CONG] below already opens. *)
+local
+  infix THEN
+  val op THEN = Tactical.THEN
+
+  val element = Term.mk_var ("element", Type.alpha)
+  val boolean = Type.alpha --> Type.bool
+
+  fun membership_bounds element =
+    [listSyntax.mk_mem
+       (element, Term.mk_var ("elements", listSyntax.mk_list_type Type.alpha)),
+     Term.mk_comb
+       (boolSyntax.mk_icomb
+          (Term.prim_mk_const {Thy = "bool", Name = "IN"}, element),
+        Term.mk_var ("elements", boolean))]
+
+  (* One schema, instantiated with the bound on either side of the
+     conjunction: the left conjunct is simplified on its own, the right
+     one with the simplified left in context, and the conjunction they
+     rebuild is handed back to the traversal. *)
+  fun bounded_cong bound bound_first =
+    let
+      val simplified_bound = Term.mk_var ("simplified_bound", boolean)
+      val body = Term.mk_var ("body", boolean)
+      val simplified_body = Term.mk_var ("simplified_body", boolean)
+      val rebuilt = Term.mk_var ("rebuilt", boolean)
+      fun apply f = Term.mk_comb (f, element)
+      val (left, simplified_left, right, simplified_right) =
+        if bound_first then
+          (bound, apply simplified_bound, apply body, apply simplified_body)
+        else
+          (apply body, apply simplified_body, bound, apply simplified_bound)
+      fun quantify statement = boolSyntax.mk_forall (element, statement)
+      val left_alone = quantify (boolSyntax.mk_eq (left, simplified_left))
+      val right_in_context =
+        quantify
+          (boolSyntax.mk_imp
+             (simplified_left, boolSyntax.mk_eq (right, simplified_right)))
+      val handed_back =
+        quantify
+          (boolSyntax.mk_eq
+             (boolSyntax.mk_conj (simplified_left, simplified_right),
+              apply rebuilt))
+      val statement =
+        boolSyntax.list_mk_imp
+          ([left_alone, right_in_context, handed_back],
+           boolSyntax.mk_eq
+             (boolSyntax.mk_exists
+                (element, boolSyntax.mk_conj (left, right)),
+              boolSyntax.mk_exists (element, apply rebuilt)))
+    in
+      Tactical.prove
+        (statement,
+         Tactic.DISCH_TAC THEN
+         Tactic.DISCH_TAC THEN
+         Thm_cont.DISCH_THEN
+           (fn equation => Rewrite.REWRITE_TAC [Conv.GSYM equation]) THEN
+         Tactic.AP_TERM_TAC THEN
+         Tactic.ABS_TAC THEN
+         Rewrite.ASM_REWRITE_TAC [] THEN
+         Tactic.ASM_CASES_TAC simplified_left THEN
+         Tactic.RES_TAC THEN
+         Rewrite.ASM_REWRITE_TAC [])
+    end
+in
+val bounded_exists_congs =
+  List.concat
+    (map (fn bound => [bounded_cong bound true, bounded_cong bound false])
+       (membership_bounds element))
+end
+
 val weak_cong_ss =
   simpLib.SSFRAG
     {name = SOME "CONGWEAK",
@@ -60,7 +169,7 @@ val weak_cong_ss =
           boolTheory.IMP_CONG,
         cond_weak_cong,
         boolTheory.RES_FORALL_CONG,
-        boolTheory.RES_EXISTS_CONG],
+        boolTheory.RES_EXISTS_CONG] @ bounded_exists_congs,
      convs = [], rewrs = [], filter = NONE, ac = [], dprocs = []}
 
 (* HOL4's list-equation procedure is the analogue of the one src/HOL/
