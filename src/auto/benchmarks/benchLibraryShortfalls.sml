@@ -439,28 +439,6 @@ val sigma_and_times_rule_forms =
     ["product_type_L1088_Collect_case_prod_Sigma",
      "product_type_L688_The_split_eq"]
 
-(* Isabelle proves this with [blast elim: equalityE] from a claset
-   carrying [SigmaI] intro!, [SigmaE] elim! and [mem_Sigma_iff] iff.
-   Measured here, the ambient [SigmaE] is what stops it: with it the
-   tableau reaches depth 12 and 8226 branches without a proof in 60s,
-   and with it dropped the same goal closes at depth 4 in 25 branches
-   and 0.09s.  [SigmaE] splits every Sigma membership into two fresh
-   parameters and an equation between the member and their pair, and
-   the tableau substitutes an equation only where one side is a
-   variable, which neither side of that one is.  The forced safe step
-   is therefore pure cost, and the witness the goal turns on -- the
-   second component, which only the side hypothesis names -- is no
-   longer reached inside the deepening budget. *)
-val safe_elim_eigenvariable_equation : benchLib.shortfall list =
-  [{id = "product_type_L1085_Times_eq_cancel2",
-    cause = benchLib.EngineLimitation, date = "2026-09-11",
-    note =
-      "safe elim eigenvariable equation: an ambient safe elimination " ^
-      "splits the member into fresh parameters and an equation the " ^
-      "tableau does not substitute, and the search no longer reaches " ^
-      "the goal's witness within its depths (the search did not " ^
-      "return within the budget rather than reporting no proof)"}]
-
 (* Seven goals the corrected circularity guard newly withholds a rule
    from, all in the [characterisation is the goal] class above and
    dated to the measurement that found them.  Six are one conjunct of a
@@ -533,7 +511,6 @@ val execution : benchLib.shortfall list =
   option_relations @
   character_arithmetic @
   sigma_and_times_rule_forms @
-  safe_elim_eigenvariable_equation @
   a_reading_of_the_characterisation_is_the_goal
 
 end
