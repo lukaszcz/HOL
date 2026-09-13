@@ -190,7 +190,13 @@ in fn relation =>
     val match_thm = matcher (mk_comb(relation',tm))
     val _ = trace(3,OPENING(tm,match_thm))
     val (_,conc) = strip_n_imp nconds (concl match_thm)
-    val genvars = filter is_genvar (free_vars (rand conc))
+    (* Every rule variable the match did not determine is a result the
+       traversal has to supply, whether the conclusion names it or a
+       later antecedent does.  Reading them off the conclusion alone
+       would call an antecedent that states an intermediate result --
+       the rebuilt form a further antecedent consumes -- a side
+       condition, and hand a term with an unknown in it to the solver. *)
+    val genvars = filter is_genvar (free_vars (concl match_thm))
 
     (* this function does all the work of solving the side conditions
        one by one.  The integer is the number of side conditions

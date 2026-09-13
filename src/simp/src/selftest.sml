@@ -132,6 +132,32 @@ in
             ``?x:'a. T /\ C x``)
 end
 
+(* An antecedent stating an intermediate result -- one a later
+   antecedent consumes rather than the conclusion naming it -- is a
+   sub-congruence for the traversal to supply, not a side condition for
+   the solver.  Here the rebuilt conjunction is handed back to the
+   traversal so that the node the rule matched is still one the rewrites
+   and any further congruence reach. *)
+val _ = let
+  val threaded_cong = prove(
+    ``(!x:'a. P x = Q x) ==> (!x:'a. Q x ==> (f x = g x)) ==>
+      (!x:'a. (Q x /\ g x) = h x) ==>
+      ((?x:'a. P x /\ f x) = (?x:'a. h x))``,
+    DISCH_TAC THEN DISCH_TAC THEN
+    DISCH_THEN (fn rebuilt => REWRITE_TAC [GSYM rebuilt]) THEN
+    AP_TERM_TAC THEN ABS_TAC THEN ASM_REWRITE_TAC [] THEN
+    ASM_CASES_TAC ``Q (x:'a) : bool`` THEN RES_TAC THEN ASM_REWRITE_TAC [])
+  val cong_ss =
+    SSFRAG {name = SOME "THREADED", congs = [threaded_cong],
+            convs = [], rewrs = [], ac = [], filter = NONE, dprocs = []}
+in
+  convtest ("congruence threads an intermediate result",
+            SIMP_CONV (bool_ss ++ cong_ss)
+                      [ASSUME ``!y:'a. bnd y ==> (bdy y <=> bdy' y)``],
+            ``?x:'a. bnd x /\ bdy x``,
+            ``?x:'a. bnd x /\ bdy' x``)
+end
+
 (* test that a bounded rewrite on a variable gets a chance to fire at all *)
 val _ = let
   open pureSimps
