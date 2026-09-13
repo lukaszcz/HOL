@@ -328,20 +328,6 @@ val transitive_closure_from_a_step_list =
      ^ "nor an induction")
     ["list_L7054_set_trans_list_step_subset_trancl"]
 
-(* src/HOL/List.thy:1213 @ f7e02b7e.  Isabelle closes this from the
-   three rules its method names and nothing else; the recipe carries
-   all three, and the tableau reaches 37144 branches at depth 11 inside
-   the budget.  It was counted as a solve until the blast recipe
-   stopped simplifying for arguments that are not rewrites: the
-   simplification pass it was leaning on is one Isabelle's [blast]
-   never runs, and closing the goal without it is the parity claim. *)
-val blast_needs_a_pass_isabelle_does_not_run =
-  classified "blast needs a pass Isabelle does not run"
-    ("Isabelle's blast closes this from inj_onI, inj_onD and "
-     ^ "map_inj_on; ours reaches 37144 tableau branches with the same "
-     ^ "three rules")
-    ["list_L1213_inj_on_mapI"]
-
 val blast_search_reports_no_proof =
   classified "blast search reports no proof"
     ("the tableau search exhausts its depths without a "
@@ -536,7 +522,6 @@ val execution : benchLib.shortfall list =
   membership_through_a_guarded_flatten @
   transitive_closure_from_a_step_list @
   blast_search_reports_no_proof @
-  blast_needs_a_pass_isabelle_does_not_run @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @

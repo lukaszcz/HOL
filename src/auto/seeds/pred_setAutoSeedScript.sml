@@ -21,7 +21,11 @@ Proof
   metis_tac[]
 QED
 
-Theorem INJ_DEF_AUTO[iff]:
+(* src/HOL/Fun.thy:140 @ f7e02b7e.  A rewrite only: Isabelle states
+   inj_on as a definition and declares it to neither simpset nor
+   claset, and the [iff] elimination this used to carry unfolded every
+   INJ assumption before a supplied inj_onD could apply to it. *)
+Theorem INJ_DEF_AUTO[simp]:
   !function source target.
     INJ function source target <=>
     (!item. item IN source ==> function item IN target) /\
