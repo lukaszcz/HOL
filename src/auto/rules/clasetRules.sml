@@ -348,8 +348,17 @@ fun DUP_ELIM_RULE th =
   end
 
 (* HOL goals cons each newly discharged hypothesis.  Put the duplicate at
-   the inner end of a minor premise so that it is first in the resulting
-   assumption list, as required by blast's reverse duplication rule. *)
+   the inner end of the prefix an engine discharges -- a minor premise's
+   outer !-prefix, then the implication chain below it -- so that it is
+   first in the resulting assumption list, as required by blast's reverse
+   duplication rule.  A quantifier under that chain opens a premise the
+   engine leaves standing in the conclusion, so the duplicate stops above
+   it rather than descending out of the assumptions altogether. *)
+fun rev_dup_imp major prem =
+  case total dest_imp_only prem of
+      SOME (ante, rest) => mk_imp (ante, rev_dup_imp major rest)
+    | NONE => mk_imp (major, prem)
+
 fun rev_dup_prem major prem =
   case total dest_forall prem of
       SOME (v, body) =>
@@ -363,11 +372,15 @@ fun rev_dup_prem major prem =
         in
           mk_forall (v', rev_dup_prem major body')
         end
-    | NONE =>
-        (case total dest_imp_only prem of
-             SOME (ante, rest) =>
-               mk_imp (ante, rev_dup_prem major rest)
-           | NONE => mk_imp (major, prem))
+    | NONE => rev_dup_imp major prem
+
+fun restore_rev_dup_imp major prem hmajor hprem =
+  case total dest_imp_only prem of
+      SOME (ante, rest) =>
+        DISCH ante
+          (restore_rev_dup_imp major rest hmajor
+             (MP hprem (ASSUME ante)))
+    | NONE => MP hprem hmajor
 
 fun restore_rev_dup_prem major prem hmajor hprem =
   case total dest_forall prem of
@@ -381,13 +394,7 @@ fun restore_rev_dup_prem major prem hmajor hprem =
           GEN v'
             (restore_rev_dup_prem major body' hmajor (SPEC v' hprem))
         end
-    | NONE =>
-        (case total dest_imp_only prem of
-             SOME (ante, rest) =>
-               DISCH ante
-                 (restore_rev_dup_prem major rest hmajor
-                    (MP hprem (ASSUME ante)))
-           | NONE => MP hprem hmajor)
+    | NONE => restore_rev_dup_imp major prem hmajor hprem
 
 fun REV_DUP_ELIM_RULE th =
   let

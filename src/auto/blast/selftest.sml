@@ -3848,6 +3848,49 @@ fun blast_error_message action =
   (action (); NONE)
   handle HOL_ERR error => SOME (Feedback.message_of error)
 
+(* A swapped introduction's minor premise keeps its own quantified
+   conclusion, which the replay goal leaves standing rather than
+   discharging.  The duplicated major must still arrive as that goal's
+   first assumption: the engine moves it to the back to match the
+   tableau's own branch order, and moving anything else there puts every
+   recorded assumption position below it out by one. *)
+val _ =
+  test
+    ("a duplicating elim replays a quantified premise in order",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'a"
+         val beta = Type.mk_vartype "'b"
+         val f = mk_var ("dup_order_f", alpha --> beta)
+         val h = mk_var ("dup_order_h", alpha --> beta)
+         val x1 = mk_var ("dup_order_x1", alpha)
+         val x2 = mk_var ("dup_order_x2", alpha)
+         val one_one =
+           Drule.GEN_ALL
+             (Conv.CONV_RULE (Conv.RHS_CONV Thm.BETA_CONV)
+               (Thm.AP_THM boolTheory.ONE_ONE_DEF h))
+         val injective =
+           list_mk_forall ([x1, x2],
+             mk_imp
+               (mk_eq (mk_comb (f, x1), mk_comb (f, x2)), mk_eq (x1, x2)))
+         val goal = ([injective], boolSyntax.mk_icomb (``ONE_ONE``, f))
+         val cs =
+           List.foldl
+             (fn ((spec, named), claset) =>
+                 clasetLib.add_rule
+                   {kind = #kind spec, safe = false, prio = NONE}
+                   named claset)
+             clasetLib.empty_cs
+             (clasetLib.iff_rules "dup_order" one_one)
+       in
+         (case blastSearch.tryGoal cs 1 goal of
+              NONE => false
+            | SOME proof =>
+                Option.isSome
+                  (blastReconstruct.reconstructWith cs goal proof)) andalso
+         blast_solves (tableauLib.CS_BLAST_DEPTH_TAC cs 1) goal
+       end)
+
 val _ =
   test
     ("blast entry points clearly reject Simp and Iff markers",

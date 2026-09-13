@@ -1211,6 +1211,43 @@ val _ =
            | _ => false
        end)
 
+(* An engine discharges a minor premise's outer !-prefix and the
+   implication chain below it, and leaves any further quantified premise
+   standing in the conclusion.  The duplicate belongs at the end of that
+   discharged prefix: pushed inside the standing premise it never reaches
+   the assumptions at all. *)
+fun inner_quantifier_elim () =
+  let
+    val P = ``P : 'a -> bool``
+    val r = ``r : bool``
+    val x = ``x : 'a``
+    val universal = mk_forall (x, mk_comb (P, x))
+    val major = mk_neg universal
+    val minor = mk_imp (mk_neg r, universal)
+    val witness =
+      MP (NOT_ELIM (ASSUME major)) (MP (ASSUME minor) (ASSUME (mk_neg r)))
+  in
+    GENL [P, r] (DISCH major (DISCH minor (CCONTR r witness)))
+  end
+
+val _ =
+  test
+    ("reverse elim duplication stops above a premise's inner quantifier",
+     fn () =>
+       let
+         val P = ``P : 'a -> bool``
+         val r = ``r : bool``
+         val x = ``x : 'a``
+         val universal = mk_forall (x, mk_comb (P, x))
+         val major = mk_neg universal
+         val expected = mk_imp (mk_neg r, mk_imp (major, universal))
+       in
+         same_terms
+           (rule_premises_of clasetRules.Elim
+             (REV_DUP_ELIM_RULE (inner_quantifier_elim ())))
+           [major, expected]
+       end)
+
 val _ =
   test
     ("reverse and ordinary elim duplication order hypotheses differently",
