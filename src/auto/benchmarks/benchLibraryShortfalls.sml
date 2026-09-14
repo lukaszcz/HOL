@@ -7,10 +7,11 @@ struct
    says what stands in the way.  A goal listed in [over_budget] was
    cut off by the budget rather than reporting no proof, so its
    classification is the family it belongs to rather than an observed
-   residual.  That list is measured, not inherited: the engine work
-   since has brought ten of its goals back inside the budget, and each
-   now carries the class its residual says it belongs to (re-measured
-   2026-09-07). *)
+   residual; a goal whose own note already says it ran out the budget
+   is not listed again there.  That list is measured, not inherited:
+   the engine work since has brought eleven of its goals back inside
+   the budget, and each now carries the class its residual says it
+   belongs to (re-measured 2026-09-14). *)
 
 (* Isabelle's [code_unfold] lemmas at List.thy:8259 and 8273 state that
    a set-encoded relation and its predicate encoding agree:
@@ -36,8 +37,9 @@ val over_budget =
    "list_L1511_split_list_last_propE",
    "list_L5325_bij_rotate1",
    "list_L6138_map_sorted_distinct_set_unique",
-   "list_L8044_listrel1_subset_listrel",
+   "list_L7823_append_listrel1I",
    "list_L9013_list_all_transfer",
+   "map_L519_map_upds_twist",
    "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some"]
 
 fun record note id : benchLib.shortfall =
@@ -121,8 +123,8 @@ val over_budget_with_no_residual =
     ("the assigned tactic did not return within the budget")
     ["list_L5325_bij_rotate1",
      "list_L6138_map_sorted_distinct_set_unique",
-     "list_L8044_listrel1_subset_listrel",
      "list_L9013_list_all_transfer",
+     "map_L519_map_upds_twist",
      "map_L723_ran_map_upd", "map_L730_ran_map_upd_Some"]
 
 (* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
@@ -160,6 +162,22 @@ val indexing_through_list_constructors =
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
 
+(* src/HOL/List.thy:8044 @ f7e02b7e.  It returns inside the budget now
+   and leaves a residual rather than nothing.  What is left is two
+   lists that differ at a single position -- an append around a cons on
+   either side -- read at an arbitrary index below their common length,
+   with the relation known reflexive and known to hold at the changed
+   pair.  Both readings of the index are available; the case split
+   between them is what neither simplification nor the search
+   performs. *)
+val a_changed_position_against_the_others =
+  classified "a changed position against the others"
+    ("the residual reads two lists differing at one position at an "
+     ^ "arbitrary index, under a reflexive relation that is known to "
+     ^ "hold at the changed pair, and needs the case split on whether "
+     ^ "the index is that position")
+    ["list_L8044_listrel1_subset_listrel"]
+
 val simplification_and_search_reports_no_proof =
   classified "simplification and search reports no proof"
     ("the clasimp method terminates and reports no proof")
@@ -168,7 +186,7 @@ val simplification_and_search_reports_no_proof =
      "list_L5409_nths_drop",
      "list_L7247_lex_conv",
      "list_L7321_lex_append_rightI",
-     "list_L8999_set_Cons_transfer", "map_L519_map_upds_twist",
+     "list_L8999_set_Cons_transfer",
      "string_L178_card_UNIV_char"]
 
 val list_relation_lifting =
@@ -451,6 +469,7 @@ val execution : benchLib.shortfall list =
   rotation_by_iteration @
   decision_procedure_scope @
   definitional_unfolding_stops_short @
+  a_changed_position_against_the_others @
   injectivity_and_surjectivity @
   the_ambient_rule_is_the_goal @
   map_sum_commuted_under_a_fact @
