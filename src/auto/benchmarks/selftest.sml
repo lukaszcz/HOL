@@ -1051,6 +1051,32 @@ val _ =
        blast_gate_solves
          (benchLib.Invoke (benchLib.Blast, [blast_gate_rewrite])))
 
+(* A rule the method supplies is stated in the vocabulary the method's
+   own goal had, so the pass above has to carry it along: the goal
+   below is handed [subset_imageE], whose major premise is
+   [source SUBSET IMAGE function target], and the pass leaves the goal
+   with no [SUBSET] in it at all.  Left behind, the rule matches
+   nothing and the search guesses the set it would have named --
+   measured at 30.3s, 31.6s and 30.8s, against 3.9s, 3.5s and 3.2s
+   with the rule carried through. *)
+val stranded_rule_goal =
+  ``v_B0 SUBSET IMAGE v_f0 v_A0 <=>
+    ?b_AA. b_AA SUBSET v_A0 /\ v_B0 = IMAGE v_f0 b_AA``
+
+val _ =
+  check
+    ("a supplied rule goes through the blast pre-pass with the goal",
+     fn () =>
+       let
+         val recipe =
+           benchDerive.recipe_of "src/HOL/Set.thy:9999"
+             stranded_rule_goal "by (blast elim: subset_imageE)"
+       in
+         benchLib.outcome_solved
+           (benchLib.run_goal (Time.fromSeconds 10) recipe
+             (recipe_goal "unit-stranded-rule" recipe stranded_rule_goal))
+       end)
+
 (* ---- Phase A detectors ------------------------------------------- *)
 
 fun guard_entry id method arguments goal : benchLib.corpus_goal =

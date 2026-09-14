@@ -1213,13 +1213,17 @@ fun tactic_for simpset goal Simp args exclusions =
         (* Isabelle's [blast] never simplifies, so the pass below is
            the [unfolding] the method asked for and nothing else: it
            runs unconditionally exactly where there is a rewrite to run
-           it with, and otherwise only where the goal is the set
-           equality [SET_EQ_TAC] takes apart.  Gating it on the
-           argument list instead would make it depend on arguments that
-           are not rewrites -- a [dest:] the method named, or the
-           ambient claset, which by construction the method did not
-           name.  It did, until the ambient claset arrived: it turned
-           the pass on for every blast goal at once, and
+           it with, and otherwise wherever the goal has a set equality
+           in it for [SET_EQ_TAC]'s [ONCE_DEPTH_CONV] to take apart --
+           which is not only a goal that is one: measured, restricting
+           it to a goal whose own conclusion is a set equality costs
+           [set_L928_subset_image_iff], which the unfolding is what
+           makes provable at all.  Gating it on the argument list
+           instead would make it depend on arguments that are not
+           rewrites -- a [dest:] the method named, or the ambient
+           claset, which by construction the method did not name.  It
+           did, until the ambient claset arrived: it turned the pass on
+           for every blast goal at once, and
            [classical_L803], a Hilbert-system goal with no rewrite in
            sight, went from 0.029s to past fifteen minutes. *)
         val preprocess =
@@ -1231,6 +1235,78 @@ fun tactic_for simpset goal Simp args exclusions =
             Tactical.THEN
               (Tactical.TRY hurdUtils.SET_EQ_TAC,
                simplify)
+        (* A rule the method supplied is stated in the vocabulary the
+           method's own goal had.  The pass above rewrites the goal out
+           of that vocabulary, and a rule left behind in it matches
+           nothing: [set_L928_subset_image_iff] is handed
+           [subset_imageE], whose major premise is
+           [source SUBSET IMAGE function target], and the pass leaves
+           the goal with no [SUBSET] in it at all, so the search had to
+           guess the set the rule would have named.  The rules go
+           through the same pass as the goal, and only where that pass
+           runs -- which is what the test below decides, on the goal,
+           exactly as the tactic does.  Both forms reach the search:
+           the pass is [ONCE_DEPTH_CONV], so it rewrites the outermost
+           set equality on a path and leaves what is under it, and a
+           rule the method stated still has the equalities under that
+           one to meet. *)
+        val preprocess_fires =
+          not (null simps) orelse
+          Lib.can
+            (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV hurdUtils.SET_EQ_CONV))
+            goal
+        val normalise_rule =
+          Conv.QCONV
+            (Conv.THENC
+              (Conv.TRY_CONV
+                 (Conv.ONCE_DEPTH_CONV hurdUtils.SET_EQ_CONV),
+               simpLib.SIMP_CONV simpset
+                 (simps @ simp_controls goal exclusions)))
+        fun normalised_theorem theorem =
+          case Lib.total (Conv.CONV_RULE normalise_rule) theorem of
+              SOME normalised => normalised
+            | NONE => theorem
+        fun rule_kind (IntroAdd (strength, _)) =
+              SOME (clasetRules.Intro, strength)
+          | rule_kind (ElimAdd (strength, _)) =
+              SOME (clasetRules.Elim, strength)
+          | rule_kind (DestAdd (strength, _)) =
+              SOME (clasetRules.Dest, strength)
+          | rule_kind _ = NONE
+        fun rebuilt (IntroAdd (strength, {name, ...})) theorem =
+              IntroAdd (strength, {name = name, theorem = theorem})
+          | rebuilt (ElimAdd (strength, {name, ...})) theorem =
+              ElimAdd (strength, {name = name, theorem = theorem})
+          | rebuilt (DestAdd (strength, {name, ...})) theorem =
+              DestAdd (strength, {name = name, theorem = theorem})
+          | rebuilt argument _ = argument
+        (* The pass can simplify a rule out of rule shape: [equalityE]
+           is [left = right ==> (left SUBSET right ==> right SUBSET
+           left ==> conclusion) ==> conclusion], whose minor premise
+           follows from its major, so simplifying the two together
+           leaves [T] and the claset refuses the result as an
+           ill-formed elimination rule.  A carried rule is offered only
+           where it is still a rule of the kind the method declared,
+           which is the claset's own test. *)
+        fun carried argument =
+          case (rule_kind argument, named_theorem argument) of
+              (SOME (kind, strength), SOME {theorem = stated, ...}) =>
+                let
+                  val rewritten = normalised_theorem stated
+                  val spec =
+                    {kind = kind, safe = strength = SafeRule, prio = NONE}
+                in
+                  if aconv (Thm.concl stated) (Thm.concl rewritten) orelse
+                     not (Lib.can (clasetRules.ext_info spec) rewritten)
+                  then []
+                  else [rebuilt argument rewritten]
+                end
+            | _ => []
+        val search_args =
+          all_blast_args
+            (args @
+             (if preprocess_fires then List.concat (map carried args)
+              else []))
         fun trace_residual (goal as (_, target)) =
           (if OS.Process.getEnv "HOLBENCHBLASTRESIDUAL" = SOME "1" then
              TextIO.print
@@ -1258,7 +1334,7 @@ fun tactic_for simpset goal Simp args exclusions =
                               Tactical.ORELSE
                                 (accept_supplied,
                                  tableauLib.BLAST_TAC
-                                   (all_blast_args args @
+                                   (search_args @
                                     blast_translation_args goal @
                                     controls exclusions))))))))))
       end
