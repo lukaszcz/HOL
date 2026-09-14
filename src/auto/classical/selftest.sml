@@ -3149,24 +3149,55 @@ val _ =
            | [] => false
        end)
 
+local
+  val subst_variable = Term.mk_var ("internal_subst_x", Type.ind)
+  val subst_constant = Term.mk_var ("internal_subst_c", Type.ind)
+  val subst_predicate =
+    Term.mk_var ("internal_subst_p", Type.ind --> Type.bool)
+
+  fun subst_node assumptions store =
+    clasetGoal.create
+      {goals =
+         [{params = [], asl = assumptions,
+           w = mk_comb (subst_predicate, subst_variable)}],
+       store = store, level = 0}
+in
+
+(* An equality carrying a metavariable is no substitution the search may
+   make: eliminating the rigid side restates this branch over an unknown
+   the search has not chosen, and the sibling branches keep the variable.
+   src/Provers/hypsubst.ML:83 @ Isabelle2025-2 refuses it for the same
+   reason. *)
 val _ =
   test
-    ("metavariable hyp-subst eliminates only the rigid variable side",
+    ("metavariable hyp-subst refuses an equality carrying a metavariable",
      fn () =>
        let
-         val variable = Term.mk_var ("internal_subst_x", Type.ind)
-         val predicate =
-           Term.mk_var ("internal_subst_p", Type.ind --> Type.bool)
          val (meta, store) =
            clasetMeta.new_meta {allow = [], ty = Type.ind}
              clasetMeta.empty
-         val equality = boolSyntax.mk_eq (variable, meta)
          val node =
-           clasetGoal.create
-             {goals =
-                [{params = [], asl = [equality],
-                  w = mk_comb (predicate, variable)}],
-              store = store, level = 0}
+           subst_node [boolSyntax.mk_eq (subst_variable, meta)] store
+       in
+         not (Option.isSome
+           (seq.cases
+             (clasetStep.safe_step clasetLib.empty_cs (node, 1))))
+       end)
+
+(* The refusal is the equality's, not the goal's: a rigid equality still
+   substitutes where the goal carries metavariables elsewhere. *)
+val _ =
+  test
+    ("metavariable hyp-subst still eliminates a rigid equality",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.ind}
+             clasetMeta.empty
+         val node =
+           subst_node
+             [boolSyntax.mk_eq (subst_variable, subst_constant),
+              mk_comb (subst_predicate, meta)] store
        in
          case seq.cases
            (clasetStep.safe_step clasetLib.empty_cs (node, 1))
@@ -3174,7 +3205,9 @@ val _ =
              NONE => false
            | SOME ((record, next), _) =>
                let
-                 val expected = mk_comb (predicate, meta)
+                 val expected =
+                   ([mk_comb (subst_predicate, meta)],
+                    mk_comb (subst_predicate, subst_constant))
                  val child = the_singleton (rendered_goals next)
                  val tactic =
                    fn _ =>
@@ -3185,11 +3218,13 @@ val _ =
                  (case clasetStep.kind_of record of
                       clasetStep.HypSubst => true
                     | _ => false) andalso
-                 same_goal (child, ([], expected)) andalso
+                 same_goal (child, expected) andalso
                  Term.aconv
                    (clasetMeta.walk (clasetGoal.store next) meta) meta
                end
        end)
+
+end
 
 val _ =
   test
@@ -5293,6 +5328,21 @@ val _ =
   test
     ("FAST_TAC instantiates a witness and replays the solution",
      fn () => tactic_solves (classicalLib.FAST_TAC []) driver_exists_goal)
+
+(* The universal assumption is the rule, and one of its premises is a
+   negated equality: the branch that assumes the equality has to keep the
+   goal's own variables, or the contradiction that settles the unknown no
+   longer finds them. *)
+val _ =
+  test
+    ("FAST_TAC chains through a negated-equality guard",
+     fn () =>
+       tactic_solves (classicalLib.FAST_TAC [])
+         ([], “(!l:'a. l <> a ==> q l) ==> b <> a ==> q b”) andalso
+       tactic_solves (classicalLib.FAST_TAC [])
+         ([], “(!l r:'a. ss l /\ ss r /\ l <> r ==> p l r) ==>
+               (!x y:'a. p x y ==> q x y) ==>
+               ss c ==> ss d ==> c <> d ==> q c d”))
 
 val _ =
   test

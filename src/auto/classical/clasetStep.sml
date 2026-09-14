@@ -1208,17 +1208,27 @@ fun reflexive_equality tm =
       SOME (left, right) => if aconv left right then SOME left else NONE
     | NONE => NONE
 
+fun carries_meta tm =
+  List.exists clasetMeta.is_meta (free_vars tm) orelse
+  List.exists clasetMeta.is_tymeta (type_vars_in_term tm)
+
+(* src/Provers/hypsubst.ML:83 @ Isabelle2025-2 refuses an equality with a
+   schematic variable on either side.  Engine metavariables are the
+   analogue, and the eliminated side is not the only one that matters:
+   replacing a goal variable by a metavariable restates the branch over
+   an unknown the search has not chosen yet, and drops the assumptions
+   the sibling branches are stated over. *)
 fun subst_orientation equality =
-  case total dest_eq equality of
-      NONE => NONE
-    | SOME (left, right) =>
-        if is_var left andalso not (clasetMeta.is_meta left) andalso
-           not (free_in left right)
-        then SOME (left, right, ASSUME equality)
-        else if is_var right andalso not (clasetMeta.is_meta right) andalso
-                not (free_in right left)
-        then SOME (right, left, SYM (ASSUME equality))
-        else NONE
+  if carries_meta equality then NONE
+  else
+    case total dest_eq equality of
+        NONE => NONE
+      | SOME (left, right) =>
+          if is_var left andalso not (free_in left right)
+          then SOME (left, right, ASSUME equality)
+          else if is_var right andalso not (free_in right left)
+          then SOME (right, left, SYM (ASSUME equality))
+          else NONE
 
 fun internal_hyp_subst_results (node, pos) =
   let
