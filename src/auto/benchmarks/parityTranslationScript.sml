@@ -4163,6 +4163,84 @@ Definition source_lists_def:
     {xs | EVERY (\value. value IN domain) xs}
 End
 
+(* Isabelle introduces [lists] as an inductive set and declares what its
+   simpset and claset carry about it separately from the definition,
+   which stays folded: the clauses below are those declarations, stated
+   over the translation's encoding. *)
+
+(* src/HOL/List.thy:6861, [lists.Nil], declared [intro!, simp]. *)
+Theorem source_lists_Nil:
+  !domain. [] IN source_lists domain
+Proof
+  simp[source_lists_def]
+QED
+
+(* src/HOL/List.thy:6892, [Cons_in_lists_iff], declared [simp]; its two
+   halves are src/HOL/List.thy:6862 [lists.Cons], declared [intro!], and
+   src/HOL/List.thy:6864 [listsE], declared [elim!]. *)
+Theorem source_Cons_in_lists_iff:
+  !item items domain.
+    item::items IN source_lists domain <=>
+    item IN domain /\ items IN source_lists domain
+Proof
+  simp[source_lists_def] >> metis_tac[]
+QED
+
+(* src/HOL/List.thy:6898, [append_in_lists_conv], declared [iff]. *)
+Theorem source_append_in_lists_conv:
+  !left right domain.
+    left ++ right IN source_lists domain <=>
+    left IN source_lists domain /\ right IN source_lists domain
+Proof
+  simp[source_lists_def] >> metis_tac[]
+QED
+
+(* src/HOL/List.thy:6909, [in_listsD], declared [dest!]. *)
+Theorem source_in_listsD:
+  !domain items.
+    items IN source_lists domain ==>
+    !item. MEM item items ==> item IN domain
+Proof
+  simp[source_lists_def, listTheory.EVERY_MEM]
+QED
+
+(* src/HOL/List.thy:6914, [in_listsI], declared [intro!]. *)
+Theorem source_in_listsI:
+  !domain items.
+    (!item. MEM item items ==> item IN domain) ==>
+    items IN source_lists domain
+Proof
+  simp[source_lists_def, listTheory.EVERY_MEM]
+QED
+
+(* src/HOL/List.thy:6890, [lists_Int_eq], declared [simp]. *)
+Theorem source_lists_Int_eq:
+  !left right.
+    source_lists (left INTER right) =
+    source_lists left INTER source_lists right
+Proof
+  simp[source_lists_def, pred_setTheory.EXTENSION,
+       listTheory.EVERY_MEM]
+  >> metis_tac[]
+QED
+
+(* src/HOL/List.thy:6922, [lists_empty], declared [simp]. *)
+Theorem source_lists_empty:
+  source_lists {} = {[]}
+Proof
+  simp[source_lists_def, pred_setTheory.EXTENSION]
+  >> Cases
+  >> simp[]
+  >> metis_tac[]
+QED
+
+(* src/HOL/List.thy:6925, [lists_UNIV], declared [simp]. *)
+Theorem source_lists_UNIV:
+  source_lists UNIV = UNIV
+Proof
+  simp[source_lists_def, pred_setTheory.EXTENSION]
+QED
+
 Theorem source_mono_lists:
   !left right.
     left SUBSET right ==>

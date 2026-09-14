@@ -85,7 +85,7 @@ val introductions =
    ("source_list_ex1_def", Definition, "src/HOL/List.thy:8118"),
    ("source_list_relation_def", Notation, "src/HOL/List.thy:8701"),
    ("source_listrel1_def", Definition, "src/HOL/List.thy:7735"),
-   ("source_lists_def", Simp, "src/HOL/List.thy:6861"),
+   ("source_lists_def", Definition, "src/HOL/List.thy:6857"),
    ("source_literal_append_def", Definition, "src/HOL/String.thy:634"),
    ("source_literal_asciis_def", Definition, "src/HOL/String.thy:399"),
    ("source_literal_bij", Representation, "src/HOL/String.thy:366"),

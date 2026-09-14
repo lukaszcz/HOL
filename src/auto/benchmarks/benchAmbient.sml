@@ -104,7 +104,20 @@ val sorted_wrt_correspondence =
    definition it withholds.  They are what a source proof about an
    update runs on: the first takes the constant apart wherever the
    proof reaches a point, and the other two are the only two shapes
-   Isabelle collapses without one. *)
+   Isabelle collapses without one.
+
+   List.thy introduces [lists] as an inductive set (:6857) and leaves
+   its definition folded, declaring instead [lists.Nil] (:6861) and
+   [lists_Int_eq] (:6890), [lists_empty] (:6922) and [lists_UNIV]
+   (:6925) simp.  Reading the definition as ambient instead -- which is
+   what a set whose introduction rules carry simp otherwise means -- is
+   generous in one direction and disarming in the other: Isabelle's simp
+   takes a nil or a cons apart and never touches a [lists] at a list
+   variable, while unfolding the definition rewrites every occurrence
+   and leaves the classical rules below, all stated about the constant,
+   matching nothing.  [list_L6972] is the goal that separates them --
+   [lists A SUBSET lists B] from [A SUBSET B] is settled by the three
+   declarations and not by any rewrite. *)
 val declared_results =
   let
     fun named name =
@@ -135,7 +148,11 @@ val declared_results =
        "source_mem_Sigma_iff",
        "source_rel_image_singleton",
        "source_char_roundtrip",
-       "source_code_roundtrip"]
+       "source_code_roundtrip",
+       "source_lists_Nil",
+       "source_lists_Int_eq",
+       "source_lists_empty",
+       "source_lists_UNIV"]
   end
 
 (* An alias definition is ambient, so by the time one of the lemmas
@@ -219,7 +236,14 @@ val declared_rules =
      (* src/HOL/Product_Type.thy:1027 [SigmaI], declared [intro!]. *)
      named benchLib.IntroAdd benchLib.SafeRule "source_SigmaI",
      (* src/HOL/Product_Type.thy:1030 [SigmaE], declared [elim!]. *)
-     named benchLib.ElimAdd benchLib.SafeRule "source_SigmaE"]
+     named benchLib.ElimAdd benchLib.SafeRule "source_SigmaE",
+     (* src/HOL/List.thy:6861 [lists.Nil], declared [intro!] as well as
+        simp. *)
+     named benchLib.IntroAdd benchLib.SafeRule "source_lists_Nil",
+     (* src/HOL/List.thy:6909 [in_listsD], declared [dest!]. *)
+     named benchLib.DestAdd benchLib.SafeRule "source_in_listsD",
+     (* src/HOL/List.thy:6914 [in_listsI], declared [intro!]. *)
+     named benchLib.IntroAdd benchLib.SafeRule "source_in_listsI"]
   end
 
 (* Isabelle's [iff] declares one theorem into both its simpset and its
@@ -234,7 +258,16 @@ val declared_rules =
 val iff_declarations =
   ["parityTranslation$source_map_add_None",
    "parityTranslation$source_rel_image_singleton",
-   "parityTranslation$source_mem_Sigma_iff"]
+   "parityTranslation$source_mem_Sigma_iff",
+   (* src/HOL/List.thy:6898 [append_in_lists_conv], declared [iff]. *)
+   "parityTranslation$source_append_in_lists_conv",
+   (* src/HOL/List.thy:6892 [Cons_in_lists_iff] is declared simp alone,
+      and the claset halves the equivalence yields here are Isabelle's
+      own two declarations about the same shape: :6862 [lists.Cons]
+      [intro!] is its right-to-left reading and :6864 [listsE] [elim!]
+      its left-to-right one.  Carrying it as an [iff] is those three
+      declarations together and not more than Isabelle has. *)
+   "parityTranslation$source_Cons_in_lists_iff"]
 
 fun ambient_argument (named as {name, ...} : benchLib.named_thm) =
   if List.exists (fn entry => entry = name) iff_declarations then
@@ -286,7 +319,17 @@ val declaration_sites =
    ("parityTranslation$source_SigmaI",
     "src/HOL/Product_Type.thy:1027"),
    ("parityTranslation$source_SigmaE",
-    "src/HOL/Product_Type.thy:1030")]
+    "src/HOL/Product_Type.thy:1030"),
+   ("parityTranslation$source_lists_Nil", "src/HOL/List.thy:6861"),
+   ("parityTranslation$source_lists_Int_eq", "src/HOL/List.thy:6890"),
+   ("parityTranslation$source_Cons_in_lists_iff",
+    "src/HOL/List.thy:6892"),
+   ("parityTranslation$source_append_in_lists_conv",
+    "src/HOL/List.thy:6898"),
+   ("parityTranslation$source_in_listsD", "src/HOL/List.thy:6909"),
+   ("parityTranslation$source_in_listsI", "src/HOL/List.thy:6914"),
+   ("parityTranslation$source_lists_empty", "src/HOL/List.thy:6922"),
+   ("parityTranslation$source_lists_UNIV", "src/HOL/List.thy:6925")]
 
 fun declaration_site name =
   case List.find (fn (entry, _) => entry = name) declaration_sites of
