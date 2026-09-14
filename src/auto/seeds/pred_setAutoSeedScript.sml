@@ -36,11 +36,10 @@ Proof
   MATCH_ACCEPT_TAC pred_setTheory.INJ_DEF
 QED
 
-(* src/HOL/Set.thy:484-1088 @ f7e02b7e *)
+(* src/HOL/Set.thy:566-1088 @ f7e02b7e *)
 val _ =
   List.app export_iff
-    [("SUBSET_DEF_AUTO", pred_setTheory.SUBSET_DEF),
-     (* src/HOL/Set.thy:566-569 @ f7e02b7e.  This one declaration carries
+    [(* src/HOL/Set.thy:566-569 @ f7e02b7e.  This one declaration carries
         both empty_iff and emptyE: stated as a negation, the [iff]
         machinery derives the safe elimination that closes a branch on
         a membership in the empty set.  The tableau leg has no simpset,
@@ -119,6 +118,45 @@ QED
 (* src/HOL/Set.thy:1746-1752 @ f7e02b7e. *)
 val _ =
   export_iff ("IN_PREIMAGE_AUTO", pred_setTheory.IN_PREIMAGE)
+
+(* src/HOL/Set.thy:484,493,501,505 @ f7e02b7e.  Isabelle states the
+   membership reading of a subset as [subset_eq] (:505) and declares it
+   to neither simpset nor claset: a subset is settled classically, by
+   [subsetI] [intro!] and the two unsafe eliminations [subsetD] (:493)
+   and [subsetCE] (:501).  Carrying the equivalence as an [iff] instead
+   put the reading in the simpset, where Isabelle keeps it out, and a
+   quantified subset among the assumptions then became a conditional
+   rewrite whose condition carries a variable its left-hand side does
+   not: [set (TAKE i l) SUBSET set l] rewrites to [MEM x l] conditional
+   on [MEM x (TAKE i l)], and since the left-hand side is a membership
+   at two variables it matches every membership, while discharging the
+   condition reproduces the same shape.  [map_L519] is the goal that
+   found it -- its [using set_take_subset] hands the search exactly
+   that assumption, and simplification did not return inside five
+   minutes. *)
+Theorem SUBSET_I_AUTO[sintro]:
+  !left right.
+    (!item. item IN left ==> item IN right) ==> left SUBSET right
+Proof
+  REWRITE_TAC [pred_setTheory.SUBSET_DEF]
+QED
+
+Theorem SUBSET_D_AUTO[elim]:
+  !left right item.
+    left SUBSET right ==> item IN left ==> item IN right
+Proof
+  REWRITE_TAC [pred_setTheory.SUBSET_DEF] THEN METIS_TAC []
+QED
+
+Theorem SUBSET_CE_AUTO[elim]:
+  !left right item conclusion.
+    left SUBSET right ==>
+    (item NOTIN left ==> conclusion) ==>
+    (item IN right ==> conclusion) ==>
+    conclusion
+Proof
+  REWRITE_TAC [pred_setTheory.SUBSET_DEF] THEN METIS_TAC []
+QED
 
 val _ =
   clasetLib.export_rule sintro_spec "pred_set.SUBSET_ANTISYM"
