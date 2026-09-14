@@ -122,7 +122,7 @@ val introductions =
    ("source_sorted_list_of_set_def", Definition, "src/HOL/List.thy:6726"),
    ("source_sorted_wrt_def", Fun, "src/HOL/List.thy:400"),
    ("source_stable_sort_key_def", Definition, "src/HOL/List.thy:434"),
-   ("source_strict_sorted_def", Fun, "src/HOL/List.thy:400"),
+   ("source_strict_sorted_def", Notation, "src/HOL/List.thy:400"),
    ("source_subseqs_def", Primrec, "src/HOL/List.thy:295"),
    ("source_successively_def", Fun, "src/HOL/List.thy:254"),
    ("source_superset_def", Simp, "src/HOL/List.thy:8188"),

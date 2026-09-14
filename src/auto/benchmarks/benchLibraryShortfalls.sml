@@ -239,8 +239,7 @@ val sortedness_beyond_the_bridge =
      ^ "SORTED itself -- an order step between two of its members, "
      ^ "or its closure under a list operation, which needs an "
      ^ "induction the search does not perform")
-    ["list_L415_strict_sorted_simps_2",
-     "list_L6053_sorted_iff_nth_mono", "list_L6104_sorted_butlast",
+    ["list_L6053_sorted_iff_nth_mono", "list_L6104_sorted_butlast",
      "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
 
 val numeral_against_Suc =

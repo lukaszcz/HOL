@@ -23,9 +23,15 @@ Definition source_sorted_def:
   source_sorted le (xs : 'a list) = source_sorted_wrt le xs
 End
 
+(* Isabelle has no [strict_sorted] constant: it writes [sorted_wrt (<)]
+   inline, so its goals carry [sorted_wrt]'s own equations and nothing
+   else.  Reading the notation onto SORTED instead would hand a goal the
+   adjacent predicate where the source had the all-pairs one, and the
+   cons equation Isabelle proves [strict_sorted_simps] from would not be
+   there. *)
 Definition source_strict_sorted_def:
   source_strict_sorted le (xs : 'a list) =
-    sorting$SORTED (relation$STRORD le) xs
+    source_sorted_wrt (relation$STRORD le) xs
 End
 
 Theorem source_sorted_wrt_bridge:
@@ -53,10 +59,11 @@ QED
 
 Theorem source_strict_sorted_bridge:
   !le xs : 'a list.
-    source_strict_sorted le xs <=>
-    sorting$SORTED (relation$STRORD le) xs
+    relation$transitive (relation$STRORD le) ==>
+    (source_strict_sorted le xs <=>
+     sorting$SORTED (relation$STRORD le) xs)
 Proof
-  simp[source_strict_sorted_def]
+  simp[source_strict_sorted_def, source_sorted_wrt_bridge]
 QED
 
 Theorem source_sorted_wrt_nth_less:
@@ -319,15 +326,13 @@ Proof
   rpt strip_tac
   >> drule source_weak_linear_transitive
   >> strip_tac
+  >> `relation$transitive (relation$STRORD le)`
+       by metis_tac[source_strord_transitive]
+  >> simp[source_sorted_bridge, source_strict_sorted_bridge]
   >> Induct_on `xs`
-  >- simp[source_sorted_bridge, source_strict_sorted_def]
-  >> simp[source_sorted_bridge, source_strict_sorted_def,
-          sortingTheory.SORTED_EQ,
-          source_weak_linear_transitive,
-          source_strord_transitive,
-          relationTheory.STRORD,
-          boolTheory.FORALL_AND_THM]
-  >> fs[source_sorted_bridge, source_strict_sorted_def]
+  >- simp[]
+  >> rw[sortingTheory.SORTED_EQ, relationTheory.STRORD,
+        boolTheory.FORALL_AND_THM]
   >> metis_tac[]
 QED
 
