@@ -5,9 +5,7 @@ open HolKernel autoSeedTheory
 
 val goals : benchLib.source_goal list =
 [{id = "map_L151_map_upd_Some_unfold",
- goal = ``(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query) v_m0 v_a0 (SOME v_b0) v_x0 =
+ goal = ``source_fun_upd v_m0 v_a0 (SOME v_b0) v_x0 =
 SOME v_y0 ⇔ v_x0 = v_a0 ∧ v_b0 = v_y0 ∨ v_x0 ≠ v_a0 ∧ v_m0 v_x0 = SOME v_y0``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Map.thy", line = 151, commit = "f7e02b7e"},
@@ -15,9 +13,7 @@ SOME v_y0 ⇔ v_x0 = v_a0 ∧ v_b0 = v_y0 ∨ v_x0 ≠ v_a0 ∧ v_m0 v_x0 = SOME
 {id = "map_L155_image_map_upd",
  goal = ``v_x0 ∉ v_A0 ⇒
 IMAGE
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_x0 (SOME v_y0)) v_A0 =
+  (source_fun_upd v_m0 v_x0 (SOME v_y0)) v_A0 =
 IMAGE v_m0 v_A0``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Map.thy", line = 155, commit = "f7e02b7e"},
@@ -143,10 +139,7 @@ v_n0 v_k0 = NONE ∧ v_m0 v_k0 = NONE``,
  goal = ``(λb_restrict_func b_restrict_set b_restrict_key.
      if b_restrict_key ∈ b_restrict_set then b_restrict_func b_restrict_key
      else NONE) v_f0 (v_a0 INSERT v_A0) =
-(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query)
-  ((λb_restrict_func b_restrict_set b_restrict_key.
+source_fun_upd ((λb_restrict_func b_restrict_set b_restrict_key.
         if b_restrict_key ∈ b_restrict_set then
           b_restrict_func b_restrict_key
         else NONE) v_f0 v_A0) v_a0 (v_f0 v_a0)``,
@@ -201,14 +194,9 @@ v_n0 v_k0 = NONE ∧ v_m0 v_k0 = NONE``,
  goal = ``(λb_restrict_func b_restrict_set b_restrict_key.
      if b_restrict_key ∈ b_restrict_set then b_restrict_func b_restrict_key
      else NONE)
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_x0 v_y0) v_D0 =
+  (source_fun_upd v_m0 v_x0 v_y0) v_D0 =
 if v_x0 ∈ v_D0 then
-  (λb_update_func b_update_key b_update_value b_update_query.
-       if b_update_query = b_update_key then b_update_value
-       else b_update_func b_update_query)
-    ((λb_restrict_func b_restrict_set b_restrict_key.
+  source_fun_upd ((λb_restrict_func b_restrict_set b_restrict_key.
           if b_restrict_key ∈ b_restrict_set then
             b_restrict_func b_restrict_key
           else NONE) v_m0 (v_D0 DIFF {v_x0})) v_x0 v_y0
@@ -220,10 +208,7 @@ else
  provenance = {file = "src/HOL/Map.thy", line = 441, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L445_fun_upd_None_restrict",
- goal = ``(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query)
-  ((λb_restrict_func b_restrict_set b_restrict_key.
+ goal = ``source_fun_upd ((λb_restrict_func b_restrict_set b_restrict_key.
         if b_restrict_key ∈ b_restrict_set then
           b_restrict_func b_restrict_key
         else NONE) v_m0 v_D0) v_x0 NONE =
@@ -239,17 +224,11 @@ else
  provenance = {file = "src/HOL/Map.thy", line = 445, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L449_fun_upd_restrict",
- goal = ``(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query)
-  ((λb_restrict_func b_restrict_set b_restrict_key.
+ goal = ``source_fun_upd ((λb_restrict_func b_restrict_set b_restrict_key.
         if b_restrict_key ∈ b_restrict_set then
           b_restrict_func b_restrict_key
         else NONE) v_m0 v_D0) v_x0 v_y0 =
-(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query)
-  ((λb_restrict_func b_restrict_set b_restrict_key.
+source_fun_upd ((λb_restrict_func b_restrict_set b_restrict_key.
         if b_restrict_key ∈ b_restrict_set then
           b_restrict_func b_restrict_key
         else NONE) v_m0 (v_D0 DIFF {v_x0})) v_x0 v_y0``,
@@ -260,9 +239,7 @@ else
  goal = ``(λb_restrict_func b_restrict_set b_restrict_key.
      if b_restrict_key ∈ b_restrict_set then b_restrict_func b_restrict_key
      else NONE) v_f0 (COMPL {v_x0}) =
-(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query) v_f0 v_x0 NONE``,
+source_fun_upd v_f0 v_x0 NONE``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Map.thy", line = 460, commit = "f7e02b7e"},
  representative = false},
@@ -278,21 +255,14 @@ else
  representative = false},
 {id = "map_L473_map_upds_Cons",
  goal = ``source_map_upds v_m0 (v_a0::v_as0) (v_b0::v_bs0) = source_map_upds
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_a0 (SOME v_b0)) v_as0 v_bs0``,
+  (source_fun_upd v_m0 v_a0 (SOME v_b0)) v_as0 v_bs0``,
  source_method = "by (simp add:map_upds_def)",
  provenance = {file = "src/HOL/Map.thy", line = 473, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L519_map_upds_twist",
  goal = ``¬MEM v_a0 v_as0 ⇒
-source_map_upds ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_a0 (SOME v_b0)) v_as0 v_bs0 =
-(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query)
-  (source_map_upds v_m0 v_as0 v_bs0) v_a0 (SOME v_b0)``,
+source_map_upds (source_fun_upd v_m0 v_a0 (SOME v_b0)) v_as0 v_bs0 =
+source_fun_upd (source_map_upds v_m0 v_as0 v_bs0) v_a0 (SOME v_b0)``,
  source_method = "using set_take_subset by (fastforce simp add: map_upd_upds_conv_if)",
  provenance = {file = "src/HOL/Map.thy", line = 519, commit = "f7e02b7e"},
  representative = false},
@@ -321,9 +291,7 @@ v_m0 v_a0 ≠ NONE``,
  representative = false},
 {id = "map_L581_dom_fun_upd",
  goal = ``(λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE)
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_f0 v_x0 v_y0) =
+  (source_fun_upd v_f0 v_x0 v_y0) =
 if v_y0 = NONE then
   (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0 DIFF {v_x0}
 else v_x0 INSERT (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_f0``,
@@ -416,9 +384,7 @@ v_b0 ∈
 {id = "map_L723_ran_map_upd",
  goal = ``v_m0 v_a0 = NONE ⇒
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_a0 (SOME v_b0)) =
+  (source_fun_upd v_m0 v_a0 (SOME v_b0)) =
 v_b0 INSERT
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
   v_m0``,
@@ -427,9 +393,7 @@ v_b0 INSERT
  representative = false},
 {id = "map_L727_fun_upd_None_if_notin_dom",
  goal = ``v_k0 ∉ (λb_dom_func b_dom_key. b_dom_func b_dom_key ≠ NONE) v_m0 ⇒
-(λb_update_func b_update_key b_update_value b_update_query.
-     if b_update_query = b_update_key then b_update_value
-     else b_update_func b_update_query) v_m0 v_k0 NONE = v_m0``,
+source_fun_upd v_m0 v_k0 NONE = v_m0``,
  source_method = "by auto",
  provenance = {file = "src/HOL/Map.thy", line = 727, commit = "f7e02b7e"},
  representative = false},
@@ -441,9 +405,7 @@ v_z0 ∉
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
   v_m0 ⇒
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_x0 (SOME v_z0)) =
+  (source_fun_upd v_m0 v_x0 (SOME v_z0)) =
 (λb_ran_func b_ran_value. ∃b_ran_key. b_ran_func b_ran_key = SOME b_ran_value)
   v_m0 DIFF {v_y0} ∪ {v_z0}``,
  source_method = "by(force simp add: ran_def domI inj_onD)",
@@ -498,24 +460,18 @@ v_m0 v_k0 = SOME v_v0``,
 {id = "map_L795_graph_map_upd",
  goal = ``(λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair))
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_k0 (SOME v_v0)) =
+  (source_fun_upd v_m0 v_k0 (SOME v_v0)) =
 (v_k0,v_v0) INSERT
 (λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair))
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_k0 NONE)``,
+  (source_fun_upd v_m0 v_k0 NONE)``,
  source_method = "unfolding graph_def by (auto split: if_splits)",
  provenance = {file = "src/HOL/Map.thy", line = 795, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L798_graph_fun_upd_None",
  goal = ``(λb_graph_func b_graph_pair.
      b_graph_func (FST b_graph_pair) = SOME (SND b_graph_pair))
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m0 v_k0 NONE) =
+  (source_fun_upd v_m0 v_k0 NONE) =
 (λb_e.
      b_e ∈
      (λb_graph_func b_graph_pair.
@@ -639,31 +595,21 @@ IMAGE (λb_x. (b_x,THE (v_m0 b_x)))
  representative = false},
 {id = "map_L857_upd_None_map_le",
  goal = ``source_map_le
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_f0 v_x0 NONE) v_f0``,
+  (source_fun_upd v_f0 v_x0 NONE) v_f0``,
  source_method = "by (force simp add: map_le_def)",
  provenance = {file = "src/HOL/Map.thy", line = 857, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L860_map_le_upd",
  goal = ``source_map_le v_f0 v_g0 ⇒ source_map_le
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_f0 v_a0 v_b0)
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_g0 v_a0 v_b0)``,
+  (source_fun_upd v_f0 v_a0 v_b0)
+  (source_fun_upd v_g0 v_a0 v_b0)``,
  source_method = "by (fastforce simp add: map_le_def)",
  provenance = {file = "src/HOL/Map.thy", line = 860, commit = "f7e02b7e"},
  representative = false},
 {id = "map_L863_map_le_imp_upd_le",
  goal = ``source_map_le v_m10 v_m20 ⇒ source_map_le
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m10 v_x0 NONE)
-  ((λb_update_func b_update_key b_update_value b_update_query.
-        if b_update_query = b_update_key then b_update_value
-        else b_update_func b_update_query) v_m20 v_x0 (SOME v_y0))``,
+  (source_fun_upd v_m10 v_x0 NONE)
+  (source_fun_upd v_m20 v_x0 (SOME v_y0))``,
  source_method = "by (force simp add: map_le_def)",
  provenance = {file = "src/HOL/Map.thy", line = 863, commit = "f7e02b7e"},
  representative = false},

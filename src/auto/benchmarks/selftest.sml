@@ -3228,10 +3228,14 @@ val _ =
 
 (* A6.  Goal statements are owner-signed: a changed hash means a goal
    statement moved, which needs an explicit decision rather than an
-   updated pin. *)
+   updated pin.  The List/map signature was last moved on the owner's
+   decision to render Isabelle's [fun_upd] as a translation constant
+   rather than inline its body: seventeen goals carry an update, and
+   against the inlined conditional none of the results Isabelle states
+   of the unapplied constant can be stated at all. *)
 val goal_term_pins =
   [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "9CB5FD16"), ("Linarith", "E9DDA580"),
+   ("List/map", "F922626C"), ("Linarith", "E9DDA580"),
    ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
 
 val _ =

@@ -335,13 +335,6 @@ val injectivity_and_surjectivity =
      "product_type_L1329_bij_betw_map_prod",
      "product_type_L988_bij_swap"]
 
-val finite_map_update =
-  classified "finite map update"
-    ("map_upds_def unfolds to an ALOOKUP over a reversed zip and "
-     ^ "nothing reduces it")
-    ["map_L467_map_upds_Nil1",
-     "map_L470_map_upds_Nil2", "map_L473_map_upds_Cons"]
-
 (* src/HOL/Map.thy:363 @ f7e02b7e.  Isabelle closes this one from its
    simpset, by [map_add_find_right], and that declaration's translated
    statement is this goal once [map_le] is unfolded -- two source facts
@@ -459,7 +452,6 @@ val execution : benchLib.shortfall list =
   decision_procedure_scope @
   definitional_unfolding_stops_short @
   injectivity_and_surjectivity @
-  finite_map_update @
   the_ambient_rule_is_the_goal @
   map_sum_commuted_under_a_fact @
   option_relations @

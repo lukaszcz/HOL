@@ -81,12 +81,30 @@ val sorted_wrt_correspondence =
    three transplants below are what its interval vocabulary lacks
    against Isabelle's.
 
+   Map.thy:91-92 states [map_of]'s clauses as equations between
+   functions, and Map.thy declares [map_add_empty] (:346),
+   [map_add_upd] (:369) and [map_of_append] (:378) simp.  That is the
+   whole context a source proof about a list update runs in: it splits
+   the association list at the append, reads the last pair as an
+   update, and drops the empty map, naming none of them.  HOL4's
+   recursion takes the key as well, so the translation's own clauses
+   are the pointwise reading and the unapplied map the three rewrites
+   need is never exposed; the two clauses are restated here in the
+   source's form.
+
    Map.thy declares [map_add_find_right], [map_add_assoc],
    [map_le_refl] and [map_le_map_add] simp and [map_add_None] iff,
    about [map_add] and [map_le], whose definitions it withholds: a
    method that never names [map_add_def] still reads a value out of the
    right-hand map, reassociates two of them, and settles the order
-   between a map and a sum it is part of. *)
+   between a map and a sum it is part of.
+
+   Fun.thy declares [fun_upd_apply] (:872) and [fun_upd_upd] (:883)
+   simp and [fun_upd_triv] (:869) iff, about [fun_upd], whose
+   definition it withholds.  They are what a source proof about an
+   update runs on: the first takes the constant apart wherever the
+   proof reaches a point, and the other two are the only two shapes
+   Isabelle collapses without one. *)
 val declared_results =
   let
     fun named name =
@@ -94,13 +112,21 @@ val declared_results =
        theorem = DB.fetch "parityTranslation" name}
   in
     map named
-      ["source_fold_append",
+      ["source_fun_upd_apply",
+       "source_fun_upd_upd",
+       "source_fun_upd_triv",
+       "source_fold_append",
        "source_takeWhile_append1",
        "source_takeWhile_append2",
        "source_nth_zip",
        "source_distinct_upt",
        "source_take_upt",
        "source_drop_upt",
+       "source_map_of_Nil",
+       "source_map_add_empty",
+       "source_map_of_Cons",
+       "source_map_of_append",
+       "source_map_add_upd",
        "source_map_add_find_right",
        "source_map_add_assoc",
        "source_map_add_None",
@@ -227,6 +253,9 @@ val arguments =
 val declaration_sites =
   [("parityTranslation$source_sorted_wrt_bridge",
     "src/HOL/List.thy:409"),
+   ("parityTranslation$source_fun_upd_apply", "src/HOL/Fun.thy:872"),
+   ("parityTranslation$source_fun_upd_upd", "src/HOL/Fun.thy:883"),
+   ("parityTranslation$source_fun_upd_triv", "src/HOL/Fun.thy:869"),
    ("parityTranslation$source_fold_append", "src/HOL/List.thy:3231"),
    ("parityTranslation$source_takeWhile_append1",
     "src/HOL/List.thy:2500"),
@@ -236,6 +265,11 @@ val declaration_sites =
    ("parityTranslation$source_distinct_upt", "src/HOL/List.thy:3788"),
    ("parityTranslation$source_take_upt", "src/HOL/List.thy:3478"),
    ("parityTranslation$source_drop_upt", "src/HOL/List.thy:3485"),
+   ("parityTranslation$source_map_of_Nil", "src/HOL/Map.thy:91"),
+   ("parityTranslation$source_map_add_empty", "src/HOL/Map.thy:346"),
+   ("parityTranslation$source_map_of_Cons", "src/HOL/Map.thy:92"),
+   ("parityTranslation$source_map_of_append", "src/HOL/Map.thy:378"),
+   ("parityTranslation$source_map_add_upd", "src/HOL/Map.thy:369"),
    ("parityTranslation$source_map_add_find_right",
     "src/HOL/Map.thy:363"),
    ("parityTranslation$source_map_add_assoc", "src/HOL/Map.thy:352"),

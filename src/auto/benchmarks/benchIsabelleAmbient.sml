@@ -60,6 +60,7 @@ val introductions =
    ("source_extract_def", Definition, "src/HOL/List.thy:217"),
    ("source_fold_def", Primrec, "src/HOL/List.thy:109"),
    ("source_foldr_def", Primrec, "src/HOL/List.thy:113"),
+   ("source_fun_upd_def", Definition, "src/HOL/Fun.thy:831"),
    ("source_greaterThanAtMost_def", Simp, "src/HOL/Set_Interval.thy:201"),
    ("source_greaterThan_def", Simp, "src/HOL/Set_Interval.thy:110"),
    ("source_hd_def", Datatype, "src/HOL/List.thy:13"),

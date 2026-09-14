@@ -5897,6 +5897,50 @@ Proof
   >> metis_tac[]
 QED
 
+(* Isabelle/HOL src/HOL/Fun.thy:831 [fun_upd], a plain definition, and
+   the whole of a maplet: src/HOL/Map.thy:74 makes [m(a |-> b)] syntax
+   for it.  It is a constant there -- a method reaches its body only by
+   naming [fun_upd_def] -- and Map.thy states result after result of the
+   unapplied constant simp: [map_add_upd] at :369, [restrict_fun_upd] at
+   :441, [dom_fun_upd] at :581, [fun_upd_None_if_notin_dom] at :707.
+   The corpus carried the body instead, against which none of them can
+   be stated at all: the body is a conditional, and the weak conditional
+   congruence Isabelle and this layer both keep leaves a branch alone,
+   so no rewrite reaches the map the update is built on. *)
+Definition source_fun_upd_def:
+  source_fun_upd func key value =
+    \query. if query = key then value else func query
+End
+
+(* src/HOL/Fun.thy:872 [fun_upd_apply], declared [simp] -- the equation
+   that takes the constant apart again wherever a method reaches a
+   point; :883 [fun_upd_upd], also [simp]; and :869 [fun_upd_triv],
+   declared [iff].  Between them they are the whole of what Isabelle's
+   simpset reads about an update whose definition it withholds. *)
+Theorem source_fun_upd_apply:
+  !func key value query.
+    source_fun_upd func key value query =
+    if query = key then value else func query
+Proof
+  rw[source_fun_upd_def]
+QED
+
+Theorem source_fun_upd_upd:
+  !func key value replacement.
+    source_fun_upd (source_fun_upd func key value) key replacement =
+    source_fun_upd func key replacement
+Proof
+  rw[source_fun_upd_def, boolTheory.FUN_EQ_THM]
+QED
+
+Theorem source_fun_upd_triv:
+  !func key. source_fun_upd func key (func key) = func
+Proof
+  rw[source_fun_upd_def, boolTheory.FUN_EQ_THM]
+  >> COND_CASES_TAC
+  >> simp[]
+QED
+
 (* Isabelle/HOL src/HOL/Map.thy:193-845. *)
 Definition source_alookup_def[simp]:
   (source_alookup ([] : ('a # 'b) list) key = NONE) /\
@@ -6164,38 +6208,6 @@ Proof
   >> metis_tac[alistTheory.ALOOKUP_ALL_DISTINCT_MEM]
 QED
 
-(* src/HOL/Map.thy: map_upd_upds_conv_if. *)
-Theorem source_map_upd_upds_conv_if:
-  !function key value keys values.
-    (\query.
-       option_CASE
-         (ALOOKUP (REVERSE (ZIP (keys,values))) query)
-         (if query = key then SOME value else function query)
-         SOME) =
-    if MEM key (TAKE (LENGTH values) keys) then
-      (\query.
-         option_CASE
-           (ALOOKUP (REVERSE (ZIP (keys,values))) query)
-           (function query)
-           SOME)
-    else
-      (\query.
-         if query = key then SOME value
-         else
-           option_CASE
-             (ALOOKUP (REVERSE (ZIP (keys,values))) query)
-             (function query)
-             SOME)
-Proof
-  rpt gen_tac
-  >> simp[boolTheory.FUN_EQ_THM]
-  >> gen_tac
-  >> Cases_on `query = key`
-  >> fs[]
-  >> Cases_on `ALOOKUP (REVERSE (ZIP (keys,values))) key`
-  >> fs[GSYM source_alookup_reverse_zip_is_some]
-QED
-
 Theorem source_not_mem_take:
   !key keys count.
     ~MEM key keys ==>
@@ -6272,7 +6284,8 @@ Theorem source_map_upd_upds_conv_not_mem:
            SOME)
 Proof
   rpt strip_tac
-  >> rw[source_map_upd_upds_conv_if]
+  >> irule source_alookup_update_twist
+  >> metis_tac[source_alookup_reverse_zip_none]
 QED
 
 Theorem source_map_upd_upds_twist_full:
@@ -6550,6 +6563,58 @@ Definition source_map_upds_def:
     source_map_add func (ALOOKUP (REVERSE (ZIP (keys,values))))
 End
 
+(* Isabelle/HOL src/HOL/Map.thy:91 [map_of.simps], a primrec clause and
+   so ambient.  Isabelle states it as an equation between functions,
+   onto [empty]; HOL4's recursion takes the key as well, so the
+   translation's own clause is the pointwise reading and a rewrite that
+   has to see the unapplied map -- [map_add_empty] below -- does not
+   reach it. *)
+Theorem source_map_of_Nil:
+  source_alookup ([] : ('a # 'b) list) = (\key. NONE)
+Proof
+  simp[boolTheory.FUN_EQ_THM]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:346 [map_add_empty], declared [simp]. *)
+Theorem source_map_add_empty:
+  !func : 'a -> 'b option. source_map_add func (\key. NONE) = func
+Proof
+  rw[source_map_add_def, boolTheory.FUN_EQ_THM]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:92 [map_of.simps], the cons clause.
+   Isabelle states it as an update of the tail's map and not as a
+   conditional, which is what lets [map_add_upd] below reach the tail:
+   written the other way the tail sits in a branch no rewrite descends
+   into. *)
+Theorem source_map_of_Cons:
+  !stored_key value rest.
+    source_alookup ((stored_key,value)::rest) =
+    source_fun_upd (source_alookup rest) stored_key (SOME value)
+Proof
+  rw[source_fun_upd_def, boolTheory.FUN_EQ_THM]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:378 [map_of_append], declared [simp]. *)
+Theorem source_map_of_append:
+  !left right.
+    source_alookup (left ++ right) =
+    source_map_add (source_alookup right) (source_alookup left)
+Proof
+  rw[boolTheory.FUN_EQ_THM, source_map_add_def, source_alookup_append]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:369 [map_add_upd], declared [simp]. *)
+Theorem source_map_add_upd:
+  !left right key value.
+    source_map_add left (source_fun_upd right key (SOME value)) =
+    source_fun_upd (source_map_add left right) key (SOME value)
+Proof
+  rw[boolTheory.FUN_EQ_THM, source_map_add_def, source_fun_upd_def]
+  >> BasicProvers.EVERY_CASE_TAC
+  >> simp[]
+QED
+
 (* Isabelle/HOL src/HOL/Map.thy:352 [map_add_assoc], declared [simp]. *)
 Theorem source_map_add_assoc:
   !left middle right.
@@ -6559,6 +6624,28 @@ Proof
   rw[source_map_add_def, FUN_EQ_THM]
   >> Cases_on `right x`
   >> simp[]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:501 [map_upd_upds_conv_if], not
+   declared and named by map_L519's method.  Isabelle states it of the
+   two constants, an update of a list update against a list update of
+   an update; it was unstatable while the corpus carried the update as
+   a beta-redex, and the option case had to be written out on both
+   sides instead. *)
+Theorem source_map_upd_upds_conv_if:
+  !function key value keys values.
+    source_map_upds (source_fun_upd function key (SOME value)) keys values =
+    if MEM key (TAKE (LENGTH values) keys) then
+      source_map_upds function keys values
+    else
+      source_fun_upd (source_map_upds function keys values) key (SOME value)
+Proof
+  rpt gen_tac
+  >> rw[source_map_upds_def, source_map_add_def, source_fun_upd_def,
+        boolTheory.FUN_EQ_THM]
+  >> rpt (COND_CASES_TAC >> fs[])
+  >> Cases_on `ALOOKUP (REVERSE (ZIP (keys,values))) key`
+  >> fs[GSYM source_alookup_reverse_zip_is_some]
 QED
 
 (* Isabelle/HOL src/HOL/Map.thy:366 [map_add_None], declared [iff]. *)
