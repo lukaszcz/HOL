@@ -1095,6 +1095,37 @@ fun exact_rule_results cs specification =
 fun all_weights _ = true
 fun weight_is expected ({weight, ...} : clasetLib.tag) = weight = expected
 
+fun is_product_type ty =
+  case total Type.dest_type ty of
+      SOME ("prod", [_, _]) => true
+    | _ => false
+
+(* Isabelle splits the whole parameter prefix of a subgoal at once, so the
+   test looks through the leading universals and not only at the first. *)
+fun paired_forall term =
+  case total dest_forall term of
+      SOME (bound, body) =>
+        is_product_type (type_of bound) orelse paired_forall body
+    | NONE => false
+
+(* Isabelle splits the subgoal's parameters, and a HOL4 subgoal's free
+   variables are exactly those: the goal claims its conclusion for all of
+   them.  Reading the step off the engine's own parameter list instead
+   would not survive the tactics built on it -- CLARIFY re-enters from a
+   plain goal at each step, so the variable a rule stripped out of its
+   premise is an ordinary free variable by the time the next step looks.
+   Metavariables are excluded: they stand for the schematic variables
+   Isabelle's parameter split never touches, and taking one apart would
+   commit the search to a pair before it has chosen the witness. *)
+fun splittable_variable (asl, w) =
+  let
+    fun splittable variable =
+      is_product_type (type_of variable) andalso
+      not (clasetMeta.is_meta variable)
+  in
+    List.find splittable (free_varsl (w :: asl))
+  end
+
 fun builtin_results (node, pos) =
   let
     val rendered as (_, w) = clasetGoal.render node pos
@@ -1149,6 +1180,26 @@ fun builtin_results (node, pos) =
     if is_imp_only w then
       make (clasetGoal.store node) Disch clasetReplay.disch_action
         Tactic.DISCH_TAC
+    else if paired_forall w then
+      make (clasetGoal.store node) SplitPaired
+        clasetReplay.split_paired_action clasetReplay.SPLIT_PAIRED_TAC
+    else if Option.isSome (splittable_variable rendered) then
+      let
+        val target = valOf (splittable_variable rendered)
+        val base = fst (dest_var target)
+        val (first_type, second_type) =
+          pairSyntax.dest_prod (type_of target)
+        val (left, store) =
+          clasetGoal.fresh_eigen node (mk_var (base ^ "_1", first_type))
+        val (right, _) =
+          clasetGoal.fresh_eigen node (mk_var (base ^ "_2", second_type))
+        val names =
+          {variable = base, left = fst (dest_var left),
+           right = fst (dest_var right)}
+      in
+        make store SplitPaired (clasetReplay.split_paired_var_action names)
+          (clasetReplay.SPLIT_PAIRED_VAR_TAC names)
+      end
     else if is_forall w then
       let
         val (bound, _) = dest_forall w

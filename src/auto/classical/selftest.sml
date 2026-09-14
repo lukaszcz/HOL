@@ -2452,6 +2452,89 @@ val _ =
                   | _ => false)
        end)
 
+(* src/HOL/Product_Type.thy:518 @ Isabelle2025-2 installs [split_all_tac]
+   as a safe claset wrapper, so a product parameter is replaced by one
+   parameter per component before any safe rule is tried.  The universal
+   here is the parameter, and its own introduction must not get there
+   first. *)
+val _ =
+  test
+    ("a paired universal splits before the built-in introduction",
+     fn () =>
+       let
+         val paired =
+           Term.mk_var ("phase1_pair",
+             pairSyntax.mk_prod (Type.ind, Type.ind) --> Type.bool)
+         val bound =
+           Term.mk_var ("phase1_v",
+             pairSyntax.mk_prod (Type.ind, Type.ind))
+         val goal =
+           ([], boolSyntax.mk_forall (bound, mk_comb (paired, bound)))
+       in
+         case first_step clasetStep.safe_step cascade_cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case (clasetStep.kind_of record, rendered_goals node) of
+                    (clasetStep.SplitPaired, [(_, split)]) =>
+                      let
+                        val (left, body) = boolSyntax.dest_forall split
+                        val (right, _) = boolSyntax.dest_forall body
+                      in
+                        Type.compare (type_of left, Type.ind) = EQUAL
+                        andalso
+                        Type.compare (type_of right, Type.ind) = EQUAL
+                        andalso valid_step goal (record, node)
+                      end
+                  | _ => false)
+       end)
+
+(* Isabelle's split_all_tac (src/HOL/Product_Type.thy:493 @ Isabelle2025-2)
+   splits the subgoal's parameters, and a HOL4 subgoal states its
+   conclusion for every free variable it carries, so a product-typed free
+   variable is one too even where no universal is left to strip. *)
+val _ =
+  test
+    ("a product free variable splits like a parameter",
+     fn () =>
+       let
+         val pair_type = pairSyntax.mk_prod (Type.ind, Type.ind)
+         val paired =
+           Term.mk_var ("phase1_free_pair", pair_type --> Type.bool)
+         val free = Term.mk_var ("phase1_free_v", pair_type)
+         val goal = ([], mk_comb (paired, free))
+       in
+         case first_step clasetStep.safe_step cascade_cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case (clasetStep.kind_of record, rendered_goals node) of
+                    (clasetStep.SplitPaired, [(_, split)]) =>
+                      not (List.exists (aconv free) (free_vars split))
+                      andalso valid_step goal (record, node)
+                  | _ => false)
+       end)
+
+(* A metavariable is not a parameter: it stands for the schematic variable
+   Isabelle's split never reaches, and taking it apart would commit the
+   search to a pair before it has chosen the witness. *)
+val _ =
+  test
+    ("a product metavariable is not split",
+     fn () =>
+       let
+         val pair_type = pairSyntax.mk_prod (Type.ind, Type.ind)
+         val paired =
+           Term.mk_var ("phase1_meta_pair", pair_type --> Type.bool)
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = pair_type} clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [], w = mk_comb (paired, meta)}],
+              store = store, level = 0}
+       in
+         not (Option.isSome
+           (seq.cases (clasetStep.safe_step cascade_cs (node, 1))))
+       end)
+
 val _ =
   test
     ("safe cascade slot 4 saturates hypothesis substitution",

@@ -21,6 +21,7 @@ datatype step_kind =
        elim : bool}
   | Disch
   | Gen
+  | SplitPaired
   | HypSubst
   | CContr
   | SwappedBuiltin of int
@@ -712,6 +713,47 @@ fun GEN_NAMED_TAC name (asl, w) =
                  ([child], validation)
                end)
 
+(* src/HOL/Product_Type.thy:518 @ Isabelle2025-2 installs [split_all_tac]
+   as a safe claset wrapper, so a parameter of product type is replaced by
+   one parameter per component before any safe rule is tried.  HOL4 has no
+   meta-quantifier: the parameter is a leading universal, and the same step
+   is [FORALL_PROD] applied to the quantifier rather than to every subterm
+   of the goal. *)
+local
+  fun split_conv term =
+    if is_forall term then
+      Conv.THENC
+        (Conv.REPEATC (Conv.HO_REWR_CONV pairTheory.FORALL_PROD),
+         Conv.TRY_CONV (Conv.BINDER_CONV split_conv))
+        term
+    else Conv.ALL_CONV term
+in
+  val SPLIT_PAIRED_TAC = Tactic.CONV_TAC (Conv.CHANGED_CONV split_conv)
+end
+
+(* The parameter case of the same step.  A product parameter reaches a
+   subgoal already stripped -- a rule's own bound variable becomes an
+   eigenvariable, never a universal the goal still carries -- so the
+   split is a case analysis on the parameter, and it has to reach the
+   assumptions it was stripped alongside. *)
+fun SPLIT_PAIRED_VAR_TAC {variable, left, right} (goal as (asl, w)) =
+  let
+    val target =
+      case List.find (fn free => fst (dest_var free) = variable)
+        (free_varsl (w :: asl))
+      of
+          SOME free => free
+        | NONE =>
+            raise mk_HOL_ERR "clasetReplay" "SPLIT_PAIRED_VAR_TAC"
+              "the parameter is not free in the goal"
+    val (first_type, second_type) = pairSyntax.dest_prod (type_of target)
+  in
+    Thm_cont.X_CHOOSE_THEN (mk_var (left, first_type))
+      (Thm_cont.X_CHOOSE_THEN (mk_var (right, second_type))
+        Tactic.SUBST_ALL_TAC)
+      (Drule.ISPEC target pairTheory.ABS_PAIR_THM) goal
+  end
+
 val GOAL_NEGATION_TAC = Tactic.CCONTR_TAC
 
 fun SWAPPED_BUILTIN_TAC _ pos (asl, w) =
@@ -828,6 +870,8 @@ fun blast_hyp_subst_action_at fields _ =
   BLAST_HYP_SUBST_TAC_AT fields
 val disch_action = fn _ => Tactic.DISCH_TAC
 fun gen_action name _ = GEN_NAMED_TAC name
+val split_paired_action = fn _ => SPLIT_PAIRED_TAC
+fun split_paired_var_action names _ = SPLIT_PAIRED_VAR_TAC names
 val goal_negation_action = fn _ => GOAL_NEGATION_TAC
 fun swapped_builtin_action pos store =
   NORMALIZED_SWAPPED_BUILTIN_TAC store pos
@@ -996,6 +1040,7 @@ fun kind_name (Assumption pos) = "assumption " ^ Int.toString pos
       (if elim then ",elim)" else ",intro)")
   | kind_name Disch = "DISCH"
   | kind_name Gen = "GEN"
+  | kind_name SplitPaired = "split-paired"
   | kind_name HypSubst = "hyp-subst"
   | kind_name CContr = "CCONTR"
   | kind_name (SwappedBuiltin pos) =
