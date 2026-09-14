@@ -62,20 +62,6 @@ val prefix_from_its_indices =
      ^ "it is read at and a prefix, which neither simpset carries")
     ["list_L3566_map_nth_upt0"]
 
-val distinctness_through_a_zip =
-  classified "distinctness through a zip"
-    ("the residual is ALL_DISTINCT of a ZIP whose first column is "
-     ^ "an interval; distinctness of the pairs does not reduce to "
-     ^ "distinctness of that column by rewriting")
-    ["list_L5176_distinct_indexed_from"]
-
-val zip_over_an_append =
-  classified "zip over an append"
-    ("the residual needs the interval of length [LENGTH xs + LENGTH "
-     ^ "ys] split into the two intervals the two ZIPs consume, a "
-     ^ "rewrite whose direction depends on the lengths")
-    ["list_L5180_indexed_from_append_eq"]
-
 val transpose_column_lengths =
   classified "transpose column lengths"
     ("the residual is that the column lengths of a transpose "
@@ -448,8 +434,6 @@ val a_reading_of_the_characterisation_is_the_goal =
 
 val execution : benchLib.shortfall list =
   prefix_from_its_indices @
-  distinctness_through_a_zip @
-  zip_over_an_append @
   transpose_column_lengths @
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @

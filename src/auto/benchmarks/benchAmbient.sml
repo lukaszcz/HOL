@@ -73,6 +73,14 @@ val sorted_wrt_correspondence =
    equal lengths instead of the two bounds the truncating ZIP needs,
    so the translation states Isabelle's form.
 
+   List.thy:3788 declares [distinct_upt] simp, List.thy:3478
+   [take_upt] and List.thy:3485 [drop_upt], which is how a source proof
+   that asks whether an interval repeats, or cuts one at a length,
+   never names them.  HOL4's list library answers the first with an
+   injectivity condition and carries neither of the other two, so the
+   three transplants below are what its interval vocabulary lacks
+   against Isabelle's.
+
    Map.thy declares [map_add_find_right], [map_add_assoc],
    [map_le_refl] and [map_le_map_add] simp and [map_add_None] iff,
    about [map_add] and [map_le], whose definitions it withholds: a
@@ -90,6 +98,9 @@ val declared_results =
        "source_takeWhile_append1",
        "source_takeWhile_append2",
        "source_nth_zip",
+       "source_distinct_upt",
+       "source_take_upt",
+       "source_drop_upt",
        "source_map_add_find_right",
        "source_map_add_assoc",
        "source_map_add_None",
@@ -222,6 +233,9 @@ val declaration_sites =
    ("parityTranslation$source_takeWhile_append2",
     "src/HOL/List.thy:2504"),
    ("parityTranslation$source_nth_zip", "src/HOL/List.thy:2789"),
+   ("parityTranslation$source_distinct_upt", "src/HOL/List.thy:3788"),
+   ("parityTranslation$source_take_upt", "src/HOL/List.thy:3478"),
+   ("parityTranslation$source_drop_upt", "src/HOL/List.thy:3485"),
    ("parityTranslation$source_map_add_find_right",
     "src/HOL/Map.thy:363"),
    ("parityTranslation$source_map_add_assoc", "src/HOL/Map.thy:352"),

@@ -7917,6 +7917,40 @@ Proof
   >> simp[]
 QED
 
+(* src/HOL/List.thy declares [distinct_upt] (:3788), [take_upt] (:3478)
+   and [drop_upt] (:3485) simp, so a source proof that takes an interval
+   apart or asks whether one repeats never names them.  HOL4's own
+   [ALL_DISTINCT_GENLIST] is an injectivity condition rather than a
+   fact, and its list library carries no law at all for a prefix or a
+   suffix of an interval; each of the three is stated here in the
+   eta-contracted [$+ start] form the goals arrive in. *)
+Theorem source_distinct_upt:
+  !start length. ALL_DISTINCT (GENLIST ($+ start) length)
+Proof
+  rw[listTheory.ALL_DISTINCT_GENLIST]
+QED
+
+Theorem source_take_upt:
+  !start amount length.
+    amount <= length ==>
+    TAKE amount (GENLIST ($+ start) length) = GENLIST ($+ start) amount
+Proof
+  rpt strip_tac
+  >> `MIN amount length = amount`
+       by (rw[arithmeticTheory.MIN_DEF] >> decide_tac)
+  >> simp[listTheory.TAKE_GENLIST]
+QED
+
+Theorem source_drop_upt:
+  !start amount length.
+    DROP amount (GENLIST ($+ start) length) =
+    GENLIST ($+ (start + amount)) (length - amount)
+Proof
+  rw[listTheory.DROP_GENLIST, combinTheory.o_DEF,
+     listTheory.GENLIST_FUN_EQ]
+  >> decide_tac
+QED
+
 Theorem source_tl_num_genlist:
   !start length.
     TL (GENLIST (\offset. start + offset) length) =
