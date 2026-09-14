@@ -54,9 +54,12 @@ fun classified classification note ids =
 
 val prefix_from_its_indices =
   classified "prefix from its indices"
-    ("the residual is [GENLIST (\\index. EL index xs) count = TAKE "
-     ^ "count xs]; rebuilding a prefix out of the indices it is "
-     ^ "read at is not a rewrite either simpset carries")
+    ("the cited [map_nth_upt] has no HOL4 counterpart: the name table "
+     ^ "answers it with [rich_listTheory.MAP_COUNT_LIST], which fuses "
+     ^ "the MAP into a GENLIST and says nothing about a prefix, so "
+     ^ "what is left is [GENLIST (\\index. EL index xs) count = TAKE "
+     ^ "count xs] -- an equation between a list built from the indices "
+     ^ "it is read at and a prefix, which neither simpset carries")
     ["list_L3566_map_nth_upt0"]
 
 val distinctness_through_a_zip =

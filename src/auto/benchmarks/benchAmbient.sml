@@ -156,8 +156,11 @@ val ambient_definitions =
    schematic is applied at every tableau node, so it meets the
    undetermined literals a witness-guessing branch leaves behind: the
    seed clasets measured [set_L1610_Pow_Compl] at 88 tableau branches
-   with such a rule unsafe and 3638 and past budget with it [sdest],
-   and [map_add_SomeD] is that shape.  It costs nothing there --
+   with such a rule unsafe and 3638 and past budget with it [sdest]
+   (measured 2026-09-09; that goal has since become a shortfall of its
+   own, over budget in either class, so the contrast is the record of
+   what the class cost and not a goal to re-run for it), and
+   [map_add_SomeD] is that shape.  It costs nothing there --
    [map_L611] closes in 0.107s safe and 0.100s unsafe -- so it is
    carried unsafe against its [dest!].  The Sigma rules run the other
    way: safe, they close [split_paired_Ball_Sigma], its [Bex] twin,
