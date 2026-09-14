@@ -15,8 +15,8 @@
      CFG_LINARITH_TAC cfg ths  explicit configuration
      LINARITH_PROVE tm         forward-rule form, returns the theorem
      LINARITH_CONV             conversion deciding a relation
-     LINARITH_ss               simpset fragment: makes the simplifier
-                               discharge linear side conditions
+     LINARITH_ss               simpset fragment: the simplifier decides
+                               an arithmetic atom wherever it meets one
 
    The num instance is built in; loading intLinarith, realLinarith and
    ratLinarith (as this theory's Libs line does) registers the int,
@@ -161,10 +161,12 @@ Proof
 QED
 
 (* --------------------------------------------------------------------------
-   LINARITH_ss: linear arithmetic as a simplifier solver.  Added to a
-   simpset, it discharges arithmetic side conditions arising inside
-   simplification: here EL_TAKE's guard [x < n] follows from the
-   assumption [x + 1 < n] only by linear reasoning, which bool_ss
+   LINARITH_ss: linear arithmetic inside the simplifier.  Added to a
+   simpset, the procedure is asked about an arithmetic atom wherever
+   the traversal meets one: the atom rewriting has left standing, and
+   the side condition of a conditional rewrite, which is simplified
+   with the same simpset.  Here EL_TAKE's guard [x < n] follows from
+   the assumption [x + 1 < n] only by linear reasoning, which bool_ss
    alone cannot supply.
    -------------------------------------------------------------------------- *)
 

@@ -381,6 +381,28 @@ fun derive_clasimp_ss ss _ =
      rewriting has left standing, and the side condition of a conditional
      rewrite, which is simplified with this same simpset. *)
   |> (fn ss' => simpLib.++ (ss', orderLib.ORDER_ss))
+  (* Isabelle decides an arithmetic atom wherever the traversal meets
+     one.  [Fields.thy]'s [fast_arith_nat] and [Int.thy]'s [fast_arith]
+     are simprocs on [m < n], [m <= n] and [m = n], and the comment on
+     the first says what the solver below is left with once they are
+     there: the arithmetic solver "is really only useful to detect
+     inconsistencies among the premises for subgoals which are not
+     themselves (in)equalities, because the latter activate
+     fast_nat_arith_simproc anyway".  The layer carried only that half,
+     so an unfolded interval left a linear fact about num -- an atom in
+     the goal rather than the condition of a rewrite -- standing. *)
+  |> (fn ss' => simpLib.++ (ss', linarithLib.LINARITH_ss))
+  (* The other half of that layer.  HOL4's own arithmetic simproc
+     fragment normalises a linear term as well as deciding an atom --
+     [std_ss ++ numSimps.ARITH_DP_ss] answers [LENGTH l - 1 - n] with
+     [LENGTH l - (n + 1)] -- and the reducer above only decides.  So two
+     spellings of one term never met here: this simpset folds the
+     repeated subtraction to [LENGTH l - (1 + n)] and leaves it beside
+     [LENGTH l - (n + 1)].  [ARITH_AC_ss] is that normalisation on its
+     own, and it is num only; the int and real instances have no AC
+     fragment to point at, which is a limit of this line and not of the
+     argument for it. *)
+  |> (fn ss' => simpLib.++ (ss', numSimps.ARITH_AC_ss))
   |> simpLib.set_safe_solvers [safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
 

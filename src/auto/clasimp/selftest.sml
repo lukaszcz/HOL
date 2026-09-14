@@ -1353,6 +1353,43 @@ val _ =
            valid_closes auto_linarith_tactic auto_arith_fact_goal) andalso
        tactic_fails auto_linarith_tactic auto_arith_fact_goal)
 
+(* Isabelle's arithmetic simprocs answer an atom wherever the traversal
+   meets one, so the layer's simpset carries a decision procedure beside
+   its rewrites.  An implication between two bounds is a rewrite for
+   nothing: only that procedure closes it. *)
+val auto_arith_atom = ``~((m:num) < n) ==> ~(SUC m < n)``
+
+val _ =
+  check
+    ("the simpset decides an arithmetic atom rewriting leaves standing",
+     fn () =>
+       aconv
+         (boolSyntax.rhs (concl
+            (Conv.QCONV
+              (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [])
+              auto_arith_atom)))
+         boolSyntax.T)
+
+(* The other half of that layer: deciding an atom is not normalising a
+   term, and two spellings of one sum must not be left side by side for
+   the search to rediscover. *)
+val auto_arith_spellings =
+  (``(x:num) + (y + z)``, ``(z:num) + (y + x)``)
+
+val _ =
+  check
+    ("the simpset gives two spellings of a sum one normal form",
+     fn () =>
+       let
+         fun normal_form tm =
+           boolSyntax.rhs (concl
+             (Conv.QCONV
+               (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) []) tm))
+       in
+         aconv (normal_form (fst auto_arith_spellings))
+               (normal_form (snd auto_arith_spellings))
+       end)
+
 val _ =
   check
     ("CS_AUTO_TAC uses the supplied claset and simpset",

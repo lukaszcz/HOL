@@ -154,17 +154,6 @@ val sorted_list_of_a_set =
     ["list_L6669_sorted_key_list_of_set_eq_Nil_iff",
      "list_L6847_sorted_list_of_set_nonempty"]
 
-val arithmetic_residual_after_unfolding =
-  classified "arithmetic residual after unfolding"
-    ("the interval equation unfolds now that the conditional "
-     ^ "congruence is the weak one, and what is left is a linear "
-     ^ "arithmetic fact about num -- [~(m < n) ==> ~(SUC m < n)] and "
-     ^ "[!i j. j < i ==> ~(i <= j)].  The assigned simp method carries "
-     ^ "linarith as a side-condition solver, which discharges the "
-     ^ "conditions of conditional rewrites and not the goal it is left "
-     ^ "with")
-    ["list_L3509_tl_upt", "list_L3646_upto_rec1"]
-
 val filter_normalisation =
   classified "filter normalisation"
     ("FILTER against a composed or negated predicate is not "
@@ -180,8 +169,7 @@ val indexing_through_list_constructors =
      ^ "rules that the goal does not supply, or the index "
      ^ "characterisation itself, which neither simplification nor "
      ^ "search reduces")
-    ["list_L2480_take_update_cancel", "list_L2483_drop_update_cancel",
-     "list_L3168_list_eq_iff_zip_eq",
+    ["list_L3168_list_eq_iff_zip_eq",
      "list_L3919_bij_betw_nth",
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
@@ -469,7 +457,6 @@ val execution : benchLib.shortfall list =
   instantiated_fact_not_applied @
   over_budget_with_no_residual @
   sorted_list_of_a_set @
-  arithmetic_residual_after_unfolding @
   filter_normalisation @
   indexing_through_list_constructors @
   simplification_and_search_reports_no_proof @
