@@ -387,8 +387,21 @@ val _ = benchLib.set_definitional_context (map #theorem wrapper_definitions)
 (* The bridge is also the correspondence a recipe's own rules are
    offered across: it is what rewrites a goal out of [source_sorted_wrt]
    and into SORTED, so a cited rule stated on the translated predicate
-   has to be available on the other side too. *)
+   has to be available on the other side too.
+
+   The alias definitions cross for the same reason.  They are ambient,
+   so a goal spelling [source_lexord] spells LLEX by the time a rule is
+   tried; the lemmas above are read through them where they are
+   declared, and a citation the source method names is read nowhere.
+   [list_L7508_lexord_trans] cites [lexord_partial_trans] as an intro
+   rule and its residual is stated on LLEX, which that rule does not
+   mention; across the correspondence the goal closes in 0.065s.
+   Crossed rather than read through, because the ambient context is cut
+   to what was in scope at the goal's own line: a goal above the
+   definition does not carry it and still spells the alias. *)
 val _ =
-  benchLib.set_correspondences [#theorem sorted_wrt_correspondence]
+  benchLib.set_correspondences
+    (#theorem sorted_wrt_correspondence ::
+     map #theorem alias_definitions)
 
 end

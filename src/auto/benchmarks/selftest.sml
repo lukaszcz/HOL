@@ -2801,10 +2801,10 @@ val _ =
    [list_L6873_nth_sorted_list_of_set_greaterThanAtMost],
    [list_L3381_anon_L3381], [list_L5527_Nil_in_shufflesI],
    [list_L5470_subset_subseqs], [list_L8673_these_set_code],
-   [list_L7922_wf_listrel1_iff], [list_L7771_wf_measures],
-   [list_L7508_lexord_trans] and [list_L7954_listrel_iff_nth].
-   Closing any of those shortfalls means restoring its generalization
-   test in the same commit. *)
+   [list_L7922_wf_listrel1_iff], [list_L7771_wf_measures] and
+   [list_L7954_listrel_iff_nth].  Closing any of those shortfalls means
+   restoring its generalization test in the same commit, as
+   [list_L7508_lexord_trans]'s is restored below. *)
 
 fun retarget_goal id goal (base : benchLib.corpus_goal) =
   {id = id, goal = goal, source_method = #source_method base,
@@ -2825,7 +2825,15 @@ val promoted_recovered_schema_goals =
          (set_relation$reln_to_rel
            (LIST_TO_SET [((1 : num), 2)])) <=>
        set_relation$acyclic (LIST_TO_SET [((1 : num), 2)])``
-     (goal_named "list_L8709_wf_set" benchListMap.goals)]
+     (goal_named "list_L8709_wf_set" benchListMap.goals),
+   retarget_goal "schema-lexord-transitive-lift"
+     ``!relation : 'a -> 'a -> bool.
+         relation$transitive relation ==>
+         !left middle right.
+           parityTranslation$source_lexord relation [left] [middle] ==>
+           parityTranslation$source_lexord relation [middle] [right] ==>
+           parityTranslation$source_lexord relation [left] [right]``
+     (goal_named "list_L7508_lexord_trans" benchListMap.goals)]
 
 val _ =
   check
