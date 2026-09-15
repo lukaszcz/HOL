@@ -1542,6 +1542,18 @@ fun within_budget budget work =
   SOME (Timeout.apply budget work ())
   handle Timeout.TIMEOUT _ => NONE
 
+(* A source result's variables are fixed in the proof state the method
+   runs on: Isabelle's premises are that subgoal's, and the lemma's
+   variables are its parameters.  A corpus goal states the result
+   closed, so the same premises arrive as the antecedents of a
+   conclusion under a binder -- where the implication congruence offers
+   a premise only the premises before it, and no premise reaches the
+   assumptions the method reads.  Fixing the parameters first is what
+   the generated corpus files write out by hand, stating a source
+   result with free variables; this is the same goal for the entries
+   that state it closed. *)
+val fix_parameters = Tactical.REPEAT Tactic.GEN_TAC
+
 (* What is timed, and what the budget is spent on, is the tactic.
    Preparing the goal's simpset is neither: it asks the circularity
    guard about every ambient rewrite, which costs a tenth of a second
@@ -1562,7 +1574,9 @@ fun run_goal budget recipe (entry : corpus_goal) =
       Parse.term_to_string conclusion
     fun run () =
       case Tactical.VALID
-             (preserve_target (compile_recipe simpset entry recipe))
+             (Tactical.THEN
+                (fix_parameters,
+                 preserve_target (compile_recipe simpset entry recipe)))
              ([], #goal entry) of
           ([], validation) => (ignore (validation []); true)
         | (goals, _) =>
