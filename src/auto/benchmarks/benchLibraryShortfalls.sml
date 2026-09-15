@@ -333,17 +333,6 @@ val a_recursion_where_the_source_composes =
      ^ "method does not name")
     ["list_L7771_wf_measures"]
 
-val no_ambient_rule_for_the_image =
-  classified "no ambient rule for the image"
-    ("the two citations resolve and the unfolding leaves [FINITE "
-     ^ "(IMAGE (\\key. (key, THE (mapping key))) (\\key. mapping key "
-     ^ "<> NONE))] with the finiteness of the second set supplied as a "
-     ^ "fact.  Isabelle closes that from [finite_imageI], Finite_Set.thy, "
-     ^ "declared [simp, intro]; the HOL4 seeds declare no counterpart of "
-     ^ "[IMAGE_FINITE], so the search has no step from the set to its "
-     ^ "image")
-    ["map_L828_finite_graph_map_of"]
-
 val integer_interval_emptiness =
   classified "integer interval emptiness"
     ("the residual is [j < i ==> source_upto i j = []], which the "
@@ -498,7 +487,6 @@ val execution : benchLib.shortfall list =
   membership_through_a_guarded_flatten @
   transitive_closure_from_a_step_list @
   a_recursion_where_the_source_composes @
-  no_ambient_rule_for_the_image @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @

@@ -1267,17 +1267,19 @@ fun tactic_for simpset goal Simp args exclusions =
           Lib.can
             (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV hurdUtils.SET_EQ_CONV))
             goal
-        val normalise_rule =
+        fun normalise_with rewrites =
           Conv.QCONV
             (Conv.THENC
               (Conv.TRY_CONV
                  (Conv.ONCE_DEPTH_CONV hurdUtils.SET_EQ_CONV),
                simpLib.SIMP_CONV simpset
-                 (simps @ simp_controls goal exclusions)))
-        fun normalised_theorem theorem =
-          case Lib.total (Conv.CONV_RULE normalise_rule) theorem of
+                 (rewrites @ simp_controls goal exclusions)))
+        val normalise_rule = normalise_with simps
+        fun normalised_by rewrites theorem =
+          case Lib.total (Conv.CONV_RULE (normalise_with rewrites)) theorem of
               SOME normalised => normalised
             | NONE => theorem
+        val normalised_theorem = normalised_by simps
         fun rule_kind (IntroAdd (strength, _)) =
               SOME (clasetRules.Intro, strength)
           | rule_kind (ElimAdd (strength, _)) =
@@ -1319,6 +1321,34 @@ fun tactic_for simpset goal Simp args exclusions =
             (args @
              (if preprocess_fires then List.concat (map carried args)
               else []))
+        (* A supplied fact is stated in the same vocabulary as a
+           supplied rule, and the pass rewrites the goal out of it just
+           as surely: [finite_dom_map_of] states the finiteness of a
+           domain the pass turns into an existential, leaving the
+           search two spellings of one set and no way to see they are
+           the same.  Isabelle's [unfolding] rewrites the chained facts
+           with the goal; the facts go through the pass here for the
+           same reason the rules do, and both forms reach the search. *)
+        fun carried_fact (FactAdd {name, theorem}) =
+              let
+                (* The pass a fact goes through is the goal's, and the
+                   goal is not the fact: a fact left among the rewrites
+                   normalises itself to [T], which states nothing. *)
+                val others =
+                  List.filter
+                    (fn rewrite =>
+                      not (aconv (Thm.concl rewrite) (Thm.concl theorem)))
+                    simps
+                val rewritten = normalised_by others theorem
+              in
+                if aconv (Thm.concl theorem) (Thm.concl rewritten) then []
+                else [FactAdd {name = name, theorem = rewritten}]
+              end
+          | carried_fact _ = []
+        val fact_args =
+          args @
+          (if preprocess_fires then List.concat (map carried_fact args)
+           else [])
         fun trace_residual (goal as (_, target)) =
           (if OS.Process.getEnv "HOLBENCHBLASTRESIDUAL" = SOME "1" then
              TextIO.print
@@ -1327,7 +1357,7 @@ fun tactic_for simpset goal Simp args exclusions =
              ();
            Tactical.ALL_TAC goal)
       in
-        with_facts args
+        with_facts fact_args
           (Tactical.ORELSE
             (direct_supplied,
              Tactical.THEN

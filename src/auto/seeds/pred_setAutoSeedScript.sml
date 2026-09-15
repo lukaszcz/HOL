@@ -204,6 +204,18 @@ val _ =
      ("FINITE_UNION_AUTO", pred_setTheory.FINITE_UNION),
      ("FINITE_POW_AUTO", pred_setTheory.FINITE_POW_EQN)]
 
+(* src/HOL/Finite_Set.thy:300 @ f7e02b7e.  [finite_imageI] is a [simp]
+   rule and an unsafe [intro]; pred_set states the same content as
+   IMAGE_FINITE and declares it to neither, so a finiteness goal over
+   an image is inert -- the tableau leg has no simpset, and the
+   conditional rewrite is what discharges the premise a claset search
+   leaves. *)
+Theorem IMAGE_FINITE_AUTO[simp, intro]:
+  !s function. FINITE s ==> FINITE (IMAGE function s)
+Proof
+  METIS_TAC [pred_setTheory.IMAGE_FINITE]
+QED
+
 (* src/HOL/Relation.thy:19-1426 @ f7e02b7e.  Isabelle r O s maps to
    HOL4 s O r because the two libraries print composition oppositely. *)
 val _ =
