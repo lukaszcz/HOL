@@ -2067,6 +2067,44 @@ fun GEN_GLOBAL_SIMP_TAC mode
                      | NONE => build ()
                  end
 
+               fun root_rewrite_of context target =
+                 let
+                   val (invocation_ss,reducer_context) =
+                     process_asm_tags ss context
+                   val root_rewrite =
+                     Traverse.ROOT_REWRITE_WITH_CONTEXT
+                       (traversal_state invocation_ss)
+                 in
+                   SOME (root_rewrite
+                           {reducer_context=reducer_context,
+                            solver_context=solver_context} target)
+                   handle HOL_ERR _ => NONE
+                        | Conv.UNCHANGED => NONE
+                 end
+
+               (* A rule stated on the whole implication is a redex of the
+                  conclusion as it stands, and [strip_implications] takes
+                  that term apart before the traversal has seen it: the
+                  traversal's own order is outside-in, so the rules are
+                  owed the root before the premises leave it.  [rebuild]
+                  recovers a root rewrite once the fixpoint has finished,
+                  but on the conclusion the fixpoint has left -- and an
+                  equation whose right-hand side simplified away is no
+                  longer the term the rule is stated on. *)
+               fun root_first (goal as (asl,w)) =
+                 if not (can boolSyntax.dest_imp_only w) then ALL_TAC goal
+                 else
+                   case root_rewrite_of (map ASSUME asl) w of
+                       NONE => ALL_TAC goal
+                     | SOME eq =>
+                         let
+                           val _ = aconv (lhs (concl eq)) w orelse
+                             raise ERR ("GEN_GLOBAL_SIMP_TAC",
+                                        "bad root rewrite")
+                         in
+                           CONV_TAC (K eq) goal
+                         end
+
                (* [outer] is a suffix of the assumption list and [assumed]
                   the matching suffix of its theorems, so that the scan
                   does not re-[ASSUME] the tail it is about to walk. *)
@@ -2075,18 +2113,8 @@ fun GEN_GLOBAL_SIMP_TAC mode
                      (a::rest, _::assumed_rest) =>
                        let
                          val target = mk_imp (a,nested)
-                         val (invocation_ss,reducer_context) =
-                           process_asm_tags ss assumed_rest
-                         val root_rewrite =
-                           Traverse.ROOT_REWRITE_WITH_CONTEXT
-                             (traversal_state invocation_ss)
                        in
-                         case SOME
-                                (root_rewrite
-                                   {reducer_context=reducer_context,
-                                    solver_context=solver_context} target)
-                              handle HOL_ERR _ => NONE
-                                   | Conv.UNCHANGED => NONE of
+                         case root_rewrite_of assumed_rest target of
                              SOME eq => SOME (count,target,eq)
                            | NONE =>
                                find_rebuild target (rest,assumed_rest)
@@ -2153,7 +2181,8 @@ fun GEN_GLOBAL_SIMP_TAC mode
                           fixpoint ~1) goal
                        end
              in
-               if imp_premises then strip_implications THEN fixpoint ~1
+               if imp_premises then
+                 root_first THEN strip_implications THEN fixpoint ~1
                else fixpoint ~1
              end
         )

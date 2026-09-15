@@ -2771,22 +2771,39 @@ val bool_negation_period =
 val funpow_mod_zero_normalize =
   parityTranslationTheory.source_funpow_mod_zero_imp_normalize
 
+val funpow_mod_zero_recipe =
+  benchLib.Invoke
+    (benchLib.Simp,
+     [benchLib.RewriteAdd
+        {name = "unit$source_funpow_mod_zero_imp_normalize",
+         theorem = funpow_mod_zero_normalize},
+      benchLib.RewriteAdd
+        {name = "unit$bool_negation_period",
+         theorem = bool_negation_period}])
+
 val _ =
   check
     ("period-zero implication normalization is operation-generic",
      fn () =>
-       recipe_solves
-         (benchLib.Invoke
-           (benchLib.Simp,
-            [benchLib.RewriteAdd
-               {name = "unit$source_funpow_mod_zero_imp_normalize",
-                theorem = funpow_mod_zero_normalize},
-             benchLib.RewriteAdd
-               {name = "unit$bool_negation_period",
-                theorem = bool_negation_period}]))
+       recipe_solves funpow_mod_zero_recipe
          ``!count.
              count MOD 2 = 0 ==>
              FUNPOW (\value : bool. ~value) count T = T``)
+
+(* The same goal with its parameter already fixed, which is how the
+   generated corpus files state a source result and how the harness
+   hands every goal to its method.  The rewrite is stated on the whole
+   implication, so it is a redex of the conclusion as it stands and of
+   nothing the premise-discharging simplifier leaves: the equation
+   [FUNPOW ... T = T] simplifies to its left-hand side, and what the
+   fixpoint rebuilds is no longer the term the rewrite spells. *)
+val _ =
+  check
+    ("period-zero implication normalization reaches a fixed parameter",
+     fn () =>
+       recipe_solves funpow_mod_zero_recipe
+         ``(bench_period_count : num) MOD 2 = 0 ==>
+           FUNPOW (\value : bool. ~value) bench_period_count T = T``)
 
 (* The generalization tests that used to sit here ran a corpus
    entry's recipe against a statement the corpus does not contain, so

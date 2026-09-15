@@ -443,6 +443,22 @@ val asm_full_simp_config : simpLib.xsimptac_config =
 fun ambient_simp safe ss =
   simpLib.GEN_GLOBAL_SIMP_TAC {safe = safe} asm_full_simp_config ss
 
+(* The context-first pass below runs before the step that carries the
+   invocation's rules, so it must leave the conclusion the shape those
+   rules are stated on: discharging its antecedents takes an implication
+   apart that a supplied rewrite may be stated on as a whole, and the
+   step after would then find no redex.  The premises are read through
+   the implication congruence in this pass and discharged by the step
+   after, which is where they are wanted. *)
+val context_simp_config : simpLib.xsimptac_config =
+  {base = asm_full_simp_base,
+   concl_in_fixpoint = true,
+   imp_rebuild = true,
+   imp_premises = false}
+
+fun context_simp ss =
+  simpLib.GEN_GLOBAL_SIMP_TAC {safe = false} context_simp_config ss
+
 (* HOL4's simplifier rewrites outermost-first: at each node it tries the
    whole term before its subterms and re-descends into what it produced.
    Isabelle's works the other way round, and the difference shows
@@ -477,7 +493,7 @@ fun ambient_simp safe ss =
    left-hand side -- and read raw, as an empty simpset reads it, that
    rewrites forever. *)
 fun context_first ss =
-  Tactical.TRY (ambient_simp false (simpLib.clear_rules ss) [])
+  Tactical.TRY (context_simp (simpLib.clear_rules ss) [])
 
 (* Where the two sides are sets -- functions into bool -- the pointwise
    reading is membership and not application.  Every set and list fact
