@@ -4251,13 +4251,18 @@ Proof
   >> metis_tac[]
 QED
 
+(* Isabelle states this as [listrel r <= lists A <*> lists A], and the
+   pointwise rendering of that conclusion is membership: the applied form
+   [source_lists carrier xs] is the same term through [IN_DEF] but is not
+   the one [source_equiv_def] and [source_LIST_REL_refl_on] spell, so no
+   goal stated in this theory's own vocabulary ever met it. *)
 Theorem source_LIST_REL_in_lists:
   !carrier relation xs ys.
     (!left right.
        relation left right ==>
        left IN carrier /\ right IN carrier) ==>
     LIST_REL relation xs ys ==>
-    source_lists carrier xs /\ source_lists carrier ys
+    xs IN source_lists carrier /\ ys IN source_lists carrier
 Proof
   simp[source_lists_def, listTheory.LIST_REL_EL_EQN,
        listTheory.EVERY_EL]
