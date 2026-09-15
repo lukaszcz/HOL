@@ -12,6 +12,10 @@ datatype rule_variant = Plain | Swapped | Duplicate | MakeElim
 
 datatype hyp_subst_side = EliminateLeft | EliminateRight
 
+datatype hyp_subst_elimination =
+    DeleteReflexive of int
+  | SubstituteAt of {position : int, side : hyp_subst_side}
+
 datatype step_kind =
     Assumption of int
   | Contradiction of int * int
@@ -522,6 +526,151 @@ val HYP_SUBST_TAC =
     Tactical.THEN (hyp_subst_tac, Tactical.REPEAT hyp_subst_tac)
   end
 
+(* The classical hyp-subst step saturates, and stops where the equality it
+   reached is one the search may not use.  Replay runs against a grounded
+   goal, and a binding the search chose after the step can have made that
+   equality usable after all: saturating afresh there eliminates what the
+   recorded step left standing, and the step recorded against the residue
+   then finds nothing to do.  So which equalities a step eliminated is part
+   of the record, the way the substituted side already is for blast, and a
+   replay repeats exactly those. *)
+fun reflexive_equality tm =
+  case total dest_eq tm of
+      SOME (left, right) => if aconv left right then SOME left else NONE
+    | NONE => NONE
+
+fun carries_meta tm =
+  List.exists clasetMeta.is_meta (free_vars tm) orelse
+  List.exists clasetMeta.is_tymeta (type_vars_in_term tm)
+
+(* src/Provers/hypsubst.ML:83 @ Isabelle2025-2 refuses an equality with a
+   schematic variable on either side.  Engine metavariables are the
+   analogue, and the eliminated side is not the only one that matters:
+   replacing a goal variable by a metavariable restates the branch over
+   an unknown the search has not chosen yet, and drops the assumptions
+   the sibling branches are stated over. *)
+fun subst_orientation equality =
+  if carries_meta equality then NONE
+  else
+    case total dest_eq equality of
+        NONE => NONE
+      | SOME (left, right) =>
+          if is_var left andalso not (free_in left right)
+          then SOME (EliminateLeft, left, right, ASSUME equality)
+          else if is_var right andalso not (free_in right left)
+          then SOME (EliminateRight, right, left, SYM (ASSUME equality))
+          else NONE
+
+fun hyp_subst_elimination position equality =
+  case reflexive_equality equality of
+      SOME _ => SOME (DeleteReflexive position)
+    | NONE =>
+        (case subst_orientation equality of
+             SOME (side, _, _, _) =>
+               SOME (SubstituteAt {position = position, side = side})
+           | NONE => NONE)
+
+fun first_hyp_subst_elimination asl =
+  let
+    fun search _ [] = NONE
+      | search position (equality :: rest) =
+          (case hyp_subst_elimination position equality of
+               SOME elimination => SOME elimination
+             | NONE => search (position + 1) rest)
+  in
+    search 1 asl
+  end
+
+fun single_child function_name [child] = child
+  | single_child function_name _ =
+      raise mk_HOL_ERR "clasetReplay" function_name
+        "elimination did not produce one child"
+
+fun single_theorem function_name [theorem] = theorem
+  | single_theorem function_name _ =
+      raise mk_HOL_ERR "clasetReplay" function_name
+        "validation received the wrong number of theorems"
+
+fun claset_hyp_subst_once (DeleteReflexive position) (asl, w) =
+      let
+        val equality = nth1 "CLASET_HYP_SUBST_TAC_AT" asl position
+        val reflexive =
+          case reflexive_equality equality of
+              SOME term => term
+            | NONE =>
+                raise mk_HOL_ERR "clasetReplay" "CLASET_HYP_SUBST_TAC_AT"
+                  "recorded assumption is not a reflexive equality"
+        val child =
+          (delete_nth "CLASET_HYP_SUBST_TAC_AT" asl position, w)
+        fun validation theorems =
+          Drule.PROVE_HYP (REFL reflexive)
+            (single_theorem "CLASET_HYP_SUBST_TAC_AT" theorems)
+      in
+        ([child], validation)
+      end
+  | claset_hyp_subst_once (SubstituteAt {position, side}) (asl, w) =
+      let
+        val equality = nth1 "CLASET_HYP_SUBST_TAC_AT" asl position
+        val equality_thm =
+          case subst_orientation equality of
+              SOME (oriented, _, _, theorem) =>
+                if oriented = side then theorem
+                else
+                  raise mk_HOL_ERR "clasetReplay" "CLASET_HYP_SUBST_TAC_AT"
+                    "recorded assumption substitutes the other side"
+            | NONE =>
+                raise mk_HOL_ERR "clasetReplay" "CLASET_HYP_SUBST_TAC_AT"
+                  "recorded assumption is not a substitutable equality"
+      in
+        Tactic.SUBST_ALL_TAC equality_thm
+          (delete_nth "CLASET_HYP_SUBST_TAC_AT" asl position, w)
+      end
+
+fun claset_hyp_subst_along function_name [] goal =
+      ([goal], single_theorem function_name)
+  | claset_hyp_subst_along function_name (elimination :: rest) goal =
+      let
+        val (children, validation) = claset_hyp_subst_once elimination goal
+        val child = single_child function_name children
+        val (goals, residual) =
+          claset_hyp_subst_along function_name rest child
+      in
+        (goals, fn theorems => validation [residual theorems])
+      end
+
+fun CLASET_HYP_SUBST_TAC_AT eliminations goal =
+  if List.null eliminations then
+    raise mk_HOL_ERR "clasetReplay" "CLASET_HYP_SUBST_TAC_AT"
+      "the recorded step eliminates nothing"
+  else
+    claset_hyp_subst_along "CLASET_HYP_SUBST_TAC_AT" eliminations goal
+
+fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
+  let
+    fun saturate (goal as (asl, _)) =
+      case first_hyp_subst_elimination asl of
+          NONE =>
+            ([],
+             ([goal], single_theorem "COMPUTE_CLASET_HYP_SUBST_TAC"))
+        | SOME elimination =>
+            let
+              val (children, validation) =
+                claset_hyp_subst_once elimination goal
+              val child =
+                single_child "COMPUTE_CLASET_HYP_SUBST_TAC" children
+              val (rest, (goals, residual)) = saturate child
+            in
+              (elimination :: rest,
+               (goals, fn theorems => validation [residual theorems]))
+            end
+  in
+    case saturate goal of
+        ([], _) =>
+          raise mk_HOL_ERR "clasetReplay" "COMPUTE_CLASET_HYP_SUBST_TAC"
+            "no substitutable equality"
+      | computed => computed
+  end
+
 (* Blast records one equality substitution at a time.  Unlike the classical
    hyp-subst slot, affected assumptions are stably moved to the front. *)
 fun eta_atom_conv tm =
@@ -866,6 +1015,8 @@ fun forward_rule_action make store =
   FORWARD_RULE_TAC (make store)
 fun blast_rule_action make store = BLAST_RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
+fun claset_hyp_subst_action_at eliminations _ =
+  CLASET_HYP_SUBST_TAC_AT eliminations
 fun blast_hyp_subst_action_at fields _ =
   BLAST_HYP_SUBST_TAC_AT fields
 val disch_action = fn _ => Tactic.DISCH_TAC

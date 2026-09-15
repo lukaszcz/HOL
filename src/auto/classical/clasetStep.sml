@@ -1254,85 +1254,31 @@ fun has_metavariables node pos =
       (List.concat (map type_vars_in_term (w :: asl)))
   end
 
-fun reflexive_equality tm =
-  case total dest_eq tm of
-      SOME (left, right) => if aconv left right then SOME left else NONE
-    | NONE => NONE
-
-fun carries_meta tm =
-  List.exists clasetMeta.is_meta (free_vars tm) orelse
-  List.exists clasetMeta.is_tymeta (type_vars_in_term tm)
-
-(* src/Provers/hypsubst.ML:83 @ Isabelle2025-2 refuses an equality with a
-   schematic variable on either side.  Engine metavariables are the
-   analogue, and the eliminated side is not the only one that matters:
-   replacing a goal variable by a metavariable restates the branch over
-   an unknown the search has not chosen yet, and drops the assumptions
-   the sibling branches are stated over. *)
-fun subst_orientation equality =
-  if carries_meta equality then NONE
-  else
-    case total dest_eq equality of
-        NONE => NONE
-      | SOME (left, right) =>
-          if is_var left andalso not (free_in left right)
-          then SOME (left, right, ASSUME equality)
-          else if is_var right andalso not (free_in right left)
-          then SOME (right, left, SYM (ASSUME equality))
-          else NONE
-
 fun internal_hyp_subst_results (node, pos) =
   let
     val rendered = clasetGoal.render node pos
     val initial_params = #params (clasetGoal.goal_at node pos)
-    fun find_candidate _ [] = NONE
-      | find_candidate asm_pos (equality :: rest) =
-          (case reflexive_equality equality of
-               SOME _ => SOME (asm_pos, equality, NONE)
-             | NONE =>
-                 (case subst_orientation equality of
-                      SOME orientation =>
-                        SOME (asm_pos, equality, SOME orientation)
-                    | NONE => find_candidate (asm_pos + 1) rest))
-
-    fun once (goal as (asl, w)) =
-      case find_candidate 1 asl of
-          NONE => raise mk_HOL_ERR "clasetStep" "internal_hyp_subst"
-                    "no substitutable equality"
-        | SOME (asm_pos, equality, NONE) =>
-            let
-              val reflexive = valOf (reflexive_equality equality)
-              val child = (delete_nth asl asm_pos, w)
-              fun validation [child_thm] =
-                    Drule.PROVE_HYP (REFL reflexive) child_thm
-                | validation _ =
-                    raise mk_HOL_ERR "clasetStep" "internal_hyp_subst"
-                      "reflexive deletion validation arity"
-            in
-              ([child], validation)
-            end
-        | SOME (asm_pos, _, SOME (_, _, equality_thm)) =>
-            Tactic.SUBST_ALL_TAC equality_thm
-              (delete_nth asl asm_pos, w)
-
-    val repeated = Tactical.THEN (once, Tactical.REPEAT once)
   in
-    case Option.map aligned_result (total repeated rendered) of
+    case total clasetReplay.COMPUTE_CLASET_HYP_SUBST_TAC rendered of
         NONE => seq.empty
-      | SOME (result as ([(child_asl, child_w)], _)) =>
-          let
-            val child =
-              {params = initial_params, asl = child_asl, w = child_w}
-          in
-            seq.result
-              (Direct
-                {kind = HypSubst, consumed = NONE,
-                 created = no_created, eigenvariables = [[]],
-                 result = result, children = SOME [child],
-                 action = clasetReplay.hyp_subst_action,
-                 closed = [NONE], store = clasetGoal.store node})
-          end
-      | SOME _ => seq.empty
+      | SOME (eliminations, computed) =>
+          (case aligned_result computed of
+               result as ([(child_asl, child_w)], _) =>
+                 let
+                   val child =
+                     {params = initial_params, asl = child_asl, w = child_w}
+                 in
+                   seq.result
+                     (Direct
+                       {kind = HypSubst, consumed = NONE,
+                        created = no_created, eigenvariables = [[]],
+                        result = result, children = SOME [child],
+                        action =
+                          clasetReplay.claset_hyp_subst_action_at
+                            eliminations,
+                        closed = [NONE], store = clasetGoal.store node})
+                 end
+             | _ => seq.empty)
   end
 
 fun materialized_hyp_subst_results (node, pos) =

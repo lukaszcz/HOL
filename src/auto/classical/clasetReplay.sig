@@ -9,6 +9,13 @@ sig
      metavariable can make the other side substitutable too. *)
   datatype hyp_subst_side = EliminateLeft | EliminateRight
 
+  (* What one classical hyp-subst step eliminated, in the order it did.
+     A step saturates, so it is a list; positions are those of the state
+     the step was recorded against. *)
+  datatype hyp_subst_elimination =
+      DeleteReflexive of int
+    | SubstituteAt of {position : int, side : hyp_subst_side}
+
   datatype step_kind =
       Assumption of int
     | Contradiction of int * int
@@ -105,6 +112,9 @@ sig
      rebuild : exact_prefix_rebuild}
   val rebuild_exact_prefix : exact_prefix_rebuild -> thm -> thm
   val HYP_SUBST_TAC : tactic
+  val CLASET_HYP_SUBST_TAC_AT : hyp_subst_elimination list -> tactic
+  val COMPUTE_CLASET_HYP_SUBST_TAC :
+    goal -> hyp_subst_elimination list * (goal list * validation)
   val BLAST_HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC_AT :
     {position : int, changed : bool list, side : hyp_subst_side} -> tactic
@@ -140,6 +150,8 @@ sig
        parameters : term list, eigenvariables : string list list,
        prefixes : exact_prefix_descriptor list}) -> replay_action
   val hyp_subst_action : replay_action
+  val claset_hyp_subst_action_at :
+    hyp_subst_elimination list -> replay_action
   val blast_hyp_subst_action_at :
     {position : int, changed : bool list, side : hyp_subst_side} ->
     replay_action

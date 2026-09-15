@@ -3307,6 +3307,52 @@ val _ =
                end
        end)
 
+(* The step saturates, and stops where the equality it reached carries a
+   metavariable.  Replay runs against a grounded goal, and the binding the
+   search chose later can make that equality substitutable after all: a
+   replay that saturates afresh then eliminates what the recorded step
+   left standing, and the step recorded against it finds nothing to do.
+   So the step replays the eliminations it made, not the ones its goal
+   now admits. *)
+val _ =
+  test
+    ("hyp-subst replays its own eliminations, not a fresh saturation",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.ind}
+             clasetMeta.empty
+         val reflexive = boolSyntax.mk_eq (subst_constant, subst_constant)
+         val deferred = boolSyntax.mk_eq (meta, subst_constant)
+         val node = subst_node [reflexive, deferred] store
+         val instantiated =
+           valOf (clasetMeta.bind (meta, subst_variable) store)
+         val grounded_equality =
+           boolSyntax.mk_eq (subst_variable, subst_constant)
+         val original =
+           ([reflexive, grounded_equality],
+            mk_comb (subst_predicate, subst_variable))
+       in
+         case seq.cases
+           (clasetStep.safe_step clasetLib.empty_cs (node, 1))
+         of
+             NONE => false
+           | SOME ((record, _), _) =>
+               let
+                 val script =
+                   clasetReplay.append (clasetReplay.empty 1) record
+                 val grounded = clasetReplay.ground instantiated script
+               in
+                 case clasetReplay.replay grounded original of
+                     clasetReplay.Replayed ([child], _) =>
+                       same_goal
+                         (child,
+                          ([grounded_equality],
+                           mk_comb (subst_predicate, subst_variable)))
+                   | _ => false
+               end
+       end)
+
 end
 
 val _ =
