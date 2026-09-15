@@ -928,7 +928,16 @@ fun blast_translation_args goal =
   (if mentions_pair goal then [pairTheory.PAIR] else []) @
   [clasetLib.Intro boolTheory.SELECT_UNIQUE]
 
-fun simp_arg (RewriteAdd {theorem, ...}) = SOME theorem
+(* A [simp add:] argument the simplifier can make no firing rewrite of is
+   not passed to one.  The invocations below reach their simpsets twice --
+   once through a front end that routes such an argument to its claset, and
+   once through a [FULL_SIMP_TAC] of their own that would install the
+   rewrite the front end refused -- and that rewrite is what the front end
+   refuses it for: it matches every equation and calls the solver on an
+   existential at each. *)
+fun simp_arg (RewriteAdd {theorem, ...}) =
+      if clasimpLib.simp_argument_can_fire theorem then SOME theorem
+      else NONE
   | simp_arg (RewriteDelete name) = SOME (simpLib.Excl name)
   | simp_arg (SplitAdd {theorem, ...}) = SOME (simpLib.Split theorem)
   | simp_arg (CongruenceAdd {theorem, ...}) = SOME (simpLib.Cong theorem)

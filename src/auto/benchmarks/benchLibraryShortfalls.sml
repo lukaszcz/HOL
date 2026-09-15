@@ -9,9 +9,9 @@ struct
    classification is the family it belongs to rather than an observed
    residual; a goal whose own note already says it ran out the budget
    is not listed again there.  That list is measured, not inherited:
-   the engine work since has brought eleven of its goals back inside
+   the engine work since has brought twelve of its goals back inside
    the budget, and each now carries the class its residual says it
-   belongs to (re-measured 2026-09-14). *)
+   belongs to (re-measured 2026-09-15). *)
 
 (* Isabelle's [code_unfold] lemmas at List.thy:8259 and 8273 state that
    a set-encoded relation and its predicate encoding agree:
@@ -38,8 +38,7 @@ val over_budget =
    "list_L5325_bij_rotate1",
    "list_L6138_map_sorted_distinct_set_unique",
    "list_L7823_append_listrel1I",
-   "list_L9013_list_all_transfer",
-   "map_L730_ran_map_upd_Some"]
+   "list_L9013_list_all_transfer"]
 
 fun record note id : benchLib.shortfall =
   {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
@@ -122,8 +121,7 @@ val over_budget_with_no_residual =
     ("the assigned tactic did not return within the budget")
     ["list_L5325_bij_rotate1",
      "list_L6138_map_sorted_distinct_set_unique",
-     "list_L9013_list_all_transfer",
-     "map_L730_ran_map_upd_Some"]
+     "list_L9013_list_all_transfer"]
 
 (* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
    the translated [sorted_key_list_of_set], which is a sort of the set's

@@ -732,6 +732,56 @@ val _ =
          valid_closes tactic ([], ``~F``)
        end)
 
+(* [inj_onD]'s shape.  HOL4's rewrite preparation refuses a bare-variable
+   left-hand side and rewrites the conclusion to T instead, existentially
+   closing the condition variables the conclusion does not carry
+   (src/simp/src/Cond_rewr.sml), so the prepared rewrite matches every
+   equation in the goal and nothing determines its condition: the simpset
+   is not where this fact can reach a goal.  The invocation declares it as
+   an unsafe destruction rule instead. *)
+local
+  (* [inj_onD]'s own form: the premises are separate, which is what lets a
+     destruction rule fire on the first of them. *)
+  val undetermined_fact =
+    Tactical.prove
+      (``!f s t x y.
+           INJ f s t ==> x IN s ==> y IN s ==> (f x = f y) ==> (x = y)``,
+       Tactical.THEN
+         (Rewrite.REWRITE_TAC [pred_setTheory.INJ_DEF],
+          Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC, Tactic.RES_TAC)))
+  val undetermined_goal : Abbrev.goal =
+    ([``INJ (undetermined_f : 'a -> 'b) undetermined_s undetermined_t``,
+      ``(undetermined_x : 'a) IN undetermined_s``,
+      ``(undetermined_y : 'a) IN undetermined_s``,
+      ``(undetermined_f : 'a -> 'b) undetermined_x =
+          undetermined_f undetermined_y``],
+     ``(undetermined_x : 'a) = undetermined_y``)
+in
+
+(* The rewrite that cannot fire is not slow, it is inert: the search that
+   carries it runs on with nothing to apply it to and does not come back,
+   so a regression here stops the suite rather than failing a row.  There
+   is no budget to bound it with -- [Timeout.apply] around this tactic
+   never fired inside the selftest binary, where the same call preempts in
+   an interactive session. *)
+
+val _ =
+  check
+    ("a simp argument no rewrite of which can fire reaches the search",
+     fn () =>
+       valid_closes
+         (clasimpLib.FORCE_TAC [clasetLib.Simp undetermined_fact])
+         undetermined_goal)
+
+(* The argument is what closes it: the ambient context does not. *)
+val _ =
+  check
+    ("the goal that argument closes is not closed without it",
+     fn () => tactic_fails (clasimpLib.FORCE_TAC []) undetermined_goal)
+
+end
+
 val generic_simp_markers =
   [markerLib.AC boolTheory.AND_CLAUSES boolTheory.OR_CLAUSES,
    markerLib.Cong boolTheory.AND_CLAUSES,

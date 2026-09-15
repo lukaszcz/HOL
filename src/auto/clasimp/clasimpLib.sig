@@ -55,6 +55,16 @@ sig
 
   val remove_iff : string -> unit
 
+  (* Whether the simplifier can make a rewrite of this argument that is
+     able to fire.  A conditional rule whose conclusion is an equation
+     between variables prepares to a rewrite matching every equation in
+     the goal whose condition the match determines nothing of, which the
+     simplifier then tries to discharge at each of them; an invocation
+     declares such an argument to its claset instead of its simpset.  A
+     caller that hands its arguments to a simpset directly asks here
+     first. *)
+  val simp_argument_can_fire : thm -> bool
+
   val extend_invocation :
     {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
      claset : clasetLib.claset, simpset : simpLib.simpset} ->

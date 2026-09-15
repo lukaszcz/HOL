@@ -1014,10 +1014,99 @@ fun remove_iff name =
     #update_global_value iff_data (apply_iff_to_global delta)
   end
 
+(* A conditional rule whose conclusion is an equation between variables --
+   [inj_onD] is the standard one -- is a rewrite in Isabelle:
+   [Simplifier.mksimps] keeps the schematic left-hand side, and the
+   subgoaler instantiates the schematics its conditions carry by unifying
+   them against the assumptions.  HOL4 matches the left-hand side first and
+   only then proves the conditions, so a left-hand side that is a bare
+   variable is refused and the rule is turned into an [<=> T] rewrite of
+   its own conclusion, with the condition variables the conclusion does not
+   carry existentially closed
+   (IMP_EQ_CANON and QUANTIFY_CONDITIONS, src/simp/src/Cond_rewr.sml).
+   [inj_onD] prepares to
+   [(?f s t. INJ f s t /\ x IN s /\ y IN s /\ f x = f y) ==> (x = y <=> T)]:
+   a rewrite whose pattern is an equation between two variables, so it
+   matches every equation in the goal, and whose condition the match
+   determines nothing of.  It cannot fire, and it is not merely inert: the
+   simplifier reaches it at every equation and calls its solver on the
+   existential, so a four-assumption goal does not come back in a minute
+   where the same call without the argument returns at once.
+
+   The rule reaches those goals as an unsafe destruction rule instead: its
+   premises say where the condition variables come from, so the reasoner
+   fires it on an assumption matching the first and resolves the rest --
+   what Isabelle's subgoaler does when it instantiates the schematics a
+   condition carries, and the declaration Isabelle's own libraries give
+   this rule family ([dest: inj_onD]).  Conclusion-directed instead, as an
+   introduction rule, it is offered on every equality goal with the
+   witnesses its premises name left to the search to guess: measured on the
+   corpus goal that names [inj_onD], the destruction rule closes it and the
+   introduction rule does not close it in twelve times the time.
+
+   The test is on that exact shape, and reads the argument's form rather
+   than its name.  A conditional equation between variables whose conditions
+   the two sides do determine -- [LIST_EQ] is one -- carries no existential
+   and keeps its rewrite, and so does an argument that prepares to several
+   rewrites of which any is usable. *)
+val undetermined_dest_spec : clasetLib.rulespec =
+  {kind = clasetRules.Dest, safe = false, prio = NONE}
+
+fun rewrites_every_equation rule =
+  let
+    val conclusion = concl rule
+  in
+    boolSyntax.is_imp_only conclusion andalso
+    boolSyntax.is_exists (fst (boolSyntax.dest_imp conclusion)) andalso
+    (case Lib.total boolSyntax.dest_eq
+            (snd (boolSyntax.dest_imp conclusion)) of
+         SOME (pattern, value) =>
+           aconv value boolSyntax.T andalso
+           (case Lib.total boolSyntax.dest_eq pattern of
+                SOME (left, right) => is_var left andalso is_var right
+              | NONE => false)
+       | NONE => false)
+  end
+
+fun simp_argument_can_fire theorem =
+  case Lib.total Cond_rewr.mk_cond_rewrs
+         (BoundedRewrites.dest_tagged_rewrite theorem) of
+      NONE => true
+    | SOME prepared =>
+        List.exists (not o rewrites_every_equation o #1) prepared
+
+(* The declaration takes the rule the bound was attached to: a bound counts
+   rewrite applications, and there are none to count here. *)
+fun declare_undetermined theorem cs =
+  let
+    val rule = #1 (BoundedRewrites.dest_tagged_rewrite theorem)
+    val name =
+      clasetLib.fresh_rule_name
+        {prefix = "__clasimp_undetermined_arg_", from = 0} cs
+  in
+    clasetLib.add_derived_rule undetermined_dest_spec (name, rule) cs
+  end
+
+(* A fact the classical reasoner declines too stays a rewrite: it is then
+   no worse off than it was, and the argument is not silently dropped. *)
+fun route_simp_argument (theorem, (cs, rewrites)) =
+  if simp_argument_can_fire theorem then (cs, theorem :: rewrites)
+  else
+    case Lib.total (declare_undetermined theorem) cs of
+        SOME extended =>
+          (trace 1
+             (fn () =>
+               "no rewrite of " ^ Parse.thm_to_string theorem ^
+               " can fire; declaring it as an unsafe destruction rule");
+           (extended, rewrites))
+      | NONE => (cs, theorem :: rewrites)
+
 fun extend_invocation
       {iff_prefix,simp_rules,iff_rules,claset,simpset} =
   let
-    val simp_ss = simpLib.++ (simpset, simpLib.rewrites simp_rules)
+    val (routed_claset, rewritable) =
+      List.foldr route_simp_argument (claset, []) simp_rules
+    val simp_ss = simpLib.++ (simpset, simpLib.rewrites rewritable)
     val declarations =
       map
         (fn (index, rule) =>
@@ -1026,7 +1115,7 @@ fun extend_invocation
     val invocation_cs =
       List.foldl
         (fn ({rules,...}, cs) => add_iff_rules rules cs)
-        claset declarations
+        routed_claset declarations
     (* A single fragment rebuilds the rewrite net once.  Its head has the
        highest precedence, so reverse the declarations to match successive
        fragment insertion. *)
