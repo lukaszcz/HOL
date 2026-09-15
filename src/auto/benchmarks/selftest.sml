@@ -3254,13 +3254,21 @@ val _ =
 (* A6.  Goal statements are owner-signed: a changed hash means a goal
    statement moved, which needs an explicit decision rather than an
    updated pin.  The List/map signature was last moved on the owner's
-   decision to render Isabelle's [fun_upd] as a translation constant
-   rather than inline its body: seventeen goals carry an update, and
-   against the inlined conditional none of the results Isabelle states
-   of the unapplied constant can be stated at all. *)
+   decision to state [list_L7401_lexord_append_leftD]'s premise as its
+   source does, [!item. ~relation item item] rather than
+   [relation$irreflexive relation]: Isabelle's [lexord_append_leftD]
+   states that premise unfolded, and rendering it through the HOL4
+   constant asked the assigned method to unfold a constant its method
+   string does not name.
+
+   The decision before that rendered Isabelle's [fun_upd] as a
+   translation constant rather than inlining its body: seventeen goals
+   carry an update, and against the inlined conditional none of the
+   results Isabelle states of the unapplied constant can be stated at
+   all. *)
 val goal_term_pins =
   [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "F922626C"), ("Linarith", "E9DDA580"),
+   ("List/map", "C72C0B49"), ("Linarith", "E9DDA580"),
    ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
 
 val _ =

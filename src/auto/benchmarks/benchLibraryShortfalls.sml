@@ -194,7 +194,6 @@ val list_relation_lifting =
      ^ "assigned tactic reaches no route to them")
     ["list_L3089_list_all2_appendI",
      "list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
-     "list_L7401_lexord_append_leftD",
      "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff"]
 
 (* The earlier reading -- that the translation renders foldr as FOLDL

@@ -83,12 +83,17 @@ val goals =
          parityTranslation$source_lexord relation xs ys ==>
          parityTranslation$source_lexord relation
            (prefix ++ xs) (prefix ++ ys)``,
+   (* The source premise is [(!a. (a,a) ~: r)], stated unfolded: the
+      neighbouring [lexord_same_pref_if_irrefl] is the one stating
+      [irrefl r], and that one cites [irrefl_def] to close.  Rendering
+      this premise through HOL4's [irreflexive] asks the method to
+      unfold a constant it does not name. *)
    entry "list_L7401_lexord_append_leftD" 7401
      "by (simp add: lexord_same_pref_iff)"
      ``!relation prefix xs ys.
          parityTranslation$source_lexord relation
            (prefix ++ xs) (prefix ++ ys) ==>
-         relation$irreflexive relation ==>
+         (!item. ~relation item item) ==>
          parityTranslation$source_lexord relation xs ys``,
    entry "list_L7508_lexord_trans" 7508
      "by (auto simp: trans_def intro: lexord_partial_trans)"
