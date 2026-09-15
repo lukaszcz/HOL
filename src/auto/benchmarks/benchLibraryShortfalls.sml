@@ -189,11 +189,10 @@ val list_relation_lifting =
   classified "list relation lifting"
     ("the declared rules take a LIST_REL apart at a nil, a cons or a "
      ^ "REVERSE, and trade a SHORTLEX for a length comparison; these "
-     ^ "goals are about the relation as a whole -- an append, "
-     ^ "asymmetry, well-foundedness or an equivalence -- and the "
+     ^ "goals are about the relation as a whole -- asymmetry, "
+     ^ "well-foundedness, an equivalence, or what lenlex is -- and the "
      ^ "assigned tactic reaches no route to them")
-    ["list_L3089_list_all2_appendI",
-     "list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
+    ["list_L7995_equiv_listrel", "list_L7256_lenlex_conv",
      "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff"]
 
 (* The earlier reading -- that the translation renders foldr as FOLDL

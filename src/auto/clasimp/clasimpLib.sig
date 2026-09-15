@@ -9,6 +9,16 @@ sig
      rather than restating it. *)
   val safe_solver : Traverse.ssolver
 
+  (* The subgoaler of the clasimp simpset: the traversal's own recursion,
+     then, on a side condition [QUANTIFY_CONDITIONS] left existentially
+     closed, a match of the condition against the context assumptions
+     that reads the witnesses off it.  Exported because a simpset rebuilt
+     from [ssfrags_of] keeps only what the fragments carry, and the
+     subgoaler is not one of those -- a caller that rebuilds this simpset
+     restates it, as it already restates the solvers and the condition
+     depth. *)
+  val witness_subgoaler : Traverse.subgoaler
+
   (* Replaces the conditional congruence of a simpset by the weak form,
      which simplifies the condition and leaves the branches to whatever
      case split the caller arranges.  Exported so that the simpsets

@@ -22,6 +22,120 @@ val safe_solver =
         Tactic.ACCEPT_TAC boolTheory.TRUTH,
         Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
 
+(* A rewrite whose condition carries a variable its left-hand side does
+   not determine reaches the traversal with that variable existentially
+   closed: [QUANTIFY_CONDITIONS] is what HOL4 has where Isabelle leaves
+   a schematic in the condition.  [EVERY2_LENGTH] is the shape --
+   [LIST_REL P l1 l2 ==> LENGTH l1 = LENGTH l2] prepares to
+   [(?P. LIST_REL P l1 l2) ==> (LENGTH l1 = LENGTH l2 <=> T)] -- and
+   Isabelle discharges the condition of its own [list_all2_lengthD] by
+   assumption, the unifier reading the relation off the assumption the
+   schematic meets.  The existential is what is left of that unification
+   here, and nothing above answers it: the assumption is in the context,
+   and the condition asks for the witness the assumption names.
+
+   So this pass names it: the condition is matched against the context
+   assumptions with the goal's own variables held fixed, and the
+   witnesses the match reads off discharge the existential.  A rewrite
+   with more than one premise arrives as one existential over their
+   conjunction, so the conjuncts are matched in turn under what the
+   earlier ones have named.  A match against an assumption already in
+   the context is Isabelle's [assume_tac] step, not a search.
+
+   It is the subgoaler, not a solver, because the subgoaler is the one
+   slot only a side condition reaches: the traversal simplifies a
+   condition through it and offers what survives to the solvers, while
+   the solvers are also what a simplification tactic tries on the goal
+   itself.  An existential goal is not a condition a rewrite left open,
+   and simplification does not prove one in Isabelle either.  The
+   subgoaler runs the traversal's own recursion first and looks only at
+   what that leaves. *)
+val witness_subgoaler : Traverse.subgoaler =
+  let
+    (* The conditions are matched one at a time against the context, each
+       under what the earlier matches have already named: the rewrite's
+       premises share the variables the traversal left open, which is how
+       they determine one another in Isabelle's unifier too. *)
+    fun witnesses assumptions fixed fixed_types conditions =
+      let
+        fun search [] instance = SOME instance
+          | search (condition :: rest) instance =
+              let
+                val pattern = Term.subst instance condition
+                fun attempt [] = NONE
+                  | attempt (assumption :: others) =
+                      case Lib.total
+                             (Term.match_terml fixed_types fixed pattern)
+                             assumption of
+                          NONE => attempt others
+                        | SOME (extra, _) =>
+                            (case search rest (extra @ instance) of
+                                 NONE => attempt others
+                               | found => found)
+              in
+                attempt assumptions
+              end
+      in
+        search conditions []
+      end
+    fun witness_tac (goal as (assumptions, w)) =
+      let
+        val (vars, body) = boolSyntax.strip_exists w
+        val fixed =
+          HOLset.difference
+            (Term.FVL [w] Term.empty_tmset,
+             HOLset.fromList Term.compare vars)
+        val fixed_types = Term.type_vars_in_term w
+        fun attempt conditions =
+          witnesses assumptions fixed fixed_types conditions
+        (* Whole first, so that a conjunction standing as one assumption
+           is met by one match; the decomposed reading is for the
+           premises the goal's own strip has taken apart. *)
+        fun matched () =
+          case attempt [body] of
+              NONE => attempt (boolSyntax.strip_conj body)
+            | found => found
+      in
+        if null vars then Tactical.NO_TAC goal
+        else
+          case matched () of
+              NONE => Tactical.NO_TAC goal
+            | SOME instance =>
+                let
+                  val accept = Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC
+                in
+                  Tactical.THEN
+                    (Tactical.MAP_EVERY Tactic.EXISTS_TAC
+                       (map (Term.subst instance) vars),
+                     Tactical.ORELSE
+                       (accept,
+                        Tactical.THEN (Tactical.REPEAT Tactic.CONJ_TAC,
+                                       accept)))
+                    goal
+                end
+      end
+    fun witness_proof context_thms term =
+      Lib.total
+        (fn goal =>
+           Lib.itlist Drule.PROVE_HYP context_thms
+             (Tactical.TAC_PROOF (goal, witness_tac)))
+        (map Thm.concl context_thms, term)
+  in
+    fn ({recurse, context_thms, ...} : Traverse.simp_prover_ctxt) =>
+      fn term =>
+        let
+          val reduction = recurse term
+          val reduced = boolSyntax.rhs (Thm.concl reduction)
+        in
+          if Term.aconv reduced boolSyntax.T then reduction
+          else
+            case witness_proof context_thms reduced of
+                NONE => reduction
+              | SOME theorem =>
+                  Thm.TRANS reduction (Drule.EQT_INTRO theorem)
+        end
+  end
+
 (* HOL4's COND_CONG simplifies both branches of a conditional as well as
    its condition.  A recursive equation whose right-hand side is a
    conditional -- how an interval or an iteration is ordinarily stated --
@@ -405,6 +519,7 @@ fun derive_clasimp_ss ss _ =
   |> (fn ss' => simpLib.++ (ss', numSimps.ARITH_AC_ss))
   |> simpLib.set_safe_solvers [safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
+  |> simpLib.set_subgoaler witness_subgoaler
 
 (* This accessor is the only visible part of the private derived-value
    record.  BasicProvers marks the cache stale whenever srw_ss changes. *)

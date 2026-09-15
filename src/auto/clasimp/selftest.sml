@@ -759,12 +759,12 @@ local
      ``(undetermined_x : 'a) = undetermined_y``)
 in
 
-(* The rewrite that cannot fire is not slow, it is inert: the search that
-   carries it runs on with nothing to apply it to and does not come back,
-   so a regression here stops the suite rather than failing a row.  There
-   is no budget to bound it with -- [Timeout.apply] around this tactic
-   never fired inside the selftest binary, where the same call preempts in
-   an interactive session. *)
+(* The rewrite that cannot fire is not merely inert: it matches every
+   equation and calls the solver on an existential at each, and the search
+   that carries it does not come back, so a regression here stops the
+   suite rather than failing a row.  There is no budget to bound it with
+   -- [Timeout.apply] around this tactic never fired inside the selftest
+   binary, where the same call preempts in an interactive session. *)
 
 val _ =
   check
@@ -779,6 +779,38 @@ val _ =
   check
     ("the goal that argument closes is not closed without it",
      fn () => tactic_fails (clasimpLib.FORCE_TAC []) undetermined_goal)
+
+end
+
+(* The other half of an undetermined condition variable.  [EVERY2_LENGTH]
+   does carry a left-hand side to match -- [LENGTH l1 = LENGTH l2] -- and
+   only its relation is undetermined, so the prepared rewrite is one the
+   simpset can hold; what it needs is the witness the assumption names.
+   [LIST_REL_APPEND_EQ] asks for that length equation as its own
+   condition, which is where Isabelle's proof of [list_all2_appendI]
+   sends it. *)
+local
+  val lifted_goal : Abbrev.goal =
+    ([], ``!relation a b c d.
+             LIST_REL relation a b ==> LIST_REL relation c d ==>
+             LIST_REL relation (a ++ c) (b ++ d)``)
+  val lifting_arguments =
+    [clasetLib.Simp listTheory.LIST_REL_APPEND_EQ,
+     clasetLib.Simp listTheory.EVERY2_LENGTH]
+in
+
+val _ =
+  check
+    ("a condition variable the left-hand side leaves open is read off " ^
+     "an assumption",
+     fn () => valid_closes (clasimpLib.AUTO_TAC lifting_arguments)
+                lifted_goal)
+
+(* The arguments are what close it; neither is ambient. *)
+val _ =
+  check
+    ("the goal those arguments close is not closed without them",
+     fn () => not (valid_closes (clasimpLib.AUTO_TAC []) lifted_goal))
 
 end
 

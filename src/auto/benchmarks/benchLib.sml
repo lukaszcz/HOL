@@ -747,6 +747,7 @@ fun clean_simpset goal =
     |> simpLib.set_cond_depth 40
     |> simpLib.set_safe_solvers [benchmark_safe_solver]
     |> simpLib.add_unsafe_solver linarithLib.linarith_solver
+    |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
   end
 
 fun preserve_target tactic (original as (_, target)) =
