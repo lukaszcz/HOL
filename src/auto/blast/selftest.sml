@@ -4156,6 +4156,32 @@ val _ =
            ([], mk_imp (conclusion, conclusion))
        end)
 
+(* An inserted fact's type variables are fixed by the assumption list,
+   where a claset rule at the same statement is instantiated freely and
+   Isabelle's [using] leaves them schematic.  A supplied rule whose
+   statement carries a type variable the goal does not -- [bijI] relates
+   three sets at [:'a] and [:'b] where a goal about one function needs
+   them equal -- was therefore unusable. *)
+val _ =
+  test
+    ("a supplied fact applies at the types the goal fixes",
+     fn () =>
+       let
+         val bijI =
+           prove
+             (``!function source target.
+                  INJ function source target ==>
+                  SURJ function source target ==>
+                  BIJ function source target``,
+              REWRITE_TAC [pred_setTheory.BIJ_DEF] THEN PROVE_TAC [])
+         val goal =
+           ([] : Term.term list,
+            ``INJ (fixed : 'a -> 'a) UNIV UNIV ==>
+              SURJ fixed UNIV UNIV ==> BIJ fixed UNIV UNIV``)
+       in
+         blast_solves (tableauLib.BLAST_DEPTH_TAC 3 [bijI]) goal
+       end)
+
 val _ =
   test
     ("tryIt records full search and skips reconstruction",

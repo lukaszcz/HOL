@@ -35,9 +35,9 @@ val translation : benchLib.shortfall list =
 val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
    "list_L1511_split_list_last_propE",
-   "list_L5325_bij_rotate1",
    "list_L6138_map_sorted_distinct_set_unique",
    "list_L7823_append_listrel1I",
+   "list_L8999_set_Cons_transfer",
    "list_L9013_list_all_transfer"]
 
 fun record note id : benchLib.shortfall =
@@ -96,31 +96,10 @@ val search_returns_nothing_at_ten_times_the_budget =
      "list_L1484_split_list_first_propE",
      "list_L1511_split_list_last_propE"]
 
-(* Diagnosed: a fact reaches a goal as an inserted premise, and a
-   premise's type variables are fixed -- only its term variables can be
-   specialised.  So an instantiated citation applies exactly when its
-   type variables already coincide with the goal's, which they do when
-   the instantiating term is matched against the theorem as written and
-   need not when it is not.  [zip_map_map] uses the identity's own type
-   variable for an unrelated component, so its instance comes out
-   narrower than the citation warrants; renaming the term's type
-   variables apart makes the instance correct and then unusable, and
-   was measured at four goals lost and none gained.  The fix is to
-   instantiate a supplied fact's types against the goal where facts are
-   supplied, not in the name table. *)
-val instantiated_fact_not_applied =
-  classified "instantiated fact not applied"
-    ("the instantiated citation reaches the goal as a premise, whose "
-     ^ "type variables are fixed; the instance is narrower than the "
-     ^ "citation because the identity shares a type variable with an "
-     ^ "unrelated component of the cited theorem")
-    ["list_L2806_zip_map1", "list_L2810_zip_map2"]
-
 val over_budget_with_no_residual =
   classified "over budget with no residual"
     ("the assigned tactic did not return within the budget")
-    ["list_L5325_bij_rotate1",
-     "list_L6138_map_sorted_distinct_set_unique",
+    ["list_L6138_map_sorted_distinct_set_unique",
      "list_L9013_list_all_transfer"]
 
 (* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
@@ -174,16 +153,58 @@ val a_changed_position_against_the_others =
      ^ "the index is that position")
     ["list_L8044_listrel1_subset_listrel"]
 
-val simplification_and_search_reports_no_proof =
-  classified "simplification and search reports no proof"
-    ("the clasimp method terminates and reports no proof")
-    ["list_L2178_snoc_eq_iff_butlast",
-     "list_L7998_listrel_rtrancl_refl",
-     "list_L5409_nths_drop",
-     "list_L7247_lex_conv",
-     "list_L7321_lex_append_rightI",
-     "list_L8999_set_Cons_transfer",
-     "string_L178_card_UNIV_char"]
+(* What used to be one class saying only that the method reported no
+   proof.  Each goal's residual was read and each names a different
+   cause; [list_L7998_listrel_rtrancl_refl] left the class altogether,
+   its citation now resolved as the source method instantiates it. *)
+
+val a_snoc_read_through_an_append =
+  classified "a snoc read through an append"
+    ("the residual reads FRONT and LAST of an append with a "
+     ^ "singleton.  Isabelle's simpset carries [butlast_snoc] and "
+     ^ "[append_butlast_last_id], List.thy:2045 and 2085, on that "
+     ^ "very form; HOL4 states the two reductions on SNOC "
+     ^ "([FRONT_SNOC], [LAST_SNOC]) and keeps [SNOC_APPEND] out of "
+     ^ "the simpset deliberately, so of the append form only LAST "
+     ^ "reduces, through [LAST_APPEND_CONS], and FRONT does not; "
+     ^ "[APPEND_FRONT_LAST] is declared to no simpset at all")
+    ["list_L2178_snoc_eq_iff_butlast"]
+
+val the_cited_characterisation_has_no_counterpart =
+  classified "the cited characterisation has no counterpart"
+    ("every fact the source method names is one the name table "
+     ^ "records as unrepresented, so the recipe reaches the goal with "
+     ^ "the ambient context and nothing else: [nths_drop] cites "
+     ^ "[drop_eq_nths], [nths_nths] and [atLeastLessThan_iff], and "
+     ^ "the two lex goals cite [lexn_conv], which characterises "
+     ^ "Isabelle's length-indexed [lexn] by a common prefix and a "
+     ^ "related pair after it -- a constant HOL4 does not have, and "
+     ^ "a reading of [LLEX] that [LLEX_EL_THM] states at an index "
+     ^ "instead")
+    ["list_L5409_nths_drop", "list_L7247_lex_conv",
+     "list_L7321_lex_append_rightI"]
+
+val a_set_relation_stated_by_its_graph =
+  classified "a set relation stated by its graph"
+    ("the method unfolds [rel_set_def], and HOL4's [SET_REL] is "
+     ^ "stated the other way round -- as a set of pairs whose two "
+     ^ "projections are the two sides -- so unfolding it leaves that "
+     ^ "set to be built where Isabelle's unfolding leaves two bounded "
+     ^ "quantifiers to be read off the cons rules")
+    ["list_L8999_set_Cons_transfer"]
+
+val an_injectivity_premise_no_ambient_fact_reaches =
+  classified "an injectivity premise no ambient fact reaches"
+    ("Isabelle discharges the cited [card_image]'s premise from its "
+     ^ "ambient [inj_on_char_of_nat], String.thy:141, an atom its "
+     ^ "simpset rewrites to T.  Both HOL4 counterparts state that "
+     ^ "premise in a shape no ambient fact reaches: [CARD_IMAGE_INJ] "
+     ^ "writes it out as a quantified implication, which the "
+     ^ "condition solver discharges from an assumption but not from "
+     ^ "a rewrite, and [INJ_CARD_IMAGE] states it as [INJ f s t] "
+     ^ "whose [t] the left-hand side does not determine, so the "
+     ^ "condition arrives existentially closed")
+    ["string_L178_card_UNIV_char"]
 
 val list_relation_lifting =
   classified "list relation lifting"
@@ -297,14 +318,31 @@ val transitive_closure_from_a_step_list =
      ^ "nor an induction")
     ["list_L7054_set_trans_list_step_subset_trancl"]
 
-val blast_search_reports_no_proof =
-  classified "blast search reports no proof"
-    ("the tableau search exhausts its depths without a "
-     ^ "reconstructible proof")
-    ["list_L7771_wf_measures",
-     "list_L7861_listrel1_converse",
-     "map_L828_finite_graph_map_of",
-     "option_L59_split_option_ex"]
+(* [list_L7861_listrel1_converse] left this class when the citation it
+   unfolds started firing: the definition is now stated at the argument
+   the source's own is, so a goal equating two relations has the
+   occurrence it rewrites. *)
+val a_recursion_where_the_source_composes =
+  classified "a recursion where the source composes"
+    ("the source defines [measures] as [inv_image (lex less_than) "
+     ^ "(map ...)], and its [unfolding] leaves a composite whose three "
+     ^ "constants each carry an ambient well-foundedness rule for blast "
+     ^ "to assemble; the translation defines it by recursion on the "
+     ^ "list of measure functions instead, so the same citation leaves "
+     ^ "clauses that say nothing about [WF] and an induction the "
+     ^ "method does not name")
+    ["list_L7771_wf_measures"]
+
+val no_ambient_rule_for_the_image =
+  classified "no ambient rule for the image"
+    ("the two citations resolve and the unfolding leaves [FINITE "
+     ^ "(IMAGE (\\key. (key, THE (mapping key))) (\\key. mapping key "
+     ^ "<> NONE))] with the finiteness of the second set supplied as a "
+     ^ "fact.  Isabelle closes that from [finite_imageI], Finite_Set.thy, "
+     ^ "declared [simp, intro]; the HOL4 seeds declare no counterpart of "
+     ^ "[IMAGE_FINITE], so the search has no step from the set to its "
+     ^ "image")
+    ["map_L828_finite_graph_map_of"]
 
 val integer_interval_emptiness =
   classified "integer interval emptiness"
@@ -441,12 +479,14 @@ val execution : benchLib.shortfall list =
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
-  instantiated_fact_not_applied @
   over_budget_with_no_residual @
   sorted_list_of_a_set @
   filter_normalisation @
   indexing_through_list_constructors @
-  simplification_and_search_reports_no_proof @
+  a_snoc_read_through_an_append @
+  the_cited_characterisation_has_no_counterpart @
+  a_set_relation_stated_by_its_graph @
+  an_injectivity_premise_no_ambient_fact_reaches @
   list_relation_lifting @
   fold_direction @
   fold_against_a_set_aggregate @
@@ -457,7 +497,8 @@ val execution : benchLib.shortfall list =
   characterisation_is_the_goal @
   membership_through_a_guarded_flatten @
   transitive_closure_from_a_step_list @
-  blast_search_reports_no_proof @
+  a_recursion_where_the_source_composes @
+  no_ambient_rule_for_the_image @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @

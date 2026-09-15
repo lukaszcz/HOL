@@ -1312,13 +1312,138 @@ fun invocation_facts theorems =
     else (check_aesop_markers "invocation_facts" rest; rest)
   end
 
+(* The subterms a match can be attempted at: applications at a constant
+   head.  On the fact's side [free] also rejects a subterm under one of
+   the fact's own abstractions -- matching there would read a type off a
+   variable that exists only under the binder -- and on the goal's side
+   every variable is one of its own. *)
+fun matchable_subterms free term =
+  let
+    fun headed sub =
+      is_comb sub andalso is_const (fst (strip_comb sub)) andalso
+      List.all free (free_vars sub)
+  in
+    find_terms headed term
+  end
+
+fun head_name term = fst (dest_const (fst (strip_comb term)))
+
+(* A fact reaches a goal as an assumption, and the kernel fixes an
+   assumption's type variables.  The same statement declared to the
+   claset is instantiated freely, so a fact stated at [:'a -> 'b] is
+   unusable exactly where a rule at that statement would apply:
+   [bijI] at [INJ f s t ==> SURJ f s t ==> BIJ f s t] says nothing
+   about a goal at one type until its [:'b] is [:'a].  Isabelle's
+   [using] leaves a fact's type variables schematic and instantiates
+   them per use; the instances a goal determines are built here
+   instead.
+
+   Only a fact carrying a type variable the goal never mentions is
+   instantiated.  As written such a fact says nothing the goal can
+   use: its atoms are at a type no term of the goal is at, so nothing
+   it states can meet anything the goal states.  A fact the goal's own
+   type variables already cover is left exactly as it is -- some of
+   its atoms will match somewhere at some type, and taking those for
+   the instance wanted is guesswork: [image_cong] meets an equality at
+   the goal's element type and one at its image type, where the
+   instance the goal needs is the citation itself.
+
+   A match then contributes only where it leaves alone the type
+   variables the fact shares with the goal through a free variable of
+   its own: such a variable ties the fact to the goal's, and an
+   instance of its type would leave the fact speaking of a different
+   variable.  Any other type variable of the fact is its own however
+   it is named. *)
+fun goal_type_instances (assumptions, target) fact =
+  let
+    val body = Thm.concl (Drule.SPEC_ALL fact)
+    val goal_terms = target :: assumptions
+    val goal_variables = Term.free_varsl goal_terms
+    val fact_variables = Term.free_varsl (body :: Thm.hyp fact)
+    val goal_type_variables =
+      List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
+        [] goal_terms
+    val alien = Lib.set_diff (type_vars_in_term body) goal_type_variables
+    val fixed =
+      List.foldl
+        (fn (variable, seen) =>
+          if Lib.op_mem aconv variable goal_variables then
+            Lib.union (Type.type_vars (Term.type_of variable)) seen
+          else
+            seen)
+        [] fact_variables
+    val loose = Lib.set_diff (type_vars_in_term body) fixed
+  in
+    if null alien orelse null loose then [fact]
+    else
+      let
+        val schematic = free_vars body
+        val patterns =
+          matchable_subterms (fn v => Lib.op_mem aconv v schematic) body
+        val sites =
+          List.concat (map (matchable_subterms (fn _ => true)) goal_terms)
+        fun instance_of (pattern, site) =
+          case Lib.total (Term.match_term pattern) site of
+              NONE => NONE
+            | SOME (_, types) =>
+                let
+                  (* A match reports the type variables it leaves where
+                     they are as well; those bind nothing. *)
+                  val proper =
+                    List.filter
+                      (fn {redex, residue} =>
+                        not (Type.compare (redex, residue) = EQUAL))
+                      types
+                in
+                  if null proper then NONE
+                  else if List.all (fn {redex, ...} => Lib.mem redex loose)
+                            proper
+                  then SOME proper
+                  else NONE
+                end
+        val substitutions =
+          List.mapPartial instance_of
+            (List.concat
+              (map
+                (fn pattern =>
+                  List.mapPartial
+                    (fn site =>
+                      if head_name pattern = head_name site then
+                        SOME (pattern, site)
+                      else
+                        NONE)
+                    sites)
+                patterns))
+        val instances =
+          List.foldl
+            (fn (types, kept) =>
+              let val instance = Thm.INST_TYPE types fact
+              in
+                if List.exists
+                     (fn earlier =>
+                       aconv (Thm.concl earlier) (Thm.concl instance))
+                     kept
+                then kept
+                else kept @ [instance]
+              end)
+            [] substitutions
+      in
+        if null instances then [fact] else instances
+      end
+  end
+
 (* ASSUME_TAC conses onto the assumption list, so the facts are assumed
    back-to-front to leave them in declaration order.  Order is observable:
    it is the recency tie-break the classical engines use when scanning
-   assumptions, and what FIRST_ASSUM and friends see in the residue. *)
+   assumptions, and what FIRST_ASSUM and friends see in the residue.
+   The marker check stays where the tactic is built; the instances a
+   fact is inserted at are the goal's, so they are taken when it runs. *)
 fun INSERT_FACTS_TAC facts =
   (check_aesop_markers "INSERT_FACTS_TAC" facts;
-   Tactical.MAP_EVERY Tactic.ASSUME_TAC (List.rev facts))
+   fn goal =>
+     Tactical.MAP_EVERY Tactic.ASSUME_TAC
+       (List.rev (List.concat (map (goal_type_instances goal) facts)))
+       goal)
 
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base

@@ -2997,16 +2997,36 @@ Proof
           GSYM listTheory.SNOC_APPEND]
 QED
 
+(* Isabelle's [inj], [surj] and [bij] are [inj_on f UNIV], [range f =
+   UNIV] and [bij_betw f UNIV UNIV]; the HOL4 library states all three
+   of a function between two sets, so the three read [INJ], [SURJ] and
+   [BIJ] at [UNIV], which is what the [bij_rotate1] goal is stated
+   with.  A [blast] that is handed the two of them and [bijI] matches
+   atoms, exactly as the source method's does. *)
 Theorem source_rotate1_inj:
-  !xs ys. source_rotate1 xs = source_rotate1 ys ==> xs = ys
+  INJ source_rotate1 UNIV UNIV
 Proof
-  metis_tac[source_rotate1_inverse]
+  simp[pred_setTheory.INJ_DEF]
+  >> metis_tac[source_rotate1_inverse]
 QED
 
 Theorem source_rotate1_surj:
-  !ys. ?xs. source_rotate1 xs = ys
+  SURJ source_rotate1 UNIV UNIV
 Proof
-  metis_tac[source_rotate1_inverse]
+  simp[pred_setTheory.SURJ_DEF]
+  >> metis_tac[source_rotate1_inverse]
+QED
+
+(* Isabelle/HOL src/HOL/Fun.thy:376.  HOL4 states the same content as
+   the definition of [BIJ], an equivalence the claset cannot take as
+   the introduction the method asks for. *)
+Theorem source_bijI:
+  !function source target.
+    INJ function source target ==>
+    SURJ function source target ==>
+    BIJ function source target
+Proof
+  simp[pred_setTheory.BIJ_DEF]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:5329-5411. *)
@@ -3580,13 +3600,25 @@ Definition source_Id_on_def:
 End
 
 (* Isabelle/HOL src/HOL/List.thy:7790-7870.  A set of pairs is
-   represented as its curried membership predicate. *)
+   represented as its curried membership predicate.
+
+   The equation is stated at the argument the source's own definition
+   is stated at -- [listrel1 r = {(xs, ys). ...}] names the set, not
+   its membership -- and not at the two points the membership adds.  A
+   citation of it is an [unfolding], which rewrites the goal before the
+   search sees it, and a goal that equates two relations has no
+   occurrence of the constant applied to a point for a pointwise
+   equation to meet: [list_L7861_listrel1_converse] is
+   [source_listrel1 (\left right. relation right left) = _], where the
+   pointwise form rewrites nothing at all and the search is then left
+   with an opaque constant on both sides. *)
 Definition source_listrel1_def:
-  source_listrel1 relation xs ys <=>
-    ?prefix left right suffix.
-      xs = prefix ++ left::suffix /\
-      relation left right /\
-      ys = prefix ++ right::suffix
+  source_listrel1 relation =
+    \xs ys.
+      ?prefix left right suffix.
+        xs = prefix ++ left::suffix /\
+        relation left right /\
+        ys = prefix ++ right::suffix
 End
 
 (* src/HOL/List.thy: listrel1E.  The definition is an equivalence, which
@@ -4291,6 +4323,21 @@ Proof
   >> irule source_LIST_REL_refl_on
   >> qexists_tac `carrier`
   >> fs[source_lists_def]
+QED
+
+(* Isabelle cites [listrel_refl_on] at [UNIV] with its premise already
+   discharged by [refl_rtrancl].  An instance reached that way is its
+   own citation, so it is stated as its own theorem rather than left to
+   be recombined: the carrier the instantiation fixes occurs in neither
+   side of the conclusion, so nothing in a goal determines it. *)
+Theorem source_LIST_REL_rtrancl_refl_on:
+  !relation.
+    source_refl_on (source_lists UNIV)
+      (LIST_REL (relation$RTC relation))
+Proof
+  gen_tac
+  >> irule source_LIST_REL_refl_on_preserve
+  >> simp[source_refl_on_def, relationTheory.RTC_REFL]
 QED
 
 Theorem source_LIST_REL_symmetric:
@@ -6831,6 +6878,36 @@ Theorem source_domI:
     key IN (\candidate. function candidate <> NONE)
 Proof
   simp[]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:793.  [graph] and [dom] are both
+   inlined, so the equation is stated between the two sets the
+   translation writes out. *)
+Theorem source_graph_eq_to_snd_dom:
+  !mapping.
+    (\pair. mapping (FST pair) = SOME (SND pair)) =
+    IMAGE (\key. (key, THE (mapping key))) (\key. mapping key <> NONE)
+Proof
+  gen_tac
+  >> simp[pred_setTheory.EXTENSION, pred_setTheory.IN_IMAGE,
+          boolTheory.IN_DEF, pairTheory.FORALL_PROD]
+  >> rpt gen_tac
+  >> eq_tac
+  >> rw[]
+  >> metis_tac[optionTheory.THE_DEF, optionTheory.option_CLAUSES]
+QED
+
+(* Isabelle/HOL src/HOL/Map.thy:596.  [map_of] is [ALOOKUP] and [dom]
+   is inlined, so the finiteness is stated of the key set the
+   translation writes out. *)
+Theorem source_finite_dom_map_of:
+  !al. FINITE (\key. alist$ALOOKUP al key <> NONE)
+Proof
+  gen_tac
+  >> irule pred_setTheory.SUBSET_FINITE
+  >> qexists_tac `LIST_TO_SET (MAP FST al)`
+  >> simp[pred_setTheory.SUBSET_DEF, boolTheory.IN_DEF,
+          alistTheory.ALOOKUP_NONE]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:8687. *)

@@ -957,8 +957,10 @@ fun supplied_rule (IntroAdd (_, {theorem, ...})) = SOME theorem
   | supplied_rule (DestAdd (_, {theorem, ...})) = SOME theorem
   | supplied_rule _ = NONE
 
-fun insert_facts facts =
-  Tactical.MAP_EVERY Tactic.ASSUME_TAC (List.rev facts)
+(* The engines' own insertion: a [using] fact reaches the goal through
+   [clasetLib.INSERT_FACTS_TAC], instances and order included, so the
+   corpus measures what a caller gets. *)
+val insert_facts = clasetLib.INSERT_FACTS_TAC
 
 fun with_facts args tactic =
   let

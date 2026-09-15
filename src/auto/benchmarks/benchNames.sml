@@ -76,25 +76,54 @@ fun symmetric build () =
    term the method instantiates it with. *)
 fun instantiated bindings build () =
   let
-    (* The instantiating term's type variables are matched against the
-       theorem's as written, sharing names rather than being renamed
-       apart.  That is deliberate and load-bearing: the fact reaches a
-       goal as an inserted premise, whose type variables are fixed and
-       cannot be specialised, so an instance whose types are fresh
-       cannot apply to anything.  It also means [I] meeting a theorem
-       that already uses [I]'s type variable collapses two independent
-       types -- real, and visible in
-       [zip_map_map[of f xs "\\<lambda>x. x" ys]].  Renaming apart and
-       then collapsing the fresh variable back onto a theorem variable
-       was measured twice and costs three or four goals to gain none:
-       the collapse has to keep one of the two identified variables,
-       and the one it keeps is the key type, so
-       [sorted_sort_key[where f="\\<lambda>x. x"]] resolves at [:beta]
-       where every goal citing it is stated at [:alpha].  Sharing keeps
-       [:alpha] because that is the variable the quoted [I] parses at.
-       The fix belongs where a supplied fact reaches the goal, not
-       here: Isabelle's [using] leaves the fact polymorphic and
-       [insert_facts] freezes it. *)
+    (* The instantiating term carries type variables of its own -- the
+       quoted identity parses at [:'a] -- and matching it against the
+       theorem as written identifies the theorem's variable of that
+       name with it, collapsing two independent types wherever the
+       names meet: [zip_map_map[of f xs "\\<lambda>x. x" ys]] otherwise
+       loses the distinction between [f]'s domain and the identity's.
+       The theorem is renamed apart first, so a binding instantiates
+       only what the method instantiates.  The instance's remaining
+       type variables are its own, and INSERT_FACTS_TAC specialises
+       them at the goal each citation is inserted into. *)
+    fun renamed_apart terms theorem =
+      let
+        fun variables_of terms =
+          List.foldl
+            (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
+            [] terms
+        val occupied = variables_of terms
+        val own = variables_of (Thm.concl theorem :: Thm.hyp theorem)
+        (* A type variable's name is a quote and alphanumerics, so a
+           fresh one is numbered rather than primed. *)
+        fun fresh taken variable =
+          let
+            val base = dest_vartype variable
+            fun attempt index =
+              let val candidate = mk_vartype (base ^ Int.toString index)
+              in
+                if Lib.mem candidate taken then attempt (index + 1)
+                else candidate
+              end
+          in
+            attempt 1
+          end
+        val (substitution, _) =
+          List.foldl
+            (fn (variable, (substitution, taken)) =>
+              if Lib.mem variable occupied then
+                let val replacement = fresh taken variable
+                in
+                  (substitution @ [variable |-> replacement],
+                   replacement :: taken)
+                end
+              else
+                (substitution, taken))
+            ([], Lib.union occupied own)
+            own
+      in
+        Thm.INST_TYPE substitution theorem
+      end
     fun bind (name, term) theorem =
       case List.find (fn variable => fst (dest_var variable) = name)
              (free_vars (concl theorem)) of
@@ -109,7 +138,10 @@ fun instantiated bindings build () =
       Drule.GEN_ALL
         (Drule.DISCH_ALL
           (List.foldl (fn (binding, current) => bind binding current)
-            (Drule.SPEC_ALL (Drule.UNDISCH_ALL (Drule.SPEC_ALL theorem)))
+            (Drule.SPEC_ALL
+              (Drule.UNDISCH_ALL
+                (Drule.SPEC_ALL
+                  (renamed_apart (map snd bindings) theorem))))
             bindings))
   in
     Theorems
@@ -117,25 +149,13 @@ fun instantiated bindings build () =
         (resolved build))
   end
 
-(* An attribute that instantiates at plain variables names the same
-   theorem at the source lemma's own variables, and the translation
-   names a goal's variables after them -- Isabelle's [xs] is [v_xs0] --
-   so the instance can be written from the names the method wrote and
-   says the same thing for every goal that cites that string.  Each
-   binding pairs a variable of the HOL4 statement with the method
-   argument standing in its place; the source's positions are its own
-   statement's, which the translation does not preserve, so the pairing
-   is written out rather than counted off.  A position the method
-   leaves open contributes no binding and its variable stays
-   quantified, which is what a remaining schematic amounts to in an
-   inserted premise.
-
-   Matching does not always recover such an instance.  A supplied fact
-   reaches the goal as a premise, and splitting an iff is a case
-   analysis on a ground equivalence: a quantified one is not something
-   a safe step takes apart, so a citation the source instantiates
-   before inserting has to be instantiated here too. *)
-fun at_goal_variables bindings build () =
+(* The instance itself: each binding names a variable of the HOL4
+   statement and builds, from that variable's type, the term standing
+   in its place.  A position the method leaves open contributes no
+   binding and its variable stays quantified, which is what a
+   remaining schematic amounts to in an inserted premise; an
+   instantiated one does not get quantified again. *)
+fun at_goal_instance caller bindings build () =
   let
     fun instance theorem =
       let
@@ -144,11 +164,19 @@ fun at_goal_variables bindings build () =
         fun paired (name, argument) =
           case List.find (fn v => fst (dest_var v) = name) variables of
               NONE =>
-                raise mk_HOL_ERR "benchNames" "at_goal_variables"
+                raise mk_HOL_ERR "benchNames" caller
                   (name ^ " is not a variable of the cited theorem")
             | SOME variable =>
-                (variable,
-                 mk_var ("v_" ^ argument ^ "0", type_of variable))
+                let
+                  val replacement = argument (type_of variable)
+                in
+                  if Type.compare (type_of replacement, type_of variable)
+                     = EQUAL
+                  then (variable, replacement)
+                  else
+                    raise mk_HOL_ERR "benchNames" caller
+                      (name ^ " is instantiated at a term of another type")
+                end
         val pairs = map paired bindings
         fun instantiated variable =
           List.exists (fn (bound, _) => aconv bound variable) pairs
@@ -162,6 +190,43 @@ fun at_goal_variables bindings build () =
       (map (fn {name, theorem} => {name = name, theorem = instance theorem})
         (resolved build))
   end
+
+(* An attribute that instantiates at plain variables names the same
+   theorem at the source lemma's own variables, and the translation
+   names a goal's variables after them -- Isabelle's [xs] is [v_xs0] --
+   so the instance can be written from the names the method wrote and
+   says the same thing for every goal that cites that string.  The
+   source's positions are its own statement's, which the translation
+   does not preserve, so the pairing is written out rather than
+   counted off.
+
+   Matching does not always recover such an instance.  A supplied fact
+   reaches the goal as a premise, and splitting an iff is a case
+   analysis on a ground equivalence: a quantified one is not something
+   a safe step takes apart, so a citation the source instantiates
+   before inserting has to be instantiated here too. *)
+fun at_goal_variables bindings build () =
+  at_goal_instance "at_goal_variables"
+    (map
+      (fn (name, argument) =>
+        (name, fn ty => mk_var ("v_" ^ argument ^ "0", ty)))
+      bindings)
+    build ()
+
+(* The same instance, where the method instantiates at a term over a
+   goal's variables rather than at one of them: [of "\\<lambda>x. \\<not>
+   P x"] on an iff about [P] states the same iff about its negation,
+   and the translation's name for the goal's [P] is what the term is
+   written over.  The goal variables the term mentions stay free, as
+   the ones it replaces do: Isabelle instantiates at a variable its
+   proof state has fixed, and re-generalising here would hand the
+   search a quantified predicate to guess instead -- measured, the
+   generalised form does not return in five minutes where this one
+   closes the goal in 0.026s. *)
+fun at_goal_terms bindings build () =
+  at_goal_instance "at_goal_terms"
+    (map (fn (name, term) => (name, fn _ => term)) bindings)
+    build ()
 
 (* A HOL4 recursion equation or characterisation bundles clauses an
    Isabelle citation names one at a time, and handing over the bundle
@@ -487,6 +552,10 @@ val table : (string * (unit -> resolution)) list =
    translated "source_map_upd_upds_conv_if"),
   ("domI",
    translated "source_domI"),
+  ("graph_eq_to_snd_dom",
+   translated "source_graph_eq_to_snd_dom"),
+  ("finite_dom_map_of",
+   translated "source_finite_dom_map_of"),
   ("map_add_comm",
    translated "source_map_add_comm"),
   ("map_add_le_mapI",
@@ -642,14 +711,18 @@ val table : (string * (unit -> resolution)) list =
   ("dom_map_option[of \"\\<lambda>_. g\" m]", unrepresented),
   ("drop_eq_nths", unrepresented),
   ("filter_equals_takeWhile_sorted_rev[OF sorted, of i]", unrepresented),
-  ("finite_dom_map_of", unrepresented),
-  ("graph_eq_to_snd_dom", unrepresented),
   ("inj_on_apfst[of f UNIV]", unrepresented),
   ("inj_on_apsnd[of f UNIV]", unrepresented),
   (* [source_lenlex] is [list$SHORTLEX] directly, so Isabelle's route to
      it through [inv_image] and [lex_prod] has nothing to unfold. *)
   ("inv_image_def", unrepresented),
   ("lex_prod_def", unrepresented),
+  (* [lexn_conv] characterises [lexn r n], the length-indexed family
+     Isabelle's [lex] is the union of, by a common prefix and a
+     related pair at the position after it.  HOL4 has no [lexn], and
+     no such characterisation of [LLEX]: [LLEX_EL_THM] reads the two
+     lists at an index instead. *)
+  ("lexn_conv", unrepresented),
   ("list.pred_transfer", unrepresented),
   ("nth_sorted_list_of_set_greaterThanLessThan[of n \"Suc j\" i]",
    unrepresented),
@@ -677,7 +750,11 @@ val table : (string * (unit -> resolution)) list =
   ("lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]]",
    unrepresented),
   ("possible_bit_def", unrepresented),
-  ("rel_set_def", unrepresented),
+  (* HOL4 states the same relation by its graph -- a set of pairs whose
+     projections are the two sides -- rather than by Isabelle's two
+     bounded quantifiers.  It is still the definition of the constant
+     the translated goal is stated with. *)
+  ("rel_set_def", library "list" "SET_REL_def"),
   ("set_takeWhileD",
    translated "source_set_takeWhileD"),
   ("takeWhile_nth", library "list" "EL_takeWhile"),
@@ -695,12 +772,21 @@ val table : (string * (unit -> resolution)) list =
   ("set_take_subset", library "list" "LIST_TO_SET_TAKE"),
   ("dropWhile_eq_Nil_conv", library "list" "dropWhile_eq_nil"),
   ("split_option_all", library "option" "FORALL_OPTION"),
+  (* The negation the method instantiates at is what turns the
+     universal characterisation into the existential one; the general
+     statement reaches the goal not at all, because splitting it at
+     the goal's predicate is exactly the instantiation, and the
+     predicate is the goal's own. *)
   ("split_option_all[of \"\\<lambda>x. \\<not> P x\"]",
-   library "option" "FORALL_OPTION"),
+   at_goal_terms [("P", ``\b_x:'a option. ~ v_P0 b_x``)]
+     (library "option" "FORALL_OPTION")),
   ("list_eq_iff_nth_eq",
    library "list" "LIST_EQ_REWRITE"),
+  (* [bijI] is an introduction rule; HOL4 has its content as the
+     definition of [BIJ], an equivalence the claset cannot take as
+     one. *)
   ("bijI",
-   library "pred_set" "BIJ_DEF"),
+   translated "source_bijI"),
   ("inj_rotate1",
    translated "source_rotate1_inj"),
   ("surj_rotate1",
@@ -846,8 +932,6 @@ val table : (string * (unit -> resolution)) list =
    translated "source_unit_le_def"),
   ("less_le",
    library "pred_set" "PSUBSET_DEF"),
-  ("lexn_conv",
-   translated "source_lex_def"),
   ("lexord_same_pref_iff",
    translated "source_lexord_same_prefix_iff"),
   ("lexordp_conv_lexordp_eq",
@@ -901,8 +985,12 @@ val table : (string * (unit -> resolution)) list =
    library "list" "LIST_REL_EVERY_ZIP"),
   ("listrel_refl_on",
    translated "source_LIST_REL_refl_on_preserve"),
+  (* [of UNIV] fixes a carrier that occurs in neither side of the
+     conclusion, and [OF refl_rtrancl] discharges the premise it
+     leaves; neither is recoverable by matching, so the resolved
+     instance is stated as its own theorem. *)
   ("listrel_refl_on[of UNIV, OF refl_rtrancl]",
-   translated "source_LIST_REL_refl_on_preserve"),
+   translated "source_LIST_REL_rtrancl_refl_on"),
   ("listrel_sym",
    translated "source_LIST_REL_symmetric"),
   ("listrel_trans",

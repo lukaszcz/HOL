@@ -3035,6 +3035,70 @@ val _ =
            | _ => false
        end)
 
+(* An assumption's type variables are fixed, where Isabelle's [using]
+   leaves a fact's schematic: a fact the goal cannot be read at is a
+   fact the engines cannot use at all. *)
+val pointwise_reflexivity =
+  Tactical.prove
+    (``!(f : 'a -> 'b) (x : 'a). f x = f x``,
+     Tactical.THEN (Tactical.REPEAT Tactic.GEN_TAC, Tactic.REFL_TAC))
+
+val _ =
+  test
+    ("a fact is inserted at the types the goal determines for it",
+     fn () =>
+       let
+         val goal =
+           ([] : term list, ``FST (p : 'c # 'd) = FST p``)
+         val expected =
+           concl
+             (Thm.INST_TYPE
+                [alpha |-> ``:'c # 'd``, beta |-> ``:'c``]
+                pointwise_reflexivity)
+       in
+         case #1 (Tactical.VALID
+                    (INSERT_FACTS_TAC [pointwise_reflexivity]) goal) of
+             [([assumption], _)] => Term.aconv assumption expected
+           | _ => false
+       end)
+
+(* A fact the goal's own type variables cover is usable as it stands,
+   and which of its atoms happens to match where is no evidence of the
+   instance wanted: the citation itself is one of the instances, and
+   displacing it by a match at an unrelated type loses it. *)
+val _ =
+  test
+    ("a fact the goal's type variables cover is inserted as written",
+     fn () =>
+       let
+         val goal =
+           ([] : term list, ``FST (p : 'a # 'b) = FST p``)
+       in
+         case #1 (Tactical.VALID
+                    (INSERT_FACTS_TAC [pointwise_reflexivity]) goal) of
+             [([assumption], _)] =>
+               Term.aconv assumption (concl pointwise_reflexivity)
+           | _ => false
+       end)
+
+(* A free variable the fact shares with the goal ties the fact to it:
+   instantiating that variable's type would leave the fact speaking of
+   a different variable, so such a match contributes nothing and the
+   fact goes in as it is written. *)
+val _ =
+  test
+    ("a fact tied to the goal by a shared variable keeps its types",
+     fn () =>
+       let
+         val shared = Thm.REFL ``v : 'a``
+         val goal = ([``(v : 'a) = v``], ``(3 : num) = 3``)
+       in
+         case #1 (Tactical.VALID (INSERT_FACTS_TAC [shared]) goal) of
+             [([assumption, _], _)] =>
+               Term.aconv assumption (concl shared)
+           | _ => false (* one inserted assumption: no instance is offered *)
+       end)
+
 (* The shared work meter is what lets a caller ask how much search a
    proof did.  Nesting must not lose the enclosing measurement. *)
 val _ =

@@ -183,7 +183,17 @@ sig
      assumptions, which is what the classical engines' recency tie-break and
      FIRST_ASSUM see first; Isabelle's cut_facts_tac instead makes them the
      first premises, so a traversal that starts from the oldest assumption
-     -- asm_full_simp's, for one -- reaches them last rather than first. *)
+     -- asm_full_simp's, for one -- reaches them last rather than first.
+
+     A fact carrying a type variable the goal never mentions is
+     inserted at the instances the goal determines for it, and as
+     written where it determines none; a type variable the fact shares
+     with the goal through a free variable of its own is left alone,
+     and a fact the goal's type variables already cover is inserted as
+     it is.  An assumption's type variables are fixed, where
+     Isabelle's [using] leaves a fact's schematic and instantiates
+     them per use, so a fact may contribute more than one assumption,
+     one per distinct instance. *)
   val INSERT_FACTS_TAC : thm list -> tactic
 
   (* The persistent form of a rule name, as recorded in the claset delta
