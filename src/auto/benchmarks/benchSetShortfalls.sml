@@ -13,7 +13,7 @@ val over_budget =
    "set_L1607_Pow_insert",
    "set_L1847_is_singleton_the_elem",
    "set_L1610_Pow_Compl", "set_L994_image_add_0",
-   "set_theory_L168", "set_theory_L184"]
+   "set_theory_L168"]
 
 fun record note id : benchLib.shortfall =
   {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
@@ -37,7 +37,7 @@ val blast_set_rule_forms =
     ["set_L1125_image_Pow_surj",
      "set_L1607_Pow_insert",
      "set_L994_image_add_0",
-     "set_theory_L168", "set_theory_L184"]
+     "set_theory_L168"]
 
 val disjnt =
   classified "disjnt"
