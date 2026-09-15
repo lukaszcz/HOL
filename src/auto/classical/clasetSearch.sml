@@ -350,18 +350,34 @@ fun add_nodes values heap =
   List.foldr (fn (node, current) => searchHeap.add node current)
     heap values
 
+(* A state's provability does not depend on the path that reached it, and
+   a frontier driver enumerates all of a state's children when it expands
+   it, so expanding the same state again can only repeat that enumeration.
+   Without the test the drivers do repeat it: a universal assumption whose
+   elimination consumes it is re-derived on a sibling branch, the instance
+   takes a fresh metavariable each round, and the cycle reaches the
+   frontier at an unchanged size -- three states, alternating, for as long
+   as the caller waits.  The key is the state as it stands, metavariable
+   names included, so the instances differ round to round; the states
+   that precede them do not, and cutting those cuts the cycle.
+   DEPTH_SOLVE needs no such set: it commits and backtracks, and its
+   ancestor test already covers its own paths.
+
+   Isabelle's BEST_FIRST (src/Pure/search.ML @ Isabelle2025-2) carries no
+   closed set.  This is deliberately past it: the suppressed expansion is
+   one the driver has already made. *)
 fun frontier_search {driver, compare, remove_minimum}
       satisfied expand initial =
   let
-    fun classify (news, heap, count) =
+    fun classify (news, heap, count, seen) =
       let val (solutions, pending) = split_satisfied satisfied news
       in
         if List.null solutions then
-          next (add_nodes pending heap, count)
+          next (add_nodes pending heap, count, seen)
         else seq.fromList solutions
       end
 
-    and next (heap, count) =
+    and next (heap, count, seen) =
       if searchHeap.is_empty heap then
         (last_node_count := count;
          trace 1 (fn () => driver ^ " search exhausted");
@@ -370,20 +386,28 @@ fun frontier_search {driver, compare, remove_minimum}
         let
           val (current, remaining) = remove_minimum heap
         in
-          if not (allow_expansion driver count current) then
+          if Binaryset.member (seen, current) then
+            (last_pruning_count := !last_pruning_count + 1;
+             trace 2
+               (fn () =>
+                 driver ^ " dropped a state it has already expanded");
+             next (remaining, count, seen))
+          else if not (allow_expansion driver count current) then
             seq.empty
           else
             classify
               (seqUtil.list_of
                  (seq.map (note_transition current) (expand current)),
-               remaining, count + 1)
+               remaining, count + 1, Binaryset.add (seen, current))
         end
 
     fun start () =
       (last_node_count := 0;
+       last_pruning_count := 0;
        classify
          ([clasetGoal.set_level 0 initial],
-          searchHeap.empty compare, 0))
+          searchHeap.empty compare, 0,
+          Binaryset.empty clasetGoal.compare))
   in
     seq.delay start
   end

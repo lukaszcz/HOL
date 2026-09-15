@@ -5009,6 +5009,32 @@ val _ =
          length results = 1 andalso !small_expansions = 1
        end)
 
+(* A state that reaches the frontier again is one the driver has already
+   taken apart, and its children are already in the heap.  Expanding it
+   a second time only re-enumerates them, and where a rule consumes an
+   assumption a sibling branch restores, the re-enumeration is a cycle
+   that never grows and so never loses its place at the front. *)
+val _ =
+  test
+    ("BEST_FIRST expands a state returning to the frontier only once",
+     fn () =>
+       let
+         val saved_limit = !clasetSearch.node_limit
+         fun expand node =
+           if Term.aconv (search_target node) best_root_tm then
+             seq.result (search_singleton best_small_tm)
+           else seq.result (search_singleton best_root_tm)
+         val _ = clasetSearch.node_limit := 1000
+         val results =
+           search_results
+             (clasetSearch.BEST_FIRST (fn _ => false) expand
+               (search_singleton best_root_tm))
+         val count = clasetSearch.node_count ()
+         val _ = clasetSearch.node_limit := saved_limit
+       in
+         List.null results andalso count = 2
+       end)
+
 val astar_root_tm = Term.mk_var ("astar_root", bool_ty)
 val astar_parent_tm = Term.mk_var ("astar_parent", bool_ty)
 val astar_new_tm = Term.mk_var ("astar_new", bool_ty)
