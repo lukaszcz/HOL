@@ -1608,6 +1608,30 @@ val _ =
          fn () => valid_closes tactic goal))
     force_witness_goals
 
+(* Isabelle's force_tac ends in first_best_tac alone: the method carries
+   no tableau leg at all (src/Provers/clasimp.ML:167 @ Isabelle2025-2).
+   Ours keeps one, but behind the parity leg rather than in front of it.
+   The goal below is a partial map read at two points -- the shape
+   Isabelle closes with force and with nothing weaker, neither simp nor
+   fastforce nor blast.  Best-first closes it in milliseconds; the
+   tableau does not return on it, so with the legs the other way round
+   the budget is spent before the leg that carries the parity is
+   reached.  The bound is what makes that a failure rather than a hang. *)
+val force_partial_map_goal : Abbrev.goal =
+  ([``(force_m : 'a -> 'b option) force_x = SOME force_e``,
+    ``(force_m : 'a -> 'b option) force_a = NONE``],
+   ``?k. (k = force_a ==> force_b = force_e) /\
+         (k <> force_a ==> (force_m : 'a -> 'b option) k = SOME force_e)``)
+
+val _ =
+  check
+    ("FORCE closes a partial-map goal its tableau leg does not return on",
+     fn () =>
+       Lib.total
+         (Timeout.apply (Time.fromSeconds 30)
+            (valid_closes (clasimpLib.FORCE_TAC [])))
+         force_partial_map_goal = SOME true)
+
 val staged_branch_goal : Abbrev.goal =
   ([``branch_a1 \/ branch_b1``,
     ``branch_a2 \/ branch_b2``,

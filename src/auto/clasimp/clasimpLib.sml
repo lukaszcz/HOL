@@ -1157,11 +1157,17 @@ fun force_with name cs ss simp_args =
        constructor constraints from which tableau search builds a witness. *)
     val safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
+    (* Isabelle's force_tac (src/Provers/clasimp.ML:167 @ Isabelle2025-2)
+       ends in first_best_tac alone: the method carries no tableau leg.
+       Ours keeps one, but behind rather than in front, because a leg the
+       method does not have must not be able to spend the budget the leg
+       that carries the parity needs -- the tableau does not return on
+       goals best-first closes in milliseconds. *)
     val search =
       Tactical.ORELSE
-        (staged_auto_search {blast = 8, depth = 4} cs search_cs,
-         NTactical.DETERM
-           (classicalLib.CS_FIRST_BEST_TAC search_cs))
+        (NTactical.DETERM
+           (classicalLib.CS_FIRST_BEST_TAC search_cs),
+         staged_auto_search {blast = 8, depth = 4} cs search_cs)
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,
