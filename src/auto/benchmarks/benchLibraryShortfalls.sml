@@ -318,21 +318,6 @@ val transitive_closure_from_a_step_list =
      ^ "nor an induction")
     ["list_L7054_set_trans_list_step_subset_trancl"]
 
-(* [list_L7861_listrel1_converse] left this class when the citation it
-   unfolds started firing: the definition is now stated at the argument
-   the source's own is, so a goal equating two relations has the
-   occurrence it rewrites. *)
-val a_recursion_where_the_source_composes =
-  classified "a recursion where the source composes"
-    ("the source defines [measures] as [inv_image (lex less_than) "
-     ^ "(map ...)], and its [unfolding] leaves a composite whose three "
-     ^ "constants each carry an ambient well-foundedness rule for blast "
-     ^ "to assemble; the translation defines it by recursion on the "
-     ^ "list of measure functions instead, so the same citation leaves "
-     ^ "clauses that say nothing about [WF] and an induction the "
-     ^ "method does not name")
-    ["list_L7771_wf_measures"]
-
 val integer_interval_emptiness =
   classified "integer interval emptiness"
     ("the residual is [j < i ==> source_upto i j = []], which the "
@@ -431,23 +416,26 @@ val sigma_and_times_rule_forms =
    from, all in the [characterisation is the goal] class above and
    dated to the measurement that found them.  Four are one conjunct of
    a conjunctive rule -- [listTheory.ZIP], [EVERY_DEF], [EXISTS_DEF]
-   and the translation's own [source_measures_def], which the cited
-   method unfolds -- and the simpset splits each into a rewrite that is
-   the goal.  The fifth is [listTheory.SHORTLEX_NIL2], which is the
-   goal once the translation of [lenlex] is unfolded; the guard used to
-   compare a rule's conclusion against the goal with the goal's
-   quantifier prefix still on, so neither reading matched.
+   and the ambient [in_measures] -- and the simpset splits each into a
+   rewrite that is the goal.  The fifth is [listTheory.SHORTLEX_NIL2],
+   which is the goal once the translation of [lenlex] is unfolded; the
+   guard used to compare a rule's conclusion against the goal with the
+   goal's quantifier prefix still on, so neither reading matched.
 
-   Three have left the class since, none of them because the guard
+   Four have left the class since, none of them because the guard
    released the rule: a withheld rule leaves the goal to the rest of
-   the layer, and each of the three is reached by a second route.
+   the layer, and each of the four is reached by a second route.
    [list_L1851_nth_Cons_Suc] withholds one conjunct of [listTheory.EL]
    and is reached by the seeded EL_CONS, which takes a cons at an index
    known only to be non-zero, as the successor in the goal is.  The two
    [LIST_REL_NIL] readings, [list_L3014_list_all2_Nil] and
    [list_L3017_list_all2_Nil2], are reached once the seeded one-sided
    nil equations for ZIP empty the [set (zip xs ys)] the cited
-   [list_all2_iff] expands to. *)
+   [list_all2_iff] expands to.  [list_L7775_in_measures_2] withholds
+   one conjunct of the ambient [in_measures] and is reached by the
+   citation it names: [measures] is now defined as the source defines
+   it, and unfolding it leaves a pair of conses in the equal-length
+   lexicographic order the ambient [Cons_in_lex] takes apart. *)
 val a_reading_of_the_characterisation_is_the_goal =
   map
     (fn id =>
@@ -458,8 +446,7 @@ val a_reading_of_the_characterisation_is_the_goal =
          "conjunction, or states it with its quantifiers in another " ^
          "order, and A1 withholds it under either reading; the " ^
          "assigned tactic has no second route"} : benchLib.shortfall)
-    ["list_L2740_zip_Cons_Cons",
-     "list_L7300_Nil_lenlex_iff2", "list_L7775_in_measures_2",
+    ["list_L2740_zip_Cons_Cons", "list_L7300_Nil_lenlex_iff2",
      "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
 
 val execution : benchLib.shortfall list =
@@ -486,7 +473,6 @@ val execution : benchLib.shortfall list =
   characterisation_is_the_goal @
   membership_through_a_guarded_flatten @
   transitive_closure_from_a_step_list @
-  a_recursion_where_the_source_composes @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @

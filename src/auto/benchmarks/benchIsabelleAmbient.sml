@@ -97,7 +97,7 @@ val introductions =
    ("source_map_filter_def", Definition, "src/HOL/List.thy:8474"),
    ("source_map_le_def", Definition, "src/HOL/Map.thy:49"),
    ("source_map_upds_def", Definition, "src/HOL/Map.thy:99"),
-   ("source_measures_def", Simp, "src/HOL/List.thy:7719"),
+   ("source_measures_def", Definition, "src/HOL/List.thy:7713"),
    ("source_minimum_def", Definition, "src/HOL/Lattices_Big.thy:460"),
    ("source_minus_list_mset_def", Definition, "src/HOL/List.thy:241"),
    ("source_minus_list_set_def", Definition, "src/HOL/List.thy:244"),

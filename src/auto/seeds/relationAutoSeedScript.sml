@@ -1,6 +1,8 @@
 Theory relationAutoSeed
 Ancestors
   relation
+Libs
+  clasetLib
 
 (* src/HOL/Orderings.thy:620-658 @ f7e02b7e.  Isabelle reads the order
    axioms off the linorder class, so its simplifier is never told that
@@ -68,4 +70,18 @@ Theorem WeakLinearOrder_components_AUTO[simp]:
     reflexive R /\ antisymmetric R /\ transitive R /\ trichotomous R
 Proof
   simp[relationTheory.WeakLinearOrder, relationTheory.WeakOrder]
+QED
+
+(* src/HOL/Wellfounded.thy:1136 @ f7e02b7e.  [wf_inv_image] is a [simp]
+   rule and a safe [intro] there; relation states the same content as
+   WF_inv_image and declares it to neither, so a well-foundedness goal
+   about an inverse image is inert in both halves of the layer.
+   Declared unsafe rather than [sintro]: a safe introduction owes
+   seedAudit the inversion WF (inv_image R f) ==> WF R, which is false
+   -- a constant f empties the inverse image whatever R is. *)
+Theorem WF_inv_image_AUTO[simp, intro]:
+  !relation function.
+    WF relation ==> WF (inv_image relation function)
+Proof
+  METIS_TAC [relationTheory.WF_inv_image]
 QED

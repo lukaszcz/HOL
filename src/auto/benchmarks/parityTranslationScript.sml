@@ -3756,55 +3756,6 @@ Proof
           listTheory.WF_SHORTLEX]
 QED
 
-(* Isabelle/HOL src/HOL/List.thy:7770-7788. *)
-Definition source_measures_def:
-  (source_measures [] left right <=> F) /\
-  (source_measures ((function : 'a -> num)::functions) left right <=>
-     function left < function right \/
-     (function left = function right /\
-      source_measures functions left right))
-End
-
-Theorem source_measures_inv_image_shortlex:
-  !functions.
-    source_measures functions =
-    relation$inv_image
-      (list$SHORTLEX (($<) : num -> num -> bool))
-      (\value. MAP (\function. function value) functions)
-Proof
-  Induct
-  >> simp[boolTheory.FUN_EQ_THM, source_measures_def,
-          relationTheory.inv_image_def, listTheory.SHORTLEX_def]
-QED
-
-Theorem source_WF_inv_image_shortlex:
-  !relation function.
-    relation$WF relation ==>
-    relation$WF
-      (relation$inv_image (list$SHORTLEX relation) function)
-Proof
-  metis_tac[relationTheory.WF_inv_image, listTheory.WF_SHORTLEX]
-QED
-
-Theorem source_measures_WF:
-  !functions. relation$WF (source_measures functions)
-Proof
-  Induct
-  >- simp[source_measures_def, relationTheory.WF_DEF]
-  >> gen_tac
-  >> `source_measures (h::functions) =
-      relation$inv_image
-        (pair$LEX (($<) : num -> num -> bool)
-           (source_measures functions))
-        (\value. (h value, value))` by
-       simp[boolTheory.FUN_EQ_THM, source_measures_def,
-            relationTheory.inv_image_def, pairTheory.LEX_DEF]
-  >> pop_assum SUBST1_TAC
-  >> irule relationTheory.WF_inv_image
-  >> irule pairTheory.WF_LEX
-  >> simp[prim_recTheory.WF_LESS]
-QED
-
 (* Isabelle/HOL src/HOL/List.thy:7247-7760.  Isabelle's [lex] is
    equal-length lexicographic order, [lenlex] is shortlex, and
    [lexord] is the prefix-aware lexicographic order. *)
@@ -4102,6 +4053,100 @@ Proof
   >> Induct
   >> rw[listTheory.LLEX_def]
   >> metis_tac[]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7227, 7230, 7233 and 7295.  Everything
+   Isabelle's ambient context carries about [lex]: two [iff] rules, a
+   [simp] rule taking a pair of conses apart, and the irreflexive
+   reading.  HOL4 has no equal-length lexicographic order for them to
+   be stated about, so they are stated here, as [source_wf_lex] is. *)
+Theorem source_Nil_notin_lex:
+  !relation ys. ~source_lex relation [] ys
+Proof
+  rpt gen_tac
+  >> Cases_on `ys`
+  >> simp[source_lex_def]
+QED
+
+Theorem source_Nil2_notin_lex:
+  !relation xs. ~source_lex relation xs []
+Proof
+  rpt gen_tac
+  >> Cases_on `xs`
+  >> simp[source_lex_def]
+QED
+
+Theorem source_Cons_in_lex:
+  !relation left lefts right rights.
+    source_lex relation (left::lefts) (right::rights) <=>
+    (relation left right /\ LENGTH lefts = LENGTH rights) \/
+    (left = right /\ source_lex relation lefts rights)
+Proof
+  rw[source_lex_def]
+  >> metis_tac[]
+QED
+
+Theorem source_lexl_not_refl:
+  !relation xs.
+    relation$irreflexive relation ==> ~source_lex relation xs xs
+Proof
+  rpt gen_tac
+  >> strip_tac
+  >> simp[source_lex_def]
+  >> Induct_on `xs`
+  >> fs[relationTheory.irreflexive_def, listTheory.LLEX_THM]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7713.  The source composes: a list of
+   measure functions is read off a value and the readings are compared
+   by [lex less_than], so what settles the well-foundedness of
+   [measures] is the ambient [wf_inv_image], [wf_lex] and
+   [wf_less_than], each stated about one of the three constants. *)
+Definition source_measures_def:
+  source_measures (functions : ('a -> num) list) =
+    relation$inv_image (source_lex (($<) : num -> num -> bool))
+      (\value. MAP (\function. function value) functions)
+End
+
+(* Isabelle/HOL src/HOL/List.thy:7083 [wf_lex], a safe introduction
+   there.  HOL4 has no equal-length lexicographic order of its own to
+   carry the rule, so the translation states it about [source_lex];
+   SHORTLEX is the same order once the lengths agree. *)
+Theorem source_wf_lex:
+  !relation.
+    relation$WF relation ==> relation$WF (source_lex relation)
+Proof
+  rpt strip_tac
+  >> irule relationTheory.WF_SUBSET
+  >> qexists_tac `list$SHORTLEX relation`
+  >> simp[listTheory.WF_SHORTLEX, source_lex_def]
+  >> metis_tac[source_shortlex_equal_length]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7719 [in_measures], declared simp:
+   the recursion clauses are a consequence of the composite and not
+   the definition. *)
+Theorem source_in_measures:
+  (!left right. ~source_measures [] left right) /\
+  (!function functions left right.
+     source_measures (function::functions) left right <=>
+     function left < function right \/
+     (function left = function right /\
+      source_measures functions left right))
+Proof
+  simp[source_measures_def, relationTheory.inv_image_def,
+       source_lex_def, listTheory.LLEX_THM]
+  >> metis_tac[]
+QED
+
+Theorem source_measures_WF:
+  !functions. relation$WF (source_measures functions)
+Proof
+  simp[source_measures_def]
+  >> rpt strip_tac
+  >> irule relationTheory.WF_inv_image
+  >> irule source_wf_lex
+  >> simp[prim_recTheory.WF_LESS]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:7954-8275. *)

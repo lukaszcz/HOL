@@ -117,7 +117,18 @@ val sorted_wrt_correspondence =
    and leaves the classical rules below, all stated about the constant,
    matching nothing.  [list_L6972] is the goal that separates them --
    [lists A SUBSET lists B] from [A SUBSET B] is settled by the three
-   declarations and not by any rewrite. *)
+   declarations and not by any rewrite.
+
+   List.thy:7713 introduces [measures] by a plain definition and
+   declares its two recursion clauses, :7719 [in_measures], simp.  The
+   translation introduces it the same way, so the clauses are a
+   consequence here too, and that transplant is the whole simpset a
+   source proof about a list of measure functions runs in.  It unfolds
+   to Isabelle's equal-length [lex], whose own ambient facts -- :7227
+   and :7230 [iff], :7233 and :7295 [simp] -- have no HOL4 constant to
+   sit on: LLEX is the prefix order and SHORTLEX compares lengths
+   first, so neither one's declarations reach two lists already known
+   to be the same length. *)
 val declared_results =
   let
     fun named name =
@@ -152,7 +163,12 @@ val declared_results =
        "source_lists_Nil",
        "source_lists_Int_eq",
        "source_lists_empty",
-       "source_lists_UNIV"]
+       "source_lists_UNIV",
+       "source_Nil_notin_lex",
+       "source_Nil2_notin_lex",
+       "source_Cons_in_lex",
+       "source_lexl_not_refl",
+       "source_in_measures"]
   end
 
 (* An alias definition is ambient, so by the time one of the lemmas
@@ -243,7 +259,12 @@ val declared_rules =
      (* src/HOL/List.thy:6909 [in_listsD], declared [dest!]. *)
      named benchLib.DestAdd benchLib.SafeRule "source_in_listsD",
      (* src/HOL/List.thy:6914 [in_listsI], declared [intro!]. *)
-     named benchLib.IntroAdd benchLib.SafeRule "source_in_listsI"]
+     named benchLib.IntroAdd benchLib.SafeRule "source_in_listsI",
+     (* src/HOL/List.thy:7083 [wf_lex], declared [intro!].  HOL4 has no
+        equal-length lexicographic order to state it about, so unlike
+        [wf_inv_image] and [wf_less_than] -- seeded on WF_inv_image and
+        WF_LESS -- this one has nowhere to sit but the translation. *)
+     named benchLib.IntroAdd benchLib.SafeRule "source_wf_lex"]
   end
 
 (* Isabelle's [iff] declares one theorem into both its simpset and its
@@ -267,7 +288,11 @@ val iff_declarations =
       [intro!] is its right-to-left reading and :6864 [listsE] [elim!]
       its left-to-right one.  Carrying it as an [iff] is those three
       declarations together and not more than Isabelle has. *)
-   "parityTranslation$source_Cons_in_lists_iff"]
+   "parityTranslation$source_Cons_in_lists_iff",
+   (* src/HOL/List.thy:7227 [Nil_notin_lex] and :7230 [Nil2_notin_lex],
+      both declared [iff]. *)
+   "parityTranslation$source_Nil_notin_lex",
+   "parityTranslation$source_Nil2_notin_lex"]
 
 fun ambient_argument (named as {name, ...} : benchLib.named_thm) =
   if List.exists (fn entry => entry = name) iff_declarations then
@@ -329,7 +354,13 @@ val declaration_sites =
    ("parityTranslation$source_in_listsD", "src/HOL/List.thy:6909"),
    ("parityTranslation$source_in_listsI", "src/HOL/List.thy:6914"),
    ("parityTranslation$source_lists_empty", "src/HOL/List.thy:6922"),
-   ("parityTranslation$source_lists_UNIV", "src/HOL/List.thy:6925")]
+   ("parityTranslation$source_lists_UNIV", "src/HOL/List.thy:6925"),
+   ("parityTranslation$source_Nil_notin_lex", "src/HOL/List.thy:7227"),
+   ("parityTranslation$source_Nil2_notin_lex", "src/HOL/List.thy:7230"),
+   ("parityTranslation$source_Cons_in_lex", "src/HOL/List.thy:7233"),
+   ("parityTranslation$source_lexl_not_refl", "src/HOL/List.thy:7295"),
+   ("parityTranslation$source_in_measures", "src/HOL/List.thy:7719"),
+   ("parityTranslation$source_wf_lex", "src/HOL/List.thy:7083")]
 
 fun declaration_site name =
   case List.find (fn (entry, _) => entry = name) declaration_sites of

@@ -2818,10 +2818,10 @@ val _ =
    [list_L6873_nth_sorted_list_of_set_greaterThanAtMost],
    [list_L3381_anon_L3381], [list_L5527_Nil_in_shufflesI],
    [list_L5470_subset_subseqs], [list_L8673_these_set_code],
-   [list_L7922_wf_listrel1_iff], [list_L7771_wf_measures] and
-   [list_L7954_listrel_iff_nth].  Closing any of those shortfalls means
-   restoring its generalization test in the same commit, as
-   [list_L7508_lexord_trans]'s is restored below. *)
+   [list_L7922_wf_listrel1_iff] and [list_L7954_listrel_iff_nth].
+   Closing any of those shortfalls means restoring its generalization
+   test in the same commit, as [list_L7508_lexord_trans]'s and
+   [list_L7771_wf_measures]'s are restored below. *)
 
 fun retarget_goal id goal (base : benchLib.corpus_goal) =
   {id = id, goal = goal, source_method = #source_method base,
@@ -2850,7 +2850,13 @@ val promoted_recovered_schema_goals =
            parityTranslation$source_lexord relation [left] [middle] ==>
            parityTranslation$source_lexord relation [middle] [right] ==>
            parityTranslation$source_lexord relation [left] [right]``
-     (goal_named "list_L7508_lexord_trans" benchListMap.goals)]
+     (goal_named "list_L7508_lexord_trans" benchListMap.goals),
+   retarget_goal "schema-wf-measures-inv-image"
+     ``relation$WF
+         (relation$inv_image
+           (parityTranslation$source_measures [LENGTH; SUM])
+           (REVERSE : num list -> num list))``
+     (goal_named "list_L7771_wf_measures" benchListMap.goals)]
 
 val _ =
   check

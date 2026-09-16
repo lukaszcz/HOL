@@ -122,3 +122,10 @@ val _ =
         {name = "ADD_LEFT_COMMUTE_ALGEBRA", attrname = attr,
          args = [], thm = ADD_LEFT_COMMUTE_ALGEBRA})
     ["algebra_simps", "field_simps"]
+
+(* src/HOL/Wellfounded.thy:975 @ f7e02b7e.  [wf_less_than] is [iff], so
+   Isabelle's claset carries the fact as well as its simpset.  prim_rec
+   declares WF_LESS to the simpset alone, and a tableau leg that
+   reaches [WF $<] -- the last of the three steps Isabelle's
+   [wf_measures] takes -- has no simpset to close it with. *)
+val _ = export_at "sintro" ("WF_LESS_AUTO", prim_recTheory.WF_LESS)
