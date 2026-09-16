@@ -1085,6 +1085,160 @@ fun iff_finaliser {thyname} deltas db =
       db deltas
   end
 
+(* ------------------------------------------------------------------
+   An [iff] whose rewrite may only run once its subject is normalized
+   ------------------------------------------------------------------ *)
+
+(* [not_None_eq] reads an arbitrary option through a constructor: the
+   subject of its left side [x <> NONE] is a pattern variable, so the rule
+   is about every term of the type.  Isabelle declares it [iff] and its
+   simplifier rewrites the innermost redex first, so the rule is only ever
+   offered a subject already in normal form.  HOL4's rewrites the outermost
+   redex first, so a rule of that shape fires above every rule about the
+   subject's own head, and its right side re-embeds the subject where none
+   of them match: [(m ++ n) x <> NONE] becomes the stuck
+   [?y. (m ++ n) x = SOME y], where Isabelle rewrites the inner [= NONE] by
+   [map_add_None] and reaches the disjunction that discharges it.
+
+   A low-priority reducer is what the traversal reaches only once the
+   rewrites and the descent have both left a node alone, which is the order
+   Isabelle applies such a rule in: on the term above it now yields
+   [n x = NONE ==> ?y. m x = SOME y], and on a subject that is a variable
+   it yields what the rewrite did.  So the declaration differs from [iff]
+   in where its simpset half goes and nowhere else -- the claset halves are
+   the same derived rules, under the same names.
+
+   The rewrite is not a named simpset entry, so [delsimps] does not address
+   it; [remove_iff_bottom_up] retracts a declaration, as [remove_iff] does
+   for [iff]. *)
+
+exception bottom_up_context
+
+val bottom_up_fragment_name = "clasimp-bottom-up"
+
+(* The declarations the reducer applies.  It reads them when it runs, so a
+   declaration or a retraction changes what the fragment does without the
+   fragment being replaced: a reducer is a closure rather than a named
+   rewrite, so a simpset cannot address one of several, and rebuilding the
+   fragment would mean removing it -- which forces the srw_ss state, and the
+   replay of an ancestor's deltas at load time has no theory to force it
+   in. *)
+val bottom_up_rewrites = ref ([] : thm list)
+
+val bottom_up_installed = ref false
+
+val bottom_up_reducer =
+  Traverse.REDUCER
+    {name = SOME bottom_up_fragment_name,
+     initial = bottom_up_context,
+     addcontext = fn (context, _) => context,
+     apply =
+       fn _ => fn term =>
+         Conv.FIRST_CONV
+           (map (Conv.REWR_CONV o Drule.SPEC_ALL) (!bottom_up_rewrites))
+           term}
+
+val bottom_up_fragment =
+  simpLib.SSFRAG
+    {name = SOME bottom_up_fragment_name, convs = [], rewrs = [], ac = [],
+     filter = NONE, dprocs = [bottom_up_reducer], congs = []}
+
+(* The fragment is installed by the first declaration and then stays, inert
+   while nothing is declared. *)
+fun install_bottom_up_fragment table =
+  let
+    val _ = bottom_up_rewrites := map #2 (Symtab.dest table)
+  in
+    if !bottom_up_installed then ()
+    else
+      (bottom_up_installed := true;
+       BasicProvers.augment_srw_ss [bottom_up_fragment])
+  end
+
+fun bottom_up_rules kname theorem =
+  #rules (iff_declaration (iff_rule_name kname) theorem)
+
+fun apply_bottom_up_delta delta table =
+  case delta of
+      ThmSetData.ADD (kname, theorem) =>
+        Symtab.update (persistent_iff_name kname, theorem) table
+    | ThmSetData.REMOVE name =>
+        Symtab.delete_safe (normalise_iff_name name) table
+
+(* Retraction is addressed to what the table records as installed, and by
+   the key it is recorded under: naming a declaration takes a theory to
+   resolve a bare name against, and the replay of an ancestor's deltas at
+   load time has no current theory.  Retracting before a repeated
+   declaration keeps one name to one copy of the derived rules. *)
+fun apply_bottom_up_to_global delta table =
+  let
+    fun retract_if_present key =
+      if Symtab.defined table key
+      then clasetLib.augment_claset (remove_iff_rules (iff_view_name key))
+      else ()
+    val _ =
+      case delta of
+          ThmSetData.ADD (kname, theorem) =>
+            (retract_if_present (persistent_iff_name kname);
+             clasetLib.augment_claset
+               (add_iff_rules (bottom_up_rules kname theorem)))
+        | ThmSetData.REMOVE name =>
+            retract_if_present (normalise_iff_name name)
+    val table = apply_bottom_up_delta delta table
+    val _ = install_bottom_up_fragment table
+  in
+    table
+  end
+
+val _ =
+  if List.exists (equal "iff_bottom_up") (ThmSetData.all_set_types ())
+     orelse ThmAttribute.is_attribute "iff_bottom_up"
+  then
+    raise ERR "registration"
+      "settype or attribute iff_bottom_up already exists"
+  else ()
+
+val bottom_up_data =
+  ThmSetData.export_with_ancestry
+    {settype = "iff_bottom_up",
+     delta_ops =
+       {apply_to_global = apply_bottom_up_to_global,
+        thy_finaliser = NONE,
+        uptodate_delta = K true,
+        initial_value = Symtab.empty,
+        apply_delta = apply_bottom_up_delta}}
+
+(* As for [iff]: resolve against what is installed, so that a bare name
+   reaches an ancestor's declaration and an unknown one is refused here
+   rather than replayed as a no-op by every descendant. *)
+fun resolve_bottom_up_name name =
+  let
+    val installed = Symtab.keys (#get_global_value bottom_up_data ())
+    fun denotes candidate =
+      candidate = name orelse
+      (case String.fields (equal #"$") candidate of
+           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
+         | _ => false)
+  in
+    case List.filter denotes installed of
+        [resolved] => resolved
+      | [] =>
+          raise ERR "remove_iff_bottom_up"
+            ("no [iff_bottom_up] declaration named " ^ name ^
+             " is installed")
+      | _ =>
+          raise ERR "remove_iff_bottom_up"
+            ("ambiguous [iff_bottom_up] name " ^ name)
+  end
+
+fun remove_iff_bottom_up name =
+  let
+    val delta = ThmSetData.REMOVE (resolve_bottom_up_name name)
+  in
+    #record_delta bottom_up_data delta;
+    #update_global_value bottom_up_data (apply_bottom_up_to_global delta)
+  end
+
 val _ =
   if List.exists (equal "iff") (ThmSetData.all_set_types ()) orelse
      ThmAttribute.is_attribute "iff"

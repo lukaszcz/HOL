@@ -65,6 +65,15 @@ sig
 
   val remove_iff : string -> unit
 
+  (* An [iff] whose simpset half is installed as a low-priority reducer,
+     so that the traversal offers it a subject the rewrites and the
+     descent have already left alone.  Isabelle's simplifier rewrites the
+     innermost redex first and so never offers such a rule anything else;
+     HOL4's rewrites the outermost first, where a rule about an arbitrary
+     term of a type -- [x <> NONE] -- fires above every rule about that
+     term's own head.  The claset halves are those of [iff]. *)
+  val remove_iff_bottom_up : string -> unit
+
   (* Whether the simplifier can make a rewrite of this argument that is
      able to fire.  A conditional rule whose conclusion is an equation
      between variables prepares to a rewrite matching every equation in

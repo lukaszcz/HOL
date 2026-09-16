@@ -552,6 +552,123 @@ val _ =
          not (List.exists (installed retracted) first)
        end)
 
+(* [iff_bottom_up] is [iff] with its simpset half installed as a
+   low-priority reducer, which the traversal reaches only once the rewrites
+   and the descent have both left a node alone.  The probe below is the
+   shape that distinguishes the two: a declared rule reading its subject
+   through [clasimp_bu_wrap], and an ordinary rewrite about a subject whose
+   head is [clasimp_bu_step]. *)
+val clasimp_bu_wrap_def =
+  new_definition
+    ("clasimp_bu_wrap_def", ``clasimp_bu_wrap (n:num) = (n = 0)``)
+
+val clasimp_bu_view_def =
+  new_definition
+    ("clasimp_bu_view_def", ``clasimp_bu_view (n:num) = ~(n = 0)``)
+
+val clasimp_bu_step_def =
+  new_definition
+    ("clasimp_bu_step_def", ``clasimp_bu_step (n:num) = SUC n``)
+
+val clasimp_bu_rule =
+  Tactical.prove
+    (``!n. ~clasimp_bu_wrap n <=> clasimp_bu_view n``,
+     Rewrite.REWRITE_TAC [clasimp_bu_wrap_def, clasimp_bu_view_def])
+
+val clasimp_bu_head =
+  Tactical.prove
+    (``!n. clasimp_bu_wrap (clasimp_bu_step n) <=> F``,
+     Rewrite.REWRITE_TAC
+       [clasimp_bu_wrap_def, clasimp_bu_step_def, numTheory.NOT_SUC])
+
+fun clasimp_bu_normalise term =
+  let
+    val ss =
+      simpLib.++ (BasicProvers.srw_ss (), simpLib.rewrites [clasimp_bu_head])
+  in
+    boolSyntax.rhs (concl (Conv.QCONV (simpLib.SIMP_CONV ss []) term))
+  end
+
+(* Declared and retracted around the probe, so neither store keeps the
+   rule once the check that needs it has run. *)
+fun with_declaration (attribute, retract) local_name body =
+  let
+    val _ = boolLib.save_thm (local_name ^ "[" ^ attribute ^ "]",
+                              clasimp_bu_rule)
+    val result = body () handle e => (retract local_name; raise e)
+    val _ = retract local_name
+  in
+    result
+  end
+
+(* A theory holds each name once, so every declaration takes its own. *)
+fun with_bottom_up name body =
+  with_declaration ("iff_bottom_up", clasimpLib.remove_iff_bottom_up) name body
+
+fun with_plain_iff name body =
+  with_declaration ("iff", clasimpLib.remove_iff) name body
+
+val _ =
+  check
+    ("Theorem [iff_bottom_up] immediately updates and " ^
+     "remove_iff_bottom_up retracts both stores",
+     fn () =>
+       let
+         val local_name = "clasimp_bottom_up_attribute_test"
+         val persistent_name =
+           KernelSig.name_toString (ThmSetData.toKName local_name)
+         val _ =
+           boolLib.save_thm (local_name ^ "[iff_bottom_up]", clasimp_bu_rule)
+         val added =
+           has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "intro") andalso
+           has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "dest") andalso
+           has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
+           has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
+         val _ = clasimpLib.remove_iff_bottom_up local_name
+       in
+         added andalso
+         not
+           (has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "intro")) andalso
+         not
+           (has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "dest")) andalso
+         not
+           (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
+         not
+           (has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ()))
+       end)
+
+(* The same theorem declared [iff] reaches the term first and leaves the
+   subject in a form its own rule no longer addresses. *)
+val _ =
+  check
+    ("an [iff_bottom_up] rewrite waits for a rule about the subject",
+     fn () =>
+       let
+         val term = ``~clasimp_bu_wrap (clasimp_bu_step m)``
+       in
+         aconv
+           (with_bottom_up "clasimp_bottom_up_masked"
+              (fn () => clasimp_bu_normalise term))
+           boolSyntax.T andalso
+         aconv
+           (with_plain_iff "clasimp_bottom_up_as_iff"
+              (fn () => clasimp_bu_normalise term))
+           ``clasimp_bu_view (clasimp_bu_step m)``
+       end)
+
+val _ =
+  check
+    ("an [iff_bottom_up] rewrite reduces a subject no rule addresses",
+     fn () =>
+       aconv
+         (with_bottom_up "clasimp_bottom_up_bare"
+            (fn () => clasimp_bu_normalise ``~clasimp_bu_wrap v``))
+         ``clasimp_bu_view v``)
+
 fun tyinfo_named tyop =
   case List.filter
     (fn tyi => #2 (TypeBasePure.ty_name_of tyi) = tyop)

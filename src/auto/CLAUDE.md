@@ -70,7 +70,8 @@ Subtree layout:
     rules/       rule DB, attributes, netpairs, seeds
     classical/   SAFE/CLARIFY step tactics, FAST/BEST/DEEPEN
     blast/       tableau prover (Paulson's blast)
-    clasimp/     AUTO/FORCE/FASTFORCE/CLARSIMP, [iff]
+    clasimp/     AUTO/FORCE/FASTFORCE/CLARSIMP, [iff],
+                 [iff_bottom_up]
     aesop/       best-first engine (aesop-style)
     linarith/    generic linear arith, `LINARITH_TAC`; carrier
                  instances, no dispatching `ARITH_TAC`
