@@ -78,13 +78,6 @@ val image_comprehension =
      ^ "tactic")
     ["set_L968_image_cong"]
 
-val boolean_induction_rule =
-  classified "boolean induction rule"
-    ("the source proof cites an induction rule as an "
-     ^ "introduction rule; the claset has no boolean case-split "
-     ^ "rule of that shape")
-    ["set_L1587_all_bool_eq"]
-
 val instantiated_fact_citation =
   classified "instantiated fact citation"
     ("the source method instantiates its cited facts with [OF "
@@ -121,7 +114,6 @@ val entries : benchLib.shortfall list =
   bounded_quantifier_one_point @
   definite_description @
   image_comprehension @
-  boolean_induction_rule @
   instantiated_fact_citation @
   witness_the_method_supplies
 
