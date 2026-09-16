@@ -193,9 +193,11 @@ Proof
   DEEPEN_TAC []
 QED
 
-(* Pelletier problem 21 *)
-Theorem astar_pelletier_21:
-  (?x:'a. p ==> Q x) /\ (?x. Q x ==> p) ==> ?x. p <=> Q x
+(* Pelletier problem 24 *)
+Theorem astar_pelletier_24:
+  ~(?x:'a. s x /\ q x) /\ (!x. p x ==> q x \/ r x) /\
+  (~(?x. p x) ==> ?x. q x) /\ (!x. q x \/ r x ==> s x) ==>
+  ?x. p x /\ r x
 Proof
   ASTAR_TAC []
 QED
