@@ -452,6 +452,64 @@ val _ =
            ``(!z : bool. P z ==> q) ==> (!z : bool. P z ==> q)``
        end)
 
+(* A rule that quantifies the subject its conclusion is about, which is how
+   HOL4 states an induction rule and Isabelle does not. *)
+fun thm_universal_conclusion () =
+  let
+    val y = ``y : bool``
+    val universal = ``!z : bool. P z``
+  in
+    DISCH universal (GEN y (SPEC y (ASSUME universal)))
+  end
+
+val _ =
+  test
+    ("canonical_rule keeps a conclusion's binders",
+     fn () =>
+       Term.aconv
+         (concl (Drule.SPEC_ALL (canonical_rule (thm_universal_conclusion ()))))
+         ``(!z : bool. P z) ==> !z. P z``)
+
+val _ =
+  test
+    ("atomise_conclusion takes a conclusion's binders as the rule's own",
+     fn () =>
+       Term.aconv
+         (concl
+            (Drule.SPEC_ALL
+               (atomise_conclusion (thm_universal_conclusion ()))))
+         ``(!z : bool. P z) ==> P y``)
+
+val _ =
+  test
+    ("an atomised conclusion matches an atomic goal",
+     fn () =>
+       let
+         val {concl = pattern, patvars, ...} =
+           canonical_form (atomise_conclusion (thm_universal_conclusion ()))
+         val net = insert ({pat = pattern, patvars = patvars}, 1) empty
+       in
+         match ``(Q : bool -> bool) a`` net = [1]
+       end)
+
+(* The binder the atomisation removes is one the rule's premises never
+   mention, so specializing it leaves them where they were: a conclusion
+   the move uncovers as an implication is one more premise, and premises
+   already there keep their own binders. *)
+val _ =
+  test
+    ("atomise_conclusion leaves the premises alone",
+     fn () =>
+       let
+         val prem = ``!z : bool. P z ==> q``
+         val cncl = ``!w : bool. R w``
+         val th = DISCH cncl (DISCH prem (ASSUME cncl))
+       in
+         Term.aconv
+           (concl (Drule.SPEC_ALL (atomise_conclusion th)))
+           ``(!w : bool. R w) ==> (!z : bool. P z ==> q) ==> R w``
+       end)
+
 fun shadowed_outer_rule () =
   let
     val x = ``x : bool``

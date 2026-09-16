@@ -65,6 +65,20 @@ fun symmetric build () =
            {name = name ^ "[symmetric]", theorem = Conv.GSYM theorem})
        (resolved build))
 
+(* An Isabelle theorem is stored in hhf normal form, so a rule never
+   quantifies the subject its conclusion is about: [option.induct]
+   concludes the atom [?P ?option].  HOL4 has no meta level and states
+   the same rule with an object binder -- [option_induction] concludes
+   [!x. P x] -- which as a rule indexes a universal formula and meets no
+   atomic goal.  The two are the same theorem; this is the shape the
+   Isabelle name denotes, so an entry whose source rule is hhf-normal
+   says so here rather than leaving the method a rule it cannot use. *)
+fun hhf build () =
+  Theorems
+    (map (fn {name, theorem} =>
+           {name = name, theorem = clasetRules.atomise_conclusion theorem})
+       (resolved build))
+
 (* An attribute that only instantiates -- [of ...], [where ...] --
    names the same theorem at particular arguments, and the arguments
    are read off the source method rather than chosen here.  It is not
@@ -1025,7 +1039,7 @@ val table : (string * (unit -> resolution)) list =
   ("nths_Cons",
    translated "source_nths_recursion"),
   ("option.induct",
-   library "option" "option_induction"),
+   hhf (library "option" "option_induction")),
   ("option.split",
    datatype_split ``:'a option``),
   ("option.split_asm",

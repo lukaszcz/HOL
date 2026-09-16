@@ -26,6 +26,17 @@ sig
      results cannot make GEN reject a free hypothesis. *)
   val fresh_forall_vars : thm -> term list -> term list
 
+  (* Take the binders of a rule's conclusion as binders of the rule, so
+     that its index is an atom.  An Isabelle rule is stored in hhf normal
+     form and never quantifies its conclusion's subject; a HOL4 theorem
+     standing for one -- a datatype's induction rule, say -- does, and its
+     index then meets no atomic goal.  Not a normalisation the claset
+     applies on its own: the atomised index of a conclusion that is a bare
+     pattern application matches every goal, so an ambient rule must keep
+     its binder.  Callers ask for it where they know the source rule's
+     shape. *)
+  val atomise_conclusion : thm -> thm
+
   val canonical_rule : thm -> thm
   val canonical_rule_of : rulekind -> thm -> thm
   val canonical_form : thm -> canonical

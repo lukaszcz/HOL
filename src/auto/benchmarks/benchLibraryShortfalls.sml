@@ -99,8 +99,22 @@ val search_returns_nothing_at_ten_times_the_budget =
 val over_budget_with_no_residual =
   classified "over budget with no residual"
     ("the assigned tactic did not return within the budget")
-    ["list_L6138_map_sorted_distinct_set_unique",
-     "list_L9013_list_all_transfer"]
+    ["list_L6138_map_sorted_distinct_set_unique"]
+
+(* src/HOL/List.thy:9013 @ f7e02b7e.  [list_all_transfer] is proved
+   [using list.pred_transfer by blast], and [list.pred_transfer] is the
+   [list] BNF's own predicator transfer rule: the two statements are
+   the same one, so the source proof is the citation and nothing
+   else. *)
+val the_only_citation_states_the_goal =
+  classified "the only citation states the goal"
+    ("the source method's only citation is the goal's own statement, "
+     ^ "which the name table records as unrepresented, so the recipe "
+     ^ "reaches the goal with the ambient context and nothing else; "
+     ^ "what is left relates EVERY at two predicates across a "
+     ^ "LIST_REL, which is an induction on the relation and not a "
+     ^ "step any classical or simp method takes")
+    ["list_L9013_list_all_transfer"]
 
 (* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
    the translated [sorted_key_list_of_set], which is a sort of the set's
@@ -450,6 +464,7 @@ val execution : benchLib.shortfall list =
   list_decomposition_witnesses @
   search_returns_nothing_at_ten_times_the_budget @
   over_budget_with_no_residual @
+  the_only_citation_states_the_goal @
   sorted_list_of_a_set @
   filter_normalisation @
   indexing_through_list_constructors @

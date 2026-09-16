@@ -118,6 +118,63 @@ fun generalise_parameters checkpoint th =
     if List.null rigid then th else GENL rigid th
   end
 
+(* An Isabelle rule never quantifies the subject its conclusion is about:
+   a stored theorem is in hhf normal form, so what the source writes as a
+   meta-bound conclusion variable is schematic, and the rule's index is an
+   atom.  HOL4 has no meta level and states the same rule with an object
+   binder -- [option_induction] is [P NONE /\ (!a. P (SOME a)) ==> !x. P x]
+   against Isabelle's [option.induct], whose conclusion is [?P ?option].
+   Read as a rule, the binder makes the index a universal formula, which
+   the atomic goal the rule exists to close never meets.  This is not a
+   normalisation the claset may apply on its own: for an ambient rule whose
+   conclusion is a bare pattern application the atomised index matches every
+   goal, which is precisely why Isabelle keeps such rules out of its own
+   claset and passes them per call.  So the operation is offered, not
+   imposed -- a caller that knows a HOL4 theorem stands for an hhf-normal
+   Isabelle one asks for it by name. *)
+
+fun undisch_spine checkpoint th =
+  (checkpoint ();
+   case total dest_imp_only (concl th) of
+       NONE => ([], th)
+     | SOME (prem, _) =>
+         let val (rest, core) = undisch_spine checkpoint (undisch th)
+         in (prem :: rest, core) end)
+
+(* [th] carries no outer binder; the result is the same rule with every
+   conclusion binder specialized, and the variables it took. *)
+fun atomise_body checkpoint th =
+  let
+    fun step th taken =
+      let
+        val _ = checkpoint ()
+        val (prems, core) = undisch_spine checkpoint th
+      in
+        if not (is_forall (concl core)) then (th, List.rev taken)
+        else
+          let
+            val (bound, _) = strip_forall (concl core)
+            val avoids = free_varsl (concl th :: hyp th) @ taken
+            fun freshen _ [] = []
+              | freshen avoid (variable :: rest) =
+                  let
+                    val _ = checkpoint ()
+                    val variable' = variant avoid variable
+                  in
+                    variable' :: freshen (variable' :: avoid) rest
+                  end
+            val fresh = freshen avoids bound
+            val atom = Drule.SPECL fresh core
+            val restored =
+              List.foldr (fn (prem, th') => DISCH prem th') atom prems
+          in
+            step restored (List.rev fresh @ taken)
+          end
+      end
+  in
+    step th []
+  end
+
 fun canonical_rule_with checkpoint exemption th0 =
   let
     val th = generalise_parameters checkpoint th0
@@ -135,6 +192,23 @@ fun canonical_rule_with checkpoint exemption th0 =
       in
         GENL vars' body'
       end
+  end
+
+(* The binder belongs to the conclusion alone, so no premise mentions it,
+   and taking it as one of the rule's own binders is the same rule with the
+   subject a pattern variable.  A conclusion the move exposes as an
+   implication becomes one more premise, as it is in the source. *)
+fun atomise_conclusion_with checkpoint th =
+  let
+    val _ = checkpoint ()
+    val (vars, _) = strip_forall (concl th)
+    val vars' = fresh_forall_vars_with checkpoint th vars
+    val _ = checkpoint ()
+    val body = Drule.SPECL vars' th
+    val (atomised, subjects) = atomise_body checkpoint body
+    val _ = checkpoint ()
+  in
+    GENL (vars' @ subjects) atomised
   end
 
 fun canonical_rule_of_with checkpoint kind =
@@ -159,6 +233,8 @@ fun no_checkpoint () = ()
 
 fun fresh_forall_vars th vars =
   fresh_forall_vars_with no_checkpoint th vars
+
+val atomise_conclusion = atomise_conclusion_with no_checkpoint
 
 val canonical_rule = canonical_rule_of_with no_checkpoint Intro
 
