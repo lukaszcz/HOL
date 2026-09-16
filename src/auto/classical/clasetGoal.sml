@@ -23,22 +23,39 @@ datatype node =
            paths : int list list,
            marks : binding_marks,
            avoids : term list,
-           rendering : term option ref}
+           rendering : term option ref,
+           (* A rendering is a pure function of the node's goals and
+              store, and a rule query asks for one at every candidate
+              lookup, so it is computed once per position. *)
+           renders : (int * (term list * term)) list ref}
 
 fun norm_term store tm =
   let
+    (* Structure sharing, as in [clasetMeta]: a render normalises every
+       assumption of every goal at every rule query, and rebuilding a term
+       that the store leaves alone costs a node per subterm for nothing. *)
     fun recurse current =
       case dest_term current of
           COMB (operator, operand) =>
             let
+              val operator' = recurse operator
+              val operand' = recurse operand
               val combination =
-                mk_comb (recurse operator, recurse operand)
+                if Portable.pointer_eq (operator', operator) andalso
+                   Portable.pointer_eq (operand', operand)
+                then current
+                else mk_comb (operator', operand')
             in
-              if is_abs (#1 (dest_comb combination)) then
-                recurse (beta_conv combination)
+              if is_abs operator' then recurse (beta_conv combination)
               else combination
             end
-        | LAMB (bvar, body) => mk_abs (bvar, recurse body)
+        | LAMB (bvar, body) =>
+            let
+              val body' = recurse body
+            in
+              if Portable.pointer_eq (body', body) then current
+              else mk_abs (bvar, body')
+            end
         | _ => current
   in
     recurse (clasetMeta.instantiate store tm)
@@ -96,7 +113,8 @@ fun make_node goals store replay level paths marks avoids =
     in
       Node {goals = goals, store = store', replay = replay,
             size = goals_size store' goals, level = level, paths = paths,
-            marks = marks, avoids = avoids', rendering = ref NONE}
+            marks = marks, avoids = avoids', rendering = ref NONE,
+            renders = ref []}
     end
 
 fun root_paths goals =
@@ -148,28 +166,28 @@ fun set_store store'
 
 fun set_level level'
   (Node {goals, store, replay, size, paths, marks, avoids,
-         rendering, ...}) =
+         rendering, renders, ...}) =
   (* Goals and store are unchanged, so their cached derivatives remain
      valid. *)
   Node {goals = goals, store = store, replay = replay, size = size,
         level = level', paths = paths, marks = marks, avoids = avoids,
-        rendering = rendering}
+        rendering = rendering, renders = renders}
 
 fun set_binding_marks marks'
   (Node {goals, store, replay, size, level, paths, avoids,
-         rendering, ...}) =
+         rendering, renders, ...}) =
   Node {goals = goals, store = store, replay = replay, size = size,
         level = level, paths = paths, marks = marks', avoids = avoids,
-        rendering = rendering}
+        rendering = rendering, renders = renders}
 
 fun record_step record
   (Node {goals, store, replay, size, level, paths, marks, avoids,
-         rendering}) =
+         rendering, renders}) =
   Node
     {goals = goals, store = store,
      replay = clasetReplay.append replay record, size = size,
      level = level, paths = paths, marks = marks, avoids = avoids,
-     rendering = rendering}
+     rendering = rendering, renders = renders}
 
 fun nth1 function_name =
   clasetNorm.nth1 ("clasetGoal", function_name)
@@ -383,15 +401,21 @@ fun compare (left, right) =
                            canonical_rendering right)
   | order => order
 
-fun render node pos =
-  let
-    val {asl, w, ...} = goal_at node pos
-    val store = store node
-  in
-    (* Unbound engine metavariables survive normalization as their marked
-       frees.  HOL4 tactics consequently see rigid variables, not holes. *)
-    (map (norm_term store) asl, norm_term store w)
-  end
+fun render (node as Node {renders, ...}) pos =
+  case List.find (fn (cached, _) => cached = pos) (!renders) of
+      SOME (_, rendered) => rendered
+    | NONE =>
+        let
+          val {asl, w, ...} = goal_at node pos
+          val store = store node
+          (* Unbound engine metavariables survive normalization as their
+             marked frees.  HOL4 tactics consequently see rigid variables,
+             not holes. *)
+          val rendered = (map (norm_term store) asl, norm_term store w)
+          val _ = renders := (pos, rendered) :: !renders
+        in
+          rendered
+        end
 
 fun member_term tm = List.exists (fn known => aconv tm known)
 fun member_type ty = List.exists (fn known => Type.compare (ty, known) = EQUAL)

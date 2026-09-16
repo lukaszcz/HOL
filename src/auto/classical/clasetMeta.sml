@@ -55,6 +55,13 @@ fun same_tymeta left right =
       (SOME left_name, SOME right_name) => left_name = right_name
     | _ => false
 
+(* [occurring] is every variable that stands in a binding's residue.
+   Expansion only substitutes one residue into another, so no variable
+   outside it can appear in any normalized residue, and registering an
+   eigenvariable the set does not hold cannot invalidate a binding.  The
+   check it replaces normalizes every binding in the store at every
+   eigenvariable introduction, which is quadratic in the bindings a
+   branch has made. *)
 type store =
   {allows : (string, term list) Redblackmap.dict,
    eigens : (string, term list) Redblackmap.dict,
@@ -62,7 +69,8 @@ type store =
    tm_bindings : (string, term) Redblackmap.dict,
    tymetas : (string, tymeta) Redblackmap.dict,
    ty_bindings :
-     (string, tymeta * hol_type) Redblackmap.dict}
+     (string, tymeta * hol_type) Redblackmap.dict,
+   occurring : string Redblackset.set}
 
 val empty =
   {allows = Redblackmap.mkDict string_compare,
@@ -70,7 +78,8 @@ val empty =
    metas = Redblackmap.mkDict string_compare,
    tm_bindings = Redblackmap.mkDict string_compare,
    tymetas = Redblackmap.mkDict string_compare,
-   ty_bindings = Redblackmap.mkDict string_compare}
+   ty_bindings = Redblackmap.mkDict string_compare,
+   occurring = Redblackset.empty string_compare}
 
 fun same_terms left right =
   ListPair.allEq (fn (tm1, tm2) => aconv tm1 tm2) (left, right)
@@ -111,7 +120,9 @@ fun absorb {base, extensions} =
            (#tymetas store, #tymetas extension),
        ty_bindings =
          merge_table "type binding" same_type_binding
-           (#ty_bindings store, #ty_bindings extension)}
+           (#ty_bindings store, #ty_bindings extension),
+       occurring =
+         Redblackset.union (#occurring store, #occurring extension)}
   in
     List.foldl merge base extensions
   end
@@ -159,7 +170,8 @@ fun new_meta {allow, ty} store =
       metas = metas,
       tm_bindings = #tm_bindings store,
       tymetas = #tymetas store,
-      ty_bindings = #ty_bindings store})
+      ty_bindings = #ty_bindings store,
+      occurring = #occurring store})
   end
 
 fun new_tymeta store =
@@ -174,8 +186,19 @@ fun new_tymeta store =
       metas = #metas store,
       tm_bindings = #tm_bindings store,
       tymetas = tymetas,
-      ty_bindings = #ty_bindings store})
+      ty_bindings = #ty_bindings store,
+      occurring = #occurring store})
   end
+
+(* A normalisation that changes nothing returns what it was given.
+   Rebuilding regardless costs a fresh node for every subterm of every
+   term the engine looks at, and [mk_thy_type] and [mk_comb] each re-check
+   what the original already satisfied.  The engine normalises the same
+   terms repeatedly -- a unification walks a pair node by node, a goal is
+   rendered once per rule query -- so the terms that changed are the rare
+   ones. *)
+fun unchanged_list (originals, results) =
+  ListPair.allEq Portable.pointer_eq (originals, results)
 
 fun norm_ty store ty =
   let
@@ -190,9 +213,10 @@ fun norm_ty store ty =
           else
             let
               val {Thy, Tyop, Args} = dest_thy_type current
+              val args = map recurse Args
             in
-              mk_thy_type
-                {Thy = Thy, Tyop = Tyop, Args = map recurse Args}
+              if unchanged_list (Args, args) then current
+              else mk_thy_type {Thy = Thy, Tyop = Tyop, Args = args}
             end
   in
     recurse ty
@@ -279,13 +303,23 @@ fun beta_eta_normalize
             let
               val rator' = recurse rator
               val rand' = recurse rand
-              val combined = combination (rator', rand')
+              val combined =
+                if Portable.pointer_eq (rator', rator) andalso
+                   Portable.pointer_eq (rand', rand)
+                then current
+                else combination (rator', rand')
             in
               if abstraction_operator rator' then recurse (beta combined)
               else combined
             end
         | LAMB (bvar, body) =>
-            eta (abstraction (bvar, recurse body))
+            let
+              val body' = recurse body
+            in
+              eta
+                (if Portable.pointer_eq (body', body) then current
+                 else abstraction (bvar, body'))
+            end
         | _ => current
   in
     recurse tm
@@ -507,8 +541,13 @@ fun register_eigen eigen store =
              metas = #metas store,
              tm_bindings = #tm_bindings store,
              tymetas = #tymetas store,
-             ty_bindings = #ty_bindings store}
+             ty_bindings = #ty_bindings store,
+             occurring = #occurring store}
+          (* No residue can normalize to a term mentioning a variable no
+             residue holds, so a name outside [occurring] leaves every
+             binding's allow-set exactly as it was. *)
           val permitted =
+            not (Redblackset.member (#occurring candidate, name)) orelse
             List.all (binding_respects_allow candidate)
               (Redblackmap.listItems (#tm_bindings candidate))
         in
@@ -545,7 +584,12 @@ fun bind (m, tm) store =
                    Redblackmap.insert
                      (#tm_bindings store, name, residue),
                  tymetas = #tymetas store,
-                 ty_bindings = #ty_bindings store}
+                 ty_bindings = #ty_bindings store,
+                 occurring =
+                   List.foldl
+                     (fn (variable, known) =>
+                       Redblackset.add (known, #1 (dest_var variable)))
+                     (#occurring store) (free_vars residue)}
               (* Adding a binding whose normalized residue contains no
                  eigenvariable cannot invalidate the eigen scopes of any
                  existing binding.  A later binding which does introduce an
@@ -594,7 +638,8 @@ fun bind_ty (tymeta, ty) store =
                tymetas = #tymetas store,
                ty_bindings =
                  Redblackmap.insert
-                   (#ty_bindings store, name, (tymeta, residue))}
+                   (#ty_bindings store, name, (tymeta, residue)),
+               occurring = #occurring store}
         end
 
 fun ground_types store =
