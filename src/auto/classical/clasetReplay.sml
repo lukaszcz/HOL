@@ -1245,8 +1245,22 @@ fun replay_option _ NONE goal = ([goal], fn [th] => th | _ =>
         "open-goal validation arity")
   | replay_option store (SOME record) goal =
       let
+        (* A step proves the goal in the spelling the engine recorded it
+           in, and replay runs it against the goal as the caller posed
+           one: the two spell a binder or a redex differently wherever
+           the entry reduced the caller's terms.  The step's proof is
+           restated in the replay goal's own spelling before its validity
+           is judged, as [clasetStep.aligned_result] restates a child's. *)
+        fun aligned_action replay_goal =
+          let
+            val (children, validation) = action_of record store replay_goal
+          in
+            (children,
+             fn theorems =>
+               clasetNorm.align_goal replay_goal (validation theorems))
+          end
         val (children, parent_validation) =
-          Tactical.VALID (action_of record store) goal
+          Tactical.VALID aligned_action goal
           handle error =>
             raise ReplayError (record, goal, Feedback.exn_to_string error)
         val subtrees = children_of record

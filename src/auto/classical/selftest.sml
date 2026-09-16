@@ -3342,6 +3342,50 @@ val _ =
    left standing, and the step recorded against it finds nothing to do.
    So the step replays the eliminations it made, not the ones its goal
    now admits. *)
+(* A step's recorded result proves its goal in the spelling the engine
+   rendered it in, and replay runs that result against the goal the
+   caller posed: a caller who writes a quantifier contracted poses
+   [$! P] where the engine's entry spells it out.  The replayed proof is
+   restated in the caller's spelling, or the step proves the goal from a
+   formula the goal does not assume. *)
+val _ =
+  test
+    ("replay restates a recorded step in the caller's spelling",
+     fn () =>
+       let
+         val predicate =
+           Term.mk_var ("replay_spelling_predicate", Type.ind --> bool_ty)
+         val witness = Term.mk_var ("replay_spelling_witness", Type.ind)
+         val bound = Term.mk_var ("replay_spelling_bound", Type.ind)
+         val contracted =
+           Term.mk_comb
+             (Term.inst [Type.alpha |-> Type.ind] boolSyntax.universal,
+              predicate)
+         val expanded =
+           boolSyntax.mk_forall (bound, Term.mk_comb (predicate, bound))
+         val target = Term.mk_comb (predicate, witness)
+         val proof = Thm.SPEC witness (ASSUME expanded)
+         val record =
+           clasetReplay.make_record
+             {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
+              created = {terms = [], types = []},
+              eigenvariables = [], validation = (fn _ => proof),
+              action = clasetReplay.fixed_action ([], fn _ => proof),
+              children = []}
+         val script = clasetReplay.append (clasetReplay.empty 1) record
+         val grounded = clasetReplay.ground clasetMeta.empty script
+       in
+         case clasetReplay.replay grounded ([contracted], target) of
+             clasetReplay.Replayed ([], validation) =>
+               let
+                 val theorem = validation []
+               in
+                 Term.aconv (concl theorem) target andalso
+                 List.all (Term.aconv contracted) (hyp theorem)
+               end
+           | _ => false
+       end)
+
 val _ =
   test
     ("hyp-subst replays its own eliminations, not a fresh saturation",

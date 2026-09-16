@@ -2927,6 +2927,27 @@ val _ =
        ((ignore (aesopLib.AESOP_TAC [] ([], surface_p)); false)
         handle HOL_ERR _ => true))
 
+(* A caller may pose a quantified assumption contracted, and the engine's
+   entry spells it out: the proof aesop replays then assumes [!x. P x]
+   where the goal lists [$! P].  Closing the goal means the replay
+   restates the proof in the spelling the caller used. *)
+val _ =
+  check
+    ("AESOP_TAC closes a goal whose assumption the caller posed contracted",
+     fn () =>
+       let
+         val predicate =
+           Term.mk_var ("aesop_contracted_predicate", Type.ind --> Type.bool)
+         val witness = Term.mk_var ("aesop_contracted_witness", Type.ind)
+         val assumption =
+           Term.mk_comb
+             (Term.inst [Type.alpha |-> Type.ind] boolSyntax.universal,
+              predicate)
+         val goal = ([assumption], Term.mk_comb (predicate, witness))
+       in
+         null (#1 (Tactical.VALID (aesopLib.AESOP_TAC []) goal))
+       end)
+
 val surface_global_rules =
   map (fn (_, (name, _)) => name)
     (clasetLib.rules_of (clasetLib.the_claset ()))
