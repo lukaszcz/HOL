@@ -752,9 +752,14 @@ val table : (string * (unit -> resolution)) list =
   ("greaterThanLessThan_eq", unrepresented),
   ("idem_if_sorted_distinct", unrepresented),
   ("listrel_subset", translated "source_LIST_REL_in_lists"),
-  ("lists_accD", unrepresented),
+  (* Isabelle's [Wellfounded.acc] is [relationTheory.WFP]; both lemmas
+     are about the accessible part of its [lists] set, which the
+     translation states pointwise.  The second is cited already
+     resolved through [Cons_in_lists_iff], and the translation states
+     it in that resolved form. *)
+  ("lists_accD", translated "source_lists_accD"),
   ("lists_accI[THEN Cons_in_lists_iff[THEN iffD1, THEN conjunct1]]",
-   unrepresented),
+   translated "source_lists_accI"),
   ("possible_bit_def", unrepresented),
   (* HOL4 states the same relation by its graph -- a set of pairs whose
      projections are the two sides -- rather than by Isabelle's two

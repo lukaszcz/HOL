@@ -206,17 +206,6 @@ val an_injectivity_premise_no_ambient_fact_reaches =
      ^ "condition arrives existentially closed")
     ["string_L178_card_UNIV_char"]
 
-val well_foundedness_through_the_accessible_part =
-  classified "well-foundedness through the accessible part"
-    ("the cited [wf_iff_acc] is [relationTheory.WF_EQ_WFP], which "
-     ^ "turns both sides into statements about the accessible part; "
-     ^ "Isabelle then crosses between the two by [lists_accD] and "
-     ^ "[lists_accI], results about the accessible part of its "
-     ^ "[lists] set that HOL4 has no counterpart for, so what is "
-     ^ "left is the two implications between WFP (listrel1 R) and "
-     ^ "WFP R with nothing to relate them")
-    ["list_L7922_wf_listrel1_iff"]
-
 (* The earlier reading -- that the translation renders foldr as FOLDL
    over REVERSE -- was wrong: [source_foldr] is FOLDR.  The FOLDL over
    a REVERSE arrives from the cited [foldr_conv_fold], which is what
@@ -468,7 +457,6 @@ val execution : benchLib.shortfall list =
   the_cited_characterisation_has_no_counterpart @
   a_set_relation_stated_by_its_graph @
   an_injectivity_premise_no_ambient_fact_reaches @
-  well_foundedness_through_the_accessible_part @
   fold_direction @
   fold_against_a_set_aggregate @
   finite_cardinality @

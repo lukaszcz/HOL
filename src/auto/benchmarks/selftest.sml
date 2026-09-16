@@ -2817,11 +2817,12 @@ val _ =
    [list_L6847_sorted_list_of_set_nonempty],
    [list_L6873_nth_sorted_list_of_set_greaterThanAtMost],
    [list_L3381_anon_L3381], [list_L5527_Nil_in_shufflesI],
-   [list_L5470_subset_subseqs], [list_L8673_these_set_code],
-   [list_L7922_wf_listrel1_iff] and [list_L7954_listrel_iff_nth].
+   [list_L5470_subset_subseqs], [list_L8673_these_set_code] and
+   [list_L7954_listrel_iff_nth].
    Closing any of those shortfalls means restoring its generalization
-   test in the same commit, as [list_L7508_lexord_trans]'s and
-   [list_L7771_wf_measures]'s are restored below.  The last two below
+   test in the same commit, as [list_L7508_lexord_trans]'s,
+   [list_L7771_wf_measures]'s and [list_L7922_wf_listrel1_iff]'s are
+   restored below.  The last two below
    are not restorations: [list_L7570_asym_lenlex] and
    [list_L7318_lenlex_length] never carried one, and gained one with
    the composite definition of [lenlex] that closed them. *)
@@ -2860,6 +2861,11 @@ val promoted_recovered_schema_goals =
            (parityTranslation$source_measures [LENGTH; SUM])
            (REVERSE : num list -> num list))``
      (goal_named "list_L7771_wf_measures" benchListMap.goals),
+   retarget_goal "schema-wf-listrel1-forward"
+     ``!relation : num -> num -> bool.
+         relation$WF relation ==>
+         relation$WF (parityTranslation$source_listrel1 relation)``
+     (goal_named "list_L7922_wf_listrel1_iff" benchListMap.goals),
    retarget_goal "schema-asym-lenlex-iterated"
      ``!relation : num -> num -> bool.
          parityTranslation$source_asym relation ==>

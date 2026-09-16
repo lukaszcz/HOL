@@ -182,6 +182,9 @@ val declared_results =
        "source_Cons_in_lex",
        "source_lexl_not_refl",
        "source_asym_lex_prod",
+       "source_not_Nil_listrel1",
+       "source_not_listrel1_Nil",
+       "source_Cons_listrel1_Cons",
        "source_in_measures"]
   end
 
@@ -284,7 +287,14 @@ val declared_rules =
         the source as well, so neither rule has a HOL4 carrier once it
         is stated that way. *)
      named benchLib.IntroAdd benchLib.SafeRule "source_wf_lenlex",
-     named benchLib.IntroAdd benchLib.UnsafeRule "source_lenlex_transI"]
+     named benchLib.IntroAdd benchLib.UnsafeRule "source_lenlex_transI",
+     (* src/HOL/List.thy:7773 [Cons_listrel1E1] and :7780
+        [Cons_listrel1E2], both declared [elim!]; :7834
+        [Cons_acc_listrel1I], declared [intro!]. *)
+     named benchLib.ElimAdd benchLib.SafeRule "source_Cons_listrel1E1",
+     named benchLib.ElimAdd benchLib.SafeRule "source_Cons_listrel1E2",
+     named benchLib.IntroAdd benchLib.SafeRule
+       "source_Cons_acc_listrel1I"]
   end
 
 (* Isabelle's [iff] declares one theorem into both its simpset and its
@@ -312,7 +322,13 @@ val iff_declarations =
    (* src/HOL/List.thy:7227 [Nil_notin_lex] and :7230 [Nil2_notin_lex],
       both declared [iff]. *)
    "parityTranslation$source_Nil_notin_lex",
-   "parityTranslation$source_Nil2_notin_lex"]
+   "parityTranslation$source_Nil2_notin_lex",
+   (* src/HOL/List.thy:7750 [not_Nil_listrel1], :7753
+      [not_listrel1_Nil] and :7756 [Cons_listrel1_Cons], all three
+      declared [iff]. *)
+   "parityTranslation$source_not_Nil_listrel1",
+   "parityTranslation$source_not_listrel1_Nil",
+   "parityTranslation$source_Cons_listrel1_Cons"]
 
 fun ambient_argument (named as {name, ...} : benchLib.named_thm) =
   if List.exists (fn entry => entry = name) iff_declarations then
@@ -388,7 +404,19 @@ val declaration_sites =
    ("parityTranslation$source_Nil_lenlex_iff2",
     "src/HOL/List.thy:7245"),
    ("parityTranslation$source_asym_lex_prod",
-    "src/HOL/Wellfounded.thy:1318")]
+    "src/HOL/Wellfounded.thy:1318"),
+   ("parityTranslation$source_not_Nil_listrel1",
+    "src/HOL/List.thy:7750"),
+   ("parityTranslation$source_not_listrel1_Nil",
+    "src/HOL/List.thy:7753"),
+   ("parityTranslation$source_Cons_listrel1_Cons",
+    "src/HOL/List.thy:7756"),
+   ("parityTranslation$source_Cons_listrel1E1",
+    "src/HOL/List.thy:7773"),
+   ("parityTranslation$source_Cons_listrel1E2",
+    "src/HOL/List.thy:7780"),
+   ("parityTranslation$source_Cons_acc_listrel1I",
+    "src/HOL/List.thy:7834")]
 
 fun declaration_site name =
   case List.find (fn (entry, _) => entry = name) declaration_sites of

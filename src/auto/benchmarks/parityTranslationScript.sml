@@ -3656,104 +3656,82 @@ Proof
   >> metis_tac[listTheory.APPEND_ASSOC]
 QED
 
-Theorem source_shortlex_not_less_equal:
-  !relation xs ys.
-    list$SHORTLEX relation xs ys ==>
-    ~(LENGTH xs < LENGTH ys) ==>
-    LENGTH xs = LENGTH ys
-Proof
-  metis_tac[listTheory.SHORTLEX_LENGTH_LE,
-            arithmeticTheory.NOT_LESS,
-            arithmeticTheory.LESS_EQUAL_ANTISYM]
-QED
-
-Theorem source_shortlex_append_change:
-  !relation prefix left right suffix.
-    relation left right ==>
-    list$SHORTLEX relation
-      (prefix ++ [left] ++ suffix)
-      (prefix ++ [right] ++ suffix)
-Proof
-  gen_tac
-  >> Induct
-  >> simp[listTheory.SHORTLEX_THM]
-QED
-
-Theorem source_listrel1_shortlex:
-  !relation xs ys.
-    source_listrel1 relation xs ys ==>
-    list$SHORTLEX relation xs ys
+(* src/HOL/List.thy:7750 [not_Nil_listrel1] and :7753
+   [not_listrel1_Nil], both declared [iff].  A one-step rewrite of a
+   list is a rewrite of one of its positions, so neither end of it can
+   be empty. *)
+Theorem source_not_Nil_listrel1:
+  !relation ys. ~source_listrel1 relation [] ys
 Proof
   rpt gen_tac
-  >> strip_tac
-  >> fs[source_listrel1_def]
-  >> mp_tac
-       (Q.SPECL [`relation`, `prefix`, `left`, `right`, `suffix`]
-          source_shortlex_append_change)
-  >> simp[]
+  >> simp[source_listrel1_def]
+  >> rpt strip_tac
+  >> Cases_on `prefix`
+  >> fs[]
 QED
 
-Theorem source_listrel1_singleton:
-  !relation left right.
-    source_listrel1 relation [left] [right] <=>
-    relation left right
+Theorem source_not_listrel1_Nil:
+  !relation xs. ~source_listrel1 relation xs []
+Proof
+  rpt gen_tac
+  >> simp[source_listrel1_def]
+  >> rpt strip_tac
+  >> Cases_on `prefix`
+  >> fs[]
+QED
+
+(* src/HOL/List.thy:7756 [Cons_listrel1_Cons], declared [iff]: the step
+   is either at the head or inside the tail. *)
+Theorem source_Cons_listrel1_Cons:
+  !relation x xs y ys.
+    source_listrel1 relation (x::xs) (y::ys) <=>
+    relation x y /\ xs = ys \/ x = y /\ source_listrel1 relation xs ys
 Proof
   rpt gen_tac
   >> eq_tac
   >- (strip_tac
       >> fs[source_listrel1_def]
       >> Cases_on `prefix`
-      >> fs[])
+      >> fs[]
+      >> metis_tac[])
   >> strip_tac
-  >> simp[source_listrel1_def]
-  >> map_every qexists_tac [`[]`, `left`, `right`, `[]`]
+  >> fs[source_listrel1_def]
+  >- (map_every qexists_tac [`[]`, `x`, `y`, `ys`] >> simp[])
+  >> map_every qexists_tac [`y::prefix`, `left`, `right`, `suffix`]
   >> simp[]
 QED
 
-Theorem source_WF_list_lift:
-  !relation lift.
-    (!left right. lift [left] [right] <=> relation left right) ==>
-    (!xs ys. lift xs ys ==> list$SHORTLEX relation xs ys) ==>
-    (relation$WF lift <=> relation$WF relation)
+(* src/HOL/List.thy:7773 [Cons_listrel1E1] and :7780 [Cons_listrel1E2],
+   both declared [elim!]: the two case splits the equivalence above
+   supports when only one side is known to be a cons. *)
+Theorem source_Cons_listrel1E1:
+  !relation x xs ys conclusion.
+    source_listrel1 relation (x::xs) ys ==>
+    (!y. ys = y::xs ==> relation x y ==> conclusion) ==>
+    (!zs. ys = x::zs ==> source_listrel1 relation xs zs ==> conclusion) ==>
+    conclusion
 Proof
-  rpt strip_tac
-  >> eq_tac
-  >- (strip_tac
-      >> irule relationTheory.WF_SUBSET
-      >> qexists_tac
-           `relation$inv_image lift (\value. [value])`
-      >> conj_tac
-      >- simp[relationTheory.inv_image_def]
-      >> irule relationTheory.WF_inv_image
-      >> simp[])
-  >> strip_tac
-  >> irule relationTheory.WF_SUBSET
-  >> qexists_tac `list$SHORTLEX relation`
-  >> simp[listTheory.WF_SHORTLEX]
+  rpt gen_tac
+  >> Cases_on `ys`
+  >> fs[source_not_listrel1_Nil, source_Cons_listrel1_Cons]
+  >> rpt strip_tac
+  >> fs[]
+  >> metis_tac[]
 QED
 
-Theorem source_wf_listrel1_iff:
-  !relation.
-    relation$WF (source_listrel1 relation) <=>
-    relation$WF relation
+Theorem source_Cons_listrel1E2:
+  !relation xs y ys conclusion.
+    source_listrel1 relation xs (y::ys) ==>
+    (!x. xs = x::ys ==> relation x y ==> conclusion) ==>
+    (!zs. xs = y::zs ==> source_listrel1 relation zs ys ==> conclusion) ==>
+    conclusion
 Proof
-  gen_tac
-  >> eq_tac
-  >- (strip_tac
-      >> irule relationTheory.WF_SUBSET
-      >> qexists_tac
-           `relation$inv_image
-              (source_listrel1 relation) (\value. [value])`
-      >> conj_tac
-      >- simp[relationTheory.inv_image_def,
-              source_listrel1_singleton]
-      >> irule relationTheory.WF_inv_image
-      >> simp[])
-  >> strip_tac
-  >> irule relationTheory.WF_SUBSET
-  >> qexists_tac `list$SHORTLEX relation`
-  >> simp[source_listrel1_shortlex,
-          listTheory.WF_SHORTLEX]
+  rpt gen_tac
+  >> Cases_on `xs`
+  >> fs[source_not_Nil_listrel1, source_Cons_listrel1_Cons]
+  >> rpt strip_tac
+  >> fs[]
+  >> metis_tac[]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:7247-7760.  Isabelle's [lex] is
@@ -4436,6 +4414,100 @@ Proof
   simp[source_lists_def, pred_setTheory.SUBSET_DEF,
        listTheory.EVERY_MEM]
   >> metis_tac[]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7831, "Accessible part and
+   wellfoundedness".  [Wellfounded.acc] is [relationTheory.WFP]: both
+   read as "every predecessor is accessible", and both are what their
+   library's well-foundedness characterisation -- Isabelle's
+   [wf_iff_acc], HOL4's [WF_EQ_WFP] -- turns a well-foundedness
+   statement into.  The three results below are stated in the source
+   over its [lists] set, and the pointwise [source_lists] is that set. *)
+
+(* src/HOL/List.thy:7834 [Cons_acc_listrel1I], declared [intro!]. *)
+Theorem source_Cons_acc_listrel1I:
+  !relation item items.
+    relation$WFP relation item ==>
+    relation$WFP (source_listrel1 relation) items ==>
+    relation$WFP (source_listrel1 relation) (item::items)
+Proof
+  gen_tac
+  >> `!item.
+        relation$WFP relation item ==>
+        !items.
+          relation$WFP (source_listrel1 relation) items ==>
+          relation$WFP (source_listrel1 relation) (item::items)`
+       suffices_by metis_tac[]
+  >> ho_match_mp_tac relationTheory.WFP_INDUCT
+  >> rpt strip_tac
+  >> qpat_x_assum `relation$WFP (source_listrel1 relation) items` mp_tac
+  >> qid_spec_tac `items`
+  >> ho_match_mp_tac relationTheory.WFP_STRONG_INDUCT
+  >> rpt strip_tac
+  >> irule relationTheory.WFP_RULES
+  >> rpt strip_tac
+  >> rename1 `source_listrel1 relation candidate (item::_)`
+  >> Cases_on `candidate`
+  >> fs[source_not_Nil_listrel1, source_Cons_listrel1_Cons]
+  >> metis_tac[]
+QED
+
+(* src/HOL/List.thy:7846 [lists_accD], attributed to no set. *)
+Theorem source_lists_accD:
+  !relation items.
+    items IN source_lists {value | relation$WFP relation value} ==>
+    relation$WFP (source_listrel1 relation) items
+Proof
+  gen_tac
+  >> Induct
+  >- (strip_tac
+      >> irule relationTheory.WFP_RULES
+      >> simp[source_not_listrel1_Nil])
+  >> rpt strip_tac
+  >> fs[source_Cons_in_lists_iff]
+  >> irule source_Cons_acc_listrel1I
+  >> fs[]
+QED
+
+(* src/HOL/List.thy:7857 [lists_accI], attributed to no set.  A
+   predecessor of a list under [listrel1] is that list with one member
+   replaced by something the relation puts below it, so the induction
+   hypothesis reaches every member. *)
+Theorem source_lists_accI_lists:
+  !relation items.
+    relation$WFP (source_listrel1 relation) items ==>
+    items IN source_lists {value | relation$WFP relation value}
+Proof
+  gen_tac
+  >> ho_match_mp_tac relationTheory.WFP_INDUCT
+  >> rpt strip_tac
+  >> simp[source_lists_def, listTheory.EVERY_MEM]
+  >> rpt strip_tac
+  >> irule relationTheory.WFP_RULES
+  >> rpt strip_tac
+  >> rename1 `relation lower element`
+  >> rename1 `MEM element collection`
+  >> `?prefix suffix. collection = prefix ++ element::suffix`
+       by metis_tac[listTheory.MEM_SPLIT]
+  >> `source_listrel1 relation (prefix ++ lower::suffix) collection`
+       by (simp[source_listrel1_def] >> metis_tac[])
+  >> first_x_assum drule
+  >> simp[source_lists_def, listTheory.EVERY_MEM]
+  >> disch_then (qspec_then `lower` mp_tac)
+  >> simp[]
+QED
+
+(* [lists_accI] resolved through :6892 [Cons_in_lists_iff], which is
+   how src/HOL/List.thy:7866 [wf_listrel1_iff] cites it: read at a cons,
+   it says the head of an accessible list is itself accessible. *)
+Theorem source_lists_accI:
+  !relation item items.
+    relation$WFP (source_listrel1 relation) (item::items) ==>
+    relation$WFP relation item
+Proof
+  rpt strip_tac
+  >> drule source_lists_accI_lists
+  >> simp[source_Cons_in_lists_iff]
 QED
 
 (* Isabelle states this as [listrel r <= lists A <*> lists A], and the
