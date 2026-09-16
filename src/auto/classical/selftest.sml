@@ -2246,7 +2246,10 @@ val _ =
                in
                  Term.aconv head predicate andalso
                  length arguments = 1 andalso
-                 Term.aconv conclusion boolSyntax.F
+                 (* The existential elimination's minor premise already
+                    concludes the rule's conclusion, so the classical form
+                    adds no negated goal and the target survives the step. *)
+                 Term.aconv conclusion target
                end
            | _ => false
        end)

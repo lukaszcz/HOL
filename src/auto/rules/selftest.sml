@@ -316,7 +316,7 @@ fun one pat patvars = insert ({pat = pat, patvars = patvars}, 1) empty
 
 val _ =
   test
-    ("clasetNet follows Lam bodies and Cmb rators",
+    ("clasetNet retrieves an abstraction key and follows Cmb rators",
      fn () =>
      mem 1
        (match ``\a : bool. p /\ a``
@@ -331,7 +331,7 @@ val _ =
 
 val _ =
   test
-    ("clasetNet unification harvests Lam and Cmb subnets",
+    ("clasetNet unification harvests abstraction and Cmb subnets",
      fn () =>
        mem 1
          (unify {q = x, qvars = tmset [x]}
@@ -342,6 +342,24 @@ val _ =
        andalso mem 1
          (unify {q = ``\z : bool. z``, qvars = tmset []}
             (one x (tmset [x]))))
+
+(* Isabelle keys an abstraction as a wildcard in [Pure/net.ML] "to cover
+   eta-conversion", and the engines here need the same rule: blast's
+   [wkNorm] contracts [!z. p /\ z] to [$! ($/\ p)], and the stored
+   [!y. P y] of an elimination has to be offered for that shape. *)
+val _ =
+  test
+    ("clasetNet offers an abstraction key to an eta-contracted query",
+     fn () =>
+       let
+         val predicate = ``P : bool -> bool``
+         val net = one ``!z : bool. (P : bool -> bool) z`` (tmset [predicate])
+         val contracted =
+           rhs (concl (Conv.RAND_CONV Drule.ETA_CONV ``!z : bool. p /\ z``))
+       in
+         mem 1 (match contracted net) andalso
+         mem 1 (unify {q = contracted, qvars = tmset []} net)
+       end)
 
 val _ =
   test
@@ -1290,6 +1308,43 @@ val _ =
          hol_err_msg
            (fn () => (REV_DUP_ELIM_RULE boolTheory.TRUTH; ())) =
            SOME "Ill-formed elimination rule"
+       end)
+
+(* The classical form adds the negated conclusion to a minor premise only
+   where it adds something, and a premise that already concludes the rule's
+   conclusion gets nothing.  That conclusion sits under the premise's
+   parameters as well as under its own antecedents, so [!x. P x ==> q]
+   concludes [q]; reading it as concluding itself decorates every rule with
+   an eigenvariable, and each such step then puts one more copy of the
+   negated goal among the assumptions for the search to carry. *)
+val _ =
+  test
+    ("the classical form leaves a parameterised minor premise alone",
+     fn () =>
+       let
+         val transfer =
+           let
+             val (a, b, w) =
+               (mk_var ("a", bool), mk_var ("b", bool), mk_var ("w", bool))
+             val hb = EQ_MP (ASSUME (mk_eq (a, b))) (ASSUME a)
+             val body = MP (ASSUME (mk_imp (b, w))) hb
+           in
+             GENL [a, b, w]
+               (DISCH (mk_eq (a, b))
+                 (DISCH a (DISCH (mk_imp (b, w)) body)))
+           end
+         fun adds_negation th =
+           List.exists
+             (fn prem =>
+               case total dest_imp_only prem of
+                   SOME (ante, _) => is_neg ante
+                 | NONE => false)
+             (rule_premises_of clasetRules.Elim (CLASSICAL_RULE th))
+       in
+         not (adds_negation EXISTS_ELIM_THM) andalso
+         same_thm (CLASSICAL_RULE EXISTS_ELIM_THM)
+           (canonical_rule_of clasetRules.Elim EXISTS_ELIM_THM) andalso
+         adds_negation transfer
        end)
 
 val _ =

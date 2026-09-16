@@ -2028,7 +2028,10 @@ val _ =
          fun hidden (rules : blastRule.tableau_rule list) =
            map #hidden_assumptions rules
        in
-         hidden ordinary = [[SOME 0]] andalso
+         (* The rule assumes the negated conclusion itself, so the
+            classical form adds none of its own and the hidden assumption
+            sits where the rule's own minor premise puts it. *)
+         hidden ordinary = [[SOME 1]] andalso
          hidden ordinary_hit = hidden ordinary andalso
          hidden measured = hidden ordinary andalso
          hidden measured_hit = hidden ordinary andalso
@@ -2863,8 +2866,11 @@ val _ =
        in
          case blastReconstruct.searchGoal cs 0 goal of
              SOME (proof, ([], validation)) =>
+               (* One hidden antecedent, not two: the rule assumes the
+                  negated conclusion itself, so the classical form adds
+                  none of its own. *)
                selector_view proof =
-                 ["defer", "safe:3", "assume:5"] andalso
+                 ["defer", "safe:3", "assume:4"] andalso
                (ignore (validation []); true)
            | _ => false
        end)

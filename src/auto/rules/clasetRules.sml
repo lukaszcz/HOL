@@ -244,8 +244,27 @@ fun CLASSICAL_RULE th =
           if not (is_var concl) then thm
           else
             let
+              (* A premise's conclusion sits under its parameters as well
+                 as under its own antecedents, and the negation adds
+                 nothing to a premise that already concludes the rule's
+                 conclusion or already assumes it. *)
+              val negation = mk_neg concl
+              fun strip_assums tm =
+                case total dest_forall tm of
+                    SOME (_, body) => strip_assums body
+                  | NONE =>
+                      (case total dest_imp_only tm of
+                           SOME (antecedent, body) =>
+                             let val (hyps, cncl) = strip_assums body
+                             in (antecedent :: hyps, cncl) end
+                         | NONE => ([], tm))
               fun needs_repair prem =
-                not (Term.aconv (snd (strip_imp_only prem)) concl)
+                let
+                  val (hyps, cncl) = strip_assums prem
+                in
+                  not (Term.aconv cncl concl) andalso
+                  not (List.exists (Term.aconv negation) hyps)
+                end
               val repairs = map needs_repair rest
               fun repair (prem, true) = mk_imp (mk_neg concl, prem)
                 | repair (prem, false) = prem
