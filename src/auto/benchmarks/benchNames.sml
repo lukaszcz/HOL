@@ -536,6 +536,19 @@ val table : (string * (unit -> resolution)) list =
    translated "source_lex_def"),
   ("lenlex_def",
    translated "source_lenlex_def"),
+  (* The two constants [lenlex_def] composes over. *)
+  ("inv_image_def",
+   library "relation" "inv_image_def"),
+  ("lex_prod_def",
+   library "pair" "LEX_DEF"),
+  (* The three facts [asym_lenlex] is proved from; Isabelle's [asym] is
+     an abbreviation over a set the translation writes out. *)
+  ("asym_inv_image",
+   translated "source_asym_inv_image"),
+  ("asym_less_than",
+   translated "source_asym_less_than"),
+  ("asym_lex",
+   translated "source_asym_lex"),
   ("lex_conv",
    translated "source_lex_conv"),
   ("lexord_partial_trans",
@@ -706,17 +719,12 @@ val table : (string * (unit -> resolution)) list =
   (* ---- Isabelle facts with no HOL4 counterpart ---- *)
   ("Pow_top", unrepresented),
   ("append_eq_appendI", unrepresented),
-  ("asym_inv_image", unrepresented),
   ("atLeastLessThan_iff[symmetric]", unrepresented),
   ("dom_map_option[of \"\\<lambda>_. g\" m]", unrepresented),
   ("drop_eq_nths", unrepresented),
   ("filter_equals_takeWhile_sorted_rev[OF sorted, of i]", unrepresented),
   ("inj_on_apfst[of f UNIV]", unrepresented),
   ("inj_on_apsnd[of f UNIV]", unrepresented),
-  (* [source_lenlex] is [list$SHORTLEX] directly, so Isabelle's route to
-     it through [inv_image] and [lex_prod] has nothing to unfold. *)
-  ("inv_image_def", unrepresented),
-  ("lex_prod_def", unrepresented),
   (* [lexn_conv] characterises [lexn r n], the length-indexed family
      Isabelle's [lex] is the union of, by a common prefix and a
      related pair at the position after it.  HOL4 has no [lexn], and
@@ -729,8 +737,6 @@ val table : (string * (unit -> resolution)) list =
   ("nths_nths", unrepresented),
   ("partition_filter1[symmetric]", unrepresented),
   ("partition_filter2[symmetric]", unrepresented),
-  ("asym_less_than", unrepresented),
-  ("asym_lex", unrepresented),
   ("bit_iff_odd_drop_bit", unrepresented),
   ("bit_simps", unrepresented),
   ("bit_take_bit_iff", unrepresented),

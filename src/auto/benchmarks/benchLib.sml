@@ -388,8 +388,8 @@ fun statement_normal_form term =
 
 (* A rule and the goal can state the same thing and still not look
    alike.  A corpus goal wears the translation's constants and a library
-   rule wears HOL4's: [source_lenlex] is [SHORTLEX] by definition, so a
-   rule about SHORTLEX is the goal of a source_lenlex statement, and a
+   rule wears HOL4's: [source_lexord] is [LLEX] by definition, so a
+   rule about LLEX is the goal of a source_lexord statement, and a
    comparison that reads only the two terms cannot see it.  The
    translation's definitions are ambient for every goal already, so
    comparing under them grants the measurement nothing new; what it

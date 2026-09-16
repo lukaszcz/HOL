@@ -128,7 +128,18 @@ val sorted_wrt_correspondence =
    and :7230 [iff], :7233 and :7295 [simp] -- have no HOL4 constant to
    sit on: LLEX is the prefix order and SHORTLEX compares lengths
    first, so neither one's declarations reach two lists already known
-   to be the same length. *)
+   to be the same length.
+
+   List.thy:7064 introduces [lenlex] by a plain definition of the same
+   shape -- an [inv_image] of the pair product of [less_than] and that
+   same [lex] -- and declares :7244 [Nil_lenlex_iff1] and :7245
+   [Nil_lenlex_iff2] simp.  The pair product carries an ambient fact
+   of its own, Wellfounded.thy:1318 [asym_lex_prod], which is what
+   takes the asymmetry of the two components across it.  HOL4 has the
+   product as [LEX] and the inverse image as [inv_image], so the rules
+   about those two are seeded; [asym] is Isabelle's abbreviation over
+   a set the translation writes out, and has no HOL4 constant to sit
+   on. *)
 val declared_results =
   let
     fun named name =
@@ -165,9 +176,12 @@ val declared_results =
        "source_lists_empty",
        "source_lists_UNIV",
        "source_Nil_notin_lex",
+       "source_Nil_lenlex_iff1",
+       "source_Nil_lenlex_iff2",
        "source_Nil2_notin_lex",
        "source_Cons_in_lex",
        "source_lexl_not_refl",
+       "source_asym_lex_prod",
        "source_in_measures"]
   end
 
@@ -264,7 +278,13 @@ val declared_rules =
         equal-length lexicographic order to state it about, so unlike
         [wf_inv_image] and [wf_less_than] -- seeded on WF_inv_image and
         WF_LESS -- this one has nowhere to sit but the translation. *)
-     named benchLib.IntroAdd benchLib.SafeRule "source_wf_lex"]
+     named benchLib.IntroAdd benchLib.SafeRule "source_wf_lex",
+     (* src/HOL/List.thy:7197 [wf_lenlex], declared [intro!], and
+        :7223 [lenlex_transI], declared [intro].  [lenlex] composes in
+        the source as well, so neither rule has a HOL4 carrier once it
+        is stated that way. *)
+     named benchLib.IntroAdd benchLib.SafeRule "source_wf_lenlex",
+     named benchLib.IntroAdd benchLib.UnsafeRule "source_lenlex_transI"]
   end
 
 (* Isabelle's [iff] declares one theorem into both its simpset and its
@@ -360,7 +380,15 @@ val declaration_sites =
    ("parityTranslation$source_Cons_in_lex", "src/HOL/List.thy:7233"),
    ("parityTranslation$source_lexl_not_refl", "src/HOL/List.thy:7295"),
    ("parityTranslation$source_in_measures", "src/HOL/List.thy:7719"),
-   ("parityTranslation$source_wf_lex", "src/HOL/List.thy:7083")]
+   ("parityTranslation$source_wf_lex", "src/HOL/List.thy:7083"),
+   ("parityTranslation$source_wf_lenlex", "src/HOL/List.thy:7197"),
+   ("parityTranslation$source_lenlex_transI", "src/HOL/List.thy:7223"),
+   ("parityTranslation$source_Nil_lenlex_iff1",
+    "src/HOL/List.thy:7244"),
+   ("parityTranslation$source_Nil_lenlex_iff2",
+    "src/HOL/List.thy:7245"),
+   ("parityTranslation$source_asym_lex_prod",
+    "src/HOL/Wellfounded.thy:1318")]
 
 fun declaration_site name =
   case List.find (fn (entry, _) => entry = name) declaration_sites of

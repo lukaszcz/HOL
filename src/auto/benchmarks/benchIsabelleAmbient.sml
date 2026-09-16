@@ -75,7 +75,7 @@ val introductions =
    ("source_int_horner8_def", Representation, "src/HOL/String.thy:24"),
    ("source_integer_of_char_def", Definition, "src/HOL/String.thy:341"),
    ("source_last_def", Primrec, "src/HOL/List.thy:70"),
-   ("source_lenlex_def", Alias, "src/HOL/List.thy:7064"),
+   ("source_lenlex_def", Definition, "src/HOL/List.thy:7064"),
    ("source_lessThan_def", Simp, "src/HOL/Set_Interval.thy:100"),
    ("source_lex_def", Definition, "src/HOL/List.thy:7061"),
    ("source_lexord_def", Alias, "src/HOL/List.thy:7305"),
@@ -199,7 +199,8 @@ val declaring_theories =
    "src/HOL/Set.thy",
    "src/HOL/Set_Interval.thy",
    "src/HOL/String.thy",
-   "src/HOL/Transitive_Closure.thy"]
+   "src/HOL/Transitive_Closure.thy",
+   "src/HOL/Wellfounded.thy"]
 
 val ancestry =
   let
@@ -221,7 +222,8 @@ val ancestry =
        "src/HOL/Product_Type.thy",
        "src/HOL/Relation.thy",
        "src/HOL/Set.thy",
-       "src/HOL/Transitive_Closure.thy"]),
+       "src/HOL/Transitive_Closure.thy",
+       "src/HOL/Wellfounded.thy"]),
      ("src/HOL/List.thy",
       ["src/HOL/Complete_Lattices.thy",
        "src/HOL/Equiv_Relations.thy",
@@ -234,7 +236,8 @@ val ancestry =
        "src/HOL/Relation.thy",
        "src/HOL/Set.thy",
        "src/HOL/Set_Interval.thy",
-       "src/HOL/Transitive_Closure.thy"]),
+       "src/HOL/Transitive_Closure.thy",
+       "src/HOL/Wellfounded.thy"]),
      ("src/HOL/Map.thy",
       ["src/HOL/Complete_Lattices.thy",
        "src/HOL/Equiv_Relations.thy",
@@ -248,7 +251,8 @@ val ancestry =
        "src/HOL/Relation.thy",
        "src/HOL/Set.thy",
        "src/HOL/Set_Interval.thy",
-       "src/HOL/Transitive_Closure.thy"]),
+       "src/HOL/Transitive_Closure.thy",
+       "src/HOL/Wellfounded.thy"]),
      ("src/HOL/String.thy",
       ["src/HOL/Bit_Operations.thy",
        "src/HOL/Code_Numeral.thy",
@@ -265,7 +269,8 @@ val ancestry =
        "src/HOL/Relation.thy",
        "src/HOL/Set.thy",
        "src/HOL/Set_Interval.thy",
-       "src/HOL/Transitive_Closure.thy"]),
+       "src/HOL/Transitive_Closure.thy",
+       "src/HOL/Wellfounded.thy"]),
      ("src/HOL/Examples/Groebner_Examples.thy", after_everything),
      ("src/HOL/ex/Arith_Examples.thy", after_everything),
      ("src/HOL/ex/Classical.thy", after_everything),

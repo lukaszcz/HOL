@@ -150,7 +150,7 @@ fun supplied_findings entry =
    same detector over the ambient context.
 
    The translation's definitions are ambient too, and a goal wearing
-   [source_lenlex] needs them before a rule about [SHORTLEX] can reach
+   [source_lexord] needs them before a rule about [LLEX] can reach
    it, so they are supplied to the candidate run and to its control
    alike: what is measured is whether this one further rule turns the
    goal into a triviality. *)

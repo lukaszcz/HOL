@@ -3764,8 +3764,17 @@ Definition source_lex_def:
     LENGTH xs = LENGTH ys /\ list$LLEX relation xs ys
 End
 
+(* Isabelle/HOL src/HOL/List.thy:7064.  [lenlex] composes there -- two
+   lists are compared by their lengths and, at equal length, by [lex]
+   -- and every source result about it is proved by unfolding this one
+   definition.  Stated as SHORTLEX -- the same order -- the citation
+   those proofs name would have nothing to unfold: the length
+   comparison would be HOL4's recursion instead. *)
 Definition source_lenlex_def:
-  source_lenlex relation xs ys <=> list$SHORTLEX relation xs ys
+  source_lenlex relation =
+    relation$inv_image
+      (pair$LEX (($<) : num -> num -> bool) (source_lex relation))
+      (\xs. (LENGTH xs, xs))
 End
 
 Definition source_lexord_def:
@@ -3975,86 +3984,6 @@ Proof
             arithmeticTheory.LESS_OR_EQ]
 QED
 
-Theorem source_lenlex_conv:
-  !relation xs ys.
-    source_lenlex relation xs ys <=>
-    LENGTH xs < LENGTH ys \/
-    (LENGTH xs = LENGTH ys /\ source_lex relation xs ys)
-Proof
-  simp[source_lenlex_def, source_lex_def]
-  >> metis_tac[source_shortlex_equal_length,
-                listTheory.LENGTH_LT_SHORTLEX,
-                listTheory.SHORTLEX_LENGTH_LE,
-                arithmeticTheory.LESS_OR_EQ]
-QED
-
-Definition source_asym_def:
-  source_asym relation <=>
-    !left right. relation left right ==> ~relation right left
-End
-
-Theorem source_shortlex_asym:
-  !relation.
-    source_asym relation ==>
-    source_asym (list$SHORTLEX relation)
-Proof
-  simp[source_asym_def]
-  >> gen_tac
-  >> strip_tac
-  >> Induct_on `left`
-  >> Cases_on `right`
-  >> simp[listTheory.SHORTLEX_def]
-  >> rpt strip_tac
-  >> TRY decide_tac
-  >> metis_tac[]
-QED
-
-Theorem source_asym_lenlex:
-  !relation.
-    source_asym relation ==>
-    source_asym (source_lenlex relation)
-Proof
-  simp[source_asym_def, source_lenlex_def]
-  >> gen_tac
-  >> strip_tac
-  >> Induct_on `left`
-  >> Cases_on `right`
-  >> simp[listTheory.SHORTLEX_def]
-  >> rpt strip_tac
-  >> TRY decide_tac
-  >> metis_tac[]
-QED
-
-(* Isabelle/HOL src/HOL/List.thy:7385.  Unconditional: reflexivity of
-   [relation] somewhere in the prefix is a disjunct, not a premise.  The
-   form that assumes irreflexivity is the corpus goal at line 7387. *)
-Theorem source_lexord_same_prefix_iff:
-  !relation prefix xs ys.
-    (source_lexord relation (prefix ++ xs) (prefix ++ ys) <=>
-     (?item. MEM item prefix /\ relation item item) \/
-     source_lexord relation xs ys)
-Proof
-  simp[source_lexord_def]
-  >> gen_tac
-  >> Induct
-  >> rw[listTheory.LLEX_def]
-  >> metis_tac[]
-QED
-
-(* Isabelle/HOL src/HOL/List.thy:7474.  Pointwise: no list is below
-   itself when no element is.  That [source_lexord] preserves
-   irreflexivity is the corpus goal at line 7537. *)
-Theorem source_lexord_irreflexive:
-  !relation xs.
-    (!x. ~relation x x) ==> ~source_lexord relation xs xs
-Proof
-  simp[source_lexord_def]
-  >> gen_tac
-  >> Induct
-  >> rw[listTheory.LLEX_def]
-  >> metis_tac[]
-QED
-
 (* Isabelle/HOL src/HOL/List.thy:7227, 7230, 7233 and 7295.  Everything
    Isabelle's ambient context carries about [lex]: two [iff] rules, a
    [simp] rule taking a pair of conses apart, and the irreflexive
@@ -4097,17 +4026,6 @@ Proof
   >> fs[relationTheory.irreflexive_def, listTheory.LLEX_THM]
 QED
 
-(* Isabelle/HOL src/HOL/List.thy:7713.  The source composes: a list of
-   measure functions is read off a value and the readings are compared
-   by [lex less_than], so what settles the well-foundedness of
-   [measures] is the ambient [wf_inv_image], [wf_lex] and
-   [wf_less_than], each stated about one of the three constants. *)
-Definition source_measures_def:
-  source_measures (functions : ('a -> num) list) =
-    relation$inv_image (source_lex (($<) : num -> num -> bool))
-      (\value. MAP (\function. function value) functions)
-End
-
 (* Isabelle/HOL src/HOL/List.thy:7083 [wf_lex], a safe introduction
    there.  HOL4 has no equal-length lexicographic order of its own to
    carry the rule, so the translation states it about [source_lex];
@@ -4122,6 +4040,198 @@ Proof
   >> simp[listTheory.WF_SHORTLEX, source_lex_def]
   >> metis_tac[source_shortlex_equal_length]
 QED
+
+Theorem source_lenlex_conv:
+  !relation xs ys.
+    source_lenlex relation xs ys <=>
+    LENGTH xs < LENGTH ys \/
+    (LENGTH xs = LENGTH ys /\ source_lex relation xs ys)
+Proof
+  simp[source_lenlex_def, relationTheory.inv_image_def,
+       pairTheory.LEX_DEF_THM]
+QED
+
+Theorem source_lenlex_shortlex:
+  !relation xs ys.
+    source_lenlex relation xs ys <=> list$SHORTLEX relation xs ys
+Proof
+  simp[source_lenlex_conv, source_lex_def]
+  >> metis_tac[source_shortlex_equal_length,
+                listTheory.LENGTH_LT_SHORTLEX,
+                listTheory.SHORTLEX_LENGTH_LE,
+                arithmeticTheory.LESS_OR_EQ]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7189 [lex_transI], which carries no
+   attribute there: it is what [lenlex_transI] below is proved from. *)
+Theorem source_lex_transI:
+  !relation.
+    relation$transitive relation ==>
+    relation$transitive (source_lex relation)
+Proof
+  rpt strip_tac
+  >> `relation$transitive (list$LLEX relation)` by
+       simp[listTheory.LLEX_transitive]
+  >> fs[relationTheory.transitive_def, source_lex_def]
+  >> metis_tac[]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7197 [wf_lenlex], a safe introduction
+   there, and :7223 [lenlex_transI], an unsafe one. *)
+Theorem source_wf_lenlex:
+  !relation.
+    relation$WF relation ==> relation$WF (source_lenlex relation)
+Proof
+  rpt strip_tac
+  >> simp[source_lenlex_def]
+  >> irule relationTheory.WF_inv_image
+  >> irule pairTheory.WF_LEX
+  >> simp[prim_recTheory.WF_LESS, source_wf_lex]
+QED
+
+Theorem source_lenlex_transI:
+  !relation.
+    relation$transitive relation ==>
+    relation$transitive (source_lenlex relation)
+Proof
+  rpt strip_tac
+  >> simp[source_lenlex_def]
+  >> irule relationTheory.transitive_inv_image
+  >> irule pairTheory.transitive_LEX
+  >> simp[source_lex_transI, relationTheory.transitive_def]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7244 and :7245, both simp. *)
+Theorem source_Nil_lenlex_iff1:
+  !relation xs. source_lenlex relation [] xs <=> xs <> []
+Proof
+  rpt gen_tac
+  >> Cases_on `xs`
+  >> simp[source_lenlex_conv, source_Nil_notin_lex]
+QED
+
+Theorem source_Nil_lenlex_iff2:
+  !relation xs. ~source_lenlex relation xs []
+Proof
+  simp[source_lenlex_conv, source_Nil2_notin_lex]
+QED
+
+Definition source_asym_def:
+  source_asym relation <=>
+    !left right. relation left right ==> ~relation right left
+End
+
+Theorem source_shortlex_asym:
+  !relation.
+    source_asym relation ==>
+    source_asym (list$SHORTLEX relation)
+Proof
+  simp[source_asym_def]
+  >> gen_tac
+  >> strip_tac
+  >> Induct_on `left`
+  >> Cases_on `right`
+  >> simp[listTheory.SHORTLEX_def]
+  >> rpt strip_tac
+  >> TRY decide_tac
+  >> metis_tac[]
+QED
+
+(* Isabelle/HOL src/HOL/Relation.thy:1677 [asym_inv_image],
+   src/HOL/Wellfounded.thy:987 [asym_less_than] and
+   src/HOL/List.thy:7511 [asym_lex] -- the three facts the source
+   proves [asym_lenlex] from, none of them attributed there -- and
+   src/HOL/Wellfounded.thy:1318 [asym_lex_prod], which is simp and is
+   what carries those three across the pair product [lenlex] composes
+   over. *)
+Theorem source_asym_inv_image:
+  !relation function.
+    source_asym relation ==>
+    source_asym (relation$inv_image relation function)
+Proof
+  simp[source_asym_def, relationTheory.inv_image_def]
+QED
+
+Theorem source_asym_less_than:
+  source_asym (($<) : num -> num -> bool)
+Proof
+  simp[source_asym_def]
+QED
+
+Theorem source_asym_lex:
+  !relation.
+    source_asym relation ==> source_asym (source_lex relation)
+Proof
+  simp[source_asym_def, source_lex_def]
+  >> gen_tac
+  >> strip_tac
+  >> Induct_on `left`
+  >> Cases_on `right`
+  >> simp[listTheory.LLEX_THM]
+  >> metis_tac[]
+QED
+
+Theorem source_asym_lex_prod:
+  !left right.
+    source_asym left ==> source_asym right ==>
+    source_asym (pair$LEX left right)
+Proof
+  simp[source_asym_def, pairTheory.FORALL_PROD, pairTheory.LEX_DEF_THM]
+  >> metis_tac[]
+QED
+
+Theorem source_asym_lenlex:
+  !relation.
+    source_asym relation ==>
+    source_asym (source_lenlex relation)
+Proof
+  rpt strip_tac
+  >> simp[source_lenlex_def]
+  >> irule source_asym_inv_image
+  >> irule source_asym_lex_prod
+  >> simp[source_asym_less_than, source_asym_lex]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7385.  Unconditional: reflexivity of
+   [relation] somewhere in the prefix is a disjunct, not a premise.  The
+   form that assumes irreflexivity is the corpus goal at line 7387. *)
+Theorem source_lexord_same_prefix_iff:
+  !relation prefix xs ys.
+    (source_lexord relation (prefix ++ xs) (prefix ++ ys) <=>
+     (?item. MEM item prefix /\ relation item item) \/
+     source_lexord relation xs ys)
+Proof
+  simp[source_lexord_def]
+  >> gen_tac
+  >> Induct
+  >> rw[listTheory.LLEX_def]
+  >> metis_tac[]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7474.  Pointwise: no list is below
+   itself when no element is.  That [source_lexord] preserves
+   irreflexivity is the corpus goal at line 7537. *)
+Theorem source_lexord_irreflexive:
+  !relation xs.
+    (!x. ~relation x x) ==> ~source_lexord relation xs xs
+Proof
+  simp[source_lexord_def]
+  >> gen_tac
+  >> Induct
+  >> rw[listTheory.LLEX_def]
+  >> metis_tac[]
+QED
+
+(* Isabelle/HOL src/HOL/List.thy:7713.  The source composes: a list of
+   measure functions is read off a value and the readings are compared
+   by [lex less_than], so what settles the well-foundedness of
+   [measures] is the ambient [wf_inv_image], [wf_lex] and
+   [wf_less_than], each stated about one of the three constants. *)
+Definition source_measures_def:
+  source_measures (functions : ('a -> num) list) =
+    relation$inv_image (source_lex (($<) : num -> num -> bool))
+      (\value. MAP (\function. function value) functions)
+End
 
 (* Isabelle/HOL src/HOL/List.thy:7719 [in_measures], declared simp:
    the recursion clauses are a consequence of the composite and not

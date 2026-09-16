@@ -206,15 +206,16 @@ val an_injectivity_premise_no_ambient_fact_reaches =
      ^ "condition arrives existentially closed")
     ["string_L178_card_UNIV_char"]
 
-val list_relation_lifting =
-  classified "list relation lifting"
-    ("the declared rules take a LIST_REL apart at a nil, a cons or a "
-     ^ "REVERSE, and trade a SHORTLEX for a length comparison; these "
-     ^ "goals are about the relation as a whole -- asymmetry, "
-     ^ "well-foundedness, or what lenlex is -- and the assigned "
-     ^ "tactic reaches no route to them")
-    ["list_L7256_lenlex_conv",
-     "list_L7570_asym_lenlex", "list_L7922_wf_listrel1_iff"]
+val well_foundedness_through_the_accessible_part =
+  classified "well-foundedness through the accessible part"
+    ("the cited [wf_iff_acc] is [relationTheory.WF_EQ_WFP], which "
+     ^ "turns both sides into statements about the accessible part; "
+     ^ "Isabelle then crosses between the two by [lists_accD] and "
+     ^ "[lists_accI], results about the accessible part of its "
+     ^ "[lists] set that HOL4 has no counterpart for, so what is "
+     ^ "left is the two implications between WFP (listrel1 R) and "
+     ^ "WFP R with nothing to relate them")
+    ["list_L7922_wf_listrel1_iff"]
 
 (* The earlier reading -- that the translation renders foldr as FOLDL
    over REVERSE -- was wrong: [source_foldr] is FOLDR.  The FOLDL over
@@ -293,7 +294,7 @@ val characterisation_is_the_goal =
      ^ "constant the translation introduces, and the assigned tactic "
      ^ "has no second route")
     ["list_L1856_nth_Cons_pos", "list_L1921_in_set_conv_nth",
-     "list_L6444_stable_sort_key_sort_key", "list_L7318_lenlex_length",
+     "list_L6444_stable_sort_key_sort_key",
      "product_type_L785_curry_conv",
      "list_L8167_list_all_iff",
      "list_L8642_image_set", "list_L8660_card_set",
@@ -422,9 +423,9 @@ val sigma_and_times_rule_forms =
    guard used to compare a rule's conclusion against the goal with the
    goal's quantifier prefix still on, so neither reading matched.
 
-   Four have left the class since, none of them because the guard
+   Five have left the class since, none of them because the guard
    released the rule: a withheld rule leaves the goal to the rest of
-   the layer, and each of the four is reached by a second route.
+   the layer, and each of the five is reached by a second route.
    [list_L1851_nth_Cons_Suc] withholds one conjunct of [listTheory.EL]
    and is reached by the seeded EL_CONS, which takes a cons at an index
    known only to be non-zero, as the successor in the goal is.  The two
@@ -435,7 +436,11 @@ val sigma_and_times_rule_forms =
    one conjunct of the ambient [in_measures] and is reached by the
    citation it names: [measures] is now defined as the source defines
    it, and unfolding it leaves a pair of conses in the equal-length
-   lexicographic order the ambient [Cons_in_lex] takes apart. *)
+   lexicographic order the ambient [Cons_in_lex] takes apart.
+   [list_L7300_Nil_lenlex_iff2] no longer meets [SHORTLEX_NIL2] at
+   all: [lenlex] is now the source's composite too, and unfolding it
+   leaves the nil in the equal-length order the ambient
+   [Nil2_notin_lex] rejects. *)
 val a_reading_of_the_characterisation_is_the_goal =
   map
     (fn id =>
@@ -446,7 +451,7 @@ val a_reading_of_the_characterisation_is_the_goal =
          "conjunction, or states it with its quantifiers in another " ^
          "order, and A1 withholds it under either reading; the " ^
          "assigned tactic has no second route"} : benchLib.shortfall)
-    ["list_L2740_zip_Cons_Cons", "list_L7300_Nil_lenlex_iff2",
+    ["list_L2740_zip_Cons_Cons",
      "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
 
 val execution : benchLib.shortfall list =
@@ -463,7 +468,7 @@ val execution : benchLib.shortfall list =
   the_cited_characterisation_has_no_counterpart @
   a_set_relation_stated_by_its_graph @
   an_injectivity_premise_no_ambient_fact_reaches @
-  list_relation_lifting @
+  well_foundedness_through_the_accessible_part @
   fold_direction @
   fold_against_a_set_aggregate @
   finite_cardinality @

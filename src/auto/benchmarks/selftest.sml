@@ -1249,18 +1249,18 @@ val _ =
 (* ---- the comparison reads through a translation wrapper --------- *)
 
 (* A corpus goal wears the translation's constant while an ambient rule
-   wears HOL4's, and [source_lenlex] *is* [SHORTLEX] by definition.  A
+   wears HOL4's, and [source_lexord] *is* [LLEX] by definition.  A
    comparison of the two terms as written cannot see the analogy, so a
    rule that states such a goal would be handed to it undetected.  Both
    statements here are synthetic; neither is a corpus goal. *)
 val wrapped_goal =
   ``!R xs ys.
-      source_lenlex R xs ys /\ source_lenlex R ys xs ==>
-      source_lenlex R xs ys``
+      source_lexord R xs ys /\ source_lexord R ys xs ==>
+      source_lexord R xs ys``
 
 val unwrapped_rule =
   Tactical.prove
-    (``!R xs ys. SHORTLEX R xs ys /\ SHORTLEX R ys xs ==> SHORTLEX R xs ys``,
+    (``!R xs ys. LLEX R xs ys /\ LLEX R ys xs ==> LLEX R xs ys``,
      bossLib.metis_tac [])
 
 fun without_definitions body =
@@ -1292,7 +1292,7 @@ val _ =
     ("A1 leaves an ambient rule about the same constant alone",
      fn () =>
        not
-         (benchLib.theorem_is_goal wrapped_goal listTheory.SHORTLEX_NIL2))
+         (benchLib.theorem_is_goal wrapped_goal listTheory.LLEX_NIL2))
 
 (* Unfolding a definition against itself leaves [t = t], which matches
    every other vacuous statement.  The wrapper's own definition must not
@@ -1303,7 +1303,7 @@ val _ =
      fn () =>
        not
          (benchLib.theorem_is_goal wrapped_goal
-            parityTranslationTheory.source_lenlex_def))
+            parityTranslationTheory.source_lexord_def))
 
 (* A [define_new_type_bijections] theorem is registered as a definition
    and is equational, so it reaches the ambient rewrite set; reading it
@@ -1326,7 +1326,7 @@ val _ =
        List.exists
          (fn theorem =>
            Term.aconv (Thm.concl theorem)
-             (Thm.concl parityTranslationTheory.source_lenlex_def))
+             (Thm.concl parityTranslationTheory.source_lexord_def))
          (benchGuards.relevant_definitions wrapped_goal))
 
 (* Collecting the candidates is not the same as consulting them: A1 has
@@ -2821,7 +2821,10 @@ val _ =
    [list_L7922_wf_listrel1_iff] and [list_L7954_listrel_iff_nth].
    Closing any of those shortfalls means restoring its generalization
    test in the same commit, as [list_L7508_lexord_trans]'s and
-   [list_L7771_wf_measures]'s are restored below. *)
+   [list_L7771_wf_measures]'s are restored below.  The last two below
+   are not restorations: [list_L7570_asym_lenlex] and
+   [list_L7318_lenlex_length] never carried one, and gained one with
+   the composite definition of [lenlex] that closed them. *)
 
 fun retarget_goal id goal (base : benchLib.corpus_goal) =
   {id = id, goal = goal, source_method = #source_method base,
@@ -2856,7 +2859,21 @@ val promoted_recovered_schema_goals =
          (relation$inv_image
            (parityTranslation$source_measures [LENGTH; SUM])
            (REVERSE : num list -> num list))``
-     (goal_named "list_L7771_wf_measures" benchListMap.goals)]
+     (goal_named "list_L7771_wf_measures" benchListMap.goals),
+   retarget_goal "schema-asym-lenlex-iterated"
+     ``!relation : num -> num -> bool.
+         parityTranslation$source_asym relation ==>
+         parityTranslation$source_asym
+           (parityTranslation$source_lenlex
+             (parityTranslation$source_lenlex relation))``
+     (goal_named "list_L7570_asym_lenlex" benchListMap.goals),
+   retarget_goal "schema-lenlex-length-iterated"
+     ``!relation : num -> num -> bool.
+       !xs ys : num list list.
+         parityTranslation$source_lenlex
+           (parityTranslation$source_lenlex relation) xs ys ==>
+         LENGTH xs <= LENGTH ys``
+     (goal_named "list_L7318_lenlex_length" benchListMap.goals)]
 
 val _ =
   check

@@ -51,3 +51,15 @@ Theorem CURRY_AUTO_IFF[iff]:
 Proof
   simp [pairTheory.CURRY_DEF]
 QED
+
+(* src/HOL/Wellfounded.thy:1239,1291 @ f7e02b7e.  [in_lex_prod] is simp
+   there and [wf_lex_prod] a safe intro, so a source proof that unfolds
+   a definition built on the pair lexicographic product -- [lenlex] is
+   one -- never names either.  pair states both and declares neither.
+
+   [wf_lex_prod] is declared unsafe against Isabelle's [intro!]: the
+   inversion seedAudit owes a safe intro is WF (R LEX Q) ==> WF R /\
+   WF Q, which the audit's prover stack does not close. *)
+val _ = export_at "simp" ("LEX_APPLIED_AUTO", pairTheory.LEX_DEF_THM)
+
+val _ = export_at "intro" ("WF_LEX_AUTO", pairTheory.WF_LEX)

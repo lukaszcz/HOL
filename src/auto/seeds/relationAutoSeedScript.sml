@@ -85,3 +85,17 @@ Theorem WF_inv_image_AUTO[simp, intro]:
 Proof
   METIS_TAC [relationTheory.WF_inv_image]
 QED
+
+(* src/HOL/Relation.thy:1680 @ f7e02b7e.  [in_inv_image] is simp there:
+   Isabelle's simpset reads an inverse image at a pair without being
+   told to, which is how a proof that unfolds a definition built on
+   [inv_image] carries on into the underlying relation.  relation
+   states the same content unapplied, as the constant's definition,
+   and declares it to no simpset. *)
+Theorem IN_INV_IMAGE_AUTO[simp]:
+  !relation function left right.
+    inv_image relation function left right <=>
+    relation (function left) (function right)
+Proof
+  simp[relationTheory.inv_image_def]
+QED
