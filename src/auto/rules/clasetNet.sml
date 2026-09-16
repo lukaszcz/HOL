@@ -12,6 +12,20 @@
  * its labels (Cnet of ... * int), so it cannot skip a subterm without
  * knowing that arity, and extending it lives on a path shared with every
  * simpset.  Keep [match] here consistent with Ho_Net's semantics.
+ *
+ * Both sides are labelled eta-contracted.  Isabelle's [Pure/net.ML] states
+ * the same requirement -- its operands must be beta-eta-normal -- and here
+ * it is forced by the engines themselves: [blastTerm.wkNorm] contracts
+ * under a binder, so an assumption [!xs. C a xs] reaches the search as
+ * [$! (C a)], while the elimination that takes a universal apart is stored
+ * under [!y. P y].  Labelling the stored abstraction structurally hid that
+ * rule from the one formula it exists to decompose, and the unifier that
+ * follows contracts both sides and would have succeeded.  Contracting at
+ * each labelled node is what keeps the index's notion of a term the same
+ * as theirs; Isabelle goes further and keys every abstraction as a
+ * wildcard, which also covers near-eta redexes such as [%x. ?P (?f x)],
+ * but resolution there is higher-order where the matcher and the unifier
+ * here are first-order, so nothing but eta can bridge the two spellings.
  * ===================================================================== *)
 
 structure clasetNet :> clasetNet =
@@ -47,6 +61,28 @@ fun fvar_label tm =
 fun is_bound checkpoint bvars tm =
   (checkpoint (); op_mem aconv tm bvars)
 
+(* [\y. f y] and [f] are the same function and the engines' terms are
+   carried in whichever spelling reduction left, so the index answers for
+   both: a labelled node is contracted first, and the walk contracts each
+   child as it reaches it. *)
+fun eta_contract tm =
+  if not (is_abs tm) then tm
+  else
+    let
+      val (bvar, body) = dest_abs tm
+      val body' = eta_contract body
+      fun rebuild () = if aconv body' body then tm else mk_abs (bvar, body')
+    in
+      if is_comb body' then
+        let val (rator, rand) = dest_comb body'
+        in
+          if aconv rand bvar andalso not (free_in bvar rator)
+          then eta_contract rator
+          else rebuild ()
+        end
+      else rebuild ()
+    end
+
 fun stored_label patvars bvars tm =
   if is_var tm andalso
      (HOLset.member (patvars, tm) orelse
@@ -73,8 +109,10 @@ fun replace_edge label net [] = [(label, net)]
       if label = label' then (label, net) :: rest
       else entry :: replace_edge label net rest
 
-fun stored_labels patvars bvars tm =
-  let val label = stored_label patvars bvars tm
+fun stored_labels patvars bvars tm0 =
+  let
+    val tm = eta_contract tm0
+    val label = stored_label patvars bvars tm
   in
     case label of
         Lam =>
@@ -140,8 +178,8 @@ fun follow checkpoint normal_walk (tm, bvars) rest (NODE (_, edges)) =
 fun match tm net =
   let
     fun walk [] (NODE (tips, _)) = tips
-      | walk (task :: rest) node =
-          follow no_checkpoint walk task rest node
+      | walk ((task, bvars) :: rest) node =
+          follow no_checkpoint walk (eta_contract task, bvars) rest node
   in
     walk [(tm, [])] net
   end
@@ -172,9 +210,10 @@ fun unify_with checkpoint {q, qvars} net =
       end
 
     fun walk [] (NODE (tips, _)) = (checkpoint (); tips)
-      | walk ((tm, bvars) :: rest) node =
+      | walk ((tm0, bvars) :: rest) node =
           let
             val _ = checkpoint ()
+            val tm = eta_contract tm0
           in
             if is_var tm andalso not (bound tm bvars) andalso
                HOLset.member (qvars, tm) then

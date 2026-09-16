@@ -8,9 +8,10 @@ sig
      the note in the implementation for why membership is the normal
      form. *)
   val reduce_conv : conv
-  (* [reduce_conv] without eta, for a goal the caller posed: eta changes
-     a binder's shape and a goal is handed to tactics that take it
-     apart. *)
+  (* [reduce_conv] without eta, for a goal the caller posed: contracting
+     there would re-spell a quantifier the caller wrote out.  A quantifier
+     the caller posed contracted is spelled back out, [$! P] being a binder
+     no tactic can take apart. *)
   val goal_reduce_conv : conv
   val normalize_conv : conv
   (* The crossing alone, for a caller that keeps its own beta-eta, and its

@@ -5499,6 +5499,29 @@ val _ =
                (!x y:'a. p x y ==> q x y) ==>
                ss c ==> ss d ==> c <> d ==> q c d”))
 
+(* Eta contracts [!x. P x] to [$! P], and [dest_forall] fails on the
+   contracted form: a goal posed that way had no binder any step could
+   take apart, so it was inert whatever its assumptions said.  The goal
+   normalisation spells such a quantifier back out, which is what makes
+   the two spellings one goal. *)
+val _ =
+  test
+    ("an eta-contracted universal goal is still stripped",
+     fn () =>
+       let
+         val expanded =
+           “(!x:'a. eta_goal_q x ==> eta_goal_p x) ==>
+            (!x:'a. eta_goal_q x) ==> !x:'a. eta_goal_p x”
+         val contracted =
+           boolSyntax.rhs (concl
+             (Conv.RAND_CONV
+               (Conv.RAND_CONV (Conv.RAND_CONV Drule.ETA_CONV))
+               expanded))
+       in
+         not (Term.aconv contracted expanded) andalso
+         tactic_solves (classicalLib.FAST_TAC []) ([], contracted)
+       end)
+
 val _ =
   test
     ("single engine step drivers replay their resulting nodes",

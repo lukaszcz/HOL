@@ -4128,6 +4128,27 @@ val _ =
                       ([], mk_imp (p, p))) ()
              end)
 
+(* [wkNorm] eta-contracts under a binder, so an assumption whose body
+   applies a constant to the bound variable reaches the search already
+   contracted: [!z. p ==> z] is [$! ($==> p)].  The elimination that takes
+   a universal apart is stored under its [!y. P y] major premise, and the
+   net has to offer it for that shape -- indexing the stored abstraction
+   structurally hid it, and no assumption of this form could be used at
+   all. *)
+val _ =
+  test
+    ("an eta-contracted universal assumption is still eliminated",
+     fn () =>
+       let
+         val bound = mk_var ("eta_assumption_z", bool)
+         val premise = mk_var ("eta_assumption_p", bool)
+         val target = mk_var ("eta_assumption_q", bool)
+         val source = mk_forall (bound, mk_imp (premise, bound))
+       in
+         blast_solves (tableauLib.BLAST_TAC [])
+           ([source, premise], target)
+       end)
+
 val _ =
   test
     ("plain extra lemmas are inserted and markers are processed",

@@ -111,11 +111,11 @@ and binder total is_hole tm =
     in
       if is_abs predicate then
         Conv.RAND_CONV (Conv.ABS_CONV (formula total is_hole)) tm
-      else if is_var predicate andalso not (is_hole predicate) then
+      else if is_hole predicate then Conv.ALL_CONV tm
+      else
         (* [!x. P x] contracted to [$! P] would come back applied when a
            search instantiates it, so it is expanded and its body crossed. *)
         Conv.THENC (Conv.RAND_CONV expand_conv, formula total is_hole) tm
-      else Conv.ALL_CONV tm
     end
 
 and atom total is_hole tm =
@@ -169,6 +169,26 @@ val member_beta_conv =
 val projection_conv =
   Conv.ORELSEC (Conv.REWR_CONV pairTheory.FST, Conv.REWR_CONV pairTheory.SND)
 
+(* [dest_forall] fails on [$! P], so a quantifier that reaches a caller's
+   goal contracted is one no step can take apart.  The crossing spells such
+   a predicate out for the engine's own terms; a goal is not crossed, so it
+   is spelled out here instead.  A hole predicate stays contracted: [$! ?P]
+   is the first-order pattern a search instantiates, and [!x. ?P x] is
+   not. *)
+fun expand_binders is_hole tm =
+  let
+    fun here tm =
+      case connective tm of
+          SOME ("bool", name, [predicate]) =>
+            if (name = "!" orelse name = "?" orelse name = "?!") andalso
+               not (is_abs predicate) andalso not (is_hole predicate)
+            then Conv.RAND_CONV expand_conv tm
+            else Conv.ALL_CONV tm
+        | _ => Conv.ALL_CONV tm
+  in
+    Conv.THENC (here, Conv.SUB_CONV (expand_binders is_hole)) tm
+  end
+
 val reduction =
   Conv.REDEPTH_CONV
     (Conv.ORELSEC (BETA_CONV, Conv.ORELSEC (Drule.ETA_CONV,
@@ -176,15 +196,18 @@ val reduction =
 
 val reduce_conv = Conv.QCONV reduction
 
-(* The same reduction for a goal arriving from the caller, without eta.
-   Eta is sound but changes a binder's shape -- [!x. P x] becomes
-   [$! P] -- and a goal is handed to tactics that take it apart, so the
-   engine reduces a goal's redexes without re-spelling its quantifiers. *)
+(* The same reduction for a goal arriving from the caller, without eta:
+   the caller's terms are its own and contracting one would re-spell a
+   quantifier the caller wrote out.  A quantifier that arrives contracted
+   is expanded, so a goal posed as [$! P] is as strippable as one posed as
+   [!x. P x]. *)
 val goal_reduce_conv =
   Conv.QCONV
-    (Conv.REDEPTH_CONV
-      (Conv.ORELSEC (BETA_CONV,
-       Conv.ORELSEC (member_beta_conv, projection_conv))))
+    (Conv.THENC
+      (Conv.REDEPTH_CONV
+        (Conv.ORELSEC (BETA_CONV,
+         Conv.ORELSEC (member_beta_conv, projection_conv))),
+       expand_binders clasetMeta.is_meta))
 
 val normalize_conv =
   Conv.QCONV (Conv.THENC (formula false clasetMeta.is_meta, reduction))
