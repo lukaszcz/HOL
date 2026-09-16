@@ -31,7 +31,9 @@ sig
   val align_conclusion : term -> thm -> thm
   (* The same for a whole goal: the engine renders a goal reduced, so a
      step's child is proved in that spelling while the step's validation
-     was built on the spelling the step returned. *)
+     was built on the spelling the step returned.  A hypothesis the proof
+     states in neither spelling of the goal's own assumptions is
+     discharged from the assumption it normalises to. *)
   val align_goal : goal -> thm -> thm
   val normalize_thm : thm -> thm
   val normalize_rule_thm : thm -> thm

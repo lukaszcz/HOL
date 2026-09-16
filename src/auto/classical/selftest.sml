@@ -2256,6 +2256,31 @@ val _ =
 
 val _ =
   test
+    ("SAFE_TAC discharges an assumption the caller posed contracted",
+     fn () =>
+       let
+         val predicate =
+           Term.mk_var ("safe_contracted_predicate", Type.ind --> bool_ty)
+         val target =
+           Term.mk_var ("safe_contracted_target", Type.ind --> bool_ty)
+         fun contract predicate =
+           Term.mk_comb
+             (Term.inst [Type.alpha |-> Type.ind] boolSyntax.universal,
+              predicate)
+         val assumption = contract predicate
+         val conclusion = contract target
+         (* The entry spells a contracted binder out, so the proof states
+            the assumption spelled out while the caller's goal assumes it
+            contracted; a validation that discharges only the spelling it
+            entered with leaves the other one a hypothesis. *)
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) ([assumption], conclusion)
+       in
+         length residues = 1
+       end)
+
+val _ =
+  test
     ("CLARIFY_TAC leaves a genuinely branching conjunction intact",
      fn () =>
        let

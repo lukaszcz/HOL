@@ -258,22 +258,30 @@ fun align_conclusion target theorem =
 (* The engine renders a goal reduced, so a step's child is proved in the
    reduced spelling while the step's own validation was built on the
    spelling the step returned.  This restates such a proof: the conclusion
-   through [align_conclusion], and each assumption the step stated in place
-   of the reduction the proof discharged. *)
+   through [align_conclusion], and each hypothesis the proof states in a
+   spelling of its own through the assumption the goal poses it in.
+   Both spellings are the same formula, so the bridge is
+   [align_conclusion] again, applied to the assumption: which spellings
+   can differ is the entry's business -- one entry eta-contracts, another
+   spells a contracted binder out -- and comparing in the normal form
+   settles them all, where naming one entry's conversion here would leave
+   the others' assumptions undischarged. *)
 fun align_goal (asl, w) theorem =
   let
-    fun restore (assumption, th) =
+    val aligned = align_conclusion w theorem
+    fun posed hypothesis = List.exists (aconv hypothesis) asl
+    fun restore (hypothesis, th) =
       let
-        val equality = reduce_conv assumption
-        val reduced = rhs (concl equality)
+        fun bridge [] = th
+          | bridge (assumption :: rest) =
+              case total (align_conclusion hypothesis) (ASSUME assumption) of
+                  SOME proof => Drule.PROVE_HYP proof th
+                | NONE => bridge rest
       in
-        if aconv reduced assumption then th
-        else if List.exists (aconv reduced) (hyp th) then
-          Drule.PROVE_HYP (EQ_MP equality (ASSUME assumption)) th
-        else th
+        bridge asl
       end
   in
-    List.foldl restore (align_conclusion w theorem) asl
+    List.foldl restore aligned (List.filter (not o posed) (hyp aligned))
   end
 
 fun normalize_thm theorem =
