@@ -131,12 +131,26 @@ val sorted_list_of_a_set =
     ["list_L6669_sorted_key_list_of_set_eq_Nil_iff",
      "list_L6847_sorted_list_of_set_nonempty"]
 
-val filter_normalisation =
-  classified "filter normalisation"
-    ("FILTER against a composed or negated predicate is not "
-     ^ "normalised")
-    ["list_L1838_partition_filter_conv",
-     "list_L4762_length_removeAll_less"]
+(* src/HOL/List.thy:1838 @ f7e02b7e.  The source proof folds both
+   filters back into [partition] through partition_filter1 and
+   partition_filter2 and closes by reflexivity.  HOL4 has no constant
+   the translation could name there, so the goal arrives with
+   [partition] inlined as a lambda and the two citations resolve to
+   nothing.  What is left equates FILTER at [\item. ~f item] with
+   FILTER at [$~ o f]: the same function pointwise, in an argument
+   position where neither is applied, so identifying them is an
+   extensionality step.  Isabelle's own simp does not take it either --
+   [filter (%x. ~ f x) xs = filter (Not o f) xs] fails under plain simp
+   in Isabelle2025-2, measured 2026-09-18. *)
+val a_composed_predicate_at_a_function_argument =
+  classified "a composed predicate at a function argument"
+    ("the residual equates FILTER at a negated lambda with FILTER at "
+     ^ "the composition [$~ o f].  The two agree pointwise and stand "
+     ^ "in an argument position where neither is applied, so they are "
+     ^ "identified only by extensionality.  The source method never "
+     ^ "meets the residual: its citations fold both filters back into "
+     ^ "the [partition] the translation had to inline")
+    ["list_L1838_partition_filter_conv"]
 
 val indexing_through_list_constructors =
   classified "indexing through list constructors"
@@ -466,7 +480,7 @@ val execution : benchLib.shortfall list =
   over_budget_with_no_residual @
   the_only_citation_states_the_goal @
   sorted_list_of_a_set @
-  filter_normalisation @
+  a_composed_predicate_at_a_function_argument @
   indexing_through_list_constructors @
   a_snoc_read_through_an_append @
   the_cited_characterisation_has_no_counterpart @

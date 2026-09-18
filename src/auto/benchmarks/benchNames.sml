@@ -950,7 +950,7 @@ val table : (string * (unit -> resolution)) list =
   ("length_filter_conv_card",
    translated "source_length_filter_count"),
   ("length_filter_less",
-   library "rich_list" "LENGTH_FILTER_LESS"),
+   translated "source_length_filter_less"),
   ("length_remdups_card_conv",
    symmetric (library "list" "CARD_LIST_TO_SET_EQN")),
   ("less_eq_unit_def",

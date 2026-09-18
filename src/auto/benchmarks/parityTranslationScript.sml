@@ -3187,6 +3187,24 @@ Proof
   >> simp[source_length_filter_count_index]
 QED
 
+(* src/HOL/List.thy:1664 @ f7e02b7e: [length_filter_less].  HOL4's
+   rich_listTheory.LENGTH_FILTER_LESS carries the same content with the
+   premise packed as an EXISTS over the negated predicate; Isabelle
+   names the element the predicate fails at, and states the two
+   premises as a meta-implication chain rather than a conjunction, so a
+   destruction rule built from it matches the membership alone. *)
+Theorem source_length_filter_less:
+  !value xs predicate.
+    MEM value xs ==>
+    ~predicate value ==>
+    LENGTH (FILTER predicate xs) < LENGTH xs
+Proof
+  rpt strip_tac
+  >> irule rich_listTheory.LENGTH_FILTER_LESS
+  >> simp[listTheory.EXISTS_MEM, combinTheory.o_THM]
+  >> metis_tac[]
+QED
+
 Theorem source_shift_image:
   !count indices.
     {index |
