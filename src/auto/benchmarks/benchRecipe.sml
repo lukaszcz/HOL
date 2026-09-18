@@ -348,6 +348,7 @@ fun method_heads ({methods, ...} : parsed) = map #name methods
 
 type resolver = {
   theorems : string -> benchLib.named_thm list,
+  normalised_subject : string -> bool,
   tactics : string -> term -> benchLib.tactic_id list,
   ambient : string -> benchLib.method_arg list
 }
@@ -359,13 +360,27 @@ fun deletion_names resolve name =
         String.map (fn c => if c = #"$" then #"." else c) display)
     (resolve name)
 
-fun argument_of resolve modifier =
+(* Which of the two rewrite constructors a citation takes is the
+   resolver's answer about the rule, so every goal naming that rule
+   installs it the same way, and every place a citation becomes a
+   rewrite asks the same question. *)
+fun rewritten resolve normalised_subject names =
+  let
+    fun constructor name =
+      if normalised_subject name then benchLib.RewriteAddBottomUp
+      else benchLib.RewriteAdd
+  in
+    List.concat
+      (map (fn name => map (constructor name) (resolve name)) names)
+  end
+
+fun argument_of resolve normalised_subject modifier =
   let
     fun each build names =
       List.concat (map (fn name => map build (resolve name)) names)
   in
     case modifier of
-        SimpAdd names => each benchLib.RewriteAdd names
+        SimpAdd names => rewritten resolve normalised_subject names
       | SimpDelete names =>
           map benchLib.RewriteDelete
             (List.concat (map (deletion_names resolve) names))
@@ -380,7 +395,7 @@ fun argument_of resolve modifier =
       | Facts names => each benchLib.FactAdd names
   end
 
-fun to_recipe ({theorems, tactics, ambient} : resolver)
+fun to_recipe ({theorems, normalised_subject, tactics, ambient} : resolver)
               {goal, source} ({facts, unfolded, methods} : parsed) =
   let
     (* [using] premises enter as facts, [unfolding] names as rewrites.
@@ -391,7 +406,7 @@ fun to_recipe ({theorems, tactics, ambient} : resolver)
       List.concat (map (fn name => map build (theorems name)) names)
     val common =
       resolved benchLib.FactAdd facts @
-      resolved benchLib.RewriteAdd unfolded
+      rewritten theorems normalised_subject unfolded
     (* The ambient context stands in for the simpset and the claset an
        Isabelle method reads without naming them, and each half reaches
        only the methods that consult that half.  Giving the rewrites to
@@ -423,7 +438,8 @@ fun to_recipe ({theorems, tactics, ambient} : resolver)
         benchLib.Invoke
           (identifier,
            common @
-           List.concat (map (argument_of theorems) modifiers) @
+           List.concat
+             (map (argument_of theorems normalised_subject) modifiers) @
            context)
       end
     fun invoke ({name, modifiers, repeated} : method) =

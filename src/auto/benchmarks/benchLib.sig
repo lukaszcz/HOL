@@ -31,6 +31,17 @@ sig
 
   datatype method_arg =
       RewriteAdd of named_thm
+      (* The same rewrite, installed so that the traversal offers it a
+         subject the other rules have finished with.  HOL4 rewrites the
+         outermost redex first, so a rule whose left side reads an
+         arbitrary term of its subject's type -- [set_zip], which reads
+         any zip pointwise -- fires above every rule about the subject's
+         own head and re-embeds the subject where none of them match.
+         Isabelle rewrites the innermost redex first and so offers such
+         a rule nothing but a normal subject.  Which citations take this
+         is recorded in [benchNames], once per rule and never per goal;
+         the argument is the same theorem under the same name. *)
+    | RewriteAddBottomUp of named_thm
     | RewriteDelete of string
     | SplitAdd of named_thm
     | IntroAdd of rule_strength * named_thm

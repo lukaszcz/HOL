@@ -2,7 +2,9 @@ structure benchDerive :> benchDerive =
 struct
 
 val resolver =
-  {theorems = benchNames.theorems, tactics = benchTactics.tactics,
+  {theorems = benchNames.theorems,
+   normalised_subject = benchNames.normalised_subject,
+   tactics = benchTactics.tactics,
    ambient = benchAmbient.arguments_at}
 
 (* The Isabelle line a goal was proved at, which is what the ambient

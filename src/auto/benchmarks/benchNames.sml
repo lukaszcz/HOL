@@ -667,7 +667,16 @@ val table : (string * (unit -> resolution)) list =
    translated "source_distinct_adj_mapI"),
   ("hd_def", translated "source_hd_def"),
   ("last_def", translated "source_last_def"),
-  ("refl_on_def", translated "source_refl_on_def"),
+  (* Isabelle's [refl] is an abbreviation for [refl_on UNIV]
+     (src/HOL/Relation.thy:155), so a [refl] premise is a [refl_on]
+     premise and this citation unfolds it.  The translation renders the
+     abbreviation as HOL4's own [reflexive], which the translated
+     definition says nothing about, so the citation resolves to both
+     spellings of the one constant it unfolds in Isabelle. *)
+  ("refl_on_def",
+   bundle
+     [translated "source_refl_on_def",
+      library "relation" "reflexive_def"]),
   ("remove1_commute", translated "source_remove1_commute"),
   ("removeAll_commute", translated "source_removeAll_commute"),
   ("upto_rec1", translated "source_upto_rec1"),
@@ -1123,5 +1132,16 @@ fun theorems citation =
     | _ => []
 
 val names = map #1 table
+
+(* [set_zip] reads any zip pointwise: its left side is the set of a zip
+   of two pattern variables, and its right side leaves those two lists
+   under an index, where no rule about a zip's own head reaches them.
+   HOL4 rewrites the outermost redex first, so it fires above
+   [zip_append] -- src/HOL/List.thy:2749, simp there and seeded here --
+   which Isabelle applies first, the zip being the innermost redex.
+   Installed at low priority the two apply in Isabelle's order. *)
+val normalised_subjects = ["set_zip"]
+
+fun normalised_subject citation = Lib.mem citation normalised_subjects
 
 end

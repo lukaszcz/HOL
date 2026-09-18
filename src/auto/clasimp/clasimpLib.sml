@@ -1143,6 +1143,25 @@ val bottom_up_fragment =
     {name = SOME bottom_up_fragment_name, convs = [], rewrs = [], ac = [],
      filter = NONE, dprocs = [bottom_up_reducer], congs = []}
 
+(* The same mechanism for a rule installed for one invocation rather than
+   declared: the rewrites are fixed when the fragment is built, where the
+   declaration's reducer reads a table that a later declaration changes. *)
+val normalised_subject_fragment_name = "clasimp-normalised-subject"
+
+fun normalised_subject_fragment rewrites =
+  simpLib.SSFRAG
+    {name = SOME normalised_subject_fragment_name, convs = [], rewrs = [],
+     ac = [], filter = NONE, congs = [],
+     dprocs =
+       [Traverse.REDUCER
+          {name = SOME normalised_subject_fragment_name,
+           initial = bottom_up_context,
+           addcontext = fn (context, _) => context,
+           apply =
+             fn _ => fn term =>
+               Conv.FIRST_CONV
+                 (map (Conv.REWR_CONV o Drule.SPEC_ALL) rewrites) term}]}
+
 (* The fragment is installed by the first declaration and then stays, inert
    while nothing is declared. *)
 fun install_bottom_up_fragment table =

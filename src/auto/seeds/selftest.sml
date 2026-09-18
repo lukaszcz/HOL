@@ -861,6 +861,23 @@ val _ =
                   measure (set (FLAT xss)) =
                   measure (BIGUNION (IMAGE set (set xss)))``))
 
+(* src/HOL/List.thy:2749 @ f7e02b7e, [zip_append].  The goal is not a
+   corpus entry and is not the rule: two lists sharing a prefix are
+   zipped and the pairs read off, and a pair is one of the shared
+   prefix's or one of the tails' only once the zip comes apart there.
+   The tactic is simplification alone, the rule being a rewrite.  It is
+   read at the pairs rather than at the length: a length reduces
+   through MIN without the zip ever coming apart. *)
+val _ =
+  check
+    ("a zip of two appends with equal prefixes comes apart",
+     fn () =>
+       closes_within 20
+         (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) [])
+         ([], ``!(xs : 'a list) ys zs pair.
+                  MEM pair (ZIP (xs ++ ys, xs ++ zs)) <=>
+                  MEM pair (ZIP (xs, xs)) \/ MEM pair (ZIP (ys, zs))``))
+
 (* src/HOL/List.thy:1348,1521 @ f7e02b7e, the two together.  The goal is
    not a corpus entry and is not either rule: the pair has to be placed
    in the inner list its first component builds, and that list in the
@@ -955,3 +972,21 @@ val _ =
        closes_within 20 (clasimpLib.AUTO_TAC [])
          ([], ``!(xs : 'a list) (ys : 'a list).
                   NULL xs /\ LENGTH ys = LENGTH xs ==> ys = []``))
+
+(* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
+   entry.  Isabelle settles a relation inclusion with the same three
+   rules it settles a set inclusion with, a relation being a set of
+   pairs there; HOL4's curried inclusion is a separate constant, and
+   without the three declared on RSUBSET the search has nothing to take
+   one apart with and neither goal closes. *)
+val _ =
+  check
+    ("a curried relation inclusion is settled classically",
+     fn () =>
+       List.all
+         (closes_within 20 (tableauLib.BLAST_TAC []))
+         [([], ``(!x y. seed_rsub_left x y ==> seed_rsub_right x y) ==>
+                 seed_rsub_left RSUBSET seed_rsub_right``),
+          ([], ``seed_rsub_left RSUBSET seed_rsub_middle ==>
+                 seed_rsub_middle RSUBSET seed_rsub_right ==>
+                 seed_rsub_left RSUBSET seed_rsub_right``)])

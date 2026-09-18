@@ -669,6 +669,50 @@ val _ =
             (fn () => clasimp_bu_normalise ``~clasimp_bu_wrap v``))
          ``clasimp_bu_view v``)
 
+(* The same order for a rewrite a single invocation installs rather than
+   a declaration: added plainly it reaches the term first and leaves the
+   subject in a form the rule about that subject's head no longer
+   addresses. *)
+val clasimp_bu_head_ss =
+  simpLib.++ (BasicProvers.srw_ss (), simpLib.rewrites [clasimp_bu_head])
+
+fun clasimp_bu_reduce ss term =
+  boolSyntax.rhs (concl (Conv.QCONV (simpLib.SIMP_CONV ss []) term))
+
+val _ =
+  check
+    ("a rewrite installed for one invocation waits the same way",
+     fn () =>
+       let
+         val term = ``~clasimp_bu_wrap (clasimp_bu_step m)``
+       in
+         aconv
+           (clasimp_bu_reduce
+              (simpLib.++
+                 (clasimp_bu_head_ss,
+                  clasimpLib.normalised_subject_fragment [clasimp_bu_rule]))
+              term)
+           boolSyntax.T andalso
+         aconv
+           (clasimp_bu_reduce
+              (simpLib.++ (clasimp_bu_head_ss,
+                           simpLib.rewrites [clasimp_bu_rule]))
+              term)
+           ``clasimp_bu_view (clasimp_bu_step m)``
+       end)
+
+val _ =
+  check
+    ("a rewrite installed for one invocation reduces a bare subject",
+     fn () =>
+       aconv
+         (clasimp_bu_reduce
+            (simpLib.++
+               (clasimp_bu_head_ss,
+                clasimpLib.normalised_subject_fragment [clasimp_bu_rule]))
+            ``~clasimp_bu_wrap v``)
+         ``clasimp_bu_view v``)
+
 fun tyinfo_named tyop =
   case List.filter
     (fn tyi => #2 (TypeBasePure.ty_name_of tyi) = tyop)

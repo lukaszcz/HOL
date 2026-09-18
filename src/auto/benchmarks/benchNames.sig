@@ -57,4 +57,12 @@ sig
      citation. *)
   val theorems : string -> benchLib.named_thm list
   val names : string list
+
+  (* Whether a citation's analogue is installed so that the traversal
+     offers it a subject the other rules have finished with -- see
+     [benchLib.RewriteAddBottomUp].  Decided by the rule's own shape,
+     recorded once beside the table, and answered the same way for every
+     goal that cites it. *)
+  val normalised_subjects : string list
+  val normalised_subject : string -> bool
 end

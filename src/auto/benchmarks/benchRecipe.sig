@@ -68,6 +68,11 @@ sig
      per goal, which is what keeps it from becoming a hint. *)
   type resolver = {
     theorems : string -> benchLib.named_thm list,
+    (* Whether a citation's analogue is installed so that the traversal
+       offers it a normalised subject: a property of the rule, answered
+       the same way wherever a citation becomes a rewrite -- [simp add:]
+       and [unfolding] alike.  See [benchLib.RewriteAddBottomUp]. *)
+    normalised_subject : string -> bool,
     tactics : string -> Term.term -> benchLib.tactic_id list,
     ambient : string -> benchLib.method_arg list
   }

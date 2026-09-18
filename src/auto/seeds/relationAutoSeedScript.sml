@@ -99,3 +99,38 @@ Theorem IN_INV_IMAGE_AUTO[simp]:
 Proof
   simp[relationTheory.inv_image_def]
 QED
+
+(* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Isabelle has one inclusion
+   for both encodings -- a relation is a set of pairs there, so
+   [subsetI] [intro!] and the unsafe eliminations [subsetD] (:493) and
+   [subsetCE] (:501) settle a relation inclusion as they settle any
+   other.  HOL4 splits the encoding: pred_set carries the same three
+   for SUBSET, and a curried relation's inclusion is RSUBSET, which is
+   declared to neither half.  The membership reading, RSUBSET itself,
+   stays out of the simpset for the reason recorded at SUBSET_I_AUTO --
+   an inclusion among the assumptions would become a conditional
+   rewrite matching every application of its left side. *)
+
+Theorem RSUBSET_I_AUTO[sintro]:
+  !left right.
+    (!x y. left x y ==> right x y) ==> left RSUBSET right
+Proof
+  REWRITE_TAC [relationTheory.RSUBSET]
+QED
+
+Theorem RSUBSET_D_AUTO[elim]:
+  !left right x y.
+    left RSUBSET right ==> left x y ==> right x y
+Proof
+  REWRITE_TAC [relationTheory.RSUBSET] THEN METIS_TAC []
+QED
+
+Theorem RSUBSET_CE_AUTO[elim]:
+  !left right x y conclusion.
+    left RSUBSET right ==>
+    (~left x y ==> conclusion) ==>
+    (right x y ==> conclusion) ==>
+    conclusion
+Proof
+  REWRITE_TAC [relationTheory.RSUBSET] THEN METIS_TAC []
+QED

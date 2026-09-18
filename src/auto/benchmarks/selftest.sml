@@ -1956,6 +1956,55 @@ val _ =
              "\n");
         null repeated_entries))
 
+(* The deferral table names citations, so an entry that names nothing
+   the table answers is a rule that moved or was renamed, and its
+   deferral silently stops applying.  The fragment rewrites with
+   REWR_CONV, which a conditional statement does not reach: a deferred
+   citation whose theorem is not an unconditional equation would be
+   installed and never fire, and the goal would look as it does with
+   the rule absent.  What the table decides is also checked where it
+   lands: a goal citing [set_zip] is handed it as the bottom-up
+   argument and not as a plain rewrite. *)
+val _ =
+  check
+    ("every deferred citation is one the name table answers",
+     fn () =>
+       let
+         fun equation theorem =
+           let
+             val statement = snd (boolSyntax.strip_forall (concl theorem))
+           in
+             Lib.can boolSyntax.dest_eq statement
+           end
+         fun answered citation =
+           List.exists (equal citation) benchNames.names andalso
+           not (null (benchNames.theorems citation)) andalso
+           List.all (equation o #theorem) (benchNames.theorems citation)
+       in
+         List.all answered benchNames.normalised_subjects
+       end)
+
+val _ =
+  check
+    ("a deferred citation reaches its goal deferred",
+     fn () =>
+       let
+         val recipe =
+           benchDerive.recipe_of "src/HOL/List.thy:9999"
+             ``!xs : 'a list. xs = xs``
+             "by (auto simp add: set_zip)"
+         val arguments = benchLib.recipe_arguments recipe
+         fun deferred (benchLib.RewriteAddBottomUp {name, ...}) = SOME name
+           | deferred _ = NONE
+         fun plain (benchLib.RewriteAdd {name, ...}) = SOME name
+           | plain _ = NONE
+         val zip_name = "parityTranslation$source_set_zip"
+       in
+         List.exists (equal zip_name) (List.mapPartial deferred arguments)
+         andalso
+         not (List.exists (equal zip_name) (List.mapPartial plain arguments))
+       end)
+
 (* src/HOL/List.thy @ f7e02b7e: split_list is the implication and
    in_set_conv_decomp the equivalence, and only the equivalence builds a
    member back out of a decomposition.  The goal below is not a corpus
@@ -2277,6 +2326,8 @@ fun registered_definition theorem =
     (DB.revlookup theorem)
 
 fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
+  | argument_theorem (benchLib.RewriteAddBottomUp {theorem, ...}) =
+      SOME theorem
   | argument_theorem (benchLib.SplitAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.IntroAdd (_, {theorem, ...})) = SOME theorem
   | argument_theorem (benchLib.ElimAdd (_, {theorem, ...})) = SOME theorem
@@ -2289,6 +2340,7 @@ fun argument_theorem (benchLib.RewriteAdd {theorem, ...}) = SOME theorem
   | argument_theorem (benchLib.RewriteDelete _) = NONE
 
 fun argument_name (benchLib.RewriteAdd {name, ...}) = SOME name
+  | argument_name (benchLib.RewriteAddBottomUp {name, ...}) = SOME name
   | argument_name (benchLib.SplitAdd {name, ...}) = SOME name
   | argument_name (benchLib.IntroAdd (_, {name, ...})) = SOME name
   | argument_name (benchLib.ElimAdd (_, {name, ...})) = SOME name

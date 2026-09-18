@@ -38,6 +38,7 @@ datatype rule_strength = SafeRule | UnsafeRule
 
 datatype method_arg =
     RewriteAdd of named_thm
+  | RewriteAddBottomUp of named_thm
   | RewriteDelete of string
   | SplitAdd of named_thm
   | IntroAdd of rule_strength * named_thm
@@ -140,6 +141,8 @@ fun strength_arg constructor strength ({name, ...} : named_thm) =
   constructor ^ "-" ^ strength_name strength ^ "(" ^ name ^ ")"
 
 fun method_arg_name (RewriteAdd theorem) = named_arg "rewrite" theorem
+  | method_arg_name (RewriteAddBottomUp theorem) =
+      named_arg "rewrite-bottom-up" theorem
   | method_arg_name (RewriteDelete name) = "rewrite-delete(" ^ name ^ ")"
   | method_arg_name (SplitAdd theorem) = named_arg "split" theorem
   | method_arg_name (IntroAdd (strength, theorem)) =
@@ -593,6 +596,7 @@ fun simp_controls goal exclusions =
   translation_base :: withheld_primitives goal @ controls exclusions
 
 fun named_theorem (RewriteAdd theorem) = SOME theorem
+  | named_theorem (RewriteAddBottomUp theorem) = SOME theorem
   | named_theorem (SplitAdd theorem) = SOME theorem
   | named_theorem (IntroAdd (_, theorem)) = SOME theorem
   | named_theorem (ElimAdd (_, theorem)) = SOME theorem
@@ -837,6 +841,11 @@ fun iff_markers ({name, theorem} : named_thm) =
     (clasetLib.iff_rules name theorem)
 
 fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
+  (* Installed in the simpset the invocation runs with, by
+     [with_normalised_subjects] below, and so named in no marker: the
+     low priority is the fragment's, and an invocation rewrite has
+     none. *)
+  | class_args (RewriteAddBottomUp _) = []
   | class_args (RewriteDelete name) =
       map clasetLib.Del (claset_names name) @ [markerLib.Excl name]
   | class_args (SplitAdd {theorem, ...}) = [simpLib.Split theorem]
@@ -939,6 +948,8 @@ fun blast_translation_args goal =
 fun simp_arg (RewriteAdd {theorem, ...}) =
       if clasimpLib.simp_argument_can_fire theorem then SOME theorem
       else NONE
+  (* Not a rewrite of the invocation: see [class_args] above. *)
+  | simp_arg (RewriteAddBottomUp _) = NONE
   | simp_arg (RewriteDelete name) = SOME (simpLib.Excl name)
   | simp_arg (SplitAdd {theorem, ...}) = SOME (simpLib.Split theorem)
   | simp_arg (CongruenceAdd {theorem, ...}) = SOME (simpLib.Cong theorem)
@@ -951,6 +962,19 @@ fun simp_arg (RewriteAdd {theorem, ...}) =
 
 fun fact_arg (FactAdd {theorem, ...}) = SOME theorem
   | fact_arg _ = NONE
+
+fun bottom_up_arg (RewriteAddBottomUp {theorem, ...}) = SOME theorem
+  | bottom_up_arg _ = NONE
+
+(* Where a low-priority argument is installed: in the simpset the
+   invocation runs with, so that every engine reading a simpset --
+   the simplifier's own pass and the classical search's alike -- offers
+   the rule the same subject. *)
+fun with_normalised_subjects simpset args =
+  case List.mapPartial bottom_up_arg args of
+      [] => simpset
+    | rewrites =>
+        simpLib.++ (simpset, clasimpLib.normalised_subject_fragment rewrites)
 
 fun supplied_rule (IntroAdd (_, {theorem, ...})) = SOME theorem
   | supplied_rule (ElimAdd (_, {theorem, ...})) = SOME theorem
@@ -1138,6 +1162,8 @@ fun crossed ({name, theorem} : named_thm) =
 fun crossed_arg arg =
   case arg of
       RewriteAdd entry => Option.map RewriteAdd (crossed entry)
+    | RewriteAddBottomUp entry =>
+        Option.map RewriteAddBottomUp (crossed entry)
     | IffAdd entry => Option.map IffAdd (crossed entry)
     | IntroAdd (strength, entry) =>
         Option.map (fn crossing => IntroAdd (strength, crossing))
@@ -1468,9 +1494,13 @@ fun tactic_for simpset goal Simp args exclusions =
 fun compile_recipe simpset entry recipe =
   case recipe of
       Invoke (tactic_id, args) =>
-        tactic_for simpset (#goal entry) tactic_id
-          (recipe_args entry (across_correspondence entry args))
-          (#excl entry)
+        let
+          val arguments =
+            recipe_args entry (across_correspondence entry args)
+        in
+          tactic_for (with_normalised_subjects simpset arguments)
+            (#goal entry) tactic_id arguments (#excl entry)
+        end
     | Then (left, right) =>
         Tactical.THEN1
           (compile_recipe simpset entry left,

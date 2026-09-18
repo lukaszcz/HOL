@@ -245,6 +245,24 @@ val _ =
     [("ZIP_NIL_LEFT_AUTO", CONJUNCT1 listTheory.ZIP_def),
      ("ZIP_NIL_RIGHT_AUTO", CONJUNCT1 (CONJUNCT2 listTheory.ZIP_def))]
 
+(* src/HOL/List.thy:2749 @ f7e02b7e.  [zip_append] is simp there and
+   undeclared here: HOL4 states the same fact as rich_list's ZIP_APPEND,
+   which reads the two zips into one rather than the one into two and
+   asks both pairs to be of equal length where the source asks it of the
+   prefixes alone.  What the source's orientation buys is that a zip of
+   two lists built the same way to the left comes apart, and its rules
+   then meet the pieces: [list_L8044_listrel1_subset_listrel] is where
+   that shows -- the two lists differ at one position, and split at it
+   what is left is a diagonal zip on either side. *)
+Theorem ZIP_APPEND_AUTO[simp]:
+  !prefix left suffix right.
+    LENGTH prefix = LENGTH left ==>
+    ZIP (prefix ++ suffix, left ++ right) =
+    ZIP (prefix, left) ++ ZIP (suffix, right)
+Proof
+  Induct >> Cases_on `left` >> fs[listTheory.ZIP_def]
+QED
+
 (* src/HOL/List.thy:1222-1228,2826-2827 @ f7e02b7e.  [map_fst_zip],
    [map_snd_zip] and [nth_zip] are simp there and undeclared here; HOL4's
    MAP_ZIP carries the two composed forms as well, which Isabelle reaches

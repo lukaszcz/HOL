@@ -74,6 +74,17 @@ sig
      term's own head.  The claset halves are those of [iff]. *)
   val remove_iff_bottom_up : string -> unit
 
+  (* The simpset half of that declaration, for a rewrite a caller
+     installs for one invocation instead of declaring: a fragment whose
+     rewrites the traversal reaches only once the rewrites and the
+     descent have both left a node alone.  A rule whose left side reads
+     an arbitrary term of its subject's type fires, in HOL4's order,
+     above every rule about the subject's own head; in this fragment it
+     is offered the subject the other rules have finished with, which is
+     the only subject Isabelle's order ever offers it.  The rewrites are
+     unconditional equations, as the declaration's are. *)
+  val normalised_subject_fragment : thm list -> simpLib.ssfrag
+
   (* Whether the simplifier can make a rewrite of this argument that is
      able to fire.  A conditional rule whose conclusion is an equation
      between variables prepares to a rewrite matching every equation in
