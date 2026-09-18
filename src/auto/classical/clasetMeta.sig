@@ -1,6 +1,5 @@
 signature clasetMeta =
 sig
-  (* ABLATION-DIAG: temporary counters. *)
   type term = Term.term
   type hol_type = Type.hol_type
   type ('a, 'b) subst = ('a, 'b) Lib.subst
