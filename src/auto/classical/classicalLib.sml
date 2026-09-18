@@ -175,6 +175,31 @@ fun CS_FIRST_BEST_TAC cs =
   solve (clasetSearch.BEST_FIRST solved
     (expand_first clasetStep.step cs))
 
+(* A bounded turn for the frontier search: the engine's expansion bound is
+   in force only while this runs.  It is a tactic rather than an ntactic
+   because an ntactic's result sequence is lazy, so the search would run
+   after the bound was restored; DETERM forces the first solution here,
+   inside the scope.  A search that reaches the bound reports no solution,
+   which is failure, so a caller can offer the goal to another engine. *)
+fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal =
+  let
+    val () =
+      if expansions >= 1 then ()
+      else
+        (* The search reads a limit of zero as no limit, so a turn of none
+           would be the unbounded search rather than the empty one. *)
+        raise mk_HOL_ERR "classicalLib" "CS_BOUNDED_FIRST_BEST_TAC"
+          "a turn is at least one expansion"
+    val saved = !clasetSearch.node_limit
+    val () = clasetSearch.node_limit := expansions
+    val result =
+      NTactical.DETERM (CS_FIRST_BEST_TAC cs) goal
+        handle e => (clasetSearch.node_limit := saved; raise e)
+  in
+    clasetSearch.node_limit := saved;
+    result
+  end
+
 fun CS_ASTAR_TAC cs = solve (astar_driver clasetStep.step cs)
 fun CS_SLOW_ASTAR_TAC cs = solve (astar_driver clasetStep.slow_step cs)
 

@@ -5951,6 +5951,54 @@ val _ =
          andalso Term.aconv (List.nth (order, 1)) small
        end)
 
+(* The turn is a bound on admitted expansions, so the unbounded search
+   names the expansion at which a goal closes: a turn that long closes it,
+   and a turn one expansion shorter reports no proof.  Reporting no proof
+   is failure, which is what lets a caller offer the goal to a different
+   engine, and the bound is back to what it was either way.  Five nested
+   witnesses give a search deep enough to tell the two turns apart. *)
+val _ =
+  test
+    ("CS_BOUNDED_FIRST_BEST_TAC closes inside its turn, fails one \
+     \expansion short, and leaves the bound as it found it",
+     fn () =>
+       let
+         val saved = !clasetSearch.node_limit
+         val cs = clasetLib.the_claset ()
+         val goal = ([], nested_exists 5 boolSyntax.T)
+         val unbounded =
+           tactic_solves
+             (NTactical.DETERM (classicalLib.CS_FIRST_BEST_TAC cs)) goal
+         val needed = clasetSearch.node_count ()
+         fun closes turn =
+           tactic_solves
+             (classicalLib.CS_BOUNDED_FIRST_BEST_TAC cs turn) goal
+             handle HOL_ERR _ => false
+       in
+         unbounded andalso needed >= 2 andalso
+         closes needed andalso not (closes (needed - 1)) andalso
+         !clasetSearch.node_limit = saved
+       end)
+
+val _ =
+  test
+    ("CS_BOUNDED_FIRST_BEST_TAC refuses a turn of no expansions",
+     fn () =>
+       let
+         val saved = !clasetSearch.node_limit
+         val cs = clasetLib.the_claset ()
+         val goal = ([], nested_exists 5 boolSyntax.T)
+         fun refuses turn =
+           (ignore
+              (Tactical.VALID
+                (classicalLib.CS_BOUNDED_FIRST_BEST_TAC cs turn) goal);
+            false)
+           handle HOL_ERR _ => true
+       in
+         refuses 0 andalso refuses ~1 andalso
+         !clasetSearch.node_limit = saved
+       end)
+
 fun depth_solves cs bound node =
   List.exists
     (List.null o clasetGoal.goals o #2)

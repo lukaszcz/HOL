@@ -1520,6 +1520,15 @@ fun CS_of body cs ss = body cs ss []
 
 fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
 
+(* The best-first leg's turn, in admitted expansions.  Every list/map
+   corpus goal that leg closes under force closes far inside it: the
+   longest of those solves, [ran_map_upd_Some], takes 0.6s.  A turn on a
+   goal the leg cannot close is the cost the goals that need the other
+   engine pay, and 500 expansions of one costs 11s, so a materially wider
+   turn would spend a whole per-goal budget before the engine that closes
+   the goal was reached. *)
+val first_best_turn = 500
+
 fun force_with name cs ss simp_args =
   let
     val search_cs = add_simp_wrapper ss simp_args cs
@@ -1533,15 +1542,26 @@ fun force_with name cs ss simp_args =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
     (* Isabelle's force_tac (src/Provers/clasimp.ML:167 @ Isabelle2025-2)
        ends in first_best_tac alone: the method carries no tableau leg.
-       Ours keeps one, but behind rather than in front, because a leg the
-       method does not have must not be able to spend the budget the leg
-       that carries the parity needs -- the tableau does not return on
-       goals best-first closes in milliseconds. *)
+       Ours keeps one, and neither leg may run to exhaustion in front of
+       the other, because neither bound is a bound on work: best-first does
+       not return on [snd_image_Sigma], which the tableau closes in 0.02s,
+       and the tableau does not return on [ran_map_upd], which best-first
+       closes in 0.1s.  Whichever goes first therefore loses the goals only
+       the other closes.
+
+       So each engine takes a bounded turn before either is let loose: a
+       best-first turn, then the staged tableau and depth search at their
+       invocation bounds, then the unbounded best-first the method is.
+       Nothing force closes today is given up -- that last turn is what it
+       runs now -- and a goal the first turn cannot close reaches the other
+       engine with the budget it needs.  The last turn repeats the first
+       one's expansions, which only a goal already spending seconds in
+       best-first ever reaches. *)
     val search =
-      Tactical.ORELSE
-        (NTactical.DETERM
-           (classicalLib.CS_FIRST_BEST_TAC search_cs),
-         staged_auto_search {blast = 8, depth = 4} cs search_cs)
+      Tactical.FIRST
+        [classicalLib.CS_BOUNDED_FIRST_BEST_TAC search_cs first_best_turn,
+         staged_auto_search {blast = 8, depth = 4} cs search_cs,
+         NTactical.DETERM (classicalLib.CS_FIRST_BEST_TAC search_cs)]
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,

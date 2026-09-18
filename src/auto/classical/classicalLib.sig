@@ -34,6 +34,15 @@ sig
   val CS_FIRST_BEST_TAC : clasetLib.claset -> NTactical.ntactic
   val CS_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
   val CS_SLOW_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
+  (* [CS_FIRST_BEST_TAC] given a bounded turn: the search runs under a
+     bound of [expansions] admitted expansions and reports failure if it
+     reaches it, so a caller can hand the goal to another engine rather
+     than let one search spend a whole invocation.  A tactic, because the
+     bound has to be in force while the search runs and an ntactic's
+     result sequence is lazy.  [expansions] is at least one: the search
+     reads a limit of zero as no limit. *)
+  val CS_BOUNDED_FIRST_BEST_TAC : clasetLib.claset -> int -> tactic
+
   val CS_DEPTH_SOLVE_TAC :
     {dup : bool} -> int -> clasetLib.claset -> NTactical.ntactic
   val CS_DEEPEN_TAC : clasetLib.claset ->
