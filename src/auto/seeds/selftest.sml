@@ -845,6 +845,22 @@ val _ =
          ([], ``!(xss : num list list).
                   ~MEM 0 (FLAT xss) ==> EVERY (\ys. ~MEM 0 ys) xss``))
 
+(* src/HOL/List.thy:1521 @ f7e02b7e, [set_concat] where what it reads is
+   a set rather than a membership.  The goal is not a corpus entry and
+   is not the rule: the flattened list stands under a function of sets,
+   with no membership around it, so the two sides meet only once the
+   flattened list is read as the union it is.  The tactic is
+   simplification alone, the rule being a rewrite. *)
+val _ =
+  check
+    ("a flattened list standing as a set is read as a union",
+     fn () =>
+       closes_within 20
+         (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) [])
+         ([], ``!(xss : 'a list list) (measure : 'a set -> num).
+                  measure (set (FLAT xss)) =
+                  measure (BIGUNION (IMAGE set (set xss)))``))
+
 (* src/HOL/List.thy:1348,1521 @ f7e02b7e, the two together.  The goal is
    not a corpus entry and is not either rule: the pair has to be placed
    in the inner list its first component builds, and that list in the

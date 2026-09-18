@@ -159,6 +159,24 @@ QED
    safety class rather than this rule or its shape. *)
 val _ = export_at "simp" ("MEM_FLAT_AUTO", listTheory.MEM_FLAT)
 
+(* The set reading of the same source rule, which the membership
+   reading does not cover: a flattened list also stands as a set of its
+   own, with no membership around it for MEM_FLAT_AUTO to meet.
+   [list_L4011_length_remdups_concat] is where that shows -- its simp
+   leaves [CARD (set (FLAT xss)) = CARD (BIGUNION (IMAGE set (set
+   xss)))], two readings of one set under a CARD.  The rule is stated in
+   the source's image form rather than HOL4's LIST_TO_SET_FLAT, whose
+   [set (MAP set ls)] right-hand side would need the image reading of a
+   mapped list, which this layer declines to declare for the reason
+   above.  A membership still meets MEM_FLAT_AUTO first: it stands at
+   the head of the term, and HOL4's traversal rewrites there before it
+   reaches the set beneath. *)
+Theorem LIST_TO_SET_FLAT_AUTO[simp]:
+  !ls. set (FLAT ls) = BIGUNION (IMAGE set (set ls))
+Proof
+  simp[listTheory.LIST_TO_SET_FLAT, listTheory.LIST_TO_SET_MAP]
+QED
+
 Theorem MEM_MAP_IMAGE_AUTO[intro]:
   !f y x (xs : 'a list). y = f x /\ MEM x xs ==> MEM y (MAP f xs)
 Proof
