@@ -36,7 +36,6 @@ val over_budget =
   ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
    "list_L1511_split_list_last_propE",
    "list_L6138_map_sorted_distinct_set_unique",
-   "list_L7823_append_listrel1I",
    "list_L8999_set_Cons_transfer",
    "list_L9013_list_all_transfer"]
 
@@ -81,7 +80,7 @@ val list_decomposition_witnesses =
   classified "list decomposition witnesses"
     ("the residual needs an existential witness splitting a list "
      ^ "at a member")
-    ["list_L7823_append_listrel1I", "list_L8673_these_set_code"]
+    ["list_L8673_these_set_code"]
 
 (* Re-measured at ten times the budget: all three still return nothing.
    The citation they were filed under is not what stands in the way --
@@ -174,18 +173,6 @@ val indexing_through_list_constructors =
    proof.  Each goal's residual was read and each names a different
    cause; [list_L7998_listrel_rtrancl_refl] left the class altogether,
    its citation now resolved as the source method instantiates it. *)
-
-val a_snoc_read_through_an_append =
-  classified "a snoc read through an append"
-    ("the residual reads FRONT and LAST of an append with a "
-     ^ "singleton.  Isabelle's simpset carries [butlast_snoc] and "
-     ^ "[append_butlast_last_id], List.thy:2045 and 2085, on that "
-     ^ "very form; HOL4 states the two reductions on SNOC "
-     ^ "([FRONT_SNOC], [LAST_SNOC]) and keeps [SNOC_APPEND] out of "
-     ^ "the simpset deliberately, so of the append form only LAST "
-     ^ "reduces, through [LAST_APPEND_CONS], and FRONT does not; "
-     ^ "[APPEND_FRONT_LAST] is declared to no simpset at all")
-    ["list_L2178_snoc_eq_iff_butlast"]
 
 val the_cited_characterisation_has_no_counterpart =
   classified "the cited characterisation has no counterpart"
@@ -464,7 +451,6 @@ val execution : benchLib.shortfall list =
   sorted_list_of_a_set @
   a_composed_predicate_at_a_function_argument @
   indexing_through_list_constructors @
-  a_snoc_read_through_an_append @
   the_cited_characterisation_has_no_counterpart @
   a_set_relation_stated_by_its_graph @
   an_injectivity_premise_no_ambient_fact_reaches @

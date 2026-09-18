@@ -665,6 +665,9 @@ val table : (string * (unit -> resolution)) list =
    translated "source_distinct_adj_mapD"),
   ("distinct_adj_mapI",
    translated "source_distinct_adj_mapI"),
+  (* src/HOL/List.thy:1036.  The rule a proof uses to build an equation
+     between two appends out of a cut of one side. *)
+  ("append_eq_appendI", translated "source_append_eq_appendI"),
   ("hd_def", translated "source_hd_def"),
   ("last_def", translated "source_last_def"),
   (* Isabelle's [refl] is an abbreviation for [refl_on UNIV]
@@ -741,7 +744,6 @@ val table : (string * (unit -> resolution)) list =
 
   (* ---- Isabelle facts with no HOL4 counterpart ---- *)
   ("Pow_top", unrepresented),
-  ("append_eq_appendI", unrepresented),
   ("atLeastLessThan_iff[symmetric]", unrepresented),
   ("dom_map_option[of \"\\<lambda>_. g\" m]", unrepresented),
   ("drop_eq_nths", unrepresented),

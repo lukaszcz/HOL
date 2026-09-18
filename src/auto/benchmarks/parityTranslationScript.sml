@@ -1440,13 +1440,17 @@ Proof
   metis_tac[source_upto_split1]
 QED
 
-Theorem source_append_cons_cut:
-  !whole prefix tail head rest.
-    whole = prefix ++ tail ==>
-    tail = head::rest ==>
-    whole = prefix ++ [head] ++ rest
+(* src/HOL/List.thy:1036 @ f7e02b7e.  [append_eq_appendI] is the
+   introduction a proof uses to build an equation between two appends
+   out of a cut of one side: the source's [append_listrel1I] names it,
+   as the rule that lets the search choose where the shared part ends.
+   HOL4 states the associativity it rests on and nothing of this
+   shape. *)
+Theorem source_append_eq_appendI:
+  !xs middle zs ys us.
+    xs ++ middle = zs ==> ys = middle ++ us ==> xs ++ ys = zs ++ us
 Proof
-  simp[]
+  metis_tac[listTheory.APPEND_ASSOC]
 QED
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
@@ -3652,26 +3656,6 @@ Theorem source_listrel1E:
     conclusion
 Proof
   metis_tac[source_listrel1_def]
-QED
-
-Theorem source_listrel1_append_suffix:
-  !relation xs ys suffix.
-    source_listrel1 relation xs ys ==>
-    source_listrel1 relation (xs ++ suffix) (ys ++ suffix)
-Proof
-  rpt strip_tac
-  >> fs[source_listrel1_def]
-  >> metis_tac[listTheory.APPEND_ASSOC]
-QED
-
-Theorem source_listrel1_append_prefix:
-  !relation prefix xs ys.
-    source_listrel1 relation xs ys ==>
-    source_listrel1 relation (prefix ++ xs) (prefix ++ ys)
-Proof
-  rpt strip_tac
-  >> fs[source_listrel1_def]
-  >> metis_tac[listTheory.APPEND_ASSOC]
 QED
 
 (* src/HOL/List.thy:7750 [not_Nil_listrel1] and :7753
