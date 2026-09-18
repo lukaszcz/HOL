@@ -3335,12 +3335,20 @@ val _ =
 (* A6.  Goal statements are owner-signed: a changed hash means a goal
    statement moved, which needs an explicit decision rather than an
    updated pin.  The List/map signature was last moved on the owner's
-   decision to state [list_L7401_lexord_append_leftD]'s premise as its
-   source does, [!item. ~relation item item] rather than
-   [relation$irreflexive relation]: Isabelle's [lexord_append_leftD]
-   states that premise unfolded, and rendering it through the HOL4
-   constant asked the assigned method to unfold a constant its method
-   string does not name.
+   decision to state [list_L8044_listrel1_subset_listrel]'s two
+   inclusions folded, as relation$RSUBSET, rather than pointwise:
+   Isabelle states both with its one subset, a relation being a set of
+   pairs there, and unfolded the conclusion's LIST_REL stands at
+   variable lists where auto's first simplification pass reads it --
+   a step ahead of where the source's own method meets it, which
+   Isabelle's [auto] fails at too when the lemma is restated that way.
+
+   The decision before that stated [list_L7401_lexord_append_leftD]'s
+   premise as its source does, [!item. ~relation item item] rather
+   than [relation$irreflexive relation]: Isabelle's
+   [lexord_append_leftD] states that premise unfolded, and rendering it
+   through the HOL4 constant asked the assigned method to unfold a
+   constant its method string does not name.
 
    The decision before that rendered Isabelle's [fun_upd] as a
    translation constant rather than inlining its body: seventeen goals
@@ -3349,7 +3357,7 @@ val _ =
    all. *)
 val goal_term_pins =
   [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "C72C0B49"), ("Linarith", "E9DDA580"),
+   ("List/map", "507D17D7"), ("Linarith", "E9DDA580"),
    ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
 
 val _ =

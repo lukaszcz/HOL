@@ -60,17 +60,20 @@ val goals =
            (parityTranslation$source_rel_image relation {value})
            (parityTranslation$source_rel_image
               (LIST_REL relation) {xs})``,
+   (* The source states both inclusions with the one subset of
+      Isabelle's, a relation being a set of pairs there.  HOL4's
+      curried inclusion is relation$RSUBSET, and the goal is stated
+      with it rather than pointwise: unfolded, the conclusion's
+      LIST_REL stands at variable lists where auto's first
+      simplification pass reads it, which is a step ahead of where the
+      source's own method meets it. *)
    entry "list_L8044_listrel1_subset_listrel" 8044
      "by(auto elim!: listrel1E simp add: listrel_iff_zip set_zip refl_on_def)"
      ``!left_relation right_relation.
-         (!left right.
-            left_relation left right ==>
-            right_relation left right) ==>
+         left_relation RSUBSET right_relation ==>
          relation$reflexive right_relation ==>
-         !xs ys.
-           parityTranslation$source_listrel1
-             left_relation xs ys ==>
-           LIST_REL right_relation xs ys``,
+         parityTranslation$source_listrel1 left_relation RSUBSET
+         LIST_REL right_relation``,
    entry "list_L8247_anon_L8247" 8247
      "by (auto simp: fun_eq_iff list_all_iff)"
      ``!xs.

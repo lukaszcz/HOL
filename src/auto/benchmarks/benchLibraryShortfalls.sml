@@ -170,22 +170,6 @@ val indexing_through_list_constructors =
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
 
-(* src/HOL/List.thy:8044 @ f7e02b7e.  It returns inside the budget now
-   and leaves a residual rather than nothing.  What is left is two
-   lists that differ at a single position -- an append around a cons on
-   either side -- read at an arbitrary index below their common length,
-   with the relation known reflexive and known to hold at the changed
-   pair.  Both readings of the index are available; the case split
-   between them is what neither simplification nor the search
-   performs. *)
-val a_changed_position_against_the_others =
-  classified "a changed position against the others"
-    ("the residual reads two lists differing at one position at an "
-     ^ "arbitrary index, under a reflexive relation that is known to "
-     ^ "hold at the changed pair, and needs the case split on whether "
-     ^ "the index is that position")
-    ["list_L8044_listrel1_subset_listrel"]
-
 (* What used to be one class saying only that the method reported no
    proof.  Each goal's residual was read and each names a different
    cause; [list_L7998_listrel_rtrancl_refl] left the class altogether,
@@ -496,7 +480,6 @@ val execution : benchLib.shortfall list =
   rotation_by_iteration @
   decision_procedure_scope @
   definitional_unfolding_stops_short @
-  a_changed_position_against_the_others @
   injectivity_and_surjectivity @
   the_ambient_rule_is_the_goal @
   map_sum_commuted_under_a_fact @
