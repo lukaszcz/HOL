@@ -116,19 +116,24 @@ val the_only_citation_states_the_goal =
      ^ "step any classical or simp method takes")
     ["list_L9013_list_all_transfer"]
 
-(* src/HOL/List.thy:6669,6847 @ f7e02b7e.  The residual is stated on
-   the translated [sorted_key_list_of_set], which is a sort of the set's
-   elements in an arbitrary listing.  The source's facts about it are
-   the locale lemmas of the fold that builds it -- its head is the
+(* src/HOL/List.thy:6669,6770,6847 @ f7e02b7e.  The residual is stated
+   on the translated [sorted_key_list_of_set], which is a sort of the
+   set's elements in an arbitrary listing.  The source's facts about it
+   are the locale lemmas of the fold that builds it -- its head is the
    least element, and it is empty exactly when the set is -- and HOL4
    has no constant of its own to state them on, so a sort at a set
-   known only to be finite reduces nowhere. *)
+   known only to be finite reduces nowhere.  L6770 was filed under a
+   cardinality reading and is here on its residual: both halves of its
+   iff are left, and what each turns on is
+   [source_sorted_key_list_of_set le function domain = target], the
+   same sort at the same kind of set. *)
 val sorted_list_of_a_set =
   classified "sorted list of a set"
     ("the residual is a sort over a set's elements, which the source "
      ^ "reads through the locale lemmas of the fold that builds it "
      ^ "and HOL4 states on no constant of its own")
     ["list_L6669_sorted_key_list_of_set_eq_Nil_iff",
+     "list_L6770_sorted_key_list_of_set_unique",
      "list_L6847_sorted_list_of_set_nonempty"]
 
 (* src/HOL/List.thy:1838 @ f7e02b7e.  The source proof folds both
@@ -255,13 +260,6 @@ val fold_against_a_set_aggregate =
      ^ "nothing turns the hypothesis about every list into the "
      ^ "instance the goal needs")
     ["list_L3381_anon_L3381", "list_L3385_anon_L3385"]
-
-val finite_cardinality =
-  classified "finite cardinality"
-    ("the residual is a CARD identity over a finite set built "
-     ^ "from a list")
-    ["list_L4011_length_remdups_concat",
-     "list_L6770_sorted_key_list_of_set_unique"]
 
 (* Three of what used to be one class were permutations of a single
    statement and now close.  What is left is not propositional: the
@@ -488,7 +486,6 @@ val execution : benchLib.shortfall list =
   an_injectivity_premise_no_ambient_fact_reaches @
   fold_direction @
   fold_against_a_set_aggregate @
-  finite_cardinality @
   arithmetic_complement_in_a_disjunct @
   sortedness_beyond_the_bridge @
   numeral_against_Suc @
