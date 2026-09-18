@@ -454,3 +454,22 @@ Theorem TL_APPEND2_AUTO[simp]:
 Proof
   Cases >> simp[]
 QED
+
+(* src/HOL/List.thy:2045,2085 @ f7e02b7e.  [butlast_snoc] and
+   [append_butlast_last_id] are simp there, and both are stated on the
+   append with a singleton: a list built by appending one element has
+   its front read off, and a non-empty list is put back together from
+   its front and its last.  HOL4 states the pair on SNOC ([FRONT_SNOC],
+   [LAST_SNOC]) and keeps [SNOC_APPEND] out of the simpset by design,
+   so a front of an append never reduces; [APPEND_FRONT_LAST] is
+   declared to no simpset at all.  Of the append form only LAST
+   reduces, through [LAST_APPEND_CONS], and the two spellings never
+   meet. *)
+Theorem FRONT_APPEND_SINGLETON_AUTO[simp]:
+  !xs x. FRONT (xs ++ [x]) = xs
+Proof
+  REWRITE_TAC [GSYM listTheory.SNOC_APPEND, listTheory.FRONT_SNOC]
+QED
+
+val _ =
+  export_at "simp" ("APPEND_FRONT_LAST_AUTO", listTheory.APPEND_FRONT_LAST)

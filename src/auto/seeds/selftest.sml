@@ -950,6 +950,23 @@ val _ =
          ([], ``!(xs : 'a list) x n.
                   0 < n ==> EL n ([x] ++ xs) = EL (n - 1) xs``))
 
+(* src/HOL/List.thy:2045,2085 @ f7e02b7e, [butlast_snoc] and
+   [append_butlast_last_id].  Neither goal is a corpus entry and
+   neither is a rule: the first reads a front off under a REVERSE, the
+   second puts a list back together under a further append.  HOL4
+   states the pair on SNOC and keeps [SNOC_APPEND] out of the simpset,
+   so a front of an append reduces only once the append spelling is
+   declared. *)
+val _ =
+  check
+    ("a front and a last are read off an append",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!(xs : 'a list) x. REVERSE (FRONT (xs ++ [x])) = REVERSE xs``),
+          ([], ``!(ys : 'a list) x.
+                   ys <> [] ==> FRONT ys ++ [LAST ys] ++ [x] = ys ++ [x]``)])
+
 (* [adjacent_thm] settles a pair that is the head of the list, and
    [adjacent_iff] is what walks one further in.  The goal below asks for
    a pair one place beyond the head of a list with an arbitrary tail, so
