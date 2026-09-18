@@ -739,20 +739,22 @@ val benchmark_safe_solver =
         Tactic.ACCEPT_TAC boolTheory.TRUTH,
         Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
 
+(* Rule A1 on the ambient simpset: a rewrite that states the goal is not
+   what closes it.  The filter goes through simpLib, which replays the
+   simpset's own history, rather than rebuilding it from its fragments:
+   the fragments are not the simpset.  Rebuilt from them, what the layer
+   had removed by name comes back -- [APPEND_ASSOC], which
+   [clasimpLib] drops because it and the equation normalisation that
+   respells a trailing cons are each other's reverse, and the pair
+   loops. *)
 fun clean_simpset goal =
-  let
-    fun clean_fragment fragment =
-      simpLib.ssf_upd_rewrs
-        (List.filter (not o theorem_is_goal goal o #2)) fragment
-  in
-    simpLib.mk_simpset
-      (map clean_fragment
-        (List.rev (simpLib.ssfrags_of (clasimpLib.clasimp_ss ()))))
-    |> simpLib.set_cond_depth 40
-    |> simpLib.set_safe_solvers [benchmark_safe_solver]
-    |> simpLib.add_unsafe_solver linarithLib.linarith_solver
-    |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
-  end
+  simpLib.filter_rewrites
+    (fn (_, theorem) => not (theorem_is_goal goal theorem))
+    (clasimpLib.clasimp_ss ())
+  |> simpLib.set_cond_depth 40
+  |> simpLib.set_safe_solvers [benchmark_safe_solver]
+  |> simpLib.add_unsafe_solver linarithLib.linarith_solver
+  |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
 
 fun preserve_target tactic (original as (_, target)) =
   let

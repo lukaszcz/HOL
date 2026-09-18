@@ -1375,6 +1375,43 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      QCONV (SIMP_CONV clear_rebuilt []),
      ``surface_filtered_x:'a``, ``surface_filtered_x:'a``)
 
+  (* A simpset is not its fragments.  A rewrite it has removed by name is
+     gone from the simpset and still stands in the fragment its history
+     records, so rebuilding from [ssfrags_of] brings the rewrite back --
+     along with the [excluded] set, the limit and the rewrite maker that
+     rebuild drops.  [filter_rewrites] replays the history instead, so
+     only the rejected rewrites go. *)
+  val filter_removed_rwt = ASSUME ``surface_filter_a:'a = surface_filter_b``
+  val filter_kept_rwt = ASSUME ``surface_filter_c:'a = surface_filter_d``
+  val filter_base =
+    empty_ss ++
+      named_rewrites_with_names "surface filter probe"
+        [({Thy = "scratch", Name = "surface_filter_removed"},
+          filter_removed_rwt),
+         ({Thy = "scratch", Name = "surface_filter_kept"},
+          filter_kept_rwt)]
+    |> remove_simps ["surface_filter_removed"]
+  val filter_replayed = filter_rewrites (fn _ => true) filter_base
+  val filter_dropped =
+    filter_rewrites
+      (fn (_, theorem) => not (aconv (concl theorem) (concl filter_kept_rwt)))
+      filter_base
+
+  val _ = convtest
+    ("filter_rewrites keeps a rewrite the simpset removed by name removed",
+     QCONV (SIMP_CONV filter_replayed []),
+     ``surface_filter_a:'a``, ``surface_filter_a:'a``)
+
+  val _ = convtest
+    ("filter_rewrites keeps the rewrites the predicate accepts",
+     QCONV (SIMP_CONV filter_replayed []),
+     ``surface_filter_c:'a``, ``surface_filter_d:'a``)
+
+  val _ = convtest
+    ("filter_rewrites drops the rewrites the predicate rejects",
+     QCONV (SIMP_CONV filter_dropped []),
+     ``surface_filter_c:'a``, ``surface_filter_c:'a``)
+
   val tactic_condition =
     ``surface_solver_x \/ ~surface_solver_x``
   val tactic_rwt =

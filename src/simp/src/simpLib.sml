@@ -1392,6 +1392,32 @@ fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
                                   |> setexcluded excluded
     end
 
+(* Drops from every fragment the rewrites a predicate rejects, leaving
+   the rest of the simpset's history in place.  Rebuilding a simpset
+   from `ssfrags_of` instead keeps the ADDFRAGs alone, so a rewrite the
+   simpset had removed by name comes back, and so do its `excluded`
+   set, its limit and its rewrite maker: the result is not the simpset
+   it was filtered from.  Going through `build_from_history` is what
+   `remove_ssfrags` does for the same reason.
+
+   Returns the simpset itself where the predicate rejects nothing, so
+   the common case costs no replay, and never raises Conv.UNCHANGED. *)
+fun filter_rewrites keep (ss as SS{history,limit,excluded,...}) =
+    let
+      fun filtered (ADDFRAG f) = ADDFRAG (ssf_upd_rewrs (List.filter keep) f)
+        | filtered item = item
+      fun rewrite_count items =
+          List.foldl
+            (fn (ADDFRAG f, n) => n + length (frag_rewrites f)
+              | (_, n) => n)
+            0 items
+      val history' = map filtered history
+    in
+      if rewrite_count history' = rewrite_count history then ss
+      else build_from_history history' |> fupdlimit (fn _ => limit)
+                                       |> setexcluded excluded
+    end
+
 (* Like `remove_ssfrags`, but additionally records the names so that any
    subsequent `++` of a fragment with one of those names is silently
    skipped.  `force_add` is the override that bypasses (and clears) this

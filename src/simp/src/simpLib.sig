@@ -136,6 +136,15 @@ sig
   val mk_simpset      : ssfrag list -> simpset
   val remove_ssfrags  : string list -> simpset -> simpset
 
+  (* Removes from every fragment the rewrites the predicate rejects,
+     keeping the rest of the simpset's history -- what it has excluded
+     by name, its limit, its rewrite maker, its strategy -- as it
+     stands.  Rebuilding from ssfrags_of does not: that keeps the
+     fragments alone.  Returns the simpset itself where nothing is
+     rejected, and never raises Conv.UNCHANGED. *)
+  val filter_rewrites :
+    ((thname option * thm) -> bool) -> simpset -> simpset
+
   (* Like remove_ssfrags, but additionally records the names so that any
      subsequent ++ of a named fragment with one of those names is silently
      a no-op.  force_add is the override for that prohibition.

@@ -1,0 +1,50 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `filter_rewrites`
+
+``` hol4
+simpLib.filter_rewrites :
+  ((simpLib.thname option * thm) -> bool) -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Removes the rewrite rules a predicate rejects from a simpset.
+
+A call to `filter_rewrites keep ss` returns a simpset that is the same
+as `ss` except that every rewrite rule for which `keep` returns false
+is gone.  The predicate sees each rule as it was added: its theorem,
+and the name it was added under where it has one.  Conversions,
+congruences, decision procedures, loopers and the simpset's strategy
+settings are left alone.
+
+The result is built by replaying the simpset's history, so everything
+the simpset carries beyond its fragments — the rules it has excluded by
+name with `remove_simps` or `-*`, its fragment exclusions, its limit,
+its rewrite maker, its strategy events — stands in the result as it
+stood in `ss`.  Rebuilding a filtered simpset out of `ssfrags_of`
+instead does not preserve them: the fragments a simpset was built from
+are not the simpset.
+
+Where `keep` rejects nothing, the simpset itself is returned.
+
+### Failure
+
+Never fails, and never raises `Conv.UNCHANGED`.
+
+### Example
+
+Withholding one particular theorem from an otherwise ambient simpset,
+whatever fragment it arrived in:
+
+``` hol4
+val without_thm =
+  simpLib.filter_rewrites
+    (fn (_, th) => not (aconv (concl th) (concl unwanted))) (srw_ss())
+```
+
+### See also
+
+[`simpLib.remove_ssfrags`](#simpLib.remove_ssfrags),
+[`simpLib.remove_simps`](#simpLib.remove_simps),
+[`simpLib.clear_rules`](#simpLib.clear_rules),
+[`simpLib.mk_simpset`](#simpLib.mk_simpset)
