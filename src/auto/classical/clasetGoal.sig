@@ -42,6 +42,11 @@ sig
   val fresh_eigen : node -> term -> term * store
 
   val goal_at : node -> int -> cgoal
+  (* Whether what the goal at the position claims still carries a
+     metavariable the store has not bound.  Nothing in such a
+     conclusion constrains the unknown, so only a step that guesses it
+     closes the goal. *)
+  val stands_on_unknown : node -> int -> bool
   val replace_goal : node ->
                      {pos : int, children : cgoal list, store : store} ->
                      node

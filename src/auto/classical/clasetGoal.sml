@@ -194,6 +194,18 @@ fun nth1 function_name =
 
 fun goal_at node pos = nth1 "goal_at" (goals node) pos
 
+(* Whether what the goal at [pos] claims still carries an unknown.
+   Nothing in such a conclusion constrains that unknown, so the only
+   step that closes the goal is one that guesses it; an unknown in the
+   assumptions is the opposite case, since a step reading the
+   assumption against the conclusion settles it. *)
+fun stands_on_unknown node pos =
+  let
+    val {w, ...} = goal_at node pos : cgoal
+  in
+    not (null (clasetMeta.metas_of (store node) w))
+  end
+
 fun delete_nth function_name pos values =
   clasetNorm.delete_nth ("clasetGoal", function_name) values pos
 

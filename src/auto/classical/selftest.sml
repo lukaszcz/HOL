@@ -5716,6 +5716,88 @@ val _ =
          tactic_solves tactic goal
        end)
 
+(* An unsafe destruction rule whose conclusion carries an unknown that none
+   of its own premises fixes.  The rule leaves two goals: the premise
+   [~ p v], which stands on the unknown, and the conclusion, which the
+   caller's goal settles.  The premise stands on the unknown applied to a
+   parameter, which no assumption here matches, so a search that insists on
+   it abandons a state it can solve and the rule is unusable however deep
+   the search goes.  The claset holds nothing but the rule, so this is the
+   only route to the goal. *)
+val selection_fixture =
+  let
+    val predicate_ty = Type.mk_type ("fun", [Type.ind, bool_ty])
+    val element = Term.mk_var ("selection_element", Type.ind)
+    val predicate = Term.mk_var ("selection_predicate", predicate_ty)
+    val bound = Term.mk_var ("selection_bound", Type.ind)
+    val major = Term.mk_var ("selection_major", predicate_ty)
+    val flaw = Term.mk_var ("selection_flaw", predicate_ty)
+    val witness = Term.mk_var ("selection_witness", Type.ind)
+
+    val major_premise = Term.mk_comb (major, element)
+    val negated_instance =
+      boolSyntax.mk_neg (Term.mk_comb (predicate, element))
+    val universal =
+      boolSyntax.mk_forall (bound, Term.mk_comb (predicate, bound))
+    val instance = SPEC element (ASSUME universal)
+    val absurd = MP (NOT_ELIM (ASSUME negated_instance)) instance
+    val rule =
+      GENL [element, predicate]
+        (DISCH major_premise
+          (DISCH negated_instance
+            (NOT_INTRO (DISCH universal absurd))))
+
+    val other = Term.mk_var ("selection_other", predicate_ty)
+    fun body term =
+      boolSyntax.mk_conj
+        (Term.mk_comb (flaw, term), Term.mk_comb (other, term))
+    val goal : Abbrev.goal =
+      ([Term.mk_comb (major, witness), boolSyntax.mk_neg (body witness)],
+       boolSyntax.mk_neg (boolSyntax.mk_forall (bound, body bound)))
+    val cs =
+      clasetLib.add_rule
+        {kind = clasetRules.Dest, safe = false, prio = NONE}
+        ("selection-dest", rule) clasetLib.empty_cs
+  in
+    (cs, goal)
+  end
+
+val _ =
+  test
+    ("the bounded depth search takes the goal a rule's unknown is settled \
+     \in, not the goal that stands on it",
+     fn () =>
+       let
+         val (cs, goal) = selection_fixture
+       in
+         tactic_solves
+           (NTactical.DETERM
+             (classicalLib.CS_DEPTH_SOLVE_TAC {dup = true} 4 cs)) goal
+       end)
+
+val _ =
+  test
+    ("CS_DEEPEN_TAC reaches the same rule",
+     fn () =>
+       let
+         val (cs, goal) = selection_fixture
+       in
+         tactic_solves
+           (NTactical.DETERM (classicalLib.CS_DEEPEN_TAC cs {start = 4}))
+           goal
+       end)
+
+val _ =
+  test
+    ("CS_FAST_TAC reaches the same rule",
+     fn () =>
+       let
+         val (cs, goal) = selection_fixture
+       in
+         tactic_solves
+           (NTactical.DETERM (classicalLib.CS_FAST_TAC cs)) goal
+       end)
+
 val _ =
   test
     ("all solve-completely drivers fail cleanly on a non-theorem",

@@ -125,6 +125,25 @@ fun project_steps steps =
 fun expand_at step cs pos node =
   project_steps (step cs (node, pos))
 
+(* The first goal that does not stand on an unknown, and the first goal
+   when they all do.  A goal whose conclusion still carries an unknown
+   is closed only by a step that guesses it, because nothing in the
+   conclusion constrains the guess, while a sibling's proof may settle
+   it outright; taking such a goal first is what makes a rule whose
+   conclusion carries an unknown its premises do not fix unusable at any
+   bound.  Exactly one goal is expanded either way, so a state whose
+   goals all stand settled is expanded as it was before. *)
+fun expand_settled_first step cs node =
+  let
+    val count = length (clasetGoal.goals node)
+    fun choose pos =
+      if pos > count then 1
+      else if clasetGoal.stands_on_unknown node pos then choose (pos + 1)
+      else pos
+  in
+    if count = 0 then seq.empty else expand_at step cs (choose 1) node
+  end
+
 fun expand_first step cs node =
   let
     fun first pos =
@@ -158,7 +177,7 @@ fun solve search goal =
   end
 
 fun depth_driver step cs =
-  clasetSearch.DEPTH_SOLVE (expand_at step cs 1)
+  clasetSearch.DEPTH_SOLVE (expand_settled_first step cs)
 
 fun best_driver step cs =
   clasetSearch.BEST_FIRST solved (expand_at step cs 1)

@@ -2226,17 +2226,43 @@ fun general_step fast cs (input as (node, _)) =
 fun step cs = general_step true cs
 fun slow_step cs = general_step false cs
 
+(* The children an inference leaves are solved one at a time, and the
+   one taken first is the first whose conclusion does not stand on an
+   unknown.  Nothing in such a conclusion constrains the unknown, so the
+   child is closed only by a step that guesses it, where a sibling's
+   proof may settle it outright: a rule whose conclusion carries an
+   unknown its remaining premises do not fix leaves exactly that pair,
+   and solving the premise first abandons a conjunction that is
+   solvable, which made the rule unusable at any bound.  Isabelle's
+   depth_tac (src/Provers/classical.ML:715 @ Isabelle2025-2) always
+   takes the first child and reaches those states through higher-order
+   unification instead, enumerating instances of the undetermined
+   premise until one happens to fit a sibling.  Every child is solved
+   either way and each is offered all of its solutions, so this is an
+   order and not a choice. *)
 fun depth_step cs part bound (node, pos) =
   let
-    fun solve_many _ 0 result = seq.result result
-      | solve_many m count (record, current) =
-          seq.bind (solve_one m (current, pos))
-            (solve_many m (count - 1))
+    fun solve_many _ _ 0 result = seq.result result
+      | solve_many m target count (record, current) =
+          let
+            (* The children occupy [target] upwards, and solving one
+               moves the rest down into its place, so the offset is
+               taken afresh against the children that are left. *)
+            fun settled offset =
+              if offset >= count then 0
+              else if clasetGoal.stands_on_unknown current (target + offset)
+              then settled (offset + 1)
+              else offset
+          in
+            seq.bind (solve_one m (current, target + settled 0))
+              (solve_many m target (count - 1))
+          end
 
     and solve_one m (current, target) =
       case safe_steps_at cs current target of
           SOME (result as (_, safe_node)) =>
-            solve_many m (clasetGoal.child_count current safe_node) result
+            solve_many m target
+              (clasetGoal.child_count current safe_node) result
         | NONE =>
             let
               val closers = inst0_step cs (current, target)
@@ -2248,7 +2274,7 @@ fun depth_step cs part bound (node, pos) =
                       (guess_free_first (depth_cascade part)) cs
                       (current, target))
                     (fn result as (_, next) =>
-                      solve_many (m - 1)
+                      solve_many (m - 1) target
                         (clasetGoal.child_count current next) result)
             in
               seq.append closers branching
