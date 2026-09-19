@@ -8998,4 +8998,29 @@ Proof
   rw[rich_listTheory.FRONT_APPEND_NOT_NIL]
 QED
 
+(* Isabelle/HOL src/HOL/Product_Type.thy:781, [curry_def].  Isabelle
+   defines the constant unapplied -- [curry = (%c x y. c (x, y))] --
+   where HOL4's [CURRY_DEF] states the applied equation, which is
+   L785's goal.  Rendered as HOL4 defines it, the citation a method
+   names is the goal it is cited for and is withheld; rendered as the
+   source states it, unfolding the constant leaves a beta redex and the
+   goal follows from it. *)
+Theorem source_curry_def:
+  pair$CURRY = \function first second. function (first, second)
+Proof
+  simp[FUN_EQ_THM, pairTheory.CURRY_DEF]
+QED
+
+(* Isabelle/HOL src/HOL/Nat.thy:714, [gr0_conv_Suc].  An equivalence
+   between a positivity and the successor form of the same number.
+   HOL4's [num_CASES] is the case split, which states neither side of
+   it: a method that rewrites with the equivalence turns a positivity
+   assumption into the successor form, where a case split offers two
+   branches and leaves the positivity to refute the zero one. *)
+Theorem source_gr0_conv_Suc:
+  !number. 0 < number <=> ?predecessor. number = SUC predecessor
+Proof
+  Cases >> simp[]
+QED
+
 val _ = export_theory ()

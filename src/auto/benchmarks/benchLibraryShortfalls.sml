@@ -270,6 +270,23 @@ val numeral_against_Suc =
      ^ "for")
     ["list_L5301_nth_rotate1"]
 
+(* Two of this class's goals were not in it: their citation is a
+   definition Isabelle states unapplied -- [curry_def] at
+   Product_Type.thy:781, [gr0_conv_Suc] at Nat.thy:714 -- which the
+   name table answered with HOL4's applied equation, and the applied
+   equation is the goal.  Both are stated in the translation as the
+   source states them and both close.  The rest are the real thing:
+   the fact the source method names is, in Isabelle too, the goal's own
+   statement.  [list_L1921_in_set_conv_nth] is the one that is neither.
+   Isabelle's [set_conv_nth] is a set equation, and its own
+   [in_set_conv_nth] follows by rewriting [set xs] inside [x : set xs].
+   The translation renders list membership as MEM, which is HOL4's
+   normal form and what every other goal is stated in, so a goal that
+   says MEM carries no [set xs] for that equation to rewrite; the
+   citation is therefore carried in the MEM spelling, where it is the
+   goal.  Recovering the source's route means spelling the corpus's
+   list membership through [IN set] instead, which is every list goal's
+   statement and not one goal's fix. *)
 val characterisation_is_the_goal =
   classified "characterisation is the goal"
     ("the HOL4 theorem that is this goal -- the one the Isabelle "
@@ -279,9 +296,8 @@ val characterisation_is_the_goal =
      ^ "of an equation or an equivalence or the unfolding of a "
      ^ "constant the translation introduces, and the assigned tactic "
      ^ "has no second route")
-    ["list_L1856_nth_Cons_pos", "list_L1921_in_set_conv_nth",
+    ["list_L1921_in_set_conv_nth",
      "list_L6444_stable_sort_key_sort_key",
-     "product_type_L785_curry_conv",
      "list_L8167_list_all_iff",
      "list_L8642_image_set", "list_L8660_card_set",
      "list_L8683_can_select_set_list_ex1",
