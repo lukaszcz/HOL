@@ -2329,3 +2329,34 @@ val _ =
          (clasimpLib.with_extensionality
             (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) []))
          applied_goal)
+
+(* The reading is this layer's default and not the invocation's.
+   [EVERY clasimp_ext_p] is constant-headed at [-> bool] and is no set:
+   it is a predicate short of an argument, and every fact about it is
+   stated applied, so the default membership reading leaves
+   [clasimp_member IN EVERY clasimp_ext_p], which nothing meets.  The
+   rewrites below are what a method naming [fun_eq_iff] and
+   [list_all_iff] supplies, and they say which reading the equation is
+   to be taken in; taken first, the default would put the equation out
+   of their reach for good.  Neither the goal nor the rewrites are a
+   benchmark entry. *)
+val supplied_reading_goal : Abbrev.goal =
+  ([], ``EVERY (clasimp_ext_p : 'a -> bool) =
+         \clasimp_member.
+           !clasimp_element.
+             MEM clasimp_element clasimp_member ==>
+             clasimp_ext_p clasimp_element``)
+
+val supplied_reading_ss =
+  simpLib.++ (BasicProvers.srw_ss (),
+              simpLib.rewrites
+                [boolTheory.FUN_EQ_THM, listTheory.EVERY_MEM])
+
+val _ =
+  check
+    ("a supplied rewrite decides the reading of an equation",
+     fn () =>
+       valid_closes
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            clasetLib.empty_cs supplied_reading_ss)
+         supplied_reading_goal)

@@ -1452,11 +1452,59 @@ fun must_close name =
    readings the terminal step takes.  The conversion is deliberately
    root-only: expanding a nested test such as [f = EMPTY] would lose a
    useful case split, and a pointwise goal must not be extensionalized
-   again. *)
-val extensional_normalize =
+   again.
+
+   Which of the two readings an equation is given is this layer's
+   default and not the invocation's, and the invocation has the better
+   claim where one of its own rewrites states a reading: Isabelle's
+   [fun_eq_iff] names the applied one outright.  Only a rewrite of
+   equations between functions states one -- [states_a_reading] is
+   that test, and it is what keeps every other rewrite that happens to
+   match the goal's statement out of the decision -- and the step
+   stands down for one that takes this equation where it stands.
+   Taken first, the default puts the equation out of that rewrite's
+   reach for good -- a membership at a constant-headed side that is a
+   predicate short of an argument, and no set, meets none of the facts
+   the predicate's own are stated on, and no rewrite brings the two
+   readings back together. *)
+fun states_a_reading theorem =
+  let
+    val (premises, equivalence) =
+      boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
+    val (equation, _) = boolSyntax.dest_eq equivalence
+    val (equated, _) = boolSyntax.dest_eq equation
+  in
+    null premises andalso Lib.can Type.dom_rng (Term.type_of equated)
+  end
+  handle HOL_ERR _ => false
+
+(* [Conv.REWR_CONV] rejects a theorem it cannot read as a rewrite when
+   it is given the theorem, not when the conversion is run, so the
+   rejection escapes a [can] that is handed the conversion already
+   built.  Applying it inside the [can] is what keeps one unusable
+   rewrite in the simpset from raising out of the test and standing
+   the step down everywhere. *)
+fun read_by_a_rewrite ss term =
+  let
+    fun readings theorem =
+      Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
+    fun applies theorem =
+      states_a_reading theorem andalso
+      Lib.can (fn subject => Conv.REWR_CONV theorem subject) term
+  in
+    List.exists (List.exists applies o readings)
+      (List.concat (map simpLib.frag_rewrites (simpLib.ssfrags_of ss)))
+  end
+
+fun extensional_normalize ss =
   Tactical.CONV_TAC
     (Conv.CHANGED_CONV
-       (fn term => Conv.REWR_CONV (extensional_rule term) term))
+       (fn term =>
+          if read_by_a_rewrite ss term then
+            raise ERR "extensional_normalize"
+              "a rewrite of the invocation's takes the equation"
+          else
+            Conv.REWR_CONV (extensional_rule term) term))
 
 fun search_stages limit =
   let
@@ -1526,7 +1574,7 @@ fun auto_with {blast, depth} cs ss simp_args =
        metavariables, so one TRY per subgoal (from THEN) is equivalent. *)
     val script =
       Tactical.EVERY
-        [Tactical.TRY extensional_normalize,
+        [Tactical.TRY (extensional_normalize ss),
          with_extensionality (asm_full_simp ss simp_args),
          Tactical.TRY initial_safe,
          Tactical.TRY search,
@@ -1584,7 +1632,7 @@ fun force_with name cs ss simp_args =
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,
-         Tactical.TRY extensional_normalize,
+         Tactical.TRY (extensional_normalize ss),
          simpLib.FULL_SIMP_TAC ss simp_args,
          with_extensionality (asm_full_simp ss simp_args),
          Tactical.TRY safe,
@@ -1606,7 +1654,7 @@ fun search_with_simp name engine cs ss simp_args =
     must_close name
       (Tactical.EVERY
          [Tactical.TRY clarify,
-          Tactical.TRY extensional_normalize,
+          Tactical.TRY (extensional_normalize ss),
           NTactical.DETERM
             (engine (add_simp_wrapper ss simp_args cs))])
   end

@@ -2649,6 +2649,48 @@ val _ =
              (#recipe satisfiable_absolute_value_goal)
              satisfiable_absolute_value_goal)))
 
+(* The recipe's set-equality pass reads an equation as a membership,
+   which is the reading HOL4 states its set and list facts on and the
+   wrong one where a side is a predicate short of an argument:
+   [source_superset] is defined applied to both its arguments, so
+   [element IN source_superset xs] meets neither its definition nor
+   anything else, and no rewrite brings the two readings back
+   together.  The method's own [fun_eq_iff] is what says which reading
+   is meant, so the pass stands down for it.  Read as an application
+   instead, both sides unfold and the goal is a membership fact about
+   two appended lists.  A constant the ambient simpset unfolds --
+   [EVERY] is one -- recovers from the membership reading and shows
+   nothing here.  The goal is not a corpus entry, and every rewrite is
+   cited by the recipe rather than ambient. *)
+val supplied_reading_recipe =
+  benchLib.Invoke
+    (benchLib.Auto,
+     [benchLib.RewriteAdd
+        {name = "fun_eq_iff", theorem = boolTheory.FUN_EQ_THM},
+      benchLib.RewriteAdd
+        {name = "list_all_iff", theorem = listTheory.EVERY_MEM},
+      benchLib.RewriteAdd
+        {name = "superset_def",
+         theorem = parityTranslationTheory.source_superset_def},
+      benchLib.RewriteAdd
+        {name = "list_all_def",
+         theorem = parityTranslationTheory.source_list_all_def}])
+
+val _ =
+  check
+    ("a rewrite the method named decides the reading of an equation",
+     fn () =>
+       recipe_solves supplied_reading_recipe
+         ``!bench_unit_xs bench_unit_zs.
+             parityTranslation$source_superset
+               (bench_unit_xs ++ bench_unit_zs) =
+             \bench_unit_ys.
+               parityTranslation$source_list_all
+                 (\bench_unit_v.
+                    MEM bench_unit_v bench_unit_xs \/
+                    MEM bench_unit_v bench_unit_zs)
+                 bench_unit_ys``)
+
 (* The pair rule is support for the translation's spelling of a set of
    pairs, and a goal with no pair in it neither needs it nor can afford
    it: it goes in as an assumption, and a universal assumption is

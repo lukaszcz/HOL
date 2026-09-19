@@ -1191,6 +1191,39 @@ fun across_correspondence entry args =
    HOL4's [FULL_SIMP_TAC] offers a premise only the premises before it.
    A source result states its premises as the antecedents of its
    conclusion, which is where the difference is felt. *)
+(* The set-equality pass below reads an equation as a membership,
+   which is the reading HOL4's set and list facts are stated on.  It is
+   a default, and where the method named a rewrite that states a
+   reading of the equation the method's is the one meant:
+   [fun_eq_iff] names the applied one outright.  Only a rewrite of
+   equations between functions states one, which is what keeps the
+   ambient rewrites -- supplied to every goal, and between them
+   matching almost any statement -- out of the decision.  Run first the pass
+   puts the equation out of that rewrite's reach for good -- a
+   membership at a constant-headed side that is a predicate short of
+   an argument, and no set, meets none of the facts the predicate's
+   own are stated on -- so it stands down there.  This is the
+   precedence [clasimpLib.extensional_normalize] takes for the same
+   choice inside the engines.  The test reads the goal's own shape
+   against the rewrites the method named, as [preprocess_fires] below
+   decides its pass. *)
+fun reading_is_supplied goal args =
+  let
+    val (_, statement) = boolSyntax.strip_forall goal
+    fun readings theorem =
+      Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
+    fun applies theorem =
+      clasimpLib.states_a_reading theorem andalso
+      Lib.can (fn subject => Conv.REWR_CONV theorem subject) statement
+  in
+    List.exists (List.exists applies o readings)
+      (List.mapPartial simp_arg args)
+  end
+
+fun set_equality_pass goal args =
+  if reading_is_supplied goal args then Tactical.ALL_TAC
+  else Tactical.TRY hurdUtils.SET_EQ_TAC
+
 fun tactic_for simpset goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
@@ -1211,7 +1244,7 @@ fun tactic_for simpset goal Simp args exclusions =
             (all_class_args args @ simp_controls goal exclusions)
         val prepare =
           Tactical.THEN
-            (Tactical.TRY hurdUtils.SET_EQ_TAC,
+            (set_equality_pass goal args,
              simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
                 simp_controls goal exclusions))
@@ -1221,7 +1254,7 @@ fun tactic_for simpset goal Simp args exclusions =
             (predicate_abstraction_tac,
              if null args then
                Tactical.THEN
-                 (Tactical.TRY hurdUtils.SET_EQ_TAC, automatic)
+                 (set_equality_pass goal args, automatic)
              else
                Tactical.THEN
                  (prepare,
@@ -1412,7 +1445,7 @@ fun tactic_for simpset goal Simp args exclusions =
       let
         val prepare =
           Tactical.THEN
-            (Tactical.TRY hurdUtils.SET_EQ_TAC,
+            (set_equality_pass goal args,
              simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
                 simp_controls goal exclusions))
@@ -1426,7 +1459,7 @@ fun tactic_for simpset goal Simp args exclusions =
   | tactic_for simpset goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
-          (Tactical.TRY hurdUtils.SET_EQ_TAC,
+          (set_equality_pass goal args,
            processed_clasimp simpset clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls goal exclusions)))
   | tactic_for _ _ Safe args exclusions =

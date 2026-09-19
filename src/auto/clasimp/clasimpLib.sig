@@ -41,6 +41,16 @@ sig
      methods take, rather than restating it. *)
   val with_extensionality : tactic -> tactic
 
+  (* True of a rewrite that states how an equation between functions is
+     to be read -- its own left-hand side is such an equation, which is
+     what [fun_eq_iff] and a membership reading are and what no other
+     rewrite is.  The extensional steps above impose a reading of their
+     own, and they stand down where one of these takes the equation
+     first.  Exported so that a method built from HOL4's simplifier
+     directly -- the parity corpus builds its recipes that way -- can
+     make the same decision about its own set-equality pass. *)
+  val states_a_reading : thm -> bool
+
   val asm_full_simp : simpLib.simpset -> thm list -> tactic
   val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic
 
