@@ -350,8 +350,7 @@ val definitional_unfolding_stops_short =
     ("the cited definition unfolds one constant and nothing "
      ^ "reduces what it exposes")
     ["list_L5441_distinct_set_subseqs", "list_L5470_subset_subseqs",
-     "list_L5527_Nil_in_shufflesI", "list_L8247_anon_L8247",
-     "list_L8701_trancl_set_ntrancl"]
+     "list_L8247_anon_L8247", "list_L8701_trancl_set_ntrancl"]
 
 val injectivity_and_surjectivity =
   classified "injectivity and surjectivity"
