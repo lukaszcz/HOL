@@ -11,17 +11,33 @@ datatype introduction =
   | Alias
   | Definition
   | Function
+  | SimpDeleted
+  | Characterisation
   | Constructor
 
 (* Isabelle's default simpset carries the equations of a [fun], a
    [primrec] and a datatype's selectors and predicator, and carries a
-   plain [definition]'s only where one is separately declared.  The
-   translation's own constants -- the ones Isabelle writes inline, the
-   ones encoding a type HOL4 states differently, and the ones that
-   rename a constant HOL4 already has -- withhold nothing the source
-   had, so they stay.  A constructor is the other way round:
-   Isabelle's simpset cannot unfold one, and the translation's equation
-   for it would give a goal more than the source proof had.
+   plain [definition]'s only where one is separately declared.  It
+   carries a [function]'s too, from the point a [termination] block
+   proves its termination: such a function with no other fact about it
+   closes an instance of its equations [by simp] (measured against
+   Isabelle2025-2, 2026-09-19).  The translation's own constants -- the
+   ones Isabelle writes inline, the ones encoding a type HOL4 states
+   differently, and the ones that rename a constant HOL4 already has --
+   withhold nothing the source had, so they stay.  A constructor is the
+   other way round: Isabelle's simpset cannot unfold one, and the
+   translation's equation for it would give a goal more than the source
+   proof had.
+
+   Two [function] rows are withheld anyway.  [upto] is [SimpDeleted]:
+   the source takes its equation back out with
+   [declare upto.simps[simp del]] at List.thy:3577, so it is ambient
+   nowhere.  [transpose] is [Characterisation]: the source's equations
+   are ambient from the [termination transpose] at List.thy:5643, but
+   the translation states the constant by its index reading --
+   Isabelle's own [nth_transpose] and [length_transpose], which it
+   declares nowhere -- so the two sides have no equation in common and
+   this one would give a goal what the source did not have.
 
    Cited lines are Isabelle2025-2, the sources the corpus commit
    f7e02b7e belongs to.  An Isabelle [abbreviation] -- [sorted],
@@ -115,7 +131,7 @@ val introductions =
    ("source_rotate1_def", Primrec, "src/HOL/List.thy:285"),
    ("source_rotate_def", Definition, "src/HOL/List.thy:289"),
    ("source_set_Cons_def", Definition, "src/HOL/List.thy:6976"),
-   ("source_shuffles_def", Function, "src/HOL/List.thy:313"),
+   ("source_shuffles_def", Function, "src/HOL/List.thy:318"),
    ("source_sort_def", Notation, "src/HOL/List.thy:430"),
    ("source_sort_key_def", Simp, "src/HOL/List.thy:6191"),
    ("source_sorted_def", Notation, "src/HOL/List.thy:409"),
@@ -131,12 +147,12 @@ val introductions =
    ("source_take_bit_def", Definition, "src/HOL/Bit_Operations.thy:622"),
    ("source_these_def", Definition, "src/HOL/Option.thy:277"),
    ("source_trans_list_step_def", Definition, "src/HOL/List.thy:6996"),
-   ("source_transpose_def", Function, "src/HOL/List.thy:5590"),
+   ("source_transpose_def", Characterisation, "src/HOL/List.thy:5590"),
    ("source_unit_le_def", Simp, "src/HOL/Product_Type.thy:140"),
    ("source_unit_lt_def", Simp, "src/HOL/Product_Type.thy:146"),
    ("source_unrotate1_def", Notation, "src/HOL/List.thy:285"),
    ("source_upto_aux_def", Definition, "src/HOL/List.thy:3643"),
-   ("source_upto_def", Function, "src/HOL/List.thy:3572")
+   ("source_upto_def", SimpDeleted, "src/HOL/List.thy:3572")
   ]
 
 fun ambient introduction =
@@ -149,7 +165,9 @@ fun ambient introduction =
     | Representation => true
     | Alias => true
     | Definition => false
-    | Function => false
+    | Function => true
+    | SimpDeleted => false
+    | Characterisation => false
     | Constructor => false
 
 fun is_ambient name =

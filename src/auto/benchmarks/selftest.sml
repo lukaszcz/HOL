@@ -741,6 +741,53 @@ val _ =
          not (List.exists (equal "source_map_filter_def") names)
        end)
 
+(* Isabelle's simpset carries a [function]'s equations from the point
+   its termination is proved.  Two of the three the translation has are
+   withheld anyway: [upto]'s by the source's own [simp del], and
+   [transpose]'s because the translation states that constant by its
+   index reading and not by the source's equations, so the two sides
+   have no equation in common.  The goal below is no corpus entry -- it
+   is Isabelle's illustration at List.thy:355 cut to one element a side
+   -- and it needs all three equations rather than any one of them: the
+   cons equation splits the two interleavings and the two nil equations
+   close them. *)
+val _ =
+  check
+    ("the ambient set carries a function's equations",
+     fn () =>
+       let
+         val ambient =
+           List.mapPartial
+             (fn benchLib.RewriteAdd named => SOME named | _ => NONE)
+             benchAmbient.arguments
+         fun carried name =
+           List.exists
+             (fn {name = entry, ...} : benchLib.named_thm => entry = name)
+             ambient
+         val equations =
+           List.find
+             (fn {name, ...} : benchLib.named_thm =>
+               name = "source_shuffles_def")
+             ambient
+         val interleaved =
+           ``!left right : 'a.
+               [left; right] IN
+                 parityTranslation$source_shuffles [left] [right] /\
+               [right; left] IN
+                 parityTranslation$source_shuffles [left] [right]``
+         fun closes rules =
+           Lib.can Tactical.TAC_PROOF
+             (([], interleaved),
+              simpLib.SIMP_TAC (BasicProvers.srw_ss ()) rules)
+       in
+         not (carried "source_upto_def") andalso
+         not (carried "source_transpose_def") andalso
+         (case equations of
+              NONE => false
+            | SOME {theorem, ...} =>
+                closes [theorem] andalso not (closes []))
+       end)
+
 (* A declared result is tried against a goal the ambient set has
    already rewritten, so it has to be stated the way that leaves it.
    [source_code_roundtrip] is Isabelle's [of_char_of], stated on

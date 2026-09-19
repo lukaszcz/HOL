@@ -139,7 +139,14 @@ val sorted_wrt_correspondence =
    product as [LEX] and the inverse image as [inv_image], so the rules
    about those two are seeded; [asym] is Isabelle's abbreviation over
    a set the translation writes out, and has no HOL4 constant to sit
-   on. *)
+   on.
+
+   The last row is not a declaration but an equation: List.thy:315
+   states [shuffles xs [] = {xs}] at a list variable, and HOL4 takes
+   the definition's rows apart to make them disjoint, so the equation
+   its ambient definition keeps is the cons case.  A goal spelling the
+   variable case is one the source's simpset rewrites and the
+   translation's would not, and the row puts it back. *)
 val declared_results =
   let
     fun named name =
@@ -185,7 +192,8 @@ val declared_results =
        "source_not_Nil_listrel1",
        "source_not_listrel1_Nil",
        "source_Cons_listrel1_Cons",
-       "source_in_measures"]
+       "source_in_measures",
+       "source_shuffles_nil_right"]
   end
 
 (* An alias definition is ambient, so by the time one of the lemmas
@@ -416,7 +424,9 @@ val declaration_sites =
    ("parityTranslation$source_Cons_listrel1E2",
     "src/HOL/List.thy:7780"),
    ("parityTranslation$source_Cons_acc_listrel1I",
-    "src/HOL/List.thy:7834")]
+    "src/HOL/List.thy:7834"),
+   ("parityTranslation$source_shuffles_nil_right",
+    "src/HOL/List.thy:318")]
 
 fun declaration_site name =
   case List.find (fn (entry, _) => entry = name) declaration_sites of

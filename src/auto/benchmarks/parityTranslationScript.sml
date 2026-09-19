@@ -4778,26 +4778,28 @@ Proof
   >> metis_tac[set_relationTheory.tc_rules]
 QED
 
-(* Isabelle/HOL src/HOL/List.thy:5482-5536. *)
-Inductive source_shuffle:
-  source_shuffle [] [] [] /\
-  (!left xs ys zs.
-     source_shuffle xs ys zs ==>
-     source_shuffle (left::xs) ys (left::zs)) /\
-  (!right xs ys zs.
-     source_shuffle xs ys zs ==>
-     source_shuffle xs (right::ys) (right::zs))
-End
-
+(* Isabelle/HOL src/HOL/List.thy:313-318.  The source introduces
+   [shuffles] by a [function] and proves its termination in the same
+   block, so these three equations are what its simpset carries. *)
 Definition source_shuffles_def:
-  source_shuffles xs ys = {zs | source_shuffle xs ys zs}
+  (source_shuffles [] ys = {ys}) /\
+  (source_shuffles (left::xs) [] = {left::xs}) /\
+  (source_shuffles (left::xs) (right::ys) =
+     IMAGE (CONS left) (source_shuffles xs (right::ys)) UNION
+     IMAGE (CONS right) (source_shuffles (left::xs) ys))
+Termination
+  WF_REL_TAC `measure (\(xs,ys). LENGTH xs + LENGTH ys)`
+  >> simp[]
 End
 
-Theorem source_nil_in_shuffles:
-  !xs ys.
-    xs = [] ==> ys = [] ==> [] IN source_shuffles xs ys
+(* src/HOL/List.thy:315, the second of those equations.  The source
+   states it at a list variable, and HOL4 takes the rows apart to make
+   them disjoint, so the equation it keeps is the cons case and the
+   variable case is a consequence. *)
+Theorem source_shuffles_nil_right:
+  !xs. source_shuffles xs [] = {xs}
 Proof
-  simp[source_shuffles_def, source_shuffle_rules]
+  Cases >> simp[source_shuffles_def]
 QED
 
 (* Isabelle/HOL src/HOL/List.thy:5415-5480. *)

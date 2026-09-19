@@ -37,9 +37,17 @@ sig
       (* Declares no simp equation: Isabelle's simpset leaves the
          constant folded. *)
     | Definition
-      (* [function] proves its equations but declares none simp, unlike
-         [fun]. *)
+      (* Declares its equations simp, as [fun] does, from the point a
+         [termination] block proves its termination. *)
     | Function
+      (* A [function] whose equations the source then takes back out of
+         its simpset. *)
+    | SimpDeleted
+      (* Isabelle carries the source's equations and the translation
+         states the constant by a characterisation the source declares
+         nowhere, so the two sides share no equation: supplying this one
+         would hand a goal what the source did not have. *)
+    | Characterisation
       (* A datatype constructor whose type carries no ambient selector
          equations: opaque to Isabelle's simpset, so the translation's
          defining equation goes beyond what the source has.  A
