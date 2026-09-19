@@ -967,6 +967,22 @@ val _ =
           ([], ``!(ys : 'a list) x.
                    ys <> [] ==> FRONT ys ++ [LAST ys] ++ [x] = ys ++ [x]``)])
 
+(* src/HOL/List.thy:5882 @ f7e02b7e, [sorted_wrt_take] and
+   [sorted_wrt_drop].  Neither goal is a corpus entry and neither is a
+   rule: the first takes a segment of a segment, so it needs both rules
+   composed, and the second has to strip a head off the sorted list
+   before either rule reaches it. *)
+val _ =
+  check
+    ("a segment of a sorted list is sorted",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!le (xs : 'a list) count.
+                   SORTED le xs ==> SORTED le (TAKE count (DROP count xs))``),
+          ([], ``!le (xs : 'a list) x count.
+                   SORTED le (x::xs) ==> SORTED le (DROP count xs)``)])
+
 (* [adjacent_thm] settles a pair that is the head of the list, and
    [adjacent_iff] is what walks one further in.  The goal below asks for
    a pair one place beyond the head of a list with an arbitrary tail, so

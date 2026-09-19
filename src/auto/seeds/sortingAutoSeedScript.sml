@@ -67,3 +67,22 @@ Theorem SORTED_GENLIST_INTERVAL_AUTO[simp]:
 Proof
   rw[sortingTheory.SORTED_EL_SUC] >> simp[]
 QED
+
+(* src/HOL/List.thy:5882 @ f7e02b7e.  [sorted_wrt_take] and
+   [sorted_wrt_drop] are simp there.  HOL4 states neither.  Isabelle's
+   sorted_wrt is all-pairs and HOL4's SORTED adjacent, but a segment of a
+   SORTED list is SORTED for the adjacent reading too, with no side
+   condition on the relation. *)
+Theorem SORTED_TAKE_AUTO[simp]:
+  !relation elements count. SORTED relation elements ==>
+                            SORTED relation (TAKE count elements)
+Proof
+  metis_tac[sortingTheory.SORTED_APPEND_GEN, listTheory.TAKE_DROP]
+QED
+
+Theorem SORTED_DROP_AUTO[simp]:
+  !relation elements count. SORTED relation elements ==>
+                            SORTED relation (DROP count elements)
+Proof
+  metis_tac[sortingTheory.SORTED_APPEND_GEN, listTheory.TAKE_DROP]
+QED
