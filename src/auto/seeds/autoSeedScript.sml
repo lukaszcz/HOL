@@ -3,7 +3,7 @@ Ancestors
   clasetSeed pairAutoSeed sumAutoSeed optionAutoSeed listAutoSeed
   pred_setAutoSeed arithmeticAutoSeed finite_mapAutoSeed integerAutoSeed
   realAutoSeed stringAutoSeed rich_listAutoSeed sortingAutoSeed
-  relationAutoSeed
+  relationAutoSeed set_relationAutoSeed
 Libs
   clasimpLib splitLib
 
