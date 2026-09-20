@@ -60,12 +60,6 @@ val disjnt =
      ^ "the term first")
     ["set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2"]
 
-val bounded_quantifier_one_point =
-  classified "bounded-quantifier one-point"
-    ("the goal states bounded quantification with IN rather than "
-     ^ "with RES_FORALL, so the one-point rewrite never fires")
-    ["set_L421_ball_triv", "set_L425_bex_triv"]
-
 val definite_description =
   classified "definite description"
     ("CHOICE over a singleton is not reduced by the assigned "
@@ -111,7 +105,6 @@ val witness_the_method_supplies : benchLib.shortfall list =
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
   disjnt @
-  bounded_quantifier_one_point @
   definite_description @
   image_comprehension @
   instantiated_fact_citation @
