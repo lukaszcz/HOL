@@ -60,11 +60,41 @@ val disjnt =
      ^ "the term first")
     ["set_L1988_disjnt_insert1", "set_L1991_disjnt_insert2"]
 
-val definite_description =
+val definite_description_specified =
   classified "definite description"
-    ("CHOICE over a singleton is not reduced by the assigned "
-     ^ "tactic")
-    ["set_L1844_the_elem_eq", "set_L1847_is_singleton_the_elem"]
+    ("the source method cites [the_elem_def], an equation -- "
+     ^ "[the_elem A = (THE a. A = {a})] -- and its simp closes the "
+     ^ "goal by unfolding it.  HOL4 introduces CHOICE by "
+     ^ "new_specification, and the fact of that name, [CHOICE_DEF], "
+     ^ "is the conditional membership [s <> {} ==> CHOICE s IN s]: "
+     ^ "the cited fact translates by name and not by content, and "
+     ^ "nothing in it reaches the goal's left-hand side.  The "
+     ^ "equation that would is the goal itself, [CHOICE_SING], which "
+     ^ "rule A1 withholds.  The method returns the goal unchanged in "
+     ^ "0.1s rather than searching, and Isabelle's own simp fails the "
+     ^ "same way where the constant is specified rather than defined "
+     ^ "(checked there on an axiomatized choice constant), so what is "
+     ^ "missing is the shape of the cited fact and not the strength "
+     ^ "of the method")
+    ["set_L1844_the_elem_eq"]
+
+val definite_description_reading =
+  classified "definite description"
+    ("the assigned tactic and its rewrites close this goal as stated "
+     ^ "in 0.012s.  What does not close is the reading the corpus's "
+     ^ "own set-equality pass imposes before the engine sees it: each "
+     ^ "of the goal's two equations has a singleton on one side, a "
+     ^ "constant the simpset states a membership fact about, so the "
+     ^ "pass takes both to their membership form, and the search does "
+     ^ "not return on [(?b. !x. x IN A <=> x IN {b}) <=> "
+     ^ "(!x. x IN A <=> x IN {CHOICE A})] -- nor does Isabelle's auto "
+     ^ "on that same reading, which it has no pass to reach and which "
+     ^ "was killed at 54s unfinished.  The membership reading is what "
+     ^ "brings HOL4's set facts within reach of a goal stated as an "
+     ^ "equation, and on this goal it is the loss; standing the pass "
+     ^ "down for the shape is a corpus decision to be measured across "
+     ^ "the families, not an engine gap")
+    ["set_L1847_is_singleton_the_elem"]
 
 val image_comprehension =
   classified "image comprehension"
@@ -105,7 +135,8 @@ val witness_the_method_supplies : benchLib.shortfall list =
 val entries : benchLib.shortfall list =
   blast_set_rule_forms @
   disjnt @
-  definite_description @
+  definite_description_specified @
+  definite_description_reading @
   image_comprehension @
   instantiated_fact_citation @
   witness_the_method_supplies
