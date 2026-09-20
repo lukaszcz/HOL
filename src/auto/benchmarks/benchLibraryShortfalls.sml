@@ -390,12 +390,23 @@ val map_sum_commuted_under_a_fact =
      ^ "runs out a budget ten times the measurement's")
     ["map_L810_graph_map_add"]
 
-val option_relations =
-  classified "option relations"
-    ("OPTREL and the option-set constructions carry no claset "
-     ^ "rules")
-    ["option_L317_these_empty_eq", "option_L320_these_not_empty_eq",
-     "option_L361_equal_None_code_unfold_2"]
+(* src/HOL/Option.thy:317,320 @ f7e02b7e.  Both goals are set
+   equalities about [these], and taken apart into memberships they
+   leave a residual whose missing step is the goal's own negation:
+   [x' = NONE] is atomic, and what the claset derived about an option
+   is an introduction on [!y. x <> SOME y] and a destruction from it,
+   neither of which meets the goal until it is negated.  Isabelle's
+   [auto] fails on that same subgoal (measured 2026-09-19) and never
+   reaches it, closing the source lemma from [these_def] instead: the
+   divergence is upstream of the residual, in how the set equality is
+   taken apart, and not a rule the claset lacks. *)
+val these_set_equality_route =
+  classified "these set equality route"
+    ("the set equality is taken apart into memberships and the "
+     ^ "residual needs the goal's own negation, which the rules the "
+     ^ "claset derived about an option meet only once it is negated; "
+     ^ "Isabelle closes the lemma from these_def without reaching it")
+    ["option_L317_these_empty_eq", "option_L320_these_not_empty_eq"]
 
 val character_arithmetic =
   classified "character arithmetic"
@@ -484,7 +495,7 @@ val execution : benchLib.shortfall list =
   injectivity_and_surjectivity @
   the_ambient_rule_is_the_goal @
   map_sum_commuted_under_a_fact @
-  option_relations @
+  these_set_equality_route @
   character_arithmetic @
   sigma_and_times_rule_forms @
   a_reading_of_the_characterisation_is_the_goal
