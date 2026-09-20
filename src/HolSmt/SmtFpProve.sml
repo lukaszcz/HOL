@@ -97,8 +97,37 @@ struct
     smtfloatLib.add_smtfloat_to_compset
       (computeLib.copy (computeLib.the_compset()))
 
+  (* Admission predicates must inspect a shared circuit as a DAG, not as its
+     potentially exponential expanded tree.  Finding a witness ends the
+     scan; absence is certified only after the bounded DAG is complete. *)
+  fun dag_find case_id predicate t =
+    let
+      exception Found of Term.term
+      fun inspect node =
+        if predicate node then raise Found node else ()
+    in
+      (let
+         val summary = SmtResource.bounded_structure_with_inspector
+           inspect SmtResource.max_bitblast_term_nodes t
+       in
+          if #complete summary then NONE
+          else
+            (SmtResource.check_dag_size_with_limit "FloatingPoint" case_id
+               SmtResource.max_bitblast_term_nodes (#dag_nodes summary);
+             NONE)
+       end)
+      handle Found node => SOME node
+    end
+
+  fun dag_contains case_id predicate t =
+    Option.isSome (dag_find case_id predicate t)
+
+  (* HOL bound variables are not [is_var]. *)
+  fun ground_eval_closed t =
+    not (dag_contains "fp-ground-domain" Term.is_var t)
+
   fun ground_eval_prove t =
-    if List.null (Term.free_vars t) then
+    if ground_eval_closed t then
       Drule.EQT_ELIM (computeLib.CBV_CONV ground_eval_compset t)
       handle Conv.UNCHANGED =>
         raise ERR "ground_eval_prove"
@@ -220,8 +249,8 @@ struct
     handle Feedback.HOL_ERR _ => false
 
   fun is_tier2_atom_conversion t =
-    Lib.can (HolKernel.find_term is_tier2_atom_const) t orelse
-    Lib.can (HolKernel.find_term is_bits_equality) t
+    dag_contains "fp-tier2-domain"
+      (fn node => is_tier2_atom_const node orelse is_bits_equality node) t
 
   val tier2_rewrites =
     let open smtfloatTheory
@@ -372,11 +401,11 @@ struct
     tier2_bitblast_prove_with_decompositions [] t
 
   fun mentions_to_real t =
-    Lib.can (HolKernel.find_term
+    dag_contains "fp-to-real-domain"
       (fn tm =>
         Term.is_const tm andalso
         let val {Thy, Name, ...} = Term.dest_thy_const tm
-        in Thy = "smtfloat" andalso Name = "smtfp_to_real" end)) t
+        in Thy = "smtfloat" andalso Name = "smtfp_to_real" end) t
 
   fun to_real_arith_prove arith_prove t =
     if mentions_to_real t then arith_prove t
@@ -398,7 +427,9 @@ struct
     in is_addsub_const head andalso List.length args = 3 end
 
   fun addsub_result_type t =
-    Term.type_of (HolKernel.find_term is_addsub_app t)
+    case dag_find "fp-addsub-domain" is_addsub_app t of
+      SOME operation => Term.type_of operation
+    | NONE => raise ERR "addsub_result_type" "no FP add/sub operation"
 
   fun addsub_format_dimensions t =
     let
@@ -435,7 +466,9 @@ struct
     in is_mul_const head andalso List.length args = 3 end
 
   fun mul_result_type t =
-    Term.type_of (HolKernel.find_term is_mul_app t)
+    case dag_find "fp-mul-domain" is_mul_app t of
+      SOME operation => Term.type_of operation
+    | NONE => raise ERR "mul_result_type" "no FP multiplication"
 
   fun mul_format_dimensions t =
     let
@@ -505,10 +538,47 @@ struct
       Lib.can (Term.match_term consequent) t
     end
 
+  (* Rewrite only arithmetic producers in a shared proof graph.  Running a
+     whole-term simplifier over a large fpa2bv clause repeatedly traverses
+     the same encoded Boolean circuit, even though the circuit contains no
+     floating-point producer to rewrite. *)
+  fun symbolic_arithmetic_dag_conv rewrites root =
+    let
+      val memo = ref (Redblackmap.mkDict Term.compare :
+        (Term.term, Thm.thm) Redblackmap.dict)
+      val arithmetic = fn term =>
+        is_addsub_app term orelse is_mul_app term
+      fun convert term =
+        case Redblackmap.peek (!memo, term) of
+          SOME theorem => theorem
+        | NONE =>
+            let
+              val theorem =
+                if arithmetic term then
+                  (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites term
+                   handle Conv.UNCHANGED => Thm.REFL term)
+                else if Term.is_comb term then
+                  Thm.MK_COMB
+                    (convert (Term.rator term),
+                     convert (Term.rand term))
+                else if Term.is_abs term then
+                  let val (variable, body) = Term.dest_abs term
+                  in Thm.ABS variable (convert body) end
+                else Thm.REFL term
+              val _ = memo := Redblackmap.insert (!memo, term, theorem)
+            in theorem end
+    in convert root end
+
   fun symbolic_arithmetic_uncapped allow_direct_mul t =
   let
-    val has_addsub = Lib.can (HolKernel.find_term is_addsub_const) t
-    val has_mul = Lib.can (HolKernel.find_term is_mul_const) t
+    fun trace_stage stage =
+      if OS.Process.getEnv "HOL4_FP_TRACE" = SOME "1" then
+        (Feedback.HOL_MESG ("FP symbolic circuit: " ^ stage);
+         TextIO.flushOut TextIO.stdOut)
+      else ()
+    val _ = trace_stage "begin"
+    val has_addsub = dag_contains "fp-addsub-domain" is_addsub_const t
+    val has_mul = dag_contains "fp-mul-domain" is_mul_const t
     val _ = has_addsub orelse has_mul orelse
       raise ERR "symbolic_arithmetic_prove"
         "not an add/sub/mul rewrite"
@@ -529,13 +599,20 @@ struct
       case direct_mul of
         SOME theorem => Drule.EQT_INTRO theorem
       | NONE =>
-          (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites t
-           handle Conv.UNCHANGED => Thm.REFL t)
+          if SmtResource.dag_nodes_up_to 257 t > 256 then
+            symbolic_arithmetic_dag_conv rewrites t
+          else
+            (simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites t
+             handle Conv.UNCHANGED => Thm.REFL t)
+    val _ = trace_stage
+      ("normalized nodes=" ^ Int.toString
+        (SmtResource.dag_nodes_up_to 200001
+          (boolSyntax.rhs (Thm.concl normalized))))
     val residue = boolSyntax.rhs (Thm.concl normalized)
     val () = SmtResource.check_bitblast_goal case_id residue
     val residue_thm =
       if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
-      else tier2_bv_prove residue
+      else (trace_stage "bitblast begin"; tier2_bv_prove residue)
   in
     Thm.EQ_MP (Thm.SYM normalized) residue_thm
   end
@@ -543,7 +620,7 @@ struct
   fun symbolic_arithmetic_prove_mode allow_direct_mul t =
     let
       val case_id =
-        if Lib.can (HolKernel.find_term is_mul_const) t then
+        if dag_contains "fp-mul-domain" is_mul_const t then
           mul_case_id
         else addsub_case_id
     in
@@ -568,11 +645,15 @@ struct
       val limit = SmtResource.max_bitblast_term_nodes
       fun check term =
         let
-          val has_addsub = Lib.can (HolKernel.find_term is_addsub_const) term
-          val has_mul = Lib.can (HolKernel.find_term is_mul_const) term
+          val has_addsub =
+            dag_contains "fp-symbolic-preflight-domain"
+              is_addsub_app term
+          val has_mul =
+            dag_contains "fp-symbolic-preflight-domain"
+              is_mul_app term
         in
           if not (has_addsub orelse has_mul) orelse
-             List.null (Term.free_vars term) then ()
+             ground_eval_closed term then ()
           else
             let
               val width = if has_mul then mul_format_width term
@@ -590,50 +671,78 @@ struct
       List.app check terms
     end
 
-  fun next_rung prover t continuation =
-    prover t
+  fun trace_rung message =
+    if OS.Process.getEnv "HOL4_FP_TRACE" = SOME "1" then
+      (Feedback.HOL_MESG ("FP prover: " ^ message);
+       TextIO.flushOut TextIO.stdOut)
+    else ()
+
+  fun next_named_rung name prover t continuation =
+    let
+      val _ = trace_rung ("begin=" ^ name)
+      val result = prover t
+      val _ = trace_rung ("done=" ^ name)
+    in result end
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
+        (trace_rung ("gated=" ^ name ^ ": " ^
+          SmtResource.bounded_text 200 (Feedback.message_of holerr));
+         raise Feedback.HOL_ERR holerr)
       else
-        continuation ()
+        (trace_rung ("declined=" ^ name);
+         continuation ())
+
+  fun next_rung prover t continuation =
+    next_named_rung "external" prover t continuation
 
   fun fp_prove_with_context_mode symbolic_prover arith_prove
       eligible_decompositions all_decompositions t =
-    if not (has_fp_theory_term t) then
-      unsupported t
-    else
-      next_rung
+    let
+      fun tier2 continuation =
+        next_named_rung "tier2-bitblast"
+          (* E1(a): checked lowering plus BBLAST decides the selected
+             finite Tier-2 atom/decomposition fragment, subject to D4. *)
+          (profile "fp(5)(tier2-bitblast)"
+            (tier2_bitblast_prove_with_decompositions
+              all_decompositions)) t continuation
+      fun symbolic continuation =
+        next_named_rung "symbolic-arithmetic"
+          (* E1(b): checked circuit lowering and terminal BV decision
+             handles selected add/sub/mul goals, subject to D4. *)
+          (profile "fp(6)(symbolic-arithmetic)" symbolic_prover) t
+          continuation
+      fun unsupported_fallback () =
+        profile "fp(7)(unsupported)" unsupported t
+      fun later () =
+        if dag_contains "fp-arithmetic-domain"
+            (fn tm => is_addsub_app tm orelse is_mul_app tm) t then
+          symbolic (fn () => tier2 unsupported_fallback)
+        else
+          tier2 (fn () => symbolic unsupported_fallback)
+    in
+      if not (has_fp_theory_term t) then
+        unsupported t
+      else
+      next_named_rung "proforma"
         (* E1(a): theorem-net instantiation is the checked procedure for the
            proved FP rewrite schemas.  Its final reflexive-lt fallback is a
            separately D1-gated E1(c) cache. *)
         (profile "fp(1)(proforma)" proforma_prove) t (fn () =>
-      next_rung
+      next_named_rung "ground-eval"
         (* E1(a): CBV decides closed executable SMT floating-point terms. *)
         (profile "fp(2)(ground-eval)" ground_eval_prove) t (fn () =>
-      next_rung
+      next_named_rung "bit-decomposition"
         (* E1(a): exact lookup in the finite parser-recorded decomposition
            set plus the checked packed-fields theorem is complete. *)
         (profile "fp(3)(bit-decomposition)"
           (bit_decomposition_prove eligible_decompositions)) t (fn () =>
-      next_rung
+      next_named_rung "to-real-arith"
         (* E1(b): the supplied arithmetic procedure is general for selected
            fp.to_real residues and fails loudly outside that family. *)
         (profile "fp(4)(to-real-arith)"
           (to_real_arith_prove arith_prove)) t (fn () =>
-      next_rung
-        (* E1(a): checked lowering plus BBLAST decides the selected finite
-           Tier-2 atom/decomposition fragment, subject to the D4 cap. *)
-        (profile "fp(5)(tier2-bitblast)"
-          (tier2_bitblast_prove_with_decompositions all_decompositions)) t
-        (fn () =>
-      next_rung
-        (* E1(b): checked circuit lowering and terminal BV decision is the
-           general selected add/sub/mul family, with a loud D4 boundary. *)
-        (profile "fp(6)(symbolic-arithmetic)"
-          symbolic_prover) t (fn () =>
-      (* E1(b): terminal loud floating-point family boundary. *)
-      profile "fp(7)(unsupported)" unsupported t))))))
+      later ()))))
+    end
 
   fun fp_prove_with_context arith_prove eligible_decompositions
       all_decompositions =

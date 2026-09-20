@@ -12,6 +12,7 @@ struct
 
   datatype context = Context of
     {procedures : atom_procedure list,
+     fallback : atom_procedure option,
      atom_cache : (term, thm) Redblackmap.dict ref}
 
   type metrics =
@@ -22,6 +23,14 @@ struct
      normalized_dag_nodes : int,
      sat_tree_nodes : int,
      sat_dag_nodes : int,
+     graph_nodes : int,
+     graph_observations : int,
+     graph_edges : int,
+     graph_type_nodes : int,
+     graph_type_observations : int,
+     graph_type_edges : int,
+     graph_leaf_transport_nodes : int,
+     graph_leaf_transport_seconds : Time.time,
      distinct_atoms : int,
      atom_requests : int,
      atom_proofs : int,
@@ -96,7 +105,11 @@ struct
     end
 
   fun new_context procedures = Context
-    {procedures = procedures,
+    {procedures = procedures, fallback = NONE,
+     atom_cache = ref (Redblackmap.mkDict Term.compare)}
+
+  fun new_dynamic_context procedures fallback = Context
+    {procedures = procedures, fallback = SOME fallback,
      atom_cache = ref (Redblackmap.mkDict Term.compare)}
 
   fun cache_size (Context {atom_cache, ...}) =
@@ -185,26 +198,155 @@ struct
 
   exception REANCHOR_LIMIT
 
+  datatype admission_type_key =
+      AdmissionTypeVariable of string
+    | AdmissionTypeOperator of KernelSig.kernelid * int list
+
+  fun admission_type_key_compare
+      (AdmissionTypeVariable left, AdmissionTypeVariable right) =
+        String.compare (left, right)
+    | admission_type_key_compare
+        (AdmissionTypeVariable _, AdmissionTypeOperator _) = LESS
+    | admission_type_key_compare
+        (AdmissionTypeOperator _, AdmissionTypeVariable _) = GREATER
+    | admission_type_key_compare
+        (AdmissionTypeOperator (left_id, left_arguments),
+         AdmissionTypeOperator (right_id, right_arguments)) =
+        (case KernelSig.id_compare (left_id, right_id) of
+           EQUAL => list_compare Int.compare
+             (left_arguments, right_arguments)
+         | order => order)
+
+  datatype admission_type_node = AdmissionTypeNode of
+    {id : int, tree_nodes : int}
+
+  fun new_type_admission_context () =
+    let
+      val maximum = SmtResource.max_bv_replay_term_nodes
+      val ids = ref (Redblackmap.mkDict admission_type_key_compare)
+      val physical = ref ([] : (hol_type * admission_type_node) list)
+      val next_id = ref 0
+      val nodes = ref 0
+      val edges = ref 0
+      fun intern ty =
+        case List.find
+            (fn (saved, _) => Portable.pointer_eq (ty, saved)) (!physical) of
+          SOME (_, node) => node
+        | NONE =>
+            let
+              val arguments = if Type.is_vartype ty then []
+                else Lib.snd (Type.dest_type ty)
+              val children = List.map intern arguments
+              fun node_id (AdmissionTypeNode {id, ...}) = id
+              fun node_size (AdmissionTypeNode {tree_nodes, ...}) = tree_nodes
+              val key = if Type.is_vartype ty then
+                  AdmissionTypeVariable (Type.dest_vartype ty)
+                else AdmissionTypeOperator
+                  (#Tyop (Type.dest_thy_typeid ty), List.map node_id children)
+              val _ = edges := saturated_add (!edges) (List.length children)
+              val (id, tree_nodes) =
+                case Redblackmap.peek (!ids, key) of
+                  SOME (AdmissionTypeNode fields) =>
+                    (#id fields, #tree_nodes fields)
+                | NONE =>
+                    let
+                      val size = List.foldl
+                        (fn (child, count) =>
+                          saturated_add count (node_size child)) 1 children
+                      val _ = if size <= maximum then () else
+                        SmtResource.check_term_size_for "BitVector"
+                          "skeleton-type-work" size
+                      val id = !next_id
+                    in
+                      next_id := id + 1; nodes := !nodes + 1; (id, size)
+                    end
+              val node = AdmissionTypeNode {id = id, tree_nodes = tree_nodes}
+              val _ = if Option.isSome (Redblackmap.peek (!ids, key)) then ()
+                else ids := Redblackmap.insert (!ids, key, node)
+              val _ = physical := (ty, node) :: !physical
+            in node end
+      fun type_id ty = let val AdmissionTypeNode {id, ...} = intern ty in id end
+      fun admit_abstraction operation term =
+        let
+          val _ = case Term.term_size_bounded maximum term of
+              SOME _ => ()
+            | NONE => SmtResource.check_term_size_for "BitVector" operation
+                (maximum + 1)
+          fun atom_rank atom = if Term.is_var atom then 0 else 1
+          fun compare_atoms (left, right) =
+            case Int.compare (atom_rank left, atom_rank right) of
+              EQUAL => if Term.is_var left then
+                  pair_compare (String.compare, Int.compare)
+                    ((Lib.fst (Term.dest_var left),
+                      type_id (Term.type_of left)),
+                     (Lib.fst (Term.dest_var right),
+                      type_id (Term.type_of right)))
+                else pair_compare (KernelSig.id_compare, Int.compare)
+                  ((#Name (Term.dest_thy_constid left),
+                    type_id (Term.type_of left)),
+                   (#Name (Term.dest_thy_constid right),
+                    type_id (Term.type_of right)))
+            | order => order
+          val atoms = HOLset.listItems
+            (Term.all_atomsl [term] (HOLset.empty compare_atoms))
+          val _ = List.app (ignore o intern o Term.type_of) atoms
+        in () end
+    in
+      {intern = intern, admit_abstraction = admit_abstraction,
+       nodes = nodes, edges = edges, physical = physical}
+    end
+
   (* Build left = right one physical node at a time.  Both endpoint anchors
      compare only a newly built outer node whose children already have the
      requested endpoint pointers.  Structural cache collisions use separate
      pointer buckets, and the fixed skeleton DAG limit bounds reconstruction. *)
   fun bounded_nodewise_equality maximum left right =
     let
+      val type_admission = new_type_admission_context ()
+      fun inspect term =
+        if Term.is_abs term then
+          #admit_abstraction type_admission
+            "skeleton-cache-abstraction" term
+        else ()
       val _ =
-        if SmtResource.dag_nodes_up_to maximum left <= maximum then ()
+        if SmtResource.dag_nodes_up_to_with_inspector inspect maximum left <=
+           maximum then ()
         else raise REANCHOR_LIMIT
       val compared = ref 0
-      val cache = ref ([] : (term * term * thm) list)
+      val bucket_count = 4093
+      val cache = Array.array
+        (bucket_count, [] : (term * term * thm) list)
+      fun hash_string string =
+        CharVector.foldl (fn (character, hash) =>
+          (hash * 33 + Char.ord character) mod bucket_count) 17 string
+      fun shallow_hash 0 term =
+            if Term.is_var term then hash_string (#1 (Term.dest_var term))
+            else if Term.is_const term then
+              hash_string (#Name (Term.dest_thy_const term))
+            else if Term.is_abs term then 5 else 7
+        | shallow_hash depth term =
+            if Term.is_comb term then
+              (41 * shallow_hash (depth - 1) (Term.rator term) +
+               67 * shallow_hash (depth - 1) (Term.rand term) + 11) mod
+                bucket_count
+            else if Term.is_abs term then
+              (73 * shallow_hash (depth - 1) (Term.body term) + 13) mod
+                bucket_count
+            else shallow_hash 0 term
+      fun pair_bucket (left, right) =
+        (97 * shallow_hash 3 left + shallow_hash 3 right) mod bucket_count
       fun visit (left, right) =
         if Portable.pointer_eq (left, right) then Thm.REFL left
         else
+          let val bucket = pair_bucket (left, right) in
           case List.find
               (fn (saved_left, saved_right, _) =>
                 Portable.pointer_eq (left, saved_left) andalso
-                Portable.pointer_eq (right, saved_right)) (!cache) of
+                Portable.pointer_eq (right, saved_right))
+              (Array.sub (cache, bucket)) of
             SOME (_, _, theorem) => theorem
           | NONE => compute (left, right)
+          end
       and compute (left, right) =
         let
           val _ = compared := !compared + 1
@@ -222,15 +364,17 @@ struct
               end
             else if Term.is_abs left andalso Term.is_abs right then
               let
-                val (left_binder, left_body) = Term.dest_abs left
-                val (_, right_body) = Term.dest_abs right
-              in
-                anchor_right right (anchor_left left
-                  (Thm.ABS left_binder (visit (left_body, right_body))))
-              end
+                val _ = #admit_abstraction type_admission
+                  "skeleton-cache-abstraction" left
+                val _ = #admit_abstraction type_admission
+                  "skeleton-cache-abstraction" right
+              in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
             else
               Thm.TRANS (Thm.REFL left) (Thm.REFL right)
-          val _ = cache := (left, right, theorem) :: !cache
+          val bucket = pair_bucket (left, right)
+          val _ = Array.update
+            (cache, bucket,
+             (left, right, theorem) :: Array.sub (cache, bucket))
         in
           theorem
         end
@@ -292,8 +436,9 @@ struct
       theorem
     end
 
-  fun procedure_names (Context {procedures, ...}) =
-    List.map #name procedures
+  fun procedure_names (Context {procedures, fallback, ...}) =
+    List.map #name procedures @
+      (case fallback of NONE => [] | SOME procedure => [#name procedure])
 
   fun procedure_named procedures name =
     case List.filter (fn procedure => #name procedure = name) procedures of
@@ -338,150 +483,517 @@ struct
       (boolSyntax.mk_conj (idempotent_variable, idempotent_variable),
        idempotent_variable))
 
-  fun normalize_idempotent_skeleton skeleton =
+  datatype raw_key =
+      RawVariable of string * int
+    | RawConstant of KernelSig.kernelid * int
+    | RawApplication of int * int
+
+  fun raw_key_rank key =
+    case key of RawVariable _ => 0 | RawConstant _ => 1 | RawApplication _ => 2
+
+  fun raw_key_compare (left, right) =
+    case Int.compare (raw_key_rank left, raw_key_rank right) of
+      EQUAL =>
+        (case (left, right) of
+           (RawVariable (left_name, left_type),
+            RawVariable (right_name, right_type)) =>
+             (case String.compare (left_name, right_name) of
+                EQUAL => Int.compare (left_type, right_type)
+              | order => order)
+         | (RawConstant (left_id, left_type),
+            RawConstant (right_id, right_type)) =>
+             (case KernelSig.id_compare (left_id, right_id) of
+                EQUAL => Int.compare (left_type, right_type)
+              | order => order)
+         | (RawApplication (left_operator, left_operand),
+            RawApplication (right_operator, right_operand)) =>
+             pair_compare (Int.compare, Int.compare)
+               ((left_operator, left_operand),
+                (right_operator, right_operand))
+         | _ => EQUAL)
+    | order => order
+
+  datatype graph_kind =
+      GraphTrue
+    | GraphFalse
+    | GraphAtom of int
+    | GraphNegation of int
+    | GraphConjunction of int * int
+    | GraphDisjunction of int * int
+    | GraphImplication of int * int
+    | GraphEquality of int * int
+    | GraphConditional of int * int * int
+
+  fun graph_kind_rank kind =
+    case kind of
+      GraphTrue => 0 | GraphFalse => 1 | GraphAtom _ => 2 |
+      GraphNegation _ => 3 | GraphConjunction _ => 4 |
+      GraphDisjunction _ => 5 | GraphImplication _ => 6 |
+      GraphEquality _ => 7 | GraphConditional _ => 8
+
+  fun graph_kind_compare (left, right) =
+    case Int.compare (graph_kind_rank left, graph_kind_rank right) of
+      EQUAL =>
+        (case (left, right) of
+           (GraphAtom left_id, GraphAtom right_id) =>
+             Int.compare (left_id, right_id)
+         | (GraphNegation left_id, GraphNegation right_id) =>
+             Int.compare (left_id, right_id)
+         | (GraphConjunction left_ids, GraphConjunction right_ids) =>
+             pair_compare (Int.compare, Int.compare) (left_ids, right_ids)
+         | (GraphDisjunction left_ids, GraphDisjunction right_ids) =>
+             pair_compare (Int.compare, Int.compare) (left_ids, right_ids)
+         | (GraphImplication left_ids, GraphImplication right_ids) =>
+             pair_compare (Int.compare, Int.compare) (left_ids, right_ids)
+         | (GraphEquality left_ids, GraphEquality right_ids) =>
+             pair_compare (Int.compare, Int.compare) (left_ids, right_ids)
+         | (GraphConditional (left_test, left_yes, left_no),
+            GraphConditional (right_test, right_yes, right_no)) =>
+             list_compare Int.compare
+               ([left_test, left_yes, left_no],
+                [right_test, right_yes, right_no])
+         | _ => EQUAL)
+    | order => order
+
+  datatype raw_node = RawNode of
+    {id : int, representative : term, equality : thm, tree_nodes : int,
+     ty : hol_type}
+
+  datatype graph_node = GraphNode of
+    {id : int, kind : graph_kind, representative : term,
+     equality : thm, tree_nodes : int}
+
+  (* The graph uses kernel declaration identities and canonical child IDs as
+     lookup keys.  Terms remain the proof evidence: every reuse is justified
+     by a checked equality with the current occurrence as its exact left
+     endpoint.  Whole abstractions form the public-kernel boundary and are
+     compared only after bounded raw and type-work admission. *)
+  fun build_cnf_graph skeleton =
     let
-      val nodes = ref (Redblackmap.mkDict Term.compare)
-      fun visit term =
-        let
-          fun compute () = case skeleton_children term of
-          NONE => (Thm.REFL term, false)
-        | SOME [] => (Thm.REFL term, false)
-        | SOME children =>
-                 let
-                   val child_results = List.map visit children
-                   val child_changed = List.exists Lib.snd child_results
-                   (* Preserve structural cache sharing while normalizing.
-                      The completed root equality is anchored once below;
-                      anchoring every structurally equal cache hit repeats
-                      the same transport throughout an expanded word DAG. *)
-                   val congruence =
-                     if child_changed then
-                       connective_congruence term
-                         (List.map Lib.fst child_results)
-                     else Thm.REFL term
-                   val rebuilt = boolSyntax.rhs (Thm.concl congruence)
-                   val (theorem, changed_here) =
-                     if boolSyntax.is_disj rebuilt then
-                       let val (left, right) = boolSyntax.dest_disj rebuilt
-                       in
-                         if Term.aconv left right then
-                           (Thm.TRANS congruence
-                              (Conv.REWR_CONV disj_idempotent rebuilt), true)
-                         else (congruence, false)
-                       end
-                     else if boolSyntax.is_conj rebuilt then
-                       let val (left, right) = boolSyntax.dest_conj rebuilt
-                       in
-                         if Term.aconv left right then
-                           (Thm.TRANS congruence
-                              (Conv.REWR_CONV conj_idempotent rebuilt), true)
-                         else (congruence, false)
-                       end
-                     else (congruence, false)
-                   val result =
-                     (theorem, child_changed orelse changed_here)
-                   val _ = nodes :=
-                     Redblackmap.insert (!nodes, term, result)
-                 in
-                   result
-                 end
-        in
-          case Redblackmap.peek (!nodes, term) of
-            SOME result => result
-          | NONE => compute ()
+      val maximum = SmtResource.max_bv_replay_term_nodes
+      val type_admission = new_type_admission_context ()
+      fun intern_type ty = #intern type_admission ty
+      fun type_id (AdmissionTypeNode {id, ...}) = id
+      fun admit_type ty = ignore (intern_type ty)
+      val admit_abstraction = #admit_abstraction type_admission
+      val type_nodes = #nodes type_admission
+      val type_edges = #edges type_admission
+      val type_physical = #physical type_admission
+      val raw_ids = ref (Redblackmap.mkDict raw_key_compare)
+      val physical_bucket_count = 4093
+      val raw_physical = Array.array
+        (physical_bucket_count, [] : (term * raw_node) list)
+      fun hash_string string =
+        CharVector.foldl (fn (character, hash) =>
+          (hash * 33 + Char.ord character) mod physical_bucket_count)
+          17 string
+      fun shallow_hash 0 term =
+            if Term.is_var term then hash_string (#1 (Term.dest_var term))
+            else if Term.is_const term then
+              hash_string (#Name (Term.dest_thy_const term))
+            else if Term.is_abs term then 5 else 7
+        | shallow_hash depth term =
+            if Term.is_comb term then
+              (41 * shallow_hash (depth - 1) (Term.rator term) +
+               67 * shallow_hash (depth - 1) (Term.rand term) + 11) mod
+                physical_bucket_count
+            else if Term.is_abs term then
+              (73 * shallow_hash (depth - 1) (Term.body term) + 13) mod
+                physical_bucket_count
+            else shallow_hash 0 term
+      fun physical_bucket term = shallow_hash 3 term
+      fun physical_find buckets term =
+        List.find
+          (fn (saved, _) => Portable.pointer_eq (term, saved))
+          (Array.sub (buckets, physical_bucket term))
+      fun physical_insert buckets term node =
+        let val bucket = physical_bucket term in
+          Array.update (buckets, bucket,
+            (term, node) :: Array.sub (buckets, bucket))
         end
+      val abstractions = ref ([] : raw_node list)
+      val next_raw_id = ref 0
+      val raw_nodes = ref 0
+      val raw_edges = ref 0
+      val transport_nodes = ref 0
+      val transport_time = ref Time.zeroTime
+      fun fresh_raw representative equality tree_nodes ty =
+        let
+          val result = RawNode
+            {id = !next_raw_id, representative = representative,
+             equality = equality, tree_nodes = tree_nodes, ty = ty}
+        in
+          next_raw_id := !next_raw_id + 1;
+          raw_nodes := !raw_nodes + 1;
+          result
+        end
+      fun raw_id (RawNode {id, ...}) = id
+      fun raw_representative (RawNode {representative, ...}) = representative
+      fun raw_equality (RawNode {equality, ...}) = equality
+      fun raw_tree_nodes (RawNode {tree_nodes, ...}) = tree_nodes
+      fun raw_type (RawNode {ty, ...}) = ty
+      fun checked_leaf_equality operation occurrence representative =
+        let
+          val timer = Timer.startRealTimer ()
+          val _ = admit_type (Term.type_of occurrence)
+          val _ = admit_type (Term.type_of representative)
+          val theorem =
+            Thm.TRANS (Thm.REFL occurrence) (Thm.REFL representative)
+          val _ = transport_nodes := !transport_nodes + 1
+          val _ = transport_time := Time.+
+            (!transport_time, Timer.checkRealTimer timer)
+        in
+          theorem
+        end
+      fun canonical_raw key occurrence representative initial_equality
+          tree_nodes ty make_equality =
+        case Redblackmap.peek (!raw_ids, key) of
+          SOME saved =>
+            let
+              val representative = raw_representative saved
+              val equality = make_equality representative
+            in
+              RawNode {id = raw_id saved, representative = representative,
+                equality = equality, tree_nodes = raw_tree_nodes saved,
+                ty = raw_type saved}
+            end
+        | NONE =>
+            let
+              val saved = fresh_raw representative initial_equality
+                tree_nodes ty
+              val _ = raw_ids := Redblackmap.insert (!raw_ids, key, saved)
+            in
+              saved
+            end
+      fun intern_abstraction occurrence =
+        let
+          val size =
+            case Term.term_size_bounded maximum occurrence of
+              SOME size => size
+            | NONE =>
+                (SmtResource.check_term_size_for "BitVector"
+                   "skeleton-graph-abstraction" (maximum + 1); 0)
+          val ty = Term.type_of occurrence
+          val _ = admit_abstraction "skeleton-graph-abstraction" occurrence
+          fun find [] = NONE
+            | find (saved :: rest) =
+                let val representative = raw_representative saved
+                in
+                  admit_abstraction
+                    "skeleton-graph-abstraction" representative;
+                  if Term.aconv occurrence representative then SOME saved
+                  else find rest
+                end
+        in
+          case find (!abstractions) of
+            SOME saved =>
+              RawNode
+                {id = raw_id saved,
+                 representative = raw_representative saved,
+                 equality = checked_leaf_equality
+                   "skeleton-graph-abstraction" occurrence
+                   (raw_representative saved),
+                 tree_nodes = raw_tree_nodes saved, ty = raw_type saved}
+          | NONE =>
+              let
+                val (_, body) = Term.dest_abs occurrence
+                val _ = ignore (intern_raw body)
+                val _ = raw_edges := saturated_add (!raw_edges) 1
+                val saved = fresh_raw occurrence
+                  (Thm.REFL occurrence) size ty
+              in abstractions := saved :: !abstractions; saved end
+        end
+      and intern_raw occurrence =
+        case physical_find raw_physical occurrence of
+          SOME (_, saved) => saved
+        | NONE =>
+            let
+              val saved =
+                if Term.is_var occurrence then
+                  let
+                    val (name, ty) = Term.dest_var occurrence
+                    val type_id = type_id (intern_type ty)
+                  in
+                    canonical_raw (RawVariable (name, type_id)) occurrence
+                      occurrence (Thm.REFL occurrence) 1 ty
+                      (checked_leaf_equality "skeleton-graph-variable"
+                         occurrence)
+                  end
+                else if Term.is_const occurrence then
+                  let
+                    val ty = Term.type_of occurrence
+                    val type_id = type_id (intern_type ty)
+                    val key = RawConstant
+                      (#Name (Term.dest_thy_constid occurrence), type_id)
+                  in
+                    canonical_raw key occurrence occurrence
+                      (Thm.REFL occurrence) 1 ty
+                      (checked_leaf_equality "skeleton-graph-constant"
+                         occurrence)
+                  end
+                else if Term.is_comb occurrence then
+                  let
+                    val (operator, operand) = Term.dest_comb occurrence
+                    val operator_node = intern_raw operator
+                    val operand_node = intern_raw operand
+                    val key = RawApplication
+                      (raw_id operator_node, raw_id operand_node)
+                    val tree_nodes = saturated_add 1
+                      (saturated_add (raw_tree_nodes operator_node)
+                        (raw_tree_nodes operand_node))
+                    fun equality representative =
+                      let
+                        val _ = admit_type (raw_type operator_node)
+                        val _ = admit_type (raw_type operand_node)
+                        val congruence = anchor_left occurrence
+                          (Thm.MK_COMB
+                            (raw_equality operator_node,
+                             raw_equality operand_node))
+                      in
+                        anchor_right representative congruence
+                      end
+                    val children_unchanged =
+                      Portable.pointer_eq
+                        (operator, raw_representative operator_node) andalso
+                      Portable.pointer_eq
+                        (operand, raw_representative operand_node)
+                    val candidate_equality =
+                      if children_unchanged then Thm.REFL occurrence
+                      else
+                        let
+                          val _ = admit_type (raw_type operator_node)
+                          val _ = admit_type (raw_type operand_node)
+                        in
+                          anchor_left occurrence
+                            (Thm.MK_COMB
+                              (raw_equality operator_node,
+                               raw_equality operand_node))
+                        end
+                    val candidate = boolSyntax.rhs
+                      (Thm.concl candidate_equality)
+                    val ty = Lib.snd (Type.dom_rng (raw_type operator_node))
+                    val _ = raw_edges := saturated_add (!raw_edges) 2
+                  in
+                    canonical_raw key occurrence candidate candidate_equality
+                      tree_nodes ty equality
+                  end
+                else if Term.is_abs occurrence then
+                  intern_abstraction occurrence
+                else raise ERR "build_cnf_graph"
+                  "unknown raw term constructor"
+              val _ = physical_insert raw_physical occurrence saved
+            in
+              saved
+            end
+      val graph_ids = ref (Redblackmap.mkDict graph_kind_compare)
+      val graph_physical = Array.array
+        (physical_bucket_count, [] : (term * graph_node) list)
+      val graph_observations = ref 0
+      val graph_entries = ref ([] : graph_node list)
+      val next_graph_id = ref 0
+      val graph_edges = ref 0
+      val residual_atoms = ref 0
+      fun graph_id (GraphNode {id, ...}) = id
+      fun graph_representative (GraphNode {representative, ...}) = representative
+      fun graph_equality (GraphNode {equality, ...}) = equality
+      fun graph_tree_nodes (GraphNode {tree_nodes, ...}) = tree_nodes
+      fun add_graph kind representative equality tree_nodes =
+        case Redblackmap.peek (!graph_ids, kind) of
+          SOME saved =>
+            GraphNode
+              {id = graph_id saved, kind = kind,
+               representative = graph_representative saved,
+               equality = anchor_right (graph_representative saved) equality,
+               tree_nodes = graph_tree_nodes saved}
+        | NONE =>
+            let
+              val saved = GraphNode
+                {id = !next_graph_id, kind = kind,
+                 representative = representative, equality = equality,
+                 tree_nodes = tree_nodes}
+            in
+              next_graph_id := !next_graph_id + 1;
+              graph_ids := Redblackmap.insert (!graph_ids, kind, saved);
+              graph_entries := saved :: !graph_entries;
+              saved
+            end
+      fun connective_kind term ids =
+        if boolSyntax.is_neg term then GraphNegation (hd ids)
+        else if boolSyntax.is_conj term then
+          GraphConjunction (List.nth (ids, 0), List.nth (ids, 1))
+        else if boolSyntax.is_disj term then
+          GraphDisjunction (List.nth (ids, 0), List.nth (ids, 1))
+        else if boolSyntax.is_imp term then
+          GraphImplication (List.nth (ids, 0), List.nth (ids, 1))
+        else if boolSyntax.is_cond term then
+          GraphConditional
+            (List.nth (ids, 0), List.nth (ids, 1), List.nth (ids, 2))
+        else GraphEquality (List.nth (ids, 0), List.nth (ids, 1))
+      fun visit occurrence =
+        case physical_find graph_physical occurrence of
+          SOME (_, saved) => saved
+        | NONE =>
+            let
+              val saved =
+                if Term.aconv occurrence boolSyntax.T then
+                  add_graph GraphTrue occurrence (Thm.REFL occurrence) 1
+                else if Term.aconv occurrence boolSyntax.F then
+                  add_graph GraphFalse occurrence (Thm.REFL occurrence) 1
+                else
+                  case skeleton_children occurrence of
+                    NONE =>
+                      let
+                        val raw = intern_raw occurrence
+                        val _ = residual_atoms := !residual_atoms + 1
+                      in
+                        add_graph (GraphAtom (raw_id raw))
+                          (raw_representative raw) (raw_equality raw)
+                          (raw_tree_nodes raw)
+                      end
+                  | SOME [] => raise ERR "build_cnf_graph"
+                      "unexpected propositional leaf"
+                  | SOME children =>
+                      let
+                        val child_nodes = List.map visit children
+                        val child_ids = List.map graph_id child_nodes
+                        val congruence = anchor_left occurrence
+                          (connective_congruence occurrence
+                            (List.map graph_equality child_nodes))
+                        val rebuilt = boolSyntax.rhs (Thm.concl congruence)
+                        val tree_nodes = saturated_add 1
+                          (List.foldl
+                            (fn (node, count) => saturated_add count
+                              (graph_tree_nodes node)) 0 child_nodes)
+                        val _ = graph_edges := saturated_add (!graph_edges)
+                          (List.length child_nodes)
+                      in
+                        if (boolSyntax.is_conj rebuilt orelse
+                            boolSyntax.is_disj rebuilt) andalso
+                           graph_id (List.nth (child_nodes, 0)) =
+                             graph_id (List.nth (child_nodes, 1)) then
+                          let
+                            val law = if boolSyntax.is_conj rebuilt then
+                              conj_idempotent else disj_idempotent
+                            val child = hd child_nodes
+                            val GraphNode {kind, ...} = child
+                            val instantiated = Thm.INST
+                              [idempotent_variable |->
+                                 graph_representative child] law
+                            val theorem = Thm.TRANS congruence instantiated
+                          in
+                            GraphNode
+                              {id = graph_id child,
+                               kind = kind,
+                               representative = graph_representative child,
+                               equality = theorem,
+                               tree_nodes = graph_tree_nodes child}
+                          end
+                        else
+                          add_graph (connective_kind rebuilt child_ids)
+                            rebuilt congruence tree_nodes
+                      end
+              val _ = physical_insert graph_physical occurrence saved
+              val _ = graph_observations := !graph_observations + 1
+            in
+              saved
+            end
+      val root = visit skeleton
+      val normalized = graph_representative root
+      val normalized_raw = intern_raw normalized
+      val normalized_tree_nodes = raw_tree_nodes normalized_raw
+      val normalized_dag_nodes = !raw_nodes
     in
-      exact_left skeleton (Lib.fst (visit skeleton))
+      {root = root, entries = List.rev (!graph_entries),
+       graph_nodes = !next_graph_id,
+       graph_observations = !graph_observations,
+       graph_edges = !graph_edges,
+       raw_nodes = !raw_nodes, raw_edges = !raw_edges,
+       normalized_tree_nodes = normalized_tree_nodes,
+       normalized_dag_nodes = normalized_dag_nodes,
+       type_nodes = !type_nodes,
+       type_observations = List.length (!type_physical),
+       type_edges = !type_edges,
+       transport_nodes = !transport_nodes,
+       transport_seconds = !transport_time,
+       residual_atoms = List.length
+         (List.filter
+           (fn GraphNode {kind = GraphAtom _, ...} => true | _ => false)
+           (!graph_entries))}
     end
 
-  (* Turn the shared abstract skeleton into an explicitly linear
-     definitional implication.  HolSat sees each connective node once.  Its
-     checked theorem is instantiated back with the original DAG nodes, whose
-     defining equations are then discharged by reflexivity. *)
-  fun linear_sat_target actual_nodes residual_substitution skeleton =
+  fun checked_graph_sat_prove entries root =
     let
-      val nodes = ref (Redblackmap.mkDict Term.compare)
-      val definitions = ref []
-      fun visit term =
-        case skeleton_children term of
-          NONE => term
-        | SOME [] => term
-        | SOME children =>
-            (case Redblackmap.peek (!nodes, term) of
-               SOME variable => variable
-             | NONE =>
-                 let
-                   val (head, _) = boolSyntax.strip_comb term
-                   val body = List.foldl
-                     (fn (child, function) => Term.mk_comb (function, child))
-                     head (List.map visit children)
-                   val variable = Term.genvar Type.bool
-                   val equation = boolSyntax.mk_eq (variable, body)
-                   val _ = nodes :=
-                     Redblackmap.insert (!nodes, term, variable)
-                   val _ = definitions :=
-                     (equation, variable, term) :: !definitions
-                 in
-                   variable
-                 end)
-      val root = visit skeleton
-      val entries = List.rev (!definitions)
+      fun node_id (GraphNode {id, ...}) = id
+      fun node_kind (GraphNode {kind, ...}) = kind
+      fun node_representative (GraphNode {representative, ...}) =
+        representative
+      fun generated kind =
+        case kind of GraphTrue => false | GraphFalse => false | _ => true
+      val variables = List.foldl
+        (fn (node, dictionary) =>
+          if generated (node_kind node) then
+            Redblackmap.insert
+              (dictionary, node_id node, Term.genvar Type.bool)
+          else dictionary)
+        (Redblackmap.mkDict Int.compare) entries
+      fun symbolic id =
+        case List.find (fn node => node_id node = id) entries of
+          NONE => raise ERR "checked_graph_sat_prove" "unknown graph node ID"
+        | SOME node =>
+            (case node_kind node of
+               GraphTrue => boolSyntax.T
+             | GraphFalse => boolSyntax.F
+             | _ => Redblackmap.find (variables, id))
+      fun body kind =
+        case kind of
+          GraphNegation child => boolSyntax.mk_neg (symbolic child)
+        | GraphConjunction (left, right) =>
+            boolSyntax.mk_conj (symbolic left, symbolic right)
+        | GraphDisjunction (left, right) =>
+            boolSyntax.mk_disj (symbolic left, symbolic right)
+        | GraphImplication (left, right) =>
+            boolSyntax.mk_imp (symbolic left, symbolic right)
+        | GraphEquality (left, right) =>
+            boolSyntax.mk_eq (symbolic left, symbolic right)
+        | GraphConditional (test, yes, no) =>
+            boolSyntax.mk_cond
+              (symbolic test, symbolic yes, symbolic no)
+        | _ => raise ERR "checked_graph_sat_prove"
+            "non-connective graph node has no definition"
+      fun is_connective kind =
+        case kind of
+          GraphNegation _ => true | GraphConjunction _ => true |
+          GraphDisjunction _ => true | GraphImplication _ => true |
+          GraphEquality _ => true | GraphConditional _ => true | _ => false
+      val connective_nodes = List.filter
+        (is_connective o node_kind) entries
       val equations = List.map
-        (fn (equation, _, _) => equation) entries
+        (fn node => boolSyntax.mk_eq
+          (symbolic (node_id node), body (node_kind node)))
+        connective_nodes
       val antecedent =
-        case equations of
-          [] => boolSyntax.T
+        case equations of [] => boolSyntax.T
         | _ => boolSyntax.list_mk_conj equations
       val target = boolSyntax.mk_imp
-        (antecedent, root)
-      fun actual term = Redblackmap.find (actual_nodes, term)
-        handle Redblackmap.NotFound =>
-          raise ERR "linear_sat_target"
-            "abstract node has no actual-node correspondence"
-      val node_substitution = List.map
-        (fn (_, variable, term) => variable |-> actual term) entries
-      val node_domains = HOLset.addList (HOLset.empty Term.compare,
-        List.map #redex node_substitution)
-      val residual_domains = HOLset.addList (HOLset.empty Term.compare,
-        List.map #redex residual_substitution)
+        (antecedent, symbolic (node_id root))
+      val sat_measure = term_measure target
+      val substitution = List.map
+        (fn node => Redblackmap.find (variables, node_id node) |->
+          node_representative node)
+        (List.filter (generated o node_kind) entries)
+      val domains = HOLset.addList (HOLset.empty Term.compare,
+        List.map #redex substitution)
       val _ =
-        if List.all (Term.is_var o #redex)
-             (node_substitution @ residual_substitution) andalso
-           HOLset.numItems node_domains = List.length node_substitution andalso
-           HOLset.numItems residual_domains =
-             List.length residual_substitution andalso
-           HOLset.isEmpty
-             (HOLset.intersection (node_domains, residual_domains)) then ()
-        else raise ERR "linear_sat_target"
-          "generated substitution domains overlap or are not unique variables"
-      (* Apply atom and Tseitin substitutions simultaneously.  Term.subst
-         returns a matched residue without visiting it, so actual DAGs are
-         inserted once rather than copied through a second INST.  HOL free
-         variables and bound de Bruijn nodes are distinct constructors, so
-         inserting a free-variable residue below an abstraction is
-         capture-safe.  The disjoint-domain check above makes this schedule
-         independent of substitution-list order. *)
-      val substitution = node_substitution @ residual_substitution
+        if HOLset.numItems domains = List.length substitution andalso
+           List.all (Term.is_var o #redex) substitution then ()
+        else raise ERR "checked_graph_sat_prove"
+          "generated graph substitution domains overlap"
       val definition_theorem =
-        case entries of
+        case connective_nodes of
           [] => boolTheory.TRUTH
         | _ => Drule.LIST_CONJ
-            (List.map (fn (_, _, term) => Thm.REFL (actual term)) entries)
-    in
-      {target = target,
-       substitution = substitution,
-       definition_theorem = definition_theorem}
-    end
-
-  fun checked_sat_skeleton_prove
-      (actual_nodes, residual_substitution, expected, skeleton) =
-    let
-      val {target, substitution, definition_theorem} =
-        phase "skeleton/cnf-construction"
-          (linear_sat_target actual_nodes residual_substitution) skeleton
+            (List.map (Thm.REFL o node_representative) connective_nodes)
       val _ = observe_sat_target target
-      (* HolSatLib currently exposes search and certificate reconstruction as
-         one checked operation, so E0 records that indivisible boundary. *)
       val target_theorem =
         case !sat_completion_observer of
           NONE => phase "skeleton/sat-search+checking"
@@ -500,73 +1012,18 @@ struct
         (fn substitution => Thm.INST substitution target_theorem)
         substitution
       val theorem = phase "skeleton/cnf-definitions"
-        (fn definition_theorem =>
-          Thm.MP instantiated definition_theorem) definition_theorem
-      val _ = phase "skeleton/cnf-final-check"
-        (fn () =>
-          if Term.aconv (Thm.concl theorem) expected then ()
-          else raise ERR "checked_sat_skeleton_prove"
-            "checked definitions did not return the actual skeleton") ()
+        (fn definitions => Thm.MP instantiated definitions)
+        definition_theorem
     in
-      {theorem = theorem, sat_target = target}
-    end
-
-  fun abstract_skeleton skeleton =
-    let
-      (* HolSatLib accepts a purely propositional term.  Preserve every
-         connective and replace only residual Boolean leaves; instantiating
-         its checked theorem afterwards is a kernel operation. *)
-      val nodes = ref (Redblackmap.mkDict Term.compare)
-      val atoms = ref (Redblackmap.mkDict Term.compare)
-      val actual_nodes = ref (Redblackmap.mkDict Term.compare)
-      fun atom term =
-        case Redblackmap.peek (!atoms, term) of
-          SOME variable => variable
-        | NONE =>
-            let
-              val variable = Term.genvar Type.bool
-              val _ = atoms := Redblackmap.insert (!atoms, term, variable)
-              val _ = actual_nodes :=
-                Redblackmap.insert (!actual_nodes, variable, term)
-            in
-              variable
-            end
-      fun visit term =
-        case skeleton_children term of
-          NONE => atom term
-        | SOME [] =>
-            (actual_nodes := Redblackmap.insert (!actual_nodes, term, term);
-             term)
-        | SOME children =>
-            (case Redblackmap.peek (!nodes, term) of
-               SOME result => result
-             | NONE =>
-                 let
-                   val (head, _) = boolSyntax.strip_comb term
-                   val result = List.foldl
-                     (fn (child, function) =>
-                       Term.mk_comb (function, child))
-                     head (List.map visit children)
-                   val _ =
-                     nodes := Redblackmap.insert (!nodes, term, result)
-                   val _ = actual_nodes :=
-                     Redblackmap.insert (!actual_nodes, result, term)
-                 in
-                   result
-                 end)
-      val abstracted = visit skeleton
-      val substitution = Redblackmap.foldl
-        (fn (actual, variable, result) =>
-          (variable |-> actual) :: result) [] (!atoms)
-    in
-      (abstracted, !actual_nodes, substitution,
-       Redblackmap.numItems (!atoms))
+      {theorem = theorem, sat_target = target,
+       sat_tree_nodes = #tree_nodes sat_measure,
+       sat_dag_nodes = #dag_nodes sat_measure}
     end
 
   exception PROCEDURE_UNABLE
 
   fun prove_with_owners
-      (Context {procedures, atom_cache}) owners
+      (Context {procedures, fallback, atom_cache}) owners
       (target_measure : {tree_nodes : int, dag_nodes : int}) target =
     let
       val _ =
@@ -600,34 +1057,44 @@ struct
         in
           calls := Redblackmap.insert (!calls, name, count + 1)
         end
-      fun expand atom =
-        case Redblackmap.peek (owners, atom) of
+      fun raw_expand atom =
+        case (case Redblackmap.peek (owners, atom) of
+                SOME name =>
+                  SOME (name, procedure_named procedures name, true)
+              | NONE => Option.map (fn procedure =>
+                  (#name procedure, procedure, false)) fallback) of
           NONE => (Thm.REFL atom, false)
-        | SOME name =>
+        | SOME (name, procedure, required) =>
             let
-              val {expand, ...} = procedure_named procedures name
-              val _ = owned_atoms := !owned_atoms + 1
+              val {expand, ...} = procedure
               val _ = atom_requests := !atom_requests + 1
               val _ = distinct_atoms := HOLset.add (!distinct_atoms, atom)
               fun prove () =
                 let
                   val timer = Timer.startRealTimer ()
                   val _ = add_call name
-                  val theorem =
-                    case Profile.profile_with_exn_name
-                        ("th_lemma[general](atom:" ^ name ^ ")")
-                        expand atom of
-                      Expanded theorem =>
-                        exact_left atom
-                          (validate_theorem name atom theorem)
-                    | Unable => raise PROCEDURE_UNABLE
+                  val expansion = Profile.profile_with_exn_name
+                    ("th_lemma[general](atom:" ^ name ^ ")")
+                    expand atom
                   val elapsed = Timer.checkRealTimer timer
                   val _ = atom_time := Time.+ (!atom_time, elapsed)
-                  val _ = working_cache :=
-                    Redblackmap.insert (!working_cache, atom, theorem)
-                  val _ = atom_proofs := !atom_proofs + 1
                 in
-                  (theorem, true)
+                  case expansion of
+                    Unable =>
+                      if required then raise PROCEDURE_UNABLE
+                      else (Thm.REFL atom, false)
+                  | Expanded theorem =>
+                      let
+                        val theorem = exact_left atom
+                          (validate_theorem name atom theorem)
+                        val _ = owned_atoms := !owned_atoms + 1
+                        val _ = working_cache :=
+                          Redblackmap.insert
+                            (!working_cache, atom, theorem)
+                        val _ = atom_proofs := !atom_proofs + 1
+                      in
+                        (theorem, true)
+                      end
                 end
             in
               case Redblackmap.peek (!working_cache, atom) of
@@ -661,7 +1128,23 @@ struct
             end
         in
           case skeleton_children term of
-            NONE => expand term
+            NONE =>
+              (case fallback of
+                 NONE => raw_expand term
+               | SOME _ =>
+                   let
+                     val (first, changed) = raw_expand term
+                   in
+                     if changed then
+                       let
+                         val residue = boolSyntax.rhs (Thm.concl first)
+                         val (rest, rest_changed) = visit residue
+                       in
+                         (Thm.TRANS first rest,
+                          changed orelse rest_changed)
+                       end
+                     else (first, changed)
+                   end)
           | SOME children =>
               (case Redblackmap.peek (!nodes, term) of
                  SOME (saved, (theorem, changed)) =>
@@ -719,22 +1202,83 @@ struct
         if !owned_atoms > 0 andalso Term.aconv normalized target then
           raise ERR "prove" "atom expansion made no progress"
         else ()
-      val idempotence = phase "skeleton/cnf-normalization"
-        normalize_idempotent_skeleton normalized
-      val normalized = boolSyntax.rhs (Thm.concl idempotence)
-      val (abstracted, actual_nodes, residual_substitution, residual_count) =
-        phase "skeleton/abstraction" abstract_skeleton normalized
+      val graph = phase "skeleton/cnf-normalization"
+        build_cnf_graph normalized
+      val _ = SmtResource.emit_e0
+        ("skeleton-graph nodes=" ^ Int.toString (#graph_nodes graph) ^
+         " observations=" ^ Int.toString (#graph_observations graph) ^
+         " edges=" ^ Int.toString (#graph_edges graph) ^
+         " raw_nodes=" ^ Int.toString (#raw_nodes graph) ^
+         " raw_edges=" ^ Int.toString (#raw_edges graph) ^
+         " type_nodes=" ^ Int.toString (#type_nodes graph) ^
+         " type_observations=" ^
+           Int.toString (#type_observations graph) ^
+         " type_edges=" ^ Int.toString (#type_edges graph) ^
+         " leaf_transport_nodes=" ^ Int.toString (#transport_nodes graph) ^
+         " leaf_transport_wall=" ^ Time.toString (#transport_seconds graph))
+      val GraphNode
+        {representative = normalized, equality = idempotence,
+         ...} = #root graph
       val sat_timer = Timer.startRealTimer ()
-      val {theorem = actual_theorem, sat_target} =
-        phase "skeleton/cnf+sat" checked_sat_skeleton_prove
-          (actual_nodes, residual_substitution, normalized, abstracted)
+      val {theorem = actual_theorem, sat_target, sat_tree_nodes,
+           sat_dag_nodes} =
+        (phase "skeleton/cnf+sat" checked_graph_sat_prove
+          (#entries graph) (#root graph)
+         handle HolSatLib.SAT_cex theorem =>
+           let
+             fun label (GraphNode {kind = GraphAtom _, representative, ...}) =
+                   let val (head, _) = boolSyntax.strip_comb representative in
+                     if Term.is_const head then
+                       let
+                         val {Thy, Name, ...} = Term.dest_thy_const head
+                         fun head_name argument =
+                           let val (argument_head, _) =
+                             boolSyntax.strip_comb argument
+                           in
+                             if Term.is_const argument_head then
+                               let val {Thy, Name, ...} =
+                                 Term.dest_thy_const argument_head
+                               in Thy ^ "$" ^ Name end
+                             else if Term.is_var argument_head then "variable"
+                             else "other"
+                           end
+                         val (_, arguments) =
+                           boolSyntax.strip_comb representative
+                         val suffix = if Thy = "fcp" then
+                             "[" ^ String.concatWith ","
+                               (List.map head_name arguments) ^ "]"
+                           else ""
+                       in SOME (Thy ^ "$" ^ Name ^ suffix) end
+                     else SOME "non-constant"
+                   end
+               | label _ = NONE
+             val labels = List.mapPartial label (#entries graph)
+             fun unique [] = []
+               | unique (item :: rest) =
+                   item :: unique (List.filter (fn other => other <> item) rest)
+             val message = "SKELETON_CEX residual_atoms=" ^
+               Int.toString (#residual_atoms graph) ^
+               " owned_atoms=" ^ Int.toString (!owned_atoms) ^
+               " labels=" ^ String.concatWith "," (unique labels)
+             val _ = Feedback.HOL_MESG message
+           in raise HolSatLib.SAT_cex theorem end)
       val _ =
         if List.null (Thm.hyp actual_theorem) then ()
         else raise ERR "prove" "checked SAT theorem has hypotheses"
-      val _ =
-        if Term.aconv (Thm.concl actual_theorem) normalized then ()
-        else raise ERR "prove"
-          "checked SAT theorem does not match the actual skeleton"
+      val actual_theorem =
+        let val conclusion = Thm.concl actual_theorem in
+          if Portable.pointer_eq (conclusion, normalized) then
+            actual_theorem
+          else
+            let
+              val equality = phase "skeleton/sat-conclusion-transport"
+                (fn () => bounded_nodewise_equality
+                  SmtResource.max_skeleton_replay_dag_nodes
+                  conclusion normalized) ()
+            in Thm.EQ_MP equality actual_theorem end
+        end
+        handle REANCHOR_LIMIT => raise ERR "prove"
+          "checked SAT theorem exceeds the skeleton transport DAG bound"
       val _ = Library.check_oracle_tags
         "SmtSkeletonProve" "checked-sat" actual_theorem
       val sat_time = Timer.checkRealTimer sat_timer
@@ -760,19 +1304,24 @@ struct
         (fn () => Library.check_oracle_tags
           "SmtSkeletonProve" "result" theorem) ()
       val total_time = Timer.checkRealTimer total_timer
-      val normalized_measure = phase "skeleton/metrics-normalized"
-        term_measure normalized
-      val sat_measure = phase "skeleton/metrics-sat" term_measure sat_target
       val procedure_calls = Redblackmap.foldl
         (fn (name, count, result) => (name, count) :: result) [] (!calls)
       val metrics =
         {target_tree_nodes = #tree_nodes target_measure,
          target_dag_nodes = #dag_nodes target_measure,
          skeleton_dag_nodes = HOLset.numItems (!skeleton_nodes),
-         normalized_tree_nodes = #tree_nodes normalized_measure,
-         normalized_dag_nodes = #dag_nodes normalized_measure,
-         sat_tree_nodes = #tree_nodes sat_measure,
-         sat_dag_nodes = #dag_nodes sat_measure,
+         normalized_tree_nodes = #normalized_tree_nodes graph,
+         normalized_dag_nodes = #normalized_dag_nodes graph,
+         sat_tree_nodes = sat_tree_nodes,
+         sat_dag_nodes = sat_dag_nodes,
+         graph_nodes = #graph_nodes graph,
+         graph_observations = #graph_observations graph,
+         graph_edges = #graph_edges graph,
+         graph_type_nodes = #type_nodes graph,
+         graph_type_observations = #type_observations graph,
+         graph_type_edges = #type_edges graph,
+         graph_leaf_transport_nodes = #transport_nodes graph,
+         graph_leaf_transport_seconds = #transport_seconds graph,
          distinct_atoms = HOLset.numItems (!distinct_atoms),
          atom_requests = !atom_requests,
          atom_proofs = !atom_proofs,
@@ -783,7 +1332,7 @@ struct
          node_cache_structural_reanchor_successes = !node_reanchor_successes,
          node_cache_structural_reanchor_fallbacks = !node_reanchor_fallbacks,
          node_cache_reanchor_seconds = !node_reanchor_time,
-         residual_atoms = residual_count,
+         residual_atoms = #residual_atoms graph,
          atom_seconds = !atom_time,
          sat_seconds = sat_time,
          total_seconds = total_time,
@@ -799,7 +1348,9 @@ struct
 
   fun attempt_with_owners context owners target_measure target =
     Proved (prove_with_owners context owners target_measure target)
-    handle PROCEDURE_UNABLE => Declined
-         | HolSatLib.SAT_cex _ => Declined
+    handle PROCEDURE_UNABLE =>
+             (Feedback.HOL_MESG "SKELETON PROCEDURE_UNABLE"; Declined)
+         | HolSatLib.SAT_cex _ =>
+             (Feedback.HOL_MESG "SKELETON SAT_CEX"; Declined)
 
 end

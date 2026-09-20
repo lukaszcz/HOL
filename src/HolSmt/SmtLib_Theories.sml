@@ -412,22 +412,29 @@ in
       dest_holsmt_xor tm
       handle Feedback.HOL_ERR _ =>
         boolSyntax.dest_eq (boolSyntax.dest_neg tm)
-    fun word_from_bits bs =
-      case from_word_selectors bs of
-        SOME word => SOME word
-      | NONE =>
-          (case from_bitwise_binop boolSyntax.dest_conj wordsSyntax.mk_word_and bs of
-             SOME word => SOME word
-           | NONE =>
-               (case from_bitwise_binop boolSyntax.dest_disj wordsSyntax.mk_word_or bs of
-                  SOME word => SOME word
-                | NONE =>
-                    (case from_bitwise_binop dest_bool_xor wordsSyntax.mk_word_xor bs of
-                       SOME word => SOME word
-                     | NONE =>
-                         (case from_bitwise_binop boolSyntax.dest_eq wordsSyntax.mk_word_xnor bs of
-                            SOME word => SOME word
-                          | NONE => from_bitwise_not bs))))
+    fun word_from_bits bs = recover_word 4 bs
+    and recover_word 0 _ = NONE
+      | recover_word fuel bs =
+          case from_word_selectors bs of
+            SOME word => SOME word
+          | NONE =>
+              (case from_bitwise_binop fuel boolSyntax.dest_conj
+                  wordsSyntax.mk_word_and bs of
+                 SOME word => SOME word
+               | NONE =>
+                   (case from_bitwise_binop fuel boolSyntax.dest_disj
+                       wordsSyntax.mk_word_or bs of
+                      SOME word => SOME word
+                    | NONE =>
+                        (case from_bitwise_binop fuel dest_bool_xor
+                            wordsSyntax.mk_word_xor bs of
+                           SOME word => SOME word
+                         | NONE =>
+                             (case from_bitwise_binop fuel
+                                 boolSyntax.dest_eq
+                                 wordsSyntax.mk_word_xnor bs of
+                                SOME word => SOME word
+                              | NONE => from_bitwise_not fuel bs))))
     and from_word_selectors bs =
       case Lib.total (fn () => List.map dest_bit bs) () of
         NONE => NONE
@@ -438,7 +445,8 @@ in
               Arbnum.toInt (fcpLib.index_to_num (wordsSyntax.dim_of word))
             fun check _ [] = true
               | check n ((idx, tm) :: xs) =
-                  idx = n andalso Term.aconv tm word andalso check (n + 1) xs
+                  idx = n andalso Portable.pointer_eq (tm, word) andalso
+                  check (n + 1) xs
           in
             if idx0 = 0 andalso word_width = width andalso check 1 rest then
               SOME word
@@ -446,36 +454,51 @@ in
               NONE
           end
           handle _ => NONE
-    and from_bitwise_binop dest mk bs =
+    and from_bitwise_binop fuel dest mk bs =
       case Lib.total (fn () => List.map dest bs) () of
         SOME pairs =>
-          (case (word_from_bits (List.map Lib.fst pairs),
-                 word_from_bits (List.map Lib.snd pairs)) of
+          (case (recover_word (fuel - 1) (List.map Lib.fst pairs),
+                 recover_word (fuel - 1) (List.map Lib.snd pairs)) of
              (SOME l, SOME r) => SOME (mk (l, r))
            | _ => NONE)
       | NONE => NONE
-    and from_bitwise_not bs =
+    and from_bitwise_not fuel bs =
       case Lib.total (fn () => List.map boolSyntax.dest_neg bs) () of
         SOME bs' =>
-          (case word_from_bits bs' of
+          (case recover_word (fuel - 1) bs' of
              SOME word => SOME (wordsSyntax.mk_word_1comp word)
            | NONE => NONE)
       | NONE => NONE
-    val i = Term.mk_var ("i", numSyntax.num)
-    fun numeral n = numSyntax.mk_numeral (Arbnum.fromInt n)
-    fun select_bit [] = boolSyntax.F
-      | select_bit ((n, bit) :: rest) =
-          boolSyntax.mk_cond (boolSyntax.mk_eq (i, numeral n),
-            bit, select_bit rest)
-    val indexed_bits =
-      ListPair.zip (List.tabulate (width, Lib.I), bits)
-    val body = select_bit indexed_bits
+    val one = wordsSyntax.mk_word (Arbnum.one, Arbnum.one)
+    val zero = wordsSyntax.mk_word (Arbnum.zero, Arbnum.one)
+    fun singleton bit =
+      if Term.aconv bit boolSyntax.T then one
+      else if Term.aconv bit boolSyntax.F then zero
+      else boolSyntax.mk_cond (bit, one, zero)
+    fun constant_value [] _ value = SOME value
+      | constant_value (bit :: rest) place value =
+          if Term.aconv bit boolSyntax.F then
+            constant_value rest (Arbnum.* (place, Arbnum.fromInt 2)) value
+          else if Term.aconv bit boolSyntax.T then
+            constant_value rest (Arbnum.* (place, Arbnum.fromInt 2))
+              (Arbnum.+ (value, place))
+          else NONE
+    fun exact_word [] = raise ERR "mk_bbterm" "empty bit vector"
+      | exact_word bs =
+          case constant_value bs Arbnum.one Arbnum.zero of
+            SOME value =>
+              wordsSyntax.mk_word (value, Arbnum.fromInt width)
+          | NONE =>
+              let val high :: lower = List.rev bs in
+                List.foldl
+                  (fn (bit, word) =>
+                    wordsSyntax.mk_word_concat (word, singleton bit))
+                  (singleton high) lower
+              end
   in
     case word_from_bits bits of
       SOME word => word
-    | NONE =>
-        fcpSyntax.mk_fcp (Term.mk_abs (i, body),
-          fcpLib.index_type (Arbnum.fromInt width))
+    | NONE => exact_word bits
   end
 
   fun mk_bool_ne (t1, t2) =

@@ -19,6 +19,40 @@ fun mk_sat_var lfn sva n =
         handle Subscript => failwith("mk_sat_var"^(int_to_string (n+1))^"\n")
     in rbapply lfn rv handle NotFound => rv end
 
+fun mk_resolution_var lfn sva n =
+    if RBM.numItems lfn = 0 then mk_sat_var lfn sva n
+    else Array.sub(sva,n+1)
+      handle Subscript =>
+        failwith("mk_resolution_var"^(int_to_string (n+1))^"\n")
+
+type root_context =
+  {conjunction : term,
+   projections : thm Termtab.table}
+
+fun balanced_conjunction [] = T
+  | balanced_conjunction [term] = term
+  | balanced_conjunction terms =
+      let val half = List.length terms div 2 in
+        mk_conj
+          (balanced_conjunction (List.take (terms, half)),
+           balanced_conjunction (List.drop (terms, half)))
+      end
+
+fun root_context clauseth =
+    let
+      val roots = Array.foldr
+        (fn ((root, _), result) => root :: result) [] clauseth
+      val conjunction = balanced_conjunction roots
+      fun collect term theorem table =
+        if is_conj term then
+          let val (left, right) = dest_conj term in
+            collect right (CONJUNCT2 theorem)
+              (collect left (CONJUNCT1 theorem) table)
+          end
+        else Termtab.update (term, theorem) table
+      val projections = collect conjunction (ASSUME conjunction) Termtab.empty
+    in {conjunction = conjunction, projections = projections} end
+
 local
 
 val A = mk_var("A",bool)
@@ -37,7 +71,7 @@ in
    where t = (x0 \/ ... \/ xn) and t' = (p0 \/ ... \/ pn),
    i.e. the "expanded" t
 *)
-fun dualise lfn orc clauseth ci =
+fun dualise lfn ({projections, ...} : root_context) orc clauseth ci =
     let
       fun dualise' th =
           let
@@ -63,20 +97,61 @@ fun dualise lfn orc clauseth ci =
               let val th2 = MP (INST [A|->t1] AND_INV_IMP2) th1
                                (*[tm] |- ~t ==> F*)
               in dualise' th2 end
-            else (* [~p0,...,~pn,tm] |- F *)
-              let val th2 = MP (INST [A|->t1] AND_INV_IMP2) (ASSUME t1)
-                            (*[tm,t] |- ~t ==> F *)
-                  val dth = dualise' th2 (* [~x0,...,~xn,tm,t] |- F *)
-              in
-                PROVE_HYP th1 (INSTANTIATE_UNDERLYING lfn dth)
-              end (* [~p0,...,~pn,tm] |- F *)
+            else
+              let
+                  val root =
+                    case Termtab.lookup projections t1 of
+                      SOME theorem => theorem
+                    | NONE => failwith "dualise: missing root projection"
+                  val th2 = MP (INST [A|->t1] AND_INV_IMP2) root
+                  (* All compact clauses are projections of one balanced CNF
+                     assumption.  Resolution therefore carries one shared
+                     hypothesis instead of accumulating one per root. *)
+                  val dth = dualise' th2
+              in dth end
      in res end
+
+fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
+    if RBM.numItems lfn = 0 then th
+    else
+      let
+        fun trace message =
+          if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
+            (Feedback.HOL_MESG ("HOL SAT: finish " ^ message);
+             TextIO.flushOut TextIO.stdOut)
+          else ()
+        val _ = trace "discharge start"
+        val discharged = DISCH conjunction th
+        val _ = trace "discharge done"
+        val insts = RBM.foldl
+          (fn (variable, term, result) =>
+            (variable |-> term) :: result) [] lfn
+        val _ = trace ("instantiate start count=" ^
+          Int.toString (List.length insts))
+        val instantiated = INST insts discharged
+        val _ = trace "instantiate done"
+        val roots = Array.foldr
+          (fn ((_, theorem), result) => theorem :: result) [] clauseth
+        val _ = trace "premise start"
+        fun balanced_theorems [] = TRUTH
+          | balanced_theorems [theorem] = theorem
+          | balanced_theorems theorems =
+              let val half = List.length theorems div 2 in
+                CONJ
+                  (balanced_theorems (List.take (theorems, half)))
+                  (balanced_theorems (List.drop (theorems, half)))
+              end
+        val premise = balanced_theorems roots
+        val _ = trace "premise done"
+        val result = MP instantiated premise
+        val _ = trace "MP done"
+      in result end
 end
 
 (* convert clause term to dualised thm form on first use *)
-fun prepareRootClause lfn orc clauseth cl ci =
+fun prepareRootClause lfn roots orc clauseth cl ci =
     let
-        val th = dualise lfn orc clauseth ci
+        val th = dualise lfn roots orc clauseth ci
         val _ = Dynarray.update(cl,ci,th)
      in th end
 
@@ -103,9 +178,16 @@ fun resolveClause lfn sva cl piv rth0 c1i =
       (* piv is the pivot lit in c1i. if piv mode 2 = 0, then must be
          negated in c0i *)
       val n0 = (piv mod 2 = 0)
-      val v = mk_sat_var lfn sva (piv div 2)
+      val v = mk_resolution_var lfn sva (piv div 2)
       val rth  = resolve v n0 rth0 rth1
       val _ = (counter:=(!counter)+1)
+      val _ =
+        if !counter mod 50000 = 0 andalso
+           OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
+          (Feedback.HOL_MESG
+            ("HOL SAT: resolution steps=" ^ Int.toString (!counter));
+           TextIO.flushOut TextIO.stdOut)
+        else ()
     in rth end
 
 fun resolveChain lfn sva cl (nl,lnl) rci =

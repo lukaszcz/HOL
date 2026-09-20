@@ -1,0 +1,29 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `term_size_bounded`
+
+``` hol4
+Term.term_size_bounded : int -> term -> int option
+```
+
+------------------------------------------------------------------------
+
+Counts raw term syntax up to a caller-supplied limit.
+
+`Term.term_size_bounded limit t` returns `SOME n` exactly when
+`Term.term_size t = n` and `n <= limit`. It returns `NONE` when `limit` is
+negative or the size exceeds it. Applications count once plus both children;
+abstractions count once plus the body, without separately counting the binder.
+
+The traversal is iterative and stops before incrementing beyond the limit.
+In the standard kernel it exposes a delayed closure one outer constructor at a
+time and does not normalize a complete abstraction body through `dest_abs`.
+Its work is proportional to the raw nodes visited before the bound, plus
+one-step closure-environment work and the pending traversal stack. It does not
+memoize shared subterms and makes no intrinsic-DAG complexity claim. The
+unbounded raw counter with the same node metric is `Term.term_size`; this is
+different from the convenience counter named `HolKernel.term_size`, which
+does not count application constructors.
+
+### Failure
+
+Never fails on a well-formed term.

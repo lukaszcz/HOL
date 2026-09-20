@@ -101,10 +101,17 @@ fun doCNF neg_tm =
     in (cnfv,cnf_thm,lfn,clauses) end
 
 fun undoCNF lfn clauses th = (* th is [ci] |-  F *)
-    let val insts = RBM.foldl (fn (v,t,insts) => (v |-> t)::insts) [] lfn
-        val inst_th = INST insts th
-        val th0 = List.foldl (fn ((_,cth),th) => PROVE_HYP cth th)
-                             inst_th clauses (* ~t |- F *)
+    let
+        (* Discharge the compact schematic CNF clauses before expanding the
+           definitional substitution.  Repeated PROVE_HYP after INST makes
+           every intermediate hypothesis-set operation traverse the expanded
+           Boolean circuits. *)
+        val discharged = List.foldl
+          (fn ((clause,_),theorem) => DISCH clause theorem) th clauses
+        val insts = RBM.foldl (fn (v,t,insts) => (v |-> t)::insts) [] lfn
+        val inst_th = INST insts discharged
+        val th0 = List.foldl (fn ((_,cth),theorem) => MP theorem cth)
+                             inst_th (List.rev clauses) (* ~t |- F *)
     in th0 end
 
 fun mk_model_thm cnfv lfn t f =

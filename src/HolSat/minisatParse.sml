@@ -124,7 +124,7 @@ fun getIntRoot fin idx =
    So this is faster (time and space) than building the clause term from the
    proof log.
 *)
-fun addClause lfn cl  sva vc clauseth fin lit1 id =
+fun addClause lfn roots cl sva vc clauseth fin lit1 id =
     let val orc = (rshift lit1)-1
           (*-1 because right now orc's in proof log start at 1*)
         val l = getIntRoot fin (sat_getint fin)
@@ -134,7 +134,7 @@ fun addClause lfn cl  sva vc clauseth fin lit1 id =
     in case l of
            []  => failwith
                     ("addClause:Failed parsing clause "^Int.toString id^"\n")
-         | _ => prepareRootClause lfn orc clauseth cl id
+         | _ => prepareRootClause lfn roots orc clauseth cl id
     end
 
 (* SML equivalent of  C-style eval of v&1=0 *)
@@ -142,29 +142,30 @@ fun isRoot v =
     Word.compare(Word.andb(Word.fromInt v,Word.fromInt 1),(Word.fromInt 0)) =
     EQUAL
 
-fun readTrace lfn cl sva vc clauseth fin id =
+fun readTrace lfn roots cl sva vc clauseth fin id =
     if BinIO.endOfStream fin then id
     else
       let val tmp = sat_getint fin
       in
         if isRoot tmp then
-          let val _ = addClause lfn cl sva vc clauseth fin tmp id
-          in readTrace lfn cl  sva vc clauseth fin (id+1) end
+          let val _ = addClause lfn roots cl sva vc clauseth fin tmp id
+          in readTrace lfn roots cl sva vc clauseth fin (id+1) end
         else
           let val isch = addBranch lfn cl sva fin tmp id
-          in if isch then readTrace lfn cl sva vc clauseth fin (id+1) (* chain*)
-             else readTrace lfn cl sva vc clauseth fin id
+          in if isch then
+               readTrace lfn roots cl sva vc clauseth fin (id+1) (* chain*)
+             else readTrace lfn roots cl sva vc clauseth fin id
           end (* deletion *)
         end
 
 exception Trivial
 
 (*build the clause/chain list *)
-fun parseTrace cl sva nr fname solver vc clauseth lfn proof =
+fun parseTrace roots cl sva nr fname solver vc clauseth lfn proof =
     let
         val fin = sat_fileopen (if isSome proof then valOf proof
                                 else fname^"."^(getSolverName solver)^".proof")
-        val id = readTrace lfn cl sva vc clauseth fin 0
+        val id = readTrace lfn roots cl sva vc clauseth fin 0
         val _ = sat_fileclose fin
      in SOME id end
 handle Io _ => NONE
@@ -179,8 +180,22 @@ clauseth: root clause vector. clauseth[i] is i'th root clause from original
 fun replayProof sva nr fname solver vc clauseth lfn proof =
     let val _ = (minisatResolve.counter:=0)
         val cl = Dynarray.array((Array.length clauseth) * 2,TRUTH)
-    in case parseTrace cl sva nr fname solver vc clauseth lfn proof of
-           SOME id => SOME (Dynarray.sub(cl,id-1))
+        fun trace message =
+          if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
+            (Feedback.HOL_MESG ("HOL SAT: " ^ message);
+             TextIO.flushOut TextIO.stdOut)
+          else ()
+        val _ = trace "resolution roots start"
+        val roots = minisatResolve.root_context clauseth
+        val _ = trace "resolution roots done"
+        val _ = trace "resolution trace start"
+    in case parseTrace roots cl sva nr fname solver vc clauseth lfn proof of
+           SOME id =>
+             let val _ = trace "resolution trace done"
+                 val result = minisatResolve.finish_resolution roots lfn
+                   clauseth (Dynarray.sub(cl,id-1))
+                 val _ = trace "resolution finish done"
+             in SOME result end
          | NONE => NONE
     end
 

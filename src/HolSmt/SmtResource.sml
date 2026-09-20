@@ -8,7 +8,11 @@ struct
   val ERR = Feedback.mk_HOL_ERR "SmtResource"
 
   (* P5.3: these are the single source of truth for the D12 budget. *)
-  val max_proof_bytes = 16 * 1024 * 1024
+  (* Complete CPC certificates for the Float8 Sterbenz regression produced
+     by cvc5 1.3.4 are about 22 MiB without printer-specific compaction.
+     Keep the admission boundary independent of a patched proof printer while
+     retaining a fixed, cheaply checked power-of-two cap. *)
+  val max_proof_bytes = 32 * 1024 * 1024
   (* Compatibility name retained for callers and diagnostics tests that
      predate the CPC proof-text gate. *)
   val max_z3_proof_bytes = max_proof_bytes
@@ -357,7 +361,7 @@ struct
     Position.toInt position
     handle Overflow => max_proof_bytes + 1
 
-  (* 'proof_start' is the byte count consumed while reading Z3's status.
+  (* 'proof_start' is the byte count consumed while reading solver status.
      Checking the remaining file size does no parsing and allocates no
      proof-sized string, so even very large outputs are rejected cheaply. *)
   fun remaining_file_bytes path proof_start =
@@ -399,8 +403,15 @@ struct
                 let val (rator, rand) = Term.dest_comb tm
                 in loop (rator :: rand :: pending, count) end
               else if Term.is_abs tm then
-                let val (binder, body) = Term.dest_abs tm
-                in loop (binder :: body :: pending, count) end
+                let
+                  val remaining = limit - count + 1
+                in
+                  case Term.term_size_bounded remaining tm of
+                    NONE => limit + 1
+                  | SOME _ =>
+                      let val (binder, body) = Term.dest_abs tm
+                      in loop (binder :: body :: pending, count) end
+                end
               else
                 loop (pending, count)
             end
@@ -430,7 +441,13 @@ struct
       let val (operator, operand) = Term.dest_comb term
       in [operator, operand] end
     else if Term.is_abs term then
-      let val (_, body) = Term.dest_abs term in [body] end
+      (case Term.term_size_bounded max_bv_replay_term_nodes term of
+         NONE =>
+           (check_term_size_for "BitVector" "binder-opening"
+              (max_bv_replay_term_nodes + 1);
+            [])
+       | SOME _ =>
+           let val (_, body) = Term.dest_abs term in [body] end)
     else []
 
   type bounded_structure = {
@@ -444,26 +461,65 @@ struct
   (* A compact diagnostic scan with a hard distinct-node bound.  Edges count
      children of each admitted DAG node once; identifier sizes come only from
      variable and constant metadata and never render a term. *)
-  fun bounded_structure limit root : bounded_structure =
+  fun bounded_structure_with_inspector inspect limit root : bounded_structure =
     let
+      val bucket_count = 4093
+      val seen_buckets =
+        Array.array (bucket_count, [] : Term.term list)
+      fun name_hash name =
+        let
+          fun loop index hash =
+            if index = String.size name then hash
+            else loop (index + 1)
+              ((hash * 33 + Char.ord (String.sub (name, index))) mod
+               bucket_count)
+        in loop 0 5381 end
+      fun pointer_hash term =
+        let
+          fun hash depth term =
+            if Term.is_var term then name_hash (#1 (Term.dest_var term))
+            else if Term.is_const term then
+              name_hash (#Name (Term.dest_thy_const term))
+            else if depth = 0 then
+              if Term.is_abs term then 17 else 19
+            else if Term.is_abs term then
+              let val (_, body) = Term.dest_abs term
+              in (23 + 37 * hash (depth - 1) body) mod bucket_count end
+            else
+              let val (operator, operand) = Term.dest_comb term
+              in
+                (29 + 37 * hash (depth - 1) operator +
+                 hash (depth - 1) operand) mod bucket_count
+              end
+        in hash 3 term end
+        handle Feedback.HOL_ERR _ => 31
+      fun seen term =
+        let
+          val index = pointer_hash term
+          val bucket = Array.sub (seen_buckets, index)
+        in
+          if List.exists
+               (fn seen_term => Portable.pointer_eq (term, seen_term)) bucket
+          then true
+          else
+            (Array.update (seen_buckets, index, term :: bucket); false)
+        end
       fun identifier_bytes term =
         String.size (Lib.fst (Term.dest_var term))
         handle Feedback.HOL_ERR _ =>
           String.size (#Name (Term.dest_thy_const term))
           handle Feedback.HOL_ERR _ => 0
-      fun loop ([], _, nodes, edges, depth, identifier) =
+      fun loop ([], nodes, edges, depth, identifier) =
             {dag_nodes = nodes, edges = edges, max_binder_depth = depth,
              max_identifier_bytes = identifier, complete = true}
-        | loop ((term, binder_depth) :: pending, seen, nodes, edges,
+        | loop ((term, binder_depth) :: pending, nodes, edges,
             depth, identifier) =
-            if List.exists
-                 (fn seen_term => Portable.pointer_eq (term, seen_term))
-                 seen then
-              loop (pending, seen, nodes, edges, depth, identifier)
+            if seen term then
+              loop (pending, nodes, edges, depth, identifier)
             else
               let
+                val _ = inspect term
                 val nodes = nodes + 1
-                val seen = term :: seen
                 val children = term_children term
                 val edges = saturated_add edges (List.length children)
                 val depth = Int.max (depth, binder_depth)
@@ -480,11 +536,14 @@ struct
                    max_binder_depth = depth,
                    max_identifier_bytes = identifier, complete = false}
                 else
-                  loop (pending, seen, nodes, edges, depth, identifier)
+                  loop (pending, nodes, edges, depth, identifier)
               end
     in
-      loop ([(root, 0)], [], 0, 0, 0, 0)
+      loop ([(root, 0)], 0, 0, 0, 0)
     end
+
+  fun bounded_structure limit root =
+    bounded_structure_with_inspector (fn _ => ()) limit root
 
   (* A bounded graph serialization for diagnostics and extracted fixtures.
      It records applications, abstractions, and identifier metadata with
@@ -564,6 +623,9 @@ struct
      metric. *)
   fun dag_nodes_up_to limit root =
     #dag_nodes (bounded_structure limit root)
+
+  fun dag_nodes_up_to_with_inspector inspect limit root =
+    #dag_nodes (bounded_structure_with_inspector inspect limit root)
 
   fun check_dag_size_for category case_id observed =
     if observed <= max_skeleton_replay_dag_nodes then ()

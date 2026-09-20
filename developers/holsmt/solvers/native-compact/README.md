@@ -4,8 +4,10 @@ This directory retains the reviewed native producer patches, pinned source
 identities, and conformance tests.  HOL's Z3 driver selects the compact typed
 parser and native printer option only for the explicit replacement version
 `4.11.2.0-holsmt-compact-prototype2`.  Ordinary Z3 versions retain the legacy
-proof format.  The cvc5 patch remains producer evidence for later semantic FP
-component integration; the HOL cvc5 driver does not enable compact output.
+proof format.  The cvc5 compact printer is retired from HOL's runtime path.
+Its patch remains historical producer evidence and also contains the distinct
+FP-component operand repair required by the measured prototype binary; the
+HOL cvc5 driver requests ordinary CPC output without the compact-name option.
 
 The Z3 patch includes a subsequently found quoted-symbol lexical repair and
 an explicit proof-result closure category.
@@ -72,8 +74,9 @@ Explicit native version labels:
 - Z3: `4.11.2.0-holsmt-compact-prototype2`.
 - cvc5: `1.3.4-holsmt-compact-prototype2`.
 
-Enable only the native output option, retaining the existing query and proof
-configuration:
+The Z3 compact option remains the supported version-selected runtime path.
+The cvc5 command below is retained only to reproduce the historical compact
+measurements; HOL does not issue it:
 
 ```sh
 z3-build/z3 -t:30000 proof=true pp.simplify_implies=false \
@@ -84,11 +87,13 @@ cvc5-build/bin/cvc5 --tlimit-per=30000 --produce-proofs \
   --proof-compact-names --fp-exp --sets-exp --lang smt emitted.smt2
 ```
 
-Keep HOL's 16 MiB raw certificate gate before parsing. A compact native stream
-still needs bounded tokens, edges, nesting, literal sizes and live graph state.
-Renaming is syntax preservation, and scalar definitions are term sharing;
-neither establishes a theorem. HOL must reconstruct the admitted certificate
-and check its exact conclusion, hypotheses and oracle tags.
+Keep HOL's 32 MiB raw certificate gate before parsing. This admits the measured
+23 MiB ordinary strong cvc5 certificates without a printer-specific dialect.
+Every native stream still needs bounded tokens, edges, nesting, literal sizes
+and live graph state. Renaming is syntax preservation, and scalar definitions
+are term sharing; neither establishes a theorem. HOL must reconstruct the
+admitted certificate and check its exact conclusion, hypotheses and oracle
+tags.
 
 ## Measured prototype gates
 
@@ -99,13 +104,13 @@ and check its exact conclusion, hypotheses and oracle tags.
 | Strong variable-mode positive FP | 23,040,748 | 13,269,637 | 25,273 commands / 3,693,462 tokens; same comparison |
 | Strong variable-mode negative FP | 22,777,678 | 13,121,607 | 25,301 commands / 3,650,287 tokens; same comparison |
 
-All compact streams have over 20% byte headroom against 16 MiB. The Z3 compact
-dialect is integrated behind its exact prototype version label and the
-Agreement stream has passed direct typed parsing and checked HOL replay. The FP
-measurements remain producer evidence: the cvc5 compact dialect still awaits
-the semantic component adapter and is disabled in the HOL driver. The FP inputs
-are the preserved strong natural public-is_finite probes, and are separately
-hashed from historical inputs.
+The Z3 compact dialect is integrated behind its exact prototype version label,
+and the Agreement stream has passed direct typed parsing and checked HOL
+replay. The cvc5 compact measurements remain historical producer evidence; its
+runtime path is retired. The 32 MiB HOL gate instead admits both measured
+ordinary strong FP certificates. The FP inputs are the preserved strong
+natural public-is_finite probes, and are separately hashed from historical
+inputs.
 
 The final-source Z3 executable has SHA-256
 `b3b935d3afd31d7d6e494426df78c5bfdb0523b84e0560e791f29a3addc683f3`.

@@ -55,7 +55,7 @@ uninterpreted sort and is never treated as an SMT FloatingPoint value.
 
 `SmtResource.sml` is the single budget module for checked replay; the FP
 bit-blast case and the Seq/Set/Bag/String/Array replay provers share its
-caps.  It defines the fixed D12 limits: 16 MiB of proof text before parsing,
+caps.  It defines the fixed D12 limits: 32 MiB of proof text before parsing,
 10 seconds per bit-blast step, and 200,000 term nodes.  A limit breach is an
 explicit `resource-gated: fp-bitblast;` outcome (other categories use their
 own `resource-gated:` prefixes), distinct from the D2 unsupported-shape

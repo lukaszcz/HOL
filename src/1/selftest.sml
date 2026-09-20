@@ -38,6 +38,51 @@ val Idy = mk_abs(y,y)
 val P = mk_var("P", Type.alpha --> Type.bool)
 
 val _ = let
+  val _ = tprint "Testing bounded raw term size"
+  val p = mk_var ("term_size_bounded_p", Type.bool)
+  val q = mk_var ("term_size_bounded_q", Type.bool)
+  val application = mk_comb (boolSyntax.negation, p)
+  val abstraction = mk_abs (p, application)
+  val shadowed = mk_abs (p, mk_abs (p, application))
+  val inserter = mk_abs (p, mk_abs (q, p))
+  fun lazy_beta application =
+    boolSyntax.rhs (Thm.concl (Thm.Beta (Thm.REFL application)))
+  val lazy_small = lazy_beta (mk_comb (inserter, boolSyntax.T))
+  val lazy_shifted = lazy_beta (mk_comb (inserter, q))
+  fun shared 0 = p
+    | shared n = let val body = shared (n - 1)
+                 in boolSyntax.mk_conj (body, body) end
+  val shared_body = shared 24
+  val lazy_large =
+    if Thm.kernelid = "expknl" then
+      Term.mk_abs (q, shared_body)
+    else
+      lazy_beta (mk_comb (inserter, shared_body))
+  val exact = [("leaf", p), ("application", application),
+               ("abstraction", abstraction), ("shadowed", shadowed),
+               ("lazy closure", lazy_small),
+               ("capture-sensitive lazy closure", lazy_shifted)]
+  fun exact_check (label, term) =
+    let val size = Term.term_size term
+    in
+      if Term.term_size_bounded size term <> SOME size then
+        die (label ^ " bounded size disagreed at the exact boundary")
+      else if Term.term_size_bounded (size - 1) term <> NONE then
+        die (label ^ " bounded size admitted one below the boundary")
+      else ()
+    end
+in
+  List.app exact_check exact;
+  if Term.term_size_bounded 0 p <> NONE orelse
+          Term.term_size_bounded 0 lazy_large <> NONE orelse
+          Term.term_size_bounded ~1 p <> NONE then
+    die "bounded term size accepted a zero/negative leaf budget"
+  else if Term.term_size_bounded 64 lazy_large <> NONE then
+    die "bounded term size admitted a large shared closure"
+  else OK ()
+end
+
+val _ = let
   val _ = tprint "Term.has_free_vars sharing and closure behavior"
   fun shared_branch 0 leaf = leaf
     | shared_branch depth leaf =
@@ -1500,6 +1545,48 @@ in
 end
 
 val _ = List.app (ignore o substtest) tests
+
+val _ = let
+  val _ = tprint "Term.subst sharing and simultaneous semantics"
+  val p = mk_var ("subst_sharing_p", bool)
+  val q = mk_var ("subst_sharing_q", bool)
+  fun independent 0 leaf = boolSyntax.mk_neg leaf
+    | independent depth leaf =
+        boolSyntax.mk_conj
+          (independent (depth - 1) leaf,
+           independent (depth - 1) leaf)
+  val shared_source = independent 8 p
+  val source = boolSyntax.mk_conj (shared_source, shared_source)
+  val result = Term.subst [p |-> T] source
+  val (left, right) = boolSyntax.dest_conj result
+  val absent = independent 8 q
+  val unchanged = Term.subst [p |-> T] absent
+  val simultaneous = Term.subst [p |-> q, q |-> T]
+    (boolSyntax.mk_conj (p, q))
+  val (sim_left, sim_right) = boolSyntax.dest_conj simultaneous
+  val collision = Term.subst [p |-> T]
+    (boolSyntax.mk_conj (boolSyntax.mk_neg p, boolSyntax.mk_neg q))
+  val (collision_left, collision_right) = boolSyntax.dest_conj collision
+  val binder = mk_var ("subst_sharing_binder", bool)
+  val capture = Term.subst [p |-> binder]
+    (mk_abs (binder, boolSyntax.mk_conj (p, binder)))
+  val (new_binder, capture_body) = dest_abs capture
+  val (capture_left, capture_right) = boolSyntax.dest_conj capture_body
+in
+  if not (Portable.pointer_eq (left, right)) then
+    die "Term.subst did not share independently equal results"
+  else if not (Portable.pointer_eq (absent, unchanged)) then
+    die "Term.subst rebuilt an unchanged root"
+  else if not (aconv sim_left q andalso aconv sim_right T) then
+    die "Term.subst recursively substituted a simultaneous residue"
+  else if not (aconv collision_left (boolSyntax.mk_neg T) andalso
+               aconv collision_right (boolSyntax.mk_neg q)) then
+    die "Term.subst confused colliding pointer-cache entries"
+  else if aconv new_binder binder orelse not (aconv capture_left binder) orelse
+          not (aconv capture_right new_binder) then
+    die "Term.subst changed capture-avoidance semantics"
+  else OK ()
+end
 
 val _ = print "Testing cond-printer after set_grammar_ancestry\n"
 val _ = set_trace "PP.avoid_unicode" 1

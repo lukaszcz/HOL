@@ -229,33 +229,101 @@ val empty_varset = HOLset.empty var_compare
 fun fast_term_eq (t1:term) (t2:term) = Portable.pointer_eq (t1,t2)
 
 fun compare (t1,t2) =
-    if fast_term_eq t1 t2 then EQUAL else
-    case (t1,t2) of
-      (t1 as Clos _, t2)     => compare (push_clos t1, t2)
-    | (t1, t2 as Clos _)     => compare (t1, push_clos t2)
-    | (u as Fv _, v as Fv _) => var_compare (u,v)
-    | (Fv _, _)              => LESS
-    | (Bv _, Fv _)           => GREATER
-    | (Bv i, Bv j)           => Int.compare (i,j)
-    | (Bv _, _)              => LESS
-    | (Const _, Fv _)        => GREATER
-    | (Const _, Bv _)        => GREATER
-    | (Const(c1,ty1),
-       Const(c2,ty2))        => (case KernelSig.id_compare (c1, c2)
-                                  of EQUAL => Type.compare (to_hol_type ty1,
-                                                            to_hol_type ty2)
-                                   | x => x)
-    | (Const _, _)           => LESS
-    | (Comb(M,N),Comb(P,Q))  => (case compare (M,P)
-                                  of EQUAL => compare (N,Q)
-                                   | x => x)
-    | (Comb _, Abs _)        => LESS
-    | (Comb _, _)            => GREATER
-    | (Abs(Fv(_, ty1),M),
-       Abs(Fv(_, ty2),N))    => (case Type.compare(ty1,ty2)
-                                  of EQUAL => compare (M,N)
-                                   | x => x)
-    | (Abs _, _)             => GREATER;
+  if fast_term_eq t1 t2 then EQUAL
+  else
+    let
+      val bucket_count = 4093
+      val cache = ref
+        (NONE : (((term * term) * order) list Array.array) option)
+      fun get_cache () =
+        case !cache of
+          SOME buckets => buckets
+        | NONE =>
+            let
+              val buckets = Array.array
+                (bucket_count, [] : ((term * term) * order) list)
+              val _ = cache := SOME buckets
+            in buckets end
+      fun string_hash string =
+        let
+          fun loop index hash =
+            if index = String.size string then hash
+            else loop (index + 1)
+              ((hash * 33 + Char.ord (String.sub (string, index))) mod
+               bucket_count)
+        in loop 0 5381 end
+      fun head_hash tm =
+        case tm of
+          Fv(name,_) => string_hash name
+        | Bv index => index mod bucket_count
+        | Const(id,_) => string_hash (KernelSig.id_toString id)
+        | Comb _ => 17
+        | Abs _ => 19
+        | Clos _ => 23
+      fun term_hash tm =
+        let
+          fun bounded 0 term = head_hash term
+            | bounded depth term =
+                case term of
+                  Comb(operator, operand) =>
+                    (bounded (depth - 1) operator * 37 +
+                     bounded (depth - 1) operand * 17 + 3) mod bucket_count
+                | Abs(_,body) =>
+                    (bounded (depth - 1) body * 41 + 5) mod bucket_count
+                | _ => head_hash term
+        in bounded 8 tm end
+      fun cache_index left right =
+        (term_hash left * 37 + term_hash right) mod bucket_count
+      fun lookup [] _ _ = NONE
+        | lookup ((((saved1, saved2), result) :: rest)) left right =
+            if fast_term_eq saved1 left andalso fast_term_eq saved2 right then
+              SOME result
+            else lookup rest left right
+      fun cmp depth left right =
+        if fast_term_eq left right then EQUAL
+        else if depth < 8 then compute (depth + 1) left right
+        else
+          let
+            val buckets = get_cache ()
+            val bucket = cache_index left right
+          in
+            case lookup (Array.sub(buckets,bucket)) left right of
+              SOME result => result
+            | NONE =>
+                let
+                  val result = compute (depth + 1) left right
+                  val _ = Array.update (buckets,bucket,
+                    (((left,right),result) :: Array.sub(buckets,bucket)))
+                in result end
+          end
+      and compute depth left right =
+        case (left,right) of
+          (left as Clos _, right) => cmp depth (push_clos left) right
+        | (left, right as Clos _) => cmp depth left (push_clos right)
+        | (u as Fv _, v as Fv _) => var_compare (u,v)
+        | (Fv _, _) => LESS
+        | (Bv _, Fv _) => GREATER
+        | (Bv i, Bv j) => Int.compare (i,j)
+        | (Bv _, _) => LESS
+        | (Const _, Fv _) => GREATER
+        | (Const _, Bv _) => GREATER
+        | (Const(c1,ty1), Const(c2,ty2)) =>
+            (case KernelSig.id_compare (c1,c2) of
+               EQUAL => Type.compare (to_hol_type ty1, to_hol_type ty2)
+             | ordering => ordering)
+        | (Const _, _) => LESS
+        | (Comb(M,N), Comb(P,Q)) =>
+            (case cmp depth M P of
+               EQUAL => cmp depth N Q
+             | ordering => ordering)
+        | (Comb _, Abs _) => LESS
+        | (Comb _, _) => GREATER
+        | (Abs(Fv(_,ty1),M), Abs(Fv(_,ty2),N)) =>
+            (case Type.compare (ty1,ty2) of
+               EQUAL => cmp depth M N
+             | ordering => ordering)
+        | (Abs _, _) => GREATER
+    in cmp 0 t1 t2 end
 
 (*---------------------------------------------------------------------------
  * Does a term contain a free variable?  Bound occurrences remain raw Bv
@@ -708,17 +776,84 @@ local
   fun EQ(t1,t2) = fast_term_eq t1 t2
   fun subsEQ(s1,s2) = s1 = s2
 in
-fun aconv t1 t2 = EQ(t1,t2) orelse
- case(t1,t2)
-  of (Comb(M,N),Comb(P,Q)) => aconv N Q andalso aconv M P
-   | (Abs(Fv(_,ty1),M),
-      Abs(Fv(_,ty2),N)) => ty1=ty2 andalso aconv M N
-   | (Clos(e1,b1),
-      Clos(e2,b2)) => (subsEQ(e1,e2) andalso EQ(b1,b2))
-                       orelse aconv (push_clos t1) (push_clos t2)
-   | (Clos _, _) => aconv (push_clos t1) t2
-   | (_, Clos _) => aconv t1 (push_clos t2)
-   | (M,N)       => (M=N)
+fun aconv t1 t2 =
+  let
+    val bucket_count = 4093
+    val cache = ref
+      (NONE : (((term * term) * bool) list Array.array) option)
+    fun get_cache () =
+      case !cache of
+        SOME buckets => buckets
+      | NONE =>
+          let
+            val buckets = Array.array
+              (bucket_count, [] : ((term * term) * bool) list)
+            val _ = cache := SOME buckets
+          in buckets end
+    fun string_hash string =
+      let
+        fun loop index hash =
+          if index = String.size string then hash
+          else loop (index + 1)
+            ((hash * 33 + Char.ord (String.sub (string, index))) mod
+             bucket_count)
+      in loop 0 5381 end
+    fun head_hash tm =
+      case tm of
+        Fv(name,_) => string_hash name
+      | Bv index => index mod bucket_count
+      | Const(id,_) => string_hash (KernelSig.id_toString id)
+      | Comb _ => 17
+      | Abs _ => 19
+      | Clos _ => 23
+    fun term_hash tm =
+      let
+        fun bounded 0 term = head_hash term
+          | bounded depth term =
+              case term of
+                Comb(operator, operand) =>
+                  (bounded (depth - 1) operator * 37 +
+                   bounded (depth - 1) operand * 17 + 3) mod bucket_count
+              | Abs(_,body) =>
+                  (bounded (depth - 1) body * 41 + 5) mod bucket_count
+              | _ => head_hash term
+      in bounded 8 tm end
+    fun pair_hash left right =
+      (term_hash left * 37 + term_hash right) mod bucket_count
+    fun lookup [] _ _ = NONE
+      | lookup ((((saved1, saved2), result) :: rest)) left right =
+          if EQ(saved1,left) andalso EQ(saved2,right) then SOME result
+          else lookup rest left right
+    fun compare depth left right =
+      if EQ(left,right) then true
+      else if depth < 8 then compute (depth + 1) left right
+      else
+        let
+          val buckets = get_cache ()
+          val bucket = pair_hash left right
+        in
+          case lookup (Array.sub(buckets,bucket)) left right of
+            SOME result => result
+          | NONE =>
+              let
+                val result = compute (depth + 1) left right
+                val _ = Array.update(buckets,bucket,
+                  (((left,right),result) :: Array.sub(buckets,bucket)))
+              in result end
+        end
+    and compute depth left right =
+      case (left,right) of
+        (Comb(M,N),Comb(P,Q)) =>
+          compare depth N Q andalso compare depth M P
+      | (Abs(Fv(_,ty1),M), Abs(Fv(_,ty2),N)) =>
+          ty1=ty2 andalso compare depth M N
+      | (Clos(e1,b1), Clos(e2,b2)) =>
+          (subsEQ(e1,e2) andalso EQ(b1,b2)) orelse
+          compare depth (push_clos left) (push_clos right)
+      | (Clos _, _) => compare depth (push_clos left) right
+      | (_, Clos _) => compare depth left (push_clos right)
+      | (M,N) => M=N
+  in compare 0 t1 t2 end
 end;
 
 
@@ -728,11 +863,70 @@ end;
 
 fun beta_conv (Comb(Abs(_,Body), Bv 0)) = Body
   | beta_conv (Comb(Abs(_,Body), Rand)) =
-     let fun subs((tm as Bv j),i)     = if i=j then Rand else tm
-           | subs(Comb(Rator,Rand),i) = Comb(subs(Rator,i),subs(Rand,i))
-           | subs(Abs(v,Body),i)      = Abs(v,subs(Body,i+1))
-           | subs (tm as Clos _,i)    = subs(push_clos tm,i)
-           | subs (tm,_) = tm
+     let
+       datatype beta_result = Unchanged | Changed of term
+       val bucket_count = 4093
+       val cache = Array.array
+         (bucket_count, [] : ((term * int) * beta_result) list)
+       fun string_hash string =
+         let
+           fun loop index hash =
+             if index = String.size string then hash
+             else loop (index + 1)
+               ((hash * 33 + Char.ord (String.sub (string, index))) mod
+                bucket_count)
+         in loop 0 5381 end
+       fun constructor_hash tm =
+         case tm of
+           Fv(name,_) => string_hash name
+         | Bv index => index mod bucket_count
+         | Const(id,_) => string_hash (KernelSig.id_toString id)
+         | Comb _ => 17
+         | Abs _ => 19
+         | Clos _ => 23
+       fun cache_index (tm, depth) =
+         (constructor_hash tm * 37 + depth) mod bucket_count
+       fun lookup (key as (tm, depth)) =
+         let
+           fun seek [] = NONE
+             | seek ((((saved, saved_depth), outcome)) :: rest) =
+                 if depth = saved_depth andalso fast_term_eq tm saved then
+                   SOME outcome
+                 else seek rest
+         in seek (Array.sub (cache, cache_index key)) end
+       fun finish tm Unchanged = tm
+         | finish _ (Changed result) = result
+       fun remember (key as (tm, _)) outcome =
+         let val index = cache_index key
+         in
+           Array.update
+             (cache, index, (key, outcome) :: Array.sub (cache, index));
+           finish tm outcome
+         end
+       fun subs (key as (tm, depth)) =
+         case lookup key of
+           SOME outcome => finish tm outcome
+         | NONE => remember key
+             (case tm of
+                Bv index =>
+                  if index = depth then Changed Rand else Unchanged
+              | Comb(Rator,Operand) =>
+                  let
+                    val Rator' = subs (Rator, depth)
+                    val Operand' = subs (Operand, depth)
+                  in
+                    if fast_term_eq Rator Rator' andalso
+                       fast_term_eq Operand Operand' then Unchanged
+                    else Changed (Comb(Rator', Operand'))
+                  end
+              | Abs(variable,body) =>
+                  let val body' = subs (body, depth + 1)
+                  in
+                    if fast_term_eq body body' then Unchanged
+                    else Changed (Abs(variable, body'))
+                  end
+              | tm as Clos _ => Changed (subs (push_clos tm, depth))
+              | _ => Unchanged)
      in
        subs (Body,0)
      end
@@ -790,24 +984,133 @@ local
 in
 fun subst [] = I
   | subst theta =
-    let val (fmap,b) = addb theta (emptysubst, true)
-        fun vsubs (v as Fv _) = (case peek(fmap,v) of NONE => v | SOME y => y)
-          | vsubs (Comb(Rator,Rand)) = Comb(vsubs Rator, vsubs Rand)
-          | vsubs (Abs(Bvar,Body)) = Abs(Bvar,vsubs Body)
-          | vsubs (c as Clos _) = vsubs (push_clos c)
-          | vsubs tm = tm
-        fun subs tm =
-          case peek(fmap,tm)
-           of SOME residue => residue
-            | NONE =>
-              (case tm
-                of Comb(Rator,Rand) => Comb(subs Rator, subs Rand)
-                 | Abs(Bvar,Body) => Abs(Bvar,subs Body)
-                 | Clos _        => subs(push_clos tm)
-                 |   _         => tm)
-    in
-      (if b then vsubs else subs)
-    end
+    let
+      (* Most kernel substitutions are tiny.  Pay for a deeper cache key only
+         when a large simultaneous substitution can revisit a broad,
+         homogeneous term graph. *)
+      val large_substitution = List.length theta > 256
+      val (fmap,b) = addb theta (emptysubst, true)
+      fun apply root =
+        let
+          datatype subst_result = Unchanged | Changed of term
+          (* Portable ML provides pointer equality without a pointer hash.
+             A bounded syntax hash distinguishes homogeneous Boolean graphs
+             whose roots all have the same operator.  Collisions are harmless
+             because pointer identity remains the decisive cache key. *)
+          val bucket_count = if large_substitution then 16381 else 4093
+          val cache = Array.array
+            (bucket_count, [] : (term * subst_result) list)
+          fun string_hash string =
+            let
+              fun loop index hash =
+                if index = String.size string then hash
+                else loop (index + 1)
+                  ((hash * 33 + Char.ord (String.sub (string, index))) mod
+                   bucket_count)
+            in loop 0 5381 end
+          fun head_hash tm =
+            case tm of
+              Fv(name,_) => string_hash name
+            | Bv index => index mod bucket_count
+            | Const(id,_) => string_hash (KernelSig.id_toString id)
+            | Comb _ => 17
+            | Abs _ => 19
+            | Clos _ => 23
+          fun cache_index tm =
+            let
+              fun spine (Comb(operator, operand), arity, _) =
+                    spine (operator, arity + 1, SOME operand)
+                | spine (head, arity, first) = (head, arity, first)
+              fun shallow term =
+                let
+                  val (head, arity, first) = spine (term, 0, NONE)
+                  val first_hash = case first of NONE => 0 | SOME arg =>
+                    head_hash (#1 (spine (arg, 0, NONE)))
+                in
+                  (head_hash head * 37 + arity * 17 + first_hash) mod
+                    bucket_count
+                end
+              fun hash 0 term = head_hash term
+                | hash depth term =
+                    case term of
+                      Comb(operator, operand) =>
+                        (31 + 41 * hash (depth - 1) operator +
+                         67 * hash (depth - 1) operand) mod bucket_count
+                    | Abs(_, body) =>
+                        (37 + 73 * hash (depth - 1) body) mod bucket_count
+                    | _ => head_hash term
+            in if large_substitution then hash 8 tm else shallow tm end
+          fun lookup tm =
+            let
+              fun seek [] = NONE
+                | seek ((saved, outcome) :: rest) =
+                    if fast_term_eq tm saved then SOME outcome else seek rest
+            in seek (Array.sub (cache, cache_index tm)) end
+          fun finish tm Unchanged = tm
+            | finish _ (Changed result) = result
+          fun remember tm outcome =
+            let val index = cache_index tm
+            in
+              Array.update
+                (cache, index, (tm, outcome) :: Array.sub (cache, index));
+              finish tm outcome
+            end
+          fun vsubs tm =
+            case lookup tm of
+              SOME outcome => finish tm outcome
+            | NONE => remember tm
+                (case tm of
+                   v as Fv _ =>
+                     (case peek(fmap,v) of
+                        NONE => Unchanged
+                      | SOME y =>
+                          if fast_term_eq v y then Unchanged else Changed y)
+                 | Comb(Rator,Rand) =>
+                     let val Rator' = vsubs Rator
+                         val Rand' = vsubs Rand
+                     in
+                       if fast_term_eq Rator Rator' andalso
+                          fast_term_eq Rand Rand'
+                       then Unchanged
+                       else Changed (Comb(Rator',Rand'))
+                     end
+                 | Abs(Bvar,Body) =>
+                     let val Body' = vsubs Body
+                     in if fast_term_eq Body Body' then Unchanged
+                        else Changed (Abs(Bvar,Body'))
+                     end
+                 | c as Clos _ => Changed (vsubs (push_clos c))
+                 | _ => Unchanged)
+          fun subs tm =
+            case lookup tm of
+              SOME outcome => finish tm outcome
+            | NONE => remember tm
+                (case peek(fmap,tm) of
+                   SOME residue =>
+                     if fast_term_eq tm residue then Unchanged
+                     else Changed residue
+                 | NONE =>
+                     (case tm of
+                        Comb(Rator,Rand) =>
+                          let val Rator' = subs Rator
+                              val Rand' = subs Rand
+                          in
+                            if fast_term_eq Rator Rator' andalso
+                               fast_term_eq Rand Rand'
+                            then Unchanged
+                            else Changed (Comb(Rator',Rand'))
+                          end
+                      | Abs(Bvar,Body) =>
+                          let val Body' = subs Body
+                          in if fast_term_eq Body Body' then Unchanged
+                             else Changed (Abs(Bvar,Body'))
+                          end
+                      | Clos _ => Changed (subs(push_clos tm))
+                      | _ => Unchanged))
+        in
+          (if b then vsubs else subs) root
+        end
+    in apply end
 end
 
 (*---------------------------------------------------------------------------*
@@ -1224,6 +1527,26 @@ fun size acc tlist =
         | _ => size (1 + acc) ts
       end
 fun term_size t = size 0 [t]
+
+(* Counts the same raw nodes as [term_size], but stops before the count would
+   exceed [limit].  A delayed closure is exposed one outer constructor at a
+   time; unlike [dest_abs], this never normalizes a complete abstraction
+   body. *)
+fun term_size_bounded limit root =
+  if limit < 0 then NONE
+  else
+    let
+      fun count ([], total) = SOME total
+        | count (tm :: pending, total) =
+            if total = limit then NONE
+            else
+              (case tm of
+                 Clos _ => count (push_clos tm :: pending, total)
+               | Comb (operator, operand) =>
+                   count (operator :: operand :: pending, total + 1)
+               | Abs (_, body) => count (body :: pending, total + 1)
+               | _ => count (pending, total + 1))
+    in count ([root], 0) end
 
 (*---------------------------------------------------------------------------*
  *  Raw syntax prettyprinter for terms.                                      *

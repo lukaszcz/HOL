@@ -289,7 +289,9 @@ structure CVC = struct
             SmtLib.parser_dicts_for_solver_translation "cvc5" translation
           val proof =
             SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
-              outfile proof_start instream (parse (ty_dict, tm_dict))
+              outfile proof_start instream
+              (SmtResource.profile_phase "cvc/cpc-parse"
+                (parse (ty_dict, tm_dict)))
             handle Feedback.HOL_ERR holerr =>
               (TextIO.closeIn instream;
                if SmtResource.is_resource_gate holerr then
@@ -299,8 +301,9 @@ structure CVC = struct
                    (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
-          val thm = quiet_replay
-            (replay (SmtLib.translation_definitions translation))
+          val thm = SmtResource.profile_phase "cvc/cpc-replay"
+            (quiet_replay
+              (replay (SmtLib.translation_definitions translation)))
             (finite_hyps @ As, g, proof)
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
@@ -321,10 +324,8 @@ structure CVC = struct
     "--proof-granularity=dsl-rewrite --fp-exp --sets-exp --lang smt "
 
   fun cpc_command (_, (_, arrays_exp)) =
-    if arrays_exp then
-      cpc_proof_cmd ^ "--arrays-exp "
-    else
-      cpc_proof_cmd
+    cpc_proof_cmd ^
+    (if arrays_exp then "--arrays-exp " else "")
 
   val CVC_SMT_CPC_Prover =
     mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_command

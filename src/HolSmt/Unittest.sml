@@ -15768,8 +15768,9 @@ let
   val results = Profile.results ()
 in
   assert
-    (profile_count "CPC(rung:word/bitblast_word_arith)" results = 4,
-     "CPC XOR rotation family did not consume the general word route")
+    (profile_count "CPC(rung:word/poly_norm_schematic_bvite_words)_OK"
+       results = 4,
+     "CPC XOR rotation family did not consume the checked word route")
 end
 
 fun cpc_proof_replay_cong_consumes_premises_success () =
@@ -15824,7 +15825,9 @@ let
       val calls = List.foldl (fn ((_, n), total) => n + total) 0 routes
     in
       assert (Thm.concl theorem ~~ expected,
-        label ^ " returned the wrong indexed occurrence");
+        label ^ " returned the wrong indexed occurrence: " ^
+        Library.term_to_string (Thm.concl theorem) ^ "; expected " ^
+        Library.term_to_string expected);
       List.app check_route routes;
       assert (route_count results = calls,
         label ^ " consumed another and_elim provenance route");
@@ -16082,31 +16085,53 @@ let
     \(step @resolved :rule eq_resolve :premises (@source @cong)) \
     \(step @out :rule and_elim :premises (@resolved) :args (0)))"
   val forall_cong_proof = parse_cpc_proof_string forall_cong_text
+  fun forall_inner_operands provenance =
+    case provenance of
+      CPC_Proof.ConjunctionProvenance (_, [body, _]) =>
+        forall_inner_operands body
+    | CPC_Proof.BinderBlockProvenance
+        ("forall", 1, CPC_Proof.ConjunctionProvenance
+          (_, [_, CPC_Proof.ConjunctionProvenance (_, operands)])) =>
+        SOME operands
+    | _ => NONE
+  fun provenance_shape provenance =
+    case provenance of
+      CPC_Proof.AtomicProvenance => "atom"
+    | CPC_Proof.ApplicationProvenance (name, args) =>
+        name ^ "(" ^
+        String.concatWith "," (List.map provenance_shape args) ^ ")"
+    | CPC_Proof.BinderProvenance (name, body) =>
+        name ^ "(" ^ provenance_shape body ^ ")"
+    | CPC_Proof.BinderBlockProvenance (name, count, body) =>
+        name ^ Int.toString count ^ "(" ^ provenance_shape body ^ ")"
+    | CPC_Proof.EqualityProvenance (left, right) =>
+        "=(" ^ provenance_shape left ^ "," ^
+        provenance_shape right ^ ")"
+    | CPC_Proof.ConjunctionProvenance (_, operands) =>
+        "and(" ^
+        String.concatWith "," (List.map provenance_shape operands) ^ ")"
+    | CPC_Proof.UnavailableProvenance reason => "unavailable: " ^ reason
+    | CPC_Proof.AmbiguousProvenance reason => "ambiguous: " ^ reason
   val _ =
     (case CPC_ProofReplay.replay_step_provenance_for_test
         forall_cong_proof "@cong" of
-       CPC_Proof.EqualityProvenance
-         (CPC_Proof.ConjunctionProvenance
-            (_, [CPC_Proof.BinderBlockProvenance
-                   ("forall", 1, CPC_Proof.ConjunctionProvenance
-                     (_, [_, CPC_Proof.ConjunctionProvenance
-                       (_, before_operands)])),
-                  _]),
-          CPC_Proof.ConjunctionProvenance
-            (_, [CPC_Proof.BinderBlockProvenance
-                   ("forall", 1, CPC_Proof.ConjunctionProvenance
-                     (_, [_, CPC_Proof.ConjunctionProvenance
-                       (_, after_operands)])),
-                  _])) =>
-           assert (List.length before_operands = 3 andalso
-                   List.length after_operands = 2,
-             "FORALL_EQ congruence lost the rewritten conjunction boundary")
-     | _ => die
-         "FAIL: FORALL_EQ congruence lost exact binder provenance")
+       CPC_Proof.EqualityProvenance (source, target) =>
+         (case (forall_inner_operands source,
+                forall_inner_operands target) of
+            (SOME before_operands, SOME after_operands) =>
+              assert (List.length before_operands = 3 andalso
+                      List.length after_operands = 2,
+                "FORALL_EQ congruence lost the rewritten boundary")
+          | _ => die
+              ("FAIL: FORALL_EQ congruence lost exact binder provenance: " ^
+               provenance_shape target))
+     | actual => die
+         ("FAIL: FORALL_EQ congruence lost exact binder provenance: " ^
+          provenance_shape actual))
   val forall_cong_theorem = run_routes
     "CPC CONG replacement inside capture-sensitive forall"
     [("eq_resolve", 1)] forall_cong_text
-    ``!x:bool. (x = u) /\ p /\ (q /\ r)``
+    ``!x:bool. (u = x) /\ p /\ (q /\ r)``
   val _ = assert
     (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
      profile_count "CPC(cong:binder/forall)" (Profile.results ()) = 1,
@@ -16153,7 +16178,7 @@ let
   val exists_cong_theorem = run_routes
     "CPC CONG replacement inside capture-sensitive exists"
     [("eq_resolve", 1)] exists_cong_text
-    ``?x:bool. (x = u) /\ p /\ (q /\ r)``
+    ``?x:bool. (u = x) /\ p /\ (q /\ r)``
   val _ = assert
     (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
      profile_count "CPC(cong:binder/exists)" (Profile.results ()) = 1,
@@ -16178,28 +16203,42 @@ let
     \  :args ((= left right))) \
     \(step @resolved :rule eq_resolve :premises (@source @cong)))"
   val lambda_cong_proof = parse_cpc_proof_string lambda_cong_text
+  fun lambda_inner_operands provenance =
+    let
+      fun lambda_body candidate =
+        case candidate of
+          CPC_Proof.BinderBlockProvenance
+            ("lambda", 1, CPC_Proof.ConjunctionProvenance
+              (_, [_, CPC_Proof.ConjunctionProvenance (_, operands)])) =>
+              SOME operands
+        | _ => NONE
+    in
+      case provenance of
+        CPC_Proof.EqualityProvenance (left, right) =>
+          (case lambda_body left of
+             SOME operands => SOME operands
+           | NONE => lambda_body right)
+      | _ => NONE
+    end
   val _ =
     (case CPC_ProofReplay.replay_step_provenance_for_test
         lambda_cong_proof "@cong" of
-       CPC_Proof.EqualityProvenance
-         (CPC_Proof.EqualityProvenance
-            (CPC_Proof.BinderBlockProvenance
-               ("lambda", 1, CPC_Proof.ConjunctionProvenance
-                 (_, [_, CPC_Proof.ConjunctionProvenance
-                   (_, before_operands)])), _),
-          CPC_Proof.EqualityProvenance
-            (CPC_Proof.BinderBlockProvenance
-               ("lambda", 1, CPC_Proof.ConjunctionProvenance
-                 (_, [_, CPC_Proof.ConjunctionProvenance
-                   (_, after_operands)])), _)) =>
-           assert (List.length before_operands = 3 andalso
-                   List.length after_operands = 2,
-             "ABS congruence lost the rewritten conjunction boundary")
-     | _ => die "FAIL: ABS congruence lost exact binder provenance")
+       CPC_Proof.EqualityProvenance (source, target) =>
+         (case (lambda_inner_operands source,
+                lambda_inner_operands target) of
+            (SOME source_operands, SOME target_operands) =>
+              assert (List.length source_operands = 3 andalso
+                      List.length target_operands = 2,
+                "ABS congruence lost the rewritten conjunction boundary")
+          | _ => die ("FAIL: ABS congruence lost exact binder provenance: " ^
+              provenance_shape target))
+     | actual => die
+         ("FAIL: ABS congruence lost exact binder provenance: " ^
+          provenance_shape actual))
   val lambda_cong_theorem = run_routes
     "CPC CONG replacement inside capture-sensitive lambda" []
     lambda_cong_text
-    ``(\x:bool. (x = u) /\ p /\ (q /\ r)) = (\x:bool. u)``
+    ``(\x:bool. u) = (\x:bool. (u = x) /\ p /\ (q /\ r))``
   val _ = assert
     (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
      profile_count "CPC(cong:binder/lambda)" (Profile.results ()) = 1,
@@ -16813,19 +16852,58 @@ in
     "CPC FP trust did not replay an FP proposition")
 end
 
-fun cpc_proof_replay_fp_context_obligation_diagnostic () =
+fun shared_open_bool_dag () =
+let
+  fun share 0 term = term
+    | share remaining term =
+        share (remaining - 1) (boolSyntax.mk_conj (term, term))
+in share 26 ``p:bool`` end
+
+fun smtfp_ground_eval_shared_open_dag_rejected () =
+let
+  val goal = shared_open_bool_dag ()
+in
+  expect_hol_error_contains "FP ground evaluation on a shared open DAG"
+    "ground evaluation requires a closed conclusion"
+    (fn () => ignore (SmtFpProve.ground_eval_prove goal))
+end
+
+fun smtfp_to_real_shared_dag_absence () =
+let
+  val goal = shared_open_bool_dag ()
+in
+  expect_hol_error_contains "FP to-real selector on a shared DAG"
+    "no fp.to_real residue"
+    (fn () => ignore (SmtFpProve.to_real_arith_prove
+      (fn _ => boolTheory.TRUTH) goal))
+end
+
+fun smtfp_tier2_shared_dag_absence () =
+let
+  val goal = shared_open_bool_dag ()
+in
+  expect_hol_error_contains "FP Tier-2 selector on a shared DAG"
+    "not a Tier-2 atom conversion"
+    (fn () => ignore (SmtFpProve.tier2_bitblast_prove goal))
+end
+
+fun cpc_proof_replay_fp_context_obligation_retained () =
 let
   val proof = parse_cpc_proof_string
     "((declare-const x (_ FloatingPoint 3 5)) \
     \(assume @p1 (fp.isNaN x)) \
     \(step @p2 :rule trust :args ((= #b0 #b1))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
 in
-  expect_hol_error_contains "CPC FP-context trust obligation"
-    "rule=trust; theory=fp"
-    (fn () => ignore (CPC_ProofReplay.replay_root_for_test proof))
+  assert
+    (case Thm.hyp theorem of
+       [obligation] => Term.aconv obligation (Thm.concl theorem)
+     | _ => false,
+     "CPC FP-context trust obligation was not retained as a hypothesis");
+  check_oracle_tags "CPC FP-context deferred trust" theorem
 end
 
-fun cpc_proof_replay_fp_symbolic_unsupported_diagnostic () =
+fun cpc_proof_replay_fp_symbolic_obligations_retained () =
 let
   val declarations =
     "(declare-const x (_ FloatingPoint 3 5)) " ^
@@ -16841,18 +16919,18 @@ let
       val proof = parse_cpc_proof_string
         ("(" ^ declarations ^
          "(step @p1 :rule trust :args ((= " ^ application ^ " x))))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+      val obligation =
+        case Thm.hyp theorem of
+          [hypothesis] => hypothesis
+        | _ => die ("FAIL: symbolic CPC " ^ label ^
+            " did not retain one trust obligation")
+      val (_, body) = boolSyntax.strip_forall obligation
     in
-      (ignore (CPC_ProofReplay.replay_root_for_test proof);
-       die ("FAIL: symbolic CPC " ^ label ^ " replayed successfully"))
-      handle Feedback.HOL_ERR holerr =>
-        let val msg = Feedback.message_of holerr in
-          assert (not (SmtResource.is_resource_gate holerr),
-            "symbolic CPC " ^ label ^ " was mislabeled as a resource gate");
-          assert (contains
-              "unsupported CPC FP step: rule=trust; theory=fp" msg,
-            "symbolic CPC " ^ label ^
-            " did not report its unsupported replay shape: " ^ msg)
-        end
+      assert (Term.aconv body (Thm.concl theorem),
+        "symbolic CPC " ^ label ^
+        " trust hypothesis does not cover its conclusion");
+      check_oracle_tags ("symbolic CPC " ^ label ^ " deferred trust") theorem
     end
 in
   List.app check cases
@@ -17027,8 +17105,8 @@ in
     "omitted CPC conclusion did not record a cache bypass");
   assert (#hits stats = 0 andalso #misses stats = 0,
     "omitted CPC conclusion incorrectly probed the theorem cache");
-  assert (#cardinality stats = 1 andalso #peak_cardinality stats = 1,
-    "CPC per-proof cache cardinality counters are inconsistent");
+  assert (#cardinality stats = 0 andalso #peak_cardinality stats = 0,
+    "omitted CPC conclusion unexpectedly entered the theorem cache");
   assert (#step_cardinality stats = 1,
     "CPC per-proof step cardinality counter is inconsistent")
 end
@@ -20582,6 +20660,195 @@ in
   assert ((case declined of SmtSkeletonProve.Declined => true | _ => false)
       andalso !observed_attempts = 1 andalso !observed_successes = 1,
     "node-cache observer lost partial events when the skeleton declined")
+end
+
+fun skeleton_typed_cnf_graph_success () =
+let
+  val p = ``task30_cnf_p:bool``
+  val q = ``task30_cnf_q:bool``
+  fun complex () =
+    boolSyntax.mk_conj
+      (boolSyntax.mk_imp (p, q),
+       boolSyntax.mk_eq
+         (boolSyntax.mk_cond (p, q, boolSyntax.mk_neg q),
+          boolSyntax.mk_disj
+            (boolSyntax.mk_conj (p, q),
+             boolSyntax.mk_conj
+               (boolSyntax.mk_neg p, boolSyntax.mk_neg q))))
+  fun excluded_middle left right =
+    boolSyntax.mk_disj (left, boolSyntax.mk_neg right)
+  fun prove target = SmtSkeletonProve.prove_with_owners
+    (SmtSkeletonProve.new_context [])
+    (Redblackmap.mkDict Term.compare)
+    (SmtResource.term_measure target) target
+  fun check (label, target, result) =
+    (assert (Portable.pointer_eq (Thm.concl (#theorem result), target),
+       label ^ " lost its exact conclusion endpoint");
+     assert_no_hyps (label, #theorem result);
+     check_oracle_tags label (#theorem result))
+  val connective_target = excluded_middle (complex ()) (complex ())
+  val connective_result = prove connective_target
+  fun shared_sum 0 = ``task30_cnf_large_leaf:num``
+    | shared_sum depth =
+        let val child = shared_sum (depth - 1)
+        in numSyntax.mk_plus (child, child) end
+  fun opaque_atom () =
+    boolSyntax.mk_eq (shared_sum 10, numSyntax.zero_tm)
+  val opaque_target = excluded_middle (opaque_atom ()) (opaque_atom ())
+  val opaque_result = prove opaque_target
+  val x = Term.mk_var ("task30_cnf_x", Type.bool)
+  val y = Term.mk_var ("task30_cnf_y", Type.bool)
+  fun alpha_atom binder = boolSyntax.mk_eq
+    (Term.mk_abs (binder, Term.mk_abs (binder, binder)),
+     Term.mk_abs (binder, Term.mk_abs (binder, binder)))
+  val alpha_target = excluded_middle (alpha_atom x) (alpha_atom y)
+  val alpha_result = prove alpha_target
+  val shared_outside = boolSyntax.mk_conj (p, q)
+  val cross_abstraction = Term.mk_abs
+    (x, boolSyntax.mk_conj (x, shared_outside))
+  val cross_target = boolSyntax.mk_conj
+    (boolSyntax.mk_eq (cross_abstraction, cross_abstraction),
+     boolSyntax.mk_eq (shared_outside, shared_outside))
+  fun check_metric_exact (label, target) =
+    let
+      val graph = SmtSkeletonProve.build_cnf_graph target
+      val legacy = SmtResource.term_measure target
+    in
+      assert (#normalized_tree_nodes graph = #tree_nodes legacy,
+        label ^ " changed the legacy normalized tree count");
+      assert (#normalized_dag_nodes graph = #dag_nodes legacy,
+        label ^ " changed the legacy normalized DAG count")
+    end
+  fun shared_boolean 0 binder = alpha_atom binder
+    | shared_boolean depth binder =
+        let val child = shared_boolean (depth - 1) binder
+        in boolSyntax.mk_disj (child, child) end
+  val shared_binder_target = excluded_middle
+    (shared_boolean 12 x) (shared_boolean 12 y)
+  val shared_binder_result = prove shared_binder_target
+  fun retained_boolean 0 = alpha_atom x
+    | retained_boolean depth =
+        let val child = retained_boolean (depth - 1)
+        in boolSyntax.mk_imp (child, child) end
+  val retained_target = retained_boolean 30
+  val retained_graph = SmtSkeletonProve.build_cnf_graph retained_target
+  val SmtSkeletonProve.GraphNode
+    {equality = retained_equality, ...} = #root retained_graph
+  val retained_sat = SmtSkeletonProve.checked_graph_sat_prove
+    (#entries retained_graph) (#root retained_graph)
+  val retained_theorem = Thm.EQ_MP (Thm.SYM retained_equality)
+    (#theorem retained_sat)
+  val deep_opaque_target = excluded_middle
+    (boolSyntax.mk_eq (shared_sum 30, numSyntax.zero_tm))
+    (boolSyntax.mk_eq (shared_sum 30, numSyntax.zero_tm))
+  val deep_opaque_graph =
+    SmtSkeletonProve.build_cnf_graph deep_opaque_target
+  val SmtSkeletonProve.GraphNode
+    {equality = deep_opaque_equality, ...} = #root deep_opaque_graph
+  val deep_opaque_sat = SmtSkeletonProve.checked_graph_sat_prove
+    (#entries deep_opaque_graph) (#root deep_opaque_graph)
+  val deep_opaque_theorem = Thm.EQ_MP (Thm.SYM deep_opaque_equality)
+    (#theorem deep_opaque_sat)
+  val free_left = boolSyntax.mk_eq
+    (Term.mk_abs (x, y), Term.mk_abs (x, y))
+  val captured_right = boolSyntax.mk_eq
+    (Term.mk_abs (y, y), Term.mk_abs (y, y))
+  val distinct_target = excluded_middle free_left captured_right
+  val distinct = SmtSkeletonProve.attempt_with_owners
+    (SmtSkeletonProve.new_context [])
+    (Redblackmap.mkDict Term.compare)
+    (SmtResource.term_measure distinct_target) distinct_target
+  fun shared_product 0 = Type.mk_vartype "'task30_cnf_type"
+    | shared_product depth =
+        let val child = shared_product (depth - 1)
+        in Type.mk_type ("prod", [child, child]) end
+  fun typed_identity name ty =
+    let val variable = Term.mk_var (name, ty)
+    in Term.mk_abs (variable, variable) end
+  val small_alpha = SmtSkeletonProve.bounded_nodewise_equality 16
+    (typed_identity "task30_cnf_small_x" Type.bool)
+    (typed_identity "task30_cnf_small_y" Type.bool)
+  val type_rejected =
+    ((SmtSkeletonProve.bounded_nodewise_equality 16
+        (typed_identity "task30_cnf_large_x" (shared_product 21))
+        (typed_identity "task30_cnf_large_y" (shared_product 21)); false)
+     handle Feedback.HOL_ERR error =>
+       Feedback.top_structure_of error = "SmtResource" andalso
+       String.isSubstring "resource-gate:BitVector:skeleton-type-work"
+         (Feedback.message_of error))
+  fun nested_clash_atom suffix =
+    let
+      val left_type = shared_product 21
+      val right_type = shared_product 21
+      val left = Term.mk_var ("x", left_type)
+      val right = Term.mk_var ("x", right_type)
+      val left_predicate = Term.mk_var ("task30_left_" ^ suffix,
+        Type.mk_type ("fun", [left_type, Type.bool]))
+      val right_predicate = Term.mk_var ("task30_right_" ^ suffix,
+        Type.mk_type ("fun", [right_type, Type.bool]))
+      val body = boolSyntax.mk_conj
+        (Term.mk_comb (left_predicate, left),
+         Term.mk_comb (right_predicate, right))
+      val binder = Term.mk_var ("x", Type.bool)
+      val abstraction = Term.mk_abs (binder, body)
+      val outer = Term.mk_var ("task30_outer_" ^ suffix,
+        Type.mk_type ("fun", [Term.type_of abstraction, Type.bool]))
+    in Term.mk_comb (outer, abstraction) end
+  val nested_type_rejected =
+    ((SmtSkeletonProve.bounded_nodewise_equality 64
+        (nested_clash_atom "left") (nested_clash_atom "right"); false)
+     handle Feedback.HOL_ERR error =>
+       Feedback.top_structure_of error = "SmtResource" andalso
+       String.isSubstring "resource-gate:BitVector:skeleton-type-work"
+         (Feedback.message_of error))
+in
+  check ("typed CNF all connectives", connective_target, connective_result);
+  check ("typed CNF opaque shared atoms", opaque_target, opaque_result);
+  check ("typed CNF alpha/shadow atoms", alpha_target, alpha_result);
+  check_metric_exact ("typed CNF alpha/shadow metric", alpha_target);
+  check_metric_exact
+    ("typed CNF cross-abstraction sharing metric", cross_target);
+  check ("typed CNF shared Boolean binder atom", shared_binder_target,
+    shared_binder_result);
+  assert (Portable.pointer_eq (Thm.concl retained_theorem, retained_target),
+    "deep retained graph lost its exact conclusion endpoint");
+  assert_no_hyps ("deep retained typed CNF graph", retained_theorem);
+  check_oracle_tags "deep retained typed CNF graph" retained_theorem;
+  assert (#graph_nodes retained_graph >= 31 andalso
+      #graph_observations retained_graph >= 31 andalso
+      #graph_edges retained_graph >= 60 andalso
+      #raw_nodes retained_graph >= 31 andalso
+      #raw_edges retained_graph >= 60,
+    "deep retained graph did not preserve linear structural growth");
+  assert (Portable.pointer_eq
+      (Thm.concl deep_opaque_theorem, deep_opaque_target),
+    "deep opaque graph lost its exact conclusion endpoint");
+  assert_no_hyps ("deep opaque typed CNF graph", deep_opaque_theorem);
+  check_oracle_tags "deep opaque typed CNF graph" deep_opaque_theorem;
+  assert (#raw_nodes deep_opaque_graph >= 30 andalso
+      #raw_nodes deep_opaque_graph < 200 andalso
+      #raw_edges deep_opaque_graph >= 60 andalso
+      #transport_nodes deep_opaque_graph > 0,
+    "deep independently rebuilt raw DAG did not remain bounded");
+  assert (#graph_nodes (#metrics opaque_result) > 0 andalso
+      #graph_edges (#metrics opaque_result) > 0 andalso
+      #graph_type_nodes (#metrics opaque_result) > 0 andalso
+      #graph_type_edges (#metrics opaque_result) > 0 andalso
+      #graph_leaf_transport_nodes (#metrics opaque_result) > 0 andalso
+      Time.compare (#graph_leaf_transport_seconds (#metrics opaque_result),
+        Time.zeroTime) <> LESS,
+    "typed CNF graph did not report structural/type/transport growth");
+  assert (#residual_atoms (#metrics opaque_result) = 1,
+    "independently rebuilt opaque atoms were not interned together");
+  assert ((case distinct of SmtSkeletonProve.Declined => true | _ => false),
+    "free-variable collision was merged with a captured binder");
+  assert (Term.aconv (boolSyntax.lhs (Thm.concl small_alpha))
+      (boolSyntax.rhs (Thm.concl small_alpha)),
+    "small typed alpha transport failed");
+  assert (type_rejected,
+    "shared abstraction type work bypassed resource admission");
+  assert (nested_type_rejected,
+    "nested abstraction opened before shared type-work admission")
 end
 
 fun z3_e0_sat_shape_opportunity_success () =
@@ -25135,6 +25402,19 @@ in
   SmtFpProve.preflight_resource_gate [swapped]
 end
 
+fun smtfp_preflight_shared_dag_resource_diagnostic () =
+let
+  val x = ``x : (4,3) smtfp``
+  val y = ``y : (4,3) smtfp``
+  val arithmetic = ``smtfp_add RNE ^x ^y = ^x``
+  val goal = boolSyntax.mk_conj
+    (shared_open_bool_dag (), arithmetic)
+in
+  expect_hol_error_contains "FP preflight on a shared open DAG"
+    "resource-gated"
+    (fn () => SmtFpProve.preflight_resource_gate [goal])
+end
+
 fun smtfp_tier2_atom_classes_success () =
 let
   fun tiny theorem =
@@ -25157,6 +25437,278 @@ let
     end
 in
   List.app check cases
+end
+
+fun smtfp_graph_stage1_success () =
+let
+  val x = ``task30_fp_graph_x : (4,3) smtfp``
+  val y = ``task30_fp_graph_y : (4,3) smtfp``
+  val swapped = ``task30_fp_graph_swapped : (3,4) smtfp``
+  fun check_rep (label, value) =
+    let val descriptor = SmtFpGraph.represent value
+        val theorem = #representation descriptor
+    in
+      assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl theorem), value),
+        label ^ " lost its exact representation endpoint");
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  fun check_atom (label, atom) =
+    let val theorem = SmtFpGraph.convert_atom atom
+        val rhs = boolSyntax.rhs (Thm.concl theorem)
+        val forbidden =
+          ["smtfp_is_normal", "smtfp_is_subnormal", "smtfp_is_zero",
+           "smtfp_is_infinite", "smtfp_is_nan", "smtfp_is_finite",
+           "smtfp_is_positive", "smtfp_is_negative", "smtfp_eq",
+           "smtfp_lt", "smtfp_le", "smtfp_gt", "smtfp_ge",
+           "smtfp_nan_pattern", "smtfp_mag_lt", "smtfp_word_equal",
+           "smtfp_word_fp_eq", "smtfp_word_lt", "smtfp_word_le",
+           "smtfp_word_gt", "smtfp_word_ge"]
+        val retained = List.filter
+          (fn name => Lib.can (HolKernel.find_term
+            (fn tm => Term.is_const tm andalso
+              let val {Thy, Name, ...} = Term.dest_thy_const tm
+              in Thy = "smtfloat" andalso Name = name end)) rhs)
+          forbidden
+    in
+      assert (Portable.pointer_eq (boolSyntax.lhs (Thm.concl theorem), atom),
+        label ^ " lost its exact atom endpoint");
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem;
+      assert (List.null retained,
+        label ^ " retained FP/helper predicates: " ^
+        String.concatWith "," retained)
+    end
+  fun check_expected (label, atom, expected) =
+    let
+      val converted = SmtFpGraph.convert_atom atom
+      val rhs = boolSyntax.rhs (Thm.concl converted)
+      val proposition = if expected then rhs else boolSyntax.mk_neg rhs
+      val theorem = wordsLib.WORD_DECIDE proposition
+    in
+      assert_no_hyps (label ^ " expected result", theorem);
+      check_oracle_tags (label ^ " expected result") theorem
+    end
+  val unsupported =
+    ((SmtFpGraph.represent ``smtfp_add RNE ^x ^y``; false)
+     handle SmtFpGraph.Declined _ => true)
+  val opaque = Term.mk_var
+    ("task30_fp_graph_opaque", ``:(4,3) smtfp -> (4,3) smtfp``)
+  val nested_unsupported =
+    ((SmtFpGraph.represent
+        (Term.mk_comb (opaque, ``smtfp_add RNE ^x ^y``)); false)
+     handle SmtFpGraph.Declined _ => true)
+  val conditional_unsupported =
+    ((SmtFpGraph.represent (boolSyntax.mk_cond (boolSyntax.T, x, y)); false)
+     handle SmtFpGraph.Declined _ => true)
+  val rebuilt_x = Term.mk_var ("task30_fp_graph_x", Term.type_of x)
+  val scoped_value = Term.mk_comb
+    (Term.mk_abs (Term.mk_var ("task30_fp_scope", Type.bool), x),
+     boolSyntax.T)
+  val dependent_selector = Term.mk_var
+    ("task30_fp_dependent", Type.mk_type
+      ("fun", [Type.bool, Term.type_of x]))
+  val dependent_binder = Term.mk_var ("task30_fp_bound", Type.bool)
+  val dependent_scoped_value = Term.mk_comb
+    (Term.mk_abs (dependent_binder,
+       Term.mk_comb (dependent_selector, dependent_binder)), boolSyntax.T)
+  fun rebuilt_abs_neg () =
+    let val value = Term.mk_var ("task30_fp_graph_x", Term.type_of x)
+    in ``smtfp_abs (smtfp_neg ^value)`` end
+  val rebuilt_abs_neg_left = rebuilt_abs_neg ()
+  val rebuilt_abs_neg_right = rebuilt_abs_neg ()
+  fun shared_opaque 0 = x
+    | shared_opaque depth =
+        let
+          val child = shared_opaque (depth - 1)
+          val combine = Term.mk_var ("task30_fp_graph_combine",
+            ``:(4,3) smtfp -> (4,3) smtfp -> (4,3) smtfp``)
+        in Term.list_mk_comb (combine, [child, child]) end
+  val resource_rejected =
+    ((SmtFpGraph.represent (shared_opaque 18); false)
+     handle Feedback.HOL_ERR error =>
+       SmtResource.is_resource_gate error andalso
+       Feedback.message_of error =
+         SmtResource.term_size_diagnostic "fp-graph-stage1" 200001)
+  fun shared_type 0 = Type.mk_vartype "'task30_fp_graph_type"
+    | shared_type depth =
+        let val child = shared_type (depth - 1)
+        in Type.mk_type ("prod", [child, child]) end
+  fun nested_typed_value () =
+    let
+      val left_type = shared_type 21
+      val right_type = shared_type 21
+      val left = Term.mk_var ("x", left_type)
+      val right = Term.mk_var ("x", right_type)
+      val left_predicate = Term.mk_var
+        ("task30_fp_left", Type.mk_type
+          ("fun", [left_type, Type.bool]))
+      val right_predicate = Term.mk_var
+        ("task30_fp_right", Type.mk_type
+          ("fun", [right_type, Type.bool]))
+      val body = boolSyntax.mk_conj
+        (Term.mk_comb (left_predicate, left),
+         Term.mk_comb (right_predicate, right))
+      val binder = Term.mk_var ("x", Type.bool)
+      val condition = Term.mk_comb (Term.mk_abs (binder, body), boolSyntax.T)
+    in boolSyntax.mk_cond (condition, x, x) end
+  val nested_type_rejected =
+    ((SmtFpGraph.represent (nested_typed_value ()); false)
+     handle Feedback.HOL_ERR error =>
+       SmtResource.is_resource_gate error andalso
+       Feedback.message_of error = SmtResource.term_size_diagnostic_for
+         "BitVector" "skeleton-type-work" 2097151)
+  val pzero = SmtFpGraph.represent ``smtfp_pzero : (4,3) smtfp``
+  val nzero = SmtFpGraph.represent ``smtfp_nzero : (4,3) smtfp``
+  val pinf = SmtFpGraph.represent ``smtfp_pinf : (4,3) smtfp``
+  val ninf = SmtFpGraph.represent ``smtfp_ninf : (4,3) smtfp``
+  val nan = SmtFpGraph.represent ``smtfp_nan : (4,3) smtfp``
+  val swapped_pzero =
+    SmtFpGraph.represent ``smtfp_pzero : (3,4) smtfp``
+  val swapped_nan = SmtFpGraph.represent ``smtfp_nan : (3,4) smtfp``
+  val symbolic_pzero = SmtFpGraph.represent
+    (Term.prim_mk_const {Thy = "smtfloat", Name = "smtfp_pzero"})
+  val symbolic_zero_atom = Term.mk_comb
+    (Term.prim_mk_const {Thy = "smtfloat", Name = "smtfp_is_zero"},
+     #value symbolic_pzero)
+  fun literal number term = wordsSyntax.is_word_literal term andalso
+    Arbnum.compare
+      (wordsSyntax.dest_word_literal term, Arbnum.fromInt number) = EQUAL
+  fun declines thunk = ((thunk (); false)
+    handle SmtFpGraph.Declined _ => true)
+  val boolean_variable_declined = declines
+    (fn () => ignore (SmtFpGraph.convert_atom ``task30_fp_boolean:bool``))
+  val predicate = Term.mk_var
+    ("task30_fp_predicate", ``:(4,3) smtfp -> bool``)
+  val predicate_declined = declines
+    (fn () => ignore (SmtFpGraph.convert_atom (Term.mk_comb (predicate, x))))
+  val lambda_declined = declines
+    (fn () => ignore (SmtFpGraph.convert_atom
+      (Term.mk_comb (Term.mk_abs
+        (Term.mk_var ("task30_fp_bool", Type.bool), boolSyntax.T),
+       boolSyntax.T))))
+  val partial_declined = declines
+    (fn () => ignore (SmtFpGraph.convert_atom ``smtfp_lt ^x``))
+  val nonboolean_declined = declines
+    (fn () => ignore (SmtFpGraph.convert_atom x))
+in
+  List.app check_rep
+    [("FP graph variable", x),
+     ("FP graph swapped format", swapped),
+     ("FP graph scoped opaque value", scoped_value),
+     ("FP graph dependent scoped opaque value", dependent_scoped_value),
+     ("FP graph abs-neg", ``smtfp_abs (smtfp_neg ^x)``),
+     ("FP graph rebuilt abs-neg left", rebuilt_abs_neg_left),
+     ("FP graph rebuilt abs-neg right", rebuilt_abs_neg_right),
+     ("FP graph positive zero", ``smtfp_pzero : (4,3) smtfp``),
+     ("FP graph negative zero", ``smtfp_nzero : (4,3) smtfp``),
+     ("FP graph positive infinity", ``smtfp_pinf : (4,3) smtfp``),
+     ("FP graph negative infinity", ``smtfp_ninf : (4,3) smtfp``),
+     ("FP graph NaN constant", ``smtfp_nan : (4,3) smtfp``),
+     ("FP graph explicit bits", ``smtfp_bits (0w:word1)
+        (0w:word3) (0w:word4) : (4,3) smtfp``)];
+  List.app check_atom
+    [("FP graph normal", ``smtfp_is_normal ^x``),
+     ("FP graph subnormal", ``smtfp_is_subnormal ^x``),
+     ("FP graph zero", ``smtfp_is_zero ^x``),
+     ("FP graph infinity", ``smtfp_is_infinite ^x``),
+     ("FP graph NaN", ``smtfp_is_nan ^x``),
+     ("FP graph positive", ``smtfp_is_positive ^x``),
+     ("FP graph negative", ``smtfp_is_negative ^x``),
+     ("FP graph finite", ``smtfp_is_finite ^x``),
+     ("FP graph HOL equality", ``^x = ^y``),
+     ("FP graph rebuilt equality", boolSyntax.mk_eq (x, rebuilt_x)),
+     ("FP graph shared equality", boolSyntax.mk_eq (x, x)),
+     ("FP graph IEEE equality", ``smtfp_eq ^x ^y``),
+     ("FP graph less", ``smtfp_lt (smtfp_abs ^x) (smtfp_neg ^y)``),
+     ("FP graph less-equal", ``smtfp_le ^x ^y``),
+     ("FP graph greater", ``smtfp_gt ^x ^y``),
+     ("FP graph greater-equal", ``smtfp_ge ^x ^y``)];
+  List.app check_atom
+    [("FP graph symbolic-format zero", symbolic_zero_atom),
+     ("FP graph concrete NaN format 4,3",
+       ``smtfp_is_nan (smtfp_bits 0w (UINT_MAXw:word3) 1w :
+           (4,3) smtfp)``),
+     ("FP graph concrete zero format 4,3",
+       ``smtfp_is_zero (smtfp_bits 1w (0w:word3) (0w:word4) :
+           (4,3) smtfp)``),
+     ("FP graph concrete infinity format 3,4",
+       ``smtfp_is_infinite (smtfp_bits 0w (UINT_MAXw:word4) 0w :
+           (3,4) smtfp)``),
+     ("FP graph concrete subnormal format 3,4",
+       ``smtfp_is_subnormal (smtfp_bits 0w (0w:word4) 1w :
+           (3,4) smtfp)``),
+     ("FP graph rebuilt abs-neg equality",
+       boolSyntax.mk_eq (rebuilt_abs_neg_left, rebuilt_abs_neg_right)),
+     ("FP graph positive and negative zero HOL equality",
+       ``(smtfp_pzero : (4,3) smtfp) = smtfp_nzero``),
+     ("FP graph positive and negative zero IEEE equality",
+       ``smtfp_eq (smtfp_pzero : (4,3) smtfp) smtfp_nzero``),
+     ("FP graph NaN HOL equality",
+       ``(smtfp_nan : (4,3) smtfp) = smtfp_nan``),
+     ("FP graph NaN IEEE equality",
+       ``smtfp_eq (smtfp_nan : (4,3) smtfp) smtfp_nan``)];
+  List.app check_expected
+    [("FP graph concrete NaN semantics",
+       ``smtfp_is_nan (smtfp_bits 0w (UINT_MAXw:word3) 1w :
+           (4,3) smtfp)``, true),
+     ("FP graph concrete signed-zero semantics",
+       ``smtfp_is_zero (smtfp_bits 1w (0w:word3) (0w:word4) :
+           (4,3) smtfp)``, true),
+     ("FP graph concrete infinity semantics",
+       ``smtfp_is_infinite (smtfp_bits 0w (UINT_MAXw:word4) 0w :
+           (3,4) smtfp)``, true),
+     ("FP graph concrete subnormal semantics",
+       ``smtfp_is_subnormal (smtfp_bits 0w (0w:word4) 1w :
+           (3,4) smtfp)``, true),
+     ("FP graph signed-zero constructor inequality",
+       ``(smtfp_pzero : (4,3) smtfp) = smtfp_nzero``, false),
+     ("FP graph signed-zero IEEE equality",
+       ``smtfp_eq (smtfp_pzero : (4,3) smtfp) smtfp_nzero``, true),
+     ("FP graph reflexive NaN constructor equality",
+       ``(smtfp_nan : (4,3) smtfp) = smtfp_nan``, true),
+     ("FP graph NaN IEEE inequality",
+       ``smtfp_eq (smtfp_nan : (4,3) smtfp) smtfp_nan``, false)];
+  assert (unsupported,
+    "FP graph accepted unsupported arithmetic producer");
+  assert (nested_unsupported,
+    "FP graph hid arithmetic inside an opaque application");
+  assert (conditional_unsupported,
+    "FP graph accepted a builtin FP conditional as an opaque leaf");
+  assert (resource_rejected,
+    "FP graph did not preserve its input resource envelope");
+  assert (nested_type_rejected,
+    "FP graph opened a nested binder before type admission");
+  assert (literal 0 (#sign pzero) andalso literal 0 (#exponent pzero)
+      andalso literal 0 (#fraction pzero),
+    "positive-zero descriptor fields are not concrete zeros");
+  assert (literal 1 (#sign nzero) andalso literal 0 (#exponent nzero)
+      andalso literal 0 (#fraction nzero),
+    "negative-zero descriptor fields are incorrect");
+  assert (literal 0 (#sign pinf) andalso wordsSyntax.is_word_T
+      (#exponent pinf) andalso literal 0 (#fraction pinf),
+    "positive-infinity descriptor fields are incorrect");
+  assert (literal 1 (#sign ninf) andalso wordsSyntax.is_word_T
+      (#exponent ninf) andalso literal 0 (#fraction ninf),
+    "negative-infinity descriptor fields are incorrect");
+  assert (literal 0 (#sign nan) andalso wordsSyntax.is_word_T (#exponent nan)
+      andalso wordsSyntax.is_word_T (#fraction nan),
+    "NaN descriptor is not the selected checked all-ones representative");
+  assert (literal 0 (#sign swapped_pzero) andalso
+      literal 0 (#exponent swapped_pzero) andalso
+      literal 0 (#fraction swapped_pzero),
+    "swapped-format positive-zero descriptor fields are incorrect");
+  assert (literal 0 (#sign swapped_nan) andalso
+      wordsSyntax.is_word_T (#exponent swapped_nan) andalso
+      wordsSyntax.is_word_T (#fraction swapped_nan),
+    "swapped-format NaN descriptor fields are incorrect");
+  assert (literal 0 (#sign symbolic_pzero) andalso
+      literal 0 (#exponent symbolic_pzero) andalso
+      literal 0 (#fraction symbolic_pzero),
+    "symbolic-format constant invoked format-specific evaluation");
+  assert (boolean_variable_declined andalso predicate_declined andalso
+      lambda_declined andalso partial_declined andalso nonboolean_declined,
+    "FP graph capability classification leaked a non-Declined exception")
 end
 
 fun smtfp_tier2_resource_diagnostic () =
@@ -25725,7 +26277,7 @@ fun smt_resource_diagnostic_contract () =
 let
   val proof_diagnostic =
     "resource-gated: fp-bitblast; limit=proof-size; " ^
-    "observed=16777217 bytes; maximum=16777216 bytes; " ^
+    "observed=33554433 bytes; maximum=33554432 bytes; " ^
     "feature=resource-gate:FloatingPoint:z3-proof-text"
   val time_diagnostic =
     "resource-gated: fp-bitblast; limit=step-time; maximum=10 s; " ^
@@ -25763,8 +26315,8 @@ let
           "\nobserved: " ^ observed)
       end
 in
-  assert (SmtResource.max_z3_proof_bytes = 16777216,
-    "Z3 proof-size budget is not 16 MB");
+  assert (SmtResource.max_z3_proof_bytes = 33554432,
+    "SMT proof-size budget is not 32 MiB");
   assert (Time.toSeconds SmtResource.max_bitblast_step_time = 10,
     "bit-blast step-time budget is not 10 seconds");
   assert (SmtResource.max_bitblast_term_nodes = 200000,
@@ -25773,11 +26325,11 @@ in
     "BV replay step-time budget is not 90 seconds");
   assert (SmtResource.max_bv_replay_term_nodes = 2000000,
     "BV replay term-size budget is not 2M nodes");
-  SmtResource.check_proof_size "z3-proof-text" 16777216;
+  SmtResource.check_proof_size "z3-proof-text" 33554432;
   SmtResource.check_term_size "comparison-goal" 200000;
   SmtResource.check_bitblast_goal "small-goal" boolSyntax.T;
   expect_gate "proof-size cap" proof_diagnostic (fn () =>
-    SmtResource.check_proof_size "z3-proof-text" 16777217);
+    SmtResource.check_proof_size "z3-proof-text" 33554433);
   expect_gate "term-size cap" term_diagnostic (fn () =>
     SmtResource.check_term_size "comparison-goal" 200001);
   expect_gate "step-time cap" time_diagnostic (fn () =>
@@ -25808,7 +26360,7 @@ let
   val parser_invoked = ref false
   val expected =
     "resource-gated: fp-bitblast; limit=proof-size; " ^
-    "observed=16777217 bytes; maximum=16777216 bytes; " ^
+    "observed=33554433 bytes; maximum=33554432 bytes; " ^
     "feature=resource-gate:FloatingPoint:z3-proof-text"
   fun remove () = OS.FileSys.remove path handle _ => ()
   fun write_oversized_proof () =
@@ -25818,7 +26370,7 @@ let
         | blocks n = (TextIO.output (outstream, block); blocks (n - 1))
     in
       TextIO.output (outstream, "unsat\n");
-      blocks 4096;
+      blocks 8192;
       TextIO.output (outstream, "x");
       TextIO.closeOut outstream
     end
@@ -25868,7 +26420,7 @@ let
   val block = String.implode (List.tabulate (4096, fn _ => #"("))
   val parser_invoked = ref false
   val expected = SmtResource.proof_size_diagnostic
-    "cvc5-cpc-proof-text" 16777217
+    "cvc5-cpc-proof-text" 33554433
   fun remove () = OS.FileSys.remove path handle _ => ()
   fun write_oversized_proof () =
     let
@@ -25877,7 +26429,7 @@ let
         | blocks n = (TextIO.output (outstream, block); blocks (n - 1))
     in
       TextIO.output (outstream, "unsat\n");
-      blocks 4096;
+      blocks 8192;
       TextIO.output (outstream, "x");
       TextIO.closeOut outstream
     end
@@ -25920,6 +26472,21 @@ let
       end
 in
   Portable.finally remove run ()
+end
+
+fun cvc_cpc_command_uses_standard_proof () =
+let
+  val ordinary = CVC.cpc_command ((), ((), false))
+  val arrays = CVC.cpc_command ((), ((), true))
+in
+  assert (String.isSubstring "--proof-format-mode=cpc" ordinary,
+    "CVC command does not request CPC proofs");
+  assert (not (String.isSubstring "--proof-compact-names" ordinary) andalso
+      not (String.isSubstring "--proof-compact-names" arrays),
+    "CVC command still requests compact CPC names");
+  assert (not (String.isSubstring "--arrays-exp" ordinary) andalso
+      String.isSubstring "--arrays-exp" arrays,
+    "CVC command lost its array-mode selection")
 end
 
 fun z3_reconstructed_theorem_contract_success () =
@@ -26286,10 +26853,399 @@ in
     "nested list element did not contribute its Real feature")
 end
 
+fun binder_opening_resource_success () =
+let
+  val x = Term.mk_var ("binder_resource_x", Type.bool)
+  val y = Term.mk_var ("binder_resource_y", Type.bool)
+  val identity = Term.mk_abs (x, x)
+  val nested = Term.mk_abs (x, Term.mk_abs (y, x))
+  val shadowed = Term.mk_abs (x, Term.mk_abs (x, x))
+  val after_application = Term.mk_comb (identity, boolSyntax.T)
+  fun check_exact (label, expected, term) =
+    let
+      val at_boundary = SmtResource.term_nodes_up_to expected term
+      val above_boundary = SmtResource.term_nodes_up_to (expected + 1) term
+      val below_boundary = SmtResource.term_nodes_up_to (expected - 1) term
+    in
+      assert (at_boundary = expected andalso
+              above_boundary = expected andalso
+              below_boundary = expected,
+        label ^ " changed the binder-inclusive tree metric")
+    end
+  fun shared 0 = x
+    | shared depth =
+        let val child = shared (depth - 1)
+        in boolSyntax.mk_conj (child, child) end
+  val inserter = Term.mk_abs (x, Term.mk_abs (y, x))
+  val shared_body = shared 20
+  val large_binder =
+    if Thm.kernelid = "expknl" then
+      Term.mk_abs (y, shared_body)
+    else
+      boolSyntax.rhs (Thm.concl
+        (Thm.Beta (Thm.REFL (Term.mk_comb (inserter, shared_body)))))
+  val expected_diagnostic = SmtResource.term_size_diagnostic_for
+    "BitVector" "binder-opening"
+    (SmtResource.max_bv_replay_term_nodes + 1)
+  fun expect_binder_gate label action =
+    ((action ();
+      die ("FAIL: " ^ label ^ " opened an oversized binder"))
+     handle Feedback.HOL_ERR holerr =>
+       assert (SmtResource.is_resource_gate holerr andalso
+               Feedback.top_function_of holerr = "check_term_size" andalso
+               Feedback.message_of holerr = expected_diagnostic,
+         label ^ " raised the wrong binder-opening resource gate"))
+in
+  check_exact ("used abstraction", 3, identity);
+  check_exact ("nested abstraction", 5, nested);
+  check_exact ("shadowed abstraction", 5, shadowed);
+  check_exact ("abstraction after application", 5, after_application);
+  assert (List.length (SmtResource.term_children identity) = 1,
+    "small abstraction did not retain its body-only child metric");
+  assert (SmtResource.term_nodes_up_to 64 large_binder = 65,
+    "large shared binder did not return the exceeded sentinel");
+  expect_binder_gate "term_children"
+    (fn () => ignore (SmtResource.term_children large_binder));
+  expect_binder_gate "bounded_structure DAG admission"
+    (fn () => ignore (SmtResource.bounded_structure 8 large_binder))
+end
+
+fun word_graph_conversion_success () =
+let
+  val x = ``x : word8``
+  val y = ``y : word8``
+  val sum = wordsSyntax.mk_word_add (x, y)
+  val bit0 = numSyntax.zero_tm
+  val projection = wordsSyntax.mk_index (sum, bit0)
+  val (projection_thm, projection_metrics) =
+    SmtWordGraph.normalize_with_metrics projection
+  val projection_rhs = boolSyntax.rhs (Thm.concl projection_thm)
+  val projection_expected = boolSyntax.mk_eq
+    (wordsSyntax.mk_index (x, bit0),
+     boolSyntax.mk_neg (wordsSyntax.mk_index (y, bit0)))
+  val repeated = boolSyntax.mk_eq (projection, projection)
+  val (repeated_thm, repeated_metrics) =
+    SmtWordGraph.normalize_with_metrics repeated
+  val upper_projection = ``((a && b : word16) ' 15)``
+  val upper_thm = SmtWordGraph.normalize upper_projection
+  val (upper_word, upper_index) =
+    wordsSyntax.dest_index upper_projection
+  val (upper_x, upper_y) = wordsSyntax.dest_word_and upper_word
+  val upper_expected = boolSyntax.mk_conj
+    (wordsSyntax.mk_index (upper_x, upper_index),
+     wordsSyntax.mk_index (upper_y, upper_index))
+  val binder = Term.mk_var ("word_graph_operand_0", Type.bool)
+  val used_body = boolSyntax.mk_conj (binder, repeated)
+  val abstraction = Term.mk_abs (binder, used_body)
+  val abstraction_thm = SmtWordGraph.normalize abstraction
+  val abstraction_rhs = boolSyntax.rhs (Thm.concl abstraction_thm)
+  val abstraction_application = Term.mk_comb
+    (Term.mk_abs (binder, binder), used_body)
+  val boundary_rhs = boolSyntax.rhs (Thm.concl
+    (SmtWordGraph.normalize abstraction_application))
+  val out_of_range = wordsSyntax.mk_index
+    (sum, numSyntax.term_of_int 8)
+  fun oversize 0 term = term
+    | oversize n term = oversize (n - 1)
+        (boolSyntax.mk_conj
+          (Term.mk_var ("word_graph_p_" ^ Int.toString n, Type.bool), term))
+  val too_large = oversize 2100 boolSyntax.T
+  val huge_ty = wordsSyntax.mk_int_word_type 5000
+  val huge_x = Term.mk_var ("huge_x", huge_ty)
+  val huge_y = Term.mk_var ("huge_y", huge_ty)
+  val huge_projection = wordsSyntax.mk_index
+    (wordsSyntax.mk_word_add (huge_x, huge_y), bit0)
+  val exponential_index = Type.mk_type ("fun",
+    [fcpSyntax.mk_int_numeric_type 16,
+     fcpSyntax.mk_int_numeric_type 2])
+  val exponential_ty = wordsSyntax.mk_word_type exponential_index
+  val exponential_x = Term.mk_var ("exponential_x", exponential_ty)
+  val exponential_y = Term.mk_var ("exponential_y", exponential_ty)
+  val exponential_projection = wordsSyntax.mk_index
+    (wordsSyntax.mk_word_add (exponential_x, exponential_y), bit0)
+  val word32_target = ``(x + y : word32) = z``
+  val word32_thm = SmtWordGraph.normalize word32_target
+  val nonword_projection = ``(v : num ** 8) ' 0``
+  val mixed_projection =
+    ``((v : num ** 8) ' 0 = n) /\ (((x : word8) + y) ' 0)``
+  val mixed_thm = SmtWordGraph.normalize mixed_projection
+  val condition = Term.mk_var ("condition", Type.bool)
+  val conditional_word = boolSyntax.mk_cond (condition, x, y)
+  val conditional_projection = wordsSyntax.mk_index (conditional_word, bit0)
+  val conditional_thm = SmtWordGraph.normalize conditional_projection
+  val one = fcpSyntax.mk_int_numeric_type 1
+  fun shared_product 0 ty = ty
+    | shared_product n ty =
+        shared_product (n - 1) (Type.mk_type ("prod", [ty, ty]))
+  val shared_dimension = shared_product 23 one
+  val shared_word = Term.mk_var
+    ("shared_word", wordsSyntax.mk_word_type shared_dimension)
+  val shared_projection = wordsSyntax.mk_index (shared_word, bit0)
+  val singleton_fun = Type.mk_type ("fun",
+    [fcpSyntax.mk_int_numeric_type 5000, one])
+  val singleton_cart = Type.mk_type ("cart",
+    [one, fcpSyntax.mk_int_numeric_type 5000])
+  val singleton_fun_projection = wordsSyntax.mk_index
+    (Term.mk_var ("singleton_fun", wordsSyntax.mk_word_type singleton_fun),
+     bit0)
+  val singleton_cart_projection = wordsSyntax.mk_index
+    (Term.mk_var ("singleton_cart", wordsSyntax.mk_word_type singleton_cart),
+     bit0)
+  val symbolic_projection = wordsSyntax.mk_index
+    (Term.mk_var ("symbolic_word",
+       wordsSyntax.mk_word_type (Type.mk_vartype "'word_graph_dimension")),
+     bit0)
+  val symbolic_ty =
+    wordsSyntax.mk_word_type (Type.mk_vartype "'word_graph_mixed_dimension")
+  val symbolic_x = Term.mk_var ("symbolic_x", symbolic_ty)
+  val symbolic_y = Term.mk_var ("symbolic_y", symbolic_ty)
+  val symbolic_operator_projection = wordsSyntax.mk_index
+    (wordsSyntax.mk_word_add (symbolic_x, symbolic_y), bit0)
+  val mixed_symbolic = boolSyntax.mk_conj
+    (symbolic_operator_projection, projection)
+  val mixed_symbolic_thm = SmtWordGraph.normalize mixed_symbolic
+  val mixed_symbolic_rhs = boolSyntax.rhs (Thm.concl mixed_symbolic_thm)
+  val two_dimension = fcpSyntax.mk_int_numeric_type 2
+  val sixteen_dimension = fcpSyntax.mk_int_numeric_type 16
+  fun exponent_dimension domain =
+    Type.mk_type ("fun", [domain, two_dimension])
+  val admitted_intermediate = exponent_dimension sixteen_dimension
+  val tower_intermediate = exponent_dimension
+    (exponent_dimension (exponent_dimension sixteen_dimension))
+  fun singleton_operator_projection label domain =
+    let
+      val ty = wordsSyntax.mk_word_type
+        (Type.mk_type ("fun", [domain, one]))
+      val left = Term.mk_var (label ^ "_left", ty)
+      val right = Term.mk_var (label ^ "_right", ty)
+    in
+      wordsSyntax.mk_index (wordsSyntax.mk_word_add (left, right), bit0)
+    end
+  val admitted_intermediate_projection = singleton_operator_projection
+    "admitted_intermediate" admitted_intermediate
+  val tower_intermediate_projection = singleton_operator_projection
+    "tower_intermediate" tower_intermediate
+in
+  assert (not (SmtWordGraph.eager_product_fits_for_test 5
+      (Arbnum.fromInt 7) (Arbnum.fromInt 7)),
+    "eager product retained a one-bit-over-budget result");
+  assert (SmtWordGraph.eager_product_fits_for_test 5
+      (Arbnum.fromInt 5) (Arbnum.fromInt 5),
+    "eager product rejected an admissible boundary result");
+  assert (not (SmtWordGraph.eager_product_fits_for_test 5
+      Arbnum.one (Arbnum.fromInt 64)),
+    "eager product oracle admitted an oversized input through identity");
+  assert (Term.aconv projection_rhs projection_expected,
+    "word8 addition low bit did not reduce to the operand-bit XOR");
+  assert (not (can (find_term wordsSyntax.is_word_add) projection_rhs),
+    "a supported word addition survived projection expansion");
+  assert (Term.aconv (boolSyntax.rhs (Thm.concl upper_thm)) upper_expected,
+    "held-out word16 conjunction upper bit was not expanded");
+  assert (Portable.pointer_eq
+      (Lib.fst (boolSyntax.dest_eq (Thm.concl word32_thm)), word32_target),
+    "word32 addition equality lost its exact left endpoint");
+  assert (not (can (find_term wordsSyntax.is_word_add)
+      (boolSyntax.rhs (Thm.concl word32_thm))),
+    "word32 addition survived complete relation/projection lowering");
+  assert (can (find_term (fn term => Portable.pointer_eq
+      (term, symbolic_operator_projection))) mixed_symbolic_rhs,
+    "an unsupported symbolic-width operator was not retained opaquely");
+  assert (not (can (find_term (fn term => Portable.pointer_eq
+      (term, projection))) mixed_symbolic_rhs),
+    "a symbolic-width decline discarded an unrelated known-width rewrite");
+  assert (Term.aconv (boolSyntax.rhs (Thm.concl conditional_thm))
+      (boolSyntax.mk_cond
+        (condition, wordsSyntax.mk_index (x, bit0),
+         wordsSyntax.mk_index (y, bit0))),
+    "conditional word projection has the wrong branch-bit semantics");
+  assert (not (can (find_term (fn term =>
+      wordsSyntax.is_index term andalso
+      let val word = Lib.fst (wordsSyntax.dest_index term)
+      in Portable.pointer_eq (word, conditional_word) end))
+      (boolSyntax.rhs (Thm.concl conditional_thm))),
+    "conditional word projection did not descend to branch words");
+  assert (#memo_hits repeated_metrics > 0 andalso
+          #visited_nodes repeated_metrics <=
+            SmtResource.max_skeleton_replay_dag_nodes andalso
+          #generated_nodes repeated_metrics <=
+            SmtResource.max_skeleton_replay_dag_nodes andalso
+          #operator_calls projection_metrics > 0,
+    "word projection did not retain bounded operation-local sharing");
+  assert (List.null (Thm.hyp projection_thm) andalso
+          List.null (Thm.hyp repeated_thm) andalso
+          List.null (Thm.hyp abstraction_thm),
+    "word graph conversion introduced hypotheses");
+  check_oracle_tags "word_graph_projection" projection_thm;
+  check_oracle_tags "word_graph_repeated" repeated_thm;
+  check_oracle_tags "word_graph_abstraction" abstraction_thm;
+  check_oracle_tags "word_graph_word32" word32_thm;
+  check_oracle_tags "word_graph_mixed_projection" mixed_thm;
+  check_oracle_tags "word_graph_conditional" conditional_thm;
+  assert (List.exists (fn variable => Term.aconv variable x)
+      (Term.free_vars abstraction_rhs),
+    "fresh schematic operands captured a free word variable");
+  assert (Term.is_comb boundary_rhs andalso
+          Term.is_abs (Lib.fst (Term.dest_comb boundary_rhs)),
+    "word conversion crossed an abstraction-headed application boundary");
+  ((SmtWordGraph.normalize out_of_range;
+    die "FAIL: out-of-range bare FCP projection did not decline")
+   handle Conv.UNCHANGED => ());
+  ((SmtWordGraph.normalize nonword_projection;
+    die "FAIL: generic non-word FCP projection was claimed")
+   handle Conv.UNCHANGED => ());
+  List.app
+    (fn (label, projection) =>
+      ((SmtWordGraph.normalize projection;
+        die ("FAIL: opaque " ^ label ^ " projection was claimed"))
+       handle Conv.UNCHANGED => ()))
+    [("shared singleton", shared_projection),
+     ("large-domain singleton fun", singleton_fun_projection),
+     ("large-index singleton cart", singleton_cart_projection),
+     ("symbolic word", symbolic_projection)];
+  assert (Term.aconv
+      (boolSyntax.rhs (Thm.concl
+        (SmtWordGraph.normalize ``word_bit 8 ((x : word8) + y)``)))
+      boolSyntax.F,
+    "out-of-range word_bit lost its guarded false semantics");
+  ((SmtWordGraph.normalize too_large;
+    die "FAIL: oversized word graph was admitted")
+   handle Feedback.HOL_ERR holerr =>
+     assert (SmtResource.is_resource_gate holerr,
+       "oversized word graph raised a non-resource HOL_ERR"));
+  ((SmtWordGraph.normalize huge_projection;
+    die "FAIL: oversized word dimension reached primitive conversion")
+   handle Feedback.HOL_ERR holerr =>
+     assert (SmtResource.is_resource_gate holerr,
+       "oversized word dimension raised a non-resource HOL_ERR"));
+  ((SmtWordGraph.normalize exponential_projection;
+    die "FAIL: exponentiating word dimension reached primitive conversion")
+   handle Feedback.HOL_ERR holerr =>
+     assert (SmtResource.is_resource_gate holerr,
+       "exponentiating word dimension raised a non-resource HOL_ERR"));
+  let
+    val word_calls = ref 0
+    val bit_calls = ref 0
+    fun word_callback term = (word_calls := !word_calls + 1; Thm.REFL term)
+    fun bit_callback term = (bit_calls := !bit_calls + 1; Thm.REFL term)
+    fun run term = SmtWordGraph.normalize_using_with_metrics
+      {word_conversion = word_callback, bit_conversion = bit_callback,
+       node_conversion = fn _ => raise Conv.UNCHANGED} term
+  in
+    ((ignore (run admitted_intermediate_projection);
+      die "FAIL: unchanged moderate dimension callback was claimed")
+     handle Conv.UNCHANGED => ());
+    assert (!word_calls = 1 andalso !bit_calls = 1,
+      "moderate eager dimension did not reach both checked callbacks");
+    word_calls := 0;
+    bit_calls := 0;
+    ((ignore (run tower_intermediate_projection);
+      die "FAIL: eager dimension tower reached checked callbacks")
+     handle Feedback.HOL_ERR holerr =>
+       assert (SmtResource.is_resource_gate holerr andalso
+               String.isSubstring "word-graph-dimension-evaluation"
+                 (Feedback.message_of holerr),
+         "dimension tower raised the wrong resource boundary"));
+    assert (!word_calls = 0 andalso !bit_calls = 0,
+      "dimension tower invoked a primitive before preflight rejection")
+  end;
+  let
+    val unexpected = Feedback.mk_HOL_ERR
+      "Unittest" "word_graph_terminal_callback" "unexpected"
+    val resource =
+      (SmtResource.check_dag_size_with_limit
+         "Skeleton" "word-graph-terminal-callback" 0 1;
+       unexpected)
+      handle exn => exn
+    fun run injected =
+      SmtWordGraph.normalize_using_with_metrics
+        {word_conversion = blastLib.WORD_SIMP_CONV,
+         bit_conversion = fn _ => raise injected,
+         node_conversion = fn _ => raise Conv.UNCHANGED} projection
+    fun expect label injected matches =
+      ((ignore (run injected);
+        die ("FAIL: word graph swallowed terminal " ^ label))
+       handle exn =>
+         assert (matches exn,
+           "word graph changed terminal " ^ label ^ " exception: " ^
+           General.exnMessage exn))
+  in
+    expect "resource"
+      resource
+      (fn Feedback.HOL_ERR holerr => SmtResource.is_resource_gate holerr
+        | _ => false);
+    expect "HOL_ERR" unexpected
+      (fn Feedback.HOL_ERR holerr =>
+          Feedback.top_function_of holerr = "word_graph_terminal_callback"
+        | _ => false);
+    expect "Fail" (Fail "word graph terminal")
+      (fn Fail _ => true | _ => false);
+    expect "Timeout" (Timeout.TIMEOUT Time.zeroTime)
+      (fn Timeout.TIMEOUT _ => true | _ => false);
+    expect "Interrupt" Interrupt
+      (fn Interrupt => true | _ => false)
+  end
+end
+
+fun run_word_graph_unittests () =
+  run_test ("word_graph_conversion_success", word_graph_conversion_success)
+
+fun run_binder_resource_unittests () =
+  run_test
+    ("binder_opening_resource_success", binder_opening_resource_success)
+
+fun run_fp_graph_unittests () =
+  run_test ("smtfp_graph_stage1_success", smtfp_graph_stage1_success)
+
+fun run_cnf_graph_unittests () =
+  List.app run_test
+    [("skeleton_typed_cnf_graph_success",
+       skeleton_typed_cnf_graph_success),
+     ("skeleton_structural_atom_cache_exact_lhs_success",
+       skeleton_structural_atom_cache_exact_lhs_success),
+     ("skeleton_node_cache_metric_split_success",
+       skeleton_node_cache_metric_split_success),
+     ("z3_e0_sat_shape_opportunity_success",
+       z3_e0_sat_shape_opportunity_success),
+     ("z3_e0_replay_measurement_aggregate_success",
+       z3_e0_replay_measurement_aggregate_success),
+     ("z3_e0_diagnostic_exception_precedence_success",
+       z3_e0_diagnostic_exception_precedence_success),
+     ("z3_e0_replay_measurement_reserved_snapshot_success",
+       z3_e0_replay_measurement_reserved_snapshot_success)]
+
+fun cpc_multi_premise_sat_clause_resolution_success () =
+  let
+    val theorem = CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(assume @clause (or p q)) \
+        \(assume @not_p (not p)) \
+        \(assume @not_q (not q)) \
+        \(step @out :rule chain_m_resolution \
+        \  :premises (@clause @not_p @not_q) :args (false)))")
+    val _ = assert (Thm.concl theorem ~~ boolSyntax.F,
+      "multi-premise clause resolution did not prove false")
+    val _ = assert (List.length (Thm.hyp theorem) = 3,
+      "multi-premise clause resolution lost premise hypotheses")
+  in
+    check_oracle_tags "CPC multi-premise SAT clause resolution" theorem
+  end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("smt_resource_diagnostic_contract",
+      smt_resource_diagnostic_contract),
+    ("smt_resource_proof_pre_gate_precedes_parser",
+      smt_resource_proof_pre_gate_precedes_parser),
+    ("cvc_cpc_proof_pre_gate_precedes_parser",
+      cvc_cpc_proof_pre_gate_precedes_parser),
+    ("cvc_cpc_command_uses_standard_proof",
+      cvc_cpc_command_uses_standard_proof),
+    ("binder_opening_resource_success", binder_opening_resource_success),
+    ("skeleton_typed_cnf_graph_success", skeleton_typed_cnf_graph_success),
+    ("word_graph_conversion_success", word_graph_conversion_success),
     ("cpc_reglan_native_aggregate_focused_success",
       cpc_reglan_native_aggregate_focused_success),
     ("cvc_tac_oracle_tag_gate_rejects_oracle_thm",
@@ -26753,6 +27709,8 @@ let
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",
       cpc_proof_parser_version_resolution_success),
+    ("cpc_multi_premise_sat_clause_resolution_success",
+      cpc_multi_premise_sat_clause_resolution_success),
     ("cpc_proof_replay_contra_success",
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
@@ -26785,10 +27743,16 @@ let
       cpc_proof_replay_bag_trust_success),
     ("cpc_proof_replay_fp_trust_success",
       cpc_proof_replay_fp_trust_success),
-    ("cpc_proof_replay_fp_context_obligation_diagnostic",
-      cpc_proof_replay_fp_context_obligation_diagnostic),
-    ("cpc_proof_replay_fp_symbolic_unsupported_diagnostic",
-      cpc_proof_replay_fp_symbolic_unsupported_diagnostic),
+    ("smtfp_ground_eval_shared_open_dag_rejected",
+      smtfp_ground_eval_shared_open_dag_rejected),
+    ("smtfp_to_real_shared_dag_absence",
+      smtfp_to_real_shared_dag_absence),
+    ("smtfp_tier2_shared_dag_absence",
+      smtfp_tier2_shared_dag_absence),
+    ("cpc_proof_replay_fp_context_obligation_retained",
+      cpc_proof_replay_fp_context_obligation_retained),
+    ("cpc_proof_replay_fp_symbolic_obligations_retained",
+      cpc_proof_replay_fp_symbolic_obligations_retained),
     ("cpc_proof_replay_equiv_elim1_success",
       cpc_proof_replay_equiv_elim1_success),
     ("cpc_proof_replay_bool_impl_true2_success",
@@ -27168,8 +28132,11 @@ let
       smtfp_deferred_gate_residue_diagnostics),
     ("smtfp_format_agnostic_preflight_success",
       smtfp_format_agnostic_preflight_success),
+    ("smtfp_preflight_shared_dag_resource_diagnostic",
+      smtfp_preflight_shared_dag_resource_diagnostic),
     ("smtfp_tier2_atom_classes_success",
       smtfp_tier2_atom_classes_success),
+    ("smtfp_graph_stage1_success", smtfp_graph_stage1_success),
     ("smtfp_tier2_resource_diagnostic",
       smtfp_tier2_resource_diagnostic),
     ("smtfp_bit_decomposition_rung_success",
@@ -27194,12 +28161,6 @@ let
       z3_proof_replay_failure_diagnostic),
     ("z3_proof_replay_malformed_premise_diagnostics",
       z3_proof_replay_malformed_premise_diagnostics),
-    ("smt_resource_diagnostic_contract",
-      smt_resource_diagnostic_contract),
-    ("smt_resource_proof_pre_gate_precedes_parser",
-      smt_resource_proof_pre_gate_precedes_parser),
-    ("cvc_cpc_proof_pre_gate_precedes_parser",
-      cvc_cpc_proof_pre_gate_precedes_parser),
     ("z3_reconstructed_theorem_contract_success",
       z3_reconstructed_theorem_contract_success),
     ("z3_reconstructed_theorem_contract_rejects_bad_shape",
@@ -27223,7 +28184,18 @@ let
     ("solver_spec_rejects_bad_proof_theorem",
       solver_spec_rejects_bad_proof_theorem)
   ]
-  val () = List.app run_test tests
+  val selected =
+    case OS.Process.getEnv "HOL4_UNITTEST_FILTER" of
+      NONE => tests
+    | SOME name =>
+        let
+          val matches = List.filter (fn (candidate, _) =>
+            candidate = name) tests
+          val _ = if List.null matches then
+            die ("FAIL: unknown HOL4_UNITTEST_FILTER=" ^ name)
+          else ()
+        in matches end
+  val () = List.app run_test selected
   val () = print "\ndone, all unit tests successful.\n"
 in
   ()

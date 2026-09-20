@@ -93,6 +93,7 @@ sig
   val empty_varset  : term set
 
   val term_size     : term -> int
+  val term_size_bounded : int -> term -> int option
 
   (* theory segment related functionality *)
   val uptodate_term     : term -> bool

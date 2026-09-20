@@ -804,18 +804,85 @@ local
         end
 
   fun vsubst theta tm =
-      case tm of
-        Var _ => (case peek(theta, tm) of NONE => raise Unchanged
-                                        | SOME (_, t) => t)
-      | Const _ => raise Unchanged
-      | App p  => qcomb App (vsubst theta) p
-      | Abs _ => let
-          val fvi = calculate_fvinfo (SOME theta) tm
-          val theta' = filtertheta theta (current fvi)
+    let
+      val large_substitution = numItems theta > 256
+      val bucket_count = if large_substitution then 16381 else 4093
+      val cache = Array.array
+        (bucket_count, [] : (term * term option) list)
+      fun string_hash string =
+        let
+          fun loop index hash =
+            if index = String.size string then hash
+            else loop (index + 1)
+              ((hash * 33 + Char.ord (String.sub (string, index))) mod
+               bucket_count)
+        in loop 0 5381 end
+      fun head_hash term =
+        case term of
+          Var(name,_) => string_hash name
+        | Const(id,_) => string_hash (KernelSig.id_toString id)
+        | App _ => 17
+        | Abs _ => 19
+      fun cache_index term =
+        let
+          fun spine (App(operator, operand), arity, _) =
+                spine (operator, arity + 1, SOME operand)
+            | spine (head, arity, first) = (head, arity, first)
+          fun shallow current =
+            let
+              val (head, arity, first) = spine (current, 0, NONE)
+              val first_hash = case first of NONE => 0 | SOME argument =>
+                head_hash (#1 (spine (argument, 0, NONE)))
+            in
+              (head_hash head * 37 + arity * 17 + first_hash) mod
+                bucket_count
+            end
+          fun hash 0 current = head_hash current
+            | hash depth current =
+                case current of
+                  App(operator, operand) =>
+                    (31 + 41 * hash (depth - 1) operator +
+                     67 * hash (depth - 1) operand) mod bucket_count
+                | Abs(_, body) =>
+                    (37 + 73 * hash (depth - 1) body) mod bucket_count
+                | _ => head_hash current
+        in if large_substitution then hash 8 term else shallow term end
+      fun lookup term =
+        let
+          fun seek [] = NONE
+            | seek ((saved, result) :: rest) =
+                if fast_term_eq term saved then SOME result else seek rest
+        in seek (Array.sub (cache, cache_index term)) end
+      fun save term result =
+        let val index = cache_index term
         in
-          if numItems theta' = 0 then raise Unchanged
-          else augvsubst theta' fvi tm
+          Array.update
+            (cache, index, (term, result) :: Array.sub (cache, index));
+          result
         end
+      fun walk term =
+        case lookup term of
+          SOME (SOME result) => result
+        | SOME NONE => raise Unchanged
+        | NONE =>
+            ((let val result = compute term
+              in ignore (save term (SOME result)); result end)
+             handle Unchanged =>
+               (ignore (save term NONE); raise Unchanged))
+      and compute term =
+        case term of
+          Var _ => (case peek(theta, term) of NONE => raise Unchanged
+                                          | SOME (_, t) => t)
+        | Const _ => raise Unchanged
+        | App p => qcomb App walk p
+        | Abs _ => let
+            val fvi = calculate_fvinfo (SOME theta) term
+            val theta' = filtertheta theta (current fvi)
+          in
+            if numItems theta' = 0 then raise Unchanged
+            else augvsubst theta' fvi term
+          end
+    in walk tm end
 
   fun ssubst theta t =
       (* only used to substitute in fresh variables (genvars), so no
@@ -1206,6 +1273,21 @@ fun size acc tlist =
       end
 
 fun term_size t = size 0 [t]
+
+fun term_size_bounded limit root =
+  if limit < 0 then NONE
+  else
+    let
+      fun count ([], total) = SOME total
+        | count (tm :: pending, total) =
+            if total = limit then NONE
+            else
+              (case tm of
+                 App (operator, operand) =>
+                   count (operator :: operand :: pending, total + 1)
+               | Abs (_, body) => count (body :: pending, total + 1)
+               | _ => count (pending, total + 1))
+    in count ([root], 0) end
 
 
 

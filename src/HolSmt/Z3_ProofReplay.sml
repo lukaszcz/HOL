@@ -117,6 +117,7 @@ local
     (* stores certain theorems (proved by 'rewrite' or 'th_lemma') for
        later retrieval, to avoid re-reproving them *)
     thm_cache : Thm.thm Net.net,
+    large_thm_cache : (Term.term * Thm.thm) list,
     (* contains all of the variables that Z3 has defined *)
     var_set : Term.term HOLset.set,
     (* Parser-discovered FP decomposition associations.  These are hints, not
@@ -142,6 +143,7 @@ local
       definition_hyps = #definition_hyps s,
       flexible_vars = #flexible_vars s,
       thm_cache = #thm_cache s,
+      large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
@@ -178,6 +180,7 @@ local
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
       flexible_vars = List.foldl make_rigid (#flexible_vars s) newly_rigid,
       thm_cache = #thm_cache s,
+      large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
@@ -186,20 +189,30 @@ local
       z3_version = #z3_version s
     } end
 
+  (* Net indexing walks the unfolded term.  A large shared conclusion is
+     cheap as a DAG but can be prohibitively expensive to index.  Keep such
+     theorems in an exact-match cache instead. *)
   fun state_cache_thm (s : state) (thm : Thm.thm) : state =
-    {
+    let
+      val conclusion = Thm.concl thm
+      val large = SmtResource.term_nodes_up_to 16384 conclusion > 16384
+    in {
       allowed_asserted_hyps = #allowed_asserted_hyps s,
       asserted_hyps = #asserted_hyps s,
       definition_hyps = #definition_hyps s,
       flexible_vars = #flexible_vars s,
-      thm_cache = Net.insert (Thm.concl thm, thm) (#thm_cache s),
+      thm_cache = if large then #thm_cache s
+                  else Net.insert (conclusion, thm) (#thm_cache s),
+      large_thm_cache =
+        if large then (conclusion, thm) :: #large_thm_cache s
+        else #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
-    }
+    } end
 
   fun state_inst_cached_thm (s : state) (t : Term.term) : Thm.thm =
     let
@@ -209,8 +222,18 @@ local
           if HOLset.isSubset (Thm.hypset thm, available) then thm
           else raise ERR "state_inst_cached_thm" "unavailable hypothesis"
         end
+      fun lookup_net () =
+        Lib.tryfind instantiate (Net.match t (#thm_cache s))
+      fun exact_large (saved, thm) =
+        CPC_ProofReplay.sharing_aware_aconv saved t andalso
+        HOLset.isSubset (Thm.hypset thm, available)
     in
-      Lib.tryfind instantiate (Net.match t (#thm_cache s))
+      if not (List.null (#large_thm_cache s)) andalso
+         SmtResource.term_nodes_up_to 16384 t > 16384 then
+        (case List.find exact_large (#large_thm_cache s) of
+           SOME (_, thm) => thm
+         | NONE => lookup_net ())
+      else lookup_net ()
     end
 
   (* FP decomposition theorems carry proof-local packed-word definitions.
@@ -219,11 +242,25 @@ local
      elimination.  FP replay therefore reuses only the exact recorded
      conclusion; its cheap proforma rung can simply re-prove other instances. *)
   fun state_exact_cached_thm (s : state) (t : Term.term) : Thm.thm =
-    Lib.tryfind
-      (fn thm =>
-        if Thm.concl thm ~~ t then thm
-        else raise ERR "state_exact_cached_thm" "different conclusion")
-      (Net.match t (#thm_cache s))
+    let
+      fun lookup_net () =
+        Lib.tryfind
+          (fn thm =>
+            if Thm.concl thm ~~ t then thm
+            else raise ERR "state_exact_cached_thm"
+              "different conclusion")
+          (Net.match t (#thm_cache s))
+    in
+      if not (List.null (#large_thm_cache s)) andalso
+         SmtResource.term_nodes_up_to 16384 t > 16384 then
+        (case List.find
+           (fn (saved, _) =>
+             CPC_ProofReplay.sharing_aware_aconv saved t)
+           (#large_thm_cache s) of
+           SOME (_, thm) => thm
+         | NONE => lookup_net ())
+      else lookup_net ()
+    end
 
   (***************************************************************************)
   (* auxiliary functions                                                     *)
@@ -1319,8 +1356,14 @@ local
   fun z3_commutativity (state, t) =
   let
     val (x, y) = boolSyntax.dest_eq (boolSyntax.lhs t)
+    val xy = boolSyntax.mk_eq (x, y)
+    val yx = boolSyntax.mk_eq (y, x)
+    (* Specializing EQ_SYM_EQ traverses the unfolded arguments.  Derive its
+       instance from kernel symmetry while retaining their DAG sharing. *)
+    val forward = Thm.DISCH xy (Thm.SYM (Thm.ASSUME xy))
+    val backward = Thm.DISCH yx (Thm.SYM (Thm.ASSUME yx))
   in
-    (state, Drule.ISPECL [x, y] boolTheory.EQ_SYM_EQ)
+    (state, Drule.IMP_ANTISYM_RULE forward backward)
   end
 
   (* Instances of Tseitin-style propositional tautologies:
@@ -1605,6 +1648,7 @@ local
   val active_proof_step = ref (NONE : proof_step_state option)
   val latest_proof_step = ref (NONE : proof_step_state option)
   val first_failed_proof_step = ref (NONE : proof_step_state option)
+  val replay_completed_steps = ref 0
 
   datatype measured_route =
       MeasuredDefAxiom
@@ -1650,6 +1694,14 @@ local
      sat_dag_nodes : int ref,
      distinct_atoms : int ref,
      residual_atoms : int ref,
+     graph_nodes : int ref,
+     graph_observations : int ref,
+     graph_edges : int ref,
+     graph_type_nodes : int ref,
+     graph_type_observations : int ref,
+     graph_type_edges : int ref,
+     graph_leaf_transport_nodes : int ref,
+     graph_leaf_transport_time : Time.time ref,
      node_cache_hits : int ref,
      node_pointer_hits : int ref,
      node_reanchor_attempts : int ref,
@@ -1738,6 +1790,14 @@ local
      sat_dag_nodes = ref 0,
      distinct_atoms = ref 0,
      residual_atoms = ref 0,
+     graph_nodes = ref 0,
+     graph_observations = ref 0,
+     graph_edges = ref 0,
+     graph_type_nodes = ref 0,
+     graph_type_observations = ref 0,
+     graph_type_edges = ref 0,
+     graph_leaf_transport_nodes = ref 0,
+     graph_leaf_transport_time = ref Time.zeroTime,
      node_cache_hits = ref 0,
      node_pointer_hits = ref 0,
      node_reanchor_attempts = ref 0,
@@ -1835,6 +1895,9 @@ local
   fun skeleton_measurement_text
       ({successes, target_dag_nodes, skeleton_dag_nodes,
         normalized_dag_nodes, sat_dag_nodes, distinct_atoms, residual_atoms,
+        graph_nodes, graph_observations, graph_edges, graph_type_nodes,
+        graph_type_observations, graph_type_edges, graph_leaf_transport_nodes,
+        graph_leaf_transport_time,
         node_cache_hits, node_pointer_hits, node_reanchor_attempts,
         node_reanchor_successes, node_reanchor_fallbacks, node_reanchor_time,
         sat_time, total_time} : skeleton_measurement) =
@@ -1846,6 +1909,18 @@ local
     " skeleton_sat_dag_sum=" ^ Int.toString (!sat_dag_nodes) ^
     " skeleton_distinct_atoms_sum=" ^ Int.toString (!distinct_atoms) ^
     " skeleton_residual_atoms_sum=" ^ Int.toString (!residual_atoms) ^
+    " skeleton_graph_nodes_sum=" ^ Int.toString (!graph_nodes) ^
+    " skeleton_graph_observations_sum=" ^
+      Int.toString (!graph_observations) ^
+    " skeleton_graph_edges_sum=" ^ Int.toString (!graph_edges) ^
+    " skeleton_graph_type_nodes_sum=" ^ Int.toString (!graph_type_nodes) ^
+    " skeleton_graph_type_observations_sum=" ^
+      Int.toString (!graph_type_observations) ^
+    " skeleton_graph_type_edges_sum=" ^ Int.toString (!graph_type_edges) ^
+    " skeleton_graph_leaf_transport_nodes_sum=" ^
+      Int.toString (!graph_leaf_transport_nodes) ^
+    " skeleton_graph_leaf_transport_wall=" ^
+      Time.toString (!graph_leaf_transport_time) ^
     " skeleton_node_cache_hits=" ^ Int.toString (!node_cache_hits) ^
     " skeleton_node_pointer_hits=" ^ Int.toString (!node_pointer_hits) ^
     " skeleton_node_reanchor_attempts=" ^
@@ -2110,6 +2185,19 @@ local
           add_metric (#sat_dag_nodes skeleton) (#sat_dag_nodes metrics);
           add_metric (#distinct_atoms skeleton) (#distinct_atoms metrics);
           add_metric (#residual_atoms skeleton) (#residual_atoms metrics);
+          add_metric (#graph_nodes skeleton) (#graph_nodes metrics);
+          add_metric (#graph_observations skeleton)
+            (#graph_observations metrics);
+          add_metric (#graph_edges skeleton) (#graph_edges metrics);
+          add_metric (#graph_type_nodes skeleton) (#graph_type_nodes metrics);
+          add_metric (#graph_type_observations skeleton)
+            (#graph_type_observations metrics);
+          add_metric (#graph_type_edges skeleton) (#graph_type_edges metrics);
+          add_metric (#graph_leaf_transport_nodes skeleton)
+            (#graph_leaf_transport_nodes metrics);
+          #graph_leaf_transport_time skeleton := Time.+
+            (!(#graph_leaf_transport_time skeleton),
+             #graph_leaf_transport_seconds metrics);
           #sat_time skeleton := Time.+
             (!(#sat_time skeleton), #sat_seconds metrics);
           #total_time skeleton := Time.+
@@ -2337,8 +2425,18 @@ local
     {id = id, rule = rule, status = status, local_info = local_info}
 
   fun set_latest_proof_step id rule status local_info =
-    latest_proof_step := SOME
-      (proof_step_state id rule status local_info)
+    (latest_proof_step := SOME
+      (proof_step_state id rule status local_info);
+     if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
+        (!replay_completed_steps < 20 orelse
+         !replay_completed_steps >= 350 andalso
+         !replay_completed_steps < 700) then
+       (Feedback.HOL_MESG
+         ("Z3 replay step: id=" ^ Int.toString id ^
+          " rule=" ^ rule ^ " status=" ^ status ^
+          " completed=" ^ Int.toString (!replay_completed_steps));
+        TextIO.flushOut TextIO.stdOut)
+     else ())
 
   fun track_proof_step_with_local id rule local_info action input =
     let
@@ -3114,6 +3212,13 @@ local
       "Skeleton" "z3-def-axiom"
       (fn target =>
         let
+          fun trace_stage stage =
+            if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
+               !replay_completed_steps < 20 then
+              (Feedback.HOL_MESG ("Z3 def-axiom: " ^ stage);
+               TextIO.flushOut TextIO.stdOut)
+            else ()
+          val _ = trace_stage "measure"
           val measure = admitted_def_axiom_measure
             SmtSkeletonProve.term_measure target
           fun skeleton_prove () =
@@ -3168,9 +3273,11 @@ local
           fun structural_prove () =
             let
               fun skeleton () = profile "def-axiom(1d)(skeleton)"
-                (fn () => skeleton_prove ()) ()
+                (fn () => (trace_stage "skeleton";
+                  skeleton_prove ())) ()
               fun proforma () =
-                (Library.require_fastpath "Z3 def-axiom proforma" target
+                (trace_stage "proforma";
+                 Library.require_fastpath "Z3 def-axiom proforma" target
                   (profile "def-axiom(1c)(proforma)"
                     (Z3_ProformaThms.prove
                       Z3_ProformaThms.def_axiom_thms)) target)
@@ -3196,17 +3303,19 @@ local
                             (theorem_prove same_schematic schematic)
                         end) target
                   fun conjunction_clause () = structural_fallback
-                    (fn () => prove_schema
+                    (fn () => (trace_stage "conjunction-clause";
+                      prove_schema
                       "def-axiom(1b)(conjunction-clause)"
                       def_axiom_clause_schema
-                      def_axiom_conjunction_clause)
+                      def_axiom_conjunction_clause))
                     proforma
                 in
                   structural_fallback
-                    (fn () => prove_schema
+                    (fn () => (trace_stage "conjunction-member";
+                      prove_schema
                       "def-axiom(1a)(conjunction-member)"
                       def_axiom_member_schema
-                      def_axiom_conjunction_member)
+                      def_axiom_conjunction_member))
                     conjunction_clause
                 end
             in
@@ -3271,7 +3380,398 @@ local
              Tactic.CONV_TAC blastLib.BBLAST_CONV))) target
     end
 
+  fun def_axiom_guarded_conditional target =
+    let
+      fun trace_guard stage =
+        if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
+           !replay_completed_steps >= 550 then
+          (Feedback.HOL_MESG ("Z3 guarded axiom: " ^ stage);
+           TextIO.flushOut TextIO.stdOut)
+        else ()
+      val _ = trace_guard "begin"
+      fun prove disjunct proposition =
+        let
+          val negated = boolSyntax.is_neg disjunct
+          val condition =
+            if negated then boolSyntax.dest_neg disjunct
+            else disjunct
+          val (left, right) = boolSyntax.dest_eq proposition
+          fun candidate (conditional_on_left, conditional, other) =
+            let
+              val (guard, then_branch, else_branch) =
+                boolSyntax.dest_cond conditional
+              val _ = trace_guard "shape"
+              val guard_matches =
+                Portable.pointer_eq (guard, condition) orelse
+                Term.aconv guard condition
+              val branch =
+                if negated then then_branch else else_branch
+              val branch_matches = guard_matches andalso
+                (Portable.pointer_eq (branch, other) orelse
+                 Term.aconv branch other)
+              val _ = trace_guard
+                ("candidate guard=" ^ Bool.toString guard_matches ^
+                 " branch=" ^ Bool.toString branch_matches)
+            in
+              if guard_matches andalso branch_matches then
+                SOME (conditional_on_left, other,
+                  then_branch, else_branch)
+              else NONE
+            end
+          val candidates =
+            (if boolSyntax.is_cond left then
+               [(true, left, right)] else []) @
+            (if boolSyntax.is_cond right then
+               [(false, right, left)] else [])
+          fun first_matching [] =
+                raise ERR "def_axiom_guarded_conditional"
+                  "disjunct does not guard an equal branch"
+            | first_matching (next :: rest) =
+                (case candidate next of
+                   SOME selected => selected
+                 | NONE => first_matching rest)
+          val (conditional_on_left, other, then_branch, else_branch) =
+            first_matching candidates
+          val _ = trace_guard "matched"
+          val p = Term.genvar Type.bool
+          val x = Term.genvar (Term.type_of other)
+          val y = Term.genvar (Term.type_of other)
+          val schematic_conditional =
+            boolSyntax.mk_cond (p,
+              if negated then x else y,
+              if negated then y else x)
+          val schematic_equality =
+            if conditional_on_left then
+              boolSyntax.mk_eq (schematic_conditional, x)
+            else boolSyntax.mk_eq (x, schematic_conditional)
+          val schema_goal = boolSyntax.mk_disj
+            (if negated then boolSyntax.mk_neg p else p,
+             schematic_equality)
+          val schema = Tactical.TAC_PROOF (([], schema_goal),
+            Tactical.THEN (Tactic.BOOL_CASES_TAC p,
+              bossLib.ASM_SIMP_TAC boolSimps.bool_ss []))
+          val _ = trace_guard "schema-proved"
+          val instantiated = Thm.INST
+            [{redex = p, residue = condition},
+             {redex = x, residue = other},
+             {redex = y, residue =
+                if negated then else_branch else then_branch}]
+            schema
+          val _ = trace_guard "instantiated"
+        in instantiated end
+      val (left, right) = boolSyntax.dest_disj target
+      val theorem = prove left right
+        handle Feedback.HOL_ERR _ =>
+          let val symmetric = prove right left
+          in
+            Thm.EQ_MP
+              (Drule.SPECL [right, left] boolTheory.DISJ_COMM)
+              symmetric
+          end
+      val _ = Term.aconv (Thm.concl theorem) target orelse
+        raise ERR "def_axiom_guarded_conditional"
+          "schema endpoint mismatch"
+    in theorem end
+
+  fun rewrite_boolean_constant_schema target =
+    let
+      val (left, right) = boolSyntax.dest_eq target
+      val (inner, outer, inner_on_left) =
+        if boolSyntax.is_eq left then (left, right, true)
+        else if boolSyntax.is_eq right then (right, left, false)
+        else raise ERR "rewrite_boolean_constant_schema"
+          "no inner Boolean equality"
+      val (first, second) = boolSyntax.dest_eq inner
+      val (constant, proposition, constant_on_left) =
+        if Term.aconv first boolSyntax.T orelse
+           Term.aconv first boolSyntax.F then
+          (first, second, true)
+        else if Term.aconv second boolSyntax.T orelse
+                Term.aconv second boolSyntax.F then
+          (second, first, false)
+        else raise ERR "rewrite_boolean_constant_schema"
+          "inner equality has no Boolean constant"
+      val _ = Term.type_of proposition = Type.bool orelse
+        raise ERR "rewrite_boolean_constant_schema"
+          "inner equality is not Boolean"
+      val _ = Term.aconv outer
+        (if Term.aconv constant boolSyntax.F then
+           boolSyntax.mk_neg proposition else proposition) orelse
+        raise ERR "rewrite_boolean_constant_schema"
+          "outer proposition does not match"
+      val variable = Term.genvar Type.bool
+      val inner_schema =
+        if constant_on_left then boolSyntax.mk_eq (constant, variable)
+        else boolSyntax.mk_eq (variable, constant)
+      val outer_schema =
+        if Term.aconv constant boolSyntax.F then
+          boolSyntax.mk_neg variable else variable
+      val goal =
+        if inner_on_left then
+          boolSyntax.mk_eq (inner_schema, outer_schema)
+        else boolSyntax.mk_eq (outer_schema, inner_schema)
+      val schema = tautLib.TAUT_PROVE goal
+      val theorem = Thm.INST
+        [{redex = variable, residue = proposition}] schema
+      val _ = Term.aconv (Thm.concl theorem) target orelse
+        raise ERR "rewrite_boolean_constant_schema"
+          "schema endpoint mismatch"
+    in theorem end
+
+  fun rewrite_fp_sub_boolean_normal_form target =
+    let
+      val (left, right) = boolSyntax.dest_eq target
+      val _ = boolSyntax.is_neg left andalso
+        boolSyntax.is_neg right andalso
+        boolSyntax.is_forall (boolSyntax.dest_neg left) andalso
+        boolSyntax.is_forall (boolSyntax.dest_neg right) orelse
+        raise ERR "rewrite_fp_sub_boolean_normal_form"
+          "not a negated quantified rewrite"
+      fun sub_operator term =
+        let
+          val (head, _) = boolSyntax.strip_comb term
+          val {Thy, Name, ...} = Term.dest_thy_const head
+        in Thy = "smtfloat" andalso Name = "smtfp_sub" end
+        handle Feedback.HOL_ERR _ => false
+      val _ = Lib.can (HolKernel.find_term sub_operator) target orelse
+        raise ERR "rewrite_fp_sub_boolean_normal_form"
+          "no floating-point subtraction"
+    in
+      SmtResource.with_resource_step_time
+        "FloatingPoint" "z3-rewrite-fp-sub-boolean"
+        (fn target =>
+          (SmtResource.check_resource_goal
+             "FloatingPoint" "z3-rewrite-fp-sub-boolean" target;
+           Tactical.TAC_PROOF (([], target),
+             Rewrite.REWRITE_TAC
+               [smtfloatReplayRoundingTheory.smtfp_sub_add_negate,
+                boolTheory.IMP_DISJ_THM,
+                boolTheory.CONJ_ASSOC]))) target
+    end
+
+  fun rewrite_fp_pack_roundtrip target =
+    let
+      fun is_pack term =
+        let
+          val (head, _) = boolSyntax.strip_comb term
+          val {Thy, Name, ...} = Term.dest_thy_const head
+        in Thy = "smtfloat" andalso Name = "smtfp_pack_bv" end
+        handle Feedback.HOL_ERR _ => false
+      val pack = HolKernel.find_term is_pack target
+      val (_, value) = Term.dest_comb pack
+      val schema = smtfloatTheory.smtfp_bits_pack_bv
+      val (_, quantified) = boolSyntax.dest_imp (Thm.concl schema)
+      val (schema_value, _) = boolSyntax.dest_forall quantified
+      val schema = Drule.INST_TY_TERM
+        (Term.match_term schema_value value) schema
+      val (_, quantified) = boolSyntax.dest_imp (Thm.concl schema)
+      val (_, body) = boolSyntax.dest_forall quantified
+      val schema_pack = HolKernel.find_term is_pack body
+      val packed_word = Term.mk_var
+        ("packed_word", Term.type_of schema_pack)
+      val schema = Drule.INST_TY_TERM
+        (Term.match_term packed_word pack) schema
+      val schema = bossLib.SIMP_RULE (bossLib.srw_ss()) [] schema
+      val theorem = Thm.SPEC value schema
+      val theorem =
+        if Term.aconv (Thm.concl theorem) target then theorem
+        else Thm.SYM theorem
+      val _ = Term.aconv (Thm.concl theorem) target orelse
+        raise ERR "rewrite_fp_pack_roundtrip"
+          "packed reconstruction does not match the target"
+    in theorem end
+
+  fun rewrite_fp_packed_atom target =
+    let
+      val (left, right) = boolSyntax.dest_eq target
+      val (original_atom, _, _) =
+        if SmtFpGraph.lower_atom_domain left then
+          (left, right, true)
+        else if SmtFpGraph.lower_atom_domain right then
+          (right, left, false)
+        else raise ERR "rewrite_fp_packed_atom"
+          "no supported floating-point atom"
+      val _ =
+        case Lib.total boolSyntax.dest_eq original_atom of
+          SOME (first, _) =>
+            if Term.type_of first = Type.bool then ()
+            else raise ERR "rewrite_fp_packed_atom"
+              "floating-point value equality needs circuit replay"
+        | NONE => ()
+      fun is_fp_type ty =
+        let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+        in Thy = "smtfloat" andalso Tyop = "smtfp" end
+        handle Feedback.HOL_ERR _ => false
+      val sources = ref ([] : Term.term list)
+      val source_seen = ref (HOLset.empty Term.compare)
+      fun collect term =
+        if HOLset.member (!source_seen, term) then ()
+        else
+          (source_seen := HOLset.add (!source_seen, term);
+           if is_fp_type (Term.type_of term) andalso
+              not (Term.is_var term) then
+             if List.exists (fn saved => Term.aconv saved term) (!sources)
+             then () else sources := term :: !sources
+           else List.app collect (SmtResource.term_children term))
+      val _ = collect original_atom
+      val source_variables =
+        List.map (Term.genvar o Term.type_of) (!sources)
+      val source_pairs = ListPair.zip (!sources, source_variables)
+      val abstraction_memo = ref
+        (Redblackmap.mkDict Term.compare :
+          (Term.term, Term.term) Redblackmap.dict)
+      fun abstract term =
+        case Redblackmap.peek (!abstraction_memo, term) of
+          SOME result => result
+        | NONE =>
+            let
+              val result =
+                case List.find
+                    (fn (source, _) => Term.aconv source term)
+                    source_pairs of
+                  SOME (_, variable) => variable
+                | NONE =>
+                    if Term.is_comb term then
+                      Term.mk_comb
+                        (abstract (Term.rator term),
+                         abstract (Term.rand term))
+                    else term
+              val _ = abstraction_memo :=
+                Redblackmap.insert (!abstraction_memo, term, result)
+            in result end
+      val schematic_target = abstract target
+      val shared_target =
+        SmtResource.term_nodes_up_to
+          SmtResource.max_bitblast_term_nodes schematic_target >
+        SmtResource.max_bitblast_term_nodes
+      val (left, right) = boolSyntax.dest_eq schematic_target
+      val (atom, encoded, atom_on_left) =
+        if SmtFpGraph.lower_atom_domain left then
+          (left, right, true)
+        else (right, left, false)
+      fun packed term =
+        let
+          val (head, _) = boolSyntax.strip_comb term
+          val {Thy, Name, ...} = Term.dest_thy_const head
+        in Thy = "smtfloat" andalso Name = "smtfp_pack_bv" end
+        handle Feedback.HOL_ERR _ => false
+      val _ = Lib.can (HolKernel.find_term packed) encoded orelse
+        raise ERR "rewrite_fp_packed_atom"
+          "encoded side has no packed floating-point word"
+      fun node_conversion term =
+        if packed term then
+          Conv.REWR_CONV smtfloatTheory.smtfp_pack_bv_def term
+        else
+          (SmtFpGraph.convert_word_projection term
+           handle Conv.UNCHANGED =>
+             if shared_target andalso
+                SmtResource.term_nodes_up_to 256 term <= 256 andalso
+                (wordsSyntax.is_word_extract term orelse
+                 (case Lib.total boolSyntax.dest_eq term of
+                    SOME (left, _) =>
+                      wordsSyntax.is_word_type (Term.type_of left)
+                  | NONE => false)) then
+               simpLib.SIMP_CONV
+                 (simpLib.++
+                   (bossLib.srw_ss(), wordsLib.WORD_EXTRACT_ss)) []
+                 term
+             else raise Conv.UNCHANGED)
+      fun phase name f x =
+        if shared_target then
+          SmtResource.with_resource_step_time
+            "FloatingPoint" name f x
+        else f x
+      fun convert () =
+        let
+          val atom_theorem = phase "z3-fp-packed-atom-lower"
+            SmtFpGraph.lower_atom atom
+          val word_theorem =
+            phase "z3-fp-packed-word-lower"
+              (SmtWordGraph.normalize_with_node_conversion
+                node_conversion) encoded
+          val word_residue = boolSyntax.rhs (Thm.concl word_theorem)
+          val simplified =
+            if shared_target then Thm.REFL word_residue
+            else
+              (simpLib.SIMP_CONV
+                (simpLib.++
+                  (bossLib.srw_ss(), wordsLib.WORD_EXTRACT_ss)) []
+                word_residue
+               handle Conv.UNCHANGED => Thm.REFL word_residue)
+          val encoded_theorem = Thm.TRANS word_theorem simplified
+          val equality_head = Term.rator (Term.rator schematic_target)
+          val normalized =
+            if atom_on_left then Thm.MK_COMB
+              (Thm.MK_COMB (Thm.REFL equality_head, atom_theorem),
+               encoded_theorem)
+            else Thm.MK_COMB
+              (Thm.MK_COMB (Thm.REFL equality_head,
+                 encoded_theorem), atom_theorem)
+          val residue = boolSyntax.rhs (Thm.concl normalized)
+          val source_facts =
+            if shared_target then
+              List.map
+                (fn (source, variable) =>
+                  let
+                    val descriptor = phase "z3-fp-packed-source"
+                      SmtFpGraph.represent source
+                    val theorem = #representation descriptor
+                    val fields = boolSyntax.rhs (Thm.concl theorem)
+                  in (boolSyntax.mk_eq (variable, fields), theorem) end)
+                source_pairs
+            else []
+          val antecedents = List.map Lib.fst source_facts
+          val implication = boolSyntax.list_mk_imp
+            (antecedents, residue)
+          val proof =
+            if shared_target then
+              CPC_ProofReplay.prove_boolean_circuit implication
+            else tautLib.TAUT_PROVE residue
+          val assumptions = List.map Thm.ASSUME antecedents
+          val residue_proved = Drule.LIST_MP assumptions proof
+          val schematic = Thm.EQ_MP
+            (Thm.SYM normalized) residue_proved
+          val schematic = List.foldr
+            (fn (fact, theorem) => Thm.DISCH fact theorem)
+            schematic antecedents
+          val substitutions = ListPair.mapEq
+            (fn (source, variable) =>
+              {redex = variable, residue = source})
+            (!sources, source_variables)
+          val instantiated = phase "z3-fp-packed-atom-instantiate"
+            (Thm.INST substitutions) schematic
+          val result = Drule.LIST_MP
+            (List.map Lib.snd source_facts) instantiated
+          val _ = CPC_ProofReplay.sharing_aware_aconv
+            (Thm.concl result) target orelse
+            raise ERR "rewrite_fp_packed_atom"
+              "abstracted proof endpoint mismatch"
+        in result end
+    in
+      if shared_target then
+        let
+          val nodes = SmtResource.dag_nodes_up_to
+            (SmtResource.max_skeleton_replay_dag_nodes + 1)
+            schematic_target
+          val _ = SmtResource.check_dag_size_for
+            "FloatingPoint" "z3-rewrite-fp-packed-atom" nodes
+        in convert () end
+      else SmtResource.with_resource_step_time
+        "FloatingPoint" "z3-rewrite-fp-packed-atom"
+        (fn target =>
+          (SmtResource.check_resource_goal
+             "FloatingPoint" "z3-rewrite-fp-packed-atom" target;
+           convert ())) schematic_target
+    end
+
   fun z3_def_axiom (state, t) =
+    (* A guarded conditional is a top-level Boolean schema.  Prove it before
+       inspecting potentially large theory terms in its branches. *)
+    (state, def_axiom_guarded_conditional t)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
     (* Recognize excluded-middle clauses from their Boolean spine before
        generic proforma matching.  This avoids traversing deeply shared
        character and bit-vector atoms merely to bind one proposition. *)
@@ -4737,6 +5237,9 @@ local
     if l ~~ r then
       (state, Thm.REFL l)
     else
+      case Lib.total rewrite_boolean_constant_schema t of
+        SOME theorem => (state, theorem)
+      | NONE =>
       (* E1(a): this decides Boolean AC-idempotent conjunction/disjunction. *)
       rewrite_profile "propositional-AC" "rewrite(1)(conj/disj)" (fn () =>
       if boolSyntax.is_conj l then
@@ -5190,16 +5693,44 @@ local
        | ASSERTED_EQUALITY_REWRITE_ERROR error => raise error
 
   fun z3_rewrite_entry (state, target) =
-  let
+  case Lib.total rewrite_boolean_constant_schema target of
+    SOME theorem => (state, theorem)
+  | NONE =>
+  (case SOME (rewrite_fp_packed_atom target)
+      handle Feedback.HOL_ERR holerr =>
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else NONE
+           | SmtFpGraph.Declined _ => NONE of
+     SOME theorem => (state, theorem)
+   | NONE =>
+  (case SOME (rewrite_fp_sub_boolean_normal_form target)
+      handle Feedback.HOL_ERR holerr =>
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else NONE of
+     SOME theorem => (state, theorem)
+   | NONE => let
+    val trace = OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
+      !replay_completed_steps < 100
+    val _ = if trace then
+      (Feedback.HOL_MESG "Z3 rewrite: begin";
+       TextIO.flushOut TextIO.stdOut) else ()
     val orientation =
       profile "rewrite(entry)(canonical-orientation)"
         (Conv.QCHANGED_CONV SmtReplayCanon.z3_rewrite_canon_conv) target
       handle Conv.UNCHANGED => Thm.REFL target
+    val _ = if trace then
+      (Feedback.HOL_MESG "Z3 rewrite: canonicalized";
+       TextIO.flushOut TextIO.stdOut) else ()
     val canonical = boolSyntax.rhs (Thm.concl orientation)
     val (state, theorem) = z3_rewrite (state, canonical)
+    val _ = if trace then
+      (Feedback.HOL_MESG "Z3 rewrite: proved";
+       TextIO.flushOut TextIO.stdOut) else ()
   in
     (state, Thm.EQ_MP (Thm.SYM orientation) theorem)
-  end
+  end))
 
   (* |- ~(!x. P x y) <=> ~(P (sk y) y)
      |- (?x. P x y) <=> P (sk y) y *)
@@ -5275,7 +5806,11 @@ local
     | SemanticProofLocalLookup
 
   fun skeleton_general_attempt state target =
-    SmtSkeletonDispatch.attempt (#skeleton_context state) target
+    if SmtResource.dag_nodes_up_to
+        (SmtResource.max_skeleton_replay_dag_nodes + 1) target >
+       SmtResource.max_skeleton_replay_dag_nodes then
+      SmtSkeletonDispatch.Declined
+    else SmtSkeletonDispatch.attempt (#skeleton_context state) target
 
   fun skeleton_general_success result =
     profile "th_lemma[general](success)"
@@ -5363,8 +5898,100 @@ local
           (COND_REWRITE_TAC, Tactic.CONV_TAC PROFILED_BBLAST_CONV))
   end
 
+  fun bv_concat_schema_prove target =
+    let
+      val _ = boolSyntax.is_eq target orelse
+        raise ERR "bv_concat_schema_prove"
+          "not a word equality"
+      val (left, _) = boolSyntax.dest_eq target
+      val _ = wordsSyntax.is_word_type (Term.type_of left) orelse
+        raise ERR "bv_concat_schema_prove"
+          "equality is not over words"
+      val substitutions = ref
+        ([] : {redex : Term.term, residue : Term.term} list)
+      val sources = ref ([] : (Term.term * Term.term) list)
+      val memo = ref
+        (Redblackmap.mkDict Term.compare :
+          (Term.term, Term.term) Redblackmap.dict)
+      fun payload term =
+        if wordsSyntax.is_word_literal term then term
+        else
+          case List.find (fn (source, _) => Term.aconv source term)
+              (!sources) of
+            SOME (_, variable) => variable
+          | NONE =>
+              let
+                val variable = Term.genvar (Term.type_of term)
+                val _ = sources := (term, variable) :: !sources
+                val _ = substitutions :=
+                  {redex = variable, residue = term} :: !substitutions
+              in variable end
+      fun abstract term =
+        case Redblackmap.peek (!memo, term) of
+          SOME result => result
+        | NONE =>
+            let
+              val result =
+                if wordsSyntax.is_word_concat term then
+                  let
+                    val (first, second) =
+                      wordsSyntax.dest_word_concat term
+                    fun argument part =
+                      if wordsSyntax.is_word_concat part then
+                        abstract part
+                      else payload part
+                  in wordsSyntax.mk_word_concat
+                    (argument first, argument second) end
+                else if Term.is_comb term then
+                  Term.mk_comb
+                    (abstract (Term.rator term),
+                     abstract (Term.rand term))
+                else term
+              val _ = memo := Redblackmap.insert (!memo, term, result)
+            in result end
+      val schematic = abstract target
+      val _ = List.null (!substitutions) andalso
+        raise ERR "bv_concat_schema_prove"
+          "no concatenation payload to abstract"
+      val _ = if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
+        (Feedback.HOL_MESG
+          ("Z3 BV concat schema: payloads=" ^
+           Int.toString (List.length (!substitutions)) ^
+           " nodes=" ^
+           Int.toString (SmtResource.dag_nodes_up_to 10001 schematic));
+         TextIO.flushOut TextIO.stdOut)
+        else ()
+      val law = blastLib.BBLAST_PROVE schematic
+        handle Feedback.HOL_ERR holerr =>
+          (if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
+             (Feedback.HOL_MESG
+               ("Z3 BV concat schema: declined=" ^
+                Feedback.message_of holerr);
+              TextIO.flushOut TextIO.stdOut)
+           else ();
+           raise Feedback.HOL_ERR holerr)
+             | HolSatLib.SAT_cex _ =>
+          raise ERR "bv_concat_schema_prove"
+            "schematic word lemma has a counterexample"
+      val _ = if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
+        (Feedback.HOL_MESG "Z3 BV concat schema: proved";
+         TextIO.flushOut TextIO.stdOut)
+        else ()
+      val theorem = Thm.INST (!substitutions) law
+      val _ = Term.aconv (Thm.concl theorem) target orelse
+        raise ERR "bv_concat_schema_prove"
+          "schema endpoint mismatch"
+    in theorem end
+
   fun bv_th_lemma_prove target =
-    bv_resource_prove "bv-th-lemma" bv_th_lemma_prove_raw target
+    (require_bv_family "bv-th-lemma" target;
+     bv_resource_prove_after_admission
+       "bv-th-lemma-concat-schema" bv_concat_schema_prove target
+     handle Feedback.HOL_ERR holerr =>
+       if SmtResource.is_resource_gate holerr then
+         raise Feedback.HOL_ERR holerr
+       else bv_resource_prove_after_admission
+         "bv-th-lemma" bv_th_lemma_prove_raw target)
 
   fun bv_th_lemma_basic_branch prove decline fallback target =
     if has_word_atom target then
@@ -5960,22 +6587,144 @@ local
   fun z3_th_lemma_fp _ (state, thms, t) =
   let
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    fun trace_fp stage =
+      if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
+         !replay_completed_steps < 700 then
+        (Feedback.HOL_MESG
+          ("Z3 FP lemma: " ^ stage ^ " nodes=" ^
+           Int.toString (SmtResource.dag_nodes_up_to 1025 t'));
+         TextIO.flushOut TextIO.stdOut)
+      else ()
+    fun symbolic_fp target =
+      SmtFpProve.fp_prove_with_decompositions_and_arith
+        arith_prove [] target
+    fun shared_fp_circuit target =
+      let
+        val seen = ref (HOLset.empty Term.compare)
+        val fp_sources = ref ([] : Term.term list)
+        val rounding_sources = ref ([] : Term.term list)
+        val (rounding_var, _) = boolSyntax.dest_forall
+          (Thm.concl smtfloatReplayRoundingTheory.smtfp_rounding_onehot)
+        val rounding_type = Term.type_of rounding_var
+        fun is_fp_source term =
+          (let val {Thy, Tyop, ...} =
+                 Type.dest_thy_type (Term.type_of term)
+           in Thy = "smtfloat" andalso Tyop = "smtfp" andalso
+              (Term.is_var term orelse boolSyntax.is_select term) end)
+          handle Feedback.HOL_ERR _ => false
+        fun collect term =
+          if HOLset.member (!seen, term) then ()
+          else
+            (seen := HOLset.add (!seen, term);
+             if is_fp_source term then
+               fp_sources := term :: !fp_sources else ();
+             if Term.type_of term = rounding_type andalso
+                (Term.is_var term orelse boolSyntax.is_select term) then
+               rounding_sources := term :: !rounding_sources
+             else ();
+             List.app collect (SmtResource.term_children term))
+        val _ = collect target
+        fun canonical_fact source =
+          let
+            val base = Drule.ISPECL [source]
+              (Drule.GEN_ALL
+                smtfloatReplayRoundingTheory.smtfp_rep_canonical_fields)
+            val beta = Conv.TOP_DEPTH_CONV Thm.BETA_CONV
+              (Thm.concl base)
+              handle Conv.UNCHANGED => Thm.REFL (Thm.concl base)
+          in Thm.EQ_MP beta base end
+        val facts = List.map canonical_fact (!fp_sources) @
+          List.map (fn mode => Thm.SPEC mode
+            smtfloatReplayRoundingTheory.smtfp_rounding_onehot)
+            (!rounding_sources)
+        val implication = List.foldr boolSyntax.mk_imp target
+          (List.map Thm.concl facts)
+        val proved = CPC_ProofReplay.prove_boolean_circuit implication
+        val proof = List.foldl
+          (fn (fact, theorem) => Thm.MP theorem fact) proved facts
+        val _ = List.null (Thm.hyp proof) andalso
+          Term.aconv (Thm.concl proof) target orelse
+          raise ERR "z3_th_lemma_fp"
+            "shared circuit proof did not close the exact target"
+      in proof end
+    fun circuit_or_symbolic target =
+      if SmtResource.dag_nodes_up_to 257 target <= 256 then
+        (symbolic_fp target
+         handle (original as Feedback.HOL_ERR holerr) =>
+           if SmtResource.is_resource_gate holerr then
+             raise original
+           else
+             (trace_fp "symbolic declined; shared circuit begin";
+              shared_fp_circuit target
+              handle Feedback.HOL_ERR circuit_err =>
+                if SmtResource.is_resource_gate circuit_err then
+                  raise Feedback.HOL_ERR circuit_err
+                else raise original
+                   | HolSatLib.SAT_cex _ => raise original
+                   | HolSatLib.SAT_satisfiable _ => raise original))
+      else
+        (trace_fp "shared circuit begin";
+         shared_fp_circuit target
+         handle Feedback.HOL_ERR holerr =>
+           if SmtResource.is_resource_gate holerr then
+             raise Feedback.HOL_ERR holerr
+           else
+             (trace_fp ("shared circuit declined: " ^
+               SmtResource.bounded_text 160
+                 (Feedback.message_of holerr));
+              symbolic_fp target)
+              | HolSatLib.SAT_cex _ =>
+             (trace_fp "shared circuit declined: SAT abstraction";
+              symbolic_fp target)
+              | HolSatLib.SAT_satisfiable _ =>
+             (trace_fp "shared circuit declined: SAT abstraction";
+              symbolic_fp target))
     val () =
       if SmtFpProve.has_fp_theory_term t' then ()
       else SmtFpProve.unsupported t'
+    val _ = trace_fp "begin"
     val (general, thm) =
-      case skeleton_general_attempt state t' of
-        SmtSkeletonDispatch.Proved result =>
-          (true, skeleton_general_success result)
-      | SmtSkeletonDispatch.Declined =>
+      case Lib.total (state_inst_cached_thm state) t' of
+        SOME cached => (true, cached)
+      | NONE =>
+        (case skeleton_general_attempt state t' of
+          SmtSkeletonDispatch.Proved result =>
+            (true, skeleton_general_success result)
+        | SmtSkeletonDispatch.Declined =>
           (* E1(b): checked lowering is the general selected FP th-lemma
              procedure and fails loudly at its unsupported/D4 boundary. *)
-          (false, profile "th_lemma[fp](1)"
-            (SmtFpProve.fp_prove_with_decompositions_and_arith
-              arith_prove []) t')
+          (false,
+           (profile "th_lemma[fp](pack-roundtrip)"
+              rewrite_fp_pack_roundtrip t'
+            handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else
+                (trace_fp
+                   ("pack-roundtrip declined: " ^
+                    Feedback.message_of holerr);
+                 profile "th_lemma[fp](packed-atom)"
+                   rewrite_fp_packed_atom t'
+                 handle Feedback.HOL_ERR holerr =>
+                   if SmtResource.is_resource_gate holerr then
+                     raise Feedback.HOL_ERR holerr
+                   else profile "th_lemma[fp](1)"
+                     circuit_or_symbolic t')
+                 | SmtFpGraph.Declined _ =>
+              profile "th_lemma[fp](1)"
+                circuit_or_symbolic t')))
+    val _ = trace_fp "proved"
+    val state' =
+      if general then state
+      else
+        (trace_fp "cache begin";
+         let val cached = state_cache_thm state thm
+         in trace_fp "cache end"; cached end)
+    val _ = trace_fp "apply begin"
+    val applied = Drule.LIST_MP thms thm
+    val _ = trace_fp "apply end"
   in
-    (if general then state else state_cache_thm state thm,
-     Drule.LIST_MP thms thm)
+    (state', applied)
   end
 
   fun z3_th_lemma_advanced metadata =
@@ -6833,6 +7582,19 @@ local
                   val proof = update_proof_steps proof steps
                   val _ =
                     set_latest_proof_step id rule "end" local_info
+                  val _ = replay_completed_steps :=
+                    !replay_completed_steps + 1
+                  val _ =
+                    if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" =
+                       SOME "1" andalso
+                       !replay_completed_steps mod 100 = 0 then
+                      (Feedback.HOL_MESG
+                        ("Z3 replay progress: completed=" ^
+                         Int.toString (!replay_completed_steps) ^
+                         " id=" ^ Int.toString id ^
+                         " rule=" ^ rule);
+                       TextIO.flushOut TextIO.stdOut)
+                    else ()
                 in
                   ((state, proof), thm)
                 end
@@ -7705,6 +8467,7 @@ in
     definition_hyps = Term.empty_tmset,
     flexible_vars = proof_vars proof,
     thm_cache = Net.empty,
+    large_thm_cache = [],
     var_set = proof_vars proof,
     bit_decompositions = proof_bit_decompositions proof,
     translation_definitions = definitions,
@@ -8166,6 +8929,7 @@ in
      subset of) those asserted in the proof *)
   fun check_proof_impl definitions (asl, g, proof) : Thm.thm =
   let
+    val _ = replay_completed_steps := 0
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG "HolSmtLib: checking Z3 proof"
       else ()

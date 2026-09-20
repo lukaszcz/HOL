@@ -1,5 +1,10 @@
 signature blastLib =
 sig
+    (* Checked word normalization primitives.  BIT_BLAST_CONV performs its
+       internal tree scans, so callers must use it only on separately bounded
+       inputs (for example, small schematic terms). *)
+    val WORD_SIMP_CONV   : Conv.conv
+    val BIT_BLAST_CONV   : Conv.conv
     val BBLAST_CONV      : Conv.conv
     val BBLAST_CONV_WITH_PROFILES :
       (Conv.conv -> Conv.conv) -> (Conv.conv -> Conv.conv) -> Conv.conv

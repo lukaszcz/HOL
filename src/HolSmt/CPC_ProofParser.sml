@@ -10,6 +10,113 @@ local
 
   type dicts = SmtLib_Parser.dicts
 
+  val term_intern_bucket_count = 4093
+  val cpc_term_intern = ref
+    (Array.array (term_intern_bucket_count, [] : Term.term list))
+
+  fun term_intern_hash term =
+    let
+      fun string_hash string =
+        let
+          fun loop index hash =
+            if index = String.size string then hash
+            else loop (index + 1)
+              ((hash * 33 + Char.ord (String.sub (string, index))) mod
+               term_intern_bucket_count)
+        in loop 0 5381 end
+      fun head_hash tm =
+        if Term.is_var tm then string_hash (#1 (Term.dest_var tm))
+        else if Term.is_const tm then
+          string_hash (#Name (Term.dest_thy_const tm))
+        else if Term.is_comb tm then 17
+        else if Term.is_abs tm then 19
+        else 23
+      fun bounded 0 tm = head_hash tm
+        | bounded depth tm =
+            if Term.is_comb tm then
+              let val (operator, operand) = Term.dest_comb tm in
+                (bounded (depth - 1) operator * 37 +
+                 bounded (depth - 1) operand * 17 + 3) mod
+                  term_intern_bucket_count
+              end
+            else if Term.is_abs tm then
+              let val (_, body) = Term.dest_abs tm in
+                (bounded (depth - 1) body * 41 + 5) mod
+                  term_intern_bucket_count
+              end
+            else head_hash tm
+    in bounded 6 term end
+
+  fun intern_cpc_term term =
+    let
+      (* Compound candidates are interned bottom-up.  Structural equality of
+         such candidates is therefore pointer equality of their canonical
+         children; avoid repeatedly alpha-comparing the full shared DAG. *)
+      fun same_candidate saved candidate =
+        Portable.pointer_eq (saved, candidate) orelse
+        if Term.is_comb saved andalso Term.is_comb candidate then
+          let
+            val (saved_operator, saved_operand) = Term.dest_comb saved
+            val (operator, operand) = Term.dest_comb candidate
+          in
+            Portable.pointer_eq (saved_operator, operator) andalso
+            Portable.pointer_eq (saved_operand, operand)
+          end
+        else if Term.is_var saved andalso Term.is_var candidate then
+          let
+            val (saved_name, saved_type) = Term.dest_var saved
+            val (name, ty) = Term.dest_var candidate
+          in
+            saved_name = name andalso Type.compare (saved_type, ty) = EQUAL
+          end
+        else if Term.is_const saved andalso Term.is_const candidate then
+          Term.same_const saved candidate andalso
+          Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
+        else Term.is_abs saved andalso Term.is_abs candidate andalso
+          Term.aconv saved candidate
+      fun bucket_entries candidate = Array.sub
+        (!cpc_term_intern, term_intern_hash candidate)
+      fun pointer_lookup candidate = List.find
+        (fn saved => Portable.pointer_eq (saved, candidate))
+        (bucket_entries candidate)
+      fun lookup candidate = List.find
+        (fn saved => same_candidate saved candidate)
+        (bucket_entries candidate)
+      fun insert candidate =
+        let
+          val bucket = term_intern_hash candidate
+          val entries = Array.sub (!cpc_term_intern, bucket)
+        in
+          Array.update (!cpc_term_intern, bucket, candidate :: entries);
+          candidate
+        end
+      fun intern candidate =
+        case pointer_lookup candidate of
+          SOME saved => saved
+        | NONE =>
+            if Term.is_comb candidate then
+              let
+                val (operator, operand) = Term.dest_comb candidate
+                val operator' = intern operator
+                val operand' = intern operand
+                val rebuilt =
+                  if Portable.pointer_eq (operator, operator') andalso
+                     Portable.pointer_eq (operand, operand') then candidate
+                  else Term.mk_comb (operator', operand')
+              in
+                case lookup rebuilt of
+                  SOME saved => saved
+                | NONE => insert rebuilt
+              end
+            else
+              case lookup candidate of
+                SOME saved => saved
+              | NONE => insert candidate
+    in intern term end
+
+  fun intern_located ({term, provenance} : located_term) =
+    {term = intern_cpc_term term, provenance = provenance}
+
   (* @list is CPC's compact representation for a list of binders or
      resolution annotations.  It is not an SMT-LIB term, so retain only the
      binder-list payload needed when it is referenced by a later quantifier. *)
@@ -408,14 +515,70 @@ local
           ("malformed CPC sort marker " ^ token)
     end
 
+  type cpc_fp_private_binding = {
+    marker : Term.term,
+    kind : string,
+    source : Term.term
+  }
+
+  val cpc_fp_private_bindings_ref =
+    ref ([] : cpc_fp_private_binding list)
+
+  fun cpc_fp_private_bindings () = !cpc_fp_private_bindings_ref
+
+  fun cpc_fp_private_abbreviation token sort_marker source =
+    let
+      fun same ({marker, kind, source = saved} : cpc_fp_private_binding) =
+        kind = token andalso
+        Type.compare (Term.type_of marker, Term.type_of sort_marker) = EQUAL
+        andalso (Portable.pointer_eq (saved, source) orelse
+                 Term.aconv saved source)
+    in
+      case List.find same (!cpc_fp_private_bindings_ref) of
+        SOME {marker, ...} => marker
+      | NONE =>
+          let
+            val marker = Term.mk_var
+              (token ^ "#" ^
+               Int.toString (List.length (!cpc_fp_private_bindings_ref)),
+               Term.type_of sort_marker)
+            val binding = {marker = marker, kind = token, source = source}
+          in
+            cpc_fp_private_bindings_ref :=
+              binding :: !cpc_fp_private_bindings_ref;
+            marker
+          end
+    end
+
   fun cpc_fp_private_parsefn token indices args =
     if not (List.null indices) then
       raise ERR "cpc_fp_private_parsefn" "unexpected indices"
     else
       case args of
         [sort_marker] => Term.mk_var (token, Term.type_of sort_marker)
+      | [sort_marker, source] =>
+          cpc_fp_private_abbreviation token sort_marker source
       | _ => raise ERR "cpc_fp_private_parsefn"
-          (token ^ " expects one sort marker")
+          (token ^ " expects a sort marker and at most one " ^
+           "floating-point operand")
+
+  fun cpc_fp_rounding_parsefn token indices args =
+    if token <> "@fp.RMBITBLAST" orelse not (List.null indices) then
+      raise ERR "cpc_fp_rounding_parsefn"
+        "malformed private rounding-mode bit-blast"
+    else
+      case args of
+        [source] =>
+          let
+            val constant = Term.prim_mk_const
+              {Thy = "smtfloatReplayWord",
+               Name = "smtfp_cvc_rounding_bits"}
+            val (domain, _) = Type.dom_rng (Term.type_of constant)
+            val instantiation =
+              Type.match_type domain (Term.type_of source)
+          in Term.mk_comb (Term.inst instantiation constant, source) end
+      | _ => raise ERR "cpc_fp_rounding_parsefn"
+          "private rounding-mode bit-blast expects one operand"
 
   fun cpc_private_const_parsefn token indices args =
     if token <> "@const" orelse not (List.null indices) then
@@ -564,6 +727,8 @@ local
         tmdict
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
          "@fp.NAN", "@fp.INF"]
+      val tmdict = Library.extend_dict
+        (("@fp.RMBITBLAST", cpc_fp_rounding_parsefn), tmdict)
       val tmdict = Library.extend_dict
         (("bvite", cpc_bvite_parsefn), tmdict)
       val tmdict = List.foldl
@@ -728,7 +893,7 @@ local
         | lookup ((candidate, sizes) :: rest) =
             if Term.aconv candidate quantified then
               (case sizes of
-                 [size] => size
+                 [size] => (candidate, size)
                | _ => cpc_skolem_error where_
                    "source FORALL binder-block metadata is ambiguous")
             else lookup rest
@@ -753,9 +918,11 @@ local
           val _ = if boolSyntax.is_forall quantified then ()
             else cpc_skolem_error where_
               "expected a FORALL Boolean formula"
-          val immediate_count = immediate_forall_block where_ quantified
+          val (canonical_quantified, immediate_count) =
+            immediate_forall_block where_ quantified
           val {witnesses, ...} = CPC_Proof.cpc_skolem_witnesses
-            immediate_count (Thm.ASSUME (boolSyntax.mk_neg quantified))
+            immediate_count
+            (Thm.ASSUME (boolSyntax.mk_neg canonical_quantified))
           fun witness_at _ [] = cpc_skolem_error where_
                 "binder index is outside the quantified formula"
             | witness_at current (witness :: rest) =
@@ -1388,6 +1555,12 @@ local
         RawList
           [RawList [RawAtom "_", RawAtom "is", RawAtom constructor],
            normalize_cpc_testers scrutinee]
+    | RawList [RawAtom "and"] => RawAtom "true"
+    | RawList [RawAtom "or"] => RawAtom "false"
+    | RawList [RawAtom "and", operand] =>
+        normalize_cpc_testers operand
+    | RawList [RawAtom "or", operand] =>
+        normalize_cpc_testers operand
     | RawList entries => RawList (List.map normalize_cpc_testers entries)
     | RawAtom _ => raw
 
@@ -1527,7 +1700,12 @@ local
           [provenance_of_raw_in environment binders,
            provenance_of_raw_in environment body]
     | RawList (RawAtom head :: operands) =>
-        if head = "match" orelse head = "par" then
+        if List.exists (fn private_name => private_name = head)
+             ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND",
+              "@fp.ZERO", "@fp.NAN", "@fp.INF",
+              "@fp.RMBITBLAST"] then
+          AtomicProvenance
+        else if head = "match" orelse head = "par" then
           UnavailableProvenance
             ("unsupported binding form " ^ head)
         else if head = "@var" then AtomicProvenance
@@ -1546,8 +1724,8 @@ local
      recovery. *)
   fun parse_located_term dicts_ref get_token : located_term =
     let
-      val raw = read_raw_term get_token
-      val tokens = ref (raw_tokens (normalize_cpc_testers raw))
+      val raw = normalize_cpc_testers (read_raw_term get_token)
+      val tokens = ref (raw_tokens raw)
       fun next_token () =
         case !tokens of
           token :: rest => (tokens := rest; token)
@@ -2340,9 +2518,13 @@ local
           (Library.undo_look_ahead [first] get_token))
       val _ = case defined_term of
           SOME ({term, provenance} : located_term) =>
-            (Library.expect_token ")" (get_token ());
-             add_term dicts_ref key term;
-             add_term_provenance key provenance)
+            let
+              val term = intern_cpc_term term
+            in
+              Library.expect_token ")" (get_token ());
+              add_term dicts_ref key term;
+              add_term_provenance key provenance
+            end
         | NONE => ()
       val _ = cpc_proof_term_symbols :=
         HOLset.add (!cpc_proof_term_symbols, key)
@@ -2351,7 +2533,7 @@ local
     end
 
   fun duplicate_id id known_ids =
-    List.exists (Lib.equal id) (!known_ids)
+    HOLset.member (!known_ids, id)
 
   fun ensure_fresh_id where_ id known_ids =
     if duplicate_id id known_ids then
@@ -2359,7 +2541,7 @@ local
     else ()
 
   fun require_known_premise id known_ids premise =
-    if List.exists (Lib.equal premise) (!known_ids) then ()
+    if HOLset.member (!known_ids, premise) then ()
     else raise ERR "parse_step"
       ("unknown premise ID '" ^ premise ^ "' in CPC step " ^ id)
 
@@ -2778,7 +2960,7 @@ local
                   val premise =
                     cpc_id_key "parse_step" "premise ID" raw_premise
                 in
-                  if List.exists (Lib.equal premise) (!known_ids) then
+                  if HOLset.member (!known_ids, premise) then
                     ids ()
                   else raise ERR "parse_step"
                     ("unknown premise ID '" ^
@@ -2830,8 +3012,10 @@ local
       val conclusion = Option.map parse_buffered raw_conclusion
       fun attrs seen_premises seen_args premises args =
         case get_token () of
-          ")" => {id = id, conclusion = conclusion, rule = rule,
-                   premises = premises, args = args}
+          ")" => {id = id,
+                   conclusion = Option.map intern_located conclusion,
+                   rule = rule, premises = premises,
+                   args = List.map intern_located args}
         | ":premises" =>
             if seen_premises then raise ERR "parse_step"
               ("duplicate :premises in CPC step " ^ id)
@@ -3252,7 +3436,7 @@ local
     let
       fun add_id id =
         (ensure_fresh_id "parse_commands" id known_ids;
-         known_ids := id :: !known_ids)
+         known_ids := HOLset.add (!known_ids, id))
       fun recurse acc =
         parse_commands dicts_ref version known_ids scope_snapshots
           seen_steps record_unsupported get_token stop acc
@@ -3279,9 +3463,10 @@ local
           val signature_tokens =
             kind :: id :: normalize_premise_ids (List.tl tokens)
         in
-          case List.find (fn (known_id, _) => known_id = id) (!seen_steps) of
-            NONE => seen_steps := (id, signature_tokens) :: !seen_steps
-          | SOME (_, known_tokens) =>
+          case Redblackmap.peek (!seen_steps, id) of
+            NONE => seen_steps :=
+              Redblackmap.insert (!seen_steps, id, signature_tokens)
+          | SOME known_tokens =>
               if same_tokens signature_tokens known_tokens then ()
               else raise ERR "parse_commands"
                 ("duplicate CPC command ID " ^ id)
@@ -3405,6 +3590,7 @@ local
            SmtLib_Parser.proof_symbol_text other ^ "'")
     end
 in
+  val intern_cpc_term = intern_cpc_term
   val cpc_indexed_term_registry = cpc_indexed_term_registry
   val with_cpc_deindexed_entries = with_cpc_deindexed_entries
   val cpc_parameterized_skolem_names = cpc_parameterized_skolem_names
@@ -3413,6 +3599,8 @@ in
   val cpc_re_unfold_pos_decomposition = cpc_re_unfold_pos_decomposition
   val cpc_re_unfold_pos_regexps = cpc_re_unfold_pos_regexps
   val cpc_re_unfold_pos_component = cpc_re_unfold_pos_component
+  type cpc_fp_private_binding = cpc_fp_private_binding
+  val cpc_fp_private_bindings = cpc_fp_private_bindings
 
   fun parse_stream_with_version (dicts : dicts) version instream : proof =
     let
@@ -3421,7 +3609,10 @@ in
       val version = resolve_version version
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
+      val _ = cpc_fp_private_bindings_ref := []
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
+      val _ = cpc_term_intern :=
+        Array.array (term_intern_bucket_count, [])
       val _ = cpc_forall_blocks := []
       fun keys dictionary = Redblackmap.foldl
         (fn (key, _, set) => HOLset.add (set, key))
@@ -3447,9 +3638,11 @@ in
       val _ = cpc_source_term_symbols := source_keys (#2 dicts)
       val _ = cpc_proof_sort_symbols := HOLset.empty String.compare
       val _ = cpc_proof_term_symbols := HOLset.empty String.compare
-      val known_ids = ref ([] : string list)
-      val scope_snapshots = ref ([] : string list list)
-      val seen_steps = ref ([] : (string * string list) list)
+      val known_ids = ref (HOLset.empty String.compare)
+      val scope_snapshots = ref ([] : string HOLset.set list)
+      val seen_steps = ref
+        (Redblackmap.mkDict String.compare :
+          (string, string list) Redblackmap.dict)
       val pending = ref (NONE : (string * string) option)
       fun record_unsupported diagnostic =
         case !pending of

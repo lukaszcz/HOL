@@ -27,10 +27,12 @@ struct
   fun member name = List.exists (Lib.equal name)
 
   fun node_features term =
-    if not (Term.is_const term) then (false, false, false, false)
+    if not (Term.is_const term) then
+      (false, false, false, false, false)
     else
       let val {Thy, Name, ...} = Term.dest_thy_const term in
         (Thy = "words",
+         false,
          List.exists
            (fn (thy, name) => Thy = thy andalso Name = name)
            regex_constants,
@@ -43,14 +45,20 @@ struct
             member Name ["smt_ediv_total", "smt_emod_total"]))
       end
 
-  fun merge_features ((word1, regex1, arith1, arith_boundary1),
-      (word2, regex2, arith2, arith_boundary2)) =
-    (word1 orelse word2, regex1 orelse regex2, arith1 orelse arith2,
-     arith_boundary1 orelse arith_boundary2)
+  fun merge_features
+      ((word1, fp1, regex1, arith1, arith_boundary1),
+       (word2, fp2, regex2, arith2, arith_boundary2)) =
+    (word1 orelse word2, fp1 orelse fp2, regex1 orelse regex2,
+     arith1 orelse arith2, arith_boundary1 orelse arith_boundary2)
 
   fun conversion_attempt conversion atom =
     SmtSkeletonProve.Expanded (conversion atom)
     handle Conv.UNCHANGED => SmtSkeletonProve.Unable
+
+  fun floating_point_attempt _ atom =
+    SmtSkeletonProve.Expanded (SmtFpGraph.lower_atom atom)
+    handle Conv.UNCHANGED => SmtSkeletonProve.Unable
+         | SmtFpGraph.Declined _ => SmtSkeletonProve.Unable
 
   fun arithmetic_attempt arith_prove atom =
     let
@@ -71,17 +79,26 @@ struct
            | NONE => SmtSkeletonProve.Unable)
     end
 
-  fun new_context arith_prove =
+  fun context_with_word_conversion arith_prove word_conversion =
     SmtSkeletonProve.new_context
       [{name = "char-word",
         expand = conversion_attempt
           SmtStringProve.char_word_expansion_conv},
        {name = "word",
-        expand = conversion_attempt blastLib.BBLAST_CONV},
+        expand = conversion_attempt word_conversion},
+       {name = "floating-point",
+        expand = floating_point_attempt word_conversion},
        {name = "ground-regex",
         expand = conversion_attempt SmtStringProve.ground_eval_conv},
        {name = "arithmetic",
         expand = arithmetic_attempt arith_prove}]
+
+  fun new_context arith_prove =
+    context_with_word_conversion arith_prove SmtWordGraph.normalize
+
+  fun new_context_with_word_node_conversion arith_prove node_conversion =
+    context_with_word_conversion arith_prove
+      (SmtWordGraph.normalize_with_node_conversion node_conversion)
 
   val procedure_names = SmtSkeletonProve.procedure_names
 
@@ -133,11 +150,13 @@ struct
       val ambiguous = ref false
       fun select atom =
         let
-          val ((word, regex, arith, arith_boundary), _) = summary atom
+          val ((word, _, regex, arith, arith_boundary), _) = summary atom
           val char = SmtStringProve.char_word_expansion_domain atom
+          val fp = SmtFpGraph.lower_atom_domain atom
           val candidates =
             (if char then ["char-word"] else []) @
-              (if word andalso not char then ["word"] else []) @
+              (if fp then ["floating-point"] else []) @
+              (if word andalso not char andalso not fp then ["word"] else []) @
               (if regex andalso List.null (Term.free_vars atom) then
                  ["ground-regex"]
                else []) @
@@ -147,11 +166,20 @@ struct
                else [])
         in
           case candidates of
-            [] => ()
+            [] =>
+              let
+                val (head, _) = boolSyntax.strip_comb atom
+                val label = if Term.is_const head then
+                    let val {Thy, Name, ...} = Term.dest_thy_const head
+                    in Thy ^ "$" ^ Name end
+                  else "non-constant"
+              in Feedback.HOL_MESG ("SMT_UNOWNED " ^ label) end
           | [name] =>
               (has_owner := true;
                owners := Redblackmap.insert (!owners, atom, name))
-          | _ => ambiguous := true
+          | _ =>
+              (Feedback.HOL_MESG "SMT_AMBIGUOUS";
+               ambiguous := true)
         end
       fun skeleton term =
         if HOLset.member (!skeleton_nodes, term) then ()
@@ -187,19 +215,22 @@ struct
             | SOME _ => false) then
           Declined
         else
-          case SmtResource.profile_phase "skeleton/ownership-analysis"
-              (analyze context) target of
+          case SmtResource.with_resource_step_time
+              "Skeleton" "general-reduction-ownership"
+              (SmtResource.profile_phase
+                "skeleton/ownership-analysis" (analyze context))
+              target of
             NONE => Declined
           | SOME {owners, target_measure} =>
-              (case SmtSkeletonProve.attempt_with_owners
-                  context owners target_measure target of
+              (case SmtResource.with_resource_step_time
+                  "Skeleton" "general-reduction-replay"
+                  (SmtSkeletonProve.attempt_with_owners
+                    context owners target_measure) target of
                  SmtSkeletonProve.Proved result => Proved result
                | SmtSkeletonProve.Declined => Declined)
     in
       Profile.profile_with_exn_name
-        "th_lemma[general](candidate/attempt)"
-        (SmtResource.with_resource_step_time
-          "Skeleton" "general-reduction" run) target
+        "th_lemma[general](candidate/attempt)" run target
     end
 
   fun prove context target =

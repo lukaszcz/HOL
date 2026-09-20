@@ -8,6 +8,7 @@
 structure HolSatLib :> HolSatLib = struct
 
 exception SAT_cex = minisatProve.SAT_cex
+exception SAT_satisfiable = minisatProve.SAT_satisfiable
 
 open satTools dimacsTools SatSolvers minisatProve satConfig
 

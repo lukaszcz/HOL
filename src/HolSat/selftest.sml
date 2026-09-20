@@ -17,3 +17,31 @@ val _ = require_msg
           thm_to_string
           SAT_ORACLE
           ``b ==> T``
+
+(* Definitional CNF uses a shared root assumption while replaying the
+   resolution trace; the returned proof must still discharge that root. *)
+val _ = tprint "SAT_PROVE discharges definitional CNF roots"
+val _ = require_msg
+          (check_result (fn th => null (hyp th) andalso
+            concl th ~~ ``(p /\ q) ==> (q /\ p)``))
+          thm_to_string
+          SAT_PROVE
+          ``(p /\ q) ==> (q /\ p)``
+
+(* Proof-only mode checks UNSAT certificates but never constructs a theorem
+   for a satisfying assignment that the caller will discard. *)
+val _ = tprint "SAT_PROVE_ONLY checks UNSAT proofs"
+val _ = require_msg
+          (check_result (fn th => null (hyp th) andalso
+            concl th ~~ ``(p /\ q) ==> (q /\ p)``))
+          thm_to_string
+          SAT_PROVE_ONLY
+          ``(p /\ q) ==> (q /\ p)``
+
+val _ = tprint "SAT_PROVE_ONLY rejects SAT instances"
+val _ = require_msg
+          (check_result (fn rejected => rejected))
+          Bool.toString
+          (fn tm => (ignore (SAT_PROVE_ONLY tm); false)
+             handle SAT_satisfiable _ => true)
+          ``p \/ q``
