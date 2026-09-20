@@ -232,20 +232,6 @@ val fold_against_a_set_aggregate =
      ^ "instance the goal needs")
     ["list_L3381_anon_L3381", "list_L3385_anon_L3385"]
 
-(* Three of what used to be one class were permutations of a single
-   statement and now close.  What is left is not propositional: the
-   residual is [0 < n ==> P a <=> P a \/ n = 0], and the two sides
-   agree only once [n = 0] is read as the complement of [0 < n].  The
-   note this class carried -- that Isabelle's simplifier orders such
-   equations by its term order -- was false: [conj_ac], [disj_ac] and
-   [eq_ac] are all stated in HOL.thy and none is declared [simp]. *)
-val arithmetic_complement_in_a_disjunct =
-  classified "arithmetic complement in a disjunct"
-    ("the residual is an equivalence whose two sides agree only "
-     ^ "once a disjunct is read as the complement of a bound, "
-     ^ "which is arithmetic and not a propositional rearrangement")
-    ["list_L5008_Ball_set_replicate"]
-
 (* [source_sorted] is now [source_sorted_wrt], and the ambient bridge
    has crossed: every residual below is stated on HOL4's own adjacent
    SORTED, with nothing of the all-pairs reading left in it.  So the
@@ -349,8 +335,7 @@ val definitional_unfolding_stops_short =
   classified "definitional unfolding stops short"
     ("the cited definition unfolds one constant and nothing "
      ^ "reduces what it exposes")
-    ["list_L5441_distinct_set_subseqs", "list_L5470_subset_subseqs",
-     "list_L8701_trancl_set_ntrancl"]
+    ["list_L5441_distinct_set_subseqs", "list_L8701_trancl_set_ntrancl"]
 
 val injectivity_and_surjectivity =
   classified "injectivity and surjectivity"
@@ -482,7 +467,6 @@ val execution : benchLib.shortfall list =
   an_injectivity_premise_no_ambient_fact_reaches @
   fold_direction @
   fold_against_a_set_aggregate @
-  arithmetic_complement_in_a_disjunct @
   sortedness_beyond_the_bridge @
   numeral_against_Suc @
   characterisation_is_the_goal @

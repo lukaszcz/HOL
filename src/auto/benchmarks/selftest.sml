@@ -2958,8 +2958,7 @@ val _ =
    [list_L6847_sorted_list_of_set_nonempty],
    [list_L6873_nth_sorted_list_of_set_greaterThanAtMost],
    [list_L3381_anon_L3381], [list_L5527_Nil_in_shufflesI],
-   [list_L5470_subset_subseqs], [list_L8673_these_set_code] and
-   [list_L7954_listrel_iff_nth].
+   [list_L8673_these_set_code] and [list_L7954_listrel_iff_nth].
    Closing any of those shortfalls means restoring its generalization
    test in the same commit, as [list_L7508_lexord_trans]'s,
    [list_L7771_wf_measures]'s and [list_L7922_wf_listrel1_iff]'s are
@@ -3014,6 +3013,12 @@ val promoted_recovered_schema_goals =
            (parityTranslation$source_lenlex
              (parityTranslation$source_lenlex relation))``
      (goal_named "list_L7570_asym_lenlex" benchListMap.goals),
+   retarget_goal "schema-subseqs-three-elements"
+     ``({1; 3} : num set) IN
+       IMAGE LIST_TO_SET
+         (LIST_TO_SET
+           (parityTranslation$source_subseqs [1; 2; 3]))``
+     (goal_named "list_L5470_subset_subseqs" benchListMap.goals),
    retarget_goal "schema-lenlex-length-iterated"
      ``!relation : num -> num -> bool.
        !xs ys : num list list.
