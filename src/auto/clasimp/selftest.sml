@@ -713,6 +713,78 @@ val _ =
             ``~clasimp_bu_wrap v``)
          ``clasimp_bu_view v``)
 
+(* [simp_bottom_up] is the same order without the claset halves: a law the
+   source declares [simp] and not [iff] may not seed the reasoner. *)
+fun with_simp_bottom_up name body =
+  with_declaration ("simp_bottom_up", clasimpLib.remove_simp_bottom_up)
+    name body
+
+val _ =
+  check
+    ("a [simp_bottom_up] rewrite waits for a rule about the subject",
+     fn () =>
+       aconv
+         (with_simp_bottom_up "clasimp_simp_bottom_up_masked"
+            (fn () => clasimp_bu_normalise
+                        ``~clasimp_bu_wrap (clasimp_bu_step m)``))
+         boolSyntax.T andalso
+       aconv
+         (with_simp_bottom_up "clasimp_simp_bottom_up_bare"
+            (fn () => clasimp_bu_normalise ``~clasimp_bu_wrap v``))
+         ``clasimp_bu_view v``)
+
+val _ =
+  check
+    ("Theorem [simp_bottom_up] declares no claset rule and " ^
+     "remove_simp_bottom_up retracts the rewrite",
+     fn () =>
+       let
+         val local_name = "clasimp_simp_bottom_up_attribute_test"
+         val persistent_name =
+           KernelSig.name_toString (ThmSetData.toKName local_name)
+         val _ =
+           boolLib.save_thm
+             (local_name ^ "[simp_bottom_up]", clasimp_bu_rule)
+         val declared =
+           has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
+           has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
+         val claset_rules =
+           List.exists
+             (fn suffix =>
+                has_named_claset_rule
+                  (persistent_iff_rule_name persistent_name suffix))
+             ["intro", "dest", "elim"]
+         val _ = clasimpLib.remove_simp_bottom_up local_name
+       in
+         declared andalso not claset_rules andalso
+         not (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
+         not (has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ()))
+       end)
+
+(* The matcher the reducer uses.  A law stated as a higher-order pattern --
+   Isabelle's miniscoping laws read a quantifier's body as [P x] -- fires
+   on a body that is not literally a variable applied to the bound one only
+   if the reducer matches the way the simplifier's own rewrites do. *)
+val clasimp_bu_higher_order =
+  Tactical.prove
+    (``!P Q. (!x:num. P x ==> Q) <=> ((?x:num. P x) ==> Q)``,
+     Rewrite.REWRITE_TAC [boolTheory.LEFT_FORALL_IMP_THM])
+
+val _ =
+  check
+    ("a bottom-up rewrite is matched as a higher-order pattern",
+     fn () =>
+       aconv
+         (clasimp_bu_reduce
+            (simpLib.++
+               (BasicProvers.srw_ss (),
+                clasimpLib.normalised_subject_fragment
+                  [clasimp_bu_higher_order]))
+            ``!n:num.
+                clasimp_bu_wrap (clasimp_bu_step n) ==> clasimp_bu_probe``)
+         ``(?n:num. clasimp_bu_wrap (clasimp_bu_step n)) ==>
+           clasimp_bu_probe``)
+
 fun tyinfo_named tyop =
   case List.filter
     (fn tyi => #2 (TypeBasePure.ty_name_of tyi) = tyop)
@@ -972,6 +1044,80 @@ val _ =
   check
     ("the goal those arguments close is not closed without them",
      fn () => not (valid_closes (clasimpLib.AUTO_TAC []) lifted_goal))
+
+end
+
+(* The same witness, once the simpset has miniscoped the closure it sits
+   in.  The closed condition is a conjunction over the rewrite's premises,
+   and Isabelle's [ex_simps] -- ambient there, declared here -- leaves the
+   quantifier over the one conjunct its variable occurs in, which is not
+   where the assumption naming the witness can be read off.  The law is
+   declared below in the form the seeds declare it; neither the goal nor
+   the rule is a benchmark entry. *)
+local
+  val clasimp_pull_p_def =
+    new_definition
+      ("clasimp_pull_p_def", ``clasimp_pull_p (n:num) <=> (n MOD 2 = 0)``)
+  val clasimp_pull_q_def =
+    new_definition
+      ("clasimp_pull_q_def", ``clasimp_pull_q (n:num) <=> clasimp_pull_p n``)
+  val clasimp_pull_link_def =
+    new_definition
+      ("clasimp_pull_link_def",
+       ``clasimp_pull_link (r:num -> num -> bool) x y <=> r x y``)
+  (* Two premises, so that the closure is a conjunction, and a relation the
+     conclusion does not carry, so that there is a witness to name at all:
+     the conclusion determines the subject and nothing else. *)
+  val clasimp_pull_fact =
+    Tactical.prove
+      (``!relation x y.
+           (!a b. relation (a:num) (b:num) ==> clasimp_pull_p a) ==>
+           clasimp_pull_link relation x y ==> clasimp_pull_q x``,
+       Tactical.THEN
+         (Rewrite.REWRITE_TAC [clasimp_pull_q_def, clasimp_pull_link_def],
+          Tactical.THEN
+            (Tactical.REPEAT Tactic.STRIP_TAC,
+             Tactical.THEN (Tactic.RES_TAC, Rewrite.ASM_REWRITE_TAC []))))
+  (* The assumption that names the witness is the goal's own antecedent, as
+     it is in the corpus: the traversal has it in context only once it has
+     descended through the quantifiers and the implication, and by then the
+     condition has been left to the reducer. *)
+  val clasimp_pull_goal : Abbrev.goal =
+    ([``!a b. (clasimp_pull_r : num -> num -> bool) a b ==>
+              clasimp_pull_p a``],
+     ``!x y. clasimp_pull_link clasimp_pull_r x y ==> clasimp_pull_q x``)
+  (* A theory holds each name once, so each declaration takes its own. *)
+  fun with_miniscoping local_name body =
+    let
+      val _ =
+        boolLib.save_thm
+          (local_name ^ "[simp_bottom_up]", boolTheory.RIGHT_EXISTS_AND_THM)
+      val result =
+        body ()
+        handle e => (clasimpLib.remove_simp_bottom_up local_name; raise e)
+      val _ = clasimpLib.remove_simp_bottom_up local_name
+    in
+      result
+    end
+  fun closes local_name arguments =
+    with_miniscoping local_name
+      (fn () =>
+         valid_closes
+           (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) arguments)
+           clasimp_pull_goal)
+in
+
+val _ =
+  check
+    ("a witness the simpset has miniscoped out of reach is still read " ^
+     "off an assumption",
+     fn () => closes "clasimp_pull_supplied" [clasimp_pull_fact])
+
+(* The argument is what closes it: the assumptions alone do not. *)
+val _ =
+  check
+    ("the goal that argument closes is not closed without it",
+     fn () => not (closes "clasimp_pull_bare" []))
 
 end
 

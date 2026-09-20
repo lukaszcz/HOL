@@ -78,14 +78,34 @@ val witness_subgoaler : Traverse.subgoaler =
       in
         search conditions []
       end
+    (* The closure arrives as one existential over the premises'
+       conjunction, but the traversal simplifies a condition before this
+       pass is offered it, and a simpset that miniscopes -- [ex_simps],
+       ambient in Isabelle and declared here -- leaves the quantifier over
+       the one conjunct its variable occurs in.  The witnesses are the
+       same and the assumptions that name them are the same; only where
+       the quantifier sits has moved, so the condition is read with the
+       existentials pulled back out.  A conjunction is all there is to
+       undo: [QUANTIFY_CONDITIONS] closes over the premises' conjunction,
+       and these two laws are the readings of it the declaration can
+       reshape. *)
+    val pull_laws =
+      map (Conv.HO_REWR_CONV o Drule.SPEC_ALL o Conv.GSYM)
+        [boolTheory.LEFT_EXISTS_AND_THM, boolTheory.RIGHT_EXISTS_AND_THM]
+    val pull_existentials =
+      Conv.QCONV (Conv.TOP_DEPTH_CONV (Conv.FIRST_CONV pull_laws))
+    val has_existential = Lib.can (HolKernel.find_term boolSyntax.is_exists)
     fun witness_tac (goal as (assumptions, w)) =
       let
-        val (vars, body) = boolSyntax.strip_exists w
+        val pulled_thm =
+          if has_existential w then pull_existentials w else Thm.REFL w
+        val pulled = boolSyntax.rhs (Thm.concl pulled_thm)
+        val (vars, body) = boolSyntax.strip_exists pulled
         val fixed =
           HOLset.difference
-            (Term.FVL [w] Term.empty_tmset,
+            (Term.FVL [pulled] Term.empty_tmset,
              HOLset.fromList Term.compare vars)
-        val fixed_types = Term.type_vars_in_term w
+        val fixed_types = Term.type_vars_in_term pulled
         fun attempt conditions =
           witnesses assumptions fixed fixed_types conditions
         (* Whole first, so that a conjunction standing as one assumption
@@ -105,12 +125,14 @@ val witness_subgoaler : Traverse.subgoaler =
                   val accept = Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC
                 in
                   Tactical.THEN
-                    (Tactical.MAP_EVERY Tactic.EXISTS_TAC
-                       (map (Term.subst instance) vars),
-                     Tactical.ORELSE
-                       (accept,
-                        Tactical.THEN (Tactical.REPEAT Tactic.CONJ_TAC,
-                                       accept)))
+                    (Tactic.CONV_TAC (fn _ => pulled_thm),
+                     Tactical.THEN
+                       (Tactical.MAP_EVERY Tactic.EXISTS_TAC
+                          (map (Term.subst instance) vars),
+                        Tactical.ORELSE
+                          (accept,
+                           Tactical.THEN (Tactical.REPEAT Tactic.CONJ_TAC,
+                                          accept))))
                     goal
                 end
       end
@@ -1280,8 +1302,19 @@ val bottom_up_fragment_name = "clasimp-bottom-up"
    in. *)
 val bottom_up_rewrites = ref ([] : thm list)
 
+(* The same reducer carries [simp_bottom_up], which is this declaration
+   without the claset halves: Isabelle states a law whose subject must be
+   normal as [simp] as well as as [iff], and a rule the source declares
+   [simp] may not seed the claset. *)
+val simp_bottom_up_rewrites = ref ([] : thm list)
+
 val bottom_up_installed = ref false
 
+(* Matched as the simplifier matches its own rewrites.  Isabelle's laws of
+   this kind are higher-order patterns -- [all_simps] reads a body as
+   [P x] -- and a first-order matcher offers them only a body that is
+   literally a variable applied to the bound one, so the declaration would
+   be silently inert on every other goal. *)
 val bottom_up_reducer =
   Traverse.REDUCER
     {name = SOME bottom_up_fragment_name,
@@ -1290,7 +1323,8 @@ val bottom_up_reducer =
      apply =
        fn _ => fn term =>
          Conv.FIRST_CONV
-           (map (Conv.REWR_CONV o Drule.SPEC_ALL) (!bottom_up_rewrites))
+           (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL)
+              (!bottom_up_rewrites @ !simp_bottom_up_rewrites))
            term}
 
 val bottom_up_fragment =
@@ -1300,7 +1334,8 @@ val bottom_up_fragment =
 
 (* The same mechanism for a rule installed for one invocation rather than
    declared: the rewrites are fixed when the fragment is built, where the
-   declaration's reducer reads a table that a later declaration changes. *)
+   declaration's reducer reads a table that a later declaration changes.
+   Matched higher-order for the reason the declaration's reducer is. *)
 val normalised_subject_fragment_name = "clasimp-normalised-subject"
 
 fun normalised_subject_fragment rewrites =
@@ -1315,19 +1350,23 @@ fun normalised_subject_fragment rewrites =
            apply =
              fn _ => fn term =>
                Conv.FIRST_CONV
-                 (map (Conv.REWR_CONV o Drule.SPEC_ALL) rewrites) term}]}
+                 (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) rewrites) term}]}
 
 (* The fragment is installed by the first declaration and then stays, inert
    while nothing is declared. *)
+fun ensure_bottom_up_fragment () =
+  if !bottom_up_installed then ()
+  else
+    (bottom_up_installed := true;
+     BasicProvers.augment_srw_ss [bottom_up_fragment])
+
 fun install_bottom_up_fragment table =
-  let
-    val _ = bottom_up_rewrites := map #2 (Symtab.dest table)
-  in
-    if !bottom_up_installed then ()
-    else
-      (bottom_up_installed := true;
-       BasicProvers.augment_srw_ss [bottom_up_fragment])
-  end
+  (bottom_up_rewrites := map #2 (Symtab.dest table);
+   ensure_bottom_up_fragment ())
+
+fun install_simp_bottom_up_fragment table =
+  (simp_bottom_up_rewrites := map #2 (Symtab.dest table);
+   ensure_bottom_up_fragment ())
 
 fun bottom_up_rules kname theorem =
   #rules (iff_declaration (iff_rule_name kname) theorem)
@@ -1411,6 +1450,82 @@ fun remove_iff_bottom_up name =
   in
     #record_delta bottom_up_data delta;
     #update_global_value bottom_up_data (apply_bottom_up_to_global delta)
+  end
+
+(* ------------------------------------------------------------------
+   A [simp] whose rewrite may only run once its subject is normalized
+   ------------------------------------------------------------------ *)
+
+(* [iff_bottom_up] without the claset halves.  Isabelle's miniscoping laws
+   -- [ex_simps] and [all_simps], src/HOL/HOL.thy:1396-1414,1442-1443 --
+   are the family this is for: they are declared [simp] there and nothing
+   else, and their subject is a quantifier whose body the traversal must
+   have normalised first.  Fired above the body, as HOL4's outermost-first
+   order would fire an ordinary rewrite, the law pushes the quantifier past
+   a side whose own antecedent had not yet been used, and the reading that
+   antecedent would have settled is lost. *)
+
+fun apply_simp_bottom_up_delta delta table =
+  case delta of
+      ThmSetData.ADD (kname, theorem) =>
+        Symtab.update (persistent_iff_name kname, theorem) table
+    | ThmSetData.REMOVE name =>
+        Symtab.delete_safe (normalise_iff_name name) table
+
+fun apply_simp_bottom_up_to_global delta table =
+  let
+    val table = apply_simp_bottom_up_delta delta table
+    val _ = install_simp_bottom_up_fragment table
+  in
+    table
+  end
+
+val _ =
+  if List.exists (equal "simp_bottom_up") (ThmSetData.all_set_types ())
+     orelse ThmAttribute.is_attribute "simp_bottom_up"
+  then
+    raise ERR "registration"
+      "settype or attribute simp_bottom_up already exists"
+  else ()
+
+val simp_bottom_up_data =
+  ThmSetData.export_with_ancestry
+    {settype = "simp_bottom_up",
+     delta_ops =
+       {apply_to_global = apply_simp_bottom_up_to_global,
+        thy_finaliser = NONE,
+        uptodate_delta = K true,
+        initial_value = Symtab.empty,
+        apply_delta = apply_simp_bottom_up_delta}}
+
+(* As for [iff_bottom_up]: resolve against what is installed. *)
+fun resolve_simp_bottom_up_name name =
+  let
+    val installed = Symtab.keys (#get_global_value simp_bottom_up_data ())
+    fun denotes candidate =
+      candidate = name orelse
+      (case String.fields (equal #"$") candidate of
+           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
+         | _ => false)
+  in
+    case List.filter denotes installed of
+        [resolved] => resolved
+      | [] =>
+          raise ERR "remove_simp_bottom_up"
+            ("no [simp_bottom_up] declaration named " ^ name ^
+             " is installed")
+      | _ =>
+          raise ERR "remove_simp_bottom_up"
+            ("ambiguous [simp_bottom_up] name " ^ name)
+  end
+
+fun remove_simp_bottom_up name =
+  let
+    val delta = ThmSetData.REMOVE (resolve_simp_bottom_up_name name)
+  in
+    #record_delta simp_bottom_up_data delta;
+    #update_global_value simp_bottom_up_data
+      (apply_simp_bottom_up_to_global delta)
   end
 
 val _ =

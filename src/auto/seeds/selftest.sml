@@ -1023,3 +1023,70 @@ val _ =
           ([], ``seed_rsub_left RSUBSET seed_rsub_middle ==>
                  seed_rsub_middle RSUBSET seed_rsub_right ==>
                  seed_rsub_left RSUBSET seed_rsub_right``)])
+
+(* src/HOL/HOL.thy:1396-1414,1442-1443 @ f7e02b7e.  The twelve
+   miniscoping laws.  Neither the readings below nor the two goals are
+   corpus entries: the readings ask for each law outright, and the
+   goals ask for what declaring them buys -- a rule stated of the
+   narrower scope meets a body the goal quantifies over whole. *)
+val miniscoping_readings =
+  [(``!b. seed_mini_p (b:'a) /\ seed_mini_q``,
+    ``(!b. seed_mini_p (b:'a)) /\ seed_mini_q``),
+   (``!b. seed_mini_q /\ seed_mini_p (b:'a)``,
+    ``seed_mini_q /\ !b. seed_mini_p (b:'a)``),
+   (``!b. seed_mini_p (b:'a) \/ seed_mini_q``,
+    ``(!b. seed_mini_p (b:'a)) \/ seed_mini_q``),
+   (``!b. seed_mini_q \/ seed_mini_p (b:'a)``,
+    ``seed_mini_q \/ !b. seed_mini_p (b:'a)``),
+   (``!b. seed_mini_p (b:'a) ==> seed_mini_q``,
+    ``(?b. seed_mini_p (b:'a)) ==> seed_mini_q``),
+   (``!b. seed_mini_q ==> seed_mini_p (b:'a)``,
+    ``seed_mini_q ==> !b. seed_mini_p (b:'a)``),
+   (``?b. seed_mini_p (b:'a) /\ seed_mini_q``,
+    ``(?b. seed_mini_p (b:'a)) /\ seed_mini_q``),
+   (``?b. seed_mini_q /\ seed_mini_p (b:'a)``,
+    ``seed_mini_q /\ ?b. seed_mini_p (b:'a)``),
+   (``?b. seed_mini_p (b:'a) \/ seed_mini_q``,
+    ``(?b. seed_mini_p (b:'a)) \/ seed_mini_q``),
+   (``?b. seed_mini_q \/ seed_mini_p (b:'a)``,
+    ``seed_mini_q \/ ?b. seed_mini_p (b:'a)``),
+   (``?b. seed_mini_p (b:'a) ==> seed_mini_q``,
+    ``(!b. seed_mini_p (b:'a)) ==> seed_mini_q``),
+   (``?b. seed_mini_q ==> seed_mini_p (b:'a)``,
+    ``seed_mini_q ==> ?b. seed_mini_p (b:'a)``)]
+
+val _ =
+  check
+    ("the miniscoping laws are ambient",
+     fn () =>
+       List.all
+         (fn (redex, reduct) =>
+            Term.aconv
+              (boolSyntax.rhs
+                 (Thm.concl
+                    (Conv.QCONV
+                       (simpLib.SIMP_CONV (BasicProvers.srw_ss ()) [])
+                       redex)))
+              reduct)
+         miniscoping_readings)
+
+val miniscoping_rule =
+  Thm.ASSUME ``(?b. seed_mini_r (b:'a)) <=> seed_mini_s``
+
+val _ =
+  check
+    ("a rule stated of the narrower scope meets a quantified body",
+     fn () =>
+       List.all
+         (fn goal =>
+            (Term.aconv
+               (boolSyntax.rhs
+                  (Thm.concl
+                     (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ())
+                        [miniscoping_rule] goal)))
+               boolSyntax.T
+             handle Conv.UNCHANGED => false))
+         [``(!b. seed_mini_r (b:'a) ==> seed_mini_q) <=>
+              (seed_mini_s ==> seed_mini_q)``,
+          ``(?b. seed_mini_r (b:'a) /\ seed_mini_q) <=>
+              (seed_mini_s /\ seed_mini_q)``])

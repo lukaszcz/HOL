@@ -99,6 +99,13 @@ sig
      term's own head.  The claset halves are those of [iff]. *)
   val remove_iff_bottom_up : string -> unit
 
+  (* The same declaration without the claset halves, for a law the source
+     declares [simp] and not [iff].  Isabelle's miniscoping laws are the
+     family: fired above a quantifier's body, as HOL4's order would fire
+     an ordinary rewrite, such a law pushes the quantifier past a side
+     whose own antecedent the body had not yet been read with. *)
+  val remove_simp_bottom_up : string -> unit
+
   (* The simpset half of that declaration, for a rewrite a caller
      installs for one invocation instead of declaring: a fragment whose
      rewrites the traversal reaches only once the rewrites and the
