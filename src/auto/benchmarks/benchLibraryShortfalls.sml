@@ -33,9 +33,7 @@ val translation : benchLib.shortfall list =
    encoding_gap "list_L8273_anon_L8273" 8273]
 
 val over_budget =
-  ["list_L1460_split_list_propE", "list_L1484_split_list_first_propE",
-   "list_L1511_split_list_last_propE",
-   "list_L6138_map_sorted_distinct_set_unique",
+  ["list_L6138_map_sorted_distinct_set_unique",
    "list_L8999_set_Cons_transfer",
    "list_L9013_list_all_transfer"]
 
@@ -81,19 +79,6 @@ val list_decomposition_witnesses =
     ("the residual needs an existential witness splitting a list "
      ^ "at a member")
     ["list_L8673_these_set_code"]
-
-(* Re-measured at ten times the budget: all three still return nothing.
-   The citation they were filed under is not what stands in the way --
-   [OF assms] discharges a premise from the goal's own assumption and
-   each resolves.  What is left is the search. *)
-val search_returns_nothing_at_ten_times_the_budget =
-  classified "search returns nothing at ten times the budget"
-    ("the cited facts resolve and are supplied, and the assigned "
-     ^ "search returns neither a proof nor a residual in 300 "
-     ^ "seconds")
-    ["list_L1460_split_list_propE",
-     "list_L1484_split_list_first_propE",
-     "list_L1511_split_list_last_propE"]
 
 val over_budget_with_no_residual =
   classified "over budget with no residual"
@@ -456,7 +441,6 @@ val execution : benchLib.shortfall list =
   transpose_column_lengths @
   emptiness_from_disjoint_membership @
   list_decomposition_witnesses @
-  search_returns_nothing_at_ten_times_the_budget @
   over_budget_with_no_residual @
   the_only_citation_states_the_goal @
   sorted_list_of_a_set @
