@@ -289,39 +289,6 @@ val membership_through_a_guarded_flatten =
      ^ "reports no proof well inside its budget")
     ["list_L8705_set_relcomp"]
 
-(* src/HOL/List.thy:6998 @ f7e02b7e.  Measured 2026-09-20: the closure
-   is not what stops this goal.  HOL4 declares nothing at all about
-   [set_relation$transitive_closure] -- no rewrite, no claset rule, no
-   solver -- but with its own [tc_rules] declared as unsafe
-   introductions, two edges and the closure of their join close at the
-   classical leg's first stage, in 0.009s, and the residual the
-   measurement leaves closes at its fifth.  The assigned tactic runs
-   that leg to two, which is where Isabelle runs it:
-   [auto_tac ctxt = mk_auto_tac ctxt 4 2] of src/Provers/clasimp.ML.
-   So the stages go to the decomposition of a membership in a FLAT
-   over a MAP over a FILTER, and the closure never gets one.  Isabelle
-   spends none there: [set_map] and [set_concat] are simp and [imageE]
-   is [elim!], where listAutoSeed declares the mapped reading unsafe --
-   the deviation that file records, with the measurement that buys it
-   ([set_L1610_Pow_Compl] at 88 branches against 3638).  Isabelle's
-   ambient closure machinery would not bridge the rest either: the
-   four unsafe simp solvers of Transitive_Closure.thy:1603-1606 -- the
-   decision procedure in src/Provers/trancl.ML -- stand in for the one
-   stage the closure costs, not the four the decomposition is over
-   by. *)
-val transitive_closure_from_a_step_list =
-  classified "transitive closure from a step list"
-    ("the flattened list of steps is taken apart, and what is left is "
-     ^ "a pair drawn from a map over a filter together with the two "
-     ^ "steps of the transitive closure it has to be built into.  "
-     ^ "The closure is within reach -- its own introduction rules "
-     ^ "close that join at the first stage of the classical leg -- "
-     ^ "and the decomposition is not: this layer takes a mapped "
-     ^ "membership apart with unsafe steps where Isabelle's simpset "
-     ^ "and safe elimination take it apart for nothing, and that is "
-     ^ "already past the bound both run the leg to")
-    ["list_L7054_set_trans_list_step_subset_trancl"]
-
 val integer_interval_emptiness =
   classified "integer interval emptiness"
     ("the residual is [j < i ==> source_upto i j = []], which the "
@@ -518,7 +485,6 @@ val execution : benchLib.shortfall list =
   numeral_against_Suc @
   characterisation_is_the_goal @
   membership_through_a_guarded_flatten @
-  transitive_closure_from_a_step_list @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @
