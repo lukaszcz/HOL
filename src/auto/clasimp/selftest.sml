@@ -2246,7 +2246,7 @@ val _ =
     ("an equation between functions meets the applied law that settles it",
      fn () =>
        valid_closes
-         (clasimpLib.with_extensionality
+         (clasimpLib.with_extensionality (clasimpLib.clasimp_ss ())
             (clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ()) []))
          extensional_goal)
 
@@ -2295,7 +2295,7 @@ val _ =
     ("an equation between sets meets the rules stated on membership",
      fn () =>
        valid_closes
-         (clasimpLib.with_extensionality
+         (clasimpLib.with_extensionality membership_ss
             (clasimpLib.asm_full_simp membership_ss []))
          membership_goal)
 
@@ -2326,7 +2326,7 @@ val _ =
     ("an equation between predicates keeps the reading its context has",
      fn () =>
        valid_closes
-         (clasimpLib.with_extensionality
+         (clasimpLib.with_extensionality (BasicProvers.srw_ss ())
             (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) []))
          applied_goal)
 
@@ -2360,3 +2360,32 @@ val _ =
          (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
             clasetLib.empty_cs supplied_reading_ss)
          supplied_reading_goal)
+
+(* Which reading the default takes is decided by the head, not by the
+   head being a constant.  [EVERY clasimp_ext_q] is constant-headed at
+   [-> bool] and is no set: the simpset states no membership fact about
+   it -- no rewrite of its own has [_ IN EVERY ...] for a left-hand side
+   -- and every fact it does state is applied, so read as a membership
+   the equation meets none of them.  The rewrite below is what a method
+   naming [list_all_iff] supplies, and it says nothing about the
+   reading; the applied one has to be the default's own choice.  Neither
+   the goal nor the rewrite is a benchmark entry. *)
+val predicate_reading_goal : Abbrev.goal =
+  ([], ``EVERY (clasimp_ext_q : 'a -> bool) =
+         \clasimp_subject.
+           !clasimp_item.
+             MEM clasimp_item clasimp_subject ==>
+             clasimp_ext_q clasimp_item``)
+
+val predicate_reading_ss =
+  simpLib.++ (BasicProvers.srw_ss (),
+              simpLib.rewrites [listTheory.EVERY_MEM])
+
+val _ =
+  check
+    ("a predicate short of an argument is read applied, not as a set",
+     fn () =>
+       valid_closes
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            clasetLib.empty_cs predicate_reading_ss)
+         predicate_reading_goal)

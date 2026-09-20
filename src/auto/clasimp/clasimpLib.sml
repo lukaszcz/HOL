@@ -629,26 +629,88 @@ val membership_extensionality =
         Tactic.BETA_TAC,
         Rewrite.REWRITE_TAC []])
 
-(* Which of the two readings an equation is given is decided by its
-   sides.  A side headed by a constant -- [set l], an image, an
-   intersection -- is one HOL4 states facts about, and states them on
-   the membership; where neither side is, there is no such fact to meet,
-   and the applied reading is the one the goal's own context is in.  The
-   source's [Collect_cong] is that case: it arrives with an applied
-   premise about a predicate variable, and reading its conclusion as a
-   membership puts the two out of each other's reach. *)
-fun extensional_rule term =
+(* A rewrite states a fact about a head on the membership when its own
+   left-hand side is a membership at that head: [MEM x l] is
+   [x IN set l], [IN_IMAGE] and [IN_INTER] are the same shape, and
+   [NOT_IN_EMPTY] is that shape negated.  The heads so collected are what
+   the invocation states on the membership and nothing else is; the scan
+   runs once where the tactic is built rather than once per equation the
+   traversal reaches. *)
+fun membership_heads ss =
   let
-    fun constant_headed side =
-      Term.is_const (fst (boolSyntax.strip_comb side))
-    fun membership_reading (left, right) =
-      snd (Type.dom_rng (Term.type_of left)) = Type.bool andalso
-      (constant_headed left orelse constant_headed right)
+    fun subject theorem =
+      let
+        val (_, statement) =
+          boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
+      in
+        case Lib.total boolSyntax.dest_neg statement of
+            SOME negated => negated
+          | NONE =>
+              (case Lib.total boolSyntax.dest_eq statement of
+                   SOME (left, _) => left
+                 | NONE => statement)
+      end
+    fun head_of theorem =
+      let
+        val (_, set) = pred_setSyntax.dest_in (subject theorem)
+        val (head, _) = boolSyntax.strip_comb set
+      in
+        if Term.is_const head then SOME (Term.dest_thy_const head) else NONE
+      end
+      handle HOL_ERR _ => NONE
+    fun readings theorem =
+      Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
+    fun record (theorem, heads) =
+      case head_of theorem of
+          SOME {Thy, Name, ...} => Binaryset.add (heads, (Thy, Name))
+        | NONE => heads
   in
-    case Lib.total (Lib.assert membership_reading o boolSyntax.dest_eq) term of
-        SOME _ => membership_extensionality
-      | NONE => boolTheory.FUN_EQ_THM
+    List.foldl record (Binaryset.empty (Lib.pair_compare (String.compare,
+                                                          String.compare)))
+      (List.concat
+        (map readings
+          (List.concat
+            (map simpLib.frag_rewrites (simpLib.ssfrags_of ss)))))
   end
+
+(* Which of the two readings an equation is given is decided by its
+   sides.  A side headed by a constant HOL4 states facts about on the
+   membership -- [set l], an image, an intersection -- is read there;
+   where neither side is, there is no such fact to meet, and the applied
+   reading is the one the goal's own context is in.  The source's
+   [Collect_cong] is that case: it arrives with an applied premise about
+   a predicate variable, and reading its conclusion as a membership puts
+   the two out of each other's reach.  So is a constant-headed side that
+   is a predicate short of an argument and no set -- [IS_NONE], a
+   translated [source_superset] -- whose every fact is stated applied:
+   read as a membership it meets none of them, and no rewrite brings the
+   two readings back together. *)
+fun membership_reading heads term =
+  let
+    fun head_constant side =
+      Lib.total (Term.dest_thy_const o fst o boolSyntax.strip_comb) side
+    fun stated_on_membership side =
+      case head_constant side of
+          SOME {Thy, Name, ...} => Binaryset.member (heads, (Thy, Name))
+        | NONE => false
+    fun both_sides (left, right) =
+      snd (Type.dom_rng (Term.type_of left)) = Type.bool andalso
+      (stated_on_membership left orelse stated_on_membership right)
+  in
+    Lib.can (Lib.assert both_sides o boolSyntax.dest_eq) term
+  end
+
+fun extensional_rule heads term =
+  if membership_reading heads term then membership_extensionality
+  else boolTheory.FUN_EQ_THM
+
+(* Whether the engine's default takes an equation as a membership, for a
+   method built from HOL4's simplifier directly -- the parity corpus
+   builds its recipes that way -- to make the same decision about its own
+   set-equality pass.  Applied to the simpset alone it collects the heads
+   once, so a caller asking it of each equation its own pass reaches pays
+   the scan once rather than once per equation. *)
+fun reads_as_membership ss = membership_reading (membership_heads ss)
 
 (* An equation between two functions is decided pointwise.  The source
    states its laws at the function level -- [f ^^ 0 = id],
@@ -662,12 +724,14 @@ fun extensional_rule term =
    The equation is looked for under the goal's leading quantifiers and
    implications, which is where simplification leaves it, and taking it
    pointwise strips one arrow, so the step applies finitely often. *)
-fun pointwise_conv term =
-  if boolSyntax.is_forall term then Conv.QUANT_CONV pointwise_conv term
-  else if boolSyntax.is_imp_only term then Conv.RAND_CONV pointwise_conv term
-  else Conv.REWR_CONV (extensional_rule term) term
+fun pointwise_conv heads term =
+  if boolSyntax.is_forall term then
+    Conv.QUANT_CONV (pointwise_conv heads) term
+  else if boolSyntax.is_imp_only term then
+    Conv.RAND_CONV (pointwise_conv heads) term
+  else Conv.REWR_CONV (extensional_rule heads term) term
 
-val pointwise = Tactic.CONV_TAC pointwise_conv
+fun pointwise heads = Tactic.CONV_TAC (pointwise_conv heads)
 
 (* The step is terminal: it runs on what simplification could not close,
    so no goal that already closes takes a different route.  Where
@@ -684,9 +748,10 @@ val pointwise = Tactic.CONV_TAC pointwise_conv
    take it at all: Isabelle's [ext] is an introduction rule and not a
    safe one, and a safe step that rewrote every function equation would
    change what SAFE_TAC leaves. *)
-fun with_extensionality simplify =
+fun with_extensionality ss simplify =
   let
-    val pointwise_then = Tactical.THEN (pointwise, Tactical.TRY simplify)
+    val pointwise_then =
+      Tactical.THEN (pointwise (membership_heads ss), Tactical.TRY simplify)
   in
     Tactical.THEN
       (Tactical.ORELSE (simplify, pointwise_then),
@@ -1497,14 +1562,18 @@ fun read_by_a_rewrite ss term =
   end
 
 fun extensional_normalize ss =
-  Tactical.CONV_TAC
-    (Conv.CHANGED_CONV
-       (fn term =>
-          if read_by_a_rewrite ss term then
-            raise ERR "extensional_normalize"
-              "a rewrite of the invocation's takes the equation"
-          else
-            Conv.REWR_CONV (extensional_rule term) term))
+  let
+    val heads = membership_heads ss
+  in
+    Tactical.CONV_TAC
+      (Conv.CHANGED_CONV
+         (fn term =>
+            if read_by_a_rewrite ss term then
+              raise ERR "extensional_normalize"
+                "a rewrite of the invocation's takes the equation"
+            else
+              Conv.REWR_CONV (extensional_rule heads term) term))
+  end
 
 fun search_stages limit =
   let
@@ -1575,7 +1644,7 @@ fun auto_with {blast, depth} cs ss simp_args =
     val script =
       Tactical.EVERY
         [Tactical.TRY (extensional_normalize ss),
-         with_extensionality (asm_full_simp ss simp_args),
+         with_extensionality ss (asm_full_simp ss simp_args),
          Tactical.TRY initial_safe,
          Tactical.TRY search,
          Tactical.TRY final_safe]
@@ -1634,7 +1703,7 @@ fun force_with name cs ss simp_args =
         [Tactical.TRY clarify,
          Tactical.TRY (extensional_normalize ss),
          simpLib.FULL_SIMP_TAC ss simp_args,
-         with_extensionality (asm_full_simp ss simp_args),
+         with_extensionality ss (asm_full_simp ss simp_args),
          Tactical.TRY safe,
          search]
   in

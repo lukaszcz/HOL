@@ -29,17 +29,32 @@ sig
 
   val clasimp_ss : unit -> simpLib.simpset
 
-  (* [with_extensionality simplify] runs [simplify] and, where it leaves
-     a goal whose conclusion is an equation between functions, takes that
-     equation pointwise and runs [simplify] again.  HOL4's library states
-     applied what the source states at the function level, so a goal at
-     the function level cannot meet the rule that settles it; this is the
-     one step that brings the two together.  It wraps a method's
+  (* [with_extensionality ss simplify] runs [simplify] and, where it
+     leaves a goal whose conclusion is an equation between functions,
+     takes that equation pointwise and runs [simplify] again.  HOL4's
+     library states applied what the source states at the function
+     level, so a goal at the function level cannot meet the rule that
+     settles it; this is the one step that brings the two together.
+     Which of the two readings the equation is taken in is read off
+     [ss], as [reads_as_membership] below says.  It wraps a method's
      simplification, not a step inside a search.  Exported so that a
      method built from HOL4's simplifier directly -- the parity corpus
      builds its simp method that way -- takes the step the layer's own
      methods take, rather than restating it. *)
-  val with_extensionality : tactic -> tactic
+  val with_extensionality : simpLib.simpset -> tactic -> tactic
+
+  (* True where the pointwise reading of an equation between functions is
+     its membership and not its application: a side is headed by a
+     constant the simpset states a membership fact about -- some rewrite
+     of its own has [_ IN c ...] for a left-hand side, as the [set],
+     image and intersection rules do.  A constant-headed side that is a
+     predicate short of an argument and no set has every fact stated
+     applied, and read as a membership meets none of them.  It asks this
+     of the equation it is given: a caller whose own pass reaches
+     equations below the goal's conclusion asks it of each of those.
+     Applied to the simpset alone it collects the simpset's heads once.
+     Exported for the same reason as [states_a_reading] below. *)
+  val reads_as_membership : simpLib.simpset -> term -> bool
 
   (* True of a rewrite that states how an equation between functions is
      to be read -- its own left-hand side is such an equation, which is

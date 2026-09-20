@@ -1192,21 +1192,34 @@ fun across_correspondence entry args =
    A source result states its premises as the antecedents of its
    conclusion, which is where the difference is felt. *)
 (* The set-equality pass below reads an equation as a membership,
-   which is the reading HOL4's set and list facts are stated on.  It is
-   a default, and where the method named a rewrite that states a
-   reading of the equation the method's is the one meant:
-   [fun_eq_iff] names the applied one outright.  Only a rewrite of
-   equations between functions states one, which is what keeps the
-   ambient rewrites -- supplied to every goal, and between them
-   matching almost any statement -- out of the decision.  Run first the pass
-   puts the equation out of that rewrite's reach for good -- a
-   membership at a constant-headed side that is a predicate short of
-   an argument, and no set, meets none of the facts the predicate's
-   own are stated on -- so it stands down there.  This is the
-   precedence [clasimpLib.extensional_normalize] takes for the same
-   choice inside the engines.  The test reads the goal's own shape
-   against the rewrites the method named, as [preprocess_fires] below
-   decides its pass. *)
+   which is the reading HOL4's set and list facts are stated on.  It
+   stands down in two cases, both of them the engines' own -- the pass
+   runs before [FULL_SIMP_TAC] and so before the engine ever sees the
+   equation, and run first it puts the equation out of the other
+   reading's reach for good.
+
+   The first is the method's own rewrite: where it named one that states
+   a reading of the equation, that is the one meant, and [fun_eq_iff]
+   names the applied reading outright.  Only a rewrite of equations
+   between functions states one, which is what keeps the ambient
+   rewrites -- supplied to every goal, and between them matching almost
+   any statement -- out of the decision.
+
+   The second is the equation's own shape: the membership reading is the
+   right one only where a side is headed by a constant the simpset
+   states a membership fact about, which is what
+   [clasimpLib.reads_as_membership] decides.  A constant-headed side
+   that is a predicate short of an argument, and no set, meets none of
+   the facts the predicate's own are stated on.  This one is asked of
+   each equation the pass reaches rather than of the goal: the pass
+   descends, and a source lemma stating when two sets are equal -- an
+   iff between set equations -- has no equation at its conclusion at
+   all.
+
+   Both are the decisions [clasimpLib.extensional_normalize] takes
+   inside the engines.  The test reads the goal's own shape against the
+   rewrites the method named, as [preprocess_fires] below decides its
+   pass. *)
 fun reading_is_supplied goal args =
   let
     val (_, statement) = boolSyntax.strip_forall goal
@@ -1220,16 +1233,35 @@ fun reading_is_supplied goal args =
       (List.mapPartial simp_arg args)
   end
 
-fun set_equality_pass goal args =
-  if reading_is_supplied goal args then Tactical.ALL_TAC
-  else Tactical.TRY hurdUtils.SET_EQ_TAC
+fun set_equality_pass simpset goal args =
+  let
+    (* What the invocation states on the membership is what its simpset
+       and its own rewrites state between them.  Isabelle's [iff]
+       declarations reach a goal here as arguments rather than in the
+       simpset the corpus starts from, and [mem_Sigma_iff] -- the whole
+       of what a [Sigma] has stated on its membership -- is one of
+       those. *)
+    val stated =
+      simpLib.++ (simpset,
+                  simpLib.rewrites (List.mapPartial simp_arg args))
+    val reads_as_membership = clasimpLib.reads_as_membership stated
+    fun take_to_membership term =
+      if reads_as_membership term then hurdUtils.SET_EQ_CONV term
+      else raise ERR "set_equality_pass" "the equation is read applied"
+  in
+    if reading_is_supplied goal args then Tactical.ALL_TAC
+    else
+      Tactical.TRY
+        (Tactic.CONV_TAC
+           (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV take_to_membership)))
+  end
 
 fun tactic_for simpset goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
         val simplify =
-          clasimpLib.with_extensionality
+          clasimpLib.with_extensionality simpset
             (clasimpLib.asm_full_simp simpset
                (simps @ simp_controls goal exclusions))
       in
@@ -1244,7 +1276,7 @@ fun tactic_for simpset goal Simp args exclusions =
             (all_class_args args @ simp_controls goal exclusions)
         val prepare =
           Tactical.THEN
-            (set_equality_pass goal args,
+            (set_equality_pass simpset goal args,
              simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
                 simp_controls goal exclusions))
@@ -1254,7 +1286,7 @@ fun tactic_for simpset goal Simp args exclusions =
             (predicate_abstraction_tac,
              if null args then
                Tactical.THEN
-                 (set_equality_pass goal args, automatic)
+                 (set_equality_pass simpset goal args, automatic)
              else
                Tactical.THEN
                  (prepare,
@@ -1445,7 +1477,7 @@ fun tactic_for simpset goal Simp args exclusions =
       let
         val prepare =
           Tactical.THEN
-            (set_equality_pass goal args,
+            (set_equality_pass simpset goal args,
              simpLib.FULL_SIMP_TAC simpset
                (List.mapPartial simp_arg args @
                 simp_controls goal exclusions))
@@ -1459,7 +1491,7 @@ fun tactic_for simpset goal Simp args exclusions =
   | tactic_for simpset goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
-          (set_equality_pass goal args,
+          (set_equality_pass simpset goal args,
            processed_clasimp simpset clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls goal exclusions)))
   | tactic_for _ _ Safe args exclusions =
