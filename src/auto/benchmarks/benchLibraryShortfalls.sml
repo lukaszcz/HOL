@@ -192,7 +192,13 @@ val an_injectivity_premise_no_ambient_fact_reaches =
      ^ "condition solver discharges from an assumption but not from "
      ^ "a rewrite, and [INJ_CARD_IMAGE] states it as [INJ f s t] "
      ^ "whose [t] the left-hand side does not determine, so the "
-     ^ "condition arrives existentially closed")
+     ^ "condition arrives existentially closed.  The shape is what "
+     ^ "is missing and not the solver's strength: measured in "
+     ^ "Isabelle 2026-09-20, its own simplifier leaves a conditional "
+     ^ "rule unfired where the conditions stand as earlier conjuncts "
+     ^ "of the antecedent -- in the membership spelling and in the "
+     ^ "bound one alike -- and fires it once they stand as "
+     ^ "assumptions, which is what HOL4's solver does here too")
     ["string_L178_card_UNIV_char"]
 
 (* The earlier reading -- that the translation renders foldr as FOLDL
@@ -283,13 +289,37 @@ val membership_through_a_guarded_flatten =
      ^ "reports no proof well inside its budget")
     ["list_L8705_set_relcomp"]
 
+(* src/HOL/List.thy:6998 @ f7e02b7e.  Measured 2026-09-20: the closure
+   is not what stops this goal.  HOL4 declares nothing at all about
+   [set_relation$transitive_closure] -- no rewrite, no claset rule, no
+   solver -- but with its own [tc_rules] declared as unsafe
+   introductions, two edges and the closure of their join close at the
+   classical leg's first stage, in 0.009s, and the residual the
+   measurement leaves closes at its fifth.  The assigned tactic runs
+   that leg to two, which is where Isabelle runs it:
+   [auto_tac ctxt = mk_auto_tac ctxt 4 2] of src/Provers/clasimp.ML.
+   So the stages go to the decomposition of a membership in a FLAT
+   over a MAP over a FILTER, and the closure never gets one.  Isabelle
+   spends none there: [set_map] and [set_concat] are simp and [imageE]
+   is [elim!], where listAutoSeed declares the mapped reading unsafe --
+   the deviation that file records, with the measurement that buys it
+   ([set_L1610_Pow_Compl] at 88 branches against 3638).  Isabelle's
+   ambient closure machinery would not bridge the rest either: the
+   four unsafe simp solvers of Transitive_Closure.thy:1603-1606 -- the
+   decision procedure in src/Provers/trancl.ML -- stand in for the one
+   stage the closure costs, not the four the decomposition is over
+   by. *)
 val transitive_closure_from_a_step_list =
   classified "transitive closure from a step list"
     ("the flattened list of steps is taken apart, and what is left is "
      ^ "a pair drawn from a map over a filter together with the two "
-     ^ "steps of the transitive closure it has to be built into; the "
-     ^ "source method names neither the closure's introduction rules "
-     ^ "nor an induction")
+     ^ "steps of the transitive closure it has to be built into.  "
+     ^ "The closure is within reach -- its own introduction rules "
+     ^ "close that join at the first stage of the classical leg -- "
+     ^ "and the decomposition is not: this layer takes a mapped "
+     ^ "membership apart with unsafe steps where Isabelle's simpset "
+     ^ "and safe elimination take it apart for nothing, and that is "
+     ^ "already past the bound both run the leg to")
     ["list_L7054_set_trans_list_step_subset_trancl"]
 
 val integer_interval_emptiness =
@@ -322,13 +352,46 @@ val definitional_unfolding_stops_short =
      ^ "reduces what it exposes")
     ["list_L5441_distinct_set_subseqs", "list_L8701_trancl_set_ntrancl"]
 
-val injectivity_and_surjectivity =
-  classified "injectivity and surjectivity"
-    ("the residual is an INJ, SURJ or BIJ claim the assigned "
-     ^ "tactic does not decompose")
-    ["list_L6690_distinct_if_distinct_map",
-     "product_type_L1329_bij_betw_map_prod",
-     "product_type_L988_bij_swap"]
+(* What used to be one class saying the residual was an INJ, SURJ or
+   BIJ claim the tactic does not decompose.  Two of the three are not
+   that, and the third is a constant the translation has to inline;
+   each residual was read on 2026-09-20 and each names its own cause. *)
+
+val the_mapped_distinctness_equivalence =
+  classified "the mapped distinctness equivalence"
+    ("Isabelle's [distinct_map] is the equivalence whose left side is "
+     ^ "this goal's antecedent, so rewriting the antecedent closes "
+     ^ "it.  The name table answers the citation with HOL4's two "
+     ^ "readings: [ALL_DISTINCT_MAP], which is this goal and A1 "
+     ^ "withholds, and [ALL_DISTINCT_MAP_INJ], whose premise is "
+     ^ "injectivity everywhere where Isabelle's is injectivity on the "
+     ^ "list's own elements.  Nothing decomposes the antecedent, and "
+     ^ "the tactic returns it beside the goal in 0.156s without "
+     ^ "searching")
+    ["list_L6690_distinct_if_distinct_map"]
+
+val the_surjective_half_is_an_atom =
+  classified "the surjective half is an atom"
+    ("Isabelle's [bij_betw_def] unfolds to an injectivity and the "
+     ^ "image equation [f ` A = B], which its auto reads through "
+     ^ "membership.  HOL4's [BIJ_DEF] unfolds to INJ and the atom "
+     ^ "[SURJ f s t], which the method's citations name no unfolding "
+     ^ "for -- the source has no constant there to cite.  Both INJ "
+     ^ "halves are unfolded and what is left is the SURJ claim over a "
+     ^ "Sigma")
+    ["product_type_L1329_bij_betw_map_prod"]
+
+val the_inlined_swap =
+  classified "the inlined swap"
+    ("the source states this of [prod.swap], whose [inj_swap] and "
+     ^ "[surj_swap] are ambient [simp] where it stands "
+     ^ "(Product_Type.thy:978,984), so [simp add: bij_def] closes it "
+     ^ "from two atoms.  The translation has no such constant and "
+     ^ "inlines the swap as a lambda, which neither atom reaches; "
+     ^ "measured in Isabelle on that inlined form, its own "
+     ^ "[simp add: bij_def] leaves the conjunction standing and its "
+     ^ "[auto] fails")
+    ["product_type_L988_bij_swap"]
 
 (* src/HOL/Map.thy:363 @ f7e02b7e.  Isabelle closes this one from its
    simpset, by [map_add_find_right], and that declaration's translated
@@ -460,7 +523,9 @@ val execution : benchLib.shortfall list =
   rotation_by_iteration @
   decision_procedure_scope @
   definitional_unfolding_stops_short @
-  injectivity_and_surjectivity @
+  the_mapped_distinctness_equivalence @
+  the_surjective_half_is_an_atom @
+  the_inlined_swap @
   the_ambient_rule_is_the_goal @
   map_sum_commuted_under_a_fact @
   these_set_equality_route @
