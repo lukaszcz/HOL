@@ -366,6 +366,10 @@ val table : (string * (unit -> resolution)) list =
    translated "source_split_list_first"),
   ("split_list_last",
    translated "source_split_list_last"),
+  (* The entry names the fact these citations resolve, as it stands:
+     [benchRecipe.to_recipe] reads the instance out of the goal whose
+     assumptions [OF assms] names, so the table says the same thing for
+     every goal that cites the string. *)
   ("split_list_prop[OF assms]",
    translated "source_split_list_prop"),
   ("split_list_first_prop[OF assms]",

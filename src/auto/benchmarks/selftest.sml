@@ -1674,6 +1674,49 @@ val _ =
          map #name methods = ["fastforce"]
        end)
 
+(* [OF assms] cites the fact resolved against the enclosing lemma's
+   assumptions, which the translation states as the goal's leading
+   antecedents.  The goals below are not corpus entries: the corpus
+   states this citation about a list and a predicate the translation
+   names after Isabelle's, and these name their own. *)
+local
+  val list_source = "src/HOL/List.thy:1"
+  val resolved_goal =
+    ``(?b_item. MEM b_item (v_ys0 : num list) /\ v_Q0 b_item) ==>
+      v_result0``
+  val citation = "using split_list_prop [OF assms] by blast"
+  fun supplied goal =
+    List.mapPartial benchLib.named_theorem
+      (benchLib.recipe_arguments (benchDerive.recipe_of list_source goal
+                                    citation))
+in
+val _ =
+  check
+    ("a citation resolved against the assumptions is supplied at their " ^
+     "instance",
+     fn () =>
+       let
+         val (antecedent, _) = boolSyntax.dest_imp resolved_goal
+         fun premise_of ({theorem, ...} : benchLib.named_thm) =
+           Lib.total (fst o boolSyntax.dest_imp) (Thm.concl theorem)
+       in
+         List.exists
+           (fn fact =>
+             case premise_of fact of
+                 SOME premise => aconv premise antecedent
+               | NONE => false)
+           (supplied resolved_goal)
+       end)
+
+val _ =
+  check
+    ("a citation no assumption of the goal matches is an error",
+     fn () =>
+       ((supplied ``v_result0 : bool``; false)
+        handle Portable.Interrupt => raise Portable.Interrupt
+             | benchRecipe.Unparseable _ => true))
+end
+
 val _ =
   check
     ("the parser reads unfolding names",

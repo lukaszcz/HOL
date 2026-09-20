@@ -7,7 +7,10 @@ sig
      cites it.
 
      A citation carrying an attribute that changes the theorem --
-     [symmetric], [OF ...], [THEN ...] -- is its own key.  A citation
+     [symmetric], [OF ...], [THEN ...] -- is its own key.  Where the
+     attribute is [OF assms], the entry names the fact the citation
+     resolves and [benchRecipe.to_recipe] supplies it at the instance
+     the goal's own assumptions determine.  A citation
      whose attribute only instantiates it -- [of ...], [where ...] --
      is its own key too, and resolves either to the general theorem or,
      through [instantiated] or [at_goal_variables], to the instance the

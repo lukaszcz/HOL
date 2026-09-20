@@ -395,18 +395,81 @@ fun argument_of resolve normalised_subject modifier =
       | Facts names => each benchLib.FactAdd names
   end
 
+(* Isabelle's [OF assms] cites a fact already resolved against the
+   enclosing lemma's assumptions, and that resolution fixes what the
+   fact's own statement quantifies: [split_list_prop [OF assms]] is the
+   fact at the goal's list and the goal's predicate, where the fact as
+   stated quantifies both.  The translation writes a lemma's
+   assumptions as its goal's leading antecedents, so the instance is
+   read off the goal rather than transcribed -- one rule for every
+   citation of the form, and no per-goal field.  Premises and
+   antecedents are matched in the order both are written, and the
+   longest prefix that matches decides how many of them [assms]
+   discharges.
+
+   Isabelle discharges the premises it resolves; they stay here, where
+   the goal's own antecedent is what discharges them, so the argument
+   says no more than the citation does.  A citation whose first premise
+   matches no antecedent is an error naming it: supplying the fact as
+   stated instead is the silent fallback B1 forbids. *)
+val assumption_resolution = "[OF assms]"
+
+fun leading_implications term =
+  if boolSyntax.is_imp_only term then
+    let val (left, right) = boolSyntax.dest_imp term
+    in left :: leading_implications right end
+  else []
+
+fun at_assumptions citation goal theorem =
+  let
+    val (_, statement) = boolSyntax.strip_forall goal
+    val assumptions = leading_implications statement
+    val specialised = Drule.SPEC_ALL theorem
+    val premises = leading_implications (Thm.concl specialised)
+    fun matched count =
+      if count <= 0 then NONE
+      else
+        let
+          val subject = boolSyntax.list_mk_conj (List.take (premises, count))
+          val object =
+            boolSyntax.list_mk_conj (List.take (assumptions, count))
+        in
+          case Lib.total (Term.match_term subject) object of
+              SOME instance => SOME instance
+            | NONE => matched (count - 1)
+        end
+  in
+    case matched (Int.min (length premises, length assumptions)) of
+        SOME instance => Drule.INST_TY_TERM instance specialised
+      | NONE =>
+          raise Unparseable
+            (citation, "no leading assumption of the goal matches a premise")
+  end
+
 fun to_recipe ({theorems, normalised_subject, tactics, ambient} : resolver)
               {goal, source} ({facts, unfolded, methods} : parsed) =
   let
+    (* A citation resolved against the goal's assumptions is answered by
+       the same table entry as the fact it resolves, at the instance
+       that resolution determines; every other citation is the entry as
+       it stands. *)
+    fun cited name =
+      if String.isSuffix assumption_resolution name then
+        map
+          (fn {name = label, theorem} =>
+            {name = label, theorem = at_assumptions name goal theorem})
+          (theorems name)
+      else
+        theorems name
     (* [using] premises enter as facts, [unfolding] names as rewrites.
        Neither becomes a DefinitionAdd: that constructor exists only to
        unlock the escape hatch in [permitted_for], and a derived recipe
        never needs it. *)
     fun resolved build names =
-      List.concat (map (fn name => map build (theorems name)) names)
+      List.concat (map (fn name => map build (cited name)) names)
     val common =
       resolved benchLib.FactAdd facts @
-      rewritten theorems normalised_subject unfolded
+      rewritten cited normalised_subject unfolded
     (* The ambient context stands in for the simpset and the claset an
        Isabelle method reads without naming them, and each half reaches
        only the methods that consult that half.  Giving the rewrites to
@@ -439,7 +502,7 @@ fun to_recipe ({theorems, normalised_subject, tactics, ambient} : resolver)
           (identifier,
            common @
            List.concat
-             (map (argument_of theorems normalised_subject) modifiers) @
+             (map (argument_of cited normalised_subject) modifiers) @
            context)
       end
     fun invoke ({name, modifiers, repeated} : method) =

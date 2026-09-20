@@ -32,7 +32,13 @@ that order rather than reading the goal to pick a side.  A method string
 the parser does not understand is a hard error, never a silent fallback to
 a bare tactic.  `benchNames` is a single global table from
 Isabelle theorem name to HOL4 theorem; it is keyed by name only and knows
-nothing about which goal is asking.  `benchAmbient` supplies the
+nothing about which goal is asking.  Where a citation's attribute
+resolves it against the enclosing lemma's assumptions --
+`split_list_prop [OF assms]` -- the recipe supplies that entry at the
+instance the goal's own leading antecedents determine, which is what
+the resolution fixes; the premises stay, where the goal's antecedent
+discharges them, and a citation whose first premise matches no
+antecedent is an error naming it.  `benchAmbient` supplies the
 translation's definitions as rewrites, and only
 to the methods that consult a simpset -- Isabelle's `blast`, `safe`,
 `clarify`, `metis` and its decision procedures do not.  It stands in for the
