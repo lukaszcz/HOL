@@ -559,12 +559,13 @@ fun ambient_simp safe ss =
   simpLib.GEN_GLOBAL_SIMP_TAC {safe = safe} asm_full_simp_config ss
 
 (* The context-first pass below runs before the step that carries the
-   invocation's rules, so it must leave the conclusion the shape those
-   rules are stated on: discharging its antecedents takes an implication
-   apart that a supplied rewrite may be stated on as a whole, and the
-   step after would then find no redex.  The premises are read through
-   the implication congruence in this pass and discharged by the step
-   after, which is where they are wanted. *)
+   ambient rules, so it must leave the conclusion the shape the
+   invocation's rules are stated on: discharging its antecedents takes
+   an implication apart that a supplied rewrite may be stated on as a
+   whole, and neither that pass nor the step after would find a redex.
+   The premises are read through the implication congruence in this
+   pass and discharged by the step after, which is where they are
+   wanted. *)
 val context_simp_config : simpLib.xsimptac_config =
   {base = asm_full_simp_base,
    concl_in_fixpoint = true,
@@ -585,19 +586,25 @@ fun context_simp ss =
    [dropWhile P xs = xs].  What is lost is a premise, and with it the
    goal it would have closed.
 
-   Running the same step against the goal's own equations first --
-   its assumptions, where a supplied fact stands, and none of the
-   invocation's rules -- gives the subterm its chance.  The pass
-   adds no rule to the goal: every rewrite it can make is one the step
-   after it would have made too, in the other order.  It is not a
-   bottom-up traversal -- an ambient rule can still consume a redex
-   another ambient rule would have refined -- but the assumptions are
-   where the two simplifiers disagree about what a goal still says.
+   Running the same step against what the invocation itself states
+   first -- the goal's assumptions, where a supplied fact stands, and
+   the invocation's own rewrites, with none of the ambient rules --
+   gives the subterm its chance.  The pass adds no rule to the goal:
+   every rewrite it can make is one the step after it would have made
+   too, in the other order.  It is not a bottom-up traversal -- an
+   ambient rule can still consume a redex another ambient rule would
+   have refined -- but an ambient rule consuming what the invocation
+   was asked about is where the two simplifiers disagree.
 
-   The supplied rewrites are left to the step after: a method's
-   translation payload unfolds definitions the ambient simpset is
-   needed to reduce again, and unfolding them with no simpset to hand
-   builds terms the pass cannot put back together.
+   A method naming [set (REPLICATE n a) = if n = 0 then {} else {a}]
+   is the same loss the other way round: the rule's redex sits under a
+   membership the ambient decomposition matches whole, so the ambient
+   rule reaches it first and the [if] is never built.  With it built,
+   the case split lifts its condition over the whole equation and
+   settles both sides at once; without it the goal keeps an arithmetic
+   atom on one side and its negation on the other, which no rule
+   relates.  The source simplifier reaches the subterm first and never
+   has the choice.
 
    What the pass keeps of the invocation's simpset is how it reads an
    assumption as a rewrite: [clear_rules] drops the rules, the decision
@@ -607,8 +614,89 @@ fun context_simp ss =
    among the assumptions -- an equation that reproduces its own
    left-hand side -- and read raw, as an empty simpset reads it, that
    rewrites forever. *)
-fun context_first ss =
-  Tactical.TRY (context_simp (simpLib.clear_rules ss) [])
+(* Not every supplied rewrite belongs in that pass.  Two kinds wait for
+   the step that carries the ambient rules.
+
+   One is a rewrite the ambient simpset has a rule about at the same
+   redex: the two compete there, and which of them fires is not the
+   divergence above -- both simplifiers hold their rules in one set and
+   let them compete.  A method naming [disjnt_def] beside ambient
+   [DISJOINT_INSERT] is that case, and unfolding first leaves an
+   intersection the ambient rule no longer recognises.
+
+   The other is a rewrite that reproduces its own left-hand side:
+   [upt_rec] rewrites an interval to its head consed onto a shorter
+   interval, which is the same redex again.  Such a rule makes progress
+   only against a simpset that reduces what it builds, and this pass has
+   none; run early it leaves an unfolding the step after must undo.
+   What runs early, then, is a rewrite that refines a term once, into
+   vocabulary the ambient rules still recognise. *)
+local
+  fun redex theorem =
+    let
+      val (_, statement) =
+        boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
+    in
+      case Lib.total boolSyntax.dest_neg statement of
+          SOME negated => negated
+        | NONE =>
+            (case Lib.total boolSyntax.dest_eq statement of
+                 SOME (left, _) => left
+               | NONE => statement)
+    end
+  fun redexes theorem =
+    map redex
+      (Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem])
+  fun head term = #1 (boolSyntax.strip_comb term)
+  fun overlaps ambient supplied =
+    Term.is_const (head ambient) andalso Term.is_const (head supplied) andalso
+    Term.same_const (head ambient) (head supplied) andalso
+    (Lib.can (Term.match_term supplied) ambient orelse
+     Lib.can (Term.match_term ambient) supplied)
+  fun subterms term =
+    term ::
+    (case Lib.total Term.dest_comb term of
+         SOME (rator, rand) => subterms rator @ subterms rand
+       | NONE =>
+           (case Lib.total Term.dest_abs term of
+                SOME (_, body) => subterms body
+              | NONE => []))
+  fun reproduces theorem =
+    let
+      val (_, statement) =
+        boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
+    in
+      case Lib.total boolSyntax.dest_eq statement of
+          NONE => false
+        | SOME (left, right) =>
+            List.exists (Lib.can (Term.match_term left)) (subterms right)
+    end
+in
+fun refining ss =
+  let
+    val ambient =
+      List.concat
+        (map redexes
+          (List.concat
+            (map simpLib.frag_rewrites (simpLib.ssfrags_of ss))))
+    fun contested theorem =
+      List.exists
+        (fn supplied =>
+            List.exists (fn rule => overlaps rule supplied) ambient)
+        (redexes theorem)
+    fun deferred theorem =
+      List.exists
+        (fn part => contested part orelse reproduces part)
+        (Drule.CONJUNCTS (Drule.SPEC_ALL theorem)
+         handle HOL_ERR _ => [theorem])
+  in
+    List.filter (not o deferred)
+  end
+end
+
+fun context_first ss simp_args =
+  Tactical.TRY
+    (context_simp (simpLib.clear_rules ss) (refining ss simp_args))
 
 (* Where the two sides are sets -- functions into bool -- the pointwise
    reading is membership and not application.  Every set and list fact
@@ -884,11 +972,13 @@ fun with_permutation_instances step simp_args =
 
 fun asm_full_simp ss simp_args =
   with_permutation_instances
-    (fn args => Tactical.THEN (context_first ss, ambient_simp false ss args))
+    (fn args =>
+        Tactical.THEN (context_first ss args, ambient_simp false ss args))
     simp_args
 
 fun safe_asm_full_simp ss simp_args =
-  Tactical.THEN (context_first ss, ambient_simp true ss simp_args)
+  Tactical.THEN (context_first ss simp_args,
+                 ambient_simp true ss simp_args)
 
 (* Inside the classical cascade the split between assumptions and
    conclusion is the cascade's own: its negation introduction strips a

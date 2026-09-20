@@ -2197,6 +2197,47 @@ val _ =
             clasetLib.empty_cs traversal_ss)
          traversal_goal)
 
+(* The same divergence the other way round: here the redex the ambient
+   rule swallows is one a rule the invocation named would have refined.
+   [MEM x (REPLICATE n a)] is a membership the ambient decomposition
+   matches whole, and [set (REPLICATE n a)] -- what the rule below is
+   stated on -- is a subterm of it, so outermost-first the rule never
+   fires and the [if] it would have built is never there to split.  With
+   it built the case split carries [n = 0] across the whole goal, which
+   is what settles the disjunct on the other side of it.  The goal is
+   not a benchmark entry. *)
+val replicate_set_rule =
+  Tactical.prove
+    (``!n (value : 'a).
+         LIST_TO_SET (REPLICATE n value) =
+         if n = 0 then {} else {value}``,
+     Tactical.THEN
+       (bossLib.Induct,
+        Tactical.THEN
+          (BasicProvers.SRW_TAC []
+             [rich_listTheory.REPLICATE, pred_setTheory.EXTENSION],
+           bossLib.metis_tac [])))
+
+val supplied_subterm_goal : Abbrev.goal =
+  ([], ``(!clasimp_replicate_x.
+            MEM clasimp_replicate_x
+                (REPLICATE clasimp_replicate_n (clasimp_replicate_a : 'a)) ==>
+            clasimp_replicate_P clasimp_replicate_x) ==>
+         clasimp_replicate_n = 0 \/
+         clasimp_replicate_P clasimp_replicate_a``)
+
+val _ =
+  check
+    ("a supplied rewrite refines a subterm the ambient rule would swallow",
+     fn () =>
+       let
+         val (subgoals, _) =
+           clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ())
+             [replicate_set_rule] supplied_subterm_goal
+       in
+         null subgoals
+       end)
+
 (* A tactic that reports no proof has come back, which is what the bound
    below is about; only the timeout distinguishes the two outcomes. *)
 fun terminates_within seconds tactic goal =
