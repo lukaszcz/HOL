@@ -1006,6 +1006,43 @@ val _ =
          ([], ``!(xs : 'a list) (ys : 'a list).
                   NULL xs /\ LENGTH ys = LENGTH xs ==> ys = []``))
 
+(* src/HOL/List.thy:1348,1521 and src/HOL/Set.thy:893 @ f7e02b7e.
+   Neither goal is a corpus entry.  A membership in a flattened map is
+   two decompositions deep, and MEM_MAP_CASES_AUTO is declared safe
+   there, as Isabelle declares [imageE] [elim!]: the decompositions are
+   taken in the safe cascade and spend no stage of the classical leg,
+   so the two stages the method runs it to are still there for the
+   implication beyond them.  Declared an ordinary dest rule each
+   decomposition spends a stage instead, the bound is out before the
+   implication is reached, and the second goal is left open -- which is
+   the half of [list_L7054_set_trans_list_step_subset_trancl] of the
+   list/map corpus this rule answers for, the closure the decomposition
+   uncovers being set_relationAutoSeed's.  The first goal asks for
+   nothing past the decompositions and closes under either class; it is
+   here to put the boundary where the measurement found it. *)
+val _ =
+  check
+    ("a flattened mapped membership decomposes without spending a stage",
+     fn () =>
+       List.all
+         (closes_within 20 (clasimpLib.AUTO_TAC []))
+         [([], ``!(seed_flat_lists : 'a list list)
+                   (seed_flat_f : 'a -> 'b) seed_flat_p seed_flat_y.
+                   (!xs x. MEM xs seed_flat_lists /\ MEM x xs ==>
+                           seed_flat_p (seed_flat_f x)) /\
+                   MEM seed_flat_y
+                     (FLAT (MAP (MAP seed_flat_f) seed_flat_lists)) ==>
+                   seed_flat_p seed_flat_y``),
+          ([], ``!(seed_flat_lists : 'a list list)
+                   (seed_flat_f : 'a -> 'b) seed_flat_p seed_flat_q
+                   seed_flat_y.
+                   (!b. seed_flat_p b ==> seed_flat_q b) /\
+                   (!xs x. MEM xs seed_flat_lists /\ MEM x xs ==>
+                           seed_flat_p (seed_flat_f x)) /\
+                   MEM seed_flat_y
+                     (FLAT (MAP (MAP seed_flat_f) seed_flat_lists)) ==>
+                   seed_flat_q seed_flat_y``)])
+
 (* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
    entry.  Isabelle settles a relation inclusion with the same three
    rules it settles a set inclusion with, a relation being a set of

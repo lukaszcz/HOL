@@ -144,19 +144,25 @@ QED
    projections of a zip, which are conditional on the two sides having
    equal length, then never see the MAP they reduce.
 
-   The elimination is declared unsafe where the source declares it safe,
-   which is the same deviation MEM_takeWhile_HOLDS_AUTO below records and
-   is made for the same reason: what is wanted is strength, and here the
-   safe reading costs more than it earns.  A safe elimination is tried at
-   every node of the tableau, and its major premise is entirely schematic,
-   so it meets the undetermined literals a witness-guessing branch leaves
-   behind.  Declared safe, [set_L1610_Pow_Compl] of the sets corpus --
-   whose source method supplies the witness this layer's recipe has to
-   guess -- goes from 88 branches to 3638 and past its budget; declared
-   unsafe it stays at 88, and the goals the rule exists for still close.
-   The [selim] spelling costs the same, and so does declaring the
-   pre-existing MEM_takeWhile_HOLDS_AUTO below safe, so what costs is the
-   safety class rather than this rule or its shape. *)
+   The elimination is declared safe, which is the class the source gives
+   [imageE].  It stood unsafe here until 2026-09-20, on the reading that
+   a safe elimination is tried at every node of the tableau and that its
+   entirely schematic major premise would then meet the undetermined
+   literals a witness-guessing branch leaves behind.  Measured across the
+   six families that reading costs a goal and buys none: the safe class
+   loses nothing, and it is what takes
+   [list_L7054_set_trans_list_step_subset_trancl] of the list/map corpus
+   apart, where a membership in a FLAT over a MAP over a FILTER stands
+   past the two stages the assigned method runs the classical leg to --
+   Isabelle's own [auto_tac ctxt = mk_auto_tac ctxt 4 2] of
+   src/Provers/clasimp.ML.  Declared unsafe each decomposition spends a
+   stage and the goal is left with the membership standing; declared
+   safe they spend none, and what is then left is the closure those two
+   edges have to be built into, which set_relationAutoSeed's rules
+   close.  [set_L1610_Pow_Compl] of the sets corpus, the
+   witness-guessing goal the unsafe reading was chosen for, runs to its
+   budget under both classes and is a shortfall of its own either
+   way. *)
 val _ = export_at "simp" ("MEM_FLAT_AUTO", listTheory.MEM_FLAT)
 
 (* The set reading of the same source rule, which the membership
@@ -183,7 +189,7 @@ Proof
   metis_tac [listTheory.MEM_MAP]
 QED
 
-Theorem MEM_MAP_CASES_AUTO[dest]:
+Theorem MEM_MAP_CASES_AUTO[sdest]:
   !f y (xs : 'a list). MEM y (MAP f xs) ==> ?x. y = f x /\ MEM x xs
 Proof
   metis_tac [listTheory.MEM_MAP]
