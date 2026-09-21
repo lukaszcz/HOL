@@ -32,10 +32,11 @@ Holmake                # full library + smtheap + selftest.exe + drivers
 ```
 
 Plain `Holmake` works here (no `--holstate` needed).  `Holmake` also builds
-the `smtheap` HOL heap and the conformance driver wrappers `holsmt-typecheck`,
-`holsmt-z3-tac`, and `holsmt-cvc-cpc-tac` (shell scripts wrapping
-`*_driver.sml` via `bin/hol run`).  Style: `tools/h4pedant` from the repo root
-(no tabs, no trailing whitespace, < 80 columns).
+the `smtheap` HOL heap and the conformance driver objects.  The external
+validation repository invokes those drivers directly with `bin/hol run`; no
+generated shell wrappers are kept in this source tree.  Style:
+`tools/h4pedant` from the repo root (no tabs, no trailing whitespace,
+< 80 columns).
 
 Solver selection is via `HOL4_Z3_EXECUTABLE`, `HOL4_CVC_EXECUTABLE`,
 `HOL4_YICES_EXECUTABLE`, and `HOL4_CSDP_EXECUTABLE` (CSDP is the untrusted

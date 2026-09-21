@@ -9,9 +9,7 @@ CPC_Proof.sml           Version-gated cvc5 CPC proof-rule registry.
 CPC_ProofParser.sml     Parser for untrusted cvc5 CPC proof text.
 CPC_ProofReplay.sml     Kernel-checked replay of supported CPC rules.
 Holmakefile             Makefile for Holmake.  Also builds the smtheap HOL
-                        heap, selftest.exe, smtfloat-diff.exe, and the
-                        conformance driver wrappers holsmt-typecheck,
-                        holsmt-z3-tac, and holsmt-cvc-cpc-tac.
+                        heap, selftest.exe, and smtfloat-diff.exe.
 HolSmtLib.{sig,sml}     Entry point into HolSmtLib. Provides GENERIC_SMT_TAC
                         and derived tactics to call SMT solvers.
 HolSmtScript.sml        Various theorems for HolSmtLib.
@@ -395,8 +393,8 @@ caller sets `elaborate_datatypes = true`.  Placeholder mode installs datatype
 sorts and symbols without elaborating genuine HOL datatypes, and rejects
 binding `match` patterns with a precise diagnostic.  The command-line
 typecheck and checked Z3 tactic drivers use native datatype elaboration by
-default; `holsmt-typecheck --placeholder-datatypes` keeps the library default
-available as an explicit gate.
+default; passing `--placeholder-datatypes` as the third driver argument keeps
+the library default available as an explicit gate.
 
 HOL translation records include HOLTheoryEncoding rows for the advanced
 theories.  These rows distinguish native SMT-LIB encodings from conservative
@@ -678,11 +676,23 @@ Large external benchmark runs are opt-in:
     --benchmark-dir /path/to/smtlib-benchmarks \
     --z3-proof-dir /path/to/z3/proof/tests
 
-Use `--logic` and repeated `--mode` flags to restrict a run.  The
-typecheck-only and checked Z3_TAC modes default to HOL drivers built by:
+Use `--logic` and repeated `--mode` flags to restrict a run.  Build the HOL
+heap and drivers with:
 
-  bin/Holmake -C src/HolSmt holsmt-typecheck
-  bin/Holmake -C src/HolSmt holsmt-z3-tac
+  bin/Holmake -C src/HolSmt
+
+The external validation runner should invoke the drivers directly through
+the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
+
+  extra=$(printf '%s\n%s' "$input" "$logic")
+  "$HOL4_ROOT/bin/hol" --gcthreads=1 run \
+    --holstate="$HOL4_ROOT/src/HolSmt/smtheap" \
+    --extra "$extra" typecheck_driver
+
+The checked Z3 and cvc5 CPC drivers use the same command with
+`z3_tac_driver` and `cvc_cpc_tac_driver`, respectively, and set
+`HOL4_Z3_EXECUTABLE` or `HOL4_CVC_EXECUTABLE` when needed.  The validation
+repository owns the portable command templates and path normalization.
 
 The typecheck driver accepts an SMT-LIB input path and logic name, runs the
 `SmtLib_Parser` typechecker, and prints deterministic `TYPECHECK_PASS` or
@@ -805,7 +815,7 @@ Local CI contract commands:
     $HOLSMT_VALIDATION_DIR/tools/proof-corpus/minimal_bool_unsat.smt2
 
   # HOL driver conformance after building src/HolSmt drivers
-  bin/Holmake -C src/HolSmt holsmt-typecheck holsmt-z3-tac
+  bin/Holmake -C src/HolSmt
   python3 $HOLSMT_VALIDATION_DIR/tools/run_conformance_suite.py \
     --out .holsmt-ci/conformance/typecheck \
     --no-default-suite \
