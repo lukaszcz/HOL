@@ -1134,6 +1134,38 @@ val _ =
        end
        handle Conv.UNCHANGED => false)
 
+(* src/HOL/Set.thy:1650,1660 @ f7e02b7e.  Neither goal is a corpus
+   entry, and neither is the clause: each asks for it twice over, at a
+   list of two whose tail is still a variable, so the head splits off
+   and the clause must meet what it left behind.  The insert clauses of
+   [ball_simps] and [bex_simps] are simp in the source, and a bounded
+   quantifier over a cons meets them because Isabelle reads
+   [set (x # xs)] as an insert.  HOL4 states list membership as MEM,
+   and outermost-first a quantified membership descends into MEM's own
+   cons equation instead, leaving a disjunctive bound that no rule
+   about the quantifier matches again -- and what that leaves is not
+   closed by the ambient simpset, measured. *)
+val _ =
+  check
+    ("a bounded quantifier over a cons splits off the head",
+     fn () =>
+       List.all
+         (fn goal =>
+            Term.aconv
+              (boolSyntax.rhs
+                 (Thm.concl
+                    (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [] goal)))
+              boolSyntax.T
+            handle Conv.UNCHANGED => false)
+         [``(!e. MEM e (seed_cons_a::seed_cons_b::seed_cons_xs) ==>
+                 seed_cons_p e) <=>
+             seed_cons_p seed_cons_a /\ seed_cons_p seed_cons_b /\
+             !e. MEM e seed_cons_xs ==> seed_cons_p e``,
+          ``(?e. MEM e (seed_cons_a::seed_cons_b::seed_cons_xs) /\
+                 seed_cons_p e) <=>
+             seed_cons_p seed_cons_a \/ seed_cons_p seed_cons_b \/
+             ?e. MEM e seed_cons_xs /\ seed_cons_p e``])
+
 (* src/HOL/Set.thy:824-825 @ f7e02b7e.  Not a corpus entry.  The
    witness is a singleton and nothing in the goal names it.  The safe
    introduction the iff derives, [x = y ==> x IN {y}], settles the set

@@ -215,6 +215,35 @@ Proof
   simp[listTheory.MEM_MAP] >> metis_tac[]
 QED
 
+(* src/HOL/Set.thy:1650,1660 @ f7e02b7e, at the list src/HOL/List.thy
+   states as a cons.  The insert clauses of [ball_simps] and
+   [bex_simps] are simp there, and Isabelle's [set (x # xs)] is
+   [insert x (set xs)], so a bounded quantifier over a cons meets them
+   and splits off the head.  HOL4 states list membership as MEM, whose
+   own cons equation is a simp rule too, and outermost-first that
+   equation is the one a quantified membership descends into: the bound
+   becomes a disjunction and no rule stated on the bounded quantifier
+   matches it again.  What is left, [!e. e = x \/ MEM e xs ==> P e]
+   against [P x /\ !e. MEM e xs ==> P e], is not closed by the ambient
+   simpset -- measured -- and needs a distributive law and a one-point
+   elimination that Isabelle never reaches for, because its clause
+   fires above the membership and not inside it.  These are that
+   clause; stated on the quantifier they are reached first, so the cons
+   equation never runs on a bound. *)
+Theorem FORALL_MEM_CONS_AUTO[simp]:
+  !(x : 'a) xs P.
+    (!e. MEM e (x::xs) ==> P e) <=> P x /\ !e. MEM e xs ==> P e
+Proof
+  metis_tac [listTheory.MEM]
+QED
+
+Theorem EXISTS_MEM_CONS_AUTO[simp]:
+  !(x : 'a) xs P.
+    (?e. MEM e (x::xs) /\ P e) <=> P x \/ ?e. MEM e xs /\ P e
+Proof
+  metis_tac [listTheory.MEM]
+QED
+
 Theorem MEM_MAP_IMAGE_AUTO[intro]:
   !f y x (xs : 'a list). y = f x /\ MEM x xs ==> MEM y (MAP f xs)
 Proof
