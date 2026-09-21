@@ -364,28 +364,13 @@ val the_mapped_distinctness_equivalence =
      ^ "searching")
     ["list_L6690_distinct_if_distinct_map"]
 
-val the_surjective_half_is_an_atom =
-  classified "the surjective half is an atom"
-    ("Isabelle's [bij_betw_def] unfolds to an injectivity and the "
-     ^ "image equation [f ` A = B], which its auto reads through "
-     ^ "membership.  HOL4's [BIJ_DEF] unfolds to INJ and the atom "
-     ^ "[SURJ f s t], which the method's citations name no unfolding "
-     ^ "for -- the source has no constant there to cite.  Both INJ "
-     ^ "halves are unfolded and what is left is the SURJ claim over a "
-     ^ "Sigma")
-    ["product_type_L1329_bij_betw_map_prod"]
-
-val the_inlined_swap =
-  classified "the inlined swap"
-    ("the source states this of [prod.swap], whose [inj_swap] and "
-     ^ "[surj_swap] are ambient [simp] where it stands "
-     ^ "(Product_Type.thy:978,984), so [simp add: bij_def] closes it "
-     ^ "from two atoms.  The translation has no such constant and "
-     ^ "inlines the swap as a lambda, which neither atom reaches; "
-     ^ "measured in Isabelle on that inlined form, its own "
-     ^ "[simp add: bij_def] leaves the conjunction standing and its "
-     ^ "[auto] fails")
-    ["product_type_L988_bij_swap"]
+(* Two classes left the accounting when the surjectivity bridge
+   landed: "the surjective half is an atom"
+   ([product_type_L1329_bij_betw_map_prod]) and "the inlined swap"
+   ([product_type_L988_bij_swap]).  Both named the same atom -- HOL4
+   states SURJ where the source states an image equation -- and the
+   second is now closed where Isabelle's own [auto] on the inlined
+   form is not. *)
 
 (* src/HOL/Map.thy:363 @ f7e02b7e.  Isabelle closes this one from its
    simpset, by [map_add_find_right], and that declaration's translated
@@ -527,8 +512,6 @@ val execution : benchLib.shortfall list =
   decision_procedure_scope @
   definitional_unfolding_stops_short @
   the_mapped_distinctness_equivalence @
-  the_surjective_half_is_an_atom @
-  the_inlined_swap @
   the_ambient_rule_is_the_goal @
   map_sum_commuted_under_a_fact @
   these_set_equality_route @
