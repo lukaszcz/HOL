@@ -12,8 +12,7 @@ val over_budget =
   ["set_L1125_image_Pow_surj",
    "set_L1607_Pow_insert",
    "set_L1847_is_singleton_the_elem",
-   "set_L1610_Pow_Compl", "set_L994_image_add_0",
-   "set_theory_L168"]
+   "set_L1610_Pow_Compl"]
 
 fun record note id : benchLib.shortfall =
   {id = id, cause = benchLib.EngineLimitation, date = "2026-08-28",
@@ -32,12 +31,15 @@ val blast_set_rule_forms =
     ("the obstruction is not isolated: these goals withhold no "
      ^ "ambient analogue at all, so the earlier reading -- that "
      ^ "excluding the goal's own characterisation left no second "
-     ^ "route -- was wrong for them.  The search reports no proof on "
-     ^ "some and does not return within the budget on the rest")
+     ^ "route -- was wrong for them.  Two do not return within the "
+     ^ "budget; the third returns a residual in which the "
+     ^ "translation's own [source_add_image] stands unfolded.  The "
+     ^ "three causes are distinct and none is the rule form the "
+     ^ "class is named for: [set_theory_L168] was the goal that "
+     ^ "was, and a singleton introduction closed it")
     ["set_L1125_image_Pow_surj",
      "set_L1607_Pow_insert",
-     "set_L994_image_add_0",
-     "set_theory_L168"]
+     "set_L994_image_add_0"]
 
 val disjnt =
   classified "disjnt"
