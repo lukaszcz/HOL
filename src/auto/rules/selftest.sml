@@ -3177,8 +3177,9 @@ val _ =
 
 (* A fact the goal's own type variables cover is usable as it stands,
    and which of its atoms happens to match where is no evidence of the
-   instance wanted: the citation itself is one of the instances, and
-   displacing it by a match at an unrelated type loses it. *)
+   instance wanted: the citation itself is one of the instances, so it
+   stands among the assumptions and a match is offered beside it
+   rather than in its place. *)
 val _ =
   test
     ("a fact the goal's type variables cover is inserted as written",
@@ -3189,8 +3190,44 @@ val _ =
        in
          case #1 (Tactical.VALID
                     (INSERT_FACTS_TAC [pointwise_reflexivity]) goal) of
-             [([assumption], _)] =>
-               Term.aconv assumption (concl pointwise_reflexivity)
+             [(assumptions, _)] =>
+               List.exists
+                 (fn assumption =>
+                   Term.aconv assumption (concl pointwise_reflexivity))
+                 assumptions
+           | _ => false
+       end)
+
+(* Cover is by name and what decides the fact is where the goal
+   applies it.  A fact at one type variable meeting a goal that
+   mentions two, and states the fact at the second, was left assumed
+   at the first alone, where nothing the goal states could meet it:
+   [source_sorted_all_distinct_unique] at [:'a] against a goal about
+   sorted mapped lists is the shape it was found on.  Neither the fact
+   nor the goal below is a corpus entry. *)
+val pair_projection = Thm.REFL ``FST ((x, x) : 'a # 'a)``
+
+val _ =
+  test
+    ("a fact is inserted at a type the goal mentions elsewhere too",
+     fn () =>
+       let
+         val goal =
+           ([] : term list,
+            ``FST (((g : 'a -> 'b) z, g z) : 'b # 'b) = FST (g z, g z)``)
+         val instance =
+           concl (Thm.INST_TYPE [alpha |-> beta] pair_projection)
+       in
+         case #1 (Tactical.VALID
+                    (INSERT_FACTS_TAC [pair_projection]) goal) of
+             [(assumptions, _)] =>
+               List.exists
+                 (fn assumption => Term.aconv assumption instance)
+                 assumptions andalso
+               List.exists
+                 (fn assumption =>
+                   Term.aconv assumption (concl pair_projection))
+                 assumptions
            | _ => false
        end)
 

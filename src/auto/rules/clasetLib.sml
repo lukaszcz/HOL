@@ -1338,15 +1338,25 @@ fun head_name term = fst (dest_const (fst (strip_comb term)))
    them per use; the instances a goal determines are built here
    instead.
 
-   Only a fact carrying a type variable the goal never mentions is
-   instantiated.  As written such a fact says nothing the goal can
-   use: its atoms are at a type no term of the goal is at, so nothing
-   it states can meet anything the goal states.  A fact the goal's own
-   type variables already cover is left exactly as it is -- some of
-   its atoms will match somewhere at some type, and taking those for
-   the instance wanted is guesswork: [image_cong] meets an equality at
-   the goal's element type and one at its image type, where the
-   instance the goal needs is the citation itself.
+   A fact carrying a type variable the goal never mentions says
+   nothing the goal can use as written: its atoms are at a type no
+   term of the goal is at, so nothing it states can meet anything the
+   goal states.  Such a fact is replaced by the instances the goal
+   determines for it.
+
+   A fact whose type variables the goal does mention is kept and the
+   instances are offered beside it.  Mentioning is by name and what
+   decides the fact is where the goal applies it:
+   [source_sorted_all_distinct_unique] is at [:'a] and a goal about
+   sorted mapped lists mentions [:'a] and [:'b] both, needing the fact
+   at the second, so reading the name as cover leaves it assumed at a
+   type the goal never states it at -- measured under that reading, the
+   goal fails at 0.698s with the fact as written and closes at 0.019s
+   with it at the goal's types.  Keeping the fact is what the guesswork
+   an instance risks asks for, and it costs nothing: [image_cong] meets
+   an equality at the goal's element type and one at its image type,
+   where the instance the goal needs is the citation itself, and the
+   citation still stands.
 
    A match then contributes only where it leaves alone the type
    variables the fact shares with the goal through a free variable of
@@ -1374,7 +1384,7 @@ fun goal_type_instances (assumptions, target) fact =
         [] fact_variables
     val loose = Lib.set_diff (type_vars_in_term body) fixed
   in
-    if null alien orelse null loose then [fact]
+    if null loose then [fact]
     else
       let
         val schematic = free_vars body
@@ -1428,7 +1438,9 @@ fun goal_type_instances (assumptions, target) fact =
               end)
             [] substitutions
       in
-        if null instances then [fact] else instances
+        if null instances then [fact]
+        else if null alien then fact :: instances
+        else instances
       end
   end
 
