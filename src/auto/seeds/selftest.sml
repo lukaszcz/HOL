@@ -1134,6 +1134,29 @@ val _ =
        end
        handle Conv.UNCHANGED => false)
 
+(* src/HOL/Set.thy:824-825 @ f7e02b7e.  Not a corpus entry.  The
+   witness is a singleton and nothing in the goal names it.  The safe
+   introduction the iff derives, [x = y ==> x IN {y}], settles the set
+   on a singleton and leaves the equation that names the element
+   standing; the branch denying the other membership is then offered a
+   set the equation has not fixed, and the arithmetic that would decide
+   the denial is handed a literal carrying an unsolved variable.  Where
+   the denial is an assumption rather than a consequence the branch
+   closes either way -- measured -- which is why the premise here is an
+   order and not a disequality.  [singletonI] closes its branch where
+   it settles the set, so the denial meets a determined one; that is
+   what Isabelle's own comment on the rule says it is for. *)
+val _ =
+  check
+    ("a singleton witness is settled by the membership alone",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!seed_sing_a seed_sing_b : int.
+                  seed_sing_a < seed_sing_b ==>
+                  ?seed_sing_set.
+                    seed_sing_a NOTIN seed_sing_set /\
+                    seed_sing_b IN seed_sing_set``))
+
 (* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
    entry.  Isabelle settles a relation inclusion with the same three
    rules it settles a set inclusion with, a relation being a set of

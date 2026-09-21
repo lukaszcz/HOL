@@ -136,6 +136,24 @@ val _ =
    found it -- its [using set_take_subset] hands the search exactly
    that assumption, and simplification did not return inside five
    minutes. *)
+(* src/HOL/Set.thy:824-825 @ f7e02b7e.  [singletonI] [intro!], whose
+   own comment there reads "Redundant?  But unlike insertCI, it proves
+   the subgoal immediately!".  That is the whole of what it adds: the
+   iff derived from IN_SING already gives the safe introduction
+   [x = y ==> x IN {y}], and against an undetermined set the search
+   settles it on a singleton and is then left holding the equation that
+   names the element, which it must solve before the branch closes.
+   Stated with the element in both places the rule closes the branch
+   outright, the set being determined by the same unification.
+   Measured on [set_theory_L168], whose witness is a singleton: open at
+   the ambient claset, closed in 1.3s with this rule, and insertCI's
+   own classical form (:778) closes nothing there. *)
+Theorem IN_SING_I_AUTO[sintro]:
+  !item. item IN {item}
+Proof
+  REWRITE_TAC [pred_setTheory.IN_SING]
+QED
+
 Theorem SUBSET_I_AUTO[sintro]:
   !left right.
     (!item. item IN left ==> item IN right) ==> left SUBSET right
