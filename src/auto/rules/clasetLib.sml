@@ -1457,6 +1457,59 @@ fun INSERT_FACTS_TAC facts =
        (List.rev (List.concat (map (goal_type_instances goal) facts)))
        goal)
 
+(* A supplied fact that is an implication is declared to the invocation
+   claset and left out of the assumptions.  Isabelle's [using] chains a
+   fact whose type variables stay schematic and whose premises its
+   reasoner resolves where the proof wants a rule; an assumption here
+   is type-fixed -- the instances [goal_type_instances] offers are the
+   eager approximation of the first half -- and is a rule only where
+   the search makes one of it, through the quantifier and implication
+   eliminations, which is the expensive route to the same step.
+
+   The assumption is not merely redundant beside the rule: it enlarges
+   the search the rule was meant to shorten, because both routes stay
+   open at every node.  Measured on the sorted-unique chain of
+   list_L6138, its two citations being the facts the source method
+   names: inserted only, the goal fails at 75.2s; inserted and
+   declared, it does not return inside 300s; declared and not
+   inserted, it closes at 1.140s.
+
+   Only an implication is declared and withheld.  A fact that is not
+   one states at its own shape what the assumption already offers the
+   search, and as a rule it would be an introduction concluding
+   itself, so it stays an assumption.  A negation is not an
+   implication here: [is_imp_only] keeps [~P] opaque, which is what
+   leaves a negated fact where the tableau reads it as a literal.  A
+   fact the claset declines -- an implication whose shape makes no
+   destruction rule -- stays an assumption too, so no fact is lost by
+   the routing. *)
+val invocation_fact_spec : rulespec =
+  {kind = clasetRules.Dest, safe = false, prio = NONE}
+
+val invocation_fact_prefix = "__invocation_fact_"
+
+(* Returns the claset the search runs against and the facts still owed
+   to the assumptions, in the order they were given. *)
+fun declare_invocation_facts facts cs =
+  let
+    fun step (fact, (cs, assumed)) =
+      if boolSyntax.is_imp_only (Thm.concl (Drule.SPEC_ALL fact)) then
+        let
+          val name =
+            fresh_rule_name {prefix = invocation_fact_prefix, from = 0} cs
+        in
+          case Lib.total
+                 (add_derived_rule invocation_fact_spec (name, fact)) cs of
+              SOME extended => (extended, assumed)
+            | NONE => (cs, fact :: assumed)
+        end
+      else
+        (cs, fact :: assumed)
+    val (declared_cs, reversed) = List.foldl step (cs, []) facts
+  in
+    (declared_cs, List.rev reversed)
+  end
+
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base
   in
@@ -1494,10 +1547,11 @@ fun with_invocation_args {iff_prefix,extra_markers} body base_cs simpset =
                 end
         val (invocation_cs, facts) =
           extra_markers leftovers classical_cs
+        val (search_cs, assumed) = declare_invocation_facts facts invocation_cs
       in
         Tactical.THEN
-          (INSERT_FACTS_TAC facts,
-           body invocation_cs invocation_ss simp_controls) goal
+          (INSERT_FACTS_TAC assumed,
+           body search_cs invocation_ss simp_controls) goal
       end))
 
 end

@@ -3249,6 +3249,74 @@ val _ =
            | _ => false (* one inserted assumption: no instance is offered *)
        end)
 
+(* An invocation's facts are routed: a citation that is an implication
+   becomes a rule of the invocation claset, where the search can
+   instantiate it per use and resolve its premises, and is kept out of
+   the assumptions, where a second copy of it only widens the search;
+   one that is not an implication states at its own shape what the
+   assumption already offers, so nothing is declared for it and it is
+   assumed as before.  What the search receives is read off the body,
+   which is handed the claset the invocation built, and what the goal
+   receives is read off the residual goal.  Neither theorem below is a
+   corpus entry. *)
+fun invocation_run facts =
+  let
+    val seen = ref ([] : (rulespec * (string * thm)) list)
+    fun body cs _ _ =
+      (seen := rules_of cs; Tactical.ALL_TAC)
+    val tactic =
+      with_invocation_args
+        {iff_prefix = "__selftest_invocation_iff_",
+         extra_markers = fn theorems => fn cs => (cs, theorems)}
+        body empty_cs NONE facts
+    val (residual, _) = tactic ([] : term list, boolSyntax.T)
+  in
+    (!seen, residual)
+  end
+
+fun invocation_claset_rules facts = #1 (invocation_run facts)
+
+fun invocation_assumptions facts =
+  case #2 (invocation_run facts) of
+      [(asl, _)] => asl
+    | _ => raise Fail "invocation_assumptions: one residual goal expected"
+
+val invocation_implication =
+  Thm.DISCH ``p : bool`` (Thm.ASSUME ``p : bool``)
+
+val invocation_equation = Thm.REFL ``FST ((x, y) : 'a # 'b)``
+
+val _ =
+  test
+    ("a supplied implication is a rule for the invocation too",
+     fn () =>
+       case invocation_claset_rules [invocation_implication] of
+           [({kind = Dest, safe = false, ...}, (_, rule))] =>
+             (* the declaration generalises what it is given, so the
+                statements meet once both are specialised *)
+             Term.aconv (concl (Drule.SPEC_ALL rule))
+               (concl (Drule.SPEC_ALL invocation_implication))
+         | _ => false)
+
+val _ =
+  test
+    ("a supplied implication is not assumed as well",
+     fn () => List.null (invocation_assumptions [invocation_implication]))
+
+val _ =
+  test
+    ("a supplied fact that is not an implication declares nothing",
+     fn () => List.null (invocation_claset_rules [invocation_equation]))
+
+val _ =
+  test
+    ("a supplied fact that is not an implication is still assumed",
+     fn () =>
+       case invocation_assumptions [invocation_equation] of
+           [assumption] =>
+             Term.aconv assumption (concl invocation_equation)
+         | _ => false)
+
 (* The shared work meter is what lets a caller ask how much search a
    proof did.  Nesting must not lose the enclosing measurement. *)
 val _ =

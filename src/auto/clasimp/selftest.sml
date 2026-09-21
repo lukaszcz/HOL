@@ -1121,6 +1121,71 @@ val _ =
 
 end
 
+(* How a citation reaches the search.  An implication becomes a rule of
+   the invocation claset and is kept out of the assumptions; both routes
+   close the goal below, so what the routing changes is how much search
+   that takes.  Reached as an assumption, the fact is taken apart a
+   quantifier and an implication at a time; reached as a rule it is one
+   application.  The work meter is the measurement, not the clock.
+
+   The predicates are defined here and declared nowhere, and neither the
+   rule nor the goal is a benchmark entry.  Their heads have to be
+   constants: a rule concluding an applied variable is indexed under no
+   constant and reaches nothing, which is a fact about the rule net and
+   not about the routing. *)
+local
+  val routing_ord_def =
+    new_definition
+      ("routing_ord_def", ``routing_ord (r : 'a -> 'a -> bool) <=> T``)
+  val routing_srt_def =
+    new_definition
+      ("routing_srt_def",
+       ``routing_srt (r : 'a -> 'a -> bool) (x : 'a) <=> T``)
+  val routing_dst_def =
+    new_definition ("routing_dst_def", ``routing_dst (x : 'a) <=> T``)
+  val routing_same_def =
+    new_definition
+      ("routing_same_def", ``routing_same (x : 'a) (y : 'a) <=> T``)
+  (* Five premises, so that the assumption route has something to peel:
+     the rule's own subjects are determined by the premises and not by
+     its conclusion. *)
+  val routing_fact =
+    Tactical.prove
+      (``!r x y.
+           routing_ord r ==>
+           routing_srt r x ==> routing_srt r y ==>
+           routing_dst x ==> routing_dst y ==>
+           routing_same x y``,
+       Rewrite.REWRITE_TAC [routing_same_def])
+  val routing_goal : Abbrev.goal =
+    ([``routing_ord (routing_le : 'a -> 'a -> bool)``,
+      ``routing_srt (routing_le : 'a -> 'a -> bool) (routing_a : 'a)``,
+      ``routing_srt (routing_le : 'a -> 'a -> bool) (routing_b : 'a)``,
+      ``routing_dst (routing_a : 'a)``,
+      ``routing_dst (routing_b : 'a)``],
+     ``routing_same (routing_a : 'a) (routing_b : 'a)``)
+  fun search tactic =
+    searchWork.measure (fn () => valid_closes tactic routing_goal)
+in
+
+val _ =
+  check
+    ("a supplied implication shortens the search it is given to",
+     fn () =>
+       let
+         val (assumed_closed, assumed_work) =
+           search
+             (Tactical.THEN
+                (Tactic.ASSUME_TAC routing_fact, classicalLib.FAST_TAC []))
+         val (supplied_closed, supplied_work) =
+           search (classicalLib.FAST_TAC [routing_fact])
+       in
+         assumed_closed andalso supplied_closed andalso
+         #expansions supplied_work < #expansions assumed_work
+       end)
+
+end
+
 val generic_simp_markers =
   [markerLib.AC boolTheory.AND_CLAUSES boolTheory.OR_CLAUSES,
    markerLib.Cong boolTheory.AND_CLAUSES,
@@ -1180,8 +1245,7 @@ val _ =
     ("plain theorems are inserted before the clasimp script",
      fn () =>
        let
-         val p = ``clasimp_insert_p:bool``
-         val fact = DISCH p (ASSUME p)
+         val fact = Thm.REFL ``clasimp_insert_x:'a``
          fun leave_residue _ _ _ = Tactical.ALL_TAC
          val tactic =
            local_clasimp leave_residue clasetLib.empty_cs
@@ -1189,6 +1253,28 @@ val _ =
        in
          case residual tactic ([], ``clasimp_insert_goal:bool``) of
              [([assumption], _)] => Term.aconv assumption (concl fact)
+           | _ => false
+       end)
+
+(* A citation that is an implication takes the other route: it is a rule
+   of the claset the script is handed, and the goal it runs on does not
+   carry it as well. *)
+val _ =
+  check
+    ("a supplied implication reaches the script as a rule instead",
+     fn () =>
+       let
+         val p = ``clasimp_insert_p:bool``
+         val fact = DISCH p (ASSUME p)
+         val seen = ref ~1
+         fun leave_residue cs _ _ =
+           (seen := length (clasetLib.rules_of cs); Tactical.ALL_TAC)
+         val tactic =
+           local_clasimp leave_residue clasetLib.empty_cs
+             simpLib.empty_ss [fact]
+       in
+         case residual tactic ([], ``clasimp_insert_goal:bool``) of
+             [([], _)] => !seen = 1
            | _ => false
        end)
 
