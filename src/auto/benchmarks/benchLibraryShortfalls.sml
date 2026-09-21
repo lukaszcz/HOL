@@ -80,9 +80,28 @@ val list_decomposition_witnesses =
      ^ "at a member")
     ["list_L8673_these_set_code"]
 
+(* src/HOL/List.thy:6138 @ f7e02b7e.  Four causes were found here and
+   three are fixed: a fact frozen at a type the goal never states it
+   at, an order premise the search could not ask for, and a cited
+   implication that reached the search only as an assumption.  What is
+   left is measured rather than inherited -- the recipe runs a live
+   search with both of the method's citations in front of it,
+   expansions=256 and no residual, and spends the budget.  The fourth
+   cause read earlier, that Isabelle's one [inj_on] is spelled
+   [source_inj_on] at this goal and [INJ _ _ UNIV] at the cited
+   [source_map_inj_on], is refuted in both directions: restating the
+   goal leaves it exactly where it was, and restating the fact costs
+   [list_L1193_inj_on_map_eq_map] and [list_L1213_inj_on_mapI], whose
+   own hypotheses are written the transparent way the ambient INJ
+   unfolding reads. *)
 val over_budget_with_no_residual =
   classified "over budget with no residual"
-    ("the assigned tactic did not return within the budget")
+    ("the recipe runs a live search with both of the method's "
+     ^ "citations in front of it -- expansions=256, no residual -- "
+     ^ "and spends the budget; three separate causes of this goal's "
+     ^ "failure have been fixed and the fourth is not the two "
+     ^ "spellings of the cited injectivity premise, which is measured "
+     ^ "and refuted in both directions")
     ["list_L6138_map_sorted_distinct_set_unique"]
 
 (* src/HOL/List.thy:9013,6761 @ f7e02b7e.  [list_all_transfer] is
