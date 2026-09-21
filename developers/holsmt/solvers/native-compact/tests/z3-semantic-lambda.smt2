@@ -1,7 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-fun p ((Array Int Int)) Bool)
-(assert (p (lambda ((x Int)) (+ x 1))))
-(assert (not (p (lambda ((x Int)) (+ x 1)))))
-(check-sat)
-(get-proof)

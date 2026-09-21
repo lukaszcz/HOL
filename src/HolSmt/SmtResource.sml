@@ -9,9 +9,9 @@ struct
 
   (* P5.3: these are the single source of truth for the D12 budget. *)
   (* Complete CPC certificates for the Float8 Sterbenz regression produced
-     by cvc5 1.3.4 are about 22 MiB without printer-specific compaction.
-     Keep the admission boundary independent of a patched proof printer while
-     retaining a fixed, cheaply checked power-of-two cap. *)
+     by cvc5 1.3.4 are about 22 MiB.  Keep the admission boundary tied to the
+     ordinary release proof format and retain a fixed, cheaply checked
+     power-of-two cap. *)
   val max_proof_bytes = 32 * 1024 * 1024
   (* Compatibility name retained for callers and diagnostics tests that
      predate the CPC proof-text gate. *)

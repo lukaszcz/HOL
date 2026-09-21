@@ -6,13 +6,9 @@ built independently.
 
 ## Prerequisites
 
-Install a supported Z3 4.x release and set `$HOL4_Z3_EXECUTABLE` to its
-path. Building every example, including the complete word32 midpoint family,
-requires the native compact Z3 replacement version
-`4.11.2.0-holsmt-compact-prototype2`. Its pinned source, patch, build command,
-and conformance tests are in the
-[`native-compact` recipe](../../../developers/holsmt/solvers/native-compact/README.md).
-Install cvc5 1.3.4 as well to build the cvc5 example. HolSmt checks
+Install an official supported Z3 4.x release and set
+`$HOL4_Z3_EXECUTABLE` to its path. Install an official supported cvc5 release
+as well to build the cvc5 example. HolSmt checks
 `$HOL4_CVC_EXECUTABLE`, then `$CVC5`, then looks for `cvc5` on `$PATH`.
 The exact tested solver versions and feature coverage are documented in the
 parent [`README`](../README).

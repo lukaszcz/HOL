@@ -148,7 +148,7 @@ struct
     loop 0
   end
 
-  (* The pinned cvc5-1.3.4 CPC printer accepts Unicode in String tokens only
+  (* The supported cvc5 CPC printer accepts Unicode in String tokens only
      through the ASCII \\u escape syntax.  Reject raw controls and non-ASCII
      bytes before semantic escape decoding.  This policy is proof-dialect
      specific; the general SMT-LIB frontend does not call this function. *)
