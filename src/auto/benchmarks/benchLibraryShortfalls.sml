@@ -85,20 +85,26 @@ val over_budget_with_no_residual =
     ("the assigned tactic did not return within the budget")
     ["list_L6138_map_sorted_distinct_set_unique"]
 
-(* src/HOL/List.thy:9013 @ f7e02b7e.  [list_all_transfer] is proved
-   [using list.pred_transfer by blast], and [list.pred_transfer] is the
-   [list] BNF's own predicator transfer rule: the two statements are
-   the same one, so the source proof is the citation and nothing
-   else. *)
+(* src/HOL/List.thy:9013,6761 @ f7e02b7e.  [list_all_transfer] is
+   proved [using list.pred_transfer by blast], and [list.pred_transfer]
+   is the [list] BNF's own predicator transfer rule: the two statements
+   are the same one, so the source proof is the citation and nothing
+   else.  [list_L6761] reaches the same place by the other road -- its
+   citation is represented, as [source_strict_sorted_equal_unique], and
+   is the goal word for word, so rule A1 withholds it and the recipe is
+   authored without it.  [Uniq_def], the method's other citation, is
+   inlined and carries no fact. *)
 val the_only_citation_states_the_goal =
   classified "the only citation states the goal"
-    ("the source method's only citation is the goal's own statement, "
-     ^ "which the name table records as unrepresented, so the recipe "
-     ^ "reaches the goal with the ambient context and nothing else; "
-     ^ "what is left relates EVERY at two predicates across a "
-     ^ "LIST_REL, which is an induction on the relation and not a "
-     ^ "step any classical or simp method takes")
-    ["list_L9013_list_all_transfer"]
+    ("the source method's only fact-bearing citation is the goal's "
+     ^ "own statement -- recorded unrepresented by the name table, or "
+     ^ "represented and withheld by rule A1 -- so the recipe reaches "
+     ^ "the goal with the ambient context and nothing else.  What is "
+     ^ "left is an induction and not a step any classical or simp "
+     ^ "method takes: for [list_L9013] EVERY at two predicates across "
+     ^ "a LIST_REL, and for [list_L6761] that two strictly sorted "
+     ^ "listings of one set are equal")
+    ["list_L9013_list_all_transfer", "list_L6761_anon_L6761"]
 
 (* src/HOL/List.thy:6669,6770,6847 @ f7e02b7e.  The residual is stated
    on the translated [sorted_key_list_of_set], which is a sort of the
@@ -224,19 +230,44 @@ val fold_against_a_set_aggregate =
     ["list_L3381_anon_L3381", "list_L3385_anon_L3385"]
 
 (* [source_sorted] is now [source_sorted_wrt], and the ambient bridge
-   has crossed: every residual below is stated on HOL4's own adjacent
+   has crossed: the residual below is stated on HOL4's own adjacent
    SORTED, with nothing of the all-pairs reading left in it.  So the
    class is no longer about the two readings at all -- it is what the
-   engine cannot do with SORTED once it has it. *)
+   engine cannot do with SORTED once it has it.  Two goals have left
+   it: [list_L6761] is withholding its only citation and not a fact
+   about SORTED at all, and [list_L6053] needs no induction, which the
+   note used to claim of all three. *)
 val sortedness_beyond_the_bridge =
   classified "sortedness beyond the bridge"
     ("the residual is stated on HOL4's adjacent SORTED, so the "
-     ^ "ambient bridge has crossed; what is left is a fact about "
-     ^ "SORTED itself -- an order step between two of its members, "
-     ^ "or its closure under a list operation, which needs an "
-     ^ "induction the search does not perform")
-    ["list_L6053_sorted_iff_nth_mono",
-     "list_L6384_sorted_insort_insert_key", "list_L6761_anon_L6761"]
+     ^ "ambient bridge has crossed; what is left is SORTED's closure "
+     ^ "under a list operation, which needs an induction the search "
+     ^ "does not perform")
+    ["list_L6384_sorted_insort_insert_key"]
+
+(* src/HOL/List.thy:6053 @ f7e02b7e.  Measured, not read off the
+   residual's shape: the residual
+   [right < LENGTH xs, left <= right, !l r. l < r ==> r < LENGTH xs ==>
+    le xs[l] xs[r], WeakLinearOrder le |- le xs[left] xs[right]]
+   is left open by the assigned tactic, and closes in 0.102s once
+   [left < right \/ left = right] is handed over as an assumption.
+   Reflexivity is already reachable from the order premise (closed in
+   0.006s), and the split is provable where it is the goal (0.010s), so
+   neither half is the obstruction -- what is missing is the step that
+   takes a [<=] standing in the assumptions to the disjunction.  The
+   source method gets it from the cited [nat_less_le], which rewrites
+   the quantified premise's [<] into [<= /\ <>]; the name table pins
+   that citation engine-native, and the ambient simpset leaves [a < b]
+   unchanged. *)
+val the_order_split_the_citation_supplies =
+  classified "the order split the citation supplies"
+    ("the residual needs a [<=] assumption split into its strict and "
+     ^ "equal cases; handed that disjunction the assigned tactic "
+     ^ "closes the goal in 0.102s, and both halves are reachable on "
+     ^ "their own.  Isabelle gets the split from the cited "
+     ^ "[nat_less_le], which the name table records as engine-native, "
+     ^ "and nothing in the ambient layer performs it")
+    ["list_L6053_sorted_iff_nth_mono"]
 
 val numeral_against_Suc =
   classified "numeral against Suc"
@@ -483,6 +514,7 @@ val execution : benchLib.shortfall list =
   fold_direction @
   fold_against_a_set_aggregate @
   sortedness_beyond_the_bridge @
+  the_order_split_the_citation_supplies @
   numeral_against_Suc @
   characterisation_is_the_goal @
   integer_interval_emptiness @
