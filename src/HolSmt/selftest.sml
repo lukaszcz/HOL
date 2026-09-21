@@ -144,7 +144,7 @@ fun reject_unsupported_smtfloat t =
 (* performance)                                                              *)
 (*****************************************************************************)
 
-fun auto_tac (_, t) =
+fun auto_tac (_, t) (_ : Context.t) =
   let
     val simpset = bossLib.++ (bossLib.srw_ss (), wordsLib.WORD_ss)
     val simp_thms =

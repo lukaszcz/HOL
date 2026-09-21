@@ -55,13 +55,16 @@ fun concatMapV f (ls, v: list_validation) = let
   val (gs, v1) = go ls
   in (gs, v o v1: list_validation) end
 
-fun expandf (tac:tactic) (n, g) =
+fun expandf (tac:tactic) ctxt (n, g) =
   (n, apply (fn (gs, v) =>
-    Base (concatMapV ((fn (gs, v) => (gs, single o v)) o tac) (gs, v))) g)
+    Base (concatMapV ((fn (gs, v) => (gs, single o v)) o
+                      (Lib.C tac ctxt))
+                     (gs, v))) g)
 val expand = expandf o Tactical.VALID
 
-fun expand_listf (ltac:list_tactic) (n, g) =
-  (n, apply (fn (gs, v) => (fn (gs', v') => Base (gs', v o v')) (ltac gs)) g)
+fun expand_listf (ltac:list_tactic) ctxt (n, g) =
+  (n, apply (fn (gs, v) =>
+                (fn (gs', v') => Base (gs', v o v')) (ltac gs ctxt)) g)
 val expand_list = expand_listf o Tactical.VALID_LT
 
 fun top_goals (_, Base (gs, _)) = gs
@@ -154,7 +157,16 @@ fun close_repeat (n, g) = let;
           | Running g' => let
             val (g1, v1) = asBase g'
             val (acc, v2) = repeat g1 (acc, fn x => ([], x))
-            fun v' (ths, thacc) = apfst (fn th1 => v1 th1 @ ths) (v2 thacc)
+            (* `repeat' prepends each goal's theorem to what it has
+               built, so `v2' hands back the subgoals' theorems in
+               reverse -- which is what the `rev' below the top-level
+               call undoes for the frame's own validation.  `v1' is the
+               body's validation for *this* goal and gets no such
+               treatment, so reverse here: pairing subgoal theorems
+               with the wrong subgoals proves the wrong thing, silently
+               where the statements happen to typecheck. *)
+            fun v' (ths, thacc) =
+                apfst (fn th1 => v1 (rev th1) @ ths) (v2 thacc)
             in repeat gs (acc, v' o v) end
       val (gs', v) = asBase gs
       val (gs', v') = repeat gs' ([], fn x => ([], x))
@@ -203,10 +215,28 @@ fun next_select_lt (n, g) = let
   fun go [] success (failed: (goal list * list_validation) list) v = let
       val (gs1, v1) = concatMapV I (rev success, I)
       val (gs2, v2) = concatMapV I (rev failed, I)
+      (* `v' consumes its lists head-first from the last selected goal
+         backwards, so the theorems must be reversed -- but *outside*
+         `v1', which pairs theorems with goals by position.  Reversing
+         first hands each theorem to another goal's validation.  With
+         one theorem per selected goal and identity validations the
+         two orders coincide, so this only shows once a selected
+         goal's tactic does real work: `gvs' on two goals matching the
+         same pattern proved the wrong thing, and the mismatch
+         surfaced as a failure inside `Thm.CHOOSE'. *)
       fun v' n ths = let
         val (ths1, ths2) = Lib.split_after n ths
-        in v ([], v1 (rev ths1), v2 (rev ths2)) end
-      in Stashed (Base (gs1, v2), NthGoal ([], gs2, v' (length gs1))) end
+        in v ([], rev (v1 ths1), rev (v2 ths2)) end
+      (* The focus carries `I', not `v1' or `v2': `v'` below applies
+         both, `v1' to the theorems of the selected goals and `v2' to
+         the stashed ones, so anything applied here would be applied
+         twice.  It used to carry `v2', which is built for the
+         *stashed* goals -- so with a different number selected than
+         stashed it was handed the wrong count and `Lib.split_after'
+         said "index too big".  Only `finish' runs validations, so the
+         goals looked right the whole way and a completed proof
+         reported "No subgoals but proof incomplete". *)
+      in Stashed (Base (gs1, I), NthGoal ([], gs2, v' (length gs1))) end
     | go (Try (Running gs, _) :: rest) success failed v =
       go rest (asBase gs :: success) failed (v o (fn (a,b,c) => (hd b::a,tl b,c)))
     | go (Try (Failed _, ([g], v')) :: rest) success failed v =
@@ -236,7 +266,8 @@ fun close_first_lt (n, g) = let
    combinator inward; wrappers not carried by `Stashed` (Try,
    Repeat, Parallel, Done) are not currently described. *)
 fun context_lines (_, g) = let
-  fun kind_str (Then1 _) = "first subgoal of >-"
+  val then1 = "inside >-"
+  fun kind_str (Then1 _) = then1
     | kind_str (TacsToLT (acc, rest, _)) =
         "branch " ^ Int.toString (length acc + 1) ^
         " of " ^ Int.toString (length acc + 1 + length rest) ^
@@ -246,7 +277,22 @@ fun context_lines (_, g) = let
         " of " ^ Int.toString (length lo + 1 + length hi)
   fun go (Stashed (inner, k)) acc = go inner (kind_str k :: acc)
     | go _ acc = acc
-  in rev (go g []) end
+  (* A Then1 frame has exactly one branch, so its tag carries no
+     position -- repeats say only how deeply the cursor is nested.
+     Fold a run of them into that count instead of printing the same
+     tag several times.  Other kinds number themselves, so identical
+     neighbours there are distinct facts and stay as they are. *)
+  fun collapse [] = []
+    | collapse (l :: ls) = let
+        fun run n (l' :: rest) =
+              if l' = l then run (n + 1) rest else (n, l' :: rest)
+          | run n [] = (n, [])
+        val (n, rest) = run 1 ls
+        val here = if n = 1 orelse l <> then1 then
+                     List.tabulate (n, fn _ => l)
+                   else ["inside " ^ Int.toString n ^ " nested >-"]
+        in here @ collapse rest end
+  in collapse (rev (go g [])) end
 
 fun pp_goalstate gs = let
   open smpp
@@ -262,17 +308,29 @@ fun pp_goalstate gs = let
     | ls => add_string ("[" ^ String.concatWith "] [" ls ^ "]") >>
             add_newline >> add_newline
   (* If the current focus is empty and the outer combinators can't
-     yet close cleanly, close them one at a time until goals become
-     visible again (or every close fails).  The user sees the state
-     that WILL be current once the pending close_paren steps fire,
-     so cursor positions just past a solved subgoal don't render as
-     the misleading "No subgoals but proof incomplete." message. *)
+     yet close cleanly, step them one at a time until goals become
+     visible again (or every step fails).  The user sees the state
+     that WILL be current once the pending steps fire, so cursor
+     positions just past a solved subgoal don't render as the
+     misleading "No subgoals but proof incomplete." message.
+
+     A solved THENL branch needs `next_tacs_to_lt' rather than
+     `close_paren': closing a TacsToLT frame with branches still to
+     come is a length mismatch, so closing is not available until the
+     last branch.  Report which step got us moving, and keep the
+     first one -- that is the one describing what the user just
+     finished. *)
+  fun stepOut gs = case total close_paren gs of
+      SOME closed => SOME ("remaining after close", closed)
+    | NONE => (case total next_tacs_to_lt gs of
+        SOME next => SOME ("next branch", next)
+      | NONE => NONE)
   fun peek gs =
-    case total close_paren gs of
+    case stepOut gs of
       NONE => NONE
-    | SOME closed =>
-      if not (null (top_goals closed)) then SOME closed
-      else peek closed
+    | SOME (how, gs') =>
+      if not (null (top_goals gs')) then SOME (how, gs')
+      else Option.map (fn (_, gs'') => (how, gs'')) (peek gs')
   in
     case top_goals gs of
       [] =>
@@ -284,16 +342,38 @@ fun pp_goalstate gs = let
           lift Parse.pp_thm th)
       | NONE =>
         (case peek gs of
-          SOME closed =>
+          SOME (how, rest) =>
             block Portable.CONSISTENT 0 (
               pp_context >>
-              add_string
-                "Focused subgoal(s) solved; remaining after close:" >>
+              add_string ("Focused subgoal(s) solved; " ^ how ^ ":") >>
               add_newline >> add_newline >>
-              pp_goalstate closed)
+              pp_goalstate rest)
         | NONE =>
-          add_string "No subgoals but proof incomplete (try close_paren)." >>
-          add_newline))
+          (* Two very different states reach here, and telling a user
+             the wrong one is worse than saying nothing.
+
+             If something is still open, the proof really is unfinished
+             and `close_paren' is the advice.  If nothing is open --
+             `close_paren' raising `Bind' is exactly "no frame at this
+             depth" -- then every step ran and every frame closed, and
+             what failed was rebuilding the theorem from the subgoals'
+             validations.  That is ours to fix, not the user's, and
+             must not be reported as their proof being incomplete. *)
+          let
+            val nothing_open =
+                (close_paren gs; false) handle Bind => true | _ => false
+          in
+            if nothing_open then
+              add_string "All subgoals are closed, but the theorem \
+                         \could not be rebuilt from them: a \
+                         \validation rejected the subgoals' \
+                         \theorems.  This is a limitation of \
+                         \stepping through the proof, not a report \
+                         \about the proof itself." >> add_newline
+            else
+              add_string "No subgoals but proof incomplete (try \
+                         \close_paren)." >> add_newline
+          end))
     | goals => let
       val (ellipsis_action, goals_to_print) =
         if length goals > show_nsubgoals then let

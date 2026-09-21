@@ -3221,3 +3221,12 @@ QED
 
   val _ = s ("p001", wordsTheory.ZERO_LT_dimword)  (* ``0 < dimword(:'a)`` *)
   val _ = s ("p002", wordsTheory.ONE_LT_dimword)  (* ``1 < dimword(:'a)`` *)
+
+  val _ = s ("TO_WORD_EXTRACT", boolLib.TAC_PROOF (([],
+        “(!w : 'a word.
+            dimindex(:'b) < dimindex(:'a) ==>
+            (w2w w : 'b word = (dimindex(:'b) - 1 >< 0) w)) /\
+         (!w : 'a word.
+            dimindex(:'b) < dimindex(:'a) ==>
+            (sw2sw w : 'b word = (dimindex(:'b) - 1 >< 0) w))”),
+        BasicProvers.SRW_TAC [wordsLib.WORD_BIT_EQ_ss] []))
