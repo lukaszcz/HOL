@@ -4830,7 +4830,9 @@ local
                       end
                     else if is_holsmt_xor term then
                       let
-                        val (_, [left, right]) = boolSyntax.strip_comb term
+                        val (left, right) = case boolSyntax.strip_comb term of
+                          (_, [left, right]) => (left, right)
+                        | _ => raise Fail "malformed xor"
                       in internal (boolSyntax.mk_neg (boolSyntax.mk_eq
                         (circuit left, circuit right))) end
                     else circuit_leaf term
@@ -7501,9 +7503,12 @@ local
                 val right = Term.genvar numSyntax.num
                 val law = Drule.SPECL [index, left, right]
                   smtfloatReplayRoundingTheory.smtfp_bit_add
-                val (_, [_, first, second, input]) =
-                  boolSyntax.strip_comb
-                    (boolSyntax.rhs (Thm.concl law))
+                val (first, second, input) =
+                  case boolSyntax.strip_comb
+                      (boolSyntax.rhs (Thm.concl law)) of
+                    (_, [_, first, second, input]) =>
+                      (first, second, input)
+                  | _ => raise Conv.UNCHANGED
                 val base = Drule.SPECL [first, second, input]
                   (Thm.CONJUNCT1 blastTheory.BCARRY_def)
                 fun next_carry position previous =
@@ -11811,8 +11816,10 @@ local
                             else leaf term
                           end
                         else if is_xor term then
-                          let val (_, [left, right]) =
-                            boolSyntax.strip_comb term
+                          let val (left, right) =
+                            case boolSyntax.strip_comb term of
+                              (_, [left, right]) => (left, right)
+                            | _ => raise Fail "malformed xor"
                           in internal (boolSyntax.mk_neg (boolSyntax.mk_eq
                             (circuit left, circuit right))) end
                         else leaf term

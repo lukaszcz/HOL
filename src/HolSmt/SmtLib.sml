@@ -7483,16 +7483,17 @@ in
      splits, instead of failing opaquely far from the cause. *)
   fun one_subgoal_stage name (tac : Tactical.tactic) : Tactical.tactic =
     fn g =>
-    let
-      val (goals, validation) = tac g
-    in
-      if List.length goals > 1 then
-        raise Feedback.mk_HOL_ERR "SmtLib" "SIMP_TAC"
-          ("preprocessing stage '" ^ name ^ "' produced " ^
-           Int.toString (List.length goals) ^ " subgoals")
-      else
-        (goals, validation)
-    end
+      fn c =>
+        let
+          val (goals, validation) = tac g c
+        in
+          if List.length goals > 1 then
+            raise Feedback.mk_HOL_ERR "SmtLib" "SIMP_TAC"
+              ("preprocessing stage '" ^ name ^ "' produced " ^
+               Int.toString (List.length goals) ^ " subgoals")
+          else
+            (goals, validation)
+        end
 
   fun SIMP_TAC_WITH_NATIVE_BAGS preserve_native_bags simp_let =
   let

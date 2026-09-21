@@ -489,12 +489,13 @@ in
             SOME value =>
               wordsSyntax.mk_word (value, Arbnum.fromInt width)
           | NONE =>
-              let val high :: lower = List.rev bs in
-                List.foldl
-                  (fn (bit, word) =>
-                    wordsSyntax.mk_word_concat (word, singleton bit))
-                  (singleton high) lower
-              end
+              (case List.rev bs of
+                 [] => raise ERR "mk_bbterm" "empty bit vector"
+               | high :: lower =>
+                   List.foldl
+                     (fn (bit, word) =>
+                       wordsSyntax.mk_word_concat (word, singleton bit))
+                     (singleton high) lower)
   in
     case word_from_bits bits of
       SOME word => word

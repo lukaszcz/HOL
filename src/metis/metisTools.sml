@@ -43,7 +43,7 @@ local
      {module = "metisTools",     alignment = I},
      {module = "metisLib",       alignment = I}];
   val () = register_trace ("metis", trace_level, 10)
-  val () = trace_level := (if !Globals.interactive then 1 else 0) (* OK *)
+  val () = trace_level := 0 (* keep library use quiet by default *)
   val () = set_traces aligned_traces
 in
   fun chatting l = tracing {module = module, level = l};

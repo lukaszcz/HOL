@@ -127,7 +127,10 @@ struct
     let
       val (premise, equation) = boolSyntax.dest_imp (Thm.concl law)
       val (_, bits) = boolSyntax.dest_eq equation
-      val (_, [sign, exponent, fraction]) = boolSyntax.strip_comb bits
+      val (sign, exponent, fraction) =
+        case boolSyntax.strip_comb bits of
+          (_, [sign, exponent, fraction]) => (sign, exponent, fraction)
+        | _ => raise Declined "malformed smtfp_nan bits"
       fun conjuncts tm = if boolSyntax.is_conj tm then
           let val (left, right) = boolSyntax.dest_conj tm
           in conjuncts left @ conjuncts right end
@@ -331,7 +334,10 @@ struct
       fun generic_argument argument =
         if full_named "smtfloat" "smtfp_unpack_rounding" 1 argument then
           let
-            val (head, [raw]) = boolSyntax.strip_comb argument
+            val (head, raw) =
+              case boolSyntax.strip_comb argument of
+                (head, [raw]) => (head, raw)
+              | _ => raise Declined "malformed smtfp_unpack_rounding"
             val variable = Term.genvar (Term.type_of raw)
           in Term.mk_comb (head, variable) end
         else if is_rounding_type (Term.type_of argument) then
@@ -410,7 +416,9 @@ struct
               if full_named "bool" "LET" 2 term then
                 let
                   val _ = lets := !lets + 1
-                  val [function, value] = arguments
+                  val (function, value) = case arguments of
+                    [function, value] => (function, value)
+                  | _ => raise Declined "malformed LET"
                   val (value_theorem, _) = close value
                   val assembled = rebuild head
                     [Thm.REFL function, value_theorem]
@@ -420,7 +428,9 @@ struct
               else if Term.is_abs head andalso not (List.null arguments) then
                 let
                   val _ = betas := !betas + 1
-                  val first :: remaining = arguments
+                  val (first, remaining) = case arguments of
+                    first :: remaining => (first, remaining)
+                  | [] => raise Declined "malformed abstraction application"
                   val (first_theorem, _) = close first
                   val applied = Thm.MK_COMB (Thm.REFL head, first_theorem)
                   val timer = Timer.startRealTimer ()
@@ -437,7 +447,9 @@ struct
               else if full_named "pair" "pair_CASE" 2 term then
                 let
                   val _ = pairs := !pairs + 1
-                  val [value, function] = arguments
+                  val (value, function) = case arguments of
+                    [value, function] => (value, function)
+                  | _ => raise Declined "malformed pair_CASE"
                   val (value_theorem, _) = close value
                   val assembled = rebuild head
                     [value_theorem, Thm.REFL function]
@@ -447,7 +459,9 @@ struct
               else if full_named "pair" "UNCURRY" 2 term then
                 let
                   val _ = pairs := !pairs + 1
-                  val [function, value] = arguments
+                  val (function, value) = case arguments of
+                    [function, value] => (function, value)
+                  | _ => raise Declined "malformed UNCURRY"
                   val (value_theorem, _) = close value
                   val assembled = rebuild head
                     [Thm.REFL function, value_theorem]
@@ -458,7 +472,9 @@ struct
                       full_named "pair" "SND" 1 term then
                 let
                   val _ = projections := !projections + 1
-                  val [value] = arguments
+                  val value = case arguments of
+                    [value] => value
+                  | _ => raise Declined "malformed pair projection"
                   val (value_theorem, _) = close value
                   val assembled = rebuild head [value_theorem]
                   val residue = boolSyntax.rhs (Thm.concl assembled)
@@ -525,7 +541,9 @@ struct
           then
             let
               val _ = priorities := !priorities + 1
-              val [count, word] = arguments
+              val (count, word) = case arguments of
+                [count, word] => (count, word)
+              | _ => raise Declined "malformed word priority"
               val _ = if HOLset.isEmpty
                   (Term.FVL_dag [count] Term.empty_tmset) then ()
                 else raise Declined "nonliteral priority count"
@@ -622,7 +640,9 @@ struct
       fun lift_source head theorem =
         Thm.MK_COMB (Thm.REFL head, theorem)
       fun projection () =
-        let val (head, [source]) = boolSyntax.strip_comb term
+        let val (head, source) = case boolSyntax.strip_comb term of
+              (head, [source]) => (head, source)
+            | _ => raise Conv.UNCHANGED
         in
           lift_source head (field_projection_conversion source)
           handle Conv.UNCHANGED =>
@@ -641,7 +661,9 @@ struct
       val (head, arguments) = boolSyntax.strip_comb term
       fun priority () =
         let
-          val [count, word] = arguments
+          val (count, word) = case arguments of
+            [count, word] => (count, word)
+          | _ => raise Conv.UNCHANGED
           val _ = if HOLset.isEmpty
               (Term.FVL_dag [count] Term.empty_tmset) then ()
             else raise Declined "nonliteral priority count"
@@ -833,8 +855,9 @@ struct
             SOME ("smtfloat", "smtfp_bits") => Thm.REFL term
           | SOME ("smtfloat", "smtfp_abs") =>
               let
-                val (_, [argument]) = boolSyntax.strip_comb term
-                  handle Match => raise Declined "malformed smtfp_abs"
+                val argument = case boolSyntax.strip_comb term of
+                    (_, [argument]) => argument
+                  | _ => raise Declined "malformed smtfp_abs"
                 val child = represent_internal admission word_admission
                   schema_cache memo argument
                 val (head, _) = boolSyntax.strip_comb term
@@ -850,8 +873,9 @@ struct
               end
           | SOME ("smtfloat", "smtfp_neg") =>
               let
-                val (_, [argument]) = boolSyntax.strip_comb term
-                  handle Match => raise Declined "malformed smtfp_neg"
+                val argument = case boolSyntax.strip_comb term of
+                    (_, [argument]) => argument
+                  | _ => raise Declined "malformed smtfp_neg"
                 val child = represent_internal admission word_admission
                   schema_cache memo argument
                 val (head, _) = boolSyntax.strip_comb term
@@ -893,8 +917,9 @@ struct
       subtract term =
     let
       val (head, arguments) = boolSyntax.strip_comb term
-      val [mode, left, right] = arguments
-        handle Bind => raise Declined "malformed floating-point add/sub"
+      val (mode, left, right) = case arguments of
+        [mode, left, right] => (mode, left, right)
+      | _ => raise Declined "malformed floating-point add/sub"
       val left_descriptor = represent_internal admission word_admission
         schema_cache memo left
       val right_descriptor = represent_internal admission word_admission
@@ -963,9 +988,11 @@ struct
 
   val finite_bits_law =
     let
-      val (_, [operand]) = boolSyntax.strip_comb
-        (boolSyntax.lhs
-          (Thm.concl smtfloatTheory.smtfp_is_finite_expansion))
+      val operand = case boolSyntax.strip_comb
+          (boolSyntax.lhs
+            (Thm.concl smtfloatTheory.smtfp_is_finite_expansion)) of
+          (_, [operand]) => operand
+        | _ => raise Fail "malformed smtfp_is_finite_expansion"
       val represented = boolSyntax.lhs
         (Thm.concl smtfloatTheory.smtfp_bits_rep)
       val (bits_head, represented_fields) =
@@ -1037,15 +1064,17 @@ struct
       term =
     let
       val (predicate, predicate_arguments) = boolSyntax.strip_comb term
-      val [operation] = predicate_arguments
-        handle Bind => raise Declined "malformed add/sub observation"
+      val operation = case predicate_arguments of
+        [operation] => operation
+      | _ => raise Declined "malformed add/sub observation"
       val observation =
         case registered_name ["smtfp_is_zero", "smtfp_is_nan"] predicate of
           SOME name => name
         | NONE => raise Declined "not a supported add/sub observation"
       val (operator, arguments) = boolSyntax.strip_comb operation
-      val [mode, left, right] = arguments
-        handle Bind => raise Declined "malformed floating-point add/sub"
+      val (mode, left, right) = case arguments of
+        [mode, left, right] => (mode, left, right)
+      | _ => raise Declined "malformed floating-point add/sub"
       val subtract =
         case head_name operation of
           SOME ("smtfloat", "smtfp_add") => false

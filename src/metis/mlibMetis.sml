@@ -43,7 +43,7 @@ val aligned_traces =
    {module = "mlibSupport",    alignment = I},
    {module = "mlibResolution", alignment = I}];
 
-val () = trace_level := 1 (* OK *)
+val () = trace_level := 0 (* keep library use quiet by default *)
 val () = set_traces aligned_traces
 
 (* ------------------------------------------------------------------------- *)

@@ -1425,6 +1425,97 @@ local
   fun discover_bit_decompositions proof =
     Lib.fst (discover_bit_decompositions_with_work proof)
 
+  fun extend_proof proof (id, proofterm) =
+    update_proof_steps proof
+      (Redblackmap.insert (proof_steps proof, id, proofterm))
+
+  (* Parse the legacy proof wrapper.  Keep the parser local to this module:
+     proof definitions extend the term dictionary and proof graph as they are
+     encountered, while the public entry points below only expose completed
+     proofs. *)
+  fun parse_definition get_token (tydict, tmdict, proof) =
+    let
+      val _ = Library.expect_token "(" (get_token ())
+      val _ = Library.expect_token "(" (get_token ())
+      val name = get_token ()
+      val term = SmtLib_Parser.parse_term get_token (tydict, tmdict)
+      val _ = Library.expect_token ")" (get_token ())
+      val _ = Library.expect_token ")" (get_token ())
+    in
+      if String.isPrefix "@x" name then
+        let
+          val tmdict = Library.extend_dict_unique
+            ((name, SmtLib_Theories.K_zero_zero (Term.mk_var (name, pt_ty))),
+             tmdict)
+          val proof = extend_proof proof
+            (proofterm_id name, proofterm_of_term (proof_version proof) term)
+        in
+          (tmdict, proof)
+        end
+      else
+        (Library.extend_dict_unique
+           ((name, SmtLib_Theories.K_zero_zero term), tmdict), proof)
+    end
+
+  fun parse_proof_expression get_token (tydict, tmdict, proof) rpars =
+    let
+      val _ = Library.expect_token "(" (get_token ())
+      val head = get_token ()
+    in
+      if head = "let" then
+        let
+          val (tmdict, proof) = parse_definition get_token
+            (tydict, tmdict, proof)
+        in
+          parse_proof_expression get_token (tydict, tmdict, proof) (rpars + 1)
+        end
+      else
+        let
+          val get_token' = Library.undo_look_ahead ["(", head] get_token
+          val term = SmtLib_Parser.parse_term get_token' (tydict, tmdict)
+        in
+          extend_proof proof
+            (0, proofterm_of_term (proof_version proof) term) before Lib.funpow rpars
+            (fn () => Library.expect_token ")" (get_token ())) ()
+        end
+    end
+
+  fun parse_proof_decl get_token (tydict, tmdict, proof) rpars =
+    let
+      val _ = Library.expect_token "(" (get_token ())
+      val head = get_token ()
+    in
+      if head = "proof" then
+        parse_proof_expression get_token (tydict, tmdict, proof) (rpars + 1)
+      else if head = "set-logic" then
+        (get_token (); Library.expect_token ")" (get_token ());
+         parse_proof_decl get_token (tydict, tmdict, proof) rpars)
+      else if head = "declare-fun" then
+        let
+          val (term, tmdict) = SmtLib_Parser.parse_declare_fun get_token
+            (tydict, tmdict)
+          val proof = update_proof_vars proof
+            (HOLset.add (proof_vars proof, term))
+        in
+          parse_proof_decl get_token (tydict, tmdict, proof) rpars
+        end
+      else if head = "error" then
+        (get_token (); Library.expect_token ")" (get_token ());
+         parse_proof_decl get_token (tydict, tmdict, proof) rpars)
+      else
+        parse_proof_expression
+          (Library.undo_look_ahead ["(", head] get_token)
+          (tydict, tmdict, proof) rpars
+    end
+
+  fun parse_proof get_token state =
+    let
+      val _ = Library.expect_token "(" (get_token ())
+      val _ = Library.expect_token "(" (get_token ())
+    in
+      parse_proof_decl (Library.undo_look_ahead ["("] get_token) state 1
+    end
+
   (***************************************************************************)
   (* parser for the ordinary Z3 release proof dialect *)
   fun parse_legacy_stream_with_version
@@ -1476,9 +1567,9 @@ local
     val proof = SmtResource.profile_phase "z3/graph-finalization"
       discover_bit_decompositions parsed
     val _ = if !Library.trace > 0 then
-        WARNING "parse_stream" ("ignoring token '" ^ get_token () ^
+        (WARNING "parse_stream" ("ignoring token '" ^ get_token () ^
           "' (and perhaps others) after proof")
-          handle Feedback.HOL_ERR _ => ()  (* end of stream, as expected *)
+           handle Feedback.HOL_ERR _ => ())
       else ()
   in
     proof
@@ -1512,6 +1603,11 @@ local
   fun parse_file dicts path =
     parse_file_with_version dicts unknown_z3_version path
 
+in
+  val parse_stream_with_version = parse_stream_with_version
+  val parse_stream = parse_stream
+  val parse_file_with_version = parse_file_with_version
+  val parse_file = parse_file
 end  (* local *)
 
 end

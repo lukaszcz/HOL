@@ -160,7 +160,8 @@ structure SolverSpec = struct
      the respective SMT solver; simp_tac must produce at most one subgoal *)
   fun simplify simp_tac goal =
   let
-    val (new_goal, validation) = case simp_tac goal (Context.snapshot()) of
+    val context = Feedback.quiet_warnings (fn () => Context.snapshot()) ()
+    val (new_goal, validation) = case simp_tac goal context of
         ([], validation) =>
         (* apply the SMT solver anyway, but to the trivial goal ``T`` *)
         (([], boolSyntax.T), fn _ => validation [])

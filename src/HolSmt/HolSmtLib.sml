@@ -39,7 +39,7 @@ structure HolSmtLib :> HolSmtLib = struct
 
   (* Keep the oracle-producing path disjoint from GENERIC_SMT_TAC, so a
      checked tactic's call graph contains no mk_oracle_thm branch. *)
-  fun ORACLE_SMT_TAC solver goal =
+  fun ORACLE_SMT_TAC solver goal (_ : Context.t) =
   let
     val ERR = Feedback.mk_HOL_ERR "HolSmtLib" "ORACLE_SMT_TAC"
   in
@@ -86,21 +86,20 @@ structure HolSmtLib :> HolSmtLib = struct
 
   val include_theorems = SmtLib.include_theorems
 
-  (* report whether solvers are available.  The probe calls prove(T,...),
-     which needs a current theory; skip when none is active. *)
-  val _ =
+  (* Probe configured solvers without producing load-time diagnostics.  The
+     probe calls prove(T,...), which needs a current theory; skip when none is
+     active. *)
+  val _ = Feedback.quiet_messages (Feedback.quiet_warnings (fn () =>
     let
-      fun check_available prove_fn name =
+      fun check_available prove_fn _ =
         (
           prove_fn boolSyntax.T;  (* try to prove ``T`` *)
-          Feedback.HOL_MESG ("HolSmtLib: solver " ^ name ^ " is available.")
+          ()
         )
-        handle Feedback.HOL_ERR herr =>
-          Feedback.HOL_MESG ("HolSmtLib: " ^ Feedback.message_of herr)
+        handle Feedback.HOL_ERR _ => ())
       fun provoke_err prove_fn =
         ignore (prove_fn boolSyntax.T)  (* should fail *)
-          handle Feedback.HOL_ERR herr =>
-            Feedback.HOL_MESG ("HolSmtLib: " ^ Feedback.message_of herr)
+          handle Feedback.HOL_ERR _ => ()
     in
       case Thm.getCT () of
           NONE => ()
@@ -123,6 +122,6 @@ structure HolSmtLib :> HolSmtLib = struct
                 provoke_err Z3_ORACLE_PROVE;
               Feedback.reset_trace "HolSmtLib"
             )
-    end
+    end)) ()
 
 end
