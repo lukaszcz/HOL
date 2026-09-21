@@ -1303,6 +1303,34 @@ fun tactic_for simpset goal Simp args exclusions =
            was gated away from. *)
         val simps =
           List.mapPartial simp_arg (List.filter (not o iff_argument) args)
+        (* Isabelle's [blast] never unfolds an equation.  One with a
+           variable on a side it eliminates by substituting it, and so
+           does this search: [blastSearch]'s [HypSubst], oriented on
+           exactly that side.  Taking such an equation to membership
+           spends the step instead.  [set_L1125_image_Pow_surj] arrives
+           as [IMAGE f A = B ==> ...], and dissolving the hypothesis
+           loses two things at once -- the equation the search would
+           have substituted, and the last [IMAGE] standing under a
+           [SUBSET], which is the major premise of [subset_imageE], the
+           rule the method itself supplies.  With nothing for that rule
+           to match the search is blind: measured, 3055 branches and
+           past the budget dissolved, 0.016s left standing.  What the
+           pass is for is the equation no substitution reaches, which
+           is the one with the same variable on both sides. *)
+        fun substitutable term =
+          case Lib.total boolSyntax.dest_eq term of
+              NONE => false
+            | SOME (left, right) =>
+                (Term.is_var left andalso not (Term.free_in left right))
+                orelse
+                (Term.is_var right andalso not (Term.free_in right left))
+        fun set_eq_conv term =
+          if substitutable term then
+            raise ERR "tactic_for" "the search substitutes the equation"
+          else hurdUtils.SET_EQ_CONV term
+        val set_equality_step =
+          Tactic.CONV_TAC
+            (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV set_eq_conv))
         val supplied_rules = List.mapPartial supplied_rule args
         val accept_supplied =
           Tactical.FIRST
@@ -1319,35 +1347,33 @@ fun tactic_for simpset goal Simp args exclusions =
            the [unfolding] the method asked for and nothing else: it
            runs unconditionally exactly where there is a rewrite to run
            it with, and otherwise wherever the goal has a set equality
-           in it for [SET_EQ_TAC]'s [ONCE_DEPTH_CONV] to take apart --
-           which is not only a goal that is one: measured, restricting
-           it to a goal whose own conclusion is a set equality costs
-           [set_L928_subset_image_iff], which the unfolding is what
-           makes provable at all.  Gating it on the argument list
-           instead would make it depend on arguments that are not
-           rewrites -- a [dest:] the method named, or the ambient
-           claset, which by construction the method did not name.  It
-           did, until the ambient claset arrived: it turned the pass on
-           for every blast goal at once, and
+           the step above will take -- which is not only a goal whose
+           own conclusion is one, an equality under a quantifier or a
+           connective being reached just the same.  Gating it on the
+           argument list instead would make it depend on arguments
+           that are not rewrites -- a [dest:] the method named, or the
+           ambient claset, which by construction the method did not
+           name.  It did, until the ambient claset arrived: it turned
+           the pass on for every blast goal at once, and
            [classical_L803], a Hilbert-system goal with no rewrite in
            sight, went from 0.029s to past fifteen minutes. *)
         val preprocess =
           if null simps then
             Tactical.TRY
               (Tactical.THEN
-                (hurdUtils.SET_EQ_TAC, simplify))
+                (set_equality_step, simplify))
           else
             Tactical.THEN
-              (Tactical.TRY hurdUtils.SET_EQ_TAC,
+              (Tactical.TRY set_equality_step,
                simplify)
         (* A rule the method supplied is stated in the vocabulary the
            method's own goal had.  The pass above rewrites the goal out
            of that vocabulary, and a rule left behind in it matches
-           nothing: [set_L928_subset_image_iff] is handed
-           [subset_imageE], whose major premise is
-           [source SUBSET IMAGE function target], and the pass leaves
-           the goal with no [SUBSET] in it at all, so the search had to
-           guess the set the rule would have named.  The rules go
+           nothing: a goal handed [subset_imageE], whose major premise
+           is [source SUBSET IMAGE function target], is left by the
+           pass with no [SUBSET] in it at all, and the search has to
+           guess the set the rule would have named.  The selftest's
+           [stranded_rule_goal] is that shape.  The rules go
            through the same pass as the goal, and only where that pass
            runs -- which is what the test below decides, on the goal,
            exactly as the tactic does.  Both forms reach the search:
@@ -1358,13 +1384,13 @@ fun tactic_for simpset goal Simp args exclusions =
         val preprocess_fires =
           not (null simps) orelse
           Lib.can
-            (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV hurdUtils.SET_EQ_CONV))
+            (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV set_eq_conv))
             goal
         fun normalise_with rewrites =
           Conv.QCONV
             (Conv.THENC
               (Conv.TRY_CONV
-                 (Conv.ONCE_DEPTH_CONV hurdUtils.SET_EQ_CONV),
+                 (Conv.ONCE_DEPTH_CONV set_eq_conv),
                simpLib.SIMP_CONV simpset
                  (rewrites @ simp_controls goal exclusions)))
         val normalise_rule = normalise_with simps

@@ -1103,9 +1103,19 @@ val _ =
    below is handed [subset_imageE], whose major premise is
    [source SUBSET IMAGE function target], and the pass leaves the goal
    with no [SUBSET] in it at all.  Left behind, the rule matches
-   nothing and the search guesses the set it would have named --
-   measured at 30.3s, 31.6s and 30.8s, against 3.9s, 3.5s and 3.2s
-   with the rule carried through. *)
+   nothing and the search guesses the set it would have named.
+
+   That is what the row was written for, and it no longer measures
+   it.  Ablated -- rules never carried -- the goal below still closes
+   and the row stays green, at HEAD as well as here, so the 30.3s
+   against 3.9s this comment used to quote has rotted: the ambient
+   claset now closes the membership reading without the carried rule.
+   The row is kept as the weaker guard it has become, that the goal
+   closes within its budget at all, and the mechanism above is for
+   the moment untested.  Restating the goal does not recover it: an
+   intersection keeps the pass on but puts the goal out of reach
+   altogether, failing at a 60s budget, and an empty union or a
+   singleton closes without the rule just as the variable does. *)
 val stranded_rule_goal =
   ``v_B0 SUBSET IMAGE v_f0 v_A0 <=>
     ?b_AA. b_AA SUBSET v_A0 /\ v_B0 = IMAGE v_f0 b_AA``
@@ -1122,6 +1132,33 @@ val _ =
          benchLib.outcome_solved
            (benchLib.run_goal (Time.fromSeconds 10) recipe
              (recipe_goal "unit-stranded-rule" recipe stranded_rule_goal))
+       end)
+
+(* The pass takes an equation to its membership form; an equation with
+   a variable on a side is one the search eliminates by substituting
+   it instead, which is what [blastSearch]'s [HypSubst] is for.
+   Dissolving the hypothesis below spends that step and takes the
+   [SUBSET] the supplied [subset_imageE] is stated under with it,
+   leaving the rule nothing to match anywhere in the goal.  Neither
+   the goal nor the rule is a corpus entry. *)
+val substituted_hypothesis_goal =
+  ``IMAGE v_h0 v_source0 = v_target0 ==>
+    v_part0 SUBSET v_target0 ==>
+    ?b_piece. b_piece SUBSET v_source0 /\ v_part0 = IMAGE v_h0 b_piece``
+
+val _ =
+  check
+    ("a hypothesis the search substitutes survives the blast pre-pass",
+     fn () =>
+       let
+         val recipe =
+           benchDerive.recipe_of "src/HOL/Set.thy:9998"
+             substituted_hypothesis_goal "by (blast elim: subset_imageE)"
+       in
+         benchLib.outcome_solved
+           (benchLib.run_goal (Time.fromSeconds 10) recipe
+             (recipe_goal "unit-substituted-hypothesis" recipe
+                substituted_hypothesis_goal))
        end)
 
 (* ---- Phase A detectors ------------------------------------------- *)

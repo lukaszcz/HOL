@@ -9,8 +9,7 @@ struct
    the family it belongs to rather than an observed residual. *)
 
 val over_budget =
-  ["set_L1125_image_Pow_surj",
-   "set_L1607_Pow_insert",
+  ["set_L1607_Pow_insert",
    "set_L1847_is_singleton_the_elem",
    "set_L1610_Pow_Compl"]
 
@@ -26,20 +25,24 @@ fun record note id : benchLib.shortfall =
 fun classified classification note ids =
   map (record (classification ^ ": " ^ note)) ids
 
-val blast_set_rule_forms =
-  classified "blast set rule forms"
-    ("the obstruction is not isolated: these goals withhold no "
-     ^ "ambient analogue at all, so the earlier reading -- that "
-     ^ "excluding the goal's own characterisation left no second "
-     ^ "route -- was wrong for them.  Two do not return within the "
-     ^ "budget; the third returns a residual in which the "
-     ^ "translation's own [source_add_image] stands unfolded.  The "
-     ^ "three causes are distinct and none is the rule form the "
-     ^ "class is named for: [set_theory_L168] was the goal that "
-     ^ "was, and a singleton introduction closed it")
-    ["set_L1125_image_Pow_surj",
-     "set_L1607_Pow_insert",
-     "set_L994_image_add_0"]
+(* The class this goal was in was named for a rule form, and none of
+   the three goals in it had that cause.  [set_theory_L168] was the
+   goal that did, and a singleton introduction closed it;
+   [set_L1125_image_Pow_surj] was the corpus's own set-equality pass
+   dissolving a hypothesis the search would have substituted, and
+   leaving the pass that equation closes it; [set_L1607_Pow_insert] is
+   the witness its method supplies, which is where it now stands.
+   What is left is one goal and a cause of its own. *)
+val translated_fact_unfolded =
+  classified "translated fact unfolded"
+    ("the goal withholds no ambient analogue at all, so the earlier "
+     ^ "reading -- that excluding the goal's own characterisation "
+     ^ "left no second route -- was wrong for it.  What comes back "
+     ^ "in 0.331s is a residual in which the translation's own "
+     ^ "[source_add_image] stands unfolded, with nothing stated on "
+     ^ "it for the search to meet: the obstruction is the shape of "
+     ^ "the translated fact and not the strength of the method")
+    ["set_L994_image_add_0"]
 
 val disjnt =
   classified "disjnt"
@@ -117,19 +120,30 @@ val instantiated_fact_citation =
    Isabelle declares both [elim!] and they are what closes
    [set_L928_subset_image_iff] and [set_theory_L48] -- so what is left
    here is the witness the method was given and the recipe was not. *)
+(* src/HOL/Set.thy:1607 @ f7e02b7e.  [Pow_insert]'s method supplies a
+   witness the same way ([blast intro: image_eqI [where ?x = "u - {a}"
+   for u]]), and the supply is load-bearing rather than decoration:
+   measured against Isabelle itself, its own [blast] closes the goal
+   in under a second with the instantiation and does not return in
+   300s with the method reduced to bare [blast].  What the recipe
+   compiler cannot represent is therefore the whole of the gap. *)
 val witness_the_method_supplies : benchLib.shortfall list =
-  [{id = "set_L1610_Pow_Compl", cause = benchLib.EngineLimitation,
-    date = "2026-09-12",
-    note =
-      "witness the method supplies: the source method instantiates " ^
-      "exI with the witness; the recipe compiler represents a " ^
-      "citation but not its instantiation, so the search guesses it, " ^
-      "and the union membership rules Isabelle declares [elim!] meet " ^
-      "the undetermined membership the guess leaves behind (the " ^
-      "search exceeded the budget rather than reporting no proof)"}]
+  map
+    (fn (id, date) =>
+      {id = id, cause = benchLib.EngineLimitation, date = date,
+       note =
+         "witness the method supplies: the source method instantiates " ^
+         "the introduction with the witness; the recipe compiler " ^
+         "represents a citation but not its instantiation, so the " ^
+         "search guesses it, and the membership rules Isabelle " ^
+         "declares [elim!] meet the undetermined membership the guess " ^
+         "leaves behind (the search exceeded the budget rather than " ^
+         "reporting no proof)"})
+    [("set_L1610_Pow_Compl", "2026-09-12"),
+     ("set_L1607_Pow_insert", "2026-09-21")]
 
 val entries : benchLib.shortfall list =
-  blast_set_rule_forms @
+  translated_fact_unfolded @
   disjnt @
   definite_description_specified @
   definite_description_reading @
