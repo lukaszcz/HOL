@@ -88,40 +88,42 @@ structure HolSmtLib :> HolSmtLib = struct
 
   (* Probe configured solvers without producing load-time diagnostics.  The
      probe calls prove(T,...), which needs a current theory; skip when none is
-     active. *)
-  val _ = Feedback.quiet_messages (Feedback.quiet_warnings (fn () =>
+     active.  A probe can run Metis while replaying a checked proof, so keep
+     that implementation detail out of the user's load transcript and restore
+     all trace settings afterwards. *)
+  val _ =
     let
       fun check_available prove_fn _ =
-        (
-          prove_fn boolSyntax.T;  (* try to prove ``T`` *)
-          ()
-        )
-        handle Feedback.HOL_ERR _ => ())
+        (prove_fn boolSyntax.T; ())  (* try to prove ``T`` *)
+        handle Feedback.HOL_ERR _ => ()
       fun provoke_err prove_fn =
         ignore (prove_fn boolSyntax.T)  (* should fail *)
           handle Feedback.HOL_ERR _ => ()
+      fun probe () =
+        Feedback.quiet_messages (Feedback.quiet_warnings (fn () =>
+          case Thm.getCT () of
+              NONE => ()
+            | SOME _ =>
+                (if CVC.is_configured () then (
+                   check_available CVC_ORACLE_PROVE "cvc5 (oracle)";
+                   check_available CVC_PROVE "cvc5 (with proofs)"
+                 ) else
+                   provoke_err CVC_ORACLE_PROVE;
+                 if Yices.is_configured () then
+                   check_available YICES_ORACLE_PROVE "Yices (oracle)"
+                 else
+                   provoke_err YICES_ORACLE_PROVE;
+                 if Z3.is_configured () then (
+                   check_available Z3_ORACLE_PROVE "Z3 (oracle)";
+                   check_available Z3_PROVE "Z3 (with proofs)"
+                 ) else
+                   provoke_err Z3_ORACLE_PROVE))) ()
     in
-      case Thm.getCT () of
-          NONE => ()
-        | SOME _ =>
-            (
-              Feedback.set_trace "HolSmtLib" 0;
-              if CVC.is_configured () then (
-                check_available CVC_ORACLE_PROVE "cvc5 (oracle)";
-                check_available CVC_PROVE "cvc5 (with proofs)"
-              ) else
-                provoke_err CVC_ORACLE_PROVE;
-              if Yices.is_configured () then
-                check_available YICES_ORACLE_PROVE "Yices (oracle)"
-              else
-                provoke_err YICES_ORACLE_PROVE;
-              if Z3.is_configured () then (
-                check_available Z3_ORACLE_PROVE "Z3 (oracle)";
-                check_available Z3_PROVE "Z3 (with proofs)"
-              ) else
-                provoke_err Z3_ORACLE_PROVE;
-              Feedback.reset_trace "HolSmtLib"
-            )
-    end)) ()
+      Feedback.with_traces
+        [("HolSmtLib", 0), ("metis", 0),
+         ("TAC_PROOF requires current theory", 0),
+         ("ambient context inside proof", 0)]
+        (fn () => probe ()) ()
+    end
 
 end
