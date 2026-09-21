@@ -280,15 +280,6 @@ val characterisation_is_the_goal =
      "list_L8683_can_select_set_list_ex1",
      "option_L361_equal_None_code_unfold_1", "string_L728_anon_L728"]
 
-val membership_through_a_guarded_flatten =
-  classified "membership through a guarded flatten"
-    ("the membership is in a flatten over a map whose body maps each "
-     ^ "element to a singleton or to nothing according to a test, so "
-     ^ "the pair has to be placed in the branch the test selects and, "
-     ^ "in the other direction, read back out of it; the search "
-     ^ "reports no proof well inside its budget")
-    ["list_L8705_set_relcomp"]
-
 val integer_interval_emptiness =
   classified "integer interval emptiness"
     ("the residual is [j < i ==> source_upto i j = []], which the "
@@ -484,7 +475,6 @@ val execution : benchLib.shortfall list =
   sortedness_beyond_the_bridge @
   numeral_against_Suc @
   characterisation_is_the_goal @
-  membership_through_a_guarded_flatten @
   integer_interval_emptiness @
   rotation_by_iteration @
   decision_procedure_scope @
