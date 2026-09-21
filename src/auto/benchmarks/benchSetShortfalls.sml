@@ -39,8 +39,10 @@ val translated_fact_unfolded =
      ^ "reading -- that excluding the goal's own characterisation "
      ^ "left no second route -- was wrong for it.  What comes back "
      ^ "in 0.331s is a residual in which the translation's own "
-     ^ "[source_add_image] stands unfolded, with nothing stated on "
-     ^ "it for the search to meet: the obstruction is the shape of "
+     ^ "[source_add_image] stands folded, with nothing stated on "
+     ^ "it for the search to meet -- the recipe its [by auto] method "
+     ^ "compiles to carries [source_image_def] and no equation for "
+     ^ "[source_add_image] at all: the obstruction is the shape of "
      ^ "the translated fact and not the strength of the method")
     ["set_L994_image_add_0"]
 
