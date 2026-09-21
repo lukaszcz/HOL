@@ -5684,6 +5684,10 @@ local
     int_arithTheory.INT_NUM_COND,
     arithmeticTheory.GREATER_DEF,
     arithmeticTheory.GREATER_EQ,
+    (* Rewrite inequalities against MAX before num-to-int transfer.  This
+       keeps tautological bounds such as [y <= MAX x y] out of the much more
+       expensive integer/absolute-value encoding. *)
+    Thm.CONJUNCT1 (Drule.SPEC_ALL arithmeticTheory.MAX_LE),
     arithmeticTheory.MAX_DEF,
     arithmeticTheory.MIN_DEF,
     Drule.GEN_ALL (Thm.SYM intrealTheory.real_of_int_num)

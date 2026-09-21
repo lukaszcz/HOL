@@ -243,7 +243,8 @@ structure CVC = struct
         end)
       (* Some options were added due to:
          https://github.com/cvc5/cvc5/issues/10293 *)
-      (" --macros-quant --macros-quant-mode=all --fp-exp --sets-exp " ^
+      (" --quiet --macros-quant --macros-quant-mode=all " ^
+       "--fp-exp --sets-exp " ^
        "--arrays-exp --lang smt ")
       (Lib.K is_sat_file)
 
@@ -320,7 +321,7 @@ structure CVC = struct
 
   (* CPC is the sole checked cvc5 proof format. *)
   val cpc_proof_cmd =
-    " --produce-proofs --proof-format-mode=cpc " ^
+    " --quiet --produce-proofs --proof-format-mode=cpc " ^
     "--proof-granularity=dsl-rewrite --fp-exp --sets-exp --lang smt "
 
   fun cpc_command (_, (_, arrays_exp)) =

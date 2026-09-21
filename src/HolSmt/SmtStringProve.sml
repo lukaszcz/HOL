@@ -981,7 +981,50 @@ struct
          decline under [GateLateFamily], while [GateTraversal] retains the
          generic String classifier's established whole-traversal cap. *)
       fun scan target =
-        let
+      let
+          val bucket_count = 4093
+          val seen_buckets = Array.array
+            (bucket_count, [] : Term.term list)
+          fun name_hash name =
+            let
+              fun loop index hash =
+                if index = String.size name then hash
+                else loop (index + 1)
+                  ((hash * 33 + Char.ord (String.sub (name, index))) mod
+                   bucket_count)
+            in
+              loop 0 5381
+            end
+          fun pointer_hash depth term =
+            if Term.is_var term then
+              name_hash (Lib.fst (Term.dest_var term))
+            else if Term.is_const term then
+              name_hash (#Name (Term.dest_thy_const term))
+            else if depth = 0 then
+              if Term.is_abs term then 17 else 19
+            else if Term.is_abs term then
+              let val (_, body) = Term.dest_abs term in
+                (23 + 37 * pointer_hash (depth - 1) body) mod bucket_count
+              end
+            else
+              let
+                val (operator, operand) = Term.dest_comb term
+              in
+                (29 + 37 * pointer_hash (depth - 1) operator +
+                 pointer_hash (depth - 1) operand) mod bucket_count
+              end
+            handle Feedback.HOL_ERR _ => 31
+          fun seen term =
+            let
+              val index = pointer_hash 3 term
+              val bucket = Array.sub (seen_buckets, index)
+            in
+              if List.exists
+                   (fn saved => Portable.pointer_eq (term, saved)) bucket
+              then true
+              else
+                (Array.update (seen_buckets, index, term :: bucket); false)
+            end
           fun children term rest =
             if Term.is_comb term then
               let val (operator, operand) = Term.dest_comb term
@@ -990,24 +1033,28 @@ struct
               let val (_, body) = Term.dest_abs term in body :: rest end
             else
               rest
-          fun loop seen observed [] = FamilyAbsent
-            | loop seen observed (term :: rest) =
-                if HOLset.member (seen, term) then
-                  loop seen observed rest
+          fun loop observed [] = FamilyAbsent
+            | loop observed (term :: rest) =
+                if seen term then
+                  loop observed rest
                 else
                   let
-                    val seen = HOLset.add (seen, term)
                     val observed = Int.min (maximum + 1, observed + 1)
+                    val named_head =
+                      let val (head, _) = boolSyntax.strip_comb term
+                      in is_named_const string_theory_names head end
+                      handle Feedback.HOL_ERR _ => false
                   in
                     if policy = GateTraversal andalso observed > maximum then
                       TraversalLimit observed
-                    else if is_named_const string_theory_names term then
+                    else if named_head orelse
+                            is_named_const string_theory_names term then
                       FamilyFound observed
                     else
-                      loop seen observed (children term rest)
+                      loop observed (children term rest)
                   end
         in
-          loop (HOLset.empty Term.compare) 0 [target]
+          loop 0 [target]
         end
       val found = SmtResource.with_resource_step_time
         "String" "family-admission" scan t
@@ -1031,6 +1078,14 @@ struct
   fun has_string_theory_term t =
     scan_string_family GateTraversal
       (SmtResource.max_term_nodes_for "String") t
+    handle Feedback.HOL_ERR holerr =>
+      (* Classification is deliberately non-gating: a traversal cap means
+         that the target is too large for this family, not that it ceased to
+         be a String target.  Let the caller's named rung budget report the
+         resource diagnostic (e.g. String/rewrite) instead of leaking the
+         internal family-admission probe. *)
+      if SmtResource.is_resource_gate holerr then true
+      else raise Feedback.HOL_ERR holerr
 
   (* These are semantic rewrite facts, rather than a general-purpose simp
      set.  In particular, do not include METIS here: each rewrite rung must
@@ -1344,7 +1399,11 @@ struct
   (* The ordering is intentional and mirrors `string_prove`: executable
      evaluation precedes the small, named normalization set above. *)
   fun string_rewrite_prove t =
-    if not (has_string_theory_term t) then
+    if (case Lib.total boolSyntax.dest_eq t of
+          SOME (left, right) => Term.aconv left right
+        | NONE => false) then
+      let val (left, _) = boolSyntax.dest_eq t in Thm.REFL left end
+    else if not (has_string_theory_term t) then
       (* Family admission must precede the String-specific size gate.  A
          large word-only rewrite belongs to the later BV rungs and must not
          be rejected under a String resource diagnostic. *)

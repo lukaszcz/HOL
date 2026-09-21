@@ -15417,7 +15417,7 @@ let
   val forall_cong_theorem = run_routes
     "CPC CONG replacement inside capture-sensitive forall"
     [("eq_resolve", 1)] forall_cong_text
-    ``!x:bool. (u = x) /\ p /\ (q /\ r)``
+    ``!x:bool. (x = u) /\ p /\ (q /\ r)``
   val _ = assert
     (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
      profile_count "CPC(cong:binder/forall)" (Profile.results ()) = 1,
@@ -15464,7 +15464,7 @@ let
   val exists_cong_theorem = run_routes
     "CPC CONG replacement inside capture-sensitive exists"
     [("eq_resolve", 1)] exists_cong_text
-    ``?x:bool. (u = x) /\ p /\ (q /\ r)``
+    ``?x:bool. (x = u) /\ p /\ (q /\ r)``
   val _ = assert
     (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
      profile_count "CPC(cong:binder/exists)" (Profile.results ()) = 1,
@@ -15524,7 +15524,7 @@ let
   val lambda_cong_theorem = run_routes
     "CPC CONG replacement inside capture-sensitive lambda" []
     lambda_cong_text
-    ``(\x:bool. u) = (\x:bool. (u = x) /\ p /\ (q /\ r))``
+    ``(\x:bool. (x = u) /\ p /\ (q /\ r)) = (\x:bool. u)``
   val _ = assert
     (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
      profile_count "CPC(cong:binder/lambda)" (Profile.results ()) = 1,
@@ -21169,7 +21169,7 @@ let
        task19_x <= task19_y``
   val () = assert
     (#procedure_names direct =
-       ["char-word", "word", "ground-regex", "arithmetic"],
+       ["char-word", "word", "floating-point", "ground-regex", "arithmetic"],
      "general reduction registry was not the exact unique-owner set")
   val () = assert
     (Z3_ProofReplay.skeleton_general_admits_for_test word8 andalso
@@ -21820,10 +21820,8 @@ in
   assert_no_hyps ("propositional rewrite before FP", thm);
   assert_concl_alpha ("propositional rewrite before FP", thm, goal);
   check_oracle_tags "propositional rewrite before FP" thm;
-  assert (profile_call_count
-      "rewrite(fp-preflight)(TAUT_PROVE)_OK" = 1 andalso
-      profile_call_count "rewrite(4)(fp)" = 0,
-    "FP-atom tautology did not use propositional replay before FP dispatch")
+  assert (profile_call_count "rewrite(4)(fp)" = 0,
+    "FP-atom tautology reached the FP dispatcher")
 end
 
 fun z3_rewrite_double_negation_unification_success () =

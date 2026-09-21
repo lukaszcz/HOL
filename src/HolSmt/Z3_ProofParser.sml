@@ -488,6 +488,7 @@ local
     else SmtLib_Theories.decline "<z3_string_tydict.Char>" "no arguments expected"
 
   val z3_string_tydict = Library.dict_from_list [
+    ("String", SmtLib_Theories.K_zero_zero z3_string_ty),
     ("Char", z3_char_type),
     ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty),
     ("Seq Char", SmtLib_Theories.K_zero_one (fn _ => z3_string_seq_ty))
@@ -575,7 +576,8 @@ local
              smtstring_app "smtstr_suffixof" [s, t]
            else rich_list_app "IS_SUFFIX" [t, s])),
         ("seq.unit", SmtLib_Theories.K_zero_one
-          (fn c => if is_z3_char c then
+          (fn c => if is_z3_char c orelse
+              Type.compare (Term.type_of c, z3_char_ty) = EQUAL then
              z3_string_app "seq_unit" [z3_char_to_num c]
            else listSyntax.mk_cons
              (c, listSyntax.mk_nil (Term.type_of c)))),
@@ -805,6 +807,11 @@ local
        Keep it available even when the translation-local inverse dictionary
        recorded the asserted application as a nullary term. *)
     ("is_int", SmtLib_Theories.K_zero_one intrealSyntax.mk_is_int),
+    ("Char", fn _ => fn indices => fn args =>
+      case (indices, args) of
+        ([code], []) => z3_num_to_char (z3_natural code)
+      | _ => SmtLib_Theories.decline "<z3_builtin_dict.Char>"
+          "one character code index expected"),
     (* the following names are used as `(_ th-lemma ...)` indices. *)
     ("arith",           builtin_name "arith"),
     ("array",           builtin_name "array"),
@@ -1222,6 +1229,17 @@ local
   and proof_bind_pt version = SmtLib_Theories.one_arg (fn operand =>
     let
       val (vars, body) = Term.strip_abs operand
+      (* Z3 commonly puts a proof-producing rewrite under a lambda whose
+         body is a SMT-LIB [let].  The ordinary term parser intentionally
+         preserves lets, but proof-term dispatch needs to see the rule at
+         the head.  Eliminate only the outer let layers here; this is a
+         structural beta reduction and does not simplify proof terms. *)
+      fun reduce_lets tm =
+        case Lib.total boolSyntax.dest_let tm of
+          NONE => tm
+        | SOME (func, arg) =>
+            reduce_lets (Term.beta_conv (Term.mk_comb (func, arg)))
+      val body = reduce_lets body
       val _ = if Type.compare (Term.type_of body, pt_ty) = EQUAL then ()
         else
           raise ERR "proof_bind_pt"
@@ -1429,6 +1447,64 @@ local
     update_proof_steps proof
       (Redblackmap.insert (proof_steps proof, id, proofterm))
 
+  (* Z3's proof dialect permits verbatim lambda terms in let bindings.  Keep
+     the ordinary SMT-LIB term parser conservative, but enable genuine binder
+     parsing for the two proof-term entry points below. *)
+  (* Proof terms are not replayed as HOL [let] constants.  Z3 emits them
+     freely in asserted clauses and in proof-bind lambdas, while the replay
+     membership checks compare the beta-normal HOL shape.  Normalize the
+     parser's let construction at the boundary (ordinary SMT-LIB parsing
+     keeps lets intact elsewhere). *)
+  fun reduce_z3_lets tm =
+    case Lib.total boolSyntax.dest_let tm of
+      NONE => tm
+    | SOME (func, arg) =>
+        reduce_z3_lets (Term.beta_conv (Term.mk_comb (func, arg)))
+
+  fun z3_mk_let (bindings, body) =
+    reduce_z3_lets (SmtLib_Parser.smtlib_mk_let (bindings, body))
+
+  val z3_proof_cfg : SmtLib_Parser.parser_cfg = {
+    mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
+    mk_let = z3_mk_let,
+    mk_bound_var = Term.mk_var,
+    lookup_binder_list = fn _ => NONE,
+    record_binder_block = fn _ => (),
+    symbol_key = SmtLib_Parser.proof_symbol_text,
+    type_symbol_key = Lib.I,
+    parse_choice = false,
+    parse_lambda = true
+  }
+
+  fun unknown_proof_rule token _ args =
+    let
+      val arg_types = List.map Term.type_of args
+      val rule_ty = boolSyntax.list_mk_fun (arg_types, pt_ty)
+    in
+      Term.list_mk_comb (Term.mk_var (token, rule_ty), args)
+    end
+
+  fun parse_proof_term_with_unknown_rule head get_token (tydict, tmdict) =
+    let
+      val tmdict = Library.extend_dict
+        ((head, unknown_proof_rule), tmdict)
+    in
+      SmtLib_Parser.parse_term_with_cfg z3_proof_cfg get_token
+        (tydict, tmdict)
+    end
+
+  fun parse_known_proof_term head get_token state =
+    (SmtLib_Parser.parse_term_with_cfg z3_proof_cfg get_token state)
+    handle Feedback.HOL_ERR holerr =>
+      if Feedback.top_structure_of holerr = "SmtLib_Parser" andalso
+         Feedback.top_function_of holerr =
+           SmtLib_Parser.unknown_symbol_origin then
+        raise Feedback.HOL_ERR holerr
+      else
+        raise ERR "parse_proof_expression"
+          ("proof rule '" ^ head ^ "' term parse failed: " ^
+           Feedback.message_of holerr)
+
   (* Parse the legacy proof wrapper.  Keep the parser local to this module:
      proof definitions extend the term dictionary and proof graph as they are
      encountered, while the public entry points below only expose completed
@@ -1438,7 +1514,8 @@ local
       val _ = Library.expect_token "(" (get_token ())
       val _ = Library.expect_token "(" (get_token ())
       val name = get_token ()
-      val term = SmtLib_Parser.parse_term get_token (tydict, tmdict)
+      val term = SmtLib_Parser.parse_term_with_cfg z3_proof_cfg
+        get_token (tydict, tmdict)
       val _ = Library.expect_token ")" (get_token ())
       val _ = Library.expect_token ")" (get_token ())
     in
@@ -1472,7 +1549,12 @@ local
       else
         let
           val get_token' = Library.undo_look_ahead ["(", head] get_token
-          val term = SmtLib_Parser.parse_term get_token' (tydict, tmdict)
+          val term =
+            if Option.isSome (lookup_rule (proof_version proof) head) then
+              parse_known_proof_term head get_token' (tydict, tmdict)
+            else
+              parse_proof_term_with_unknown_rule head get_token'
+                (tydict, tmdict)
         in
           extend_proof proof
             (0, proofterm_of_term (proof_version proof) term) before Lib.funpow rpars

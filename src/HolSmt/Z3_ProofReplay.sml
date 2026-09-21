@@ -3765,13 +3765,6 @@ local
     end
 
   fun z3_def_axiom (state, t) =
-    (* A guarded conditional is a top-level Boolean schema.  Prove it before
-       inspecting potentially large theory terms in its branches. *)
-    (state, def_axiom_guarded_conditional t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
     (* Recognize excluded-middle clauses from their Boolean spine before
        generic proforma matching.  This avoids traversing deeply shared
        character and bit-vector atoms merely to bind one proposition. *)
@@ -5094,9 +5087,15 @@ local
         else attempt reversed
     end
 
-  fun z3_rewrite (state, t) =
+    fun z3_rewrite (state, t) =
   let
     val (l, r) = boolSyntax.dest_eq t
+    (* Admit String rewrites before the generic Boolean ladder walks a large
+       concatenation spine.  The dedicated String budget owns this boundary
+       and supplies the stable String/rewrite diagnostic. *)
+    val _ = if SmtStringProve.has_string_theory_term t then
+      SmtResource.check_resource_goal "String" "rewrite" t
+    else ()
     val attempts = ref ([] : string list)
     val deferred_unification = ref (NONE : (thm * term list) option)
     val checked_normalization =
@@ -5806,11 +5805,10 @@ local
     | SemanticProofLocalLookup
 
   fun skeleton_general_attempt state target =
-    if SmtResource.dag_nodes_up_to
-        (SmtResource.max_skeleton_replay_dag_nodes + 1) target >
-       SmtResource.max_skeleton_replay_dag_nodes then
-      SmtSkeletonDispatch.Declined
-    else SmtSkeletonDispatch.attempt (#skeleton_context state) target
+    (SmtResource.check_dag_size_for "Skeleton" "general-reduction"
+       (SmtResource.dag_nodes_up_to
+          (SmtResource.max_skeleton_replay_dag_nodes + 1) target);
+     SmtSkeletonDispatch.attempt (#skeleton_context state) target)
 
   fun skeleton_general_success result =
     profile "th_lemma[general](success)"
@@ -5986,7 +5984,7 @@ local
   fun bv_th_lemma_prove target =
     (require_bv_family "bv-th-lemma" target;
      bv_resource_prove_after_admission
-       "bv-th-lemma-concat-schema" bv_concat_schema_prove target
+       "bv-th-lemma" bv_concat_schema_prove target
      handle Feedback.HOL_ERR holerr =>
        if SmtResource.is_resource_gate holerr then
          raise Feedback.HOL_ERR holerr
