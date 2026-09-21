@@ -4,13 +4,16 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_iff (name, theorem) =
+fun export_at attr (name, theorem) =
   let
     val saved = save_thm (name, theorem)
   in
     ThmAttribute.store_at_attribute
-      {name = name, attrname = "iff", args = [], thm = saved}
+      {name = name, attrname = attr, args = [], thm = saved}
   end
+
+fun export_iff entry = export_at "iff" entry
+fun export_simp entry = export_at "simp" entry
 
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
@@ -195,6 +198,26 @@ Proof
   ONCE_REWRITE_TAC [boolTheory.EQ_SYM_EQ] THEN
   REWRITE_TAC [pred_setTheory.EXTENSION, pred_setTheory.NOT_IN_EMPTY]
 QED
+
+(* src/HOL/Complete_Lattices.thy:1052 and src/HOL/Set.thy:1652,1663
+   @ f7e02b7e.  [UN_iff] and the image clause of [bex_simps] are simp
+   there and pred_set declares neither.  Isabelle's [UN x:A. B x] is
+   BIGUNION (IMAGE B A), so [UN_iff] is the fused reading of a
+   membership in such a union: it names the element A holds and applies
+   B to it, where HOL4 reaches the same membership as
+   IN_BIGUNION and IN_IMAGE separately and leaves an undetermined set
+   standing between them, fixed only by an equation under a further
+   existential.  Neither simplifier eliminates a quantifier so fixed --
+   measured on both -- so the unfused route stops one layer in, and a
+   membership in a union of a union never reaches the layer beneath it.
+   [bex_simps]'s image clause does the same for an image the membership
+   is the bound of: it applies the function to the name rather than
+   leaving the equation that names it.  [ball_simps]'s is already
+   carried, as FORALL_IN_IMAGE_AUTO above. *)
+val _ =
+  List.app export_simp
+    [("IN_BIGUNION_IMAGE_AUTO", pred_setTheory.IN_BIGUNION_IMAGE),
+     ("EXISTS_IN_IMAGE_AUTO", pred_setTheory.EXISTS_IN_IMAGE)]
 
 (* src/HOL/Finite_Set.thy:158-532 @ f7e02b7e.  HOL4 COUNT k is
    Isabelle's set comprehension {n | n < k}. *)

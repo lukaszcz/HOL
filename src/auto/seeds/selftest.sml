@@ -1043,6 +1043,60 @@ val _ =
                      (FLAT (MAP (MAP seed_flat_f) seed_flat_lists)) ==>
                    seed_flat_q seed_flat_y``)])
 
+(* src/HOL/Complete_Lattices.thy:1052 and src/HOL/Set.thy:1663
+   @ f7e02b7e.  Neither goal is a corpus entry.  [UN_iff] and the image
+   clause of [bex_simps] are simp there, and what they buy is applying
+   the function: a membership in a union of an image names the element
+   the outer list holds and puts the inner list in its place, where
+   reading IN_BIGUNION and IN_IMAGE separately leaves a set standing
+   that only an equation under a further existential fixes -- and
+   neither simplifier eliminates a quantifier so fixed.  One flatten
+   deep that costs nothing, which is what the second goal here records;
+   two deep the layer beneath is never exposed at all, and the first
+   goal is left open with the list it names unguessed. *)
+val _ =
+  check
+    ("a pair is placed two flattened maps deep",
+     fn () =>
+       closes_within 25 (clasimpLib.AUTO_TAC [])
+         ([], ``!(seed_image_rows : ('a # 'b) list)
+                  (seed_image_cols : ('b # 'c) list) seed_image_test
+                  (seed_image_a : 'a) (seed_image_b : 'b)
+                  (seed_image_c : 'c).
+                  MEM (seed_image_a,seed_image_b) seed_image_rows /\
+                  MEM (seed_image_b,seed_image_c) seed_image_cols /\
+                  seed_image_test (seed_image_a,seed_image_b)
+                    (seed_image_b,seed_image_c) ==>
+                  MEM (seed_image_a,seed_image_c)
+                    (FLAT
+                       (MAP
+                          (\seed_row.
+                             FLAT
+                               (MAP
+                                  (\seed_col.
+                                     if seed_image_test seed_row seed_col
+                                     then [(FST seed_row,SND seed_col)]
+                                     else []) seed_image_cols))
+                          seed_image_rows))``))
+
+val _ =
+  check
+    ("a pair is placed one flattened map deep",
+     fn () =>
+       closes_within 25 (clasimpLib.AUTO_TAC [])
+         ([], ``!(seed_image_cols : ('b # 'c) list) seed_image_test
+                  (seed_image_a : 'a) (seed_image_b : 'b)
+                  (seed_image_c : 'c).
+                  MEM (seed_image_b,seed_image_c) seed_image_cols /\
+                  seed_image_test (seed_image_b,seed_image_c) ==>
+                  MEM (seed_image_a,seed_image_c)
+                    (FLAT
+                       (MAP
+                          (\seed_col.
+                             if seed_image_test seed_col then
+                               [(seed_image_a,SND seed_col)]
+                             else []) seed_image_cols))``))
+
 (* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
    entry.  Isabelle settles a relation inclusion with the same three
    rules it settles a set inclusion with, a relation being a set of

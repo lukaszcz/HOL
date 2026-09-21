@@ -183,6 +183,38 @@ Proof
   simp[listTheory.LIST_TO_SET_FLAT, listTheory.LIST_TO_SET_MAP]
 QED
 
+(* src/HOL/Set.thy:1652,1663 @ f7e02b7e, at the mapped list
+   src/HOL/List.thy:1348's [set_map] takes to an image.  The image
+   clauses of [ball_simps] and [bex_simps] are simp there; seeded on
+   the image in pred_setAutoSeed, they do not reach a list, whose
+   membership HOL4 states as MEM and not as [IN set].  These are that
+   reading, and they are not the image rewrite the split above
+   declines: a bare [MEM y (MAP f xs)] is left alone, and only the
+   membership a quantifier binds is taken -- which is the position
+   MEM_FLAT_AUTO's right-hand side puts it in, and the only one where
+   applying the function to the name costs nothing, the name being
+   quantified in either reading.
+
+   That position is where a flatten over a map stands.  Without these
+   the membership stops at [?l. MEM l (MAP f xs) /\ MEM y l], whose l
+   is fixed only by an equation under a further existential; with them
+   it is [?x. MEM x xs /\ MEM y (f x)], and [f x] applied exposes the
+   next layer, so a second flatten beneath the first is reached rather
+   than left to a search that has to guess the list it names. *)
+Theorem EXISTS_MEM_MAP_AUTO[simp]:
+  !f P (xs : 'a list).
+    (?y. MEM y (MAP f xs) /\ P y) <=> ?x. MEM x xs /\ P (f x)
+Proof
+  simp[listTheory.MEM_MAP] >> metis_tac[]
+QED
+
+Theorem FORALL_MEM_MAP_AUTO[simp]:
+  !f P (xs : 'a list).
+    (!y. MEM y (MAP f xs) ==> P y) <=> !x. MEM x xs ==> P (f x)
+Proof
+  simp[listTheory.MEM_MAP] >> metis_tac[]
+QED
+
 Theorem MEM_MAP_IMAGE_AUTO[intro]:
   !f y x (xs : 'a list). y = f x /\ MEM x xs ==> MEM y (MAP f xs)
 Proof
