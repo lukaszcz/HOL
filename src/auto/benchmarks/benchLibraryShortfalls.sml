@@ -317,15 +317,20 @@ val integer_interval_emptiness =
      ^ "source method does not name and no simpset carries")
     ["list_L3695_upto_aux_rec"]
 
+(* The successor clause has been seeded -- arithmetic states it as
+   FUNPOW_SUC and declared it to no simpset, where the source's is a
+   primrec equation and simp -- and [list_L5194_rotate_Suc] left the
+   class with it.  What remains is the other half, and it is not a
+   declaration but a statement: HOL4 has no single-step swap under any
+   name, and the name table's [FUNPOW_COMM] is the commuting law
+   between two iterations, which the goal's shape does not meet. *)
 val rotation_by_iteration =
   classified "rotation by iteration"
     ("the iteration unfolds and the residual is a FUNPOW law HOL4 "
-     ^ "does not have where the source does: the successor clause, "
-     ^ "which the source declares to its simpset and HOL4 to none, "
-     ^ "and the swap, which HOL4 states only as the commuting law "
-     ^ "between two iterations and never as the single step the goal "
-     ^ "carries")
-    ["list_L5194_rotate_Suc", "list_L5207_rotate1_rotate_swap"]
+     ^ "does not have where the source does: the swap, which HOL4 "
+     ^ "states only as the commuting law between two iterations and "
+     ^ "never as the single step the goal carries")
+    ["list_L5207_rotate1_rotate_swap"]
 
 val decision_procedure_scope =
   classified "decision procedure scope"
