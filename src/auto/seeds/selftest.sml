@@ -1209,6 +1209,24 @@ val _ =
                      (FUNPOW seed_funpow_step seed_funpow_times
                         seed_funpow_xs))``))
 
+(* src/HOL/Fun.thy:143,155-156 @ f7e02b7e.  Not a corpus entry, and
+   not the rule: what the bridge buys is that a surjectivity reaches
+   the ambient image membership, on the goal side and on the
+   assumption side alike.  Without it SURJ is an atom the search
+   carries along whole. *)
+val _ =
+  check
+    ("a surjectivity is read through the image membership",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!seed_surj_f seed_surj_s seed_surj_t.
+                  SURJ seed_surj_f (seed_surj_s : 'a set)
+                       (seed_surj_t : 'b set) ==>
+                  SURJ seed_surj_f seed_surj_s
+                       (IMAGE seed_surj_f seed_surj_s) /\
+                  !y. y IN seed_surj_t ==>
+                      ?x. x IN seed_surj_s /\ seed_surj_f x = y``))
+
 (* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
    entry.  Isabelle settles a relation inclusion with the same three
    rules it settles a set inclusion with, a relation being a set of

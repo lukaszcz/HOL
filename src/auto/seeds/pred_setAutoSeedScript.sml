@@ -235,6 +235,23 @@ Proof
   REWRITE_TAC [pred_setTheory.IN_IMAGE] THEN metis_tac []
 QED
 
+(* src/HOL/Fun.thy:143,155-156 @ f7e02b7e.  Isabelle states no constant
+   for surjectivity onto a set: [bij_betw_def] unfolds to [inj_on f A /\
+   f ` A = B] and [surj] is an abbreviation for [range f = UNIV], so the
+   claim always reaches a method as an image equation and the ambient
+   image membership reads it.  HOL4 states it as the constant SURJ,
+   which the ambient layer leaves an atom -- BIJ_DEF hands a method
+   [SURJ f s t] and nothing reduces it, so the half Isabelle closes
+   through membership stands unreduced.  IMAGE_SURJ is that claim in
+   the source's vocabulary, ambient here for the reason the notation is
+   ambient there. *)
+Theorem SURJ_IMAGE_AUTO[simp]:
+  !(function : 'a -> 'b) source target.
+    SURJ function source target <=> IMAGE function source = target
+Proof
+  MATCH_ACCEPT_TAC pred_setTheory.IMAGE_SURJ
+QED
+
 (* src/HOL/Complete_Lattices.thy:1052 and src/HOL/Set.thy:1652,1663
    @ f7e02b7e.  [UN_iff] and the image clause of [bex_simps] are simp
    there and pred_set declares neither.  Isabelle's [UN x:A. B x] is
