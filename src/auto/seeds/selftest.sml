@@ -600,6 +600,58 @@ val _ =
        end
        handle Conv.UNCHANGED => false)
 
+(* src/HOL/Orderings.thy:620-658 @ f7e02b7e.  The check above is the
+   rewrite route, where the simplifier's own condition solver discharges
+   a side condition.  This is the other route the components' [dest]
+   declaration is for: a rule the search applies asks for the component
+   as a premise of its own, and a premise is not a subterm of the goal,
+   so no rewrite of the assumptions reaches it.  With the components
+   declared to the simpset alone the goal below stays open.  Neither the
+   rule nor the goal is a corpus entry, and as above the rule's content
+   is irrelevant -- only its order premise is under test -- so the two
+   predicates it is stated over are defined here and declared nowhere. *)
+val order_seed_carried_def =
+  Definition.new_definition
+    ("order_seed_carried_def",
+     ``order_seed_carried (R : 'a -> 'a -> bool) (x : 'a) = T``)
+
+val order_seed_targeted_def =
+  Definition.new_definition
+    ("order_seed_targeted_def",
+     ``order_seed_targeted (R : 'a -> 'a -> bool) (x : 'a) = T``)
+
+val order_premise_rule =
+  Tactical.prove
+    (``!R : 'a -> 'a -> bool. !x : 'a.
+         relation$transitive R ==>
+         order_seed_carried R x ==> order_seed_targeted R x``,
+     Rewrite.REWRITE_TAC [order_seed_targeted_def])
+
+val order_premise_goal : Abbrev.goal =
+  ([``relation$WeakLinearOrder (order_seed_le : 'a -> 'a -> bool)``,
+    ``order_seed_carried (order_seed_le : 'a -> 'a -> bool)
+        order_seed_a``],
+   ``order_seed_targeted (order_seed_le : 'a -> 'a -> bool)
+       order_seed_a``)
+
+val _ =
+  check
+    ("an order premise reaches a rule's own premise",
+     fn () =>
+       let
+         val spec =
+           {kind = clasetRules.Dest, safe = false, prio = NONE}
+         val () =
+           clasetLib.temp_add_rule spec
+             ("order_seed_premise_rule", order_premise_rule)
+         val closed =
+           closes_within 20 (clasimpLib.FASTFORCE_TAC [])
+             order_premise_goal
+         val () = clasetLib.temp_delrule "order_seed_premise_rule"
+       in
+         closed
+       end)
+
 (* src/HOL/List.thy:1830,1966-1969,2328,2337,1824 @ f7e02b7e.  None
    of the goals below is a corpus entry, and none is one of the rules:
    each indexes a list built by a constructor the seeds now push an
