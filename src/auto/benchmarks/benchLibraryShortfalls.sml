@@ -156,9 +156,29 @@ val indexing_through_list_constructors =
      ^ "characterisation itself, which neither simplification nor "
      ^ "search reduces")
     ["list_L3168_list_eq_iff_zip_eq",
-     "list_L3919_bij_betw_nth",
      "list_L6487_nth_nth_transpose_sorted",
      "list_L6873_nth_sorted_list_of_set_greaterThanAtMost"]
+
+(* src/HOL/Fun.thy:140-141,196-201 @ f7e02b7e.  Owner decision D-D13
+   keeps the ambient unfolding, so this goal keeps a record. *)
+val the_codomain_the_source_predicate_has_not =
+  classified "the codomain the source predicate has not"
+    ("Isabelle's [inj_on f A] carries no codomain and HOL4's "
+     ^ "[INJ f s t] does, so the translation of the method's own "
+     ^ "cited [inj_on_nth] concludes [INJ f s UNIV] and does not "
+     ^ "unify with a goal whose codomain is a real set.  The road "
+     ^ "that would join them -- discharging the codomain obligation "
+     ^ "separately and leaving the codomain-free injectivity "
+     ^ "standing -- is closed by this layer's own ambient unfolding "
+     ^ "of INJ, which dissolves the literal before any rule "
+     ^ "concluding one is offered a redex.  Measured: the citation "
+     ^ "never fires either way, and with the unfolding withheld and "
+     ^ "the codomain discharged by an unsafe introduction the goal "
+     ^ "closes in 0.046s.  The unfolding stays because Isabelle keeps "
+     ^ "[inj_on] opaque while declaring specific facts about it "
+     ^ "simp, and this layer put one blanket rewrite where that set "
+     ^ "of facts stands")
+    ["list_L3919_bij_betw_nth"]
 
 (* What used to be one class saying only that the method reported no
    proof.  Each goal's residual was read and each names a different
@@ -498,6 +518,7 @@ val execution : benchLib.shortfall list =
   sorted_list_of_a_set @
   a_composed_predicate_at_a_function_argument @
   indexing_through_list_constructors @
+  the_codomain_the_source_predicate_has_not @
   the_cited_characterisation_has_no_counterpart @
   a_set_relation_stated_by_its_graph @
   an_injectivity_premise_no_ambient_fact_reaches @
