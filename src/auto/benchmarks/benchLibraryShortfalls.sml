@@ -291,11 +291,20 @@ val the_order_split_the_citation_supplies =
 
 val numeral_against_Suc =
   classified "numeral against Suc"
-    ("the residual has the same successor in both spellings -- "
-     ^ "[1 + index] on one side and [SUC index] on the other -- and "
-     ^ "neither is HOL4's normal form for the other, so the cited "
-     ^ "fact stands in the assumptions stating the goal it was cited "
-     ^ "for")
+    ("two mismatches block this residual and each was measured to "
+     ^ "block on its own.  The successor is in both spellings -- "
+     ^ "[index + 1] in the cited fact and [SUC index] in the goal -- "
+     ^ "and neither is HOL4's normal form for the other, where "
+     ^ "Isabelle's arithmetic simp takes [1 + n] to [Suc n] and the "
+     ^ "two meet; and the fact is stated of [rotate 1] where the goal "
+     ^ "states [rotate1], which Isabelle bridges from its own "
+     ^ "[rotate_Suc] and [rotate0], both simp at List.thy:5135,5138, "
+     ^ "while the translation defines [source_rotate] through FUNPOW "
+     ^ "and declares neither clause.  Supplying both -- the "
+     ^ "definition and [ADD1] -- closes the residual in 0.014s, and "
+     ^ "supplying either alone leaves the other standing.  The second "
+     ^ "is a declaration on a translation constant, so it is corpus "
+     ^ "work rather than engine work")
     ["list_L5301_nth_rotate1"]
 
 (* Two of this class's goals were not in it: their citation is a
