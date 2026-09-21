@@ -8567,7 +8567,8 @@ let
   val public_goal =
     ([], boolSyntax.mk_eq (multi_cons_input, ``ys:'a list``))
   val normalized_public_goal =
-    (case Lib.fst (SmtLib.Z3_ASSERTION_TO_SMT_TAC public_goal) of
+    (case Lib.fst (SmtLib.Z3_ASSERTION_TO_SMT_TAC public_goal
+        (Context.snapshot ())) of
        [goal] => goal
      | _ => die "Z3 assertion normalization did not preserve one goal")
     handle Feedback.HOL_ERR holerr =>
@@ -8578,7 +8579,8 @@ let
   val inverse_public_goal = ([], boolSyntax.mk_eq
     (inverse_input, ``u:real``))
   val normalized_inverse_public_goal =
-    case Lib.fst (SmtLib.Z3_ASSERTION_TO_SMT_TAC inverse_public_goal) of
+    case Lib.fst (SmtLib.Z3_ASSERTION_TO_SMT_TAC inverse_public_goal
+        (Context.snapshot ())) of
       [goal] => goal
     | _ => die "Z3 inverse normalization did not preserve one goal"
   val closed_literal_unchanged =
@@ -9921,7 +9923,7 @@ let
   val datatype_goal = ([], boolSyntax.mk_eq (case_input, ``m:int``))
   fun normalized label goal =
     let
-      val (goals, _) = SmtLib.SIMP_TAC true goal
+      val (goals, _) = SmtLib.SIMP_TAC true goal (Context.snapshot ())
     in
       case goals of
         [normalized] => normalized
@@ -10061,7 +10063,8 @@ let
     ([boolSyntax.mk_eq (selector_input, m)],
      boolSyntax.mk_eq (case_input, m))
   val normalized_general_goal =
-    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC general_goal) of
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC general_goal
+        (Context.snapshot ())) of
       [goal] => goal
     | _ => die "datatype reduction did not preserve one general goal"
   fun result thm = Lib.snd (boolSyntax.dest_eq (Thm.concl thm))
@@ -10153,7 +10156,8 @@ let
   val expected_goal =
     ([], boolSyntax.mk_eq (applied_expected, result))
   val normalized_goal =
-    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC input_goal) of
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC input_goal
+        (Context.snapshot ())) of
       [goal] => goal
     | _ => die "mixed-arity case eta did not preserve one public goal"
   val pointwise_case =
@@ -10261,7 +10265,8 @@ let
   val public_expected_goal =
     ([], boolSyntax.mk_eq (overapplied_expected, result))
   val public_normalized_goal =
-    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC public_input_goal) of
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC public_input_goal
+        (Context.snapshot ())) of
       [goal] => goal
     | _ => die "exact-spine case eta did not preserve one public goal"
 in
@@ -10396,7 +10401,7 @@ let
               (registered (Term.type_of argument)))
       (Library.subterms tm)
   fun normalized_goal goal =
-    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC goal) of
+    case Lib.fst (SmtLib.DATATYPE_TO_SMT_TAC goal (Context.snapshot ())) of
       [normalized] => normalized
     | _ => die "destructor normalization did not preserve one goal"
   val hd_goal = normalized_goal
@@ -10530,7 +10535,7 @@ let
     ([boolSyntax.mk_eq (``HD [HD ([]:int list)]``, ``x:int``)],
      boolSyntax.mk_eq (closed_hd, ``y:int``))
   val reuse_goal =
-    case Lib.fst (SmtLib.SIMP_TAC true reuse_input) of
+    case Lib.fst (SmtLib.SIMP_TAC true reuse_input (Context.snapshot ())) of
       [normalized] => normalized
     | _ => die "closed destructor reuse preprocessing changed goal count"
   val (reuse_translation, _) =
@@ -10623,7 +10628,8 @@ let
       end
   fun preprocessing_removes label term forbidden =
     let
-      val (subgoals, _) = SmtLib.SIMP_TAC true ([], term)
+      val (subgoals, _) =
+        SmtLib.SIMP_TAC true ([], term) (Context.snapshot ())
       val rendered = String.concatWith "\n"
         (List.map (fn (_, t) => term_with_types t) subgoals)
     in
@@ -10639,7 +10645,8 @@ let
         Feedback.message_of holerr)
   fun preprocessing_solves label term =
     let
-      val (subgoals, _) = SmtLib.SIMP_TAC true ([], term)
+      val (subgoals, _) =
+        SmtLib.SIMP_TAC true ([], term) (Context.snapshot ())
     in
       assert (List.null subgoals,
         label ^ " preprocessing left " ^
@@ -25543,7 +25550,8 @@ end
 
 fun checked_smt_tac_rejects_unsat_without_theorem () =
   (ignore (HolSmtLib.GENERIC_SMT_TAC
-     (fn _ => SolverSpec.UNSAT NONE) ([], boolSyntax.T));
+     (fn _ => SolverSpec.UNSAT NONE) ([], boolSyntax.T)
+     (Context.snapshot ()));
    die "FAIL: checked SMT tactic accepted UNSAT without a theorem")
   handle Feedback.HOL_ERR holerr =>
     let val msg = Feedback.message_of holerr

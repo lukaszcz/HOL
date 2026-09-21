@@ -8,8 +8,8 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "CPC_ProofReplay"
 
-  val rare_seq_contains_refl = Tactical.TAC_PROOF
-    (([], ``!(x:'a list). IS_SUBLIST x x``),
+  val rare_seq_contains_refl = Library.prove
+    (``!(x:'a list). IS_SUBLIST x x``,
      Tactical.THEN
        (bossLib.RW_TAC (bossLib.srw_ss())
           [rich_listTheory.IS_SUBLIST_APPEND],
@@ -7203,11 +7203,11 @@ local
      for this exact shape; irrelevant congruence branches discard reflexive
      premises, while any proof that actually needs the rewrite still fails. *)
   val smtfp_eq_components_law =
-    Tactical.TAC_PROOF
-      (([], ``!x y : ('t,'w) smtfp.
+    Library.prove
+      (``!x y : ('t,'w) smtfp.
           smtfp_eq x y <=>
           (~smtfp_is_nan x /\ ~smtfp_is_nan y) /\
-          (x = y \/ smtfp_is_zero x /\ smtfp_is_zero y)``),
+          (x = y \/ smtfp_is_zero x /\ smtfp_is_zero y)``,
        Tactical.THEN
          (bossLib.SIMP_TAC (bossLib.srw_ss())
             [smtfloatTheory.smtfp_eq_def,
@@ -7227,13 +7227,13 @@ local
       (Term.term, Thm.thm) Redblackmap.dict)
   val fp_atom_bridge_laws = ref ([] : Thm.thm list)
 
-  val circuit_cnf_atom = Tactical.TAC_PROOF
-    (([], ``(p : bool) = q <=> (p \/ ~q) /\ (~p \/ q)``),
+  val circuit_cnf_atom = Library.prove
+    (``(p : bool) = q <=> (p \/ ~q) /\ (~p \/ q)``,
      tautLib.TAUT_TAC)
-  val circuit_cnf_true = Tactical.TAC_PROOF
-    (([], ``((p : bool) = T) <=> p``), tautLib.TAUT_TAC)
-  val circuit_cnf_false = Tactical.TAC_PROOF
-    (([], ``((p : bool) = F) <=> ~p``), tautLib.TAUT_TAC)
+  val circuit_cnf_true = Library.prove
+    (``((p : bool) = T) <=> p``, tautLib.TAUT_TAC)
+  val circuit_cnf_false = Library.prove
+    (``((p : bool) = F) <=> ~p``, tautLib.TAUT_TAC)
 
   fun prove_boolean_circuit_tautology goal =
     if boolSyntax.is_eq goal andalso

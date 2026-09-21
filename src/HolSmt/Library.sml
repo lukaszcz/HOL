@@ -29,6 +29,34 @@ struct
 
   val _ = Feedback.register_trace ("HolSmtLib", trace, 4)
 
+  (* HolSmt's replay support contains a handful of precomputed theorems.
+     They are built while the library is loaded, which can happen before a
+     client has opened a theory (notably when running the HolSmt selftests).
+     Give those declaration-time proofs an explicit, otherwise unchanged
+     context.  Keeping the trace bracket here also prevents an implementation
+     detail of the checked replay path from leaking into a client's transcript.
+     Calls made while a theory is active retain that theory in the snapshot. *)
+  fun proof_context () =
+    let
+      val ctxt = Context.snapshot ()
+    in
+      case Context.current_thy ctxt of
+        SOME _ => ctxt
+      | NONE =>
+          (Thm.setCT "HolSmtLib";
+           let val proof_ctxt = Context.snapshot ()
+           in
+             Context.restore ctxt;
+             proof_ctxt
+           end)
+    end
+
+  fun prove (tm, tac) =
+    Feedback.with_traces
+      [("metis", 0), ("ambient context inside proof", 0)]
+      (fn () => Feedback.quiet_messages
+        (fn () => Tactical.prove_in (proof_context ()) (tm, tac)) ()) ()
+
   (* Permanent coverage-ablation switch.  Replay fast paths consult this
      single predicate; complete rule procedures remain enabled. *)
   fun no_fastpath () =

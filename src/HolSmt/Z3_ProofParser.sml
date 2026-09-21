@@ -1604,6 +1604,7 @@ local
     parse_file_with_version dicts unknown_z3_version path
 
 in
+  val z3_hi_fp_unspecified_diagnostic = z3_hi_fp_unspecified_diagnostic
   val parse_stream_with_version = parse_stream_with_version
   val parse_stream = parse_stream
   val parse_file_with_version = parse_file_with_version

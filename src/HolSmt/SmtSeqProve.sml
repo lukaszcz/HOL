@@ -109,13 +109,13 @@ struct
   (* Z3's native Seq certificate uses its internal `seq.eq` and `seq.tail`
      witnesses for this list fact.  The parser reconstructs them as equality
      and DROP, so one generic theorem handles all element types. *)
-  val head_tail_thm = Tactical.prove
+  val head_tail_thm = Library.prove
     (``(&(LENGTH (s : 'a list)):int) = 0 \/
         s = [EL 0 s] ++ DROP 1 s``,
      Tactical.THEN (bossLib.Cases_on `s`,
        bossLib.RW_TAC (bossLib.srw_ss()) []))
 
-  val nth_of_unit_thm = Tactical.prove
+  val nth_of_unit_thm = Library.prove
     (``[x] = (s : 'a list) ==> EL 0 s = x``,
      bossLib.METIS_TAC [listTheory.EL, listTheory.HD])
 
@@ -124,7 +124,7 @@ struct
      Split on the complete semantic boundary once, then compare the resulting
      canonical forms.  This covers every element type and symbolic index
      without assigning a value outside the specified range. *)
-  val nth_boundary_thm = Tactical.prove
+  val nth_boundary_thm = Library.prove
     (``smt_seq_nth (s : 'a list) i =
         if i < 0 \/ &(LENGTH s) <= i then smt_seq_nth s i
         else EL (Num i) s``,

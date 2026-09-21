@@ -71,35 +71,35 @@ struct
     end
 
   val array_thm_list = [
-    Tactical.prove
+    Library.prove
       (``((i =+ e) a) i = e``,
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
-    Tactical.prove
+    Library.prove
       (``i <> j ==> ((i =+ e) a) j = a j``,
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
-    Tactical.prove
+    Library.prove
       (``(i =+ f) ((i =+ e) a) = (i =+ f) a``,
         bossLib.RW_TAC (bossLib.srw_ss()) [
           boolTheory.FUN_EQ_THM,
           combinTheory.APPLY_UPDATE_THM
         ]),
-    Tactical.prove
+    Library.prove
       (``i <> j ==>
           (j =+ f) ((i =+ e) a) = (i =+ e) ((j =+ f) a)``,
         Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) [
             boolTheory.FUN_EQ_THM,
             combinTheory.APPLY_UPDATE_THM
           ], bossLib.METIS_TAC [])),
-    Tactical.prove
+    Library.prove
       (``i <> j ==> ((j =+ f) ((i =+ e) a)) i = e``,
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
-    Tactical.prove
+    Library.prove
       (``i <> j ==> ((j =+ f) ((i =+ e) a)) j = f``,
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
-    Tactical.prove
+    Library.prove
       (``(!i. a i = b i) ==> (a = b)``,
         bossLib.RW_TAC (bossLib.srw_ss()) [boolTheory.FUN_EQ_THM]),
-    Tactical.prove
+    Library.prove
       (``(a = b) <=> (!i. a i = b i)``,
         bossLib.RW_TAC (bossLib.srw_ss()) [boolTheory.FUN_EQ_THM])
   ]
@@ -118,27 +118,27 @@ struct
     (* Z3's array-set subset rewrite is [a SUBSET b =
        ((\x. a x /\ ~b x) = EMPTY)].  It is the recorded map-and/map-not
        lowering, not a guessed alternative Set encoding. *)
-    Tactical.prove
+    Library.prove
       (``((s:'a set) SUBSET t) =
           ((\x. x IN s /\ x NOTIN t) = (EMPTY:'a set))``,
        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss())
          [pred_setTheory.SUBSET_DEF, pred_setTheory.EXTENSION],
          bossLib.METIS_TAC [])),
     (* A store pushed through Z3's Boolean map-not. *)
-    Tactical.prove
+    Library.prove
       (``(\x. ~((i =+ v) (s:'a set)) x) =
           (i =+ ~v) (\x. ~s x)``,
        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss())
          [boolTheory.FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM],
          Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
            bossLib.RW_TAC (bossLib.srw_ss()) []))),
-    Tactical.prove
+    Library.prove
       (``(!x:'a. x IN s <=> x IN t) ==> (s = t)``,
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.EXTENSION]),
-    Tactical.prove
+    Library.prove
       (``F = ((x:'a) IN (EMPTY:'a set))``,
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.NOT_IN_EMPTY]),
-    Tactical.prove
+    Library.prove
       (``((x:'a) IN (UNIV:'a set)) = T``,
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.IN_UNIV])
   ]

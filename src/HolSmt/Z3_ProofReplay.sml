@@ -892,7 +892,7 @@ local
     handle Feedback.HOL_ERR _ =>
       profile "nnf[metis-fallback]" metis_prove (thms, t)
 
-  val INT_LE_RMUL_EXP = Tactical.prove(
+  val INT_LE_RMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n``,
     REPEAT STRIP_TAC THEN
     bossLib.Cases_on `n = 0` THENL [
@@ -908,11 +908,11 @@ local
       ]
     ])
 
-  val INT_LE_LMUL_EXP = Tactical.prove(
+  val INT_LE_LMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> n * a <= n * b``,
     metisLib.METIS_TAC [INT_LE_RMUL_EXP, integerTheory.INT_MUL_COMM])
 
-  val INT_LE_MUL2 = Tactical.prove(
+  val INT_LE_MUL2 = Library.prove(
     ``!x1 x2 y1 y2:int.
         0 <= x1 /\ 0 <= y1 /\ x1 <= x2 /\ y1 <= y2 ==>
         x1 * y1 <= x2 * y2``,
@@ -967,7 +967,7 @@ local
        ORELSE
        REPEAT STRIP_TAC THEN int_product_bound_tac))
 
-  val REAL_ZERO_FACTOR_NONNEG = Tactical.prove(
+  val REAL_ZERO_FACTOR_NONNEG = Library.prove(
     ``!x:real. !y:real. x <= 0 ==> x >= 0 ==> 0 <= x * y``,
     Tactical.REPEAT STRIP_TAC THEN
     Tactic.MP_TAC
@@ -977,7 +977,7 @@ local
     ASM_REWRITE_TAC
       [realTheory.REAL_MUL_LZERO, realTheory.REAL_LE_REFL])
 
-  val REAL_ZERO_FACTOR_NONNEG_CLAUSE = Tactical.prove(
+  val REAL_ZERO_FACTOR_NONNEG_CLAUSE = Library.prove(
     ``!x:real. !y:real. 0 <= x * y \/ ~(x <= 0) \/ ~(x >= 0)``,
     metisLib.METIS_TAC [REAL_ZERO_FACTOR_NONNEG])
 
@@ -1088,7 +1088,7 @@ local
         (List.mapPartial divisor (Library.subterms target))
     end
 
-  val SMT_RDIV_CANCEL_CLAUSE = Tactical.prove(
+  val SMT_RDIV_CANCEL_CLAUSE = Library.prove(
     ``(y:real) = 0 \/ x = y * HolSmt$smt_rdiv x y``,
     Tactic.ASM_CASES_TAC ``(y:real) = 0`` THENL [
       ASM_REWRITE_TAC [],
@@ -1096,7 +1096,7 @@ local
         [HolSmtTheory.smt_rdiv_eq_div, realTheory.REAL_DIV_LMUL]
     ])
 
-  val SMT_RDIV_INTRO_CANCEL_CLAUSE = Tactical.prove(
+  val SMT_RDIV_INTRO_CANCEL_CLAUSE = Library.prove(
     ``HolSmt$smt_rdiv (x:real) y = k ==>
       y = 0 \/ y * k = x``,
     bossLib.METIS_TAC [SMT_RDIV_CANCEL_CLAUSE])
@@ -4970,7 +4970,7 @@ local
   fun definition_normalization_prove var_set definitions =
     definition_normalization_prove_with ignore var_set definitions
 
-  val NEGATED_IMPLICATION_ANTECEDENT = Tactical.prove
+  val NEGATED_IMPLICATION_ANTECEDENT = Library.prove
     (``!p q. ~(p ==> q) ==> p``, tautLib.TAUT_TAC)
 
   (* Extract equality facts by a fixed, structurally decreasing derivation.
