@@ -950,6 +950,31 @@ val _ =
          ([], ``!(xs : 'a list) x n.
                   0 < n ==> EL n ([x] ++ xs) = EL (n - 1) xs``))
 
+(* src/HOL/List.thy:1222 @ f7e02b7e, [rev_append].  Neither goal is a
+   corpus entry and neither is the rule: the first needs the reversal
+   moved past the append before the supplied fold law reaches the
+   append underneath it, the second before the ambient involution
+   reaches the reversal.  The tactic is the simplifier alone, which is
+   what the source declares the rule to: the search closes both
+   without it, by an induction no simplifier takes. *)
+val _ =
+  let
+    val simplify =
+      clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ())
+        [rich_listTheory.FOLDL_APPEND]
+  in
+    check
+      ("a reversal is moved past an append",
+       fn () =>
+         List.all
+           (closes_within 20 simplify)
+           [([], ``!(xs : 'a list) ys f e.
+                     FOLDL f e (REVERSE (xs ++ ys)) =
+                     FOLDL f (FOLDL f e (REVERSE ys)) (REVERSE xs)``),
+            ([], ``!(xs : 'a list) ys.
+                     REVERSE (REVERSE xs ++ ys) = REVERSE ys ++ xs``)])
+  end
+
 (* src/HOL/List.thy:2045,2085 @ f7e02b7e, [butlast_snoc] and
    [append_butlast_last_id].  Neither goal is a corpus entry and
    neither is a rule: the first reads a front off under a REVERSE, the

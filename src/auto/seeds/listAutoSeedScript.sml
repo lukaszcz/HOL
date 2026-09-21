@@ -57,6 +57,16 @@ val _ =
      ("REVERSE_EQ_NIL_AUTO", listTheory.REVERSE_EQ_NIL),
      ("REVERSE_11_AUTO", listTheory.REVERSE_11)]
 
+(* src/HOL/List.thy:1222 @ f7e02b7e.  [rev_append] is simp there and
+   declared to no simpset here.  HOL4's ambient REVERSE rules take the
+   reversal off a membership, a length or an EVERY; none of them moves
+   it past an append, so a law stated on an appended list is out of
+   reach behind one -- a fold over an append stays whole where the
+   source's simpset has already split it. *)
+val _ =
+  List.app (export_at "simp")
+    [("REVERSE_APPEND_AUTO", listTheory.REVERSE_APPEND)]
+
 (* src/HOL/List.thy:3014-3042,6917-6970 @ f7e02b7e *)
 val _ =
   List.app export_iff
