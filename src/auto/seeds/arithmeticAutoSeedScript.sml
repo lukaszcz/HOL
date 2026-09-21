@@ -123,6 +123,28 @@ val _ =
          args = [], thm = ADD_LEFT_COMMUTE_ALGEBRA})
     ["algebra_simps", "field_simps"]
 
+(* src/HOL/Nat.thy:1470-1472 @ f7e02b7e.  [funpow] is a primrec there,
+   so its own two equations are simp, and the successor clause
+   associates the new application outermost:
+   [(f ^^ Suc n) x = f ((f ^^ n) x)].  HOL4 defines FUNPOW with the
+   other association -- [FUNPOW f (SUC n) x = FUNPOW f n (f x)], which
+   is Isabelle's [funpow_Suc_right] and is deliberately not simp there
+   -- and states the source's form as arithmetic's FUNPOW_SUC,
+   declared to no simpset.  Measured, the ambient layer leaves
+   [FUNPOW f (SUC n) x] untouched in either association, so an
+   iteration at a successor is inert and no fact about the iterated
+   function reaches the application the successor adds.  Declared here
+   in the source's association alone: the other one is HOL4's
+   definition and stays where HOL4 put it, or the two would rewrite
+   against each other.
+
+   The zero clause needs nothing -- FUNPOW_0 is already ambient. *)
+Theorem FUNPOW_SUC_AUTO[simp]:
+  !f n x. FUNPOW f (SUC n) x = f (FUNPOW f n x)
+Proof
+  REWRITE_TAC [arithmeticTheory.FUNPOW_SUC]
+QED
+
 (* src/HOL/Wellfounded.thy:975 @ f7e02b7e.  [wf_less_than] is [iff], so
    Isabelle's claset carries the fact as well as its simpset.  prim_rec
    declares WF_LESS to the simpset alone, and a tableau leg that

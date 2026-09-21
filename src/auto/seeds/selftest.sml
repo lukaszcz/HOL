@@ -1189,6 +1189,26 @@ val _ =
                     seed_sing_a NOTIN seed_sing_set /\
                     seed_sing_b IN seed_sing_set``))
 
+(* src/HOL/Nat.thy:1470-1472 @ f7e02b7e.  Not a corpus entry, and not
+   the rule: what the successor clause buys is the outermost
+   application, exposed so that a fact about the iterated function
+   reaches it.  Here that fact is the assumption, and without the
+   clause the iteration at a successor is one inert term the
+   assumption does not match. *)
+val _ =
+  check
+    ("a fact about the iterated function reaches the step a successor adds",
+     fn () =>
+       closes_within 20 (clasimpLib.AUTO_TAC [])
+         ([], ``!seed_funpow_step seed_funpow_xs seed_funpow_times.
+                  (!ys. NULL (seed_funpow_step ys) <=> NULL ys) ==>
+                  (NULL
+                     (FUNPOW seed_funpow_step (SUC seed_funpow_times)
+                        (seed_funpow_xs : 'a list)) <=>
+                   NULL
+                     (FUNPOW seed_funpow_step seed_funpow_times
+                        seed_funpow_xs))``))
+
 (* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
    entry.  Isabelle settles a relation inclusion with the same three
    rules it settles a set inclusion with, a relation being a set of
