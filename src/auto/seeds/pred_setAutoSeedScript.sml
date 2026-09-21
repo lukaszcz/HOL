@@ -59,7 +59,6 @@ val _ =
      ("IN_SING_AUTO", pred_setTheory.IN_SING),
      ("EQUAL_SING_AUTO", pred_setTheory.EQUAL_SING),
      ("INSERT_EQ_SING_AUTO", pred_setTheory.INSERT_EQ_SING),
-     ("IN_IMAGE_AUTO", pred_setTheory.IN_IMAGE),
      ("FORALL_IN_IMAGE_AUTO", pred_setTheory.FORALL_IN_IMAGE),
      ("IMAGE_EQ_EMPTY_1_AUTO",
       GEN_ALL (CONJUNCT1 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))),
@@ -197,6 +196,25 @@ Theorem EMPTY_EQ_SET_AUTO[iff]:
 Proof
   ONCE_REWRITE_TAC [boolTheory.EQ_SYM_EQ] THEN
   REWRITE_TAC [pred_setTheory.EXTENSION, pred_setTheory.NOT_IN_EMPTY]
+QED
+
+(* src/HOL/Set.thy:883-884 @ f7e02b7e.  Isabelle's [image_def] exposes
+   the bounded-domain premise before the value equality, and pred_set's
+   IN_IMAGE states it after.  The order is what a conditional rewrite
+   under the membership needs: the simplifier carries a conjunct's left
+   siblings into it as context, so stated the source's way the
+   membership is in hand when the equality's right-hand side is
+   simplified, and a fact of the form [x IN s ==> f x = g x] applies
+   there.  Stated the other way it never does -- measured, that is the
+   whole of [set_L968_image_cong] of the sets corpus, whose method is
+   simp alone and whose search never runs.  The content is IN_IMAGE
+   itself; only the order differs. *)
+Theorem IN_IMAGE_AUTO[iff]:
+  !function collection value.
+    value IN IMAGE function collection <=>
+    ?item. item IN collection /\ value = function item
+Proof
+  REWRITE_TAC [pred_setTheory.IN_IMAGE] THEN metis_tac []
 QED
 
 (* src/HOL/Complete_Lattices.thy:1052 and src/HOL/Set.thy:1652,1663

@@ -1097,6 +1097,43 @@ val _ =
                                [(seed_image_a,SND seed_col)]
                              else []) seed_image_cols))``))
 
+(* src/HOL/Set.thy:883-884 @ f7e02b7e.  Isabelle's [image_def] states
+   the bounded-domain premise before the value equality, and pred_set's
+   IN_IMAGE states it after.  The simplifier carries a conjunct's left
+   siblings into it as context, so only the source's order has the
+   membership in hand when the equality's right-hand side is rewritten,
+   which is what an equation conditional on that membership needs.
+   Neither the rule nor the goal is a corpus entry, and the rule is
+   assumed because only the shape of its condition is under test.  The
+   check goes through SIMP_CONV for the reason the order side condition
+   above does: what the order decides is the rewriter's reach, and a
+   check through AUTO_TAC says nothing, the search stripping the
+   existential into assumptions where both conjuncts stand side by side
+   and the order cannot matter. *)
+val image_domain_rule =
+  Thm.ASSUME
+    ``!seed_cong_x : 'a.
+        seed_cong_x IN seed_cong_set ==>
+        (seed_cong_f seed_cong_x : 'b) = seed_cong_g seed_cong_x``
+
+val image_domain_goal =
+  ``!seed_cong_value : 'b.
+      seed_cong_value IN IMAGE seed_cong_f seed_cong_set <=>
+      seed_cong_value IN IMAGE seed_cong_g (seed_cong_set : 'a -> bool)``
+
+val _ =
+  check
+    ("an image membership rewrites under its domain premise",
+     fn () =>
+       let
+         val rewritten =
+           simpLib.SIMP_CONV (clasimpLib.clasimp_ss ())
+             [image_domain_rule] image_domain_goal
+       in
+         Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
+       end
+       handle Conv.UNCHANGED => false)
+
 (* src/HOL/Set.thy:484,493,501 @ f7e02b7e.  Neither goal is a corpus
    entry.  Isabelle settles a relation inclusion with the same three
    rules it settles a set inclusion with, a relation being a set of
