@@ -96,12 +96,6 @@ val definite_description_reading =
      ^ "the families, not an engine gap")
     ["set_L1847_is_singleton_the_elem"]
 
-val image_comprehension =
-  classified "image comprehension"
-    ("IMAGE is not unfolded to its comprehension by the assigned "
-     ^ "tactic")
-    ["set_L968_image_cong"]
-
 val instantiated_fact_citation =
   classified "instantiated fact citation"
     ("the source method instantiates its cited facts with [OF "
@@ -137,7 +131,6 @@ val entries : benchLib.shortfall list =
   disjnt @
   definite_description_specified @
   definite_description_reading @
-  image_comprehension @
   instantiated_fact_citation @
   witness_the_method_supplies
 
