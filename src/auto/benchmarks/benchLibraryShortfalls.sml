@@ -443,7 +443,19 @@ val sigma_and_times_rule_forms =
    [list_L7300_Nil_lenlex_iff2] no longer meets [SHORTLEX_NIL2] at
    all: [lenlex] is now the source's composite too, and unfolding it
    leaves the nil in the equal-length order the ambient
-   [Nil2_notin_lex] rejects. *)
+   [Nil2_notin_lex] rejects.
+
+   Two more have left it, and these two because the second route now
+   exists.  [list_L8187_list_all_Cons_iff] and
+   [list_L8195_list_ex_Cons_iff] withhold one conjunct of [EVERY_DEF]
+   and of [EXISTS_DEF], and what the cited [list_all_iff] /
+   [list_ex_iff] leave is a bounded quantifier over a cons.  Isabelle
+   reads [set (x # xs)] as an insert, so the insert clauses of
+   [ball_simps] and [bex_simps], both simp there, split the head off
+   above the membership; HOL4 spells the membership as MEM, whose own
+   cons equation is simp too, and outermost-first the quantifier
+   descends into that instead.  The seeded list reading of those
+   clauses is stated on the quantifier, so it is reached first. *)
 val a_reading_of_the_characterisation_is_the_goal =
   map
     (fn id =>
@@ -451,11 +463,9 @@ val a_reading_of_the_characterisation_is_the_goal =
        note =
          "a reading of the characterisation is the goal: the HOL4 " ^
          "rule that reaches this goal states it as one conjunct of a " ^
-         "conjunction, or states it with its quantifiers in another " ^
-         "order, and A1 withholds it under either reading; the " ^
+         "conjunction, and A1 withholds the conjunction; the " ^
          "assigned tactic has no second route"} : benchLib.shortfall)
-    ["list_L2740_zip_Cons_Cons",
-     "list_L8187_list_all_Cons_iff", "list_L8195_list_ex_Cons_iff"]
+    ["list_L2740_zip_Cons_Cons"]
 
 val execution : benchLib.shortfall list =
   prefix_from_its_indices @
