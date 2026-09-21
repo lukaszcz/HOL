@@ -230,16 +230,33 @@ val an_injectivity_premise_no_ambient_fact_reaches =
 (* The earlier reading -- that the translation renders foldr as FOLDL
    over REVERSE -- was wrong: [source_foldr] is FOLDR.  The FOLDL over
    a REVERSE arrives from the cited [foldr_conv_fold], which is what
-   Isabelle's own proofs rewrite with. *)
-val fold_direction =
-  classified "fold direction"
-    ("the cited foldr_conv_fold rewrites the goal into a FOLDL over "
-     ^ "a REVERSE, which is where Isabelle's proof continues into its "
-     ^ "fold lemmas; the HOL4 fold law that would close each residual "
-     ^ "is either declared to no simpset or, for the append law, the "
-     ^ "goal itself, which rule A1 withholds")
-    ["list_L3421_foldr_append", "list_L3427_foldr_map",
-     "list_L3430_foldr_filter"]
+   Isabelle's own proofs rewrite with.  The reading after that -- that
+   the append law was the goal and rule A1 withheld it -- was wrong
+   too: the law the source route needs is [source_fold_append], which
+   is ambient and stands in the recipe.  What stood between the two
+   was the reversal the citation leaves around the append, which the
+   seeded [rev_append] now moves, and [list_L3421_foldr_append] left
+   the class with it.  What is left is a second cause the other two
+   share. *)
+val a_point_free_law_stated_applied =
+  classified "a point-free law stated applied"
+    ("Isabelle states [fold_map] and [fold_filter] at the function "
+     ^ "level -- [fold (g o f)] and [fold (%x. if P x then f x else "
+     ^ "id)] -- which is the spelling the goal's own right-hand side "
+     ^ "carries, so the citation lands on it.  The translation states "
+     ^ "both applied to the accumulator, so what the citation leaves "
+     ^ "is that right-hand side against a lambda that agrees with it "
+     ^ "pointwise: [\\value. g (f value)] against [g o f], and the "
+     ^ "guarded step against [\\x. if P x then f x else I].  The "
+     ^ "layer's extensionality step has already taken the equation "
+     ^ "pointwise in the accumulator, and the pair that is left "
+     ^ "stands in an argument position of the fold, where no "
+     ^ "extensionality reaches it.  Unfolding the composition would "
+     ^ "close the first, and neither system declares that unfolding: "
+     ^ "Isabelle's own proofs cite [comp_def] by hand where they need "
+     ^ "it, and this method does not, there being nothing left to "
+     ^ "unfold once [fold_map] is stated point-free")
+    ["list_L3427_foldr_map", "list_L3430_foldr_filter"]
 
 val fold_against_a_set_aggregate =
   classified "fold against a set aggregate"
@@ -531,7 +548,7 @@ val execution : benchLib.shortfall list =
   the_cited_characterisation_has_no_counterpart @
   a_set_relation_stated_by_its_graph @
   an_injectivity_premise_no_ambient_fact_reaches @
-  fold_direction @
+  a_point_free_law_stated_applied @
   fold_against_a_set_aggregate @
   sortedness_beyond_the_bridge @
   the_order_split_the_citation_supplies @
