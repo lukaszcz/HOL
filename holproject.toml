@@ -40,6 +40,11 @@ path = "src/AI/sml_inspection/parallel"
 linelen = 0
 
 [[h4pedant.dir]]
+# translated/generated parity corpora
+path = "src/auto/benchmarks"
+linelen = 0
+
+[[h4pedant.dir]]
 path = "src/1"
 linelen = 0
 
@@ -154,4 +159,3 @@ linelen = 0
 [[h4pedant.dir]]
 path = "src/simp/src"
 linelen = 0
-

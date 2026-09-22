@@ -5,6 +5,13 @@ open Abbrev HolKernel
 
 val ERR = mk_HOL_ERR "clasimpLib"
 
+(* Load-time congruence proofs run before a theory is selected.  VALID checks
+   the tactic result without requiring TAC_PROOF's ambient-theory guard. *)
+fun prove (term, tactic) =
+  case Tactical.VALID tactic ([], term) (Context.snapshot()) of
+      ([], validation) => validation []
+    | _ => raise ERR "prove" "load-time proof left goals"
+
 val clasimp_trace = ref 0
 val _ = Feedback.register_trace ("clasimp", clasimp_trace, 3)
 
@@ -95,7 +102,7 @@ val witness_subgoaler : Traverse.subgoaler =
     val pull_existentials =
       Conv.QCONV (Conv.TOP_DEPTH_CONV (Conv.FIRST_CONV pull_laws))
     val has_existential = Lib.can (HolKernel.find_term boolSyntax.is_exists)
-    fun witness_tac (goal as (assumptions, w)) =
+    fun witness_tac (goal as (assumptions, w)) ctxt =
       let
         val pulled_thm =
           if has_existential w then pull_existentials w else Thm.REFL w
@@ -116,10 +123,10 @@ val witness_subgoaler : Traverse.subgoaler =
               NONE => attempt (boolSyntax.strip_conj body)
             | found => found
       in
-        if null vars then Tactical.NO_TAC goal
+        if null vars then Tactical.NO_TAC goal ctxt
         else
           case matched () of
-              NONE => Tactical.NO_TAC goal
+              NONE => Tactical.NO_TAC goal ctxt
             | SOME instance =>
                 let
                   val accept = Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC
@@ -133,14 +140,16 @@ val witness_subgoaler : Traverse.subgoaler =
                           (accept,
                            Tactical.THEN (Tactical.REPEAT Tactic.CONJ_TAC,
                                           accept))))
-                    goal
+                    goal ctxt
                 end
       end
     fun witness_proof context_thms term =
       Lib.total
         (fn goal =>
-           Lib.itlist Drule.PROVE_HYP context_thms
-             (Tactical.TAC_PROOF (goal, witness_tac)))
+           case Tactical.VALID witness_tac goal (Context.snapshot()) of
+               ([], validation) =>
+                 Lib.itlist Drule.PROVE_HYP context_thms (validation [])
+             | _ => raise ERR "witness_proof" "witness tactic left goals")
         (map Thm.concl context_thms, term)
   in
     fn ({recurse, context_thms, ...} : Traverse.simp_prover_ctxt) =>
@@ -178,7 +187,7 @@ local
   val op THEN = Tactical.THEN
 in
 val cond_weak_cong =
-  Tactical.prove
+  prove
     (``!condition simplified left right.
          (condition = simplified) ==>
          ((if condition then left else right) =
@@ -277,7 +286,7 @@ local
                 (element, boolSyntax.mk_conj (left, right)),
               boolSyntax.mk_exists (element, apply rebuilt)))
     in
-      Tactical.prove
+      prove
         (statement,
          Tactic.DISCH_TAC THEN
          Tactic.DISCH_TAC THEN
@@ -545,7 +554,7 @@ fun derive_clasimp_ss ss _ =
 
 (* This accessor is the only visible part of the private derived-value
    record.  BasicProvers marks the cache stale whenever srw_ss changes. *)
-val {get = clasimp_ss, set = _} =
+val {get = clasimp_ss, get_of = _} =
   BasicProvers.make_simpset_derived_value
     "clasimpLib.clasimp_ss" derive_clasimp_ss simpLib.empty_ss
 
@@ -730,7 +739,7 @@ fun context_first ss simp_args =
    is opaque and stays as it is.  Isabelle needs no such step: its
    [set_eq_iff] is the membership reading outright. *)
 val membership_extensionality =
-  Tactical.prove
+      prove
     (``!(left : 'a -> bool) right.
          (left = right) <=>
          !element. element IN left <=> element IN right``,
@@ -1980,11 +1989,11 @@ fun restore_normalized_target target validation theorems =
     else theorem
   end
 
-fun public body theorems (goal as (_, target)) =
+fun public body theorems (goal as (_, target)) ctxt =
   let
     val (goals, validation) =
       process_clasimp_args body
-        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal
+        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
   in
     (goals, restore_normalized_target target validation)
   end
@@ -2127,7 +2136,7 @@ local
         (Drule.LIST_BETA_CONV (list_mk_comb (abstraction, variables)))
     end
 in
-  fun LAMBDA_LIFT_TAC (assumptions, conclusion) =
+  fun LAMBDA_LIFT_TAC (assumptions, conclusion) _ =
     let
       val lifted = abstractions (conclusion :: assumptions)
       val _ =

@@ -100,6 +100,7 @@ fun perform_with cs goal ({script, ...} : proof) =
             (clasetGoal.replay final)
         val result as (residuals, _) =
           Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
+            (Context.snapshot())
         val _ =
           if null residuals then ()
           else

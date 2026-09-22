@@ -115,7 +115,7 @@ fun failed_stats summary search_time reconstruction_time =
      "; reconstruction " ^
      Time.toString reconstruction_time ^ "s")
 
-fun run_depths base_cs initial_depth next_depth goal =
+fun run_depths base_cs initial_depth next_depth goal ctxt =
   let
     val cs = add_blast_selims base_cs
     val started = Time.now ()
@@ -132,7 +132,9 @@ fun run_depths base_cs initial_depth next_depth goal =
     fun accept proof =
       let
         val reconstruction_started = Time.now ()
-        val result = blastReconstruct.reconstructWith cs goal proof
+        val result =
+          Context.with_context ctxt
+            (fn () => blastReconstruct.reconstructWith cs goal proof) ()
         val elapsed = Time.- (Time.now (), reconstruction_started)
         val _ = add_time elapsed reconstruction_time
       in
@@ -185,35 +187,35 @@ fun run_depths base_cs initial_depth next_depth goal =
             "blast search found no reconstructible proof"
   end
 
-fun CS_BLAST_DEPTH_TAC cs depth =
-  run_depths cs (SOME depth) (fn _ => NONE)
+fun CS_BLAST_DEPTH_TAC cs depth goal ctxt =
+  run_depths cs (SOME depth) (fn _ => NONE) goal ctxt
 
 fun next_through limit depth =
   if depth >= limit then NONE else SOME (depth + 1)
 
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
-fun BLAST_DEPTH_TAC depth theorems goal =
-  invoke (fn cs => CS_BLAST_DEPTH_TAC cs depth) theorems goal
+fun BLAST_DEPTH_TAC depth theorems goal ctxt =
+  invoke (fn cs => CS_BLAST_DEPTH_TAC cs depth) theorems goal ctxt
 
-fun BLAST_TAC theorems goal =
+fun BLAST_TAC theorems goal ctxt =
   let
     val limit = !depth_limit
     val initial = if limit < 0 then NONE else SOME 0
   in
     invoke
       (fn cs => run_depths cs initial (next_through limit))
-      theorems goal
+      theorems goal ctxt
   end
 
 fun tryIt depth theorems goal =
   let
     val answer = ref (NONE : try_result option)
-    fun inspect cs prepared_goal =
+    fun inspect cs prepared_goal ctxt =
       (answer := SOME
          (blastSearch.debugGoal (add_blast_selims cs) depth prepared_goal);
-       Tactical.ALL_TAC prepared_goal)
-    val _ = invoke inspect theorems goal
+       Tactical.ALL_TAC prepared_goal ctxt)
+    val _ = invoke inspect theorems goal (Context.snapshot())
   in
     valOf (!answer)
   end

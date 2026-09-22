@@ -660,20 +660,20 @@ fun neq_elim_step (prefix, suffix, Split (split, left, right)) =
    and would leave the user with the arity mismatch that diagnostic
    exists to replace.  Hence the loop written out: it ends exactly where
    find_split reports no splittable disequality. *)
-fun neq_elim_tac discrete_only (goal as (assumptions, conclusion)) =
+fun neq_elim_tac discrete_only (goal as (assumptions, conclusion)) ctxt =
   if not (Term.aconv conclusion boolSyntax.F) then
-    Tactical.ALL_TAC goal
+    Tactical.ALL_TAC goal ctxt
   else
     case find_split discrete_only assumptions of
-        NONE => Tactical.ALL_TAC goal
+        NONE => Tactical.ALL_TAC goal ctxt
       | SOME found =>
           let
-            fun step (_ : goal) = neq_elim_step found
+            fun step (_ : goal) _ = neq_elim_step found
           in
-            Tactical.THEN (step, neq_elim_tac discrete_only) goal
+            Tactical.THEN (step, neq_elim_tac discrete_only) goal ctxt
           end
 
-fun append_negated_tac (assumptions, conclusion) =
+fun append_negated_tac (assumptions, conclusion) _ =
   let
     val negated = negate conclusion
     val goal = (assumptions @ [negated], boolSyntax.F)
@@ -685,13 +685,13 @@ fun append_negated_tac (assumptions, conclusion) =
     ([goal], justify)
   end
 
-fun justification_tac justification (assumptions, goal) =
+fun justification_tac justification (assumptions, goal) ctxt =
   if not (Term.aconv goal boolSyntax.F) then
     raise ERR "justification_tac" "goal is not false"
   else
     Tactic.ACCEPT_TAC
       (mkthm (List.map Thm.ASSUME assumptions) justification)
-      (assumptions, goal)
+      (assumptions, goal) ctxt
 
 fun refute_tac split_neq justifications =
   let
@@ -728,6 +728,7 @@ fun fwd_prove config theorems conclusion =
         | NONE =>
             raise ERR "fwd_prove" "linear arithmetic found no proof"
     val (goals, validation) = tactic (hypotheses, conclusion)
+      (Context.snapshot())
     val _ =
       if null goals then ()
       else raise ERR "fwd_prove" "replay left a subgoal open"

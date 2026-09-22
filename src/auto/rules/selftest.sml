@@ -128,7 +128,7 @@ val _ =
 fun same_terms ts1 ts2 =
   ListPair.allEq (fn (tm1, tm2) => Term.aconv tm1 tm2) (ts1, ts2)
 
-fun labelled tm _ =
+fun labelled tm _ _ =
   seq.result ([([], tm)], fn _ => ASSUME tm)
 
 fun labels tac goal =
@@ -137,7 +137,7 @@ fun labels tac goal =
        case gs of
            [(_, tm)] => tm
          | _ => raise Fail "labelled tactic did not return one goal")
-    (seq.take 10 (tac goal))
+    (seq.take 10 (tac goal (Context.snapshot())))
 
 val p = ``p : bool``
 val q = ``q : bool``
@@ -172,7 +172,8 @@ val _ =
     ("NORELSE does not backtrack after later failure",
      fn () =>
        seq.null
-         (NTHEN (NORELSE (NALL_TAC, close), NNO_TAC) choice_goal))
+         (NTHEN (NORELSE (NALL_TAC, close), NNO_TAC)
+            choice_goal (Context.snapshot())))
 
 val _ =
   test
@@ -180,13 +181,16 @@ val _ =
      fn () =>
        not
          (seq.null
-            (NTHEN (NAPPEND (NALL_TAC, close), NNO_TAC) choice_goal)))
+            (NTHEN (NAPPEND (NALL_TAC, close), NNO_TAC)
+               choice_goal (Context.snapshot()))))
 
 val _ =
   let
-    fun diverging_branch _ =
+    fun diverging_branch _ _ =
       let fun loop () = loop () in loop () end
-    val _ = seq.hd (NORELSE (NALL_TAC, diverging_branch) choice_goal)
+    val _ =
+      seq.hd (NORELSE (NALL_TAC, diverging_branch)
+                choice_goal (Context.snapshot()))
   in
     test ("NORELSE leaves a diverging second branch unforced", fn () => true)
   end
@@ -201,7 +205,8 @@ val _ =
     ("NTHEN composed validations satisfy Tactical.VALID",
      fn () =>
        let
-         val (gs, _) = Tactical.VALID validation_tac validation_goal
+         val (gs, _) =
+           Tactical.VALID validation_tac validation_goal (Context.snapshot())
        in
          List.null gs
        end)
@@ -215,6 +220,7 @@ val _ =
        let
          val (gs, _) =
            Tactical.VALID (DETERM (NREPEAT (LIFT DISCH_TAC))) repeat_goal
+             (Context.snapshot())
        in
          case gs of
              [([asm], tm)] => Term.aconv asm p andalso Term.aconv tm p
@@ -2102,7 +2108,7 @@ val _ =
        in
          size_of variable_goal = 4 andalso
          size_of ([], ``(\x : bool. x) p``) = 3 andalso
-         (case #1 (hyp_subst_tac variable_goal) of
+         (case #1 (hyp_subst_tac variable_goal (Context.snapshot())) of
              [(_, goal)] => Term.aconv goal p
            | _ => false)
        end)
@@ -3141,7 +3147,9 @@ val _ =
             boolTheory.IMP_ANTISYM_AX]
          val goal = ([] : term list, boolSyntax.T)
        in
-         case #1 (Tactical.VALID (INSERT_FACTS_TAC facts) goal) of
+         case #1
+                (Tactical.VALID (INSERT_FACTS_TAC facts) goal
+                   (Context.snapshot())) of
              [(asl, _)] =>
                ListPair.allEq (fn (left, right) => Term.aconv left right)
                  (asl, map concl facts)
@@ -3169,8 +3177,10 @@ val _ =
                 [alpha |-> ``:'c # 'd``, beta |-> ``:'c``]
                 pointwise_reflexivity)
        in
-         case #1 (Tactical.VALID
-                    (INSERT_FACTS_TAC [pointwise_reflexivity]) goal) of
+         case #1
+                (Tactical.VALID
+                   (INSERT_FACTS_TAC [pointwise_reflexivity]) goal
+                   (Context.snapshot())) of
              [([assumption], _)] => Term.aconv assumption expected
            | _ => false
        end)
@@ -3188,8 +3198,10 @@ val _ =
          val goal =
            ([] : term list, ``FST (p : 'a # 'b) = FST p``)
        in
-         case #1 (Tactical.VALID
-                    (INSERT_FACTS_TAC [pointwise_reflexivity]) goal) of
+         case #1
+                (Tactical.VALID
+                   (INSERT_FACTS_TAC [pointwise_reflexivity]) goal
+                   (Context.snapshot())) of
              [(assumptions, _)] =>
                List.exists
                  (fn assumption =>
@@ -3218,8 +3230,10 @@ val _ =
          val instance =
            concl (Thm.INST_TYPE [alpha |-> beta] pair_projection)
        in
-         case #1 (Tactical.VALID
-                    (INSERT_FACTS_TAC [pair_projection]) goal) of
+         case #1
+                (Tactical.VALID
+                   (INSERT_FACTS_TAC [pair_projection]) goal
+                   (Context.snapshot())) of
              [(assumptions, _)] =>
                List.exists
                  (fn assumption => Term.aconv assumption instance)
@@ -3243,7 +3257,9 @@ val _ =
          val shared = Thm.REFL ``v : 'a``
          val goal = ([``(v : 'a) = v``], ``(3 : num) = 3``)
        in
-         case #1 (Tactical.VALID (INSERT_FACTS_TAC [shared]) goal) of
+         case #1
+                (Tactical.VALID (INSERT_FACTS_TAC [shared]) goal
+                   (Context.snapshot())) of
              [([assumption, _], _)] =>
                Term.aconv assumption (concl shared)
            | _ => false (* one inserted assumption: no instance is offered *)
@@ -3269,7 +3285,8 @@ fun invocation_run facts =
         {iff_prefix = "__selftest_invocation_iff_",
          extra_markers = fn theorems => fn cs => (cs, theorems)}
         body empty_cs NONE facts
-    val (residual, _) = tactic ([] : term list, boolSyntax.T)
+    val (residual, _) =
+      tactic ([] : term list, boolSyntax.T) (Context.snapshot())
   in
     (!seen, residual)
   end

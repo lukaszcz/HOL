@@ -151,9 +151,9 @@ fun goal_matches_index NONE _ = true
   | goal_matches_index (SOME (HypPattern pattern)) (assumptions, _) =
       List.exists (can (Term.match_term pattern)) assumptions
 
-fun indexed_changed index tactic goal =
+fun indexed_changed index tactic goal ctxt =
   if goal_matches_index index goal then
-    NTactical.NCHANGED tactic goal
+    NTactical.NCHANGED tactic goal ctxt
   else
     seq.empty
 

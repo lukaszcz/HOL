@@ -142,12 +142,13 @@ fun check (name, predicate) =
   (tprint name;
    if predicate () then OK () else die "failed")
 
-fun residual tactic goal = #1 (Tactical.VALID tactic goal)
+fun residual tactic goal =
+  #1 (Tactical.VALID tactic goal (Context.snapshot()))
 
 fun valid_closes tactic goal = null (residual tactic goal)
 
 fun tactic_fails tactic goal =
-  ((ignore (Tactical.VALID tactic goal); false)
+  ((ignore (Tactical.VALID tactic goal (Context.snapshot())); false)
    handle Feedback.HOL_ERR _ => true)
 
 fun normalized_rhs (instance : linarithData.linarith_instance) tm =

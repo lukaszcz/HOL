@@ -167,7 +167,8 @@ fun aligned_result (goals, validation) =
 fun tactic_direct kind consumed node pos tactic =
   let
     val rendered = clasetGoal.render node pos
-    val result as (goals, _) = aligned_result (tactic rendered)
+    val result as (goals, _) =
+      aligned_result (tactic rendered (Context.snapshot()))
     val eigens = new_free_names_by_goal rendered goals
   in
     SOME
@@ -1131,7 +1132,7 @@ fun builtin_results (node, pos) =
     val rendered as (_, w) = clasetGoal.render node pos
 
     fun make initial_store kind action tactic =
-      case total tactic rendered of
+      case total (fn () => tactic rendered (Context.snapshot())) () of
           NONE => seq.empty
         | SOME (result as (goals, _)) =>
             let
@@ -1304,7 +1305,8 @@ fun plain_tactic_results kind action tactic (node, pos) =
         val rendered = clasetGoal.render node pos
         val {params, ...} = clasetGoal.goal_at node pos
       in
-        case Option.map aligned_result (total tactic rendered) of
+        case Option.map aligned_result
+               (total (fn () => tactic rendered (Context.snapshot())) ()) of
             NONE => seq.empty
           | SOME (result as (goals, _)) =>
               let
@@ -1361,7 +1363,7 @@ fun blast_hyp_subst_in
               (fields,
                clasetReplay.BLAST_HYP_SUBST_TAC_AT
                  {position = position, changed = changed, side = side}
-                 goal)) () of
+                 goal (Context.snapshot()))) () of
         NONE => NONE
       | SOME ({changed, side}, unaligned) =>
           let
@@ -1452,7 +1454,10 @@ fun gen_results (input as (node, pos)) =
           val name = fst (dest_var fresh)
           val rendered = clasetGoal.render node pos
         in
-          case total (clasetReplay.GEN_NAMED_TAC name) rendered of
+      case total
+             (fn () =>
+                clasetReplay.GEN_NAMED_TAC name rendered
+                  (Context.snapshot())) () of
               NONE => seq.empty
             | SOME (result as (goals, validation)) =>
                 let
@@ -1957,7 +1962,7 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
             (goals, identity)
           end
 
-        fun base goal =
+        fun base goal _ =
           if boolSyntax.goal_eq goal rendered then
             seq.map remember (cascade cs (node, pos))
           else
@@ -1967,7 +1972,8 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
               seq.map direct_result (cascade cs (temporary, 1))
             end
 
-        val wrapped = apply_wrappers cs base rendered
+        val wrapped =
+          apply_wrappers cs base rendered (Context.snapshot())
 
         fun lift sequence =
           seq.delay

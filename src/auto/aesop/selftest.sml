@@ -1,5 +1,13 @@
 open HolKernel testutils
 
+structure SelfTestTactical = Tactical
+structure Tactical =
+struct
+  open SelfTestTactical
+  fun VALID tactic goal =
+    SelfTestTactical.VALID tactic goal (Context.snapshot())
+end
+
 (* check and residual come from linarithCorpus, which states the
    assertion helpers once for the suites that reach linear arithmetic;
    with_arith_fact below is from there too. *)
@@ -366,7 +374,8 @@ val _ =
          is_phase (aesopRule.RNorm 0) rule andalso
          (case #apply rule of
               aesopRule.RenderedTactic tactic =>
-                not (seq.null (tactic ([], boolSyntax.T)))
+                not (seq.null
+                  (tactic ([], boolSyntax.T) (Context.snapshot())))
             | _ => false)
        end)
 
@@ -381,7 +390,7 @@ fun first_engine_result rule goal =
 fun rendered_succeeds rule goal =
   case #apply (rule : aesopRule.rule) of
       aesopRule.RenderedTactic tactic =>
-        not (seq.null (tactic goal))
+        not (seq.null (tactic goal (Context.snapshot())))
     | _ => false
 
 val forward_p = distinct_prop 5
@@ -1668,7 +1677,7 @@ val bookkeeping_store6 =
     (clasetMeta.bind_ty (assigned_type, Type.bool)
       bookkeeping_store5)
 val bookkeeping_result =
-  Tactical.ALL_TAC ([], boolSyntax.T)
+  Tactical.ALL_TAC ([], boolSyntax.T) (Context.snapshot())
 val bookkeeping_record =
   clasetReplay.make_record
     {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
@@ -1710,7 +1719,7 @@ val _ =
 
 fun tree_creation_record terms types =
   let
-    val result = Tactical.ALL_TAC ([], boolSyntax.T)
+    val result = Tactical.ALL_TAC ([], boolSyntax.T) (Context.snapshot())
   in
     clasetReplay.make_record
       {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
@@ -2643,7 +2652,7 @@ val corrupt_store_false =
 val corrupt_goal : Abbrev.goal =
   ([], boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T))
 val corrupt_split_result =
-  Tactic.CONJ_TAC corrupt_goal
+  Tactic.CONJ_TAC corrupt_goal (Context.snapshot())
 val corrupt_tree0 =
   new_tree corrupt_store0
     (tree_cgoal [] (#1 corrupt_goal) (#2 corrupt_goal)) []
@@ -2659,7 +2668,7 @@ val corrupt_split =
 val [corrupt_left, corrupt_right] =
   #goals corrupt_split
 val corrupt_close_result =
-  Tactic.ACCEPT_TAC boolTheory.TRUTH ([], boolSyntax.T)
+  Tactic.ACCEPT_TAC boolTheory.TRUTH ([], boolSyntax.T) (Context.snapshot())
 val corrupt_left_closed =
   install_tree_rapp (#tree corrupt_split) corrupt_left
     aesopRule.RSafe "corrupt-left" corrupt_store_true []
@@ -2674,7 +2683,8 @@ val _ =
   check
     ("aesop treats conflicting winning stores as a hard replay error",
      fn () =>
-       ((ignore (aesopSearch.REPLAY_TAC corrupt_tree corrupt_goal);
+       ((ignore (aesopSearch.REPLAY_TAC corrupt_tree corrupt_goal
+                   (Context.snapshot()));
          false)
         handle HOL_ERR error =>
           String.isSubstring "engine bug" (Feedback.message_of error)))
@@ -2699,7 +2709,8 @@ val _ =
   check
     ("aesop replay diagnostics never reinterpret an interrupt",
      fn () =>
-       ((ignore (aesopSearch.REPLAY_TAC interrupt_tree interrupt_goal);
+       ((ignore (aesopSearch.REPLAY_TAC interrupt_tree interrupt_goal
+                   (Context.snapshot()));
          false)
         handle Portable.Interrupt => true
              | HOL_ERR _ => false))
@@ -2924,7 +2935,8 @@ val _ =
   check
     ("AESOP_TAC has close-or-fail semantics",
      fn () =>
-       ((ignore (aesopLib.AESOP_TAC [] ([], surface_p)); false)
+       ((ignore (aesopLib.AESOP_TAC [] ([], surface_p)
+                   (Context.snapshot())); false)
         handle HOL_ERR _ => true))
 
 (* A caller may pose a quantified assumption contracted, and the engine's
@@ -2978,7 +2990,8 @@ val _ =
   check
     ("AESOP_SAFE_TAC fails when insertion and safe search change nothing",
      fn () =>
-       ((ignore (aesopLib.AESOP_SAFE_TAC [] ([], surface_p)); false)
+       ((ignore (aesopLib.AESOP_SAFE_TAC [] ([], surface_p)
+                   (Context.snapshot())); false)
         handle HOL_ERR _ => true))
 
 val surface_conj_intro =

@@ -1,5 +1,16 @@
 open HolKernel testutils searchHeap
 
+(* Keep this large, historically written test file readable while the tactic
+   API carries an explicit context.  The production tests below intentionally
+   exercise the old two-argument VALID convenience shape. *)
+structure SelfTestTactical = Tactical
+structure Tactical =
+struct
+  open SelfTestTactical
+  fun VALID tactic goal =
+    SelfTestTactical.VALID tactic goal (Context.snapshot())
+end
+
 fun test (name, check) =
   (tprint name;
    if check () then OK () else die "failed")
@@ -1756,6 +1767,7 @@ val _ =
            (x, Term.mk_comb (predicate, x))
          val node = clasetGoal.from_goal ([], quantified)
          val result = Tactic.GEN_TAC (clasetGoal.render node 1)
+           (Context.snapshot())
        in
          case clasetGoal.unrender node 1 result of
            NONE => false
@@ -1789,7 +1801,8 @@ fun valid_step goal (record, node) =
     val materialized =
       clasetGoal.render (clasetGoal.from_goal goal) 1
     val tactic =
-      fn _ => (rendered_goals node, clasetStep.validation_of record)
+      fn _ => fn _ =>
+        (rendered_goals node, clasetStep.validation_of record)
     val _ = Tactical.VALID tactic materialized
   in
     true
@@ -1804,7 +1817,7 @@ val _ =
          val node = clasetGoal.from_goal
            ([], boolSyntax.mk_imp (goal_p, goal_q))
          val rendered = clasetGoal.render node 1
-         val result = Tactic.DISCH_TAC rendered
+         val result = Tactic.DISCH_TAC rendered (Context.snapshot())
        in
          List.null (#1 rendered)
          andalso Term.aconv (#2 rendered)
@@ -2170,11 +2183,11 @@ fun same_goal ((asl1, w1), (asl2, w2)) =
 fun same_goals left right = ListPair.allEq same_goal (left, right)
 
 fun tactic_fails tactic goal =
-  (ignore (tactic goal); false)
+  (ignore (tactic goal (Context.snapshot())); false)
   handle HOL_ERR _ => true
 
 fun tactic_error_message tactic goal =
-  (ignore (tactic goal); NONE)
+  (ignore (tactic goal (Context.snapshot())); NONE)
   handle HOL_ERR error => SOME (Feedback.message_of error)
 
 val classical_marker_entry_points =
@@ -3320,8 +3333,8 @@ val _ =
                    ([mk_comb (subst_predicate, meta)],
                     mk_comb (subst_predicate, subst_constant))
                  val child = the_singleton (rendered_goals next)
-                 val tactic =
-                   fn _ =>
+                   val tactic =
+                   fn _ => fn _ =>
                      ([child], clasetStep.validation_of record)
                  val _ =
                    Tactical.VALID tactic (clasetGoal.render node 1)
@@ -3459,11 +3472,11 @@ val _ =
          val observations =
            ref ([] : (term list * term) list list)
 
-         fun observe tactic goal =
+         fun observe tactic goal ctxt =
            seq.map
              (fn result as (goals, _) =>
                (observations := goals :: !observations; result))
-             (tactic goal)
+             (tactic goal ctxt)
 
          val cs =
            clasetLib.add_unsafe_wrapper ("observe-depth", observe)
@@ -3597,7 +3610,7 @@ val _ =
            clasetReplay.RULE_TAC
              {theorem = theorem, elim = false, consumed = NONE,
               parameters = parameters, eigenvariables = [[]]}
-             ([], target)
+             ([], target) (Context.snapshot())
          val accepted =
            case total apply [rule_variable] of
                SOME ([([], child)], _) => Term.aconv child boolSyntax.F
@@ -3634,9 +3647,9 @@ val _ =
                 mode = clasetUnify.Match} (input ()))
          val (ordinary_children, ordinary_validation) =
            clasetReplay.RULE_TAC
-             {theorem = SPEC target theorem, elim = false,
-              consumed = NONE, parameters = [],
-              eigenvariables = [[]]} goal
+              {theorem = SPEC target theorem, elim = false,
+               consumed = NONE, parameters = [],
+              eigenvariables = [[]]} goal (Context.snapshot())
 
          fun exact result =
            case result of
@@ -3975,7 +3988,7 @@ val _ =
                    val expected = rendered_goals next
                    val (direct, _) =
                      Tactical.VALID
-                       (fn _ =>
+                       (fn _ => fn _ =>
                          (expected, clasetStep.validation_of record))
                        materialized_goal
                    val ground_store = clasetMeta.ground final_store
@@ -4895,10 +4908,10 @@ val _ =
                  {params = [], asl = [], w = meta}],
               store = store, level = 0}
 
-         fun second base goal =
+         fun second base goal ctxt =
            seq.delay
              (fn () =>
-               case seq.cases (base goal) of
+               case seq.cases (base goal ctxt) of
                    NONE => seq.empty
                  | SOME (_, rest) =>
                      case seq.cases rest of
@@ -4936,7 +4949,7 @@ val _ =
            clasetGoal.create
              {goals = [{params = [], asl = [], w = received}],
               store = store, level = 0}
-         fun forged _ =
+         fun forged _ _ =
            seq.result
              ([([], foreign)],
               fn _ => raise Fail "a rejected validation was called")
@@ -5942,11 +5955,11 @@ val _ =
              (witness, boolSyntax.mk_conj (witness, witness))
          val saw_marked_goal = ref false
 
-         fun observed_conjunction (goal as (_, conclusion)) =
+         fun observed_conjunction (goal as (_, conclusion)) ctxt =
            (if List.exists clasetMeta.is_meta (free_vars conclusion) then
               saw_marked_goal := true
             else ();
-            Tactic.CONJ_TAC goal)
+            Tactic.CONJ_TAC goal ctxt)
 
          val cs =
            clasetLib.add_safe_wrapper
@@ -6008,8 +6021,8 @@ val _ =
          val small_rule = DISCH small boolTheory.TRUTH
          val visited = ref ([] : term list)
 
-         fun observe base (goal as (_, target)) =
-           (visited := target :: !visited; base goal)
+         fun observe base (goal as (_, target)) ctxt =
+           (visited := target :: !visited; base goal ctxt)
 
          val plain_cs =
            clasetLib.add_intros
@@ -6347,6 +6360,7 @@ val _ =
            clasetReplay.BLAST_HYP_SUBST_TAC_AT
              {position = 1, changed = [false, true],
               side = clasetReplay.EliminateLeft} goal
+             (Context.snapshot())
          val expected = ([app q redex, app p x], app q redex)
          val child_ok =
            case children of
@@ -6375,7 +6389,7 @@ val _ =
          val qy = app q y
          val goal = ([equality, px, qy], qy)
          val (children, validation) =
-           clasetReplay.BLAST_HYP_SUBST_TAC goal
+           clasetReplay.BLAST_HYP_SUBST_TAC goal (Context.snapshot())
          val expected = ([app q redex, px], app q redex)
          val child_ok =
            case children of
@@ -6895,9 +6909,9 @@ local
          (boolSyntax.mk_eq (redex_g, mk_abs (redex_x, boolSyntax.T)),
           mk_comb (redex_g, redex_b))))
   fun closes tactic =
-    (Tactical.TAC_PROOF (redex_goal, tactic); true)
-    handle Interrupt => raise Interrupt
-         | _ => false
+    case SelfTestTactical.VALID tactic redex_goal (Context.snapshot()) of
+        ([], validation) => (ignore (validation []); true)
+      | _ => false
 in
 val _ =
   test
@@ -6919,9 +6933,9 @@ local
      boolSyntax.mk_forall
        (posed_b, mk_comb (mk_abs (posed_x, boolSyntax.T), posed_b)))
   fun closes tactic =
-    (Tactical.TAC_PROOF (posed_goal, tactic); true)
-    handle Interrupt => raise Interrupt
-         | _ => false
+    case SelfTestTactical.VALID tactic posed_goal (Context.snapshot()) of
+        ([], validation) => (ignore (validation []); true)
+      | _ => false
 in
 val _ =
   test

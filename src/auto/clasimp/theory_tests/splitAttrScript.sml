@@ -27,7 +27,7 @@ val excluded_goals =
   #1 (Tactical.VALID
         (SIMP_TAC (bool_ss ++ split_ss)
                   [Excl "split splitAttr$attr_pick_split"])
-        ([],split_goal))
+        ([],split_goal) (Context.snapshot()))
 val _ =
   case excluded_goals of
       [([],goal)] =>

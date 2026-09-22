@@ -58,7 +58,7 @@ fun accept_safe_transition
     {node=next, validation=validation'}
   end
 
-fun safe_saturate cs goal =
+fun safe_saturate cs goal _ =
   let
     val initial =
       {node = clasetGoal.from_goal goal,
@@ -71,7 +71,7 @@ fun safe_saturate cs goal =
     else seq.result (caller_result goal (goals, #validation final))
   end
 
-fun step_ntactic step cs goal =
+fun step_ntactic step cs goal _ =
   let
     val node = clasetGoal.from_goal goal
   in
@@ -90,13 +90,13 @@ fun CS_CLARIFY_TAC cs =
   NTactical.NCHANGED
     (NTactical.NREPEAT (CS_CLARIFY_STEP_TAC cs))
 
-fun replay_node original node =
+fun replay_node original node ctxt =
   let
     val grounded =
       clasetReplay.ground (clasetGoal.store node)
         (clasetGoal.replay node)
   in
-    seq.result (clasetReplay.REPLAY_TAC grounded original)
+    seq.result (clasetReplay.REPLAY_TAC grounded original ctxt)
   end
   handle HOL_ERR error =>
     let
@@ -108,11 +108,11 @@ fun replay_node original node =
       seq.empty
     end
 
-fun replay_step step cs goal =
+fun replay_step step cs goal ctxt =
   let val initial = clasetGoal.from_goal goal
   in
     seq.bind (step cs (initial, 1))
-      (fn (_, node) => replay_node goal node)
+      (fn (_, node) => replay_node goal node ctxt)
   end
 
 fun CS_STEP_TAC cs = replay_step clasetStep.step cs
@@ -168,12 +168,12 @@ fun safe_saturate_node cs initial =
 
 fun solved node = List.null (clasetGoal.goals node)
 
-fun solve search goal =
+fun solve search goal ctxt =
   let val initial = clasetGoal.from_goal goal
   in
     seq.bind (search initial)
       (fn node =>
-        if solved node then replay_node goal node else seq.empty)
+        if solved node then replay_node goal node ctxt else seq.empty)
   end
 
 fun depth_driver step cs =
@@ -200,7 +200,7 @@ fun CS_FIRST_BEST_TAC cs =
    after the bound was restored; DETERM forces the first solution here,
    inside the scope.  A search that reaches the bound reports no solution,
    which is failure, so a caller can offer the goal to another engine. *)
-fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal =
+fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal ctxt =
   let
     val () =
       if expansions >= 1 then ()
@@ -212,7 +212,7 @@ fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal =
     val saved = !clasetSearch.node_limit
     val () = clasetSearch.node_limit := expansions
     val result =
-      NTactical.DETERM (CS_FIRST_BEST_TAC cs) goal
+      NTactical.DETERM (CS_FIRST_BEST_TAC cs) goal ctxt
         handle e => (clasetSearch.node_limit := saved; raise e)
   in
     clasetSearch.node_limit := saved;

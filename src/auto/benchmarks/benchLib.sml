@@ -756,9 +756,9 @@ fun clean_simpset goal =
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
 
-fun preserve_target tactic (original as (_, target)) =
+fun preserve_target tactic (original as (_, target)) ctxt =
   let
-    val (goals, validation) = tactic original
+    val (goals, validation) = tactic original ctxt
     fun restore theorems =
       let
         val theorem = validation theorems
@@ -1733,7 +1733,7 @@ fun run_goal budget recipe (entry : corpus_goal) =
              (Tactical.THEN
                 (fix_parameters,
                  preserve_target (compile_recipe simpset entry recipe)))
-             ([], #goal entry) of
+             ([], #goal entry) (Context.snapshot()) of
           ([], validation) => (ignore (validation []); true)
         | (goals, _) =>
             (residual :=

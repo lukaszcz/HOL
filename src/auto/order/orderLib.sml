@@ -9,7 +9,7 @@ val ERR = mk_HOL_ERR "orderLib"
    premise, so a tactic that ignored them would decide nothing.  The
    prefix is stripped first, which is what puts the axioms of a goal
    stated as [!R. transitive R ==> ...] into the assumptions. *)
-fun solve theorems (asl, w) =
+fun solve theorems (asl, w) _ =
   ([], fn _ => orderSolve.prove_with (List.map ASSUME asl @ theorems) w)
 
 fun ORDER_TAC theorems =
@@ -17,7 +17,14 @@ fun ORDER_TAC theorems =
   REPEAT (DISCH_THEN STRIP_ASSUME_TAC) THEN
   solve theorems
 
-fun ORDER_PROVE tm = TAC_PROOF (([], tm), ORDER_TAC [])
+fun ORDER_PROVE tm =
+  let
+    val (goals, validation) =
+      Tactical.VALID (ORDER_TAC []) ([], tm) (Context.snapshot())
+  in
+    if null goals then validation []
+    else raise ERR "ORDER_PROVE" "unsolved goals"
+  end
 
 fun ORDER_CONV tm = EQT_INTRO (ORDER_PROVE tm)
 

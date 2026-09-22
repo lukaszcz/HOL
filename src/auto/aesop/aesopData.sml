@@ -81,7 +81,7 @@ fun derive_aesop_ss ss _ : cached_simpset =
      |> (fn ss' =>
           simpLib.++ (ss', simpLib.rewrites (aesop_simp_rewrites ())))}
 
-val {get = get_cached_aesop_ss, set = set_cached_aesop_ss} =
+val {get = get_cached_aesop_ss, get_of = _} =
   BasicProvers.make_simpset_derived_value
     "aesopData.aesop_ss"
     derive_aesop_ss
@@ -96,7 +96,6 @@ fun aesop_ss () =
     else
       let
         val fresh = derive_aesop_ss (BasicProvers.srw_ss ()) cached
-        val _ = set_cached_aesop_ss fresh
       in
         #simpset fresh
       end

@@ -110,7 +110,8 @@ val _ =
       ("ORDER_TAC takes the order and the facts from the assumptions",
        fn () =>
          let
-           val (remaining, validation) = Tactical.VALID (ORDER_TAC []) goal
+           val (remaining, validation) =
+             Tactical.VALID (ORDER_TAC []) goal (Context.snapshot())
          in
            List.null remaining andalso
            Term.aconv (Thm.concl (validation [])) (Lib.snd goal)
@@ -136,5 +137,5 @@ val _ =
                    (Tactical.THEN
                       (Tactical.REPEAT Tactic.STRIP_TAC,
                        simpLib.ASM_SIMP_TAC ss []))
-                   ([], goal)))
+                   ([], goal) (Context.snapshot())))
        end)

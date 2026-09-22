@@ -37,15 +37,15 @@ fun initial_tree goal =
   aesopTree.create
     {node = clasetGoal.from_goal goal, unsafe_cursor = []}
 
-fun close_raw function_name config claset simpset simp_controls goal =
+fun close_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
     val source = rule_source claset simpset simp_controls
   in
     case aesopSearch.search config source (initial_tree goal) of
         aesopSearch.SearchProved tree =>
-          aesopSearch.REPLAY_TAC tree goal
-      | aesopSearch.SearchFailed _ => Tactical.NO_TAC goal
+          aesopSearch.REPLAY_TAC tree goal ctxt
+      | aesopSearch.SearchFailed _ => Tactical.NO_TAC goal ctxt
   end
 
 fun singleton_replay store record =
@@ -100,7 +100,7 @@ fun safe_replay tree =
     replay_goal (aesopTree.root tree)
   end
 
-fun safe_raw function_name config claset simpset simp_controls goal =
+fun safe_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
     val source = rule_source claset simpset simp_controls
@@ -111,9 +111,9 @@ fun safe_raw function_name config claset simpset simp_controls goal =
         {max_depth = #max_depth config, rules = source} tree
     of
         aesopSearch.SafeSaturated saturated =>
-          safe_replay saturated goal
-      | aesopSearch.SafeDepthLimit _ => Tactical.NO_TAC goal
-      | aesopSearch.SafeNormalisationLimit _ => Tactical.NO_TAC goal
+          safe_replay saturated goal ctxt
+      | aesopSearch.SafeDepthLimit _ => Tactical.NO_TAC goal ctxt
+      | aesopSearch.SafeNormalisationLimit _ => Tactical.NO_TAC goal ctxt
   end
 
 fun changed tactic =
@@ -160,35 +160,29 @@ fun process_args body base_claset base_simpset =
     (SOME {base=base_simpset, extend=clasimpLib.extend_invocation})
 
 fun CS_AESOP_TAC config claset simpset =
-  Tactical.VALID
-    (close_raw "CS_AESOP_TAC" config claset simpset [])
+  close_raw "CS_AESOP_TAC" config claset simpset []
 
 fun CS_AESOP_SAFE_TAC config claset simpset =
-  Tactical.VALID
-    (changed
-      (safe_raw "CS_AESOP_SAFE_TAC" config claset simpset []))
+  changed (safe_raw "CS_AESOP_SAFE_TAC" config claset simpset [])
 
 (* The invocation context is read inside the goal abstraction, as
    clasimpLib's entry points read theirs.  A tactic value bound before a
    declaration -- [val TAC = AESOP_TAC []] at the head of a script -- must
    still use the claset and the aesop simpset current where it is applied,
    not the ones current where it was bound. *)
-fun AESOP_TAC theorems goal =
-  Tactical.VALID
-    (process_args
+fun AESOP_TAC theorems goal ctxt =
+  process_args
       (close_raw "AESOP_TAC" default_config)
       (clasetLib.the_claset ()) (aesopData.aesop_ss ())
-      theorems)
-    goal
+      theorems
+    goal ctxt
 
-fun AESOP_SAFE_TAC theorems goal =
-  Tactical.VALID
-    (changed
+fun AESOP_SAFE_TAC theorems goal ctxt =
+  changed
       (process_args
         (safe_raw "AESOP_SAFE_TAC" default_config)
         (clasetLib.the_claset ()) (aesopData.aesop_ss ())
-        theorems))
-    goal
+        theorems) goal ctxt
 
 fun augment_aesop {name, phase, tactic} =
   aesopRule.register_tactic_rule

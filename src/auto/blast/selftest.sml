@@ -1,6 +1,18 @@
 open HolKernel boolSyntax testutils blastTerm
 open clasetSeedTheory pred_setTheory
 
+structure SelfTestTactical = Tactical
+structure Tactical =
+struct
+  open SelfTestTactical
+  fun VALID tactic goal =
+    SelfTestTactical.VALID tactic goal (Context.snapshot())
+  fun TAC_PROOF (goal, tactic) =
+    case SelfTestTactical.VALID tactic goal (Context.snapshot()) of
+        ([], validation) => validation []
+      | _ => raise Fail "test proof left goals"
+end
+
 fun prove (proposition, tactic) =
   Tactical.TAC_PROOF (([], proposition), tactic)
   handle error =>
@@ -3065,7 +3077,7 @@ val _ =
              let
                val (validated, _) =
                  Tactical.VALID
-                   (fn _ =>
+                   (fn _ => fn _ =>
                      (before_goals, clasetStep.validation_of record))
                    goal
                val grounded =
@@ -3941,9 +3953,12 @@ val _ =
          fun rejected (marker, expected) =
            let
              val actions =
-               [fn () => ignore (tableauLib.BLAST_TAC [marker] goal),
+               [fn () =>
+                  ignore (tableauLib.BLAST_TAC [marker] goal
+                    (Context.snapshot())),
                 fn () =>
-                  ignore (tableauLib.BLAST_DEPTH_TAC 0 [marker] goal),
+                  ignore (tableauLib.BLAST_DEPTH_TAC 0 [marker] goal
+                    (Context.snapshot())),
                 fn () => ignore (tableauLib.tryIt 0 [marker] goal)]
            in
              List.all
@@ -4033,7 +4048,8 @@ val _ =
          val tactic =
            tableauLib.CS_BLAST_DEPTH_TAC clasetLib.empty_cs 0
          val message =
-           blast_error_message (fn () => ignore (tactic ([], stale)))
+           blast_error_message
+             (fn () => ignore (tactic ([], stale) (Context.snapshot())))
        in
          not (Term.uptodate_term stale) andalso
          (case message of

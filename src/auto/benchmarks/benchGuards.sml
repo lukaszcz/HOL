@@ -51,7 +51,7 @@ val recognition_budget = ref (Time.fromSeconds 2)
 fun closes tactic goal =
   let
     fun run () =
-      case Tactical.VALID tactic ([], goal) of
+      case Tactical.VALID tactic ([], goal) (Context.snapshot()) of
           ([], validation) => (ignore (validation []); true)
         | _ => false
   in

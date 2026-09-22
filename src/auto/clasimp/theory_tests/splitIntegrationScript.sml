@@ -23,7 +23,9 @@ val _ =
   else fail "[split] theorem is absent from split_thms"
 
 fun check_typebase_split label goal =
-  case #1 (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([], goal)) of
+  case #1
+         (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([], goal)
+            (Context.snapshot())) of
       [([], result)] =>
         if not (aconv result goal) andalso
            not (can (find_term TypeBase.is_case) result)

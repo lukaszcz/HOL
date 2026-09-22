@@ -925,11 +925,11 @@ fun extract tree =
     clasetReplay.ground covering_store script
   end
 
-fun REPLAY_TAC tree goal =
+fun REPLAY_TAC tree goal ctxt =
   let
     val grounded = extract tree
     val result as (goals, _) =
-      Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
+      Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal ctxt
     val _ =
       if null goals then ()
       else

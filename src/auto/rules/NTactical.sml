@@ -5,23 +5,23 @@ open Abbrev
 
 
 type nresult = goal list * validation
-type ntactic = goal -> nresult seq.seq
+type ntactic = goal -> Context.t -> nresult seq.seq
 type wrapper = ntactic -> ntactic
 
-fun LIFT tac g =
+fun LIFT tac g ctxt =
   seq.delay
     (fn () =>
-       seq.result (tac g) handle Feedback.HOL_ERR _ => seq.empty)
+       seq.result (tac g ctxt) handle Feedback.HOL_ERR _ => seq.empty)
 
-fun DETERM ntac g =
-  case seq.cases (ntac g) of
-      NONE => Tactical.NO_TAC g
+fun DETERM ntac g ctxt =
+  case seq.cases (ntac g ctxt) of
+      NONE => Tactical.NO_TAC g ctxt
     | SOME (result, _) => result
 
-val NNO_TAC : ntactic = fn _ => seq.empty
+val NNO_TAC : ntactic = fn _ => fn _ => seq.empty
 val NALL_TAC : ntactic = LIFT Tactical.ALL_TAC
 
-fun NTHEN (tac1, tac2) g =
+fun NTHEN (tac1, tac2) g ctxt =
   let
     fun all_goals ([] : goal list) :
           (goal list * int list * validation list) seq.seq =
@@ -29,7 +29,7 @@ fun NTHEN (tac1, tac2) g =
       | all_goals (g0 :: gs0) =
           seq.delay
             (fn () =>
-               seq.bind (tac2 g0)
+               seq.bind (tac2 g0 ctxt)
                  (fn (gs1, v1) =>
                     seq.map
                       (fn (gs2, lengths, vs) =>
@@ -38,7 +38,7 @@ fun NTHEN (tac1, tac2) g =
   in
     seq.delay
       (fn () =>
-         seq.bind (tac1 g)
+         seq.bind (tac1 g ctxt)
            (fn (gs, v) =>
               seq.map
                 (fn (gs', lengths, vs) =>
@@ -46,21 +46,22 @@ fun NTHEN (tac1, tac2) g =
                 (all_goals gs)))
   end
 
-fun NORELSE (tac1, tac2) g =
+fun NORELSE (tac1, tac2) g ctxt =
   seq.delay
     (fn () =>
-       case seq.cases (tac1 g) of
-           NONE => tac2 g
+       case seq.cases (tac1 g ctxt) of
+           NONE => tac2 g ctxt
          | SOME (result, rest) => seq.cons result rest)
 
-fun NAPPEND (tac1, tac2) g =
-  seq.append (seq.delay (fn () => tac1 g)) (seq.delay (fn () => tac2 g))
+fun NAPPEND (tac1, tac2) g ctxt =
+  seq.append (seq.delay (fn () => tac1 g ctxt))
+             (seq.delay (fn () => tac2 g ctxt))
 
 fun NTRY tac = NORELSE (tac, NALL_TAC)
 
 fun NREPEAT tac = LIFT (Tactical.REPEAT (DETERM tac))
 
-fun NCHANGED tac g =
+fun NCHANGED tac g ctxt =
   seq.delay
     (fn () =>
        seq.filter
@@ -68,7 +69,7 @@ fun NCHANGED tac g =
             case gs of
                 [g'] => not (boolSyntax.goal_eq g g')
               | _ => true)
-         (tac g))
+         (tac g ctxt))
 
 fun NFIRST [] = NNO_TAC
   | NFIRST (tac :: tacs) = NORELSE (tac, NFIRST tacs)

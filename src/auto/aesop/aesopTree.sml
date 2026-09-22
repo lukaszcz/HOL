@@ -335,7 +335,7 @@ fun rendered_results tactic node =
         Option.map
           (fn (record, next) => ([record], next))
           (rendered_record node rendered result))
-      (tactic rendered)
+      (tactic rendered (Context.snapshot()))
   end
 
 (* One reading of a rule's alternatives for both engine phases: [aesopNorm]

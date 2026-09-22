@@ -138,7 +138,7 @@ fun assumption_thm store asm target =
     restore_target "ASSUMPTION_TAC" target target' closing
   end
 
-fun ASSUMPTION_TAC store pos (asl, w) =
+fun ASSUMPTION_TAC store pos (asl, w) _ =
   let
     val asm = nth1 "ASSUMPTION_TAC" asl pos
     fun validation [] = assumption_thm store asm w
@@ -149,7 +149,7 @@ fun ASSUMPTION_TAC store pos (asl, w) =
     ([], validation)
   end
 
-fun CONTRADICTION_TAC store (negative_pos, positive_pos) (asl, w) =
+fun CONTRADICTION_TAC store (negative_pos, positive_pos) (asl, w) _ =
   let
     val negative = nth1 "CONTRADICTION_TAC" asl negative_pos
     val positive = nth1 "CONTRADICTION_TAC" asl positive_pos
@@ -174,7 +174,7 @@ fun CONTRADICTION_TAC store (negative_pos, positive_pos) (asl, w) =
     ([], validation)
   end
 
-fun MP_TAC store {implication, antecedent} (asl, w) =
+fun MP_TAC store {implication, antecedent} (asl, w) _ =
   let
     val implication_tm = nth1 "MP_TAC" asl implication
     val antecedent_tm = nth1 "MP_TAC" asl antecedent
@@ -449,10 +449,10 @@ fun ordinary_rule_children parent_asl premises eigenvariables =
       rule_child parent_asl premise names)
     (premises, eigenvariables)
 
-fun RULE_TAC fields =
-  rule_tac_with "RULE_TAC" ordinary_rule_children fields
+fun RULE_TAC fields goal _ =
+  rule_tac_with "RULE_TAC" ordinary_rule_children fields goal
 
-fun FORWARD_RULE_TAC {theorem, immediate, assumptions} (asl, w) =
+fun FORWARD_RULE_TAC {theorem, immediate, assumptions} (asl, w) _ =
   let
     val function_name = "FORWARD_RULE_TAC"
     val rule0 = normalize_rule_thm theorem
@@ -514,9 +514,10 @@ fun BLAST_RULE_TAC
         raise mk_HOL_ERR "clasetReplay" "BLAST_RULE_TAC"
           "recorded prefix-descriptor arity is corrupt"
   in
-    rule_tac_with "BLAST_RULE_TAC" make_children
-      {theorem = theorem, elim = elim, consumed = consumed,
-       parameters = parameters, eigenvariables = eigenvariables}
+    fn goal => fn _ =>
+      rule_tac_with "BLAST_RULE_TAC" make_children
+        {theorem = theorem, elim = elim, consumed = consumed,
+         parameters = parameters, eigenvariables = eigenvariables} goal
   end
 
 val HYP_SUBST_TAC =
@@ -591,7 +592,7 @@ fun single_theorem function_name [theorem] = theorem
       raise mk_HOL_ERR "clasetReplay" function_name
         "validation received the wrong number of theorems"
 
-fun claset_hyp_subst_once (DeleteReflexive position) (asl, w) =
+fun claset_hyp_subst_once (DeleteReflexive position) (asl, w) _ =
       let
         val equality = nth1 "CLASET_HYP_SUBST_TAC_AT" asl position
         val reflexive =
@@ -608,7 +609,7 @@ fun claset_hyp_subst_once (DeleteReflexive position) (asl, w) =
       in
         ([child], validation)
       end
-  | claset_hyp_subst_once (SubstituteAt {position, side}) (asl, w) =
+  | claset_hyp_subst_once (SubstituteAt {position, side}) (asl, w) ctxt =
       let
         val equality = nth1 "CLASET_HYP_SUBST_TAC_AT" asl position
         val equality_thm =
@@ -623,27 +624,28 @@ fun claset_hyp_subst_once (DeleteReflexive position) (asl, w) =
                   "recorded assumption is not a substitutable equality"
       in
         Tactic.SUBST_ALL_TAC equality_thm
-          (delete_nth "CLASET_HYP_SUBST_TAC_AT" asl position, w)
+          (delete_nth "CLASET_HYP_SUBST_TAC_AT" asl position, w) ctxt
       end
 
-fun claset_hyp_subst_along function_name [] goal =
+fun claset_hyp_subst_along function_name [] goal _ =
       ([goal], single_theorem function_name)
-  | claset_hyp_subst_along function_name (elimination :: rest) goal =
+  | claset_hyp_subst_along function_name (elimination :: rest) goal ctxt =
       let
-        val (children, validation) = claset_hyp_subst_once elimination goal
+        val (children, validation) =
+          claset_hyp_subst_once elimination goal ctxt
         val child = single_child function_name children
         val (goals, residual) =
-          claset_hyp_subst_along function_name rest child
+          claset_hyp_subst_along function_name rest child ctxt
       in
         (goals, fn theorems => validation [residual theorems])
       end
 
-fun CLASET_HYP_SUBST_TAC_AT eliminations goal =
+fun CLASET_HYP_SUBST_TAC_AT eliminations goal ctxt =
   if List.null eliminations then
     raise mk_HOL_ERR "clasetReplay" "CLASET_HYP_SUBST_TAC_AT"
       "the recorded step eliminates nothing"
   else
-    claset_hyp_subst_along "CLASET_HYP_SUBST_TAC_AT" eliminations goal
+    claset_hyp_subst_along "CLASET_HYP_SUBST_TAC_AT" eliminations goal ctxt
 
 fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
   let
@@ -655,7 +657,7 @@ fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
         | SOME elimination =>
             let
               val (children, validation) =
-                claset_hyp_subst_once elimination goal
+                claset_hyp_subst_once elimination goal (Context.snapshot())
               val child =
                 single_child "COMPUTE_CLASET_HYP_SUBST_TAC" children
               val (rest, (goals, residual)) = saturate child
@@ -731,7 +733,7 @@ fun blast_hyp_orientation equality =
     | SOME (_, old, replacement, equality_thm) =>
         SOME (old, replacement, equality_thm)
 
-fun blast_hyp_subst_tac_at position recorded (asl, w) =
+fun blast_hyp_subst_tac_at position recorded (asl, w) ctxt =
   let
     val equality = nth1 "BLAST_HYP_SUBST_TAC_AT" asl position
     val recorded_changed = Option.map #changed recorded
@@ -771,7 +773,7 @@ fun blast_hyp_subst_tac_at position recorded (asl, w) =
     val target_equality = normalize_conv w
     val normalized_target = rhs (concl target_equality)
     val (children, validation0) =
-      Tactic.SUBST_ALL_TAC equality_thm (remaining, w)
+      Tactic.SUBST_ALL_TAC equality_thm (remaining, w) ctxt
     val _ =
       case children of
           [_] => ()
@@ -802,20 +804,20 @@ fun blast_hyp_subst_tac_at position recorded (asl, w) =
      ([(reordered, target)], validation))
   end
 
-fun BLAST_HYP_SUBST_TAC_AT {position, changed, side} goal =
+fun BLAST_HYP_SUBST_TAC_AT {position, changed, side} goal ctxt =
   #2 (blast_hyp_subst_tac_at position
-        (SOME {changed = changed, side = side}) goal)
+        (SOME {changed = changed, side = side}) goal ctxt)
 
 fun COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal =
-  blast_hyp_subst_tac_at position NONE goal
+  blast_hyp_subst_tac_at position NONE goal (Context.snapshot())
 
-fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) =
+fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) ctxt =
   let
     fun first _ [] =
           raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
             "no suitable equality assumption"
       | first position (_ :: rest) =
-          (#2 (COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal)
+          (#2 (blast_hyp_subst_tac_at position NONE goal ctxt)
            handle HOL_ERR _ => first (position + 1) rest)
   in
     first 1 asl
@@ -837,10 +839,10 @@ fun eta_forall_predicate tm =
            | NONE => NONE)
     | _ => NONE
 
-fun GEN_NAMED_TAC name (asl, w) =
+fun GEN_NAMED_TAC name (asl, w) ctxt =
   case total dest_forall w of
       SOME (bound, _) =>
-        Tactic.X_GEN_TAC (mk_var (name, type_of bound)) (asl, w)
+        Tactic.X_GEN_TAC (mk_var (name, type_of bound)) (asl, w) ctxt
     | NONE =>
         (case eta_forall_predicate w of
              NONE =>
@@ -885,7 +887,7 @@ end
    eigenvariable, never a universal the goal still carries -- so the
    split is a case analysis on the parameter, and it has to reach the
    assumptions it was stripped alongside. *)
-fun SPLIT_PAIRED_VAR_TAC {variable, left, right} (goal as (asl, w)) =
+fun SPLIT_PAIRED_VAR_TAC {variable, left, right} (goal as (asl, w)) ctxt =
   let
     val target =
       case List.find (fn free => fst (dest_var free) = variable)
@@ -901,11 +903,12 @@ fun SPLIT_PAIRED_VAR_TAC {variable, left, right} (goal as (asl, w)) =
       (Thm_cont.X_CHOOSE_THEN (mk_var (right, second_type))
         Tactic.SUBST_ALL_TAC)
       (Drule.ISPEC target pairTheory.ABS_PAIR_THM) goal
+      ctxt
   end
 
 val GOAL_NEGATION_TAC = Tactic.CCONTR_TAC
 
-fun SWAPPED_BUILTIN_TAC _ pos (asl, w) =
+fun SWAPPED_BUILTIN_TAC _ pos (asl, w) _ =
   let
     val negative = nth1 "SWAPPED_BUILTIN_TAC" asl pos
     val positive = dest_neg negative
@@ -927,7 +930,7 @@ fun SWAPPED_BUILTIN_TAC _ pos (asl, w) =
     ([child], validation)
   end
 
-fun NORMALIZED_SWAPPED_BUILTIN_TAC _ pos (asl, w) =
+fun NORMALIZED_SWAPPED_BUILTIN_TAC _ pos (asl, w) _ =
   let
     fun normalize tm = rhs (concl (normalize_conv tm))
 
@@ -974,7 +977,7 @@ fun NORMALIZED_SWAPPED_BUILTIN_TAC _ pos (asl, w) =
     ([child], validation)
   end
 
-fun MOVE_ASSUMPTION_TO_BACK_TAC pos (asl, w) =
+fun MOVE_ASSUMPTION_TO_BACK_TAC pos (asl, w) _ =
   let
     val selected = nth1 "MOVE_ASSUMPTION_TO_BACK_TAC" asl pos
     val rest = delete_nth "MOVE_ASSUMPTION_TO_BACK_TAC" asl pos
@@ -1034,7 +1037,7 @@ fun move_assumption_to_back_action pos _ =
    the covering store already has to both the children and a theorem schema
    for the validation.  The schema makes instantiation happen before the
    opaque closure consumes the replayed child theorems. *)
-fun grounded_fixed_action (goals, validation) store _ =
+fun grounded_fixed_action (goals, validation) store _ _ =
   let
     fun ground_goal (child_asl, child_w) =
       (map (clasetMeta.norm store) child_asl,
@@ -1074,14 +1077,15 @@ fun grounded_fixed_action (goals, validation) store _ =
     (map ground_goal goals, ground_validation)
   end
 
-fun fixed_action_on recorded result store current =
+fun fixed_action_on recorded result store current ctxt =
   if boolSyntax.goal_eq recorded current then result
-  else grounded_fixed_action result store current
+  else grounded_fixed_action result store current ctxt
 
 (* Compatibility for callers that did not record the wrapper's input.  A
    marked direct replay keeps the symbolic result, as it did historically;
    complete engine records use [fixed_action_on]. *)
-fun fixed_action (result as (goals, validation)) store (goal as (asl, w)) =
+fun fixed_action (result as (goals, validation)) store
+    (goal as (asl, w)) ctxt =
   let
     val input_terms = w :: asl
     val marked_input =
@@ -1090,7 +1094,7 @@ fun fixed_action (result as (goals, validation)) store (goal as (asl, w)) =
         (List.concat (map type_vars_in_term input_terms))
   in
     if marked_input then result
-    else grounded_fixed_action (goals, validation) store goal
+    else grounded_fixed_action (goals, validation) store goal ctxt
   end
 
 fun empty count =
@@ -1251,16 +1255,17 @@ fun replay_option _ NONE goal = ([goal], fn [th] => th | _ =>
            the entry reduced the caller's terms.  The step's proof is
            restated in the replay goal's own spelling before its validity
            is judged, as [clasetStep.aligned_result] restates a child's. *)
-        fun aligned_action replay_goal =
+        fun aligned_action replay_goal _ =
           let
-            val (children, validation) = action_of record store replay_goal
+            val (children, validation) =
+              action_of record store replay_goal (Context.snapshot())
           in
             (children,
              fn theorems =>
                clasetNorm.align_goal replay_goal (validation theorems))
           end
         val (children, parent_validation) =
-          Tactical.VALID aligned_action goal
+          Tactical.VALID aligned_action goal (Context.snapshot())
           handle error =>
             raise ReplayError (record, goal, Feedback.exn_to_string error)
         val subtrees = children_of record
@@ -1349,7 +1354,7 @@ fun goal_string (asl, w) =
     "[" ^ assumptions ^ "] ?- " ^ Parse.term_to_string w
   end
 
-fun REPLAY_TAC grounded goal =
+fun REPLAY_TAC grounded goal _ =
   case replay grounded goal of
       Replayed result => result
     | ReplayFailed

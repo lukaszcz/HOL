@@ -3,7 +3,7 @@ sig
   include Abbrev
 
   type nresult = goal list * validation
-  type ntactic = goal -> nresult seq.seq
+  type ntactic = goal -> Context.t -> nresult seq.seq
   type wrapper = ntactic -> ntactic
 
   val LIFT : tactic -> ntactic

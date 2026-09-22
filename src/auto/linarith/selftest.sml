@@ -1228,7 +1228,10 @@ fun tactic_replay_succeeds config assumptions conclusion =
   (case linarithReplay.refute config assumptions conclusion of
        NONE => false
      | SOME tactic =>
-         null (#1 (Tactical.VALID tactic (assumptions, conclusion))))
+         null
+           (#1
+              (Tactical.VALID tactic (assumptions, conclusion)
+                (Context.snapshot()))))
   handle Feedback.HOL_ERR _ => false
 
 val _ =
@@ -1631,7 +1634,7 @@ val _ =
            ((ignore
                (Tactical.VALID
                  (linarithLib.SIMPLE_LINARITH_TAC [])
-                 ([], min_le_left));
+                 ([], min_le_left) (Context.snapshot()));
              false)
             handle Feedback.HOL_ERR _ => true)
        in
@@ -1901,7 +1904,8 @@ val _ =
            List.length (linarithData.injections ())
          val failed =
            ((ignore
-               (linarithLib.SIMPLE_LINARITH_TAC [] ([], nonlinear_goal));
+               (linarithLib.SIMPLE_LINARITH_TAC [] ([], nonlinear_goal)
+                  (Context.snapshot()));
              false)
             handle Feedback.HOL_ERR _ => true)
        in
@@ -1957,15 +1961,17 @@ val _ =
        List.all has_unregistered_message
          [fn () =>
             ignore
-              (linarithLib.LINARITH_TAC [] ([], unregistered_goal)),
+              (linarithLib.LINARITH_TAC [] ([], unregistered_goal)
+                (Context.snapshot())),
           fn () =>
             ignore
               (linarithLib.SIMPLE_LINARITH_TAC []
-                ([], unregistered_goal)),
+                ([], unregistered_goal) (Context.snapshot())),
           fn () =>
             ignore
               (linarithLib.CFG_LINARITH_TAC
-                linarithLib.default_config [] ([], unregistered_goal)),
+                linarithLib.default_config [] ([], unregistered_goal)
+                (Context.snapshot())),
           fn () => ignore (linarithLib.LINARITH_PROVE unregistered_goal),
           fn () => ignore (linarithLib.LINARITH_CONV unregistered_goal)])
 
@@ -2521,7 +2527,9 @@ val equivalence_fact_instance =
    budget reports the limit, and a search that alternated for ever
    reports nothing at all. *)
 fun reports_no_proof tm =
-  ((ignore (linarithLib.LINARITH_TAC [] ([], tm)); false)
+  ((ignore
+      (linarithLib.LINARITH_TAC [] ([], tm) (Context.snapshot()));
+    false)
    handle Feedback.HOL_ERR error =>
      Feedback.message_of error = "linear arithmetic found no proof")
 

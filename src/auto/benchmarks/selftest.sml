@@ -1,5 +1,24 @@
 open HolKernel testutils
 
+(* Preserve the historical convenience shape used by these checks while
+   the tactic kernel carries an explicit context. *)
+structure SelfTestTactical = Tactical
+structure Tactical =
+struct
+  open SelfTestTactical
+  fun VALID tactic goal =
+    SelfTestTactical.VALID tactic goal (Context.snapshot())
+  fun TAC_PROOF (goal, tactic) =
+    let
+      val (goals, validation) =
+        SelfTestTactical.VALID tactic goal (Context.snapshot())
+    in
+      if null goals then validation []
+      else raise Fail "unsolved goals"
+    end
+  fun prove (term, tactic) = TAC_PROOF (([], term), tactic)
+end
+
 fun check (name, predicate) =
   (tprint name;
    if predicate () then OK () else die "failed")

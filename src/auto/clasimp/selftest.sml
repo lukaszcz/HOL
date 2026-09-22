@@ -1,4 +1,12 @@
 open HolKernel testutils
+
+structure SelfTestTactical = Tactical
+structure Tactical =
+struct
+  open SelfTestTactical
+  fun VALID tactic goal =
+    SelfTestTactical.VALID tactic goal (Context.snapshot())
+end
 open listTheory optionTheory pred_setTheory
 
 (* check, residual, valid_closes and tactic_fails come from
@@ -2398,6 +2406,7 @@ val _ =
              [membership_condition_rule]
              ([``~(?i. MEM i (as:'a list) /\ ~q i)``],
               ``walk (as:'a list) = as``)
+             (Context.snapshot())
        in
          null subgoals
        end)
@@ -2466,6 +2475,7 @@ val _ =
          val (subgoals, _) =
            clasimpLib.asm_full_simp (clasimpLib.clasimp_ss ())
              [replicate_set_rule] supplied_subterm_goal
+             (Context.snapshot())
        in
          null subgoals
        end)

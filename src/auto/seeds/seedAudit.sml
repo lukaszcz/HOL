@@ -170,7 +170,8 @@ fun run_tactic budget timer name tactic term =
          (fn () =>
            let
              val started = Timer.startRealTimer ()
-             val (goals, validation) = Tactical.VALID tactic ([], term)
+             val (goals, validation) =
+               Tactical.VALID tactic ([], term) (Context.snapshot())
              val elapsed = Timer.checkRealTimer started
            in
              if null goals then SOME (name, elapsed, validation []) else NONE

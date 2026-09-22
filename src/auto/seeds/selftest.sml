@@ -220,7 +220,7 @@ val _ =
        end)
 
 fun solved tactic goal =
-  case Tactical.VALID tactic ([], goal) of
+  case Tactical.VALID tactic ([], goal) (Context.snapshot()) of
       ([], validation) => (ignore (validation []); true)
     | _ => false
 
@@ -467,7 +467,8 @@ fun within seconds interpret tactic goal =
   interpret
     (Timeout.apply (Time.fromSeconds seconds)
       (fn () =>
-        SOME (Tactical.VALID tactic goal) handle HOL_ERR _ => NONE) ())
+        SOME (Tactical.VALID tactic goal (Context.snapshot()))
+          handle HOL_ERR _ => NONE) ())
   handle Timeout.TIMEOUT _ => false
 
 fun closes_within seconds =

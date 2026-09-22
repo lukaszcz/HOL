@@ -5,6 +5,11 @@ open Abbrev HolKernel Drule
 
 val ERR = mk_HOL_ERR "linarithLib"
 
+fun prove (term, tactic) =
+  case Tactical.VALID tactic ([], term) (Context.snapshot()) of
+      ([], validation) => validation []
+    | _ => raise ERR "prove" "load-time proof left goals"
+
 val same_type = linarithData.same_type
 
 fun relation_carrier tm =
@@ -141,9 +146,9 @@ fun exhausted function hint (assumptions, conclusion) =
    linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
    no_proof function hint)
 
-fun core function hint config goal =
+fun core function hint config goal ctxt =
   case refutation config goal of
-      SOME tactic => tactic goal
+      SOME tactic => tactic goal ctxt
     | NONE => exhausted function hint goal
 
 (* Everything the session owns -- the [arith] table here, and the
@@ -162,13 +167,13 @@ fun SIMPLE_LINARITH_TAC arguments =
     val function = "SIMPLE_LINARITH_TAC"
     val argument_facts = map (simple_argument function) arguments
   in
-    fn goal =>
+    fn goal => fn ctxt =>
       Tactical.THEN
         (clasetLib.INSERT_FACTS_TAC
            (linarithData.arith_facts () @ argument_facts),
          fn inner as (_, conclusion) =>
            core function (unregistered_hint conclusion)
-             linarithData.default_config inner) goal
+             linarithData.default_config inner) goal ctxt
   end
 
 fun has_registered_subterm tm =
@@ -238,7 +243,7 @@ fun shell_relevant tm =
    have closed the goal.  That is what the opposite_tac step at the
    entry point below is for; the one inside nnf_flatten sees only what
    survived here. *)
-fun filter_relevant (assumptions, conclusion) =
+fun filter_relevant (assumptions, conclusion) _ =
   let
     val filtered = List.filter shell_relevant assumptions
     fun validate [theorem] = theorem
@@ -279,7 +284,7 @@ val carrier_nnf_rule =
       Rewrite.GEN_REWRITE_RULE Conv.TOP_DEPTH_CONV Rewrite.bool_rewrites
         (carrier_nnf_rewrites ()))
 
-fun opposite_tac (assumptions, conclusion) =
+fun opposite_tac (assumptions, conclusion) ctxt =
   let
     fun contradiction [] = NONE
       | contradiction (assumption :: rest) =
@@ -292,11 +297,11 @@ fun opposite_tac (assumptions, conclusion) =
              | NONE => contradiction rest)
   in
     if List.exists (Term.aconv boolSyntax.F) assumptions then
-      Tactic.ACCEPT_TAC (ASSUME boolSyntax.F) (assumptions, conclusion)
+      Tactic.ACCEPT_TAC (ASSUME boolSyntax.F) (assumptions, conclusion) ctxt
     else
       case contradiction assumptions of
           SOME theorem =>
-            Tactic.CONTR_TAC theorem (assumptions, conclusion)
+            Tactic.CONTR_TAC theorem (assumptions, conclusion) ctxt
         | NONE => raise ERR "opposite_tac" "no immediate contradiction"
   end
 
@@ -317,7 +322,7 @@ val strip_literals =
    carrier rule is a parameter because building it reads the registry
    and builds a rewrite net; the search runs this at every node of a
    tree over one fixed registry. *)
-fun nnf_flatten carrier_rule goal =
+fun nnf_flatten carrier_rule goal ctxt =
   let
     val nnf_rule = carrier_rule o Conv.CONV_RULE normalForms.NNF_CONV
   in
@@ -325,7 +330,7 @@ fun nnf_flatten carrier_rule goal =
       (Tactical.POP_ASSUM_LIST
          (fn theorems =>
            Tactical.MAP_EVERY (strip_literals o nnf_rule) theorems),
-       Tactical.TRY opposite_tac) goal
+       Tactical.TRY opposite_tac) goal ctxt
   end
 
 fun limit_exceeded function limit =
@@ -470,14 +475,14 @@ fun literal_bounds instance operator tm (left, right) =
         (left, right)
       else
         (right, left)
-    fun ground relation goal =
+    fun ground relation goal ctxt =
       Tactic.ACCEPT_TAC
-        (EQT_ELIM (Conv.QCONV (#norm_conv instance) relation)) goal
+        (EQT_ELIM (Conv.QCONV (#norm_conv instance) relation)) goal ctxt
     val branches =
       [leq (lower, left), leq (lower, right),
        leq (left, upper), leq (right, upper)]
     fun bound relation =
-      Tactical.prove
+      prove
         (relation,
          Tactical.THEN
            (Tactic.COND_CASES_TAC, Tactical.FIRST (map ground branches)))
@@ -800,48 +805,50 @@ fun split_on_demand function config split_tac =
        and the generic implication expansion would introduce a third live
        case before the next operator.  That branch-count boundary is the
        threshold for the direct binary path. *)
-    fun has_successor_split (goals, _) =
-      List.exists (Lib.can split_tac) goals
+    fun has_successor_split ctxt (goals, _) =
+      List.exists (Lib.can (fn goal => split_tac goal ctxt)) goals
 
-    fun node hint spent goal =
+    fun node hint spent goal ctxt =
       (note_search Node;
-       Tactical.THEN (flatten, decide hint spent) goal)
-    and open_node hint spent goal =
+       Tactical.THEN (flatten, decide hint spent) goal ctxt)
+    and open_node hint spent goal ctxt =
       (note_search Node;
        case Lib.total
               (complementary_implications_tac config complement_cache) goal of
            SOME split =>
              (note_search DisjunctionSplit;
-              expand node hint spent split)
-         | NONE => Tactical.THEN (flatten, branch hint spent) goal)
-    and decide hint spent goal =
+              expand node hint spent split ctxt)
+         | NONE => Tactical.THEN (flatten, branch hint spent) goal ctxt)
+    and decide hint spent goal ctxt =
       (note_search Refutation;
        case refutation config goal of
-          SOME tactic => tactic goal
-        | NONE => branch hint spent goal)
-    and branch hint (spent as {splits, augmentations, processed}) goal =
+          SOME tactic => tactic goal ctxt
+        | NONE => branch hint spent goal ctxt)
+    and branch hint (spent as {splits, augmentations, processed}) goal ctxt =
       case Lib.total (disj_elim_tac config) (connected_split_goal goal) of
           SOME split =>
             (note_search DisjunctionSplit;
-             expand node hint spent split)
+             expand node hint spent split ctxt)
         | NONE =>
-            (case Lib.total split_tac (connected_split_goal goal) of
+            (case Lib.total (fn split_goal => split_tac split_goal ctxt)
+                    (connected_split_goal goal) of
                  SOME split =>
                    if splits >= limit then limit_exceeded function limit
                    else
                      let
                        val continue =
-                         if has_successor_split split then open_node else node
+                         if has_successor_split ctxt split then open_node
+                         else node
                      in
                        note_search OperatorSplit;
                        expand continue hint
                          {splits = splits + 1,
                           augmentations = augmentations,
-                          processed = processed} split
+                          processed = processed} split ctxt
                      end
-               | NONE => augment hint spent goal)
+               | NONE => augment hint spent goal ctxt)
     and augment hint {splits, augmentations, processed}
-                (goal as (assumptions, _)) =
+                (goal as (assumptions, _)) ctxt =
       let
         val (processed', facts) =
           augmentation function limit processed assumptions
@@ -860,19 +867,19 @@ fun split_on_demand function config split_tac =
                  decide hint
                    {splits = splits,
                     augmentations = augmentations + 1,
-                    processed = processed'})) goal)
+                    processed = processed'})) goal ctxt)
       end
-    and expand continue hint spent (goals, validation) =
+    and expand continue hint spent (goals, validation) ctxt =
       let
         val (result, revalidation) =
-          Tactical.ALLGOALS (continue hint spent) goals
+          Tactical.ALLGOALS (continue hint spent) goals ctxt
       in
         (result, validation o revalidation)
       end
   in
-    fn hint => fn goal =>
+    fn hint => fn goal => fn ctxt =>
       (last_search_stats_ref := empty_search_stats;
-       node hint start goal)
+       node hint start goal ctxt)
   end
 
 type linarith_config = linarithData.linarith_config
@@ -885,7 +892,7 @@ fun CFG_LINARITH_TAC config arguments =
       full_arguments function arguments
     val split_tac = split_tactic argument_splits
   in
-    fn goal =>
+    fn goal => fn ctxt =>
       Tactical.THEN
         (clasetLib.INSERT_FACTS_TAC
            (linarithData.arith_facts () @ argument_facts),
@@ -901,7 +908,7 @@ fun CFG_LINARITH_TAC config arguments =
                    Tactical.THEN
                      (filter_relevant,
                       search (unregistered_hint conclusion)))) inner
-         end) goal
+         end) goal ctxt
   end
 
 val LINARITH_TAC = CFG_LINARITH_TAC default_config
@@ -956,7 +963,8 @@ fun forward_prove premises conclusion =
     val premise_theorems = atomized_assumptions premises
     val premise_terms = map Thm.concl premise_theorems
     val outcome =
-      SOME (forward_search conclusion (premise_terms, conclusion))
+      SOME (forward_search conclusion (premise_terms, conclusion)
+        (Context.snapshot()))
       handle exn =>
         if exhausted_search exn then NONE else raise exn
     val theorem =

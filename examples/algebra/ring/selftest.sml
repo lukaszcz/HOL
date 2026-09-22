@@ -81,7 +81,7 @@ val _ = List.app (rule_test RING_RULE) [
       ];
 
 fun tactic_solves tactic goal =
-  (null (#1 (Tactical.VALID tactic ([], goal)))
+  (null (#1 (Tactical.VALID tactic ([], goal) (Context.snapshot())))
    handle HOL_ERR _ => false)
 
 val explicit_identity =
