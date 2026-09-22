@@ -4,6 +4,15 @@
 
 structure SolverSpec = struct
 
+  (* Solver translation runs a sizeable amount of ordinary HOL machinery.
+     Its messages and warnings are implementation details of the SMT
+     backend, not diagnostics for a tactic user.  Keep this helper local to
+     the solver boundary so the public HOL feedback settings are restored on
+     both success and failure. *)
+  fun quiet f x =
+    Feedback.quiet_messages
+      (fn () => Feedback.quiet_warnings (fn () => f x) ()) ()
+
   datatype result = SAT of string option  (* model, should perhaps be a thm *)
                   | UNSAT of Thm.thm option  (* assumptions |- conclusion *)
                   | UNKNOWN of string option  (* reason for failure *)
@@ -72,7 +81,7 @@ structure SolverSpec = struct
   fn goal => SmtResource.with_e0_invocation (fn goal =>
   let
     (* call 'pre goal' to generate SMT solver input *)
-    val (x, inputs) = pre goal
+    val (x, inputs) = quiet pre goal
     val cmd_stem = command_stem x
     val infile = FileSys.tmpName ()
     val outfile = FileSys.tmpName ()

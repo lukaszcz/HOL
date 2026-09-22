@@ -380,6 +380,10 @@ structure Z3 = struct
        "Z3 command: " ^ command_string cmd_stem ^ "\n" ^
        "underlying HOL_ERR: " ^ hol_err_string holerr)
 
+  fun quiet f =
+    Feedback.quiet_messages
+      (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()
+
   val unsupported_proof_symbol_diagnostic =
     "Z3_PROOF_SYMBOL_UNSUPPORTED"
 
@@ -532,24 +536,34 @@ structure Z3 = struct
                   SolverSpec.UNSAT NONE =>
                   let
                     val (As, g) = goal
-                    val proof = parse_proof proof_start
-                    val thm = SmtResource.profile_phase "z3/replay"
-                      (Z3_ProofReplay.check_proof_with_definitions
-                        (SmtLib.translation_definitions translation))
-                      (As, g, proof)
+                    val _ = if !Library.trace > 1 then
+                        Feedback.HOL_MESG "HolSmtLib: parsing Z3 proof"
+                      else ()
+                    val proof = quiet (fn () => parse_proof proof_start)
+                    val _ = if !Library.trace > 1 then
+                        Feedback.HOL_MESG "HolSmtLib: checking Z3 proof"
+                      else ()
+                    val thm = quiet (fn () =>
+                      SmtResource.profile_phase "z3/replay"
+                        (Z3_ProofReplay.check_proof_with_definitions
+                          (SmtLib.translation_definitions translation))
+                        (As, g, proof))
                       handle Feedback.HOL_ERR holerr =>
                         if SmtResource.is_resource_gate holerr then
                           raise Feedback.HOL_ERR holerr
                         else
                           raise_with_context "Z3_SMT_Prover" "proof replay"
                             (current_proof_cmd_stem ()) holerr
-                    val thm = SmtResource.profile_phase "z3/final-ccontr"
-                      (fn thm => Thm.CCONTR g thm) thm
-                    val thm = SmtResource.profile_phase "z3/final-validation"
-                      validation [thm]
-                    val thm = SmtResource.profile_phase "z3/final-checks"
-                      (check_reconstructed_theorem "Z3_SMT_Prover")
-                      (original_goal, thm)
+                    val thm = quiet (fn () =>
+                      SmtResource.profile_phase "z3/final-ccontr"
+                        (fn thm => Thm.CCONTR g thm) thm)
+                    val thm = quiet (fn () =>
+                      SmtResource.profile_phase "z3/final-validation"
+                        validation [thm])
+                    val thm = quiet (fn () =>
+                      SmtResource.profile_phase "z3/final-checks"
+                        (check_reconstructed_theorem "Z3_SMT_Prover")
+                        (original_goal, thm))
                   in
                     SolverSpec.UNSAT (SOME thm)
                   end

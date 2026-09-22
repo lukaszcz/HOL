@@ -270,11 +270,15 @@ structure CVC = struct
 
   (* CPC replay calls Metis and Grobner internally.  Their default interactive
      output is useful when those tools are invoked directly, but it makes a
-     routine CVC_TAC proof unnecessarily noisy.  Keep the suppression local
-     to replay, and let both wrappers restore their settings on exceptions. *)
+     routine CVC_TAC proof unnecessarily noisy.  Keep all backend chatter
+     suppressed inside the checked solver boundary. *)
   fun quiet_replay replay input =
     Lib.with_flag (Grobner.verbose, false)
       (Feedback.trace ("metis", 0) replay) input
+
+  fun quiet f =
+    Feedback.quiet_messages
+      (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()
 
   fun checked_post proof_name command_stem parse replay
       (data as ((original_goal, goal, validation, finite_hyps),
@@ -286,13 +290,16 @@ structure CVC = struct
       case result of
         SolverSpec.UNSAT NONE =>
         let
-          val (ty_dict, tm_dict) =
-            SmtLib.parser_dicts_for_solver_translation "cvc5" translation
-          val proof =
+          val (ty_dict, tm_dict) = quiet (fn () =>
+            SmtLib.parser_dicts_for_solver_translation "cvc5" translation)
+          val _ = if !Library.trace > 1 then
+              Feedback.HOL_MESG "HolSmtLib: parsing CVC proof"
+            else ()
+          val proof = quiet (fn () =>
             SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
               outfile proof_start instream
               (SmtResource.profile_phase "cvc/cpc-parse"
-                (parse (ty_dict, tm_dict)))
+                (parse (ty_dict, tm_dict))))
             handle Feedback.HOL_ERR holerr =>
               (TextIO.closeIn instream;
                if SmtResource.is_resource_gate holerr then
@@ -302,19 +309,24 @@ structure CVC = struct
                    (command_stem data) holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
-          val thm = SmtResource.profile_phase "cvc/cpc-replay"
-            (quiet_replay
-              (replay (SmtLib.translation_definitions translation)))
-            (finite_hyps @ As, g, proof)
+          val _ = if !Library.trace > 1 then
+              Feedback.HOL_MESG "HolSmtLib: checking CVC proof"
+            else ()
+          val thm = quiet (fn () =>
+            SmtResource.profile_phase "cvc/cpc-replay"
+              (quiet_replay
+                (replay (SmtLib.translation_definitions translation)))
+              (finite_hyps @ As, g, proof))
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
               else
                 raise_with_context proof_name "proof replay"
                   (command_stem data) holerr
-          val thm = Thm.CCONTR g thm
-          val thm = validation [thm]
-          val thm = check_reconstructed_theorem proof_name (original_goal, thm)
+          val thm = quiet (fn () => Thm.CCONTR g thm)
+          val thm = quiet (fn () => validation [thm])
+          val thm = quiet (fn () =>
+            check_reconstructed_theorem proof_name (original_goal, thm))
         in SolverSpec.UNSAT (SOME thm) end
       | _ => (result before TextIO.closeIn instream)
     end
