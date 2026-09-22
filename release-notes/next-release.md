@@ -70,6 +70,38 @@ New features
     Genuine cycles within a single root's `INCLUDES` chain are
     still reported.
 
+-   The directory column in `Holmake`'s per-target completion lines
+    (Poly/ML, `-j n` with `n` greater than one) now names the source
+    tree a target came from when the build spans more than one of
+    them, writing the path with its `holpathdb` registration:
+    `$(CAKEMLDIR)/compiler/parsing` rather than just
+    `compiler/parsing`.  Builds confined to a single tree are
+    unchanged, the prefix being the same on every line there.
+    A path too long for the column now has whole interior components
+    replaced by `...` (`$(CAKEMLDIR)/.../parsing`) instead of being
+    truncated from the left, the tree name being the last part given
+    up; in a very narrow terminal the column is left blank rather
+    than displacing the time and verdict columns.
+    Relatedly, a directory that *is* a registered `holpathdb`
+    directory now abbreviates to a bare `$(NAME)` wherever `Holmake`
+    prints a directory, where it previously printed the unabbreviated
+    path.
+
+-   The closing `*** Holmake aborted` report (Poly/ML, `-j n` with
+    `n` greater than one) now spends a fixed budget of about fifty
+    lines of log content, however many targets failed.  A single
+    failure still gets the whole of the retained tail of its log, as
+    before; with `-k` and several failures the budget is divided
+    between them, and each says how much of its log it is showing
+    (`Last 16 lines of output. Full log: ...`).  Beyond five failures a
+    target's share would be under ten lines, too few to hold an error
+    message, so the report drops log content altogether and just names
+    the failed targets and where their full logs are.  Previously
+    every failure contributed its entire retained tail, so a
+    keep-going build with ten failures closed with five hundred lines
+    of report.  The per-failure notice `-k` prints inline as each
+    target fails is unchanged.
+
 -   `Holmake` (under Poly/ML) understands a new per-directory
     `Holmakefile` variable, `LOCAL_PARALLELISM_LIMIT = n`, which
     caps the total number of concurrent jobs the parallel
@@ -84,6 +116,22 @@ New features
     the declaration is then ignored.  The variable has no
     effect under Moscow ML (whose `Holmake` is always
     sequential) or under Poly/ML `Holmake -j 1`.
+
+-   `Holmake` (under Poly/ML) takes a new option `--retry-oos=n`,
+    which allows each target up to `n` further attempts when its
+    build fails with the Poly/ML runtime reporting that it has run
+    out of store.  That message means the runtime could not grow
+    the ML heap; because the shortage is a property of the machine
+    at that moment rather than of the target, running the same
+    build again will often succeed.  A failure that does not carry
+    the message is never retried, and the default of zero leaves
+    the previous behaviour unchanged.  An attempt that is going to
+    be retried is reported as `RETRY` rather than as a failure, and
+    the number of re-runs performed is reported when the build
+    finishes.  Recognising the message means reading the log
+    `Holmake` keeps for each job, so the option has no effect under
+    `Holmake -j 1`, which writes a command's output straight to the
+    terminal.
 
 -   `Holmake` recognises a project-root marker file
     `holproject.toml`: dropping one at the top of a multi-directory
@@ -121,12 +169,42 @@ New features
     `unicode_ok` toggle, an `exclude` list of skipped subdirectories,
     and a `[[h4pedant.dir]]` array of per-subdirectory overrides;
     `h4pedant` with no positional arguments walks up to find the
-    project root and scans the whole tree.  See the *Project
-    files* sub-section of *Maintaining HOL Formalizations with
-    Holmake* in the Description manual.
+    project root and scans the whole tree.  Projects nest: a
+    sub-directory carrying its own `holproject.toml` heads a
+    separate project, governed by its own file rather than the
+    enclosing one's, and `Holmake -r` and `--dirs` account for that.
+    Two diagnostics guard the nesting: a project that points into an
+    enclosing project it has not declared with `[projects.<id>]` is
+    warned about, with the stanza to add spelled out, and any key
+    `holproject.toml` does not recognise is reported rather than
+    quietly discarded — a `[project.<id>]` typo for
+    `[projects.<id>]` otherwise reads as correct and behaves as
+    absent.
+    See the *Project files* sub-section of *Maintaining HOL
+    Formalizations with Holmake* in the Description manual.
+
+-   `bossLib` provides three new short names for common tactics:
+    `have ‘t’` states an intermediate result, leaving it as the
+    first subgoal and adding it (stripped) to the assumptions of
+    the other; it is the tactic already available as `sg`.
+    `suff ‘t’` replaces the goal with a sufficient condition,
+    leaving `t ==> goal` as the first subgoal; it is already
+    available as `qsuff_tac`; `contr` starts a proof by
+    contradiction, and is an abbreviation for
+    `SPOSE_NOT_THEN STRIP_ASSUME_TAC`.
 
 Bugs fixed
 ----------
+
+-   `Holmake -r` now overrides `--no_prereqs`, as the documentation
+    has always said it does.  Previously the two fought: `-r` seeded
+    the targets of every `INCLUDES` directory and `--no_prereqs`
+    then demoted every node outside the current directory.
+
+-   Searching the manual site for an entry whose name is an English stop word (`by`, `THEN`, `EVERY`, `IF`, `I`, `all`, `can`, `for`, `say`) or punctuation (`&&`, `$`, `==`, `++`, `-->`) returned nothing, in every manual.
+    The search index's stop-word and stemming pipeline is applied to the query as well as to the indexed text, so those names were dropped on both sides and the query produced no terms at all.
+    Each book now emits a generated table of its entry names, which the site consults first: exact and prefix name matches are shown above the full-text results.
+    An exact entry-name match is thereby also prioritised — searching for `subgoal` puts `bossLib.subgoal` at the top rather than somewhere among the pages that merely mention it.
 
 -   Three kernel bugs (github issues [#1838](https://github.com/HOL-Theorem-Prover/HOL/issues/1838), [#1839](https://github.com/HOL-Theorem-Prover/HOL/issues/1839), and [#1840](https://github.com/HOL-Theorem-Prover/HOL/issues/1840)) in CV-compute were fixed.
     Thanks to Ramana Kumar for finding these!
@@ -143,6 +221,13 @@ Bugs fixed
     In long-running sessions the cache accumulated entries — both in number of cached goals and in the per-key list of `(context, result)` pairs under each goal — and `simp` invocations slowed down approximately linearly with session length, dominated by linear scans of the per-key list under `boolSyntax.F`.
     The cache now uses LRU eviction on the keyspace and a per-key list cap, with both bounds set at cache-creation time.
     See the `Cache.sig` header for the new `{capacity, per_key_cap}` constructor argument.
+
+-   metis's finite-model heuristic, which weights clauses by how often they hold in a model of the axioms, sampled its valuations from a single random generator created when `mlibModel` was loaded and never reset, and numbered its models from a counter with the same lifetime — a number that is hashed into the model's interpretation.
+    Every metis call therefore started from whatever state the previous one left behind, so what a goal cost depended on what had been proved before it in the same session: repeats of one identical relevant-logic proof in a single process ranged from 0.5s to 40s, and the theory containing it built in either 5.6s or 32s depending only on how far the generator had advanced.
+    Each model now carries its own generator, and both that and the model's identity are seeded from the structure of the problem being refuted, so which models a call gets no longer depends on its predecessors.
+    The two models behind `mlibSupport`'s probable-tautology filter are likewise built per call rather than once per process, which also stops their memoisation caches growing for the lifetime of the session.
+    Repeats of one goal still search slightly differently, because HOL's CNF names skolem constants from a genvar counter and model interpretations are md5-derived from those names; that residual is in the naming rather than in metis.
+    `developers/bench-metis-order.sml` measures what is left.
 
 New theories
 ------------
@@ -195,13 +280,13 @@ Incompatibilities
     In particular, users are recommended to *not* directly open `realaxTheory` (an intermediate
     theory for constructing real numbers), in which all useful theorems should be also covered by
    `realTheory` (under same or different theorem names).
-  
+
 |  Old name       | New name           | Statements                                    |
 | --------------- | ------------------ | --------------------------------------------- |
 | `REAL_LE_SUP'`  | `REAL_LE_SUP2`     | `!s a b y. y IN s /\ a <= y /\ (!x. x IN s ==> x <= b) ==> a <= sup s` |
 | `REAL_LE_MUL'`  | `REAL_LE_MUL_NEG`  | `!x y. x <= 0 /\ y <= 0 ==> 0 <= x * y`       |
 | `REAL_LT_MUL'`  | `REAL_LT_MUL_NEG`  | `!x y. x < 0 /\ y < 0 ==> 0 < x * y`          |
-| `REAL_LT_LMUL'` | `REAL_LT_LMUL_NEG` | `!x y z. x < 0 ==> (x * y < x * z <=> z < y)` | 
+| `REAL_LT_LMUL'` | `REAL_LT_LMUL_NEG` | `!x y z. x < 0 ==> (x * y < x * z <=> z < y)` |
 | `REAL_LT_RMUL'` | `REAL_LT_RMUL_NEG` | `!x y z. z < 0 ==> (x * z < y * z <=> y < x)` |
 
 -   For better compatibility with HOL Light (making code-porting easier), arithmetic theory’s `GREATER_EQ` theorem (stating *m ≥ n ⇔ n ≤ m*) is now also available in that theory under the name `GE`.

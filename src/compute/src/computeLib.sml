@@ -125,7 +125,8 @@ fun initial_state rws t =
    - `Cbv_abs`: The continuation after descending into the body of an
      abstraction.
 
-   `rws` is the compset, threaded through for use in wrapping conversion results.
+   `rws` is the compset, threaded through for use in wrapping conversion
+   results.
 *)
 fun cbv_wk rws ((th,CLOS{Env, Term=App(a,args)}), stk) =
   (* *Combination.* Descend into operator immediately. Descend into operand in
@@ -197,15 +198,19 @@ and cbv_up rws (hcl, Cbv_rator{Rand=(mka,clos), Ctx}) =
           the stack. *)
           case Const_info of
             {Head, Args, Rws=Try{Hcst,Rws=Rewrite rls,Tail},Skip} =>
-              cbv_wk rws ((thm, CST {Head=Head,Args=Args,Rws=Tail,Skip=Skip}),Ctx)
+              cbv_wk
+                rws
+                ((thm, CST {Head=Head,Args=Args,Rws=Tail,Skip=Skip}),Ctx)
           | _ => raise DEAD_CODE "cbv_wk"
       in
         case Ctx of
            Cbv_top =>
              (if aconv T (rhs (concl current_thm)) then
                 (* This antecedent proved. Add it to the accumulator and try to
-                prove next antecedent. *)
-                prove_ants rws (thm,Cl,current_thm::Proved,Pending,Mk_thm,Const_info,Ctx)
+                   prove next antecedent. *)
+                prove_ants
+                  rws
+                  (thm,Cl,current_thm::Proved,Pending,Mk_thm,Const_info,Ctx)
               else
                 (* The current antecedent did not reduce to `T`; abandon this
                 rewrite rule. *)
@@ -239,7 +244,8 @@ and strong_up _ (th, Cbv_top) = th
   | strong_up _ (th, Cbv_rand{Rator=(mka,false,clos), Ctx}) =
       raise DEAD_CODE "strong_up"
   | strong_up rws (th, Cbv_rator{Rand=(mka,clos), Ctx}) =
-      strong rws (cbv_wk rws (clos, Cbv_rand{Rator=(mka,true,(th,NEUTR)), Ctx=Ctx}))
+      strong rws
+             (cbv_wk rws (clos, Cbv_rand{Rator=(mka,true,(th,NEUTR)), Ctx=Ctx}))
   | strong_up rws (th, Cbv_rand{Rator=(mka,true,(tha,_)), Ctx}) =
       strong_up rws (mka tha th, Ctx)
   | strong_up rws (th, Cbv_abs{Bvar=mkl, Ctx}) = strong_up rws (mkl th, Ctx)
@@ -281,7 +287,9 @@ fun CBVn_CONV n rws t =
 
 (*---------------------------------------------------------------------------
  * Adding an arbitrary conv. The conversion result is wrapped with from_term
- * at invocation time in reduce_cst, using the current compset.
+ * at invocation time in reduce_cst, using the current compset. A conv that
+ * fails, raises UNCHANGED or returns a reflexive theorem makes no progress
+ * and reduce_cst moves on to the constant's remaining rules.
  *---------------------------------------------------------------------------*)
 
 fun add_conv (cst,arity,conv) rws = add_extern (cst,arity,conv) rws;
@@ -316,7 +324,8 @@ local
          empty = copy bool_compset,
          pp = fn _ => "<compset>"}
 in
-  fun the_compset () = Context.Data.get compset_slot (Context.snapshot())
+  fun the_compset_of ctxt = Context.Data.get compset_slot ctxt
+  fun the_compset () = the_compset_of (Context.snapshot())
   val put_compset = Context.Data.write compset_slot
   val upd_compset = Context.Data.modify compset_slot
 end
@@ -332,7 +341,9 @@ fun del_funs thms = upd_compset (scrub_thms thms)
 fun EVAL_CONV t = CBV_CONV (the_compset()) t;
 fun EVALn_CONV n t = CBVn_CONV n (the_compset()) t
 val EVAL_RULE = Conv.CONV_RULE EVAL_CONV;
-val EVAL_TAC  = Tactic.CONV_TAC EVAL_CONV;
+(* CBV_CONV takes its compset explicitly, so the tactic reads the one in
+   the context it is run in rather than the ambient one *)
+fun EVAL_TAC g ctxt = Tactic.CONV_TAC (CBV_CONV (the_compset_of ctxt)) g ctxt
 
 infix Orelse;
 fun (p Orelse q) x = p x orelse q x;
@@ -344,7 +355,11 @@ fun OR [] = K false
 fun RESTR_EVAL_CONV clist =
   Lib.with_flag (stoppers,SOME (OR clist)) EVAL_CONV;
 
-val RESTR_EVAL_TAC  = Tactic.CONV_TAC o RESTR_EVAL_CONV;
+fun RESTR_EVAL_TAC clist g ctxt =
+    Tactic.CONV_TAC
+      (Lib.with_flag (stoppers, SOME (OR clist))
+                     (CBV_CONV (the_compset_of ctxt)))
+      g ctxt
 val RESTR_EVAL_RULE = Conv.CONV_RULE o RESTR_EVAL_CONV;
 
 (*---------------------------------------------------------------------------
@@ -384,7 +399,8 @@ in
            List.partition (fn thm => tmopt_eq (Lib.total get_f thm) case_const)
                           simpls
         val case_thm = List.map lazyfy_thm case_thm
-        val cs' = foldl (fn (c, cset) => add_conv c cset) cs (translate_convs convs)
+        val cs' =
+            foldl (fn (c, cset) => add_conv c cset) cs (translate_convs convs)
     in
         add_thms (size_opt @ boolify_opt @ case_thm @ simpls) cs'
     end

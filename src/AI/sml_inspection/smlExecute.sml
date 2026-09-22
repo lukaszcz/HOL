@@ -29,7 +29,8 @@ val sml_thml_glob = ref []
 
 fun quse_string s =
   let
-    val stream = TextIO.openString (HOLSource.fromString {quietOpen = false, print = K()} s)
+    val stream = TextIO.openString
+                   (HOLSource.fromString {quietOpen = false, print = K()} s)
     fun infn () = TextIO.input1 stream
   in
     (
@@ -163,11 +164,18 @@ fun goal_of_sml s =
    Apply tactic string
    ------------------------------------------------------------------------- *)
 
-val (TC_OFF : tactic -> tactic) = trace ("show_typecheck_errors", 0)
+val TC_OFF = trace ("show_typecheck_errors", 0)
 
+(* A tactic does its work once it has both the goal and the context, so
+   both the trace setting and the timeout have to span that application,
+   not merely the one that builds the context-awaiting closure. *)
 fun app_stac tim stac g =
-  let val tac = tactic_of_sml tim stac in
-    SOME (fst (timeout tim (TC_OFF tac) g))
+  let
+    val tac = tactic_of_sml tim stac
+    val ctxt = Context.snapshot()
+    val run = TC_OFF (Lib.C tac ctxt)
+  in
+    SOME (fst (timeout tim run g))
   end
   handle Interrupt => raise Interrupt | _ => NONE
 

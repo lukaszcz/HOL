@@ -12,10 +12,13 @@ val finish        : goalstate -> thm
 val top_goal      : goalstate -> goal
 val top_goals     : goalstate -> goal list
 
-val expand          : tactic -> frag_tactic
-val expandf         : tactic -> frag_tactic
-val expand_list     : list_tactic -> frag_tactic
-val expand_listf    : list_tactic -> frag_tactic
+(* the context the tactic is run against is supplied explicitly; the
+   interactive callers snapshot the session's, and a replay can pass a
+   context captured at the proof's own position *)
+val expand          : tactic -> Context.t -> frag_tactic
+val expandf         : tactic -> Context.t -> frag_tactic
+val expand_list     : list_tactic -> Context.t -> frag_tactic
+val expand_listf    : list_tactic -> Context.t -> frag_tactic
 val open_paren      : frag_tactic
 val open_first      : frag_tactic
 val open_head_goal  : frag_tactic
@@ -36,6 +39,12 @@ val close_first     : frag_tactic
 val close_paren     : frag_tactic
 val close_repeat    : frag_tactic
 val close_first_lt  : frag_tactic
+
+(* Tags naming the combinators still open around the focus,
+   outermost first: "branch 2 of 3 of THENL", "inside >-".  What
+   `pp_goalstate' renders above the goals; exposed separately so a
+   client can pin them somewhere that does not scroll away. *)
+val context_lines   : goalstate -> string list
 
 val pp_goalstate    : goalstate Parse.pprinter
 

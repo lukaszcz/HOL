@@ -8,6 +8,8 @@ val _ = diemode := Remember failcount
 
 val _ = Portable.catch_SIGINT()
 
+fun valid tac goal = #1 (runtac (VALID tac) goal)
+
 (* earlier versions of the simplifier would go into an infinite loop on
    terms of this form. *)
 val const_term = ``(ARB : bool -> bool) ((ARB : bool -> bool) ARB)``
@@ -60,7 +62,7 @@ val _ =
     infloop_protect
       "Abbreviations + ASM_SIMP_TAC"
       test4P
-      (VALID (ASM_SIMP_TAC bool_ss [markerSyntax.Abbr`y`]))
+      (runtac (VALID (ASM_SIMP_TAC bool_ss [markerSyntax.Abbr`y`])))
       ([``Abbrev (y:'b = f (x : 'a))``, ``P (y:'b) : bool``],
        ``Q (y:'b) : bool``)
 
@@ -76,9 +78,9 @@ val test5P =
                          in
                            aconv (concl th) goal5 andalso null (hyp th)
                          end)
-        (fn g => (EQ_TAC THEN STRIP_TAC THEN
-                  SIMP_TAC bool_ss [Once EQ_SYM_EQ] THEN
-                  POP_ASSUM ACCEPT_TAC) g)
+        (runtac (EQ_TAC THEN STRIP_TAC THEN
+                 SIMP_TAC bool_ss [Once EQ_SYM_EQ] THEN
+                 POP_ASSUM ACCEPT_TAC))
         ([], goal5)
 
 (* test that being a bounded rewrite overrides detection of loops in
@@ -265,7 +267,7 @@ end
 val _ = let
   val asm = ``Abbrev(f = (\x. x /\ y))``
   val g = ([asm], ``p /\ y``)
-  val doit = ASM_SIMP_TAC bool_ss []
+  val doit = runtac (ASM_SIMP_TAC bool_ss [])
   fun geq (asl1, g1) (asl2, g2) =
       aconv g1 g2 andalso
       case (asl1, asl2) of
@@ -469,7 +471,8 @@ val _ = let
                                        | _ => false)
 
       in
-        require_msg testresult printgoals (VALID (ASM_SIMP_TAC pure_ss thl))
+        require_msg testresult printgoals
+                    (runtac (VALID (ASM_SIMP_TAC pure_ss thl)))
                     (asms,i)
       end
   val oneone = Q.prove(‘ONE_ONE f ==> !x y. (f x = f y) <=> (x = y)’,
@@ -511,7 +514,7 @@ val _ = let
         | _ => false
   fun test (msg, tac, ing, outgs) =
       (tprint msg;
-       require_msg (testresult outgs) printgoals tac ing)
+       require_msg (testresult outgs) printgoals (runtac tac) ing)
   val T_t = “?x:'a. p”
   fun gs c = global_simp_tac c
   val fs = full_simp_tac
@@ -1529,7 +1532,7 @@ local
     case result of
         Exn.Res (sgs,_) => list_eq goal_eq expected sgs
       | Exn.Exn _ => false
-  fun run tac goal = Exn.capture (VALID tac) goal
+  fun run tac goal = Exn.capture (runtac (VALID tac)) goal
   fun inc r = r := !r + 1
   fun solver_failure name =
     raise mk_HOL_ERR "selftest" name "not applicable"
@@ -1730,7 +1733,8 @@ local
     else die "qualified rule exclusion removed the looper"
   val _ = shouldfail
     {testfn=fn () =>
-       VALID (SIMP_TAC shared_ss [Excl "shared_identity"]) entry_goal,
+       runtac (VALID (SIMP_TAC shared_ss [Excl "shared_identity"]))
+              entry_goal,
      printresult=K "unexpected success", printarg=K "ambiguous Excl",
      checkexn=fn HOL_ERR error =>
        String.isSubstring "ambiguous" (Feedback.message_of error)
@@ -1893,8 +1897,8 @@ local
     list_eq aconv (hyp th1) (hyp th2)
   fun compare_tactics tac1 tac2 goal =
     let
-      val (sgs1,vf1) = tac1 goal
-      val (sgs2,vf2) = tac2 goal
+      val (sgs1,vf1) = runtac tac1 goal
+      val (sgs2,vf2) = runtac tac2 goal
       val same_goals = list_eq goal_eq sgs1 sgs2
       val th1 = vf1 (map mk_thm sgs1)
       val th2 = vf2 (map mk_thm sgs2)
@@ -2035,7 +2039,7 @@ val _ = let
     ``(b ==> P (x:'a)) /\ (~b ==> P y)``
   val _ = tprint "splitter: SPLIT_TAC performs one conclusion split"
   val _ =
-    case #1 (VALID (SPLIT_TAC [if_split]) tactic_goal) of
+    case valid (SPLIT_TAC [if_split]) tactic_goal of
         [([], result)] =>
           if aconv result tactic_result then OK()
           else die "SPLIT_TAC produced the wrong conclusion"
@@ -2047,8 +2051,7 @@ val _ = let
   val _ =
     tprint "splitter: conditional assumption split has clean cases"
   val _ =
-    case #1
-      (VALID (SPLIT_ASM_TAC [if_split, if_asm_split]) asm_goal) of
+    case valid (SPLIT_ASM_TAC [if_split, if_asm_split]) asm_goal of
         [(left, left_concl), (right, right_concl)] =>
           if aconv left_concl ``G:bool`` andalso
              aconv right_concl ``G:bool`` andalso
@@ -2067,7 +2070,7 @@ val _ = let
   val _ =
     tprint "splitter: cleanup preserves a doubly negated assumption lhs"
   val _ =
-    case #1 (VALID (SPLIT_ASM_TAC [if_asm_split]) double_neg_goal) of
+    case valid (SPLIT_ASM_TAC [if_asm_split]) double_neg_goal of
         [left, right] =>
           if not (goal_has_double_neg left) andalso
              not (goal_has_double_neg right)
@@ -2082,8 +2085,7 @@ val _ = let
     ``(c ==> Q (u:'b)) /\ (~c ==> Q v)``
   val _ = tprint "splitter: SPLIT_TAC prefers conclusion rules"
   val _ =
-    case #1
-      (VALID (SPLIT_TAC [if_asm_split, if_split]) order_goal) of
+    case valid (SPLIT_TAC [if_asm_split, if_split]) order_goal of
         [(asms, result)] =>
           if aconv result order_result andalso
              has ``R (if b then x:'a else y) : bool`` asms
@@ -2092,7 +2094,7 @@ val _ = let
       | _ => die "SPLIT_TAC split an assumption before the conclusion"
 
   val _ = shouldfail
-    {testfn= #1 o VALID (SPLIT_ASM_TAC [if_split]),
+    {testfn=valid (SPLIT_ASM_TAC [if_split]),
      printresult=K "unexpected tactic result",
      printarg=K "splitter: rhs shape routes conclusion rules away from asms",
      checkexn=fn HOL_ERR _ => true | _ => false}
@@ -2108,7 +2110,7 @@ val _ = let
   val _ =
     tprint "splitter: a later assumption is split when the first cannot"
   val _ =
-    case #1 (VALID (SPLIT_ASM_TAC [if_asm_split]) later_asm_goal) of
+    case valid (SPLIT_ASM_TAC [if_asm_split]) later_asm_goal of
         [(left, left_concl), (right, right_concl)] =>
           if aconv left_concl ``G:bool`` andalso
              aconv right_concl ``G:bool`` andalso
@@ -2123,14 +2125,14 @@ val _ = let
       | _ => die "SPLIT_ASM_TAC did not reach the later assumption"
 
   val _ = shouldfail
-    {testfn= #1 o VALID (SPLIT_ASM_TAC [if_asm_split]),
+    {testfn=valid (SPLIT_ASM_TAC [if_asm_split]),
      printresult=K "unexpected tactic result",
      printarg=K "splitter: naming a key does not make an assumption split",
      checkexn=fn HOL_ERR _ => true | _ => false}
     ([partial_cond_asm], ``G:bool``)
 
   val _ = shouldfail
-    {testfn= #1 o VALID (SPLIT_TAC [if_split, if_asm_split]),
+    {testfn=valid (SPLIT_TAC [if_split, if_asm_split]),
      printresult=K "unexpected tactic result",
      printarg=K "splitter: SPLIT_TAC fails when nothing splits",
      checkexn=fn HOL_ERR _ => true | _ => false}
@@ -2190,7 +2192,7 @@ val _ = let
     ``(b ==> P (x:'a)) /\ (~b ==> P y)``
   val _ = tprint "split_ss splits a conditional in the conclusion"
   val _ =
-    case #1 (VALID (SIMP_TAC (bool_ss ++ split_ss) []) split_goal) of
+    case valid (SIMP_TAC (bool_ss ++ split_ss) []) split_goal of
         [([], result)] =>
           if not (aconv result (#2 split_goal)) andalso
              not (can (find_term is_cond) result)
@@ -2205,8 +2207,7 @@ val _ = let
     not (goal_has_double_neg (asms, goal))
   val _ = tprint "split_ss uses TypeBase splits in assumptions"
   val _ =
-    case #1
-      (VALID (SIMP_TAC (bool_ss ++ split_ss) []) typebase_asm_goal) of
+    case valid (SIMP_TAC (bool_ss ++ split_ss) []) typebase_asm_goal of
         [goal1, goal2] =>
           if List.all clean_asm_goal [goal1, goal2] then OK()
           else die "TypeBase assumption split retained conditional syntax"
@@ -2224,7 +2225,7 @@ val _ = let
       with_split
   val _ = tprint "add_split installs a conclusion looper by theorem name"
   val _ =
-    case #1 (VALID (SIMP_TAC with_split []) split_goal) of
+    case valid (SIMP_TAC with_split []) split_goal of
         [([], result)] =>
           if aconv result split_result then OK()
           else die "add_split installed the wrong looper"
@@ -2232,7 +2233,7 @@ val _ = let
 
   val _ = tprint "del_split removes a conclusion looper by theorem name"
   val _ =
-    case #1 (VALID (SIMP_TAC without_split []) split_goal) of
+    case valid (SIMP_TAC without_split []) split_goal of
         [([], result)] =>
           if aconv result (#2 split_goal) then OK()
           else die "del_split left the conclusion looper active"
@@ -2240,7 +2241,7 @@ val _ = let
 
   val _ = tprint "Split installs a split for one invocation"
   val _ =
-    case #1 (VALID (SIMP_TAC bool_ss [Split named_if_split]) split_goal) of
+    case valid (SIMP_TAC bool_ss [Split named_if_split]) split_goal of
         [([], result)] =>
           if not (aconv result (#2 split_goal)) andalso
              not (can (find_term is_cond) result)
@@ -2252,8 +2253,7 @@ val _ = let
     "split " ^ Theory.current_theory () ^ "$simp_split_selftest_rule"
   val _ = tprint "Excl suppresses a named split looper"
   val _ =
-    case #1
-      (VALID (SIMP_TAC with_split [Excl split_name]) split_goal) of
+    case valid (SIMP_TAC with_split [Excl split_name]) split_goal of
         [([], result)] =>
           if aconv result (#2 split_goal) then OK()
           else die "Excl left the named split looper active"
@@ -2261,9 +2261,8 @@ val _ = let
 
   val _ = tprint "Excl split.case suppresses TypeBase splits"
   val _ =
-    case #1
-      (VALID (SIMP_TAC (bool_ss ++ split_ss)
-                       [Excl "split.case bool"]) split_goal) of
+    case valid (SIMP_TAC (bool_ss ++ split_ss)
+                 [Excl "split.case bool"]) split_goal of
         [([], result)] =>
           if aconv result (#2 split_goal) then OK()
           else die "split.case exclusion left the TypeBase split active"
@@ -2275,9 +2274,8 @@ val _ = let
     Feedback.quiet_warnings
       (Lib.total
          (fn () =>
-            #1 (VALID (SIMP_TAC (bool_ss ++ split_ss)
-                        [Excl "split.case definitely_not_a_type"])
-                      split_goal)))
+            valid (SIMP_TAC (bool_ss ++ split_ss)
+                    [Excl "split.case definitely_not_a_type"]) split_goal))
   val _ = tprint "unmatched split.case Excl leaves TypeBase splits alone"
   val _ =
     case unmatched_case_run () of
@@ -2291,9 +2289,9 @@ val _ = let
 
   val _ = shouldfail
     {testfn=fn () =>
-       VALID
+       runtac (VALID
          (SIMP_TAC (bool_ss ++ split_ss)
-           [Excl "case:definitely_not_a_type"]) split_goal,
+           [Excl "case:definitely_not_a_type"])) split_goal,
      printresult=K "unexpected success",
      printarg=K "nonexistent split.case exclusion",
      checkexn=fn HOL_ERR error =>
@@ -2306,7 +2304,7 @@ val _ = let
            Q (if c then u:'b else v)``)
   val _ = tprint "simpset limit bounds splitter rounds"
   val _ =
-    case #1 (VALID (SIMP_TAC limited_split_ss []) limited_goal) of
+    case valid (SIMP_TAC limited_split_ss []) limited_goal of
         [(_,result)] =>
           if not (aconv result (#2 limited_goal)) andalso
              can (find_term is_cond) result
@@ -2319,7 +2317,7 @@ val _ = let
   val with_asm_split = add_split named_if_asm_split bool_ss
   val _ = tprint "add_split auto-routes an assumption split rule"
   val _ =
-    case #1 (VALID (SIMP_TAC with_asm_split []) asm_goal) of
+    case valid (SIMP_TAC with_asm_split []) asm_goal of
         [_, _] => OK()
       | _ => die "assumption split rule was not routed to the asm looper"
 in
@@ -2350,7 +2348,7 @@ val _ = let
   val saved_outstream = !Feedback.WARNING_outstream
   val _ = Feedback.WARNING_outstream := (fn s => warnings := s :: !warnings)
   fun warned () = List.exists (String.isSubstring "Split") (!warnings)
-  fun run tac goal = Lib.total (fn () => #1 (VALID tac goal)) ()
+  fun run tac goal = Lib.total (fn () => valid tac goal) ()
 
   val _ = warnings := []
   val _ = tprint "unnamed Split rule splits under its head constant"
@@ -2425,7 +2423,7 @@ end
    because RW_TAC lives far downstream of this directory. *)
 val _ = let
   fun solves goal =
-    null (#1 (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([],goal)))
+    null (valid (SIMP_TAC (bool_ss ++ split_ss) []) ([],goal))
   fun check (name,goal) =
     (tprint ("split_ss strength: " ^ name);
      if solves goal then OK()
@@ -2454,7 +2452,7 @@ val _ = let
   val goal = ([``p /\ q``], ``r:bool``)
   val _ = tprint "global_simp_tac strip=false keeps assumptions whole"
 in
-  case #1 (VALID (global_simp_tac cfg bool_ss []) goal) of
+  case valid (global_simp_tac cfg bool_ss []) goal of
       [([asm], w)] =>
         if aconv asm ``p /\ q`` andalso aconv w ``r:bool`` then OK()
         else die "strip=false changed the goal"
@@ -2472,7 +2470,7 @@ val _ = let
       {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild,
        imp_premises=false}
   val xcfg = mode_xcfg {safe=false}
-  fun result tac goal = #1 (VALID tac goal)
+  fun result tac goal = valid tac goal
   fun check msg expected tac goal =
     let val _ = tprint msg
     in
@@ -2880,8 +2878,8 @@ in
          ``G:bool``)
       val _ = tprint "splitter: option case in an assumption"
       val _ =
-        case #1 (VALID (SPLIT_ASM_TAC [option_split, option_asm_split])
-                        option_asm_goal) of
+        case valid (SPLIT_ASM_TAC [option_split, option_asm_split])
+                   option_asm_goal of
             [none_case, some_case] =>
               if not (goal_has_double_neg none_case) andalso
                  not (goal_has_double_neg some_case)
@@ -2910,8 +2908,7 @@ in
       val list_goal =
         ``P (list_CASE xs (n:'b) (f:'a -> 'a list -> 'b)) : bool``
       val _ =
-        case #1
-          (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([], list_goal)) of
+        case valid (SIMP_TAC (bool_ss ++ split_ss) []) ([], list_goal) of
             [([], result)] =>
               if not (aconv result list_goal) andalso
                  not (can (find_term TypeBase.is_case) result)

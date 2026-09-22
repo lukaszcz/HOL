@@ -44,6 +44,21 @@ fun is_multidir gdi =
     (Map.numItems gdi = 1 andalso
      Binarymap.peek(gdi, hmdir.curdir()) = NONE)
 
+(* Does the build span more than one source tree?  A directory's tree
+   is its holpathdb registration -- the thing the monitor's directory
+   column displays -- and not the holproject.toml project that owns
+   it; the two need not coincide.  Directories under no registered
+   directory share the empty key.  That lumping is deliberate: such
+   directories have no abbreviation to display anyway, and mixing them
+   with registered ones still yields more than one key. *)
+fun is_multitree gdi =
+    let
+      fun foldthis (d,_,A) = Binaryset.add(A, hmdir.tree_key d)
+      val keys = Map.foldl foldthis (Binaryset.empty String.compare) gdi
+    in
+      Binaryset.numItems keys > 1
+    end
+
 
 
 
@@ -53,9 +68,11 @@ fun graphbuild optinfo g =
           mosml_build_command : GraphExtra.t mosml_build_command,
           diag,
           keep_going, quiet, hmenv, jobs, time_limit, maxheap,
-          relocbuild, thmsrc,
+          relocbuild, thmsrc, retry_oos,
           outs : Holmake_tools.output_functions } = optinfo
     val {warn, info, tgtfatal, ...} = outs
+    (* `info' is shadowed below by the monitor's two-column version *)
+    val plain_info = info
     val _ = diag "Starting graphbuild"
     (* Per-target locking: track locks for active build targets *)
     type lockkey = hmdir.t * string
@@ -118,15 +135,82 @@ fun graphbuild optinfo g =
           ldir ++ safetag dir tag
         end
 
-    val (monitor, {bold,green,red,coloured_info = info,final_report}) =
+    (* --- retrying out-of-store failures -------------------------------
+       Poly/ML writes these to stderr (its polyStderr is plain stderr on
+       every non-Windows build) when it cannot grow the ML heap.  The
+       first is printed when the runtime interrupts its threads to try
+       to recover; the ML-level symptom is an Interrupt exception in
+       whichever thread was allocating, so the theory build dies through
+       an ordinary non-zero exit and looks like any other failure from
+       the outside.  Since the shortage is a property of the machine at
+       that moment and not of the target, running the same job again
+       often succeeds.  A job's stdout and stderr both land in the log
+       file the monitor opens for it (see genLF above), which is the
+       only place the message survives, so that is what we search. *)
+    val oos_markers = ["Run out of store - interrupting threads",
+                       "Failed to recover - exiting"]
+    fun log_shows_oos logfile =
+        let
+          val strm = TextIO.openIn logfile
+          fun loop () =
+              case TextIO.inputLine strm of
+                  NONE => false
+                | SOME line =>
+                  List.exists (fn m => String.isSubstring m line) oos_markers
+                  orelse loop ()
+        in
+          loop () before TextIO.closeIn strm
+          handle e => (TextIO.closeIn strm; raise e)
+        end handle IO.Io _ => false
+                 | OS.SysErr _ => false
+
+    (* Attempts still available for a node, counting down from retry_oos.
+       Keyed by node so that a target whose every attempt hits the same
+       problem gives up after retry_oos extra tries rather than looping. *)
+    val oos_budget : (node, int) Map.dict ref = ref (Map.mkDict node_compare)
+    val oos_retried = ref 0
+    fun oos_left n = case Map.peek(!oos_budget, n) of
+                         NONE => retry_oos
+                       | SOME k => k
+    (* Called with a job that has just failed; true means its targets have
+       been handed back for another attempt.  A job the scheduler killed
+       comes through here too, since ProcessMultiplexor runs `update' for
+       those as well: one killed by --time_limit while Poly was thrashing
+       on memory is worth another attempt on the same grounds as one that
+       exited by itself, and one killed because the build as a whole is
+       giving up is never offered again whatever we say here. *)
+    fun oos_retry {node, tag, dir} =
+        if retry_oos <= 0 orelse oos_left node <= 0 then false
+        else if not (log_shows_oos (genLF {tag = tag, dir = dir})) then false
+        else
+          let
+            val remaining = oos_left node - 1
+          in
+            oos_budget := Map.insert(!oos_budget, node, remaining);
+            oos_retried := !oos_retried + 1;
+            diag ("Out-of-store failure building " ^ tag ^ " in " ^ dir ^
+                  "; retrying (" ^ Int.toString remaining ^
+                  " further attempt(s) available)");
+            true
+          end
+    fun oos_report () =
+        if !oos_retried = 0 then ()
+        else plain_info (Int.toString (!oos_retried) ^
+                         " job(s) were re-run after Poly/ML reported\
+                         \ running out of store")
+    val retrying_result = {marker = NONE, retrying = true}
+
+    val (monitor0, {bold,green,red,coloured_info = info,dirname,
+                    final_report}) =
         MB_Monitor.new {info = info, warn = warn, genLogFile = genLF,
                         time_limit = time_limit,
                         keep_going = keep_going,
-                        multidir = is_multidir dirmap}
+                        multidir = is_multidir dirmap,
+                        multitree = is_multitree dirmap}
 
     fun dircomplete dir (good, bad) t =
         let
-          val pfx0 = bold ("Finished " ^ hmdir.pretty_dir dir)
+          val pfx0 = bold ("Finished " ^ dirname (hmdir.toAbsPath dir))
           val timetaken = "(" ^ Time.toString t ^ "s)"
           val pfx = if good > 0 orelse bad > 0 then
                       pfx0 ^ " [" ^
@@ -142,30 +226,65 @@ fun graphbuild optinfo g =
           info (pfx,timetaken)
         end
 
+    (* A directory's report is queued rather than printed at the point
+       its last target is accounted for.  ProcessMultiplexor runs a
+       job's `update' -- which is where the count is usually crossed --
+       before handing the Terminated message to the monitor, so printing
+       from there would put "Finished <dir>" above the completion line
+       of the very target that finished the directory.  Draining once
+       the monitor has had the message keeps the two in the order they
+       happened, and makes the in-process compiles that cross the count
+       elsewhere (see the `needed' case in genjob) agree. *)
+    val pending_dirreports : (unit -> unit) list ref = ref []
+    fun queue_dirreport th = pending_dirreports := th :: !pending_dirreports
+    fun drain_dirreports () =
+        case !pending_dirreports of
+            [] => ()
+          | ths => (pending_dirreports := [];
+                    List.app (fn th => th ()) (List.rev ths))
+    fun monitor msg =
+        let
+          val cmd = monitor0 msg
+        in
+          drain_dirreports (); cmd
+        end
+
     fun tgtcompletion_cb dirmap =
         if not (is_multidir dirmap) then fn _ => ()
         else
           let
             fun foldthis (d,n,A) =
-                (diag (hmdir.pretty_dir d ^ " has " ^ Int.toString n ^
+                (diag (dirname (hmdir.toAbsPath d) ^ " has " ^
+                       Int.toString n ^
                        " targets to build");
                  Map.insert(A, d, {good = ref 0, bad = ref 0, tgt = n,
-                                   goodthys = ref 0,
+                                   goodthys = ref 0, reported = ref false,
                                    elapsed = ref Time.zeroTime}))
             val dirprogress_map =
                 Map.foldl foldthis (Map.mkDict hmdir.compare) dirmap
           in
             fn (dir, n, nthys, goodp, t) =>
                let
-                 val {tgt,good,bad,goodthys,elapsed} =
+                 val {tgt,good,bad,goodthys,reported,elapsed} =
                      Map.find(dirprogress_map, dir)
                  val _ = if goodp then (good := !good + n;
                                         goodthys := !goodthys + nthys)
                          else bad := !bad + n
                  val _ = elapsed := Time.+(!elapsed, t)
                in
-                 if !good + !bad >= tgt then
-                   dircomplete dir (!goodthys,!bad) (!elapsed)
+                 (* the counts can be pushed past tgt more than once: a
+                    theory rescan can return an already-Succeeded node to
+                    Pending, so report only the first crossing, on the
+                    figures as they stood then *)
+                 if not (!reported) andalso !good + !bad >= tgt then
+                   let
+                     val thys = !goodthys and fails = !bad
+                     and taken = !elapsed
+                   in
+                     reported := true;
+                     queue_dirreport
+                       (fn () => dircomplete dir (thys,fails) taken)
+                   end
                  else ()
                end
           end
@@ -298,14 +417,25 @@ fun graphbuild optinfo g =
                           fun update ((g,ok), b, t) =
                               let
                                 val status = error b
-                                val g' = updall (g, status)
-                                val ok' = status = Succeeded orelse keep_going
-                                val _ =
-                                    tgtcomplete(#dir nI, neededi, thycount,
-                                                ok, t)
-                                val _ = release_target_lock nI
                               in
-                                ((g',ok'), NONE)
+                                if status <> Succeeded andalso
+                                   oos_retry {node = n, tag = tag, dir = dir}
+                                then
+                                  (release_target_lock nI;
+                                   ((updall (g, Pending{needed=true}), true),
+                                    retrying_result))
+                                else
+                                  let
+                                    val g' = updall (g, status)
+                                    val ok' = status = Succeeded orelse
+                                              keep_going
+                                    val _ =
+                                        tgtcomplete(#dir nI, neededi, thycount,
+                                                    ok, t)
+                                    val _ = release_target_lock nI
+                                  in
+                                    ((g',ok'), job_done)
+                                  end
                               end
                         in
                           NewJob ({tag = tag, command = shell_command c,
@@ -390,15 +520,35 @@ fun graphbuild optinfo g =
                                    Poly's load step. *)
                                 val ok2 = job_kont (fn s => ()) (b2res b)
                                 val _ = release_target_lock nI
-                                val g' = if ok2 then
-                                           updall Succeeded (rescan_theory_deps g)
-                                         else updall RealFail g
-                                val marker = HM_Progress.note_completion
-                                                 g' ok2 (#command nI)
-                                val _ = tgtcomplete(#dir nI, ndi, thyc, ok2, t)
                               in
-                                ((g', if ok2 then true else keep_going),
-                                 marker)
+                                (* Returning the nodes to Pending is all a
+                                   retry takes: their dependencies are still
+                                   Succeeded, so the picker offers the target
+                                   again on a later cycle, and the failed
+                                   run's own prep_for_build has already
+                                   removed the products it was to write, so
+                                   the "can skip work" test cannot mistake
+                                   the target for done. *)
+                                if not ok2 andalso
+                                   oos_retry {node = n, tag = tag, dir = dir}
+                                then
+                                  ((updall (Pending{needed=true}) g, true),
+                                   retrying_result)
+                                else
+                                  let
+                                    val g' =
+                                        if ok2 then
+                                          updall Succeeded
+                                                 (rescan_theory_deps g)
+                                        else updall RealFail g
+                                    val marker = HM_Progress.note_completion
+                                                     g' ok2 (#command nI)
+                                    val _ = tgtcomplete(#dir nI, ndi, thyc,
+                                                        ok2, t)
+                                  in
+                                    ((g', if ok2 then true else keep_going),
+                                     {marker = marker, retrying = false})
+                                  end
                               end
                             fun cline_str (c,l) = "["^c^"] " ^
                                                   String.concatWith " " l
@@ -481,7 +631,8 @@ fun graphbuild optinfo g =
                       provider = { initial = (g,true), genjob = genjob }}
   in
     do_work(worklist, monitor)
-    before (release_all_locks(); final_report())
+    before (drain_dirreports(); release_all_locks(); oos_report();
+            final_report())
   end
 
 end

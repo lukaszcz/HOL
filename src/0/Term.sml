@@ -29,7 +29,7 @@ infix |-> ##;
                Create the signature for HOL terms
  ---------------------------------------------------------------------------*)
 
-fun termsig() = Context.termsig (Context.snapshot())
+fun termsig() = Context.termsig (Context.live())
 fun upd_termsig f = Context.update (Context.map_termsig f)
 fun genupd_termsig f =
     Context.gen_update (fn c =>
@@ -785,7 +785,8 @@ fun strip_binder opt =
    let
      open Uref
      val (prefixl,body) = peel f tm []
-     val AV = Uref.new (Redblackmap.mkDict String.compare) : ((string,occtype)Redblackmap.dict) Uref.t
+     val AV = Uref.new (Redblackmap.mkDict String.compare)
+              : ((string,occtype)Redblackmap.dict) Uref.t
      fun peekInsert (key,data) =
         let open Redblackmap
         in case peek (!AV,key)

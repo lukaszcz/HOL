@@ -52,15 +52,15 @@ val _ =
         end
   in
     tprint "process_taclist_then_recur strips Req0 for recursion";
-    ignore (process_taclist_then_recur
-              {arg = [mk_Req0 TRUTH]} start ([], “p:bool”));
+    ignore (runtac (process_taclist_then_recur
+              {arg = [mk_Req0 TRUTH]} start) ([], “p:bool”));
     if !calls < 2 then die "the recursive pass never ran"
     else if null (!leaked) then OK()
     else die ("marker hypotheses reached the tactic: " ^
               String.concatWith ", " (map term_to_string (!leaked)))
   end
 
-fun testtac tac = #1 o VALID tac
+fun testtac tac = #1 o runtac (VALID tac)
 val goal_print = HOLPP.pp_to_string 75 goalStack.pp_goal
 
 val goals_print =

@@ -233,7 +233,8 @@ local
          empty = Symtab.empty,
          pp = fn _ => "<simpLib.ssfragDB>"}
 in
-  fun ssfragDB () = Context.Data.get ssfragDB_slot (Context.snapshot())
+  fun ssfragDB_of ctxt = Context.Data.get ssfragDB_slot ctxt
+  fun ssfragDB () = ssfragDB_of (Context.snapshot())
   val upd_ssfragDB = Context.Data.modify ssfragDB_slot
 end
 fun register_frag ssf =
@@ -1854,10 +1855,10 @@ type simptac_config =
 
 (* back/front assume_tac; backp is true if the new assumption should go at the
    back of the list *)
-fun BF_ASSUME_TAC backp th (g as (asl,w)) =
+fun BF_ASSUME_TAC backp th (g as (asl,w)) ctxt =
     if backp then ([(asl @ [concl th], w)],
                    fn resths => PROVE_HYP th (hd resths))
-    else ASSUME_TAC th g
+    else ASSUME_TAC th g ctxt
 
 (* contr/accept/assume *)
 fun caa_tac0 backp (c : simptac_config) th =
@@ -1929,9 +1930,9 @@ fun same_goals (goals1,goals2) = boolSyntax.goals_eq goals1 goals2
 
 (* Apply a continuation independently to annotated goals, retaining all
    validation functions. *)
-fun map_annotated next annotated =
+fun map_annotated next annotated ctxt =
     let
-      val results = map (fn (g,state) => next state g) annotated
+      val results = map (fn (g,state) => next state g ctxt) annotated
       val output = List.concat (map #1 results)
       val validations = map #2 results
       val lengths = map (length o #1) results
@@ -1940,37 +1941,38 @@ fun map_annotated next annotated =
       (output,validate)
     end
 
-fun bind_annotated (annotated,validation) next =
-    let val (output,validate) = map_annotated next annotated
+fun bind_annotated (annotated,validation) next ctxt =
+    let val (output,validate) = map_annotated next annotated ctxt
     in (output,validation o validate)
     end
 
-fun continue_annotated (annotated,validation) next =
+fun continue_annotated (annotated,validation) next ctxt =
     let
-      fun tag_result state g =
-        let val (goals,validate) = next state g
+      fun tag_result state g ctxt =
+        let val (goals,validate) = next state g ctxt
         in (map (fn goal => (goal,())) goals,validate)
         end
-      val (tagged,validate) = map_annotated tag_result annotated
+      val (tagged,validate) = map_annotated tag_result annotated ctxt
     in
       (map #1 tagged,validation o validate)
     end
 
 (* Continue from an unannotated tactic result. *)
-fun then_annotated (goals,validation) next =
-    continue_annotated (map (fn g => (g,())) goals,validation) (fn () => next)
+fun then_annotated (goals,validation) next ctxt =
+    continue_annotated
+      (map (fn g => (g,())) goals,validation) (fn () => next) ctxt
 
 fun rotate_assumption cfg =
     popper_of cfg (BF_ASSUME_TAC (not (#oldestfirst cfg)))
 
-fun counted_psr cfg ss prepared solver_context g =
+fun counted_psr cfg ss prepared solver_context g ctxt =
     let
       (* [simplify] runs inside a callback, so what it learns about the
          assumption is smuggled out through this cell. *)
       val outcome = ref (NONE : {changed:bool, expected:goal list} option)
       fun simplify th =
         ASSUM_LIST
-          (fn asms => fn popped_goal =>
+          (fn asms => fn popped_goal => fn ctxt =>
              let
                val (invocation_ss,reducer_context) =
                  process_asm_tags ss asms
@@ -1978,15 +1980,16 @@ fun counted_psr cfg ss prepared solver_context g =
                  simp_rule_with_prepared_context
                    invocation_ss prepared reducer_context solver_context th
                val ordinary =
-                 BF_ASSUME_TAC (not (#oldestfirst cfg)) simplified popped_goal
+                 BF_ASSUME_TAC
+                   (not (#oldestfirst cfg)) simplified popped_goal ctxt
                val _ =
                  outcome :=
                    SOME {changed=not (aconv (concl th) (concl simplified)),
                          expected= #1 ordinary}
              in
-               stdcon cfg simplified popped_goal
+               stdcon cfg simplified popped_goal ctxt
              end)
-      val (goals,validation) = popper_of cfg simplify g
+      val (goals,validation) = popper_of cfg simplify g ctxt
       val {changed,expected} =
         case !outcome of
             SOME outcome => outcome
@@ -1998,22 +2001,24 @@ fun counted_psr cfg ss prepared solver_context g =
       (map (fn goal => (goal,info)) goals,validation)
     end
 
-fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
+fun counted_pass cfg ss prepared solver_context initial_k
+                 (g as (asl,_)) ctxt =
     let
       val n = length asl
       val initial =
         {last= ~1, structural=false, k=initial_k, index=0}
-      fun loop state goal =
+      fun loop state goal ctxt =
         if #index state = n then ([(goal,state)],hd)
         else
           let
             val step =
               if #k state = 0 then
-                let val (goals,validation) = rotate_assumption cfg goal
+                let
+                  val (goals,validation) = rotate_assumption cfg goal ctxt
                     val info = {changed=false,structural=false}
                 in (map (fn g => (g,info)) goals,validation)
                 end
-              else counted_psr cfg ss prepared solver_context goal
+              else counted_psr cfg ss prepared solver_context goal ctxt
             fun next {changed,structural} =
               let
                 val k =
@@ -2028,10 +2033,10 @@ fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
                 loop state'
               end
           in
-            bind_annotated step next
+            bind_annotated step next ctxt
           end
     in
-      loop initial g
+      loop initial g ctxt
     end
 
 fun GEN_GLOBAL_SIMP_TAC mode
@@ -2052,10 +2057,10 @@ fun GEN_GLOBAL_SIMP_TAC mode
                  gen_simp_tac_with_prepared
                    prepared solver_context mode ss []
 
-               fun strip_implications (g as (_,w)) =
+               fun strip_implications (g as (_,w)) ctxt =
                  if can boolSyntax.dest_imp_only w then
-                   (DISCH_TAC THEN strip_implications) g
-                 else ALL_TAC g
+                   (DISCH_TAC THEN strip_implications) g ctxt
+                 else ALL_TAC g ctxt
 
                val pop_head_mp = POP_ASSUM MP_TAC
 
@@ -2117,18 +2122,18 @@ fun GEN_GLOBAL_SIMP_TAC mode
                   but on the conclusion the fixpoint has left -- and an
                   equation whose right-hand side simplified away is no
                   longer the term the rule is stated on. *)
-               fun root_first (goal as (asl,w)) =
-                 if not (can boolSyntax.dest_imp_only w) then ALL_TAC goal
+               fun root_first (goal as (asl,w)) ctxt =
+                 if not (can boolSyntax.dest_imp_only w) then ALL_TAC goal ctxt
                  else
                    case root_rewrite_of (map ASSUME asl) w of
-                       NONE => ALL_TAC goal
+                       NONE => ALL_TAC goal ctxt
                      | SOME eq =>
                          let
                            val _ = aconv (lhs (concl eq)) w orelse
                              raise ERR ("GEN_GLOBAL_SIMP_TAC",
                                         "bad root rewrite")
                          in
-                           CONV_TAC (K eq) goal
+                           CONV_TAC (K eq) goal ctxt
                          end
 
                (* [outer] is a suffix of the assumption list and [assumed]
@@ -2148,10 +2153,10 @@ fun GEN_GLOBAL_SIMP_TAC mode
                        end
                    | _ => NONE
 
-               fun fixpoint k goal =
+               fun fixpoint k goal ctxt =
                  let
                    val pass as (annotated,validation) =
-                     counted_pass base ss prepared solver_context k goal
+                     counted_pass base ss prepared solver_context k goal ctxt
                    val unchanged =
                      same_goals (map #1 annotated,[goal])
                    fun clear_change state =
@@ -2163,14 +2168,14 @@ fun GEN_GLOBAL_SIMP_TAC mode
                      (map (fn (g,state) => (g,clear_change state)) annotated,
                       validation)
                  in
-                   continue_annotated pass' after_pass
+                   continue_annotated pass' after_pass ctxt
                  end
 
-               and after_pass state goal =
+               and after_pass state goal ctxt =
                  if concl_in_fixpoint then
                    let
-                     val result as (goals,_) = conclusion_tac goal
-                     fun continue next = then_annotated result next
+                     val result as (goals,_) = conclusion_tac goal ctxt
+                     fun continue next = then_annotated result next ctxt
                    in
                      if not (same_goals (goals,[goal])) then
                        continue (fixpoint ~1)
@@ -2181,21 +2186,21 @@ fun GEN_GLOBAL_SIMP_TAC mode
                      else if imp_rebuild then continue rebuild
                      else result
                    end
-                 else if #structural state then fixpoint ~1 goal
-                 else if #last state > 0 then fixpoint (#last state) goal
-                 else final_conclusion goal
+                 else if #structural state then fixpoint ~1 goal ctxt
+                 else if #last state > 0 then fixpoint (#last state) goal ctxt
+                 else final_conclusion goal ctxt
 
-               and final_conclusion goal =
+               and final_conclusion goal ctxt =
                  let
-                   val result = conclusion_tac goal
+                   val result = conclusion_tac goal ctxt
                  in
-                   if imp_rebuild then then_annotated result rebuild
+                   if imp_rebuild then then_annotated result rebuild ctxt
                    else result
                  end
 
-               and rebuild (goal as (asl,w)) =
+               and rebuild (goal as (asl,w)) ctxt =
                  case find_rebuild w (asl,map ASSUME asl) 1 of
-                     NONE => ALL_TAC goal
+                     NONE => ALL_TAC goal ctxt
                    | SOME (count,target,eq) =>
                        let
                          val _ = aconv (lhs (concl eq)) target orelse
@@ -2204,7 +2209,7 @@ fun GEN_GLOBAL_SIMP_TAC mode
                        in
                          (ntac count pop_head_mp THEN
                           CONV_TAC (K eq) THEN strip_implications THEN
-                          fixpoint ~1) goal
+                          fixpoint ~1) goal ctxt
                        end
              in
                if imp_premises then
@@ -2224,12 +2229,7 @@ fun global_simp_tac cfg =
 
 
 
-fun track f x =
- let val _ = (used_rewrites := [])
-     val res = Lib.with_flag(track_rewrites,true) f x
- in used_rewrites := rev (!used_rewrites)
-  ; res
- end;
+val track = with_tracking
 
 (* ----------------------------------------------------------------------
     creating per-type ssdata values
@@ -2240,10 +2240,12 @@ fun tyi_to_ssdata tyinfo =
       val (thy,tyop) = TypeBasePure.ty_name_of tyinfo
       val tyname = thy ^ "$" ^ tyop
       val {rewrs = rws0, convs} = TypeBasePure.simpls_of tyinfo;
+      fun name_of th i =
+          case DB.revlookup th of
+              DB_dtype.Stored {Thy, Name} :: _ => {Thy = Thy, Name = Name}
+            | _ => {Thy = "", Name = tyname ^ " simpl. " ^ Int.toString i}
       fun reduce (th, (i,A)) =
-          (i + 1,
-           (SOME {Thy="",Name=tyname ^ " simpl. " ^ Int.toString i},th) ::
-           A)
+          (i + 1, (SOME (name_of th i), th) :: A)
       val (_, rewrs) = foldl reduce (1,[]) rws0
     in
       SSFRAG_CON

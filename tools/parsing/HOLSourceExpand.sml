@@ -42,6 +42,20 @@ fun expandRecord f pat {left, elems = {args, seps, stop = stop1}, right, stop} =
   val elems = {args = reord args NONE [], seps = seps, stop = stop1}
   in {left = left, elems = elems, right = right, stop = stop} end
 
+(* The context a surface form is elaborated against.  It goes on as a
+   curried argument anchored past the preceding one, so the enclosing
+   App's span still covers its children and hover navigation inside the
+   form keeps resolving to the user's own identifiers. *)
+fun mkSnapshot p =
+    App (mkIdent (p, "Context.snapshot"), Unit {left = p, right = p})
+
+(* `fn () => e', with every synthetic field at p *)
+fun mkThunk p e =
+    Fn {fn_ = p,
+        elems = [{bar = NONE, pat = Unit {left = p, right = p},
+                  arrow = NONE, exp = e}],
+        stop = p}
+
 fun mkLocPragma line col s =
   concat [" (*#loc ", Int.toString (line + 1), " ", Int.toString (col + 1), "*)", s]
 
@@ -55,9 +69,28 @@ fun mkLocString' (p, loc) ({file = "", ...}: fileline) = App (mkIdent (p, loc), 
     App (mkIdent (p, loc), App (mkIdent (p, "DB_dtype.mkloc"),
       mkTuple (p, [mkString (p, file), mkInt (p, line+1), mkIdent (p, "true")])))
 
+(* The composed simpset transformation a Proof's attributes ask for,
+   or NONE when it carries none.  Anchored wholly at `p' so a caller
+   that wants it inside a synthetic declaration can collapse that
+   declaration's span without leaving real-span children behind. *)
+fun simpsetUpd _ [] = NONE
+  | simpsetUpd p (kv::kvs) = let
+  fun mktm1 {key = (_, key), bind} = let
+    val args = case bind of NONE => [] | SOME {vals, eq_=_} => map mkString vals
+    val key = case key of
+      "exclude_simps" => "simpLib.remove_simps"
+    | "exclude_frags" => "simpLib.exclude_ssfrags"
+    | _ => key
+    in App (mkIdent (p, key), mkList (p, args)) end
+  fun mktm (kv, e) = Infix {left = e, id = (p, "o"), right = mktm1 kv}
+  in SOME (foldl mktm (mktm1 kv) kvs) end
+
+fun proofKvals (SOME {attrs = {args, ...}, ...} : kvals attrs) = args
+  | proofKvals _ = []
+
 fun doProofKvals _ [] tac = tac
   | doProofKvals p (kv::kvs) tac = let
-  val e = mkIdent (p, "BasicProvers.with_simpset_updates")
+  val e = mkIdent (p, "BasicProvers.with_simpset_updates_tac")
   fun mktm1 {key = (p, key), bind} = let
     val args = case bind of NONE => [] | SOME {vals, eq_=_} => map mkString vals
     val key = case key of
@@ -77,7 +110,13 @@ fun wrapTac (p, tac) = let
      one byte wide — it doesn't overlap with any real source token
      the user might hover.  A 14-character name would extend into
      the tac's own source range and intercept navigation on tactic
-     identifiers. *)
+     identifiers.
+
+     Only the goal is abstracted: this defers evaluation of the tactic
+     expression itself, which is what the wrapper is for.  Whoever needs
+     the tactic's *execution* bracketed has to span the context
+     application too, since that is when a tactic does its work --- see
+     BasicProvers.with_simpset_updates_tac. *)
   val tacEnd = expStop tac
   val patDummy = mkIdent (tacEnd, "g")
   val expDummy = mkIdent (tacEnd, "g")
@@ -153,6 +192,167 @@ exception HasOrPat
 fun mapSep f {args, seps, stop} = {args = map f args, seps = seps, stop = stop}
 
 fun expandDec {parseError, quietOpen, fileline} = let
+
+(* Whether a srw_ss rebind can be compiled in this file.  The shim names
+   BasicProvers, which does not exist for the scripts that build before
+   src/basicProof -- combinScript is one, and it uses Theorem.  The
+   theory header says whether it is available: a non-bare theory opens
+   bossLib, and a bare one has to ask for BasicProvers among its Libs.
+   Set by the Theory declaration, which precedes every proof in the
+   file; a file with no Theory header gets no shim. *)
+val srwShimOK = ref false
+
+(* Whether a TypeBase rebind can be compiled in this file.  The shim
+   names TypeBase qualified, so it needs no open -- only the structure,
+   which src/1 defines.  Everything with a Script builds after src/1
+   except src/bool, so the theory name is the whole test.  Set by the
+   Theory declaration, as srwShimOK is. *)
+val caseEqShimOK = ref false
+
+(* wrapTac, plus a rebinding of srw_ss to the simpset carried by the
+   context the tactic is run against:
+
+     fn g => fn c =>
+       let val srw_ss = fn () => BasicProvers.srw_ss_of c in <tac> end g c
+
+   A tactic that names srw_ss() itself -- SIMP_TAC (srw_ss()) ths, of
+   which the tree has many -- otherwise reads the live simpset, which is
+   both a read of ambient state during a proof and the reason
+   Proof[exclude_simps=...] still needs a global window: the attribute
+   reaches the context, but those readers do not look there.  Binding it
+   here makes them answer from the context, which by then already
+   carries whatever with_simpset_updates_tac put in it, so the shim
+   applies no updates of its own and cannot double-apply them.
+
+   Only the bare name is rebound.  Rebinding *and opening* the structure
+   would cover a qualified BasicProvers.srw_ss() too -- which
+   src/boss/theory_tests/exclArithBug writes, and which the bare name
+   cannot shadow -- but a structure is a strdec, and SML's `let dec in
+   exp end' takes core declarations only, so it cannot go here.  The one
+   place it fits is a declaration-level `local', where the only context
+   in hand is the declaration's own snapshot, taken before the tactic
+   runs and so missing whatever with_simpset_updates_tac put in the
+   context it passes down: that would shadow the ambient window with the
+   *un*-excluded simpset and turn exclArithBug's blocked case into a
+   solved one.  Qualified readers stay the window's business until the
+   live context is thread-local and srw_ss can answer from it directly.
+
+   The tactic expression stays under both binders, so it is still
+   evaluated per run rather than closed over early. *)
+(* The scope a declaration is elaborated in.  It binds the context the
+   declaration is checked against, applies whatever simpset transformation
+   the Proof attributes ask for, and rebinds BasicProvers so srw_ss() --
+   bare or qualified -- answers from that context.  Because the
+   transformation is applied here, the tactic runs in the transformed
+   context and with_simpset_updates_tac's ambient window has nothing left
+   to do.
+
+   The structure is rebound but NOT opened.  Opening it would shadow all
+   of BasicProvers across the declaration, and the names collide with
+   ones scripts already use: listScript's FOLDR_CONG proof calls Induct,
+   BasicProvers exports a different Induct, and the proof stops going
+   through.  Rebinding covers a qualified BasicProvers.srw_ss(), and one
+   further val -- taken from the rebound structure -- covers the bare
+   name, which between them is what an open would have reached without
+   touching anything else.  The parsing shim does the same: the quotation
+   expansion emits a qualified Parse.Term, so rebinding Parse suffices
+   there too.
+
+   Everything synthetic is anchored at `stop', the declaration's end,
+   because builtNavigateTo picks the FIRST child whose span covers the
+   cursor.  A DecVal's span can be collapsed to a point, but a DecOpen's
+   is derived from its identifier and cannot be.  At `stop' these
+   declarations sit past everything a cursor inside the declaration can
+   reach, so hover still descends to the user's own identifiers. *)
+fun ctxtLocal {anchor, stop, kvs, body} = let
+  val ctxtName = "HOLctxt"
+  val snap = mkSnapshot stop
+  val rhs = case simpsetUpd stop kvs of
+      NONE => snap
+    | SOME f => App (App (mkIdent (stop, "BasicProvers.map_simpset"), f), snap)
+  val bind = valPat stop (mkIdent (stop, ctxtName)) rhs
+  val ctxtId = mkIdent (stop, ctxtName)
+  fun shadow (nm, e) = valPat stop (mkIdent (stop, nm)) e
+  fun inCtxt f = App (mkIdent (stop, f), ctxtId)
+  (* Parse is available wherever the Theorem syntax is, so unlike the
+     BasicProvers rebind this needs no guard.  Term and Type are taken
+     from the rebound structure so a bare `Term q' is covered too --
+     listScript writes PAT_X_ASSUM (Term`x = y`) and the expansion of a
+     doublequoted quotation emits a qualified Parse.Term. *)
+  val parseRebind = [
+    DecStructure {structure_ = stop,
+      elems = {args = [{id = (stop, "Parse"), constraint = NONE,
+        bind = SOME {eq = stop, strexp = StrStruct {struct_ = stop,
+          strdec = [DecOpen {open_ = stop, elems = [(stop, "Parse")]},
+                    shadow ("Term", inCtxt "Parse.Term_in"),
+                    shadow ("Type", inCtxt "Parse.Type_in")],
+          end_ = SOME stop, stop = stop}}}],
+        seps = [], stop = stop}},
+    shadow ("Term", mkIdent (stop, "Parse.Term")),
+    shadow ("Type", mkIdent (stop, "Parse.Type"))]
+  val bp = (stop, "BasicProvers")
+  val rebind =
+    if not (!srwShimOK) then []
+    else let
+      val ss = App (mkIdent (stop, "BasicProvers.srw_ss_of"),
+                    mkIdent (stop, ctxtName))
+      val thunk = mkThunk stop ss
+      val strexp = StrStruct {struct_ = stop,
+        strdec = [DecOpen {open_ = stop, elems = [bp]},
+                  valPat stop (mkIdent (stop, "srw_ss")) thunk],
+        end_ = SOME stop, stop = stop}
+      in [DecStructure {structure_ = stop,
+            elems = {args = [{id = bp, constraint = NONE,
+                              bind = SOME {eq = stop, strexp = strexp}}],
+                     seps = [], stop = stop}},
+          shadow ("srw_ss", mkIdent (stop, "BasicProvers.srw_ss"))] end
+  (* The case-theorem family reads the TypeBase, so a proof naming
+     AllCaseEqs() gets the types its context knows rather than whatever
+     the ambient TypeBase has grown since.  AllCaseEqs and AllCasePreds
+     stay thunks so the theorem is built per run, not per declaration;
+     the other four are partial applications that do no work until the
+     proof names a type.  Only the bare names are rebound: a qualified
+     TypeBase.AllCaseEqs() still reads the ambient TypeBase, and a
+     structure rebind to cover it costs more per declaration than all
+     six of these vals together.  No script writes one. *)
+  val caseRebind =
+    if not (!caseEqShimOK) then []
+    else let
+      fun ofCtxt nm = inCtxt ("TypeBase." ^ nm ^ "_of")
+      fun thunked nm = shadow (nm, mkThunk stop (ofCtxt nm))
+      fun applied nm = shadow (nm, ofCtxt nm)
+      in
+        [thunked "AllCaseEqs", thunked "AllCasePreds",
+         applied "CaseEq", applied "CaseEqs",
+         applied "CasePred", applied "CasePreds"]
+      end
+  in DecLocal {local_ = anchor,
+               dec1 = bind :: parseRebind @ rebind @ caseRebind,
+               in_ = SOME stop,
+               dec2 = [body], end_ = SOME stop, stop = stop} end
+
+fun srwWrapTac (p, tac) =
+  if not (!srwShimOK) then wrapTac (p, tac)
+  else let
+    val stop = expStop tac
+    (* The whole binding collapses to a point at p.  builtNavigateTo
+       picks the FIRST child whose span covers the cursor, so a synthetic
+       declaration carrying the tactic's own stop would span the tactic
+       body and swallow every hover inside it -- lsp_tests'
+       hover_inside_proof_qed is exactly that.  With start = stop = p the
+       `endOffset < endPosition' test can never select it, and the tac,
+       which keeps its real span, is found instead. *)
+    val ss = App (mkIdent (p, "BasicProvers.srw_ss_of"), mkIdent (p, "c"))
+    val thunk = mkThunk p ss
+    val body = LetInEnd {let_ = p,
+      dec = [valPat p (mkIdent (p, "srw_ss")) thunk], in_ = SOME p,
+      exps = {args = [tac], seps = [], stop = stop},
+      end_ = SOME stop, stop = stop}
+    val applied = App (App (body, mkIdent (stop, "g")), mkIdent (stop, "c"))
+    fun lam v e = Fn {fn_ = p,
+      elems = [{bar = NONE, pat = mkIdent (stop, v), arrow = NONE, exp = e}],
+      stop = stop}
+    in lam "g" (lam "c" applied) end
 
 fun magicBind (p, name) acc =
   if Systeml.canBindStr then let
@@ -278,9 +478,37 @@ and expandQuoteCore start toks = let
     | go (DefinitionLabel _ :: _) _ = raise Unreachable
   in go toks [] end
 
+(* Byte-precise positions of a qdecl in the source file.  Used by
+   expandQuote to give the synthesized quotation List and its
+   ExpExpansion wrapper a span that covers the ACTUAL body text, so
+   the LSP annotator can tag the body with PQuote and quotation
+   hover works on Theorem-QED / Definition / Datatype / etc. bodies
+   (not just explicit `‘...’` / `‘‘...’’` quotations). *)
+and qdStart (QuoteLiteral (p, _)) = p
+  | qdStart (QuoteAntiq {caret_, ...}) = caret_
+  | qdStart (DefinitionLabel {left, ...}) = left
+and qdStop (QuoteLiteral (p, s)) = p + String.size s
+  | qdStop (QuoteAntiq {exp, ...}) = expStop exp
+  | qdStop (DefinitionLabel {stop, ...}) = stop
+
 and expandQuote start stop toks = let
-  val elems = {args = expandQuoteCore start toks, seps = [], stop = stop}
-  in List {left = start, elems = elems, right = NONE, stop = stop} end
+  val (bodyStart, bodyEnd) = case toks of
+      [] => (start, stop)
+    | _ => (qdStart (hd toks), qdStop (List.last toks))
+  val elems = {args = expandQuoteCore start toks, seps = [], stop = bodyEnd}
+  val list = List {left = bodyStart, elems = elems, right = NONE, stop = bodyEnd}
+  (* Wrap the synthesized List in an ExpExpansion whose orig is a
+     synthetic HOLQuote pointing at the body span.  The LSP's
+     annotateExp fires its HOLQuote case on this List and adds a
+     PQuote-tagged Built node — the same mechanism used for explicit
+     source quotations.  For quotations that WERE explicit in source
+     (HOLFullQuote / HOLQuote), expandExp wraps expandQuote's result
+     in ANOTHER ExpExpansion carrying the original AST node; that
+     outer wrap keeps its own wider span (including delimiters) via
+     overspan. *)
+  val orig = HOLQuote {head = (bodyStart, ""), quote = toks,
+                       end_tok = NONE, stop = bodyEnd}
+  in ExpExpansion {orig = orig, result = list} end
 
 and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
   | expandDec _ (DecVal {val_, tyvars, elems}) = let
@@ -353,6 +581,7 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
   | expandDec _ (dec as HOLFilePragmaWith _) = DecExpansion {orig = dec, result = []}
   | expandDec _ (dec as HOLTheory {theory_, id, attrs, elems, ...}) = let
     val bare = ref false
+    val libBasicProvers = ref false
     val _ = app (fn
         {key = (_, "bare"), bind = NONE} => bare := true
       | {key = (_, "no_sig_docs"), bind = NONE} => ()  (* considered in HOLTheoryEnd *)
@@ -393,6 +622,9 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
           | ({key = (_, "ignore_grammar"), bind = NONE}, true) => ignoreGrammar := true
           | ({key = (p, s), ...}, _) => parseError (p, p + size s) "unknown header attribute"
           ) (case attrs of NONE => [] | SOME v => #args (#attrs v))
+        val _ = if not isThy andalso #2 id = "BasicProvers" then
+                  libBasicProvers := true
+                else ()
         val id' = if isThy then (#1 id, #2 id ^ "Theory") else id
         val acc = push (!qualified) id' acc
         val _ =
@@ -416,6 +648,8 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
         val acc = mkSemi (decs @ f "HOL_Interactive.start_open" acc)
         in f "HOL_Interactive.end_open" acc end
     else process elems (lhs, acc)
+    val _ = srwShimOK := (not (!bare) orelse !libBasicProvers)
+    val _ = caseEqShimOK := (#2 id <> "bool")
     val acc = valWild theory_ (App (mkIdent (theory_, "Theory.new_theory"), mkString id)) :: acc
     val acc = if !bare then acc else
       valWild theory_ (App (mkIdent (theory_, "Parse.set_grammar_ancestry"),
@@ -431,6 +665,19 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
       val exclude_docs = mkApp set_trace [include_docs, zero]
       in Infix {left = exclude_docs, id = (theory_, "before"), right = e} end
     in DecExpansion {orig = dec, result = [valWild theory_ e]} end
+  | expandDec _ (dec as HOLDefinition {
+      definition_, id, attrs = _, colon = _, quote = _,
+      termination, end_ = NONE, stop = _}) = let
+    (* Skip `TotalDefn.qDefine` wrapping so wide type errors from a
+       partial body don't fire; still bind the SML name to a `thm`
+       placeholder so downstream references type-check. *)
+    val bind = valPat definition_ (mkIdent id)
+                 (mkIdent (definition_, "boolTheory.TRUTH"))
+    val extra = case termination of
+        NONE => []
+      | SOME {tac = ExpEmpty _, ...} => []
+      | SOME {tac, ...} => [valWild definition_ (expandExp false tac)]
+    in DecExpansion {orig = dec, result = bind :: extra} end
   | expandDec _ (dec as HOLDefinition {
       definition_, id as (_, name), attrs, colon = _, quote, termination, end_ = _, stop}) = let
     val indThm = ref NONE
@@ -450,12 +697,27 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
         String.extract (name, 0, SOME (size name - 4)) ^ "_IND"
       else name ^ "_ind")
     val fileline = fileline (#1 id)
-    val e = mkLocString (definition_, "TotalDefn.qDefine", "TotalDefn.located_qDefine") fileline
+    val e = mkLocString' (definition_, "TotalDefn.located_qDefine")
+                         fileline
     val e = App (e, mkNameAttrs mkKval id attrs)
     val e = App (e, expandQuote definition_ stop quote)
+    (* Anchor the synthetic `NONE` past the body so the enclosing
+       App's expStop covers the quotation.  Otherwise
+       `mkIdent(definition_, "NONE")` at the `Definition` keyword
+       position gives the outer App span (definition_, definition_+4)
+       and the body's PQuote node — structurally inside this App —
+       becomes unreachable via builtNavigateTo.
+
+       For the `SOME tac` case there's nothing to fix: `tac`'s own
+       expStop naturally extends past the body, so keep `SOME` at
+       `definition_` to preserve input→output line correspondence
+       for the tac's SML (moving it to `stop` would push the whole
+       `( SOME <tac> )` onto the `End` input line even though the
+       tac lives on an earlier line). *)
     val e = App (e, case termination of
-      NONE => mkIdent (definition_, "NONE")
+      NONE => mkIdent (stop, "NONE")
     | SOME {tac, ...} => App (mkIdent (definition_, "SOME"), expandExp false tac))
+    val e = App (e, mkSnapshot (expStop e))
     val dec' = magicBind indThm [valPat definition_ (mkIdent id) e]
     in DecExpansion {orig = dec, result = rev dec'} end
   | expandDec _ (dec as HOLDatatype {datatype_, quote, stop, ...}) = let
@@ -483,10 +745,26 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
         else split (SOME lab) [] r (mk l :: qs, olab :: labs)
       | split olab l (d :: r) qs = split olab (d :: l) r qs
     val (quotes, conjs) = split NONE [] quote ([], [])
-    val quote = mkList (inductive_, mkQ "(" :: tl (List.concat quotes) @ [mkQ ")"])
+    (* Give the synthesised quote-list a body-precise span and wrap
+       in ExpExpansion(HOLQuote, ...) so the LSP annotator adds
+       PQuote to the body — same trick as `expandQuote` for the
+       other HOL* declarations.  Without this, mkList's default
+       left=stop=inductive_ yields a zero-width span and body
+       hovers fall through to the SML tree walk. *)
+    val (bodyStart, bodyEnd) = case quote of
+        [] => (inductive_, inductive_)
+      | _ => (qdStart (hd quote), qdStop (List.last quote))
+    val elems = {args = mkQ "(" :: tl (List.concat quotes) @ [mkQ ")"],
+                 seps = [], stop = bodyEnd}
+    val quoteList = List {left = bodyStart, elems = elems,
+                          right = NONE, stop = bodyEnd}
+    val quoteOrig = HOLQuote {head = (bodyStart, ""), quote = quote,
+                              end_tok = NONE, stop = bodyEnd}
+    val quote = ExpExpansion {orig = quoteOrig, result = quoteList}
     fun mkStem x = (id, stem ^ x)
     val pat = mkTuple (inductive_, map (mkIdent o mkStem) ["_rules", indSuffix, "_cases"])
     val e = App (App (mkIdent (inductive_, entryPoint), mkString (id, stem)), quote)
+    val e = App (e, mkSnapshot (expStop e))
     val acc = magicBind (mkStem "_strongind") [valPat inductive_ pat e]
     fun mkExtra _ [] acc = acc
       | mkExtra i (SOME {label = SOME (HOLLabel {tilde_, id}), attrs, ...} :: conjs) acc = let
@@ -534,6 +812,20 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
     val dec' = valPat theorem_ (mkIdent id) (App (e, mkTuple (theorem_, [nameAttrs, rhs])))
     in DecExpansion {orig = dec, result = [dec']} end
   | expandDec _ (dec as HOLTheoremDecl {
+      triv = _, theorem_, id, attrs = _, colon = _, quote = _,
+      proof_, tac, qed_ = NONE, stop = _}) = let
+    (* Skip `Q.store_thm` wrapping so a not-yet-`tactic` tac (e.g.
+       `Induct_on` still waiting for its argument) doesn't surface
+       as a wide wrapping-type error; standalone-compile the tac
+       to still catch real SML bugs inside it. *)
+    val bind = valPat theorem_ (mkIdent id)
+                 (mkIdent (theorem_, "boolTheory.TRUTH"))
+    val extra = case (proof_, tac) of
+        (NONE, _) => []
+      | (SOME _, ExpEmpty _) => []
+      | (SOME _, _) => [valWild theorem_ (expandExp false tac)]
+    in DecExpansion {orig = dec, result = bind :: extra} end
+  | expandDec _ (dec as HOLTheoremDecl {
       triv, theorem_, id,
       attrs, colon = _, quote, proof_, tac, qed_ = _, stop}) = let
     val fileline = fileline (#1 id)
@@ -551,8 +843,13 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
       | NONE => expStart tac
     val quote = expandQuote theorem_ tacAnchor quote
     val tac = wrapTac (tacAnchor, expandExp false tac)
-    val tac = case proof_ of SOME {proof_, attrs} => doProofAttrs proof_ attrs tac | _ => tac
-    val e = mkLocString (theorem_, "Q.store_thm", "Q.store_thm_at") fileline
+    (* the Proof attributes are applied to the context in the enclosing
+       local, AND wrapped round the tactic: the context reaches readers
+       that look there, but a separately-compiled library calling
+       srw_ss() reads the ambient simpset, which only the window covers *)
+    val kvs = case proof_ of SOME {attrs, ...} => proofKvals attrs | NONE => []
+    val tac = doProofKvals tacAnchor kvs tac
+    val e = mkLocString' (theorem_, "Q.store_thm_at") fileline
     (* Give the synthetic tuple a real stop so the resulting Built
        parent covers its children.  mkTuple's default (stop = anchor
        position = theorem_) yields a zero-width parent over tac's
@@ -561,7 +858,11 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
     val args = {args = [nameAttrs, quote, tac], seps = [], stop = tupleStop}
     val tuple = Tuple {left = theorem_, elems = args, right = NONE, stop = tupleStop}
     val e = App (e, tuple)
-    in DecExpansion {orig = dec, result = [valPat theorem_ (mkIdent id) e]} end
+    val e = App (e, mkIdent (expStop e, "HOLctxt"))
+    val body = valPat theorem_ (mkIdent id) e
+    in DecExpansion {orig = dec, result = [
+         ctxtLocal {anchor = theorem_, stop = stop, kvs = kvs, body = body}]}
+    end
   | expandDec _ (dec as HOLResume {resume_, id, attrs, tac, ...}) = let
     val (label, rest) = case (case attrs of NONE => [] | SOME v => #args (#attrs v)) of
       {key, bind = NONE} :: rest => (key, rest)
@@ -580,7 +881,9 @@ and expandDec _ (dec as DecSemi _) = DecExpansion {orig = dec, result = []}
     val e = App (e, mkRecord (resume_, [
       mkLabEq (resume_, "label_name", mkString label),
       mkLabEq (resume_, "suspension_name", mkString id)]))
-    val e = App (e, doProofKvals resume_ rest (wrapTac (resume_, expandExp false tac)))
+    val e = App (e, doProofKvals resume_ rest
+                             (srwWrapTac (resume_, expandExp false tac)))
+    val e = App (e, mkSnapshot (expStop e))
     in DecExpansion {orig = dec, result = [valPat resume_ subname e]} end
   | expandDec _ (dec as HOLFinalise {finalise_, id, attrs, ...}) = let
     val fileline = fileline (#1 id)

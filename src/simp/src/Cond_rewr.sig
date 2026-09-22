@@ -65,7 +65,7 @@ sig
      every traversal whose simpset does not configure the depth. *)
   val stack_limit : int ref
 
-  val used_rewrites : thm list ref
-  val track_rewrites : bool ref
+  (* run something, and report which rewrites fired while it ran *)
+  val with_tracking : ('a -> 'b) -> 'a -> 'b * thm list
 
 end
