@@ -5692,6 +5692,21 @@ local
        | ASSERTED_EQUALITY_REWRITE_ERROR error => raise error
 
   fun z3_rewrite_entry (state, target) =
+  (* Perform the String resource admission before canonical orientation.  The
+     latter is a generic conversion and can otherwise walk an oversized
+     String concatenation spine before the owning budget gets a chance to
+     reject it. *)
+  let
+    val direct_string_equality =
+      case Lib.total boolSyntax.dest_eq target of
+        SOME (left, right) =>
+          Library.type_contains_string (Term.type_of left) orelse
+          Library.type_contains_string (Term.type_of right)
+      | NONE => false
+    val _ = if direct_string_equality then
+      SmtResource.check_resource_goal "String" "rewrite" target
+    else ()
+  in
   case Lib.total rewrite_boolean_constant_schema target of
     SOME theorem => (state, theorem)
   | NONE =>
@@ -5730,6 +5745,7 @@ local
   in
     (state, Thm.EQ_MP (Thm.SYM orientation) theorem)
   end))
+  end
 
   (* |- ~(!x. P x y) <=> ~(P (sk y) y)
      |- (?x. P x y) <=> P (sk y) y *)

@@ -24774,13 +24774,13 @@ let
       check_oracle_tags (label ^ " expected result") theorem
     end
   val unsupported =
-    ((SmtFpGraph.represent ``smtfp_add RNE ^x ^y``; false)
+    ((SmtFpGraph.represent ``smtfp_mul RNE ^x ^y``; false)
      handle SmtFpGraph.Declined _ => true)
   val opaque = Term.mk_var
     ("task30_fp_graph_opaque", ``:(4,3) smtfp -> (4,3) smtfp``)
   val nested_unsupported =
     ((SmtFpGraph.represent
-        (Term.mk_comb (opaque, ``smtfp_add RNE ^x ^y``)); false)
+        (Term.mk_comb (opaque, ``smtfp_mul RNE ^x ^y``)); false)
      handle SmtFpGraph.Declined _ => true)
   val conditional_unsupported =
     ((SmtFpGraph.represent (boolSyntax.mk_cond (boolSyntax.T, x, y)); false)

@@ -40,11 +40,20 @@ struct
   fun registered_name names term =
     let
       val (head, _) = boolSyntax.strip_comb term
-      val actual = #Name (Term.dest_thy_constid head)
-      fun matches name = KernelSig.id_compare
-        (actual, #Name (Term.dest_thy_constid
-          (Term.prim_mk_const {Thy = "smtfloat", Name = name}))) = EQUAL
-    in List.find matches names end
+    in
+      case Lib.total Term.dest_thy_constid head of
+        NONE => NONE
+      | SOME actual_id =>
+          let
+            val actual = #Name actual_id
+            fun matches name = KernelSig.id_compare
+              (actual, #Name (Term.dest_thy_constid
+                (Term.prim_mk_const {Thy = "smtfloat", Name = name}))) =
+              EQUAL
+          in
+            List.find matches names
+          end
+    end
 
   fun known_unsupported term =
     case head_name term of

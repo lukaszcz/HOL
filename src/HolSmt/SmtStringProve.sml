@@ -1544,13 +1544,61 @@ struct
       (fn target =>
         let
           val maximum = SmtResource.max_skeleton_replay_dag_nodes
-          fun loop _ _ [] = false
-            | loop seen observed (term :: pending) =
-                if HOLset.member (seen, term) then
-                  loop seen observed pending
+          (* This admission walk is deliberately pointer-based.  Character
+             expansion fixtures contain deeply shared Boolean structure; a
+             structural [HOLset] lookup repeatedly compares that entire
+             shared spine and can consume the step-time budget before the
+             DAG cap is reached.  The resource metric is a physical-DAG
+             bound, so pointer identity is the appropriate key here. *)
+          val bucket_count = 4093
+          val seen_buckets = Array.array
+            (bucket_count, [] : Term.term list)
+          fun name_hash name =
+            let
+              fun loop index hash =
+                if index = String.size name then hash
+                else loop (index + 1)
+                  ((hash * 33 + Char.ord (String.sub (name, index))) mod
+                   bucket_count)
+            in
+              loop 0 5381
+            end
+          fun pointer_hash depth term =
+            if Term.is_var term then
+              name_hash (Lib.fst (Term.dest_var term))
+            else if Term.is_const term then
+              name_hash (#Name (Term.dest_thy_const term))
+            else if depth = 0 then
+              if Term.is_abs term then 17 else 19
+            else if Term.is_abs term then
+              let val (_, body) = Term.dest_abs term in
+                (23 + 37 * pointer_hash (depth - 1) body) mod bucket_count
+              end
+            else
+              let
+                val (operator, operand) = Term.dest_comb term
+              in
+                (29 + 37 * pointer_hash (depth - 1) operator +
+                 pointer_hash (depth - 1) operand) mod bucket_count
+              end
+            handle Feedback.HOL_ERR _ => 31
+          fun seen term =
+            let
+              val index = pointer_hash 3 term
+              val bucket = Array.sub (seen_buckets, index)
+            in
+              if List.exists
+                   (fn saved => Portable.pointer_eq (term, saved)) bucket
+              then true
+              else
+                (Array.update (seen_buckets, index, term :: bucket); false)
+            end
+          fun loop _ [] = false
+            | loop observed (term :: pending) =
+                if seen term then
+                  loop observed pending
                 else
                   let
-                    val seen = HOLset.add (seen, term)
                     val observed = Int.min (maximum + 1, observed + 1)
                     val () = SmtResource.check_dag_size_with_limit
                       "String" "char-family-admission"
@@ -1558,11 +1606,11 @@ struct
                   in
                     if applies term then true
                     else
-                      loop seen observed
+                      loop observed
                         (SmtResource.term_children term @ pending)
                   end
         in
-          loop (HOLset.empty Term.compare) 0 [target]
+          loop 0 [target]
         end) target
 
   fun char_word_expansion_domain target =
