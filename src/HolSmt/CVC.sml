@@ -277,8 +277,10 @@ structure CVC = struct
       (Feedback.trace ("metis", 0) replay) input
 
   fun quiet f =
-    Feedback.quiet_messages
-      (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()
+    Feedback.trace ("metis", 0)
+      (fn () =>
+        Feedback.quiet_messages
+          (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()) ()
 
   fun checked_post proof_name command_stem parse replay
       (data as ((original_goal, goal, validation, finite_hyps),

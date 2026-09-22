@@ -381,8 +381,10 @@ structure Z3 = struct
        "underlying HOL_ERR: " ^ hol_err_string holerr)
 
   fun quiet f =
-    Feedback.quiet_messages
-      (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()
+    Feedback.trace ("metis", 0)
+      (fn () =>
+        Feedback.quiet_messages
+          (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()) ()
 
   val unsupported_proof_symbol_diagnostic =
     "Z3_PROOF_SYMBOL_UNSUPPORTED"

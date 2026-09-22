@@ -10,8 +10,10 @@ structure SolverSpec = struct
      the solver boundary so the public HOL feedback settings are restored on
      both success and failure. *)
   fun quiet f x =
-    Feedback.quiet_messages
-      (fn () => Feedback.quiet_warnings (fn () => f x) ()) ()
+    Feedback.trace ("metis", 0)
+      (fn () =>
+        Feedback.quiet_messages
+          (fn () => Feedback.quiet_warnings (fn () => f x) ()) ()) ()
 
   datatype result = SAT of string option  (* model, should perhaps be a thm *)
                   | UNSAT of Thm.thm option  (* assumptions |- conclusion *)
