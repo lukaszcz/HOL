@@ -996,3 +996,233 @@ val _ =
        in
          ordinary_declines andalso result
        end)
+
+(* This carrier is a fresh datatype, not another spelling of int.  Its
+   arithmetic laws are proved by reducing the wrapper to integer laws;
+   the generic solver only sees the registered, wrapped theorems. *)
+val _ = Datatype.Datatype `client_integer = ClientInteger int`
+
+val client_plus_def = bossLib.Define
+  `client_plus (ClientInteger a) (ClientInteger b) =
+     ClientInteger (a + b)`
+val client_le_def = bossLib.Define
+  `client_le (ClientInteger a) (ClientInteger b) <=> a <= b`
+val client_lt_def = bossLib.Define
+  `client_lt (ClientInteger a) (ClientInteger b) <=> a < b`
+
+val client_defs = [client_plus_def, client_le_def, client_lt_def]
+
+fun client_law statement variables int_laws =
+  Tactical.prove
+    (statement,
+     Tactical.THEN
+       (Tactical.rpt Tactic.GEN_TAC,
+        Tactical.THEN
+          (List.foldr
+             (fn (name, tac) =>
+               Tactical.THEN (bossLib.Cases_on name, tac))
+             Tactical.ALL_TAC variables,
+           Tactical.THEN
+             (simpLib.SIMP_TAC boolSimps.bool_ss
+                (DB.fetch "linarithRenamedSelftest" "client_integer_11" ::
+                 client_defs),
+              metisLib.METIS_TAC int_laws))))
+
+val client_add_mono =
+  client_law
+    ``!a b c d : client_integer.
+        client_le a b /\ client_le c d ==>
+        client_le (client_plus a c) (client_plus b d)``
+    [`a`, `b`, `c`, `d`] [integerTheory.INT_LE_ADD2]
+val client_lt_add_mono =
+  client_law
+    ``!a b c d : client_integer.
+        client_lt a b /\ client_lt c d ==>
+        client_lt (client_plus a c) (client_plus b d)``
+    [`a`, `b`, `c`, `d`] [integerTheory.INT_LT_ADD2]
+val client_let_add_mono =
+  client_law
+    ``!a b c d : client_integer.
+        client_le a b /\ client_lt c d ==>
+        client_lt (client_plus a c) (client_plus b d)``
+    [`a`, `b`, `c`, `d`] [integerTheory.INT_LET_ADD2]
+val client_lte_add_mono =
+  client_law
+    ``!a b c d : client_integer.
+        client_lt a b /\ client_le c d ==>
+        client_lt (client_plus a c) (client_plus b d)``
+    [`a`, `b`, `c`, `d`] [integerTheory.INT_LTE_ADD2]
+
+val client_not_less =
+  client_law
+    ``!a b : client_integer.
+        ~client_lt a b <=> client_le b a``
+    [`a`, `b`] [integerTheory.INT_NOT_LT]
+val client_not_le =
+  client_law
+    ``!a b : client_integer.
+        ~client_le a b <=> client_lt b a``
+    [`a`, `b`] [integerTheory.INT_NOT_LE]
+val client_neq =
+  client_law
+    ``!a b : client_integer.
+        a <> b ==>
+        (client_lt a b ==> F) ==>
+        (client_lt b a ==> F) ==> F``
+    [`a`, `b`] [linarithInstTheory.INT_NEQ_E]
+
+val client_assoc =
+  client_law
+    ``!a b c : client_integer.
+        client_plus (client_plus a b) c =
+        client_plus a (client_plus b c)``
+    [`a`, `b`, `c`] [integerTheory.INT_ADD_ASSOC]
+val client_comm =
+  client_law
+    ``!a b : client_integer.
+        client_plus a b = client_plus b a``
+    [`a`, `b`] [integerTheory.INT_ADD_COMM]
+val client_rid =
+  client_law
+    ``!a : client_integer.
+        client_plus a (ClientInteger 0) = a``
+    [`a`] [integerTheory.INT_ADD_RID]
+val client_le_cancel =
+  client_law
+    ``!a b c : client_integer.
+        client_le (client_plus a b) (client_plus a c) <=>
+        client_le b c``
+    [`a`, `b`, `c`] [integerTheory.INT_LE_LADD]
+val client_lt_cancel =
+  client_law
+    ``!a b c : client_integer.
+        client_lt (client_plus a b) (client_plus a c) <=>
+        client_lt b c``
+    [`a`, `b`, `c`] [integerTheory.INT_LT_LADD]
+val client_eq_cancel =
+  client_law
+    ``!a b c : client_integer.
+        (client_plus a b = client_plus a c) <=> (b = c)``
+    [`a`, `b`, `c`] [integerTheory.INT_EQ_LADD]
+val client_lt_refl =
+  client_law ``!a : client_integer. ~client_lt a a`` [`a`]
+    [integerTheory.INT_LT_REFL]
+val client_le_refl =
+  client_law ``!a : client_integer. client_le a a`` [`a`]
+    [integerTheory.INT_LE_REFL]
+
+val client_plus =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "client_plus"}
+val client_le =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "client_le"}
+val client_lt =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "client_lt"}
+val client_ctor =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "ClientInteger"}
+val client_ty = Term.type_of (Term.mk_comb (client_ctor, i0))
+
+fun client_strip tm =
+  case Lib.total (renamed_binary client_plus) tm of
+      SOME (left, right) => client_strip left @ client_strip right
+    | NONE => [tm]
+
+fun client_dest_lit tm =
+  let
+    val (ctor, value) = Term.dest_comb tm
+  in
+    if Term.aconv ctor client_ctor then
+      Arbrat.fromAInt (intSyntax.int_of_term value)
+    else raise mk_HOL_ERR "linarithRenamedSelftest"
+                 "client_dest_lit" "not a client literal"
+  end
+
+fun client_mk_lit value =
+  Term.mk_comb (client_ctor,
+    intSyntax.term_of_int (Arbrat.toAInt value))
+
+fun client_ac_canon tm =
+  let
+    val summands = Listsort.sort Term.compare (client_strip tm)
+    val normal =
+      list_mk_lbinop (renamed_app client_plus) summands
+  in
+    if Term.aconv tm normal then Thm.REFL tm
+    else
+      Tactical.prove
+        (boolSyntax.mk_eq (tm, normal),
+         metisLib.METIS_TAC [client_assoc, client_comm])
+  end
+
+val client_instance : linarithData.linarith_instance =
+  {ty = client_ty,
+   discrete = NONE,
+   dest =
+     {dest_plus = renamed_binary client_plus,
+      dest_minus = NONE,
+      dest_neg = NONE,
+      dest_mult = fn _ =>
+        raise mk_HOL_ERR "linarithRenamedSelftest"
+          "dest_mult" "no multiplication on client_integer",
+      dest_div = NONE,
+      dest_suc = NONE,
+      dest_lit = client_dest_lit,
+      mk_lit = client_mk_lit,
+      dest_less = renamed_binary client_lt,
+      dest_leq = renamed_binary client_le},
+   kit =
+     {add_mono =
+        [client_add_mono, client_lt_add_mono,
+         client_let_add_mono, client_lte_add_mono],
+      mult_mono = [],
+      not_less = client_not_less,
+      not_le = client_not_le,
+      neqE = client_neq,
+      nonneg = fn _ => NONE},
+   norm_conv =
+     linarithCancel.mk_norm_conv
+       {ac =
+          {dest_less = renamed_binary client_lt,
+           dest_leq = renamed_binary client_le,
+           strip_plus = client_strip,
+           mk_plus = fn (left, right) =>
+             renamed_app client_plus left right,
+           assoc = client_assoc,
+           comm = client_comm,
+           rid = client_rid,
+           ac_fallback = SOME client_ac_canon},
+        ty = client_ty,
+        leq_cancel = client_le_cancel,
+        less_cancel = client_lt_cancel,
+        eq_cancel = client_eq_cancel,
+        expression_conv = fn _ => raise Conv.UNCHANGED,
+        reduce_conv = Conv.NO_CONV,
+        refl_thms = [client_lt_refl, client_le_refl]},
+   nnf_rules = [],
+   pre_split = [],
+   atom_facts = fn _ => []}
+
+val client_x = Term.mk_var ("client_x", client_ty)
+val client_y = Term.mk_var ("client_y", client_ty)
+val client_z = Term.mk_var ("client_z", client_ty)
+val client_w = Term.mk_var ("client_w", client_ty)
+
+val client_goal =
+  ([renamed_app client_le client_x client_y,
+    renamed_app client_le client_z client_w],
+   renamed_app client_le
+     (renamed_app client_plus client_x client_z)
+     (renamed_app client_plus client_y client_w))
+
+val _ =
+  check
+    ("a new arithmetic carrier uses its registered theorem kit",
+     fn () =>
+       let
+         val ordinary_declines =
+           not (valid_closes (linarithLib.LINARITH_TAC []) client_goal
+                handle Feedback.HOL_ERR _ => false)
+         val _ = linarithData.register_instance client_instance
+       in
+         ordinary_declines andalso
+         valid_closes (linarithLib.LINARITH_TAC []) client_goal
+       end)

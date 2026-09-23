@@ -14,6 +14,7 @@ checks; it is not a solved-goal score.
 | Bounded FORCE turns | `clasimp/selftest.sml` compares the admitted first-best expansions under one-unit and large slices on the same partial-map proof. `classical/selftest.sml` resumes depth search and pending kernel replay under one budget. |
 | Resumed tableau turns | `blast/selftest.sml` compares small application slices with one funded fixed-depth run, interleaves another search while a live owned trail is suspended, rejects the first proof to force backtracking, and validates a resumed theorem in an explicit context. |
 | Renamed arithmetic declarations | `linarith/instances/selftest.sml` registers fresh names for integer addition and order, derives their laws from the existing theorem kit, and closes an additive inequality the ordinary instance declines. |
+| Independent arithmetic carrier | `linarith/instances/selftest.sml` defines a fresh `client_integer` datatype, proves its addition and order kit from integer laws, and closes an additive inequality only after registering that instance. Its AC fallback also checks certified cancellation replay. |
 | Safe tagged rule transport | `clasimp/selftest.sml` derives a safe introduction rule whose conclusion reaches the goal only after an invocation rewrite changes its normal form. |
 | Persistent claset transport | `clasimp/selftest.sml` uses an explicit base-claset destruction rule through `CS_AUTO_TAC` and scoped public `AUTO_TAC`, and a safe introduction rule through `CS_CLARSIMP_TAC`. Each needs a supplied rewrite before the rule view reaches the goal; a polymorphic rule is checked at both `num` and `bool`. |
 | Reloaded persistent transport | `clasimp/theory_tests/transportPersistentBaseScript.sml` declares a safe destruction rule; its child theory closes the differently spelled goal with public `AUTO_TAC` and a supplied bridge rewrite. |
@@ -30,11 +31,12 @@ The following temporary source ablations were run, then removed:
 | Retaining the tableau continuation | `resumed tableau retains its fixed-depth work and proof` failed when yielded turns restarted the fixed-depth run. |
 | Selecting persistent claset rules for transport | `persistent destruction rule crosses a supplied normal form` failed through public `AUTO_TAC` when only invocation markers were selected; the invocation tagged-rule control still passed. |
 | Contextual FORCE's view fallback | `contextual FORCE uses a persistent rule's certified view` failed when that entry point passed no persistent candidates to the shared fallback. |
+| Certified AC fallback reflexivity | `a new arithmetic carrier uses its registered theorem kit` failed with `EQT_ELIM` when the shared fallback left equal canonical forms as an unevaluated equality. |
 
 The restored rules, classical, clasimp, linarith instances and seeds local
-selftests pass. The ordered `upto-auto` gate passed after the contextual
-FORCE view change, including benchmarks and the reloaded-rule theory test.
-The `bin/build -F -t` result predates these later auto-only changes.
+selftests pass. The ordered `upto-auto` gate passed after the independent
+carrier change, including benchmarks and theory tests. The `bin/build -F -t`
+result predates these later auto-only changes.
 
 Tableau now retains its mutable search frontier at bounded turns. A cutoff
 during initial translation restarts that preparation, and a cutoff within
@@ -42,5 +44,6 @@ one search step can replay charged work inside that step. Invocation safe
 rule transport retains its declared role only when its safe class is
 unchanged and no new theorem hypothesis is introduced. Persistent claset
 rules now use the same certified view checks when a tactic leaves work open.
-A proof on an independent arithmetic carrier remains for the final
-generalization audit.
+The independent arithmetic carrier uses its own type and operations; its
+laws are proved from integer arithmetic, then consumed through the public
+instance registry and tactic without generic dispatch on its names.

@@ -68,13 +68,22 @@ fun ac_equality (ops : ac_ops) left right =
   else
     let
       val equality = boolSyntax.mk_eq (left, right)
+      (* A rewrite by EQ_REFL merely matches the reflexive equality;
+         certify that it is true before EQT_ELIM consumes the result. *)
+      fun refl_conv tm =
+        let
+          val (lhs, rhs) = boolSyntax.dest_eq tm
+        in
+          if Term.aconv lhs rhs then EQT_INTRO (REFL lhs)
+          else raise ERR "ac_equality" "canonical forms differ"
+        end
       fun fallback () =
         case #ac_fallback ops of
             NONE => raise ERR "ac_equality" "AC rearrangement failed"
           | SOME canon =>
               EQT_ELIM
                 ((BINOP_CONV canon THENC
-                  REWR_CONV boolTheory.EQ_REFL) equality)
+                  refl_conv) equality)
     in
       EQT_ELIM (AC_CONV (#assoc ops, #comm ops) equality)
       handle HOL_ERR _ => fallback ()
