@@ -2389,11 +2389,15 @@ fun force_with name budget charge cs ss simp_args =
     must_close name script
   end
 
-fun CS_FORCE_TAC cs ss goal =
-  let val budget = force_budget ()
+fun CS_FORCE_TAC cs ss goal ctxt =
+  let
+    val budget = force_budget ()
   in
-    force_with "CS_FORCE_TAC" budget
-      (charge_normalization budget) cs ss [] goal
+    with_claset_transport budget ss
+      (clasetLib.rules_of cs) cs
+      (fn current =>
+        force_with "CS_FORCE_TAC" budget
+          (charge_normalization budget) current ss []) goal ctxt
   end
 
 (* The classical search drivers already succeed only with a closed engine

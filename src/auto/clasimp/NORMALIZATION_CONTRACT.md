@@ -66,14 +66,13 @@ the `GENLIST` interval case that initially exposed the abstraction-head
 problem. The bottom-up reducer remains until paired tests show the policy
 subsumes its cases. The existing context fixpoint and conditional subgoaler
 remain reusable. Certified rule-view transport now covers persistent claset
-rules in AUTO, the direct contextual AUTO and CLARSIMP entry points, and
-their shared search wrappers. The ordinary tactic runs first, and a
+rules in AUTO and the direct contextual AUTO, FORCE, FASTFORCE, SLOWSIMP,
+BESTSIMP and CLARSIMP entry points. The ordinary tactic runs first, and a
 certified derived view is tried when it leaves work open. Candidates share
 a nonlogical head with the goal, a residual goal from the first attempt,
 or a head reachable through chains of the supplied simpset's direct
 rewrite-head bridges; this bounds conversion work without
 assuming that the rule and goal use identical heads. The original
-declaration and role are retained. Direct contextual FORCE still uses its
-original claset and needs the same view fallback. A synthetic pair of
-cyclic rules exercises the typed
+declaration and role are retained. A synthetic pair of cyclic rules
+exercises the typed
 normalization-limit outcome through `CLARSIMP_TAC_BUDGETED`.

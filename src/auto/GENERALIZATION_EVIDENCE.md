@@ -17,6 +17,7 @@ checks; it is not a solved-goal score.
 | Safe tagged rule transport | `clasimp/selftest.sml` derives a safe introduction rule whose conclusion reaches the goal only after an invocation rewrite changes its normal form. |
 | Persistent claset transport | `clasimp/selftest.sml` uses an explicit base-claset destruction rule through `CS_AUTO_TAC` and scoped public `AUTO_TAC`, and a safe introduction rule through `CS_CLARSIMP_TAC`. Each needs a supplied rewrite before the rule view reaches the goal; a polymorphic rule is checked at both `num` and `bool`. |
 | Reloaded persistent transport | `clasimp/theory_tests/transportPersistentBaseScript.sml` declares a safe destruction rule; its child theory closes the differently spelled goal with public `AUTO_TAC` and a supplied bridge rewrite. |
+| Contextual FORCE transport | `clasimp/selftest.sml` keeps only FORCE's best-first leg and closes a rule/goal spelling mismatch after the ordinary search exhausts. |
 
 The following temporary source ablations were run, then removed:
 
@@ -28,10 +29,11 @@ The following temporary source ablations were run, then removed:
 | Transporting safe tagged rules | `safe tagged introduction retains its role after transport` failed in clasimp when safe transport was disabled. |
 | Retaining the tableau continuation | `resumed tableau retains its fixed-depth work and proof` failed when yielded turns restarted the fixed-depth run. |
 | Selecting persistent claset rules for transport | `persistent destruction rule crosses a supplied normal form` failed through public `AUTO_TAC` when only invocation markers were selected; the invocation tagged-rule control still passed. |
+| Contextual FORCE's view fallback | `contextual FORCE uses a persistent rule's certified view` failed when that entry point passed no persistent candidates to the shared fallback. |
 
 The restored rules, classical, clasimp, linarith instances and seeds local
-selftests pass. The ordered `upto-auto` gate passed after the persistent
-rule-view change, including benchmarks and the reloaded-rule theory test.
+selftests pass. The ordered `upto-auto` gate passed after the contextual
+FORCE view change, including benchmarks and the reloaded-rule theory test.
 The `bin/build -F -t` result predates these later auto-only changes.
 
 Tableau now retains its mutable search frontier at bounded turns. A cutoff
@@ -39,6 +41,6 @@ during initial translation restarts that preparation, and a cutoff within
 one search step can replay charged work inside that step. Invocation safe
 rule transport retains its declared role only when its safe class is
 unchanged and no new theorem hypothesis is introduced. Persistent claset
-rules now use the same certified view checks when a tactic leaves work open;
-the direct contextual FORCE path and a proof on an independent arithmetic
-carrier remain for the final generalization audit.
+rules now use the same certified view checks when a tactic leaves work open.
+A proof on an independent arithmetic carrier remains for the final
+generalization audit.

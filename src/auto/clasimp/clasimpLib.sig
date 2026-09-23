@@ -142,7 +142,7 @@ sig
     (clasetLib.claset -> simpLib.simpset -> thm list -> tactic) ->
     clasetLib.claset -> simpLib.simpset -> thm list -> tactic
 
-  (* CS_AUTO, CS_FASTFORCE, CS_SLOWSIMP, CS_BESTSIMP and CS_CLARSIMP
+  (* Contextual AUTO, FORCE, FASTFORCE, SLOWSIMP, BESTSIMP and CLARSIMP
      retain the supplied claset, then retry unfinished goals with
      certified rule views in the supplied simpset's form. The retry
      shares one budget and preserves the original rule role and support. *)

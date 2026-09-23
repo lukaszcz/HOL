@@ -1974,6 +1974,35 @@ val _ =
 
 val _ =
   check
+    ("contextual FORCE uses a persistent rule's certified view",
+     fn () =>
+       let
+         val goal =
+           ([``transport_q (n:num)``], ``transport_r n``)
+         val cs =
+           clasetLib.add_sdests
+             [("force_persistent_transport", transport_fact)]
+             clasetLib.empty_cs
+         val ss =
+           simpLib.++
+             (clasimpLib.clasimp_ss (),
+              simpLib.rewrites [transport_bridge])
+         val saved = !clasimpLib.force_schedule
+         val best_only =
+           {best = #best saved, tableau = #tableau saved,
+            depth = #depth saved, blast_depth = 0,
+            classical_depth = 0}
+       in
+         Lib.with_flag (clasimpLib.force_schedule, best_only)
+           (fn () =>
+             tactic_fails
+               (clasimpLib.CS_FORCE_TAC cs
+                  (clasimpLib.clasimp_ss ())) goal andalso
+             valid_closes (clasimpLib.CS_FORCE_TAC cs ss) goal) ()
+       end)
+
+val _ =
+  check
     ("persistent rule transport is independent of the carrier type",
      fn () =>
        let
