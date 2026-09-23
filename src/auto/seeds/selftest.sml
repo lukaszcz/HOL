@@ -653,6 +653,47 @@ val _ =
          closed
        end)
 
+(* A datatype and relation introduced by a client theory use the same
+   declaration path as the bundled seeds.  The definition stays opaque to
+   search; only the temporary destination rule exposes its consequence. *)
+val _ = Datatype.Datatype `extension_node =
+  ExtensionStart | ExtensionEnd`
+
+val extension_edge_def =
+  Definition.new_definition
+    ("extension_edge_def",
+     ``extension_edge (x : extension_node) y <=>
+         x = ExtensionStart /\ y = ExtensionEnd``)
+
+val extension_edge_dest =
+  Tactical.prove
+    (``!x y : extension_node.
+         extension_edge x y ==> y = ExtensionEnd``,
+     simpLib.SIMP_TAC boolSimps.bool_ss [extension_edge_def])
+
+val extension_edge_goal : Abbrev.goal =
+  ([``extension_edge (a : extension_node) b``],
+   ``(b : extension_node) = ExtensionEnd``)
+
+val _ =
+  check
+    ("a client datatype and relation use temporary search declarations",
+     fn () =>
+       let
+         val tactic = clasimpLib.FASTFORCE_TAC []
+         val opaque = not (closes_within 20 tactic extension_edge_goal)
+         val spec =
+           {kind = clasetRules.Dest, safe = false, prio = NONE}
+         val () =
+           clasetLib.temp_add_rule spec
+             ("extension_edge_dest", extension_edge_dest)
+         val declared = closes_within 20 tactic extension_edge_goal
+         val () = clasetLib.temp_delrule "extension_edge_dest"
+       in
+         opaque andalso declared andalso
+         not (closes_within 20 tactic extension_edge_goal)
+       end)
+
 (* src/HOL/List.thy:1830,1966-1969,2328,2337,1824 @ f7e02b7e.  None
    of the goals below is a corpus entry, and none is one of the rules:
    each indexes a list built by a constructor the seeds now push an
