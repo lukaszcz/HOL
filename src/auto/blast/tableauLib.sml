@@ -201,6 +201,17 @@ fun CS_BLAST_DEPTH_BUDGETED budget base_cs depth goal ctxt =
     blastSearch.searchGoalBudgeted budget cs depth goal accept
   end
 
+fun CS_BLAST_DEPTH_RESUMABLE budget base_cs depth goal ctxt =
+  let
+    val cs = add_blast_selims base_cs
+    fun accept proof =
+      case blastReconstruct.reconstructWith_in ctxt cs goal proof of
+          SOME tactic_result => tactic_result
+        | NONE => raise blastSearch.PROOF_FAILED
+  in
+    blastSearch.searchGoalResumable budget cs depth goal accept
+  end
+
 fun next_through limit depth =
   if depth >= limit then NONE else SOME (depth + 1)
 

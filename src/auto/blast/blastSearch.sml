@@ -983,8 +983,19 @@ datatype instrumentation =
 
 datatype 'a budget_outcome =
     BudgetFinished of {result : 'a option, statistics : statistics}
+  | BudgetYielded of
+      {kind : searchBudget.kind, usage : searchBudget.usage,
+       trail_assignments : int,
+       resume : unit -> 'a budget_outcome}
   | BudgetLimitReached of
       {kind : searchBudget.kind, usage : searchBudget.usage}
+
+datatype 'a run_outcome =
+    RunDone of 'a measured_result
+  | RunYielded of
+      {kind : searchBudget.kind, usage : searchBudget.usage,
+       trail_assignments : int,
+       resume : unit -> 'a run_outcome}
 
 val zero_phase_statistics : phase_statistics =
   {emergency_cleanup_assignments = 0,
@@ -1002,10 +1013,14 @@ val zero_phase_statistics : phase_statistics =
 
 datatype interruption_cleanup = Restore | AbandonOwned
 
-fun runGoal cleanup_policy instrumentation claset depth goal cont =
+fun runGoal resumable cleanup_policy instrumentation
+    claset depth goal cont =
   let
     exception INTERRUPTED
     exception STOP_EXCEPTION of exn
+    exception YIELDED
+    val suspended = ref NONE
+    val suspended_limit = ref NONE
     val state = newState ()
     val rule_cache = blastRule.newCache ()
     val closed = ref 0
@@ -1327,19 +1342,67 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
        branches_closed = !closed,
        choices_pruned = !pruned}
 
+    (* A yielded child keeps its backtracking handler when resumed.  The
+       closure saved by the deepest prv call restarts only that call; each
+       enclosing handler wraps it on the way out. *)
+    fun preserve handler action =
+      let
+        fun suspend limit resume =
+          (suspended_limit := SOME limit;
+           suspended := SOME resume;
+           raise YIELDED)
+        fun continue_with resume =
+          let val next = valOf (!suspended)
+          in
+            suspended := SOME (fn () => resume next);
+            raise YIELDED
+          end
+        fun run_work work =
+          ((work ()
+            handle YIELDED => continue_with run_work
+                 | searchBudget.LimitReached limit =>
+                     if resumable then
+                       suspend limit (fn () => run_work work)
+                     else raise searchBudget.LimitReached limit)
+           handle exn =>
+             (case handler exn of
+                  SOME recover => run_recover recover
+                | NONE => raise exn))
+        and run_recover recover =
+          (recover ()
+           handle YIELDED => continue_with run_recover
+                | searchBudget.LimitReached limit =>
+                    if resumable then
+                      suspend limit (fn () => run_recover recover)
+                    else raise searchBudget.LimitReached limit)
+      in
+        if resumable then run_work action
+        else
+          (action ()
+           handle exn =>
+             case handler exn of
+                 SOME recover => recover ()
+               | NONE => raise exn)
+      end
+
     fun prv (tacs, trace, choices, brs) =
       let
-        val _ = instrumentEntry brs
+        val entry_mark = if resumable then trailSize state else 0
       in
-      case brs of
+      (instrumentEntry brs;
+       case brs of
           [] =>
-            ((cont (proofOf (tacs, trace)))
-             handle PROOF_FAILED =>
-               (if Feedback.current_trace "blast" >= 1 then
-                  Feedback.HOL_MESG
-                    ("PROOF FAILED for depth " ^ Int.toString depth)
-                else ();
-                backtrack choices))
+            preserve
+              (fn PROOF_FAILED =>
+                    SOME (fn () =>
+                      (if Feedback.current_trace "blast" >= 1 then
+                         Feedback.HOL_MESG
+                           ("PROOF FAILED for depth " ^
+                            Int.toString depth)
+                       else ();
+                       backtrack choices))
+                | _ => NONE)
+              (fn () => cont (proofOf (tacs, trace)))
         | brs0 as
             ({pairs = (((formula, md) :: safe, unsafe) :: pairs),
               lits, vars, lim, assumptions} : search_branch) :: brs =>
@@ -1492,23 +1555,41 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                                    major = major} :: tacs
                             in
                               if null prems' then
-                                (closed := !closed + 1;
-                                 noteRuleInference limit;
-                                 prv
-                                   (tacs', brs0 :: trace,
+                                let
+                                  val before_prune = !pruned
+                                  val choices'' =
                                     pruneAt mark
-                                      (branches, next_vars, choices'),
-                                    brs))
+                                      (branches, next_vars, choices')
+                                    handle searchBudget.LimitReached limit =>
+                                      (pruned := before_prune;
+                                       raise searchBudget.LimitReached
+                                         limit)
+                                in
+                                  (noteRuleInference limit
+                                   handle searchBudget.LimitReached work =>
+                                     (pruned := before_prune;
+                                      raise searchBudget.LimitReached
+                                        work));
+                                  closed := !closed + 1;
+                                  prv
+                                    (tacs', brs0 :: trace,
+                                     choices'', brs)
+                                end
                               else if limit < 0 then
                                 (rollbackAt mark; raise NEWBRANCHES)
                               else
-                                (created :=
-                                   !created + lengthPremsAt mark prems' - 1;
-                                 noteRuleInference limit;
-                                 prv
-                                   (tacs', brs0 :: trace, choices',
+                                let
+                                  val children =
                                     newBranches variant (vars', limit)
-                                      prems'))
+                                      prems'
+                                  val count = lengthPremsAt mark prems'
+                                in
+                                  noteRuleInference limit;
+                                  created := !created + count - 1;
+                                  prv
+                                    (tacs', brs0 :: trace, choices',
+                                     children)
+                                end
                             end
 
                           fun exhausted () =
@@ -1537,15 +1618,21 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                                      NONE => retry rest
                                    | SOME variant =>
                                        (rollbackAt unified;
-                                        descend retry_lim variant
-                                        handle PRV => retry rest))
+                                        preserve
+                                          (fn PRV => SOME (fn () => retry rest)
+                                            | _ => NONE)
+                                          (fn () =>
+                                            descend retry_lim variant)))
                         in
                           if contraposing then contraposeFirst ()
                           else
-                            descend lim' rule
-                            handle PRV =>
-                              if retry_lim < 0 then exhausted ()
-                              else retry (sharedLeads prems)
+                            preserve
+                              (fn PRV =>
+                                    SOME (fn () =>
+                                      if retry_lim < 0 then exhausted ()
+                                      else retry (sharedLeads prems))
+                                | _ => NONE)
+                              (fn () => descend lim' rule)
                         end
                     end
 
@@ -1567,51 +1654,70 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                                   (branches, next_vars,
                                    Choice (mark, branches, PRV) :: choices)
                             in
-                              closed := !closed + 1;
                               noteInference ();
-                              (prv
-                                 (step :: tacs, brs0 :: trace,
-                                  choices', brs)
-                               handle PRV =>
-                                 (rollbackAt mark; closeF literals))
+                              closed := !closed + 1;
+                              preserve
+                                (fn PRV =>
+                                      SOME (fn () =>
+                                        (rollbackAt mark;
+                                         closeF literals))
+                                  | _ => NONE)
+                                (fn () =>
+                                  prv
+                                    (step :: tacs, brs0 :: trace,
+                                     choices', brs))
                             end
                     end
+
+              fun onClose recover action =
+                preserve
+                  (fn CLOSEF => SOME recover | _ => NONE) action
 
               fun closeLevels [] = raise CLOSEF
                 | closeLevels ((level_safe, level_unsafe) :: rest) =
                     (checkpointAt mark;
-                     closeF (map first level_safe)
-                     handle CLOSEF =>
-                       (closeF (map first level_unsafe)
-                        handle CLOSEF => closeLevels rest))
+                     onClose
+                       (fn () =>
+                         onClose
+                           (fn () => closeLevels rest)
+                           (fn () => closeF (map first level_unsafe)))
+                       (fn () => closeF (map first level_safe)))
 
               fun cascade () =
                 if lim < 0 then backtrack choices
                 else
-                  (let
-                     val _ = checkpointAt mark
-                     val _ = noteEqualityAttempt ()
-                     val (equality, changed, side, substituted) =
-                       equalSubstAt mark
-                         (formula,
-                          {pairs = (safe, unsafe) :: pairs,
-                           lits = lits, vars = vars, lim = lim,
-                           assumptions = assumptions})
-                     val _ = noteEqualitySuccess ()
-                     val _ = noteInference ()
-                   in
-                     prv
-                       (HypSubst
-                          {equality = equality, changed = changed,
-                           side = side} :: tacs,
-                        brs0 :: trace, choices,
-                        substituted :: brs)
-                   end
-                   handle DEST_EQ =>
-                     (closeF lits
-                      handle CLOSEF =>
-                        (closeLevels ((safe, unsafe) :: pairs)
-                         handle CLOSEF => deeper rules)))
+                  preserve
+                    (fn DEST_EQ =>
+                          SOME (fn () =>
+                            onClose
+                              (fn () =>
+                                onClose
+                                  (fn () => deeper rules)
+                                  (fn () =>
+                                    closeLevels
+                                      ((safe, unsafe) :: pairs)))
+                              (fn () => closeF lits))
+                      | _ => NONE)
+                    (fn () =>
+                      let
+                        val _ = checkpointAt mark
+                        val _ = noteEqualityAttempt ()
+                        val (equality, changed, side, substituted) =
+                          equalSubstAt mark
+                            (formula,
+                             {pairs = (safe, unsafe) :: pairs,
+                              lits = lits, vars = vars, lim = lim,
+                              assumptions = assumptions})
+                        val _ = noteEqualitySuccess ()
+                        val _ = noteInference ()
+                      in
+                        prv
+                          (HypSubst
+                             {equality = equality, changed = changed,
+                              side = side} :: tacs,
+                           brs0 :: trace, choices,
+                           substituted :: brs)
+                      end)
 
               fun fallback () =
                 case unsafeRulesFor vars (trackedTerm formula) of
@@ -1649,7 +1755,9 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                       end
 
             in
-              cascade () handle NEWBRANCHES => fallback ()
+              preserve
+                (fn NEWBRANCHES => SOME fallback | _ => NONE)
+                cascade
             end
         | ({pairs = ([], unsafe) :: (safe, unsafe') :: pairs,
             lits, vars, lim, assumptions} : search_branch) :: brs =>
@@ -1786,109 +1894,187 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                             if killsAllAlternatives lim' prems then
                               (rollbackAt mark; raise NEWBRANCHES)
                             else
-                              (if null prems then
-                                 closed := !closed + 1
-                               else
-                                 created :=
-                                   !created + lengthPremsAt mark prems - 1;
-                               noteRuleInference lim';
-                               prv
-                                 (step :: tacs, brs0 :: trace,
-                                  Choice (mark, branches, PRV) :: choices,
+                              let
+                                val children =
                                   newBranches
                                     (rule, new_vars, pattern, duplicate,
-                                     lim')
-                                    prems))
+                                     lim') prems
+                                val count = lengthPremsAt mark prems
+                              in
+                                noteRuleInference lim';
+                                if null prems then closed := !closed + 1
+                                else created := !created + count - 1;
+                                prv
+                                  (step :: tacs, brs0 :: trace,
+                                   Choice (mark, branches, PRV) :: choices,
+                                   children)
+                              end
                         in
                           if contraposing then contraposeFirst ()
                           else
-                            descend ()
-                            handle PRV =>
-                              if undo then
-                                (rollbackAt mark; deeper other)
-                              else backtrack choices
+                            preserve
+                              (fn PRV =>
+                                    SOME (fn () =>
+                                      if undo then
+                                        (rollbackAt mark; deeper other)
+                                      else backtrack choices)
+                                | _ => NONE)
+                              descend
                         end
                     end
 
             in
               if lim < 1 then backtrack choices
               else
-                (deeper rules
-                 handle NEWBRANCHES =>
-                   prv
-                     (tacs, brs0 :: trace, choices,
-                      {pairs = [([], unsafe)],
-                       lits = formula :: lits,
-                       vars = vars, lim = lim,
-                       assumptions = assumptions} :: brs))
+                preserve
+                  (fn NEWBRANCHES =>
+                        SOME (fn () =>
+                          prv
+                            (tacs, brs0 :: trace, choices,
+                             {pairs = [([], unsafe)],
+                              lits = formula :: lits,
+                              vars = vars, lim = lim,
+                              assumptions = assumptions} :: brs))
+                    | _ => NONE)
+                  (fn () => deeper rules)
             end
-        | _ :: _ => backtrack choices
+        | _ :: _ => backtrack choices)
+      handle searchBudget.LimitReached (kind, usage) =>
+        if resumable then
+          (clearTo state entry_mark;
+           suspended_limit := SOME (kind, usage);
+           suspended :=
+             SOME (fn () => prv (tacs, trace, choices, brs));
+           raise YIELDED)
+        else raise searchBudget.LimitReached (kind, usage)
       end
 
-    val (completion, result) =
-      case prepared of
-          NONE => (Interrupted, NONE)
-        | SOME formulas =>
-            ((let
-                val initial = initialBranchOf (formulas, depth)
-              in
-                (Completed,
-                 SOME
-                   (prv
-                      ([], [], [Choice (trailSize state, 1, PROVE)],
-                       [initial])))
-              end
-              handle PROVE => (Completed, NONE)
-                   | INTERRUPTED =>
-                       (cleanupRun INTERRUPTED; (Interrupted, NONE)))
-             handle STOP_EXCEPTION exn => (cleanupRun exn; raise exn)
-                  | exn => (cleanupRun exn; raise exn))
-    val (inferences, maximum_resource_cost, fullTrace, phase) =
-      instrumentationResult ()
-    val statistics =
-      {configured_depth = depth,
-       maximum_resource_cost = maximum_resource_cost,
-       inferences_performed = inferences,
-       branches_created = !created,
-       branches_closed = !closed,
-       choices_pruned = !pruned,
-       rule_cache_hits = blastRule.hitCount rule_cache,
-       rule_conversions = blastRule.conversionCount rule_cache,
-       remaining_trail_assignments = trailSize state,
-       phase = phase}
-    val _ =
-      searchWork.note_tableau
-        {depth = depth, branches = !created,
-         inferences = inferences}
+    fun report completion result =
+      let
+        val (inferences, maximum_resource_cost, fullTrace, phase) =
+          instrumentationResult ()
+        val statistics =
+          {configured_depth = depth,
+           maximum_resource_cost = maximum_resource_cost,
+           inferences_performed = inferences,
+           branches_created = !created,
+           branches_closed = !closed,
+           choices_pruned = !pruned,
+           rule_cache_hits = blastRule.hitCount rule_cache,
+           rule_conversions = blastRule.conversionCount rule_cache,
+           remaining_trail_assignments = trailSize state,
+           phase = phase}
+        val _ =
+          searchWork.note_tableau
+            {depth = depth, branches = !created,
+             inferences = inferences}
+      in
+        RunDone
+          {completion = completion, fullTrace = fullTrace,
+           result = result, statistics = statistics}
+      end
+
+    fun execute work =
+      (report Completed (SOME (work ()))
+       handle PROVE => report Completed NONE
+            | INTERRUPTED =>
+                (cleanupRun INTERRUPTED;
+                 report Interrupted NONE)
+            | YIELDED =>
+                let
+                  val (kind, usage) = valOf (!suspended_limit)
+                  val next = valOf (!suspended)
+                in
+                  RunYielded
+                    {kind = kind, usage = usage,
+                     trail_assignments = trailSize state,
+                     resume = fn () => execute next}
+                end
+            | STOP_EXCEPTION exn => (cleanupRun exn; raise exn)
+            | exn => (cleanupRun exn; raise exn))
   in
-    {completion = completion, fullTrace = fullTrace, result = result,
-     statistics = statistics}
+    case prepared of
+        NONE => report Interrupted NONE
+      | SOME formulas =>
+          execute
+            (fn () =>
+              let val initial = initialBranchOf (formulas, depth)
+              in
+                prv
+                  ([], [], [Choice (trailSize state, 1, PROVE)],
+                   [initial])
+              end)
   end
 
 fun searchGoalMeasured {debug, stop} claset depth goal cont =
-  runGoal AbandonOwned
-    (On {debug = debug, stop = stop, budget = NONE})
-    claset depth goal cont
+  case runGoal false AbandonOwned
+         (On {debug = debug, stop = stop, budget = NONE})
+         claset depth goal cont of
+      RunDone report => report
+    | RunYielded _ => raise Fail "unbudgeted tableau yielded"
 
 fun searchGoalBudgeted budget claset depth goal cont =
   let
     val report =
-      runGoal Restore
+      runGoal false Restore
         (On {debug = false, stop = fn () => false,
              budget = SOME budget}) claset depth goal cont
   in
-    BudgetFinished
-      {result = #result report, statistics = #statistics report}
+    case report of
+        RunDone finished =>
+          BudgetFinished
+            {result = #result finished,
+             statistics = #statistics finished}
+      | RunYielded _ =>
+          raise Fail "one-shot tableau yielded"
   end
   handle searchBudget.LimitReached (kind, usage) =>
     BudgetLimitReached {kind = kind, usage = usage}
 
+fun searchGoalResumable budget claset depth goal cont =
+  let
+    fun once resume =
+      let val used = ref false
+      in
+        fn () =>
+          if !used then
+            raise Fail
+              "blastSearch.searchGoalResumable: continuation already used"
+          else (used := true; resume ())
+      end
+    fun convert (RunDone report) =
+          BudgetFinished
+            {result = #result report,
+             statistics = #statistics report}
+      | convert (RunYielded
+                   {kind, usage, trail_assignments, resume}) =
+          BudgetYielded
+            {kind = kind, usage = usage,
+             trail_assignments = trail_assignments,
+             resume = once (fn () => convert (resume ()))}
+    fun start () =
+      convert
+        (runGoal true Restore
+           (On {debug = false, stop = fn () => false,
+                budget = SOME budget}) claset depth goal cont)
+      handle searchBudget.LimitReached (kind, usage) =>
+        BudgetYielded
+          {kind = kind, usage = usage, trail_assignments = 0,
+           resume = once start}
+  in
+    start ()
+  end
+
 fun searchGoalWithStats claset depth goal cont =
   let
     val report =
-      runGoal Restore Stats claset depth goal cont
+      runGoal false Restore Stats claset depth goal cont
   in
-    {result = #result report, statistics = #statistics report}
+    case report of
+        RunDone finished =>
+          {result = #result finished,
+           statistics = #statistics finished}
+      | RunYielded _ => raise Fail "statistics tableau yielded"
   end
 
 (* Statistics instrumentation selects the same plain workers as [Off] and
@@ -1896,7 +2082,9 @@ fun searchGoalWithStats claset depth goal cont =
    entry point uses it: the inference and resource-cost counters are what
    the shared work meter reports. *)
 fun searchGoal claset depth goal cont =
-  #result (runGoal Restore Stats claset depth goal cont)
+  case runGoal false Restore Stats claset depth goal cont of
+      RunDone report => #result report
+    | RunYielded _ => raise Fail "ordinary tableau yielded"
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)

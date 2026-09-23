@@ -2003,6 +2003,13 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
     val best_slice = ref best
     val tableau_active = ref (blast_depth > 0)
     val tableau_slice = ref tableau
+    val tableau_current =
+      ref
+        (NONE :
+          (searchBudget.budget *
+           (unit ->
+             (goal list * validation) blastSearch.budget_outcome))
+          option)
     val depth_stages = ref (search_stages classical_depth)
     val depth_slice = ref depth
     val depth_current =
@@ -2047,25 +2054,50 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
       if not (!tableau_active) then NONE
       else
         let
-          val turn =
-            searchBudget.child budget
-              (slice_limits (!tableau_slice))
+          val (turn, resume) =
+            case !tableau_current of
+                SOME current => current
+              | NONE =>
+                  let
+                    val turn =
+                      searchBudget.child budget
+                        (slice_limits (!tableau_slice))
+                    val current =
+                      (turn,
+                       fn () =>
+                         tableauLib.CS_BLAST_DEPTH_RESUMABLE turn
+                           cs blast_depth goal ctxt)
+                  in
+                    tableau_current := SOME current;
+                    current
+                  end
         in
-          case tableauLib.CS_BLAST_DEPTH_BUDGETED turn
-                 cs blast_depth goal ctxt of
+          case resume () of
               blastSearch.BudgetFinished {result = SOME result, ...} =>
                 SOME result
             | blastSearch.BudgetFinished {result = NONE, ...} =>
-                (tableau_active := false; NONE)
-            | blastSearch.BudgetLimitReached {kind, ...} =>
+                (tableau_active := false;
+                 tableau_current := NONE;
+                 NONE)
+            | blastSearch.BudgetYielded {kind, resume, ...} =>
                 (limit kind;
                  trace 1
                    (fn () =>
                      "FORCE tableau depth " ^
                      Int.toString blast_depth ^
-                     " restarts after a bounded turn");
+                     " resumes after a bounded turn");
+                 searchBudget.extend turn searchBudget.Candidate
+                   (#candidates (!tableau_slice));
+                 searchBudget.extend turn searchBudget.Application
+                   (#applications (!tableau_slice));
+                 searchBudget.extend turn searchBudget.Normalization
+                   (#normalization (!tableau_slice));
                  tableau_slice := grow_slice (!tableau_slice);
+                 tableau_current := SOME (turn, resume);
                  NONE)
+            | blastSearch.BudgetLimitReached {kind, ...} =>
+                raise searchBudget.LimitReached
+                  (kind, searchBudget.usage budget)
         end
 
     fun depth_turn () =

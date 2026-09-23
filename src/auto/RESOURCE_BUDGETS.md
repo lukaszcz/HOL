@@ -58,8 +58,12 @@ Classical and Aesop candidate yields retain their search sessions. Classical
 also retains a candidate awaiting kernel replay when the normalization limit
 is reached. A nested expansion cutoff retains the selected frontier state;
 retrying a partially forced lazy alternative can repeat charged work.
-BLAST restores its mutable trail on a limit and has a
-one-shot fixed-depth result; order returns a one-shot proved, exhausted, or
+BLAST's one-shot fixed-depth adapter restores its trail on a limit. Its
+resumable fixed-depth path retains the owned trail, branch/script state,
+rule cache and backtracking handlers across turns. A cutoff within one
+partially scanned step may replay charged work at that step; a cutoff
+during initial goal translation restarts translation before the first
+tableau frontier exists. Order returns a one-shot proved, exhausted, or
 limit result. Existing tactic, depth, and order entry points keep their
 compatibility behavior.
 
@@ -68,10 +72,9 @@ normalization slices. Its first-best session keeps its heap and pending
 alternatives across turns. Classical depth keeps its lazy cursor and a
 candidate awaiting replay at each stage up to the configured bound. Their
 yielded slices double for the next turn. Tableau runs at one configured
-depth and currently has a one-shot frontier: when its slice ends, the next
-turn restarts it with a doubled slice. Repeated work charges the same
-invocation budget. Every round offers one turn to each active engine, and
-a parent limit reports a typed cutoff.
+depth and retains its owned frontier and pending reconstruction across
+turns on the same child budget. Every round offers one turn to each active
+engine, and a parent limit reports a typed cutoff.
 `FORCE_TAC_BUDGETED` accepts a caller-owned budget; the ordinary FORCE
 entry points allocate finite default candidate, application, and
 normalization limits.

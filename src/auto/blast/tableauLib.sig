@@ -23,6 +23,12 @@ sig
     searchBudget.budget -> clasetLib.claset -> int ->
     goal -> Context.t ->
     (goal list * validation) blastSearch.budget_outcome
+  (* A yielded turn retains the fixed-depth tableau frontier and its
+     reconstruction continuation. The same budget is extended to resume. *)
+  val CS_BLAST_DEPTH_RESUMABLE :
+    searchBudget.budget -> clasetLib.claset -> int ->
+    goal -> Context.t ->
+    (goal list * validation) blastSearch.budget_outcome
 
   val depth_limit : int ref
 

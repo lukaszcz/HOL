@@ -150,8 +150,8 @@ sig
   type force_schedule =
     {best : force_slice, tableau : force_slice, depth : force_slice,
      blast_depth : int, classical_depth : int}
-  (* Each positive slice is doubled after a yield. First-best and depth
-     cursors resume; tableau charges a restarted fixed-depth attempt. *)
+  (* Each positive slice is doubled after a yield. First-best, depth and
+     tableau retain their search state across turns. *)
   val force_schedule : force_schedule ref
   val CS_FORCE_TAC :
     clasetLib.claset -> simpLib.simpset -> tactic

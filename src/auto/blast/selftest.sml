@@ -1384,6 +1384,54 @@ val _ =
 
 val _ =
   test
+    ("resumed tableau retains its fixed-depth work and proof",
+     fn () =>
+       let
+         val p = mk_var ("resumed_blast_p", bool)
+         val q = mk_var ("interleaved_blast_q", bool)
+         val goal = ([], mk_imp (p, p))
+         val small =
+           searchBudget.create
+             {candidates = SOME 10000, applications = SOME 1,
+              normalization = SOME 10000}
+         val large = searchBudget.unbounded ()
+         val first =
+           blastSearch.searchGoalResumable small clasetLib.empty_cs
+             0 goal (fn proof => proof)
+         val before_other = searchBudget.usage small
+         val one_shot =
+           blastSearch.searchGoalBudgeted large clasetLib.empty_cs
+             0 ([], mk_imp (q, q)) (fn proof => proof)
+         val after_other = searchBudget.usage small
+         fun finish 0 _ = NONE
+           | finish turns outcome =
+               case outcome of
+                   blastSearch.BudgetFinished report => SOME report
+                 | blastSearch.BudgetYielded {kind, resume, ...} =>
+                     (searchBudget.extend small kind 1;
+                      finish (turns - 1) (resume ()))
+                 | blastSearch.BudgetLimitReached _ => NONE
+         val completed = finish 10 first
+       in
+         (case (first, completed, one_shot) of
+              (blastSearch.BudgetYielded
+                 {kind = searchBudget.Application, resume, ...},
+               SOME {result = SOME resumed, statistics = resumed_stats},
+               blastSearch.BudgetFinished
+                 {result = SOME ordinary, statistics = ordinary_stats}) =>
+                ((ignore (resume ()); false)
+                 handle Fail _ => true) andalso
+                before_other = after_other andalso
+                #applications (searchBudget.usage small) =
+                  #applications (searchBudget.usage large) andalso
+                #inferences_performed resumed_stats =
+                  #inferences_performed ordinary_stats andalso
+                length (#script resumed) = length (#script ordinary)
+            | _ => false)
+       end)
+
+val _ =
+  test
     ("safe fanout counts one inference and one extra branch",
      fn () =>
        let
@@ -3369,6 +3417,98 @@ val _ =
 
 val _ =
   test
+    ("resumed tableau backtracks after failed reconstruction",
+     fn () =>
+       let
+         val p = mk_var ("resumed_choice_p", bool)
+         val q = mk_var ("resumed_choice_q", bool)
+         val goal = ([p, q], mk_disj (p, q))
+         val cs =
+           clasetLib.add_intros
+             [("left", boolTheory.OR_INTRO_THM1),
+              ("right", boolTheory.OR_INTRO_THM2)]
+             clasetLib.empty_cs
+         val small =
+           searchBudget.create
+             {candidates = SOME 10000, applications = SOME 1,
+              normalization = SOME 10000}
+         val attempts = ref 0
+         fun accept proof =
+           (attempts := !attempts + 1;
+            if !attempts = 1 then raise blastSearch.PROOF_FAILED
+            else proof)
+         val first =
+           blastSearch.searchGoalResumable small cs 1 goal accept
+         fun finish 0 _ = NONE
+           | finish turns outcome =
+               case outcome of
+                   blastSearch.BudgetFinished {result, ...} => result
+                 | blastSearch.BudgetYielded {kind, resume, ...} =>
+                     (searchBudget.extend small kind 1;
+                      finish (turns - 1) (resume ()))
+                 | blastSearch.BudgetLimitReached _ => NONE
+         val resumed = finish 100 first
+         val ordinary_attempts = ref 0
+         fun ordinary_accept proof =
+           (ordinary_attempts := !ordinary_attempts + 1;
+            if !ordinary_attempts = 1 then
+              raise blastSearch.PROOF_FAILED
+            else proof)
+         val ordinary = blastSearch.searchGoal cs 1 goal ordinary_accept
+       in
+         (case first of
+              blastSearch.BudgetYielded _ => true
+            | _ => false) andalso
+         !attempts = 2 andalso !ordinary_attempts = 2 andalso
+         same_proof_options (resumed, ordinary)
+       end)
+
+val _ =
+  test
+    ("a yielded owned trail survives an interleaved tableau",
+     fn () =>
+       let
+         val witness = mk_var ("resumed_owned_witness", bool)
+         val goal = ([], mk_exists (witness, witness))
+         val cs =
+           clasetLib.add_sintros
+             [("resumed-owned-truth", boolTheory.TRUTH)]
+             (clasetLib.add_intros
+                [("resumed-owned-exists", EXISTS_INTRO_THM)]
+                clasetLib.empty_cs)
+         val budget =
+           searchBudget.create
+             {candidates = SOME 10000, applications = SOME 1,
+              normalization = SOME 10000}
+         val first =
+           blastSearch.searchGoalResumable budget cs 1 goal
+             (fn proof => proof)
+         val other =
+           blastSearch.searchGoal clasetLib.empty_cs 0
+             ([], ``resumed_other_p ==> resumed_other_p``)
+             (fn proof => proof)
+         fun finish 0 _ = NONE
+           | finish turns outcome =
+               case outcome of
+                   blastSearch.BudgetFinished {result, ...} => result
+                 | blastSearch.BudgetYielded {kind, resume, ...} =>
+                     (searchBudget.extend budget kind 1;
+                      finish (turns - 1) (resume ()))
+                 | blastSearch.BudgetLimitReached _ => NONE
+         val resumed = finish 20 first
+         val ordinary =
+           blastSearch.searchGoal cs 1 goal (fn proof => proof)
+       in
+         (case first of
+              blastSearch.BudgetYielded
+                {trail_assignments, ...} => trail_assignments > 0
+            | _ => false) andalso
+         Option.isSome other andalso
+         same_proof_options (resumed, ordinary)
+       end)
+
+val _ =
+  test
     ("a sole pure gamma inference is not retried after PROOF_FAILED",
      fn () =>
        let
@@ -4125,6 +4265,38 @@ val _ =
                 {result = SOME (remaining, validate), ...} =>
                   null remaining andalso
                   Term.aconv (Thm.concl (validate [])) target
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("resumed public tableau validates in its explicit context",
+     fn () =>
+       let
+         val p = mk_var ("resumed_public_blast_p", bool)
+         val target = mk_imp (p, p)
+         val goal = ([], target)
+         val budget =
+           searchBudget.create
+             {candidates = SOME 10000, applications = SOME 1,
+              normalization = SOME 10000}
+         val first =
+           tableauLib.CS_BLAST_DEPTH_RESUMABLE budget
+             clasetLib.empty_cs 0 goal (Context.snapshot ())
+         fun finish 0 _ = NONE
+           | finish turns outcome =
+               case outcome of
+                   blastSearch.BudgetFinished {result, ...} => result
+                 | blastSearch.BudgetYielded {kind, resume, ...} =>
+                     (searchBudget.extend budget kind 1;
+                      finish (turns - 1) (resume ()))
+                 | blastSearch.BudgetLimitReached _ => NONE
+       in
+         (case (first, finish 10 first) of
+              (blastSearch.BudgetYielded _,
+               SOME (remaining, validate)) =>
+                 null remaining andalso
+                 Term.aconv (Thm.concl (validate [])) target
             | _ => false)
        end)
 

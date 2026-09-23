@@ -76,6 +76,10 @@ sig
 
   datatype 'a budget_outcome =
       BudgetFinished of {result : 'a option, statistics : statistics}
+    | BudgetYielded of
+        {kind : searchBudget.kind, usage : searchBudget.usage,
+         trail_assignments : int,
+         resume : unit -> 'a budget_outcome}
     | BudgetLimitReached of
         {kind : searchBudget.kind, usage : searchBudget.usage}
 
@@ -184,6 +188,14 @@ sig
      A limit restores mutable search state and is distinct from exhaustive
      failure.  This fixed-depth adapter does not retain a tableau cursor. *)
   val searchGoalBudgeted :
+    searchBudget.budget -> claset -> int -> goal ->
+    (proof -> 'a) -> 'a budget_outcome
+  (* Retains the tableau's owned trail, rule cache, script, branches and
+     backtracking handlers across bounded turns.  A yielded outcome reports
+     the live owned-trail length for diagnostics; no caller-owned cells
+     are reachable through it. The caller extends the same budget before
+     invoking its one-shot continuation. *)
+  val searchGoalResumable :
     searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
   val tryGoal : claset -> int -> goal -> proof option
