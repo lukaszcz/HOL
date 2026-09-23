@@ -16,6 +16,7 @@ checks; it is not a solved-goal score.
 | FORCE scheduling | `clasimp/selftest.sml` drives the production round-robin loop with scripted yielding, proving and exhausting engines; each engine is the sole finisher in one case, and a shared three-application limit reaches all three before propagation. |
 | Resumed tableau turns | `blast/selftest.sml` compares small application slices with one funded fixed-depth run, interleaves another search while a live owned trail is suspended, rejects the first proof to force backtracking, and validates a resumed theorem in an explicit context. |
 | Renamed arithmetic declarations | `linarith/instances/selftest.sml` registers fresh names for integer addition and order, derives their laws from the existing theorem kit, and closes an additive inequality the ordinary instance declines. |
+| Nested simplifier budgets | `clasimp/selftest.sml` proves arithmetic and order chains through public `CLARSIMP_TAC_BUDGETED`, then checks that a zero candidate allowance reports a typed limit. The direct reducer tests in `linarith/selftest.sml` and `order/selftest.sml` check the same behavior inside their own fragments. |
 | Independent arithmetic carrier | `linarith/instances/selftest.sml` defines a fresh `client_integer` datatype, proves its addition and order kit from integer laws, and closes an additive inequality only after registering that instance. Its AC fallback also checks certified cancellation replay. |
 | Safe tagged rule transport | `clasimp/selftest.sml` derives a safe introduction rule whose conclusion reaches the goal only after an invocation rewrite changes its normal form. |
 | Persistent claset transport | `clasimp/selftest.sml` uses an explicit base-claset destruction rule through `CS_AUTO_TAC` and scoped public `AUTO_TAC`, and a safe introduction rule through `CS_CLARSIMP_TAC`. Each needs a supplied rewrite before the rule view reaches the goal; a polymorphic rule is checked at both `num` and `bool`. |
@@ -38,12 +39,14 @@ The following temporary source ablations were run, then removed:
 | Selecting persistent claset rules for transport | `persistent destruction rule crosses a supplied normal form` failed through public `AUTO_TAC` when only invocation markers were selected; the invocation tagged-rule control still passed. |
 | Contextual FORCE's view fallback | `contextual FORCE uses a persistent rule's certified view` failed when that entry point passed no persistent candidates to the shared fallback. |
 | Certified AC fallback reflexivity | `a new arithmetic carrier uses its registered theorem kit` failed with `EQT_ELIM` when the shared fallback left equal canonical forms as an unevaluated equality. |
+| Budgeted arithmetic reducer | `CLARSIMP charges nested arithmetic to its invocation` failed when the reducer called the legacy cached, unbudgeted procedure. |
+| Budgeted order reducer | `CLARSIMP charges nested order to its invocation` failed when its reducer selected the unbudgeted graph search. |
 
 The restored rules, classical, clasimp, linarith instances and seeds local
-selftests pass. The ordered `upto-auto` gate passed after the FORCE
-scheduler extraction and sole-finisher tests; the preceding gate ran
-benchmarks on the same production scheduler. `bin/build -F -t` passed at
-`22b8e0c53`, including the full distribution and generated documentation.
+selftests pass. The ordered `upto-auto` gate and `bin/build -F -t` passed
+after the nested arithmetic and order budget integration, including the
+benchmark harness, theory tests, full distribution and generated
+documentation.
 
 Tableau now retains its mutable search frontier at bounded turns. A cutoff
 during initial translation restarts that preparation, and a cutoff within
@@ -54,3 +57,13 @@ rules now use the same certified view checks when a tactic leaves work open.
 The independent arithmetic carrier uses its own type and operations; its
 laws are proved from integer arithmetic, then consumed through the public
 instance registry and tactic without generic dispatch on its names.
+
+When arithmetic reduction joined the invocation budget, the former
+100,000-unit default stopped the seed suite's finite negative INJ check.
+The legacy and budgeted reducers gave the same success/failure answers on
+its arithmetic atoms; the difference was counting nested proof work.
+The default is now 1,000,000 normalization units, and explicit budgeted
+entry points can still request smaller limits. The budgeted reducer uses
+an invocation-local RCACHE so arithmetic context components, negative
+answers and dynamic `[arith]` facts follow the legacy proof path while
+cache misses charge the invocation.
