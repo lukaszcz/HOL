@@ -39,8 +39,8 @@ The following temporary source ablations were run, then removed:
 The restored rules, classical, clasimp, linarith instances and seeds local
 selftests pass. The ordered `upto-auto` gate passed after the FORCE
 scheduler extraction and sole-finisher tests; the preceding gate ran
-benchmarks on the same production scheduler. The `bin/build -F -t`
-result predates these later auto-only changes.
+benchmarks on the same production scheduler. `bin/build -F -t` passed at
+`22b8e0c53`, including the full distribution and generated documentation.
 
 Tableau now retains its mutable search frontier at bounded turns. A cutoff
 during initial translation restarts that preparation, and a cutoff within
