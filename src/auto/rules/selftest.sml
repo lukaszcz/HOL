@@ -3323,6 +3323,10 @@ val hygiene_behavior_fact =
   GEN hygiene_x
     (Tactical.prove
       (``hygiene_p (x:'a)``, Rewrite.REWRITE_TAC [hygiene_p_def]))
+val hygiene_behavior_fact_z =
+  GEN hygiene_z
+    (Tactical.prove
+      (``hygiene_p (z:'a)``, Rewrite.REWRITE_TAC [hygiene_p_def]))
 
 val _ =
   test
@@ -3340,6 +3344,44 @@ val _ =
              ([], validation) =>
                (ignore (validation []); true)
            | _ => false
+       end)
+
+(* The fixture is fixed before running any variant: two binder spellings,
+   two schematic carrier spellings, and two goal carriers.  The extra
+   reflexive conjunct deliberately shares the first binder's spelling. *)
+val _ =
+  test
+    ("fact insertion is invariant across a small rename/carrier matrix",
+     fn () =>
+       let
+         val source_carrier = Type.mk_vartype "'hygiene_matrix"
+         val facts =
+           [hygiene_behavior_fact, hygiene_behavior_fact_z,
+            Thm.INST_TYPE [alpha |-> source_carrier]
+              hygiene_behavior_fact,
+            Thm.INST_TYPE [alpha |-> source_carrier]
+              hygiene_behavior_fact_z]
+         val goals : Abbrev.goal list =
+           [([], ``hygiene_p (u:'b) /\ ((x:'a) = x)``),
+            ([], ``hygiene_p (u:'c) /\ ((x:'a) = x)``)]
+         fun closes tactic goal =
+           case Lib.total
+                  (fn () =>
+                    Tactical.VALID tactic goal
+                      (Context.snapshot ())) () of
+               SOME ([], validation) =>
+                 (ignore (validation []); true)
+             | _ => false
+         fun with_fact fact =
+           Tactical.THEN
+             (INSERT_FACTS_TAC [fact], Rewrite.ASM_REWRITE_TAC [])
+       in
+         List.all
+           (fn goal =>
+             not (closes (Rewrite.ASM_REWRITE_TAC []) goal)) goals
+         andalso
+         List.all
+           (fn fact => List.all (closes (with_fact fact)) goals) facts
        end)
 
 val hygiene_support = ``hygiene_support (v:'a):bool``
