@@ -81,8 +81,10 @@ sig
   val grounded_to_string : grounded_script -> string
 
   (* [replay] reports malformed scripts as data.  [REPLAY_TAC] is the
-     classical-driver policy: it raises a diagnostic HOL_ERR. *)
+     classical-driver policy: it raises a diagnostic HOL_ERR.  [replay_in]
+     and [REPLAY_TAC] use the supplied proof context for every action. *)
   val replay : grounded_script -> goal -> replay_outcome
+  val replay_in : Context.t -> grounded_script -> goal -> replay_outcome
   val REPLAY_TAC : grounded_script -> tactic
 
   (* Shared, position-directed replay vocabulary.  None of these tactics
@@ -115,11 +117,17 @@ sig
   val CLASET_HYP_SUBST_TAC_AT : hyp_subst_elimination list -> tactic
   val COMPUTE_CLASET_HYP_SUBST_TAC :
     goal -> hyp_subst_elimination list * (goal list * validation)
+  val COMPUTE_CLASET_HYP_SUBST_TAC_IN :
+    Context.t -> goal ->
+    hyp_subst_elimination list * (goal list * validation)
   val BLAST_HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC_AT :
     {position : int, changed : bool list, side : hyp_subst_side} -> tactic
   val COMPUTE_BLAST_HYP_SUBST_TAC_AT :
     int -> goal ->
+    {changed : bool list, side : hyp_subst_side} * (goal list * validation)
+  val COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN :
+    Context.t -> int -> goal ->
     {changed : bool list, side : hyp_subst_side} * (goal list * validation)
   val GEN_NAMED_TAC : string -> tactic
   val SPLIT_PAIRED_TAC : tactic

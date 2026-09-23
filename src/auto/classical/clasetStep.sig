@@ -28,23 +28,38 @@ sig
   val rule_origin :
     clasetLib.claset -> bool -> thm -> thm * rule_variant
 
+  (* [_in] carries the tactic's proof context through lazy wrapper and
+     built-in tactic calls.  The old step entry points snapshot at their
+     invocation boundary. *)
   val safe_step : clasetLib.claset -> step
+  val safe_step_in : Context.t -> clasetLib.claset -> step
   val clarify_step : clasetLib.claset -> step
+  val clarify_step_in : Context.t -> clasetLib.claset -> step
   val inst0_step : clasetLib.claset -> step
   val instp_step : clasetLib.claset -> step
   val inst_step : clasetLib.claset -> step
   val unsafe_step : clasetLib.claset -> step
   val dup_step : clasetLib.claset -> step
   val step : clasetLib.claset -> step
+  val step_in : Context.t -> clasetLib.claset -> step
   val slow_step : clasetLib.claset -> step
+  val slow_step_in : Context.t -> clasetLib.claset -> step
 
   (* Every transition in a complete safe fixed point, in replay order. *)
   val safe_saturation :
     clasetLib.claset -> node -> (goalpos * step_record * node) list
+  val safe_saturation_in :
+    Context.t -> clasetLib.claset -> node ->
+    (goalpos * step_record * node) list
 
   (* Wrapper-free application of one supplied rule through the ordinary
      child policy.  Each sequence result is one application alternative. *)
   val rule_step :
+    {theorem : thm, elim : bool, mode : clasetUnify.mode} -> step
+  (* Charge before each introduction or elimination-major attempt.  The
+     lazy sequence keeps the unexamined attempt on a budget cutoff. *)
+  val rule_step_budgeted :
+    searchBudget.budget ->
     {theorem : thm, elim : bool, mode : clasetUnify.mode} -> step
 
   (* Engine-native forward application.  The first [immediate] premises are
@@ -59,6 +74,24 @@ sig
   val forward_rule_step :
     {theorem : thm, immediate : int option,
      mode : clasetUnify.mode} -> step
+  (* The budgeted form charges each premise/major examination and each
+     raw result inspection before work.  LimitReached propagates to the
+     caller; the legacy form keeps its existing unbounded sequence API. *)
+  val forward_rule_step_budgeted :
+    searchBudget.budget ->
+    {theorem : thm, immediate : int option,
+     mode : clasetUnify.mode} -> step
+
+  type forward_cursor = (step_record * node) seq.seq
+  datatype forward_scan =
+      ForwardYield of
+        {result : step_record * node, rest : forward_cursor}
+    | ForwardExhausted
+    | ForwardScanLimit of
+        {kind : searchBudget.kind, usage : searchBudget.usage,
+         cursor : forward_cursor}
+  (* Keep the same cursor on cutoff; extending its budget can resume it. *)
+  val next_forward : forward_cursor -> forward_scan
 
   (* Exact, wrapper-free engine transitions used by blast reconstruction.
      Rule application uses the supplied canonical source rather than doing
@@ -87,9 +120,21 @@ sig
     {equality : int, changed : bool list,
      side : hyp_subst_side} -> step
   val blast_move_back_step : int -> step
+  val blast_disch_step_in : Context.t -> step
+  val blast_gen_step_in : Context.t -> step
+  val blast_ccontr_step_in : Context.t -> step
+  val blast_hyp_subst_step_in : Context.t -> step
+  val blast_hyp_subst_step_at_in :
+    Context.t ->
+    {equality : int, changed : bool list,
+     side : hyp_subst_side} -> step
+  val blast_move_back_step_in : Context.t -> int -> step
 
   (* [depth_step cs part m] selects the duplicating or non-duplicating
      unsafe net through [part].  Safe and inst0 inferences cost nothing;
      an instp/part inference costs one unit. *)
   val depth_step : clasetLib.claset -> clasetLib.claset_part -> int -> step
+  val depth_step_in :
+    Context.t -> clasetLib.claset -> clasetLib.claset_part ->
+    int -> step
 end

@@ -164,11 +164,11 @@ fun aligned_result (goals, validation) =
     (goals, aligned)
   end
 
-fun tactic_direct kind consumed node pos tactic =
+fun tactic_direct_in ctxt kind consumed node pos tactic =
   let
     val rendered = clasetGoal.render node pos
     val result as (goals, _) =
-      aligned_result (tactic rendered (Context.snapshot()))
+      aligned_result (tactic rendered ctxt)
     val eigens = new_free_names_by_goal rendered goals
   in
     SOME
@@ -190,18 +190,6 @@ fun first_nonempty [] _ = seq.empty
             | SOME (value, tail) => seq.cons value tail)
 
 fun list_seq thunk = seq.delay (fn () => seq.fromList (thunk ()))
-
-(* [seq.take] materializes a list; a bound on a search alternative must
-   itself stay lazy, so that truncating costs nothing until pulled. *)
-fun take_seq count sequence =
-  if count <= 0 then seq.empty
-  else
-    seq.delay
-      (fn () =>
-        case seq.cases sequence of
-            NONE => seq.empty
-          | SOME (value, rest) =>
-              seq.cons value (take_seq (count - 1) rest))
 
 fun assumption_results (node, pos) =
   list_seq
@@ -812,14 +800,6 @@ fun try_rule policy mode cs duplicated node pos
        | HOL_ERR _ => raise Match
        | Empty => raise Match
 
-(* Resolving every immediate premise against every assumption is a
-   cartesian product, so one declaration can offer far more applications
-   than a search can install.  The engine budgets whole searches by their
-   rule-application count; bound the candidates one forward rule builds at
-   one goal by the same measure, so that a single expansion cannot
-   outproduce the search it feeds. *)
-val forward_alternative_limit = 200
-
 (* The major premise is the last immediate one and comes fixed from the
    caller; the earlier premises are resolved against the assumptions here.
    Committing to their first unifier would hide every conclusion but one of
@@ -828,7 +808,7 @@ val forward_alternative_limit = 200
    inspects only the leading alternatives pays for those alone.  Each
    result carries the assumption it adds, for the duplicate filter in
    [forward_rule_results]. *)
-fun try_forward mode {source, form} immediate node pos
+fun try_forward charge mode {source, form} immediate node pos
     (major_pos, major) =
   let
     val (asl, w) = clasetGoal.render node pos
@@ -840,6 +820,7 @@ fun try_forward mode {source, form} immediate node pos
     val immediate_premises = List.take (all_premises, immediate)
     val major_premise = List.last immediate_premises
     val config = {mode = mode, rule_metas = #metas fresh}
+    val _ = charge ()
     val major_store =
       case clasetUnify.unify (#store fresh) config
         (major_premise, major)
@@ -847,34 +828,6 @@ fun try_forward mode {source, form} immediate node pos
           NONE => raise Match
         | SOME store => store
     val positioned = position_map (fn value => value) asl
-
-    (* An assumption already equal to the premise discharges it without
-       binding anything, so those choices come first and keep their
-       store. *)
-    fun choices premise store =
-      let
-        val (equal, remaining) =
-          List.partition
-            (fn (_, assumption) =>
-              closing_equal store premise assumption) positioned
-      in
-        map (fn (position, _) => (position, store)) equal @
-        List.mapPartial
-          (fn (position, assumption) =>
-            Option.map
-              (fn next => (position, next))
-              (clasetUnify.unify store config (premise, assumption)))
-          remaining
-      end
-
-    fun assignments [] rev_positions store =
-          seq.result (List.rev rev_positions @ [major_pos], store)
-      | assignments (premise :: rest) rev_positions store =
-          seq.flatten
-            (seq.map
-              (fn (position, next) =>
-                assignments rest (position :: rev_positions) next)
-              (seq.fromList (choices premise store)))
 
     val earlier = List.take (immediate_premises, immediate - 1)
     val residual_terms =
@@ -934,56 +887,205 @@ fun try_forward mode {source, form} immediate node pos
             action = clasetReplay.forward_rule_action replay_instance,
             closed = [NONE], store = final_store})
       end
+    (* The stack is the multi-premise cursor.  Charge before removing a
+       candidate from its frame, so a cutoff resumes at that comparison.
+       Exact matches precede unification matches as in the old sequence. *)
+    datatype work =
+        Expand of term list * int list * clasetMeta.store
+      | CheckExact of
+          term * term list * int list * clasetMeta.store *
+          (int * term) list * (int * term) list
+      | CheckUnify of
+          term * term list * int list * clasetMeta.store *
+          (int * term) list
+    val pending = ref [Expand (earlier, [], major_store)]
+
+    fun next_assignment () =
+      case !pending of
+          [] => NONE
+        | Expand ([], positions, store) :: rest =>
+            (pending := rest;
+             SOME (List.rev positions @ [major_pos], store))
+        | Expand (premise :: later, positions, store) :: rest =>
+            (pending :=
+               CheckExact
+                 (premise, later, positions, store,
+                  positioned, []) :: rest;
+             next_assignment ())
+        | CheckExact
+            (premise, later, positions, store, [], mismatched) ::
+            rest =>
+            (pending :=
+               CheckUnify
+                 (premise, later, positions, store,
+                  List.rev mismatched) :: rest;
+             next_assignment ())
+        | CheckExact
+            (premise, later, positions, store,
+             (position, assumption) :: remaining, mismatched) :: rest =>
+            let
+              val _ = charge ()
+              val equal = closing_equal store premise assumption
+              val tail =
+                CheckExact
+                  (premise, later, positions, store, remaining,
+                   if equal then mismatched
+                   else (position, assumption) :: mismatched) :: rest
+            in
+              pending :=
+                if equal then
+                  Expand (later, position :: positions, store) :: tail
+                else tail;
+              next_assignment ()
+            end
+        | CheckUnify (_, _, _, _, []) :: rest =>
+            (pending := rest; next_assignment ())
+        | CheckUnify
+            (premise, later, positions, store,
+             (position, assumption) :: remaining) :: rest =>
+            let
+              val _ = charge ()
+              val next =
+                clasetUnify.unify store config (premise, assumption)
+              val tail =
+                CheckUnify
+                  (premise, later, positions, store, remaining) :: rest
+            in
+              pending :=
+                (case next of
+                     NONE => tail
+                   | SOME next_store =>
+                       Expand
+                         (later, position :: positions, next_store) ::
+                       tail);
+              next_assignment ()
+            end
+
+    fun next_result () =
+      case next_assignment () of
+          NONE => NONE
+        | SOME assignment =>
+            (case total build assignment of
+                 NONE => next_result ()
+               | SOME result => SOME result)
   in
-    seq.mapPartial (total build) (assignments earlier [] major_store)
+    seq.fresult next_result
   end
   handle Match => raise Match
        | HOL_ERR _ => raise Match
        | Empty => raise Match
 
-fun forward_rule_results mode rule immediate (node, pos) =
-  seq.delay
-    (fn () =>
+fun forward_rule_results charge mode rule immediate (node, pos) =
+  let
+    val assumptions = #asl (clasetGoal.goal_at node pos)
+    val parent_store = clasetGoal.store node
+
+    val remaining =
+      ref (position_map (fn value => value) assumptions)
+    val current = ref (NONE : (term * direct) seq.seq option)
+
+    fun attempts () =
+      case !current of
+          SOME candidates =>
+            (case seq.cases candidates of
+                 SOME (candidate, rest) =>
+                   (current := SOME rest; SOME candidate)
+               | NONE =>
+                   (current := NONE; attempts ()))
+        | NONE =>
+            (case !remaining of
+                 [] => NONE
+               | (position, major) :: rest =>
+                   let
+                     val next =
+                       (SOME
+                         (try_forward charge mode rule immediate
+                           node pos (position, major))
+                        handle Match => NONE)
+                   in
+                     remaining := rest;
+                     current := next;
+                     attempts ()
+                   end)
+
+    (* Rule-local metas are fresh for every alternative.  Only bindings
+       of pre-existing metas change the search state seen by the parent. *)
+    type effect =
+      {terms : (term * term) list,
+       types : (hol_type * hol_type) list}
+
+    fun effect_of direct : effect =
       let
-        val assumptions = #asl (clasetGoal.goal_at node pos)
-        val store = clasetGoal.store node
-
-        fun attempts _ [] = seq.empty
-          | attempts position (major :: rest) =
-              seq.delay
-                (fn () =>
-                  seq.append
-                    (case total
-                       (fn () =>
-                         try_forward mode rule immediate node pos
-                           (position, major)) ()
-                     of
-                         SOME candidates => candidates
-                       | NONE => seq.empty)
-                    (attempts (position + 1) rest))
-
-        (* Forward chaining reruns at every expansion, so an alternative
-           whose conclusion an assumption already states, or that an
-           earlier alternative already added, is only work.  Filtering
-           across the whole sequence rather than per major premise also
-           removes the repetitions different major premises share.  The
-           conclusions are compared in the store the goal arrived with:
-           an alternative must not be discarded because a sibling, which
-           the search may never take, assigns a metavariable. *)
-        fun distinct seen candidates =
-          seq.delay
-            (fn () =>
-              case seq.cases candidates of
-                  NONE => seq.empty
-                | SOME ((added, direct), rest) =>
-                    if List.exists (closing_equal store added) seen then
-                      distinct seen rest
-                    else
-                      seq.cons direct (distinct (added :: seen) rest))
+        val store = direct_store direct
+        val {terms = created_terms, types = created_types} =
+          direct_created direct
+        val {terms, types} = clasetMeta.bindings store
+        fun original_term (meta, _) =
+          not (List.exists (clasetMeta.same_meta meta) created_terms)
+        fun original_type (tymeta, _) =
+          not (List.exists (clasetMeta.same_tymeta tymeta)
+            created_types)
       in
-        distinct assumptions
-          (take_seq forward_alternative_limit (attempts 1 assumptions))
-      end)
+        {terms =
+           map (fn (meta, value) =>
+             (meta, normalize_term store value))
+             (List.filter original_term terms),
+         types =
+           map (fn (tymeta, value) =>
+             (tymeta, clasetMeta.norm_type store value))
+             (List.filter original_type types)}
+      end
+
+    fun same_effect (left : effect) (right : effect) =
+      ListPair.allEq
+        (fn ((left_meta, left_value),
+             (right_meta, right_value)) =>
+          clasetMeta.same_meta left_meta right_meta andalso
+          aconv left_value right_value)
+        (#terms left, #terms right) andalso
+      ListPair.allEq
+        (fn ((left_meta, left_value),
+             (right_meta, right_value)) =>
+          clasetMeta.same_tymeta left_meta right_meta andalso
+          Type.compare (left_value, right_value) = EQUAL)
+        (#types left, #types right)
+
+    (* Existing assumptions are available in the arriving store.
+       Sibling results may be deduplicated only if their effects on
+       pre-existing metas agree; compare their conclusions in the common
+       parent store.  Hold a produced candidate across a cutoff. *)
+    val seen = ref ([] : (term * effect) list)
+    val candidate_pending = ref (NONE : (term * direct) option)
+
+    fun distinct () =
+      case !candidate_pending of
+          NONE =>
+            (case attempts () of
+                 NONE => NONE
+               | SOME candidate =>
+                   (candidate_pending := SOME candidate;
+                    distinct ()))
+        | SOME (added, direct) =>
+            (charge ();
+             candidate_pending := NONE;
+             let
+               val effect = effect_of direct
+             in
+               if List.exists
+                  (closing_equal (direct_store direct) added)
+                  assumptions orelse
+                  List.exists
+                    (fn (previous, prior_effect) =>
+                      closing_equal parent_store added previous andalso
+                      same_effect effect prior_effect)
+                    (!seen)
+               then distinct ()
+               else
+                 (seen := (added, effect) :: !seen; SOME direct)
+             end)
+  in
+    seq.fresult distinct
+  end
 
 fun rule_results mode cs duplicated part weight_filter (node, pos) =
   seq.delay
@@ -1066,7 +1168,7 @@ fun exact_rule_attempts attempt selector elim node pos =
         end
     | _ => seq.empty
 
-fun supplied_rule_results_with selector policy mode cs
+fun supplied_rule_results_with charge selector policy mode cs
     {theorem, elim} (node, pos) =
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
@@ -1075,19 +1177,21 @@ fun supplied_rule_results_with selector policy mode cs
     fun attempt assumption =
       seq.delay
         (fn () =>
-          case total
+          (charge ();
+           case total
             (fn () =>
               try_rule policy mode cs false node pos entry assumption) ()
           of
               SOME direct => seq.result direct
-            | NONE => seq.empty)
+            | NONE => seq.empty))
 
   in
     exact_rule_attempts attempt selector elim node pos
   end
 
 fun exact_rule_results_with selector cs specification =
-  supplied_rule_results_with selector ExactBlastPrefixes
+  supplied_rule_results_with (fn () => ())
+    selector ExactBlastPrefixes
     clasetUnify.Unify cs specification
 
 fun exact_rule_results cs specification =
@@ -1127,12 +1231,12 @@ fun splittable_variable (asl, w) =
     List.find splittable (free_varsl (w :: asl))
   end
 
-fun builtin_results (node, pos) =
+fun builtin_results_in ctxt (node, pos) =
   let
     val rendered as (_, w) = clasetGoal.render node pos
 
     fun make initial_store kind action tactic =
-      case total (fn () => tactic rendered (Context.snapshot())) () of
+      case total (fn () => tactic rendered ctxt) () of
           NONE => seq.empty
         | SOME (result as (goals, _)) =>
             let
@@ -1213,7 +1317,10 @@ fun builtin_results (node, pos) =
     else seq.empty
   end
 
-fun swapped_builtin_results (node, pos) =
+fun builtin_results input =
+  builtin_results_in (Context.snapshot ()) input
+
+fun swapped_builtin_results_in ctxt (node, pos) =
   list_seq
     (fn () =>
       let
@@ -1230,7 +1337,7 @@ fun swapped_builtin_results (node, pos) =
                 | NONE => false
           in
             if supported then
-              case tactic_direct (SwappedBuiltin asm_pos)
+              case tactic_direct_in ctxt (SwappedBuiltin asm_pos)
                 (SOME asm_pos) node pos
                 (clasetReplay.SWAPPED_BUILTIN_TAC store asm_pos)
               of
@@ -1255,12 +1362,14 @@ fun has_metavariables node pos =
       (List.concat (map type_vars_in_term (w :: asl)))
   end
 
-fun internal_hyp_subst_results (node, pos) =
+fun internal_hyp_subst_results_in ctxt (node, pos) =
   let
     val rendered = clasetGoal.render node pos
     val initial_params = #params (clasetGoal.goal_at node pos)
   in
-    case total clasetReplay.COMPUTE_CLASET_HYP_SUBST_TAC rendered of
+    case total
+           (clasetReplay.COMPUTE_CLASET_HYP_SUBST_TAC_IN ctxt)
+           rendered of
         NONE => seq.empty
       | SOME (eliminations, computed) =>
           (case aligned_result computed of
@@ -1282,23 +1391,24 @@ fun internal_hyp_subst_results (node, pos) =
              | _ => seq.empty)
   end
 
-fun materialized_hyp_subst_results (node, pos) =
+fun materialized_hyp_subst_results_in ctxt (node, pos) =
   let
     val {hyp_subst_tac, ...} = clasetLib.claset_config
     val repeated =
       Tactical.THEN
         (hyp_subst_tac, Tactical.REPEAT hyp_subst_tac)
   in
-    case tactic_direct HypSubst NONE node pos repeated of
+    case tactic_direct_in ctxt HypSubst NONE node pos repeated of
         SOME result => seq.result result
       | NONE => seq.empty
   end
 
-fun hyp_subst_results (input as (node, pos)) =
-  if has_metavariables node pos then internal_hyp_subst_results input
-  else materialized_hyp_subst_results input
+fun hyp_subst_results_in ctxt (input as (node, pos)) =
+  if has_metavariables node pos then
+    internal_hyp_subst_results_in ctxt input
+  else materialized_hyp_subst_results_in ctxt input
 
-fun plain_tactic_results kind action tactic (node, pos) =
+fun plain_tactic_results_in ctxt kind action tactic (node, pos) =
   seq.delay
     (fn () =>
       let
@@ -1306,7 +1416,7 @@ fun plain_tactic_results kind action tactic (node, pos) =
         val {params, ...} = clasetGoal.goal_at node pos
       in
         case Option.map aligned_result
-               (total (fn () => tactic rendered (Context.snapshot())) ()) of
+               (total (fn () => tactic rendered ctxt) ()) of
             NONE => seq.empty
           | SOME (result as (goals, _)) =>
               let
@@ -1324,6 +1434,9 @@ fun plain_tactic_results kind action tactic (node, pos) =
                      store = clasetGoal.store node})
               end
       end)
+
+fun plain_tactic_results kind action tactic input =
+  plain_tactic_results_in (Context.snapshot()) kind action tactic input
 
 (* T1 affectedness is computed on the branch syntax, before beta/eta
    normalization.  Instantiate engine bindings structurally, but preserve
@@ -1349,7 +1462,7 @@ fun prepare_blast_hyp_subst node pos : blast_hyp_subst_context =
      goal = goal}
   end
 
-fun blast_hyp_subst_in
+fun blast_hyp_subst_in ctxt
       ({store, params, assumption_count, goal} :
         blast_hyp_subst_context) {position, recorded} =
   if position <= 0 orelse position > assumption_count then NONE
@@ -1358,12 +1471,13 @@ fun blast_hyp_subst_in
       (fn () =>
         case recorded of
             NONE =>
-              clasetReplay.COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal
+              clasetReplay.COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN
+                ctxt position goal
           | SOME (fields as {changed, side}) =>
               (fields,
                clasetReplay.BLAST_HYP_SUBST_TAC_AT
                  {position = position, changed = changed, side = side}
-                 goal (Context.snapshot()))) () of
+                 goal ctxt)) () of
         NONE => NONE
       | SOME ({changed, side}, unaligned) =>
           let
@@ -1384,7 +1498,7 @@ fun blast_hyp_subst_in
                  closed = map (fn _ => NONE) goals, store = store})
           end
 
-fun blast_hyp_subst_results (node, pos) =
+fun blast_hyp_subst_results_in ctxt (node, pos) =
   list_seq
     (fn () =>
       let
@@ -1395,18 +1509,35 @@ fun blast_hyp_subst_results (node, pos) =
       in
         List.mapPartial
           (fn position =>
-            blast_hyp_subst_in prepared
+            blast_hyp_subst_in ctxt prepared
               {position = position, recorded = NONE}) positions
       end)
 
-fun blast_hyp_subst_results_at {equality, changed, side} (node, pos) =
+fun blast_hyp_subst_results_at_in ctxt
+      {equality, changed, side} (node, pos) =
   list_seq
     (fn () =>
-      case blast_hyp_subst_in (prepare_blast_hyp_subst node pos)
+      case blast_hyp_subst_in ctxt (prepare_blast_hyp_subst node pos)
         {position = equality,
          recorded = SOME {changed = changed, side = side}} of
           NONE => []
         | SOME direct => [direct])
+
+fun blast_hyp_subst_results input =
+  blast_hyp_subst_results_in (Context.snapshot()) input
+
+fun blast_hyp_subst_results_at fields input =
+  blast_hyp_subst_results_at_in (Context.snapshot()) fields input
+
+fun ccontr_results_in ctxt =
+  plain_tactic_results_in ctxt CContr
+    clasetReplay.goal_negation_action
+    clasetReplay.GOAL_NEGATION_TAC
+
+fun move_back_results_in ctxt position =
+  plain_tactic_results_in ctxt (MoveAssumptionToBack position)
+    (clasetReplay.move_assumption_to_back_action position)
+    (clasetReplay.MOVE_ASSUMPTION_TO_BACK_TAC position)
 
 val ccontr_results =
   plain_tactic_results CContr
@@ -1441,12 +1572,12 @@ fun forall_bound tm =
       SOME (bound, _) => SOME bound
     | NONE => eta_forall_bound tm
 
-fun disch_results (input as (node, pos)) =
+fun disch_results_in ctxt (input as (node, pos)) =
   if is_imp_only (rendered_conclusion node pos) then
-    builtin_results input
+    builtin_results_in ctxt input
   else seq.empty
 
-fun gen_results (input as (node, pos)) =
+fun gen_results_in ctxt (input as (node, pos)) =
   case forall_bound (rendered_conclusion node pos) of
       SOME bound =>
         let
@@ -1457,7 +1588,7 @@ fun gen_results (input as (node, pos)) =
       case total
              (fn () =>
                 clasetReplay.GEN_NAMED_TAC name rendered
-                  (Context.snapshot())) () of
+                  ctxt) () of
               NONE => seq.empty
             | SOME (result as (goals, validation)) =>
                 let
@@ -1479,15 +1610,21 @@ fun gen_results (input as (node, pos)) =
         end
     | NONE => seq.empty
 
-fun safe_cascade cs input =
+fun disch_results input =
+  disch_results_in (Context.snapshot()) input
+
+fun gen_results input =
+  gen_results_in (Context.snapshot()) input
+
+fun safe_cascade_in ctxt cs input =
   first_nonempty
     [assumption_results,
      eq_mp_results,
      rule_results clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
-     builtin_results,
-     swapped_builtin_results,
-     hyp_subst_results,
+     builtin_results_in ctxt,
+     swapped_builtin_results_in ctxt,
+     hyp_subst_results_in ctxt,
      rule_results clasetUnify.Match cs false
        (clasetLib.safep_part cs) all_weights]
     input
@@ -1555,14 +1692,14 @@ fun bimatch2_results cs part input =
   seq.mapPartial close_one_child
     (rule_results clasetUnify.Match cs false part (weight_is 2) input)
 
-fun clarify_cascade cs input =
+fun clarify_cascade_in ctxt cs input =
   first_nonempty
     [assume_or_contradiction,
      rule_results clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
-     builtin_results,
-     swapped_builtin_results,
-     hyp_subst_results,
+     builtin_results_in ctxt,
+     swapped_builtin_results_in ctxt,
+     hyp_subst_results_in ctxt,
      rule_results clasetUnify.Match cs false
        (clasetLib.safep_part cs) (weight_is 1),
      bimatch2_results cs (clasetLib.safep_part cs)]
@@ -1894,9 +2031,16 @@ val blast_contradiction_step =
   direct_step unifying_contradiction_results
 fun rule_step {theorem, elim, mode} =
   direct_step
-    (supplied_rule_results_with AllMajors LegacyPrefixes mode
+    (supplied_rule_results_with (fn () => ())
+      AllMajors LegacyPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
-fun forward_rule_step {theorem, immediate, mode} =
+fun rule_step_budgeted budget {theorem, elim, mode} =
+  direct_step
+    (supplied_rule_results_with
+      (fn () => searchBudget.charge budget searchBudget.Candidate)
+      AllMajors LegacyPrefixes mode
+      clasetLib.empty_cs {theorem = theorem, elim = elim})
+fun forward_rule_step_with charge {theorem, immediate, mode} =
   let
     (* Canonicalizing here serves both the range check and every later
        application, so the rule is put in canonical form exactly once. *)
@@ -1910,8 +2054,31 @@ fun forward_rule_step {theorem, immediate, mode} =
           "the immediate-premise count is out of range"
   in
     direct_step
-      (forward_rule_results mode {source = theorem, form = form} count)
+      (forward_rule_results charge mode
+        {source = theorem, form = form} count)
   end
+fun forward_rule_step specification =
+  forward_rule_step_with (fn () => ()) specification
+fun forward_rule_step_budgeted budget specification =
+  forward_rule_step_with
+    (fn () => searchBudget.charge budget searchBudget.Candidate)
+    specification
+type forward_cursor = (step_record * node) seq.seq
+datatype forward_scan =
+    ForwardYield of
+      {result : step_record * node, rest : forward_cursor}
+  | ForwardExhausted
+  | ForwardScanLimit of
+      {kind : searchBudget.kind, usage : searchBudget.usage,
+       cursor : forward_cursor}
+fun next_forward cursor =
+  (case seq.cases cursor of
+       NONE => ForwardExhausted
+     | SOME (result, rest) =>
+         ForwardYield {result = result, rest = rest})
+  handle searchBudget.LimitReached (kind, usage) =>
+    ForwardScanLimit
+      {kind = kind, usage = usage, cursor = cursor}
 fun blast_assumption_step_at position =
   direct_step (unifying_assumption_results_at position)
 fun blast_contradiction_step_at positions =
@@ -1932,6 +2099,16 @@ fun blast_hyp_subst_step_at fields =
 fun blast_move_back_step position =
   direct_step (move_back_results position)
 
+fun blast_disch_step_in ctxt = direct_step (disch_results_in ctxt)
+fun blast_gen_step_in ctxt = direct_step (gen_results_in ctxt)
+fun blast_ccontr_step_in ctxt = direct_step (ccontr_results_in ctxt)
+fun blast_hyp_subst_step_in ctxt =
+  direct_step (blast_hyp_subst_results_in ctxt)
+fun blast_hyp_subst_step_at_in ctxt fields =
+  direct_step (blast_hyp_subst_results_at_in ctxt fields)
+fun blast_move_back_step_in ctxt position =
+  direct_step (move_back_results_in ctxt position)
+
 fun wrapper_direct rendered goals validation store =
   let val result = aligned_result (goals, validation)
   in
@@ -1943,7 +2120,7 @@ fun wrapper_direct rendered goals validation store =
        closed = map (fn _ => NONE) goals, store = store}
   end
 
-fun wrapped_step apply_wrappers cascade cs (node, pos) =
+fun wrapped_step_in ctxt apply_wrappers cascade cs (node, pos) =
   seq.delay
     (fn () =>
       let
@@ -1973,7 +2150,7 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
             end
 
         val wrapped =
-          apply_wrappers cs base rendered (Context.snapshot())
+          apply_wrappers cs base rendered ctxt
 
         fun lift sequence =
           seq.delay
@@ -2021,11 +2198,22 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
         lift wrapped
       end)
 
+fun wrapped_step apply_wrappers cascade cs input =
+  wrapped_step_in (Context.snapshot ()) apply_wrappers cascade cs input
+
+fun safe_step_in ctxt cs =
+  wrapped_step_in ctxt clasetLib.app_safe_wrappers
+    (safe_cascade_in ctxt) cs
+
 fun safe_step cs =
-  wrapped_step clasetLib.app_safe_wrappers safe_cascade cs
+  fn input => safe_step_in (Context.snapshot ()) cs input
+
+fun clarify_step_in ctxt cs =
+  wrapped_step_in ctxt clasetLib.app_safe_wrappers
+    (clarify_cascade_in ctxt) cs
 
 fun clarify_step cs =
-  wrapped_step clasetLib.app_safe_wrappers clarify_cascade cs
+  fn input => clarify_step_in (Context.snapshot ()) cs input
 
 (* Unsafe steps carry no wrappers: the claset's safe wrappers apply only
    to safe and clarify cascades. *)
@@ -2046,7 +2234,7 @@ fun first_result sequence =
       NONE => NONE
     | SOME (result, _) => SOME result
 
-fun safe_steps_at_full cs node pos =
+fun safe_steps_at_full_with step cs node pos =
   let
     val initial_count = length (clasetGoal.goals node)
 
@@ -2054,31 +2242,40 @@ fun safe_steps_at_full cs node pos =
       if length (clasetGoal.goals current) < initial_count then
         (List.rev transitions, current)
       else
-        case first_result (safe_step cs (current, pos)) of
+        case first_result (step cs (current, pos)) of
             NONE => (List.rev transitions, current)
           | SOME (record, next) =>
               repeat ((pos, record, next) :: transitions) next
   in
-    case first_result (safe_step cs (node, pos)) of
+    case first_result (step cs (node, pos)) of
         NONE => NONE
       | SOME (record, next) =>
           SOME (repeat [(pos, record, next)] next)
   end
 
-fun safe_steps_at cs node pos =
+fun safe_steps_at_full cs node pos =
+  safe_steps_at_full_with safe_step cs node pos
+
+fun safe_steps_at_full_in ctxt cs node pos =
+  safe_steps_at_full_with (safe_step_in ctxt) cs node pos
+
+fun safe_steps_at_with steps cs node pos =
   Option.map
     (fn (transitions, next) =>
         let val (_, record, _) = List.last transitions
         in (record, next)
         end)
-    (safe_steps_at_full cs node pos)
+    (steps cs node pos)
 
-fun safe_saturation cs node =
+fun safe_steps_at_in ctxt cs node pos =
+  safe_steps_at_with (safe_steps_at_full_in ctxt) cs node pos
+
+fun safe_saturation_with steps cs node =
   let
     fun first_goal pos current =
       if pos > length (clasetGoal.goals current) then NONE
       else
-        case safe_steps_at_full cs current pos of
+        case steps cs current pos of
             NONE => first_goal (pos + 1) current
           | result => result
 
@@ -2091,8 +2288,14 @@ fun safe_saturation cs node =
     saturate [] node
   end
 
-fun safe_saturate_all cs node =
-  case List.rev (safe_saturation cs node) of
+fun safe_saturation cs node =
+  safe_saturation_with safe_steps_at_full cs node
+
+fun safe_saturation_in ctxt cs node =
+  safe_saturation_with (safe_steps_at_full_in ctxt) cs node
+
+fun safe_saturate_all_in ctxt cs node =
+  case List.rev (safe_saturation_in ctxt cs node) of
       [] => NONE
     | (_, record, next) :: _ => SOME (record, next)
 
@@ -2222,15 +2425,18 @@ fun unsafe_rung fast cs (input as (node, _)) =
                   else seq.cons first rest)
     end
 
-fun general_step fast cs (input as (node, _)) =
-  case safe_saturate_all cs node of
+fun general_step_in ctxt fast cs (input as (node, _)) =
+  case safe_saturate_all_in ctxt cs node of
       SOME result => seq.result result
     | NONE =>
-        wrapped_step clasetLib.app_unsafe_wrappers
+        wrapped_step_in ctxt clasetLib.app_unsafe_wrappers
           (unsafe_rung fast) cs input
 
-fun step cs = general_step true cs
-fun slow_step cs = general_step false cs
+fun step_in ctxt cs = general_step_in ctxt true cs
+fun slow_step_in ctxt cs = general_step_in ctxt false cs
+
+fun step cs input = step_in (Context.snapshot ()) cs input
+fun slow_step cs input = slow_step_in (Context.snapshot ()) cs input
 
 (* The children an inference leaves are solved one at a time, and the
    one taken first is the first whose conclusion does not stand on an
@@ -2246,7 +2452,7 @@ fun slow_step cs = general_step false cs
    premise until one happens to fit a sibling.  Every child is solved
    either way and each is offered all of its solutions, so this is an
    order and not a choice. *)
-fun depth_step cs part bound (node, pos) =
+fun depth_step_in ctxt cs part bound (node, pos) =
   let
     fun solve_many _ _ 0 result = seq.result result
       | solve_many m target count (record, current) =
@@ -2265,7 +2471,7 @@ fun depth_step cs part bound (node, pos) =
           end
 
     and solve_one m (current, target) =
-      case safe_steps_at cs current target of
+      case safe_steps_at_in ctxt cs current target of
           SOME (result as (_, safe_node)) =>
             solve_many m target
               (clasetGoal.child_count current safe_node) result
@@ -2276,7 +2482,8 @@ fun depth_step cs part bound (node, pos) =
                 if m <= 0 then seq.empty
                 else
                   seq.bind
-                    (wrapped_step clasetLib.app_unsafe_wrappers
+                    (wrapped_step_in ctxt
+                      clasetLib.app_unsafe_wrappers
                       (guess_free_first (depth_cascade part)) cs
                       (current, target))
                     (fn result as (_, next) =>
@@ -2288,5 +2495,8 @@ fun depth_step cs part bound (node, pos) =
   in
     if bound < 0 then seq.empty else solve_one bound (node, pos)
   end
+
+fun depth_step cs part bound input =
+  depth_step_in (Context.snapshot ()) cs part bound input
 
 end

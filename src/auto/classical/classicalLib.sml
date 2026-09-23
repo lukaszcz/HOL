@@ -58,12 +58,13 @@ fun accept_safe_transition
     {node=next, validation=validation'}
   end
 
-fun safe_saturate cs goal _ =
+fun safe_saturate cs goal ctxt =
   let
     val initial =
       {node = clasetGoal.from_goal goal,
        validation = initial_validation}
-    val transitions = clasetStep.safe_saturation cs (#node initial)
+    val transitions =
+      clasetStep.safe_saturation_in ctxt cs (#node initial)
     val final = List.foldl accept_safe_transition initial transitions
     val goals = rendered_goals (#node final)
   in
@@ -71,7 +72,7 @@ fun safe_saturate cs goal _ =
     else seq.result (caller_result goal (goals, #validation final))
   end
 
-fun step_ntactic step cs goal _ =
+fun step_ntactic step cs goal ctxt =
   let
     val node = clasetGoal.from_goal goal
   in
@@ -79,11 +80,11 @@ fun step_ntactic step cs goal _ =
       (fn (record, next) =>
         caller_result goal
           (rendered_goals next, clasetStep.validation_of record))
-      (step cs (node, 1))
+      (step ctxt cs (node, 1))
   end
 
-fun CS_SAFE_STEP_TAC cs = step_ntactic clasetStep.safe_step cs
-fun CS_CLARIFY_STEP_TAC cs = step_ntactic clasetStep.clarify_step cs
+fun CS_SAFE_STEP_TAC cs = step_ntactic clasetStep.safe_step_in cs
+fun CS_CLARIFY_STEP_TAC cs = step_ntactic clasetStep.clarify_step_in cs
 fun CS_SAFE_TAC cs = safe_saturate cs
 
 fun CS_CLARIFY_TAC cs =
@@ -111,13 +112,14 @@ fun replay_node original node ctxt =
 fun replay_step step cs goal ctxt =
   let val initial = clasetGoal.from_goal goal
   in
-    seq.bind (step cs (initial, 1))
+    seq.bind (step ctxt cs (initial, 1))
       (fn (_, node) => replay_node goal node ctxt)
   end
 
-fun CS_STEP_TAC cs = replay_step clasetStep.step cs
-fun CS_SLOW_STEP_TAC cs = replay_step clasetStep.slow_step cs
-fun CS_INST_STEP_TAC cs = replay_step clasetStep.inst_step cs
+fun CS_STEP_TAC cs = replay_step clasetStep.step_in cs
+fun CS_SLOW_STEP_TAC cs = replay_step clasetStep.slow_step_in cs
+fun CS_INST_STEP_TAC cs =
+  replay_step (fn _ => clasetStep.inst_step) cs
 
 fun project_steps steps =
   seq.map (fn (_, node) => node) steps
@@ -161,8 +163,8 @@ fun expand_first step cs node =
 (* Isabelle's safe_depth_tac saturates the complete selected state before
    depth search.  Keeping the resulting goals visible to DEPTH_SOLVE also
    lets its D25 commitment test run between safely generated siblings. *)
-fun safe_saturate_node cs initial =
-  case List.rev (clasetStep.safe_saturation cs initial) of
+fun safe_saturate_node_in ctxt cs initial =
+  case List.rev (clasetStep.safe_saturation_in ctxt cs initial) of
       [] => initial
     | (_, _, final) :: _ => final
 
@@ -185,14 +187,19 @@ fun best_driver step cs =
 fun astar_driver step cs =
   clasetSearch.ASTAR solved (expand_at step cs 1)
 
-fun CS_FAST_TAC cs = solve (depth_driver clasetStep.step cs)
-fun CS_SLOW_TAC cs = solve (depth_driver clasetStep.slow_step cs)
-fun CS_BEST_TAC cs = solve (best_driver clasetStep.step cs)
-fun CS_SLOW_BEST_TAC cs = solve (best_driver clasetStep.slow_step cs)
+fun CS_FAST_TAC cs goal ctxt =
+  solve (depth_driver (clasetStep.step_in ctxt) cs) goal ctxt
+fun CS_SLOW_TAC cs goal ctxt =
+  solve (depth_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
+fun CS_BEST_TAC cs goal ctxt =
+  solve (best_driver (clasetStep.step_in ctxt) cs) goal ctxt
+fun CS_SLOW_BEST_TAC cs goal ctxt =
+  solve (best_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
 
-fun CS_FIRST_BEST_TAC cs =
-  solve (clasetSearch.BEST_FIRST solved
-    (expand_first clasetStep.step cs))
+fun CS_FIRST_BEST_TAC cs goal ctxt =
+  solve
+    (clasetSearch.BEST_FIRST solved
+      (expand_first (clasetStep.step_in ctxt) cs)) goal ctxt
 
 (* A bounded turn for the frontier search: the engine's expansion bound is
    in force only while this runs.  It is a tactic rather than an ntactic
@@ -219,41 +226,141 @@ fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal ctxt =
     result
   end
 
-fun CS_ASTAR_TAC cs = solve (astar_driver clasetStep.step cs)
-fun CS_SLOW_ASTAR_TAC cs = solve (astar_driver clasetStep.slow_step cs)
+type budget_session =
+  {frontier : clasetSearch.frontier_session,
+   budget : searchBudget.budget,
+   goal : goal,
+   ctxt : Context.t,
+   pending : clasetGoal.node option ref,
+   terminal : (searchBudget.kind * searchBudget.usage) option ref,
+   aborted : bool ref}
 
-fun bounded_depth {dup} cs bound initial =
+datatype budget_outcome =
+    BudgetProved of
+      {result : goal list * validation, session : budget_session}
+  | BudgetExhausted
+  | BudgetYielded of
+      {kind : searchBudget.kind, usage : searchBudget.usage,
+       session : budget_session}
+  | BudgetLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
+
+fun CS_FIRST_BEST_SESSION budget cs goal ctxt : budget_session =
+  {frontier =
+     clasetSearch.new_best_session budget solved
+       (expand_first (clasetStep.step_in ctxt) cs)
+       (clasetGoal.from_goal goal),
+   budget = budget, goal = goal, ctxt = ctxt, pending = ref NONE,
+   terminal = ref NONE, aborted = ref false}
+
+fun RESUME_FIRST_BEST_SESSION
+      (session as
+        {frontier, budget, goal, ctxt, pending, terminal, aborted} :
+        budget_session) =
+  let
+    fun replay node =
+      let
+        val admitted =
+          (searchBudget.charge budget searchBudget.Normalization; NONE)
+          handle searchBudget.LimitReached (kind, usage) =>
+            SOME (kind, usage)
+      in
+        case admitted of
+            SOME (kind, usage) =>
+              BudgetYielded
+                {kind = kind, usage = usage, session = session}
+          | NONE =>
+              let
+                val _ = pending := NONE
+                val grounded =
+                  clasetReplay.ground
+                    (clasetGoal.store node)
+                    (clasetGoal.replay node)
+                val result =
+                  Tactical.VALID
+                    (clasetReplay.REPLAY_TAC grounded) goal ctxt
+              in
+                if null (#1 result) then
+                  BudgetProved
+                    {result = result, session = session}
+                else advance ()
+              end
+              handle HOL_ERR _ => advance ()
+                   | searchBudget.LimitReached (kind, usage) =>
+                       (terminal := SOME (kind, usage);
+                        BudgetLimitReached
+                          {kind = kind, usage = usage})
+      end
+    and advance () =
+      case !pending of
+          SOME node => replay node
+        | NONE =>
+            (case clasetSearch.resume_frontier frontier of
+                 clasetSearch.FrontierResult {node, ...} =>
+                   (pending := SOME node; replay node)
+               | clasetSearch.FrontierExhausted => BudgetExhausted
+               | clasetSearch.FrontierYielded {kind, usage, ...} =>
+                   BudgetYielded
+                     {kind = kind, usage = usage, session = session}
+               | clasetSearch.FrontierLimitReached {kind, usage} =>
+                   (terminal := SOME (kind, usage);
+                    BudgetLimitReached
+                      {kind = kind, usage = usage}))
+  in
+    if !aborted then
+      raise mk_HOL_ERR "classicalLib" "RESUME_FIRST_BEST_SESSION"
+        "an interrupted or failed session cannot be resumed"
+    else
+      case !terminal of
+          SOME (kind, usage) =>
+            BudgetLimitReached {kind = kind, usage = usage}
+        | NONE =>
+            (advance ()
+             handle exn => (aborted := true; raise exn))
+  end
+
+fun CS_ASTAR_TAC cs goal ctxt =
+  solve (astar_driver (clasetStep.step_in ctxt) cs) goal ctxt
+fun CS_SLOW_ASTAR_TAC cs goal ctxt =
+  solve (astar_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
+
+fun bounded_depth_in ctxt {dup} cs bound initial =
   let
     val part =
       if dup then clasetLib.dup_part cs else clasetLib.unsafe_part cs
-    val saturated = safe_saturate_node cs initial
+    val saturated = safe_saturate_node_in ctxt cs initial
     val search =
       clasetSearch.DEPTH_SOLVE
         (fn node =>
           project_steps
-            (clasetStep.depth_step cs part bound (node, 1)))
+            (clasetStep.depth_step_in ctxt cs part bound (node, 1)))
   in
     search saturated
   end
 
-fun CS_DEPTH_SOLVE_TAC config bound cs =
-  solve (bounded_depth config cs bound)
+fun CS_DEPTH_SOLVE_TAC config bound cs goal ctxt =
+  solve (bounded_depth_in ctxt config cs bound) goal ctxt
 
-fun CS_DEEPEN_TAC cs {start} =
+fun CS_DEEPEN_TAC cs {start} goal ctxt =
   solve
     (clasetSearch.DEEPEN (2, 10)
-      (bounded_depth {dup = true} cs) start)
+      (bounded_depth_in ctxt {dup = true} cs) start) goal ctxt
 
 fun no_extra_markers theorems cs = (cs, theorems)
 
-fun invocation body theorems =
-  clasetLib.with_invocation_args
-    {iff_prefix="", extra_markers=no_extra_markers}
-    (fn cs => fn _ => fn _ => body cs)
+fun invocation_with consumer body theorems =
+  clasetLib.with_invocation_fact_env
+    {iff_prefix="", extra_markers=no_extra_markers,
+     consumer=consumer}
+    (fn cs => fn _ => fn _ => fn _ => body cs)
     (clasetLib.the_claset ())
     (NONE : unit clasetLib.invocation_simpset option) theorems
 
+fun invocation body = invocation_with clasetLib.SearchFacts body
+fun safe_invocation body = invocation_with clasetLib.SafeFacts body
+
 fun public tactic = invocation (NTactical.DETERM o tactic)
+fun public_safe tactic = safe_invocation (NTactical.DETERM o tactic)
 
 (* The saturating tactics report a no-op as failure, and inserting a fact is
    not a no-op, so their progress test spans the whole invocation: an engine
@@ -261,14 +368,16 @@ fun public tactic = invocation (NTactical.DETERM o tactic)
    discarding them.  With nothing to insert this is exactly the engine's own
    test.  The step tactics keep theirs, since one that could "succeed" by
    inserting alone would make NREPEAT insert for ever. *)
-fun progress tactic theorems =
+fun progress_with invoke tactic theorems =
   Tactical.CHANGED_TAC
-    (invocation (NTactical.DETERM o NTactical.NTRY o tactic) theorems)
+    (invoke (NTactical.DETERM o NTactical.NTRY o tactic) theorems)
+
+fun progress tactic = progress_with safe_invocation tactic
 
 fun SAFE_TAC theorems = progress CS_SAFE_TAC theorems
 fun CLARIFY_TAC theorems = progress CS_CLARIFY_TAC theorems
-fun SAFE_STEP_TAC theorems = public CS_SAFE_STEP_TAC theorems
-fun CLARIFY_STEP_TAC theorems = public CS_CLARIFY_STEP_TAC theorems
+fun SAFE_STEP_TAC theorems = public_safe CS_SAFE_STEP_TAC theorems
+fun CLARIFY_STEP_TAC theorems = public_safe CS_CLARIFY_STEP_TAC theorems
 fun STEP_TAC theorems = public CS_STEP_TAC theorems
 fun SLOW_STEP_TAC theorems = public CS_SLOW_STEP_TAC theorems
 fun INST_STEP_TAC theorems = public CS_INST_STEP_TAC theorems

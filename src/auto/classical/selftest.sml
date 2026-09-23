@@ -3907,6 +3907,294 @@ val _ =
 
 val _ =
   test
+    ("budgeted forward scanning reports a candidate cutoff",
+     fn () =>
+       let
+         val assumptions =
+           [forward_edge_of forward_a forward_c,
+            forward_edge_of forward_b forward_c,
+            forward_node_of forward_c]
+         val node = clasetGoal.from_goal
+           (assumptions, forward_goal_target)
+         fun step budget =
+           clasetStep.forward_rule_step_budgeted budget
+             {theorem = forward_reach_rule, immediate = NONE,
+              mode = clasetUnify.Match} (node, 1)
+         val limited =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           (ignore (seq.cases (step limited)); false)
+           handle searchBudget.LimitReached
+             (searchBudget.Candidate, used) =>
+               #candidates used = 0
+         val funded =
+           searchBudget.create
+             {candidates = SOME 100, applications = NONE,
+              normalization = NONE}
+         val alternatives = drain_exact (step funded)
+       in
+         cutoff andalso length alternatives = 2 andalso
+         #candidates (searchBudget.usage funded) > 2 andalso
+         #applications (searchBudget.usage funded) = 0
+       end)
+
+val _ =
+  test
+    ("a forward scan resumes after small candidate allocations",
+     fn () =>
+       let
+         val assumptions =
+           [forward_edge_of forward_a forward_c,
+            forward_edge_of forward_b forward_c,
+            forward_node_of forward_c]
+         val node =
+           clasetGoal.from_goal (assumptions, forward_goal_target)
+         val budget =
+           searchBudget.create
+             {candidates = SOME 1, applications = NONE,
+              normalization = NONE}
+         val cursor =
+           clasetStep.forward_rule_step_budgeted budget
+             {theorem = forward_reach_rule, immediate = NONE,
+              mode = clasetUnify.Match} (node, 1)
+         val reference_budget = searchBudget.unbounded ()
+         val reference =
+           drain_exact
+             (clasetStep.forward_rule_step_budgeted reference_budget
+               {theorem = forward_reach_rule, immediate = NONE,
+                mode = clasetUnify.Match} (node, 1))
+         val initial_cutoff =
+           case clasetStep.next_forward cursor of
+               clasetStep.ForwardScanLimit
+                 {kind = searchBudget.Candidate, cursor = _, usage} =>
+                   #candidates usage = 1
+             | _ => false
+         fun resume 0 _ _ = NONE
+           | resume turns current reversed =
+               (case clasetStep.next_forward current of
+                    clasetStep.ForwardYield {result, rest} =>
+                      resume turns rest (result :: reversed)
+                  | clasetStep.ForwardExhausted =>
+                      SOME (List.rev reversed)
+                  | clasetStep.ForwardScanLimit {cursor, ...} =>
+                      (searchBudget.extend budget
+                         searchBudget.Candidate 1;
+                       resume (turns - 1) cursor reversed))
+         fun added (_, result) =
+           case rendered_goals result of
+               [(conclusion :: _, _)] => SOME conclusion
+             | _ => NONE
+       in
+         case resume 100 cursor [] of
+             SOME results =>
+               initial_cutoff andalso ListPair.allEq
+                 (fn (left, right) =>
+                   case (left, right) of
+                       (SOME actual, SOME expected) =>
+                         Term.aconv actual expected
+                     | _ => false)
+                 (map added results, map added reference) andalso
+               length results = 2 andalso
+               #candidates (searchBudget.usage budget) =
+               #candidates (searchBudget.usage reference_budget)
+           | NONE => false
+       end)
+
+val forward_guard =
+  Term.mk_var ("forward_guard", forward_object --> bool_ty)
+fun forward_guard_of value = Term.mk_comb (forward_guard, value)
+val forward_w = Term.mk_var ("forward_w", forward_object)
+fun forward_product_of source guarded =
+  boolSyntax.mk_exists
+    (forward_w,
+     boolSyntax.mk_conj
+       (boolSyntax.mk_conj
+          (forward_edge_of source forward_w,
+           forward_node_of forward_w),
+        forward_guard_of guarded))
+val forward_product_rule =
+  GENL [forward_x, forward_y, forward_z]
+    (DISCH (forward_edge_of forward_x forward_y)
+      (DISCH (forward_node_of forward_y)
+        (DISCH (forward_guard_of forward_z)
+          (EXISTS
+            (forward_product_of forward_x forward_z, forward_y)
+            (CONJ
+              (CONJ
+                (ASSUME (forward_edge_of forward_x forward_y))
+                (ASSUME (forward_node_of forward_y)))
+              (ASSUME (forward_guard_of forward_z)))))))
+
+val _ =
+  test
+    ("a forward cursor resumes a three-premise Cartesian scan",
+     fn () =>
+       let
+         val assumptions =
+           [forward_edge_of forward_a forward_c,
+            forward_edge_of forward_b forward_c,
+            forward_node_of forward_c,
+            forward_guard_of forward_c,
+            forward_guard_of forward_d]
+         val goal = (assumptions, forward_goal_target)
+         val node = clasetGoal.from_goal goal
+         fun scan budget =
+           clasetStep.forward_rule_step_budgeted budget
+             {theorem = forward_product_rule, immediate = NONE,
+              mode = clasetUnify.Match} (node, 1)
+         val small =
+           searchBudget.create
+             {candidates = SOME 3, applications = NONE,
+              normalization = NONE}
+         val large = searchBudget.unbounded ()
+         val reference = drain_exact (scan large)
+         fun resume 0 _ _ = NONE
+           | resume turns cursor reversed =
+               (case clasetStep.next_forward cursor of
+                    clasetStep.ForwardYield {result, rest} =>
+                      resume turns rest (result :: reversed)
+                  | clasetStep.ForwardExhausted =>
+                      SOME (List.rev reversed)
+                  | clasetStep.ForwardScanLimit {cursor, ...} =>
+                      (searchBudget.extend small
+                         searchBudget.Candidate 3;
+                       resume (turns - 1) cursor reversed))
+         fun consequence (_, result) =
+           case rendered_goals result of
+               [(added :: retained, target)] =>
+                 if same_goals [(retained, target)] [goal] then
+                   SOME added
+                 else NONE
+             | _ => NONE
+       in
+         case resume 100 (scan small) [] of
+             SOME results =>
+               length results > 4 andalso
+               ListPair.allEq
+                 (fn (SOME left, SOME right) => Term.aconv left right
+                   | _ => false)
+                 (map consequence results, map consequence reference)
+               andalso
+               List.all (valid_open_replay goal) results andalso
+               #candidates (searchBudget.usage small) =
+               #candidates (searchBudget.usage large)
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("a new forward cursor sees a newly available premise",
+     fn () =>
+       let
+         val edge = forward_edge_of forward_a forward_c
+         val without_premise = forward_alternatives [edge]
+         val with_premise =
+           forward_alternatives
+             [edge, forward_node_of forward_c]
+       in
+         null without_premise andalso
+         (case with_premise of
+              [SOME conclusion] =>
+                Term.aconv conclusion (forward_reach_of forward_a)
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("forward duplicates use the candidate's arriving substitution",
+     fn () =>
+       let
+         val a = Term.mk_var ("forward_arriving_a", forward_object)
+         val b = Term.mk_var ("forward_arriving_b", forward_object)
+         val x = Term.mk_var ("forward_arriving_x", forward_object)
+         val p = Term.mk_var
+           ("forward_arriving_p", forward_object --> bool_ty)
+         val r = Term.mk_var
+           ("forward_arriving_r", forward_object --> bool_ty)
+         fun app head argument = Term.mk_comb (head, argument)
+         val px = app p x
+         val rx = app r x
+         val rule =
+           GEN x
+             (DISCH px
+               (DISCH rx
+                 (CONJ (ASSUME px) (ASSUME rx))))
+         val constant_rule =
+           GEN x (DISCH px (DISCH rx boolTheory.TRUTH))
+         val base = the_store
+           (clasetMeta.register_eigen b
+             (the_store
+               (clasetMeta.register_eigen a clasetMeta.empty)))
+         val (meta, store) =
+           clasetMeta.new_meta
+             {allow = [a, b], ty = forward_object} base
+         val known =
+           boolSyntax.mk_conj (app r meta, app p meta)
+         val premise = [app p meta, app r a]
+         fun results_for theorem assumptions =
+           let
+             val node = clasetGoal.create
+               {goals =
+                  [{params = [a, b], asl = assumptions,
+                    w = forward_goal_target}],
+                store = store, level = 0}
+           in
+             drain_exact
+               (clasetStep.forward_rule_step
+                 {theorem = theorem, immediate = NONE,
+                  mode = clasetUnify.Unify} (node, 1))
+           end
+         fun results assumptions = results_for rule assumptions
+         val plain = results premise
+         val duplicate = results (premise @ [known])
+         val siblings =
+           results [app p meta, app r meta, app r a]
+         fun is_bound (_, next) =
+           Term.aconv
+             (clasetMeta.norm (clasetGoal.store next) meta) a
+         fun added (_, next) =
+           hd (#asl (clasetGoal.goal_at next 1))
+         val unbound = List.filter (not o is_bound) siblings
+         val bound = List.filter is_bound siblings
+         val constant =
+           results_for constant_rule
+             [app p meta, app r a, app r b]
+         fun binds value (_, next) =
+           Term.aconv
+             (clasetMeta.norm (clasetGoal.store next) meta)
+             value
+         fun overlaps_unbound (result as (_, next)) =
+           let val arriving = clasetGoal.store next
+           in
+             List.exists
+               (fn previous =>
+                 Term.aconv
+                   (clasetMeta.norm arriving (added previous))
+                   (clasetMeta.norm arriving (added result)))
+               unbound
+           end
+         fun duplicate_after_binding (_, next) =
+           let
+             val next_store = clasetGoal.store next
+             val {asl, ...} = clasetGoal.goal_at next 1
+           in
+             Term.aconv (clasetMeta.norm next_store meta) a andalso
+             Term.aconv
+               (clasetMeta.norm next_store (hd asl))
+               (clasetMeta.norm next_store known)
+           end
+       in
+         List.exists duplicate_after_binding plain andalso
+         not (List.exists duplicate_after_binding duplicate) andalso
+         List.exists overlaps_unbound bound andalso
+         List.exists (binds a) constant andalso
+         List.exists (binds b) constant
+       end)
+
+val _ =
+  test
     ("exact EXISTS elim preserves an eta-reduced major assumption",
      fn () =>
        let
@@ -5237,6 +5525,271 @@ val _ =
                (search_singleton astar_root_tm))
        in
          !parent_expansions = 1
+       end)
+
+val _ =
+  test
+    ("a budgeted best frontier resumes its partial child scan",
+     fn () =>
+       let
+         val generated = ref 0
+         val yields = ref 0
+         fun satisfied node =
+           Term.aconv (search_target node) best_small_solution_tm orelse
+           Term.aconv (search_target node) best_large_solution_tm
+         fun children [] = seq.empty
+           | children (value :: rest) =
+               seq.delay
+                 (fn () =>
+                   (generated := !generated + 1;
+                    seq.cons value (children rest)))
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target best_root_tm then
+               children
+                 [search_singleton best_large_tm,
+                  search_singleton best_small_tm]
+             else if Term.aconv target best_small_tm then
+               seq.result (search_singleton best_small_solution_tm)
+             else if Term.aconv target best_large_tm then
+               seq.result (search_singleton best_large_solution_tm)
+             else seq.empty
+           end
+         val budget =
+           searchBudget.create
+             {candidates = SOME 1, applications = SOME 0,
+              normalization = SOME 0}
+         val session =
+           clasetSearch.new_best_session budget satisfied expand
+             (search_singleton best_root_tm)
+         fun resume 0 = NONE
+           | resume turns =
+               (case clasetSearch.resume_frontier session of
+                    clasetSearch.FrontierYielded {kind, ...} =>
+                      (yields := !yields + 1;
+                       searchBudget.extend budget kind 1;
+                       resume (turns - 1))
+                  | clasetSearch.FrontierResult {node, ...} => SOME node
+                  | _ => NONE)
+         val result =
+           Lib.with_flag (clasetSearch.node_limit, 1)
+             (fn () => resume 100) ()
+         val reference_budget = searchBudget.unbounded ()
+         val reference =
+           clasetSearch.resume_frontier
+             (clasetSearch.new_best_session reference_budget
+               satisfied expand (search_singleton best_root_tm))
+         val same_work =
+           #candidates (searchBudget.usage budget) =
+             #candidates (searchBudget.usage reference_budget) andalso
+           #applications (searchBudget.usage budget) =
+             #applications (searchBudget.usage reference_budget)
+         fun next_solution 0 = NONE
+           | next_solution turns =
+               (case clasetSearch.resume_frontier session of
+                    clasetSearch.FrontierYielded {kind, ...} =>
+                      (searchBudget.extend budget kind 1;
+                       next_solution (turns - 1))
+                  | clasetSearch.FrontierResult {node, ...} => SOME node
+                  | _ => NONE)
+         val later = next_solution 100
+       in
+         (case (result, reference) of
+              (SOME actual,
+               clasetSearch.FrontierResult {node = expected, ...}) =>
+                 Term.aconv (search_target actual)
+                   (search_target expected) andalso
+                 Term.aconv (search_target actual)
+                   best_small_solution_tm
+            | _ => false) andalso
+         !yields > 2 andalso !generated = 4 andalso same_work andalso
+         (case later of
+              SOME node =>
+                Term.aconv (search_target node)
+                  best_large_solution_tm
+            | NONE => false) andalso
+         (case clasetSearch.resume_frontier session of
+              clasetSearch.FrontierExhausted => true
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("a budgeted A* frontier retains ordering after a yield",
+     fn () =>
+       let
+         fun satisfied node =
+           Term.aconv (search_target node) astar_new_solution_tm orelse
+           Term.aconv (search_target node) astar_old_solution_tm
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target astar_root_tm then
+               seq.fromList
+                 [search_singleton astar_parent_tm,
+                  search_singleton astar_old_tm]
+             else if Term.aconv target astar_parent_tm then
+               seq.result (search_singleton astar_new_tm)
+             else if Term.aconv target astar_new_tm then
+               seq.result (search_singleton astar_new_solution_tm)
+             else if Term.aconv target astar_old_tm then
+               seq.result (search_singleton astar_old_solution_tm)
+             else seq.empty
+           end
+         val budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val session =
+           clasetSearch.new_astar_session budget satisfied expand
+             (search_singleton astar_root_tm)
+         val first = clasetSearch.resume_frontier session
+         val _ = searchBudget.extend budget searchBudget.Candidate 100
+         val second = clasetSearch.resume_frontier session
+       in
+         (case first of
+              clasetSearch.FrontierYielded
+                {kind = searchBudget.Candidate, usage, ...} =>
+                  #candidates usage = 0
+            | _ => false) andalso
+         (case second of
+              clasetSearch.FrontierResult {node, ...} =>
+                Term.aconv (search_target node)
+                  astar_new_solution_tm
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("frontier yields keep every solution from one expansion",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = SOME 1, applications = SOME 1,
+              normalization = NONE}
+         fun expand node =
+           if Term.aconv (search_target node) best_root_tm then
+             seq.fromList
+               [search_singleton best_small_solution_tm,
+                search_singleton best_large_solution_tm]
+           else seq.empty
+         fun satisfied node =
+           Term.aconv (search_target node) best_small_solution_tm orelse
+           Term.aconv (search_target node) best_large_solution_tm
+         val session =
+           clasetSearch.new_best_session budget satisfied expand
+             (search_singleton best_root_tm)
+         val first = clasetSearch.resume_frontier session
+         val _ = searchBudget.extend budget searchBudget.Candidate 3
+         val next = clasetSearch.resume_frontier session
+         val after = clasetSearch.resume_frontier session
+         val end_result = clasetSearch.resume_frontier session
+       in
+         (case first of
+              clasetSearch.FrontierYielded
+                {kind = searchBudget.Candidate, ...} => true
+            | _ => false) andalso
+         (case (next, after) of
+              (clasetSearch.FrontierResult {node = left, ...},
+               clasetSearch.FrontierResult {node = right, ...}) =>
+                 Term.aconv (search_target left)
+                   best_small_solution_tm andalso
+                 Term.aconv (search_target right)
+                   best_large_solution_tm
+            | _ => false) andalso
+         (case end_result of
+              clasetSearch.FrontierExhausted => true
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("duplicate child floods spend candidate work but few expansions",
+     fn () =>
+       let
+         fun expand node =
+           if Term.aconv (search_target node) best_root_tm then
+             seq.fromList
+               (List.tabulate
+                 (251, fn _ => search_singleton best_small_tm))
+           else seq.empty
+         val budget =
+           searchBudget.create
+             {candidates = SOME 2, applications = SOME 2,
+              normalization = NONE}
+         val session =
+           clasetSearch.new_best_session budget (fn _ => false) expand
+             (search_singleton best_root_tm)
+         val yields = ref 0
+         fun finish 0 = false
+           | finish turns =
+               (case clasetSearch.resume_frontier session of
+                    clasetSearch.FrontierYielded
+                      {kind = searchBudget.Candidate, ...} =>
+                        (yields := !yields + 1;
+                         searchBudget.extend budget
+                           searchBudget.Candidate 7;
+                         finish (turns - 1))
+                  | clasetSearch.FrontierExhausted => true
+                  | _ => false)
+         val exhausted = finish 100
+         val reference_budget = searchBudget.unbounded ()
+         val reference =
+           clasetSearch.resume_frontier
+             (clasetSearch.new_best_session reference_budget
+               (fn _ => false) expand
+               (search_singleton best_root_tm))
+       in
+         exhausted andalso !yields > 1 andalso
+         (case reference of
+              clasetSearch.FrontierExhausted => true
+            | _ => false) andalso
+         #applications (searchBudget.usage budget) = 2 andalso
+         #applications (searchBudget.usage reference_budget) = 2 andalso
+         #candidates (searchBudget.usage budget) =
+           #candidates (searchBudget.usage reference_budget) andalso
+         #candidates (searchBudget.usage budget) > 251
+       end)
+
+val _ =
+  test
+    ("an inner frontier cutoff is terminal and interrupts propagate",
+     fn () =>
+       let
+         val inner =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         fun limited _ =
+           (searchBudget.charge inner searchBudget.Candidate;
+            seq.empty)
+         val cutoff =
+           clasetSearch.resume_frontier
+             (clasetSearch.new_best_session
+               (searchBudget.unbounded ()) (fn _ => false) limited
+               (search_singleton best_root_tm))
+         val interrupted_session =
+           clasetSearch.new_best_session
+             (searchBudget.unbounded ()) (fn _ => false)
+             (fn _ => raise Portable.Interrupt)
+             (search_singleton best_root_tm)
+         val interrupted =
+           ((ignore
+               (clasetSearch.resume_frontier interrupted_session);
+             false)
+            handle Portable.Interrupt => true)
+       in
+         interrupted andalso
+         (case clasetSearch.resume_frontier interrupted_session of
+              clasetSearch.FrontierExhausted => true
+            | _ => false) andalso
+         (case cutoff of
+              clasetSearch.FrontierLimitReached
+                {kind = searchBudget.Candidate, usage} =>
+                  #candidates usage = 0
+            | _ => false)
        end)
 
 val _ =
@@ -6949,3 +7502,468 @@ val _ =
        closes
          (Tactical.REPEAT (classicalLib.SAFE_STEP_TAC [boolTheory.TRUTH])))
 end
+
+(* A plain citation must be available to safe inference even when its
+   implication shape also admits an unsafe search-rule reading. *)
+val _ = Theory.new_theory "classicalFactSelftest"
+val safe_fact_q_def =
+  new_definition
+    ("safe_fact_q_def", ``safe_fact_q (x:'a) <=> T``)
+val safe_implication_fact =
+  Tactical.prove
+    (``!x:'a. safe_fact_p x ==> safe_fact_q x``,
+     Rewrite.REWRITE_TAC [safe_fact_q_def])
+val safe_fact_goal =
+  ([``safe_fact_p (a:'a):bool``], ``safe_fact_q (a:'a)``)
+
+fun safe_fact_residual tactic =
+  SOME (#1 (Tactical.VALID tactic safe_fact_goal))
+    handle HOL_ERR _ => NONE
+
+val _ =
+  test
+    ("the conditional fact fixture has a visible insertion control",
+     fn () =>
+       let
+         val inserted =
+           safe_fact_residual
+             (Tactical.THEN
+               (Tactic.ASSUME_TAC safe_implication_fact,
+                Tactical.TRY (classicalLib.SAFE_TAC [])))
+       in
+         case inserted of
+             SOME [(assumptions, _)] =>
+               List.exists
+                 (fn assumption =>
+                   aconv assumption (concl safe_implication_fact))
+                 assumptions
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("SAFE_TAC retains a supplied conditional fact",
+     fn () =>
+       let
+         val explicit =
+           safe_fact_residual
+             (Tactical.THEN
+               (Tactic.ASSUME_TAC safe_implication_fact,
+                Tactical.TRY (classicalLib.SAFE_TAC [])))
+         val supplied =
+           safe_fact_residual
+             (classicalLib.SAFE_TAC [safe_implication_fact])
+       in
+         case (explicit, supplied) of
+             (SOME left, SOME right) =>
+               not (null left) andalso same_goals left right
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("CLARIFY_TAC retains a supplied conditional fact",
+     fn () =>
+       let
+         val explicit =
+           safe_fact_residual
+             (Tactical.THEN
+               (Tactic.ASSUME_TAC safe_implication_fact,
+                Tactical.TRY (classicalLib.CLARIFY_TAC [])))
+         val supplied =
+           safe_fact_residual
+             (classicalLib.CLARIFY_TAC [safe_implication_fact])
+       in
+         case (explicit, supplied) of
+             (SOME left, SOME right) =>
+               not (null left) andalso same_goals left right
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("safe methods do not invent a conditional fact's premise",
+     fn () =>
+       let
+         val target = ``safe_fact_q (a:'a)``
+         val goal = ([], target)
+         fun residual tactic =
+           SOME (#1 (Tactical.VALID tactic goal))
+             handle HOL_ERR _ => NONE
+         fun open_target outcome =
+           case outcome of
+               SOME [(assumptions, remaining)] =>
+                 aconv remaining target andalso
+                 List.exists
+                   (fn assumption =>
+                     aconv assumption (concl safe_implication_fact))
+                   assumptions
+             | _ => false
+       in
+         open_target
+           (residual
+             (classicalLib.SAFE_TAC [safe_implication_fact])) andalso
+         open_target
+           (residual
+             (classicalLib.CLARIFY_TAC [safe_implication_fact]))
+       end)
+
+val _ =
+  test
+    ("search can use a conditional citation beneath an antecedent",
+     fn () =>
+       let
+         val result = ``safe_fact_result:bool``
+         val goal =
+           ([boolSyntax.mk_imp
+               (concl safe_implication_fact, result)],
+            result)
+         fun closes tactic =
+           null (#1 (Tactical.VALID tactic goal))
+             handle HOL_ERR _ => false
+       in
+         not (closes (classicalLib.FAST_TAC [])) andalso
+         closes (classicalLib.FAST_TAC [safe_implication_fact])
+       end)
+
+val _ =
+  test
+    ("budgeted first-best preserves a proof pending kernel replay",
+     fn () =>
+       let
+         val p = mk_var ("budgeted_classical_p", bool_ty)
+         val target = boolSyntax.mk_imp (p, p)
+         val budget =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 0}
+         val session =
+           classicalLib.CS_FIRST_BEST_SESSION budget
+             clasetLib.empty_cs ([], target) (Context.snapshot())
+         val first = classicalLib.RESUME_FIRST_BEST_SESSION session
+         val used_before = searchBudget.usage budget
+         val _ = searchBudget.extend budget searchBudget.Normalization 1
+         val second = classicalLib.RESUME_FIRST_BEST_SESSION session
+         val used_after = searchBudget.usage budget
+       in
+         (case first of
+              classicalLib.BudgetYielded
+                {kind = searchBudget.Normalization, usage, ...} =>
+                  #normalization usage = 0
+            | _ => false) andalso
+         (case second of
+              classicalLib.BudgetProved
+                {result = (remaining, validate), ...} =>
+                  null remaining andalso
+                  Term.aconv (Thm.concl (validate [])) target
+            | _ => false) andalso
+         #candidates used_before = #candidates used_after andalso
+         #applications used_before = #applications used_after andalso
+         #normalization used_after = 1
+       end)
+
+val _ =
+  test
+    ("budgeted first-best separates exhaustion from a work yield",
+     fn () =>
+       let
+         val p = mk_var ("budgeted_classical_open_p", bool_ty)
+         val ctxt = Context.snapshot ()
+         val empty_budget =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 0,
+              normalization = NONE}
+         val yielded =
+           classicalLib.RESUME_FIRST_BEST_SESSION
+             (classicalLib.CS_FIRST_BEST_SESSION empty_budget
+               clasetLib.empty_cs ([], boolSyntax.mk_imp (p, p))
+               ctxt)
+         val exhausted =
+           classicalLib.RESUME_FIRST_BEST_SESSION
+             (classicalLib.CS_FIRST_BEST_SESSION
+               (searchBudget.unbounded ()) clasetLib.empty_cs
+               ([], p) ctxt)
+       in
+         (case yielded of
+              classicalLib.BudgetYielded
+                {kind = searchBudget.Application, usage, ...} =>
+                  #applications usage = 0
+            | _ => false) andalso
+         (case exhausted of
+              classicalLib.BudgetExhausted => true
+            | _ => false)
+       end)
+
+val safe_context_slot =
+  Context.Data.new
+    {name = "classical-safe-explicit-context", empty = 0,
+     pp = Int.toString}
+
+val _ =
+  test
+    ("safe wrappers receive the explicit tactic context",
+     fn () =>
+       let
+         val ctxt =
+           Context.Data.put safe_context_slot 1 (Context.snapshot ())
+         val seen = ref ([] : int list)
+         fun observe base goal current =
+           (seen := Context.Data.get safe_context_slot current :: !seen;
+            base goal current)
+         val cs =
+           clasetLib.add_safe_wrapper ("observe-context", observe)
+             clasetLib.empty_cs
+         val p = mk_var ("safe_context_p", bool_ty)
+         val goal = ([], boolSyntax.mk_imp (p, p))
+       in
+         case seq.cases (classicalLib.CS_SAFE_STEP_TAC cs goal ctxt) of
+             SOME (_, _) =>
+               not (null (!seen)) andalso
+               List.all (fn value => value = 1) (!seen)
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("FAST_TAC gives an unsafe wrapper its explicit context",
+     fn () =>
+       let
+         val ctxt =
+           Context.Data.put safe_context_slot 2 (Context.snapshot ())
+         val seen = ref ([] : int list)
+         val p = mk_var ("unsafe_context_p", bool_ty)
+         val theorem = DISJ1 boolTheory.TRUTH p
+         val goal = ([], Thm.concl theorem)
+         fun observe base target current =
+           (seen := Context.Data.get safe_context_slot current :: !seen;
+            NTactical.NORELSE
+              (NTactical.LIFT (Tactic.ACCEPT_TAC theorem), base)
+              target current)
+         val cs =
+           clasetLib.add_unsafe_wrapper ("observe-context", observe)
+             clasetLib.empty_cs
+         val safe_only =
+           null
+             (clasetStep.safe_saturation clasetLib.empty_cs
+               (clasetGoal.from_goal goal))
+       in
+         safe_only andalso
+         (case seq.cases (classicalLib.CS_FAST_TAC cs goal ctxt) of
+              SOME (_, _) =>
+                not (null (!seen)) andalso
+                List.all (fn value => value = 2) (!seen)
+            | NONE => false)
+       end)
+
+val _ =
+  test
+    ("bounded depth search gives wrappers its explicit context",
+     fn () =>
+       let
+         val ctxt =
+           Context.Data.put safe_context_slot 3 (Context.snapshot ())
+         val seen = ref ([] : int list)
+         val p = mk_var ("depth_context_p", bool_ty)
+         val theorem = DISJ1 boolTheory.TRUTH p
+         val goal = ([], Thm.concl theorem)
+         fun observe base target current =
+           (seen := Context.Data.get safe_context_slot current :: !seen;
+            NTactical.NORELSE
+              (NTactical.LIFT (Tactic.ACCEPT_TAC theorem), base)
+              target current)
+         val cs =
+           clasetLib.add_unsafe_wrapper ("observe-depth-context", observe)
+             clasetLib.empty_cs
+       in
+         case seq.cases
+                (classicalLib.CS_DEPTH_SOLVE_TAC {dup = false} 2 cs
+                   goal ctxt) of
+             SOME (_, _) =>
+               not (null (!seen)) andalso
+               List.all (fn value => value = 3) (!seen)
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("interleaved first-best sessions retain explicit contexts",
+     fn () =>
+       let
+         val ambient = Context.snapshot ()
+         val first_ctxt = Context.Data.put safe_context_slot 4 ambient
+         val second_ctxt = Context.Data.put safe_context_slot 5 ambient
+         val seen = ref ([] : int list)
+         val p = mk_var ("session_context_p", bool_ty)
+         val theorem = DISJ1 boolTheory.TRUTH p
+         val goal = ([], Thm.concl theorem)
+         fun observe base target current =
+           (seen := Context.Data.get safe_context_slot current :: !seen;
+            NTactical.NORELSE
+              (NTactical.LIFT (Tactic.ACCEPT_TAC theorem), base)
+              target current)
+         val cs =
+           clasetLib.add_unsafe_wrapper ("session-context", observe)
+             clasetLib.empty_cs
+         fun meter () =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val first_budget = meter ()
+         val second_budget = meter ()
+         val first =
+           classicalLib.CS_FIRST_BEST_SESSION first_budget cs goal
+             first_ctxt
+         val second =
+           classicalLib.CS_FIRST_BEST_SESSION second_budget cs goal
+             second_ctxt
+         fun yielded session =
+           case classicalLib.RESUME_FIRST_BEST_SESSION session of
+               classicalLib.BudgetYielded
+                 {kind = searchBudget.Candidate, ...} => true
+             | _ => false
+         fun proved session =
+           case classicalLib.RESUME_FIRST_BEST_SESSION session of
+               classicalLib.BudgetProved
+                 {result = ([], validation), ...} =>
+                   Term.aconv (Thm.concl (validation [])) (#2 goal)
+             | _ => false
+       in
+         yielded first andalso yielded second andalso
+         (searchBudget.extend first_budget searchBudget.Candidate 100;
+          searchBudget.extend second_budget searchBudget.Candidate 100;
+          proved second andalso
+          not (null (!seen)) andalso
+          List.all (fn value => value = 5) (!seen) andalso
+          proved first andalso
+          List.exists (fn value => value = 4) (!seen) andalso
+          List.all (fn value => value = 4 orelse value = 5) (!seen))
+       end)
+
+val _ =
+  test
+    ("kernel replay passes its explicit context to recorded actions",
+     fn () =>
+       let
+         val ctxt =
+           Context.Data.put safe_context_slot 6 (Context.snapshot ())
+         val seen = ref ([] : int list)
+         fun action _ goal current =
+           (seen := Context.Data.get safe_context_slot current :: !seen;
+            Tactic.ACCEPT_TAC boolTheory.TRUTH goal current)
+         val record =
+           clasetReplay.make_record
+             {kind = clasetReplay.Wrapper, target = 1,
+              consumed = NONE, created = {terms = [], types = []},
+              eigenvariables = [],
+              validation = (fn _ => boolTheory.TRUTH),
+              action = action, children = []}
+         val script =
+           clasetReplay.append (clasetReplay.empty 1) record
+         val grounded = clasetReplay.ground clasetMeta.empty script
+       in
+         case SelfTestTactical.VALID
+                (clasetReplay.REPLAY_TAC grounded)
+                ([], boolSyntax.T) ctxt of
+             ([], validation) =>
+               Term.aconv (Thm.concl (validation [])) boolSyntax.T
+                 andalso !seen = [6]
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("recursive replay keeps the same context for child actions",
+     fn () =>
+       let
+         val ctxt =
+           Context.Data.put safe_context_slot 7 (Context.snapshot ())
+         val seen = ref ([] : int list)
+         fun close _ goal current =
+           (seen := Context.Data.get safe_context_slot current :: !seen;
+            Tactic.ACCEPT_TAC boolTheory.TRUTH goal current)
+         val leaf =
+           clasetReplay.make_record
+             {kind = clasetReplay.Wrapper, target = 1,
+              consumed = NONE, created = {terms = [], types = []},
+              eigenvariables = [],
+              validation = (fn _ => boolTheory.TRUTH),
+              action = close, children = []}
+         val parent =
+           clasetReplay.make_record
+             {kind = clasetReplay.Wrapper, target = 1,
+              consumed = NONE, created = {terms = [], types = []},
+              eigenvariables = [[], []],
+              validation = (fn _ => boolTheory.TRUTH),
+              action = fn _ => Tactic.CONJ_TAC,
+              children = [SOME leaf, SOME leaf]}
+         val script =
+           clasetReplay.append (clasetReplay.empty 1) parent
+         val grounded = clasetReplay.ground clasetMeta.empty script
+         val target = boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)
+       in
+         case SelfTestTactical.VALID
+                (clasetReplay.REPLAY_TAC grounded) ([], target) ctxt of
+             ([], validation) =>
+               Term.aconv (Thm.concl (validation [])) target andalso
+               !seen = [7, 7]
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("an interrupt in a recorded action escapes replay",
+     fn () =>
+       let
+         val record =
+           clasetReplay.make_record
+             {kind = clasetReplay.Wrapper, target = 1,
+              consumed = NONE, created = {terms = [], types = []},
+              eigenvariables = [],
+              validation = (fn _ => boolTheory.TRUTH),
+              action = fn _ => fn _ => fn _ =>
+                raise Portable.Interrupt,
+              children = []}
+         val script =
+           clasetReplay.append (clasetReplay.empty 1) record
+         val grounded = clasetReplay.ground clasetMeta.empty script
+       in
+         ((ignore
+             (clasetReplay.REPLAY_TAC grounded
+               ([], boolSyntax.T) (Context.snapshot ()));
+           false)
+          handle Portable.Interrupt => true
+               | Feedback.HOL_ERR _ => false)
+       end)
+
+val _ =
+  test
+    ("a shared work cutoff in a recorded action escapes replay",
+     fn () =>
+       let
+         val meter =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         fun action _ goal ctxt =
+           (searchBudget.charge meter searchBudget.Candidate;
+            Tactic.ACCEPT_TAC boolTheory.TRUTH goal ctxt)
+         val record =
+           clasetReplay.make_record
+             {kind = clasetReplay.Wrapper, target = 1,
+              consumed = NONE, created = {terms = [], types = []},
+              eigenvariables = [],
+              validation = (fn _ => boolTheory.TRUTH),
+              action = action, children = []}
+         val script =
+           clasetReplay.append (clasetReplay.empty 1) record
+         val grounded = clasetReplay.ground clasetMeta.empty script
+       in
+         ((ignore
+             (clasetReplay.REPLAY_TAC grounded
+               ([], boolSyntax.T) (Context.snapshot ()));
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Candidate, usage) =>
+                   #candidates usage = 0
+               | Feedback.HOL_ERR _ => false)
+       end)

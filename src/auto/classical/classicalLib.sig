@@ -43,6 +43,28 @@ sig
      reads a limit of zero as no limit. *)
   val CS_BOUNDED_FIRST_BEST_TAC : clasetLib.claset -> int -> tactic
 
+  type budget_session
+  datatype budget_outcome =
+      BudgetProved of
+        {result : goal list * validation, session : budget_session}
+    | BudgetExhausted
+    | BudgetYielded of
+        {kind : searchBudget.kind, usage : searchBudget.usage,
+         session : budget_session}
+    | BudgetLimitReached of
+        {kind : searchBudget.kind, usage : searchBudget.usage}
+
+  (* Additive detailed result for the first-best engine.  A yielded
+     frontier or pending replay stays in this invocation.  The heap also
+     survives a candidate result, so a failed reconstruction can advance
+     to another candidate.  A successful result has passed Tactical.VALID
+     in the supplied proof context.  Each replay attempt admits one
+     normalization work unit before that validation. *)
+  val CS_FIRST_BEST_SESSION :
+    searchBudget.budget -> clasetLib.claset -> goal -> Context.t ->
+    budget_session
+  val RESUME_FIRST_BEST_SESSION : budget_session -> budget_outcome
+
   val CS_DEPTH_SOLVE_TAC :
     {dup : bool} -> int -> clasetLib.claset -> NTactical.ntactic
   val CS_DEEPEN_TAC : clasetLib.claset ->

@@ -647,7 +647,7 @@ fun CLASET_HYP_SUBST_TAC_AT eliminations goal ctxt =
   else
     claset_hyp_subst_along "CLASET_HYP_SUBST_TAC_AT" eliminations goal ctxt
 
-fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
+fun COMPUTE_CLASET_HYP_SUBST_TAC_IN ctxt goal =
   let
     fun saturate (goal as (asl, _)) =
       case first_hyp_subst_elimination asl of
@@ -657,7 +657,7 @@ fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
         | SOME elimination =>
             let
               val (children, validation) =
-                claset_hyp_subst_once elimination goal (Context.snapshot())
+                claset_hyp_subst_once elimination goal ctxt
               val child =
                 single_child "COMPUTE_CLASET_HYP_SUBST_TAC" children
               val (rest, (goals, residual)) = saturate child
@@ -672,6 +672,9 @@ fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
             "no substitutable equality"
       | computed => computed
   end
+
+fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
+  COMPUTE_CLASET_HYP_SUBST_TAC_IN (Context.snapshot ()) goal
 
 (* Blast records one equality substitution at a time.  Unlike the classical
    hyp-subst slot, affected assumptions are stably moved to the front. *)
@@ -808,8 +811,11 @@ fun BLAST_HYP_SUBST_TAC_AT {position, changed, side} goal ctxt =
   #2 (blast_hyp_subst_tac_at position
         (SOME {changed = changed, side = side}) goal ctxt)
 
+fun COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN ctxt position goal =
+  blast_hyp_subst_tac_at position NONE goal ctxt
+
 fun COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal =
-  blast_hyp_subst_tac_at position NONE goal (Context.snapshot())
+  COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN (Context.snapshot()) position goal
 
 fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) ctxt =
   let
@@ -1244,10 +1250,10 @@ fun split_lengths [] theorems =
         prefix :: split_lengths counts suffix
       end
 
-fun replay_option _ NONE goal = ([goal], fn [th] => th | _ =>
+fun replay_option _ _ NONE goal = ([goal], fn [th] => th | _ =>
       raise mk_HOL_ERR "clasetReplay" "replay"
         "open-goal validation arity")
-  | replay_option store (SOME record) goal =
+  | replay_option ctxt store (SOME record) goal =
       let
         (* A step proves the goal in the spelling the engine recorded it
            in, and replay runs it against the goal as the caller posed
@@ -1255,19 +1261,23 @@ fun replay_option _ NONE goal = ([goal], fn [th] => th | _ =>
            the entry reduced the caller's terms.  The step's proof is
            restated in the replay goal's own spelling before its validity
            is judged, as [clasetStep.aligned_result] restates a child's. *)
-        fun aligned_action replay_goal _ =
+        fun aligned_action replay_goal current =
           let
             val (children, validation) =
-              action_of record store replay_goal (Context.snapshot())
+              action_of record store replay_goal current
           in
             (children,
              fn theorems =>
                clasetNorm.align_goal replay_goal (validation theorems))
           end
         val (children, parent_validation) =
-          Tactical.VALID aligned_action goal (Context.snapshot())
-          handle error =>
-            raise ReplayError (record, goal, Feedback.exn_to_string error)
+          Tactical.VALID aligned_action goal ctxt
+          handle Portable.Interrupt => raise Portable.Interrupt
+               | searchBudget.LimitReached info =>
+                   raise searchBudget.LimitReached info
+               | error =>
+                   raise ReplayError
+                     (record, goal, Feedback.exn_to_string error)
         val subtrees = children_of record
         val _ =
           if length children = length subtrees then ()
@@ -1277,7 +1287,7 @@ fun replay_option _ NONE goal = ([goal], fn [th] => th | _ =>
         val replayed =
           ListPair.map
             (fn (subtree, child) =>
-              replay_option store subtree child)
+              replay_option ctxt store subtree child)
             (subtrees, children)
         val residuals = List.concat (map #1 replayed)
         val counts = map (length o #1) replayed
@@ -1296,15 +1306,15 @@ fun replay_option _ NONE goal = ([goal], fn [th] => th | _ =>
         (residuals, validation)
       end
 
-fun replay_roots _ [] [] = ([], fn [] => [] | _ =>
+fun replay_roots _ _ [] [] = ([], fn [] => [] | _ =>
       raise mk_HOL_ERR "clasetReplay" "replay_roots"
         "root validation arity")
-  | replay_roots store (root :: roots) (goal :: goals) =
+  | replay_roots ctxt store (root :: roots) (goal :: goals) =
       let
         val (first_goals, first_validation) =
-          replay_option store root goal
+          replay_option ctxt store root goal
         val (rest_goals, rest_validation) =
-          replay_roots store roots goals
+          replay_roots ctxt store roots goals
         val first_count = length first_goals
         fun validation theorems =
           let
@@ -1316,15 +1326,16 @@ fun replay_roots _ [] [] = ([], fn [] => [] | _ =>
       in
         (first_goals @ rest_goals, validation)
       end
-  | replay_roots _ _ _ =
+  | replay_roots _ _ _ _ =
       raise mk_HOL_ERR "clasetReplay" "replay_roots"
         "script root count does not match the input"
 
-fun replay
+fun replay_in ctxt
       (Grounded
         {store, script = script as Script {roots, ...}}) goal =
   let
-    val (goals, validate_roots) = replay_roots store roots [goal]
+    val (goals, validate_roots) =
+      replay_roots ctxt store roots [goal]
     fun validation theorems =
       case validate_roots theorems of
           [theorem] => theorem
@@ -1339,12 +1350,18 @@ fun replay
       (ReplayFailure
         {goal = bad_goal, step = SOME (kind_of record),
          message = message, script = to_string script})
+       | Portable.Interrupt => raise Portable.Interrupt
+       | searchBudget.LimitReached info =>
+           raise searchBudget.LimitReached info
        | error =>
-    ReplayFailed
-      (ReplayFailure
-        {goal = goal, step = NONE,
-         message = Feedback.exn_to_string error,
-         script = to_string script})
+           ReplayFailed
+             (ReplayFailure
+               {goal = goal, step = NONE,
+                message = Feedback.exn_to_string error,
+                script = to_string script})
+
+fun replay grounded goal =
+  replay_in (Context.snapshot ()) grounded goal
 
 fun goal_string (asl, w) =
   let
@@ -1354,8 +1371,8 @@ fun goal_string (asl, w) =
     "[" ^ assumptions ^ "] ?- " ^ Parse.term_to_string w
   end
 
-fun REPLAY_TAC grounded goal _ =
-  case replay grounded goal of
+fun REPLAY_TAC grounded goal ctxt =
+  case replay_in ctxt grounded goal of
       Replayed result => result
     | ReplayFailed
         (ReplayFailure {goal = bad_goal, step, message, script}) =>

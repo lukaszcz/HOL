@@ -434,6 +434,175 @@ fun ASTAR satisfied expand initial =
      remove_minimum = searchHeap.delete_min}
     satisfied expand initial
 
+datatype frontier_state =
+    Ready of
+      {heap : node searchHeap.heap, seen : node Binaryset.set,
+       count : int}
+  | Selected of
+      {current : node, remaining : node searchHeap.heap,
+       seen : node Binaryset.set, count : int}
+  | Scanning of
+      {cursor : node seq.seq, reversed : node list,
+       remaining : node searchHeap.heap,
+       seen : node Binaryset.set, count : int}
+  | Answers of
+      {results : node list, heap : node searchHeap.heap,
+       seen : node Binaryset.set, count : int}
+  | Done
+
+datatype frontier_session = FrontierSession of (unit -> frontier_step)
+and frontier_step =
+    StepResult of node
+  | StepExhausted
+  | StepYielded of searchBudget.kind * searchBudget.usage
+  | StepLimitReached of searchBudget.kind * searchBudget.usage
+
+datatype frontier_outcome =
+    FrontierResult of {node : node, session : frontier_session}
+  | FrontierExhausted
+  | FrontierYielded of
+      {kind : searchBudget.kind, usage : searchBudget.usage,
+       session : frontier_session}
+  | FrontierLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
+
+fun new_frontier_session
+      {driver, compare, remove_minimum}
+      budget satisfied expand initial =
+  let
+    exception Yield of searchBudget.kind * searchBudget.usage
+    val root = clasetGoal.set_level 0 initial
+    val state =
+      ref (Ready
+        {heap = searchHeap.add root (searchHeap.empty compare),
+         seen = Binaryset.empty clasetGoal.compare, count = 0})
+
+    fun admit kind =
+      searchBudget.charge budget kind
+      handle searchBudget.LimitReached (limited, usage) =>
+        raise Yield (limited, usage)
+
+    fun advance () =
+      let
+        fun loop () =
+          case !state of
+              Done => StepExhausted
+            | Answers {results = [], heap, seen, count} =>
+                (state := Ready
+                   {heap = heap, seen = seen, count = count};
+                 loop ())
+            | Answers
+                {results = answer :: rest, heap, seen, count} =>
+                (state := Answers
+                   {results = rest, heap = heap,
+                    seen = seen, count = count};
+                 StepResult answer)
+            | Ready {heap, seen, count} =>
+                if searchHeap.is_empty heap then
+                  (state := Done;
+                   last_node_count := count;
+                   trace 1 (fn () => driver ^ " search exhausted");
+                   StepExhausted)
+                else
+                  let
+                    val _ = admit searchBudget.Candidate
+                    val (current, remaining) = remove_minimum heap
+                  in
+                    if Binaryset.member (seen, current) then
+                      (last_pruning_count := !last_pruning_count + 1;
+                       trace 2
+                         (fn () =>
+                           driver ^
+                           " dropped a state it has already expanded");
+                       state := Ready
+                         {heap = remaining, seen = seen, count = count};
+                       loop ())
+                    else if satisfied current then
+                      (state := Answers
+                         {results = [current], heap = remaining,
+                          seen = seen, count = count};
+                       loop ())
+                    else
+                      (state := Selected
+                         {current = current, remaining = remaining,
+                          seen = seen, count = count};
+                       loop ())
+                  end
+            | Selected {current, remaining, seen, count} =>
+                let
+                  val _ = admit searchBudget.Application
+                  val _ = last_node_count := count + 1
+                  val _ = expansion_trace driver (count + 1) current
+                  val cursor =
+                    seq.map (note_transition current) (expand current)
+                in
+                  state := Scanning
+                    {cursor = cursor, reversed = [],
+                     remaining = remaining,
+                     seen = Binaryset.add (seen, current),
+                     count = count + 1};
+                  loop ()
+                end
+            | Scanning {cursor, reversed, remaining, seen, count} =>
+                let
+                  val _ = admit searchBudget.Candidate
+                in
+                  case seq.cases cursor of
+                      SOME (child, rest) =>
+                        (state := Scanning
+                           {cursor = rest, reversed = child :: reversed,
+                            remaining = remaining, seen = seen,
+                            count = count};
+                         loop ())
+                    | NONE =>
+                        let
+                          val (solutions, pending) =
+                            split_satisfied satisfied (rev reversed)
+                        in
+                          if null solutions then
+                            state := Ready
+                              {heap = add_nodes pending remaining,
+                               seen = seen, count = count}
+                          else
+                            state := Answers
+                              {results = solutions,
+                               heap = add_nodes pending remaining,
+                               seen = seen, count = count};
+                          loop ()
+                        end
+                end
+      in
+        loop ()
+        handle Yield (kind, usage) => StepYielded (kind, usage)
+             | searchBudget.LimitReached (kind, usage) =>
+                 (state := Done; StepLimitReached (kind, usage))
+             | exn => (state := Done; raise exn)
+      end
+  in
+    FrontierSession advance
+  end
+
+fun new_best_session budget =
+  new_frontier_session
+    {driver = "best-first", compare = clasetGoal.compare,
+     remove_minimum = best_minimum} budget
+
+fun new_astar_session budget =
+  new_frontier_session
+    {driver = "A*", compare = astar_compare,
+     remove_minimum = searchHeap.delete_min} budget
+
+fun resume_frontier
+      (session as FrontierSession advance) =
+  case advance () of
+      StepResult node => FrontierResult {node = node, session = session}
+    | StepExhausted => FrontierExhausted
+    | StepYielded (kind, usage) =>
+        FrontierYielded
+          {kind = kind, usage = usage, session = session}
+    | StepLimitReached (kind, usage) =>
+        FrontierLimitReached {kind = kind, usage = usage}
+
 fun DEEPEN (increment, limit) bounded start initial =
   let
     val _ =
