@@ -56,4 +56,24 @@ sig
     linarith_config -> (Term.term -> decomp option) ->
     (Term.term -> bool) -> (Term.term * decomp option) list ->
     Term.term -> bool * injust list option
+
+  datatype budget_outcome =
+      CertificateFound of
+        {split_neq : bool, justifications : injust list}
+    | CertificateExhausted
+    | CertificateLimitReached of
+        {kind : searchBudget.kind, usage : searchBudget.usage}
+
+  (* Candidate work covers coefficient, row, atom, and case scans;
+     applications admit row-pair elimination and disequality branches;
+     normalization admits decomposition and row construction.  These
+     are certificate-search outcomes, not yet kernel proof outcomes. *)
+  val prove_budgeted :
+    searchBudget.budget -> linarith_config ->
+    (Term.term -> decomp option) -> (Term.term -> bool) ->
+    Term.term list -> Term.term -> budget_outcome
+  val prove_decomposed_budgeted :
+    searchBudget.budget -> linarith_config ->
+    (Term.term -> decomp option) -> (Term.term -> bool) ->
+    (Term.term * decomp option) list -> Term.term -> budget_outcome
 end

@@ -21,6 +21,27 @@ datatype lineq =
 
 type linarith_config = linarithData.linarith_config
 
+type work =
+  {candidate : unit -> unit,
+   application : unit -> unit,
+   normalization : unit -> unit}
+
+val free_work : work =
+  {candidate = fn () => (), application = fn () => (),
+   normalization = fn () => ()}
+
+fun budget_work budget : work =
+  {candidate = fn () =>
+     searchBudget.charge budget searchBudget.Candidate,
+   application = fn () =>
+     searchBudget.charge budget searchBudget.Application,
+   normalization = fn () =>
+     searchBudget.charge budget searchBudget.Normalization}
+
+fun candidate (work : work) = #candidate work ()
+fun application (work : work) = #application work ()
+fun normalization (work : work) = #normalization work ()
+
 (* Relations and negation are structured rather than upstream strings
    (fast_lin_arith.ML:510-541). *)
 datatype relation = REL_LE | REL_LT | REL_EQ | REL_NEQ
@@ -73,7 +94,8 @@ fun mk_multiplied n just =
         Multiplied (m, inner) => mk_multiplied (Arbint.* (n, m)) inner
       | _ => Multiplied (n, just)
 
-fun multiply_ineq n (ineq as Lineq (k, ty, coeffs, just)) =
+fun multiply_ineq_with work n
+      (ineq as Lineq (k, ty, coeffs, just)) =
   if ai_one n then ineq
   else if ai_zero n andalso ty = Lt then
     raise ERR "multiply_ineq" "zero multiplier on a strict inequality"
@@ -81,16 +103,20 @@ fun multiply_ineq n (ineq as Lineq (k, ty, coeffs, just)) =
     raise ERR "multiply_ineq" "negative multiplier on an inequality"
   else
     Lineq (Arbint.* (n, k), ty,
-           List.map (fn c => Arbint.* (n, c)) coeffs,
+           List.map
+             (fn c => (candidate work; Arbint.* (n, c))) coeffs,
            mk_multiplied n just)
 
-fun add_ineq (Lineq (k1, ty1, coeffs1, just1))
+fun add_ineq_with work (Lineq (k1, ty1, coeffs1, just1))
              (Lineq (k2, ty2, coeffs2, just2)) =
   Lineq (Arbint.+ (k1, k2), find_add_type (ty1, ty2),
-         ListPair.mapEq Arbint.+ (coeffs1, coeffs2),
+         ListPair.mapEq
+           (fn pair => (candidate work; Arbint.+ pair))
+           (coeffs1, coeffs2),
          Added (just1, just2))
 
-fun elim_var v (ineq1 as Lineq (_, ty1, coeffs1, _))
+fun elim_var_with work v
+      (ineq1 as Lineq (_, ty1, coeffs1, _))
                    (ineq2 as Lineq (_, ty2, coeffs2, _)) =
   let
     val c1 = List.nth (coeffs1, v)
@@ -110,10 +136,13 @@ fun elim_var v (ineq1 as Lineq (_, ty1, coeffs1, _))
       then (Arbint.~ n1, Arbint.~ n2)
       else (n1, n2)
   in
-    add_ineq (multiply_ineq p1 ineq1) (multiply_ineq p2 ineq2)
+    add_ineq_with work
+      (multiply_ineq_with work p1 ineq1)
+      (multiply_ineq_with work p2 ineq2)
   end
 
-fun is_trivial (Lineq (_, _, coeffs, _)) = List.all ai_zero coeffs
+fun is_trivial_with work (Lineq (_, _, coeffs, _)) =
+  List.all (fn c => (candidate work; ai_zero c)) coeffs
 
 fun is_contradictory (Lineq (k, ty, _, _)) =
   case ty of
@@ -132,11 +161,12 @@ fun is_contradictory (Lineq (k, ty, _, _)) =
    NONE means no equation has a nonzero coefficient.  elim reaches
    this only with nontrivial rows, so that is exactly "no equations",
    and the caller's inequality branch is what NONE asks for. *)
-fun pivot_equation rows =
+fun pivot_equation_with work rows =
   let
     fun in_row _ [] best = best
       | in_row j (c :: cs) best =
           let
+            val _ = candidate work
             val magnitude = Arbint.abs c
             val best' =
               if ai_zero c then best
@@ -152,6 +182,7 @@ fun pivot_equation rows =
     fun over_rows _ [] best = best
       | over_rows i (Lineq (_, _, coeffs, _) :: rest) best =
           let
+            val _ = candidate work
             val best' =
               case (in_row 0 coeffs NONE, best) of
                   (NONE, _) => best
@@ -167,7 +198,8 @@ fun pivot_equation rows =
     fun split _ [] _ = NONE
       | split 0 (row :: rest) prefix =
           SOME (row, List.revAppend (prefix, rest))
-      | split i (row :: rest) prefix = split (i - 1) rest (row :: prefix)
+      | split i (row :: rest) prefix =
+          (candidate work; split (i - 1) rest (row :: prefix))
     fun located (i, j, _) =
       Option.map (fn (row, others) => (j, row, others)) (split i rows [])
   in
@@ -176,14 +208,16 @@ fun pivot_equation rows =
 
 (* One pass tallies the sign counts of every column; the pivot is the
    column with the smallest nonzero product, favouring earlier columns. *)
-fun tally (c, (pos, neg)) =
-  if ai_pos c then (pos + 1, neg)
+fun tally_with work (c, (pos, neg)) =
+  (candidate work;
+   if ai_pos c then (pos + 1, neg)
   else if ai_neg c then (pos, neg + 1)
-  else (pos, neg)
+  else (pos, neg))
 
-fun choose_blowup [] = NONE
-  | choose_blowup (first :: rest) =
+fun choose_blowup_with work [] = NONE
+  | choose_blowup_with work (first :: rest) =
       let
+        fun tally pair = tally_with work pair
         val counts =
           List.foldl
             (fn (row, acc) =>
@@ -192,6 +226,7 @@ fun choose_blowup [] = NONE
         fun pick _ [] best = best
           | pick i ((pos, neg) :: more) best =
               let
+                val _ = candidate work
                 val blow = pos * neg
                 val best' =
                   if blow = 0 then best
@@ -221,8 +256,9 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
            | order => order)
     | order => order
 
-fun distinct_rows rows =
-  linarithData.distinct_by compare_key row_key rows
+fun distinct_rows_with work rows =
+  linarithData.distinct_by
+    (fn pair => (candidate work; compare_key pair)) row_key rows
 
 (* Elimination traces one line per pivot, so the message is built only
    once the level has asked for it. *)
@@ -232,58 +268,76 @@ fun trace message =
 (* SOME just is a refutation of the rows; NONE is elimination run to a
    system with no eliminable column left, which is the rows failing to
    refute rather than the search giving up early. *)
-fun elim ineqs =
+fun elim_with work ineqs =
   let
-    val (triv, nontriv) = List.partition is_trivial ineqs
+    val (triv, nontriv) =
+      List.partition
+        (fn row => (candidate work; is_trivial_with work row)) ineqs
   in
     if not (List.null triv) then
-      (case List.find is_contradictory triv of
+      (case List.find
+              (fn row => (candidate work; is_contradictory row)) triv of
            SOME (Lineq (_, _, _, just)) => SOME just
-         | NONE => elim nontriv)
+         | NONE => elim_with work nontriv)
     else if List.null nontriv then NONE
     else
       let
         val (eqs, noneqs) =
           List.partition
-            (fn Lineq (_, ty, _, _) => ty = Eq) nontriv
+            (fn Lineq (_, ty, _, _) =>
+              (candidate work; ty = Eq)) nontriv
       in
-        case pivot_equation eqs of
+        case pivot_equation_with work eqs of
             SOME (v, eq, other_eqs) =>
               let
                 val (independent, dependent) =
                   List.partition
-                    (fn Lineq (_, _, cs, _) => ai_zero (List.nth (cs, v)))
+                    (fn Lineq (_, _, cs, _) =>
+                      (candidate work; ai_zero (List.nth (cs, v))))
                     (other_eqs @ noneqs)
                 val others =
-                  List.map (elim_var v eq) dependent @ independent
+                  List.map
+                    (fn row =>
+                      (application work; elim_var_with work v eq row))
+                    dependent @ independent
               in
                 trace (fn () => "equation pivot " ^ Int.toString v);
-                elim others
+                elim_with work others
               end
           | NONE =>
               let
                 val coeff_lists =
-                  List.map (fn Lineq (_, _, cs, _) => cs) noneqs
+                  List.map
+                    (fn Lineq (_, _, cs, _) => (candidate work; cs))
+                    noneqs
               in
-                case choose_blowup coeff_lists of
+                case choose_blowup_with work coeff_lists of
                     NONE => NONE
                   | SOME (_, v) =>
                       let
                         val (independent, dependent) =
                           List.partition
                             (fn Lineq (_, _, cs, _) =>
-                                ai_zero (List.nth (cs, v))) ineqs
+                              (candidate work;
+                               ai_zero (List.nth (cs, v)))) ineqs
                         val (pos, neg) =
                           List.partition
                             (fn Lineq (_, _, cs, _) =>
-                                ai_pos (List.nth (cs, v))) dependent
+                              (candidate work;
+                               ai_pos (List.nth (cs, v)))) dependent
                         fun products [] = []
                           | products (p :: ps) =
-                              List.map (elim_var v p) neg @ products ps
+                              List.map
+                                (fn row =>
+                                  (application work;
+                                   elim_var_with work v p row))
+                                neg @ products ps
                       in
                         trace
                           (fn () => "inequality pivot " ^ Int.toString v);
-                        elim (distinct_rows (independent @ products pos))
+                        elim_with work
+                          (distinct_rows_with work
+                            (independent @ products pos))
                       end
               end
       end
@@ -323,10 +377,10 @@ fun integ (Decomp {lhs, lhs_const, rel, rhs, rhs_const,
    did. *)
 type atom_index = {width : int, column : int Termtab.table}
 
-fun atom_index atoms =
+fun atom_index_with work atoms =
   let
     fun add (atom, (i, columns)) =
-      (i + 1, Termtab.update (atom, i) columns)
+      (candidate work; (i + 1, Termtab.update (atom, i) columns))
     val (width, columns) =
       List.foldl add (0, Termtab.empty) atoms
   in
@@ -339,29 +393,32 @@ fun atom_index atoms =
    no column and are dropped, as they were by mapping over the atom
    list.  The entries are placed back to front so that the first
    occurrence of a repeated atom wins, as List.find did. *)
-fun scatter ({width, column} : atom_index) poly =
+fun scatter_with work ({width, column} : atom_index) poly =
   let
     val row = Array.array (width, zero)
     fun place (tm, c) =
-      case Termtab.lookup column tm of
+      (candidate work;
+       case Termtab.lookup column tm of
           NONE => ()
-        | SOME i => Array.update (row, i, c)
+        | SOME i => Array.update (row, i, c))
   in
     List.app place (List.rev poly); row
   end
 
-fun mklineq index (item, asm_index) =
+fun mklineq_with work index (item, asm_index) =
   let
+    val _ = normalization work
     val (m, {lhs, lhs_const, rel, rhs, rhs_const,
              discrete, negated}) = integ item
-    val lhs_coeffs = scatter index lhs
-    val rhs_coeffs = scatter index rhs
+    val lhs_coeffs = scatter_with work index lhs
+    val rhs_coeffs = scatter_with work index rhs
     val diff =
       List.tabulate
         (#width index,
          fn i =>
-            Arbint.- (Array.sub (rhs_coeffs, i),
-                      Array.sub (lhs_coeffs, i)))
+            (candidate work;
+             Arbint.- (Array.sub (rhs_coeffs, i),
+                       Array.sub (lhs_coeffs, i))))
     val c = Arbint.- (lhs_const, rhs_const)
     val just = Asm asm_index
     fun lineq (constant, ty, cs, why) =
@@ -427,74 +484,92 @@ fun swap_less (Decomp {lhs, lhs_const, rhs, rhs_const,
 (* Unlike upstream's neqE-list ordering, each premise is discriminated by
    the discreteness its own decomposition carries
    (fast_lin_arith.ML:574-629). *)
-fun elim_neq items =
+fun elim_neq_with work items =
   let
     fun pass _ [] = [[]]
       | pass discrete_only ((item as (tm, NONE)) :: rest) =
-          List.map (fn xs => item :: xs) (pass discrete_only rest)
+          (candidate work;
+           List.map (fn xs => item :: xs) (pass discrete_only rest))
       | pass discrete_only
           ((item as (tm, SOME decomp)) :: rest) =
-          if is_neq decomp andalso
+          (candidate work;
+           if is_neq decomp andalso
              (not discrete_only orelse is_discrete decomp)
           then
-            pass discrete_only
-              (rest @ [(tm, SOME (less_decomp decomp))]) @
-            pass discrete_only
-              (rest @ [(tm, SOME (swap_less decomp))])
+            (application work;
+             pass discrete_only
+               (rest @ [(tm, SOME (less_decomp decomp))]) @
+             (application work;
+              pass discrete_only
+                (rest @ [(tm, SOME (swap_less decomp))])))
           else
-            List.map (fn xs => item :: xs) (pass discrete_only rest)
+            List.map (fn xs => item :: xs) (pass discrete_only rest))
   in
     List.concat (List.map (pass false) (pass true items))
   end
 
-fun ignore_neq (tm, NONE) = (tm, NONE)
-  | ignore_neq (tm, SOME decomp) =
-      if is_neq decomp then (tm, NONE) else (tm, SOME decomp)
+fun ignore_neq_with work (tm, NONE) =
+      (candidate work; (tm, NONE))
+  | ignore_neq_with work (tm, SOME decomp) =
+      (candidate work;
+       if is_neq decomp then (tm, NONE) else (tm, SOME decomp))
 
-fun number_hyps items =
+fun number_hyps_with work items =
   let
     fun number _ [] = []
-      | number n ((_, NONE) :: rest) = number (n + 1) rest
+      | number n ((_, NONE) :: rest) =
+          (candidate work; number (n + 1) rest)
       | number n ((_, SOME decomp) :: rest) =
-          (decomp, n) :: number (n + 1) rest
+          (candidate work;
+           (decomp, n) :: number (n + 1) rest)
   in
     number 0 items
   end
 
-fun split_items split_neq items =
+fun split_items_with work split_neq items =
   let
     val cases =
-      if split_neq then elim_neq items
-      else [List.map ignore_neq items]
+      if split_neq then elim_neq_with work items
+      else [List.map (ignore_neq_with work) items]
   in
-    List.map number_hyps cases
+    List.map (fn one => (candidate work; number_hyps_with work one)) cases
   end
 
 (* Coefficient rows follow this order, so every row built for one
    split system must come from this one function. *)
-fun atoms_of_decomps decomps =
+fun atoms_of_decomps_with work decomps =
   let
-    fun sides (Decomp {lhs, rhs, ...}) = List.map #1 (lhs @ rhs)
+    fun sides (Decomp {lhs, rhs, ...}) =
+      List.map (fn (tm, _) => (candidate work; tm)) (lhs @ rhs)
   in
-    linarithData.distinct_by Term.compare Lib.I
+    linarithData.distinct_by
+      (fn pair => (candidate work; Term.compare pair)) Lib.I
       (List.concat (List.map sides decomps))
   end
 
-fun refutes is_nonnegative systems =
+fun atoms_of_decomps decomps =
+  atoms_of_decomps_with free_work decomps
+
+fun refutes_with work is_nonnegative systems =
   let
     fun refute [] justs = SOME (List.rev justs)
       | refute (items :: rest) justs =
           let
-            val atoms = atoms_of_decomps (List.map #1 items)
-            val index = atom_index atoms
+            val atoms =
+              atoms_of_decomps_with work
+                (List.map
+                  (fn (item, _) => (candidate work; item)) items)
+            val index = atom_index_with work atoms
             val nonnegative =
               List.mapPartial
-                (mknonneg is_nonnegative (#width index))
+                (fn item =>
+                  (candidate work;
+                   mknonneg is_nonnegative (#width index) item))
                 (Lib.enumerate 0 atoms)
             val ineqs =
-              List.map (mklineq index) items @ nonnegative
+              List.map (mklineq_with work index) items @ nonnegative
           in
-            case elim ineqs of
+            case elim_with work ineqs of
                 SOME just => refute rest (just :: justs)
               | NONE => NONE
           end
@@ -506,21 +581,24 @@ fun negate tm =
   if boolSyntax.is_neg tm then boolSyntax.dest_neg tm
   else boolSyntax.mk_neg tm
 
-fun prove_decomposed ({neq_limit, split_limit = _} : linarith_config)
+fun prove_decomposed_with work
+      ({neq_limit, split_limit = _} : linarith_config)
                      decompose is_nonnegative hypotheses conclusion =
   case (SOME (negate conclusion)
         handle Feedback.HOL_ERR _ => NONE) of
       NONE => (false, NONE)
     | SOME negated_conclusion =>
         let
+          val _ = normalization work
           val items =
             hypotheses @
             [(negated_conclusion, decompose negated_conclusion)]
-          fun neq (_, SOME decomp) = is_neq decomp
-            | neq (_, NONE) = false
+          fun neq (_, SOME decomp) =
+                (candidate work; is_neq decomp)
+            | neq (_, NONE) = (candidate work; false)
           val neq_count = List.length (List.filter neq items)
           val split_neq = neq_count <= neq_limit
-          val systems = split_items split_neq items
+          val systems = split_items_with work split_neq items
           val _ =
             if split_neq then ()
             else trace
@@ -529,11 +607,59 @@ fun prove_decomposed ({neq_limit, split_limit = _} : linarith_config)
                       Int.toString neq_limit ^
                       "); ignoring disequalities")
         in
-          (split_neq, refutes is_nonnegative systems)
+          (split_neq, refutes_with work is_nonnegative systems)
         end
 
+fun prove_decomposed config decompose is_nonnegative hypotheses conclusion =
+  prove_decomposed_with free_work config decompose is_nonnegative
+    hypotheses conclusion
+
+fun prove_with work config decompose is_nonnegative hypotheses conclusion =
+  prove_decomposed_with work config decompose is_nonnegative
+    (List.map
+      (fn tm => (normalization work; (tm, decompose tm)))
+      hypotheses) conclusion
+
 fun prove config decompose is_nonnegative hypotheses conclusion =
-  prove_decomposed config decompose is_nonnegative
-    (List.map (fn tm => (tm, decompose tm)) hypotheses) conclusion
+  prove_with free_work config decompose is_nonnegative
+    hypotheses conclusion
+
+datatype budget_outcome =
+    CertificateFound of {split_neq : bool, justifications : injust list}
+  | CertificateExhausted
+  | CertificateLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
+
+fun prove_budgeted budget config decompose is_nonnegative
+      hypotheses conclusion =
+  let
+    val (split_neq, result) =
+      prove_with (budget_work budget) config decompose is_nonnegative
+        hypotheses conclusion
+  in
+    case result of
+        SOME justifications =>
+          CertificateFound
+            {split_neq = split_neq, justifications = justifications}
+      | NONE => CertificateExhausted
+  end
+  handle searchBudget.LimitReached (kind, usage) =>
+    CertificateLimitReached {kind = kind, usage = usage}
+
+fun prove_decomposed_budgeted budget config decompose is_nonnegative
+      hypotheses conclusion =
+  let
+    val (split_neq, result) =
+      prove_decomposed_with (budget_work budget) config decompose
+        is_nonnegative hypotheses conclusion
+  in
+    case result of
+        SOME justifications =>
+          CertificateFound
+            {split_neq = split_neq, justifications = justifications}
+      | NONE => CertificateExhausted
+  end
+  handle searchBudget.LimitReached (kind, usage) =>
+    CertificateLimitReached {kind = kind, usage = usage}
 
 end

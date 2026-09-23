@@ -5,6 +5,29 @@ open Abbrev HolKernel Drule
 
 val ERR = mk_HOL_ERR "linarithLib"
 
+type work =
+  {candidate : unit -> unit,
+   application : unit -> unit,
+   normalization : unit -> unit,
+   budget : searchBudget.budget option}
+
+val free_work : work =
+  {candidate = fn () => (), application = fn () => (),
+   normalization = fn () => (), budget = NONE}
+
+fun budget_work budget : work =
+  {candidate = fn () =>
+     searchBudget.charge budget searchBudget.Candidate,
+   application = fn () =>
+     searchBudget.charge budget searchBudget.Application,
+   normalization = fn () =>
+     searchBudget.charge budget searchBudget.Normalization,
+   budget = SOME budget}
+
+fun candidate (work : work) = #candidate work ()
+fun application (work : work) = #application work ()
+fun normalization (work : work) = #normalization work ()
+
 fun prove (term, tactic) =
   case Tactical.VALID tactic ([], term) (Context.snapshot()) of
       ([], validation) => validation []
@@ -132,8 +155,19 @@ fun full_arguments function arguments =
    splits it and asks again.  So refute answers NONE rather than
    failing, and only a caller that has run out of splits pays for the
    diagnostics below. *)
-fun refutation config (assumptions, conclusion) =
-  linarithReplay.refute config assumptions conclusion
+fun refutation_with work config (assumptions, conclusion) =
+  case #budget (work : work) of
+      NONE => linarithReplay.refute config assumptions conclusion
+    | SOME budget =>
+        (case linarithReplay.refute_budgeted budget config
+                assumptions conclusion of
+             linarithReplay.RefutationReady tactic => SOME tactic
+           | linarithReplay.RefutationExhausted => NONE
+           | linarithReplay.RefutationLimitReached {kind, usage} =>
+               raise searchBudget.LimitReached (kind, usage))
+
+fun refutation config goal =
+  refutation_with free_work config goal
 
 (* The diagnostics report the goal as preprocessing left it, so they stay
    on this side of the interface; the failure is reported under the
@@ -349,8 +383,13 @@ fun limit_exceeded function limit =
    the tables these results reach -- the solver's atom index, the
    result cache's store and its context graph -- would merge in any
    case, all three being keyed on Term.compare themselves. *)
+fun distinct_thms_with work theorems =
+  linarithData.distinct_by
+    (fn pair => (candidate work; Term.compare pair))
+    Thm.concl theorems
+
 fun distinct_thms theorems =
-  linarithData.distinct_by Term.compare Thm.concl theorems
+  distinct_thms_with free_work theorems
 
 fun compute_split_rules extra =
   let
@@ -466,7 +505,7 @@ fun leq_operator instance =
     Lib.get_first operator_of (#add_mono (#kit instance))
   end
 
-fun literal_bounds instance operator tm (left, right) =
+fun literal_bounds_with work instance operator tm (left, right) =
   let
     fun leq (l, r) = Term.list_mk_comb (operator, [l, r])
     val dest = #dest instance
@@ -482,15 +521,16 @@ fun literal_bounds instance operator tm (left, right) =
       [leq (lower, left), leq (lower, right),
        leq (left, upper), leq (right, upper)]
     fun bound relation =
-      prove
+      (normalization work;
+       prove
         (relation,
          Tactical.THEN
-           (Tactic.COND_CASES_TAC, Tactical.FIRST (map ground branches)))
+           (Tactic.COND_CASES_TAC, Tactical.FIRST (map ground branches))))
   in
     List.mapPartial (Lib.total bound) [leq (lower, tm), leq (tm, upper)]
   end
 
-fun conditional_bounds tm =
+fun conditional_bounds_with work tm =
   case Lib.total boolSyntax.dest_cond tm of
       NONE => []
     | SOME (_, left, right) =>
@@ -500,7 +540,8 @@ fun conditional_bounds tm =
                case leq_operator instance of
                    NONE => []
                  | SOME operator =>
-                     (literal_bounds instance operator tm (left, right)
+                     (literal_bounds_with work instance operator tm
+                        (left, right)
                       handle HOL_ERR _ => []))
 
 (* Every instance sees every atom: an instance's atom_facts declines the
@@ -509,27 +550,33 @@ fun conditional_bounds tm =
    bounds are the instance registry's rather than any one instance's:
    the carrier is the conditional's own type, so every registered
    carrier has them without declaring anything. *)
-fun facts_for tm =
-  conditional_bounds tm @
+fun facts_for_with work tm =
+  conditional_bounds_with work tm @
   List.concat
-    (map (fn i => #atom_facts i tm) (linarithData.all_instances ()))
+    (map
+      (fn i =>
+        (normalization work; #atom_facts i tm))
+      (linarithData.all_instances ()))
 
 (* One round of augmentation: the atom facts of those atoms of terms
    that processed has not already been asked about, less the ones known
    already records.  Both tests are needed -- the atom set stops an
    atom being asked twice, and the conclusion set stops two different
    atoms contributing the same fact. *)
-fun augmentation_round processed known terms =
+fun augmentation_round_with work processed known terms =
   let
-    val candidates = List.concat (map decomp_atoms terms)
-    fun inspect (candidate, entry as (seen, facts)) =
-      if Termtab.defined seen candidate then entry
+    val candidates =
+      List.concat
+        (map (fn tm => (normalization work; decomp_atoms tm)) terms)
+    fun inspect (atom, entry as (seen, facts)) =
+      if (candidate work; Termtab.defined seen atom) then entry
       else
-        (Termtab.insert_set candidate seen,
-         facts_for candidate @ facts)
+        (Termtab.insert_set atom seen,
+         facts_for_with work atom @ facts)
     val (seen, facts) = foldl inspect (processed, []) candidates
-    val unique = distinct_thms facts
-    fun stale theorem = Termtab.defined known (Thm.concl theorem)
+    val unique = distinct_thms_with work facts
+    fun stale theorem =
+      (candidate work; Termtab.defined known (Thm.concl theorem))
   in
     (seen, List.filter (not o stale) unique)
   end
@@ -541,14 +588,16 @@ fun augmentation_round processed known terms =
    travels down the branch of the search: see split_on_demand.  What is
    already on the branch travels across the rounds as a set too, each
    round only adding to it. *)
-fun augmentation function limit processed assumptions =
+fun augmentation_with work function limit processed assumptions =
   let
     fun remember terms known =
-      List.foldl (Lib.uncurry Termtab.insert_set) known terms
+      List.foldl
+        (fn (tm, seen) =>
+          (candidate work; Termtab.insert_set tm seen)) known terms
     fun loop known processed added rounds terms =
       let
         val (processed', facts) =
-          augmentation_round processed known terms
+          augmentation_round_with work processed known terms
       in
         if null facts then (processed', List.rev added)
         else if rounds >= limit then limit_exceeded function limit
@@ -570,33 +619,54 @@ fun augmentation function limit processed assumptions =
    measures how much of a disjunction is still live.  The literals are
    taken already decomposed, since every disjunct of every disjunction
    is scored against the same ones. *)
-fun consistent config decomposed disjunct =
-  case linarithSolve.prove_decomposed config linarithDecomp.decomp
-         linarithDecomp.is_nonnegative
-         ((disjunct, linarithDecomp.decomp disjunct) :: decomposed)
-         boolSyntax.F of
-      (_, SOME _) => false
-    | (_, NONE) => true
+fun consistent_with work config decomposed disjunct =
+  let
+    val _ = normalization work
+    val facts =
+      (disjunct, linarithDecomp.decomp disjunct) :: decomposed
+  in
+    case #budget (work : work) of
+        NONE =>
+          (case linarithSolve.prove_decomposed config
+                  linarithDecomp.decomp linarithDecomp.is_nonnegative
+                  facts boolSyntax.F of
+               (_, SOME _) => false
+             | (_, NONE) => true)
+      | SOME budget =>
+          (case linarithSolve.prove_decomposed_budgeted budget config
+                  linarithDecomp.decomp linarithDecomp.is_nonnegative
+                  facts boolSyntax.F of
+               linarithSolve.CertificateFound _ => false
+             | linarithSolve.CertificateExhausted => true
+             | linarithSolve.CertificateLimitReached {kind, usage} =>
+                 raise searchBudget.LimitReached (kind, usage))
+  end
 
 (* Eliminate the disjunction with the fewest arithmetically consistent
    cases.  Connectedness cannot distinguish whole disjunctions because
    they have no decomposed atoms; scoring their cases is arithmetic unit
    propagation and avoids enumerating unrelated total-order choices. *)
-fun disj_elim_tac config (assumptions, conclusion) =
+fun disj_elim_tac_with work config (assumptions, conclusion) =
   let
     val (disjunctions, literals) =
-      List.partition boolSyntax.is_disj assumptions
+      List.partition
+        (fn tm => (candidate work; boolSyntax.is_disj tm))
+        assumptions
     val _ =
       if List.null disjunctions then
         raise ERR "disj_elim_tac" "no disjunctive assumption"
       else ()
     val decomposed =
-      List.map (fn tm => (tm, linarithDecomp.decomp tm)) literals
+      List.map
+        (fn tm =>
+          (normalization work; (tm, linarithDecomp.decomp tm)))
+        literals
     fun score disjunction =
-      (List.length
-         (List.filter (consistent config decomposed)
+      (candidate work;
+       (List.length
+         (List.filter (consistent_with work config decomposed)
             (boolSyntax.strip_disj disjunction)),
-       disjunction)
+        disjunction))
     fun cheaper (candidate as (count, _), best as (fewest, _)) =
       if count < fewest then candidate else best
     val scored = List.map score disjunctions
@@ -623,14 +693,15 @@ fun disj_elim_tac config (assumptions, conclusion) =
    A recurrence reaches the same guard pair under many partial sign
    contexts.  The conjunction of the two guards is its canonical term key;
    both proofs and failures are memoized for the lifetime of one search. *)
-fun complementary_implications_tac config cache
+fun complementary_implications_tac_with work config cache ctxt
                                       (assumptions, conclusion) =
   let
     fun implication assumption =
-      case Lib.total boolSyntax.dest_imp_only assumption of
+      (candidate work;
+       case Lib.total boolSyntax.dest_imp_only assumption of
           SOME (guard, consequence) =>
             SOME (assumption, guard, consequence)
-        | NONE => NONE
+        | NONE => NONE)
     val implications = List.mapPartial implication assumptions
 
     fun complement left_guard right_guard =
@@ -638,12 +709,22 @@ fun complementary_implications_tac config cache
         val key = boolSyntax.mk_conj (left_guard, right_guard)
         val negated = boolSyntax.mk_neg left_guard
         fun prove () =
-          SOME
-            (linarithReplay.fwd_prove config
-               [Thm.ASSUME negated] right_guard)
-          handle Feedback.HOL_ERR _ => NONE
+          case #budget (work : work) of
+              NONE =>
+                (SOME
+                  (linarithReplay.fwd_prove_in ctxt config
+                    [Thm.ASSUME negated] right_guard)
+                 handle Feedback.HOL_ERR _ => NONE)
+            | SOME budget =>
+                (case linarithReplay.fwd_prove_budgeted_in
+                        ctxt budget config
+                        [Thm.ASSUME negated] right_guard of
+                     linarithReplay.ReplayProved theorem => SOME theorem
+                   | linarithReplay.ReplayExhausted => NONE
+                   | linarithReplay.ReplayLimitReached {kind, usage} =>
+                       raise searchBudget.LimitReached (kind, usage))
         val answer =
-          case Termtab.lookup (!cache) key of
+          case (candidate work; Termtab.lookup (!cache) key) of
               SOME cached => cached
             | NONE =>
                 let
@@ -659,6 +740,7 @@ fun complementary_implications_tac config cache
     fun pair_with _ [] = NONE
       | pair_with (left as (_, left_guard, _)) (right :: rest) =
           let
+            val _ = candidate work
             val (_, right_guard, _) = right
           in
             case complement left_guard right_guard of
@@ -667,7 +749,8 @@ fun complementary_implications_tac config cache
           end
     fun find_pair [] = NONE
       | find_pair (left :: rest) =
-          (case pair_with left rest of
+          (candidate work;
+           case pair_with left rest of
                SOME pair => SOME pair
              | NONE => find_pair rest)
 
@@ -789,9 +872,10 @@ fun note_search event =
        augmentations = increment Augmentation augmentations}
   end
 
-fun split_on_demand function config split_tac =
+fun split_on_demand_with work function config split_tac =
   let
     val limit = #split_limit config
+    val _ = normalization work
     val carrier_rule = carrier_nnf_rule ()
     val flatten = nnf_flatten carrier_rule
     val complement_cache =
@@ -806,31 +890,44 @@ fun split_on_demand function config split_tac =
        case before the next operator.  That branch-count boundary is the
        threshold for the direct binary path. *)
     fun has_successor_split ctxt (goals, _) =
-      List.exists (Lib.can (fn goal => split_tac goal ctxt)) goals
+      List.exists
+        (fn goal =>
+          (candidate work;
+           Lib.can (fn () => split_tac goal ctxt) ())) goals
 
     fun node hint spent goal ctxt =
-      (note_search Node;
+      (application work;
+       note_search Node;
+       normalization work;
        Tactical.THEN (flatten, decide hint spent) goal ctxt)
     and open_node hint spent goal ctxt =
-      (note_search Node;
+      (application work;
+       note_search Node;
+       candidate work;
        case Lib.total
-              (complementary_implications_tac config complement_cache) goal of
+              (complementary_implications_tac_with work config
+                complement_cache ctxt) goal of
            SOME split =>
              (note_search DisjunctionSplit;
               expand node hint spent split ctxt)
-         | NONE => Tactical.THEN (flatten, branch hint spent) goal ctxt)
+         | NONE =>
+             (normalization work;
+              Tactical.THEN (flatten, branch hint spent) goal ctxt))
     and decide hint spent goal ctxt =
       (note_search Refutation;
-       case refutation config goal of
+       case refutation_with work config goal of
           SOME tactic => tactic goal ctxt
         | NONE => branch hint spent goal ctxt)
     and branch hint (spent as {splits, augmentations, processed}) goal ctxt =
-      case Lib.total (disj_elim_tac config) (connected_split_goal goal) of
+      case Lib.total (disj_elim_tac_with work config)
+             (connected_split_goal goal) of
           SOME split =>
             (note_search DisjunctionSplit;
              expand node hint spent split ctxt)
         | NONE =>
-            (case Lib.total (fn split_goal => split_tac split_goal ctxt)
+            (case (candidate work;
+                   Lib.total
+                     (fn split_goal => split_tac split_goal ctxt))
                     (connected_split_goal goal) of
                  SOME split =>
                    if splits >= limit then limit_exceeded function limit
@@ -851,7 +948,7 @@ fun split_on_demand function config split_tac =
                 (goal as (assumptions, _)) ctxt =
       let
         val (processed', facts) =
-          augmentation function limit processed assumptions
+          augmentation_with work function limit processed assumptions
       in
         (* decide has already run the refutation on this goal and been
            told NONE, and augmentation has nothing to add, so the leaf
@@ -881,6 +978,9 @@ fun split_on_demand function config split_tac =
       (last_search_stats_ref := empty_search_stats;
        node hint start goal ctxt)
   end
+
+fun split_on_demand function config split_tac =
+  split_on_demand_with free_work function config split_tac
 
 type linarith_config = linarithData.linarith_config
 val default_config = linarithData.default_config
@@ -934,11 +1034,12 @@ fun atomized_assumptions premises =
    reached as a tactic. *)
 val forward_search_name = "forward_search"
 
-fun forward_search conclusion =
+fun forward_search_with work conclusion =
   let
+    val _ = normalization work
     val search =
-      split_on_demand forward_search_name linarithData.default_config
-        (cached_split_tac ())
+      split_on_demand_with work forward_search_name
+        linarithData.default_config (cached_split_tac ())
   in
     Tactical.THEN
       (Tactic.CCONTR_TAC,
@@ -947,6 +1048,9 @@ fun forward_search conclusion =
           Tactical.THEN
             (filter_relevant, search (unregistered_hint conclusion))))
   end
+
+fun forward_search conclusion =
+  forward_search_with free_work conclusion
 
 (* A search that found nothing raises under its own name; anything else
    -- a malformed instance, a replay that will not rebuild -- is a
@@ -1011,6 +1115,59 @@ fun LINARITH_PROVE tm =
     in
       no_proof "LINARITH_PROVE" (unregistered_hint conclusion)
     end
+
+datatype budget_outcome =
+    LinarithProved of thm
+  | LinarithExhausted
+  | LinarithLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
+
+fun LINARITH_PROVE_BUDGETED_IN ctxt budget tm =
+  let
+    val work = budget_work budget
+    val (variables, body) = boolSyntax.strip_forall tm
+    val (premises, conclusion) = boolSyntax.strip_imp_only body
+    val premise_theorems = atomized_assumptions premises
+    val premise_terms = map Thm.concl premise_theorems
+    val search = forward_search_with work conclusion
+    val outcome =
+      SOME
+        (Tactical.VALID search (premise_terms, conclusion) ctxt)
+      handle exn =>
+        if exhausted_search exn then NONE else raise exn
+  in
+    case outcome of
+        NONE => LinarithExhausted
+      | SOME (goals, validation) =>
+          let
+            val _ =
+              if null goals then ()
+              else raise ERR "LINARITH_PROVE_BUDGETED"
+                "replay left a subgoal open"
+            val _ = normalization work
+            val proved = validation []
+            fun discharge premise theorem =
+              (normalization work; PROVE_HYP premise theorem)
+            val supported =
+              Lib.rev_itlist discharge premise_theorems proved
+            fun imply premise theorem =
+              (normalization work; Thm.DISCH premise theorem)
+            val implication = Lib.itlist imply premises supported
+            val _ = normalization work
+            val theorem = GENL variables implication
+          in
+            if Term.aconv (Thm.concl theorem) tm then
+              LinarithProved theorem
+            else
+              raise ERR "LINARITH_PROVE_BUDGETED"
+                "reconstructed theorem has the wrong conclusion"
+          end
+  end
+  handle searchBudget.LimitReached (kind, usage) =>
+    LinarithLimitReached {kind = kind, usage = usage}
+
+fun LINARITH_PROVE_BUDGETED budget tm =
+  LINARITH_PROVE_BUDGETED_IN (Context.snapshot()) budget tm
 
 (* NONE is "asked and refused", which is the only failure a rung of the
    ladders below is entitled to treat as an answer: a rung that fails

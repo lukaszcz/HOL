@@ -487,7 +487,7 @@ fun normalize_final theorem =
 fun implications_of theorem =
   linarithData.instance_implications (instance_of_thm theorem)
 
-fun mkthm assumptions justification =
+fun mkthm_with charge assumptions justification =
   let
     (* A certificate names the same assumption at many of its leaves,
        so the list is indexed once here rather than walked per leaf. *)
@@ -498,8 +498,9 @@ fun mkthm assumptions justification =
         raise ERR "mkthm"
           ("assumption index " ^ Int.toString index ^
            " is out of range")
-    fun one (Asm index) = assumption index
-      | one (Nonneg atom) =
+    fun one why = (charge (); decode why)
+    and decode (Asm index) = assumption index
+      | decode (Nonneg atom) =
           (case linarithData.instance_for (Term.type_of atom) of
                NONE =>
                  raise ERR "mkthm"
@@ -512,10 +513,10 @@ fun mkthm assumptions justification =
                         raise ERR "mkthm"
                           ("instance declined nonnegative atom " ^
                            Parse.term_to_string atom)))
-      | one (LessD why) = from_instance "LessD" #lessD why
-      | one (NotLessD why) = from_instance "NotLessD" #not_less why
-      | one (NotLeD why) = from_instance "NotLeD" #not_le why
-      | one (NotLeDD why) =
+      | decode (LessD why) = from_instance "LessD" #lessD why
+      | decode (NotLessD why) = from_instance "NotLessD" #not_less why
+      | decode (NotLeD why) = from_instance "NotLeD" #not_le why
+      | decode (NotLeDD why) =
           let
             val theorem = one why
             val imps = implications_of theorem
@@ -524,8 +525,8 @@ fun mkthm assumptions justification =
           in
             required_match "finish NotLeDD on" (#lessD imps) less
           end
-      | one (Multiplied (n, why)) = mult_thm n (one why)
-      | one (Added (left, right)) =
+      | decode (Multiplied (n, why)) = mult_thm n (one why)
+      | decode (Added (left, right)) =
           normalize_added (add_thms (one left) (one right))
     (* Apply the rules the justification's own carrier supplies.  Only
        a discrete carrier supplies the lessD LessD and NotLeDD ask for,
@@ -541,7 +542,8 @@ fun mkthm assumptions justification =
           end
 
     val theorem =
-      (normalize_final (one justification)
+      (charge ();
+       normalize_final (one justification)
        handle FalseReached theorem => theorem)
     val _ = linarithData.trace_thm 2 "replayed certificate:" theorem
   in
@@ -560,6 +562,9 @@ fun mkthm assumptions justification =
         raise ERR "mkthm" message
       end
   end
+
+fun mkthm assumptions justification =
+  mkthm_with (fn () => ()) assumptions justification
 
 (* Both replay paths use this operation to select neqE from the instance
    belonging to the disequality's carrier.  REL_NEQ is the only encoding
@@ -685,25 +690,31 @@ fun append_negated_tac (assumptions, conclusion) _ =
     ([goal], justify)
   end
 
-fun justification_tac justification (assumptions, goal) ctxt =
+fun justification_tac_with charge justification
+      (assumptions, goal) ctxt =
   if not (Term.aconv goal boolSyntax.F) then
     raise ERR "justification_tac" "goal is not false"
   else
     Tactic.ACCEPT_TAC
-      (mkthm (List.map Thm.ASSUME assumptions) justification)
+      (mkthm_with charge
+        (List.map Thm.ASSUME assumptions) justification)
       (assumptions, goal) ctxt
 
-fun refute_tac split_neq justifications =
+fun refute_tac_with charge split_neq justifications =
   let
     val split_tac =
       if split_neq then
         Tactical.THEN (neq_elim_tac true, neq_elim_tac false)
       else Tactical.ALL_TAC
-    val leaves = List.map justification_tac justifications
+    val leaves =
+      List.map (justification_tac_with charge) justifications
   in
     Tactical.THEN
       (append_negated_tac, Tactical.THENL (split_tac, leaves))
   end
+
+fun refute_tac split_neq justifications =
+  refute_tac_with (fn () => ()) split_neq justifications
 
 fun refute config assumptions conclusion =
   let
@@ -714,12 +725,35 @@ fun refute config assumptions conclusion =
     Option.map (refute_tac split_neq) result
   end
 
+datatype refutation_outcome =
+    RefutationReady of tactic
+  | RefutationExhausted
+  | RefutationLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
+
+fun refute_budgeted budget config assumptions conclusion =
+  let
+    fun charge () =
+      searchBudget.charge budget searchBudget.Normalization
+  in
+    case linarithSolve.prove_budgeted budget config
+           linarithDecomp.decomp linarithDecomp.is_nonnegative
+           assumptions conclusion of
+        linarithSolve.CertificateFound
+          {split_neq, justifications} =>
+            RefutationReady
+              (refute_tac_with charge split_neq justifications)
+      | linarithSolve.CertificateExhausted => RefutationExhausted
+      | linarithSolve.CertificateLimitReached {kind, usage} =>
+          RefutationLimitReached {kind = kind, usage = usage}
+  end
+
 (* The forward proof is the tactic replay run on a goal made of the
    premises' own conclusions.  Reproducing the disequality case split a
    second time as a tree of theorems would have to stay case-for-case in
    step with refute_tac, since both consume the one justification list
    in the order the search's disequality elimination generated it. *)
-fun fwd_prove config theorems conclusion =
+fun fwd_prove_in ctxt config theorems conclusion =
   let
     val hypotheses = List.map Thm.concl theorems
     val tactic =
@@ -727,8 +761,7 @@ fun fwd_prove config theorems conclusion =
           SOME tactic => tactic
         | NONE =>
             raise ERR "fwd_prove" "linear arithmetic found no proof"
-    val (goals, validation) = tactic (hypotheses, conclusion)
-      (Context.snapshot())
+    val (goals, validation) = tactic (hypotheses, conclusion) ctxt
     val _ =
       if null goals then ()
       else raise ERR "fwd_prove" "replay left a subgoal open"
@@ -737,5 +770,50 @@ fun fwd_prove config theorems conclusion =
   in
     theorem
   end
+
+fun fwd_prove config theorems conclusion =
+  fwd_prove_in (Context.snapshot()) config theorems conclusion
+
+datatype budget_outcome =
+    ReplayProved of thm
+  | ReplayExhausted
+  | ReplayLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
+
+fun fwd_prove_budgeted_in ctxt budget config theorems conclusion =
+  let
+    val hypotheses = List.map Thm.concl theorems
+    fun charge () =
+      searchBudget.charge budget searchBudget.Normalization
+  in
+    case refute_budgeted budget config hypotheses conclusion of
+        RefutationExhausted => ReplayExhausted
+      | RefutationLimitReached {kind, usage} =>
+          ReplayLimitReached {kind = kind, usage = usage}
+      | RefutationReady tactic =>
+          let
+            val _ = charge ()
+            val (goals, validation) =
+              Tactical.VALID tactic (hypotheses, conclusion) ctxt
+            val _ =
+              if null goals then ()
+              else raise ERR "fwd_prove_budgeted"
+                "replay left a subgoal open"
+            val _ = charge ()
+            val proof = validation []
+            fun discharge premise theorem =
+              (charge (); PROVE_HYP premise theorem)
+            val theorem =
+              Lib.rev_itlist discharge theorems proof
+          in
+            ReplayProved theorem
+          end
+  end
+  handle searchBudget.LimitReached (kind, usage) =>
+    ReplayLimitReached {kind = kind, usage = usage}
+
+fun fwd_prove_budgeted budget config theorems conclusion =
+  fwd_prove_budgeted_in (Context.snapshot()) budget config
+    theorems conclusion
 
 end

@@ -640,6 +640,109 @@ fun fm_row coeffs k = fm_le (no_atoms, fm_rat k) (fm_columns coeffs, fm_rat 0)
 fun fm_equation coeffs k =
   fm_eq (no_atoms, fm_rat k) (fm_columns coeffs, fm_rat 0)
 
+val fm_budget_items =
+  [(Term.mk_var ("linarith_budget_first", Type.bool),
+    SOME (fm_le (no_atoms, fm_rat 0)
+            (fm_scaled_x 1, fm_rat 0))),
+   (Term.mk_var ("linarith_budget_second", Type.bool),
+    SOME (fm_le (no_atoms, fm_rat 1)
+            (fm_scaled_x ~1, fm_rat 0)))]
+
+fun fm_budgeted budget items =
+  prove_decomposed_budgeted budget fm_config
+    (fn _ => NONE) (fn _ => false) items fm_conclusion
+
+val _ =
+  check
+    ("FM budget distinguishes a certificate from exhaustion and limits",
+     fn () =>
+       let
+         fun budget candidates applications normalization =
+           searchBudget.create
+             {candidates = candidates, applications = applications,
+              normalization = normalization}
+         val funded =
+           fm_budgeted (searchBudget.unbounded ()) fm_budget_items
+         val exhausted =
+           fm_budgeted (searchBudget.unbounded ())
+             [hd fm_budget_items]
+         val candidate_cut =
+           fm_budgeted (budget (SOME 0) NONE NONE) fm_budget_items
+         val application_cut =
+           fm_budgeted (budget NONE (SOME 0) NONE) fm_budget_items
+         val normalization_cut =
+           fm_budgeted (budget NONE NONE (SOME 0)) fm_budget_items
+       in
+         (case funded of
+              CertificateFound
+                {justifications = [Added (Asm 0, Asm 1)], ...} =>
+                  true
+            | _ => false) andalso
+         (case exhausted of
+              CertificateExhausted => true
+            | _ => false) andalso
+         (case candidate_cut of
+              CertificateLimitReached
+                {kind = searchBudget.Candidate, usage} =>
+                  #candidates usage = 0
+            | _ => false) andalso
+         (case application_cut of
+              CertificateLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 0 andalso
+                  #candidates usage > 0
+            | _ => false) andalso
+         (case normalization_cut of
+              CertificateLimitReached
+                {kind = searchBudget.Normalization, usage} =>
+                  #normalization usage = 0
+            | _ => false)
+       end)
+
+val _ =
+  check
+    ("FM charges each row pair inside a broad elimination round",
+     fn () =>
+       let
+         fun row side index =
+           (Term.mk_var
+              ("fm_pair_" ^ side ^ "_" ^ Int.toString index,
+               Type.bool),
+            SOME
+              (fm_le (no_atoms, fm_rat 0)
+                (fm_scaled_x
+                  (if side = "positive" then 1 else ~1),
+                 fm_rat 0)))
+         val items =
+           List.tabulate (8, row "positive") @
+           List.tabulate (8, row "negative")
+         val limited =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 5,
+              normalization = NONE}
+       in
+         (case fm_budgeted limited items of
+              CertificateLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 5 andalso
+                  #candidates usage > 0
+            | _ => false) andalso
+         (case fm_budgeted (searchBudget.unbounded ()) items of
+              CertificateExhausted => true
+            | _ => false)
+       end)
+
+val _ =
+  check
+    ("budgeted certificate search propagates an interrupt",
+     fn () =>
+       ((ignore
+           (prove_budgeted (searchBudget.unbounded ()) fm_config
+             (fn _ => raise Portable.Interrupt) (fn _ => false)
+             [] fm_conclusion);
+         false)
+        handle Portable.Interrupt => true))
+
 (* 0 <= x against 1 <= ~x: the two rows add as they stand to 1 <= 0. *)
 val _ =
   check
@@ -1251,6 +1354,70 @@ val _ =
 
 val _ =
   check
+    ("budgeted forward proof waits for kernel replay",
+     fn () =>
+       let
+         val fact = Thm.ASSUME split_x_upper
+         val search_only = searchBudget.unbounded ()
+         val certificate =
+           prove_budgeted search_only one_split_config
+             linarithDecomp.decomp linarithDecomp.is_nonnegative
+             [split_x_upper] split_conclusion
+         val search_normalization =
+           #normalization (searchBudget.usage search_only)
+         val replay_limited =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME search_normalization}
+         val cutoff =
+           linarithReplay.fwd_prove_budgeted replay_limited
+             one_split_config [fact] split_conclusion
+         val funded = searchBudget.unbounded ()
+         val proved =
+           linarithReplay.fwd_prove_budgeted funded
+             one_split_config [fact] split_conclusion
+         val first_usage = searchBudget.usage funded
+         val proved_again =
+           linarithReplay.fwd_prove_budgeted funded
+             one_split_config [fact] split_conclusion
+         val second_usage = searchBudget.usage funded
+         val exhausted =
+           linarithReplay.fwd_prove_budgeted
+             (searchBudget.unbounded ()) one_split_config []
+             split_conclusion
+       in
+         (case certificate of
+              CertificateFound _ => true
+            | _ => false) andalso
+         (case cutoff of
+              linarithReplay.ReplayLimitReached
+                {kind = searchBudget.Normalization, usage} =>
+                  #normalization usage = search_normalization
+            | _ => false) andalso
+         (case proved of
+              linarithReplay.ReplayProved theorem =>
+                Term.aconv (Thm.concl theorem) split_conclusion andalso
+                List.exists (Term.aconv split_x_upper)
+                  (Thm.hyp theorem) andalso
+                #normalization first_usage >
+                  search_normalization
+            | _ => false) andalso
+         (case proved_again of
+              linarithReplay.ReplayProved _ =>
+                #candidates second_usage =
+                  2 * #candidates first_usage andalso
+                #applications second_usage =
+                  2 * #applications first_usage andalso
+                #normalization second_usage =
+                  2 * #normalization first_usage
+            | _ => false) andalso
+         (case exhausted of
+              linarithReplay.ReplayExhausted => true
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("forward replay handles nested neq splits at the configured limit",
      fn () =>
        let
@@ -1404,6 +1571,135 @@ val _ =
          Term.aconv (Thm.concl theorem) forward_tm
        end)
 
+val _ =
+  check
+    ("budgeted LINARITH_PROVE reports proof exhaustion and work limits",
+     fn () =>
+       let
+         val funded = searchBudget.unbounded ()
+         val proved =
+           linarithLib.LINARITH_PROVE_BUDGETED funded forward_tm
+         val first_usage = searchBudget.usage funded
+         val proved_again =
+           linarithLib.LINARITH_PROVE_BUDGETED funded forward_tm
+         val second_usage = searchBudget.usage funded
+         fun bounded candidates applications normalization =
+           searchBudget.create
+             {candidates = candidates, applications = applications,
+              normalization = normalization}
+         val candidate_cut =
+           linarithLib.LINARITH_PROVE_BUDGETED
+             (bounded (SOME 0) NONE NONE) forward_tm
+         val application_cut =
+           linarithLib.LINARITH_PROVE_BUDGETED
+             (bounded NONE (SOME 0) NONE) forward_tm
+         val normalization_cut =
+           linarithLib.LINARITH_PROVE_BUDGETED
+             (bounded NONE NONE (SOME 0)) forward_tm
+         val exhausted =
+           linarithLib.LINARITH_PROVE_BUDGETED
+             (searchBudget.unbounded ())
+             (Term.mk_var ("linarith_budget_unproved", Type.bool))
+       in
+         (case proved of
+              linarithLib.LinarithProved theorem =>
+                null (Thm.hyp theorem) andalso
+                Term.aconv (Thm.concl theorem) forward_tm
+            | _ => false) andalso
+         (case proved_again of
+              linarithLib.LinarithProved _ =>
+                #candidates second_usage =
+                  2 * #candidates first_usage andalso
+                #applications second_usage =
+                  2 * #applications first_usage andalso
+                #normalization second_usage =
+                  2 * #normalization first_usage
+            | _ => false) andalso
+         (case candidate_cut of
+              linarithLib.LinarithLimitReached
+                {kind = searchBudget.Candidate, usage} =>
+                  #candidates usage = 0
+            | _ => false) andalso
+         (case application_cut of
+              linarithLib.LinarithLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 0
+            | _ => false) andalso
+         (case normalization_cut of
+              linarithLib.LinarithLimitReached
+                {kind = searchBudget.Normalization, usage} =>
+                  #normalization usage = 0
+            | _ => false) andalso
+         (case exhausted of
+              linarithLib.LinarithExhausted => true
+            | _ => false)
+       end)
+
+val nested_budget_context_slot =
+  Context.Data.new
+    {name = "linarith-selftest-nested-budget-context", empty = 0,
+     pp = Int.toString}
+
+val _ =
+  check
+    ("budgeted linarith proof retains an outer explicit context",
+     fn () =>
+       let
+         val outer =
+           Context.Data.put nested_budget_context_slot 1
+             (Context.snapshot ())
+         val supplied =
+           Context.Data.put nested_budget_context_slot 2
+             (Context.snapshot ())
+         val budget = searchBudget.unbounded ()
+       in
+         Context.with_context outer
+           (fn () =>
+             let
+               val outcome =
+                 linarithLib.LINARITH_PROVE_BUDGETED budget forward_tm
+               val after_proof =
+                 Context.Data.get nested_budget_context_slot
+                   (Context.snapshot ())
+               val replay =
+                 linarithReplay.fwd_prove_budgeted
+                   (searchBudget.unbounded ()) one_split_config
+                   [Thm.ASSUME split_x_upper] split_conclusion
+               val after_replay =
+                 Context.Data.get nested_budget_context_slot
+                   (Context.snapshot ())
+               val explicit =
+                 linarithLib.LINARITH_PROVE_BUDGETED_IN
+                   supplied (searchBudget.unbounded ()) forward_tm
+               val explicit_replay =
+                 linarithReplay.fwd_prove_budgeted_in supplied
+                   (searchBudget.unbounded ()) one_split_config
+                   [Thm.ASSUME split_x_upper] split_conclusion
+               val after_explicit =
+                 Context.Data.get nested_budget_context_slot
+                   (Context.snapshot ())
+             in
+               after_proof = 1 andalso after_replay = 1 andalso
+               after_explicit = 1 andalso
+               (case outcome of
+                    linarithLib.LinarithProved theorem =>
+                      Term.aconv (Thm.concl theorem) forward_tm
+                  | _ => false) andalso
+               (case replay of
+                    linarithReplay.ReplayProved theorem =>
+                      Term.aconv (Thm.concl theorem) split_conclusion
+                  | _ => false) andalso
+               (case explicit of
+                    linarithLib.LinarithProved theorem =>
+                      Term.aconv (Thm.concl theorem) forward_tm
+                  | _ => false) andalso
+               (case explicit_replay of
+                    linarithReplay.ReplayProved theorem =>
+                      Term.aconv (Thm.concl theorem) split_conclusion
+                  | _ => false)
+             end) ()
+       end)
+
 val true_conv_tm =
   boolSyntax.mk_imp
     (public_x_le_y,
@@ -1468,6 +1764,22 @@ val _ =
          (linarithLib.SIMPLE_LINARITH_TAC
            [public_fact_positive_theorem])
          ([], public_fact_positive))
+
+val _ =
+  check
+    ("a supplied arithmetic fact retains its theorem hypothesis",
+     fn () =>
+       let
+         val guard =
+           Term.mk_var ("linarith_fact_guard", Type.bool)
+         val supported =
+           Drule.ADD_ASSUM guard public_fact_positive_theorem
+         val tactic =
+           linarithLib.SIMPLE_LINARITH_TAC [supported]
+       in
+         valid_closes tactic ([guard], public_fact_positive) andalso
+         tactic_fails tactic ([], public_fact_positive)
+       end)
 
 fun marker_error_name marker =
   ((ignore (linarithLib.SIMPLE_LINARITH_TAC [marker]); false)
@@ -1591,6 +1903,43 @@ val _ =
          closes andalso disjunction_splits = 1
        end)
 
+val _ =
+  check
+    ("budgeted disjunction scoring shares the invocation budget",
+     fn () =>
+       let
+         val statement =
+           boolSyntax.list_mk_imp
+             (num_leq num_one public_x ::
+                unrelated_choices @ [decisive_choice],
+              num_eq public_x num_one)
+         val funded = searchBudget.unbounded ()
+         val proof =
+           linarithLib.LINARITH_PROVE_BUDGETED funded statement
+         val used = searchBudget.usage funded
+         val {disjunction_splits, ...} =
+           linarithLib.last_search_stats ()
+         val allowance = #candidates used div 2
+         val limited =
+           searchBudget.create
+             {candidates = SOME allowance, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           linarithLib.LINARITH_PROVE_BUDGETED limited statement
+       in
+         (case proof of
+              linarithLib.LinarithProved theorem =>
+                null (Thm.hyp theorem) andalso
+                Term.aconv (Thm.concl theorem) statement
+            | _ => false) andalso
+         disjunction_splits = 1 andalso allowance > 0 andalso
+         (case cutoff of
+              linarithLib.LinarithLimitReached
+                {kind = searchBudget.Candidate, usage} =>
+                  #candidates usage = allowance
+            | _ => false)
+       end)
+
 (* Conditionals are the propositional form the old six-theorem rewrite
    list could not reach; normalForms.NNF_CONV splits them on both sides
    of the turnstile. *)
@@ -1624,6 +1973,35 @@ val _ =
      fn () =>
        valid_closes (linarithLib.LINARITH_TAC []) ([], min_le_left) andalso
        valid_closes (linarithLib.LINARITH_TAC []) ([], left_le_max))
+
+val _ =
+  check
+    ("budgeted LINARITH_PROVE follows the MIN split path",
+     fn () =>
+       let
+         val funded = searchBudget.unbounded ()
+         val proved =
+           linarithLib.LINARITH_PROVE_BUDGETED funded min_le_left
+         val used = searchBudget.usage funded
+         val limited =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 1,
+              normalization = NONE}
+         val cutoff =
+           linarithLib.LINARITH_PROVE_BUDGETED limited min_le_left
+       in
+         (case proved of
+              linarithLib.LinarithProved theorem =>
+                null (Thm.hyp theorem) andalso
+                Term.aconv (Thm.concl theorem) min_le_left
+            | _ => false) andalso
+         #applications used > 1 andalso
+         (case cutoff of
+              linarithLib.LinarithLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 1
+            | _ => false)
+       end)
 
 val _ =
   check
