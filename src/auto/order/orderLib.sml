@@ -49,9 +49,10 @@ fun distinct_theorems theorems =
       else seen @ [theorem])
     [] theorems
 
-fun order_fact_views goal theorems =
+fun order_fact_views_with charge goal theorems =
   let
-    val environment = clasetFacts.create goal theorems
+    val environment =
+      clasetFacts.create_with_charge charge goal theorems
     (* Antisymmetry can close an equality whose conclusion contains no
        relation application.  Concrete edges in the context then supply
        the carrier; a schematic citation alone does not. *)
@@ -73,8 +74,9 @@ fun order_fact_views goal theorems =
               (fn pattern =>
                 List.mapPartial
                   (fn site =>
-                    Option.map #theorem
-                      (clasetFacts.match_view entry pattern site))
+                    (charge searchBudget.Candidate;
+                     Option.map #theorem
+                       (clasetFacts.match_view entry pattern site)))
                   sites)
               patterns)
       in
@@ -84,6 +86,9 @@ fun order_fact_views goal theorems =
     distinct_theorems
       (List.concat (map views (clasetFacts.facts environment)))
   end
+
+fun order_fact_views goal theorems =
+  order_fact_views_with (fn _ => ()) goal theorems
 
 (* The goal's own assumptions are the context: an order arrives as a
    premise, so a tactic that ignored them would decide nothing.  The
@@ -117,8 +122,23 @@ fun ORDER_CONV tm = EQT_INTRO (ORDER_PROVE tm)
    when the current atom has a matching relation head.  That view is
    cached under the whole atom and discarded when the context changes;
    an assumed theorem cannot escape its fixed support types. *)
-val ORDER_REDUCER =
+fun make_order_reducer budget =
   let
+    fun contexts_of theorems =
+      case budget of
+          NONE => orderData.contexts theorems
+        | SOME owned => orderData.contexts_budgeted owned theorems
+    fun prove contexts theorems tm =
+      case budget of
+          NONE => orderSolve.prove_using contexts theorems tm
+        | SOME owned =>
+            (case orderSolve.prove_using_budgeted
+                    owned contexts theorems tm of
+                 orderSolve.OrderProved theorem => theorem
+               | orderSolve.OrderExhausted =>
+                   raise ERR "ORDER_DP" "no order proof"
+               | orderSolve.OrderLimitReached {kind, usage} =>
+                   raise searchBudget.LimitReached (kind, usage))
     exception CTXT of
       {theorems : thm list,
        contexts : orderData.context list,
@@ -132,7 +152,7 @@ val ORDER_REDUCER =
         val theorems = added @ theorems
         val contexts =
           if orderData.has_order_axiom added then
-            orderData.contexts theorems
+            contexts_of theorems
           else contexts
       in
         (* A context is derived from order axioms alone, so the
@@ -190,8 +210,13 @@ val ORDER_REDUCER =
               SOME (_, result) => result
             | NONE =>
                 let
-                  val views = order_fact_views ([], tm) theorems
-                  val result = (views, orderData.contexts views)
+                  val charge =
+                    case budget of
+                        NONE => (fn _ => ())
+                      | SOME owned => searchBudget.charge owned
+                  val views =
+                    order_fact_views_with charge ([], tm) theorems
+                  val result = (views, contexts_of views)
                   val previous = !sites
                 in
                   sites :=
@@ -201,7 +226,7 @@ val ORDER_REDUCER =
                 end
       in
         if List.exists (fn c => orderData.is_literal c tm) contexts then
-          EQT_INTRO (orderSolve.prove_using contexts theorems tm)
+          EQT_INTRO (prove contexts theorems tm)
         else
           case
             matching_site
@@ -216,8 +241,7 @@ val ORDER_REDUCER =
                 in
                   if List.exists
                        (fn c => orderData.is_literal c tm) derived
-                  then EQT_INTRO
-                         (orderSolve.prove_using derived views tm)
+                  then EQT_INTRO (prove derived views tm)
                   else raise ERR "ORDER_DP"
                          "not a literal of an order in the context"
                 end
@@ -231,11 +255,23 @@ val ORDER_REDUCER =
          CTXT {theorems = [], contexts = [], sites = ref []}}
   end
 
+val ORDER_REDUCER = make_order_reducer NONE
+
+fun ORDER_REDUCER_BUDGETED budget =
+  make_order_reducer (SOME budget)
+
 val ORDER_ss =
   simpLib.named_merge_ss "ORDER"
     [simpLib.SSFRAG
        {name = SOME "ORDER_DP",
         convs = [], rewrs = [], congs = [], filter = NONE,
         ac = [], dprocs = [ORDER_REDUCER]}]
+
+fun ORDER_ss_budgeted budget =
+  simpLib.named_merge_ss "ORDER"
+    [simpLib.SSFRAG
+       {name = SOME "ORDER_DP",
+        convs = [], rewrs = [], congs = [], filter = NONE,
+        ac = [], dprocs = [ORDER_REDUCER_BUDGETED budget]}]
 
 end

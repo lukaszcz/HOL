@@ -630,14 +630,54 @@ val asm_full_simp_config : simpLib.xsimptac_config =
 
 (* Each public tactic application owns this allocation. Nested simplifier
    passes receive the same callback, including passes installed as search
-   wrappers. The explicit budgeted entry point can choose other limits. *)
+   wrappers. The million-unit default includes nested arithmetic and
+   order proofs; a lower cap clipped finite seed simplification. The
+   explicit budgeted entry point can choose other limits. *)
 fun normalization_budget () =
   searchBudget.create
     {candidates = NONE, applications = NONE,
-     normalization = SOME 100000}
+     normalization = SOME 1000000}
 
 fun charge_normalization budget () =
   searchBudget.charge budget searchBudget.Normalization
+
+(* Replace the static decision procedures only for this tactic invocation.
+   Their legacy fragments remain available to standalone simpsets, while
+   this copy shares the caller's budget and explicit proof context. *)
+fun budgeted_decisions ctxt budget ss =
+  let
+    val names = simpLib.ssfrag_names_of ss
+    val has_order = List.exists (fn name => name = "ORDER") names
+    val has_linarith =
+      List.exists (fn name => name = "LINARITH") names
+    val removed =
+      simpLib.remove_ssfrags
+        (List.filter
+          (fn name => List.exists (fn present => present = name) names)
+          ["ORDER", "LINARITH"]) ss
+      handle Conv.UNCHANGED => ss
+    val without_solver =
+      if has_linarith then
+        (simpLib.remove_solver "lin_arith" removed
+         handle Conv.UNCHANGED => removed)
+      else removed
+    val with_order =
+      if has_order then
+        simpLib.++
+          (without_solver, orderLib.ORDER_ss_budgeted budget)
+      else without_solver
+    val with_linarith =
+      if has_linarith then
+        simpLib.++
+          (with_order, linarithLib.LINARITH_ss_budgeted ctxt budget)
+      else with_order
+  in
+    if has_linarith then
+      simpLib.add_unsafe_solver
+        (linarithLib.linarith_solver_budgeted ctxt budget)
+        with_linarith
+    else with_linarith
+  end
 
 fun ambient_simp charge safe ss =
   simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
@@ -933,12 +973,18 @@ fun safe_asm_full_simp_with charge ss simp_args =
 
 fun asm_full_simp ss simp_args goal =
   let val budget = normalization_budget ()
-  in asm_full_simp_with (charge_normalization budget) ss simp_args goal end
+  in
+    fn ctxt =>
+      asm_full_simp_with (charge_normalization budget)
+        (budgeted_decisions ctxt budget ss) simp_args goal ctxt
+  end
 
 fun safe_asm_full_simp ss simp_args goal =
   let val budget = normalization_budget ()
-  in safe_asm_full_simp_with
-       (charge_normalization budget) ss simp_args goal
+  in
+    fn ctxt =>
+      safe_asm_full_simp_with (charge_normalization budget)
+        (budgeted_decisions ctxt budget ss) simp_args goal ctxt
   end
 
 (* Inside the classical cascade the split between assumptions and
@@ -2124,6 +2170,7 @@ fun auto_with {blast, depth} charge cs ss simp_args =
 fun CS_of safe_only body cs ss goal ctxt =
   let
     val budget = normalization_budget ()
+    val ss = budgeted_decisions ctxt budget ss
     val candidates = clasetLib.rules_of cs
     val eligible =
       if safe_only then List.filter safe_named_rule candidates
@@ -2377,6 +2424,7 @@ fun force_with name budget charge cs ss simp_args =
 fun CS_FORCE_TAC cs ss goal ctxt =
   let
     val budget = force_budget ()
+    val ss = budgeted_decisions ctxt budget ss
   in
     with_claset_transport budget ss
       (clasetLib.rules_of cs) cs
@@ -2459,7 +2507,7 @@ fun public_using_budgeted budget process body theorems
     val simpset =
       simpLib.set_subgoaler
         (witness_subgoaler_budgeted budget)
-        (clasimp_ss ())
+        (budgeted_decisions ctxt budget (clasimp_ss ()))
     val (goals, validation) =
       process budget (body (charge_normalization budget))
         (clasetLib.the_claset ()) simpset theorems goal ctxt

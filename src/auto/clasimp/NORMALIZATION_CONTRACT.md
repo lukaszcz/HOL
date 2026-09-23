@@ -26,6 +26,13 @@ charges head preservation, traversal and reducer attempts; the existing
 invocation normalization budget across their mutual fixpoint, search
 wrappers, initial FORCE simplification, extensional conversions and target
 transport.
+For each public invocation, clasimp replaces the order and linarith
+decision fragments in its working simpset with budgeted copies. Their
+context derivation, theorem-view matching, candidate search and proof
+reconstruction charge the same invocation budget. The standalone
+`ORDER_ss` and `LINARITH_ss` fragments retain their existing behavior;
+the budgeted fragment constructors are available to callers that own a
+budget explicitly.
 
 ## Proposed automation contract
 

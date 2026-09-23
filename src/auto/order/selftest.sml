@@ -486,3 +486,40 @@ val _ =
                        simpLib.ASM_SIMP_TAC ss []))
                    ([], goal) (Context.snapshot())))
        end)
+
+val _ =
+  check
+    ("budgeted ORDER reducer charges its nested graph search",
+     fn () =>
+       let
+         val goal =
+           ``!le a b c.
+               relation$WeakLinearOrder le ==>
+               le a b /\ le b c ==> le a c``
+         val ctxt = Context.snapshot ()
+         fun run budget =
+           Tactical.VALID
+             (Tactical.THEN
+                (Tactical.REPEAT Tactic.STRIP_TAC,
+                 simpLib.ASM_SIMP_TAC
+                   (simpLib.++
+                     (boolSimps.bool_ss,
+                      ORDER_ss_budgeted budget)) []))
+             ([], goal) ctxt
+         val funded = searchBudget.unbounded ()
+         val (remaining, validation) = run funded
+         val _ = validation []
+         val used = searchBudget.usage funded
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           ((ignore (run zero); false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Candidate, usage) =>
+                     #candidates usage = 0
+                 | _ => false)
+       in
+         null remaining andalso #candidates used > 0 andalso cutoff
+       end)

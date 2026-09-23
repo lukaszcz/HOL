@@ -356,4 +356,16 @@ fun prove_with_budget budget theorems term =
   handle searchBudget.LimitReached (kind, usage) =>
     OrderLimitReached {kind = kind, usage = usage}
 
+fun prove_using_budgeted budget contexts theorems term =
+  let val work = budget_work budget
+  in
+    case search work
+           (fn context => attempt work context theorems term)
+           contexts of
+        SOME theorem => OrderProved theorem
+      | NONE => OrderExhausted
+  end
+  handle searchBudget.LimitReached (kind, usage) =>
+    OrderLimitReached {kind = kind, usage = usage}
+
 end

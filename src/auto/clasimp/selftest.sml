@@ -84,6 +84,40 @@ val _ =
          #normalization (searchBudget.usage budget) > 0
        end)
 
+val nested_arith_budget_goal : Abbrev.goal =
+  ([``(budget_a:num) <= budget_b``,
+    ``budget_b <= budget_c``],
+   ``budget_a <= budget_c``)
+
+val _ =
+  check
+    ("CLARSIMP charges nested arithmetic to its invocation",
+     fn () =>
+       let
+         val funded = searchBudget.unbounded ()
+         val closed =
+           valid_closes
+             (clasimpLib.CLARSIMP_TAC_BUDGETED funded [])
+             nested_arith_budget_goal
+         val used = searchBudget.usage funded
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           ((ignore
+               (Tactical.VALID
+                 (clasimpLib.CLARSIMP_TAC_BUDGETED zero [])
+                 nested_arith_budget_goal);
+             false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Candidate, usage) =>
+                     #candidates usage = 0
+                 | _ => false)
+       in
+         closed andalso #candidates used > 0 andalso cutoff
+       end)
+
 val _ =
   check
     ("CLARSIMP charges literal fact insertion to its invocation",
@@ -2893,6 +2927,35 @@ val _ =
   check
     ("AUTO_TAC chains a step in an order the goal supplies",
      fn () => valid_closes (clasimpLib.AUTO_TAC []) order_chaining_goal)
+
+val _ =
+  check
+    ("CLARSIMP charges nested order to its invocation",
+     fn () =>
+       let
+         val funded = searchBudget.unbounded ()
+         val closed =
+           valid_closes
+             (clasimpLib.CLARSIMP_TAC_BUDGETED funded [])
+             order_chaining_goal
+         val used = searchBudget.usage funded
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           ((ignore
+               (Tactical.VALID
+                 (clasimpLib.CLARSIMP_TAC_BUDGETED zero [])
+                 order_chaining_goal);
+             false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Candidate, usage) =>
+                     #candidates usage = 0
+                 | _ => false)
+       in
+         closed andalso #candidates used > 0 andalso cutoff
+       end)
 
 (* The second position the same procedure is asked about: the rewrite
    in the assumptions fires on the conclusion only once its order

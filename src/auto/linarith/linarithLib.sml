@@ -1474,6 +1474,140 @@ fun CACHED_LINARITH context tm =
   handle Declined _ =>
     no_proof "CACHED_LINARITH" (unregistered_hint tm)
 
+(* An invocation's simplifier cannot use the process-wide result cache as
+   its work meter: a cache miss would run an unbudgeted proof.  This
+   procedure reconstructs against exactly the component RCACHE passes it
+   and charges the supplied budget for search and replay.  Dynamic
+   [arith] facts enter the cache's context before component selection. *)
+fun budgeted_context_prove ctxt budget context tm =
+  if not (cache_check tm) then decline ""
+  else
+    let
+      val work = budget_work budget
+      val premise_theorems =
+        atomized_assumptions (map Thm.concl context)
+      val premise_terms = map Thm.concl premise_theorems
+      val outcome =
+        SOME
+          (Tactical.VALID
+            (forward_search_with work tm)
+            (premise_terms, tm) ctxt)
+        handle error =>
+          if exhausted_search error then NONE else raise error
+      val theorem =
+        case outcome of
+            NONE => decline ""
+          | SOME (goals, validation) =>
+              if null goals then
+                (normalization work; validation [])
+              else raise ERR "budgeted_context_prove"
+                "replay left a subgoal open"
+      fun discharge premise result =
+        (normalization work; PROVE_HYP premise result)
+      val supported =
+        Lib.rev_itlist discharge premise_theorems theorem
+    in
+      Lib.rev_itlist discharge context supported
+    end
+
+(* A failed arithmetic question may be offered many times as the context
+   grows.  RCACHE partitions that context by arithmetic variables and
+   remembers which components cannot prove the question.  Its table is
+   local to this reducer or solver installation.  We charge examination
+   of the input context, and a limit or interrupt is rethrown even when
+   RCACHE's ordinary failed-conversion path catches the exception. *)
+fun memo_budgeted_with_arith ctxt budget =
+  let
+    val deferred = ref (NONE : exn option)
+    val generation = ref (linarithData.generation ())
+    val facts = ref (linarithData.arith_facts ())
+    fun same_thms left right =
+      Lib.list_eq (Lib.curry Portable.pointer_eq) left right
+    fun conversion context tm =
+      EQT_INTRO (budgeted_context_prove ctxt budget context tm)
+      handle Declined _ => decline ""
+           | error => (deferred := SOME error; raise error)
+    val (cached, table) =
+      Cache.RCACHE {capacity = 2000, per_key_cap = 50}
+        (linarith_vars, cache_check, conversion)
+    fun ask context tm =
+      let
+        val current_generation = linarithData.generation ()
+        val current_facts = linarithData.arith_facts ()
+        val _ =
+          if current_generation = !generation andalso
+             same_thms current_facts (!facts)
+          then ()
+          else (Cache.clear_cache table;
+                generation := current_generation;
+                facts := current_facts)
+        val (source_facts, assumed) =
+          arith_envelope current_facts
+        val _ = deferred := NONE
+        val _ =
+          searchBudget.charge budget searchBudget.Candidate
+        val _ =
+          List.app
+            (fn _ =>
+              searchBudget.charge budget searchBudget.Candidate)
+            (context @ assumed)
+        val equation =
+          cached (context @ assumed) tm
+          handle error =>
+            (case !deferred of
+                 SOME original =>
+                   (Cache.clear_cache table; raise original)
+               | NONE => decline "")
+      in
+        case !deferred of
+            SOME original =>
+              (Cache.clear_cache table; raise original)
+          | NONE =>
+              Lib.rev_itlist PROVE_HYP source_facts
+                (EQT_ELIM equation)
+      end
+  in
+    ask
+  end
+
+fun budgeted_linarith prove context tm =
+  case attempt (prove context) tm of
+      SOME theorem => EQT_INTRO theorem
+    | NONE =>
+        (case attempt (prove context)
+                (boolSyntax.mk_neg tm) of
+             SOME theorem => EQF_INTRO theorem
+           | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm))
+
+fun LINARITH_REDUCER_BUDGETED ctxt budget =
+  let
+    val prove = memo_budgeted_with_arith ctxt budget
+    exception CTXT of thm list
+    fun get_context e = (raise e) handle CTXT value => value
+    fun addcontext (context, newtheorems) =
+      let
+        val admitted =
+          List.filter admissible
+            (List.concat (map CONJUNCTS newtheorems))
+      in
+        CTXT (admitted @ get_context context)
+      end
+  in
+    Traverse.REDUCER
+      {name = SOME "LINARITH_DP",
+       addcontext = addcontext,
+       apply = fn args =>
+         budgeted_linarith prove (get_context (#context args)),
+       initial = CTXT []}
+  end
+
+fun LINARITH_ss_budgeted ctxt budget =
+  simpLib.named_merge_ss "LINARITH"
+    [simpLib.SSFRAG
+       {name = SOME "LINARITH_DP",
+        convs = [], rewrs = [], congs = [], filter = NONE,
+        ac = [], dprocs = [LINARITH_REDUCER_BUDGETED ctxt budget]}]
+
 val LINARITH_REDUCER =
   let
     exception CTXT of thm list
@@ -1594,6 +1728,19 @@ val linarith_solver : Traverse.ssolver =
           (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))
       else raise ERR "lin_arith" "no arithmetic in the context")
      handle Declined _ => raise ERR "lin_arith" search_failed}
+
+fun linarith_solver_budgeted ctxt budget : Traverse.ssolver =
+  let val prove = memo_budgeted_with_arith ctxt budget
+  in {name = "lin_arith",
+   solve = fn {context_thms, ...} => fn tm =>
+     (if cache_check tm then
+        prove context_thms tm
+      else if refutable_context context_thms then
+        CONTR tm
+          (prove context_thms boolSyntax.F)
+      else raise ERR "lin_arith" "no arithmetic in the context")
+     handle Declined _ => raise ERR "lin_arith" search_failed}
+  end
 
 (* num is registered here, not at the foot of linarithNum the way the
    int, real and rat instances register themselves.  Those live in

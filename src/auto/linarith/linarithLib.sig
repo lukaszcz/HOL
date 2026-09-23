@@ -49,5 +49,14 @@ sig
   val LINARITH_REDUCER : Traverse.reducer
   val LINARITH_ss : simpLib.ssfrag
   val linarith_solver : Traverse.ssolver
+  (* These closures charge the owning invocation for arithmetic search and
+     replay inside simplification.  The legacy values above keep their
+     unbudgeted compatibility behavior for standalone simpsets. *)
+  val LINARITH_REDUCER_BUDGETED :
+    Context.t -> searchBudget.budget -> Traverse.reducer
+  val LINARITH_ss_budgeted :
+    Context.t -> searchBudget.budget -> simpLib.ssfrag
+  val linarith_solver_budgeted :
+    Context.t -> searchBudget.budget -> Traverse.ssolver
   val clear_linarith_caches : unit -> unit
 end

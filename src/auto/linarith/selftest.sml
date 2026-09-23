@@ -2556,6 +2556,47 @@ val _ =
 
 val _ =
   check
+    ("budgeted LINARITH reducer charges its nested proof",
+     fn () =>
+       let
+         val ctxt = Context.snapshot ()
+         val funded = searchBudget.unbounded ()
+         val ss =
+           simpLib.++
+             (simpLib.++
+                (simpLib.empty_ss, simpLib.rewrites [min_le_rule]),
+              linarithLib.LINARITH_ss_budgeted ctxt funded)
+         val closed =
+           valid_closes
+             (simpLib.FULL_SIMP_TAC ss [])
+             ([public_x_le_y, public_y_le_z], min_side_goal)
+         val used = searchBudget.usage funded
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val limited_ss =
+           simpLib.++
+             (simpLib.++
+                (simpLib.empty_ss, simpLib.rewrites [min_le_rule]),
+              linarithLib.LINARITH_ss_budgeted ctxt zero)
+         val cutoff =
+           ((ignore
+               (Tactical.VALID
+                 (simpLib.FULL_SIMP_TAC limited_ss [])
+                 ([public_x_le_y, public_y_le_z], min_side_goal)
+                 ctxt);
+             false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Candidate, usage) =>
+                     #candidates usage = 0
+                 | _ => false)
+       in
+         closed andalso #candidates used > 0 andalso cutoff
+       end)
+
+val _ =
+  check
     ("lin_arith solver uses its supplied arithmetic context",
      fn () =>
        let

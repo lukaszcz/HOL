@@ -30,4 +30,9 @@ sig
      node_limit, while the old entry points keep that compatibility cap. *)
   val prove_with_budget :
     searchBudget.budget -> thm list -> term -> budget_outcome
+  (* Reuse a reducer's already derived order contexts while charging its
+     invocation for the search and reconstruction work. *)
+  val prove_using_budgeted :
+    searchBudget.budget -> orderData.context list -> thm list -> term ->
+    budget_outcome
 end
