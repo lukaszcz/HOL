@@ -854,6 +854,18 @@ fun clasimp_bu_normalise term =
     boolSyntax.rhs (concl (Conv.QCONV (simpLib.SIMP_CONV ss []) term))
   end
 
+fun clasimp_bu_child_normalise term =
+  let
+    val ss =
+      simpLib.++ (BasicProvers.srw_ss (),
+                  simpLib.rewrites [clasimp_bu_head])
+  in
+    boolSyntax.rhs
+      (concl
+        (Conv.QCONV
+          (simpLib.SIMP_CONV_CHILD_FIRST (fn () => ()) ss []) term))
+  end
+
 (* Declared and retracted around the probe, so neither store keeps the
    rule once the check that needs it has run. *)
 fun with_declaration (attribute, retract) local_name body =
@@ -923,6 +935,23 @@ val _ =
            (with_plain_iff "clasimp_bottom_up_as_iff"
               (fn () => clasimp_bu_normalise term))
            ``clasimp_bu_view (clasimp_bu_step m)``
+       end)
+
+val _ =
+  check
+    ("child-first traversal handles the same subject rewrite",
+     fn () =>
+       let
+         val term = ``~clasimp_bu_wrap (clasimp_bu_step m)``
+       in
+         aconv
+           (with_bottom_up "clasimp_child_bottom_up"
+              (fn () => clasimp_bu_child_normalise term))
+           boolSyntax.T andalso
+         aconv
+           (with_plain_iff "clasimp_child_plain_iff"
+              (fn () => clasimp_bu_child_normalise term))
+           boolSyntax.T
        end)
 
 val _ =

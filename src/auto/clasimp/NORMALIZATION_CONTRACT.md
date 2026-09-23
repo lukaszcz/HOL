@@ -63,10 +63,15 @@ callback. The default traversal stays as it is. `context_first` and
 overlap-specific deferral were removed after local overlap and
 recursive-equation tests. The seed and benchmark gates now pass, including
 the `GENLIST` interval case that initially exposed the abstraction-head
-problem. The bottom-up reducer remains until paired tests show the policy
-subsumes its cases. The existing context fixpoint and conditional subgoaler
-remain reusable. Certified rule-view transport now covers persistent claset
-rules in AUTO and the direct contextual AUTO, FORCE, FASTFORCE, SLOWSIMP,
+problem. A paired subject-rewrite test shows that ordinary `[iff]` and
+`[iff_bottom_up]` rules reach the same result under child-first traversal.
+The persistent bottom-up reducer remains for ordinary HOL4 simplification,
+whose default still visits the parent rewrite first in this case. The
+exported invocation reducer remains a compatibility operation; automation
+does not depend on it for traversal. The existing context fixpoint and
+conditional subgoaler remain reusable. Certified rule-view transport now
+covers persistent claset rules in AUTO and the direct contextual AUTO,
+FORCE, FASTFORCE, SLOWSIMP,
 BESTSIMP and CLARSIMP entry points. The ordinary tactic runs first, and a
 certified derived view is tried when it leaves work open. Candidates share
 a nonlogical head with the goal, a residual goal from the first attempt,

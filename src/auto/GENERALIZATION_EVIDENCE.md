@@ -10,6 +10,7 @@ checks; it is not a solved-goal score.
 | Redundant forward candidates | `aesop/selftest.sml` puts a useful consequence after more than 200 redundant candidates, then compares small resumed scans with one funded run. |
 | New applications and contexts | `classical/selftest.sml` checks membership/application crossings, interleaved explicit contexts, and interrupted replay. |
 | Normalization bridges | `clasimp/selftest.sml` uses independently defined predicates for a tagged rule whose premise changes normal form, and reports a typed limit for cyclic rewrites. |
+| Child-first migration | `clasimp/selftest.sml` runs the same subject rewrite with plain `[iff]` and `[iff_bottom_up]` declarations under the opt-in policy; both close after the child rewrite. The ordinary simplifier test still distinguishes their priorities. |
 | Head preservation and seeds | `seeds/selftest.sml` uses eta-expanded interval terms and an independently defined `INJ` client predicate; a separate client datatype and relation exercise temporary declarations. |
 | Bounded FORCE turns | `clasimp/selftest.sml` compares the admitted first-best expansions under one-unit and large slices on the same partial-map proof. `classical/selftest.sml` resumes depth search and pending kernel replay under one budget. |
 | Resumed tableau turns | `blast/selftest.sml` compares small application slices with one funded fixed-depth run, interleaves another search while a live owned trail is suspended, rejects the first proof to force backtracking, and validates a resumed theorem in an explicit context. |
@@ -34,8 +35,8 @@ The following temporary source ablations were run, then removed:
 | Certified AC fallback reflexivity | `a new arithmetic carrier uses its registered theorem kit` failed with `EQT_ELIM` when the shared fallback left equal canonical forms as an unevaluated equality. |
 
 The restored rules, classical, clasimp, linarith instances and seeds local
-selftests pass. The ordered `upto-auto` gate passed after the independent
-carrier change, including benchmarks and theory tests. The `bin/build -F -t`
+selftests pass. The ordered `upto-auto` gate passed after the child-first
+paired test, including benchmarks and theory tests. The `bin/build -F -t`
 result predates these later auto-only changes.
 
 Tableau now retains its mutable search frontier at bounded turns. A cutoff
