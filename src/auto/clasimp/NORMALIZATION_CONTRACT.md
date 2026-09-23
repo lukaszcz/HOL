@@ -67,4 +67,5 @@ problem. The bottom-up reducer remains until paired tests show the policy
 subsumes its cases. The existing context fixpoint and conditional subgoaler
 remain reusable. Approved D5 also calls for certified rule-view transport
 when the goal uses a different normal form; that broader transport is still
-to be implemented.
+to be implemented. A synthetic pair of cyclic rules exercises the typed
+normalization-limit outcome through `CLARSIMP_TAC_BUDGETED`.

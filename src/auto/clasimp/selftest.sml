@@ -19,6 +19,23 @@ open linarithCorpus
    has nowhere to be declared until one is. *)
 val _ = Theory.new_theory "clasimpHookSelftest"
 
+val budget_cycle_left_def =
+  new_definition
+    ("budget_cycle_left_def", ``budget_cycle_left = T``)
+val budget_cycle_right_def =
+  new_definition
+    ("budget_cycle_right_def", ``budget_cycle_right = T``)
+val budget_cycle_lr =
+  Tactical.prove
+    (``budget_cycle_left <=> budget_cycle_right``,
+     Rewrite.REWRITE_TAC
+       [budget_cycle_left_def, budget_cycle_right_def])
+val budget_cycle_rl =
+  Tactical.prove
+    (``budget_cycle_right <=> budget_cycle_left``,
+     Rewrite.REWRITE_TAC
+       [budget_cycle_left_def, budget_cycle_right_def])
+
 (* clasimpLib is loaded before this selftest unit, so this datatype exercises
    the live TypeBase hook rather than the registration catch-up sweep. *)
 val _ = Datatype.Datatype
@@ -65,6 +82,28 @@ val _ =
              ([], ``T ∧ T``)
        in
          #normalization (searchBudget.usage budget) > 0
+       end)
+
+val _ =
+  check
+    ("cyclic simp rules report a typed normalization limit",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 100}
+       in
+         ((ignore
+             (Tactical.VALID
+                (clasimpLib.CLARSIMP_TAC_BUDGETED budget
+                   [budget_cycle_lr, budget_cycle_rl])
+                ([], ``budget_cycle_left``));
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Normalization, used) =>
+                   #normalization used = 100
+               | _ => false)
        end)
 
 val _ =
