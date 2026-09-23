@@ -2665,6 +2665,102 @@ val _ =
          #applications small_used = #applications large_used
        end)
 
+fun scripted_force_engine name calls outcomes =
+  let
+    val pending = ref outcomes
+  in
+    fn () =>
+      (calls := !calls @ [name];
+       case !pending of
+           [] => forceScheduler.Exhausted
+         | outcome :: rest =>
+             (pending := rest; outcome))
+  end
+
+val _ =
+  check
+    ("FORCE scheduler gives yielding engines one turn per round",
+     fn () =>
+       let
+         val calls = ref []
+         val best =
+           scripted_force_engine "best" calls
+             [forceScheduler.Yielded, forceScheduler.Yielded]
+         val tableau =
+           scripted_force_engine "tableau" calls
+             [forceScheduler.Yielded, forceScheduler.Proved 7]
+         val depth =
+           scripted_force_engine "depth" calls
+             [forceScheduler.Yielded]
+       in
+         forceScheduler.run [best, tableau, depth] = SOME 7 andalso
+         !calls = ["best", "tableau", "depth", "best", "tableau"]
+       end)
+
+val _ =
+  check
+    ("each FORCE engine can be the sole scripted finisher",
+     fn () =>
+       let
+         val names = ["best", "tableau", "depth"]
+         fun winner name =
+           let
+             val calls = ref []
+             fun engine candidate =
+               scripted_force_engine candidate calls
+                 [forceScheduler.Yielded,
+                  if candidate = name then forceScheduler.Proved candidate
+                  else forceScheduler.Exhausted]
+           in
+             forceScheduler.run (map engine names) = SOME name andalso
+             List.take (!calls, 3) = names
+           end
+       in
+         List.all winner names
+       end)
+
+val _ =
+  check
+    ("FORCE scheduler observes exhaustion of every engine",
+     fn () =>
+       let
+         val calls = ref []
+         fun exhausted name =
+           scripted_force_engine name calls [forceScheduler.Exhausted]
+       in
+         forceScheduler.run
+           [exhausted "best", exhausted "tableau", exhausted "depth"] =
+           NONE andalso
+         !calls = ["best", "tableau", "depth"]
+       end)
+
+val _ =
+  check
+    ("FORCE scheduler propagates a shared limit after fair turns",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 3,
+              normalization = NONE}
+         val calls = ref []
+         fun yielding name () =
+           (calls := !calls @ [name];
+            searchBudget.charge budget searchBudget.Application;
+            forceScheduler.Yielded)
+         val limited =
+           ((ignore (forceScheduler.run
+              [yielding "best", yielding "tableau", yielding "depth"]);
+             false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Application, usage) =>
+                     #applications usage = 3
+                 | _ => false)
+       in
+         limited andalso
+         !calls = ["best", "tableau", "depth", "best"]
+       end)
+
 val _ =
   check
     ("FORCE reports a shared candidate limit before search",

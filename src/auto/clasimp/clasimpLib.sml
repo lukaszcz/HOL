@@ -2187,9 +2187,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
     val best_session =
       classicalLib.CS_FIRST_BEST_SESSION best_budget
         best_cs goal ctxt
-    val best_active = ref true
     val best_slice = ref best
-    val tableau_active = ref (blast_depth > 0)
     val tableau_slice = ref tableau
     val tableau_current =
       ref
@@ -2210,12 +2208,10 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                    (kind, searchBudget.usage budget)
 
     fun best_turn () =
-      if not (!best_active) then NONE
-      else
-        case classicalLib.RESUME_FIRST_BEST_SESSION best_session of
-            classicalLib.BudgetProved {result, ...} => SOME result
-          | classicalLib.BudgetExhausted =>
-              (best_active := false; NONE)
+      case classicalLib.RESUME_FIRST_BEST_SESSION best_session of
+            classicalLib.BudgetProved {result, ...} =>
+              forceScheduler.Proved result
+          | classicalLib.BudgetExhausted => forceScheduler.Exhausted
           | classicalLib.BudgetYielded {kind, ...} =>
               (limit kind;
                trace 1
@@ -2233,13 +2229,13 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                searchBudget.extend best_budget searchBudget.Normalization
                  (#normalization (!best_slice));
                best_slice := grow_slice (!best_slice);
-               NONE)
+               forceScheduler.Yielded)
           | classicalLib.BudgetLimitReached {kind, ...} =>
               raise searchBudget.LimitReached
                 (kind, searchBudget.usage budget)
 
     fun tableau_turn () =
-      if not (!tableau_active) then NONE
+      if blast_depth = 0 then forceScheduler.Exhausted
       else
         let
           val (turn, resume) =
@@ -2262,11 +2258,10 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
         in
           case resume () of
               blastSearch.BudgetFinished {result = SOME result, ...} =>
-                SOME result
+                forceScheduler.Proved result
             | blastSearch.BudgetFinished {result = NONE, ...} =>
-                (tableau_active := false;
-                 tableau_current := NONE;
-                 NONE)
+                (tableau_current := NONE;
+                 forceScheduler.Exhausted)
             | blastSearch.BudgetYielded {kind, resume, ...} =>
                 (limit kind;
                  trace 1
@@ -2282,7 +2277,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                    (#normalization (!tableau_slice));
                  tableau_slice := grow_slice (!tableau_slice);
                  tableau_current := SOME (turn, resume);
-                 NONE)
+                 forceScheduler.Yielded)
             | blastSearch.BudgetLimitReached {kind, ...} =>
                 raise searchBudget.LimitReached
                   (kind, searchBudget.usage budget)
@@ -2290,7 +2285,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
 
     fun depth_turn () =
       case !depth_stages of
-          [] => NONE
+          [] => forceScheduler.Exhausted
         | bound :: rest =>
             let
               val (turn, session) =
@@ -2315,12 +2310,13 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
             in
               case classicalLib.RESUME_DEPTH_SESSION session of
                   classicalLib.DepthProved {result, ...} =>
-                    SOME result
+                    forceScheduler.Proved result
                 | classicalLib.DepthExhausted =>
                     (depth_stages := rest;
                      depth_current := NONE;
                      depth_slice := depth;
-                     NONE)
+                     if null rest then forceScheduler.Exhausted
+                     else forceScheduler.Yielded)
                 | classicalLib.DepthYielded {kind, ...} =>
                     (limit kind;
                      trace 1
@@ -2335,25 +2331,14 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                      searchBudget.extend turn searchBudget.Normalization
                        (#normalization (!depth_slice));
                      depth_slice := grow_slice (!depth_slice);
-                     NONE)
+                     forceScheduler.Yielded)
             end
-
-    fun rounds () =
-      case best_turn () of
-          SOME result => result
-        | NONE =>
-            (case tableau_turn () of
-                 SOME result => result
-               | NONE =>
-                   (case depth_turn () of
-                        SOME result => result
-                      | NONE =>
-                          if !best_active orelse !tableau_active orelse
-                             not (null (!depth_stages)) then rounds ()
-                          else raise ERR "force_search"
-                            "all FORCE search engines exhausted"))
   in
-    rounds ()
+    case forceScheduler.run
+           [best_turn, tableau_turn, depth_turn] of
+        SOME result => result
+      | NONE => raise ERR "force_search"
+                  "all FORCE search engines exhausted"
   end
 
 fun force_with name budget charge cs ss simp_args =

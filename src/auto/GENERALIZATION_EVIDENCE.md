@@ -13,6 +13,7 @@ checks; it is not a solved-goal score.
 | Child-first migration | `clasimp/selftest.sml` runs the same subject rewrite with plain `[iff]` and `[iff_bottom_up]` declarations under the opt-in policy; both close after the child rewrite. The ordinary simplifier test still distinguishes their priorities. |
 | Head preservation and seeds | `seeds/selftest.sml` uses eta-expanded interval terms and an independently defined `INJ` client predicate; a separate client datatype and relation exercise temporary declarations. |
 | Bounded FORCE turns | `clasimp/selftest.sml` compares the admitted first-best expansions under one-unit and large slices on the same partial-map proof. `classical/selftest.sml` resumes depth search and pending kernel replay under one budget. |
+| FORCE scheduling | `clasimp/selftest.sml` drives the production round-robin loop with scripted yielding, proving and exhausting engines; each engine is the sole finisher in one case, and a shared three-application limit reaches all three before propagation. |
 | Resumed tableau turns | `blast/selftest.sml` compares small application slices with one funded fixed-depth run, interleaves another search while a live owned trail is suspended, rejects the first proof to force backtracking, and validates a resumed theorem in an explicit context. |
 | Renamed arithmetic declarations | `linarith/instances/selftest.sml` registers fresh names for integer addition and order, derives their laws from the existing theorem kit, and closes an additive inequality the ordinary instance declines. |
 | Independent arithmetic carrier | `linarith/instances/selftest.sml` defines a fresh `client_integer` datatype, proves its addition and order kit from integer laws, and closes an additive inequality only after registering that instance. Its AC fallback also checks certified cancellation replay. |
@@ -28,6 +29,7 @@ The following temporary source ablations were run, then removed:
 | Certified transport of unsafe tagged rules | `certified tagged rule view crosses an invocation normal form` failed in clasimp. |
 | Currying a normalized conjunctive premise | `an INJ client rule survives the seed's definition normal form` failed in seeds. |
 | Retaining FORCE's first-best session after a turn | `FORCE preserves first-best expansions across small turns` failed in clasimp. |
+| Advancing after a yielded FORCE turn | `FORCE scheduler gives yielding engines one turn per round` failed when a yield immediately retried the same engine. |
 | Transporting safe tagged rules | `safe tagged introduction retains its role after transport` failed in clasimp when safe transport was disabled. |
 | Retaining the tableau continuation | `resumed tableau retains its fixed-depth work and proof` failed when yielded turns restarted the fixed-depth run. |
 | Selecting persistent claset rules for transport | `persistent destruction rule crosses a supplied normal form` failed through public `AUTO_TAC` when only invocation markers were selected; the invocation tagged-rule control still passed. |
@@ -35,8 +37,9 @@ The following temporary source ablations were run, then removed:
 | Certified AC fallback reflexivity | `a new arithmetic carrier uses its registered theorem kit` failed with `EQT_ELIM` when the shared fallback left equal canonical forms as an unevaluated equality. |
 
 The restored rules, classical, clasimp, linarith instances and seeds local
-selftests pass. The ordered `upto-auto` gate passed after the child-first
-paired test, including benchmarks and theory tests. The `bin/build -F -t`
+selftests pass. The ordered `upto-auto` gate passed after the FORCE
+scheduler extraction and sole-finisher tests; the preceding gate ran
+benchmarks on the same production scheduler. The `bin/build -F -t`
 result predates these later auto-only changes.
 
 Tableau now retains its mutable search frontier at bounded turns. A cutoff
