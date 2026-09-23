@@ -5,7 +5,9 @@ sig
   (* Decides a goal about a relation the goal itself says is an order.
      The assumptions supply both the axioms -- [transitive],
      [antisymmetric], [reflexive], [total], or any of the named orders
-     that expand to them -- and the facts to chain. *)
+     that expand to them -- and the facts to chain.  Supplied theorem
+     arguments are matched at relation sites in this invocation, with
+     their support hypotheses and fixed parameters preserved. *)
   val ORDER_TAC : thm list -> tactic
 
   val ORDER_PROVE : term -> thm

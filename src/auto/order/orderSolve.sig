@@ -18,4 +18,16 @@ sig
      repeatedly consulted decision procedure holds on to. *)
   val prove_using : orderData.context list -> thm list -> term -> thm
   val prove_with : thm list -> term -> thm
+
+  datatype budget_outcome =
+      OrderProved of thm
+    | OrderExhausted
+    | OrderLimitReached of
+        {kind : searchBudget.kind, usage : searchBudget.usage}
+
+  (* A per-invocation budget bounds graph/fact scans, reachability rounds,
+     derived order steps and reduction admissions.  It bypasses the legacy
+     node_limit, while the old entry points keep that compatibility cap. *)
+  val prove_with_budget :
+    searchBudget.budget -> thm list -> term -> budget_outcome
 end

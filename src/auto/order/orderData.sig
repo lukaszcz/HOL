@@ -44,6 +44,11 @@ sig
      for it, so a search that kept it would only cost time. *)
   val contexts : thm list -> context list
 
+  (* The budgeted reading charges each source theorem and conjunct
+     normalization, candidate scan and derived rule application. *)
+  val contexts_budgeted :
+    searchBudget.budget -> thm list -> context list
+
   (* Whether the theorems name an order predicate at all.  A decision
      procedure consulted on every atom of every goal has to answer this
      before it does anything, and answering it costs one walk over the
@@ -61,4 +66,8 @@ sig
 
   val facts_of : context -> thm -> fact list
   val facts_of_all : context -> thm list -> fact list
+  val facts_of_budgeted :
+    searchBudget.budget -> context -> thm -> fact list
+  val facts_of_all_budgeted :
+    searchBudget.budget -> context -> thm list -> fact list
 end

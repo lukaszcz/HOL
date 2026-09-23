@@ -22,6 +22,27 @@ datatype literal =
 
 type fact = {literal : literal, theorem : thm}
 
+type meter =
+  {candidate : unit -> unit,
+   application : unit -> unit,
+   normalization : unit -> unit}
+
+val free_meter : meter =
+  {candidate = fn () => (), application = fn () => (),
+   normalization = fn () => ()}
+
+fun budget_meter budget : meter =
+  {candidate = fn () =>
+     searchBudget.charge budget searchBudget.Candidate,
+   application = fn () =>
+     searchBudget.charge budget searchBudget.Application,
+   normalization = fn () =>
+     searchBudget.charge budget searchBudget.Normalization}
+
+fun candidate (meter : meter) = #candidate meter ()
+fun application (meter : meter) = #application meter ()
+fun normalization (meter : meter) = #normalization meter ()
+
 (* ------------------------------------------------------------------ *)
 (* Reading an atom                                                     *)
 (* ------------------------------------------------------------------ *)
@@ -67,10 +88,13 @@ val axiom_names =
   ["reflexive", "irreflexive", "transitive", "antisymmetric",
    "total", "trichotomous"]
 
-fun conjuncts theorem =
-  case Lib.total dest_conj (concl theorem) of
-      SOME _ => conjuncts (CONJUNCT1 theorem) @ conjuncts (CONJUNCT2 theorem)
-    | NONE => [theorem]
+fun conjuncts_with meter theorem =
+  (normalization meter;
+   case Lib.total dest_conj (concl theorem) of
+       SOME _ =>
+         conjuncts_with meter (CONJUNCT1 theorem) @
+         conjuncts_with meter (CONJUNCT2 theorem)
+     | NONE => [theorem])
 
 (* One atomic axiom: the predicate's name and the relation it is about. *)
 fun dest_axiom theorem =
@@ -83,23 +107,28 @@ fun dest_axiom theorem =
                else NONE
            | _ => NONE)
 
-fun axioms_of theorems =
+fun axioms_of_with meter theorems =
   let
     val expand = PURE_REWRITE_RULE order_definitions
-    fun atoms theorem = List.mapPartial dest_axiom (conjuncts (expand theorem))
+    fun atoms theorem =
+      (normalization meter;
+       List.mapPartial
+         (fn atom => (candidate meter; dest_axiom atom))
+         (conjuncts_with meter (expand theorem)))
   in
     List.concat (List.map atoms theorems)
   end
 
 (* Group by relation, keeping the order the goal presents them in so a
    run is reproducible. *)
-fun group atoms =
+fun group_with meter atoms =
   let
     fun add ((name, relation, theorem), groups) =
       let
         fun place [] = [(relation, [(name, theorem)])]
           | place ((r, entries) :: rest) =
-              if aconv r relation then (r, entries @ [(name, theorem)]) :: rest
+              if (candidate meter; aconv r relation) then
+                (r, entries @ [(name, theorem)]) :: rest
               else (r, entries) :: place rest
       in
         place groups
@@ -108,27 +137,30 @@ fun group atoms =
     List.foldl add [] atoms
   end
 
-fun lookup entries name =
-  Option.map snd (List.find (fn (n, _) => n = name) entries)
+fun lookup_with meter entries name =
+  Option.map snd
+    (List.find (fn (n, _) => (candidate meter; n = name)) entries)
 
 (* The two derived axioms.  Totality is not usually stated: HOL4's linear
    orders carry [trichotomous], which with reflexivity is the same thing. *)
-fun derive_total entries =
-  case lookup entries "total" of
+fun derive_total_with meter entries =
+  case lookup_with meter entries "total" of
       SOME theorem => SOME theorem
     | NONE =>
-        (case (lookup entries "reflexive", lookup entries "trichotomous") of
+        (case (lookup_with meter entries "reflexive",
+               lookup_with meter entries "trichotomous") of
              (SOME r, SOME t) =>
-               SOME (MATCH_MP (MATCH_MP order_total_of_trichotomous r) t)
+               (application meter;
+                SOME (MATCH_MP (MATCH_MP order_total_of_trichotomous r) t))
            | _ => NONE)
 
-fun weak_context relation entries reduction =
+fun weak_context_with meter relation entries reduction =
   {relation = relation,
    axioms =
-     {reflexive = lookup entries "reflexive",
-      transitive = lookup entries "transitive",
-      antisymmetric = lookup entries "antisymmetric",
-      total = derive_total entries},
+     {reflexive = lookup_with meter entries "reflexive",
+      transitive = lookup_with meter entries "transitive",
+      antisymmetric = lookup_with meter entries "antisymmetric",
+      total = derive_total_with meter entries},
    reduction = reduction}
 
 (* A strict primitive is turned into its reflexive closure on the way in.
@@ -139,38 +171,56 @@ fun weak_context relation entries reduction =
 fun strict_reduction equation =
   Conv.QCONV (ONCE_DEPTH_CONV (REWR_CONV equation))
 
-fun strict_context relation entries irreflexive transitive =
+fun strict_context_with meter relation entries irreflexive transitive =
   let
+    val _ = application meter
     val strong =
       MATCH_MP (MATCH_MP order_strong_of_parts irreflexive) transitive
+    val _ = application meter
     val weak = MATCH_MP order_weak_of_strong strong
     val closure = rand (concl weak)
+    val _ = application meter
     val equation = MATCH_MP order_strict_of_strong strong
+    val _ = normalization meter
     val closure_atoms =
-      List.mapPartial dest_axiom
-        (conjuncts (PURE_REWRITE_RULE [WeakOrder] weak))
+      List.mapPartial
+        (fn atom => (candidate meter; dest_axiom atom))
+        (conjuncts_with meter (PURE_REWRITE_RULE [WeakOrder] weak))
     val closure_entries = List.map (fn (n, _, th) => (n, th)) closure_atoms
     val trichotomous_entries =
-      case lookup entries "trichotomous" of
+      case lookup_with meter entries "trichotomous" of
           NONE => []
         | SOME theorem =>
-            [("trichotomous", MATCH_MP order_trichotomous_of_RC theorem)]
+            (application meter;
+             [("trichotomous", MATCH_MP order_trichotomous_of_RC theorem)])
   in
-    weak_context closure (closure_entries @ trichotomous_entries)
+    weak_context_with meter closure
+      (closure_entries @ trichotomous_entries)
       (strict_reduction equation)
   end
 
-fun context_of (relation, entries) =
-  case lookup entries "transitive" of
+fun context_of_with meter (relation, entries) =
+  case lookup_with meter entries "transitive" of
       NONE => NONE
     | SOME transitive =>
-        (case (lookup entries "irreflexive", lookup entries "reflexive") of
+        (case (lookup_with meter entries "irreflexive",
+               lookup_with meter entries "reflexive") of
              (SOME irreflexive, NONE) =>
-               SOME (strict_context relation entries irreflexive transitive)
-           | _ => SOME (weak_context relation entries Conv.ALL_CONV))
+               SOME
+                 (strict_context_with meter relation entries
+                   irreflexive transitive)
+           | _ =>
+               SOME (weak_context_with meter relation entries Conv.ALL_CONV))
+
+fun contexts_with meter theorems =
+  List.mapPartial (context_of_with meter)
+    (group_with meter (axioms_of_with meter theorems))
 
 fun contexts theorems =
-  List.mapPartial context_of (group (axioms_of theorems))
+  contexts_with free_meter theorems
+
+fun contexts_budgeted budget theorems =
+  contexts_with (budget_meter budget) theorems
 
 val order_names =
   axiom_names @
@@ -194,12 +244,13 @@ fun has_order_axiom theorems =
 (* Reading a fact                                                      *)
 (* ------------------------------------------------------------------ *)
 
-fun negated_rule rule {reflexive, total, ...} =
+fun negated_rule_with meter rule {reflexive, total, ...} =
   case (reflexive, total) of
-      (SOME r, SOME t) => SOME (MATCH_MP (MATCH_MP rule r) t)
+      (SOME r, SOME t) =>
+        (application meter; SOME (MATCH_MP (MATCH_MP rule r) t))
     | _ => NONE
 
-fun classify (context : context) theorem =
+fun classify_with meter (context : context) theorem =
   let
     val relation = #relation context
     val (domain, _) = Type.dom_rng (type_of relation)
@@ -225,17 +276,20 @@ fun classify (context : context) theorem =
       | SOME body =>
     case dest_weak relation body of
         SOME (x, y) =>
-          (case negated_rule order_not_weak (#axioms context) of
+          (case negated_rule_with meter order_not_weak (#axioms context) of
                SOME rule =>
-                 SOME {literal = Strict (y, x),
-                       theorem = MATCH_MP rule theorem}
+                 (application meter;
+                  SOME {literal = Strict (y, x),
+                        theorem = MATCH_MP rule theorem})
              | NONE => NONE)
       | NONE =>
     case dest_strict relation body of
         SOME (x, y) =>
-          (case negated_rule order_not_strict (#axioms context) of
+          (case negated_rule_with meter order_not_strict (#axioms context) of
                SOME rule =>
-                 SOME {literal = Weak (y, x), theorem = MATCH_MP rule theorem}
+                 (application meter;
+                  SOME {literal = Weak (y, x),
+                        theorem = MATCH_MP rule theorem})
              | NONE => NONE)
       | NONE =>
     case equation body of
@@ -286,10 +340,26 @@ fun reduce (context : context) tm = Conv.QCONV (#reduction context) tm
 
 fun normalise context theorem = CONV_RULE (reduce context) theorem
 
+fun facts_of_with meter context theorem =
+  (normalization meter;
+   List.mapPartial
+     (fn atom => (candidate meter; classify_with meter context atom))
+     (conjuncts_with meter (normalise context theorem)))
+
 fun facts_of context theorem =
-  List.mapPartial (classify context) (conjuncts (normalise context theorem))
+  facts_of_with free_meter context theorem
 
 fun facts_of_all context theorems =
   List.concat (List.map (facts_of context) theorems)
+
+fun facts_of_budgeted budget context theorem =
+  facts_of_with (budget_meter budget) context theorem
+
+fun facts_of_all_budgeted budget context theorems =
+  let
+    val meter = budget_meter budget
+  in
+    List.concat (List.map (facts_of_with meter context) theorems)
+  end
 
 end
