@@ -102,55 +102,79 @@ val witness_subgoaler : Traverse.subgoaler =
     val pull_existentials =
       Conv.QCONV (Conv.TOP_DEPTH_CONV (Conv.FIRST_CONV pull_laws))
     val has_existential = Lib.can (HolKernel.find_term boolSyntax.is_exists)
-    fun witness_tac (goal as (assumptions, w)) ctxt =
-      let
-        val pulled_thm =
-          if has_existential w then pull_existentials w else Thm.REFL w
-        val pulled = boolSyntax.rhs (Thm.concl pulled_thm)
-        val (vars, body) = boolSyntax.strip_exists pulled
-        val fixed =
-          HOLset.difference
-            (Term.FVL [pulled] Term.empty_tmset,
-             HOLset.fromList Term.compare vars)
-        val fixed_types = Term.type_vars_in_term pulled
-        fun attempt conditions =
-          witnesses assumptions fixed fixed_types conditions
-        (* Whole first, so that a conjunction standing as one assumption
-           is met by one match; the decomposed reading is for the
-           premises the goal's own strip has taken apart. *)
-        fun matched () =
-          case attempt [body] of
-              NONE => attempt (boolSyntax.strip_conj body)
-            | found => found
-      in
-        if null vars then Tactical.NO_TAC goal ctxt
-        else
-          case matched () of
-              NONE => Tactical.NO_TAC goal ctxt
-            | SOME instance =>
-                let
-                  val accept = Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC
-                in
-                  Tactical.THEN
-                    (Tactic.CONV_TAC (fn _ => pulled_thm),
-                     Tactical.THEN
-                       (Tactical.MAP_EVERY Tactic.EXISTS_TAC
-                          (map (Term.subst instance) vars),
-                        Tactical.ORELSE
-                          (accept,
-                           Tactical.THEN (Tactical.REPEAT Tactic.CONJ_TAC,
-                                          accept))))
-                    goal ctxt
-                end
-      end
     fun witness_proof context_thms term =
       Lib.total
-        (fn goal =>
-           case Tactical.VALID witness_tac goal (Context.snapshot()) of
-               ([], validation) =>
-                 Lib.itlist Drule.PROVE_HYP context_thms (validation [])
-             | _ => raise ERR "witness_proof" "witness tactic left goals")
-        (map Thm.concl context_thms, term)
+        (fn () =>
+           let
+             val pulled_thm =
+               if has_existential term then pull_existentials term
+               else Thm.REFL term
+             val pulled = boolSyntax.rhs (Thm.concl pulled_thm)
+             val (vars, body) = boolSyntax.strip_exists pulled
+             val fixed =
+               HOLset.difference
+                 (Term.FVL [pulled] Term.empty_tmset,
+                  HOLset.fromList Term.compare vars)
+             val fixed_types = Term.type_vars_in_term pulled
+             val assumptions = map Thm.concl context_thms
+             fun attempt conditions =
+               witnesses assumptions fixed fixed_types conditions
+             (* Prefer one context theorem for the whole condition.
+                Otherwise reconstruct its conjuncts from their own
+                supporting theorems. *)
+             val matched =
+               case attempt [body] of
+                   NONE => attempt (boolSyntax.strip_conj body)
+                 | found => found
+             val instance =
+               case (vars, matched) of
+                   (_ :: _, SOME instance) => instance
+                 | _ => raise ERR "witness_proof" "no contextual witness"
+             fun contextual proposition =
+               case List.find
+                      (fn theorem =>
+                        Term.aconv (Thm.concl theorem) proposition)
+                      context_thms of
+                   SOME theorem => theorem
+                 | NONE =>
+                     raise ERR "witness_proof"
+                       "matched condition has no context theorem"
+             val body' = Term.subst instance body
+             val body_thm =
+               case List.find
+                      (fn theorem =>
+                        Term.aconv (Thm.concl theorem) body')
+                      context_thms of
+                   SOME theorem => theorem
+                 | NONE =>
+                     (case map (contextual o Term.subst instance)
+                             (boolSyntax.strip_conj body) of
+                          [] =>
+                            raise ERR "witness_proof"
+                              "empty contextual condition"
+                        | theorem :: rest =>
+                            List.foldl
+                              (fn (next, combined) =>
+                                Thm.CONJ combined next)
+                              theorem rest)
+             fun introduce quantified [] theorem = theorem
+               | introduce quantified (witness :: rest) theorem =
+                   let
+                     val (variable, inner) =
+                       boolSyntax.dest_exists quantified
+                     val inner' =
+                       Term.subst
+                         [{redex = variable, residue = witness}] inner
+                   in
+                     Thm.EXISTS (quantified, witness)
+                       (introduce inner' rest theorem)
+                   end
+             val witnesses = map (Term.subst instance) vars
+             val introduced = introduce pulled witnesses body_thm
+           in
+             Thm.EQ_MP (Thm.SYM pulled_thm) introduced
+           end)
+        ()
   in
     fn ({recurse, context_thms, ...} : Traverse.simp_prover_ctxt) =>
       fn term =>
@@ -1721,6 +1745,26 @@ fun process_clasimp_args body base_cs base_ss =
       | _ => raise ERR "process_clasimp_args" "simpset was not installed")
     base_cs (SOME {base=base_ss, extend=extend_invocation})
 
+fun process_clasimp_args_fact_views consumer
+    body base_cs base_ss =
+  clasetLib.with_invocation_fact_env
+    {iff_prefix="__clasimp_iff_arg_", extra_markers=no_extra_markers,
+     consumer=consumer}
+    (fn cs => fn simpset => fn controls => fn environment =>
+      case simpset of
+          SOME ss =>
+            let
+              val views =
+                map #theorem
+                  (clasetFacts.schematic_views environment)
+            in
+              body cs ss (controls @ views)
+            end
+        | NONE =>
+            raise ERR "process_clasimp_args_fact_views"
+              "simpset was not installed")
+    base_cs (SOME {base=base_ss, extend=extend_invocation})
+
 fun must_close name =
   Tactical.check_delta
     (ERR name "tactic did not close the goal")
@@ -1989,26 +2033,32 @@ fun restore_normalized_target target validation theorems =
     else theorem
   end
 
-fun public body theorems (goal as (_, target)) ctxt =
+fun public_using process body theorems
+    (goal as (_, target)) ctxt =
   let
     val (goals, validation) =
-      process_clasimp_args body
+      process body
         (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
   in
     (goals, restore_normalized_target target validation)
   end
 
+fun public body = public_using process_clasimp_args body
+
 fun AUTO_DEPTH_TAC bounds theorems =
-  public (auto_with bounds) theorems
+  public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
+    (auto_with bounds) theorems
 
 fun AUTO_TAC theorems =
   AUTO_DEPTH_TAC {blast = 4, depth = 2} theorems
 
 fun FORCE_TAC theorems =
-  public (force_with "FORCE_TAC") theorems
+  public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
+    (force_with "FORCE_TAC") theorems
 
 fun FASTFORCE_TAC theorems =
-  public (search_with_simp "FASTFORCE_TAC" fast_search) theorems
+  public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
+    (search_with_simp "FASTFORCE_TAC" fast_search) theorems
 
 fun SLOWSIMP_TAC theorems =
   public (search_with_simp "SLOWSIMP_TAC" slow_search) theorems
@@ -2017,7 +2067,8 @@ fun BESTSIMP_TAC theorems =
   public (search_with_simp "BESTSIMP_TAC" best_search) theorems
 
 fun CLARSIMP_TAC theorems =
-  public clarsimp_with theorems
+  public_using (process_clasimp_args_fact_views clasetLib.SafeFacts)
+    clarsimp_with theorems
 
 (* A first-order step meets a goal the simplification before it left in
    the ambient normal form, and HOL4's normal forms are not the ones its

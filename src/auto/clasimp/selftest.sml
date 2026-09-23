@@ -72,6 +72,134 @@ val _ =
 
 val _ =
   check
+    ("conditional witnesses retain every context theorem's support",
+     fn () =>
+       let
+         val left = ``clasimp_witness_p (3:num) : bool``
+         val right = ``clasimp_witness_q (3:num) : bool``
+         val condition =
+           ``?n:num. clasimp_witness_p n /\ clasimp_witness_q n``
+         fun prove context_thms =
+           clasimpLib.witness_subgoaler
+             {stack = [], context_thms = context_thms,
+              recurse = Thm.REFL} condition
+         val proved = prove [Thm.ASSUME left, Thm.ASSUME right]
+         val missing = prove [Thm.ASSUME left]
+         val hypotheses = Thm.hyp proved
+       in
+         Term.aconv (Thm.concl proved)
+           (boolSyntax.mk_eq (condition, boolSyntax.T)) andalso
+         length hypotheses = 2 andalso
+         List.exists (Term.aconv left) hypotheses andalso
+         List.exists (Term.aconv right) hypotheses andalso
+         Term.aconv (Thm.concl missing)
+           (boolSyntax.mk_eq (condition, condition))
+       end)
+
+(* A plain conditional citation must remain available to the safe
+   simplifier even if unsafe search also compiles a rule view of it. *)
+val invocation_q_def =
+  new_definition
+    ("invocation_q_def", ``invocation_q (x:'a) <=> T``)
+val invocation_implication =
+  Tactical.prove
+    (``!x:'a. invocation_p x ==> invocation_q x``,
+     Rewrite.REWRITE_TAC [invocation_q_def])
+val invocation_goal =
+  ([``invocation_p (a:'a):bool``], ``invocation_q (a:'a)``)
+fun invocation_closes tactic =
+  null (residual tactic invocation_goal) handle HOL_ERR _ => false
+
+val _ =
+  check
+    ("CLARSIMP_TAC uses a directly supplied conditional fact",
+     fn () =>
+       invocation_closes
+         (Tactical.THEN
+           (Tactic.ASSUME_TAC invocation_implication,
+            clasimpLib.CLARSIMP_TAC [])) andalso
+       invocation_closes
+         (clasimpLib.CLARSIMP_TAC [invocation_implication]))
+
+val _ =
+  check
+    ("the conditional citation does not add unsafe CLARSIMP search",
+     fn () =>
+       let
+         val target = ``invocation_q (a:'a)``
+         val result =
+           SOME
+             (residual
+               (clasimpLib.CLARSIMP_TAC [invocation_implication])
+               ([], target))
+           handle HOL_ERR _ => NONE
+       in
+         case result of
+             SOME [(assumptions, remaining)] =>
+               null assumptions andalso aconv remaining target
+           | _ => false
+       end)
+
+val _ =
+  check
+    ("AUTO_DEPTH_TAC simplifies with a supplied conditional fact",
+     fn () =>
+       invocation_closes
+         (clasimpLib.AUTO_DEPTH_TAC {blast = 0, depth = 0}
+            [invocation_implication]))
+
+(* The first cited rewrite exposes the bool-typed application of the
+   second.  The initial target has no application of invocation_id, so
+   an initial-goal-only literal specialization cannot supply that view. *)
+val invocation_id_def =
+  new_definition ("invocation_id_def", ``invocation_id (x:'a) = x``)
+val invocation_bridge_def =
+  new_definition
+    ("invocation_bridge_def",
+     ``invocation_bridge (n:num) = invocation_id T``)
+val invocation_id_fact =
+  Tactical.prove
+    (``!x:'a. invocation_id x = x``,
+     Rewrite.REWRITE_TAC [invocation_id_def])
+val invocation_bridge_fact =
+  Tactical.prove
+    (``!n:num. invocation_bridge n = invocation_id T``,
+     Rewrite.REWRITE_TAC [invocation_bridge_def])
+
+val _ =
+  check
+    ("CLARSIMP_TAC uses a fact after another fact exposes its type",
+     fn () =>
+       let
+         val goal = ([], ``invocation_bridge 0 = T``)
+         fun closes facts =
+           valid_closes (clasimpLib.CLARSIMP_TAC facts) goal
+             handle HOL_ERR _ => false
+       in
+         not (closes [invocation_bridge_fact]) andalso
+         not (closes [invocation_id_fact]) andalso
+         closes [invocation_bridge_fact, invocation_id_fact]
+       end)
+
+val _ =
+  check
+    ("AUTO simplification uses a fact at a type exposed by another",
+     fn () =>
+       let
+         val goal = ([], ``invocation_bridge 0 = T``)
+         fun closes facts =
+           valid_closes
+             (clasimpLib.AUTO_DEPTH_TAC {blast = 0, depth = 0} facts)
+             goal
+             handle HOL_ERR _ => false
+       in
+         not (closes [invocation_bridge_fact]) andalso
+         not (closes [invocation_id_fact]) andalso
+         closes [invocation_bridge_fact, invocation_id_fact]
+       end)
+
+val _ =
+  check
     ("clasimpset fixes conditional-rewrite depth at forty",
      fn () =>
        #cond_depth
