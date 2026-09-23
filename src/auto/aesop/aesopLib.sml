@@ -24,25 +24,55 @@ fun qvars_of store ({asl, w, ...} : clasetGoal.cgoal) =
     (List.concat
       (map (clasetMeta.metas_of store) (w :: asl)))
 
-fun rule_source claset simpset simp_controls
+fun rule_source_with assemble claset simpset simp_controls
       ({mode, cgoal = cgoal as {asl, w, ...}, store} :
        {mode : clasetUnify.mode, cgoal : clasetGoal.cgoal,
         store : clasetMeta.store}) =
-  aesopRule.claset_rules_with
+  assemble
     {claset = claset, mode = mode, conclusion = w,
      assumptions = asl, qvars = qvars_of store cgoal,
      simpset = simpset, simp_controls = simp_controls}
 
+val rule_source = rule_source_with aesopRule.claset_rules_with
+
+fun rule_source_budgeted budget =
+  rule_source_with (aesopRule.claset_rules_with_budget budget)
+
 fun initial_tree goal =
   aesopTree.create
     {node = clasetGoal.from_goal goal, unsafe_cursor = []}
+
+fun CS_AESOP_SEARCH_BUDGETED_IN ctxt budget config claset simpset goal =
+  let val _ = check_config "CS_AESOP_SEARCH_BUDGETED" config
+  in
+    aesopSearch.search_with_budget_in ctxt budget config
+      (fn owned => rule_source_budgeted owned claset simpset [])
+      (initial_tree goal)
+  end
+
+fun CS_AESOP_SEARCH_BUDGETED budget config claset simpset goal =
+  CS_AESOP_SEARCH_BUDGETED_IN (Context.snapshot ()) budget
+    config claset simpset goal
+
+fun CS_AESOP_SESSION_IN ctxt budget config claset simpset goal =
+  let val _ = check_config "CS_AESOP_SESSION" config
+  in
+    aesopSearch.new_budget_session_in ctxt budget config
+      (fn owned => rule_source_budgeted owned claset simpset [])
+      (initial_tree goal)
+  end
+
+fun CS_AESOP_SESSION budget config claset simpset goal =
+  CS_AESOP_SESSION_IN (Context.snapshot ()) budget config
+    claset simpset goal
 
 fun close_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
     val source = rule_source claset simpset simp_controls
   in
-    case aesopSearch.search config source (initial_tree goal) of
+    case aesopSearch.search_in ctxt config source
+           (initial_tree goal) of
         aesopSearch.SearchProved tree =>
           aesopSearch.REPLAY_TAC tree goal ctxt
       | aesopSearch.SearchFailed _ => Tactical.NO_TAC goal ctxt
@@ -107,7 +137,7 @@ fun safe_raw function_name config claset simpset simp_controls goal ctxt =
     val tree = initial_tree goal
   in
     case
-      aesopSearch.safe_saturate
+      aesopSearch.safe_saturate_in ctxt
         {max_depth = #max_depth config, rules = source} tree
     of
         aesopSearch.SafeSaturated saturated =>
@@ -151,13 +181,35 @@ fun process_aesop_markers theorems claset =
     process 0 claset [] theorems
   end
 
-fun process_args body base_claset base_simpset =
-  clasetLib.with_invocation_args
-    {iff_prefix="__aesop_iff_arg_", extra_markers=process_aesop_markers}
-    (fn cs => fn SOME ss => body cs ss
-      | _ => raise ERR "process_args" "simpset was not installed")
+fun process_args_with consumer
+      body base_claset base_simpset =
+  clasetLib.with_invocation_fact_env
+    {iff_prefix="__aesop_iff_arg_",
+     extra_markers=process_aesop_markers,
+     consumer=consumer}
+    (fn cs => fn simpset => fn controls => fn environment =>
+      case simpset of
+          SOME ss =>
+            let
+              (* Aesop's normalizer rewrites assumptions as well as the
+                 target.  Propositional facts must remain there for safe
+                 and forward rules; only equational views belong in this
+                 phase. *)
+              val views =
+                map #theorem
+                  (clasetFacts.equational_views environment)
+            in
+              body cs ss (controls @ views)
+            end
+        | NONE =>
+            raise ERR "process_args" "simpset was not installed")
     base_claset
     (SOME {base=base_simpset, extend=clasimpLib.extend_invocation})
+
+fun process_args body =
+  process_args_with clasetLib.SearchFacts body
+fun process_safe_args body =
+  process_args_with clasetLib.SafeFacts body
 
 fun CS_AESOP_TAC config claset simpset =
   close_raw "CS_AESOP_TAC" config claset simpset []
@@ -179,7 +231,7 @@ fun AESOP_TAC theorems goal ctxt =
 
 fun AESOP_SAFE_TAC theorems goal ctxt =
   changed
-      (process_args
+      (process_safe_args
         (safe_raw "AESOP_SAFE_TAC" default_config)
         (clasetLib.the_claset ()) (aesopData.aesop_ss ())
         theorems) goal ctxt

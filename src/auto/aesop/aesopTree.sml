@@ -326,7 +326,7 @@ fun engine_results step node =
     (fn (record, next) => ([record], next))
     (step (node, 1))
 
-fun rendered_results tactic node =
+fun rendered_results ctxt tactic node =
   let
     val rendered = clasetGoal.render node 1
   in
@@ -335,25 +335,33 @@ fun rendered_results tactic node =
         Option.map
           (fn (record, next) => ([record], next))
           (rendered_record node rendered result))
-      (tactic rendered (Context.snapshot()))
+      (tactic rendered ctxt)
   end
 
 (* One reading of a rule's alternatives for both engine phases: [aesopNorm]
    takes the unique one, the safe phase of [aesopSearch] commits to one and
    its unsafe phase installs them all. *)
-fun rule_results ({apply, ...} : rule) node =
+fun rule_results_in ctxt ({apply, ...} : rule) node =
   case apply of
       aesopRule.EngineStep step => engine_results step node
+    | aesopRule.ContextualStep make_step =>
+        seq.delay (fn () => engine_results (make_step ctxt) node)
     | aesopRule.RenderedTactic tactic =>
-        rendered_results tactic node
+        rendered_results ctxt tactic node
     | aesopRule.MultiStep steps =>
         seq.flatten
           (seq.fromList (map (fn step => engine_results step node) steps))
 
-fun unique_rule_result rule node =
-  case seq.take 2 (rule_results rule node) of
+fun rule_results rule node =
+  rule_results_in (Context.snapshot ()) rule node
+
+fun unique_rule_result_in ctxt rule node =
+  case seq.take 2 (rule_results_in ctxt rule node) of
       [result] => SOME result
     | _ => NONE
+
+fun unique_rule_result rule node =
+  unique_rule_result_in (Context.snapshot ()) rule node
 
 (* A copied goal discharges its original sibling but is not a child the
    rule action emitted, so replay never descends into one. *)

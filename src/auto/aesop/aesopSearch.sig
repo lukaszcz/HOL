@@ -37,9 +37,28 @@ sig
         {tree : tree, safe_goals : unit -> (gid * cgoal) list,
          reason : failure_reason}
 
-  (* Deterministic normalisation-and-safe saturation.  Goals returned by
-     [safe_frontier] are the exact residual frontier. *)
+  datatype budget_outcome =
+      SearchFinished of search_outcome
+    | WorkLimitReached of
+        {kind : searchBudget.kind, usage : searchBudget.usage}
+
+  type budget_session
+  datatype resume_outcome =
+      ResumedFinished of search_outcome
+    | ResumedYielded of
+        {kind : searchBudget.kind, usage : searchBudget.usage,
+         session : budget_session}
+    | ResumedLimitReached of
+        {kind : searchBudget.kind, usage : searchBudget.usage}
+
+  (* Deterministic normalisation-and-safe saturation.  The [_in] forms
+     carry the caller's proof context to rendered tactic rules, including
+     lazy alternatives and resumed sessions.  Convenience forms snapshot
+     once at their entry.  [safe_frontier] returns the residual goals. *)
   val safe_saturate :
+    {max_depth : int, rules : rule_source} -> tree -> safe_outcome
+  val safe_saturate_in :
+    Context.t ->
     {max_depth : int, rules : rule_source} -> tree -> safe_outcome
   val safe_frontier : tree -> (gid * cgoal) list
 
@@ -50,6 +69,28 @@ sig
      never pays for it.  Not memoised -- each application recomputes. *)
   val search :
     aesop_config -> rule_source -> tree -> search_outcome
+  val search_in :
+    Context.t -> aesop_config -> rule_source -> tree -> search_outcome
+  (* Explicit cutoff result for budgeted rule sources.  Frontier
+     resumption is not provided by this transitional adapter. *)
+  val search_with_budget :
+    searchBudget.budget -> aesop_config ->
+    (searchBudget.budget -> rule_source) -> tree ->
+    budget_outcome
+  val search_with_budget_in :
+    Context.t -> searchBudget.budget -> aesop_config ->
+    (searchBudget.budget -> rule_source) -> tree ->
+    budget_outcome
+  (* A candidate yield retains the goal/rule generation and the next
+     unexamined alternative.  Extend the same budget, then resume this
+     session.  Other limits remain explicit terminal outcomes for now. *)
+  val new_budget_session :
+    searchBudget.budget -> aesop_config ->
+    (searchBudget.budget -> rule_source) -> tree -> budget_session
+  val new_budget_session_in :
+    Context.t -> searchBudget.budget -> aesop_config ->
+    (searchBudget.budget -> rule_source) -> tree -> budget_session
+  val resume_budget_session : budget_session -> resume_outcome
 
   (* Select the winning forest of a proved tree and merge its final stores.
      Replay is exact: a failure after search success is an engine error. *)

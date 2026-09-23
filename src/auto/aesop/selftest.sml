@@ -2986,6 +2986,109 @@ val _ =
              aconv right_target surface_p
          | _ => false)
 
+val aesop_safe_fact_q_def =
+  new_definition
+    ("aesop_safe_fact_q_def",
+     ``aesop_safe_fact_q (x:'a) <=> T``)
+val aesop_safe_implication_fact =
+  Tactical.prove
+    (``!x:'a. aesop_safe_fact_p x ==> aesop_safe_fact_q x``,
+     Rewrite.REWRITE_TAC [aesop_safe_fact_q_def])
+
+val _ =
+  check
+    ("AESOP_SAFE_TAC retains a supplied conditional fact",
+     fn () =>
+       let
+         val goal =
+           ([``aesop_safe_fact_p (a:'a):bool``],
+            ``aesop_safe_fact_q (a:'a)``)
+         fun outcome tactic =
+           SOME (residual tactic goal) handle HOL_ERR _ => NONE
+         val explicit =
+           outcome
+             (Tactical.THEN
+               (Tactic.ASSUME_TAC aesop_safe_implication_fact,
+                Tactical.TRY (aesopLib.AESOP_SAFE_TAC [])))
+         val supplied =
+           outcome
+             (aesopLib.AESOP_SAFE_TAC
+               [aesop_safe_implication_fact])
+         val without = outcome (aesopLib.AESOP_SAFE_TAC [])
+       in
+         (case without of SOME [] => false | _ => true) andalso
+         (case (explicit, supplied) of
+             (SOME left, SOME right) =>
+               ListPair.allEq
+                 (fn (first, second) =>
+                   boolSyntax.goal_eq first second)
+                 (left, right)
+           | _ => false)
+       end)
+
+val _ =
+  check
+    ("AESOP_SAFE_TAC does not invent a conditional premise",
+     fn () =>
+       let
+         val target = ``aesop_safe_fact_q (a:'a)``
+         val result =
+           SOME
+             (residual
+               (aesopLib.AESOP_SAFE_TAC
+                 [aesop_safe_implication_fact])
+               ([], target))
+           handle HOL_ERR _ => NONE
+       in
+         case result of
+             SOME goals =>
+               not (null goals) andalso
+               List.exists
+                 (fn (_, remaining) => aconv remaining target)
+                 goals
+           | NONE => false
+       end)
+
+val aesop_fact_id_def =
+  new_definition ("aesop_fact_id_def", ``aesop_fact_id (x:'a) = x``)
+val aesop_fact_bridge_def =
+  new_definition
+    ("aesop_fact_bridge_def",
+     ``aesop_fact_bridge (n:num) = aesop_fact_id T``)
+val aesop_fact_id =
+  Tactical.prove
+    (``!x:'a. aesop_fact_id x = x``,
+     Rewrite.REWRITE_TAC [aesop_fact_id_def])
+val aesop_fact_bridge =
+  Tactical.prove
+    (``!n:num. aesop_fact_bridge n = aesop_fact_id T``,
+     Rewrite.REWRITE_TAC [aesop_fact_bridge_def])
+
+val _ =
+  check
+    ("AESOP_SAFE_TAC normalizes with a fact at a later exposed type",
+     fn () =>
+       let
+         val goal = ([], ``aesop_fact_bridge 0 = T``)
+         fun closes facts =
+           null (residual (aesopLib.AESOP_SAFE_TAC facts) goal)
+             handle HOL_ERR _ => false
+       in
+         not (closes [aesop_fact_bridge]) andalso
+         not (closes [aesop_fact_id]) andalso
+         closes [aesop_fact_bridge, aesop_fact_id]
+       end)
+
+val _ =
+  check
+    ("AESOP_SAFE_TAC reads equations from a conjunctive citation",
+     fn () =>
+       null
+         (residual
+           (aesopLib.AESOP_SAFE_TAC
+             [Thm.CONJ aesop_fact_bridge aesop_fact_id])
+           ([], ``aesop_fact_bridge 0 = T``)))
+
 val _ =
   check
     ("AESOP_SAFE_TAC fails when insertion and safe search change nothing",
@@ -3672,6 +3775,710 @@ val _ =
                  | _ => false)
        in
          solved andalso #rule_applications work > 0
+       end)
+
+(* Known forward conclusions may precede the one useful application.
+   The application budget counts installed results, not the number of
+   duplicate candidates examined while finding one. *)
+val forward_clutter_q_def =
+  new_definition
+    ("forward_clutter_q_def",
+     ``forward_clutter_q (x:'a) <=> T``)
+val forward_clutter_fact =
+  Tactical.prove
+    (``!x:'a. forward_clutter_p x ==> forward_clutter_q x``,
+     Rewrite.REWRITE_TAC [forward_clutter_q_def])
+val forward_clutter_cs =
+  clasetLib.add_rule
+    {kind = clasetRules.Forward, safe = true, prio = NONE}
+    ("forward-clutter", forward_clutter_fact) clasetLib.empty_cs
+val forward_clutter_tac =
+  aesopLib.CS_AESOP_TAC
+    {max_rapps = 1000, max_depth = 50}
+    forward_clutter_cs simpLib.empty_ss
+
+fun forward_clutter_atom head i =
+  Term.mk_comb
+    (head, Term.mk_var ("clutter_item" ^ Int.toString i, Type.alpha))
+
+fun forward_clutter_goal count position =
+  let
+    val p = ``forward_clutter_p:'a->bool``
+    val q = ``forward_clutter_q:'a->bool``
+    val useful = forward_clutter_atom p count
+    val known_p = List.tabulate (count, forward_clutter_atom p)
+    val known_q = List.tabulate (count, forward_clutter_atom q)
+    val premises =
+      List.take (known_p, position) @ [useful] @
+      List.drop (known_p, position)
+  in
+    (premises @ known_q, forward_clutter_atom q count)
+  end
+
+val _ =
+  check
+    ("forward clutter fixture closes before the old boundary",
+     fn () =>
+       closes_goal forward_clutter_tac
+         (forward_clutter_goal 0 0) andalso
+       closes_goal forward_clutter_tac
+         (forward_clutter_goal 199 199))
+
+val _ =
+  check
+    ("forward search reaches useful candidates through known results",
+     fn () =>
+       List.all
+         (fn count =>
+           List.all
+             (fn position =>
+               closes_goal forward_clutter_tac
+                 (forward_clutter_goal count position))
+             [0, count div 2, count])
+         [201, 0, 1, 199, 200, 257])
+
+val _ =
+  check
+    ("budgeted Aesop distinguishes cutoff from a funded forward proof",
+     fn () =>
+       let
+         val goal = forward_clutter_goal 201 201
+         val empty_budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED empty_budget
+             {max_rapps = 1000, max_depth = 50}
+             forward_clutter_cs simpLib.empty_ss goal
+         val no_applications =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 0,
+              normalization = NONE}
+         val application_cutoff =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED no_applications
+             {max_rapps = 1000, max_depth = 50}
+             forward_clutter_cs simpLib.empty_ss goal
+         val no_normalization =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 0}
+         val normalization_cutoff =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED no_normalization
+             {max_rapps = 1000, max_depth = 50}
+             forward_clutter_cs simpLib.empty_ss goal
+         val funded = searchBudget.unbounded ()
+         val completed =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED funded
+             {max_rapps = 1000, max_depth = 50}
+             forward_clutter_cs simpLib.empty_ss goal
+         val terminal_budget =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 0,
+              normalization = NONE}
+         val terminal_session =
+           aesopLib.CS_AESOP_SESSION terminal_budget
+             {max_rapps = 1000, max_depth = 50}
+             forward_clutter_cs simpLib.empty_ss goal
+         val terminal_limit =
+           case aesopSearch.resume_budget_session terminal_session of
+               aesopSearch.ResumedLimitReached
+                 {kind = searchBudget.Application, ...} =>
+                   (searchBudget.extend terminal_budget
+                      searchBudget.Application 1;
+                    (ignore
+                       (aesopSearch.resume_budget_session
+                         terminal_session);
+                     false) handle HOL_ERR _ => true)
+             | _ => false
+       in
+         (case cutoff of
+              aesopSearch.WorkLimitReached
+                {kind = searchBudget.Candidate, usage} =>
+                  #candidates usage = 0
+            | _ => false) andalso
+         (case application_cutoff of
+              aesopSearch.WorkLimitReached
+                {kind = searchBudget.Application, usage} =>
+                  #applications usage = 0 andalso
+                  #candidates usage > 0
+            | _ => false) andalso
+         (case normalization_cutoff of
+              aesopSearch.WorkLimitReached
+                {kind = searchBudget.Normalization, usage} =>
+                  #normalization usage = 0
+            | _ => false) andalso
+         (case completed of
+              aesopSearch.SearchFinished
+                (aesopSearch.SearchProved tree) =>
+                  closes_goal (aesopSearch.REPLAY_TAC tree) goal
+            | _ => false) andalso
+         terminal_limit andalso
+         #candidates (searchBudget.usage funded) > 200
+       end)
+
+val forward_clutter_unsafe_cs =
+  clasetLib.add_rule
+    {kind = clasetRules.Forward, safe = false, prio = SOME 50}
+    ("forward-clutter-unsafe", forward_clutter_fact)
+    clasetLib.empty_cs
+
+val _ =
+  check
+    ("budgeted Aesop resumes a safe forward candidate scan",
+     fn () =>
+       let
+         val (assumptions, target) =
+           forward_clutter_goal 30 30
+         val early =
+           forward_clutter_atom
+             ``forward_clutter_q:'a->bool`` 0
+         val goal =
+           (List.filter
+              (fn fact => not (aconv fact early)) assumptions,
+            target)
+         val config = {max_rapps = 1000, max_depth = 50}
+         val small =
+           searchBudget.create
+             {candidates = SOME 10, applications = NONE,
+              normalization = NONE}
+         val large = searchBudget.unbounded ()
+         val session =
+           aesopLib.CS_AESOP_SESSION small config
+             forward_clutter_cs simpLib.empty_ss goal
+         val reference =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED large config
+             forward_clutter_cs simpLib.empty_ss goal
+         fun resume 0 _ _ = NONE
+           | resume turns current yielded =
+               (case aesopSearch.resume_budget_session current of
+                    aesopSearch.ResumedYielded
+                      {kind = searchBudget.Candidate,
+                       session = next, ...} =>
+                        (searchBudget.extend small
+                           searchBudget.Candidate 10;
+                         resume (turns - 1) next true)
+                  | aesopSearch.ResumedFinished
+                      (aesopSearch.SearchProved tree) =>
+                        SOME (yielded, tree)
+                  | _ => NONE)
+       in
+         case (resume 100 session false, reference) of
+             (SOME (true, tree),
+              aesopSearch.SearchFinished
+                (aesopSearch.SearchProved _)) =>
+               closes_goal (aesopSearch.REPLAY_TAC tree) goal andalso
+               #candidates (searchBudget.usage small) =
+               #candidates (searchBudget.usage large)
+           | _ => false
+       end)
+
+val _ =
+  check
+    ("budgeted Aesop resumes an unsafe forward candidate scan",
+     fn () =>
+       let
+         val goal = forward_clutter_goal 201 201
+         val config = {max_rapps = 1000, max_depth = 50}
+         val small =
+           searchBudget.create
+             {candidates = SOME 25, applications = NONE,
+              normalization = NONE}
+         val large = searchBudget.unbounded ()
+         val session =
+           aesopLib.CS_AESOP_SESSION small config
+             forward_clutter_unsafe_cs simpLib.empty_ss goal
+         val reference =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED large config
+             forward_clutter_unsafe_cs simpLib.empty_ss goal
+         fun resume 0 _ _ = NONE
+           | resume turns current yielded =
+               (case aesopSearch.resume_budget_session current of
+                    aesopSearch.ResumedYielded
+                      {kind = searchBudget.Candidate,
+                       session = next, ...} =>
+                        (searchBudget.extend small
+                           searchBudget.Candidate 25;
+                         resume (turns - 1) next true)
+                  | aesopSearch.ResumedFinished
+                      (aesopSearch.SearchProved tree) =>
+                        SOME (yielded, tree)
+                  | _ => NONE)
+       in
+         case (resume 100 session false, reference) of
+             (SOME (true, tree),
+              aesopSearch.SearchFinished
+                (aesopSearch.SearchProved _)) =>
+               let
+                 val used = searchBudget.usage small
+                 val repeated =
+                   aesopSearch.resume_budget_session session
+               in
+                 closes_goal (aesopSearch.REPLAY_TAC tree) goal andalso
+                 #candidates used =
+                 #candidates (searchBudget.usage large) andalso
+                 (case repeated of
+                      aesopSearch.ResumedFinished
+                        (aesopSearch.SearchProved _) =>
+                          #candidates (searchBudget.usage small) =
+                          #candidates used
+                    | _ => false)
+               end
+           | _ => false
+       end)
+
+(* The first pull offers a proof; the second certifies that it is unique.
+   Yielding between them must retain the first result in both phases. *)
+fun counted_alternative_rule budget phase : aesopRule.rule =
+  let
+    fun step input =
+      let
+        val result =
+          Option.map #1
+            (seq.cases
+              ((clasetStep.rule_step
+                 {theorem = boolTheory.TRUTH, elim = false,
+                  mode = clasetUnify.Match}) input))
+        val first = ref true
+        fun next () =
+          (searchBudget.charge budget searchBudget.Candidate;
+           if !first then (first := false; result) else NONE)
+      in
+        seq.fresult next
+      end
+  in
+    {name = "counted-alternative", phase = phase,
+     apply = aesopRule.EngineStep step, once = false}
+  end
+
+fun counted_safe_source budget =
+  search_source []
+    (fn _ => [counted_alternative_rule budget aesopRule.RSafe]) []
+
+fun counted_unsafe_source budget =
+  search_source [] (fn _ => [])
+    [counted_alternative_rule budget (aesopRule.RUnsafe 50)]
+
+fun counted_resume make_source =
+  let
+    val goal = ([], boolSyntax.T)
+    val tree =
+      new_tree clasetMeta.empty
+        (tree_cgoal [] [] boolSyntax.T) []
+    val config = {max_rapps = 10, max_depth = 10}
+    val small =
+      searchBudget.create
+        {candidates = SOME 1, applications = NONE,
+         normalization = NONE}
+    val large = searchBudget.unbounded ()
+    val session =
+      aesopSearch.new_budget_session small config make_source tree
+    val reference =
+      aesopSearch.search_with_budget large config make_source tree
+    val first = aesopSearch.resume_budget_session session
+  in
+    case (first, reference) of
+        (aesopSearch.ResumedYielded
+           {kind = searchBudget.Candidate, ...},
+         aesopSearch.SearchFinished
+           (aesopSearch.SearchProved _)) =>
+          (searchBudget.extend small searchBudget.Candidate 1;
+           case aesopSearch.resume_budget_session session of
+               aesopSearch.ResumedFinished
+                 (aesopSearch.SearchProved proved) =>
+                   closes_goal (aesopSearch.REPLAY_TAC proved) goal andalso
+                   #candidates (searchBudget.usage small) = 2 andalso
+                   #candidates (searchBudget.usage large) = 2
+             | _ => false)
+      | _ => false
+  end
+
+val _ =
+  check
+    ("safe uniqueness resumes after its first alternative",
+     fn () => counted_resume counted_safe_source)
+
+fun registry_replacement_resumes phase =
+  let
+    val name =
+      if phase = aesopRule.RSafe then
+        "generation-sensitive-safe"
+      else "generation-sensitive-unsafe"
+    val p = Term.mk_var ("generation_sensitive_p", Type.bool)
+    val target = boolSyntax.mk_imp (p, p)
+    val theorem = DISCH p (ASSUME p)
+    val goal = ([], target)
+    val tree =
+      new_tree clasetMeta.empty
+        (tree_cgoal [] [] target) []
+    val budget =
+      searchBudget.create
+        {candidates = SOME 1, applications = NONE,
+         normalization = NONE}
+    val config = {max_rapps = 10, max_depth = 10}
+    fun source input =
+      let
+        val selected =
+          List.filter
+            (fn (rule : aesopRule.rule) => #name rule = name)
+            (aesopRule.registered_tactic_rules ())
+      in
+        if phase = aesopRule.RSafe then
+          search_source [] (fn _ => selected) [] input
+        else
+          search_source [] (fn _ => []) selected input
+      end
+    val session =
+      aesopSearch.new_budget_session budget config
+        (fn _ => source) tree
+    fun register tactic =
+      aesopRule.register_tactic_rule
+        {name = name, phase = phase,
+         tactic = tactic, index = NONE}
+    val first =
+      aesopRule.with_tactic_rules
+        (fn () =>
+          (register (NTactical.LIFT Tactic.DISCH_TAC);
+           aesopSearch.resume_budget_session session)) ()
+    val first_usage = searchBudget.usage budget
+    val second =
+      aesopRule.with_tactic_rules
+        (fn () =>
+          (register
+             (NTactical.LIFT
+               (Tactic.ACCEPT_TAC theorem));
+           searchBudget.extend budget searchBudget.Candidate 10;
+           aesopSearch.resume_budget_session session)) ()
+  in
+    (case first of
+         aesopSearch.ResumedYielded
+           {kind = searchBudget.Candidate, ...} =>
+             #candidates first_usage = 1
+       | _ => false) andalso
+    (case second of
+         aesopSearch.ResumedFinished
+           (aesopSearch.SearchProved proved) =>
+             closes_goal (aesopSearch.REPLAY_TAC proved) goal andalso
+             #candidates (searchBudget.usage budget) = 3
+       | _ => false)
+  end
+
+val _ =
+  check
+    ("a resumed safe scan refreshes a replaced tactic rule",
+     fn () => registry_replacement_resumes aesopRule.RSafe)
+
+val _ =
+  check
+    ("a resumed unsafe scan refreshes a replaced tactic rule",
+     fn () => registry_replacement_resumes (aesopRule.RUnsafe 50))
+
+val _ =
+  check
+    ("unsafe ordinary alternatives resume without a repeated pull",
+     fn () => counted_resume counted_unsafe_source)
+
+val _ =
+  check
+    ("rendered alternatives charge before forcing and resume in place",
+     fn () =>
+       let
+         val calls = ref 0
+         val rule : aesopRule.rule =
+           {name = "budgeted-rendered", phase = aesopRule.RUnsafe 50,
+            apply =
+              aesopRule.RenderedTactic
+                (NTactical.LIFT
+                  (fn goal => fn ctxt =>
+                    (calls := !calls + 1;
+                     Tactic.ACCEPT_TAC boolTheory.TRUTH goal ctxt))),
+            once = false}
+         val meter =
+           searchBudget.create
+             {candidates = SOME 1, applications = NONE,
+              normalization = NONE}
+         val tree =
+           new_tree clasetMeta.empty
+             (tree_cgoal [] [] boolSyntax.T) []
+         val session =
+           aesopSearch.new_budget_session meter
+             {max_rapps = 10, max_depth = 10}
+             (fn _ => search_source [] (fn _ => []) [rule]) tree
+       in
+         case aesopSearch.resume_budget_session session of
+             aesopSearch.ResumedYielded
+               {kind = searchBudget.Candidate, usage, ...} =>
+               !calls = 1 andalso #candidates usage = 1 andalso
+               (searchBudget.extend meter searchBudget.Candidate 1;
+                case aesopSearch.resume_budget_session session of
+                    aesopSearch.ResumedFinished
+                      (aesopSearch.SearchProved proved) =>
+                        !calls = 1 andalso
+                        #candidates (searchBudget.usage meter) = 2 andalso
+                        closes_goal (aesopSearch.REPLAY_TAC proved)
+                          ([], boolSyntax.T)
+                  | _ => false)
+           | _ => false
+       end)
+
+val explicit_context_slot =
+  Context.Data.new
+    {name = "aesop-selftest-explicit-context", empty = 0,
+     pp = Int.toString}
+
+val _ =
+  check
+    ("CS_AESOP_TAC gives rendered rules its explicit tactic context",
+     fn () =>
+       let
+         val supplied =
+           Context.Data.put explicit_context_slot 1
+             (Context.snapshot ())
+         val seen = ref ([] : int list)
+         val goal = ([], boolSyntax.T)
+         fun observer target ctxt =
+           (seen := Context.Data.get explicit_context_slot ctxt :: !seen;
+            Tactical.ALL_TAC target ctxt)
+         fun run () =
+           (aesopLib.augment_aesop
+              {name = "observe-explicit-context",
+               phase = aesopRule.RNorm ~100,
+               tactic = NTactical.LIFT observer};
+            case
+              SelfTestTactical.VALID
+                (aesopLib.CS_AESOP_TAC aesopLib.default_config
+                   clasetLib.empty_cs simpLib.empty_ss)
+                goal supplied
+            of
+                ([], validation) =>
+                  (ignore (validation []);
+                   not (null (!seen)) andalso
+                   List.all (fn value => value = 1) (!seen))
+              | _ => false)
+       in
+         aesopRule.with_tactic_rules run ()
+       end)
+
+val _ =
+  check
+    ("Aesop engine steps retain the supplied context when forced",
+     fn () =>
+       let
+         val ambient = Context.snapshot ()
+         val first_context =
+           Context.Data.put explicit_context_slot 1 ambient
+         val second_context =
+           Context.Data.put explicit_context_slot 2 ambient
+         val seen = ref ([] : int list)
+         val goal = ([boolSyntax.T], boolSyntax.T)
+         val node = clasetGoal.from_goal goal
+         fun step ctxt input =
+           (seen := Context.Data.get explicit_context_slot ctxt :: !seen;
+            clasetStep.blast_assumption_step input)
+         val rule : aesopRule.rule =
+           {name = "contextual-engine", phase = aesopRule.RSafe,
+            apply = aesopRule.ContextualStep step, once = false}
+         val first = aesopTree.rule_results_in first_context rule node
+         val second = aesopTree.rule_results_in second_context rule node
+         fun closes sequence =
+           case seq.cases sequence of
+               SOME (([_], next), _) =>
+                 null (clasetGoal.goals next)
+             | _ => false
+       in
+         closes second andalso closes first andalso (!seen = [1, 2])
+       end)
+
+val _ =
+  check
+    ("interleaved budget sessions retain their own tactic contexts",
+     fn () =>
+       let
+         val ambient = Context.snapshot ()
+         val first_context =
+           Context.Data.put explicit_context_slot 1 ambient
+         val second_context =
+           Context.Data.put explicit_context_slot 2 ambient
+         val seen = ref ([] : int list)
+         fun close target ctxt =
+           (seen := Context.Data.get explicit_context_slot ctxt :: !seen;
+            Tactic.ACCEPT_TAC boolTheory.TRUTH target ctxt)
+         val rule : aesopRule.rule =
+           {name = "contextual-rendered",
+            phase = aesopRule.RUnsafe 50,
+            apply = aesopRule.RenderedTactic (NTactical.LIFT close),
+            once = false}
+         fun source _ =
+           search_source [] (fn _ => []) [rule]
+         fun one_charge () =
+           searchBudget.create
+             {candidates = SOME 1, applications = NONE,
+              normalization = NONE}
+         val first_budget = one_charge ()
+         val second_budget = one_charge ()
+         val config = {max_rapps = 10, max_depth = 10}
+         val tree =
+           new_tree clasetMeta.empty
+             (tree_cgoal [] [] boolSyntax.T) []
+         val first =
+           aesopSearch.new_budget_session_in first_context
+             first_budget config source tree
+         val second =
+           aesopSearch.new_budget_session_in second_context
+             second_budget config source tree
+         fun yielded session =
+           case aesopSearch.resume_budget_session session of
+               aesopSearch.ResumedYielded
+                 {kind = searchBudget.Candidate, ...} => true
+             | _ => false
+         fun proved session =
+           case aesopSearch.resume_budget_session session of
+               aesopSearch.ResumedFinished
+                 (aesopSearch.SearchProved result) =>
+                   closes_goal (aesopSearch.REPLAY_TAC result)
+                     ([], boolSyntax.T)
+             | _ => false
+       in
+         yielded first andalso yielded second andalso
+         !seen = [2, 1] andalso
+         (searchBudget.extend first_budget searchBudget.Candidate 1;
+          searchBudget.extend second_budget searchBudget.Candidate 1;
+          proved second andalso proved first andalso
+          !seen = [2, 1])
+       end)
+
+val _ =
+  check
+    ("budgeted claset assembly charges an ordinary elimination major",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val rules =
+           aesopRule.claset_rules_with_budget budget
+             {claset = elim_dest_cs, mode = clasetUnify.Match,
+              conclusion = elim_q, assumptions = [elim_p],
+              qvars = HOLset.empty Term.compare,
+              simpset = simpLib.empty_ss, simp_controls = []}
+         val selected =
+           List.filter
+             (fn ({name, ...} : aesopRule.rule) =>
+               name = "safe_elim")
+             (aesopRule.safe_rules (#safe rules))
+       in
+         case selected of
+             [{apply = aesopRule.EngineStep step, ...}] =>
+               let
+                 val cursor =
+                   step (clasetGoal.from_goal ([elim_p], elim_q), 1)
+                 val stopped =
+                   ((ignore (seq.cases cursor); false)
+                    handle searchBudget.LimitReached
+                      (searchBudget.Candidate, usage) =>
+                        #candidates usage = 0)
+                 val _ =
+                   searchBudget.extend budget searchBudget.Candidate 1
+               in
+                 stopped andalso
+                 Option.isSome (seq.cases cursor) andalso
+                 #candidates (searchBudget.usage budget) = 1
+               end
+           | _ => false
+       end)
+
+val _ =
+  check
+    ("resumable forward scans survive scheduling another goal",
+     fn () =>
+       let
+         val left = Term.mk_var ("forward_split_left", Type.bool)
+         val right = Term.mk_var ("forward_split_right", Type.bool)
+         val conjunction_intro =
+           DISCH left
+             (DISCH right
+               (CONJ (ASSUME left) (ASSUME right)))
+         val split_cs =
+           clasetLib.add_rule
+             {kind = clasetRules.Intro, safe = true, prio = NONE}
+             ("forward-split", conjunction_intro)
+             forward_clutter_unsafe_cs
+         val (assumptions, first) =
+           forward_clutter_goal 201 201
+         val predicate = ``forward_clutter_p:'a->bool``
+         val next =
+           forward_clutter_atom predicate 202
+         val second =
+           forward_clutter_atom
+             ``forward_clutter_q:'a->bool`` 202
+         val goal =
+           (assumptions @ [next],
+            boolSyntax.mk_conj (first, second))
+         val config = {max_rapps = 2000, max_depth = 50}
+         val small =
+           searchBudget.create
+             {candidates = SOME 25, applications = NONE,
+              normalization = NONE}
+         val large = searchBudget.unbounded ()
+         val session =
+           aesopLib.CS_AESOP_SESSION small config
+             split_cs simpLib.empty_ss goal
+         val reference =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED large config
+             split_cs simpLib.empty_ss goal
+         fun resume 0 _ _ = NONE
+           | resume turns current yielded =
+               (case aesopSearch.resume_budget_session current of
+                    aesopSearch.ResumedYielded
+                      {kind = searchBudget.Candidate,
+                       session = next, ...} =>
+                        (searchBudget.extend small
+                           searchBudget.Candidate 25;
+                         resume (turns - 1) next true)
+                  | aesopSearch.ResumedFinished
+                      (aesopSearch.SearchProved tree) =>
+                        SOME (yielded, tree)
+                  | _ => NONE)
+       in
+         case (resume 200 session false, reference) of
+             (SOME (true, tree),
+              aesopSearch.SearchFinished
+                (aesopSearch.SearchProved _)) =>
+               closes_goal (aesopSearch.REPLAY_TAC tree) goal andalso
+               #candidates (searchBudget.usage small) > 200
+           | _ => false
+       end)
+
+val _ =
+  check
+    ("budgeted failure charges and caches its safe frontier",
+     fn () =>
+       let
+         val budget = searchBudget.unbounded ()
+         val target =
+           Term.mk_var ("budget_failure_target", Type.bool)
+         val result =
+           aesopLib.CS_AESOP_SEARCH_BUDGETED budget
+             aesopLib.default_config clasetLib.empty_cs
+             simpLib.empty_ss ([], target)
+       in
+         case result of
+             aesopSearch.SearchFinished
+               (aesopSearch.SearchFailed {safe_goals, ...}) =>
+                 let
+                   val usage_before = searchBudget.usage budget
+                   val frontier = safe_goals ()
+                   val usage_after = searchBudget.usage budget
+                 in
+                   #normalization usage_before > 0 andalso
+                   #normalization usage_before =
+                     #normalization usage_after andalso
+                   (case frontier of
+                        [(_, {w, ...})] => aconv w target
+                      | _ => false)
+                 end
+           | _ => false
        end)
 
 (* Every registration in this file is scoped, so nothing a test declared is

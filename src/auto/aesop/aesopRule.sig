@@ -11,6 +11,7 @@ sig
 
   datatype rapply =
       EngineStep of clasetStep.step
+    | ContextualStep of Context.t -> clasetStep.step
     | RenderedTactic of NTactical.ntactic
     | MultiStep of clasetStep.step list
 
@@ -53,6 +54,10 @@ sig
   val default_forward_rule :
     {name : string, phase : rphase, theorem : thm,
      mode : clasetUnify.mode} -> rule
+  val default_forward_rule_budgeted :
+    searchBudget.budget ->
+    {name : string, phase : rphase, theorem : thm,
+     mode : clasetUnify.mode} -> rule
 
   (* The search layer keeps the branch history.  This predicate performs
      its instantiate-then-alpha-equivalence duplicate check. *)
@@ -77,6 +82,9 @@ sig
     {name : string, phase : rphase, tactic : NTactical.ntactic,
      index : tactic_index option} -> unit
   val registered_tactic_rules : unit -> rule list
+  (* Registration and scoped restoration advance this revision, so a
+     suspended search can discard scans built from an obsolete registry. *)
+  val registry_generation : unit -> int
 
   (* Registration is session-global and permanent, which is what a library
      augmenting the engine wants.  Registrations belonging to a bounded
@@ -118,6 +126,15 @@ sig
      simpset.  This form preserves that simpset and forwards only the
      generic simplifier controls to the built-in normalisation rule. *)
   val claset_rules_with :
+    {claset : clasetLib.claset,
+     mode : clasetUnify.mode,
+     conclusion : term,
+     assumptions : term list,
+     qvars : term HOLset.set,
+     simpset : simpLib.simpset,
+     simp_controls : thm list} -> ruleset
+  val claset_rules_with_budget :
+    searchBudget.budget ->
     {claset : clasetLib.claset,
      mode : clasetUnify.mode,
      conclusion : term,

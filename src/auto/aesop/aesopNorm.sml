@@ -65,18 +65,18 @@ fun new_binding created parent child =
 (* Normalisation rewrites a goal in place, so a norm rule must be
    deterministic and must not split the goal.  A [MultiStep] rule is a
    choice between its steps by construction, so it never normalises. *)
-fun raw_application (rule : rule) node =
+fun raw_application ctxt (rule : rule) node =
   case #apply rule of
       aesopRule.MultiStep _ => Inapplicable
     | _ =>
-        (case aesopTree.unique_rule_result rule node of
+        (case aesopTree.unique_rule_result_in ctxt rule node of
              SOME ([record], next) =>
                if length (clasetGoal.goals next) > 1 then Inapplicable
                else Applied {record = record, node = next}
            | _ => Inapplicable)
 
-fun application rule node =
-  case raw_application rule node of
+fun application ctxt rule node =
+  case raw_application ctxt rule node of
       Inapplicable => Inapplicable
     | Applied {record, node = next} =>
         if
@@ -109,7 +109,7 @@ fun finish id reversed_records iterations node tree =
         raise ERR "finish" "a norm chain retained more than one goal"
   end
 
-fun normalise {max_depth, rules} id tree =
+fun normalise_with ctxt charge {max_depth, rules} id tree =
   if max_depth < 0 then
     raise ERR "normalise" "max_depth must not be negative"
   else
@@ -120,7 +120,8 @@ fun normalise {max_depth, rules} id tree =
       fun scan original reversed_records iterations node [] =
             finish id reversed_records iterations node original
         | scan original reversed_records iterations node (rule :: rest) =
-            (case application rule node of
+            (charge ();
+             case application ctxt rule node of
                  Inapplicable =>
                    scan original reversed_records iterations node rest
                | Applied {record, node = next} =>
@@ -144,5 +145,18 @@ fun normalise {max_depth, rules} id tree =
       else
         scan tree [] 0 (aesopTree.goal_node goal) ordered
     end
+
+fun normalise_in ctxt specification =
+  normalise_with ctxt (fn () => ()) specification
+
+fun normalise specification =
+  normalise_in (Context.snapshot ()) specification
+
+fun normalise_budgeted_in ctxt budget =
+  normalise_with ctxt
+    (fn () => searchBudget.charge budget searchBudget.Normalization)
+
+fun normalise_budgeted budget =
+  normalise_budgeted_in (Context.snapshot ()) budget
 
 end

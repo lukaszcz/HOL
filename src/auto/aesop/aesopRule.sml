@@ -8,8 +8,9 @@ datatype rphase =
   | RSafe
   | RUnsafe of int
 
-datatype rapply =
+  datatype rapply =
     EngineStep of clasetStep.step
+  | ContextualStep of Context.t -> clasetStep.step
   | RenderedTactic of NTactical.ntactic
   | MultiStep of clasetStep.step list
 
@@ -88,22 +89,31 @@ fun safe_constructors_rule {name, theorems, mode} =
   constructors_rule_with RSafe "safe_constructors_rule"
     {name = name, theorems = theorems, mode = mode}
 
-fun forward_rule_with immediate {name, phase, theorem, mode} : rule =
+fun forward_rule_with budget immediate
+    {name, phase, theorem, mode} : rule =
   {name = name, phase = phase,
    apply =
      EngineStep
-       (clasetStep.forward_rule_step
-         {theorem = theorem, immediate = immediate, mode = mode}),
+       (case budget of
+            NONE =>
+              clasetStep.forward_rule_step
+                {theorem = theorem, immediate = immediate, mode = mode}
+          | SOME meter =>
+              clasetStep.forward_rule_step_budgeted meter
+                {theorem = theorem, immediate = immediate, mode = mode}),
    once = true}
 
 fun forward_rule {name, phase, theorem, immediate, mode} =
-  forward_rule_with (SOME immediate)
+  forward_rule_with NONE (SOME immediate)
     {name = name, phase = phase, theorem = theorem, mode = mode}
 
 (* The step canonicalizes the theorem once for all of its applications and
    takes every premise of that canonical rule when asked for NONE, so the
    all-immediate default costs no canonicalization here. *)
-val default_forward_rule = forward_rule_with NONE
+val default_forward_rule = forward_rule_with NONE NONE
+
+fun default_forward_rule_budgeted budget =
+  forward_rule_with (SOME budget) NONE
 
 fun forward_duplicate store previous candidate =
   let
@@ -165,13 +175,23 @@ fun tactic_rule {name, phase, tactic, index} : rule =
    apply = RenderedTactic (indexed_changed index tactic),
    once = false}
 
+type tactic_registry_state =
+  {rules : (rule * tactic_index option) list,
+   generation : int}
+
 val tactic_registry =
-  Sref.new ([] : (rule * tactic_index option) list)
+  Sref.new
+    ({rules = [], generation = 0} : tactic_registry_state)
+
+fun registry_generation () =
+  #generation (Sref.value tactic_registry)
 
 fun register_tactic_rule
       (registration as {index, ...}) =
   Sref.update tactic_registry
-    (fn rules => rules @ [(tactic_rule registration, index)])
+    (fn {rules, generation} =>
+      {rules = rules @ [(tactic_rule registration, index)],
+       generation = generation + 1})
 
 (* Registration is session-global and additive, which is what a library
    augmenting the engine wants.  A caller whose registrations belong to a
@@ -180,22 +200,25 @@ fun register_tactic_rule
    restores the registry afterwards whether [f] returns or raises. *)
 fun with_tactic_rules f x =
   let
-    val saved = Sref.value tactic_registry
-    fun restore () = Sref.update tactic_registry (fn _ => saved)
+    val saved = #rules (Sref.value tactic_registry)
+    fun restore () =
+      Sref.update tactic_registry
+        (fn {generation, ...} =>
+          {rules = saved, generation = generation + 1})
     val result = f x handle e => (restore (); raise e)
   in
     restore (); result
   end
 
 fun registered_tactic_rules () =
-  map #1 (Sref.value tactic_registry)
+  map #1 (#rules (Sref.value tactic_registry))
 
 fun applicable_tactic_rules conclusion assumptions =
   map #1
     (List.filter
       (fn (_, index) =>
         goal_matches_index index (assumptions, conclusion))
-      (Sref.value tactic_registry))
+      (#rules (Sref.value tactic_registry)))
 
 fun norm_phase_rule ({phase, ...} : rule) =
   case phase of RNorm _ => true | _ => false
@@ -343,13 +366,13 @@ fun simp_rule arguments =
 
 fun norm_builtins_with simp : rule list =
   [{name = "disch", phase = RNorm 0,
-    apply = EngineStep clasetStep.blast_disch_step,
+    apply = ContextualStep clasetStep.blast_disch_step_in,
     once = false},
    {name = "gen", phase = RNorm 0,
-    apply = EngineStep clasetStep.blast_gen_step,
+    apply = ContextualStep clasetStep.blast_gen_step_in,
     once = false},
    {name = "hyp-subst", phase = RNorm 0,
-    apply = EngineStep clasetStep.blast_hyp_subst_step,
+    apply = ContextualStep clasetStep.blast_hyp_subst_step_in,
     once = false},
    simp]
 
@@ -412,7 +435,7 @@ fun ordinary_kind clasetRules.Intro = true
 
 fun canonical_source ({info, ...} : candidate) = #1 (#rl info)
 
-fun declaration_rule mode
+fun declaration_rule budget mode
       (candidate as {spec, name, thm, ...} : candidate) : rule =
   let
     val kind = #kind spec
@@ -420,7 +443,7 @@ fun declaration_rule mode
       kind = clasetRules.Elim orelse kind = clasetRules.Dest
   in
     if kind = clasetRules.Forward then
-      default_forward_rule
+      forward_rule_with budget NONE
         {name = name, phase = phase_of_spec spec,
          theorem = thm, mode = mode}
     else
@@ -429,8 +452,13 @@ fun declaration_rule mode
         {name = name, phase = phase_of_spec spec,
          apply =
            EngineStep
-             (clasetStep.rule_step
-               {theorem = source, elim = elim, mode = mode}),
+             (case budget of
+                  NONE =>
+                    clasetStep.rule_step
+                      {theorem = source, elim = elim, mode = mode}
+                | SOME meter =>
+                    clasetStep.rule_step_budgeted meter
+                      {theorem = source, elim = elim, mode = mode}),
          once = false}
       end
   end
@@ -471,24 +499,24 @@ fun order_unsafe rules =
   end
 
 fun claset_rules_core
-      {claset, mode, conclusion, assumptions, qvars, simp} =
+      {claset, mode, conclusion, assumptions, qvars, simp, budget} =
   let
     val candidates =
       candidate_declarations claset conclusion assumptions qvars
     val safe0 =
-      map (declaration_rule mode)
+      map (declaration_rule budget mode)
         (List.filter (safe_class clasetRules.Safe0) candidates)
     val safep =
-      map (declaration_rule mode)
+      map (declaration_rule budget mode)
         (List.filter (safe_class clasetRules.SafeP) candidates)
     val forwards =
-      map (declaration_rule mode)
+      map (declaration_rule budget mode)
         (List.filter safe_forward_declaration candidates)
     val unsafe_claset =
-      map (declaration_rule mode)
+      map (declaration_rule budget mode)
         (List.filter unsafe_declaration candidates)
     val norm_declarations =
-      map (declaration_rule clasetUnify.Match)
+      map (declaration_rule budget clasetUnify.Match)
         (clasetLib.norm_rules claset)
     val splits = split_rules ()
     val tactics =
@@ -517,7 +545,7 @@ fun claset_rules
   claset_rules_core
     {claset = claset, mode = mode, conclusion = conclusion,
      assumptions = assumptions, qvars = qvars,
-     simp = simp_rule simp_args}
+     simp = simp_rule simp_args, budget = NONE}
 
 fun claset_rules_with
       {claset, mode, conclusion, assumptions, qvars,
@@ -528,6 +556,19 @@ fun claset_rules_with
      simp =
        simp_rule_with
          {name = "simp", simpset = simpset,
-          controls = simp_controls}}
+          controls = simp_controls},
+     budget = NONE}
+
+fun claset_rules_with_budget budget
+      {claset, mode, conclusion, assumptions, qvars,
+       simpset, simp_controls} =
+  claset_rules_core
+    {claset = claset, mode = mode, conclusion = conclusion,
+     assumptions = assumptions, qvars = qvars,
+     simp =
+       simp_rule_with
+         {name = "simp", simpset = simpset,
+          controls = simp_controls},
+     budget = SOME budget}
 
 end

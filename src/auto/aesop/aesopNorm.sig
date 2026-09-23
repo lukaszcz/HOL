@@ -14,4 +14,13 @@ sig
      so callers can stop the branch without exposing a partial norm chain. *)
   val normalise :
     {max_depth : int, rules : rule list} -> gid -> tree -> outcome
+  val normalise_in :
+    Context.t ->
+    {max_depth : int, rules : rule list} -> gid -> tree -> outcome
+  val normalise_budgeted :
+    searchBudget.budget ->
+    {max_depth : int, rules : rule list} -> gid -> tree -> outcome
+  val normalise_budgeted_in :
+    Context.t -> searchBudget.budget ->
+    {max_depth : int, rules : rule list} -> gid -> tree -> outcome
 end
