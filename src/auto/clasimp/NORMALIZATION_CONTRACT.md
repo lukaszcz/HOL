@@ -2,7 +2,7 @@
 
 This records the existing passes before G4 replaces any of them. The
 contract below is proposed pending the owner's D2 traversal decision and
-D5 abstraction decision in `PLAN_generalize.md`. Ordinary HOL4
+D5 abstraction decision. Ordinary HOL4
 simplification keeps its current behavior unless a separate decision
 changes it.
 
