@@ -16,6 +16,13 @@ sig
   val LINARITH_TAC : thm list -> tactic
   val SIMPLE_LINARITH_TAC : thm list -> tactic
   val CFG_LINARITH_TAC : linarith_config -> thm list -> tactic
+  (* These share the caller's budget through splitting and replay.
+     A work cutoff raises searchBudget.LimitReached with its usage;
+     callers may extend the budget and retry the one-shot tactic. *)
+  val LINARITH_TAC_BUDGETED :
+    searchBudget.budget -> thm list -> tactic
+  val CFG_LINARITH_TAC_BUDGETED :
+    searchBudget.budget -> linarith_config -> thm list -> tactic
 
   val LINARITH_PROVE : term -> thm
   val LINARITH_CONV : conv

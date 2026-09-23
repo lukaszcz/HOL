@@ -985,20 +985,20 @@ fun split_on_demand function config split_tac =
 type linarith_config = linarithData.linarith_config
 val default_config = linarithData.default_config
 
-fun CFG_LINARITH_TAC config arguments =
+fun cfg_linarith_tac_with work function config arguments =
   let
-    val function = "CFG_LINARITH_TAC"
     val (argument_facts, argument_splits) =
       full_arguments function arguments
     val split_tac = split_tactic argument_splits
   in
     fn goal => fn ctxt =>
-      Tactical.THEN
+      (normalization work;
+       Tactical.THEN
         (clasetLib.INSERT_FACTS_TAC
            (linarithData.arith_facts () @ argument_facts),
          let
            val search =
-             split_on_demand function config (split_tac ())
+             split_on_demand_with work function config (split_tac ())
          in
            fn inner as (_, conclusion) =>
              Tactical.THEN
@@ -1008,10 +1008,21 @@ fun CFG_LINARITH_TAC config arguments =
                    Tactical.THEN
                      (filter_relevant,
                       search (unregistered_hint conclusion)))) inner
-         end) goal ctxt
+         end) goal ctxt)
   end
 
+fun CFG_LINARITH_TAC config arguments =
+  cfg_linarith_tac_with free_work "CFG_LINARITH_TAC"
+    config arguments
+
+fun CFG_LINARITH_TAC_BUDGETED budget config arguments =
+  cfg_linarith_tac_with (budget_work budget)
+    "CFG_LINARITH_TAC_BUDGETED" config arguments
+
 val LINARITH_TAC = CFG_LINARITH_TAC default_config
+
+fun LINARITH_TAC_BUDGETED budget arguments =
+  CFG_LINARITH_TAC_BUDGETED budget default_config arguments
 
 fun atomized_assumptions premises =
   List.concat (map (CONJUNCTS o Thm.ASSUME) premises)

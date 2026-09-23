@@ -1635,6 +1635,48 @@ val _ =
             | _ => false)
        end)
 
+val budgeted_tactic_goal : Abbrev.goal =
+  ([public_x_le_y, public_y_le_z], public_x_le_z)
+
+val _ =
+  check
+    ("budgeted LINARITH_TAC charges its caller through full search",
+     fn () =>
+       let
+         val funded = searchBudget.unbounded ()
+         val closed =
+           valid_closes
+             (linarithLib.LINARITH_TAC_BUDGETED funded [])
+             budgeted_tactic_goal
+         val used = searchBudget.usage funded
+         fun cut kind limits =
+           let
+             val budget = searchBudget.create limits
+             val tactic =
+               linarithLib.CFG_LINARITH_TAC_BUDGETED budget
+                 linarithLib.default_config []
+           in
+             (ignore
+                (Tactical.VALID tactic budgeted_tactic_goal
+                   (Context.snapshot ()));
+              false)
+             handle searchBudget.LimitReached (actual, usage) =>
+               actual = kind andalso usage = searchBudget.usage budget
+           end
+       in
+         closed andalso #candidates used > 0 andalso
+         #applications used > 0 andalso #normalization used > 0 andalso
+         cut searchBudget.Candidate
+           {candidates = SOME 0, applications = NONE,
+            normalization = NONE} andalso
+         cut searchBudget.Application
+           {candidates = NONE, applications = SOME 0,
+            normalization = NONE} andalso
+         cut searchBudget.Normalization
+           {candidates = NONE, applications = NONE,
+            normalization = SOME 0}
+       end)
+
 val nested_budget_context_slot =
   Context.Data.new
     {name = "linarith-selftest-nested-budget-context", empty = 0,
