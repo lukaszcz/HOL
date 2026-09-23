@@ -178,6 +178,23 @@ sig
     (claset -> 'a option -> thm list -> tactic) ->
     claset -> 'a invocation_simpset option -> thm list -> tactic
 
+  (* Safe consumers insert each literal fact.  Search consumers compile
+     implications as schematic rules, inserting only facts that have no
+     rule view.  Tableau consumers also offer a schematic introduction
+     view of plain facts with loose types, while retaining their literal
+     premise use.  All routes share one invocation fact environment. *)
+  datatype fact_consumer = SafeFacts | SearchFacts | TableauFacts
+
+  (* The fact environment belongs to the tactic application and retains
+     the original theorems alongside lazily demanded schematic views. *)
+  val with_invocation_fact_env :
+    {iff_prefix : string,
+     extra_markers : thm list -> claset -> claset * thm list,
+     consumer : fact_consumer} ->
+    (claset -> 'a option -> thm list ->
+     clasetFacts.environment -> tactic) ->
+    claset -> 'a invocation_simpset option -> thm list -> tactic
+
   (* Inserts the facts so that they appear in the assumption list in the
      order given.  They occupy the most-recent end, ahead of the goal's own
      assumptions, which is what the classical engines' recency tie-break and
@@ -187,10 +204,13 @@ sig
 
      A fact carrying a type variable the goal never mentions is
      inserted at the instances the goal determines for it, and as
-     written where it determines none; a type variable the fact shares
-     with the goal through a free variable of its own is left alone,
-     and a fact the goal's type variables already cover is inserted as
-     it is.  An assumption's type variables are fixed, where
+     written where it determines none.  Genuine free variables in the
+     original theorem that are shared with the goal keep their types;
+     quantified variables are freshly specialized and never classified
+     as fixed by a coincidentally equal goal-variable name.  Hypothesis
+     support keeps its types.  A fact the goal's type variables already
+     cover is inserted as it is.  An assumption's type variables are
+     fixed, where
      Isabelle's [using] leaves a fact's schematic and instantiates
      them per use, so a fact may contribute more than one assumption,
      one per distinct instance. *)

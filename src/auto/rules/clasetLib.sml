@@ -1359,21 +1359,32 @@ fun head_name term = fst (dest_const (fst (strip_comb term)))
    citation still stands.
 
    A match then contributes only where it leaves alone the type
-   variables the fact shares with the goal through a free variable of
-   its own: such a variable ties the fact to the goal's, and an
-   instance of its type would leave the fact speaking of a different
-   variable.  Any other type variable of the fact is its own however
-   it is named. *)
+   variables the fact shares with the goal through a genuine free
+   variable of its own, and the types of its support hypotheses.
+   Quantified variables are specialized freshly after that
+   classification, and loose type variables are freshened apart from
+   the goal before matching.  Thus neither binder nor type-variable
+   spelling determines which instances are offered. *)
 fun goal_type_instances (assumptions, target) fact =
   let
-    val body = Thm.concl (Drule.SPEC_ALL fact)
+    val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
+    val original_body = Thm.concl fact
+    val specialized =
+      Drule.SPECL (map (Term.genvar o Term.type_of) quantified) fact
+    val body = Thm.concl specialized
     val goal_terms = target :: assumptions
     val goal_variables = Term.free_varsl goal_terms
-    val fact_variables = Term.free_varsl (body :: Thm.hyp fact)
+    val fact_variables =
+      Term.free_varsl (Thm.concl fact :: Thm.hyp fact)
     val goal_type_variables =
       List.foldl (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
         [] goal_terms
-    val alien = Lib.set_diff (type_vars_in_term body) goal_type_variables
+    val alien =
+      Lib.set_diff (type_vars_in_term original_body) goal_type_variables
+    val support_types =
+      List.foldl
+        (fn (term, seen) => Lib.union (type_vars_in_term term) seen)
+        [] (Thm.hyp fact)
     val fixed =
       List.foldl
         (fn (variable, seen) =>
@@ -1381,15 +1392,31 @@ fun goal_type_instances (assumptions, target) fact =
             Lib.union (Type.type_vars (Term.type_of variable)) seen
           else
             seen)
-        [] fact_variables
+        support_types fact_variables
     val loose = Lib.set_diff (type_vars_in_term body) fixed
+    val fresh_types =
+      map (fn ty => {redex = ty, residue = Type.gen_tyvar ()}) loose
+    fun same_support left right =
+      List.all
+        (fn term => List.exists (Term.aconv term) right) left andalso
+      List.all
+        (fn term => List.exists (Term.aconv term) left) right
   in
     if null loose then [fact]
     else
       let
-        val schematic = free_vars body
+        val match_fact = Thm.INST_TYPE fresh_types fact
+        val match_body =
+          Thm.concl
+            (Drule.SPECL
+              (map (Term.genvar o Term.type_of)
+                (fst (boolSyntax.strip_forall (Thm.concl match_fact))))
+              match_fact)
+        val match_loose = map #residue fresh_types
+        val schematic = free_vars match_body
         val patterns =
-          matchable_subterms (fn v => Lib.op_mem aconv v schematic) body
+          matchable_subterms (fn v => Lib.op_mem aconv v schematic)
+            match_body
         val sites =
           List.concat (map (matchable_subterms (fn _ => true)) goal_terms)
         fun instance_of (pattern, site) =
@@ -1406,7 +1433,8 @@ fun goal_type_instances (assumptions, target) fact =
                       types
                 in
                   if null proper then NONE
-                  else if List.all (fn {redex, ...} => Lib.mem redex loose)
+                  else if List.all
+                            (fn {redex, ...} => Lib.mem redex match_loose)
                             proper
                   then SOME proper
                   else NONE
@@ -1427,11 +1455,13 @@ fun goal_type_instances (assumptions, target) fact =
         val instances =
           List.foldl
             (fn (types, kept) =>
-              let val instance = Thm.INST_TYPE types fact
+              let val instance = Thm.INST_TYPE types match_fact
               in
                 if List.exists
                      (fn earlier =>
-                       aconv (Thm.concl earlier) (Thm.concl instance))
+                       aconv (Thm.concl earlier) (Thm.concl instance)
+                       andalso same_support (Thm.hyp earlier)
+                         (Thm.hyp instance))
                      kept
                 then kept
                 else kept @ [instance]
@@ -1474,10 +1504,12 @@ fun INSERT_FACTS_TAC facts =
    declared, it does not return inside 300s; declared and not
    inserted, it closes at 1.140s.
 
-   Only an implication is declared and withheld.  A fact that is not
-   one states at its own shape what the assumption already offers the
-   search, and as a rule it would be an introduction concluding
-   itself, so it stays an assumption.  A negation is not an
+   Only an implication is declared instead of being inserted.  A fact
+   that is not one stays an assumption: its shape can serve as a premise
+   or occur under a connective.  Tableau search also gets a safe
+   introduction view when such a fact has loose type variables, because
+   an inserted assumption fixes them before a later goal exposes their
+   useful carrier.  A negation is not an
    implication here: [is_imp_only] keeps [~P] opaque, which is what
    leaves a negated fact where the tableau reads it as a literal.  A
    fact the claset declines -- an implication whose shape makes no
@@ -1488,24 +1520,52 @@ val invocation_fact_spec : rulespec =
 
 val invocation_fact_prefix = "__invocation_fact_"
 
-(* Returns the claset the search runs against and the facts still owed
-   to the assumptions, in the order they were given. *)
-fun declare_invocation_facts facts cs =
+datatype fact_consumer = SafeFacts | SearchFacts | TableauFacts
+
+(* Returns the claset the consumer runs against and the facts owed to
+   the assumptions, in the order they were given. *)
+fun declare_invocation_facts consumer environment cs =
   let
-    fun step (fact, (cs, assumed)) =
-      if boolSyntax.is_imp_only (Thm.concl (Drule.SPEC_ALL fact)) then
-        let
-          val name =
-            fresh_rule_name {prefix = invocation_fact_prefix, from = 0} cs
-        in
-          case Lib.total
-                 (add_derived_rule invocation_fact_spec (name, fact)) cs of
-              SOME extended => (extended, assumed)
-            | NONE => (cs, fact :: assumed)
-        end
-      else
-        (cs, fact :: assumed)
-    val (declared_cs, reversed) = List.foldl step (cs, []) facts
+    fun step (entry, (cs, assumed)) =
+      let
+        val fact = #theorem (clasetFacts.literal_view entry)
+      in
+        case
+          if consumer <> SafeFacts then
+            clasetFacts.implication_rule_view entry
+          else NONE
+        of
+            SOME view =>
+              let
+                val name =
+                  fresh_rule_name
+                    {prefix = invocation_fact_prefix, from = 0} cs
+              in
+                case Lib.total
+                       (add_derived_rule invocation_fact_spec
+                         (name, #theorem view)) cs of
+                    SOME extended => (extended, assumed)
+                  | NONE => (cs, fact :: assumed)
+              end
+          | NONE =>
+              if consumer = TableauFacts andalso
+                 clasetFacts.has_schematic_types entry then
+                let
+                  val name =
+                    fresh_rule_name
+                      {prefix = invocation_fact_prefix, from = 0} cs
+                  val theorem =
+                    #theorem (clasetFacts.schematic_view entry)
+                  val extended =
+                    Lib.total
+                      (add_derived_rule sintro_spec (name, theorem)) cs
+                in
+                  (Option.getOpt (extended, cs), fact :: assumed)
+                end
+              else (cs, fact :: assumed)
+      end
+    val (declared_cs, reversed) =
+      List.foldl step (cs, []) (clasetFacts.facts environment)
   in
     (declared_cs, List.rev reversed)
   end
@@ -1522,7 +1582,11 @@ type 'a invocation_simpset =
      {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
       claset : claset, simpset : 'a} -> claset * 'a}
 
-fun with_invocation_args {iff_prefix,extra_markers} body base_cs simpset =
+(* The environment is scoped to the tactic application, where the goal and
+   its fixed parameters are known.  Views are demanded by the consumer. *)
+fun with_invocation_fact_env_raw
+    {iff_prefix,extra_markers}
+    body base_cs simpset =
   markerLib.ABBRS_THEN
     (fn theorems => fn goal =>
       (let
@@ -1547,11 +1611,32 @@ fun with_invocation_args {iff_prefix,extra_markers} body base_cs simpset =
                 end
         val (invocation_cs, facts) =
           extra_markers leftovers classical_cs
-        val (search_cs, assumed) = declare_invocation_facts facts invocation_cs
+        val environment = clasetFacts.create goal facts
+      in
+        body invocation_cs invocation_ss simp_controls environment goal
+      end))
+
+fun with_invocation_fact_env
+    {iff_prefix,extra_markers,consumer}
+    body base_cs simpset =
+  with_invocation_fact_env_raw
+    {iff_prefix=iff_prefix, extra_markers=extra_markers}
+    (fn cs => fn ss => fn controls => fn environment =>
+      let
+        val (search_cs, assumed) =
+          declare_invocation_facts consumer environment cs
       in
         Tactical.THEN
           (INSERT_FACTS_TAC assumed,
-           body search_cs invocation_ss simp_controls) goal
-      end))
+           body search_cs ss controls environment)
+      end)
+    base_cs simpset
+
+fun with_invocation_args {iff_prefix,extra_markers} body =
+  with_invocation_fact_env
+    {iff_prefix=iff_prefix, extra_markers=extra_markers,
+     consumer=SearchFacts}
+    (fn cs => fn ss => fn controls => fn _ =>
+      body cs ss controls)
 
 end

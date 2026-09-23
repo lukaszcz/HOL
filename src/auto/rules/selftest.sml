@@ -3265,6 +3265,293 @@ val _ =
            | _ => false (* one inserted assumption: no instance is offered *)
        end)
 
+(* Quantified variables are schematic even when their spelling matches a
+   free goal parameter.  Compare the semantic instance sets, since a
+   redundant citation of the original theorem is not significant. *)
+val hygiene_x = ``x:'a``
+val hygiene_z = ``z:'a``
+val hygiene_fact_x = GEN hygiene_x
+  (REFL ``FST ((x,x):'a#'a)``)
+val hygiene_fact_z = GEN hygiene_z
+  (REFL ``FST ((z,z):'a#'a)``)
+val hygiene_goal : Abbrev.goal =
+  ([], ``(FST ((u,u):'b#'b) = u) /\ ((x:'a) = x)``)
+
+fun hygiene_inserted fact =
+  case #1
+    (Tactical.VALID (INSERT_FACTS_TAC [fact]) hygiene_goal
+       (Context.snapshot())) of
+      [(assumptions, _)] => assumptions
+    | _ => raise Fail "hygiene_inserted: one goal expected"
+
+val _ =
+  test
+    ("bound-variable spelling preserves fact type instances",
+     fn () =>
+       let
+         val left = hygiene_inserted hygiene_fact_x
+         val right = hygiene_inserted hygiene_fact_z
+         val at_b =
+           concl (Thm.INST_TYPE [alpha |-> beta] hygiene_fact_x)
+         fun same_set xs ys =
+           List.all
+             (fn x => List.exists (Term.aconv x) ys) xs
+       in
+         same_set left right andalso same_set right left andalso
+         List.exists (fn x => Term.aconv x at_b) left
+       end)
+
+val hygiene_fact_c =
+  Thm.INST_TYPE
+    [alpha |-> Type.mk_vartype "'hygiene_carrier"] hygiene_fact_z
+
+val _ =
+  test
+    ("renaming a schematic carrier preserves the useful instance",
+     fn () =>
+       let
+         val expected =
+           concl (Thm.INST_TYPE [alpha |-> beta] hygiene_fact_x)
+       in
+         List.exists (fn assumption => Term.aconv assumption expected)
+           (hygiene_inserted hygiene_fact_c)
+       end)
+
+val hygiene_p_def =
+  new_definition ("hygiene_p_def", ``hygiene_p (v:'a) <=> T``)
+val hygiene_behavior_fact =
+  GEN hygiene_x
+    (Tactical.prove
+      (``hygiene_p (x:'a)``, Rewrite.REWRITE_TAC [hygiene_p_def]))
+
+val _ =
+  test
+    ("the second carrier remains usable after binder collision",
+     fn () =>
+       let
+         val goal : Abbrev.goal =
+           ([], ``hygiene_p (u:'b) /\ ((x:'a) = x)``)
+         val tactic =
+           Tactical.THEN
+             (INSERT_FACTS_TAC [hygiene_behavior_fact],
+              Rewrite.ASM_REWRITE_TAC [])
+       in
+         case Tactical.VALID tactic goal (Context.snapshot()) of
+             ([], validation) =>
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val hygiene_support = ``hygiene_support (v:'a):bool``
+val hygiene_supported_fact =
+  GEN hygiene_x
+    (Drule.ADD_ASSUM hygiene_support
+      (REFL ``FST ((x,x):'a#'a)``))
+
+val _ =
+  test
+    ("support types remain fixed during literal insertion",
+     fn () =>
+       let
+         val target = ``FST ((u,u):'b#'b) = u``
+         val goal : Abbrev.goal = ([hygiene_support], target)
+         val missing_support : Abbrev.goal = ([], target)
+         val refused =
+           (ignore
+             (Tactical.VALID
+               (INSERT_FACTS_TAC [hygiene_supported_fact])
+               missing_support (Context.snapshot()));
+            false) handle HOL_ERR _ => true
+       in
+         case #1
+           (Tactical.VALID
+             (INSERT_FACTS_TAC [hygiene_supported_fact]) goal
+             (Context.snapshot())) of
+             [([assumption, supported], _)] =>
+               refused andalso
+               Term.aconv assumption (concl hygiene_supported_fact) andalso
+               Term.aconv supported hygiene_support
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("invocation facts keep provenance and freshen separate citations",
+     fn () =>
+       let
+         val source = Thm.REFL ``citation_v:'a``
+         val environment =
+           clasetFacts.create
+             ([], ``citation_target:'b = citation_target``)
+             [source, source]
+       in
+         case clasetFacts.facts environment of
+             [left, right] =>
+               clasetFacts.source_id left = 0 andalso
+               clasetFacts.source_id right = 1 andalso
+               Term.aconv
+                 (concl (clasetFacts.source left)) (concl source) andalso
+               Term.aconv
+                 (concl (clasetFacts.source right)) (concl source) andalso
+               not
+                 (Term.aconv
+                   (concl (#theorem (clasetFacts.schematic_view left)))
+                   (concl (#theorem (clasetFacts.schematic_view right))))
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("fact views preserve literal order and select equations for norm",
+     fn () =>
+       let
+         val condition = ``citation_condition:bool``
+         val equation = Thm.REFL ``citation_subject:'a``
+         val conditional = Thm.DISCH condition equation
+         val proposition = Thm.ASSUME condition
+         val implication =
+           Thm.DISCH condition (Thm.ASSUME condition)
+         val environment =
+           clasetFacts.create ([], boolSyntax.T)
+             [equation, conditional, proposition, implication]
+         val literals = clasetFacts.literal_views environment
+         val equations = clasetFacts.equational_views environment
+         fun ids views =
+           map (fn ({source_id, ...} : clasetFacts.view) => source_id)
+             views
+       in
+         ids literals = [0, 1, 2, 3] andalso
+         ids equations = [0, 1] andalso
+         ListPair.allEq
+           (fn (view, source) =>
+             Term.aconv (Thm.concl (#theorem view))
+               (Thm.concl source))
+           (literals,
+            [equation, conditional, proposition, implication]) andalso
+         ListPair.allEq
+           (fn (view, source) =>
+             Term.aconv (Thm.concl (#source view))
+               (Thm.concl source))
+           (equations, [equation, conditional])
+       end)
+
+val _ =
+  test
+    ("equational views retain a conjunct's source and support",
+     fn () =>
+       let
+         val support = ``citation_conj_support:bool``
+         val equation = Thm.REFL ``citation_conj_subject:'a``
+         val conjunctive =
+           Thm.CONJ equation (Thm.ASSUME support)
+         val environment =
+           clasetFacts.create ([], boolSyntax.T) [conjunctive]
+       in
+         case clasetFacts.equational_views environment of
+             [{source_id, source, theorem, support = hypotheses}] =>
+               source_id = 0 andalso
+               Term.aconv (Thm.concl source)
+                 (Thm.concl conjunctive) andalso
+               can (Term.match_term (Thm.concl equation))
+                 (Thm.concl theorem) andalso
+               List.exists (Term.aconv support) hypotheses
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("implication rule views preserve source identity and support",
+     fn () =>
+       let
+         val premise = ``citation_rule_p (x:'a):bool``
+         val support = ``citation_rule_q (x:'a):bool``
+         val source = Thm.DISCH premise (Thm.ASSUME support)
+         val environment =
+           clasetFacts.create ([], boolSyntax.T)
+             [source, Thm.REFL ``citation_rule_subject:'a``]
+       in
+         case map clasetFacts.implication_rule_view
+                    (clasetFacts.facts environment) of
+             [SOME view, NONE] =>
+               #source_id view = 0 andalso
+               Term.aconv (Thm.concl (#source view))
+                 (Thm.concl source) andalso
+               List.exists (Term.aconv support) (#support view) andalso
+               can (Term.match_term (Thm.concl source))
+                 (Thm.concl (#theorem view))
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("invocation fact support and shared free parameters stay fixed",
+     fn () =>
+       let
+         val shared = Thm.REFL ``citation_shared:'a``
+         val environment =
+           clasetFacts.create
+             ([``citation_shared:'a = citation_shared``],
+              ``citation_target:'b = citation_target``)
+             [shared, hygiene_supported_fact]
+       in
+         case clasetFacts.facts environment of
+             [shared_fact, supported_fact] =>
+               Term.aconv
+                 (concl (#theorem
+                   (clasetFacts.schematic_view shared_fact)))
+                 (concl shared) andalso
+               List.exists
+                 (Term.aconv ``citation_shared:'a``)
+                 (clasetFacts.fixed_terms shared_fact) andalso
+               List.exists
+                 (fn ty => Type.compare (ty, alpha) = EQUAL)
+                 (clasetFacts.fixed_types supported_fact) andalso
+               List.exists
+                 (Term.aconv hygiene_support)
+                 (#support
+                   (clasetFacts.schematic_view supported_fact))
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("fact-site matching instantiates only schematic parameters",
+     fn () =>
+       let
+         val loose =
+           hd (clasetFacts.facts
+             (clasetFacts.create ([], boolSyntax.T) [hygiene_fact_x]))
+         val supported =
+           hd (clasetFacts.facts
+             (clasetFacts.create ([], boolSyntax.T)
+               [hygiene_supported_fact]))
+         val shared = Thm.REFL ``citation_shared:'a``
+         val fixed =
+           hd (clasetFacts.facts
+             (clasetFacts.create
+               ([``citation_shared:'a = citation_shared``],
+                boolSyntax.T) [shared]))
+         fun pattern entry =
+           concl (#theorem (clasetFacts.schematic_view entry))
+         val other = Thm.REFL ``citation_other:'a``
+       in
+         (case
+            clasetFacts.match_view loose (pattern loose)
+              (concl (Thm.INST_TYPE [alpha |-> beta] hygiene_fact_x))
+          of
+              SOME view =>
+                Term.aconv (concl (#theorem view))
+                  (concl (Thm.INST_TYPE [alpha |-> beta]
+                    hygiene_fact_x))
+            | NONE => false) andalso
+         not (Option.isSome
+           (clasetFacts.match_view supported (pattern supported)
+             (concl (Thm.INST_TYPE [alpha |-> beta]
+               hygiene_supported_fact)))) andalso
+         not (Option.isSome
+           (clasetFacts.match_view fixed (pattern fixed) (concl other)))
+       end)
+
 (* An invocation's facts are routed: a citation that is an implication
    becomes a rule of the invocation claset, where the search can
    instantiate it per use and resolve its premises, and is kept out of
@@ -3309,16 +3596,50 @@ val _ =
      fn () =>
        case invocation_claset_rules [invocation_implication] of
            [({kind = Dest, safe = false, ...}, (_, rule))] =>
-             (* the declaration generalises what it is given, so the
-                statements meet once both are specialised *)
-             Term.aconv (concl (Drule.SPEC_ALL rule))
-               (concl (Drule.SPEC_ALL invocation_implication))
+             (* The search view has fresh schematic parameters, and
+                canonicalization binds them for each application. *)
+             let
+               val supplied =
+                 concl (Drule.SPEC_ALL invocation_implication)
+               val declared = concl (Drule.SPEC_ALL rule)
+             in
+               can (Term.match_term supplied) declared andalso
+               can (Term.match_term declared) supplied
+             end
          | _ => false)
 
 val _ =
   test
     ("a supplied implication is not assumed as well",
      fn () => List.null (invocation_assumptions [invocation_implication]))
+
+val _ =
+  test
+    ("safe consumer keeps an implication literally without a rule",
+     fn () =>
+       let
+         val seen = ref ([] : (rulespec * (string * thm)) list)
+         val tactic =
+           with_invocation_fact_env
+             {iff_prefix = "__selftest_safe_iff_",
+              extra_markers = fn theorems => fn cs => (cs, theorems),
+              consumer = SafeFacts}
+             (fn cs => fn _ => fn _ => fn _ =>
+               (seen := rules_of cs; Tactical.ALL_TAC))
+             empty_cs NONE [invocation_implication]
+         val (residual, _) =
+           tactic ([] : term list, boolSyntax.T) (Context.snapshot())
+       in
+         List.null (!seen) andalso
+         (case residual of
+              [(assumptions, _)] =>
+                (case assumptions of
+                     [assumption] =>
+                       Term.aconv assumption
+                         (concl invocation_implication)
+                   | _ => false)
+            | _ => false)
+       end)
 
 val _ =
   test
@@ -3336,6 +3657,50 @@ val _ =
 
 (* The shared work meter is what lets a caller ask how much search a
    proof did.  Nesting must not lose the enclosing measurement. *)
+val _ =
+  test
+    ("invocation budget separates candidate and application work",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = SOME 2, applications = SOME 1,
+              normalization = SOME 0}
+         fun nested () = searchBudget.charge budget searchBudget.Candidate
+         val _ = nested ()
+         val _ = nested ()
+         val _ =
+           searchBudget.charge budget searchBudget.Application
+         val candidate_limit =
+           (searchBudget.charge budget searchBudget.Candidate; false)
+           handle searchBudget.LimitReached
+             (searchBudget.Candidate, used) =>
+               #candidates used = 2 andalso #applications used = 1
+         val norm_limit =
+           (searchBudget.charge budget searchBudget.Normalization; false)
+           handle searchBudget.LimitReached
+             (searchBudget.Normalization, used) =>
+               #normalization used = 0
+         val invalid =
+           (ignore
+              (searchBudget.create
+                {candidates = SOME ~1, applications = NONE,
+                 normalization = NONE});
+            false) handle HOL_ERR _ => true
+         val _ = searchBudget.extend budget searchBudget.Candidate 1
+         val _ = searchBudget.extend budget searchBudget.Normalization 1
+         val _ = searchBudget.charge budget searchBudget.Candidate
+         val _ = searchBudget.charge budget searchBudget.Normalization
+         val invalid_extension =
+           (searchBudget.extend budget searchBudget.Application ~1;
+            false) handle HOL_ERR _ => true
+       in
+         candidate_limit andalso norm_limit andalso invalid andalso
+         invalid_extension andalso
+         #candidates (searchBudget.usage budget) = 3 andalso
+         #normalization (searchBudget.usage budget) = 1
+       end)
+
 val _ =
   test
     ("the search-work meter reports each run and keeps the enclosing one",

@@ -2,11 +2,13 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-clasetLib.uo: clasetMarkerTheory.uo
+clasetLib.uo: clasetMarkerTheory.uo clasetFacts.uo
 clasetSeedTheory.uo: clasetLib.uo
 selftest.uo: clasetSeedTheory.uo
 
-selftest.exe: selftest.uo NTactical.uo clasetNet.uo clasetRules.uo \
+selftest.exe: selftest.uo NTactical.uo searchBudget.uo \
+              clasetFacts.uo \
+              clasetNet.uo clasetRules.uo \
               clasetLib.uo clasetMarkerTheory.uo clasetSeedTheory.uo
 	$(HOLMOSMLC) -o $@ $<
 
