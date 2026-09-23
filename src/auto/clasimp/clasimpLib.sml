@@ -57,8 +57,13 @@ val safe_solver =
    and simplification does not prove one in Isabelle either.  The
    subgoaler runs the traversal's own recursion first and looks only at
    what that leaves. *)
-val witness_subgoaler : Traverse.subgoaler =
+fun witness_subgoaler_with_charge charge : Traverse.subgoaler =
   let
+    fun budget_total work =
+      SOME (work ())
+      handle Portable.Interrupt => raise Portable.Interrupt
+           | e as searchBudget.LimitReached _ => raise e
+           | _ => NONE
     (* The conditions are matched one at a time against the context, each
        under what the earlier matches have already named: the rewrite's
        premises share the variables the traversal left open, which is how
@@ -68,17 +73,19 @@ val witness_subgoaler : Traverse.subgoaler =
         fun search [] instance = SOME instance
           | search (condition :: rest) instance =
               let
+                val _ = charge searchBudget.Normalization
                 val pattern = Term.subst instance condition
                 fun attempt [] = NONE
                   | attempt (assumption :: others) =
-                      case Lib.total
+                      (charge searchBudget.Candidate;
+                       case Lib.total
                              (Term.match_terml fixed_types fixed pattern)
                              assumption of
                           NONE => attempt others
                         | SOME (extra, _) =>
                             (case search rest (extra @ instance) of
                                  NONE => attempt others
-                               | found => found)
+                               | found => found))
               in
                 attempt assumptions
               end
@@ -103,9 +110,10 @@ val witness_subgoaler : Traverse.subgoaler =
       Conv.QCONV (Conv.TOP_DEPTH_CONV (Conv.FIRST_CONV pull_laws))
     val has_existential = Lib.can (HolKernel.find_term boolSyntax.is_exists)
     fun witness_proof context_thms term =
-      Lib.total
+      budget_total
         (fn () =>
            let
+             val _ = charge searchBudget.Normalization
              val pulled_thm =
                if has_existential term then pull_existentials term
                else Thm.REFL term
@@ -130,21 +138,25 @@ val witness_subgoaler : Traverse.subgoaler =
                case (vars, matched) of
                    (_ :: _, SOME instance) => instance
                  | _ => raise ERR "witness_proof" "no contextual witness"
+             fun find_context proposition =
+               let
+                 fun scan [] = NONE
+                   | scan (theorem :: rest) =
+                       (charge searchBudget.Candidate;
+                        if Term.aconv (Thm.concl theorem) proposition then
+                          SOME theorem
+                        else scan rest)
+               in scan context_thms end
              fun contextual proposition =
-               case List.find
-                      (fn theorem =>
-                        Term.aconv (Thm.concl theorem) proposition)
-                      context_thms of
+               case find_context proposition of
                    SOME theorem => theorem
                  | NONE =>
                      raise ERR "witness_proof"
                        "matched condition has no context theorem"
+             val _ = charge searchBudget.Normalization
              val body' = Term.subst instance body
              val body_thm =
-               case List.find
-                      (fn theorem =>
-                        Term.aconv (Thm.concl theorem) body')
-                      context_thms of
+               case find_context body' of
                    SOME theorem => theorem
                  | NONE =>
                      (case map (contextual o Term.subst instance)
@@ -169,12 +181,12 @@ val witness_subgoaler : Traverse.subgoaler =
                      Thm.EXISTS (quantified, witness)
                        (introduce inner' rest theorem)
                    end
+             val _ = charge searchBudget.Application
              val witnesses = map (Term.subst instance) vars
              val introduced = introduce pulled witnesses body_thm
            in
              Thm.EQ_MP (Thm.SYM pulled_thm) introduced
            end)
-        ()
   in
     fn ({recurse, context_thms, ...} : Traverse.simp_prover_ctxt) =>
       fn term =>
@@ -190,6 +202,12 @@ val witness_subgoaler : Traverse.subgoaler =
                   Thm.TRANS reduction (Drule.EQT_INTRO theorem)
         end
   end
+
+val witness_subgoaler : Traverse.subgoaler =
+  witness_subgoaler_with_charge (fn _ => ())
+
+fun witness_subgoaler_budgeted budget =
+  witness_subgoaler_with_charge (searchBudget.charge budget)
 
 (* HOL4's COND_CONG simplifies both branches of a conditional as well as
    its condition.  A recursive equation whose right-hand side is a
@@ -748,6 +766,9 @@ fun pointwise_conv heads term =
 
 fun pointwise heads = Tactic.CONV_TAC (pointwise_conv heads)
 
+fun pointwise_with charge heads goal =
+  (charge (); pointwise heads goal)
+
 (* The step is terminal: it runs on what simplification could not close,
    so no goal that already closes takes a different route.  Where
    simplification reports nothing to do the step still applies if the
@@ -763,15 +784,20 @@ fun pointwise heads = Tactic.CONV_TAC (pointwise_conv heads)
    take it at all: Isabelle's [ext] is an introduction rule and not a
    safe one, and a safe step that rewrote every function equation would
    change what SAFE_TAC leaves. *)
-fun with_extensionality ss simplify =
+fun with_extensionality_with charge ss simplify =
   let
     val pointwise_then =
-      Tactical.THEN (pointwise (membership_heads ss), Tactical.TRY simplify)
+      Tactical.THEN
+        (pointwise_with charge (membership_heads ss),
+         Tactical.TRY simplify)
   in
     Tactical.THEN
       (Tactical.ORELSE (simplify, pointwise_then),
        Tactical.REPEAT pointwise_then)
   end
+
+fun with_extensionality ss simplify =
+  with_extensionality_with (fn () => ()) ss simplify
 
 (* Isabelle reads an ordered rewrite by its schematic variables.  Stated
    with them a rule is permutative, and the simplifier applies it only in
@@ -1655,9 +1681,9 @@ fun process_clasimp_args body base_cs base_ss =
       | _ => raise ERR "process_clasimp_args" "simpset was not installed")
     base_cs (SOME {base=base_ss, extend=extend_invocation})
 
-fun process_clasimp_args_fact_views consumer
+fun process_clasimp_args_fact_views consumer budget
     body base_cs base_ss =
-  clasetLib.with_invocation_fact_env
+  clasetLib.with_invocation_fact_env_budgeted budget
     {iff_prefix="__clasimp_iff_arg_", extra_markers=no_extra_markers,
      consumer=consumer}
     (fn cs => fn simpset => fn controls => fn environment =>
@@ -1665,10 +1691,87 @@ fun process_clasimp_args_fact_views consumer
           SOME ss =>
             let
               val views =
-                map #theorem
-                  (clasetFacts.schematic_views environment)
+                clasetFacts.schematic_views environment
+              val conversion =
+                Conv.THENC
+                  (simpLib.SIMP_CONV_CHILD_FIRST
+                     (charge_normalization budget) ss [],
+                   fn term =>
+                     (charge_normalization budget ();
+                      Conv.QCONV
+                        (Conv.REDEPTH_CONV
+                          (Conv.REWR_CONV
+                            (Conv.GSYM boolTheory.AND_IMP_INTRO)))
+                        term))
+              fun transport (view : clasetFacts.view) =
+                let
+                  val derived =
+                    clasetFacts.transport_view conversion view
+                  val theorem = #theorem derived
+                in
+                  if aconv (concl theorem) (concl (#theorem view)) orelse
+                     aconv (concl theorem) boolSyntax.T then NONE
+                  else SOME derived
+                end
+                handle HOL_ERR _ => NONE
+                     | Conv.UNCHANGED => NONE
+              val transported = List.mapPartial transport views
+              fun implication theorem =
+                boolSyntax.is_imp_only
+                  (concl (Drule.SPEC_ALL theorem))
+              val fact_cs =
+                if consumer <> clasetLib.SearchFacts then cs
+                else
+                  List.foldl
+                    (fn (view, current) =>
+                      if implication (#source view) andalso
+                         implication (#theorem view) then
+                        let
+                          val name =
+                            clasetLib.fresh_rule_name
+                              {prefix = "__clasimp_transport_", from = 0}
+                              current
+                        in
+                          clasetLib.add_derived_rule
+                            {kind = clasetRules.Dest,
+                             safe = false, prio = NONE}
+                            (name, #theorem view) current
+                          handle HOL_ERR _ => current
+                        end
+                      else current)
+                    cs transported
+              val transported_cs =
+                if consumer <> clasetLib.SearchFacts then fact_cs
+                else
+                  List.foldl
+                    (fn ((spec, (_, theorem)), current) =>
+                      if #safe spec then current
+                      else
+                        let
+                          val derived =
+                            Conv.CONV_RULE conversion theorem
+                        in
+                          if aconv (concl derived) (concl theorem) orelse
+                             aconv (concl derived) boolSyntax.T then
+                            current
+                          else
+                            let
+                              val name =
+                                clasetLib.fresh_rule_name
+                                  {prefix = "__clasimp_transport_",
+                                   from = 0} current
+                            in
+                              clasetLib.add_derived_rule spec
+                                (name, derived) current
+                              handle HOL_ERR _ => current
+                            end
+                        end
+                        handle HOL_ERR _ => current
+                             | Conv.UNCHANGED => current)
+                    fact_cs (clasetLib.invocation_marker_rules cs)
             in
-              body cs ss (controls @ views)
+              body transported_cs ss
+                (controls @ map #theorem (views @ transported))
             end
         | NONE =>
             raise ERR "process_clasimp_args_fact_views"
@@ -1743,6 +1846,9 @@ fun extensional_normalize ss =
               Conv.REWR_CONV (extensional_rule heads term) term))
   end
 
+fun extensional_normalize_with charge ss goal =
+  (charge (); extensional_normalize ss goal)
+
 fun search_stages limit =
   let
     fun loop bound stages =
@@ -1811,8 +1917,8 @@ fun auto_with {blast, depth} charge cs ss simp_args =
        metavariables, so one TRY per subgoal (from THEN) is equivalent. *)
     val script =
       Tactical.EVERY
-        [Tactical.TRY (extensional_normalize ss),
-         with_extensionality ss
+        [Tactical.TRY (extensional_normalize_with charge ss),
+         with_extensionality_with charge ss
            (asm_full_simp_with charge ss simp_args),
          Tactical.TRY initial_safe,
          Tactical.TRY search,
@@ -1827,17 +1933,204 @@ fun CS_of body cs ss goal =
 
 fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
 
-(* The best-first leg's turn, in admitted expansions.  Every list/map
-   corpus goal that leg closes under force closes far inside it: the
-   longest of those solves, [ran_map_upd_Some], takes 0.6s.  A turn on a
-   goal the leg cannot close is the cost the goals that need the other
-   engine pay, and 500 expansions of one costs 11s, so a materially wider
-   turn would spend a whole per-goal budget before the engine that closes
-   the goal was reached. *)
-val first_best_turn = 500
+type force_slice =
+  {candidates : int, applications : int, normalization : int}
 
-fun force_with name charge cs ss simp_args =
+type force_schedule =
+  {best : force_slice, tableau : force_slice, depth : force_slice,
+   blast_depth : int, classical_depth : int}
+
+val force_schedule : force_schedule ref =
+  ref
+    {best =
+       {candidates = 5000, applications = 500,
+        normalization = 500},
+     tableau =
+       {candidates = 5000, applications = 500,
+        normalization = 500},
+     depth =
+       {candidates = 5000, applications = 500,
+        normalization = 500},
+     blast_depth = 8, classical_depth = 4}
+
+fun force_budget () =
+  searchBudget.create
+    {candidates = SOME 100000, applications = SOME 10000,
+     normalization = SOME 100000}
+
+fun slice_limits
+      ({candidates, applications, normalization} : force_slice) =
+  {candidates = SOME candidates, applications = SOME applications,
+   normalization = SOME normalization}
+
+fun grow_slice
+      ({candidates, applications, normalization} : force_slice) =
+  {candidates = candidates * 2,
+   applications = applications * 2,
+   normalization = normalization * 2}
+
+fun valid_slice
+      ({candidates, applications, normalization} : force_slice) =
+  candidates > 0 andalso applications > 0 andalso normalization > 0
+
+fun force_search schedule budget cs ss simp_args goal ctxt =
   let
+    val {best, tableau, depth, blast_depth, classical_depth} =
+      schedule
+    val best_budget = searchBudget.child budget (slice_limits best)
+    val best_cs =
+      add_simp_wrapper_with
+        (charge_normalization best_budget) ss simp_args cs
+    val best_session =
+      classicalLib.CS_FIRST_BEST_SESSION best_budget
+        best_cs goal ctxt
+    val best_active = ref true
+    val best_slice = ref best
+    val tableau_active = ref (blast_depth > 0)
+    val tableau_slice = ref tableau
+    val depth_stages = ref (search_stages classical_depth)
+    val depth_slice = ref depth
+    val depth_current =
+      ref (NONE :
+        (searchBudget.budget * classicalLib.depth_session) option)
+
+    fun limit kind =
+      if searchBudget.available budget kind then ()
+      else raise searchBudget.LimitReached
+                   (kind, searchBudget.usage budget)
+
+    fun best_turn () =
+      if not (!best_active) then NONE
+      else
+        case classicalLib.RESUME_FIRST_BEST_SESSION best_session of
+            classicalLib.BudgetProved {result, ...} => SOME result
+          | classicalLib.BudgetExhausted =>
+              (best_active := false; NONE)
+          | classicalLib.BudgetYielded {kind, ...} =>
+              (limit kind;
+               trace 1
+                 (fn () =>
+                   "FORCE first-best resumes after a " ^
+                   (case kind of
+                        searchBudget.Candidate => "candidate"
+                      | searchBudget.Application => "application"
+                      | searchBudget.Normalization => "normalization") ^
+                   " turn");
+               searchBudget.extend best_budget searchBudget.Candidate
+                 (#candidates (!best_slice));
+               searchBudget.extend best_budget searchBudget.Application
+                 (#applications (!best_slice));
+               searchBudget.extend best_budget searchBudget.Normalization
+                 (#normalization (!best_slice));
+               best_slice := grow_slice (!best_slice);
+               NONE)
+          | classicalLib.BudgetLimitReached {kind, ...} =>
+              raise searchBudget.LimitReached
+                (kind, searchBudget.usage budget)
+
+    fun tableau_turn () =
+      if not (!tableau_active) then NONE
+      else
+        let
+          val turn =
+            searchBudget.child budget
+              (slice_limits (!tableau_slice))
+        in
+          case tableauLib.CS_BLAST_DEPTH_BUDGETED turn
+                 cs blast_depth goal ctxt of
+              blastSearch.BudgetFinished {result = SOME result, ...} =>
+                SOME result
+            | blastSearch.BudgetFinished {result = NONE, ...} =>
+                (tableau_active := false; NONE)
+            | blastSearch.BudgetLimitReached {kind, ...} =>
+                (limit kind;
+                 trace 1
+                   (fn () =>
+                     "FORCE tableau depth " ^
+                     Int.toString blast_depth ^
+                     " restarts after a bounded turn");
+                 tableau_slice := grow_slice (!tableau_slice);
+                 NONE)
+        end
+
+    fun depth_turn () =
+      case !depth_stages of
+          [] => NONE
+        | bound :: rest =>
+            let
+              val (turn, session) =
+                case !depth_current of
+                    SOME current => current
+                  | NONE =>
+                      let
+                        val turn =
+                          searchBudget.child budget
+                            (slice_limits (!depth_slice))
+                        val depth_cs =
+                          add_simp_wrapper_with
+                            (charge_normalization turn) ss simp_args cs
+                        val session =
+                          classicalLib.CS_DEPTH_SESSION turn
+                            {dup = false} bound depth_cs goal ctxt
+                        val current = (turn, session)
+                      in
+                        depth_current := SOME current;
+                        current
+                      end
+            in
+              case classicalLib.RESUME_DEPTH_SESSION session of
+                  classicalLib.DepthProved {result, ...} =>
+                    SOME result
+                | classicalLib.DepthExhausted =>
+                    (depth_stages := rest;
+                     depth_current := NONE;
+                     depth_slice := depth;
+                     NONE)
+                | classicalLib.DepthYielded {kind, ...} =>
+                    (limit kind;
+                     trace 1
+                       (fn () =>
+                         "FORCE classical depth " ^
+                         Int.toString bound ^
+                         " resumes after a bounded turn");
+                     searchBudget.extend turn searchBudget.Candidate
+                       (#candidates (!depth_slice));
+                     searchBudget.extend turn searchBudget.Application
+                       (#applications (!depth_slice));
+                     searchBudget.extend turn searchBudget.Normalization
+                       (#normalization (!depth_slice));
+                     depth_slice := grow_slice (!depth_slice);
+                     NONE)
+            end
+
+    fun rounds () =
+      case best_turn () of
+          SOME result => result
+        | NONE =>
+            (case tableau_turn () of
+                 SOME result => result
+               | NONE =>
+                   (case depth_turn () of
+                        SOME result => result
+                      | NONE =>
+                          if !best_active orelse !tableau_active orelse
+                             not (null (!depth_stages)) then rounds ()
+                          else raise ERR "force_search"
+                            "all FORCE search engines exhausted"))
+  in
+    rounds ()
+  end
+
+fun force_with name budget charge cs ss simp_args =
+  let
+    val schedule as
+      {best, tableau, depth, blast_depth, classical_depth} =
+      !force_schedule
+    val _ =
+      if valid_slice best andalso valid_slice tableau andalso
+         valid_slice depth andalso blast_depth >= 0 andalso
+         classical_depth >= 0 then ()
+      else raise ERR "force_with" "invalid FORCE schedule"
     val search_cs = add_simp_wrapper_with charge ss simp_args cs
     val clarify =
       NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
@@ -1847,34 +2140,13 @@ fun force_with name charge cs ss simp_args =
        constructor constraints from which tableau search builds a witness. *)
     val safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
-    (* Isabelle's force_tac (src/Provers/clasimp.ML:167 @ Isabelle2025-2)
-       ends in first_best_tac alone: the method carries no tableau leg.
-       Ours keeps one, and neither leg may run to exhaustion in front of
-       the other, because neither bound is a bound on work: best-first does
-       not return on [snd_image_Sigma], which the tableau closes in 0.02s,
-       and the tableau does not return on [ran_map_upd], which best-first
-       closes in 0.1s.  Whichever goes first therefore loses the goals only
-       the other closes.
-
-       So each engine takes a bounded turn before either is let loose: a
-       best-first turn, then the staged tableau and depth search at their
-       invocation bounds, then the unbounded best-first the method is.
-       Nothing force closes today is given up -- that last turn is what it
-       runs now -- and a goal the first turn cannot close reaches the other
-       engine with the budget it needs.  The last turn repeats the first
-       one's expansions, which only a goal already spending seconds in
-       best-first ever reaches. *)
-    val search =
-      Tactical.FIRST
-        [classicalLib.CS_BOUNDED_FIRST_BEST_TAC search_cs first_best_turn,
-         staged_auto_search {blast = 8, depth = 4} cs search_cs,
-         NTactical.DETERM (classicalLib.CS_FIRST_BEST_TAC search_cs)]
+    val search = force_search schedule budget cs ss simp_args
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,
-         Tactical.TRY (extensional_normalize ss),
-         simpLib.FULL_SIMP_TAC ss simp_args,
-         with_extensionality ss
+         Tactical.TRY (extensional_normalize_with charge ss),
+         asm_full_simp_with charge ss simp_args,
+         with_extensionality_with charge ss
            (asm_full_simp_with charge ss simp_args),
          Tactical.TRY safe,
          search]
@@ -1882,7 +2154,12 @@ fun force_with name charge cs ss simp_args =
     must_close name script
   end
 
-val CS_FORCE_TAC = CS_of (force_with "CS_FORCE_TAC")
+fun CS_FORCE_TAC cs ss goal =
+  let val budget = force_budget ()
+  in
+    force_with "CS_FORCE_TAC" budget
+      (charge_normalization budget) cs ss [] goal
+  end
 
 (* The classical search drivers already succeed only with a closed engine
    state.  must_close is the public contract guard in case that invariant
@@ -1895,7 +2172,7 @@ fun search_with_simp name engine charge cs ss simp_args =
     must_close name
       (Tactical.EVERY
          [Tactical.TRY clarify,
-          Tactical.TRY (extensional_normalize ss),
+          Tactical.TRY (extensional_normalize_with charge ss),
           NTactical.DETERM
             (engine (add_simp_wrapper_with charge ss simp_args cs))])
   end
@@ -1932,36 +2209,51 @@ fun clarsimp_with charge cs ss simp_args =
 
 val CS_CLARSIMP_TAC = CS_of clarsimp_with
 
-fun restore_normalized_target target validation theorems =
+fun restore_normalized_target budget target validation theorems =
   let
     val theorem = validation theorems
-    val normalization =
-      Conv.QCONV
-        (Conv.REDEPTH_CONV
-           (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) target
-    val normalized = boolSyntax.rhs (concl normalization)
   in
     if aconv (concl theorem) target then theorem
-    else if aconv (concl theorem) normalized then
-      EQ_MP (SYM normalization) theorem
-    else theorem
+    else
+      let
+        val _ = searchBudget.charge budget searchBudget.Normalization
+        val normalization =
+          Conv.QCONV
+            (Conv.REDEPTH_CONV
+               (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) target
+        val normalized = boolSyntax.rhs (concl normalization)
+      in
+        if aconv (concl theorem) normalized then
+          EQ_MP (SYM normalization) theorem
+        else theorem
+      end
   end
 
 fun public_using_budgeted budget process body theorems
     (goal as (_, target)) ctxt =
   let
+    val simpset =
+      simpLib.set_subgoaler
+        (witness_subgoaler_budgeted budget)
+        (clasimp_ss ())
     val (goals, validation) =
-      process (body (charge_normalization budget))
-        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
+      process budget (body (charge_normalization budget))
+        (clasetLib.the_claset ()) simpset theorems goal ctxt
   in
-    (goals, restore_normalized_target target validation)
+    (goals, restore_normalized_target budget target validation)
   end
 
-fun public_using process body theorems goal ctxt =
-  let val budget = normalization_budget ()
-  in public_using_budgeted budget process body theorems goal ctxt end
+fun public_using_with allocate process make_body theorems goal ctxt =
+  let val budget = allocate ()
+  in
+    public_using_budgeted budget process (make_body budget)
+      theorems goal ctxt
+  end
 
-fun public body = public_using process_clasimp_args body
+fun public_using process body =
+  public_using_with normalization_budget process (fn _ => body)
+
+fun public body = public_using (fn _ => process_clasimp_args) body
 
 fun AUTO_DEPTH_TAC bounds theorems =
   public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
@@ -1971,8 +2263,14 @@ fun AUTO_TAC theorems =
   AUTO_DEPTH_TAC {blast = 4, depth = 2} theorems
 
 fun FORCE_TAC theorems =
-  public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
+  public_using_with force_budget
+    (process_clasimp_args_fact_views clasetLib.SearchFacts)
     (force_with "FORCE_TAC") theorems
+
+fun FORCE_TAC_BUDGETED budget theorems =
+  public_using_budgeted budget
+    (process_clasimp_args_fact_views clasetLib.SearchFacts)
+    (force_with "FORCE_TAC" budget) theorems
 
 fun FASTFORCE_TAC theorems =
   public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)

@@ -575,7 +575,7 @@ fun new_frontier_session
         loop ()
         handle Yield (kind, usage) => StepYielded (kind, usage)
              | searchBudget.LimitReached (kind, usage) =>
-                 (state := Done; StepLimitReached (kind, usage))
+                 StepYielded (kind, usage)
              | exn => (state := Done; raise exn)
       end
   in

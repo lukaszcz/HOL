@@ -19,7 +19,11 @@ sig
 
   val create : limits -> budget
   val unbounded : unit -> budget
+  (* A child has its own turn limits and charges the same work to every
+     ancestor. A local limit can be extended without resetting usage. *)
+  val child : budget -> limits -> budget
   val usage : budget -> usage
+  val available : budget -> kind -> bool
   (* Charge before work starts.  A zero limit rejects its first unit. *)
   val charge : budget -> kind -> unit
   (* Add an explicit allocation to a finite limit.  An unbounded

@@ -86,6 +86,28 @@ val _ =
 
 val _ =
   check
+    ("CLARSIMP charges literal fact insertion to its invocation",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 0,
+              normalization = NONE}
+       in
+         ((ignore
+             (Tactical.VALID
+                (clasimpLib.CLARSIMP_TAC_BUDGETED budget
+                   [boolTheory.TRUTH])
+                ([], ``T``));
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Application, used) =>
+                   #applications used = 0
+               | _ => false)
+       end)
+
+val _ =
+  check
     ("cyclic simp rules report a typed normalization limit",
      fn () =>
        let
@@ -168,6 +190,39 @@ val _ =
          List.exists (Term.aconv right) hypotheses andalso
          Term.aconv (Thm.concl missing)
            (boolSyntax.mk_eq (condition, condition))
+       end)
+
+val _ =
+  check
+    ("witness matching charges candidates inside one condition",
+     fn () =>
+       let
+         val condition = ``?n:num. witness_budget_p n : bool``
+         val context =
+           {stack = [],
+            context_thms =
+              [Thm.ASSUME ``witness_budget_p (3:num) : bool``],
+            recurse = Thm.REFL}
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val used = searchBudget.unbounded ()
+         val _ =
+           clasimpLib.witness_subgoaler_budgeted used
+             context condition
+       in
+         #candidates (searchBudget.usage used) > 0 andalso
+         #normalization (searchBudget.usage used) > 0 andalso
+         #applications (searchBudget.usage used) > 0 andalso
+         ((ignore
+             (clasimpLib.witness_subgoaler_budgeted zero
+                context condition);
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Candidate, usage) =>
+                   #candidates usage = 0
+               | _ => false)
        end)
 
 (* A plain conditional citation must remain available to the safe
@@ -1777,6 +1832,42 @@ val _ =
        end
        handle Conv.UNCHANGED => false)
 
+val transport_p_def =
+  new_definition
+    ("transport_p_def", ``transport_p (n:num) <=> n = 0``)
+val transport_q_def =
+  new_definition
+    ("transport_q_def", ``transport_q (n:num) <=> n = 0``)
+val transport_r_def =
+  new_definition
+    ("transport_r_def", ``transport_r (n:num) <=> n = 0``)
+val transport_bridge =
+  Tactical.prove
+    (``!n. transport_p n <=> transport_q n``,
+     Rewrite.REWRITE_TAC
+       [transport_p_def, transport_q_def])
+val transport_fact =
+  Tactical.prove
+    (``!n. transport_p n ==> transport_r n``,
+     Rewrite.REWRITE_TAC
+       [transport_p_def, transport_r_def])
+
+val _ =
+  check
+    ("certified tagged rule view crosses an invocation normal form",
+     fn () =>
+       let
+         val goal =
+           ([``transport_q (n:num)``], ``transport_r n``)
+       in
+         tactic_fails (clasimpLib.AUTO_TAC [transport_fact]) goal andalso
+         valid_closes
+           (clasimpLib.AUTO_TAC
+              [clasetLib.Simp transport_bridge,
+               clasetLib.Dest transport_fact])
+           goal
+       end)
+
 (* The same mismatch one spelling further on.  Isabelle normalises the
    numeral 1 to [Suc 0] -- One_nat_def is simp there -- so a rule stated
    on SUC fires against a goal that spells the number as a numeral.
@@ -2316,6 +2407,95 @@ val _ =
          (Timeout.apply (Time.fromSeconds 30)
             (valid_closes (clasimpLib.FORCE_TAC [])))
          force_partial_map_goal = SOME true)
+
+val _ =
+  check
+    ("FORCE preserves first-best expansions across small turns",
+     fn () =>
+       let
+         val saved = !clasimpLib.force_schedule
+         val small =
+           {candidates = 1, applications = 1,
+            normalization = 1}
+         val large =
+           {candidates = 5000, applications = 500,
+            normalization = 5000}
+         fun run slice =
+           let
+             val budget = searchBudget.unbounded ()
+             val _ =
+               clasimpLib.force_schedule :=
+                 {best = slice, tableau = slice, depth = slice,
+                  blast_depth = 0, classical_depth = 0}
+             val closed =
+               valid_closes
+                 (clasimpLib.FORCE_TAC_BUDGETED budget [])
+                 force_partial_map_goal
+           in
+             (closed, searchBudget.usage budget)
+           end
+         val ((small_closed, small_used),
+              (large_closed, large_used)) =
+           (run small, run large)
+           handle exn =>
+             (clasimpLib.force_schedule := saved; raise exn)
+         val _ = clasimpLib.force_schedule := saved
+       in
+         small_closed andalso large_closed andalso
+         #applications small_used > 1 andalso
+         #applications small_used = #applications large_used
+       end)
+
+val _ =
+  check
+    ("FORCE reports a shared candidate limit before search",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+       in
+         ((ignore
+             (Tactical.VALID
+                (clasimpLib.FORCE_TAC_BUDGETED budget [])
+                force_partial_map_goal);
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Candidate, used) =>
+                   #candidates used = 0
+               | _ => false)
+       end)
+
+val _ =
+  check
+    ("FORCE rejects an invalid schedule before simplification",
+     fn () =>
+       let
+         val saved = !clasimpLib.force_schedule
+         val invalid =
+           {best =
+              {candidates = 0, applications = 1,
+               normalization = 1},
+            tableau = #tableau saved, depth = #depth saved,
+            blast_depth = #blast_depth saved,
+            classical_depth = #classical_depth saved}
+         fun run () =
+           (clasimpLib.force_schedule := invalid;
+            (ignore
+               (Tactical.VALID
+                  (clasimpLib.FORCE_TAC [])
+                  ([], ``T``));
+             false)
+            handle HOL_ERR _ => true)
+         val rejected =
+           run ()
+           handle exn =>
+             (clasimpLib.force_schedule := saved; raise exn)
+         val _ = clasimpLib.force_schedule := saved
+       in
+         rejected
+       end)
 
 val staged_branch_goal : Abbrev.goal =
   ([``branch_a1 \/ branch_b1``,

@@ -51,6 +51,11 @@ sig
   val safe_saturation_in :
     Context.t -> clasetLib.claset -> node ->
     (goalpos * step_record * node) list
+  (* Charges each candidate safe step and each accepted transition.
+     A one-shot caller restarts this fixed point after a work cutoff. *)
+  val safe_saturation_in_with :
+    (searchBudget.kind -> unit) -> Context.t -> clasetLib.claset ->
+    node -> (goalpos * step_record * node) list
 
   (* Wrapper-free application of one supplied rule through the ordinary
      child policy.  Each sequence result is one application alternative. *)

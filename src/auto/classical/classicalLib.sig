@@ -67,6 +67,25 @@ sig
 
   val CS_DEPTH_SOLVE_TAC :
     {dup : bool} -> int -> clasetLib.claset -> NTactical.ntactic
+  (* A one-shot depth stage. Repeating it after a limit restarts its
+     frontier, and the repeated scans charge the same invocation budget. *)
+  val CS_DEPTH_SOLVE_TAC_BUDGETED :
+    searchBudget.budget -> {dup : bool} -> int ->
+    clasetLib.claset -> tactic
+  type depth_session
+  datatype depth_outcome =
+      DepthProved of
+        {result : goal list * validation, session : depth_session}
+    | DepthExhausted
+    | DepthYielded of
+        {kind : searchBudget.kind, usage : searchBudget.usage,
+         session : depth_session}
+  (* The lazy depth cursor and a candidate awaiting replay survive a
+     yield. Initial safe saturation may repeat if it yields mid-pass. *)
+  val CS_DEPTH_SESSION :
+    searchBudget.budget -> {dup : bool} -> int ->
+    clasetLib.claset -> goal -> Context.t -> depth_session
+  val RESUME_DEPTH_SESSION : depth_session -> depth_outcome
   val CS_DEEPEN_TAC : clasetLib.claset ->
                       {start : int} -> NTactical.ntactic
 end

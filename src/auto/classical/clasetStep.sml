@@ -2234,30 +2234,41 @@ fun first_result sequence =
       NONE => NONE
     | SOME (result, _) => SOME result
 
-fun safe_steps_at_full_with step cs node pos =
+fun safe_steps_at_full_with charge step cs node pos =
   let
     val initial_count = length (clasetGoal.goals node)
+
+    fun next current =
+      (charge searchBudget.Candidate;
+       case first_result (step cs (current, pos)) of
+           NONE => NONE
+         | SOME result =>
+             (charge searchBudget.Application; SOME result))
 
     fun repeat transitions current =
       if length (clasetGoal.goals current) < initial_count then
         (List.rev transitions, current)
       else
-        case first_result (step cs (current, pos)) of
+        case next current of
             NONE => (List.rev transitions, current)
           | SOME (record, next) =>
               repeat ((pos, record, next) :: transitions) next
   in
-    case first_result (step cs (node, pos)) of
+    case next node of
         NONE => NONE
       | SOME (record, next) =>
           SOME (repeat [(pos, record, next)] next)
   end
 
 fun safe_steps_at_full cs node pos =
-  safe_steps_at_full_with safe_step cs node pos
+  safe_steps_at_full_with (fn _ => ()) safe_step cs node pos
 
 fun safe_steps_at_full_in ctxt cs node pos =
-  safe_steps_at_full_with (safe_step_in ctxt) cs node pos
+  safe_steps_at_full_with (fn _ => ())
+    (safe_step_in ctxt) cs node pos
+
+fun safe_steps_at_full_in_with charge ctxt cs node pos =
+  safe_steps_at_full_with charge (safe_step_in ctxt) cs node pos
 
 fun safe_steps_at_with steps cs node pos =
   Option.map
@@ -2293,6 +2304,10 @@ fun safe_saturation cs node =
 
 fun safe_saturation_in ctxt cs node =
   safe_saturation_with (safe_steps_at_full_in ctxt) cs node
+
+fun safe_saturation_in_with charge ctxt cs node =
+  safe_saturation_with
+    (safe_steps_at_full_in_with charge ctxt) cs node
 
 fun safe_saturate_all_in ctxt cs node =
   case List.rev (safe_saturation_in ctxt cs node) of

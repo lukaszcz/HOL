@@ -3,6 +3,7 @@ all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
 clasetLib.uo: clasetMarkerTheory.uo clasetFacts.uo searchBudget.uo
+clasetFacts.uo: searchBudget.uo
 clasetSeedTheory.uo: clasetLib.uo
 selftest.uo: clasetSeedTheory.uo
 

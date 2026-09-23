@@ -41,15 +41,16 @@ actual safe or unsafe claset role is determined by the derived direction,
 not by the fact that it is an equivalence. Split declarations are kept
 for constructor-sensitive branching rather than treated as rewrite laws.
 
-`INJ_DEF_AUTO` currently unfolds an `INJ` head in the simplifier. That
-helps goals which need the defining obligations, but can hide the head
-from a client rule stated over `INJ`. Its replacement needs either
-specific laws that preserve the head or certified transport between
-the client's and goal's normalized forms. Until that choice is made,
-the unfolding remains in place and the interaction is an open audit
-item. Safe-rule inversion does not establish rewrite termination or
-search completeness; those properties need separate normalization and
-consumer tests.
+`INJ_DEF_AUTO` unfolds an `INJ` head in the simplifier to expose its
+defining obligations. A client may still supply an unsafe rule with an
+`INJ` premise: clasimp keeps the original rule and derives a certified
+view whose premise has the seed's normal form. Conjunctive premises are
+curried so the rule can use separately simplified assumptions. The
+seed selftest exercises this interaction with an independently defined
+client predicate. Safe tagged rules and persistent rules still need a
+separate transport audit. Safe-rule inversion does not establish rewrite
+termination or search completeness; those properties need separate
+normalization and consumer tests.
 
 For the complete seeded state, make `autoSeed` an ancestor of a theory (or
 `open autoSeedTheory` in an ML consumer).  A smaller consumer can depend on

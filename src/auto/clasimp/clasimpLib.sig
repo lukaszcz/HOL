@@ -18,6 +18,10 @@ sig
      restates it, as it already restates the solvers and the condition
      depth. *)
   val witness_subgoaler : Traverse.subgoaler
+  (* The same witness search with candidate charges for each context
+     theorem match, and normalization/application charges for replay. *)
+  val witness_subgoaler_budgeted :
+    searchBudget.budget -> Traverse.subgoaler
 
   (* Replaces the conditional congruence of a simpset by the weak form,
      which simplifies the condition and leaves the branches to whatever
@@ -141,6 +145,14 @@ sig
   val CS_AUTO_TAC :
     {blast : int, depth : int} ->
     clasetLib.claset -> simpLib.simpset -> tactic
+  type force_slice =
+    {candidates : int, applications : int, normalization : int}
+  type force_schedule =
+    {best : force_slice, tableau : force_slice, depth : force_slice,
+     blast_depth : int, classical_depth : int}
+  (* Each positive slice is doubled after a yield. First-best and depth
+     cursors resume; tableau charges a restarted fixed-depth attempt. *)
+  val force_schedule : force_schedule ref
   val CS_FORCE_TAC :
     clasetLib.claset -> simpLib.simpset -> tactic
   val CS_FASTFORCE_TAC :
@@ -156,6 +168,8 @@ sig
     {blast : int, depth : int} -> thm list -> tactic
   val AUTO_TAC : thm list -> tactic
   val FORCE_TAC : thm list -> tactic
+  val FORCE_TAC_BUDGETED :
+    searchBudget.budget -> thm list -> tactic
   val FASTFORCE_TAC : thm list -> tactic
   val SLOWSIMP_TAC : thm list -> tactic
   val BESTSIMP_TAC : thm list -> tactic

@@ -143,6 +143,10 @@ sig
   val marker_of : thm -> marker_info option
 
   val process_claset_tags : thm list -> claset -> claset * thm list
+  (* The classical declarations introduced by marker arguments in the
+     current invocation, retaining their original roles and theorems. *)
+  val invocation_marker_rules :
+    claset -> (rulespec * (string * thm)) list
 
   (* A name of the form "<prefix><n>", with n at least [from], that no
      declaration in the claset uses.  Engines name invocation-scoped rules
@@ -188,6 +192,14 @@ sig
   (* The fact environment belongs to the tactic application and retains
      the original theorems alongside lazily demanded schematic views. *)
   val with_invocation_fact_env :
+    {iff_prefix : string,
+     extra_markers : thm list -> claset -> claset * thm list,
+     consumer : fact_consumer} ->
+    (claset -> 'a option -> thm list ->
+     clasetFacts.environment -> tactic) ->
+    claset -> 'a invocation_simpset option -> thm list -> tactic
+  val with_invocation_fact_env_budgeted :
+    searchBudget.budget ->
     {iff_prefix : string,
      extra_markers : thm list -> claset -> claset * thm list,
      consumer : fact_consumer} ->

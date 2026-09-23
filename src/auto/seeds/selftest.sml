@@ -256,6 +256,37 @@ val _ =
        solved (clasimpLib.AUTO_TAC [])
          ``PERM ([] : 'a list) xs <=> xs = []``)
 
+val seed_inj_marker_def =
+  new_definition
+    ("seed_inj_marker_def",
+     ``seed_inj_marker (f:'a -> 'b) s t <=> INJ f s t``)
+val seed_inj_client_rule =
+  Tactical.prove
+    (``!f s t. INJ (f:'a -> 'b) s t ==>
+               seed_inj_marker f s t``,
+     Rewrite.REWRITE_TAC [seed_inj_marker_def])
+
+val _ =
+  check
+    ("an INJ client marker needs its supplied rule",
+     fn () =>
+       not (solved (clasimpLib.AUTO_TAC [])
+              ``INJ (f:'a -> 'b) s t ==>
+                seed_inj_marker f s t``))
+
+val _ =
+  check
+    ("an INJ client rule survives the seed's definition normal form",
+     fn () =>
+       null
+         (#1
+           (Tactical.VALID
+             (clasimpLib.AUTO_TAC
+                [clasetLib.Dest seed_inj_client_rule])
+             ([``INJ (f:'a -> 'b) s t``],
+              ``seed_inj_marker f s t``)
+             (Context.snapshot ()))))
+
 (* src/HOL/Product_Type.thy:520,524 @ f7e02b7e.  Isabelle decides
    [split_paired_All] and [split_paired_Ex] ambiently: a quantifier over
    a pair is the pair of quantifiers over its components.  Neither goal

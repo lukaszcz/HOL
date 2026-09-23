@@ -18,6 +18,11 @@ sig
      citation.  Quantified variables remain quantified until a consumer
      applies the theorem. *)
   val create : Abbrev.goal -> thm list -> environment
+  (* Charge fact classification as Candidate and first construction of
+     each cached schematic view as Normalization. *)
+  val create_with_charge :
+    (searchBudget.kind -> unit) ->
+    Abbrev.goal -> thm list -> environment
   val facts : environment -> fact list
   val source_id : fact -> int
   val source : fact -> thm
@@ -33,6 +38,10 @@ sig
   val literal_views : environment -> view list
   val schematic_view : fact -> view
   val schematic_views : environment -> view list
+  (* A conversion transports only the derived theorem. Its source ID and
+     original theorem remain attached; support follows all hypotheses of
+     the certified result, including new rewrite obligations. *)
+  val transport_view : Abbrev.conv -> view -> view
   (* Match a consumer-selected subterm against a current application
      site.  Fixed parameters and support types cannot be instantiated. *)
   val match_view : fact -> term -> term -> view option

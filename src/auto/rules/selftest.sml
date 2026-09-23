@@ -3733,6 +3733,88 @@ val _ =
 
 val _ =
   test
+    ("budgeted fact environment charges classification and lazy views",
+     fn () =>
+       let
+         fun run budget consumer =
+           with_invocation_fact_env_budgeted budget
+             {iff_prefix = "__selftest_budget_iff_",
+              extra_markers = fn theorems => fn cs => (cs, theorems),
+              consumer = consumer}
+             (fn _ => fn _ => fn _ => fn _ => Tactical.ALL_TAC)
+             empty_cs NONE [invocation_implication]
+             ([], boolSyntax.T) (Context.snapshot ())
+         fun cutoff kind limits =
+           let
+             val budget = searchBudget.create limits
+           in
+             (ignore (run budget SearchFacts); false)
+             handle searchBudget.LimitReached (actual, used) =>
+               actual = kind andalso
+               used = searchBudget.usage budget
+           end
+       in
+         cutoff searchBudget.Candidate
+           {candidates = SOME 0, applications = NONE,
+            normalization = NONE} andalso
+         cutoff searchBudget.Normalization
+           {candidates = NONE, applications = NONE,
+            normalization = SOME 0} andalso
+         cutoff searchBudget.Application
+           {candidates = NONE, applications = SOME 0,
+            normalization = NONE}
+       end)
+
+val _ =
+  test
+    ("certified fact transport keeps source identity and support",
+     fn () =>
+       let
+         val source =
+           Thm.ASSUME ``(\value : bool. value) T``
+         val environment =
+           clasetFacts.create ([], boolSyntax.T) [source]
+         val view = hd (clasetFacts.schematic_views environment)
+         val transported =
+           clasetFacts.transport_view
+             (Conv.REDEPTH_CONV BETA_CONV) view
+       in
+         #source_id transported = #source_id view andalso
+         same_thm (#source transported) (#source view) andalso
+         ListPair.allEq (fn (left, right) => Term.aconv left right)
+           (#support transported, #support view) andalso
+         Term.aconv (concl (#theorem transported)) boolSyntax.T
+       end)
+
+val _ =
+  test
+    ("transported support includes a conditional rewrite obligation",
+     fn () =>
+       let
+         val premise = ``transport_source_p:bool``
+         val bridge =
+           ``transport_source_p <=> transport_target_q``
+         val source = Thm.ASSUME premise
+         val view =
+           clasetFacts.literal_view
+             (hd (clasetFacts.facts
+               (clasetFacts.create ([], premise) [source])))
+         val transported =
+           clasetFacts.transport_view
+             (Conv.REWR_CONV (Thm.ASSUME bridge)) view
+         val support = #support transported
+       in
+         Term.aconv (concl (#theorem transported))
+           ``transport_target_q:bool`` andalso
+         List.exists (Term.aconv premise) support andalso
+         List.exists (Term.aconv bridge) support andalso
+         ListPair.allEq
+           (fn (left, right) => Term.aconv left right)
+           (support, Thm.hyp (#theorem transported))
+       end)
+
+val _ =
+  test
     ("a supplied fact that is not an implication declares nothing",
      fn () => List.null (invocation_claset_rules [invocation_equation]))
 
@@ -3789,6 +3871,42 @@ val _ =
          invalid_extension andalso
          #candidates (searchBudget.usage budget) = 3 andalso
          #normalization (searchBudget.usage budget) = 1
+       end)
+
+val _ =
+  test
+    ("child turns retain usage and charge the invocation once",
+     fn () =>
+       let
+         val invocation =
+           searchBudget.create
+             {candidates = SOME 2, applications = NONE,
+              normalization = NONE}
+         val turn =
+           searchBudget.child invocation
+             {candidates = SOME 1, applications = NONE,
+              normalization = NONE}
+         val _ = searchBudget.charge turn searchBudget.Candidate
+         val local_limit =
+           (searchBudget.charge turn searchBudget.Candidate; false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, used) =>
+                    #candidates used = 1
+                | _ => false
+         val _ = searchBudget.extend turn searchBudget.Candidate 2
+         val _ = searchBudget.charge turn searchBudget.Candidate
+         val parent_limit =
+           (searchBudget.charge turn searchBudget.Candidate; false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, used) =>
+                    #candidates used = 2
+                | _ => false
+       in
+         local_limit andalso parent_limit andalso
+         not (searchBudget.available invocation
+                searchBudget.Candidate) andalso
+         #candidates (searchBudget.usage turn) = 2 andalso
+         #candidates (searchBudget.usage invocation) = 2
        end)
 
 val _ =

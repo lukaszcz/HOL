@@ -11,6 +11,7 @@ type fact =
    fixed_types : hol_type list,
    loose_terms : term list,
    loose_types : hol_type list,
+   charge : searchBudget.kind -> unit,
    schematic : thm option ref}
 
 type environment = fact list
@@ -19,12 +20,13 @@ type view =
   {source_id : int, source : thm, theorem : thm,
    support : term list}
 
-fun create (assumptions, target) theorems =
+fun create_with_charge charge (assumptions, target) theorems =
   let
     val goal_variables = Term.free_varsl (target :: assumptions)
 
     fun prepare (id, original) =
       let
+        val _ = charge searchBudget.Candidate
         val hypotheses = Thm.hyp original
         val supported = Term.free_varsl hypotheses
         val genuine = Term.free_vars (Thm.concl original)
@@ -56,11 +58,15 @@ fun create (assumptions, target) theorems =
         {id = id, original = original, hypotheses = hypotheses,
          fixed_terms = fixed_terms, fixed_types = fixed_types,
          loose_terms = loose_terms, loose_types = loose_types,
+         charge = charge,
          schematic = ref NONE}
       end
   in
     map prepare (Lib.enumerate 0 theorems)
   end
+
+fun create goal theorems =
+  create_with_charge (fn _ => ()) goal theorems
 
 fun facts environment = environment
 fun source_id ({id, ...} : fact) = id
@@ -79,13 +85,14 @@ fun literal_views environment = map literal_view environment
 
 fun schematic_view
       ({id, original, hypotheses, loose_terms, loose_types,
-        schematic, ...} : fact) =
+        charge, schematic, ...} : fact) =
   let
     val theorem =
       case !schematic of
           SOME theorem => theorem
         | NONE =>
             let
+              val _ = charge searchBudget.Normalization
               val term_fresh =
                 map
                   (fn variable =>
@@ -110,6 +117,16 @@ fun schematic_view
 
 fun schematic_views environment =
   map schematic_view environment
+
+fun transport_view conversion
+      ({source_id, source, theorem, ...} : view) =
+  let
+    val derived = Conv.CONV_RULE conversion theorem
+  in
+    {source_id = source_id, source = source,
+     theorem = derived,
+     support = Thm.hyp derived} : view
+  end
 
 fun match_view (entry : fact) pattern site =
   let

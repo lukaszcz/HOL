@@ -5755,7 +5755,7 @@ val _ =
 
 val _ =
   test
-    ("an inner frontier cutoff is terminal and interrupts propagate",
+    ("an inner frontier cutoff retains its cursor and interrupts propagate",
      fn () =>
        let
          val inner =
@@ -5765,11 +5765,13 @@ val _ =
          fun limited _ =
            (searchBudget.charge inner searchBudget.Candidate;
             seq.empty)
-         val cutoff =
-           clasetSearch.resume_frontier
-             (clasetSearch.new_best_session
-               (searchBudget.unbounded ()) (fn _ => false) limited
-               (search_singleton best_root_tm))
+         val session =
+           clasetSearch.new_best_session
+             (searchBudget.unbounded ()) (fn _ => false) limited
+             (search_singleton best_root_tm)
+         val cutoff = clasetSearch.resume_frontier session
+         val _ = searchBudget.extend inner searchBudget.Candidate 1
+         val resumed = clasetSearch.resume_frontier session
          val interrupted_session =
            clasetSearch.new_best_session
              (searchBudget.unbounded ()) (fn _ => false)
@@ -5786,9 +5788,12 @@ val _ =
               clasetSearch.FrontierExhausted => true
             | _ => false) andalso
          (case cutoff of
-              clasetSearch.FrontierLimitReached
-                {kind = searchBudget.Candidate, usage} =>
+              clasetSearch.FrontierYielded
+                {kind = searchBudget.Candidate, usage, ...} =>
                   #candidates usage = 0
+            | _ => false) andalso
+         (case resumed of
+              clasetSearch.FrontierExhausted => true
             | _ => false)
        end)
 
@@ -7692,6 +7697,111 @@ val _ =
          (case exhausted of
               classicalLib.BudgetExhausted => true
             | _ => false)
+       end)
+
+val _ =
+  test
+    ("budgeted depth charges its stage before safe saturation",
+     fn () =>
+       let
+         val p = mk_var ("budgeted_depth_p", bool_ty)
+         val goal = ([], boolSyntax.mk_imp (p, p))
+         val ctxt = Context.snapshot ()
+         val zero =
+           searchBudget.create
+             {candidates = NONE, applications = SOME 0,
+              normalization = NONE}
+         val no_candidates =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val candidate_cutoff =
+           (ignore
+              (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED no_candidates
+                 {dup = false} 1 clasetLib.empty_cs goal ctxt);
+            false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, used) =>
+                    #candidates used = 0
+                | _ => false
+         val cutoff =
+           (ignore
+              (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED zero
+                 {dup = false} 1 clasetLib.empty_cs goal ctxt);
+            false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Application, used) =>
+                    #applications used = 0
+                | _ => false
+         val funded = searchBudget.unbounded ()
+         val (remaining, _) =
+           Tactical.VALID
+             (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED funded
+                {dup = false} 1 clasetLib.empty_cs)
+             goal
+       in
+         cutoff andalso candidate_cutoff andalso null remaining andalso
+         #applications (searchBudget.usage funded) > 0
+       end)
+
+val _ =
+  test
+    ("depth session keeps a candidate pending kernel replay",
+     fn () =>
+       let
+         val p = mk_var ("depth_replay_p", bool_ty)
+         val goal = ([], boolSyntax.mk_imp (p, p))
+         val budget =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 0}
+         val session =
+           classicalLib.CS_DEPTH_SESSION budget
+             {dup = false} 1 clasetLib.empty_cs goal
+             (Context.snapshot ())
+         val first = classicalLib.RESUME_DEPTH_SESSION session
+         val _ = searchBudget.extend budget searchBudget.Normalization 1
+         val second = classicalLib.RESUME_DEPTH_SESSION session
+       in
+         (case first of
+              classicalLib.DepthYielded
+                {kind = searchBudget.Normalization, usage, ...} =>
+                  #normalization usage = 0
+            | _ => false) andalso
+         (case second of
+              classicalLib.DepthProved
+                {result = (remaining, validate), ...} =>
+                  null remaining andalso
+                  Term.aconv (Thm.concl (validate [])) (#2 goal)
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("small depth resumes retain a proof under one budget",
+     fn () =>
+       let
+         val (cs, goal) = depth_duplication_fixture ()
+         val budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = SOME 0,
+              normalization = SOME 0}
+         val session =
+           classicalLib.CS_DEPTH_SESSION budget
+             {dup = true} 3 cs goal (Context.snapshot ())
+         fun finish 0 _ = false
+           | finish remaining yields =
+               case classicalLib.RESUME_DEPTH_SESSION session of
+                   classicalLib.DepthYielded {kind, ...} =>
+                     (searchBudget.extend budget kind 1;
+                      finish (remaining - 1) (yields + 1))
+                 | classicalLib.DepthProved
+                     {result = (residual, validate), ...} =>
+                     yields > 1 andalso null residual andalso
+                     Term.aconv (Thm.concl (validate [])) (#2 goal)
+                 | classicalLib.DepthExhausted => false
+       in
+         finish 2000 0
        end)
 
 val safe_context_slot =

@@ -163,10 +163,14 @@ fun expand_first step cs node =
 (* Isabelle's safe_depth_tac saturates the complete selected state before
    depth search.  Keeping the resulting goals visible to DEPTH_SOLVE also
    lets its D25 commitment test run between safely generated siblings. *)
-fun safe_saturate_node_in ctxt cs initial =
-  case List.rev (clasetStep.safe_saturation_in ctxt cs initial) of
+fun safe_saturate_node_in_with charge ctxt cs initial =
+  case List.rev
+         (clasetStep.safe_saturation_in_with charge ctxt cs initial) of
       [] => initial
     | (_, _, final) :: _ => final
+
+fun safe_saturate_node_in ctxt cs initial =
+  safe_saturate_node_in_with (fn _ => ()) ctxt cs initial
 
 fun solved node = List.null (clasetGoal.goals node)
 
@@ -324,22 +328,116 @@ fun CS_ASTAR_TAC cs goal ctxt =
 fun CS_SLOW_ASTAR_TAC cs goal ctxt =
   solve (astar_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
 
-fun bounded_depth_in ctxt {dup} cs bound initial =
+fun bounded_depth_in_with charge ctxt {dup} cs bound initial =
   let
     val part =
       if dup then clasetLib.dup_part cs else clasetLib.unsafe_part cs
-    val saturated = safe_saturate_node_in ctxt cs initial
+    val saturated =
+      safe_saturate_node_in_with charge ctxt cs initial
     val search =
       clasetSearch.DEPTH_SOLVE
         (fn node =>
-          project_steps
-            (clasetStep.depth_step_in ctxt cs part bound (node, 1)))
+          (charge searchBudget.Application;
+           seq.map
+             (fn child =>
+               (charge searchBudget.Candidate; child))
+             (project_steps
+                (clasetStep.depth_step_in ctxt cs part bound
+                   (node, 1)))))
   in
     search saturated
   end
 
+fun bounded_depth_in ctxt config cs bound initial =
+  bounded_depth_in_with (fn _ => ()) ctxt config cs bound initial
+
 fun CS_DEPTH_SOLVE_TAC config bound cs goal ctxt =
   solve (bounded_depth_in ctxt config cs bound) goal ctxt
+
+fun CS_DEPTH_SOLVE_TAC_BUDGETED budget config bound cs =
+  NTactical.DETERM
+    (fn goal => fn ctxt =>
+      solve
+        (bounded_depth_in_with (searchBudget.charge budget)
+           ctxt config cs bound)
+        goal ctxt)
+
+type depth_session =
+  {cursor : clasetGoal.node seq.seq ref,
+   pending : (clasetGoal.node * clasetGoal.node seq.seq) option ref,
+   budget : searchBudget.budget,
+   goal : goal,
+   ctxt : Context.t,
+   aborted : bool ref}
+
+datatype depth_outcome =
+    DepthProved of
+      {result : goal list * validation, session : depth_session}
+  | DepthExhausted
+  | DepthYielded of
+      {kind : searchBudget.kind, usage : searchBudget.usage,
+       session : depth_session}
+
+fun CS_DEPTH_SESSION budget config bound cs goal ctxt : depth_session =
+  let val initial = clasetGoal.from_goal goal
+  in
+    {cursor =
+       ref
+         (seq.delay
+           (fn () =>
+             bounded_depth_in_with (searchBudget.charge budget)
+               ctxt config cs bound initial)),
+     pending = ref NONE, budget = budget, goal = goal,
+     ctxt = ctxt, aborted = ref false}
+  end
+
+fun RESUME_DEPTH_SESSION
+      (session as {cursor, pending, budget, goal, ctxt, aborted} :
+       depth_session) =
+  let
+    fun discard rest =
+      (pending := NONE; cursor := rest; advance ())
+    and replay (node, rest) =
+      let
+        val _ =
+          searchBudget.charge budget searchBudget.Normalization
+        val result =
+          case seq.cases (replay_node goal node ctxt) of
+              NONE => NONE
+            | SOME (proof, _) =>
+                SOME
+                  (Tactical.VALID
+                    (fn _ => fn _ => proof) goal ctxt)
+        val _ = pending := NONE
+        val _ = cursor := rest
+      in
+        case result of
+            SOME proved =>
+              if null (#1 proved) then
+                DepthProved {result = proved, session = session}
+              else advance ()
+          | NONE => advance ()
+      end
+      handle HOL_ERR _ => discard rest
+    and advance () =
+      case !pending of
+          SOME candidate => replay candidate
+        | NONE =>
+            (case seq.cases (!cursor) of
+                 NONE => DepthExhausted
+               | SOME candidate =>
+                   (pending := SOME candidate; replay candidate))
+  in
+    if !aborted then
+      raise mk_HOL_ERR "classicalLib" "RESUME_DEPTH_SESSION"
+        "an interrupted or failed depth session cannot be resumed"
+    else
+      (advance ()
+       handle searchBudget.LimitReached (kind, usage) =>
+                DepthYielded
+                  {kind = kind, usage = usage, session = session}
+            | exn => (aborted := true; raise exn))
+  end
 
 fun CS_DEEPEN_TAC cs {start} goal ctxt =
   solve

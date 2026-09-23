@@ -6,24 +6,35 @@ optional nonnegative limit. `SOME 0` rejects the first charge, `NONE` is
 unbounded, and negative limits or extensions are errors. Charges happen
 before the admitted work. A yield retains usage, and extending that budget
 does not reset it. Semantic depth bounds remain separate from these counts.
+Bounded child turns charge their own counters and the enclosing invocation
+atomically. Extending a child's local limit preserves both sets of counts.
 
 The implemented checkpoints are:
 
 - Literal fact insertion: candidate charges on subterm scans, head and
   type matches, and duplicate/support comparisons; normalization charges
   on theorem specialization and type instances; application charges on
-  admitted assumptions. The ordinary insertion entry point is unchanged.
+  admitted assumptions. The budgeted fact environment also charges
+  classification, first construction of a lazy schematic view, and
+  admitted search-rule declarations. Clasimp's fact-view tactics pass
+  their invocation budget through these paths. The ordinary insertion
+  entry point is unchanged.
 - Clasimp's opt-in child-first traversal: normalization charges before
   congruence descent, weakening, and reducer attempts. AUTO, FORCE,
   FASTFORCE, SLOWSIMP, BESTSIMP, and CLARSIMP share one callback across
   their mutual simplification and search wrappers per tactic invocation.
+  Their conditional witness subgoaler charges each context match as a
+  candidate, plus normalization and proof application work. A typed cutoff
+  propagates through a failed witness attempt.
   `CLARSIMP_TAC_BUDGETED` accepts a caller-owned budget and propagates
-  `LimitReached` without translating it into tactic failure. Separate
-  normalization steps such as FORCE's initial `FULL_SIMP_TAC` and
-  extensionality are not yet charged by this callback.
+  `LimitReached` without translating it into tactic failure. FORCE's
+  initial simplification, extensional conversions, and target transport
+  charge the same normalization budget.
 - Classical best-first: candidate charges on heap selections, lazy child
   pulls, and forward-rule premise scans; application charges on node
-  expansion; normalization charges before kernel replay.
+  expansion; normalization charges before kernel replay. A budgeted depth
+  stage charges each safe fixed-point attempt and accepted transition,
+  then each depth expansion and pulled child.
 - Aesop: candidate charges on forward-rule premise scans, ordinary
   introduction/elimination-major attempts, and rendered-tactic or
   multi-step alternative pulls; application charges on committed safe
@@ -45,11 +56,25 @@ The implemented checkpoints are:
 
 Classical and Aesop candidate yields retain their search sessions. Classical
 also retains a candidate awaiting kernel replay when the normalization limit
-is reached. A nested expansion cutoff is terminal when that expansion does
-not provide a cursor. BLAST restores its mutable trail on a limit and has a
+is reached. A nested expansion cutoff retains the selected frontier state;
+retrying a partially forced lazy alternative can repeat charged work.
+BLAST restores its mutable trail on a limit and has a
 one-shot fixed-depth result; order returns a one-shot proved, exhausted, or
 limit result. Existing tactic, depth, and order entry points keep their
 compatibility behavior.
+
+FORCE uses a configurable schedule of positive candidate, application, and
+normalization slices. Its first-best session keeps its heap and pending
+alternatives across turns. Classical depth keeps its lazy cursor and a
+candidate awaiting replay at each stage up to the configured bound. Their
+yielded slices double for the next turn. Tableau runs at one configured
+depth and currently has a one-shot frontier: when its slice ends, the next
+turn restarts it with a doubled slice. Repeated work charges the same
+invocation budget. Every round offers one turn to each active engine, and
+a parent limit reports a typed cutoff.
+`FORCE_TAC_BUDGETED` accepts a caller-owned budget; the ordinary FORCE
+entry points allocate finite default candidate, application, and
+normalization limits.
 
 Aesop's ordinary claset rule and forward-rule cursors retain their partial
 scan across a candidate yield, including the uniqueness check for

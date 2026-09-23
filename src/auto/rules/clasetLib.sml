@@ -1197,6 +1197,11 @@ fun marker_of theorem =
 
 val marker_prefix = "__claset_marker_"
 
+fun invocation_marker_rules cs =
+  List.filter
+    (fn (_, (name, _)) => String.isPrefix marker_prefix name)
+    (rules_of cs)
+
 (* The first "<prefix><n>" with n at least [from] that no declaration
    already uses.  Invocation-scoped rules are named this way so that a
    marker argument can never collide with a user declaration. *)
@@ -1558,10 +1563,12 @@ datatype fact_consumer = SafeFacts | SearchFacts | TableauFacts
 
 (* Returns the claset the consumer runs against and the facts owed to
    the assumptions, in the order they were given. *)
-fun declare_invocation_facts consumer environment cs =
+fun declare_invocation_facts_with_charge charge
+    consumer environment cs =
   let
     fun step (entry, (cs, assumed)) =
       let
+        val _ = charge searchBudget.Candidate
         val fact = #theorem (clasetFacts.literal_view entry)
       in
         case
@@ -1578,7 +1585,9 @@ fun declare_invocation_facts consumer environment cs =
                 case Lib.total
                        (add_derived_rule invocation_fact_spec
                          (name, #theorem view)) cs of
-                    SOME extended => (extended, assumed)
+                    SOME extended =>
+                      (charge searchBudget.Application;
+                       (extended, assumed))
                   | NONE => (cs, fact :: assumed)
               end
           | NONE =>
@@ -1594,7 +1603,11 @@ fun declare_invocation_facts consumer environment cs =
                     Lib.total
                       (add_derived_rule sintro_spec (name, theorem)) cs
                 in
-                  (Option.getOpt (extended, cs), fact :: assumed)
+                  case extended of
+                      SOME installed =>
+                        (charge searchBudget.Application;
+                         (installed, fact :: assumed))
+                    | NONE => (cs, fact :: assumed)
                 end
               else (cs, fact :: assumed)
       end
@@ -1603,6 +1616,10 @@ fun declare_invocation_facts consumer environment cs =
   in
     (declared_cs, List.rev reversed)
   end
+
+fun declare_invocation_facts consumer environment cs =
+  declare_invocation_facts_with_charge (fn _ => ())
+    consumer environment cs
 
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base
@@ -1618,7 +1635,7 @@ type 'a invocation_simpset =
 
 (* The environment is scoped to the tactic application, where the goal and
    its fixed parameters are known.  Views are demanded by the consumer. *)
-fun with_invocation_fact_env_raw
+fun with_invocation_fact_env_raw create_environment
     {iff_prefix,extra_markers}
     body base_cs simpset =
   markerLib.ABBRS_THEN
@@ -1645,26 +1662,39 @@ fun with_invocation_fact_env_raw
                 end
         val (invocation_cs, facts) =
           extra_markers leftovers classical_cs
-        val environment = clasetFacts.create goal facts
+        val environment = create_environment goal facts
       in
         body invocation_cs invocation_ss simp_controls environment goal
       end))
 
-fun with_invocation_fact_env
+fun with_invocation_fact_env_using insert create_environment charge
     {iff_prefix,extra_markers,consumer}
     body base_cs simpset =
   with_invocation_fact_env_raw
+    create_environment
     {iff_prefix=iff_prefix, extra_markers=extra_markers}
     (fn cs => fn ss => fn controls => fn environment =>
       let
         val (search_cs, assumed) =
-          declare_invocation_facts consumer environment cs
+          declare_invocation_facts_with_charge charge
+            consumer environment cs
       in
         Tactical.THEN
-          (INSERT_FACTS_TAC assumed,
+          (insert assumed,
            body search_cs ss controls environment)
       end)
     base_cs simpset
+
+fun with_invocation_fact_env options body base_cs simpset =
+  with_invocation_fact_env_using INSERT_FACTS_TAC
+    clasetFacts.create (fn _ => ())
+    options body base_cs simpset
+
+fun with_invocation_fact_env_budgeted budget options body base_cs simpset =
+  with_invocation_fact_env_using (INSERT_FACTS_TAC_BUDGETED budget)
+    (clasetFacts.create_with_charge (searchBudget.charge budget))
+    (searchBudget.charge budget)
+    options body base_cs simpset
 
 fun with_invocation_args {iff_prefix,extra_markers} body =
   with_invocation_fact_env
