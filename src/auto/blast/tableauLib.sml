@@ -23,9 +23,10 @@ val add_blast_selims =
 fun no_extra_markers theorems cs = (cs, theorems)
 
 fun invoke tactic =
-  clasetLib.with_invocation_args
-    {iff_prefix="", extra_markers=no_extra_markers}
-    (fn cs => fn _ => fn _ => tactic cs)
+  clasetLib.with_invocation_fact_env
+    {iff_prefix="", extra_markers=no_extra_markers,
+     consumer=clasetLib.TableauFacts}
+    (fn cs => fn _ => fn _ => fn _ => tactic cs)
     (clasetLib.the_claset ())
     (NONE : unit clasetLib.invocation_simpset option)
 
@@ -133,8 +134,7 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
       let
         val reconstruction_started = Time.now ()
         val result =
-          Context.with_context ctxt
-            (fn () => blastReconstruct.reconstructWith cs goal proof) ()
+          blastReconstruct.reconstructWith_in ctxt cs goal proof
         val elapsed = Time.- (Time.now (), reconstruction_started)
         val _ = add_time elapsed reconstruction_time
       in
@@ -189,6 +189,17 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
 
 fun CS_BLAST_DEPTH_TAC cs depth goal ctxt =
   run_depths cs (SOME depth) (fn _ => NONE) goal ctxt
+
+fun CS_BLAST_DEPTH_BUDGETED budget base_cs depth goal ctxt =
+  let
+    val cs = add_blast_selims base_cs
+    fun accept proof =
+      case blastReconstruct.reconstructWith_in ctxt cs goal proof of
+          SOME tactic_result => tactic_result
+        | NONE => raise blastSearch.PROOF_FAILED
+  in
+    blastSearch.searchGoalBudgeted budget cs depth goal accept
+  end
 
 fun next_through limit depth =
   if depth >= limit then NONE else SOME (depth + 1)

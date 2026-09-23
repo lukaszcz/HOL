@@ -15,7 +15,7 @@ fun first_result sequence =
 
 fun apply step node = seq.map #2 (step (node, 1))
 
-fun move_children count node =
+fun move_children ctxt count node =
   let
     fun move position current =
       if position > count then current
@@ -23,7 +23,7 @@ fun move_children count node =
         move (position + 1)
           (#2
             (first_result
-              (clasetStep.blast_move_back_step 1
+              (clasetStep.blast_move_back_step_in ctxt 1
                 (current, position))))
   in
     move 1 node
@@ -35,11 +35,12 @@ fun move_children count node =
 fun apply_pseudo step node =
   seq.append (apply step node) (seq.result node)
 
-fun apply_rule cs duplicate major rule node =
+fun apply_rule ctxt cs duplicate major rule node =
   case #origin rule of
       blastRule.ImpIntro =>
-        apply_pseudo clasetStep.blast_disch_step node
-    | blastRule.AllIntro => apply_pseudo clasetStep.blast_gen_step node
+        apply_pseudo (clasetStep.blast_disch_step_in ctxt) node
+    | blastRule.AllIntro =>
+        apply_pseudo (clasetStep.blast_gen_step_in ctxt) node
     | blastRule.Stored {is_elim, theorem} =>
         let
           val replay_theorem =
@@ -57,36 +58,36 @@ fun apply_rule cs duplicate major rule node =
               val child_count = clasetGoal.child_count node next
             in
               if duplicate andalso is_elim then
-                move_children child_count next
+                move_children ctxt child_count next
               else next
             end
         in
           seq.mapPartial (total finish) transitions
         end
 
-fun execute cs step node =
+fun execute ctxt cs step node =
   case step of
       blastSearch.HypSubst {equality, changed, side} =>
         apply
-          (clasetStep.blast_hyp_subst_step_at
+          (clasetStep.blast_hyp_subst_step_at_in ctxt
             {equality = equality, changed = changed, side = side}) node
     | blastSearch.CloseAssume {assumption} =>
         apply (clasetStep.blast_assumption_step_at assumption) node
     | blastSearch.CloseContradiction positions =>
         apply (clasetStep.blast_contradiction_step_at positions) node
     | blastSearch.SafeRule {rule, major, ...} =>
-        apply_rule cs false major rule node
+        apply_rule ctxt cs false major rule node
     | blastSearch.DeferGoal =>
-        apply clasetStep.blast_ccontr_step node
+        apply (clasetStep.blast_ccontr_step_in ctxt) node
     | blastSearch.UnsafeRule {rule, duplicate, major, ...} =>
-        apply_rule cs duplicate major rule node
+        apply_rule ctxt cs duplicate major rule node
 
 (* Every ambiguous script step selects its exact typed assumption occurrence.
    Pull the resulting typed engine sequence lazily, but never fall back to a
    different assumption or rule position.  Only a completely grounded,
    kernel-valid replay is accepted; failure rejects this tableau through the
    search continuation's PROOF_FAILED hook. *)
-fun perform_with cs goal ({script, ...} : proof) =
+fun perform_with_in ctxt cs goal ({script, ...} : proof) =
   let
     fun finish final =
       let
@@ -99,8 +100,7 @@ fun perform_with cs goal ({script, ...} : proof) =
           clasetReplay.ground (clasetGoal.store final)
             (clasetGoal.replay final)
         val result as (residuals, _) =
-          Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
-            (Context.snapshot())
+          Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal ctxt
         val _ =
           if null residuals then ()
           else
@@ -121,29 +121,38 @@ fun perform_with cs goal ({script, ...} : proof) =
                          NONE => alternatives nodes
                        | result => result)
           in
-            alternatives (execute cs step node)
+            alternatives (execute ctxt cs step node)
           end
           handle HOL_ERR _ => NONE
   in
     case replay script (clasetGoal.from_goal goal) of
         SOME result => result
       | NONE =>
-          raise mk_HOL_ERR "blastReconstruct" "perform_with"
+          raise mk_HOL_ERR "blastReconstruct" "perform_with_in"
             "the recorded tableau has no kernel-valid replay"
   end
 
+fun reconstructWith_in ctxt cs goal proof =
+  total (perform_with_in ctxt cs goal) proof
+
 fun reconstructWith cs goal proof =
-  total (perform_with cs goal) proof
+  reconstructWith_in (Context.snapshot()) cs goal proof
+
+fun reconstruct_in ctxt goal proof =
+  reconstructWith_in ctxt clasetLib.empty_cs goal proof
 
 fun reconstruct goal proof =
   reconstructWith clasetLib.empty_cs goal proof
 
-fun accept cs goal proof =
-  case reconstructWith cs goal proof of
+fun accept_in ctxt cs goal proof =
+  case reconstructWith_in ctxt cs goal proof of
       SOME result => (proof, result)
     | NONE => raise blastSearch.PROOF_FAILED
 
+fun searchGoal_in ctxt cs depth goal =
+  blastSearch.searchGoal cs depth goal (accept_in ctxt cs goal)
+
 fun searchGoal cs depth goal =
-  blastSearch.searchGoal cs depth goal (accept cs goal)
+  searchGoal_in (Context.snapshot()) cs depth goal
 
 end

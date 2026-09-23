@@ -1308,6 +1308,82 @@ val _ =
 
 val _ =
   test
+    ("blast budget distinguishes cutoff from exhaustive failure",
+     fn () =>
+       let
+         val p = mk_var ("budgeted_blast_p", bool)
+         val limited =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val ample =
+           searchBudget.create
+             {candidates = SOME 10000, applications = SOME 100,
+              normalization = SOME 10000}
+         val cutoff =
+           blastSearch.searchGoalBudgeted limited clasetLib.empty_cs
+             0 ([], mk_imp (p, p)) (fn proof => proof)
+         val proved =
+           blastSearch.searchGoalBudgeted ample clasetLib.empty_cs
+             0 ([], mk_imp (p, p)) (fn proof => proof)
+         val exhausted =
+           blastSearch.searchGoalBudgeted
+             (searchBudget.unbounded ()) clasetLib.empty_cs
+             0 ([], p) (fn proof => proof)
+       in
+         (case cutoff of
+              blastSearch.BudgetLimitReached {kind, usage} =>
+                kind = searchBudget.Candidate andalso
+                #candidates usage = 0
+            | _ => false) andalso
+         (case proved of
+              blastSearch.BudgetFinished
+                {result = SOME _, statistics} =>
+                  #cooperative_checkpoints (#phase statistics) =
+                    #candidates (searchBudget.usage ample) +
+                    #normalization (searchBudget.usage ample)
+            | _ => false) andalso
+         (case exhausted of
+              blastSearch.BudgetFinished {result = NONE, ...} => true
+            | _ => false) andalso
+         #applications (searchBudget.usage ample) > 0 andalso
+         #normalization (searchBudget.usage ample) > 0
+       end)
+
+val _ =
+  test
+    ("blast application and normalization limits have typed outcomes",
+     fn () =>
+       let
+         val p = mk_var ("budgeted_blast_limit_p", bool)
+         val goal = ([], mk_imp (p, p))
+         fun run limits =
+           blastSearch.searchGoalBudgeted
+             (searchBudget.create limits) clasetLib.empty_cs
+             0 goal (fn proof => proof)
+         val application =
+           run
+             {candidates = NONE, applications = SOME 0,
+              normalization = NONE}
+         val normalization =
+           run
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 0}
+       in
+         (case application of
+              blastSearch.BudgetLimitReached {kind, usage} =>
+                kind = searchBudget.Application andalso
+                #applications usage = 0
+            | _ => false) andalso
+         (case normalization of
+              blastSearch.BudgetLimitReached {kind, usage} =>
+                kind = searchBudget.Normalization andalso
+                #normalization usage = 0
+            | _ => false)
+       end)
+
+val _ =
+  test
     ("safe fanout counts one inference and one extra branch",
      fn () =>
        let
@@ -4024,6 +4100,55 @@ val _ =
                 (tableauLib.CS_BLAST_DEPTH_TAC cs 2) goal) ()
        end)
 
+val _ =
+  test
+    ("budgeted blast entry returns a validated proof or a typed limit",
+     fn () =>
+       let
+         val p = mk_var ("budgeted_public_blast_p", bool)
+         val target = mk_imp (p, p)
+         val goal = ([], target)
+         val ctxt = Context.snapshot ()
+         fun run candidates =
+           tableauLib.CS_BLAST_DEPTH_BUDGETED
+             (searchBudget.create
+               {candidates = SOME candidates,
+                applications = NONE, normalization = NONE})
+             clasetLib.empty_cs 0 goal ctxt
+       in
+         (case run 0 of
+              blastSearch.BudgetLimitReached {kind, ...} =>
+                kind = searchBudget.Candidate
+            | _ => false) andalso
+         (case run 10000 of
+              blastSearch.BudgetFinished
+                {result = SOME (remaining, validate), ...} =>
+                  null remaining andalso
+                  Term.aconv (Thm.concl (validate [])) target
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("explicit-context blast reconstruction validates a tableau",
+     fn () =>
+       let
+         val p = mk_var ("explicit_blast_p", bool)
+         val target = mk_imp (p, p)
+         val goal = ([], target)
+         val ctxt = Context.snapshot ()
+         val cs = clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               (case blastReconstruct.reconstructWith_in
+                       ctxt cs goal proof of
+                    SOME ([], validation) =>
+                      Term.aconv (Thm.concl (validation [])) target
+                  | _ => false)
+       end)
+
 (* This binary starts with no theory segment at all, and the tests from
    here on declare constants and read the current theory back, which is
    the state anything doing either is called in anyway. *)
@@ -4223,6 +4348,127 @@ val _ =
               SURJ fixed UNIV UNIV ==> BIJ fixed UNIV UNIV``)
        in
          blast_solves (tableauLib.BLAST_DEPTH_TAC 3 [bijI]) goal
+       end)
+
+val blast_poly_p_def =
+  new_definition
+    ("blast_poly_p_def", ``blast_poly_p (x:'a) <=> T``)
+val blast_poly_q_def =
+  new_definition
+    ("blast_poly_q_def", ``blast_poly_q (x:'a) <=> T``)
+val blast_poly_fact =
+  prove
+    (``!x:'a. blast_poly_p x ==> blast_poly_q x``,
+     REWRITE_TAC [blast_poly_q_def])
+
+val _ =
+  test
+    ("one supplied rule serves two types in a tableau proof",
+     fn () =>
+       let
+         val goal =
+           ([],
+            ``blast_poly_p (0:num) /\ blast_poly_p T ==>
+              blast_poly_q (0:num) /\ blast_poly_q T``)
+       in
+         blast_fails (tableauLib.BLAST_DEPTH_TAC 5 []) goal andalso
+         blast_solves
+           (tableauLib.BLAST_DEPTH_TAC 5 [blast_poly_fact]) goal
+       end)
+
+val blast_late_p_def =
+  new_definition
+    ("blast_late_p_def", ``blast_late_p (x:'a) <=> T``)
+val blast_late_bridge_def =
+  new_definition
+    ("blast_late_bridge_def", ``blast_late_bridge (n:num) <=> T``)
+val blast_late_p_fact =
+  prove
+    (``!x:'a. blast_late_p x``,
+     REWRITE_TAC [blast_late_p_def])
+val blast_late_bridge_fact =
+  prove
+    (``!n:num. blast_late_p T ==> blast_late_bridge n``,
+     REWRITE_TAC [blast_late_bridge_def])
+
+val _ =
+  test
+    ("a late-type tableau fixture needs both cited facts",
+     fn () =>
+       let
+         val goal = ([], ``blast_late_bridge 0``)
+       in
+         blast_fails
+           (tableauLib.BLAST_DEPTH_TAC 5
+             [clasetLib.SIntro blast_late_bridge_fact]) goal andalso
+         blast_fails
+           (tableauLib.BLAST_DEPTH_TAC 5 [blast_late_p_fact]) goal andalso
+         blast_solves
+           (tableauLib.BLAST_DEPTH_TAC 5
+             [clasetLib.SIntro blast_late_bridge_fact,
+              clasetLib.SIntro blast_late_p_fact]) goal
+       end)
+
+val _ =
+  test
+    ("a plain tableau fact works at a type exposed during search",
+     fn () =>
+       let
+         val goal = ([], ``blast_late_bridge 0``)
+       in
+         blast_solves
+           (tableauLib.BLAST_DEPTH_TAC 5
+             [clasetLib.SIntro blast_late_bridge_fact,
+              blast_late_p_fact]) goal
+       end)
+
+val _ =
+  test
+    ("a late-type tableau fact cannot discard its hypothesis",
+     fn () =>
+       let
+         val guard = ``blast_late_guard:bool``
+         val guarded = Drule.ADD_ASSUM guard blast_late_p_fact
+         val facts =
+           [clasetLib.SIntro blast_late_bridge_fact, guarded]
+         val target = ``blast_late_bridge 0``
+       in
+         blast_fails (tableauLib.BLAST_DEPTH_TAC 5 facts)
+           ([], target)
+       end)
+
+val _ =
+  test
+    ("a late-type tableau fact uses a proved hypothesis",
+     fn () =>
+       let
+         val guard = ``blast_late_guard:bool``
+         val guarded = Drule.ADD_ASSUM guard blast_late_p_fact
+         val facts =
+           [clasetLib.SIntro blast_late_bridge_fact, guarded]
+         val target = ``blast_late_bridge 0``
+       in
+         blast_solves (tableauLib.BLAST_DEPTH_TAC 5 facts)
+           ([guard], target)
+       end)
+
+val _ =
+  test
+    ("a supplied tableau rule retains its theorem hypothesis",
+     fn () =>
+       let
+         val guard = ``blast_poly_guard:bool``
+         val guarded = Drule.ADD_ASSUM guard blast_poly_fact
+         val conclusion =
+           ``blast_poly_p (0:num) /\ blast_poly_p T ==>
+             blast_poly_q (0:num) /\ blast_poly_q T``
+       in
+         blast_solves
+           (tableauLib.BLAST_DEPTH_TAC 5 [guarded])
+           ([], boolSyntax.mk_imp (guard, conclusion)) andalso
+         blast_fails
+           (tableauLib.BLAST_DEPTH_TAC 5 [guarded])
+           ([], conclusion)
        end)
 
 val _ =
@@ -4581,9 +4827,9 @@ val _ =
   test
     ("BLAST_TAC Pelletier solved-goal count",
      fn () =>
-       !pelletier_solved =
-         length pelletier_corpus - length pelletier_expected_failures
-       andalso !pelletier_solved = 48)
+       (!pelletier_solved =
+          length pelletier_corpus - length pelletier_expected_failures)
+       andalso (!pelletier_solved = 48))
 
 (* -------------------------------------------------------------------------
  * TASK_24: Table-1 depths, set problems, Halting II, and robustness.

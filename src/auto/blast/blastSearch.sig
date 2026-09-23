@@ -74,6 +74,11 @@ sig
      result : 'a option,
      statistics : statistics}
 
+  datatype 'a budget_outcome =
+      BudgetFinished of {result : 'a option, statistics : statistics}
+    | BudgetLimitReached of
+        {kind : searchBudget.kind, usage : searchBudget.usage}
+
   type debug_result =
     {fullTrace : branch list list,
      result : proof option}
@@ -173,6 +178,14 @@ sig
   val searchGoalMeasured :
     {debug : bool, stop : unit -> bool} ->
     claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
+  (* General scan checkpoints charge candidate work, while term
+     normalization and equality substitution checkpoints charge
+     normalization work.  Successful transitions charge applications.
+     A limit restores mutable search state and is distinct from exhaustive
+     failure.  This fixed-depth adapter does not retain a tableau cursor. *)
+  val searchGoalBudgeted :
+    searchBudget.budget -> claset -> int -> goal ->
+    (proof -> 'a) -> 'a budget_outcome
   val tryGoal : claset -> int -> goal -> proof option
   val debugGoal : claset -> int -> goal -> debug_result
 

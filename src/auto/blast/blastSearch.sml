@@ -977,7 +977,14 @@ fun traceState depth branches =
 datatype instrumentation =
     Off
   | Stats
-  | On of {debug : bool, stop : unit -> bool}
+  | On of
+      {debug : bool, stop : unit -> bool,
+       budget : searchBudget.budget option}
+
+datatype 'a budget_outcome =
+    BudgetFinished of {result : 'a option, statistics : statistics}
+  | BudgetLimitReached of
+      {kind : searchBudget.kind, usage : searchBudget.usage}
 
 val zero_phase_statistics : phase_statistics =
   {emergency_cleanup_assignments = 0,
@@ -1101,7 +1108,7 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
               (fn brs => traceState depth (projectBranches brs),
                inference, ruleInference, result, plainWorkers)
             end
-        | On {debug, stop} =>
+        | On {debug, stop, budget} =>
             let
               val inferences = ref 0
               val maximum_resource_cost = ref 0
@@ -1119,14 +1126,22 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
               val literal_successes = ref 0
               val emergency_cleanups = ref 0
 
-              fun checkpoint () =
+              fun charge kind =
+                case budget of
+                    NONE => ()
+                  | SOME owned => searchBudget.charge owned kind
+
+              fun checkpoint_kind kind () =
                 let
+                  val _ = charge kind
                   val _ = checkpoints := !checkpoints + 1
                   val requested =
                     stop () handle exn => raise STOP_EXCEPTION exn
                 in
                   if requested then raise INTERRUPTED else ()
                 end
+
+              val checkpoint = checkpoint_kind searchBudget.Candidate
 
               fun entry brs =
                 (checkpoint ();
@@ -1137,9 +1152,12 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                       traceState depth projected
                     end
                  else traceState depth (projectBranches brs))
-              fun inference () = inferences := !inferences + 1
+              fun inference () =
+                (charge searchBudget.Application;
+                 inferences := !inferences + 1)
               fun ruleInference lim =
-                (inferences := !inferences + 1;
+                (charge searchBudget.Application;
+                 inferences := !inferences + 1;
                  maximum_resource_cost :=
                    Int.max (!maximum_resource_cost, depth - lim))
 
@@ -1181,10 +1199,13 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                   | _ =>
                       clearToWith emergencyCleanup cleanup_state mark
 
-              fun checkpointRollback mark =
-                checkpoint ()
+              fun checkpointRollbackWith kind mark =
+                checkpoint_kind kind ()
                 handle exn =>
                   (cleanupException exn state mark; raise exn)
+
+              fun checkpointRollback mark =
+                checkpointRollbackWith searchBudget.Candidate mark
 
               fun phaseResult () : phase_statistics =
                 {emergency_cleanup_assignments = !emergency_cleanups,
@@ -1231,7 +1252,10 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                  pruneAt=fn mark =>
                    pruneMeasured (at mark) state pruned,
                  equalSubstAt=fn mark =>
-                   equalTrackedSubstMeasured (at mark),
+                   equalTrackedSubstMeasured
+                     (fn () =>
+                       checkpointRollbackWith
+                         searchBudget.Normalization mark),
                  joinMdAt=fn mark =>
                    joinTrackedMdMeasured (at mark),
                  negGoalsAt=fn mark =>
@@ -1259,7 +1283,11 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
                    recursivePremiseMeasured (at mark),
                  mayUndoAt=fn mark =>
                    mayUndoMeasured (at mark),
-                 normAt=fn mark => normMeasured (at mark),
+                 normAt=fn mark =>
+                   normMeasured
+                     (fn () =>
+                       checkpointRollbackWith
+                         searchBudget.Normalization mark),
                  lengthBranchesAt=fn mark =>
                    lengthMeasured (at mark),
                  lengthRulesAt=fn mark =>
@@ -1288,7 +1316,8 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
     val prepared =
       SOME (initialFormulasOf goal)
       handle INTERRUPTED => NONE
-           | STOP_EXCEPTION exn => raise exn
+           | STOP_EXCEPTION exn => (cleanupRun exn; raise exn)
+           | exn => (cleanupRun exn; raise exn)
 
     fun proofOf (tacs, trace) =
       {script = rev tacs,
@@ -1836,8 +1865,23 @@ fun runGoal cleanup_policy instrumentation claset depth goal cont =
      statistics = statistics}
   end
 
-fun searchGoalMeasured options claset depth goal cont =
-  runGoal AbandonOwned (On options) claset depth goal cont
+fun searchGoalMeasured {debug, stop} claset depth goal cont =
+  runGoal AbandonOwned
+    (On {debug = debug, stop = stop, budget = NONE})
+    claset depth goal cont
+
+fun searchGoalBudgeted budget claset depth goal cont =
+  let
+    val report =
+      runGoal Restore
+        (On {debug = false, stop = fn () => false,
+             budget = SOME budget}) claset depth goal cont
+  in
+    BudgetFinished
+      {result = #result report, statistics = #statistics report}
+  end
+  handle searchBudget.LimitReached (kind, usage) =>
+    BudgetLimitReached {kind = kind, usage = usage}
 
 fun searchGoalWithStats claset depth goal cont =
   let
