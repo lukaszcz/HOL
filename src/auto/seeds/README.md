@@ -47,10 +47,11 @@ defining obligations. A client may still supply an unsafe rule with an
 view whose premise has the seed's normal form. Conjunctive premises are
 curried so the rule can use separately simplified assumptions. The
 seed selftest exercises this interaction with an independently defined
-client predicate. Safe tagged rules and persistent rules still need a
-separate transport audit. Safe-rule inversion does not establish rewrite
-termination or search completeness; those properties need separate
-normalization and consumer tests.
+client predicate. Safe tagged and persistent rules use the same certified
+transport checks; the clasimp selftests exercise both, and a child-theory
+test checks reloaded persistent rules. Safe-rule inversion does not
+establish rewrite termination or search completeness; those properties
+need separate normalization and consumer tests.
 
 For the complete seeded state, make `autoSeed` an ancestor of a theory (or
 `open autoSeedTheory` in an ML consumer).  A smaller consumer can depend on

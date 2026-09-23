@@ -26,6 +26,9 @@ The following temporary source ablations were run, then removed:
 
 | Removed mechanism | Designated public failure |
 | --- | --- |
+| Fresh specialization before fixed-variable classification | `bound-variable spelling preserves fact type instances` failed in rules when specialization reused binder names and the resulting variables were classified as fixed. The rename/carrier matrix passed after restoration. |
+| Safe consumers retain a literal implication | `the conditional citation does not add unsafe CLARSIMP search` failed when `SafeFacts` compiled the implication as a search rule and withheld its assumption. |
+| Unbounded raw forward enumeration | `forward search reaches useful candidates through known results` failed when the shared forward cursor stopped after 200 raw candidates. A cap after duplicate filtering left that public proof green but broke `budgeted Aesop resumes a safe forward candidate scan`; it was not counted as evidence for E3. |
 | Certified transport of unsafe tagged rules | `certified tagged rule view crosses an invocation normal form` failed in clasimp. |
 | Currying a normalized conjunctive premise | `an INJ client rule survives the seed's definition normal form` failed in seeds. |
 | Retaining FORCE's first-best session after a turn | `FORCE preserves first-best expansions across small turns` failed in clasimp. |
