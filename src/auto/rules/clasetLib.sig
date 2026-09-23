@@ -215,6 +215,12 @@ sig
      them per use, so a fact may contribute more than one assumption,
      one per distinct instance. *)
   val INSERT_FACTS_TAC : thm list -> tactic
+  (* The compatibility insertion path charged to an invocation budget.
+     Subterm and match attempts charge Candidate, theorem instances
+     charge Normalization, and admitted assumptions charge Application.
+     A limit is raised before the next unit of work starts. *)
+  val INSERT_FACTS_TAC_BUDGETED :
+    searchBudget.budget -> thm list -> tactic
 
   (* The persistent form of a rule name, as recorded in the claset delta
      stream: a "Thy$Name" kernel name where the source name identifies a

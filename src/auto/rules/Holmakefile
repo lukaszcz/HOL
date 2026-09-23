@@ -2,7 +2,7 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-clasetLib.uo: clasetMarkerTheory.uo clasetFacts.uo
+clasetLib.uo: clasetMarkerTheory.uo clasetFacts.uo searchBudget.uo
 clasetSeedTheory.uo: clasetLib.uo
 selftest.uo: clasetSeedTheory.uo
 

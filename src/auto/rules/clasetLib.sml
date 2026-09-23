@@ -1317,11 +1317,12 @@ fun invocation_facts theorems =
    the fact's own abstractions -- matching there would read a type off a
    variable that exists only under the binder -- and on the goal's side
    every variable is one of its own. *)
-fun matchable_subterms free term =
+fun matchable_subterms_with charge free term =
   let
     fun headed sub =
-      is_comb sub andalso is_const (fst (strip_comb sub)) andalso
-      List.all free (free_vars sub)
+      (charge searchBudget.Candidate;
+       is_comb sub andalso is_const (fst (strip_comb sub)) andalso
+       List.all free (free_vars sub))
   in
     find_terms headed term
   end
@@ -1365,10 +1366,11 @@ fun head_name term = fst (dest_const (fst (strip_comb term)))
    classification, and loose type variables are freshened apart from
    the goal before matching.  Thus neither binder nor type-variable
    spelling determines which instances are offered. *)
-fun goal_type_instances (assumptions, target) fact =
+fun goal_type_instances_with charge (assumptions, target) fact =
   let
     val quantified = fst (boolSyntax.strip_forall (Thm.concl fact))
     val original_body = Thm.concl fact
+    val _ = charge searchBudget.Normalization
     val specialized =
       Drule.SPECL (map (Term.genvar o Term.type_of) quantified) fact
     val body = Thm.concl specialized
@@ -1398,14 +1400,24 @@ fun goal_type_instances (assumptions, target) fact =
       map (fn ty => {redex = ty, residue = Type.gen_tyvar ()}) loose
     fun same_support left right =
       List.all
-        (fn term => List.exists (Term.aconv term) right) left andalso
+        (fn term =>
+          List.exists
+            (fn other =>
+              (charge searchBudget.Candidate;
+               Term.aconv term other)) right) left andalso
       List.all
-        (fn term => List.exists (Term.aconv term) left) right
+        (fn term =>
+          List.exists
+            (fn other =>
+              (charge searchBudget.Candidate;
+               Term.aconv term other)) left) right
   in
     if null loose then [fact]
     else
       let
+        val _ = charge searchBudget.Normalization
         val match_fact = Thm.INST_TYPE fresh_types fact
+        val _ = charge searchBudget.Normalization
         val match_body =
           Thm.concl
             (Drule.SPECL
@@ -1415,12 +1427,16 @@ fun goal_type_instances (assumptions, target) fact =
         val match_loose = map #residue fresh_types
         val schematic = free_vars match_body
         val patterns =
-          matchable_subterms (fn v => Lib.op_mem aconv v schematic)
+          matchable_subterms_with charge
+            (fn v => Lib.op_mem aconv v schematic)
             match_body
         val sites =
-          List.concat (map (matchable_subterms (fn _ => true)) goal_terms)
+          List.concat
+            (map (matchable_subterms_with charge (fn _ => true))
+               goal_terms)
         fun instance_of (pattern, site) =
-          case Lib.total (Term.match_term pattern) site of
+          (charge searchBudget.Candidate;
+           case Lib.total (Term.match_term pattern) site of
               NONE => NONE
             | SOME (_, types) =>
                 let
@@ -1438,7 +1454,7 @@ fun goal_type_instances (assumptions, target) fact =
                             proper
                   then SOME proper
                   else NONE
-                end
+                end)
         val substitutions =
           List.mapPartial instance_of
             (List.concat
@@ -1446,7 +1462,8 @@ fun goal_type_instances (assumptions, target) fact =
                 (fn pattern =>
                   List.mapPartial
                     (fn site =>
-                      if head_name pattern = head_name site then
+                      if (charge searchBudget.Candidate;
+                          head_name pattern = head_name site) then
                         SOME (pattern, site)
                       else
                         NONE)
@@ -1455,11 +1472,14 @@ fun goal_type_instances (assumptions, target) fact =
         val instances =
           List.foldl
             (fn (types, kept) =>
-              let val instance = Thm.INST_TYPE types match_fact
+              let
+                val _ = charge searchBudget.Normalization
+                val instance = Thm.INST_TYPE types match_fact
               in
                 if List.exists
                      (fn earlier =>
-                       aconv (Thm.concl earlier) (Thm.concl instance)
+                       (charge searchBudget.Candidate;
+                        aconv (Thm.concl earlier) (Thm.concl instance))
                        andalso same_support (Thm.hyp earlier)
                          (Thm.hyp instance))
                      kept
@@ -1480,12 +1500,26 @@ fun goal_type_instances (assumptions, target) fact =
    assumptions, and what FIRST_ASSUM and friends see in the residue.
    The marker check stays where the tactic is built; the instances a
    fact is inserted at are the goal's, so they are taken when it runs. *)
-fun INSERT_FACTS_TAC facts =
+fun insert_facts_tac_with charge facts =
   (check_aesop_markers "INSERT_FACTS_TAC" facts;
    fn goal =>
-     Tactical.MAP_EVERY Tactic.ASSUME_TAC
-       (List.rev (List.concat (map (goal_type_instances goal) facts)))
-       goal)
+     let
+       val instances =
+         List.rev
+           (List.concat
+             (map (goal_type_instances_with charge goal) facts))
+       fun assume fact inner ctxt =
+         (charge searchBudget.Application;
+          Tactic.ASSUME_TAC fact inner ctxt)
+     in
+       Tactical.MAP_EVERY assume instances goal
+     end)
+
+fun INSERT_FACTS_TAC facts =
+  insert_facts_tac_with (fn _ => ()) facts
+
+fun INSERT_FACTS_TAC_BUDGETED budget facts =
+  insert_facts_tac_with (searchBudget.charge budget) facts
 
 (* A supplied fact that is an implication is declared to the invocation
    claset and left out of the assumptions.  Isabelle's [using] chains a

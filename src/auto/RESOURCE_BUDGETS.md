@@ -9,6 +9,10 @@ does not reset it. Semantic depth bounds remain separate from these counts.
 
 The implemented checkpoints are:
 
+- Literal fact insertion: candidate charges on subterm scans, head and
+  type matches, and duplicate/support comparisons; normalization charges
+  on theorem specialization and type instances; application charges on
+  admitted assumptions. The ordinary insertion entry point is unchanged.
 - Classical best-first: candidate charges on heap selections, lazy child
   pulls, and forward-rule premise scans; application charges on node
   expansion; normalization charges before kernel replay.

@@ -3185,6 +3185,54 @@ val _ =
            | _ => false
        end)
 
+val _ =
+  test
+    ("budgeted literal insertion charges matching and admitted facts",
+     fn () =>
+       let
+         val goal =
+           ([] : term list, ``FST (p : 'c # 'd) = FST p``)
+         val facts = [pointwise_reflexivity]
+         val funded = searchBudget.unbounded ()
+         fun assumptions tactic =
+           case #1 (Tactical.VALID tactic goal (Context.snapshot())) of
+               [(items, _)] => SOME items
+             | _ => NONE
+         val baseline = assumptions (INSERT_FACTS_TAC facts)
+         val charged =
+           assumptions (INSERT_FACTS_TAC_BUDGETED funded facts)
+         val used = searchBudget.usage funded
+         fun cut kind limits =
+           let
+             val budget = searchBudget.create limits
+           in
+             (ignore
+                (assumptions
+                   (INSERT_FACTS_TAC_BUDGETED budget facts));
+              false)
+             handle searchBudget.LimitReached (actual, usage) =>
+               actual = kind andalso usage = searchBudget.usage budget
+           end
+       in
+         (case (baseline, charged) of
+              (SOME left, SOME right) =>
+                ListPair.allEq
+                  (fn (first, second) => Term.aconv first second)
+                  (left, right)
+            | _ => false) andalso
+         #candidates used > 0 andalso #applications used > 0 andalso
+         #normalization used > 0 andalso
+         cut searchBudget.Candidate
+           {candidates = SOME 0, applications = NONE,
+            normalization = NONE} andalso
+         cut searchBudget.Application
+           {candidates = NONE, applications = SOME 0,
+            normalization = NONE} andalso
+         cut searchBudget.Normalization
+           {candidates = NONE, applications = NONE,
+            normalization = SOME 0}
+       end)
+
 (* A fact the goal's own type variables cover is usable as it stands,
    and which of its atoms happens to match where is no evidence of the
    instance wanted: the citation itself is one of the instances, so it

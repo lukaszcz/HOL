@@ -28,6 +28,11 @@ fun candidate (work : work) = #candidate work ()
 fun application (work : work) = #application work ()
 fun normalization (work : work) = #normalization work ()
 
+fun insert_facts_with (work : work) facts =
+  case #budget work of
+      NONE => clasetLib.INSERT_FACTS_TAC facts
+    | SOME budget => clasetLib.INSERT_FACTS_TAC_BUDGETED budget facts
+
 fun prove (term, tactic) =
   case Tactical.VALID tactic ([], term) (Context.snapshot()) of
       ([], validation) => validation []
@@ -200,7 +205,7 @@ fun simple_linarith_tac_with work function arguments =
     fn goal => fn ctxt =>
       (normalization work;
        Tactical.THEN
-        (clasetLib.INSERT_FACTS_TAC
+        (insert_facts_with work
            (linarithData.arith_facts () @ argument_facts),
          fn inner as (_, conclusion) =>
            core_with work function (unregistered_hint conclusion)
@@ -999,7 +1004,7 @@ fun cfg_linarith_tac_with work function config arguments =
     fn goal => fn ctxt =>
       (normalization work;
        Tactical.THEN
-        (clasetLib.INSERT_FACTS_TAC
+        (insert_facts_with work
            (linarithData.arith_facts () @ argument_facts),
          let
            val search =

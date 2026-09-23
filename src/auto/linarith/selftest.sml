@@ -1649,6 +1649,23 @@ val _ =
              (linarithLib.LINARITH_TAC_BUDGETED funded [])
              budgeted_tactic_goal
          val used = searchBudget.usage funded
+         val insertion_budget =
+           searchBudget.create
+             {candidates = SOME 0, applications = SOME 0,
+              normalization = NONE}
+         val schematic_fact =
+           Thm.REFL ``(linarith_budget_fact_value : 'a)``
+         val insertion_cut =
+           (ignore
+              (Tactical.VALID
+                 (linarithLib.LINARITH_TAC_BUDGETED
+                    insertion_budget [schematic_fact])
+                 budgeted_tactic_goal (Context.snapshot ()));
+            false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, usage) =>
+                    #applications usage = 0
+                | _ => false
          fun cut kind limits =
            let
              val budget = searchBudget.create limits
@@ -1666,6 +1683,7 @@ val _ =
        in
          closed andalso #candidates used > 0 andalso
          #applications used > 0 andalso #normalization used > 0 andalso
+         insertion_cut andalso
          cut searchBudget.Candidate
            {candidates = SOME 0, applications = NONE,
             normalization = NONE} andalso
