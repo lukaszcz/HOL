@@ -884,3 +884,115 @@ val _ =
        expected_boundaries = 1}
       arith_examples_corpus
   else ()
+
+(* A second spelling of the integer operators exercises the registered
+   theorem kit through the public solver.  These laws are derived from
+   the integer kit, so replay must use the supplied operator views rather
+   than identify the built-in constant names in generic code. *)
+val _ = Theory.new_theory "linarithRenamedSelftest"
+
+val renamed_plus_def =
+  new_definition
+    ("renamed_plus_def",
+     ``renamed_plus (a:int) b = a + b``)
+val renamed_le_def =
+  new_definition
+    ("renamed_le_def",
+     ``renamed_le (a:int) b <=> a <= b``)
+val renamed_lt_def =
+  new_definition
+    ("renamed_lt_def",
+     ``renamed_lt (a:int) b <=> a < b``)
+
+val renamed_defs =
+  [renamed_plus_def, renamed_le_def, renamed_lt_def]
+
+val renamed_plus =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "renamed_plus"}
+val renamed_le =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "renamed_le"}
+val renamed_lt =
+  prim_mk_const {Thy = "linarithRenamedSelftest", Name = "renamed_lt"}
+
+fun renamed_binary operator tm =
+  case strip_comb tm of
+      (head, [left, right]) =>
+        if Term.aconv head operator then (left, right)
+        else raise mk_HOL_ERR "linarithRenamedSelftest"
+                     "renamed_binary" "different operator"
+    | _ => raise mk_HOL_ERR "linarithRenamedSelftest"
+                 "renamed_binary" "not a binary application"
+
+fun renamed_app operator left right =
+  Term.list_mk_comb (operator, [left, right])
+
+val old_dest = #dest int_instance
+val old_kit = #kit int_instance
+val fold_renamed =
+  Rewrite.REWRITE_RULE (map Conv.GSYM renamed_defs)
+val unfold_renamed =
+  Conv.TOP_DEPTH_CONV
+    (Conv.FIRST_CONV (map Conv.REWR_CONV renamed_defs))
+val fold_renamed_conv =
+  Conv.TOP_DEPTH_CONV
+    (Conv.FIRST_CONV
+       (map (Conv.REWR_CONV o Conv.GSYM) renamed_defs))
+
+val renamed_instance : linarithData.linarith_instance =
+  {ty = intSyntax.int_ty,
+   discrete =
+     Option.map
+       (fn {lessD} => {lessD = map fold_renamed lessD})
+       (#discrete int_instance),
+   dest =
+     {dest_plus = renamed_binary renamed_plus,
+      dest_minus = #dest_minus old_dest,
+      dest_neg = #dest_neg old_dest,
+      dest_mult = #dest_mult old_dest,
+      dest_div = #dest_div old_dest,
+      dest_suc = #dest_suc old_dest,
+      dest_lit = #dest_lit old_dest,
+      mk_lit = #mk_lit old_dest,
+      dest_less = renamed_binary renamed_lt,
+      dest_leq = renamed_binary renamed_le},
+   kit =
+     {add_mono = map fold_renamed (#add_mono old_kit),
+      mult_mono = map fold_renamed (#mult_mono old_kit),
+      not_less = fold_renamed (#not_less old_kit),
+      not_le = fold_renamed (#not_le old_kit),
+      neqE = fold_renamed (#neqE old_kit),
+      nonneg = #nonneg old_kit},
+   norm_conv =
+     Conv.THENC
+       (Conv.THENC
+          (unfold_renamed, Conv.QCONV (#norm_conv int_instance)),
+        Conv.QCONV fold_renamed_conv),
+   nnf_rules = map fold_renamed (#nnf_rules int_instance),
+   pre_split = map fold_renamed (#pre_split int_instance),
+   atom_facts = #atom_facts int_instance}
+
+val renamed_goal =
+  ([renamed_app renamed_le ix iy,
+    renamed_app renamed_le iz i7],
+   renamed_app renamed_le
+     (renamed_app renamed_plus ix iz)
+     (renamed_app renamed_plus iy i7))
+
+val _ =
+  check
+    ("renamed arithmetic declarations replay through a theorem kit",
+     fn () =>
+       let
+         val ordinary_declines =
+           not (valid_closes (linarithLib.LINARITH_TAC [])
+                  renamed_goal
+                handle Feedback.HOL_ERR _ => false)
+         val _ = linarithData.register_instance renamed_instance
+         val result =
+           valid_closes (linarithLib.LINARITH_TAC []) renamed_goal
+           handle error =>
+             (linarithData.register_instance int_instance; raise error)
+         val _ = linarithData.register_instance int_instance
+       in
+         ordinary_declines andalso result
+       end)

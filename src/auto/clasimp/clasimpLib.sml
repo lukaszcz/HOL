@@ -1732,6 +1732,8 @@ fun process_clasimp_args_fact_views consumer budget
                               {prefix = "__clasimp_transport_", from = 0}
                               current
                         in
+                          searchBudget.charge budget
+                            searchBudget.Application;
                           clasetLib.add_derived_rule
                             {kind = clasetRules.Dest,
                              safe = false, prio = NONE}
@@ -1745,29 +1747,42 @@ fun process_clasimp_args_fact_views consumer budget
                 else
                   List.foldl
                     (fn ((spec, (_, theorem)), current) =>
-                      if #safe spec then current
-                      else
-                        let
-                          val derived =
-                            Conv.CONV_RULE conversion theorem
-                        in
-                          if aconv (concl derived) (concl theorem) orelse
-                             aconv (concl derived) boolSyntax.T then
-                            current
-                          else
-                            let
-                              val name =
-                                clasetLib.fresh_rule_name
-                                  {prefix = "__clasimp_transport_",
-                                   from = 0} current
-                            in
-                              clasetLib.add_derived_rule spec
-                                (name, derived) current
-                              handle HOL_ERR _ => current
-                            end
-                        end
-                        handle HOL_ERR _ => current
-                             | Conv.UNCHANGED => current)
+                      let
+                        val derived =
+                          Conv.CONV_RULE conversion theorem
+                        val original_info =
+                          clasetRules.ext_info spec theorem
+                        val derived_info =
+                          clasetRules.ext_info spec derived
+                        val role_preserved =
+                          clasetRules.safe_class_of spec original_info =
+                          clasetRules.safe_class_of spec derived_info
+                        val support_preserved =
+                          List.all
+                            (fn assumption =>
+                              List.exists (aconv assumption) (hyp theorem))
+                            (hyp derived)
+                      in
+                        if aconv (concl derived) (concl theorem) orelse
+                           aconv (concl derived) boolSyntax.T orelse
+                           not role_preserved orelse
+                           not support_preserved then current
+                        else
+                          let
+                            val name =
+                              clasetLib.fresh_rule_name
+                                {prefix = "__clasimp_transport_",
+                                 from = 0} current
+                          in
+                            searchBudget.charge budget
+                              searchBudget.Application;
+                            clasetLib.add_derived_rule spec
+                              (name, derived) current
+                            handle HOL_ERR _ => current
+                          end
+                      end
+                      handle HOL_ERR _ => current
+                           | Conv.UNCHANGED => current)
                     fact_cs (clasetLib.invocation_marker_rules cs)
             in
               body transported_cs ss

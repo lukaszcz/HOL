@@ -12,6 +12,8 @@ checks; it is not a solved-goal score.
 | Normalization bridges | `clasimp/selftest.sml` uses independently defined predicates for a tagged rule whose premise changes normal form, and reports a typed limit for cyclic rewrites. |
 | Head preservation and seeds | `seeds/selftest.sml` uses eta-expanded interval terms and an independently defined `INJ` client predicate; a separate client datatype and relation exercise temporary declarations. |
 | Bounded FORCE turns | `clasimp/selftest.sml` compares the admitted first-best expansions under one-unit and large slices on the same partial-map proof. `classical/selftest.sml` resumes depth search and pending kernel replay under one budget. |
+| Renamed arithmetic declarations | `linarith/instances/selftest.sml` registers fresh names for integer addition and order, derives their laws from the existing theorem kit, and closes an additive inequality the ordinary instance declines. |
+| Safe tagged rule transport | `clasimp/selftest.sml` derives a safe introduction rule whose conclusion reaches the goal only after an invocation rewrite changes its normal form. |
 
 The following temporary source ablations were run, then removed:
 
@@ -20,13 +22,19 @@ The following temporary source ablations were run, then removed:
 | Certified transport of unsafe tagged rules | `certified tagged rule view crosses an invocation normal form` failed in clasimp. |
 | Currying a normalized conjunctive premise | `an INJ client rule survives the seed's definition normal form` failed in seeds. |
 | Retaining FORCE's first-best session after a turn | `FORCE preserves first-best expansions across small turns` failed in clasimp. |
+| Transporting safe tagged rules | `safe tagged introduction retains its role after transport` failed in clasimp when safe transport was disabled. |
 
-The restored rules, classical, clasimp and seeds local selftests pass.
+The restored rules, classical, clasimp, linarith instances and seeds local
+selftests pass.
 `bin/build -F -t` passed after the simplifier edit, and the ordered
-`upto-auto` gate passed after depth sessions and budgeted fact views were
-added. The final full-build result predates those later auto-only changes.
+`upto-auto` gate passed after safe rule transport and the renamed arithmetic
+test. A subsequent application charge for installing a derived rule passed
+the local clasimp selftest. The full-build result predates these later
+auto-only changes.
 
 Tableau currently has a charged, reported restart adapter when a bounded
-turn cuts off; it does not retain its mutable search frontier. Persistent
-and safe tagged rule transport, and a theorem-kit proof on an independent
-arithmetic carrier, remain for the final generalization audit.
+turn cuts off; it does not retain its mutable search frontier. Invocation
+safe rule transport retains its declared role only when its safe class is
+unchanged and no new theorem hypothesis is introduced. Persistent tagged
+rule transport and a proof on an independent arithmetic carrier remain
+for the final generalization audit.

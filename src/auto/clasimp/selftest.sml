@@ -1851,6 +1851,11 @@ val transport_fact =
     (``!n. transport_p n ==> transport_r n``,
      Rewrite.REWRITE_TAC
        [transport_p_def, transport_r_def])
+val transport_safe_intro =
+  Tactical.prove
+    (``!n. transport_r n ==> transport_p n``,
+     Rewrite.REWRITE_TAC
+       [transport_p_def, transport_r_def])
 
 val _ =
   check
@@ -1866,6 +1871,29 @@ val _ =
               [clasetLib.Simp transport_bridge,
                clasetLib.Dest transport_fact])
            goal
+       end)
+
+val _ =
+  check
+    ("safe tagged introduction retains its role after transport",
+     fn () =>
+       let
+         val goal =
+           ([``transport_r (n:num)``], ``transport_q n``)
+         val without =
+           not
+             (valid_closes
+                (clasimpLib.AUTO_TAC
+                   [clasetLib.SIntro transport_safe_intro]) goal
+              handle Feedback.HOL_ERR _ => false)
+         val with_bridge =
+           valid_closes
+             (clasimpLib.AUTO_TAC
+                [clasetLib.Simp transport_bridge,
+                 clasetLib.SIntro transport_safe_intro]) goal
+           handle Feedback.HOL_ERR _ => false
+       in
+         without andalso with_bridge
        end)
 
 (* The same mismatch one spelling further on.  Isabelle normalises the
