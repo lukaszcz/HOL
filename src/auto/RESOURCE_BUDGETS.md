@@ -68,7 +68,8 @@ Linarith's budgeted proof entry point includes splitting and carries an
 explicit tactic context through nested forward side proofs without a
 nested ambient pin. `LINARITH_TAC_BUDGETED` and
 `CFG_LINARITH_TAC_BUDGETED` also charge the caller's budget through the
-full tactic search and propagate a typed work-limit exception. They are
+full tactic search. `SIMPLE_LINARITH_TAC_BUDGETED` charges its direct
+refutation path. All three propagate a typed work-limit exception. They are
 one-shot tactics: extending the budget permits a retry but does not
 resume a suspended split tree. The existing tactic and simplifier
 adapters retain their unbudgeted behavior. These are G5 integration

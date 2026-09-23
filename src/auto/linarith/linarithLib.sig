@@ -21,6 +21,8 @@ sig
      callers may extend the budget and retry the one-shot tactic. *)
   val LINARITH_TAC_BUDGETED :
     searchBudget.budget -> thm list -> tactic
+  val SIMPLE_LINARITH_TAC_BUDGETED :
+    searchBudget.budget -> thm list -> tactic
   val CFG_LINARITH_TAC_BUDGETED :
     searchBudget.budget -> linarith_config -> thm list -> tactic
 

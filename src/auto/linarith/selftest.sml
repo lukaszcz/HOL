@@ -1781,6 +1781,41 @@ val _ =
          ([num_less public_x public_y],
           num_leq (num_plus public_x num_one) public_y))
 
+val simple_budget_goal : Abbrev.goal =
+  ([num_less public_x public_y],
+   num_leq (num_plus public_x num_one) public_y)
+
+val _ =
+  check
+    ("budgeted SIMPLE_LINARITH_TAC shares its refutation budget",
+     fn () =>
+       let
+         val funded = searchBudget.unbounded ()
+         val closed =
+           valid_closes
+             (linarithLib.SIMPLE_LINARITH_TAC_BUDGETED funded [])
+             simple_budget_goal
+         val used = searchBudget.usage funded
+         val limited =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cut =
+           (ignore
+              (Tactical.VALID
+                 (linarithLib.SIMPLE_LINARITH_TAC_BUDGETED
+                    limited []) simple_budget_goal
+                 (Context.snapshot ()));
+            false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, usage) =>
+                    usage = searchBudget.usage limited
+                | _ => false
+       in
+         closed andalso #candidates used > 0 andalso
+         #normalization used > 0 andalso cut
+       end)
+
 val public_x_neq_one = num_not (num_eq public_x num_one)
 
 val _ =

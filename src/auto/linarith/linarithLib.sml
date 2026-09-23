@@ -166,9 +166,6 @@ fun refutation_with work config (assumptions, conclusion) =
            | linarithReplay.RefutationLimitReached {kind, usage} =>
                raise searchBudget.LimitReached (kind, usage))
 
-fun refutation config goal =
-  refutation_with free_work config goal
-
 (* The diagnostics report the goal as preprocessing left it, so they stay
    on this side of the interface; the failure is reported under the
    caller's name because the public entries report their own.  This is
@@ -180,8 +177,8 @@ fun exhausted function hint (assumptions, conclusion) =
    linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
    no_proof function hint)
 
-fun core function hint config goal ctxt =
-  case refutation config goal of
+fun core_with work function hint config goal ctxt =
+  case refutation_with work config goal of
       SOME tactic => tactic goal ctxt
     | NONE => exhausted function hint goal
 
@@ -196,19 +193,27 @@ fun core function hint config goal ctxt =
    reported at the tactic than at some later goal.  The per-application
    reads are what the memos above make cheap -- a generation compare,
    not a rebuild. *)
-fun SIMPLE_LINARITH_TAC arguments =
+fun simple_linarith_tac_with work function arguments =
   let
-    val function = "SIMPLE_LINARITH_TAC"
     val argument_facts = map (simple_argument function) arguments
   in
     fn goal => fn ctxt =>
-      Tactical.THEN
+      (normalization work;
+       Tactical.THEN
         (clasetLib.INSERT_FACTS_TAC
            (linarithData.arith_facts () @ argument_facts),
          fn inner as (_, conclusion) =>
-           core function (unregistered_hint conclusion)
-             linarithData.default_config inner) goal ctxt
+           core_with work function (unregistered_hint conclusion)
+             linarithData.default_config inner) goal ctxt)
   end
+
+fun SIMPLE_LINARITH_TAC arguments =
+  simple_linarith_tac_with free_work
+    "SIMPLE_LINARITH_TAC" arguments
+
+fun SIMPLE_LINARITH_TAC_BUDGETED budget arguments =
+  simple_linarith_tac_with (budget_work budget)
+    "SIMPLE_LINARITH_TAC_BUDGETED" arguments
 
 fun has_registered_subterm tm =
   Lib.can
