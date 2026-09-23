@@ -13,6 +13,14 @@ The implemented checkpoints are:
   type matches, and duplicate/support comparisons; normalization charges
   on theorem specialization and type instances; application charges on
   admitted assumptions. The ordinary insertion entry point is unchanged.
+- Clasimp's opt-in child-first traversal: normalization charges before
+  congruence descent, weakening, and reducer attempts. AUTO, FORCE,
+  FASTFORCE, SLOWSIMP, BESTSIMP, and CLARSIMP share one callback across
+  their mutual simplification and search wrappers per tactic invocation.
+  `CLARSIMP_TAC_BUDGETED` accepts a caller-owned budget and propagates
+  `LimitReached` without translating it into tactic failure. Separate
+  normalization steps such as FORCE's initial `FULL_SIMP_TAC` and
+  extensionality are not yet charged by this callback.
 - Classical best-first: candidate charges on heap selections, lazy child
   pulls, and forward-rule premise scans; application charges on node
   expansion; normalization charges before kernel replay.

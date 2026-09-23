@@ -1574,6 +1574,12 @@ fun clear_rules (SS s) =
      (xtraversedata_for_ss_prepared ss prepared)
      {reducer_context=reducer_context,solver_context=solver_context};
 
+ fun SIMP_QCONV_CHILD_FIRST_WITH_PREPARED_CONTEXT
+       charge ss prepared reducer_context solver_context =
+   Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT charge
+     (xtraversedata_for_ss_prepared ss prepared)
+     {reducer_context=reducer_context,solver_context=solver_context};
+
  fun SIMP_QCONV ss thms =
    SIMP_QCONV_WITH_PREPARED_CONTEXT ss [] thms [];
 
@@ -1697,6 +1703,14 @@ fun SIMP_CONV ss l tm =
   in TRY_CONV (SIMP_QCONV ss' l') tm
   end;
 
+fun SIMP_CONV_CHILD_FIRST charge ss l tm =
+  let val (ss', l') = process_tags ss l
+  in
+    TRY_CONV
+      (SIMP_QCONV_CHILD_FIRST_WITH_PREPARED_CONTEXT
+         charge ss' [] l' []) tm
+  end;
+
 fun SIMP_PROVE ss l t =
   let val (ss', l') = process_tags ss l
   in EQT_ELIM (SIMP_QCONV ss' l' t)
@@ -1739,19 +1753,32 @@ fun reconcile_hyps asl th =
     Lib.itlist ADD_ASSUM asl (Lib.itlist replace_hyp (hyp th) th)
   end
 
-fun simp_conv_with_prepared_context
+datatype simp_traversal = Ordinary | ChildFirst of (unit -> unit)
+
+fun simp_conv_with_prepared_context_for traversal
       ss prepared reducer_context solver_context =
   TRY_CONV
-    (SIMP_QCONV_WITH_PREPARED_CONTEXT
-       ss prepared reducer_context solver_context)
+    (case traversal of
+         Ordinary =>
+           SIMP_QCONV_WITH_PREPARED_CONTEXT
+             ss prepared reducer_context solver_context
+       | ChildFirst charge =>
+           SIMP_QCONV_CHILD_FIRST_WITH_PREPARED_CONTEXT
+             charge ss prepared reducer_context solver_context)
 
-fun simp_rule_with_prepared_context
+fun simp_conv_with_prepared_context
+      ss prepared reducer_context solver_context =
+  simp_conv_with_prepared_context_for Ordinary
+    ss prepared reducer_context solver_context
+
+fun simp_rule_with_prepared_context_for traversal
       ss prepared reducer_context solver_context =
   CONV_RULE
-    (simp_conv_with_prepared_context
+    (simp_conv_with_prepared_context_for traversal
        ss prepared reducer_context solver_context)
 
-fun final_solver_tac prepared mode ss reducer_context solver_context =
+fun final_solver_tac traversal prepared mode ss
+      reducer_context solver_context =
   let
     val s = strategy_of ss
     val solvers =
@@ -1759,7 +1786,7 @@ fun final_solver_tac prepared mode ss reducer_context solver_context =
     val prover_ctxt =
       {stack=[], context_thms=reducer_context @ solver_context,
        recurse=QCONV
-         (simp_conv_with_prepared_context
+         (simp_conv_with_prepared_context_for traversal
             ss prepared reducer_context solver_context)}
     fun solve_with ({solve,...} : Traverse.ssolver) (asl,w) =
       let
@@ -1798,7 +1825,7 @@ fun bounded_looper rounds tac g =
           end
     | NONE => tac g
 
-fun gen_simp_tac_with_prepared
+fun gen_simp_tac_with_prepared traversal
       prepared solver_context (mode : simp_mode) ss ths =
   fn g =>
     let
@@ -1811,10 +1838,10 @@ fun gen_simp_tac_with_prepared
                 process_tags ss tagged_thms
               val rewr_tac =
                 CONV_TAC
-                  (simp_conv_with_prepared_context
+                  (simp_conv_with_prepared_context_for traversal
                      invocation_ss prepared context_thms solver_context)
               val solve_tac =
-                final_solver_tac prepared mode invocation_ss
+                final_solver_tac traversal prepared mode invocation_ss
                                  context_thms solver_context
               val loop_tac =
                 bounded_looper rounds (looper_tac invocation_ss)
@@ -1831,9 +1858,12 @@ fun gen_simp_tac_with_prepared
     end
 
 fun gen_simp_tac solver_context =
-  gen_simp_tac_with_prepared [] solver_context
+  gen_simp_tac_with_prepared Ordinary [] solver_context
 
 fun GEN_SIMP_TAC mode = gen_simp_tac [] mode
+
+fun GEN_SIMP_TAC_CHILD_FIRST charge mode =
+  gen_simp_tac_with_prepared (ChildFirst charge) [] [] mode
 
 fun ASM_SIMP_TAC ss = GEN_SIMP_TAC {safe=false} ss
 val asm_simp_tac = ASM_SIMP_TAC
@@ -1965,7 +1995,7 @@ fun then_annotated (goals,validation) next ctxt =
 fun rotate_assumption cfg =
     popper_of cfg (BF_ASSUME_TAC (not (#oldestfirst cfg)))
 
-fun counted_psr cfg ss prepared solver_context g ctxt =
+fun counted_psr traversal cfg ss prepared solver_context g ctxt =
     let
       (* [simplify] runs inside a callback, so what it learns about the
          assumption is smuggled out through this cell. *)
@@ -1977,7 +2007,7 @@ fun counted_psr cfg ss prepared solver_context g ctxt =
                val (invocation_ss,reducer_context) =
                  process_asm_tags ss asms
                val simplified =
-                 simp_rule_with_prepared_context
+                 simp_rule_with_prepared_context_for traversal
                    invocation_ss prepared reducer_context solver_context th
                val ordinary =
                  BF_ASSUME_TAC
@@ -2001,7 +2031,7 @@ fun counted_psr cfg ss prepared solver_context g ctxt =
       (map (fn goal => (goal,info)) goals,validation)
     end
 
-fun counted_pass cfg ss prepared solver_context initial_k
+fun counted_pass traversal cfg ss prepared solver_context initial_k
                  (g as (asl,_)) ctxt =
     let
       val n = length asl
@@ -2018,7 +2048,8 @@ fun counted_pass cfg ss prepared solver_context initial_k
                     val info = {changed=false,structural=false}
                 in (map (fn g => (g,info)) goals,validation)
                 end
-              else counted_psr cfg ss prepared solver_context goal ctxt
+              else counted_psr traversal cfg ss prepared
+                     solver_context goal ctxt
             fun next {changed,structural} =
               let
                 val k =
@@ -2039,7 +2070,7 @@ fun counted_pass cfg ss prepared solver_context initial_k
       loop initial g ctxt
     end
 
-fun GEN_GLOBAL_SIMP_TAC mode
+fun gen_global_simp_tac_with traversal mode
       ({base,concl_in_fixpoint,imp_rebuild,imp_premises} : xsimptac_config)
       ss0 =
     markerLib.mk_require_tac (
@@ -2055,7 +2086,7 @@ fun GEN_GLOBAL_SIMP_TAC mode
                val ss = ss1
                val conclusion_tac =
                  gen_simp_tac_with_prepared
-                   prepared solver_context mode ss []
+                   traversal prepared solver_context mode ss []
 
                fun strip_implications (g as (_,w)) ctxt =
                  if can boolSyntax.dest_imp_only w then
@@ -2156,7 +2187,8 @@ fun GEN_GLOBAL_SIMP_TAC mode
                fun fixpoint k goal ctxt =
                  let
                    val pass as (annotated,validation) =
-                     counted_pass base ss prepared solver_context k goal ctxt
+                     counted_pass traversal base ss prepared
+                       solver_context k goal ctxt
                    val unchanged =
                      same_goals (map #1 annotated,[goal])
                    fun clear_change state =
@@ -2219,6 +2251,12 @@ fun GEN_GLOBAL_SIMP_TAC mode
         )
       )
     )
+
+fun GEN_GLOBAL_SIMP_TAC mode =
+  gen_global_simp_tac_with Ordinary mode
+
+fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST charge mode =
+  gen_global_simp_tac_with (ChildFirst charge) mode
 
 fun global_simp_tac cfg =
     GEN_GLOBAL_SIMP_TAC {safe=false}

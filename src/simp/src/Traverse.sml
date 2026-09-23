@@ -277,7 +277,21 @@ type xtraverse_data = traverse_data * traverse_config
 val default_config : traverse_config =
   {subgoaler=NONE, solvers=[], cond_depth=NONE, term_ord=NONE};
 
-fun TRAVERSE_IN_CONTEXT root_only
+datatype traversal_policy = ParentFirst | ChildFirst of (unit -> unit)
+
+(* A function argument written as [\x. f x] names the same head as [f].
+   Contracting it before visiting the body keeps that head available to a
+   parent rewrite. Logical binders are excluded as in boolSimps.ETA_ss. *)
+fun eta_argument tm =
+  if is_comb tm then
+    if is_abs (rand tm) andalso
+       not (boolSyntax.is_exists tm orelse
+            boolSyntax.is_forall tm orelse boolSyntax.is_select tm)
+    then RAND_CONV ETA_CONV tm
+    else RATOR_CONV eta_argument tm
+  else NO_CONV tm
+
+fun TRAVERSE_IN_CONTEXT policy root_only
       (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
         {subgoaler,solvers,cond_depth,term_ord} : traverse_config))
       stack ctxt tm = let
@@ -300,6 +314,10 @@ fun TRAVERSE_IN_CONTEXT root_only
                              else ()
   fun dec r = case !r of NONE => ()
     | SOME n => r := SOME (n - 1)
+  fun charge () =
+    case policy of
+        ParentFirst => ()
+      | ChildFirst callback => callback ()
   (* [trav_with_rel] yields both entry conversions for a context: [root]
      reduces at the root only, [loop] traverses the whole term.  Only the
      caller below picks between them; every recursive call continues with
@@ -372,7 +390,9 @@ fun TRAVERSE_IN_CONTEXT root_only
         handle e as HOL_ERR _ => (lim_r := old ; raise e)
       end
       fun apply_reducer reducer context tm =
-        let val rdata = reducer_data reducer
+        let
+          val _ = charge ()
+          val rdata = reducer_data reducer
         in
           (#apply rdata) {solver=ctxt_solver,
                           conv=ctxt_conv,
@@ -397,18 +417,36 @@ fun TRAVERSE_IN_CONTEXT root_only
            depther=depther,
            freevars=freevars}
       fun apply_congproc congproc = congproc congproc_args
-      val descend = FIRSTCQC_CONV (mapfilter apply_congproc congprocs')
-      val weaken = FIRST_CONV (mapfilter apply_congproc weakenprocs')
+      fun descend tm =
+        (charge ();
+         FIRSTCQC_CONV (mapfilter apply_congproc congprocs') tm)
+      fun weaken tm =
+        (charge ();
+         FIRST_CONV (mapfilter apply_congproc weakenprocs') tm)
 
       fun loop tm = let
         val conv =
-            REPEATQC high_priority THENQC
-            (descend IFCQC
-                (fn change =>
-                  ((if change then high_priority else NO_CONV) ORELSEC
-                   low_priority ORELSEC weaken) THENCQC loop))
-               (* THENCQC above causes the loop to happen only if
-                  the stuff before it hasn't raised an exception *)
+          case policy of
+              ParentFirst =>
+                REPEATQC high_priority THENQC
+                (descend IFCQC
+                  (fn change =>
+                    ((if change then high_priority else NO_CONV) ORELSEC
+                     low_priority ORELSEC weaken) THENCQC loop))
+            | ChildFirst _ =>
+                let
+                  val after_children =
+                    descend IFCQC
+                      (fn _ =>
+                        (high_priority ORELSEC low_priority ORELSEC weaken)
+                        THENCQC loop)
+                  fun preserve_head term =
+                    (charge (); eta_argument term)
+                in
+                  if is_comb tm then
+                    (preserve_head THENCQC loop) ORELSEC after_children
+                  else after_children
+                end
       in
         (trace(4,REDUCE ("Reducing",tm)); conv tm)
       end;
@@ -429,7 +467,8 @@ end
  * ---------------------------------------------------------------------*)
 (* Reducer contexts contain mutable rewrite controls, so rebuild the context
    for every application of a reusable conversion. *)
-fun GEN_TRAVERSE_WITH_CONTEXT root_only (xdata as (data,_) : xtraverse_data)
+fun GEN_TRAVERSE_WITH_CONTEXT policy root_only
+      (xdata as (data,_) : xtraverse_data)
       {reducer_context,solver_context} tm =
    let
      val {dprocs,rewriters,...} = data
@@ -439,17 +478,21 @@ fun GEN_TRAVERSE_WITH_CONTEXT root_only (xdata as (data,_) : xtraverse_data)
             (initial_context data,reducer_context),
           solver_context)
    in
-     TRAVERSE_IN_CONTEXT root_only xdata [] context' tm
+     TRAVERSE_IN_CONTEXT policy root_only xdata [] context' tm
    end;
 
-fun GEN_TRAVERSE root_only xdata thms =
-  GEN_TRAVERSE_WITH_CONTEXT root_only xdata
+fun GEN_TRAVERSE policy root_only xdata thms =
+  GEN_TRAVERSE_WITH_CONTEXT policy root_only xdata
     {reducer_context=thms,solver_context=[]}
 
-val XTRAVERSE = GEN_TRAVERSE false
-val ROOT_REWRITE = GEN_TRAVERSE true
-val TRAVERSE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT false
-val ROOT_REWRITE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT true
+val XTRAVERSE = GEN_TRAVERSE ParentFirst false
+val ROOT_REWRITE = GEN_TRAVERSE ParentFirst true
+val TRAVERSE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT ParentFirst false
+val ROOT_REWRITE_WITH_CONTEXT =
+  GEN_TRAVERSE_WITH_CONTEXT ParentFirst true
+
+fun CHILD_FIRST_TRAVERSE_WITH_CONTEXT callback =
+  GEN_TRAVERSE_WITH_CONTEXT (ChildFirst callback) false
 
 (* The unextended entry point runs at the unconfigured settings. *)
 fun TRAVERSE (data : traverse_data) = XTRAVERSE (data, default_config)

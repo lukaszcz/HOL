@@ -610,148 +610,20 @@ val asm_full_simp_config : simpLib.xsimptac_config =
    imp_rebuild = true,
    imp_premises = true}
 
-fun ambient_simp safe ss =
-  simpLib.GEN_GLOBAL_SIMP_TAC {safe = safe} asm_full_simp_config ss
+(* Each public tactic application owns this allocation. Nested simplifier
+   passes receive the same callback, including passes installed as search
+   wrappers. The explicit budgeted entry point can choose other limits. *)
+fun normalization_budget () =
+  searchBudget.create
+    {candidates = NONE, applications = NONE,
+     normalization = SOME 100000}
 
-(* The context-first pass below runs before the step that carries the
-   ambient rules, so it must leave the conclusion the shape the
-   invocation's rules are stated on: discharging its antecedents takes
-   an implication apart that a supplied rewrite may be stated on as a
-   whole, and neither that pass nor the step after would find a redex.
-   The premises are read through the implication congruence in this
-   pass and discharged by the step after, which is where they are
-   wanted. *)
-val context_simp_config : simpLib.xsimptac_config =
-  {base = asm_full_simp_base,
-   concl_in_fixpoint = true,
-   imp_rebuild = true,
-   imp_premises = false}
+fun charge_normalization budget () =
+  searchBudget.charge budget searchBudget.Normalization
 
-fun context_simp ss =
-  simpLib.GEN_GLOBAL_SIMP_TAC {safe = false} context_simp_config ss
-
-(* HOL4's simplifier rewrites outermost-first: at each node it tries the
-   whole term before its subterms and re-descends into what it produced.
-   Isabelle's works the other way round, and the difference shows
-   wherever an ambient rule matches a term whose subterm the context has
-   already settled: [takeWhile P xs ++ dropWhile P xs = xs] standing
-   beside [takeWhile P xs = []] collapses to T here, the ambient
-   decomposition matching the whole left-hand side, where the source
-   simplifier rewrites the subterm first and is left with
-   [dropWhile P xs = xs].  What is lost is a premise, and with it the
-   goal it would have closed.
-
-   Running the same step against what the invocation itself states
-   first -- the goal's assumptions, where a supplied fact stands, and
-   the invocation's own rewrites, with none of the ambient rules --
-   gives the subterm its chance.  The pass adds no rule to the goal:
-   every rewrite it can make is one the step after it would have made
-   too, in the other order.  It is not a bottom-up traversal -- an
-   ambient rule can still consume a redex another ambient rule would
-   have refined -- but an ambient rule consuming what the invocation
-   was asked about is where the two simplifiers disagree.
-
-   A method naming [set (REPLICATE n a) = if n = 0 then {} else {a}]
-   is the same loss the other way round: the rule's redex sits under a
-   membership the ambient decomposition matches whole, so the ambient
-   rule reaches it first and the [if] is never built.  With it built,
-   the case split lifts its condition over the whole equation and
-   settles both sides at once; without it the goal keeps an arithmetic
-   atom on one side and its negation on the other, which no rule
-   relates.  The source simplifier reaches the subterm first and never
-   has the choice.
-
-   What the pass keeps of the invocation's simpset is how it reads an
-   assumption as a rewrite: [clear_rules] drops the rules, the decision
-   procedures and the loopers and retains the canonicalisation, which
-   is where a rewrite that would loop is recognised and stood down.  A
-   case analysis on a walk leaves [xs = takeWhile ($~ o P) xs ++ x::r]
-   among the assumptions -- an equation that reproduces its own
-   left-hand side -- and read raw, as an empty simpset reads it, that
-   rewrites forever. *)
-(* Not every supplied rewrite belongs in that pass.  Two kinds wait for
-   the step that carries the ambient rules.
-
-   One is a rewrite the ambient simpset has a rule about at the same
-   redex: the two compete there, and which of them fires is not the
-   divergence above -- both simplifiers hold their rules in one set and
-   let them compete.  A method naming [disjnt_def] beside ambient
-   [DISJOINT_INSERT] is that case, and unfolding first leaves an
-   intersection the ambient rule no longer recognises.
-
-   The other is a rewrite that reproduces its own left-hand side:
-   [upt_rec] rewrites an interval to its head consed onto a shorter
-   interval, which is the same redex again.  Such a rule makes progress
-   only against a simpset that reduces what it builds, and this pass has
-   none; run early it leaves an unfolding the step after must undo.
-   What runs early, then, is a rewrite that refines a term once, into
-   vocabulary the ambient rules still recognise. *)
-local
-  fun redex theorem =
-    let
-      val (_, statement) =
-        boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
-    in
-      case Lib.total boolSyntax.dest_neg statement of
-          SOME negated => negated
-        | NONE =>
-            (case Lib.total boolSyntax.dest_eq statement of
-                 SOME (left, _) => left
-               | NONE => statement)
-    end
-  fun redexes theorem =
-    map redex
-      (Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem])
-  fun head term = #1 (boolSyntax.strip_comb term)
-  fun overlaps ambient supplied =
-    Term.is_const (head ambient) andalso Term.is_const (head supplied) andalso
-    Term.same_const (head ambient) (head supplied) andalso
-    (Lib.can (Term.match_term supplied) ambient orelse
-     Lib.can (Term.match_term ambient) supplied)
-  fun subterms term =
-    term ::
-    (case Lib.total Term.dest_comb term of
-         SOME (rator, rand) => subterms rator @ subterms rand
-       | NONE =>
-           (case Lib.total Term.dest_abs term of
-                SOME (_, body) => subterms body
-              | NONE => []))
-  fun reproduces theorem =
-    let
-      val (_, statement) =
-        boolSyntax.strip_imp_only (Thm.concl (Drule.SPEC_ALL theorem))
-    in
-      case Lib.total boolSyntax.dest_eq statement of
-          NONE => false
-        | SOME (left, right) =>
-            List.exists (Lib.can (Term.match_term left)) (subterms right)
-    end
-in
-fun refining ss =
-  let
-    val ambient =
-      List.concat
-        (map redexes
-          (List.concat
-            (map simpLib.frag_rewrites (simpLib.ssfrags_of ss))))
-    fun contested theorem =
-      List.exists
-        (fn supplied =>
-            List.exists (fn rule => overlaps rule supplied) ambient)
-        (redexes theorem)
-    fun deferred theorem =
-      List.exists
-        (fn part => contested part orelse reproduces part)
-        (Drule.CONJUNCTS (Drule.SPEC_ALL theorem)
-         handle HOL_ERR _ => [theorem])
-  in
-    List.filter (not o deferred)
-  end
-end
-
-fun context_first ss simp_args =
-  Tactical.TRY
-    (context_simp (simpLib.clear_rules ss) (refining ss simp_args))
+fun ambient_simp charge safe ss =
+  simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
+    charge {safe = safe} asm_full_simp_config ss
 
 (* Where the two sides are sets -- functions into bool -- the pointwise
    reading is membership and not application.  Every set and list fact
@@ -1004,7 +876,7 @@ in
 end
 
 (* The instances are read off the goal the step is handed, before
-   [context_first] has simplified it: an assumption that states a
+   ambient simplification has simplified it: an assumption that states a
    permutation is its own decreasing rewrite, so the pass that reads the
    goal's own equations turns it into T and drops it. *)
 fun with_permutation_instances step simp_args =
@@ -1025,15 +897,23 @@ fun with_permutation_instances step simp_args =
            step (simp_args @ instances) goal
          end)
 
-fun asm_full_simp ss simp_args =
+fun asm_full_simp_with charge ss simp_args =
   with_permutation_instances
-    (fn args =>
-        Tactical.THEN (context_first ss args, ambient_simp false ss args))
+    (fn args => ambient_simp charge false ss args)
     simp_args
 
-fun safe_asm_full_simp ss simp_args =
-  Tactical.THEN (context_first ss simp_args,
-                 ambient_simp true ss simp_args)
+fun safe_asm_full_simp_with charge ss simp_args =
+  ambient_simp charge true ss simp_args
+
+fun asm_full_simp ss simp_args goal =
+  let val budget = normalization_budget ()
+  in asm_full_simp_with (charge_normalization budget) ss simp_args goal end
+
+fun safe_asm_full_simp ss simp_args goal =
+  let val budget = normalization_budget ()
+  in safe_asm_full_simp_with
+       (charge_normalization budget) ss simp_args goal
+  end
 
 (* Inside the classical cascade the split between assumptions and
    conclusion is the cascade's own: its negation introduction strips a
@@ -1051,16 +931,41 @@ val cascade_simp_config : simpLib.xsimptac_config =
    imp_rebuild = false,
    imp_premises = false}
 
-fun cascade_safe_simp ss =
-  simpLib.GEN_GLOBAL_SIMP_TAC {safe = true} cascade_simp_config ss
+fun cascade_safe_simp charge ss =
+  simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
+    charge {safe = true} cascade_simp_config ss
 
+fun add_simp_wrapper_with charge ss simp_args =
+  let
+    fun wrapper step =
+      NTactical.NAPPEND
+        (NTactical.NCHANGED
+           (NTactical.LIFT (asm_full_simp_with charge ss simp_args)),
+         step)
+  in
+    clasetLib.add_unsafe_wrapper ("asm_full_simp_tac", wrapper)
+  end
+
+fun add_safe_simp_wrapper_with charge ss simp_args =
+  let
+    fun wrapper step =
+      NTactical.NORELSE
+        (step,
+         NTactical.NCHANGED
+           (NTactical.LIFT (cascade_safe_simp charge ss simp_args)))
+  in
+    clasetLib.add_safe_wrapper
+      ("safe_asm_full_simp_tac", wrapper)
+  end
+
+(* Standalone wrapper constructors retain their existing interface. Each
+   embedded simplification owns a budget when a caller invokes it. *)
 fun add_simp_wrapper ss simp_args =
   let
     fun wrapper step =
       NTactical.NAPPEND
         (NTactical.NCHANGED
-           (NTactical.LIFT (asm_full_simp ss simp_args)),
-         step)
+           (NTactical.LIFT (asm_full_simp ss simp_args)), step)
   in
     clasetLib.add_unsafe_wrapper ("asm_full_simp_tac", wrapper)
   end
@@ -1071,7 +976,12 @@ fun add_safe_simp_wrapper ss simp_args =
       NTactical.NORELSE
         (step,
          NTactical.NCHANGED
-           (NTactical.LIFT (cascade_safe_simp ss simp_args)))
+           (NTactical.LIFT
+              (fn goal =>
+                 let val budget = normalization_budget ()
+                 in cascade_safe_simp
+                      (charge_normalization budget) ss simp_args goal
+                 end)))
   in
     clasetLib.add_safe_wrapper
       ("safe_asm_full_simp_tac", wrapper)
@@ -1883,10 +1793,10 @@ fun staged_auto_search {blast, depth} tableau_cs classical_cs =
     Tactical.FIRST (tableau @ classical)
   end
 
-fun auto_with {blast, depth} cs ss simp_args =
+fun auto_with {blast, depth} charge cs ss simp_args =
   let
-    val search_cs = add_simp_wrapper ss simp_args cs
-    val final_cs = add_safe_simp_wrapper ss simp_args cs
+    val search_cs = add_simp_wrapper_with charge ss simp_args cs
+    val final_cs = add_safe_simp_wrapper_with charge ss simp_args cs
     val initial_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
     val search =
@@ -1902,7 +1812,8 @@ fun auto_with {blast, depth} cs ss simp_args =
     val script =
       Tactical.EVERY
         [Tactical.TRY (extensional_normalize ss),
-         with_extensionality ss (asm_full_simp ss simp_args),
+         with_extensionality ss
+           (asm_full_simp_with charge ss simp_args),
          Tactical.TRY initial_safe,
          Tactical.TRY search,
          Tactical.TRY final_safe]
@@ -1910,7 +1821,9 @@ fun auto_with {blast, depth} cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-fun CS_of body cs ss = body cs ss []
+fun CS_of body cs ss goal =
+  let val budget = normalization_budget ()
+  in body (charge_normalization budget) cs ss [] goal end
 
 fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
 
@@ -1923,9 +1836,9 @@ fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
    the goal was reached. *)
 val first_best_turn = 500
 
-fun force_with name cs ss simp_args =
+fun force_with name charge cs ss simp_args =
   let
-    val search_cs = add_simp_wrapper ss simp_args cs
+    val search_cs = add_simp_wrapper_with charge ss simp_args cs
     val clarify =
       NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
 
@@ -1961,7 +1874,8 @@ fun force_with name cs ss simp_args =
         [Tactical.TRY clarify,
          Tactical.TRY (extensional_normalize ss),
          simpLib.FULL_SIMP_TAC ss simp_args,
-         with_extensionality ss (asm_full_simp ss simp_args),
+         with_extensionality ss
+           (asm_full_simp_with charge ss simp_args),
          Tactical.TRY safe,
          search]
   in
@@ -1973,7 +1887,7 @@ val CS_FORCE_TAC = CS_of (force_with "CS_FORCE_TAC")
 (* The classical search drivers already succeed only with a closed engine
    state.  must_close is the public contract guard in case that invariant
    changes; it does not add another search step. *)
-fun search_with_simp name engine cs ss simp_args =
+fun search_with_simp name engine charge cs ss simp_args =
   let
     val clarify =
       NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
@@ -1983,7 +1897,7 @@ fun search_with_simp name engine cs ss simp_args =
          [Tactical.TRY clarify,
           Tactical.TRY (extensional_normalize ss),
           NTactical.DETERM
-            (engine (add_simp_wrapper ss simp_args cs))])
+            (engine (add_simp_wrapper_with charge ss simp_args cs))])
   end
 
 val simp_search =
@@ -1998,15 +1912,15 @@ val CS_SLOWSIMP_TAC =
 val CS_BESTSIMP_TAC =
   CS_of (search_with_simp "CS_BESTSIMP_TAC" best_search)
 
-fun clarsimp_with cs ss simp_args =
+fun clarsimp_with charge cs ss simp_args =
   let
     val clarify =
       NTactical.DETERM
         (classicalLib.CS_CLARIFY_TAC
-           (add_safe_simp_wrapper ss simp_args cs))
+           (add_safe_simp_wrapper_with charge ss simp_args cs))
     val script =
       Tactical.THEN
-        (safe_asm_full_simp ss simp_args,
+        (safe_asm_full_simp_with charge ss simp_args,
          (* Isabelle's clarify tactic succeeds unchanged.  The HOL4
             CS_CLARIFY_TAC deliberately fails on a no-op, so TRY restores
             the sequencing behavior; CHANGED_TAC below guards the complete
@@ -2033,15 +1947,19 @@ fun restore_normalized_target target validation theorems =
     else theorem
   end
 
-fun public_using process body theorems
+fun public_using_budgeted budget process body theorems
     (goal as (_, target)) ctxt =
   let
     val (goals, validation) =
-      process body
+      process (body (charge_normalization budget))
         (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
   in
     (goals, restore_normalized_target target validation)
   end
+
+fun public_using process body theorems goal ctxt =
+  let val budget = normalization_budget ()
+  in public_using_budgeted budget process body theorems goal ctxt end
 
 fun public body = public_using process_clasimp_args body
 
@@ -2068,6 +1986,11 @@ fun BESTSIMP_TAC theorems =
 
 fun CLARSIMP_TAC theorems =
   public_using (process_clasimp_args_fact_views clasetLib.SafeFacts)
+    clarsimp_with theorems
+
+fun CLARSIMP_TAC_BUDGETED budget theorems =
+  public_using_budgeted budget
+    (process_clasimp_args_fact_views clasetLib.SafeFacts)
     clarsimp_with theorems
 
 (* A first-order step meets a goal the simplification before it left in

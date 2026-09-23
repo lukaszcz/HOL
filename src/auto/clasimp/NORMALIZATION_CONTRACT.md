@@ -1,29 +1,31 @@
 # Automation normalization: G4 inventory and proposed contract
 
-This records the existing passes before G4 replaces any of them. The
-contract below is proposed pending the owner's D2 traversal decision and
-D5 abstraction decision. Ordinary HOL4
-simplification keeps its current behavior unless a separate decision
-changes it.
+This records the G4 passes and their migration status. The owner approved
+D2's opt-in child-first traversal and D5's abstraction policy.
+Ordinary HOL4 simplification retains its existing traversal.
 
 ## Current passes
 
 | Pass | Input and output | Traversal, context and progress | Consumers |
 | --- | --- | --- | --- |
-| `context_first` and `refining` (`clasimpLib.sml`) | A goal, invocation simpset and rewrite arguments become a goal simplified with local assumptions and selected invocation rules. | `refining` withholds rules that overlap ambient rules at one redex or reproduce their own redex. `context_first` clears ambient rewrites and runs `GEN_GLOBAL_SIMP_TAC` before the ambient pass. It uses the goal's assumptions, the implication fixpoint and ordinary simplifier change detection. It is a separate outer pass, not child-first traversal. | `asm_full_simp`, `safe_asm_full_simp`, then AUTO, FORCE, CLARSIMP and their search wrappers. |
+| Opt-in child-first traversal (`Traverse`, `simpLib`) | A goal, invocation simpset and rewrite arguments become a goal simplified with local assumptions and selected invocation rules. | Congruences control descent and context. A certified eta contraction preserves function-argument heads before permitted children are visited; logical binders are excluded. Parent rewrites follow child descent, and the simplifier's assumption/conclusion fixpoint remains in use. This replaces the former `context_first` and `refining` outer pass in clasimp. The traversal accepts a normalization charge callback shared by each public tactic’s mutual simplification and search wrappers. | `asm_full_simp`, `safe_asm_full_simp`, then AUTO, FORCE, CLARSIMP and their search wrappers. |
 | Conditional witness subgoaler | A residual side condition and simplifier context theorems become a proved equality to `T`, or the traversal's unchanged reduction. | It recursively simplifies the condition, reverses existential miniscoping, then matches each condition against context assumptions while holding the condition's other variables and types fixed. It constructs the proof from those context theorems without taking an ambient context snapshot. It runs only in conditional rewriting. | The derived clasimp simpset, including tactics built on it. |
 | Conditional congruence | A conditional's condition and branches become a simplified conditional. | The weak congruence simplifies the condition but leaves both branches alone to avoid recursive unfolding inside an inactive branch. The split fragment handles branch reasoning later. | Every tactic using the derived clasimp simpset. |
-| `permutation_instances` | A supplied permutative theorem and current goal assumptions become bounded contextual rewrite instances. | Before `context_first`, it matches a redex in the current goal, discharges every condition from exact assumptions, checks support rigidity and term order, then bounds each rewrite by its redex occurrences. | Unsafe `asm_full_simp` and its AUTO/FORCE/search wrappers. |
+| `permutation_instances` | A supplied permutative theorem and current goal assumptions become bounded contextual rewrite instances. | Before the main simplification pass, it matches a redex in the current goal, discharges every condition from exact assumptions, checks support rigidity and term order, then bounds each rewrite by its redex occurrences. | Unsafe `asm_full_simp` and its AUTO/FORCE/search wrappers. |
 | `iff_bottom_up`, `simp_bottom_up` and invocation subject reducer | Named declarations or invocation rewrites become higher-order root reductions. | A reducer is reached after higher-priority ordinary rewrites at a node. The persistent reducer reads the declaration table when called; the invocation reducer closes over its own rules. Neither is a general child-first traversal. | The derived simpset; `[iff_bottom_up]` also seeds claset rules. |
 | `membership_heads`, `pointwise` and `extensional_normalize` | A function equality becomes an applied or membership equivalence with a kernel conversion. | `membership_heads` scans rewrite heads once per tactic construction. The conversion acts at the goal boundary under leading universal quantifiers and implications; it stands down when a supplied rewrite states the reading. It does not recurse through arbitrary nested equalities. Each pointwise step removes one function arrow. | AUTO, FORCE, FASTFORCE and terminal `with_extensionality`; safe-only methods do not add the unsafe extensional step. |
 | `GEN_GLOBAL_SIMP_TAC` mutual fixpoint | Goal assumptions and conclusion become simplified goals plus kernel validation. | It scans assumptions in configured order, simplifies the conclusion, and repeats after actual changes or structural decomposition. Root implication rewriting and rebuild are separate flags. `cascade_safe_simp` disables implication rebuild to avoid a safe-step cycle. | Context, ambient and cascade simplification in clasimp; Aesop's normalization rule also calls safe simplification. |
 | Fact and rule views | The invocation's original theorems become literal assumptions, schematic simplifier views, and compiled search rules. | `clasetFacts` owns original theorem, support, fixed parameters and source ID. Safe consumers insert literal facts without compiling an unsafe rule. Search consumers compile eligible implications from lazy schematic views and insert the others, avoiding duplicate assumption expansion. Search canonicalization instantiates the rule view at use sites. BLAST also offers a safe introduction view for plain facts with loose type variables. Aesop selects equational normalization views, including equational conjuncts, before freshening; derived views retain their source and support while propositional facts remain available to forward rules. Order tactics match theorem views at relation sites, and the order reducer matches directly supplied schematic citations at an atom while keeping assumptions fixed. Literal insertion still specializes against the current goal as a compatibility route. Rule transport to a different vocabulary is not yet a shared normalization operation. | Classical, BLAST, clasimp, Aesop and order; linarith still inserts literal facts. |
 
-The underlying `Traverse.TRAVERSE_IN_CONTEXT` tries high-priority
-rewriters at a node before descending through congruences. After a child
-changes, it tries high-priority rewriting again, then decision procedures
-and weakening. Its configured `limit` counts successful reducer calls;
-the mutual fixpoint and wrapper passes have no common invocation budget.
+The ordinary `Traverse.TRAVERSE_IN_CONTEXT` still tries high-priority
+rewriters at a node before descending through congruences. The opt-in
+child-first path contracts an eta function argument first when possible,
+then descends and offers rewrites and reducers at that node. Its callback
+charges head preservation, traversal and reducer attempts; the existing
+`limit` counts successful reducer calls. Public clasimp tactics share an
+invocation normalization budget across their mutual fixpoint and search
+wrappers. FORCE's initial `FULL_SIMP_TAC` and extensional conversion remain
+outside that callback.
 
 ## Proposed automation contract
 
@@ -54,12 +56,15 @@ the mutual fixpoint and wrapper passes have no common invocation budget.
    Built-in rules receive either a decreasing measure or an explicit
    repeat guard. An exhausted budget never reports saturation.
 
-The proposed D2 API is an opt-in traversal policy in `simp` used by the
-automation simpset. It would select child-first order under congruence
-and take an invocation-owned normalization charge callback, while the
-default traversal stays as it is. `context_first`, the bottom-up reducer
-and overlap-specific deferral can then be removed only after paired
-behavior tests show the policy subsumes them. The existing context
-fixpoint and conditional subgoaler remain reusable. D5 separately decides
-how abstraction heads are preserved or transported when a rule and goal
-use different certified normal forms.
+The approved D2 API is an opt-in traversal policy in `simp`. It preserves
+eta function-argument heads with a certified conversion, then selects
+child-first order under congruence and takes a normalization charge
+callback. The default traversal stays as it is. `context_first` and
+overlap-specific deferral were removed after local overlap and
+recursive-equation tests. The seed and benchmark gates now pass, including
+the `GENLIST` interval case that initially exposed the abstraction-head
+problem. The bottom-up reducer remains until paired tests show the policy
+subsumes its cases. The existing context fixpoint and conditional subgoaler
+remain reusable. Approved D5 also calls for certified rule-view transport
+when the goal uses a different normal form; that broader transport is still
+to be implemented.

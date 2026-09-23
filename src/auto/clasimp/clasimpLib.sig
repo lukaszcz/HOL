@@ -160,6 +160,10 @@ sig
   val SLOWSIMP_TAC : thm list -> tactic
   val BESTSIMP_TAC : thm list -> tactic
   val CLARSIMP_TAC : thm list -> tactic
+  (* The supplied invocation budget charges child-first normalization.
+     LimitReached propagates as a typed resource outcome. *)
+  val CLARSIMP_TAC_BUDGETED :
+    searchBudget.budget -> thm list -> tactic
 
   (* METIS_TAC with each fact offered in the ambient normal form as well
      as its own.  A first-order step runs on a goal the simplification

@@ -34,6 +34,41 @@ val safe_simp = clasimpLib.safe_asm_full_simp solver_ss []
 
 val _ =
   check
+    ("CLARSIMP reports a zero normalization budget before traversal",
+     fn () =>
+       let
+         val budget =
+           searchBudget.create
+             {candidates = NONE, applications = NONE,
+              normalization = SOME 0}
+       in
+         ((ignore
+             (Tactical.VALID
+                (clasimpLib.CLARSIMP_TAC_BUDGETED budget [])
+                ([], ``T ∧ T``));
+           false)
+          handle searchBudget.LimitReached
+                   (searchBudget.Normalization, used) =>
+                   #normalization used = 0
+               | _ => false)
+       end)
+
+val _ =
+  check
+    ("CLARSIMP charges its invocation normalization budget",
+     fn () =>
+       let
+         val budget = searchBudget.unbounded ()
+         val _ =
+           Tactical.VALID
+             (clasimpLib.CLARSIMP_TAC_BUDGETED budget [])
+             ([], ``T ∧ T``)
+       in
+         #normalization (searchBudget.usage budget) > 0
+       end)
+
+val _ =
+  check
     ("safe solver accepts an alpha-matching assumption",
      fn () =>
        valid_closes safe_simp

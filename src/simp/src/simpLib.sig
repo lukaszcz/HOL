@@ -207,6 +207,13 @@ sig
 
    val SIMP_PROVE : simpset -> thm list -> term -> thm
    val SIMP_CONV  : simpset -> thm list -> conv
+   (* Opt-in child-first conversion. A certified eta contraction preserves
+      function argument heads before child descent, except at logical
+      binders. Congruence rules control descent; charge runs before this
+      contraction, descent and reducer work. The ordinary SIMP_CONV
+      strategy is unchanged. *)
+   val SIMP_CONV_CHILD_FIRST :
+     (unit -> unit) -> simpset -> thm list -> conv
 
    (* ---------------------------------------------------------------------
     * SIMP_TAC : simpset -> tactic
@@ -234,6 +241,8 @@ sig
 
    type simp_mode = {safe : bool}
    val GEN_SIMP_TAC  : simp_mode -> simpset -> thm list -> tactic
+   val GEN_SIMP_TAC_CHILD_FIRST :
+     (unit -> unit) -> simp_mode -> simpset -> thm list -> tactic
    val SIMP_TAC      : simpset -> thm list -> tactic
    val simp_tac      : simpset -> thm list -> tactic
    val ASM_SIMP_TAC  : simpset -> thm list -> tactic
@@ -261,6 +270,12 @@ sig
         context rather than only with the ones before it. *)
    val GEN_GLOBAL_SIMP_TAC :
      simp_mode -> xsimptac_config -> simpset -> thm list -> tactic
+   (* The same assumption/conclusion fixpoint, with opt-in child-first
+      traversal for each simplification pass. Root-rebuild flags retain
+      their explicit wrapper behavior. *)
+   val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST :
+     (unit -> unit) -> simp_mode -> xsimptac_config ->
+     simpset -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
      (* do allasms until quiescence, then simp in the goal as well *)
 

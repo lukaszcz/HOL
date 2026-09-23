@@ -193,6 +193,16 @@ sig
        xtraverse_data ->
        {reducer_context : thm list, solver_context : thm list} -> conv
 
+   (* Opt-in child-first traversal. A certified eta contraction of a
+      function argument may run before descent to preserve its head;
+      logical binder predicates are excluded. Congruence rules decide
+      which children are visited and their context. The callback charges
+      before head preservation, descent or a reducer attempt, and its
+      exception propagates to the invocation owner. *)
+   val CHILD_FIRST_TRAVERSE_WITH_CONTEXT :
+       (unit -> unit) -> xtraverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
+
    (* Apply one reducer at the root, without descending.  Recursive
       side-condition proving still uses the full traversal. *)
    val ROOT_REWRITE : xtraverse_data -> thm list -> conv

@@ -716,6 +716,131 @@ in
     (data, {subgoaler=subgoaler, solvers=solvers,
             cond_depth=cond_depth, term_ord=term_ord})
 
+  val visited = ref ([] : term list)
+  val visit_error =
+    mk_HOL_ERR "selftest" "child_first_visit" "probe only"
+  val visit_reducer =
+    Traverse.REDUCER
+      {name=SOME "child-first visit probe",
+       initial=EMPTY_CONTEXT,
+       addcontext=fn (context, _) => context,
+       apply=fn _ => fn tm =>
+         (visited := tm :: !visited; raise visit_error)}
+  val visit_data =
+    configure_data (with_reducers pure_data [visit_reducer] [] NONE)
+                   NONE [] NONE NONE
+  val visit_term =
+    ``(visit_outer : bool -> bool)
+        ((visit_inner : bool -> bool) visit_value)``
+  val visit_child =
+    ``(visit_inner : bool -> bool) visit_value``
+  fun visits conversion =
+    (visited := [];
+     ignore (QCONV (TRY_CONV conversion) visit_term);
+     List.rev (!visited))
+  fun precedes first second [] = false
+    | precedes first second (term :: later) =
+        if aconv first term then List.exists (aconv second) later
+        else precedes first second later
+  val default_visits = visits (Traverse.XTRAVERSE visit_data [])
+  val child_charges = ref 0
+  val child_visits =
+    visits
+      (Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT
+         (fn () => child_charges := !child_charges + 1)
+         visit_data
+         {reducer_context=[], solver_context=[]})
+  val _ =
+    (tprint "opt-in traversal visits children before parent reducers";
+     if precedes visit_term visit_child default_visits andalso
+        precedes visit_child visit_term child_visits andalso
+        !child_charges > 0
+     then OK () else die "child-first traversal order changed")
+
+  exception ChildWorkLimit
+  val _ =
+    (tprint "child-first traversal propagates a work cutoff";
+     if ((ignore
+            (Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT
+               (fn () => raise ChildWorkLimit)
+               visit_data {reducer_context=[], solver_context=[]}
+               visit_term);
+          false)
+         handle ChildWorkLimit => true)
+     then OK () else die "child-first work cutoff was swallowed")
+
+  val child_bool_conv =
+    QCONV
+      (Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT
+         (fn () => ()) (xtraversedata_for_ss bool_ss)
+         {reducer_context=[], solver_context=[]})
+  val _ = convtest
+    ("child-first congruence passes a premise to its consequent",
+     child_bool_conv, ``p ==> p /\ q``, ``p ==> q``)
+  val _ = convtest
+    ("opt-in child-first simplifier conversion is public",
+     SIMP_CONV_CHILD_FIRST (fn () => ()) bool_ss [],
+     ``p ==> p /\ q``, ``p ==> q``)
+  val _ = convtest
+    ("child-first keeps an eta function head before descent",
+     SIMP_CONV_CHILD_FIRST (fn () => ()) empty_ss [],
+     ``(h:('a -> 'b) -> 'c) (\x:'a. (f:'a -> 'b) x)``,
+     ``(h:('a -> 'b) -> 'c) (f:'a -> 'b)``)
+  val _ = convtest
+    ("child-first does not eta-contract a quantifier predicate",
+     QCONV (SIMP_CONV_CHILD_FIRST (fn () => ()) empty_ss []),
+     ``!x:'a. P x``, ``!x:'a. P x``)
+  val _ =
+    (tprint "child-first simplifier conversion propagates its budget";
+     if ((ignore
+            (SIMP_CONV_CHILD_FIRST
+               (fn () => raise ChildWorkLimit) bool_ss []
+               ``p /\ T``);
+          false)
+         handle ChildWorkLimit => true)
+     then OK () else die "child-first simplifier budget was swallowed")
+
+  val overlap_rules =
+    [Tactical.prove
+       (``~(p /\ T) = (p ==> F)``, SIMP_TAC bool_ss []),
+     Tactical.prove (``(p /\ T) = p``, SIMP_TAC bool_ss []),
+     Tactical.prove (``(~p) = (p = F)``, SIMP_TAC bool_ss [])]
+  val overlap_term = ``~(q /\ T)``
+  val _ = convtest
+    ("default traversal takes the parent overlap first",
+     SIMP_CONV pureSimps.pure_ss overlap_rules,
+     overlap_term, ``q ==> F``)
+  val _ = convtest
+    ("child-first traversal gives the normalized child to its parent",
+     SIMP_CONV_CHILD_FIRST (fn () => ())
+       pureSimps.pure_ss overlap_rules,
+     overlap_term, ``q = F``)
+  val _ =
+    (tprint "child-first tactic simplifies the conclusion";
+     case valid
+            (GEN_SIMP_TAC_CHILD_FIRST (fn () => ()) {safe=false}
+               pureSimps.pure_ss overlap_rules)
+            ([], overlap_term) of
+         [([], result)] =>
+           if aconv result ``q = F`` then OK ()
+           else die "child-first tactic left the wrong conclusion"
+       | _ => die "child-first tactic changed the goal shape")
+  val child_global_config : xsimptac_config =
+    {base={strip=false, elimvars=false, droptrues=false,
+           oldestfirst=true},
+     concl_in_fixpoint=true, imp_rebuild=false, imp_premises=false}
+  val _ =
+    (tprint "child-first global tactic uses the same traversal";
+     case valid
+            (GEN_GLOBAL_SIMP_TAC_CHILD_FIRST (fn () => ())
+               {safe=false} child_global_config
+               pureSimps.pure_ss overlap_rules)
+            ([], overlap_term) of
+         [([], result)] =>
+           if aconv result ``q = F`` then OK ()
+           else die "child-first global tactic left the wrong result"
+       | _ => die "child-first global tactic changed the goal shape")
+
   val solver_data =
     configure_data (with_reducers pure_data [solver_reducer] [] NONE)
                    NONE [toy_solver] NONE NONE
