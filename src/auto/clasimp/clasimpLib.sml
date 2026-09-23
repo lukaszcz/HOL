@@ -1674,6 +1674,218 @@ fun extend_invocation
 
 fun no_extra_markers theorems cs = (cs, theorems)
 
+(* Keep the original declaration and add a certified view for the
+   simpset's representation. Exclude a rule's own rewrite statement or
+   an equivalence of which the rule is one direction. *)
+fun transport_claset_rules budget ss rules cs =
+  let
+    fun own_direction theorem rewrite =
+      let
+        val (premises, result) =
+          boolSyntax.strip_imp_only
+            (concl (Drule.SPEC_ALL theorem))
+        val (_, rewrite_body) =
+          boolSyntax.strip_imp_only
+            (concl (Drule.SPEC_ALL rewrite))
+        val (left, right) = boolSyntax.dest_eq rewrite_body
+      in
+        (aconv result left andalso
+         List.exists (aconv right) premises) orelse
+        (aconv result right andalso
+         List.exists (aconv left) premises)
+      end
+      handle HOL_ERR _ => false
+    fun conversion theorem =
+      let
+        val without_self =
+          simpLib.filter_rewrites
+            (fn (_, rewrite) =>
+              not (aconv (concl rewrite) (concl theorem)) andalso
+              not (own_direction theorem rewrite)) ss
+      in
+        Conv.THENC
+          (simpLib.SIMP_CONV_CHILD_FIRST
+             (charge_normalization budget) without_self [],
+           fn term =>
+             (charge_normalization budget ();
+              Conv.QCONV
+                (Conv.REDEPTH_CONV
+                  (Conv.REWR_CONV
+                    (Conv.GSYM boolTheory.AND_IMP_INTRO)))
+                term))
+      end
+    fun add ((spec, (_, theorem)), current) =
+      let
+        val _ = searchBudget.charge budget searchBudget.Candidate
+        val derived = Conv.CONV_RULE (conversion theorem) theorem
+        val original_info = clasetRules.ext_info spec theorem
+        val derived_info = clasetRules.ext_info spec derived
+        val role_preserved =
+          clasetRules.safe_class_of spec original_info =
+          clasetRules.safe_class_of spec derived_info
+        val support_preserved =
+          List.all
+            (fn assumption =>
+              List.exists (aconv assumption) (hyp theorem))
+            (hyp derived)
+      in
+        if aconv (concl derived) (concl theorem) orelse
+           aconv (concl derived) boolSyntax.T orelse
+           not role_preserved orelse
+           not support_preserved then current
+        else
+          let
+            val name =
+              clasetLib.fresh_rule_name
+                {prefix = "__clasimp_transport_", from = 0}
+                current
+          in
+            searchBudget.charge budget searchBudget.Application;
+            clasetLib.add_derived_rule spec (name, derived) current
+            handle HOL_ERR _ => current
+          end
+      end
+      handle HOL_ERR _ => current
+           | Conv.UNCHANGED => current
+  in
+    List.foldl add cs rules
+  end
+
+fun safe_named_rule ((spec : clasetLib.rulespec), _) = #safe spec
+
+(* Only declarations connected to the goal's vocabulary need a new
+   normal-form view. Follow direct rewrite-head bridges as well: a rule
+   about P must remain eligible when the simpset presents the goal as Q. *)
+fun transport_candidates budget ss goals candidates =
+  let
+    fun member head heads = List.exists (same_const head) heads
+    fun insert head heads =
+      if member head heads then heads else head :: heads
+    fun collect term heads =
+      if boolSyntax.is_forall term then
+        collect (snd (boolSyntax.dest_forall term)) heads
+      else if boolSyntax.is_exists term then
+        collect (snd (boolSyntax.dest_exists term)) heads
+      else if is_abs term then
+        collect (snd (dest_abs term)) heads
+      else if boolSyntax.is_imp term then
+        let val (left, right) = boolSyntax.dest_imp term
+        in collect right (collect left heads) end
+      else if boolSyntax.is_conj term then
+        let val (left, right) = boolSyntax.dest_conj term
+        in collect right (collect left heads) end
+      else if boolSyntax.is_disj term then
+        let val (left, right) = boolSyntax.dest_disj term
+        in collect right (collect left heads) end
+      else if boolSyntax.is_neg term then
+        collect (boolSyntax.dest_neg term) heads
+      else if boolSyntax.is_eq term then
+        let val (left, right) = boolSyntax.dest_eq term
+        in collect right (collect left heads) end
+      else
+        let
+          val (head, arguments) = strip_comb term
+          val heads' =
+            if is_const head andalso
+               not (aconv head boolSyntax.T) andalso
+               not (aconv head boolSyntax.F) then
+              insert head heads
+            else heads
+        in
+          List.foldl (fn (argument, found) =>
+            collect argument found) heads' arguments
+        end
+    fun root_head term =
+      let val (head, _) = strip_comb term
+      in if is_const head then SOME head else NONE end
+    fun bridge theorem =
+      let
+        val _ = searchBudget.charge budget searchBudget.Candidate
+        val (_, body) =
+          boolSyntax.strip_imp_only
+            (concl (Drule.SPEC_ALL theorem))
+        val (left, right) = dest_eq body
+      in
+        case (root_head left, root_head right) of
+            (SOME first, SOME second) => SOME (first, second)
+          | _ => NONE
+      end
+      handle HOL_ERR _ => NONE
+    val rewrites =
+      List.concat
+        (map simpLib.frag_rewrites (simpLib.ssfrags_of ss))
+    val bridges = List.mapPartial bridge rewrites
+    fun collect_goal ((assumptions, target), heads) =
+      List.foldl (fn (term, found) => collect term found)
+        (collect target heads) assumptions
+    val goal_heads = List.foldl collect_goal [] goals
+    fun grow heads =
+      let
+        fun add ((left, right), found) =
+          if member left found then insert right found
+          else if member right found then insert left found
+          else found
+        val next = List.foldl add heads bridges
+      in
+        if length next = length heads then heads else grow next
+      end
+    val relevant = grow goal_heads
+    fun related (_, (_, theorem)) =
+      let
+        val _ = searchBudget.charge budget searchBudget.Candidate
+        val heads = collect (concl theorem) []
+      in
+        List.exists (fn head => member head relevant) heads
+      end
+  in
+    List.filter related candidates
+  end
+
+fun with_claset_transport budget ss candidates cs build goal ctxt =
+  let
+    val initial =
+      (SOME (build cs goal ctxt), NONE)
+      handle exn as HOL_ERR _ => (NONE, SOME exn)
+    fun initial_result () =
+      case initial of
+          (SOME result, _) => result
+        | (NONE, SOME exn) => raise exn
+        | _ => raise ERR "with_claset_transport" "missing result"
+    fun improve () =
+      if null candidates then initial_result ()
+      else let
+        val sites =
+          case initial of
+              (SOME (goals, _), _) => goal :: goals
+            | _ => [goal]
+        val relevant =
+          transport_candidates budget ss sites candidates
+        val extended =
+          transport_claset_rules budget ss relevant cs
+      in
+        if length (clasetLib.rules_of extended) =
+           length (clasetLib.rules_of cs) then initial_result ()
+        else
+          let
+            val result =
+              SOME (build extended goal ctxt)
+              handle HOL_ERR _ => NONE
+          in
+            case (initial, result) of
+                ((SOME (goals, _), _), SOME (next_goals, validation)) =>
+                  if length next_goals < length goals then
+                    (next_goals, validation)
+                  else initial_result ()
+              | ((NONE, _), SOME next) => next
+              | _ => initial_result ()
+          end
+      end
+  in
+    case initial of
+        (SOME ([], validation), _) => ([], validation)
+      | _ => improve ()
+  end
+
 fun process_clasimp_args body base_cs base_ss =
   clasetLib.with_invocation_args
     {iff_prefix="__clasimp_iff_arg_", extra_markers=no_extra_markers}
@@ -1742,51 +1954,18 @@ fun process_clasimp_args_fact_views consumer budget
                         end
                       else current)
                     cs transported
-              val transported_cs =
-                if consumer <> clasetLib.SearchFacts then fact_cs
-                else
-                  List.foldl
-                    (fn ((spec, (_, theorem)), current) =>
-                      let
-                        val derived =
-                          Conv.CONV_RULE conversion theorem
-                        val original_info =
-                          clasetRules.ext_info spec theorem
-                        val derived_info =
-                          clasetRules.ext_info spec derived
-                        val role_preserved =
-                          clasetRules.safe_class_of spec original_info =
-                          clasetRules.safe_class_of spec derived_info
-                        val support_preserved =
-                          List.all
-                            (fn assumption =>
-                              List.exists (aconv assumption) (hyp theorem))
-                            (hyp derived)
-                      in
-                        if aconv (concl derived) (concl theorem) orelse
-                           aconv (concl derived) boolSyntax.T orelse
-                           not role_preserved orelse
-                           not support_preserved then current
-                        else
-                          let
-                            val name =
-                              clasetLib.fresh_rule_name
-                                {prefix = "__clasimp_transport_",
-                                 from = 0} current
-                          in
-                            searchBudget.charge budget
-                              searchBudget.Application;
-                            clasetLib.add_derived_rule spec
-                              (name, derived) current
-                            handle HOL_ERR _ => current
-                          end
-                      end
-                      handle HOL_ERR _ => current
-                           | Conv.UNCHANGED => current)
-                    fact_cs (clasetLib.invocation_marker_rules cs)
+              val candidates =
+                clasetLib.rules_of base_cs @
+                clasetLib.invocation_marker_rules cs
+              val eligible =
+                if consumer = clasetLib.SafeFacts then
+                  List.filter safe_named_rule candidates
+                else candidates
+              val arguments =
+                controls @ map #theorem (views @ transported)
             in
-              body transported_cs ss
-                (controls @ map #theorem (views @ transported))
+              with_claset_transport budget ss eligible fact_cs
+                (fn current => body current ss arguments)
             end
         | NONE =>
             raise ERR "process_clasimp_args_fact_views"
@@ -1942,11 +2121,20 @@ fun auto_with {blast, depth} charge cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-fun CS_of body cs ss goal =
-  let val budget = normalization_budget ()
-  in body (charge_normalization budget) cs ss [] goal end
+fun CS_of safe_only body cs ss goal ctxt =
+  let
+    val budget = normalization_budget ()
+    val candidates = clasetLib.rules_of cs
+    val eligible =
+      if safe_only then List.filter safe_named_rule candidates
+      else candidates
+  in
+    with_claset_transport budget ss eligible cs
+      (fn current =>
+        body (charge_normalization budget) current ss []) goal ctxt
+  end
 
-fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
+fun CS_AUTO_TAC bounds = CS_of false (auto_with bounds)
 
 type force_slice =
   {candidates : int, applications : int, normalization : int}
@@ -2230,11 +2418,11 @@ val simp_search =
 val (fast_search, slow_search, best_search) = simp_search
 
 val CS_FASTFORCE_TAC =
-  CS_of (search_with_simp "CS_FASTFORCE_TAC" fast_search)
+  CS_of false (search_with_simp "CS_FASTFORCE_TAC" fast_search)
 val CS_SLOWSIMP_TAC =
-  CS_of (search_with_simp "CS_SLOWSIMP_TAC" slow_search)
+  CS_of false (search_with_simp "CS_SLOWSIMP_TAC" slow_search)
 val CS_BESTSIMP_TAC =
-  CS_of (search_with_simp "CS_BESTSIMP_TAC" best_search)
+  CS_of false (search_with_simp "CS_BESTSIMP_TAC" best_search)
 
 fun clarsimp_with charge cs ss simp_args =
   let
@@ -2254,7 +2442,7 @@ fun clarsimp_with charge cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-val CS_CLARSIMP_TAC = CS_of clarsimp_with
+val CS_CLARSIMP_TAC = CS_of true clarsimp_with
 
 fun restore_normalized_target budget target validation theorems =
   let

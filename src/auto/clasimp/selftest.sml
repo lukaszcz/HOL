@@ -1856,6 +1856,28 @@ val transport_safe_intro =
     (``!n. transport_r n ==> transport_p n``,
      Rewrite.REWRITE_TAC
        [transport_p_def, transport_r_def])
+val transport_poly_p_def =
+  new_definition
+    ("transport_poly_p_def",
+     ``transport_poly_p (x:'a) <=> (x = x)``)
+val transport_poly_q_def =
+  new_definition
+    ("transport_poly_q_def",
+     ``transport_poly_q (x:'a) <=> (x = x)``)
+val transport_poly_r_def =
+  new_definition
+    ("transport_poly_r_def",
+     ``transport_poly_r (x:'a) <=> (x = x)``)
+val transport_poly_bridge =
+  Tactical.prove
+    (``!x:'a. transport_poly_p x <=> transport_poly_q x``,
+     Rewrite.REWRITE_TAC
+       [transport_poly_p_def, transport_poly_q_def])
+val transport_poly_fact =
+  Tactical.prove
+    (``!x:'a. transport_poly_p x ==> transport_poly_r x``,
+     Rewrite.REWRITE_TAC
+       [transport_poly_p_def, transport_poly_r_def])
 
 val _ =
   check
@@ -1894,6 +1916,117 @@ val _ =
            handle Feedback.HOL_ERR _ => false
        in
          without andalso with_bridge
+       end)
+
+val _ =
+  check
+    ("persistent destruction rule crosses a supplied normal form",
+     fn () =>
+       let
+         val goal =
+           ([``transport_q (n:num)``], ``transport_r n``)
+         val cs =
+           clasetLib.add_sdests
+             [("persistent_transport", transport_fact)]
+             clasetLib.empty_cs
+         val ss =
+           simpLib.++
+             (clasimpLib.clasimp_ss (),
+              simpLib.rewrites [transport_bridge])
+         val without =
+           clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+             cs (clasimpLib.clasimp_ss ())
+         val public =
+           clasetLib.with_claset cs
+             (fn () =>
+               valid_closes
+                 (clasimpLib.AUTO_TAC
+                    [clasetLib.Simp transport_bridge]) goal) ()
+       in
+         tactic_fails without goal andalso
+         valid_closes
+           (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+              cs ss) goal andalso public
+       end)
+
+val _ =
+  check
+    ("persistent safe introduction reaches CLARSIMP's normal form",
+     fn () =>
+       let
+         val goal =
+           ([``transport_r (n:num)``], ``transport_q n``)
+         val cs =
+           clasetLib.add_sintros
+             [("persistent_safe_transport", transport_safe_intro)]
+             clasetLib.empty_cs
+         val ss =
+           simpLib.++
+             (clasimpLib.clasimp_ss (),
+              simpLib.rewrites [transport_bridge])
+       in
+         tactic_fails
+           (clasimpLib.CS_CLARSIMP_TAC cs
+              (clasimpLib.clasimp_ss ())) goal andalso
+         valid_closes
+           (clasimpLib.CS_CLARSIMP_TAC cs ss) goal
+       end)
+
+val _ =
+  check
+    ("persistent rule transport is independent of the carrier type",
+     fn () =>
+       let
+         val cs =
+           clasetLib.add_sdests
+             [("polymorphic_persistent_transport",
+               transport_poly_fact)]
+             clasetLib.empty_cs
+         val ss =
+           simpLib.++
+             (clasimpLib.clasimp_ss (),
+              simpLib.rewrites [transport_poly_bridge])
+         val goals =
+           [([``transport_poly_q (n:num)``],
+             ``transport_poly_r (n:num)``),
+            ([``transport_poly_q (b:bool)``],
+             ``transport_poly_r (b:bool)``)]
+       in
+         tactic_fails
+           (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+              cs (clasimpLib.clasimp_ss ()))
+           (hd goals) andalso
+         List.all
+           (valid_closes
+              (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+                 cs ss)) goals
+       end)
+
+val _ =
+  check
+    ("an iff-derived rule cannot normalize using its own source",
+     fn () =>
+       let
+         val source =
+           CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)
+         val cs =
+           List.foldl
+             (fn ((spec, named), current) =>
+               clasetLib.add_derived_rule spec named current)
+             clasetLib.empty_cs
+             (clasetLib.iff_rules "transport_iff_source"
+                source)
+         val ss =
+           simpLib.++
+             (clasimpLib.clasimp_ss (),
+              simpLib.rewrites [source])
+       in
+         Lib.total
+           (Timeout.apply (Time.fromSeconds 5)
+              (tactic_fails
+                 (clasimpLib.CS_AUTO_TAC {blast = 2, depth = 1}
+                    cs ss)))
+           ([], ``unrelated_transport_goal:bool``) = SOME true
        end)
 
 (* The same mismatch one spelling further on.  Isabelle normalises the

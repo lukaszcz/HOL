@@ -26,6 +26,11 @@ The implemented checkpoints are:
   Their conditional witness subgoaler charges each context match as a
   candidate, plus normalization and proof application work. A typed cutoff
   propagates through a failed witness attempt.
+  A fallback search for certified rule views charges rewrite-head scans,
+  declaration relevance scans, and selected rule conversions as candidate
+  work. It charges child-first conversion as normalization and each
+  installed derived rule as an application. It keeps the original
+  declaration and shares the ordinary tactic's budget.
   `CLARSIMP_TAC_BUDGETED` accepts a caller-owned budget and propagates
   `LimitReached` without translating it into tactic failure. FORCE's
   initial simplification, extensional conversions, and target transport

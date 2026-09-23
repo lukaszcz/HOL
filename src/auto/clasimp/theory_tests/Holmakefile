@@ -12,3 +12,4 @@ iffDiamondChildTheory.uo: iffDiamondAddTheory.uo \
 iffBatchChildTheory.uo: iffBatchTheory.uo
 iffWithinRemoveChildTheory.uo: iffWithinRemoveTheory.uo
 iffBottomUpChildTheory.uo: iffBottomUpTheory.uo
+transportPersistentChildTheory.uo: transportPersistentBaseTheory.uo
