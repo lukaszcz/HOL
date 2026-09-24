@@ -111,6 +111,8 @@ of them by hand means run the tests.
   - `lsp-init-selftest.log` — loads the nine files a server `QUse`s at
     startup.  Loading them *is* the test: it is what notices the rename
     above.
+  - `lsp-init-bare-selftest.log` — the same nine, on `bin/hol.state0`;
+    see *The heap a directory asks for* below for what that pins.
   - `tacticparse-selftest.log` — `TacticParse` unit tests.  Driven by
     `bin/hol` because the module is compiled into the executable by
     `poly-init2.ML` and a `selftest.exe`, which links sigobj, cannot
@@ -303,6 +305,85 @@ client treats single newlines as spaces and reflows the statement in a
 proportional font, which throws away every break the pretty printer
 just chose.
 
+### Entry documentation
+
+Below the type and value, a hover carries the identifier's Reference
+entry -- what `help/Docfiles/<Struct>.<name>.smd` says about it -- and
+a link to the file it was read from:
+
+```
+val STRIP_TAC: Tactic.tactic = fn
+
+---
+
+## `STRIP_TAC`
+...
+Splits a goal by eliminating one outermost connective.
+...
+
+[📖 Tactic.STRIP_TAC](file:///…/Tactic.STRIP_TAC.smd)
+```
+
+Documentation comes last on purpose: an entry runs to tens of lines,
+and the type would otherwise sit off the top of the box behind it.
+
+Two build products are involved, and neither is in the repository:
+
+- `help/HOL.Help`, the index `help/src-sml/makebase.exe` writes, is how
+  a name is turned into an entry.  Matching is by the entry's own
+  structure component: a bare `STRIP_TAC` matches `Tactic.STRIP_TAC`
+  only if the declaring structure Poly/ML reports (`PStructureAt`) is
+  `Tactic`, and a written `Tactic.STRIP_TAC` only if the prefix is.
+  One name can therefore produce several entries, and all of them are
+  shown.
+- `Manual/build/Docfiles-processed/<Struct>.<name>.smd`, written by
+  `help/src-sml/process_docfiles`, is what the hover shows and links
+  to.  These are the polyscripter-evaluated entries: markdown a client
+  can render, unlike the `.txt` beside each source (a pandoc
+  plain-text rendering) or the source `.smd` (still carrying its
+  frontmatter and `>>` directives, which the hover strips and
+  evaluates respectively).
+
+`bin/build` writes both as part of its help step, so an ordinary build
+has them; one run with `--no-helpdocs` does not, and the hover then
+shows what it always did -- a type and a value.  Nothing else changes,
+and there is no diagnostic: a tree with no documentation built and an
+identifier with no entry look the same from here.
+
+An entry's cross-references -- its "See also" list, and the "Also
+exported as" banner on an aliased entry -- are written against the
+anchor scheme the Reference manual used to have (`](#Foo.bar)`).
+Nothing in a hover resolves those, so each is rewritten to point at
+that entry's own processed file; a reference to an entry that no
+longer exists is left as it was written.
+
+The processed tree is not finished markdown -- mdbook runs `smdpp`
+over it -- so the hover repeats what `smdpp` *deletes*: `\index{}`,
+`\label{}`, and `` ```{=latex} ``/`` ```{=html} `` raw blocks (body
+and all; a `` ```{=mdbook} `` block keeps its body).  Those are the
+constructs whose correct rendering is nothing at all, so an author has
+no reason to expect one to surface, and a hover that passed them
+through would be the only place they showed up.  No entry uses any of
+them today, which is why `help_init.ML` carries a load-time selftest
+rather than relying on the built tree to exercise the pass.
+
+What `smdpp` *resolves* -- `\ref{}`, `\refentry{}`, `\cite{}` -- is
+left as written, and renders as literal text: CommonMark escapes only
+punctuation, so `\refentry{Foo.bar}` is visible.  Deleting a
+cross-reference is worse than showing one the reader has to look up.
+If entries start using these, resolving them here stops being
+defensible and the pass belongs in `process_docfiles` instead, so that
+the processed tree is markdown and can be named `.md`.
+
+The wiring is `lsp/help_init.ML`, which installs
+`LSPExtension.helpLookup`; `hol.ML`'s LSP branch loads it, and
+`help/src-sml/Database` (the index reader) just before it, from
+source, since neither is in any heap.  The index is read once, on the
+first documented hover, and a tree that has none is remembered as
+having none -- a hover is not a place to rediscover the same missing
+file.  `tools-poly/poly/Help.sml` reads the same index for the REPL's
+`help` command and knows nothing about any of the above.
+
 ### Positions
 
 A hover's range, like every position on the wire, counts whatever
@@ -364,6 +445,24 @@ and nothing in the UI naming the heap.  Every other subcommand still
 dies on an unloadable heap — they have a terminal to complain to, and
 a build that quietly used a different heap would be worse than a
 failure.
+
+The heap that loads also decides what the startup files can name.
+Every directory up to `src/boss` asks for `bin/hol.state0`, which has
+`boolLib`, `proofManagerLib` and `DB` but nothing from `src/coretypes`
+onwards — a `DefnBase` reference in `defnbase_init.ML` compiled
+wherever the full heap was in play, and killed the server everywhere
+else.  Two runs are enough to hold the files to it because every heap
+a `Holmakefile` names is built on `hol.state0`, so compiling against
+that floor implies the rest; `tests/lsp-init-bare-selftest.log` is the
+run that does it.
+
+A startup step that fails anyway — one of those files, or one of the
+`evalString` hooks in `tools-poly/hol.ML` — costs its own feature and
+not the session, and becomes a `window/showMessage` naming it, sent
+once the handshake is done.  What the step wrote goes to stderr:
+`LSPServer.claimStdout` takes the wire before any of them run, so
+stdout belongs to the framing from the first line of the process and
+a diagnostic cannot land on it.
 
 Note that **which `bin/hol` serves a buffer is a client decision**, and
 the eglot client resolves it per directory from

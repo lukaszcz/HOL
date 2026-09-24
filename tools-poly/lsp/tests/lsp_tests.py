@@ -884,6 +884,60 @@ def test_thm_hover_shows_statement():
         c.close()
 
 
+def test_hover_shows_entry_documentation():
+    """Hover on a documented entry point carries its Reference entry
+    and a link to the file the entry was read from.
+
+    `help_init.ML' installs `LSPExtension.helpLookup', which the hover
+    has called since it was written; until the LSP branch of `hol.ML'
+    loaded an implementation, the hook answered the empty list and
+    every hover showed a type and nothing else.  Prose and link come
+    from Manual/build/Docfiles-processed, which `bin/build' writes
+    from help/Docfiles/*.smd -- so skip where the tree has no help
+    documentation built rather than read an empty answer as a pass."""
+    entry = os.path.join(REPO, "Manual", "build", "Docfiles-processed",
+                         "Tactic.STRIP_TAC.smd")
+    if not os.path.exists(os.path.join(REPO, "help", "HOL.Help")):
+        raise Skipped("help/HOL.Help is not built in this tree")
+    if not os.path.exists(entry):
+        raise Skipped("Manual/build/Docfiles-processed is not built in "
+                      "this tree")
+    c = Client("/tmp")
+    try:
+        _init(c, "/tmp")
+        uri = "file:///tmp/doc_hover.sml"
+        src = ("Theory doc_hover\n"
+               "Ancestors arithmetic\n\n"
+               "val mytac = STRIP_TAC\n")
+        _did_open(c, uri, src, 1)
+        assert_true(c.wait_for_method("$/compileCompleted", 30),
+                    "compileCompleted")
+        # Line 3 = "val mytac = STRIP_TAC", char 14 is inside the name.
+        res = _hover_at(c, 43, uri, 3, 14)
+        assert_true(res is not None, "hover result non-null")
+        md = res["contents"]["value"]
+        assert_contains(md, "Splits a goal by eliminating one outermost",
+                        "hover carries the entry's prose")
+        assert_true(re.search(r"Tactic\.STRIP_TAC\]\(file://\S*"
+                              r"Tactic\.STRIP_TAC\.smd\)", md),
+                    "hover links to the processed entry file")
+        # The entry's own cross-references resolve too: a "See also"
+        # target is rewritten from the manual's `#Foo.bar' anchor to
+        # the file that entry lives in.
+        assert_contains(md, "Tactic.GEN_TAC.smd)",
+                        "a See-also reference resolves to its entry")
+        assert_true("](#" not in md,
+                    "no unresolvable manual anchors survive "
+                    "({0!r})".format(md[:200]))
+        # Type first: the documentation runs to tens of lines, and
+        # what the reader came for must not sit behind it.
+        assert_true(md.index("val STRIP_TAC")
+                    < md.index("Splits a goal by eliminating"),
+                    "the SML type comes before the documentation")
+    finally:
+        c.close()
+
+
 def test_cheat_proofs_installed():
     """LSP session installs a set_prover thunk that returns
     mk_oracle_thm for any goal, so tactic bodies never run.  A goal
@@ -6507,6 +6561,39 @@ def test_unloadable_heap_falls_back_with_a_warning():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_hol_state0_directory_serves():
+    """Every directory up to `src/boss' names `bin/hol.state0' as its
+    heap, so that is what a server there compiles its own startup files
+    against -- and one of them named a structure only the full heap has.
+    The server died compiling it, before answering `initialize', so
+    `src/num/theories' could not be opened at all and the client could
+    say only that the process had exited.
+
+    A heap the startup files do not fit is therefore not a thing the
+    full-heap tests can see; this is the same scenario from outside."""
+    d = tempfile.mkdtemp(prefix="lsp_state0_")
+    try:
+        with open(os.path.join(d, "Holmakefile"), "w") as f:
+            f.write(f"HOLHEAP = {HOL_STATE0}\n")
+        c = Client(d)
+        try:
+            _init(c, d, timeout=60)
+            # A startup warning arrives just after the handshake, so
+            # give one time to show up before concluding there is none.
+            c.wait_for_method("window/showMessage", 5)
+            msgs, _ = c.messages_since(0)
+            warns = [m["params"]["message"] for m in msgs
+                     if m.get("method") == "window/showMessage"]
+            bad = [w for w in warns if "did not load" in w]
+            assert_true(not bad,
+                        f"every startup file compiled against the heap "
+                        f"({bad!r})")
+        finally:
+            c.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_overload_hover_names_the_expansion():
     """An overloaded name that resolves to a *term* rather than to one
     constant used to hover as a bare "overloaded", which says only that
@@ -6700,6 +6787,75 @@ def test_check_proofs_switchable_without_a_restart():
             assert_true(gone,
                         f"which drops the diagnostics "
                         f"({_diag_count(c, uri)!r})")
+        finally:
+            c.close()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_script_level_simp_reads_the_pinned_simpset():
+    """A script that builds its own tactics from `srw_ss()' -- which
+    `src/num/theories/arithmeticScript.sml' does, and it is the shape
+    the early theories use -- reads the *ambient* simpset: the
+    context-reading shim covers a declaration's own `srw_ss()', not one
+    a top-level function called.  The expander defers the tactic
+    expression to when the proof runs, and a deferred proof runs under
+    `Context.with_context', so that read happens under a pin.
+
+    Ambient reads answer from the pin while writes go to the live cell,
+    and initialising the simpset was a write read back -- so the read
+    returned the simpset uninitialised: no TypeBase simpls, and none of
+    the updates the ancestors had parked.  Three proofs of
+    `arithmeticScript' that a build proves were reported as failures,
+    and stepping through them in a goals pane showed them going
+    through, because a walk restores the context rather than pinning
+    it.
+
+    On `hol.state0' and a bare theory, which is where the cell stays
+    uninitialised: nothing in such a session reads the ambient simpset
+    except proofs, and those read it under the pin."""
+    d = tempfile.mkdtemp(prefix="lsp_pinss_")
+    try:
+        with open(os.path.join(d, "Holmakefile"), "w") as f:
+            f.write(f"HOLHEAP = {HOL_STATE0}\n")
+        src = ("Theory pinss[bare]\n"
+               "Ancestors arithmetic\n"
+               "Libs HolKernel boolLib Parse BasicProvers simpLib\n"
+               "\n"
+               "fun ambient_is_the_contexts g ctxt =\n"
+               "  let\n"
+               "    val amb = simpLib.ssfrag_names_of (srw_ss())\n"
+               "    val ofc = simpLib.ssfrag_names_of "
+               "(BasicProvers.srw_ss_of ctxt)\n"
+               "  in\n"
+               "    if amb = ofc then ALL_TAC g ctxt\n"
+               "    else raise Fail (\"ambient simpset has \" ^\n"
+               "                     Int.toString (length amb) ^\n"
+               "                     \" fragments, the context's \" ^\n"
+               "                     Int.toString (length ofc))\n"
+               "  end\n\n"
+               "Theorem pinned_read_is_the_contexts:\n"
+               "  T\n"
+               "Proof\n"
+               "  ambient_is_the_contexts >> ACCEPT_TAC TRUTH\n"
+               "QED\n")
+        uri = f"file://{d}/pinssScript.sml"
+        c = Client(d, args=["--lsp-check-proofs"])
+        try:
+            _init(c, d, timeout=60)
+            _did_open(c, uri, src)
+            assert_true(c.wait_for_method("$/compileCompleted", 60),
+                        "compileCompleted")
+
+            def settled(cl):
+                st = _proof_states(cl, uri).get("pinned_read_is_the_contexts")
+                return st if st and st[0] != "checking" else None
+
+            got = c.wait_until(settled, 60)
+            assert_true(got is not None,
+                        f"the proof was checked ({_proof_states(c, uri)!r})")
+            assert_eq(got[0], "proved",
+                      f"and the pinned read is the context's ({got!r})")
         finally:
             c.close()
     finally:
@@ -7558,6 +7714,8 @@ TESTS = [
     ("workdone_progress",            test_workdone_progress),
     ("cheat_proofs_installed",       test_cheat_proofs_installed),
     ("thm_hover_shows_statement",    test_thm_hover_shows_statement),
+    ("hover_shows_entry_documentation",
+                                     test_hover_shows_entry_documentation),
     ("hover_inside_proof_qed",       test_hover_inside_proof_qed),
     ("hover_on_proof_body_whitespace_is_null",
                                      test_hover_on_proof_body_whitespace_is_null),
@@ -7748,6 +7906,8 @@ TESTS = [
      test_dependency_that_binds_no_structure_blocks),
     ("unloadable_heap_falls_back_with_a_warning",
      test_unloadable_heap_falls_back_with_a_warning),
+    ("a_hol_state0_directory_serves",
+     test_a_hol_state0_directory_serves),
     ("overload_hover_names_the_expansion",
      test_overload_hover_names_the_expansion),
     ("overload_hover_sees_through_the_alias_chain",
@@ -7756,6 +7916,8 @@ TESTS = [
      test_quotation_hover_positions_under_utf16),
     ("check_proofs_switchable_without_a_restart",
      test_check_proofs_switchable_without_a_restart),
+    ("a_script_level_simp_reads_the_pinned_simpset",
+     test_a_script_level_simp_reads_the_pinned_simpset),
     ("check_proofs_enabled_during_a_compile",
      test_check_proofs_enabled_during_a_compile),
     ("goalState_select_then_completes",
