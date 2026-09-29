@@ -746,8 +746,8 @@ in
   val child_charges = ref 0
   val child_visits =
     visits
-      (Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT
-         (fn () => child_charges := !child_charges + 1)
+      (Traverse.TRAVERSE_WITH_CONTEXT
+         (Traverse.ChildFirst (fn () => child_charges := !child_charges + 1))
          visit_data
          {reducer_context=[], solver_context=[]})
   val _ =
@@ -761,8 +761,8 @@ in
   val _ =
     (tprint "child-first traversal propagates a work cutoff";
      if ((ignore
-            (Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT
-               (fn () => raise ChildWorkLimit)
+            (Traverse.TRAVERSE_WITH_CONTEXT
+               (Traverse.ChildFirst (fn () => raise ChildWorkLimit))
                visit_data {reducer_context=[], solver_context=[]}
                visit_term);
           false)
@@ -771,8 +771,8 @@ in
 
   val child_bool_conv =
     QCONV
-      (Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT
-         (fn () => ()) (xtraversedata_for_ss bool_ss)
+      (Traverse.TRAVERSE_WITH_CONTEXT
+         (Traverse.ChildFirst (fn () => ())) (xtraversedata_for_ss bool_ss)
          {reducer_context=[], solver_context=[]})
   val _ = convtest
     ("child-first congruence passes a premise to its consequent",

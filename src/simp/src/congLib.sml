@@ -176,48 +176,19 @@ val cong_reducer =
   end;
 
 
-fun reducer_addRwts (REDUCER {name,addcontext,apply,initial}) rwts =
-  REDUCER
-    {name=name, addcontext=addcontext, apply=apply,
-     initial=addcontext (initial,rwts)}
-  | reducer_addRwts
-      (CONTEXT_REDUCER {name,addcontext,apply,initial}) rwts =
+fun eq_reducer_wrapper reducer =
+  let
+    val {name,initial,addcontext,apply} = reducer_data reducer
+    fun wrapped (args as {relation=(_,refl),...}) tm =
+      let
+        val eqthm = apply args tm
+      in
+        CONV_RULE (RAND_CONV (REWR_CONV eqthm)) (refl tm)
+      end
+  in
     CONTEXT_REDUCER
-      {name=name, addcontext=addcontext, apply=apply,
-       initial=addcontext (initial,rwts)}
-
-
-fun lift_equality refl eqthm tm =
-  let
-    val congThm = refl tm
-    val congThm = CONV_RULE (RAND_CONV (REWR_CONV eqthm)) congThm
-  in
-    congThm
-  end
-
-fun eq_reducer_wrapper (REDUCER {name,initial,addcontext,apply}) =
-  let
-    fun wrapped {solver,conv,context,stack,relation as (_,refl)} tm =
-      lift_equality refl
-        (apply {solver=solver, conv=conv, context=context, stack=stack,
-                relation=relation} tm) tm
-  in
-    REDUCER
       {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
-  end
-  | eq_reducer_wrapper
-      (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
-    let
-      fun wrapped {solver,conv,context,stack,cond_depth,term_ord,
-                   relation as (_,refl)} tm =
-        lift_equality refl
-          (apply {solver=solver, conv=conv, context=context, stack=stack,
-                  cond_depth=cond_depth, term_ord=term_ord,
-                  relation=relation} tm) tm
-    in
-      CONTEXT_REDUCER
-        {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
-    end;
+  end;
 
 
 datatype congsetfrag = CSFRAG of
@@ -245,10 +216,10 @@ val empty_congset = CS {cong_reducer=cong_reducer,
     (CSFRAG {rewrs, relations=relationsFrag, dprocs=dprocsFrag, congs},
      CS {cong_reducer, relations, dprocs, travrules, limit})
   = let
-      val cong_reducer = reducer_addRwts cong_reducer rewrs;
+      val cong_reducer = addctxt rewrs cong_reducer;
 
       val refl_rewrites = map mk_refl_rewrite relationsFrag;
-      val cong_reducer = reducer_addRwts cong_reducer refl_rewrites;
+      val cong_reducer = addctxt refl_rewrites cong_reducer;
 
       val newRelations = relations@relationsFrag;
       val newCongs = mk_congprocs newRelations congs;

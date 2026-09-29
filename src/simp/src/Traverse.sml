@@ -55,13 +55,8 @@ datatype reducer =
                       relation : term * (term -> thm)} -> conv
               };
 fun dest_reducer (REDUCER x) = x
-  | dest_reducer
-      (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
-      {name=name, initial=initial, addcontext=addcontext,
-       apply=fn {solver,conv,context,stack,relation} =>
-         apply {solver=solver, conv=conv, context=context, stack=stack,
-                cond_depth= !Cond_rewr.stack_limit,
-                term_ord=Cond_rewr.ac_term_ord, relation=relation}}
+  | dest_reducer (CONTEXT_REDUCER _) =
+      raise ERR "dest_reducer" "not a REDUCER"
 
 fun reducer_data (REDUCER {name,initial,addcontext,apply}) =
       {name=name, initial=initial, addcontext=addcontext,
@@ -156,7 +151,11 @@ fun add_solver_context (context, thms) =
     let
       val TSTATE {contexts1,contexts2,context_thms,freevars,
                   relation_info,relation} = context
-      val more_freevars = free_varsl (flatten (map hyp thms))
+      (* A term set: free_varsl's list union is quadratic in the context's
+         free variables, and this runs on every application.  Renaming
+         reads the list as a set. *)
+      val more_freevars =
+        HOLset.listItems (FVL (flatten (map hyp thms)) empty_tmset)
       val _ = map (fn thm => trace(2,MORE_CONTEXT thm)) thms
     in
       TSTATE
@@ -336,6 +335,7 @@ fun TRAVERSE_IN_CONTEXT policy root_only
     in
         irefl {Rinst = relname, arg = t}
     end
+    val reducer_relation = (relname, mkrefl)
 
     fun trav stack context =
         let val {loop, root = _} = trav_convs stack context in loop end
@@ -389,21 +389,19 @@ fun TRAVERSE_IN_CONTEXT policy root_only
         trav_with_rel' equality stack context tm
         handle e as HOL_ERR _ => (lim_r := old ; raise e)
       end
+      (* A plain REDUCER is called directly, not through reducer_data's
+         adapter. *)
       fun apply_reducer reducer context tm =
-        let
-          val _ = charge ()
-          val rdata = reducer_data reducer
-        in
-          (#apply rdata) {solver=ctxt_solver,
-                          conv=ctxt_conv,
-                          context=context,
-                          stack=stack,
-                          cond_depth=current_cond_depth (),
-                          term_ord=term_ord,
-                          relation=(relname, mkrefl)}
-                         tm before
-          dec lim_r
-        end
+        (charge ();
+         (case reducer of
+              REDUCER {apply,...} =>
+                apply {solver=ctxt_solver, conv=ctxt_conv, context=context,
+                       stack=stack, relation=reducer_relation} tm
+            | CONTEXT_REDUCER {apply,...} =>
+                apply {solver=ctxt_solver, conv=ctxt_conv, context=context,
+                       stack=stack, cond_depth=current_cond_depth (),
+                       term_ord=term_ord, relation=reducer_relation} tm)
+         before dec lim_r)
       fun high_priority tm =
           (check lim_r;
            FIRST_CONV (mapfilter2 apply_reducer rewriters contexts1) tm)
@@ -487,12 +485,9 @@ fun GEN_TRAVERSE policy root_only xdata thms =
 
 val XTRAVERSE = GEN_TRAVERSE ParentFirst false
 val ROOT_REWRITE = GEN_TRAVERSE ParentFirst true
-val TRAVERSE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT ParentFirst false
+fun TRAVERSE_WITH_CONTEXT policy = GEN_TRAVERSE_WITH_CONTEXT policy false
 val ROOT_REWRITE_WITH_CONTEXT =
   GEN_TRAVERSE_WITH_CONTEXT ParentFirst true
-
-fun CHILD_FIRST_TRAVERSE_WITH_CONTEXT callback =
-  GEN_TRAVERSE_WITH_CONTEXT (ChildFirst callback) false
 
 (* The unextended entry point runs at the unconfigured settings. *)
 fun TRAVERSE (data : traverse_data) = XTRAVERSE (data, default_config)

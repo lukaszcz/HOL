@@ -87,11 +87,7 @@ sig
                  relation : (term * (term -> thm))} -> conv
        }
 
-  (* dest_reducer is the pre-CONTEXT_REDUCER interface, and has nowhere to
-     put the traversal's own settings: a context reducer seen through it
-     runs at the default side-condition depth (!Cond_rewr.stack_limit) and
-     the default term order (Cond_rewr.ac_term_ord).  reducer_data is the
-     accessor that preserves them. *)
+  (* dest_reducer fails on a CONTEXT_REDUCER; reducer_data reads either. *)
 
   val dest_reducer : reducer ->
         {name : string option,
@@ -186,21 +182,20 @@ sig
 
    val XTRAVERSE : xtraverse_data -> thm list -> conv
 
-   (* As XTRAVERSE, but keep initial reducer additions separate from
-      theorems which extend generic solver and binder-capture contexts
-      only. *)
-   val TRAVERSE_WITH_CONTEXT :
-       xtraverse_data ->
-       {reducer_context : thm list, solver_context : thm list} -> conv
+   (* ParentFirst is XTRAVERSE's order.  ChildFirst is opt-in child-first
+      traversal. A certified eta contraction of a function argument may
+      run before descent to preserve its head; logical binder predicates
+      are excluded. Congruence rules decide which children are visited and
+      their context. The callback charges before head preservation,
+      descent or a reducer attempt, and its exception propagates to the
+      invocation owner. *)
+   datatype traversal_policy = ParentFirst | ChildFirst of (unit -> unit)
 
-   (* Opt-in child-first traversal. A certified eta contraction of a
-      function argument may run before descent to preserve its head;
-      logical binder predicates are excluded. Congruence rules decide
-      which children are visited and their context. The callback charges
-      before head preservation, descent or a reducer attempt, and its
-      exception propagates to the invocation owner. *)
-   val CHILD_FIRST_TRAVERSE_WITH_CONTEXT :
-       (unit -> unit) -> xtraverse_data ->
+   (* As XTRAVERSE in the given order, but keep initial reducer additions
+      separate from theorems which extend generic solver and
+      binder-capture contexts only. *)
+   val TRAVERSE_WITH_CONTEXT :
+       traversal_policy -> xtraverse_data ->
        {reducer_context : thm list, solver_context : thm list} -> conv
 
    (* Apply one reducer at the root, without descending.  Recursive

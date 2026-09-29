@@ -117,8 +117,10 @@ val Req0_t = mk_marker_const "Req0"
 val Req0_th = EQT_ELIM markerTheory.Req0_def
 val ReqD_t = mk_marker_const "ReqD"
 val ReqD_th = EQT_ELIM markerTheory.ReqD_def
-val GenericNoAsms_t = mk_marker_const "NoAsms"
-val GenericIgnAsm_t = mk_marker_const "IgnAsm"
+val NoAsms = EQT_ELIM markerTheory.NoAsms
+val NoAsms_t = concl NoAsms
+val IgnAsm_t = mk_thy_const {Thy = "marker", Name = "IgnAsm",
+                             Ty = alpha --> bool}
 val mk_Req0 = ADD_ASSUM Req0_t
 val mk_ReqD = ADD_ASSUM ReqD_t
 
@@ -150,27 +152,24 @@ fun is_generic_simp_marker th =
     Option.isSome (dest_Req0 th) orelse
     Option.isSome (dest_ReqD th) orelse
     Option.isSome (total BoundedRewrites.DEST_BOUNDED th) orelse
-    aconv (concl th) GenericNoAsms_t orelse
-    has_marker_head GenericIgnAsm_t th orelse
+    aconv (concl th) NoAsms_t orelse
+    has_marker_head IgnAsm_t th orelse
     is_abbr th
 
 fun dest_generic_simp_wrapper th =
   let
-    val changed = ref false
-    fun unwrap theorem =
-      case dest_Req0 theorem of
-          SOME payload => (changed := true; unwrap payload)
+    val unwrapped =
+      case dest_Req0 th of
+          SOME payload => SOME payload
         | NONE =>
-            (case dest_ReqD theorem of
-                 SOME payload => (changed := true; unwrap payload)
-               | NONE =>
-                   case total BoundedRewrites.DEST_BOUNDED theorem of
-                       SOME (payload, _) =>
-                         (changed := true; unwrap payload)
-                     | NONE => theorem)
-    val payload = unwrap th
+          case dest_ReqD th of
+              SOME payload => SOME payload
+            | NONE => Option.map #1 (total BoundedRewrites.DEST_BOUNDED th)
   in
-    if !changed then SOME payload else NONE
+    Option.map
+      (fn payload =>
+         Option.getOpt (dest_generic_simp_wrapper payload, payload))
+      unwrapped
   end
 
 fun req0_modify tacf th =
@@ -681,16 +680,11 @@ val unhide_assum = unhide_assum0 first_x_assum assume_tac
 val unhide_x_assum = unhide_assum0 first_x_assum (K all_tac)
 val use_hidden_assum = unhide_assum0 first_assum (K all_tac)
 
-val NoAsms = EQT_ELIM markerTheory.NoAsms
-val NoAsms_t = concl NoAsms
-
 fun q2str [] = ""
   | q2str (QUOTE s :: rest) = s ^ q2str rest
   | q2str (ANTIQUOTE t :: rest) =
         raise ERR "IgnAsm"
               "Pattern quotation must not include antiquotes"
-val IgnAsm_t = mk_thy_const {Thy = "marker", Name = "IgnAsm",
-                             Ty = alpha --> bool}
 fun IgnAsm qpat =
     let val s = q2str qpat
         val s_t = mk_var(s, alpha)

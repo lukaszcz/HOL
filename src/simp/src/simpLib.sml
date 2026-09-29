@@ -485,15 +485,6 @@ fun net_exists P net =
   handle FoundEntry => true
 end
 
-(* Only exclusion resolution asks these questions, so they use the reading
-   [Excl] answers to rather than the stricter one [-*] parses with. *)
-fun net_has_name name net =
-  case Lib.total excl_simpset_name name of
-      NONE => false
-    | SOME pattern => net_exists (fn nd => name_match nd [pattern]) net
-
-fun simpset_has_rule name (SS s) = net_has_name name (#initial_net s)
-
 fun simpset_has_dproc name (SS s) =
   List.exists
     (fn reducer => #name (Traverse.reducer_data reducer) = SOME name)
@@ -504,27 +495,26 @@ fun simpset_has_dproc name (SS s) =
    and a dproc sharing a name are excluded together, as [ss -* names] has
    always specified.  [pending] holds the rule exclusions that
    [apply_exclusions] has resolved but not yet applied to the net; masking
-   them here is what makes deferring the filter invisible. *)
+   them here is what makes deferring the filter invisible.  Only exclusion
+   resolution asks this, so it uses the reading [Excl] answers to rather
+   than the stricter one [-*] parses with. *)
 fun simpset_has_rule_target {pending : rule_exclusion list} name
                             (ss as SS s) =
-  case pending of
-      [] => simpset_has_rule name ss orelse simpset_has_dproc name ss
-    | _ =>
-      let
-        val gone = map #pattern pending
-        fun still_there nd = not (name_match nd gone)
-      in
-        (case Lib.total excl_simpset_name name of
-             NONE => false
-           | SOME pattern =>
-               net_exists (fn nd => name_match nd [pattern] andalso
-                                    still_there nd)
-                          (#initial_net s))
-        orelse
-        (not (List.exists (fn e : rule_exclusion => #original e = name)
-                          pending) andalso
-         simpset_has_dproc name ss)
-      end
+  let
+    val gone = map #pattern pending
+    fun still_there nd = not (name_match nd gone)
+  in
+    (case Lib.total excl_simpset_name name of
+         NONE => false
+       | SOME pattern =>
+           net_exists (fn nd => name_match nd [pattern] andalso
+                                still_there nd)
+                      (#initial_net s))
+    orelse
+    (not (List.exists (fn e : rule_exclusion => #original e = name)
+                      pending) andalso
+     simpset_has_dproc name ss)
+  end
 
 (* A valid theorem name need not currently be installed in the simpset:
    theory scripts use Excl defensively around a theorem they have just put
@@ -726,9 +716,8 @@ fun add_solver (solver : Traverse.ssolver,
 fun dedup_solvers solvers = List.foldl add_solver [] solvers
 
 fun strategy_of (SS s) = #strategy s
-fun has_looper name ss =
-  List.exists
-    (fn entry => same_looper_id entry (OrdinaryLooper,name))
+fun has_looper_id id ss =
+  List.exists (fn entry => same_looper_id entry id)
     (#loopers (strategy_of ss))
 fun has_solver name ss =
   let fun named {name=name',...} = name = name'
@@ -786,17 +775,13 @@ fun set_term_ord term_ord = strategy_op (SET_TERM_ORD_EVENT (SOME term_ord))
 
 (* Deleting an absent looper is a no-op; only the exported [del_looper]
    warns about it. *)
-fun has_looper_id id ss =
-  List.exists (fn entry => same_looper_id entry id)
-    (#loopers (strategy_of ss))
-
 fun del_looper_id_quiet id ss =
   if has_looper_id id ss then strategy_op (DEL_LOOPER_EVENT id) ss else ss
 
 fun del_looper_quiet name = del_looper_id_quiet (OrdinaryLooper,name)
 
 fun del_looper name ss =
-  if has_looper name ss then del_looper_quiet name ss
+  if has_looper_id (OrdinaryLooper,name) ss then del_looper_quiet name ss
   else (HOL_WARNING "simpLib" "del_looper" ("No looper called " ^ name); ss)
 
 fun remove_solver name ss =
@@ -819,14 +804,17 @@ fun add_split th =
            apply=K (splitLib.SPLIT_TAC [th])}))
   end
 
+fun strip_namespace prefix = Lib.total (Lib.unprefix prefix)
+
 fun del_split name ss =
   let
     val ids =
-      if String.isPrefix "split " name then
-        [(SplitLooper false,String.extract (name,6,NONE))]
-      else if String.isPrefix "split_asm " name then
-        [(SplitLooper true,String.extract (name,10,NONE))]
-      else [(SplitLooper false,name),(SplitLooper true,name)]
+      case strip_namespace "split " name of
+          SOME base => [(SplitLooper false,base)]
+        | NONE =>
+          case strip_namespace "split_asm " name of
+              SOME base => [(SplitLooper true,base)]
+            | NONE => [(SplitLooper false,name),(SplitLooper true,name)]
   in
     List.foldl (fn (id,result) => del_looper_id_quiet id result) ss ids
   end
@@ -877,14 +865,6 @@ datatype exclusion_target =
   | ExcludeSolver of string
   | ExcludeSplits of string list
   | ExcludeCase of string
-
-fun strip_namespace prefix name =
-  if String.isPrefix prefix name
-  then SOME (String.extract (name,size prefix,NONE))
-  else NONE
-
-fun ordinary_looper_exists name ss =
-  has_looper_id (OrdinaryLooper,name) ss
 
 (* Membership in the split and case display spaces, rather than the lists
    themselves: every Excl asks these questions, and enumerating the case
@@ -967,7 +947,7 @@ fun resolve_exclusion {report,pending} ss original =
     | NONE =>
       case strip_namespace "looper:" original of
           SOME name =>
-            if ordinary_looper_exists name ss
+            if has_looper_id (OrdinaryLooper,name) ss
             then SOME (ExcludeLooper (OrdinaryLooper,name))
             else no_target original
         | NONE =>
@@ -1001,7 +981,7 @@ fun resolve_exclusion {report,pending} ss original =
                           (case rule_target original of
                                SOME excl => [ExcludeRule excl]
                              | NONE => []) @
-                          (if ordinary_looper_exists original ss
+                          (if has_looper_id (OrdinaryLooper,original) ss
                            then [ExcludeLooper (OrdinaryLooper,original)]
                            else []) @
                           (if has_solver original ss
@@ -1521,12 +1501,10 @@ fun clear_rules (SS s) =
    end
    fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
      val net = (raise context) handle CONVNET net => net
+     val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
+                 term_ord=term_ord}
    in
-     tryfind
-       (fn {ci = {conval,...},...} =>
-           conval {solver=solver, stack=stack, cond_depth=cond_depth,
-                   term_ord=term_ord} tm)
-             (lookup tm net)
+     tryfind (fn {ci = {conval,...},...} => conval ctxt tm) (lookup tm net)
    end
    in CONTEXT_REDUCER
         {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
@@ -1568,20 +1546,12 @@ fun clear_rules (SS s) =
  fun traversedata_for_ss ss = traversedata_for_ss_prepared ss [];
  fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ss [];
 
- fun SIMP_QCONV_WITH_PREPARED_CONTEXT
-       ss prepared reducer_context solver_context =
-   Traverse.TRAVERSE_WITH_CONTEXT
-     (xtraversedata_for_ss_prepared ss prepared)
-     {reducer_context=reducer_context,solver_context=solver_context};
-
- fun SIMP_QCONV_CHILD_FIRST_WITH_PREPARED_CONTEXT
-       charge ss prepared reducer_context solver_context =
-   Traverse.CHILD_FIRST_TRAVERSE_WITH_CONTEXT charge
-     (xtraversedata_for_ss_prepared ss prepared)
+ fun SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context =
+   Traverse.TRAVERSE_WITH_CONTEXT traversal xdata
      {reducer_context=reducer_context,solver_context=solver_context};
 
  fun SIMP_QCONV ss thms =
-   SIMP_QCONV_WITH_PREPARED_CONTEXT ss [] thms [];
+   SIMP_QCONV_WITH_XDATA ParentFirst (xtraversedata_for_ss ss) thms [];
 
 val Cong   = markerLib.Cong
 val Split  = markerLib.Split
@@ -1707,8 +1677,8 @@ fun SIMP_CONV_CHILD_FIRST charge ss l tm =
   let val (ss', l') = process_tags ss l
   in
     TRY_CONV
-      (SIMP_QCONV_CHILD_FIRST_WITH_PREPARED_CONTEXT
-         charge ss' [] l' []) tm
+      (SIMP_QCONV_WITH_XDATA
+         (ChildFirst charge) (xtraversedata_for_ss ss') l' []) tm
   end;
 
 fun SIMP_PROVE ss l t =
@@ -1753,42 +1723,17 @@ fun reconcile_hyps asl th =
     Lib.itlist ADD_ASSUM asl (Lib.itlist replace_hyp (hyp th) th)
   end
 
-datatype simp_traversal = Ordinary | ChildFirst of (unit -> unit)
-
-fun simp_conv_with_prepared_context_for traversal
-      ss prepared reducer_context solver_context =
+fun simp_conv_with_xdata traversal xdata reducer_context solver_context =
   TRY_CONV
-    (case traversal of
-         Ordinary =>
-           SIMP_QCONV_WITH_PREPARED_CONTEXT
-             ss prepared reducer_context solver_context
-       | ChildFirst charge =>
-           SIMP_QCONV_CHILD_FIRST_WITH_PREPARED_CONTEXT
-             charge ss prepared reducer_context solver_context)
+    (SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context)
 
-fun simp_conv_with_prepared_context
-      ss prepared reducer_context solver_context =
-  simp_conv_with_prepared_context_for Ordinary
-    ss prepared reducer_context solver_context
-
-fun simp_rule_with_prepared_context_for traversal
-      ss prepared reducer_context solver_context =
-  CONV_RULE
-    (simp_conv_with_prepared_context_for traversal
-       ss prepared reducer_context solver_context)
-
-fun final_solver_tac traversal prepared mode ss
+fun final_solver_tac traversal xdata mode ss
       reducer_context solver_context =
   let
     val s = strategy_of ss
     val solvers =
       if #safe mode then #safe_solvers s else #unsafe_solvers s
-    val prover_ctxt =
-      {stack=[], context_thms=reducer_context @ solver_context,
-       recurse=QCONV
-         (simp_conv_with_prepared_context_for traversal
-            ss prepared reducer_context solver_context)}
-    fun solve_with ({solve,...} : Traverse.ssolver) (asl,w) =
+    fun solve_with prover_ctxt ({solve,...} : Traverse.ssolver) (asl,w) =
       let
         val th = solve prover_ctxt w
         val _ = aconv (concl th) w orelse
@@ -1797,7 +1742,17 @@ fun final_solver_tac traversal prepared mode ss
         ACCEPT_TAC (reconcile_hyps asl th) (asl,w)
       end
   in
-    FIRST (map solve_with solvers)
+    if null solvers then NO_TAC
+    else
+      let
+        val prover_ctxt =
+          {stack=[], context_thms=reducer_context @ solver_context,
+           recurse=QCONV
+             (simp_conv_with_xdata traversal xdata
+                reducer_context solver_context)}
+      in
+        FIRST (map (solve_with prover_ctxt) solvers)
+      end
   end
 
 fun looper_tac ss =
@@ -1825,8 +1780,9 @@ fun bounded_looper rounds tac g =
           end
     | NONE => tac g
 
-fun gen_simp_tac_with_prepared traversal
-      prepared solver_context (mode : simp_mode) ss ths =
+(* [xdata_of] compiles a marker-adjusted simpset for traversal. *)
+fun gen_simp_tac_with_xdata traversal
+      xdata_of solver_context (mode : simp_mode) ss ths =
   fn g =>
     let
       val rounds = ref (getlimit ss)
@@ -1836,12 +1792,13 @@ fun gen_simp_tac_with_prepared traversal
             let
               val (invocation_ss,context_thms) =
                 process_tags ss tagged_thms
+              val xdata = xdata_of invocation_ss
               val rewr_tac =
                 CONV_TAC
-                  (simp_conv_with_prepared_context_for traversal
-                     invocation_ss prepared context_thms solver_context)
+                  (simp_conv_with_xdata traversal xdata
+                     context_thms solver_context)
               val solve_tac =
-                final_solver_tac traversal prepared mode invocation_ss
+                final_solver_tac traversal xdata mode invocation_ss
                                  context_thms solver_context
               val loop_tac =
                 bounded_looper rounds (looper_tac invocation_ss)
@@ -1857,13 +1814,11 @@ fun gen_simp_tac_with_prepared traversal
       markerLib.process_taclist_then_recur {arg=ths} start g
     end
 
-fun gen_simp_tac solver_context =
-  gen_simp_tac_with_prepared Ordinary [] solver_context
-
-fun GEN_SIMP_TAC mode = gen_simp_tac [] mode
+fun GEN_SIMP_TAC mode =
+  gen_simp_tac_with_xdata ParentFirst xtraversedata_for_ss [] mode
 
 fun GEN_SIMP_TAC_CHILD_FIRST charge mode =
-  gen_simp_tac_with_prepared (ChildFirst charge) [] [] mode
+  gen_simp_tac_with_xdata (ChildFirst charge) xtraversedata_for_ss [] mode
 
 fun ASM_SIMP_TAC ss = GEN_SIMP_TAC {safe=false} ss
 val asm_simp_tac = ASM_SIMP_TAC
@@ -1995,7 +1950,7 @@ fun then_annotated (goals,validation) next ctxt =
 fun rotate_assumption cfg =
     popper_of cfg (BF_ASSUME_TAC (not (#oldestfirst cfg)))
 
-fun counted_psr traversal cfg ss prepared solver_context g ctxt =
+fun counted_psr traversal cfg ss xdata_of solver_context g ctxt =
     let
       (* [simplify] runs inside a callback, so what it learns about the
          assumption is smuggled out through this cell. *)
@@ -2007,8 +1962,9 @@ fun counted_psr traversal cfg ss prepared solver_context g ctxt =
                val (invocation_ss,reducer_context) =
                  process_asm_tags ss asms
                val simplified =
-                 simp_rule_with_prepared_context_for traversal
-                   invocation_ss prepared reducer_context solver_context th
+                 CONV_RULE
+                   (simp_conv_with_xdata traversal (xdata_of invocation_ss)
+                      reducer_context solver_context) th
                val ordinary =
                  BF_ASSUME_TAC
                    (not (#oldestfirst cfg)) simplified popped_goal ctxt
@@ -2031,7 +1987,7 @@ fun counted_psr traversal cfg ss prepared solver_context g ctxt =
       (map (fn goal => (goal,info)) goals,validation)
     end
 
-fun counted_pass traversal cfg ss prepared solver_context initial_k
+fun counted_pass traversal cfg ss xdata_of solver_context initial_k
                  (g as (asl,_)) ctxt =
     let
       val n = length asl
@@ -2048,7 +2004,7 @@ fun counted_pass traversal cfg ss prepared solver_context initial_k
                     val info = {changed=false,structural=false}
                 in (map (fn g => (g,info)) goals,validation)
                 end
-              else counted_psr traversal cfg ss prepared
+              else counted_psr traversal cfg ss xdata_of
                      solver_context goal ctxt
             fun next {changed,structural} =
               let
@@ -2084,9 +2040,6 @@ fun gen_global_simp_tac_with traversal mode
                (* Each local marker-adjusted simpset compiles these prepared
                   rules while retaining their invocation-wide controls. *)
                val ss = ss1
-               val conclusion_tac =
-                 gen_simp_tac_with_prepared
-                   traversal prepared solver_context mode ss []
 
                fun strip_implications (g as (_,w)) ctxt =
                  if can boolSyntax.dest_imp_only w then
@@ -2095,21 +2048,21 @@ fun gen_global_simp_tac_with traversal mode
 
                val pop_head_mp = POP_ASSUM MP_TAC
 
-               (* The scan below asks its question of every suffix of the
-                  assumption list, and compiling the traversal state costs
-                  a pass over the invocation's rules.  Markers among the
-                  assumptions are the exception, so the suffixes almost
-                  always present the same simpset and get the same state
-                  back; the state is a function of that simpset and of the
-                  prepared rules alone, so one built for an earlier suffix
-                  serves a later one and the scan stays linear.
+               (* Every assumption, fixpoint pass, conclusion pass and
+                  rebuild-scan suffix asks for a traversal state, and
+                  compiling one costs a pass over the invocation's rules.
+                  Markers among the assumptions are the exception, so the
+                  requests almost always present the same simpset and get
+                  the same state back; the state is a function of that
+                  simpset and of the prepared rules alone, so one built for
+                  an earlier request serves a later one.
 
                   The key test is [Portable.pointer_eq], so the hits
                   depend on [process_tags0] handing back its argument
                   simpset itself on the marker-free path.  A version that
                   rebuilt the simpset unconditionally would turn every hit
-                  into a miss and make this scan quadratic, with no test
-                  failing. *)
+                  into a miss and recompile the rules on every request, with
+                  no test failing. *)
                val traversal_cache = ref NONE
                fun traversal_state invocation_ss =
                  let
@@ -2128,6 +2081,10 @@ fun gen_global_simp_tac_with traversal mode
                          then data else build ()
                      | NONE => build ()
                  end
+
+               val conclusion_tac =
+                 gen_simp_tac_with_xdata
+                   traversal traversal_state solver_context mode ss []
 
                fun root_rewrite_of context target =
                  let
@@ -2187,7 +2144,7 @@ fun gen_global_simp_tac_with traversal mode
                fun fixpoint k goal ctxt =
                  let
                    val pass as (annotated,validation) =
-                     counted_pass traversal base ss prepared
+                     counted_pass traversal base ss traversal_state
                        solver_context k goal ctxt
                    val unchanged =
                      same_goals (map #1 annotated,[goal])
@@ -2253,7 +2210,7 @@ fun gen_global_simp_tac_with traversal mode
     )
 
 fun GEN_GLOBAL_SIMP_TAC mode =
-  gen_global_simp_tac_with Ordinary mode
+  gen_global_simp_tac_with ParentFirst mode
 
 fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST charge mode =
   gen_global_simp_tac_with (ChildFirst charge) mode

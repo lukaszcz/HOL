@@ -99,19 +99,19 @@ fun strip_ncomb 0 A tm = SOME (tm, A)
  * strip_imp_until_rel
  *
  * this function strips implications off a sub-congruence until
- * it is a relation (i.e. the rhs is one of the genvars we have chosen)
+ * it is a relation (i.e. the rhs is a variable [is_result] accepts)
  * or it is no longer an implication (in which case the sub-congruence
  * is really a side condition.
  *
  * ---------------------------------------------------------------------*)
 
 
-fun strip_imp_until_rel genvars tm =
-  if is_var (rand tm) andalso op_mem aconv (rand tm) genvars then ([],tm)
+fun strip_imp_until_rel is_result tm =
+  if is_var (rand tm) andalso is_result (rand tm) then ([],tm)
   else
     let
       val (x,y) = dest_imp tm
-      val (z,w) = strip_imp_until_rel genvars y
+      val (z,w) = strip_imp_until_rel is_result y
     in
       (x::z,w)
     end handle HOL_ERR _ => ([],tm);
@@ -184,9 +184,31 @@ let
    val vars = free_vars (concl congrule')
    fun reprocess_flag assum = if is_var assum then false else true;
    val reprocess_flags =
-       map (map reprocess_flag o fst o strip_imp_until_rel vars o
+       map (map reprocess_flag o fst o
+            strip_imp_until_rel (fn v => op_mem aconv v vars) o
             #2 o strip_forall)
            conditions
+
+   (* Instantiating a rule variable can leave a beta redex in the rebuilt
+      term only where it is an operator or sits inside the arguments of a
+      non-constant operator (a matched variable may become an abstraction
+      that applies it); a variable renamed by the matcher is not a rule
+      variable and is always reduced. *)
+   fun applicable tm acc =
+       case dest_term tm of
+           COMB _ =>
+             let val (f,args) = strip_comb tm
+             in
+               if is_const f then itlist applicable args acc
+               else map (#1 o dest_var) (free_vars tm) @ acc
+             end
+         | LAMB (_,b) => applicable b acc
+         | _ => acc
+   val applied_names = applicable (rand conc) []
+   val var_names = map (#1 o dest_var) vars
+   fun may_leave_redex genv =
+       let val name = #1 (dest_var genv)
+       in not (mem name var_names) orelse mem name applied_names end
 
 in fn relation =>
   if not (samerel rel relation) andalso not (same_const rel relation) then
@@ -204,8 +226,22 @@ in fn relation =>
        later antecedent does.  Reading them off the conclusion alone
        would call an antecedent that states an intermediate result --
        the rebuilt form a further antecedent consumes -- a side
-       condition, and hand a term with an unknown in it to the solver. *)
-    val genvars = filter is_genvar (free_vars (concl match_thm))
+       condition, and hand a term with an unknown in it to the solver.
+       The right-hand side answers the usual case cheaply; the whole
+       conclusion, which holds the traversed term, is scanned at most once
+       and only for a genvar the right-hand side lacks. *)
+    val rhs_genvars = filter is_genvar (free_vars (rand conc))
+    val all_genvars = ref NONE
+    fun conclusion_genvars () =
+        case !all_genvars of
+            SOME gvs => gvs
+          | NONE =>
+              let val gvs = filter is_genvar (free_vars (concl match_thm))
+              in all_genvars := SOME gvs; gvs end
+    fun is_result v =
+        is_genvar v andalso
+        (op_mem aconv v rhs_genvars orelse
+         op_mem aconv v (conclusion_genvars ()))
 
     (* this function does all the work of solving the side conditions
        one by one.  The integer is the number of side conditions
@@ -223,15 +259,14 @@ in fn relation =>
               in the congruence (see subterms above) then it
               is a congruence condition *)
             val (ho_vars,bdy1) = strip_forall condition
-            val (assums,bdy2) = strip_imp_until_rel genvars bdy1
+            val (assums,bdy2) = strip_imp_until_rel is_result bdy1
             val (oper,args) = let
               val (f,x,y) = dest_binop bdy2
             in
               (f,[x,y])
             end handle HOL_ERR _ => strip_comb bdy2
         in
-          if length args = 2 andalso
-             op_mem aconv (#1 (strip_comb (el 2 args))) genvars
+          if length args = 2 andalso is_result (#1 (strip_comb (el 2 args)))
           then let
                 val (orig,res) = case args of [x,y] => (x,y) | _ => raise Bind
                 val genv = #1 (strip_comb res)
@@ -272,9 +307,11 @@ in fn relation =>
                 val gen_abs_res =
                     funpow (length ho_vars) rator (rand (concl abs_rewr_thm))
                 val spec_match_thm = SPEC gen_abs_res (GEN genv match_thm)
+                val rebuilt_thm = MP spec_match_thm gen_abs_rewr_thm
                 val new_match_thm =
-                    beta_reduce_rebuilt (n - 1) gen_abs_res
-                      (MP spec_match_thm gen_abs_rewr_thm)
+                    if may_leave_redex genv then
+                      beta_reduce_rebuilt (n - 1) gen_abs_res rebuilt_thm
+                    else rebuilt_thm
             in process_subgoals (n-1,new_match_thm,more_flags,
                                  allunch andalso not changed)
             end
