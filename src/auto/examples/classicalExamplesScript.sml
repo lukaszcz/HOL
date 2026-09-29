@@ -32,8 +32,6 @@ Ancestors
 Libs
   clasetLib classicalLib
 
-open clasetLib classicalLib
-
 (* --------------------------------------------------------------------------
    FAST_TAC on propositional logic.  These need genuinely classical
    reasoning -- there is no intuitionistic proof of any of them.

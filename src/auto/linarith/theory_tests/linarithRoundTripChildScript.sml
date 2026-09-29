@@ -1,8 +1,6 @@
 Theory linarithRoundTripChild
 Ancestors
   linarithRoundTripBase
-Libs
-  linarithData
 
 fun fail message =
   raise Fail ("linarith round-trip child test: " ^ message)

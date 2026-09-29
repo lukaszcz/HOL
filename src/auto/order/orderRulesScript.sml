@@ -1,10 +1,6 @@
 Theory orderRules
 Ancestors
   relation
-Libs
-  BasicProvers metisLib
-
-open relationTheory
 
 (* The chaining steps an order refutation is built from.  Each is stated
    with its axioms as separate antecedents, because the procedure has

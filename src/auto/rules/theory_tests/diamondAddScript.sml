@@ -2,9 +2,7 @@ Theory diamondAdd
 Ancestors
   diamondRoot
 Libs
-  BasicProvers clasetLib
-
-open clasetLib
+  clasetLib
 
 val selim_spec =
   {kind = clasetRules.Elim, safe = true, prio = NONE};

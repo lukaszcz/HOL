@@ -4,14 +4,6 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_iff (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = "iff", args = [], thm = saved}
-  end
-
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
 
@@ -106,13 +98,10 @@ Proof
   >> metis_tac[]
 QED
 
-val _ =
-  List.app export_iff
-    [("FDOM_EQ_EMPTY_AUTO", finite_mapTheory.FDOM_EQ_EMPTY),
-     ("FDOM_EQ_EMPTY_SYM_AUTO",
-      finite_mapTheory.FDOM_EQ_EMPTY_SYM),
-     ("FEMPTY_SUBMAP_AUTO", finite_mapTheory.FEMPTY_SUBMAP),
-     ("SUBMAP_ANTISYM_AUTO", finite_mapTheory.SUBMAP_ANTISYM)]
+Theorem FDOM_EQ_EMPTY_AUTO[iff] = finite_mapTheory.FDOM_EQ_EMPTY
+Theorem FDOM_EQ_EMPTY_SYM_AUTO[iff] = finite_mapTheory.FDOM_EQ_EMPTY_SYM
+Theorem FEMPTY_SUBMAP_AUTO[iff] = finite_mapTheory.FEMPTY_SUBMAP
+Theorem SUBMAP_ANTISYM_AUTO[iff] = finite_mapTheory.SUBMAP_ANTISYM
 
 val _ =
   List.app (clasetLib.export_rule sintro_spec)

@@ -2,9 +2,7 @@ Theory diamondChild
 Ancestors
   diamondAdd diamondRemove
 Libs
-  HolKernel clasetLib
-
-open clasetLib
+  clasetLib
 
 fun fail message = raise Fail ("diamond claset test: " ^ message)
 

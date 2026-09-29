@@ -2,8 +2,9 @@ Theory splitAttr[bare]
 Libs
   HolKernel Parse boolLib simpLib BasicProvers splitLib boolSimps
 
-val pick_def = new_definition
-  ("pick_def", ``pick b (x:'a) y = if b then x else y``)
+Definition pick_def:
+  pick b (x:'a) y = if b then x else y
+End
 
 Theorem attr_pick_split[split]:
   !P. P (pick b (x:'a) y) <=>
@@ -35,9 +36,8 @@ val _ =
         else raise Fail "[split] exclusion changed the residual goal"
     | _ => raise Fail "[split] exclusion did not suppress the split"
 
-val attr_pick_split_used = store_thm
-  ("attr_pick_split_used",
-   ``pick b (x:'a) y = x \/ pick b x y = y``,
-   SIMP_TAC (bool_ss ++ split_ss) [])
-
-val _ = export_theory ()
+Theorem attr_pick_split_used:
+  pick b (x:'a) y = x \/ pick b x y = y
+Proof
+  SIMP_TAC (bool_ss ++ split_ss) []
+QED

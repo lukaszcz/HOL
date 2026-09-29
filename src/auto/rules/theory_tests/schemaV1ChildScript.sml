@@ -4,8 +4,6 @@ Ancestors
 Libs
   clasetLib
 
-open clasetLib
-
 fun fail message =
   raise Fail ("claset schema-v1 compatibility test: " ^ message)
 

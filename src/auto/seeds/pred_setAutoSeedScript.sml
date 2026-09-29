@@ -4,17 +4,6 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_at attr (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = attr, args = [], thm = saved}
-  end
-
-fun export_iff entry = export_at "iff" entry
-fun export_simp entry = export_at "simp" entry
-
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
 
@@ -40,31 +29,33 @@ Proof
 QED
 
 (* src/HOL/Set.thy:566-1088 @ f7e02b7e *)
-val _ =
-  List.app export_iff
-    [(* src/HOL/Set.thy:566-569 @ f7e02b7e.  This one declaration carries
+(* src/HOL/Set.thy:566-569 @ f7e02b7e.  This one declaration carries
         both empty_iff and emptyE: stated as a negation, the [iff]
         machinery derives the safe elimination that closes a branch on
         a membership in the empty set.  The tableau leg has no simpset,
         so without the rule it can only carry such a membership along. *)
-     ("NOT_IN_EMPTY_AUTO", pred_setTheory.NOT_IN_EMPTY),
-     ("EMPTY_SUBSET_AUTO", pred_setTheory.EMPTY_SUBSET),
-     ("UNIV_NOT_EMPTY_AUTO", pred_setTheory.UNIV_NOT_EMPTY),
-     ("IN_POW_AUTO", pred_setTheory.IN_POW),
-     ("IN_COMPL_AUTO", pred_setTheory.IN_COMPL),
-     ("IN_INTER_AUTO", pred_setTheory.IN_INTER),
-     ("IN_UNION_AUTO", pred_setTheory.IN_UNION),
-     ("IN_DIFF_AUTO", pred_setTheory.IN_DIFF),
-     ("IN_INSERT_AUTO", pred_setTheory.IN_INSERT),
-     ("IN_SING_AUTO", pred_setTheory.IN_SING),
-     ("EQUAL_SING_AUTO", pred_setTheory.EQUAL_SING),
-     ("INSERT_EQ_SING_AUTO", pred_setTheory.INSERT_EQ_SING),
-     ("FORALL_IN_IMAGE_AUTO", pred_setTheory.FORALL_IN_IMAGE),
-     ("IMAGE_EQ_EMPTY_1_AUTO",
-      GEN_ALL (CONJUNCT1 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))),
-     ("IMAGE_EQ_EMPTY_2_AUTO",
-      GEN_ALL (CONJUNCT2 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))),
-     ("PSUBSET_DEF_AUTO", pred_setTheory.PSUBSET_DEF)]
+Theorem NOT_IN_EMPTY_AUTO[iff] = pred_setTheory.NOT_IN_EMPTY
+
+Theorem EMPTY_SUBSET_AUTO[iff] = pred_setTheory.EMPTY_SUBSET
+Theorem UNIV_NOT_EMPTY_AUTO[iff] = pred_setTheory.UNIV_NOT_EMPTY
+Theorem IN_POW_AUTO[iff] = pred_setTheory.IN_POW
+Theorem IN_COMPL_AUTO[iff] = pred_setTheory.IN_COMPL
+Theorem IN_INTER_AUTO[iff] = pred_setTheory.IN_INTER
+Theorem IN_UNION_AUTO[iff] = pred_setTheory.IN_UNION
+Theorem IN_DIFF_AUTO[iff] = pred_setTheory.IN_DIFF
+Theorem IN_INSERT_AUTO[iff] = pred_setTheory.IN_INSERT
+Theorem IN_SING_AUTO[iff] = pred_setTheory.IN_SING
+Theorem EQUAL_SING_AUTO[iff] = pred_setTheory.EQUAL_SING
+Theorem INSERT_EQ_SING_AUTO[iff] = pred_setTheory.INSERT_EQ_SING
+Theorem FORALL_IN_IMAGE_AUTO[iff] = pred_setTheory.FORALL_IN_IMAGE
+
+Theorem IMAGE_EQ_EMPTY_1_AUTO[iff] =
+  GEN_ALL (CONJUNCT1 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))
+
+Theorem IMAGE_EQ_EMPTY_2_AUTO[iff] =
+  GEN_ALL (CONJUNCT2 (SPEC_ALL pred_setTheory.IMAGE_EQ_EMPTY))
+
+Theorem PSUBSET_DEF_AUTO[iff] = pred_setTheory.PSUBSET_DEF
 
 (* src/HOL/Set.thy:598-601 @ f7e02b7e.  Isabelle states UNIV_I as [simp]
    and declares the classical half separately as an unsafe [intro] --
@@ -118,8 +109,7 @@ Proof
 QED
 
 (* src/HOL/Set.thy:1746-1752 @ f7e02b7e. *)
-val _ =
-  export_iff ("IN_PREIMAGE_AUTO", pred_setTheory.IN_PREIMAGE)
+Theorem IN_PREIMAGE_AUTO[iff] = pred_setTheory.IN_PREIMAGE
 
 (* src/HOL/Set.thy:484,493,501,505 @ f7e02b7e.  Isabelle states the
    membership reading of a subset as [subset_eq] (:505) and declares it
@@ -267,18 +257,14 @@ QED
    is the bound of: it applies the function to the name rather than
    leaving the equation that names it.  [ball_simps]'s is already
    carried, as FORALL_IN_IMAGE_AUTO above. *)
-val _ =
-  List.app export_simp
-    [("IN_BIGUNION_IMAGE_AUTO", pred_setTheory.IN_BIGUNION_IMAGE),
-     ("EXISTS_IN_IMAGE_AUTO", pred_setTheory.EXISTS_IN_IMAGE)]
+Theorem IN_BIGUNION_IMAGE_AUTO[simp] = pred_setTheory.IN_BIGUNION_IMAGE
+Theorem EXISTS_IN_IMAGE_AUTO[simp] = pred_setTheory.EXISTS_IN_IMAGE
 
 (* src/HOL/Finite_Set.thy:158-532 @ f7e02b7e.  HOL4 COUNT k is
    Isabelle's set comprehension {n | n < k}. *)
-val _ =
-  List.app export_iff
-    [("FINITE_COUNT_AUTO", pred_setTheory.FINITE_COUNT),
-     ("FINITE_UNION_AUTO", pred_setTheory.FINITE_UNION),
-     ("FINITE_POW_AUTO", pred_setTheory.FINITE_POW_EQN)]
+Theorem FINITE_COUNT_AUTO[iff] = pred_setTheory.FINITE_COUNT
+Theorem FINITE_UNION_AUTO[iff] = pred_setTheory.FINITE_UNION
+Theorem FINITE_POW_AUTO[iff] = pred_setTheory.FINITE_POW_EQN
 
 (* src/HOL/Finite_Set.thy:300 @ f7e02b7e.  [finite_imageI] is a [simp]
    rule and an unsafe [intro]; pred_set states the same content as
@@ -294,13 +280,11 @@ QED
 
 (* src/HOL/Relation.thy:19-1426 @ f7e02b7e.  Isabelle r O s maps to
    HOL4 s O r because the two libraries print composition oppositely. *)
-val _ =
-  List.app export_iff
-    [("EMPTY_REL_AUTO", relationTheory.EMPTY_REL_DEF),
-     ("RUNIV_AUTO", relationTheory.RUNIV),
-     ("RINTER_AUTO", relationTheory.RINTER),
-     ("RUNION_AUTO", relationTheory.RUNION),
-     ("REL_COMP_AUTO", relationTheory.O_DEF),
-     ("REL_INV_AUTO", relationTheory.inv_DEF),
-     ("IN_RDOM_AUTO", relationTheory.IN_RDOM),
-     ("IN_RRANGE_AUTO", relationTheory.IN_RRANGE)]
+Theorem EMPTY_REL_AUTO[iff] = relationTheory.EMPTY_REL_DEF
+Theorem RUNIV_AUTO[iff] = relationTheory.RUNIV
+Theorem RINTER_AUTO[iff] = relationTheory.RINTER
+Theorem RUNION_AUTO[iff] = relationTheory.RUNION
+Theorem REL_COMP_AUTO[iff] = relationTheory.O_DEF
+Theorem REL_INV_AUTO[iff] = relationTheory.inv_DEF
+Theorem IN_RDOM_AUTO[iff] = relationTheory.IN_RDOM
+Theorem IN_RRANGE_AUTO[iff] = relationTheory.IN_RRANGE

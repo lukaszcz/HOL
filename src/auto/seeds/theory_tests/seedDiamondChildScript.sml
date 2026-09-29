@@ -2,7 +2,7 @@ Theory seedDiamondChild
 Ancestors
   seedDiamondLeft seedDiamondRight
 Libs
-  clasetLib clasimpLib
+  clasimpLib
 
 fun fail message = raise Fail ("seed diamond merge: " ^ message)
 

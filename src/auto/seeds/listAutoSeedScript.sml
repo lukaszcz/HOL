@@ -4,33 +4,25 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_at attr (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = attr, args = [], thm = saved}
-  end
-
-fun export_iff entry = export_at "iff" entry
-
 (* src/HOL/List.thy:874-993 @ f7e02b7e *)
-val _ =
-  List.app export_iff
-    [("LENGTH_EQ_0_AUTO", listTheory.LENGTH_EQ_0),
-     ("LENGTH_NON_NIL_AUTO", listTheory.LENGTH_NON_NIL),
-     ("APPEND_EQ_NIL_LEFT_AUTO", CONJUNCT1 listTheory.APPEND_eq_NIL),
-     ("APPEND_EQ_NIL_RIGHT_AUTO", CONJUNCT2 listTheory.APPEND_eq_NIL),
-     ("APPEND_EQ_SELF_1_AUTO", CONJUNCT1 listTheory.APPEND_EQ_SELF),
-     ("APPEND_EQ_SELF_2_AUTO",
-      CONJUNCT1 (CONJUNCT2 listTheory.APPEND_EQ_SELF)),
-     ("APPEND_EQ_SELF_3_AUTO",
-      CONJUNCT1 (CONJUNCT2 (CONJUNCT2 listTheory.APPEND_EQ_SELF))),
-     ("APPEND_EQ_SELF_4_AUTO",
-      CONJUNCT2 (CONJUNCT2 (CONJUNCT2 listTheory.APPEND_EQ_SELF))),
-     ("APPEND_11_LEFT_AUTO", CONJUNCT1 listTheory.APPEND_11),
-     ("APPEND_11_RIGHT_AUTO", CONJUNCT2 listTheory.APPEND_11),
-     ("SNOC_11_AUTO", listTheory.SNOC_11)]
+Theorem LENGTH_EQ_0_AUTO[iff] = listTheory.LENGTH_EQ_0
+Theorem LENGTH_NON_NIL_AUTO[iff] = listTheory.LENGTH_NON_NIL
+Theorem APPEND_EQ_NIL_LEFT_AUTO[iff] = CONJUNCT1 listTheory.APPEND_eq_NIL
+Theorem APPEND_EQ_NIL_RIGHT_AUTO[iff] = CONJUNCT2 listTheory.APPEND_eq_NIL
+Theorem APPEND_EQ_SELF_1_AUTO[iff] = CONJUNCT1 listTheory.APPEND_EQ_SELF
+
+Theorem APPEND_EQ_SELF_2_AUTO[iff] =
+  CONJUNCT1 (CONJUNCT2 listTheory.APPEND_EQ_SELF)
+
+Theorem APPEND_EQ_SELF_3_AUTO[iff] =
+  CONJUNCT1 (CONJUNCT2 (CONJUNCT2 listTheory.APPEND_EQ_SELF))
+
+Theorem APPEND_EQ_SELF_4_AUTO[iff] =
+  CONJUNCT2 (CONJUNCT2 (CONJUNCT2 listTheory.APPEND_EQ_SELF))
+
+Theorem APPEND_11_LEFT_AUTO[iff] = CONJUNCT1 listTheory.APPEND_11
+Theorem APPEND_11_RIGHT_AUTO[iff] = CONJUNCT2 listTheory.APPEND_11
+Theorem SNOC_11_AUTO[iff] = listTheory.SNOC_11
 
 (* src/HOL/List.thy:1106,1115 @ f7e02b7e.  [map_map] and [map_eq_conv]
    are simp there and declared to no simpset here.  Without the first a
@@ -41,21 +33,19 @@ val _ =
    they read such an equality as the pointwise equality of the two
    functions on the list's elements, which the seeded pair quantifier
    takes apart where the elements are pairs. *)
-val _ =
-  List.app (export_at "simp")
-    [("MAP_MAP_o_AUTO", listTheory.MAP_MAP_o),
-     ("MAP_EQ_f_AUTO", listTheory.MAP_EQ_f)]
+Theorem MAP_MAP_o_AUTO[simp] = listTheory.MAP_MAP_o
+Theorem MAP_EQ_f_AUTO[simp] = listTheory.MAP_EQ_f
 
 (* src/HOL/List.thy:1123-1292 @ f7e02b7e *)
-val _ =
-  List.app export_iff
-    [("MAP_EQ_NIL_LEFT_AUTO",
-      GEN_ALL (CONJUNCT1 (SPEC_ALL listTheory.MAP_EQ_NIL))),
-     ("MAP_EQ_NIL_RIGHT_AUTO",
-      GEN_ALL (CONJUNCT2 (SPEC_ALL listTheory.MAP_EQ_NIL))),
-     ("MAP_EQ_CONS_AUTO", listTheory.MAP_EQ_CONS),
-     ("REVERSE_EQ_NIL_AUTO", listTheory.REVERSE_EQ_NIL),
-     ("REVERSE_11_AUTO", listTheory.REVERSE_11)]
+Theorem MAP_EQ_NIL_LEFT_AUTO[iff] =
+  GEN_ALL (CONJUNCT1 (SPEC_ALL listTheory.MAP_EQ_NIL))
+
+Theorem MAP_EQ_NIL_RIGHT_AUTO[iff] =
+  GEN_ALL (CONJUNCT2 (SPEC_ALL listTheory.MAP_EQ_NIL))
+
+Theorem MAP_EQ_CONS_AUTO[iff] = listTheory.MAP_EQ_CONS
+Theorem REVERSE_EQ_NIL_AUTO[iff] = listTheory.REVERSE_EQ_NIL
+Theorem REVERSE_11_AUTO[iff] = listTheory.REVERSE_11
 
 (* src/HOL/List.thy:1222 @ f7e02b7e.  [rev_append] is simp there and
    declared to no simpset here.  HOL4's ambient REVERSE rules take the
@@ -63,21 +53,19 @@ val _ =
    it past an append, so a law stated on an appended list is out of
    reach behind one -- a fold over an append stays whole where the
    source's simpset has already split it. *)
-val _ =
-  List.app (export_at "simp")
-    [("REVERSE_APPEND_AUTO", listTheory.REVERSE_APPEND)]
+Theorem REVERSE_APPEND_AUTO[simp] = listTheory.REVERSE_APPEND
 
 (* src/HOL/List.thy:3014-3042,6917-6970 @ f7e02b7e *)
-val _ =
-  List.app export_iff
-    [("LIST_REL_NIL_LEFT_AUTO",
-      GEN_ALL (CONJUNCT1 (SPEC_ALL listTheory.LIST_REL_NIL))),
-     ("LIST_REL_NIL_RIGHT_AUTO",
-      GEN_ALL (CONJUNCT2 (SPEC_ALL listTheory.LIST_REL_NIL))),
-     ("LIST_REL_CONS1_AUTO", listTheory.LIST_REL_CONS1),
-     ("LIST_REL_CONS2_AUTO", listTheory.LIST_REL_CONS2),
-     ("EVERY_APPEND_AUTO", listTheory.EVERY_APPEND),
-     ("EVERY_MEM_AUTO", listTheory.EVERY_MEM)]
+Theorem LIST_REL_NIL_LEFT_AUTO[iff] =
+  GEN_ALL (CONJUNCT1 (SPEC_ALL listTheory.LIST_REL_NIL))
+
+Theorem LIST_REL_NIL_RIGHT_AUTO[iff] =
+  GEN_ALL (CONJUNCT2 (SPEC_ALL listTheory.LIST_REL_NIL))
+
+Theorem LIST_REL_CONS1_AUTO[iff] = listTheory.LIST_REL_CONS1
+Theorem LIST_REL_CONS2_AUTO[iff] = listTheory.LIST_REL_CONS2
+Theorem EVERY_APPEND_AUTO[iff] = listTheory.EVERY_APPEND
+Theorem EVERY_MEM_AUTO[iff] = listTheory.EVERY_MEM
 
 (* src/HOL/List.thy:1351 @ f7e02b7e.  [set_filter] reads a membership in
    a filtered list as the membership in the list and then the predicate;
@@ -114,9 +102,7 @@ QED
    below, which read the inner walk's elements through the seeded
    MEM_FILTER_AUTO, so nothing reaches the rule that writes two walks as
    one. *)
-val _ =
-  export_at "simp"
-    ("FILTER_APPEND_DISTRIB_AUTO", listTheory.FILTER_APPEND_DISTRIB)
+Theorem FILTER_APPEND_DISTRIB_AUTO[simp] = listTheory.FILTER_APPEND_DISTRIB
 
 Theorem FILTER_NONE_AUTO[simp]:
   !P l. EVERY (\item. ~P item) l ==> FILTER P l = []
@@ -173,7 +159,7 @@ QED
    witness-guessing goal the unsafe reading was chosen for, runs to its
    budget under both classes and is a shortfall of its own either
    way. *)
-val _ = export_at "simp" ("MEM_FLAT_AUTO", listTheory.MEM_FLAT)
+Theorem MEM_FLAT_AUTO[simp] = listTheory.MEM_FLAT
 
 (* The set reading of the same source rule, which the membership
    reading does not cover: a flattened list also stands as a set of its
@@ -317,10 +303,8 @@ QED
    equation and the nil/nil instance of the other two, so a zip against a
    list empty on one side only stays whole.  Both general equations are
    conjuncts of ZIP_def. *)
-val _ =
-  List.app (export_at "simp")
-    [("ZIP_NIL_LEFT_AUTO", CONJUNCT1 listTheory.ZIP_def),
-     ("ZIP_NIL_RIGHT_AUTO", CONJUNCT1 (CONJUNCT2 listTheory.ZIP_def))]
+Theorem ZIP_NIL_LEFT_AUTO[simp] = CONJUNCT1 listTheory.ZIP_def
+Theorem ZIP_NIL_RIGHT_AUTO[simp] = CONJUNCT1 (CONJUNCT2 listTheory.ZIP_def)
 
 (* src/HOL/List.thy:2749 @ f7e02b7e.  [zip_append] is simp there and
    undeclared here: HOL4 states the same fact as rich_list's ZIP_APPEND,
@@ -344,17 +328,14 @@ QED
    [map_snd_zip] and [nth_zip] are simp there and undeclared here; HOL4's
    MAP_ZIP carries the two composed forms as well, which Isabelle reaches
    by rewriting under the map. *)
-val _ =
-  List.app (export_at "simp")
-    [("MAP_ZIP_AUTO", listTheory.MAP_ZIP),
-     ("EL_ZIP_AUTO", listTheory.EL_ZIP)]
+Theorem MAP_ZIP_AUTO[simp] = listTheory.MAP_ZIP
+Theorem EL_ZIP_AUTO[simp] = listTheory.EL_ZIP
 
 (* src/HOL/List.thy:1956 @ f7e02b7e.  [nth_mem] is simp there and
    declared to no simpset here, so a goal that indexes a list and then
    asks about membership stops at [MEM (EL index xs) xs] with the index
    bound already in hand. *)
-val _ =
-  export_at "simp" ("EL_MEM_AUTO", listTheory.EL_MEM)
+Theorem EL_MEM_AUTO[simp] = listTheory.EL_MEM
 
 (* src/HOL/List.thy:1830,1966-1969,2328,2337 @ f7e02b7e.  The rest of
    the indexing family, which Isabelle declares simp entire so that an
@@ -365,20 +346,17 @@ val _ =
    constructor it was built with.  EL_LUPDATE is the two Isabelle
    update rules in one conditional equation; the zip case is seeded
    above with map_snd_zip. *)
-val _ =
-  List.app (export_at "simp")
-    [("EL_MAP_AUTO", listTheory.EL_MAP),
-     ("EL_LUPDATE_AUTO", listTheory.EL_LUPDATE),
-     ("EL_TAKE_AUTO", listTheory.EL_TAKE),
-     ("EL_DROP_AUTO", listTheory.EL_DROP)]
+Theorem EL_MAP_AUTO[simp] = listTheory.EL_MAP
+Theorem EL_LUPDATE_AUTO[simp] = listTheory.EL_LUPDATE
+Theorem EL_TAKE_AUTO[simp] = listTheory.EL_TAKE
+Theorem EL_DROP_AUTO[simp] = listTheory.EL_DROP
 
 (* src/HOL/List.thy:2247 @ f7e02b7e.  [take_take] is simp there and
    declared to no simpset here, so a take of a take stays two walks
    down the list and the length that decides it is never formed.  Its
    [drop_drop] counterpart is seeded in rich_listAutoSeed, which
    states it. *)
-val _ =
-  export_at "simp" ("TAKE_TAKE_MIN_AUTO", listTheory.TAKE_TAKE_MIN)
+Theorem TAKE_TAKE_MIN_AUTO[simp] = listTheory.TAKE_TAKE_MIN
 
 (* src/HOL/List.thy:2209 @ f7e02b7e.  [length_take] is simp there and
    is unconditional, the length being the smaller of the two.  HOL4
@@ -400,11 +378,9 @@ QED
    introduces [DROP n (l1 ++ l2)] leaves it and the subtracted length
    standing.  [take_append] is rich_list$TAKE_APPEND and is seeded
    with it. *)
-val _ =
-  List.app (export_at "simp")
-    [("DROP_APPEND_AUTO", listTheory.DROP_APPEND),
-     ("TAKE_LENGTH_TOO_LONG_AUTO", listTheory.TAKE_LENGTH_TOO_LONG),
-     ("DROP_LENGTH_TOO_LONG_AUTO", listTheory.DROP_LENGTH_TOO_LONG)]
+Theorem DROP_APPEND_AUTO[simp] = listTheory.DROP_APPEND
+Theorem TAKE_LENGTH_TOO_LONG_AUTO[simp] = listTheory.TAKE_LENGTH_TOO_LONG
+Theorem DROP_LENGTH_TOO_LONG_AUTO[simp] = listTheory.DROP_LENGTH_TOO_LONG
 
 (* src/HOL/List.thy @ f7e02b7e, the takeWhile and dropWhile primrecs.
    Both are primrec there, so both recursion equations are simp.  HOL4
@@ -413,8 +389,7 @@ val _ =
    pre-existing simpset -- so the two halves of one decomposition
    reduce differently: a goal that walks a list drops its dropWhile
    away and keeps the takeWhile whole. *)
-val _ =
-  export_at "simp" ("takeWhile_AUTO", listTheory.takeWhile_def)
+Theorem takeWhile_AUTO[simp] = listTheory.takeWhile_def
 
 (* src/HOL/List.thy @ f7e02b7e, the results about those two that
    Isabelle declares simp: takeWhile_dropWhile_id, dropWhile_append1,
@@ -427,17 +402,14 @@ val _ =
    no element satisfies; HOL4's theorem of that name is the equivalence
    Isabelle calls dropWhile_eq_self_iff and leaves undeclared, so it is
    not seeded here. *)
-val _ =
-  List.app (export_at "simp")
-    [("takeWhile_APPEND_dropWhile_AUTO",
-      listTheory.takeWhile_APPEND_dropWhile),
-     ("dropWhile_APPEND_EVERY_AUTO", listTheory.dropWhile_APPEND_EVERY),
-     ("dropWhile_APPEND_EXISTS_AUTO", listTheory.dropWhile_APPEND_EXISTS)]
+Theorem takeWhile_APPEND_dropWhile_AUTO[simp] =
+  listTheory.takeWhile_APPEND_dropWhile
 
-val _ =
-  List.app export_iff
-    [("takeWhile_id_AUTO", listTheory.takeWhile_id),
-     ("dropWhile_eq_nil_AUTO", listTheory.dropWhile_eq_nil)]
+Theorem dropWhile_APPEND_EVERY_AUTO[simp] = listTheory.dropWhile_APPEND_EVERY
+Theorem dropWhile_APPEND_EXISTS_AUTO[simp] = listTheory.dropWhile_APPEND_EXISTS
+
+Theorem takeWhile_id_AUTO[iff] = listTheory.takeWhile_id
+Theorem dropWhile_eq_nil_AUTO[iff] = listTheory.dropWhile_eq_nil
 
 (* src/HOL/List.thy:2559 @ f7e02b7e.  [set_takeWhileD] reads a member of
    a takeWhile as a member of the list that satisfies the predicate, and
@@ -473,9 +445,7 @@ QED
    That obligation is true but the audit's fixed prover stack does not
    close it, and an unproven safety claim is not worth the little the
    declaration would add. *)
-val _ =
-  export_at "intro"
-    ("SHORTLEX_TRANSITIVE_AUTO", listTheory.SHORTLEX_transitive)
+Theorem SHORTLEX_TRANSITIVE_AUTO[intro] = listTheory.SHORTLEX_transitive
 
 (* src/HOL/List.thy:254-257 @ f7e02b7e.  [successively] is a fun there,
    so its three defining equations are simp by construction, and it is
@@ -492,8 +462,7 @@ val _ =
    successively over a cons left an [adjacent] on that cons with nothing
    to take it apart.  The rule recurses into the tail, so it terminates
    where the list does. *)
-val _ =
-  export_at "simp" ("adjacent_iff_AUTO", listTheory.adjacent_iff)
+Theorem adjacent_iff_AUTO[simp] = listTheory.adjacent_iff
 
 (* src/HOL/List.thy:8499-8500 @ f7e02b7e.  Isabelle's [null] is defined
    by [null_iff], and that equation carries [simp]: a null is a list
@@ -504,8 +473,7 @@ val _ =
    the other.  HOL4's own NULL rules ([NULL_MAP], [NULL_APPEND],
    [NULL_GENLIST]) push a NULL through a list operation, which is not
    the step that is missing: they leave a NULL. *)
-val _ =
-  export_at "simp" ("NULL_EQ_AUTO", listTheory.NULL_EQ)
+Theorem NULL_EQ_AUTO[simp] = listTheory.NULL_EQ
 
 (* src/HOL/List.thy:70-71,262-264 @ f7e02b7e.  [last] and [remdups] are
    primrec there, so the cons equation of each is simp and reads a walk
@@ -516,10 +484,8 @@ val _ =
    and declares neither.  What it declares of LAST instead
    ([LAST_CONS]) settles a tail spelled [] or spelled as a cons and
    leaves a variable tail alone, and of nub only the empty list. *)
-val _ =
-  List.app (export_at "simp")
-    [("LAST_CONS_COND_AUTO", listTheory.LAST_CONS_cond),
-     ("NUB_CONS_AUTO", CONJUNCT2 listTheory.nub_def)]
+Theorem LAST_CONS_COND_AUTO[simp] = listTheory.LAST_CONS_cond
+Theorem NUB_CONS_AUTO[simp] = CONJUNCT2 listTheory.nub_def
 
 (* src/HOL/List.thy:1007 @ f7e02b7e.  [tl_append2] is simp there: a tail
    of an append reads as the tail of the first list wherever that list
@@ -548,5 +514,4 @@ Proof
   REWRITE_TAC [GSYM listTheory.SNOC_APPEND, listTheory.FRONT_SNOC]
 QED
 
-val _ =
-  export_at "simp" ("APPEND_FRONT_LAST_AUTO", listTheory.APPEND_FRONT_LAST)
+Theorem APPEND_FRONT_LAST_AUTO[simp] = listTheory.APPEND_FRONT_LAST

@@ -2,8 +2,6 @@ Theory linarithSeed
 Ancestors
   arithmetic
 
-open arithmeticTheory
-
 Theorem NUM_LT_ADD2:
   !m n p q. m < p /\ n < q ==> m + n < p + q
 Proof

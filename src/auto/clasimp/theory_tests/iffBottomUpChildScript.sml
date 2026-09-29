@@ -2,9 +2,7 @@ Theory iffBottomUpChild
 Ancestors
   iffBottomUp
 Libs
-  BasicProvers clasimpLib iffTestSupport
-
-open iffTestSupport
+  iffTestSupport
 
 fun fail message = failer "iff bottom-up child test" message
 

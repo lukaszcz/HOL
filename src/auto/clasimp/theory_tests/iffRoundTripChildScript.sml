@@ -2,9 +2,7 @@ Theory iffRoundTripChild
 Ancestors
   iffRoundTripBase
 Libs
-  HolKernel BasicProvers clasimpLib iffTestSupport
-
-open clasimpLib iffTestSupport
+  clasimpLib iffTestSupport
 
 fun fail message = failer "iff round-trip child test" message
 

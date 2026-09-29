@@ -2,10 +2,7 @@ Theory batchAddChild
 Ancestors
   batchAddBase
 Libs
-  HolKernel clasetLib
-
-open clasetRules clasetLib
-open batchAddBaseTheory
+  clasetRules clasetLib
 
 fun fail message = raise Fail ("ADD-only claset batch test: " ^ message)
 

@@ -1,6 +1,6 @@
-open HolKernel Parse boolLib bossLib sortingTheory relationTheory
-
-val _ = new_theory "parityTranslation"
+Theory parityTranslation
+Ancestors
+  sorting relation integer string alist set_relation monoid bit
 
 (* Isabelle/HOL src/HOL/List.thy:5911-5974.  Unlike HOL4's adjacent
    SORTED predicate, sorted_wrt relates every earlier element to every
@@ -9024,5 +9024,3 @@ Theorem source_gr0_conv_Suc:
 Proof
   Cases >> simp[]
 QED
-
-val _ = export_theory ()

@@ -23,19 +23,11 @@ Proof
   Cases_on `x` >> simp []
 QED
 
-fun export_iff (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = "iff", args = [], thm = saved}
-  end
-
 (* src/HOL/Option.thy:105-111 @ f7e02b7e *)
-val _ =
-  List.app export_iff
-    [("OPTION_MAP_EQ_NONE_AUTO",
-      CONJUNCT1 optionTheory.OPTION_MAP_EQ_NONE_both_ways),
-     ("NONE_EQ_OPTION_MAP_AUTO",
-      CONJUNCT2 optionTheory.OPTION_MAP_EQ_NONE_both_ways),
-     ("OPTION_MAP_EQ_SOME_AUTO", optionTheory.OPTION_MAP_EQ_SOME)]
+Theorem OPTION_MAP_EQ_NONE_AUTO[iff] =
+  CONJUNCT1 optionTheory.OPTION_MAP_EQ_NONE_both_ways
+
+Theorem NONE_EQ_OPTION_MAP_AUTO[iff] =
+  CONJUNCT2 optionTheory.OPTION_MAP_EQ_NONE_both_ways
+
+Theorem OPTION_MAP_EQ_SOME_AUTO[iff] = optionTheory.OPTION_MAP_EQ_SOME

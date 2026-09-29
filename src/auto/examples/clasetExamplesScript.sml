@@ -28,8 +28,6 @@ Ancestors
 Libs
   clasetLib classicalLib aesopLib
 
-open clasetLib classicalLib aesopLib
-
 (* --------------------------------------------------------------------------
    A tiny running example: predicates as sets.  [subp s t] is the subset
    relation on predicates and [inhab s] means [s] is inhabited.

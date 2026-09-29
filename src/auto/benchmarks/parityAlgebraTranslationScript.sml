@@ -1,8 +1,6 @@
-open HolKernel Parse boolLib bossLib
-
-open ringTheory
-
-val _ = new_theory "parityAlgebraTranslation"
+Theory parityAlgebraTranslation
+Ancestors
+  ring integer
 
 (* Isabelle/HOL f7e02b7e1f311d9c41ee075d22ff788b3e0de6db,
    src/HOL/Examples/Groebner_Examples.thy:61-95.  Isabelle's [idom]
@@ -336,22 +334,14 @@ fun instantiate_Z theorem =
   SPEC ``Z : int ring``
     (INST_TYPE [Type.alpha |-> intSyntax.int_ty] theorem)
 
-val source_idom_simultaneous_squares_int =
-  save_thm
-    ("source_idom_simultaneous_squares_int",
-     SIMP_RULE (srw_ss ()) integer_instance_rewrites
-       (instantiate_Z source_idom_simultaneous_squares))
+Theorem source_idom_simultaneous_squares_int =
+  SIMP_RULE (srw_ss ()) integer_instance_rewrites
+    (instantiate_Z source_idom_simultaneous_squares)
 
-val source_idom_four_square_int =
-  save_thm
-    ("source_idom_four_square_int",
-     SIMP_RULE (srw_ss ()) integer_instance_rewrites
-       (instantiate_Z source_idom_four_square))
+Theorem source_idom_four_square_int =
+  SIMP_RULE (srw_ss ()) integer_instance_rewrites
+    (instantiate_Z source_idom_four_square)
 
-val source_idom_eight_square_int =
-  save_thm
-    ("source_idom_eight_square_int",
-     SIMP_RULE (srw_ss ()) integer_instance_rewrites
-       (instantiate_Z source_idom_eight_square))
-
-val _ = export_theory ()
+Theorem source_idom_eight_square_int =
+  SIMP_RULE (srw_ss ()) integer_instance_rewrites
+    (instantiate_Z source_idom_eight_square)

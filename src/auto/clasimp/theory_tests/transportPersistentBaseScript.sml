@@ -2,7 +2,7 @@ Theory transportPersistentBase
 Ancestors
   arithmetic
 Libs
-  BasicProvers clasimpLib
+  clasimpLib
 
 Definition transport_persistent_p_def:
   transport_persistent_p (n:num) <=> n = 0

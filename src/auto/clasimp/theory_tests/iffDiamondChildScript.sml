@@ -2,9 +2,7 @@ Theory iffDiamondChild
 Ancestors
   iffDiamondAdd iffDiamondRemove
 Libs
-  HolKernel BasicProvers clasimpLib iffTestSupport
-
-open clasimpLib iffTestSupport
+  iffTestSupport
 
 fun fail message = failer "iff diamond test" message
 

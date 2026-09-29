@@ -31,8 +31,6 @@ Ancestors
 Libs
   linarithLib intLinarith realLinarith ratLinarith
 
-open linarithLib
-
 (* --------------------------------------------------------------------------
    Natural numbers.  Truncated subtraction, MIN/MAX, SUC and literal
    MOD/DIV are all understood.

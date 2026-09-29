@@ -2,7 +2,7 @@ Theory schemaV1Base
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasetLib
+  clasetLib
 
 Theorem schema_v1_intro[intro=64]:
   !p q. p ==> p \/ q

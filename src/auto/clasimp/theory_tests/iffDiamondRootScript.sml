@@ -2,7 +2,7 @@ Theory iffDiamondRoot
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasimpLib
+  clasimpLib
 
 Definition iff_diamond_root_def:
   iff_diamond_root (p : bool) = p

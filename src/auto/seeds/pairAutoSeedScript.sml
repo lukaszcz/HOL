@@ -4,16 +4,6 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_at attr (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = attr, args = [], thm = saved}
-  end
-
-fun export_iff entry = export_at "iff" entry
-
 (* src/HOL/Product_Type.thy:520,524 @ f7e02b7e.  [split_paired_All] and
    [split_paired_Ex] are simp there and declared to no simpset here, so
    a quantifier over a pair is never taken apart.  Declared [iff] and
@@ -21,10 +11,8 @@ fun export_iff entry = export_at "iff" entry
    translated goals quantify over pairs constantly -- measured, that
    stalls the list/map family.  As an iff rule it reaches the classical
    search, which applies it to a goal rather than to every subterm. *)
-val _ =
-  List.app export_iff
-    [("FORALL_PROD_AUTO", pairTheory.FORALL_PROD),
-     ("EXISTS_PROD_AUTO", pairTheory.EXISTS_PROD)]
+Theorem FORALL_PROD_AUTO[iff] = pairTheory.FORALL_PROD
+Theorem EXISTS_PROD_AUTO[iff] = pairTheory.EXISTS_PROD
 
 (* src/HOL/Product_Type.thy:604-637 @ f7e02b7e *)
 Theorem UNCURRY_AUTO_IFF[iff]:
@@ -60,6 +48,6 @@ QED
    [wf_lex_prod] is declared unsafe against Isabelle's [intro!]: the
    inversion seedAudit owes a safe intro is WF (R LEX Q) ==> WF R /\
    WF Q, which the audit's prover stack does not close. *)
-val _ = export_at "simp" ("LEX_APPLIED_AUTO", pairTheory.LEX_DEF_THM)
+Theorem LEX_APPLIED_AUTO[simp] = pairTheory.LEX_DEF_THM
 
-val _ = export_at "intro" ("WF_LEX_AUTO", pairTheory.WF_LEX)
+Theorem WF_LEX_AUTO[intro] = pairTheory.WF_LEX

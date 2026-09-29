@@ -2,9 +2,7 @@ Theory iffBatchChild
 Ancestors
   iffBatch
 Libs
-  HolKernel BasicProvers clasimpLib iffTestSupport
-
-open iffTestSupport
+  iffTestSupport
 
 fun fail message = failer "iff batch child test" message
 

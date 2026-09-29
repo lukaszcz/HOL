@@ -2,7 +2,7 @@ Theory schemaV2Base
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasetLib
+  clasetLib
 
 Theorem schema_v2_forward[forward=73]:
   !p q. p /\ q ==> q

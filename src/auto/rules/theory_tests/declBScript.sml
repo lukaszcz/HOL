@@ -2,9 +2,7 @@ Theory declB
 Ancestors
   declA
 Libs
-  HolKernel clasetLib
-
-open clasetLib
+  clasetLib
 
 fun fail message = raise Fail ("declB claset test: " ^ message)
 

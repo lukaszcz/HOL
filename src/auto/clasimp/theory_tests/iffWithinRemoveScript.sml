@@ -2,9 +2,7 @@ Theory iffWithinRemove
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasimpLib iffTestSupport
-
-open iffTestSupport
+  clasimpLib iffTestSupport
 
 Definition iff_within_remove_def:
   iff_within_remove (p : bool) = p

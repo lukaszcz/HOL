@@ -1,8 +1,6 @@
 Theory linarithDiamondChild
 Ancestors
   linarithDiamondAdd linarithDiamondRemove
-Libs
-  linarithData
 
 fun fail message =
   raise Fail ("linarith diamond test: " ^ message)

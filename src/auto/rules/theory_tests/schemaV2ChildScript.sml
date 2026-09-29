@@ -4,8 +4,6 @@ Ancestors
 Libs
   clasetLib
 
-open clasetLib
-
 fun fail message =
   raise Fail ("claset schema-v2 reload test: " ^ message)
 

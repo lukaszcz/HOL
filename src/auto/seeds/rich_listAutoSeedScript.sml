@@ -4,16 +4,6 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-fun export_at attr (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = attr, args = [], thm = saved}
-  end
-
-fun export_iff entry = export_at "iff" entry
-
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE}
 val dest_spec =
@@ -22,30 +12,24 @@ val forward_spec =
   {kind = clasetRules.Forward, safe = false, prio = SOME 10}
 
 (* List.thy analogues and documented HOL4-local structural judgments. *)
-val _ =
-  List.app export_iff
-    [("EVERY_REVERSE_AUTO", rich_listTheory.EVERY_REVERSE),
-     ("MEM_REPLICATE_AUTO", rich_listTheory.MEM_REPLICATE),
-     ("REPLICATE_NIL_AUTO", rich_listTheory.REPLICATE_NIL),
-     ("LIST_REL_REVERSE_EQ_AUTO",
-      rich_listTheory.LIST_REL_REVERSE_EQ),
-     ("APPEND_EQ_APPEND_EQ_AUTO",
-      rich_listTheory.APPEND_EQ_APPEND_EQ),
-     ("LENGTH_FILTER_LEQ_AUTO", rich_listTheory.LENGTH_FILTER_LEQ),
-     ("FILTER_ALL_DISTINCT_AUTO", listTheory.FILTER_ALL_DISTINCT)]
+Theorem EVERY_REVERSE_AUTO[iff] = rich_listTheory.EVERY_REVERSE
+Theorem MEM_REPLICATE_AUTO[iff] = rich_listTheory.MEM_REPLICATE
+Theorem REPLICATE_NIL_AUTO[iff] = rich_listTheory.REPLICATE_NIL
+Theorem LIST_REL_REVERSE_EQ_AUTO[iff] = rich_listTheory.LIST_REL_REVERSE_EQ
+Theorem APPEND_EQ_APPEND_EQ_AUTO[iff] = rich_listTheory.APPEND_EQ_APPEND_EQ
+Theorem LENGTH_FILTER_LEQ_AUTO[iff] = rich_listTheory.LENGTH_FILTER_LEQ
+Theorem FILTER_ALL_DISTINCT_AUTO[iff] = listTheory.FILTER_ALL_DISTINCT
 
 (* src/HOL/List.thy:2256 @ f7e02b7e.  [drop_drop] is simp there and
    declared to no simpset here; HOL4 states the unconditional equation
    as DROP_DROP_T.  Its [take_take] half is seeded in listAutoSeed. *)
-val _ =
-  export_at "simp" ("DROP_DROP_T_AUTO", rich_listTheory.DROP_DROP_T)
+Theorem DROP_DROP_T_AUTO[simp] = rich_listTheory.DROP_DROP_T
 
 (* src/HOL/List.thy:3231 @ f7e02b7e.  [fold_append] is simp there and
    declared to no simpset here.  HOL4 reverses [rev (xs @ ys)]
    ambiently but leaves the fold over the result alone, so a goal that
    folds across an append stops one rewrite short. *)
-val _ =
-  export_at "simp" ("FOLDL_APPEND_AUTO", rich_listTheory.FOLDL_APPEND)
+Theorem FOLDL_APPEND_AUTO[simp] = rich_listTheory.FOLDL_APPEND
 
 (* src/HOL/List.thy:1824 @ f7e02b7e.  [nth_append_length] is simp there:
    indexing an append at exactly the left length reaches the right
@@ -54,8 +38,7 @@ val _ =
    conditional halves [nth_append_left] and [_right] are simp in
    neither system; see the rest of the indexing family in
    listAutoSeed. *)
-val _ =
-  export_at "simp" ("EL_LENGTH_APPEND_AUTO", rich_listTheory.EL_LENGTH_APPEND)
+Theorem EL_LENGTH_APPEND_AUTO[simp] = rich_listTheory.EL_LENGTH_APPEND
 
 (* src/HOL/List.thy:1807 @ f7e02b7e.  [nth_Cons_pos] is simp there and
    declared to no simpset here.  It is the constructor the indexing
@@ -65,8 +48,7 @@ val _ =
    EL_CONS, spelling the index below as [PRE n] where a translated goal
    spells it [n - 1]; the seeded step between the two spellings is what
    lets the rule meet such a goal at all. *)
-val _ =
-  export_at "simp" ("EL_CONS_AUTO", rich_listTheory.EL_CONS)
+Theorem EL_CONS_AUTO[simp] = rich_listTheory.EL_CONS
 
 (* src/HOL/List.thy @ f7e02b7e.  [hd_replicate] is simp there and HOL4
    states it nowhere: the walk down a replicate reads its head off the
@@ -87,15 +69,13 @@ QED
    the simplifier's condition solver has no way to discharge
    [MEM (HD l) l], and every rule whose side condition asks for it
    fails to fire. *)
-val _ =
-  export_at "simp" ("HEAD_MEM_AUTO", rich_listTheory.HEAD_MEM)
+Theorem HEAD_MEM_AUTO[simp] = rich_listTheory.HEAD_MEM
 
 (* src/HOL/List.thy @ f7e02b7e.  [take_append] is simp there and
    declared to no simpset here; its [drop_append] counterpart and the
    two length rules that finish the halves are seeded in
    listAutoSeed, which states them. *)
-val _ =
-  export_at "simp" ("TAKE_APPEND_AUTO", rich_listTheory.TAKE_APPEND)
+Theorem TAKE_APPEND_AUTO[simp] = rich_listTheory.TAKE_APPEND
 
 val _ =
   List.app (clasetLib.export_rule sintro_spec)

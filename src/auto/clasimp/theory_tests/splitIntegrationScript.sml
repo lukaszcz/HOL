@@ -1,11 +1,12 @@
 Theory splitIntegration[bare]
+Ancestors
+  option
 Libs
   HolKernel Parse boolLib Tactic Datatype simpLib splitLib boolSimps
-  optionTheory
 
-open HolKernel simpLib splitLib boolSimps
-
-val _ = Datatype`split_local = SplitLocalA | SplitLocalB num`;
+Datatype:
+  split_local = SplitLocalA | SplitLocalB num
+End
 
 Theorem tagged_if_split[split]:
   !P. P (if b then x else y) <=> (b ==> P x) /\ (~b ==> P y)
@@ -57,5 +58,3 @@ val _ =
      aconv (concl local_asm_split_1) (concl local_asm_split_2)
   then ()
   else fail "cached local datatype rules changed"
-
-val _ = export_theory()

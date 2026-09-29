@@ -2,8 +2,6 @@ Theory linarithInst
 Ancestors
   integer real rat
 
-open integerTheory realTheory ratTheory
-
 Theorem INT_LE_LMUL_POS:
   !a b c : int. 0 < c /\ a <= b ==> c * a <= c * b
 Proof

@@ -2,7 +2,7 @@ Theory seedChild
 Ancestors
   pairAutoSeed
 Libs
-  clasetLib clasimpLib
+  clasimpLib
 
 fun fail message = raise Fail ("seed child visibility: " ^ message)
 

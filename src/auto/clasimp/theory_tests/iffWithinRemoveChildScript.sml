@@ -2,9 +2,7 @@ Theory iffWithinRemoveChild
 Ancestors
   iffWithinRemove
 Libs
-  BasicProvers clasimpLib iffTestSupport
-
-open iffTestSupport
+  iffTestSupport
 
 val removed_name = "iffWithinRemove$iff_within_remove_rule"
 

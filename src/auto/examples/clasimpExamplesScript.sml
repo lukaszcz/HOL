@@ -34,8 +34,6 @@ Ancestors
 Libs
   clasetLib clasimpLib
 
-open clasetLib clasimpLib
-
 (* --------------------------------------------------------------------------
    AUTO_TAC: simplification and classical search in one call, so goals
    mixing rewriting (list, option, set membership) with logical steps

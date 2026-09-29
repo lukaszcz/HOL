@@ -2,9 +2,7 @@ Theory iffBatch
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasimpLib iffTestSupport
-
-open iffTestSupport
+  clasimpLib iffTestSupport
 
 Definition iff_batch_one_def:
   iff_batch_one (p : bool) = p

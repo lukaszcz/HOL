@@ -32,8 +32,6 @@ Ancestors
 Libs
   clasetLib tableauLib
 
-open clasetLib tableauLib
-
 (* --------------------------------------------------------------------------
    Propositional goals.
    -------------------------------------------------------------------------- *)

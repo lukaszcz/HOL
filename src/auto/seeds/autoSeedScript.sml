@@ -18,14 +18,6 @@ Proof
   Cases_on `b` >> simp []
 QED
 
-fun export_simp_bottom_up (name, theorem) =
-  let
-    val saved = save_thm (name, theorem)
-  in
-    ThmAttribute.store_at_attribute
-      {name = name, attrname = "simp_bottom_up", args = [], thm = saved}
-  end
-
 (* src/HOL/HOL.thy:1396-1414,1442-1443 @ f7e02b7e.  Isabelle declares
    the twelve miniscoping laws -- [ex_simps] and [all_simps] -- simp, so
    a quantifier whose body has a conjunct, disjunct or side of an
@@ -45,17 +37,31 @@ fun export_simp_bottom_up (name, theorem) =
    where the unmoved quantifier settles it.  Isabelle's innermost-first
    order offers these laws a normalised body always, which is what the
    reducer offers them here. *)
-val _ =
-  List.app export_simp_bottom_up
-    [("BOOL_AUTO_ALL_AND_LEFT", GSYM boolTheory.LEFT_AND_FORALL_THM),
-     ("BOOL_AUTO_ALL_AND_RIGHT", GSYM boolTheory.RIGHT_AND_FORALL_THM),
-     ("BOOL_AUTO_ALL_OR_LEFT", boolTheory.LEFT_FORALL_OR_THM),
-     ("BOOL_AUTO_ALL_OR_RIGHT", boolTheory.RIGHT_FORALL_OR_THM),
-     ("BOOL_AUTO_ALL_IMP_LEFT", boolTheory.LEFT_FORALL_IMP_THM),
-     ("BOOL_AUTO_ALL_IMP_RIGHT", boolTheory.RIGHT_FORALL_IMP_THM),
-     ("BOOL_AUTO_EX_AND_LEFT", boolTheory.LEFT_EXISTS_AND_THM),
-     ("BOOL_AUTO_EX_AND_RIGHT", boolTheory.RIGHT_EXISTS_AND_THM),
-     ("BOOL_AUTO_EX_OR_LEFT", GSYM boolTheory.LEFT_OR_EXISTS_THM),
-     ("BOOL_AUTO_EX_OR_RIGHT", GSYM boolTheory.RIGHT_OR_EXISTS_THM),
-     ("BOOL_AUTO_EX_IMP_LEFT", boolTheory.LEFT_EXISTS_IMP_THM),
-     ("BOOL_AUTO_EX_IMP_RIGHT", boolTheory.RIGHT_EXISTS_IMP_THM)]
+Theorem BOOL_AUTO_ALL_AND_LEFT[simp_bottom_up] =
+  GSYM boolTheory.LEFT_AND_FORALL_THM
+
+Theorem BOOL_AUTO_ALL_AND_RIGHT[simp_bottom_up] =
+  GSYM boolTheory.RIGHT_AND_FORALL_THM
+
+Theorem BOOL_AUTO_ALL_OR_LEFT[simp_bottom_up] = boolTheory.LEFT_FORALL_OR_THM
+Theorem BOOL_AUTO_ALL_OR_RIGHT[simp_bottom_up] = boolTheory.RIGHT_FORALL_OR_THM
+Theorem BOOL_AUTO_ALL_IMP_LEFT[simp_bottom_up] = boolTheory.LEFT_FORALL_IMP_THM
+
+Theorem BOOL_AUTO_ALL_IMP_RIGHT[simp_bottom_up] =
+  boolTheory.RIGHT_FORALL_IMP_THM
+
+Theorem BOOL_AUTO_EX_AND_LEFT[simp_bottom_up] = boolTheory.LEFT_EXISTS_AND_THM
+
+Theorem BOOL_AUTO_EX_AND_RIGHT[simp_bottom_up] =
+  boolTheory.RIGHT_EXISTS_AND_THM
+
+Theorem BOOL_AUTO_EX_OR_LEFT[simp_bottom_up] =
+  GSYM boolTheory.LEFT_OR_EXISTS_THM
+
+Theorem BOOL_AUTO_EX_OR_RIGHT[simp_bottom_up] =
+  GSYM boolTheory.RIGHT_OR_EXISTS_THM
+
+Theorem BOOL_AUTO_EX_IMP_LEFT[simp_bottom_up] = boolTheory.LEFT_EXISTS_IMP_THM
+
+Theorem BOOL_AUTO_EX_IMP_RIGHT[simp_bottom_up] =
+  boolTheory.RIGHT_EXISTS_IMP_THM

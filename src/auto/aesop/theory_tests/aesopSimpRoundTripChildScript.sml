@@ -1,8 +1,6 @@
 Theory aesopSimpRoundTripChild
 Ancestors
   aesopSimpRoundTripBase
-Libs
-  aesopData
 
 fun fail message =
   raise Fail ("aesop_simp round-trip child test: " ^ message)

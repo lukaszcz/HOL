@@ -1,8 +1,6 @@
 Theory linarithDiamondRemove
 Ancestors
   linarithDiamondRoot
-Libs
-  linarithData
 
 (* Both tables are keyed by the "Thy$Name" form, so a retraction spelled
    with a dot has to be normalized before it can delete anything.  Each

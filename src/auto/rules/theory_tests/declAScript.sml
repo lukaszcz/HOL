@@ -2,9 +2,7 @@ Theory declA
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasetLib
-
-open clasetLib
+  clasetLib
 
 val intro_spec =
   {kind = clasetRules.Intro, safe = false, prio = NONE};

@@ -2,7 +2,7 @@ Theory iffDiamondAdd
 Ancestors
   iffDiamondRoot
 Libs
-  BasicProvers clasimpLib
+  clasimpLib
 
 Definition iff_diamond_add_def:
   iff_diamond_add (p : bool) = p

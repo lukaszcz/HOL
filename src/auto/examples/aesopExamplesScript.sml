@@ -32,8 +32,6 @@ Ancestors
 Libs
   clasetLib aesopLib
 
-open clasetLib aesopLib
-
 (* --------------------------------------------------------------------------
    Propositional reasoning.
    -------------------------------------------------------------------------- *)

@@ -1,8 +1,6 @@
 Theory sumAutoSeed
 Ancestors
   sum
-Libs
-  clasetLib clasimpLib
 
 (* src/HOL/Sum_Type.thy:217-225 @ f7e02b7e
    The active upstream rules concern its set coproduct.  HOL4 has the sum

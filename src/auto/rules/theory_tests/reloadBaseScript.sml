@@ -2,7 +2,7 @@ Theory reloadBase
 Ancestors
   clasetSeed
 Libs
-  Datatype clasetLib
+  clasetLib
 
 Datatype:
   reload_datatype = ReloadLeft | ReloadRight bool

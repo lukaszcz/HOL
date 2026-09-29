@@ -1,9 +1,7 @@
 Theory clasetSeed
 
 Libs
-  BasicProvers clasetLib
-
-open clasetLib
+  clasetLib
 
 val sintro_spec =
   {kind = clasetRules.Intro, safe = true, prio = NONE};

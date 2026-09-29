@@ -2,9 +2,7 @@ Theory iffRoundTripBase
 Ancestors
   clasetSeed
 Libs
-  BasicProvers clasimpLib iffTestSupport
-
-open clasimpLib iffTestSupport
+  clasimpLib iffTestSupport
 
 fun fail message = failer "iff round-trip base test" message
 
