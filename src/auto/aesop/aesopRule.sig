@@ -54,10 +54,6 @@ sig
   val default_forward_rule :
     {name : string, phase : rphase, theorem : thm,
      mode : clasetUnify.mode} -> rule
-  val default_forward_rule_budgeted :
-    searchBudget.budget ->
-    {name : string, phase : rphase, theorem : thm,
-     mode : clasetUnify.mode} -> rule
 
   (* The search layer keeps the branch history.  This predicate performs
      its instantiate-then-alpha-equivalence duplicate check. *)
@@ -124,17 +120,10 @@ sig
 
   (* Explicit-context callers have already assembled their invocation
      simpset.  This form preserves that simpset and forwards only the
-     generic simplifier controls to the built-in normalisation rule. *)
+     generic simplifier controls to the built-in normalisation rule.  The
+     claset rules charge [budget] when one is given. *)
   val claset_rules_with :
-    {claset : clasetLib.claset,
-     mode : clasetUnify.mode,
-     conclusion : term,
-     assumptions : term list,
-     qvars : term HOLset.set,
-     simpset : simpLib.simpset,
-     simp_controls : thm list} -> ruleset
-  val claset_rules_with_budget :
-    searchBudget.budget ->
+    searchBudget.budget option ->
     {claset : clasetLib.claset,
      mode : clasetUnify.mode,
      conclusion : term,

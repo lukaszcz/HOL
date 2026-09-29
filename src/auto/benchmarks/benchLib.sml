@@ -751,7 +751,7 @@ fun clean_simpset goal =
   simpLib.filter_rewrites
     (fn (_, theorem) => not (theorem_is_goal goal theorem))
     (clasimpLib.clasimp_ss ())
-  |> simpLib.set_cond_depth 40
+  |> simpLib.set_cond_depth clasimpLib.cond_depth
   |> simpLib.set_safe_solvers [benchmark_safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   |> simpLib.set_subgoaler clasimpLib.witness_subgoaler

@@ -772,7 +772,8 @@ fun cross_neq_forward order =
   in
     Term.aconv
       (Thm.concl
-        (linarithReplay.fwd_prove neq_config assumptions boolSyntax.F))
+        (linarithReplay.fwd_prove_in (Context.snapshot ())
+           neq_config assumptions boolSyntax.F))
       boolSyntax.F
   end
 

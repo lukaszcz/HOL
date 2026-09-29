@@ -1,6 +1,8 @@
 structure blastTerm :> blastTerm =
 struct
 
+  open listUtil
+
   datatype term =
       Const of KernelSig.kernelname * term list
     | Skolem of string * term option ref list
@@ -15,47 +17,6 @@ struct
   infix 9 $
 
   type var = term option ref
-
-  fun mapMeasured checkpoint f [] = []
-    | mapMeasured checkpoint f (item :: items) =
-        (checkpoint (); f item :: mapMeasured checkpoint f items)
-
-  fun appMeasured checkpoint f [] = ()
-    | appMeasured checkpoint f (item :: items) =
-        (checkpoint (); f item; appMeasured checkpoint f items)
-
-  fun existsMeasured checkpoint pred [] = false
-    | existsMeasured checkpoint pred (item :: items) =
-        (checkpoint ();
-         pred item orelse existsMeasured checkpoint pred items)
-
-  fun findMeasured checkpoint pred [] = NONE
-    | findMeasured checkpoint pred (item :: items) =
-        (checkpoint ();
-         if pred item then SOME item else findMeasured checkpoint pred items)
-
-  fun appendMeasured checkpoint [] right = right
-    | appendMeasured checkpoint (item :: items) right =
-        (checkpoint (); item :: appendMeasured checkpoint items right)
-
-  fun partitionMeasured checkpoint pred [] = ([], [])
-    | partitionMeasured checkpoint pred (item :: items) =
-        let
-          val _ = checkpoint ()
-          val (yes, no) = partitionMeasured checkpoint pred items
-        in
-          if pred item then (item :: yes, no) else (yes, item :: no)
-        end
-
-  fun mapPartialMeasured checkpoint f [] = []
-    | mapPartialMeasured checkpoint f (item :: items) =
-        let
-          val _ = checkpoint ()
-          val result = f item
-          val rest = mapPartialMeasured checkpoint f items
-        in
-          case result of NONE => rest | SOME value => value :: rest
-        end
 
   datatype state = State of
     {trail : var list ref,
@@ -217,12 +178,9 @@ struct
                | NONE => add_vars (vs, add_var (v, accumulated)))
       and add_var (v, values) =
         let
-          fun member [] = false
-            | member (w :: ws) =
-                (checkpoint ();
-                 v = w orelse member ws)
+          val member = existsMeasured checkpoint (fn w => v = w) values
         in
-          if member values then values else v :: values
+          if member then values else v :: values
         end
     in
       add_term (term, vars)
@@ -322,10 +280,7 @@ struct
 
   fun loose_bnos_measured checkpoint term =
     let
-      fun member _ [] = false
-        | member value (item :: items) =
-            (checkpoint ();
-             value = item orelse member value items)
+      fun member value = existsMeasured checkpoint (fn item => value = item)
       fun add (item, level, values) =
         (checkpoint ();
          case item of
@@ -400,13 +355,7 @@ struct
              Skolem (name, args) =>
                Skolem (name, vars_in_vars_measured checkpoint args)
            | Const (name, terms) =>
-               let
-                 fun map_terms [] = []
-                   | map_terms (tm :: rest) =
-                       (checkpoint (); normalize tm :: map_terms rest)
-               in
-                 Const (name, map_terms terms)
-               end
+               Const (name, mapMeasured checkpoint normalize terms)
            | Var v =>
                (case !v of NONE => item | SOME body => normalize body)
            | f $ x =>
@@ -560,10 +509,8 @@ struct
            | Abs (_, body) => occ (level + 1) body
            | f $ x => occ level x orelse occ level f
            | _ => false)
-      and occ_vars _ [] = false
-        | occ_vars level (variable :: variables) =
-            (checkpoint ();
-             occ level (Var variable) orelse occ_vars level variables)
+      and occ_vars level =
+        existsMeasured checkpoint (fn variable => occ level (Var variable))
     in
       occ 0
     end

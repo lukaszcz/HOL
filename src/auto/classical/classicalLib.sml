@@ -200,35 +200,25 @@ fun CS_BEST_TAC cs goal ctxt =
 fun CS_SLOW_BEST_TAC cs goal ctxt =
   solve (best_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
 
-fun CS_FIRST_BEST_TAC cs goal ctxt =
-  solve
-    (clasetSearch.BEST_FIRST solved
-      (expand_first (clasetStep.step_in ctxt) cs)) goal ctxt
+fun first_best search cs goal ctxt =
+  solve (search solved (expand_first (clasetStep.step_in ctxt) cs))
+    goal ctxt
 
-(* A bounded turn for the frontier search: the engine's expansion bound is
-   in force only while this runs.  It is a tactic rather than an ntactic
-   because an ntactic's result sequence is lazy, so the search would run
-   after the bound was restored; DETERM forces the first solution here,
-   inside the scope.  A search that reaches the bound reports no solution,
-   which is failure, so a caller can offer the goal to another engine. *)
+fun CS_FIRST_BEST_TAC cs = first_best clasetSearch.BEST_FIRST cs
+
+(* A bounded turn for the frontier search, keeping its first solution.  A
+   search that reaches the bound reports no solution, which is failure, so
+   a caller can offer the goal to another engine. *)
 fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal ctxt =
-  let
-    val () =
-      if expansions >= 1 then ()
-      else
-        (* The search reads a limit of zero as no limit, so a turn of none
-           would be the unbounded search rather than the empty one. *)
-        raise mk_HOL_ERR "classicalLib" "CS_BOUNDED_FIRST_BEST_TAC"
-          "a turn is at least one expansion"
-    val saved = !clasetSearch.node_limit
-    val () = clasetSearch.node_limit := expansions
-    val result =
-      NTactical.DETERM (CS_FIRST_BEST_TAC cs) goal ctxt
-        handle e => (clasetSearch.node_limit := saved; raise e)
-  in
-    clasetSearch.node_limit := saved;
-    result
-  end
+  if expansions >= 1 then
+    NTactical.DETERM
+      (first_best (clasetSearch.BOUNDED_BEST_FIRST expansions) cs)
+      goal ctxt
+  else
+    (* The search reads a limit of zero as no limit, so a turn of none
+       would be the unbounded search rather than the empty one. *)
+    raise mk_HOL_ERR "classicalLib" "CS_BOUNDED_FIRST_BEST_TAC"
+      "a turn is at least one expansion"
 
 type budget_session =
   {frontier : clasetSearch.frontier_session,

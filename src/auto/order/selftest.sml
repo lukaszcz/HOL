@@ -23,9 +23,9 @@ val _ =
          ``!R a b c d.
              relation$transitive R ==> R a b ==> R b c ==> R c d ==> R a d``)
 
-(* This finite chain has more terms than the legacy graph cap.  Its facts
-   are hypotheses, so a larger budgeted search must still reconstruct a
-   theorem with exactly the supplied support. *)
+(* This finite chain has more terms than the unbudgeted graph cap.  Its
+   facts are hypotheses, so a larger budgeted search must still
+   reconstruct a theorem with exactly the supplied support. *)
 val long_order_type = Type.alpha
 val long_order_relation =
   Term.mk_var
@@ -56,7 +56,7 @@ val long_order_target = long_order_edge 0 51
 
 val _ =
   check
-    ("the legacy graph cap clips a finite transitivity chain",
+    ("the unbudgeted graph cap clips a finite transitivity chain",
      fn () =>
        ((ignore
            (orderSolve.prove_with
@@ -68,7 +68,7 @@ fun long_budget limits = searchBudget.create limits
 
 val _ =
   check
-    ("a budgeted invocation proves beyond the legacy graph cap",
+    ("a budgeted invocation proves beyond the unbudgeted graph cap",
      fn () =>
        case orderSolve.prove_with_budget
               (long_budget

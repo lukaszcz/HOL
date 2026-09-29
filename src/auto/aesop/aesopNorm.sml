@@ -43,10 +43,6 @@ fun member_term candidate =
   List.exists
     (fn existing => clasetMeta.meta_compare (candidate, existing) = EQUAL)
 
-fun member_type candidate =
-  List.exists
-    (fn existing => Type.compare (candidate, existing) = EQUAL)
-
 fun new_binding created parent child =
   let
     val parent_bindings = clasetMeta.bindings parent
@@ -55,8 +51,8 @@ fun new_binding created parent child =
       not (member_term meta (map #1 (#terms parent_bindings))) andalso
       not (member_term meta (#terms created))
     fun new_type (tymeta, _) =
-      not (member_type tymeta (map #1 (#types parent_bindings))) andalso
-      not (member_type tymeta (#types created))
+      not (mem tymeta (map #1 (#types parent_bindings))) andalso
+      not (mem tymeta (#types created))
   in
     List.exists new_term (#terms child_bindings) orelse
     List.exists new_type (#types child_bindings)
@@ -109,7 +105,7 @@ fun finish id reversed_records iterations node tree =
         raise ERR "finish" "a norm chain retained more than one goal"
   end
 
-fun normalise_with ctxt charge {max_depth, rules} id tree =
+fun normalise_in ctxt budget {max_depth, rules} id tree =
   if max_depth < 0 then
     raise ERR "normalise" "max_depth must not be negative"
   else
@@ -120,7 +116,10 @@ fun normalise_with ctxt charge {max_depth, rules} id tree =
       fun scan original reversed_records iterations node [] =
             finish id reversed_records iterations node original
         | scan original reversed_records iterations node (rule :: rest) =
-            (charge ();
+            (Option.app
+               (fn meter =>
+                 searchBudget.charge meter searchBudget.Normalization)
+               budget;
              case application ctxt rule node of
                  Inapplicable =>
                    scan original reversed_records iterations node rest
@@ -145,18 +144,5 @@ fun normalise_with ctxt charge {max_depth, rules} id tree =
       else
         scan tree [] 0 (aesopTree.goal_node goal) ordered
     end
-
-fun normalise_in ctxt specification =
-  normalise_with ctxt (fn () => ()) specification
-
-fun normalise specification =
-  normalise_in (Context.snapshot ()) specification
-
-fun normalise_budgeted_in ctxt budget =
-  normalise_with ctxt
-    (fn () => searchBudget.charge budget searchBudget.Normalization)
-
-fun normalise_budgeted budget =
-  normalise_budgeted_in (Context.snapshot ()) budget
 
 end

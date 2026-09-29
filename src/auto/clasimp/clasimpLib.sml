@@ -490,6 +490,8 @@ fun weaken_cond_congruence ss =
            "the simpset carries no CONG fragment to replace",
      weak_cong_ss)
 
+val cond_depth = 40
+
 (* The unsafe side-condition solver added here reaches this simpset only:
    the simplifier offers unsafe solvers to every traversal regardless of
    the safe solvers, so a simpset with a normalisation phase to protect
@@ -498,7 +500,7 @@ fun weaken_cond_congruence ss =
 fun derive_clasimp_ss ss _ =
   ss
   |> weaken_cond_congruence
-  |> simpLib.set_cond_depth 40
+  |> simpLib.set_cond_depth cond_depth
   |> (fn ss' => simpLib.++ (ss', simpLib.split_ss))
   (* ETA_ss is where Isabelle's matcher is and HOL4's is not.  Isabelle
      rewrites under higher-order patterns, which are matched modulo eta,
@@ -594,11 +596,45 @@ fun derive_clasimp_ss ss _ =
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   |> simpLib.set_subgoaler witness_subgoaler
 
-(* This accessor is the only visible part of the private derived-value
-   record.  BasicProvers marks the cache stale whenever srw_ss changes. *)
-val {get = clasimp_ss, get_of = _} =
-  BasicProvers.make_simpset_derived_value
-    "clasimpLib.clasimp_ss" derive_clasimp_ss simpLib.empty_ss
+(* A simpset with its static ORDER and LINARITH decision procedures
+   removed, and which of the two it carried. *)
+type decision_base =
+  {stripped : simpLib.simpset, order : bool, linarith : bool}
+
+(* [remove_ssfrags] replays the simpset's whole history. *)
+fun strip_decisions ss =
+  let
+    val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
+    fun present name = List.exists (fn other => other = name) names
+    val order = present "ORDER"
+    val linarith = present "LINARITH"
+    val removed =
+      simpLib.remove_ssfrags (List.filter present ["ORDER", "LINARITH"]) ss
+      handle Conv.UNCHANGED => ss
+    val stripped =
+      if linarith then
+        (simpLib.remove_solver "lin_arith" removed
+         handle Conv.UNCHANGED => removed)
+      else removed
+  in
+    {stripped = stripped, order = order, linarith = linarith}
+  end
+
+(* The decision base is derived lazily with the simpset it strips, so it is
+   stale exactly when the simpset is.  BasicProvers marks the cache stale
+   whenever srw_ss changes. *)
+val {get = clasimp_derived, get_of = _} =
+  BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
+    (fn ss => fn _ =>
+       let val full = derive_clasimp_ss ss ()
+       in {full = full, decisions = Susp.delay (fn () => strip_decisions full)}
+       end)
+    {full = simpLib.empty_ss,
+     decisions = Susp.delay (fn () => strip_decisions simpLib.empty_ss)}
+
+fun clasimp_ss () = #full (clasimp_derived ())
+
+fun clasimp_decision_base () = Susp.force (#decisions (clasimp_derived ()))
 
 (* Isabelle's asm_full_simp_tac simplifies premises mutually and turns the
    mksimps_pairs decomposition of premises into usable rewrites.
@@ -644,40 +680,28 @@ fun charge_normalization budget () =
 (* Replace the static decision procedures only for this tactic invocation.
    Their legacy fragments remain available to standalone simpsets, while
    this copy shares the caller's budget and explicit proof context. *)
-fun budgeted_decisions ctxt budget ss =
+fun budgeted_decisions_of ctxt budget
+      ({stripped, order, linarith} : decision_base) =
   let
-    val names = simpLib.ssfrag_names_of ss
-    val has_order = List.exists (fn name => name = "ORDER") names
-    val has_linarith =
-      List.exists (fn name => name = "LINARITH") names
-    val removed =
-      simpLib.remove_ssfrags
-        (List.filter
-          (fn name => List.exists (fn present => present = name) names)
-          ["ORDER", "LINARITH"]) ss
-      handle Conv.UNCHANGED => ss
-    val without_solver =
-      if has_linarith then
-        (simpLib.remove_solver "lin_arith" removed
-         handle Conv.UNCHANGED => removed)
-      else removed
     val with_order =
-      if has_order then
-        simpLib.++
-          (without_solver, orderLib.ORDER_ss_budgeted budget)
-      else without_solver
+      if order then
+        simpLib.++ (stripped, orderLib.ORDER_ss_budgeted budget)
+      else stripped
     val with_linarith =
-      if has_linarith then
+      if linarith then
         simpLib.++
           (with_order, linarithLib.LINARITH_ss_budgeted ctxt budget)
       else with_order
   in
-    if has_linarith then
+    if linarith then
       simpLib.add_unsafe_solver
         (linarithLib.linarith_solver_budgeted ctxt budget)
         with_linarith
     else with_linarith
   end
+
+fun budgeted_decisions ctxt budget ss =
+  budgeted_decisions_of ctxt budget (strip_decisions ss)
 
 fun ambient_simp charge safe ss =
   simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
@@ -1210,14 +1234,55 @@ fun retract_iff_declaration kname = retract_persistent_iffs [kname]
 fun install_persistent_iff kname theorem =
   install_persistent_iffs (#Thy kname) [(kname, theorem)]
 
-(* Only the source theorem is persistent; the db is the set of names whose
-   claset and simpset views are currently installed. *)
-fun apply_iff_delta delta db =
+(* The value of every persistent declaration stream here ([iff],
+   [iff_bottom_up], [simp_bottom_up]): the source theorems whose views are
+   currently installed, keyed by their kernel names.  Only the source
+   theorem is persistent. *)
+fun apply_named_delta delta table =
   case delta of
-      ThmSetData.ADD (name, _) =>
-        Symtab.update (persistent_iff_name name, ()) db
+      ThmSetData.ADD (kname, theorem) =>
+        Symtab.update (persistent_iff_name kname, theorem) table
     | ThmSetData.REMOVE name =>
-        Symtab.delete_safe (normalise_iff_name name) db
+        Symtab.delete_safe (normalise_iff_name name) table
+
+(* Resolve against the declarations currently installed rather than against
+   the current theory.  Removing an ancestor's declaration by its plain name
+   is the ordinary case, and defaulting the theory part to the current
+   theory would name nothing and retract nothing, silently.  Resolving here
+   also settles the name before it reaches the delta stream: a descendant
+   theory replays the recorded name, so an unknown or ambiguous one would
+   otherwise be replayed as a no-op by every descendant in turn. *)
+fun resolve_installed
+      {data : thmTable.table thmTable.data, label, caller} name =
+  let
+    val installed = Symtab.keys (#get_global_value data ())
+    fun denotes candidate =
+      candidate = name orelse
+      (case String.fields (equal #"$") candidate of
+           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
+         | _ => false)
+  in
+    case List.filter denotes installed of
+        [resolved] => resolved
+      | [] =>
+          raise ERR caller
+            ("no [" ^ label ^ "] declaration named " ^ name ^
+             " is installed")
+      | candidates =>
+          raise ERR caller
+            ("ambiguous [" ^ label ^ "] name " ^ name ^ ": " ^
+             String.concatWith ", " candidates)
+  end
+
+fun remove_declaration {data, label, caller, apply_to_global} name =
+  let
+    val delta =
+      ThmSetData.REMOVE
+        (resolve_installed {data = data, label = label, caller = caller} name)
+  in
+    #record_delta data delta;
+    #update_global_value data (apply_to_global delta)
+  end
 
 (* Retraction only ever applies to a name the db records as installed.
    Skipping it otherwise avoids a whole-history rebuild of the global
@@ -1237,7 +1302,7 @@ fun apply_iff_to_global delta db =
             retract_if_present
               (persistent_iff_kname (normalise_iff_name name))
   in
-    apply_iff_delta delta db
+    apply_named_delta delta db
   end
 
 (* Loading a theory resolves repeated declarations by their final event.
@@ -1273,7 +1338,7 @@ fun iff_finaliser {thyname} deltas db =
     retract_persistent_iffs stale;
     install_persistent_iffs thyname live;
     List.foldl
-      (fn (delta, current) => apply_iff_delta delta current)
+      (fn (delta, current) => apply_named_delta delta current)
       db deltas
   end
 
@@ -1325,47 +1390,37 @@ val simp_bottom_up_rewrites = ref ([] : thm list)
 
 val bottom_up_installed = ref false
 
-(* Matched as the simplifier matches its own rewrites.  Isabelle's laws of
-   this kind are higher-order patterns -- [all_simps] reads a body as
-   [P x] -- and a first-order matcher offers them only a body that is
-   literally a variable applied to the bound one, so the declaration would
-   be silently inert on every other goal. *)
-val bottom_up_reducer =
-  Traverse.REDUCER
-    {name = SOME bottom_up_fragment_name,
-     initial = bottom_up_context,
-     addcontext = fn (context, _) => context,
-     apply =
-       fn _ => fn term =>
-         Conv.FIRST_CONV
-           (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL)
-              (!bottom_up_rewrites @ !simp_bottom_up_rewrites))
-           term}
-
-val bottom_up_fragment =
+(* A reducer rewriting with [rewrites ()] as the simplifier matches its own
+   rewrites.  Isabelle's laws of this kind are higher-order patterns --
+   [all_simps] reads a body as [P x] -- and a first-order matcher offers
+   them only a body that is literally a variable applied to the bound one,
+   so the rule would be silently inert on every other goal. *)
+fun ho_rewrite_fragment name rewrites =
   simpLib.SSFRAG
-    {name = SOME bottom_up_fragment_name, convs = [], rewrs = [], ac = [],
-     filter = NONE, dprocs = [bottom_up_reducer], congs = []}
-
-(* The same mechanism for a rule installed for one invocation rather than
-   declared: the rewrites are fixed when the fragment is built, where the
-   declaration's reducer reads a table that a later declaration changes.
-   Matched higher-order for the reason the declaration's reducer is. *)
-val normalised_subject_fragment_name = "clasimp-normalised-subject"
-
-fun normalised_subject_fragment rewrites =
-  simpLib.SSFRAG
-    {name = SOME normalised_subject_fragment_name, convs = [], rewrs = [],
-     ac = [], filter = NONE, congs = [],
+    {name = SOME name, convs = [], rewrs = [], ac = [], filter = NONE,
+     congs = [],
      dprocs =
        [Traverse.REDUCER
-          {name = SOME normalised_subject_fragment_name,
+          {name = SOME name,
            initial = bottom_up_context,
            addcontext = fn (context, _) => context,
            apply =
              fn _ => fn term =>
                Conv.FIRST_CONV
-                 (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) rewrites) term}]}
+                 (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) (rewrites ()))
+                 term}]}
+
+val bottom_up_fragment =
+  ho_rewrite_fragment bottom_up_fragment_name
+    (fn () => !bottom_up_rewrites @ !simp_bottom_up_rewrites)
+
+(* The same mechanism for a rule installed for one invocation rather than
+   declared: the rewrites are fixed when the fragment is built, where the
+   declaration's reducer reads a table that a later declaration changes. *)
+val normalised_subject_fragment_name = "clasimp-normalised-subject"
+
+fun normalised_subject_fragment rewrites =
+  ho_rewrite_fragment normalised_subject_fragment_name (K rewrites)
 
 (* The fragment is installed by the first declaration and then stays, inert
    while nothing is declared. *)
@@ -1386,13 +1441,6 @@ fun install_simp_bottom_up_fragment table =
 fun bottom_up_rules kname theorem =
   #rules (iff_declaration (iff_rule_name kname) theorem)
 
-fun apply_bottom_up_delta delta table =
-  case delta of
-      ThmSetData.ADD (kname, theorem) =>
-        Symtab.update (persistent_iff_name kname, theorem) table
-    | ThmSetData.REMOVE name =>
-        Symtab.delete_safe (normalise_iff_name name) table
-
 (* Retraction is addressed to what the table records as installed, and by
    the key it is recorded under: naming a declaration takes a theory to
    resolve a bare name against, and the replay of an ancestor's deltas at
@@ -1412,60 +1460,23 @@ fun apply_bottom_up_to_global delta table =
                (add_iff_rules (bottom_up_rules kname theorem)))
         | ThmSetData.REMOVE name =>
             retract_if_present (normalise_iff_name name)
-    val table = apply_bottom_up_delta delta table
+    val table = apply_named_delta delta table
     val _ = install_bottom_up_fragment table
   in
     table
   end
 
-val _ =
-  if List.exists (equal "iff_bottom_up") (ThmSetData.all_set_types ())
-     orelse ThmAttribute.is_attribute "iff_bottom_up"
-  then
-    raise ERR "registration"
-      "settype or attribute iff_bottom_up already exists"
-  else ()
-
 val bottom_up_data =
-  ThmSetData.export_with_ancestry
-    {settype = "iff_bottom_up",
-     delta_ops =
-       {apply_to_global = apply_bottom_up_to_global,
-        thy_finaliser = NONE,
-        uptodate_delta = K true,
-        initial_value = Symtab.empty,
-        apply_delta = apply_bottom_up_delta}}
+  thmTable.register
+    {settype = "iff_bottom_up", initial_value = Symtab.empty,
+     apply_delta = apply_named_delta,
+     apply_to_global = apply_bottom_up_to_global}
 
-(* As for [iff]: resolve against what is installed, so that a bare name
-   reaches an ancestor's declaration and an unknown one is refused here
-   rather than replayed as a no-op by every descendant. *)
-fun resolve_bottom_up_name name =
-  let
-    val installed = Symtab.keys (#get_global_value bottom_up_data ())
-    fun denotes candidate =
-      candidate = name orelse
-      (case String.fields (equal #"$") candidate of
-           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
-         | _ => false)
-  in
-    case List.filter denotes installed of
-        [resolved] => resolved
-      | [] =>
-          raise ERR "remove_iff_bottom_up"
-            ("no [iff_bottom_up] declaration named " ^ name ^
-             " is installed")
-      | _ =>
-          raise ERR "remove_iff_bottom_up"
-            ("ambiguous [iff_bottom_up] name " ^ name)
-  end
-
-fun remove_iff_bottom_up name =
-  let
-    val delta = ThmSetData.REMOVE (resolve_bottom_up_name name)
-  in
-    #record_delta bottom_up_data delta;
-    #update_global_value bottom_up_data (apply_bottom_up_to_global delta)
-  end
+val remove_iff_bottom_up =
+  remove_declaration
+    {data = bottom_up_data, label = "iff_bottom_up",
+     caller = "remove_iff_bottom_up",
+     apply_to_global = apply_bottom_up_to_global}
 
 (* ------------------------------------------------------------------
    A [simp] whose rewrite may only run once its subject is normalized
@@ -1480,74 +1491,25 @@ fun remove_iff_bottom_up name =
    a side whose own antecedent had not yet been used, and the reading that
    antecedent would have settled is lost. *)
 
-fun apply_simp_bottom_up_delta delta table =
-  case delta of
-      ThmSetData.ADD (kname, theorem) =>
-        Symtab.update (persistent_iff_name kname, theorem) table
-    | ThmSetData.REMOVE name =>
-        Symtab.delete_safe (normalise_iff_name name) table
-
 fun apply_simp_bottom_up_to_global delta table =
   let
-    val table = apply_simp_bottom_up_delta delta table
+    val table = apply_named_delta delta table
     val _ = install_simp_bottom_up_fragment table
   in
     table
   end
 
-val _ =
-  if List.exists (equal "simp_bottom_up") (ThmSetData.all_set_types ())
-     orelse ThmAttribute.is_attribute "simp_bottom_up"
-  then
-    raise ERR "registration"
-      "settype or attribute simp_bottom_up already exists"
-  else ()
-
 val simp_bottom_up_data =
-  ThmSetData.export_with_ancestry
-    {settype = "simp_bottom_up",
-     delta_ops =
-       {apply_to_global = apply_simp_bottom_up_to_global,
-        thy_finaliser = NONE,
-        uptodate_delta = K true,
-        initial_value = Symtab.empty,
-        apply_delta = apply_simp_bottom_up_delta}}
+  thmTable.register
+    {settype = "simp_bottom_up", initial_value = Symtab.empty,
+     apply_delta = apply_named_delta,
+     apply_to_global = apply_simp_bottom_up_to_global}
 
-(* As for [iff_bottom_up]: resolve against what is installed. *)
-fun resolve_simp_bottom_up_name name =
-  let
-    val installed = Symtab.keys (#get_global_value simp_bottom_up_data ())
-    fun denotes candidate =
-      candidate = name orelse
-      (case String.fields (equal #"$") candidate of
-           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
-         | _ => false)
-  in
-    case List.filter denotes installed of
-        [resolved] => resolved
-      | [] =>
-          raise ERR "remove_simp_bottom_up"
-            ("no [simp_bottom_up] declaration named " ^ name ^
-             " is installed")
-      | _ =>
-          raise ERR "remove_simp_bottom_up"
-            ("ambiguous [simp_bottom_up] name " ^ name)
-  end
-
-fun remove_simp_bottom_up name =
-  let
-    val delta = ThmSetData.REMOVE (resolve_simp_bottom_up_name name)
-  in
-    #record_delta simp_bottom_up_data delta;
-    #update_global_value simp_bottom_up_data
-      (apply_simp_bottom_up_to_global delta)
-  end
-
-val _ =
-  if List.exists (equal "iff") (ThmSetData.all_set_types ()) orelse
-     ThmAttribute.is_attribute "iff"
-  then raise ERR "registration" "settype or attribute iff already exists"
-  else ()
+val remove_simp_bottom_up =
+  remove_declaration
+    {data = simp_bottom_up_data, label = "simp_bottom_up",
+     caller = "remove_simp_bottom_up",
+     apply_to_global = apply_simp_bottom_up_to_global}
 
 (* The source theorem is the only persistent declaration.  Its claset and
    simpset views are recomputed by this hook whenever the iff stream is
@@ -1559,49 +1521,16 @@ val _ =
    in one theory may be permuted on reload.  This affects ties only; a shared
    declaration counter can be introduced if later benchmarks need one. *)
 val iff_data =
-  ThmSetData.export_with_ancestry
-    {settype = "iff",
-     delta_ops =
-       {apply_to_global = apply_iff_to_global,
-        thy_finaliser = SOME iff_finaliser,
-        uptodate_delta = K true,
-        initial_value = Symtab.empty,
-        apply_delta = apply_iff_delta}}
+  thmTable.register_finalised
+    {settype = "iff", initial_value = Symtab.empty,
+     apply_delta = apply_named_delta,
+     apply_to_global = apply_iff_to_global,
+     thy_finaliser = iff_finaliser}
 
-(* Resolve against the declarations currently installed rather than against
-   the current theory.  Removing an ancestor's declaration by its plain name
-   is the ordinary case, and defaulting the theory part to the current
-   theory would name nothing and retract nothing, silently.  Resolving here
-   also settles the name before it reaches the delta stream: a descendant
-   theory replays the recorded name, so an unknown or ambiguous one would
-   otherwise be replayed as a no-op by every descendant in turn. *)
-fun resolve_iff_name name =
-  let
-    val installed = Symtab.keys (#get_global_value iff_data ())
-    fun denotes candidate =
-      candidate = name orelse
-      (case String.fields (equal #"$") candidate of
-           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
-         | _ => false)
-  in
-    case List.filter denotes installed of
-        [resolved] => resolved
-      | [] =>
-          raise ERR "remove_iff"
-            ("no [iff] declaration named " ^ name ^ " is installed")
-      | candidates =>
-          raise ERR "remove_iff"
-            ("ambiguous [iff] name " ^ name ^ ": " ^
-             String.concatWith ", " candidates)
-  end
-
-fun remove_iff name =
-  let
-    val delta = ThmSetData.REMOVE (resolve_iff_name name)
-  in
-    #record_delta iff_data delta;
-    #update_global_value iff_data (apply_iff_to_global delta)
-  end
+val remove_iff =
+  remove_declaration
+    {data = iff_data, label = "iff", caller = "remove_iff",
+     apply_to_global = apply_iff_to_global}
 
 (* A conditional rule whose conclusion is an equation between variables --
    [inj_onD] is the standard one -- is a rewrite in Isabelle:
@@ -1720,45 +1649,45 @@ fun extend_invocation
 
 fun no_extra_markers theorems cs = (cs, theorems)
 
+val curry_premises =
+  Conv.REDEPTH_CONV (Conv.REWR_CONV (Conv.GSYM boolTheory.AND_IMP_INTRO))
+
+(* The simpset's normal form of a rule, with conjoined premises curried. *)
+fun rule_normal_form_conv budget ss =
+  Conv.THENC
+    (simpLib.SIMP_CONV_CHILD_FIRST (charge_normalization budget) ss [],
+     fn term =>
+       (charge_normalization budget ();
+        Conv.QCONV curry_premises term))
+
 (* Keep the original declaration and add a certified view for the
    simpset's representation. Exclude a rule's own rewrite statement or
    an equivalence of which the rule is one direction. *)
 fun transport_claset_rules budget ss rules cs =
   let
-    fun own_direction theorem rewrite =
-      let
-        val (premises, result) =
-          boolSyntax.strip_imp_only
-            (concl (Drule.SPEC_ALL theorem))
-        val (_, rewrite_body) =
-          boolSyntax.strip_imp_only
-            (concl (Drule.SPEC_ALL rewrite))
-        val (left, right) = boolSyntax.dest_eq rewrite_body
-      in
-        (aconv result left andalso
-         List.exists (aconv right) premises) orelse
-        (aconv result right andalso
-         List.exists (aconv left) premises)
-      end
-      handle HOL_ERR _ => false
     fun conversion theorem =
       let
+        val statement = concl theorem
+        val (premises, result) =
+          boolSyntax.strip_imp_only (concl (Drule.SPEC_ALL theorem))
+        fun own_direction rewrite =
+          let
+            val (_, rewrite_body) =
+              boolSyntax.strip_imp_only (concl (Drule.SPEC_ALL rewrite))
+            val (left, right) = boolSyntax.dest_eq rewrite_body
+          in
+            (aconv result left andalso boolSyntax.tmem right premises)
+            orelse
+            (aconv result right andalso boolSyntax.tmem left premises)
+          end
+          handle HOL_ERR _ => false
         val without_self =
           simpLib.filter_rewrites
             (fn (_, rewrite) =>
-              not (aconv (concl rewrite) (concl theorem)) andalso
-              not (own_direction theorem rewrite)) ss
+              not (aconv (concl rewrite) statement) andalso
+              not (own_direction rewrite)) ss
       in
-        Conv.THENC
-          (simpLib.SIMP_CONV_CHILD_FIRST
-             (charge_normalization budget) without_self [],
-           fn term =>
-             (charge_normalization budget ();
-              Conv.QCONV
-                (Conv.REDEPTH_CONV
-                  (Conv.REWR_CONV
-                    (Conv.GSYM boolTheory.AND_IMP_INTRO)))
-                term))
+        rule_normal_form_conv budget without_self
       end
     fun add ((spec, (_, theorem)), current) =
       let
@@ -1771,8 +1700,7 @@ fun transport_claset_rules budget ss rules cs =
           clasetRules.safe_class_of spec derived_info
         val support_preserved =
           List.all
-            (fn assumption =>
-              List.exists (aconv assumption) (hyp theorem))
+            (fn assumption => boolSyntax.tmem assumption (hyp theorem))
             (hyp derived)
       in
         if aconv (concl derived) (concl theorem) orelse
@@ -1804,9 +1732,11 @@ fun safe_named_rule ((spec : clasetLib.rulespec), _) = #safe spec
    about P must remain eligible when the simpset presents the goal as Q. *)
 fun transport_candidates budget ss goals candidates =
   let
-    fun member head heads = List.exists (same_const head) heads
-    fun insert head heads =
-      if member head heads then heads else head :: heads
+    (* A constant is keyed by name alone, as [same_const] compares. *)
+    fun key head =
+      let val {Thy, Name, ...} = dest_thy_const head in (Thy, Name) end
+    val no_heads =
+      HOLset.empty (Lib.pair_compare (String.compare, String.compare))
     fun collect term heads =
       if boolSyntax.is_forall term then
         collect (snd (boolSyntax.dest_forall term)) heads
@@ -1835,7 +1765,7 @@ fun transport_candidates budget ss goals candidates =
             if is_const head andalso
                not (aconv head boolSyntax.T) andalso
                not (aconv head boolSyntax.F) then
-              insert head heads
+              HOLset.add (heads, key head)
             else heads
         in
           List.foldl (fn (argument, found) =>
@@ -1853,7 +1783,7 @@ fun transport_candidates budget ss goals candidates =
         val (left, right) = dest_eq body
       in
         case (root_head left, root_head right) of
-            (SOME first, SOME second) => SOME (first, second)
+            (SOME first, SOME second) => SOME (key first, key second)
           | _ => NONE
       end
       handle HOL_ERR _ => NONE
@@ -1864,24 +1794,31 @@ fun transport_candidates budget ss goals candidates =
     fun collect_goal ((assumptions, target), heads) =
       List.foldl (fn (term, found) => collect term found)
         (collect target heads) assumptions
-    val goal_heads = List.foldl collect_goal [] goals
+    val goal_heads = List.foldl collect_goal no_heads goals
     fun grow heads =
       let
-        fun add ((left, right), found) =
-          if member left found then insert right found
-          else if member right found then insert left found
-          else found
-        val next = List.foldl add heads bridges
+        fun add ((left, right), (found, changed)) =
+          let
+            fun join head =
+              if HOLset.member (found, head) then (found, changed)
+              else (HOLset.add (found, head), true)
+          in
+            if HOLset.member (found, left) then join right
+            else if HOLset.member (found, right) then join left
+            else (found, changed)
+          end
+        val (next, changed) = List.foldl add (heads, false) bridges
       in
-        if length next = length heads then heads else grow next
+        if changed then grow next else heads
       end
     val relevant = grow goal_heads
     fun related (_, (_, theorem)) =
       let
         val _ = searchBudget.charge budget searchBudget.Candidate
-        val heads = collect (concl theorem) []
+        val heads = collect (concl theorem) no_heads
       in
-        List.exists (fn head => member head relevant) heads
+        Option.isSome
+          (HOLset.find (fn head => HOLset.member (relevant, head)) heads)
       end
   in
     List.filter related candidates
@@ -1950,17 +1887,7 @@ fun process_clasimp_args_fact_views consumer budget
             let
               val views =
                 clasetFacts.schematic_views environment
-              val conversion =
-                Conv.THENC
-                  (simpLib.SIMP_CONV_CHILD_FIRST
-                     (charge_normalization budget) ss [],
-                   fn term =>
-                     (charge_normalization budget ();
-                      Conv.QCONV
-                        (Conv.REDEPTH_CONV
-                          (Conv.REWR_CONV
-                            (Conv.GSYM boolTheory.AND_IMP_INTRO)))
-                        term))
+              val conversion = rule_normal_form_conv budget ss
               fun transport (view : clasetFacts.view) =
                 let
                   val derived =
@@ -2254,6 +2181,16 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
       else raise searchBudget.LimitReached
                    (kind, searchBudget.usage budget)
 
+    (* Extend a yielded turn by its slice, and double the slice. *)
+    fun refill turn (slice : force_slice ref) =
+      (searchBudget.extend turn searchBudget.Candidate
+         (#candidates (!slice));
+       searchBudget.extend turn searchBudget.Application
+         (#applications (!slice));
+       searchBudget.extend turn searchBudget.Normalization
+         (#normalization (!slice));
+       slice := grow_slice (!slice))
+
     fun best_turn () =
       case classicalLib.RESUME_FIRST_BEST_SESSION best_session of
             classicalLib.BudgetProved {result, ...} =>
@@ -2269,13 +2206,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                       | searchBudget.Application => "application"
                       | searchBudget.Normalization => "normalization") ^
                    " turn");
-               searchBudget.extend best_budget searchBudget.Candidate
-                 (#candidates (!best_slice));
-               searchBudget.extend best_budget searchBudget.Application
-                 (#applications (!best_slice));
-               searchBudget.extend best_budget searchBudget.Normalization
-                 (#normalization (!best_slice));
-               best_slice := grow_slice (!best_slice);
+               refill best_budget best_slice;
                forceScheduler.Yielded)
           | classicalLib.BudgetLimitReached {kind, ...} =>
               raise searchBudget.LimitReached
@@ -2316,13 +2247,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                      "FORCE tableau depth " ^
                      Int.toString blast_depth ^
                      " resumes after a bounded turn");
-                 searchBudget.extend turn searchBudget.Candidate
-                   (#candidates (!tableau_slice));
-                 searchBudget.extend turn searchBudget.Application
-                   (#applications (!tableau_slice));
-                 searchBudget.extend turn searchBudget.Normalization
-                   (#normalization (!tableau_slice));
-                 tableau_slice := grow_slice (!tableau_slice);
+                 refill turn tableau_slice;
                  tableau_current := SOME (turn, resume);
                  forceScheduler.Yielded)
             | blastSearch.BudgetLimitReached {kind, ...} =>
@@ -2371,13 +2296,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                          "FORCE classical depth " ^
                          Int.toString bound ^
                          " resumes after a bounded turn");
-                     searchBudget.extend turn searchBudget.Candidate
-                       (#candidates (!depth_slice));
-                     searchBudget.extend turn searchBudget.Application
-                       (#applications (!depth_slice));
-                     searchBudget.extend turn searchBudget.Normalization
-                       (#normalization (!depth_slice));
-                     depth_slice := grow_slice (!depth_slice);
+                     refill turn depth_slice;
                      forceScheduler.Yielded)
             end
   in
@@ -2507,7 +2426,7 @@ fun public_using_budgeted budget process body theorems
     val simpset =
       simpLib.set_subgoaler
         (witness_subgoaler_budgeted budget)
-        (budgeted_decisions ctxt budget (clasimp_ss ()))
+        (budgeted_decisions_of ctxt budget (clasimp_decision_base ()))
     val (goals, validation) =
       process budget (body (charge_normalization budget))
         (clasetLib.the_claset ()) simpset theorems goal ctxt
@@ -2650,7 +2569,7 @@ local
           in
             if is_abs argument_term andalso not opaque andalso
                not (Lib.can Drule.ETA_CONV argument_term) andalso
-               not (List.exists (fn v => op_mem aconv v bound)
+               not (List.exists (fn v => boolSyntax.tmem v bound)
                       (free_vars argument_term))
             then argument_term :: found
             else found

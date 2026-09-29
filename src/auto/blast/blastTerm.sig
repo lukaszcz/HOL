@@ -17,19 +17,6 @@ sig
   type var = term option ref
   type state
 
-  val mapMeasured : (unit -> unit) -> ('a -> 'b) -> 'a list -> 'b list
-  val appMeasured : (unit -> unit) -> ('a -> unit) -> 'a list -> unit
-  val existsMeasured :
-    (unit -> unit) -> ('a -> bool) -> 'a list -> bool
-  val findMeasured :
-    (unit -> unit) -> ('a -> bool) -> 'a list -> 'a option
-  val appendMeasured :
-    (unit -> unit) -> 'a list -> 'a list -> 'a list
-  val partitionMeasured :
-    (unit -> unit) -> ('a -> bool) -> 'a list -> 'a list * 'a list
-  val mapPartialMeasured :
-    (unit -> unit) -> ('a -> 'b option) -> 'a list -> 'b list
-
   val mkGoal : term -> term
   val isGoal : term -> bool
 

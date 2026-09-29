@@ -11,6 +11,9 @@ sig
   val DEPTH_FIRST : (node -> bool) -> expansion -> expansion
   val DEPTH_SOLVE : expansion -> expansion
   val BEST_FIRST : (node -> bool) -> expansion -> expansion
+  (* [BEST_FIRST] with its own bound in place of [node_limit]. *)
+  val BOUNDED_BEST_FIRST :
+    int -> (node -> bool) -> expansion -> expansion
   val ASTAR : (node -> bool) -> expansion -> expansion
 
   type frontier_session

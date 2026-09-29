@@ -37,11 +37,6 @@ sig
         {tree : tree, safe_goals : unit -> (gid * cgoal) list,
          reason : failure_reason}
 
-  datatype budget_outcome =
-      SearchFinished of search_outcome
-    | WorkLimitReached of
-        {kind : searchBudget.kind, usage : searchBudget.usage}
-
   type budget_session
   datatype resume_outcome =
       ResumedFinished of search_outcome
@@ -53,10 +48,9 @@ sig
 
   (* Deterministic normalisation-and-safe saturation.  The [_in] forms
      carry the caller's proof context to rendered tactic rules, including
-     lazy alternatives and resumed sessions.  Convenience forms snapshot
-     once at their entry.  [safe_frontier] returns the residual goals. *)
-  val safe_saturate :
-    {max_depth : int, rules : rule_source} -> tree -> safe_outcome
+     lazy alternatives and resumed sessions; [new_budget_session]
+     snapshots once at its entry.  [safe_frontier] returns the residual
+     goals. *)
   val safe_saturate_in :
     Context.t ->
     {max_depth : int, rules : rule_source} -> tree -> safe_outcome
@@ -67,20 +61,8 @@ sig
      residual frontier, as [safe_frontier] would.  That is a second search,
      so it is deferred: a caller that only needs to know the search failed
      never pays for it.  Not memoised -- each application recomputes. *)
-  val search :
-    aesop_config -> rule_source -> tree -> search_outcome
   val search_in :
     Context.t -> aesop_config -> rule_source -> tree -> search_outcome
-  (* Explicit cutoff result for budgeted rule sources.  Frontier
-     resumption is not provided by this transitional adapter. *)
-  val search_with_budget :
-    searchBudget.budget -> aesop_config ->
-    (searchBudget.budget -> rule_source) -> tree ->
-    budget_outcome
-  val search_with_budget_in :
-    Context.t -> searchBudget.budget -> aesop_config ->
-    (searchBudget.budget -> rule_source) -> tree ->
-    budget_outcome
   (* A candidate yield retains the goal/rule generation and the next
      unexamined alternative.  Extend the same budget, then resume this
      session.  Other limits remain explicit terminal outcomes for now. *)

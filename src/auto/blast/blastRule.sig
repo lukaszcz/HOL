@@ -31,9 +31,9 @@ sig
      failures in Isabelle's fromSubgoal are vacuous here: free term
      variables become nullary Skolems and free type variables stay rigid. *)
   val fromGoalTerm : hol_term -> pterm
-  val initialBranch : goal -> (pterm * bool) list
+  val initialBranch : goal -> pterm list
   val initialBranchMeasured :
-    (unit -> unit) -> goal -> (pterm * bool) list
+    (unit -> unit) -> goal -> pterm list
 
   (* Conversion hooks are public for focused tests and diagnostics.  Normal
      clients acquire clauses through safeRules and unsafeRules. *)

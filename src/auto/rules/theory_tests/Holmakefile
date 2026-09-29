@@ -26,8 +26,7 @@ stateReplayCheck.exe: stateReplayCheck.uo reloadBaseTheory.uo ../NTactical.uo \
 	$(HOLMOSMLC) -o $@ $<
 
 declBTheory.uo: declATheory.uo
-schemaV1ChildTheory.uo: schemaV1BaseTheory.uo
-schemaV2ChildTheory.uo: schemaV2BaseTheory.uo
+specReloadChildTheory.uo: specReloadBaseTheory.uo
 batchAddChildTheory.uo: batchAddBaseTheory.uo
 diamondAddTheory.uo: diamondRootTheory.uo
 diamondRemoveTheory.uo: diamondRootTheory.uo

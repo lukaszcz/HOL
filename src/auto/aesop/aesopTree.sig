@@ -96,18 +96,12 @@ sig
      the node each of them produces.  Normalisation and search read the same
      alternatives under different determinism requirements, so the reading
      lives here, beside the rendered-result lifting it needs. *)
-  val rule_results :
-    rule -> clasetGoal.node ->
-    (step_record list * clasetGoal.node) seq.seq
   val rule_results_in :
     Context.t -> rule -> clasetGoal.node ->
     (step_record list * clasetGoal.node) seq.seq
   (* The one alternative of a deterministic rule; NONE when the rule offers
      none, or offers a choice.  Looking at two results decides that without
      forcing the tail of an otherwise lazy sequence. *)
-  val unique_rule_result :
-    rule -> clasetGoal.node ->
-    (step_record list * clasetGoal.node) option
   val unique_rule_result_in :
     Context.t -> rule -> clasetGoal.node ->
     (step_record list * clasetGoal.node) option

@@ -1320,7 +1320,7 @@ val two_split_config : linarithData.linarith_config =
   {neq_limit = 2, split_limit = 9}
 
 fun forward_with disequalities =
-  linarithReplay.fwd_prove two_split_config
+  linarithReplay.fwd_prove_in (Context.snapshot ()) two_split_config
     (List.map Thm.ASSUME
       (disequalities @
         [split_x_upper, split_x_lower,
@@ -1343,7 +1343,7 @@ val _ =
      fn () =>
        let
          val theorem =
-           linarithReplay.fwd_prove one_split_config
+           linarithReplay.fwd_prove_in (Context.snapshot ()) one_split_config
              (List.map Thm.ASSUME
                [split_x_neq_one, split_x_upper, split_x_lower])
              split_conclusion
@@ -1370,19 +1370,20 @@ val _ =
              {candidates = NONE, applications = NONE,
               normalization = SOME search_normalization}
          val cutoff =
-           linarithReplay.fwd_prove_budgeted replay_limited
+           linarithReplay.fwd_prove_budgeted_in (Context.snapshot ())
+             replay_limited
              one_split_config [fact] split_conclusion
          val funded = searchBudget.unbounded ()
          val proved =
-           linarithReplay.fwd_prove_budgeted funded
+           linarithReplay.fwd_prove_budgeted_in (Context.snapshot ()) funded
              one_split_config [fact] split_conclusion
          val first_usage = searchBudget.usage funded
          val proved_again =
-           linarithReplay.fwd_prove_budgeted funded
+           linarithReplay.fwd_prove_budgeted_in (Context.snapshot ()) funded
              one_split_config [fact] split_conclusion
          val second_usage = searchBudget.usage funded
          val exhausted =
-           linarithReplay.fwd_prove_budgeted
+           linarithReplay.fwd_prove_budgeted_in (Context.snapshot ())
              (searchBudget.unbounded ()) one_split_config []
              split_conclusion
        in
@@ -1473,7 +1474,7 @@ val _ =
      fn () =>
        let
          val theorem =
-           linarithReplay.fwd_prove one_split_config
+           linarithReplay.fwd_prove_in (Context.snapshot ()) one_split_config
              (List.map Thm.ASSUME moved_neq_assumptions)
              moved_neq_conclusion
        in
@@ -1512,7 +1513,7 @@ fun num_instance_with_neqE neqE =
 
 fun replay_failure assumptions conclusion =
   (ignore
-     (linarithReplay.fwd_prove one_split_config
+     (linarithReplay.fwd_prove_in (Context.snapshot ()) one_split_config
        (List.map Thm.ASSUME assumptions) conclusion);
    NONE)
   handle Feedback.HOL_ERR error => SOME (Feedback.top_function_of error)
@@ -1578,26 +1579,28 @@ val _ =
        let
          val funded = searchBudget.unbounded ()
          val proved =
-           linarithLib.LINARITH_PROVE_BUDGETED funded forward_tm
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+             funded forward_tm
          val first_usage = searchBudget.usage funded
          val proved_again =
-           linarithLib.LINARITH_PROVE_BUDGETED funded forward_tm
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+             funded forward_tm
          val second_usage = searchBudget.usage funded
          fun bounded candidates applications normalization =
            searchBudget.create
              {candidates = candidates, applications = applications,
               normalization = normalization}
          val candidate_cut =
-           linarithLib.LINARITH_PROVE_BUDGETED
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
              (bounded (SOME 0) NONE NONE) forward_tm
          val application_cut =
-           linarithLib.LINARITH_PROVE_BUDGETED
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
              (bounded NONE (SOME 0) NONE) forward_tm
          val normalization_cut =
-           linarithLib.LINARITH_PROVE_BUDGETED
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
              (bounded NONE NONE (SOME 0)) forward_tm
          val exhausted =
-           linarithLib.LINARITH_PROVE_BUDGETED
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
              (searchBudget.unbounded ())
              (Term.mk_var ("linarith_budget_unproved", Type.bool))
        in
@@ -1717,12 +1720,13 @@ val _ =
            (fn () =>
              let
                val outcome =
-                 linarithLib.LINARITH_PROVE_BUDGETED budget forward_tm
+                 linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+                   budget forward_tm
                val after_proof =
                  Context.Data.get nested_budget_context_slot
                    (Context.snapshot ())
                val replay =
-                 linarithReplay.fwd_prove_budgeted
+                 linarithReplay.fwd_prove_budgeted_in (Context.snapshot ())
                    (searchBudget.unbounded ()) one_split_config
                    [Thm.ASSUME split_x_upper] split_conclusion
                val after_replay =
@@ -2010,7 +2014,8 @@ val _ =
               num_eq public_x num_one)
          val funded = searchBudget.unbounded ()
          val proof =
-           linarithLib.LINARITH_PROVE_BUDGETED funded statement
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+             funded statement
          val used = searchBudget.usage funded
          val {disjunction_splits, ...} =
            linarithLib.last_search_stats ()
@@ -2020,7 +2025,8 @@ val _ =
              {candidates = SOME allowance, applications = NONE,
               normalization = NONE}
          val cutoff =
-           linarithLib.LINARITH_PROVE_BUDGETED limited statement
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+             limited statement
        in
          (case proof of
               linarithLib.LinarithProved theorem =>
@@ -2076,14 +2082,16 @@ val _ =
        let
          val funded = searchBudget.unbounded ()
          val proved =
-           linarithLib.LINARITH_PROVE_BUDGETED funded min_le_left
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+             funded min_le_left
          val used = searchBudget.usage funded
          val limited =
            searchBudget.create
              {candidates = NONE, applications = SOME 1,
               normalization = NONE}
          val cutoff =
-           linarithLib.LINARITH_PROVE_BUDGETED limited min_le_left
+           linarithLib.LINARITH_PROVE_BUDGETED_IN (Context.snapshot ())
+             limited min_le_left
        in
          (case proved of
               linarithLib.LinarithProved theorem =>

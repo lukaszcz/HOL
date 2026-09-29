@@ -39,15 +39,14 @@ sig
      equation or its negation for the other two. *)
   type fact = {literal : literal, theorem : thm}
 
+  (* The meter charges each source theorem and conjunct normalization,
+     candidate scan and derived rule application. *)
+  type meter = searchBudget.charger
+
   (* Every relation the theorems supply order axioms for.  A relation
      with no transitivity yields no context: nothing can be chained
      for it, so a search that kept it would only cost time. *)
-  val contexts : thm list -> context list
-
-  (* The budgeted reading charges each source theorem and conjunct
-     normalization, candidate scan and derived rule application. *)
-  val contexts_budgeted :
-    searchBudget.budget -> thm list -> context list
+  val contexts : meter -> thm list -> context list
 
   (* Whether the theorems name an order predicate at all.  A decision
      procedure consulted on every atom of every goal has to answer this
@@ -64,10 +63,6 @@ sig
   val literal_of_term : context -> term -> literal option
   val is_literal : context -> term -> bool
 
-  val facts_of : context -> thm -> fact list
-  val facts_of_all : context -> thm list -> fact list
-  val facts_of_budgeted :
-    searchBudget.budget -> context -> thm -> fact list
-  val facts_of_all_budgeted :
-    searchBudget.budget -> context -> thm list -> fact list
+  val facts_of : meter -> context -> thm -> fact list
+  val facts_of_all : meter -> context -> thm list -> fact list
 end

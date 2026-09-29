@@ -24,52 +24,31 @@ fun qvars_of store ({asl, w, ...} : clasetGoal.cgoal) =
     (List.concat
       (map (clasetMeta.metas_of store) (w :: asl)))
 
-fun rule_source_with assemble claset simpset simp_controls
+fun rule_source budget claset simpset simp_controls
       ({mode, cgoal = cgoal as {asl, w, ...}, store} :
        {mode : clasetUnify.mode, cgoal : clasetGoal.cgoal,
         store : clasetMeta.store}) =
-  assemble
+  aesopRule.claset_rules_with budget
     {claset = claset, mode = mode, conclusion = w,
      assumptions = asl, qvars = qvars_of store cgoal,
      simpset = simpset, simp_controls = simp_controls}
-
-val rule_source = rule_source_with aesopRule.claset_rules_with
-
-fun rule_source_budgeted budget =
-  rule_source_with (aesopRule.claset_rules_with_budget budget)
 
 fun initial_tree goal =
   aesopTree.create
     {node = clasetGoal.from_goal goal, unsafe_cursor = []}
 
-fun CS_AESOP_SEARCH_BUDGETED_IN ctxt budget config claset simpset goal =
-  let val _ = check_config "CS_AESOP_SEARCH_BUDGETED" config
-  in
-    aesopSearch.search_with_budget_in ctxt budget config
-      (fn owned => rule_source_budgeted owned claset simpset [])
-      (initial_tree goal)
-  end
-
-fun CS_AESOP_SEARCH_BUDGETED budget config claset simpset goal =
-  CS_AESOP_SEARCH_BUDGETED_IN (Context.snapshot ()) budget
-    config claset simpset goal
-
-fun CS_AESOP_SESSION_IN ctxt budget config claset simpset goal =
+fun CS_AESOP_SESSION budget config claset simpset goal =
   let val _ = check_config "CS_AESOP_SESSION" config
   in
-    aesopSearch.new_budget_session_in ctxt budget config
-      (fn owned => rule_source_budgeted owned claset simpset [])
+    aesopSearch.new_budget_session budget config
+      (fn owned => rule_source (SOME owned) claset simpset [])
       (initial_tree goal)
   end
-
-fun CS_AESOP_SESSION budget config claset simpset goal =
-  CS_AESOP_SESSION_IN (Context.snapshot ()) budget config
-    claset simpset goal
 
 fun close_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
-    val source = rule_source claset simpset simp_controls
+    val source = rule_source NONE claset simpset simp_controls
   in
     case aesopSearch.search_in ctxt config source
            (initial_tree goal) of
@@ -133,7 +112,7 @@ fun safe_replay tree =
 fun safe_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
-    val source = rule_source claset simpset simp_controls
+    val source = rule_source NONE claset simpset simp_controls
     val tree = initial_tree goal
   in
     case

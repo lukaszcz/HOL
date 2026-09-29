@@ -793,54 +793,28 @@ fun same_spec ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
               ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
   kind1 = kind2 andalso safe1 = safe2 andalso prio1 = prio2
 
-fun delta_tag (ThyDataSexp.List (ThyDataSexp.Sym tag :: _)) = SOME tag
-  | delta_tag _ = NONE
-
 val _ =
   test
-    ("claset delta codec emits and round-trips version-one deltas",
+    ("claset delta codec round-trips every rule kind",
      fn () =>
        let
          val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
          val specs =
            [{kind = clasetRules.Intro, safe = false, prio = SOME 100},
             {kind = clasetRules.Elim, safe = false, prio = SOME 50},
-            {kind = clasetRules.Dest, safe = false, prio = SOME 1}]
-         fun round_trip spec =
-           let val encoded = encode_delta (ADD {name = name, spec = spec})
-           in
-             delta_tag encoded = SOME "clasetADD1" andalso
-             (case decode_delta encoded of
-                  SOME (ADD {name = name', spec = spec'}) =>
-                    name = name' andalso same_spec spec spec'
-                | _ => false)
-           end
-       in
-         List.all round_trip specs andalso
-         decode_delta (encode_delta (RM "gone")) = SOME (RM "gone")
-       end)
-
-val _ =
-  test
-    ("claset delta codec emits and round-trips version-two deltas",
-     fn () =>
-       let
-         val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
-         val specs =
-           [{kind = clasetRules.Forward, safe = false, prio = SOME 75},
+            {kind = clasetRules.Dest, safe = false, prio = SOME 1},
+            {kind = clasetRules.Forward, safe = false, prio = SOME 75},
             {kind = clasetRules.Norm, safe = false, prio = SOME ~17},
             {kind = clasetRules.Norm, safe = true, prio = SOME 23}]
          fun round_trip spec =
-           let val encoded = encode_delta (ADD {name = name, spec = spec})
-           in
-             delta_tag encoded = SOME "clasetADD2" andalso
-             (case decode_delta encoded of
-                  SOME (ADD {name = name', spec = spec'}) =>
-                    name = name' andalso same_spec spec spec'
-                | _ => false)
-           end
+           case decode_delta
+                  (encode_delta (ADD {name = name, spec = spec})) of
+               SOME (ADD {name = name', spec = spec'}) =>
+                 name = name' andalso same_spec spec spec'
+             | _ => false
        in
-         List.all round_trip specs
+         List.all round_trip specs andalso
+         decode_delta (encode_delta (RM "gone")) = SOME (RM "gone")
        end)
 
 val _ =

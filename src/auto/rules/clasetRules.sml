@@ -112,7 +112,7 @@ fun generalise_parameters checkpoint th =
     val (bound, body) = strip_forall (concl th)
     val pinned = bound @ free_varsl (hyp th)
     val rigid =
-      List.filter (fn v => not (List.exists (aconv v) pinned)) (free_vars body)
+      List.filter (fn v => not (tmem v pinned)) (free_vars body)
     val _ = checkpoint ()
   in
     if List.null rigid then th else GENL rigid th
@@ -229,7 +229,7 @@ fun form_of checkpoint th' =
 fun canonical_form_of_measured checkpoint kind th =
   form_of checkpoint (canonical_rule_of_with checkpoint kind th)
 
-fun no_checkpoint () = ()
+val no_checkpoint = listUtil.no_checkpoint
 
 fun fresh_forall_vars th vars =
   fresh_forall_vars_with no_checkpoint th vars
@@ -339,7 +339,7 @@ fun CLASSICAL_RULE th =
                   val (hyps, cncl) = strip_assums prem
                 in
                   not (Term.aconv cncl concl) andalso
-                  not (List.exists (Term.aconv negation) hyps)
+                  not (tmem negation hyps)
                 end
               val repairs = map needs_repair rest
               fun repair (prem, true) = mk_imp (mk_neg concl, prem)
@@ -619,17 +619,14 @@ fun compare_tag ({weight = w1, index = i1} : tag,
       EQUAL => Int.compare (i1, i2)
     | ord => ord
 
-fun candidate_order_with checkpoint candidates =
+fun candidate_order_measured checkpoint candidates =
   Listsort.sort
     (fn ((tag1, _), (tag2, _)) =>
        (checkpoint (); compare_tag (tag1, tag2)))
     candidates
 
 fun candidate_order candidates =
-  candidate_order_with (fn () => ()) candidates
-
-fun candidate_order_measured checkpoint candidates =
-  candidate_order_with checkpoint candidates
+  candidate_order_measured no_checkpoint candidates
 
 fun same_kind ({kind = kind1, safe = safe1, ...} : rulespec)
               ({kind = kind2, safe = safe2, ...} : rulespec) =
@@ -783,26 +780,19 @@ fun kind_encode Intro = ThyDataSexp.String "intro"
   | kind_encode Forward = ThyDataSexp.String "forward"
   | kind_encode Norm = ThyDataSexp.String "norm"
 
-fun kind_decode1 (ThyDataSexp.String "intro") = SOME Intro
-  | kind_decode1 (ThyDataSexp.String "elim") = SOME Elim
-  | kind_decode1 (ThyDataSexp.String "dest") = SOME Dest
-  | kind_decode1 _ = NONE
-
-fun kind_decode2 sexp =
-  case kind_decode1 sexp of
-      SOME kind => SOME kind
-    | NONE =>
-        (case sexp of
-             ThyDataSexp.String "forward" => SOME Forward
-           | ThyDataSexp.String "norm" => SOME Norm
-           | _ => NONE)
+fun kind_decode (ThyDataSexp.String "intro") = SOME Intro
+  | kind_decode (ThyDataSexp.String "elim") = SOME Elim
+  | kind_decode (ThyDataSexp.String "dest") = SOME Dest
+  | kind_decode (ThyDataSexp.String "forward") = SOME Forward
+  | kind_decode (ThyDataSexp.String "norm") = SOME Norm
+  | kind_decode _ = NONE
 
 fun spec_encode ({kind, safe, prio} : rulespec) =
   ThyDataSexp.pair3_encode
     (kind_encode, ThyDataSexp.Bool,
      ThyDataSexp.option_encode ThyDataSexp.Int) (kind, safe, prio)
 
-fun spec_decode kind_decode sexp =
+fun spec_decode sexp =
   Option.map (fn (kind, safe, prio) =>
                 {kind = kind, safe = safe, prio = prio})
     (ThyDataSexp.pair3_decode
@@ -810,27 +800,16 @@ fun spec_decode kind_decode sexp =
         ThyDataSexp.option_decode ThyDataSexp.int_decode) sexp)
 
 fun encode_delta (ADD {name, spec}) =
-      ThyDataSexp.tag_encode
-        (case #kind spec of Forward => "clasetADD2"
-                          | Norm => "clasetADD2"
-                          | _ => "clasetADD1")
+      ThyDataSexp.tag_encode "clasetADD1"
         (ThyDataSexp.pair_encode (ThyDataSexp.KName, spec_encode))
         (name, spec)
   | encode_delta (RM name) =
       ThyDataSexp.tag_encode "clasetRM1" ThyDataSexp.String name
 
-fun dec_add1 sexp =
+fun dec_add sexp =
   Option.map (fn (name, spec) => ADD {name = name, spec = spec})
     (ThyDataSexp.tag_decode "clasetADD1"
-       (ThyDataSexp.pair_decode
-          (ThyDataSexp.kname_decode, spec_decode kind_decode1))
-       sexp)
-
-fun dec_add2 sexp =
-  Option.map (fn (name, spec) => ADD {name = name, spec = spec})
-    (ThyDataSexp.tag_decode "clasetADD2"
-       (ThyDataSexp.pair_decode
-          (ThyDataSexp.kname_decode, spec_decode kind_decode2))
+       (ThyDataSexp.pair_decode (ThyDataSexp.kname_decode, spec_decode))
        sexp)
 
 fun dec_rm sexp =
@@ -838,7 +817,7 @@ fun dec_rm sexp =
     (ThyDataSexp.tag_decode "clasetRM1" ThyDataSexp.string_decode sexp)
 
 fun decode_delta sexp =
-  ThyDataSexp.first [dec_add1, dec_add2, dec_rm] sexp
+  ThyDataSexp.first [dec_add, dec_rm] sexp
 
 fun load_delta (ADD {name, spec}) =
       (SOME (name, spec, DB.fetch_knm name)

@@ -21,22 +21,7 @@ datatype lineq =
 
 type linarith_config = linarithData.linarith_config
 
-type work =
-  {candidate : unit -> unit,
-   application : unit -> unit,
-   normalization : unit -> unit}
-
-val free_work : work =
-  {candidate = fn () => (), application = fn () => (),
-   normalization = fn () => ()}
-
-fun budget_work budget : work =
-  {candidate = fn () =>
-     searchBudget.charge budget searchBudget.Candidate,
-   application = fn () =>
-     searchBudget.charge budget searchBudget.Application,
-   normalization = fn () =>
-     searchBudget.charge budget searchBudget.Normalization}
+type work = searchBudget.charger
 
 fun candidate (work : work) = #candidate work ()
 fun application (work : work) = #application work ()
@@ -257,7 +242,7 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
     | order => order
 
 fun distinct_rows_with work rows =
-  linarithData.distinct_by
+  listUtil.distinct_by
     (fn pair => (candidate work; compare_key pair)) row_key rows
 
 (* Elimination traces one line per pivot, so the message is built only
@@ -542,13 +527,13 @@ fun atoms_of_decomps_with work decomps =
     fun sides (Decomp {lhs, rhs, ...}) =
       List.map (fn (tm, _) => (candidate work; tm)) (lhs @ rhs)
   in
-    linarithData.distinct_by
+    listUtil.distinct_by
       (fn pair => (candidate work; Term.compare pair)) Lib.I
       (List.concat (List.map sides decomps))
   end
 
 fun atoms_of_decomps decomps =
-  atoms_of_decomps_with free_work decomps
+  atoms_of_decomps_with searchBudget.free_charger decomps
 
 fun refutes_with work is_nonnegative systems =
   let
@@ -611,8 +596,8 @@ fun prove_decomposed_with work
         end
 
 fun prove_decomposed config decompose is_nonnegative hypotheses conclusion =
-  prove_decomposed_with free_work config decompose is_nonnegative
-    hypotheses conclusion
+  prove_decomposed_with searchBudget.free_charger config decompose
+    is_nonnegative hypotheses conclusion
 
 fun prove_with work config decompose is_nonnegative hypotheses conclusion =
   prove_decomposed_with work config decompose is_nonnegative
@@ -621,8 +606,8 @@ fun prove_with work config decompose is_nonnegative hypotheses conclusion =
       hypotheses) conclusion
 
 fun prove config decompose is_nonnegative hypotheses conclusion =
-  prove_with free_work config decompose is_nonnegative
-    hypotheses conclusion
+  prove_with searchBudget.free_charger config decompose
+    is_nonnegative hypotheses conclusion
 
 datatype budget_outcome =
     CertificateFound of {split_neq : bool, justifications : injust list}
@@ -634,8 +619,8 @@ fun prove_budgeted budget config decompose is_nonnegative
       hypotheses conclusion =
   let
     val (split_neq, result) =
-      prove_with (budget_work budget) config decompose is_nonnegative
-        hypotheses conclusion
+      prove_with (searchBudget.charger budget) config decompose
+        is_nonnegative hypotheses conclusion
   in
     case result of
         SOME justifications =>
@@ -650,7 +635,7 @@ fun prove_decomposed_budgeted budget config decompose is_nonnegative
       hypotheses conclusion =
   let
     val (split_neq, result) =
-      prove_decomposed_with (budget_work budget) config decompose
+      prove_decomposed_with (searchBudget.charger budget) config decompose
         is_nonnegative hypotheses conclusion
   in
     case result of

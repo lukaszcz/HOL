@@ -13,6 +13,7 @@ type exact_prefix_descriptor = clasetReplay.exact_prefix_descriptor
 type exact_prefix_rebuild = clasetReplay.exact_prefix_rebuild
 type binding_mark = {terms : meta list, types : tymeta list}
 type binding_marks = binding_mark list
+type spellings = {conclusion : term list, assumptions : term list list}
 
 datatype node =
   Node of {goals : cgoal list,
@@ -24,10 +25,12 @@ datatype node =
            marks : binding_marks,
            avoids : term list,
            rendering : term option ref,
-           (* A rendering is a pure function of the node's goals and
-              store, and a rule query asks for one at every candidate
-              lookup, so it is computed once per position. *)
-           renders : (int * (term list * term)) list ref}
+           (* A rendering and its lookup spellings are pure functions of
+              the node's goals and store, and every rule query of an
+              expansion asks for both, so each is computed once per
+              position. *)
+           renders : (int * (term list * term)) list ref,
+           spellings : (int * spellings) list ref}
 
 fun norm_term store tm =
   let
@@ -61,7 +64,7 @@ fun norm_term store tm =
     recurse (clasetMeta.instantiate store tm)
   end
 
-val term_size = clasetNorm.term_size
+val term_size = HolKernel.term_size
 
 fun cgoal_size store ({asl, w, ...} : cgoal) =
   List.foldl
@@ -78,17 +81,20 @@ fun fresh_marks goals = map (fn _ => empty_mark) goals
 fun cgoal_terms ({params, asl, w} : cgoal) = params @ (w :: asl)
 fun goal_frees goals = free_varsl (List.concat (map cgoal_terms goals))
 
-fun register_param (param, store) =
-  if clasetMeta.is_eigen store param then store
-  else
-    case clasetMeta.register_eigen param store of
+fun register_eigens [] store = SOME store
+  | register_eigens (param :: rest) store =
+      if clasetMeta.is_eigen store param then register_eigens rest store
+      else
+        case clasetMeta.register_eigen param store of
+            NONE => NONE
+          | SOME next => register_eigens rest next
+
+fun register_params goals store =
+  case register_eigens (List.concat (map #params goals)) store of
       SOME store' => store'
     | NONE =>
         raise mk_HOL_ERR "clasetGoal" "make_node"
           "a goal parameter is not a fresh variable"
-
-fun register_params goals store =
-  List.foldl register_param store (List.concat (map #params goals))
 
 fun register_fresh bound avoids store =
   let val fresh = variant avoids bound
@@ -114,7 +120,7 @@ fun make_node goals store replay level paths marks avoids =
       Node {goals = goals, store = store', replay = replay,
             size = goals_size store' goals, level = level, paths = paths,
             marks = marks, avoids = avoids', rendering = ref NONE,
-            renders = ref []}
+            renders = ref [], spellings = ref []}
     end
 
 fun root_paths goals =
@@ -166,28 +172,28 @@ fun set_store store'
 
 fun set_level level'
   (Node {goals, store, replay, size, paths, marks, avoids,
-         rendering, renders, ...}) =
+         rendering, renders, spellings, ...}) =
   (* Goals and store are unchanged, so their cached derivatives remain
      valid. *)
   Node {goals = goals, store = store, replay = replay, size = size,
         level = level', paths = paths, marks = marks, avoids = avoids,
-        rendering = rendering, renders = renders}
+        rendering = rendering, renders = renders, spellings = spellings}
 
 fun set_binding_marks marks'
   (Node {goals, store, replay, size, level, paths, avoids,
-         rendering, renders, ...}) =
+         rendering, renders, spellings, ...}) =
   Node {goals = goals, store = store, replay = replay, size = size,
         level = level, paths = paths, marks = marks', avoids = avoids,
-        rendering = rendering, renders = renders}
+        rendering = rendering, renders = renders, spellings = spellings}
 
 fun record_step record
   (Node {goals, store, replay, size, level, paths, marks, avoids,
-         rendering, renders}) =
+         rendering, renders, spellings}) =
   Node
     {goals = goals, store = store,
      replay = clasetReplay.append replay record, size = size,
      level = level, paths = paths, marks = marks, avoids = avoids,
-     rendering = rendering, renders = renders}
+     rendering = rendering, renders = renders, spellings = spellings}
 
 fun nth1 function_name =
   clasetNorm.nth1 ("clasetGoal", function_name)
@@ -429,8 +435,23 @@ fun render (node as Node {renders, ...}) pos =
           rendered
         end
 
-fun member_term tm = List.exists (fn known => aconv tm known)
-fun member_type ty = List.exists (fn known => Type.compare (ty, known) = EQUAL)
+fun lookup_spellings (node as Node {spellings, ...}) pos =
+  case List.find (fn (cached, _) => cached = pos) (!spellings) of
+      SOME (_, forms) => forms
+    | NONE =>
+        let
+          val (asl, w) = render node pos
+          fun spelling conversion tm = rhs (concl (conversion tm))
+          fun forms tm =
+            Lib.op_mk_set aconv
+              [tm, spelling clasetNorm.membership_conv tm,
+               spelling clasetNorm.crossed_conv tm,
+               spelling clasetNorm.applied_conv tm]
+          val computed = {conclusion = forms w, assumptions = map forms asl}
+          val _ = spellings := (pos, computed) :: !spellings
+        in
+          computed
+        end
 
 fun marked_terms terms =
   List.filter clasetMeta.is_meta (free_varsl terms)
@@ -441,55 +462,50 @@ fun marked_types terms =
 
 fun variable_name variable = fst (dest_var variable)
 
-fun unrender node pos (result as (new_goals, validation)) =
+fun lift_children node pos new_goals =
   let
     val (asl, w) = render node pos
     val {params, ...} = goal_at node pos
+    val input_frees = free_varsl (params @ (w :: asl))
+    fun lift_child (child_asl, child_w) =
+      let
+        val new_params =
+          List.filter (fn variable => not (tmem variable input_frees))
+            (free_varsl (child_w :: child_asl))
+      in
+        ({params = params @ new_params,
+          asl = child_asl, w = child_w}, new_params)
+      end
+  in
+    map lift_child new_goals
+  end
+
+fun unrender node pos (result as (new_goals, validation)) =
+  let
+    val (asl, w) = render node pos
     val input_terms = w :: asl
     val output_terms =
       List.concat
         (map (fn (child_asl, child_w) => child_w :: child_asl)
           new_goals)
-    val input_frees = free_varsl (params @ input_terms)
     val received_terms = marked_terms input_terms
     val received_types = marked_types input_terms
     val returned_terms = marked_terms output_terms
     val returned_types = marked_types output_terms
     val known_markers =
-      List.all (fn tm => member_term tm received_terms) returned_terms
+      List.all (fn tm => tmem tm received_terms) returned_terms
       andalso
-      List.all (fn ty => member_type ty received_types) returned_types
+      List.all (fn ty => Lib.mem ty received_types) returned_types
 
-    fun is_new variable = not (member_term variable input_frees)
-    fun lift_child (child_asl, child_w) =
-      let
-        val new_params =
-          List.filter is_new (free_varsl (child_w :: child_asl))
-      in
-        ({params = params @ new_params,
-          asl = child_asl, w = child_w}, new_params)
-      end
-
-    val lifted = map lift_child new_goals
+    val lifted = lift_children node pos new_goals
     val output_params = List.concat (map #2 lifted)
     val globally_fresh =
-      List.all
-        (fn variable =>
-          not (List.exists (fn old => aconv variable old) (avoids node)))
+      List.all (fn variable => not (tmem variable (avoids node)))
         output_params
-
-    fun register_all [] current = SOME current
-      | register_all (param :: rest) current =
-          if clasetMeta.is_eigen current param then
-            register_all rest current
-          else
-            case clasetMeta.register_eigen param current of
-                NONE => NONE
-              | SOME next => register_all rest next
   in
     if not known_markers orelse not globally_fresh then NONE
     else
-      case register_all output_params (store node) of
+      case register_eigens output_params (store node) of
           NONE => NONE
         | SOME store' =>
             let

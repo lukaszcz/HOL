@@ -571,9 +571,8 @@ val _ =
          val r = mk_var ("r", bool)
        in
          case blastRule.initialBranch ([p, q], r) of
-             [(Goal $ Skolem (rname, []), true),
-              (Skolem (pname, []), true),
-              (Skolem (qname, []), true)] =>
+             [Goal $ Skolem (rname, []), Skolem (pname, []),
+              Skolem (qname, [])] =>
                pname <> qname andalso pname <> rname andalso
                qname <> rname
            | _ => false
@@ -3119,7 +3118,7 @@ val _ =
                if position > count then current
                else
                  case seq.cases
-                   (clasetStep.blast_move_back_step 1
+                   (clasetStep.blast_move_back_step_in (Context.snapshot ()) 1
                      (current, position))
                  of
                      SOME ((_, next), _) => move (position + 1) next
@@ -3153,10 +3152,10 @@ val _ =
          val proof = proof_at 2
          val invalid_proof = proof_at 4
          val result =
-           blastReconstruct.reconstructWith
+           blastReconstruct.reconstructWith_in (Context.snapshot ())
              clasetLib.empty_cs goal proof
          val invalid_result =
-           blastReconstruct.reconstructWith
+           blastReconstruct.reconstructWith_in (Context.snapshot ())
              clasetLib.empty_cs goal invalid_proof
 
          fun prefix_order premise =
@@ -3648,7 +3647,7 @@ val _ =
        in
          length (#script proof) = 3 andalso
          reconstruction_succeeds
-           (blastReconstruct.reconstructWith
+           (blastReconstruct.reconstructWith_in (Context.snapshot ())
               clasetLib.empty_cs goal proof) andalso
          reconstruction_succeeds
            (blastReconstruct.reconstruct goal proof)
@@ -3683,7 +3682,8 @@ val _ =
                SOME result => result
              | NONE => raise Fail "quantified reconstruction tableau"
        in
-         case blastReconstruct.reconstructWith cs goal proof of
+         case blastReconstruct.reconstructWith_in (Context.snapshot ())
+                cs goal proof of
              SOME ([], validation) =>
                let val theorem = validation []
                in
@@ -3766,7 +3766,8 @@ val _ =
              {goals = [{params = [z], asl = [], w = quantified}],
               store = clasetMeta.empty, level = 0}
        in
-         case seq.cases (clasetStep.blast_gen_step (node, 1)) of
+         case seq.cases (clasetStep.blast_gen_step_in (Context.snapshot ())
+                           (node, 1)) of
              SOME ((record, next), _) =>
                (case (clasetStep.kind_of record,
                       clasetGoal.goals next) of
@@ -3819,7 +3820,8 @@ val _ =
                  (fn blastSearch.SafeRule _ => true
                    | _ => false) proof andalso
                reconstruction_succeeds
-                 (blastReconstruct.reconstructWith cs goal proof)
+                 (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                    cs goal proof)
        end)
 
 val _ =
@@ -3840,7 +3842,8 @@ val _ =
              NONE => false
            | SOME proof =>
                reconstruction_succeeds
-                 (blastReconstruct.reconstructWith cs goal proof)
+                 (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                    cs goal proof)
        end)
 
 
@@ -4100,7 +4103,8 @@ val _ =
              NONE => false
            | SOME proof =>
                not (Option.isSome
-                 (blastReconstruct.reconstructWith cs goal proof)) andalso
+                 (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                    cs goal proof)) andalso
                not (Option.isSome
                  (blastReconstruct.searchGoal cs 1 goal))
        end)
@@ -4156,7 +4160,8 @@ val _ =
               NONE => false
             | SOME proof =>
                 Option.isSome
-                  (blastReconstruct.reconstructWith cs goal proof)) andalso
+                  (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                     cs goal proof)) andalso
          blast_solves (tableauLib.CS_BLAST_DEPTH_TAC cs 1) goal
        end)
 

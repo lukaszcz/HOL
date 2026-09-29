@@ -135,24 +135,16 @@ fun perform_with_in ctxt cs goal ({script, ...} : proof) =
 fun reconstructWith_in ctxt cs goal proof =
   total (perform_with_in ctxt cs goal) proof
 
-fun reconstructWith cs goal proof =
-  reconstructWith_in (Context.snapshot()) cs goal proof
-
-fun reconstruct_in ctxt goal proof =
-  reconstructWith_in ctxt clasetLib.empty_cs goal proof
-
 fun reconstruct goal proof =
-  reconstructWith clasetLib.empty_cs goal proof
+  reconstructWith_in (Context.snapshot()) clasetLib.empty_cs goal proof
 
 fun accept_in ctxt cs goal proof =
   case reconstructWith_in ctxt cs goal proof of
       SOME result => (proof, result)
     | NONE => raise blastSearch.PROOF_FAILED
 
-fun searchGoal_in ctxt cs depth goal =
-  blastSearch.searchGoal cs depth goal (accept_in ctxt cs goal)
-
 fun searchGoal cs depth goal =
-  searchGoal_in (Context.snapshot()) cs depth goal
+  blastSearch.searchGoal cs depth goal
+    (accept_in (Context.snapshot()) cs goal)
 
 end

@@ -31,6 +31,9 @@ sig
      congruence to replace rather than returning it unchanged. *)
   val weaken_cond_congruence : simpLib.simpset -> simpLib.simpset
 
+  (* The conditional-rewrite depth of this layer's simpsets. *)
+  val cond_depth : int
+
   val clasimp_ss : unit -> simpLib.simpset
 
   (* [with_extensionality ss simplify] runs [simplify] and, where it

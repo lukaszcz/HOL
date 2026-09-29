@@ -81,14 +81,6 @@ val empty =
    ty_bindings = Redblackmap.mkDict string_compare,
    occurring = Redblackset.empty string_compare}
 
-fun same_terms left right =
-  ListPair.allEq (fn (tm1, tm2) => aconv tm1 tm2) (left, right)
-
-fun same_type left right = Type.compare (left, right) = EQUAL
-
-fun same_type_binding (redex1, residue1) (redex2, residue2) =
-  same_type redex1 redex2 andalso same_type residue1 residue2
-
 fun merge_table table equal (left, right) =
   let
     fun merge (key, value1, value2) =
@@ -104,10 +96,10 @@ fun absorb {base, extensions} =
   let
     fun merge (extension : store, store : store) =
       {allows =
-         merge_table "allow-set" same_terms
+         merge_table "allow-set" (Lib.list_eq aconv)
            (#allows store, #allows extension),
        eigens =
-         merge_table "eigenvariable" same_terms
+         merge_table "eigenvariable" (Lib.list_eq aconv)
            (#eigens store, #eigens extension),
        metas =
          merge_table "term metavariable" aconv
@@ -116,10 +108,10 @@ fun absorb {base, extensions} =
          merge_table "term binding" aconv
            (#tm_bindings store, #tm_bindings extension),
        tymetas =
-         merge_table "type metavariable" same_type
+         merge_table "type metavariable" (Lib.curry op =)
            (#tymetas store, #tymetas extension),
        ty_bindings =
-         merge_table "type binding" same_type_binding
+         merge_table "type binding" (Lib.curry op =)
            (#ty_bindings store, #ty_bindings extension),
        occurring =
          Redblackset.union (#occurring store, #occurring extension)}
@@ -154,7 +146,7 @@ fun new_meta {allow, ty} store =
               NONE => []
             | SOME entries => entries
       in
-        if List.exists (fn known => aconv eigen known) bucket then eigens
+        if boolSyntax.tmem eigen bucket then eigens
         else Redblackmap.insert (eigens, name, eigen :: bucket)
       end
 
@@ -531,7 +523,7 @@ fun register_eigen eigen store =
             NONE => []
           | SOME entries => entries
     in
-      if List.exists (fn known => aconv eigen known) bucket then NONE
+      if boolSyntax.tmem eigen bucket then NONE
       else
         let
           val candidate =

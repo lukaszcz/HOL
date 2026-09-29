@@ -37,10 +37,9 @@ sig
   (* [CS_FIRST_BEST_TAC] given a bounded turn: the search runs under a
      bound of [expansions] admitted expansions and reports failure if it
      reaches it, so a caller can hand the goal to another engine rather
-     than let one search spend a whole invocation.  A tactic, because the
-     bound has to be in force while the search runs and an ntactic's
-     result sequence is lazy.  [expansions] is at least one: the search
-     reads a limit of zero as no limit. *)
+     than let one search spend a whole invocation.  A tactic: it keeps the
+     first solution.  [expansions] is at least one: the search reads a
+     limit of zero as no limit. *)
   val CS_BOUNDED_FIRST_BEST_TAC : clasetLib.claset -> int -> tactic
 
   type budget_session

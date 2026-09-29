@@ -2,22 +2,8 @@ signature linarithData =
 sig
   include Abbrev
 
-  (* Type equality, spelled once for the whole layer.  Everything here
-     is keyed by carrier, so the test is asked at every level -- of a
-     registry key, of an injection's endpoints, of the carrier a
-     conversion is restricted to, of the type a relation relates -- and
-     it goes through Type.compare, the kernel's own notion of type
-     identity, rather than through the polymorphic equality. *)
+  (* Type equality, spelled once for the whole layer. *)
   val same_type : hol_type -> hol_type -> bool
-
-  (* distinct_by compare key items keeps one item per key, in order of
-     first occurrence -- an order its callers depend on: the split
-     rules, the atom columns of a coefficient row and the rows of a
-     system are all built in it.  The key is compared with the given
-     order rather than searched for with a linear test, because the
-     lists deduplicated here accumulate across the rounds of a search
-     and a scan would cost a quadratic number of comparisons. *)
-  val distinct_by : ('b * 'b -> order) -> ('a -> 'b) -> 'a list -> 'a list
 
   val dest_divmod :
     {dest_div : term -> term * term,

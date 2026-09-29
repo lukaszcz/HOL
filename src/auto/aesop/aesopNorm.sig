@@ -12,15 +12,8 @@ sig
   (* Successful rules are counted against [max_depth].  The fixpoint is
      installed atomically; an iteration-limit result retains the input tree
      so callers can stop the branch without exposing a partial norm chain. *)
-  val normalise :
-    {max_depth : int, rules : rule list} -> gid -> tree -> outcome
+  (* Each rule attempt is charged to the budget, when one is given. *)
   val normalise_in :
-    Context.t ->
-    {max_depth : int, rules : rule list} -> gid -> tree -> outcome
-  val normalise_budgeted :
-    searchBudget.budget ->
-    {max_depth : int, rules : rule list} -> gid -> tree -> outcome
-  val normalise_budgeted_in :
-    Context.t -> searchBudget.budget ->
+    Context.t -> searchBudget.budget option ->
     {max_depth : int, rules : rule list} -> gid -> tree -> outcome
 end

@@ -89,18 +89,18 @@ fun safe_constructors_rule {name, theorems, mode} =
   constructors_rule_with RSafe "safe_constructors_rule"
     {name = name, theorems = theorems, mode = mode}
 
+(* The engine step, charging [budget] when one is given. *)
+fun metered_step unmetered _ NONE = unmetered
+  | metered_step _ metered (SOME meter) = metered meter
+
 fun forward_rule_with budget immediate
     {name, phase, theorem, mode} : rule =
   {name = name, phase = phase,
    apply =
      EngineStep
-       (case budget of
-            NONE =>
-              clasetStep.forward_rule_step
-                {theorem = theorem, immediate = immediate, mode = mode}
-          | SOME meter =>
-              clasetStep.forward_rule_step_budgeted meter
-                {theorem = theorem, immediate = immediate, mode = mode}),
+       (metered_step clasetStep.forward_rule_step
+          clasetStep.forward_rule_step_budgeted budget
+          {theorem = theorem, immediate = immediate, mode = mode}),
    once = true}
 
 fun forward_rule {name, phase, theorem, immediate, mode} =
@@ -111,9 +111,6 @@ fun forward_rule {name, phase, theorem, immediate, mode} =
    takes every premise of that canonical rule when asked for NONE, so the
    all-immediate default costs no canonicalization here. *)
 val default_forward_rule = forward_rule_with NONE NONE
-
-fun default_forward_rule_budgeted budget =
-  forward_rule_with (SOME budget) NONE
 
 fun forward_duplicate store previous candidate =
   let
@@ -397,16 +394,8 @@ type candidate = clasetLib.aesop_rule
 (* Retrieval may offer one declaration through several index entries.  Keep
    the first occurrence of each name, in retrieval order. *)
 fun unique_declarations declarations =
-  let
-    fun add (declaration as {name, ...} : candidate, (seen, kept)) =
-      if Redblackset.member (seen, name) then (seen, kept)
-      else (Redblackset.add (seen, name), declaration :: kept)
-    val (_, reversed) =
-      List.foldl add
-        (Redblackset.empty String.compare, []) declarations
-  in
-    List.rev reversed
-  end
+  listUtil.distinct_by String.compare (#name : candidate -> string)
+    declarations
 
 (* Assembling a rule set inspects a retrieved declaration more than once:
    once per safe-class filter, and once more when its rule is built.  Each
@@ -452,13 +441,9 @@ fun declaration_rule budget mode
         {name = name, phase = phase_of_spec spec,
          apply =
            EngineStep
-             (case budget of
-                  NONE =>
-                    clasetStep.rule_step
-                      {theorem = source, elim = elim, mode = mode}
-                | SOME meter =>
-                    clasetStep.rule_step_budgeted meter
-                      {theorem = source, elim = elim, mode = mode}),
+             (metered_step clasetStep.rule_step
+                clasetStep.rule_step_budgeted budget
+                {theorem = source, elim = elim, mode = mode}),
          once = false}
       end
   end
@@ -547,7 +532,7 @@ fun claset_rules
      assumptions = assumptions, qvars = qvars,
      simp = simp_rule simp_args, budget = NONE}
 
-fun claset_rules_with
+fun claset_rules_with budget
       {claset, mode, conclusion, assumptions, qvars,
        simpset, simp_controls} =
   claset_rules_core
@@ -557,18 +542,6 @@ fun claset_rules_with
        simp_rule_with
          {name = "simp", simpset = simpset,
           controls = simp_controls},
-     budget = NONE}
-
-fun claset_rules_with_budget budget
-      {claset, mode, conclusion, assumptions, qvars,
-       simpset, simp_controls} =
-  claset_rules_core
-    {claset = claset, mode = mode, conclusion = conclusion,
-     assumptions = assumptions, qvars = qvars,
-     simp =
-       simp_rule_with
-         {name = "simp", simpset = simpset,
-          controls = simp_controls},
-     budget = SOME budget}
+     budget = budget}
 
 end

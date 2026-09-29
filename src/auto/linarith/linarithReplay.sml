@@ -760,19 +760,16 @@ fun fwd_prove_in ctxt config theorems conclusion =
       case refute config hypotheses conclusion of
           SOME tactic => tactic
         | NONE =>
-            raise ERR "fwd_prove" "linear arithmetic found no proof"
+            raise ERR "fwd_prove_in" "linear arithmetic found no proof"
     val (goals, validation) = tactic (hypotheses, conclusion) ctxt
     val _ =
       if null goals then ()
-      else raise ERR "fwd_prove" "replay left a subgoal open"
+      else raise ERR "fwd_prove_in" "replay left a subgoal open"
     val theorem = Lib.rev_itlist PROVE_HYP theorems (validation [])
     val _ = linarithData.trace_thm 2 "forward proof:" theorem
   in
     theorem
   end
-
-fun fwd_prove config theorems conclusion =
-  fwd_prove_in (Context.snapshot()) config theorems conclusion
 
 datatype budget_outcome =
     ReplayProved of thm
@@ -797,7 +794,7 @@ fun fwd_prove_budgeted_in ctxt budget config theorems conclusion =
               Tactical.VALID tactic (hypotheses, conclusion) ctxt
             val _ =
               if null goals then ()
-              else raise ERR "fwd_prove_budgeted"
+              else raise ERR "fwd_prove_budgeted_in"
                 "replay left a subgoal open"
             val _ = charge ()
             val proof = validation []
@@ -811,9 +808,5 @@ fun fwd_prove_budgeted_in ctxt budget config theorems conclusion =
   end
   handle searchBudget.LimitReached (kind, usage) =>
     ReplayLimitReached {kind = kind, usage = usage}
-
-fun fwd_prove_budgeted budget config theorems conclusion =
-  fwd_prove_budgeted_in (Context.snapshot()) budget config
-    theorems conclusion
 
 end

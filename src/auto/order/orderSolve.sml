@@ -5,41 +5,20 @@ open HolKernel boolLib orderRulesTheory
 
 val node_limit = ref 50
 
-type work =
-  {candidate : unit -> unit,
-   application : unit -> unit,
-   normalization : unit -> unit,
-   max_nodes : int option,
-   budget : searchBudget.budget option}
+type work = {meter : orderData.meter, max_nodes : int option}
 
-fun legacy_work () : work =
-  {candidate = fn () => (), application = fn () => (),
-   normalization = fn () => (), max_nodes = SOME (!node_limit),
-   budget = NONE}
+fun capped_work () : work =
+  {meter = searchBudget.free_charger, max_nodes = SOME (!node_limit)}
 
 fun budget_work budget : work =
-  {candidate = fn () =>
-     searchBudget.charge budget searchBudget.Candidate,
-   application = fn () =>
-     searchBudget.charge budget searchBudget.Application,
-   normalization = fn () =>
-     searchBudget.charge budget searchBudget.Normalization,
-   max_nodes = NONE, budget = SOME budget}
+  {meter = searchBudget.charger budget, max_nodes = NONE}
 
-fun candidate (work : work) = #candidate work ()
-fun application (work : work) = #application work ()
-fun normalization (work : work) = #normalization work ()
+fun candidate (work : work) = #candidate (#meter work) ()
+fun application (work : work) = #application (#meter work) ()
+fun normalization (work : work) = #normalization (#meter work) ()
 
-fun facts_of work context theorem =
-  case #budget (work : work) of
-      NONE => orderData.facts_of context theorem
-    | SOME budget => orderData.facts_of_budgeted budget context theorem
-
-fun facts_of_all work context theorems =
-  case #budget (work : work) of
-      NONE => orderData.facts_of_all context theorems
-    | SOME budget =>
-        orderData.facts_of_all_budgeted budget context theorems
+fun facts_of (work : work) = orderData.facts_of (#meter work)
+fun facts_of_all (work : work) = orderData.facts_of_all (#meter work)
 
 (* A strict step is taken apart on the way in: [STRORD R x y] is [R x y]
    together with [x <> y], and nothing else about it is used.  So the
@@ -232,9 +211,6 @@ fun refute_with work context facts =
         search work
           (close work context (edges, equalities)) distinctions
 
-fun refute context facts =
-  refute_with (legacy_work ()) context facts
-
 (* Proving a literal outright is the other half of the procedure.  A
    refutation reads the negated goal as a literal, and a relational atom
    has a negative reading only under totality, so a chain asked for by a
@@ -323,18 +299,18 @@ fun attempt work context theorems term =
   end
 
 fun prove_using_with work contexts theorems term =
-  case search work
-         (fn context => attempt work context theorems term) contexts of
+  search work (fn context => attempt work context theorems term) contexts
+
+fun prove_using contexts theorems term =
+  case prove_using_with (capped_work ()) contexts theorems term of
       SOME theorem => theorem
     | NONE =>
         raise mk_HOL_ERR "orderSolve" "prove_using"
           "no order in the assumptions decides the goal"
 
-fun prove_using contexts theorems term =
-  prove_using_with (legacy_work ()) contexts theorems term
-
 fun prove_with theorems term =
-  prove_using (orderData.contexts theorems) theorems term
+  prove_using (orderData.contexts searchBudget.free_charger theorems)
+    theorems term
 
 datatype budget_outcome =
     OrderProved of thm
@@ -342,29 +318,15 @@ datatype budget_outcome =
   | OrderLimitReached of
       {kind : searchBudget.kind, usage : searchBudget.usage}
 
-fun prove_with_budget budget theorems term =
-  let
-    val work = budget_work budget
-    val contexts = orderData.contexts_budgeted budget theorems
-  in
-    case search work
-           (fn context => attempt work context theorems term)
-           contexts of
-        SOME theorem => OrderProved theorem
-      | NONE => OrderExhausted
-  end
-  handle searchBudget.LimitReached (kind, usage) =>
-    OrderLimitReached {kind = kind, usage = usage}
+fun prove_using_budgeted budget =
+  prove_using_with (budget_work budget)
 
-fun prove_using_budgeted budget contexts theorems term =
-  let val work = budget_work budget
-  in
-    case search work
-           (fn context => attempt work context theorems term)
-           contexts of
-        SOME theorem => OrderProved theorem
-      | NONE => OrderExhausted
-  end
+fun prove_with_budget budget theorems term =
+  (case prove_using_budgeted budget
+          (orderData.contexts (searchBudget.charger budget) theorems)
+          theorems term of
+       SOME theorem => OrderProved theorem
+     | NONE => OrderExhausted)
   handle searchBudget.LimitReached (kind, usage) =>
     OrderLimitReached {kind = kind, usage = usage}
 

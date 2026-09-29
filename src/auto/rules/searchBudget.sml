@@ -137,4 +137,18 @@ fun extend (Budget {limits, ...}) kind extra =
                 normalization = grow normalization})
     end
 
+type charger =
+  {candidate : unit -> unit,
+   application : unit -> unit,
+   normalization : unit -> unit}
+
+val free_charger : charger =
+  {candidate = fn () => (), application = fn () => (),
+   normalization = fn () => ()}
+
+fun charger budget : charger =
+  {candidate = fn () => charge budget Candidate,
+   application = fn () => charge budget Application,
+   normalization = fn () => charge budget Normalization}
+
 end

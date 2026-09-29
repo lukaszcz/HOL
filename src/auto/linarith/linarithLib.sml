@@ -5,28 +5,19 @@ open Abbrev HolKernel Drule
 
 val ERR = mk_HOL_ERR "linarithLib"
 
+(* The budget rides beside the meter for the nested budgeted entries. *)
 type work =
-  {candidate : unit -> unit,
-   application : unit -> unit,
-   normalization : unit -> unit,
-   budget : searchBudget.budget option}
+  {meter : searchBudget.charger, budget : searchBudget.budget option}
 
 val free_work : work =
-  {candidate = fn () => (), application = fn () => (),
-   normalization = fn () => (), budget = NONE}
+  {meter = searchBudget.free_charger, budget = NONE}
 
 fun budget_work budget : work =
-  {candidate = fn () =>
-     searchBudget.charge budget searchBudget.Candidate,
-   application = fn () =>
-     searchBudget.charge budget searchBudget.Application,
-   normalization = fn () =>
-     searchBudget.charge budget searchBudget.Normalization,
-   budget = SOME budget}
+  {meter = searchBudget.charger budget, budget = SOME budget}
 
-fun candidate (work : work) = #candidate work ()
-fun application (work : work) = #application work ()
-fun normalization (work : work) = #normalization work ()
+fun candidate (work : work) = #candidate (#meter work) ()
+fun application (work : work) = #application (#meter work) ()
+fun normalization (work : work) = #normalization (#meter work) ()
 
 fun insert_facts_with (work : work) facts =
   case #budget work of
@@ -334,13 +325,13 @@ fun opposite_tac (assumptions, conclusion) ctxt =
       | contradiction (assumption :: rest) =
           (case Lib.total boolSyntax.dest_neg assumption of
                SOME positive =>
-                 if List.exists (Term.aconv positive) assumptions then
+                 if boolSyntax.tmem positive assumptions then
                    SOME
                      (MP (ASSUME assumption) (ASSUME positive))
                  else contradiction rest
              | NONE => contradiction rest)
   in
-    if List.exists (Term.aconv boolSyntax.F) assumptions then
+    if boolSyntax.tmem boolSyntax.F assumptions then
       Tactic.ACCEPT_TAC (ASSUME boolSyntax.F) (assumptions, conclusion) ctxt
     else
       case contradiction assumptions of
@@ -352,8 +343,8 @@ fun opposite_tac (assumptions, conclusion) ctxt =
 (* Tactic.STRIP_ASSUME_TAC without the disjunction case.  Conjunctions
    and existentials decompose an assumption without branching, so they
    are eliminated as soon as they appear.  Disjunctions branch, and are
-   left standing for split_on_demand to eliminate one at a time: a goal
-   the arithmetic closes never pays for the case splits it did not
+   left standing for split_on_demand_with to eliminate one at a time: a
+   goal the arithmetic closes never pays for the case splits it did not
    need. *)
 val strip_literals =
   Thm_cont.REPEAT_TCL
@@ -394,7 +385,7 @@ fun limit_exceeded function limit =
    result cache's store and its context graph -- would merge in any
    case, all three being keyed on Term.compare themselves. *)
 fun distinct_thms_with work theorems =
-  linarithData.distinct_by
+  listUtil.distinct_by
     (fn pair => (candidate work; Term.compare pair))
     Thm.concl theorems
 
@@ -459,13 +450,13 @@ fun decomp_atoms tm =
 fun connected_split_goal (assumptions, conclusion) =
   let
     fun atoms assumption =
-      linarithData.distinct_by Term.compare I (decomp_atoms assumption)
+      listUtil.distinct_by Term.compare I (decomp_atoms assumption)
     val entries = map (fn assumption => (assumption, atoms assumption))
       assumptions
     fun occurrence_count atom =
       List.foldl
         (fn ((_, entry_atoms), count) =>
-           if List.exists (Term.aconv atom) entry_atoms then count + 1
+           if boolSyntax.tmem atom entry_atoms then count + 1
            else count)
         0 entries
     fun score (_, entry_atoms) =
@@ -595,9 +586,9 @@ fun augmentation_round_with work processed known terms =
    atoms are candidates in their turn, and it is bounded by limit
    rounds.  It answers the facts to assume together with the atom set
    to carry on with, rather than assuming them itself, because that set
-   travels down the branch of the search: see split_on_demand.  What is
-   already on the branch travels across the rounds as a set too, each
-   round only adding to it. *)
+   travels down the branch of the search: see split_on_demand_with.
+   What is already on the branch travels across the rounds as a set
+   too, each round only adding to it. *)
 fun augmentation_with work function limit processed assumptions =
   let
     fun remember terms known =
@@ -989,9 +980,6 @@ fun split_on_demand_with work function config split_tac =
        node hint start goal ctxt)
   end
 
-fun split_on_demand function config split_tac =
-  split_on_demand_with free_work function config split_tac
-
 type linarith_config = linarithData.linarith_config
 val default_config = linarithData.default_config
 
@@ -1070,9 +1058,6 @@ fun forward_search_with work conclusion =
             (filter_relevant, search (unregistered_hint conclusion))))
   end
 
-fun forward_search conclusion =
-  forward_search_with free_work conclusion
-
 (* A search that found nothing raises under its own name; anything else
    -- a malformed instance, a replay that will not rebuild -- is a
    defect the caller has to see rather than a declined question. *)
@@ -1083,36 +1068,48 @@ fun exhausted_search exn =
         Feedback.top_function_of error = forward_search_name
     | _ => false
 
-fun forward_prove premises conclusion =
+(* The search on the atomized premises, discharged against them; NONE
+   when the search is exhausted.  Only budgeted work runs it under
+   Tactical.VALID. *)
+fun forward_prove_with work function ctxt premises conclusion =
   let
     val premise_theorems = atomized_assumptions premises
     val premise_terms = map Thm.concl premise_theorems
+    val search = forward_search_with work conclusion
+    val tactic =
+      case #budget (work : work) of
+          NONE => search
+        | SOME _ => Tactical.VALID search
     val outcome =
-      SOME (forward_search conclusion (premise_terms, conclusion)
-        (Context.snapshot()))
+      SOME (tactic (premise_terms, conclusion) ctxt)
       handle exn =>
         if exhausted_search exn then NONE else raise exn
-    val theorem =
-      case outcome of
-          NONE => decline ""
-        | SOME (goals, validation) =>
-            let
-              val _ =
-                if null goals then ()
-                else raise ERR "forward_prove" "replay left a subgoal open"
-            in
-              validation []
-            end
+    fun discharge premise theorem =
+      (normalization work; PROVE_HYP premise theorem)
   in
-    Lib.rev_itlist PROVE_HYP premise_theorems theorem
+    case outcome of
+        NONE => NONE
+      | SOME (goals, validation) =>
+          if null goals then
+            (normalization work;
+             SOME
+               (Lib.rev_itlist discharge premise_theorems
+                  (validation [])))
+          else raise ERR function "replay left a subgoal open"
   end
+
+fun forward_prove premises conclusion =
+  case forward_prove_with free_work "forward_prove" (Context.snapshot())
+         premises conclusion of
+      SOME theorem => theorem
+    | NONE => decline ""
 
 fun linarith_prove tm =
   let
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
     (* A search that found nothing is reported here rather than left to
-       fwd_prove, so that a public entry names itself and carries the
+       fwd_prove_in, so that a public entry names itself and carries the
        carrier hint.  Nothing else is: a malformed instance fails
        somewhere in the replay machinery, and reporting that as a
        refusal makes a provable goal look unprovable to the one person
@@ -1148,29 +1145,12 @@ fun LINARITH_PROVE_BUDGETED_IN ctxt budget tm =
     val work = budget_work budget
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
-    val premise_theorems = atomized_assumptions premises
-    val premise_terms = map Thm.concl premise_theorems
-    val search = forward_search_with work conclusion
-    val outcome =
-      SOME
-        (Tactical.VALID search (premise_terms, conclusion) ctxt)
-      handle exn =>
-        if exhausted_search exn then NONE else raise exn
   in
-    case outcome of
+    case forward_prove_with work "LINARITH_PROVE_BUDGETED_IN" ctxt premises
+           conclusion of
         NONE => LinarithExhausted
-      | SOME (goals, validation) =>
+      | SOME supported =>
           let
-            val _ =
-              if null goals then ()
-              else raise ERR "LINARITH_PROVE_BUDGETED"
-                "replay left a subgoal open"
-            val _ = normalization work
-            val proved = validation []
-            fun discharge premise theorem =
-              (normalization work; PROVE_HYP premise theorem)
-            val supported =
-              Lib.rev_itlist discharge premise_theorems proved
             fun imply premise theorem =
               (normalization work; Thm.DISCH premise theorem)
             val implication = Lib.itlist imply premises supported
@@ -1180,15 +1160,12 @@ fun LINARITH_PROVE_BUDGETED_IN ctxt budget tm =
             if Term.aconv (Thm.concl theorem) tm then
               LinarithProved theorem
             else
-              raise ERR "LINARITH_PROVE_BUDGETED"
+              raise ERR "LINARITH_PROVE_BUDGETED_IN"
                 "reconstructed theorem has the wrong conclusion"
           end
   end
   handle searchBudget.LimitReached (kind, usage) =>
     LinarithLimitReached {kind = kind, usage = usage}
-
-fun LINARITH_PROVE_BUDGETED budget tm =
-  LINARITH_PROVE_BUDGETED_IN (Context.snapshot()) budget tm
 
 (* NONE is "asked and refused", which is the only failure a rung of the
    ladders below is entitled to treat as an answer: a rung that fails
@@ -1484,30 +1461,15 @@ fun budgeted_context_prove ctxt budget context tm =
   else
     let
       val work = budget_work budget
-      val premise_theorems =
-        atomized_assumptions (map Thm.concl context)
-      val premise_terms = map Thm.concl premise_theorems
-      val outcome =
-        SOME
-          (Tactical.VALID
-            (forward_search_with work tm)
-            (premise_terms, tm) ctxt)
-        handle error =>
-          if exhausted_search error then NONE else raise error
       val theorem =
-        case outcome of
-            NONE => decline ""
-          | SOME (goals, validation) =>
-              if null goals then
-                (normalization work; validation [])
-              else raise ERR "budgeted_context_prove"
-                "replay left a subgoal open"
+        case forward_prove_with work "budgeted_context_prove" ctxt
+               (map Thm.concl context) tm of
+            SOME theorem => theorem
+          | NONE => decline ""
       fun discharge premise result =
         (normalization work; PROVE_HYP premise result)
-      val supported =
-        Lib.rev_itlist discharge premise_theorems theorem
     in
-      Lib.rev_itlist discharge context supported
+      Lib.rev_itlist discharge context theorem
     end
 
 (* A failed arithmetic question may be offered many times as the context
@@ -1570,71 +1532,45 @@ fun memo_budgeted_with_arith ctxt budget =
     ask
   end
 
-fun budgeted_linarith prove context tm =
-  case attempt (prove context) tm of
-      SOME theorem => EQT_INTRO theorem
-    | NONE =>
-        (case attempt (prove context)
-                (boolSyntax.mk_neg tm) of
-             SOME theorem => EQF_INTRO theorem
-           | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm))
+(* A reducer deciding each term by conv applied to the admissible
+   context. *)
+fun linarith_reducer conv =
+  let
+    exception CTXT of thm list
+    fun get_context e = (raise e) handle CTXT value => value
+    fun addcontext (context, newtheorems) =
+      let
+        val admitted =
+          List.filter admissible
+            (List.concat (map CONJUNCTS newtheorems))
+      in
+        CTXT (admitted @ get_context context)
+      end
+  in
+    Traverse.REDUCER
+      {name = SOME "LINARITH_DP",
+       addcontext = addcontext,
+       apply = fn args => conv (get_context (#context args)),
+       initial = CTXT []}
+  end
+
+fun linarith_ss reducer =
+  simpLib.named_merge_ss "LINARITH"
+    [simpLib.SSFRAG
+       {name = SOME "LINARITH_DP",
+        convs = [], rewrs = [], congs = [], filter = NONE,
+        ac = [], dprocs = [reducer]}]
 
 fun LINARITH_REDUCER_BUDGETED ctxt budget =
-  let
-    val prove = memo_budgeted_with_arith ctxt budget
-    exception CTXT of thm list
-    fun get_context e = (raise e) handle CTXT value => value
-    fun addcontext (context, newtheorems) =
-      let
-        val admitted =
-          List.filter admissible
-            (List.concat (map CONJUNCTS newtheorems))
-      in
-        CTXT (admitted @ get_context context)
-      end
-  in
-    Traverse.REDUCER
-      {name = SOME "LINARITH_DP",
-       addcontext = addcontext,
-       apply = fn args =>
-         budgeted_linarith prove (get_context (#context args)),
-       initial = CTXT []}
-  end
+  linarith_reducer
+    (decide "CACHED_LINARITH" o memo_budgeted_with_arith ctxt budget)
 
 fun LINARITH_ss_budgeted ctxt budget =
-  simpLib.named_merge_ss "LINARITH"
-    [simpLib.SSFRAG
-       {name = SOME "LINARITH_DP",
-        convs = [], rewrs = [], congs = [], filter = NONE,
-        ac = [], dprocs = [LINARITH_REDUCER_BUDGETED ctxt budget]}]
+  linarith_ss (LINARITH_REDUCER_BUDGETED ctxt budget)
 
-val LINARITH_REDUCER =
-  let
-    exception CTXT of thm list
-    fun get_context e = (raise e) handle CTXT value => value
-    fun addcontext (context, newtheorems) =
-      let
-        val admitted =
-          List.filter admissible
-            (List.concat (map CONJUNCTS newtheorems))
-      in
-        CTXT (admitted @ get_context context)
-      end
-  in
-    Traverse.REDUCER
-      {name = SOME "LINARITH_DP",
-       addcontext = addcontext,
-       apply = fn args =>
-         CACHED_LINARITH (get_context (#context args)),
-       initial = CTXT []}
-  end
+val LINARITH_REDUCER = linarith_reducer CACHED_LINARITH
 
-val LINARITH_ss =
-  simpLib.named_merge_ss "LINARITH"
-    [simpLib.SSFRAG
-       {name = SOME "LINARITH_DP",
-        convs = [], rewrs = [], congs = [], filter = NONE,
-        ac = [], dprocs = [LINARITH_REDUCER]}]
+val LINARITH_ss = linarith_ss LINARITH_REDUCER
 
 (* Whether a context could refute F at all.  Every row the procedure
    builds comes from a premise it can decompose, and the nonnegativity
@@ -1719,28 +1655,21 @@ fun refutable_context theorems =
    every call, since neither the question nor its answer would depend
    on the condition being asked about.  That is a state to report, not
    one to spend a search per side condition rediscovering. *)
-val linarith_solver : Traverse.ssolver =
+fun linarith_solver_with prove : Traverse.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
-     (if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
+     (if cache_check tm then prove context_thms tm
       else if refutable_context context_thms then
-        CONTR tm
-          (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))
+        CONTR tm (prove context_thms boolSyntax.F)
       else raise ERR "lin_arith" "no arithmetic in the context")
      handle Declined _ => raise ERR "lin_arith" search_failed}
 
-fun linarith_solver_budgeted ctxt budget : Traverse.ssolver =
-  let val prove = memo_budgeted_with_arith ctxt budget
-  in {name = "lin_arith",
-   solve = fn {context_thms, ...} => fn tm =>
-     (if cache_check tm then
-        prove context_thms tm
-      else if refutable_context context_thms then
-        CONTR tm
-          (prove context_thms boolSyntax.F)
-      else raise ERR "lin_arith" "no arithmetic in the context")
-     handle Declined _ => raise ERR "lin_arith" search_failed}
-  end
+val linarith_solver =
+  linarith_solver_with
+    (fn context => fn tm => EQT_ELIM (cached_with_arith context tm))
+
+fun linarith_solver_budgeted ctxt budget =
+  linarith_solver_with (memo_budgeted_with_arith ctxt budget)
 
 (* num is registered here, not at the foot of linarithNum the way the
    int, real and rat instances register themselves.  Those live in

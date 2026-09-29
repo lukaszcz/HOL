@@ -17,6 +17,4 @@ sig
   val NTRY : ntactic -> ntactic
   val NREPEAT : ntactic -> ntactic
   val NCHANGED : ntactic -> ntactic
-  val NFIRST : ntactic list -> ntactic
-  val nEVERY : ntactic list -> ntactic
 end

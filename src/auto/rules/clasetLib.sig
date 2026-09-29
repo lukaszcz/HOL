@@ -22,8 +22,6 @@ sig
   type aesop_rule =
     {name : string, spec : rulespec, thm : thm, info : info}
 
-  datatype part = Safe0Part | SafePPart | UnsafePart | DupPart
-
   val empty_cs : claset
 
   val add_rule : rulespec -> string * thm -> claset -> claset
@@ -86,7 +84,6 @@ sig
   val norm_rules : claset -> aesop_rule list
   val pp_claset : claset Parse.pprinter
 
-  val claset_part : part -> claset -> claset_part
   val safe0_part : claset -> claset_part
   val safep_part : claset -> claset_part
   val unsafe_part : claset -> claset_part

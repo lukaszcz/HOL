@@ -269,7 +269,7 @@ fun align_conclusion target theorem =
 fun align_goal (asl, w) theorem =
   let
     val aligned = align_conclusion w theorem
-    fun posed hypothesis = List.exists (aconv hypothesis) asl
+    fun posed hypothesis = tmem hypothesis asl
     fun restore (hypothesis, th) =
       let
         fun bridge [] = th
@@ -342,11 +342,5 @@ fun delete_nth origin values pos =
   in
     List.take (values, pos - 1) @ List.drop (values, pos)
   end
-
-fun term_size tm =
-  case dest_term tm of
-      COMB (rator, rand) => term_size rator + term_size rand
-    | LAMB (_, body) => 1 + term_size body
-    | _ => 1
 
 end

@@ -1,7 +1,7 @@
 structure blastRule :> blastRule =
 struct
 
-open HolKernel boolSyntax blastTerm
+open HolKernel boolSyntax blastTerm listUtil
 
 infix 9 $
 infix |->
@@ -164,8 +164,6 @@ fun translatorMeasured checkpoint
     val type_map : (hol_type, pterm) Redblackmap.dict ref =
       ref (Redblackmap.mkDict Type.compare)
 
-    fun member tm = existsMeasured checkpoint (Term.aconv tm)
-
     fun encode_type ty =
       let
         val _ = checkpoint ()
@@ -240,7 +238,7 @@ fun translatorMeasured checkpoint
        case Redblackmap.peek (bounds, tm) of
            SOME binder_depth => Bound (depth - binder_depth)
          | NONE =>
-             if member tm rule_vars then
+             if member_term_measured checkpoint tm rule_vars then
                fresh_variable tm (fn () => Var (ref NONE))
              else if goal_frees then
                fresh_variable tm
@@ -331,9 +329,9 @@ fun initialBranchMeasured checkpoint (assumptions, conclusion) =
     val _ = checkpoint ()
     val conclusion' = from (crossed conclusion)
   in
-    (mkGoal conclusion', true) ::
-      mapMeasured checkpoint
-        (fn formula => (from (crossed formula), true)) assumptions
+    mkGoal conclusion' ::
+      mapMeasured checkpoint (fn formula => from (crossed formula))
+        assumptions
   end
 
 fun initialBranch goal = initialBranchMeasured (fn () => ()) goal
@@ -412,7 +410,7 @@ fun compute_canonical_data checkpoint is_elim theorem =
     (* A rule variable in head position is a hole, not a set: [?P x] is how
        the tableau asks for a predicate, and a membership there would leave a
        first-order problem no instantiation can solve. *)
-    fun hole variable = List.exists (Term.aconv variable) outer
+    fun hole variable = boolSyntax.tmem variable outer
     val cross = crossed_with hole
     val from =
       translatorMeasured checkpoint

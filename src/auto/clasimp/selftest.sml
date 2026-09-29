@@ -1798,7 +1798,8 @@ val _ =
          val cs =
            clasimpLib.add_safe_simp_wrapper ss [] clasetLib.empty_cs
        in
-         case seq.cases (clasetStep.safe_step cs (node, 1)) of
+         case seq.cases (clasetStep.safe_step_in (Context.snapshot ())
+                           cs (node, 1)) of
              NONE => false
            | SOME ((_, next), _) =>
                (case clasetGoal.goals next of

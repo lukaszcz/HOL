@@ -19,10 +19,6 @@ sig
      side condition of a conditional rewrite -- the side condition is
      simplified with the same simpset -- and a separate solver for the
      second position would decide nothing the first does not. *)
-  val ORDER_REDUCER : Traverse.reducer
   val ORDER_ss : simpLib.ssfrag
-  val ORDER_REDUCER_BUDGETED :
-    searchBudget.budget -> Traverse.reducer
-  val ORDER_ss_budgeted :
-    searchBudget.budget -> simpLib.ssfrag
+  val ORDER_ss_budgeted : searchBudget.budget -> simpLib.ssfrag
 end

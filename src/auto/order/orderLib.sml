@@ -24,30 +24,15 @@ fun relation_sites terms =
         (map (List.mapPartial relation_of o find_terms (fn _ => true))
           terms)
   in
-    List.foldl
-      (fn (site, seen) =>
-        if Lib.op_mem aconv site seen then seen else seen @ [site])
-      [] candidates
+    listUtil.distinct_by Term.compare I candidates
   end
 
-fun same_theorem left right =
-  aconv (Thm.concl left) (Thm.concl right) andalso
-  let
-    val left_support = Thm.hyp left
-    val right_support = Thm.hyp right
-  in
-    List.all (fn term => Lib.op_mem aconv term right_support)
-      left_support andalso
-    List.all (fn term => Lib.op_mem aconv term left_support)
-      right_support
-  end
-
+(* Hypotheses are listed sorted and without repeats, so the key compares
+   them as sets. *)
 fun distinct_theorems theorems =
-  List.foldl
-    (fn (theorem, seen) =>
-      if List.exists (same_theorem theorem) seen then seen
-      else seen @ [theorem])
-    [] theorems
+  listUtil.distinct_by
+    (Lib.pair_compare (Term.compare, Lib.list_compare Term.compare))
+    (fn theorem => (Thm.concl theorem, Thm.hyp theorem)) theorems
 
 fun order_fact_views_with charge goal theorems =
   let
@@ -64,7 +49,8 @@ fun order_fact_views_with charge goal theorems =
     fun views entry =
       let
         val schematic = #theorem (clasetFacts.schematic_view entry)
-        val contexts = orderData.contexts [schematic]
+        val contexts =
+          orderData.contexts searchBudget.free_charger [schematic]
         val patterns =
           relation_sites [Thm.concl schematic] @
           map #relation contexts
@@ -124,21 +110,19 @@ fun ORDER_CONV tm = EQT_INTRO (ORDER_PROVE tm)
    an assumed theorem cannot escape its fixed support types. *)
 fun make_order_reducer budget =
   let
-    fun contexts_of theorems =
+    val meter =
       case budget of
-          NONE => orderData.contexts theorems
-        | SOME owned => orderData.contexts_budgeted owned theorems
+          NONE => searchBudget.free_charger
+        | SOME owned => searchBudget.charger owned
+    val contexts_of = orderData.contexts meter
     fun prove contexts theorems tm =
       case budget of
           NONE => orderSolve.prove_using contexts theorems tm
         | SOME owned =>
             (case orderSolve.prove_using_budgeted
                     owned contexts theorems tm of
-                 orderSolve.OrderProved theorem => theorem
-               | orderSolve.OrderExhausted =>
-                   raise ERR "ORDER_DP" "no order proof"
-               | orderSolve.OrderLimitReached {kind, usage} =>
-                   raise searchBudget.LimitReached (kind, usage))
+                 SOME theorem => theorem
+               | NONE => raise ERR "ORDER_DP" "no order proof")
     exception CTXT of
       {theorems : thm list,
        contexts : orderData.context list,
@@ -255,23 +239,15 @@ fun make_order_reducer budget =
          CTXT {theorems = [], contexts = [], sites = ref []}}
   end
 
-val ORDER_REDUCER = make_order_reducer NONE
-
-fun ORDER_REDUCER_BUDGETED budget =
-  make_order_reducer (SOME budget)
-
-val ORDER_ss =
+fun order_ss budget =
   simpLib.named_merge_ss "ORDER"
     [simpLib.SSFRAG
        {name = SOME "ORDER_DP",
         convs = [], rewrs = [], congs = [], filter = NONE,
-        ac = [], dprocs = [ORDER_REDUCER]}]
+        ac = [], dprocs = [make_order_reducer budget]}]
 
-fun ORDER_ss_budgeted budget =
-  simpLib.named_merge_ss "ORDER"
-    [simpLib.SSFRAG
-       {name = SOME "ORDER_DP",
-        convs = [], rewrs = [], congs = [], filter = NONE,
-        ac = [], dprocs = [ORDER_REDUCER_BUDGETED budget]}]
+val ORDER_ss = order_ss NONE
+
+fun ORDER_ss_budgeted budget = order_ss (SOME budget)
 
 end

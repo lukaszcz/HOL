@@ -115,8 +115,6 @@ fun add_mark
   {terms = union_metas more_terms terms,
    types = union_tymetas more_types types}
 
-val empty_mark : clasetGoal.binding_mark = {terms = [], types = []}
-
 fun replicate count value = List.tabulate (count, fn _ => value)
 
 (* Pruned depth search expands the first open goal.  A one-child transition
@@ -135,7 +133,7 @@ fun note_transition parent child =
              [] => []
            | mark :: rest => add_mark difference mark :: rest)
       else if child_count > 1 then
-        replicate child_count empty_mark @
+        replicate child_count clasetGoal.empty_mark @
         List.drop (inherited, child_count)
       else inherited
   in
@@ -146,12 +144,8 @@ fun note_transition parent child =
 fun goal_terms ({params, asl, w} : clasetGoal.cgoal) =
   params @ (w :: asl)
 
-fun marked_terms terms =
-  List.filter clasetMeta.is_meta (free_varsl terms)
-
-fun marked_types terms =
-  List.filter clasetMeta.is_tymeta
-    (List.concat (map type_vars_in_term terms))
+val marked_terms = clasetGoal.marked_terms
+val marked_types = clasetGoal.marked_types
 
 fun dependency_closure store goals =
   let
@@ -329,17 +323,16 @@ val split_satisfied = Lib.partition
 
 val check_period = 100
 
-fun limit_reached count =
-  !node_limit > 0 andalso count >= !node_limit andalso
-  (count = !node_limit orelse count mod check_period = 0)
+fun limit_reached limit count =
+  limit > 0 andalso count >= limit andalso
+  (count = limit orelse count mod check_period = 0)
 
-fun allow_expansion driver count node =
-  if limit_reached count then
+fun allow_expansion driver limit count node =
+  if limit_reached (limit ()) count then
     (last_node_count := count;
      trace 1
        (fn () =>
-         driver ^ " stopped at node limit " ^
-         Int.toString (!node_limit));
+         driver ^ " stopped at node limit " ^ Int.toString (limit ()));
      false)
   else
     (last_node_count := count + 1;
@@ -366,7 +359,7 @@ fun add_nodes values heap =
    Isabelle's BEST_FIRST (src/Pure/search.ML @ Isabelle2025-2) carries no
    closed set.  This is deliberately past it: the suppressed expansion is
    one the driver has already made. *)
-fun frontier_search {driver, compare, remove_minimum}
+fun frontier_search {driver, compare, remove_minimum, limit}
       satisfied expand initial =
   let
     fun classify (news, heap, count, seen) =
@@ -392,7 +385,7 @@ fun frontier_search {driver, compare, remove_minimum}
                (fn () =>
                  driver ^ " dropped a state it has already expanded");
              next (remaining, count, seen))
-          else if not (allow_expansion driver count current) then
+          else if not (allow_expansion driver limit count current) then
             seq.empty
           else
             classify
@@ -416,11 +409,15 @@ fun best_minimum heap =
   let val (minima, remaining) = searchHeap.delete_all_min heap
   in (hd minima, remaining) end
 
-fun BEST_FIRST satisfied expand initial =
+fun best_first limit satisfied expand initial =
   frontier_search
     {driver = "best-first", compare = clasetGoal.compare,
-     remove_minimum = best_minimum}
+     remove_minimum = best_minimum, limit = limit}
     satisfied expand initial
+
+fun BEST_FIRST satisfied = best_first (fn () => !node_limit) satisfied
+
+fun BOUNDED_BEST_FIRST bound satisfied = best_first (fn () => bound) satisfied
 
 fun astar_cost node =
   clasetGoal.size node + 5 * clasetGoal.level node
@@ -431,7 +428,8 @@ fun astar_compare (left, right) =
 fun ASTAR satisfied expand initial =
   frontier_search
     {driver = "A*", compare = astar_compare,
-     remove_minimum = searchHeap.delete_min}
+     remove_minimum = searchHeap.delete_min,
+     limit = fn () => !node_limit}
     satisfied expand initial
 
 datatype frontier_state =

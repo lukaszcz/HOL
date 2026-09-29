@@ -160,15 +160,12 @@ fun equational theorem =
     boolSyntax.is_eq conclusion
   end
 
-fun conjuncts theorem =
-  Drule.CONJUNCTS theorem handle HOL_ERR _ => [theorem]
-
 fun equational_views environment =
   List.concat
     (map
       (fn entry =>
         if not (List.exists equational
-                  (conjuncts (source entry))) then []
+                  (Drule.CONJUNCTS (source entry))) then []
         else
           let
             val {source_id, source, support, theorem} =
@@ -178,7 +175,7 @@ fun equational_views environment =
               (fn piece =>
                 {source_id = source_id, source = source,
                  theorem = piece, support = support} : view)
-              (List.filter equational (conjuncts theorem))
+              (List.filter equational (Drule.CONJUNCTS theorem))
           end)
       environment)
 

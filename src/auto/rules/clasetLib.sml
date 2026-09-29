@@ -26,32 +26,19 @@ type aentry = {tag : tag, rule : aesop_rule}
 type aesop_index =
   {target : aentry clasetNet.net, hyp : aentry clasetNet.net}
 
-datatype claset =
-  CS of {decls : decls,
-         safe_wrappers : (string * NTactical.wrapper) list,
-         unsafe_wrappers : (string * NTactical.wrapper) list,
-         safe0_netpair : netpair,
-         safep_netpair : netpair,
-         unsafe_netpair : netpair,
-         dup_netpair : netpair,
-         aesop_index : aesop_index,
-         norm_decls : decl list}
-
-type claset_part = netpair
-
-datatype part = Safe0Part | SafePPart | UnsafePart | DupPart
-
-(* Everything a claset derives from its declarations -- the four classical
-   netpairs, the aesop index and the Norm list -- travels as one record,
-   which is also what [add_decl] and [delete_decl] thread.  Clasets are
-   built through [mk_cs] alone, so a further derived component is added
-   here and in those two functions rather than at every rebuild site. *)
+(* The components a claset derives from its declarations; [add_decl] and
+   [delete_decl] maintain them together. *)
 type cs_index =
   {safe0 : netpair, safep : netpair, unsafe : netpair, dup : netpair,
    aesop_index : aesop_index, norm_decls : decl list}
 
 type cs_wrappers =
   (string * NTactical.wrapper) list * (string * NTactical.wrapper) list
+
+datatype claset =
+  CS of {decls : decls, wrappers : cs_wrappers, index : cs_index}
+
+type claset_part = netpair
 
 val empty_netpair = (clasetNet.empty, clasetNet.empty)
 val empty_aesop_index =
@@ -61,29 +48,8 @@ val empty_index : cs_index =
   {safe0 = empty_netpair, safep = empty_netpair, unsafe = empty_netpair,
    dup = empty_netpair, aesop_index = empty_aesop_index, norm_decls = []}
 
-fun mk_cs decls ((safe_wrappers, unsafe_wrappers) : cs_wrappers)
-  ({safe0, safep, unsafe, dup, aesop_index, norm_decls} : cs_index) =
-  CS {decls = decls,
-      safe_wrappers = safe_wrappers,
-      unsafe_wrappers = unsafe_wrappers,
-      safe0_netpair = safe0,
-      safep_netpair = safep,
-      unsafe_netpair = unsafe,
-      dup_netpair = dup,
-      aesop_index = aesop_index,
-      norm_decls = norm_decls}
-
-fun decls_of (CS {decls, ...}) = decls
-
-fun wrappers_of (CS {safe_wrappers, unsafe_wrappers, ...}) =
-  (safe_wrappers, unsafe_wrappers)
-
-fun index_of (CS {safe0_netpair, safep_netpair, unsafe_netpair,
-                  dup_netpair, aesop_index, norm_decls, ...}) =
-  {safe0 = safe0_netpair, safep = safep_netpair, unsafe = unsafe_netpair,
-   dup = dup_netpair, aesop_index = aesop_index, norm_decls = norm_decls}
-
-val empty_cs = mk_cs empty_decls ([], []) empty_index
+val empty_cs =
+  CS {decls = empty_decls, wrappers = ([], []), index = empty_index}
 
 fun rule_brl kind th = (is_elim kind, th)
 
@@ -244,16 +210,12 @@ fun make_rule_decl spec (name, th) =
                info = info, orig = th}
   end
 
-fun add_rule_by extend spec named_th cs =
-  let
-    val decl = make_rule_decl spec named_th
-  in
-    case extend decl (decls_of cs) of
-        (NONE, _) => cs
-      | (SOME new_decl, decls') =>
-          mk_cs decls' (wrappers_of cs)
-            (add_decl new_decl (index_of cs))
-  end
+fun add_rule_by extend spec named_th (cs as CS {decls, wrappers, index}) =
+  case extend (make_rule_decl spec named_th) decls of
+      (NONE, _) => cs
+    | (SOME new_decl, decls') =>
+        CS {decls = decls', wrappers = wrappers,
+            index = add_decl new_decl index}
 
 val add_rule = add_rule_by extend_decl
 
@@ -282,14 +244,14 @@ val add_selims = add_rules selim_spec
 val add_elims = add_rules elim_spec
 val add_sdests = add_rules sdest_spec
 
-fun remove_rule name cs =
+fun remove_rule name (CS {decls, wrappers, index}) =
   let
-    val (old_decls, decls') = remove_decl name (decls_of cs)
-    val index =
-      List.foldl (fn (decl, index) => delete_decl decl index)
-        (index_of cs) old_decls
+    val (old_decls, decls') = remove_decl name decls
   in
-    mk_cs decls' (wrappers_of cs) index
+    CS {decls = decls', wrappers = wrappers,
+        index =
+          List.foldl (fn (decl, index) => delete_decl decl index)
+            index old_decls}
   end
 
 fun merge_alists left right =
@@ -300,19 +262,18 @@ fun merge_alists left right =
 (* The left claset's derived components are the accumulator: only the
    declarations the merge newly admits are indexed again. *)
 fun merge_cs
-  (cs, CS {decls = decls2, safe_wrappers = safe_wrappers2,
-           unsafe_wrappers = unsafe_wrappers2, ...}) =
+  (CS {decls, wrappers = (safe_wrappers, unsafe_wrappers), index},
+   CS {decls = decls2, wrappers = (safe_wrappers2, unsafe_wrappers2), ...}) =
   let
-    val (safe_wrappers, unsafe_wrappers) = wrappers_of cs
-    val (new_decls, decls') = merge_decls (decls_of cs, decls2)
-    val index =
-      List.foldl (fn (decl, index) => add_decl decl index)
-        (index_of cs) new_decls
+    val (new_decls, decls') = merge_decls (decls, decls2)
+    val index' =
+      List.foldl (fn (decl, index) => add_decl decl index) index new_decls
   in
-    mk_cs decls'
-      (merge_alists safe_wrappers safe_wrappers2,
-       merge_alists unsafe_wrappers unsafe_wrappers2)
-      index
+    CS {decls = decls',
+        wrappers =
+          (merge_alists safe_wrappers safe_wrappers2,
+           merge_alists unsafe_wrappers unsafe_wrappers2),
+        index = index'}
   end
 
 (* Replace an existing entry in place; put a new entry at the front. *)
@@ -331,17 +292,16 @@ fun update_alist (entry as (key, _)) entries =
 fun delete_wrapper name wrappers =
   List.filter (fn (name', _) => name <> name') wrappers
 
-fun map_safe_wrappers f cs =
-  let val (safe_wrappers, unsafe_wrappers) = wrappers_of cs
-  in
-    mk_cs (decls_of cs) (f safe_wrappers, unsafe_wrappers) (index_of cs)
-  end
+fun map_wrappers f (CS {decls, wrappers, index}) =
+  CS {decls = decls, wrappers = f wrappers, index = index}
 
-fun map_unsafe_wrappers f cs =
-  let val (safe_wrappers, unsafe_wrappers) = wrappers_of cs
-  in
-    mk_cs (decls_of cs) (safe_wrappers, f unsafe_wrappers) (index_of cs)
-  end
+fun map_safe_wrappers f =
+  map_wrappers (fn (safe_wrappers, unsafe_wrappers) =>
+                  (f safe_wrappers, unsafe_wrappers))
+
+fun map_unsafe_wrappers f =
+  map_wrappers (fn (safe_wrappers, unsafe_wrappers) =>
+                  (safe_wrappers, f unsafe_wrappers))
 
 fun add_safe_wrapper wrapper = map_safe_wrappers (update_alist wrapper)
 fun add_unsafe_wrapper wrapper = map_unsafe_wrappers (update_alist wrapper)
@@ -351,10 +311,10 @@ fun del_unsafe_wrapper name = map_unsafe_wrappers (delete_wrapper name)
 fun apply_wrappers wrappers tac =
   List.foldl (fn ((_, wrapper), acc) => wrapper acc) tac wrappers
 
-fun app_safe_wrappers (CS {safe_wrappers, ...}) =
+fun app_safe_wrappers (CS {wrappers = (safe_wrappers, _), ...}) =
   apply_wrappers safe_wrappers
 
-fun app_unsafe_wrappers (CS {unsafe_wrappers, ...}) =
+fun app_unsafe_wrappers (CS {wrappers = (_, unsafe_wrappers), ...}) =
   apply_wrappers unsafe_wrappers
 
 fun rule_of_decl ({spec, name, orig, info, ...} : decl) : aesop_rule =
@@ -368,9 +328,11 @@ fun forget_info ({spec, name, thm, ...} : aesop_rule) = (spec, (name, thm))
 
 fun rules_of cs = map forget_info (all_rules cs)
 
-fun norm_rules (CS {norm_decls, ...}) = map rule_of_decl norm_decls
+fun norm_rules (CS {index = {norm_decls, ...}, ...}) =
+  map rule_of_decl norm_decls
 
-fun pp_claset0 (CS {decls, safe_wrappers, unsafe_wrappers, ...}) =
+fun pp_claset0
+  (CS {decls, wrappers = (safe_wrappers, unsafe_wrappers), ...}) =
   let
     open Portable smpp
 
@@ -414,53 +376,32 @@ fun pp_claset0 (CS {decls, safe_wrappers, unsafe_wrappers, ...}) =
 
 val pp_claset = Parse.mlower o pp_claset0
 
-fun claset_part Safe0Part (CS {safe0_netpair, ...}) = safe0_netpair
-  | claset_part SafePPart (CS {safep_netpair, ...}) = safep_netpair
-  | claset_part UnsafePart (CS {unsafe_netpair, ...}) = unsafe_netpair
-  | claset_part DupPart (CS {dup_netpair, ...}) = dup_netpair
+fun safe0_part (CS {index = {safe0, ...}, ...}) = safe0
+fun safep_part (CS {index = {safep, ...}, ...}) = safep
+fun unsafe_part (CS {index = {unsafe, ...}, ...}) = unsafe
+fun dup_part (CS {index = {dup, ...}, ...}) = dup
 
-val safe0_part = claset_part Safe0Part
-val safep_part = claset_part SafePPart
-val unsafe_part = claset_part UnsafePart
-val dup_part = claset_part DupPart
+fun match_candidates net tm = candidate_order (clasetNet.match tm net)
 
-fun match_intro_candidates (inet, _) tm =
-  candidate_order (clasetNet.match tm inet)
-fun match_elim_candidates (_, enet) tm =
-  candidate_order (clasetNet.match tm enet)
+fun match_intro_candidates ((inet, _) : claset_part) = match_candidates inet
+fun match_elim_candidates ((_, enet) : claset_part) = match_candidates enet
 
-fun unify_intro_candidates_with checkpoint (inet, _) tm =
-  let val qvars = Term.FVL [tm] Term.empty_tmset
-  in
-    candidate_order_measured checkpoint
-      (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} inet)
-  end
+fun unify_candidates checkpoint net tm =
+  candidate_order_measured checkpoint
+    (clasetNet.unifyMeasured checkpoint
+       {q = tm, qvars = Term.FVL [tm] Term.empty_tmset} net)
 
-fun unify_elim_candidates_with checkpoint (_, enet) tm =
-  let val qvars = Term.FVL [tm] Term.empty_tmset
-  in
-    candidate_order_measured checkpoint
-      (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} enet)
-  end
+fun unify_intro_candidates_measured checkpoint ((inet, _) : claset_part) =
+  unify_candidates checkpoint inet
 
-fun unify_intro_candidates netpair tm =
-  unify_intro_candidates_with (fn () => ()) netpair tm
+fun unify_elim_candidates_measured checkpoint ((_, enet) : claset_part) =
+  unify_candidates checkpoint enet
 
-fun unify_elim_candidates netpair tm =
-  unify_elim_candidates_with (fn () => ()) netpair tm
+fun unify_intro_candidates part =
+  unify_intro_candidates_measured listUtil.no_checkpoint part
 
-fun unify_intro_candidates_measured checkpoint netpair tm =
-  unify_intro_candidates_with checkpoint netpair tm
-
-fun unify_elim_candidates_measured checkpoint netpair tm =
-  unify_elim_candidates_with checkpoint netpair tm
-
-fun compare_aesop_tag
-  ({weight = weight1, index = index1} : tag,
-   {weight = weight2, index = index2} : tag) =
-  case Int.compare (weight1, weight2) of
-      EQUAL => Int.compare (index1, index2)
-    | order => order
+fun unify_elim_candidates part =
+  unify_elim_candidates_measured listUtil.no_checkpoint part
 
 fun unsafe_percent ({prio, ...} : rulespec) =
   Option.getOpt (prio, 50)
@@ -477,15 +418,15 @@ fun compare_aentry
   case Int.compare (aesop_class spec1, aesop_class spec2) of
       EQUAL =>
         if #safe spec1 andalso #safe spec2 then
-          compare_aesop_tag (tag1, tag2)
+          compare_tag (tag1, tag2)
         else
           (case Int.compare
                   (unsafe_percent spec2, unsafe_percent spec1) of
-               EQUAL => compare_aesop_tag (tag1, tag2)
+               EQUAL => compare_tag (tag1, tag2)
              | order => order)
     | order => order
 
-fun aesop_rules select (CS {aesop_index, ...}) query =
+fun aesop_rules select (CS {index = {aesop_index, ...}, ...}) query =
   map #rule
     (Listsort.sort compare_aentry
       (clasetNet.unify query (select aesop_index)))
@@ -515,12 +456,12 @@ type cstate = claset * owned_tyinfo_rule list * readiness
 
 val state0 : cstate = (empty_cs, [], Pending [])
 
-fun decl_is_live cs (wanted : decl) =
+fun decl_is_live (CS {decls, ...}) (wanted : decl) =
   List.exists
     (fn (current : decl) =>
       #name current = #name wanted andalso
       #index (#tag current) = #index (#tag wanted))
-    (dest_decls (decls_of cs))
+    (dest_decls decls)
 
 fun live_owned cs owned =
   List.filter (fn {decl, ...} => decl_is_live cs decl) owned
@@ -578,14 +519,11 @@ fun update_decls (ADD {name, spec}) decls =
              end)
   | update_decls (RM name) decls = #2 (remove_decl name decls)
 
-fun rebuild_claset decls cs =
-  let
-    val index =
-      List.foldl (fn (decl, index) => add_decl decl index)
-        empty_index (dest_decls decls)
-  in
-    mk_cs decls (wrappers_of cs) index
-  end
+fun rebuild_claset decls (CS {wrappers, ...}) =
+  CS {decls = decls, wrappers = wrappers,
+      index =
+        List.foldl (fn (decl, index) => add_decl decl index)
+          empty_index (dest_decls decls)}
 
 fun is_removal (RM _) = true
   | is_removal (ADD _) = false
@@ -654,7 +592,7 @@ fun reconcile_owned scope desired (cs, owned) =
 
 fun add_tyinfo_rule
   ({provider, tyname, spec, named_th = (name, th)} : tyinfo_rule)
-  (cs as CS {decls, ...}, owned) =
+  (cs as CS {decls, wrappers, index}, owned) =
   let
     fun same_class (decl : decl) =
       #kind (#spec decl) = #kind spec andalso
@@ -667,8 +605,8 @@ fun add_tyinfo_rule
         case extend_decl candidate decls of
             (NONE, _) => (cs, owned)
           | (SOME installed, decls') =>
-              (mk_cs decls' (wrappers_of cs)
-                 (add_decl installed (index_of cs)),
+              (CS {decls = decls', wrappers = wrappers,
+                   index = add_decl installed index},
                {provider = provider, tyname = tyname,
                 decl = installed} :: owned)
       end
@@ -772,18 +710,17 @@ fun init_state (state as (_, _, Ready)) = state
       (cs', owned', Ready)
     end
 
-fun apply_to_global delta (state as (_, _, Ready)) =
-      apply_delta delta state
-  | apply_to_global delta (cs, owned, Pending pending) =
-      (cs, owned, Pending (Modify (apply_cdelta delta) :: pending))
+fun modify f (cs, owned, Ready) =
+      let val cs' = f cs
+      in (cs', live_owned cs' owned, Ready) end
+  | modify f (cs, owned, Pending pending) =
+      (cs, owned, Pending (Modify f :: pending))
+
+fun apply_to_global delta = modify (apply_cdelta delta)
 
 (* Loading invokes this once for all a theory's deltas.  In particular, an
    unforced global state retains the complete batch for one lazy replay. *)
-fun batch_finaliser _ deltas (cs, owned, Ready) =
-      let val cs' = batch_apply deltas cs
-      in (cs', live_owned cs' owned, Ready) end
-  | batch_finaliser _ deltas (cs, owned, Pending pending) =
-      (cs, owned, Pending (Modify (batch_apply deltas) :: pending))
+fun batch_finaliser _ deltas = modify (batch_apply deltas)
 
 val adresult : (cdelta, cstate) AncestryData.fullresult =
   AncestryData.fullmake {
@@ -796,13 +733,7 @@ val adresult : (cdelta, cstate) AncestryData.fullresult =
                 initial_value = state0}
   }
 
-fun update_claset f =
-  #update_global_value adresult
-    (fn (cs, owned, Ready) =>
-          let val cs' = f cs
-          in (cs', live_owned cs' owned, Ready) end
-      | (cs, owned, Pending pending) =>
-          (cs, owned, Pending (Modify f :: pending)))
+fun update_claset f = #update_global_value adresult (modify f)
 
 fun the_claset () =
   (#update_global_value adresult init_state;
@@ -1616,10 +1547,6 @@ fun declare_invocation_facts_with_charge charge
   in
     (declared_cs, List.rev reversed)
   end
-
-fun declare_invocation_facts consumer environment cs =
-  declare_invocation_facts_with_charge (fn _ => ())
-    consumer environment cs
 
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base

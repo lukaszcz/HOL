@@ -19,7 +19,7 @@ struct
    DEEPEN call at lines 1284--1292.
 *)
 
-open blastTerm
+open blastTerm listUtil
 
 infix 9 $
 
@@ -191,8 +191,6 @@ datatype choice = Choice of int * int * exn
 val not_name = {Thy = "bool", Name = "~"}
 val equality_name = {Thy = "min", Name = "="}
 
-fun first (left, _) = left
-
 fun negate formula = Const (not_name, []) $ formula
 
 fun isNot (Const (name, _) $ _) = name = not_name
@@ -283,12 +281,6 @@ fun joinTrackedMdMeasured checkpoint md formulas =
 fun joinTrackedMd md formulas =
   joinTrackedMdMeasured (fn () => ()) md formulas
 
-fun initBranch (formulas, lim) =
-  {pairs = [(map (fn formula => (formula, true)) formulas, [])],
-   lits = [],
-   vars = add_terms_vars (formulas, []),
-   lim = lim}
-
 fun initSearchBranchWith checkpoint addVars fresh (formulas, lim) :
       search_branch =
   let
@@ -322,6 +314,10 @@ fun initSearchBranchMeasured checkpoint fresh arguments =
   initSearchBranchWith checkpoint (add_terms_vars_measured checkpoint)
     fresh arguments
 
+(* The projection drops the tokens, so they need not be fresh. *)
+fun initBranch arguments =
+  projectBranch (initSearchBranch (fn () => 0) arguments)
+
 fun lengthMeasured checkpoint values =
   let
     fun count [] n = n
@@ -330,9 +326,6 @@ fun lengthMeasured checkpoint values =
   in
     count values 0
   end
-
-fun mapFirstMeasured checkpoint values =
-  mapMeasured checkpoint first values
 
 fun trackPremise fresh premise =
   let
@@ -500,20 +493,12 @@ fun recursivePremiseMeasured checkpoint pattern premise =
           (checkpoint ();
            matches left right andalso match_lists (lefts, rights))
       | match_lists _ = false
-    fun any [] = false
-      | any (formula :: rest) =
-          (checkpoint ();
-           matches pattern formula orelse any rest)
   in
-    any premise
+    existsMeasured checkpoint (matches pattern) premise
   end
 
 fun recursivePremise pattern premise =
   recursivePremiseMeasured (fn () => ()) pattern premise
-
-fun requeueGamma (formula, md) remaining duplicate =
-  if duplicate then remaining @ [(negOfGoal formula, md)]
-  else remaining
 
 fun requeueTrackedGammaMeasured checkpoint
       (formula, md) remaining duplicate =
@@ -522,6 +507,15 @@ fun requeueTrackedGammaMeasured checkpoint
 
 fun requeueTrackedGamma pair remaining duplicate =
   requeueTrackedGammaMeasured (fn () => ()) pair remaining duplicate
+
+fun requeueGamma (formula, md) remaining duplicate =
+  let
+    fun untracked (term, flag) = (Tracked {term = term, token = NONE}, flag)
+  in
+    map projectPair
+      (requeueTrackedGamma (untracked (formula, md))
+         (map untracked remaining) duplicate)
+  end
 
 fun killsAllAlternatives limit prems =
   limit < 0 andalso not (null prems)
@@ -553,11 +547,9 @@ fun clashVar [] _ = false
    parameter of the shared pruning body below. *)
 fun clashVarMeasured checkpoint vars (n, trail) =
   let
-    fun occurs_in _ [] = false
-      | occurs_in variable (next :: rest) =
-          (checkpoint ();
-           varOccurMeasured checkpoint variable (Var next) orelse
-           occurs_in variable rest)
+    fun occurs_in variable =
+      existsMeasured checkpoint
+        (fn next => varOccurMeasured checkpoint variable (Var next))
     fun clash (0, _) = false
       | clash (_, []) = false
       | clash (left, variable :: variables) =
@@ -605,10 +597,7 @@ fun pruneWith checkpoint clashes state pruned
   if branches = 1 then choices
   else
     let
-      fun marks [] = []
-        | marks (choice :: rest) =
-            (checkpoint (); choiceMark choice :: marks rest)
-      val all_marks = marks choices
+      val all_marks = mapMeasured checkpoint choiceMark choices
       val remaining =
         prunePlanWith checkpoint clashes
           {branches = branches,
@@ -643,15 +632,10 @@ fun addTrackedLitWith checkpoint equal (original, lits) =
   let
     val original_term = trackedTerm original
     fun ins formula =
-      let
-        fun member [] = false
-          | member (other :: rest) =
-              (checkpoint ();
-               equal (trackedTerm formula, trackedTerm other) orelse
-               member rest)
-      in
-        if member lits then lits else formula :: lits
-      end
+      if existsMeasured checkpoint
+           (fn other => equal (trackedTerm formula, trackedTerm other)) lits
+      then lits
+      else formula :: lits
   in
     case original_term of
         Goal $ formula =>
@@ -734,10 +718,8 @@ fun destEqWith checkpoint equal term =
       let
         val allowed =
           case target of Skolem (_, variables) => variables | _ => []
-        fun member _ [] = false
-          | member variable (item :: items) =
-              (checkpoint ();
-               variable = item orelse member variable items)
+        fun member variable =
+          existsMeasured checkpoint (fn item => variable = item)
         fun occursEqual value =
           equal (target, value) orelse visit value
         and visit value =
@@ -967,16 +949,16 @@ fun branchString ({pairs, lits, vars, lim} : branch) =
   String.concatWith ", " (map termString lits) ^ "], levels=[" ^
   String.concatWith "; " (map levelString pairs) ^ "]}"
 
+(* [branches] is forced only when the trace is printed. *)
 fun traceState depth branches =
   if Feedback.current_trace "blast" >= 3 then
     Feedback.HOL_MESG
       ("Blast trace at depth " ^ Int.toString depth ^ ":\n" ^
-       String.concatWith "\n" (map branchString branches))
+       String.concatWith "\n" (map branchString (branches ())))
   else ()
 
 datatype instrumentation =
-    Off
-  | Stats
+    Stats
   | On of
       {debug : bool, stop : unit -> bool,
        budget : searchBudget.budget option}
@@ -1034,8 +1016,8 @@ fun runGoal resumable cleanup_policy instrumentation
     val unsafeRuleOrigin = "unsafe rule"
     val unsafeChildOrigin = "unsafe child"
     (* The search workers come as two aligned records, one plain and one
-       measured, selected once per run: [Off] and [Stats] take the plain
-       one, [On] the measured one.  [prv] has a single body that closes
+       measured, selected once per run: [Stats] takes the plain one, [On]
+       the measured one.  [prv] has a single body that closes
        over the selected components as ordinary free variables, so the
        production and the measured search cannot drift apart.  The phase
        counters and the cooperative checkpoint exist only in the [On] arm;
@@ -1058,8 +1040,6 @@ fun runGoal resumable cleanup_policy instrumentation
         val existsGoal = List.exists isGoal
         val appendPlain = fn left => fn right => left @ right
         val pairUnflagged = map (fn item => (item, false))
-        val initialFormulas =
-          fn goal => map first (blastRule.initialBranch goal)
       in
         {checkpointAt=fn _ => (),
          rollbackAt=fn mark => clearTo state mark,
@@ -1080,7 +1060,6 @@ fun runGoal resumable cleanup_policy instrumentation
          negGoalsAt=fn _ => negOfTrackedGoals,
          mapNegLitsAt=fn _ => negLits,
          existsGoalAt=fn _ => existsGoal,
-         lengthPremsAt=fn _ => List.length,
          addTrackedLitAt=fn _ => addTrackedLit,
          appendUnsafeAt=fn _ => appendPlain,
          safeRulesFor=blastRule.safeRules rule_cache claset,
@@ -1091,10 +1070,8 @@ fun runGoal resumable cleanup_policy instrumentation
          recursivePremiseAt=fn _ => recursivePremise,
          mayUndoAt=fn _ => mayUndo,
          normAt=fn _ => norm,
-         lengthBranchesAt=fn _ => List.length,
-         lengthRulesAt=fn _ => List.length,
          mergeUnsafe=appendPlain,
-         initialFormulasOf=initialFormulas,
+         initialFormulasOf=blastRule.initialBranch,
          initialBranchOf=initSearchBranch freshToken,
          cleanupRun=fn _ => ()}
       end
@@ -1102,12 +1079,7 @@ fun runGoal resumable cleanup_policy instrumentation
     val (instrumentEntry, noteInference, noteRuleInference,
          instrumentationResult, searchWorkers) =
       case instrumentation of
-          Off =>
-            (fn brs => traceState depth (projectBranches brs),
-             fn () => (), fn _ => (),
-             fn () => (0, 0, [], zero_phase_statistics),
-             plainWorkers)
-        | Stats =>
+          Stats =>
             let
               val inferences = ref 0
               val maximum_resource_cost = ref 0
@@ -1120,7 +1092,7 @@ fun runGoal resumable cleanup_policy instrumentation
                 (!inferences, !maximum_resource_cost, [],
                  zero_phase_statistics)
             in
-              (fn brs => traceState depth (projectBranches brs),
+              (fn brs => traceState depth (fn () => projectBranches brs),
                inference, ruleInference, result, plainWorkers)
             end
         | On {debug, stop, budget} =>
@@ -1164,9 +1136,9 @@ fun runGoal resumable cleanup_policy instrumentation
                     let val projected = projectBranches brs
                     in
                       fullTrace := projected :: !fullTrace;
-                      traceState depth projected
+                      traceState depth (fn () => projected)
                     end
-                 else traceState depth (projectBranches brs))
+                 else traceState depth (fn () => projectBranches brs))
               fun inference () =
                 (charge searchBudget.Application;
                  inferences := !inferences + 1)
@@ -1279,8 +1251,6 @@ fun runGoal resumable cleanup_policy instrumentation
                    mapMeasured (at mark) negOfTracked,
                  existsGoalAt=fn mark =>
                    existsMeasured (at mark) isGoal,
-                 lengthPremsAt=fn mark =>
-                   lengthMeasured (at mark),
                  addTrackedLitAt=fn mark =>
                    addTrackedLitMeasured (at mark),
                  appendUnsafeAt=fn mark =>
@@ -1303,13 +1273,10 @@ fun runGoal resumable cleanup_policy instrumentation
                      (fn () =>
                        checkpointRollbackWith
                          searchBudget.Normalization mark),
-                 lengthBranchesAt=fn mark =>
-                   lengthMeasured (at mark),
-                 lengthRulesAt=fn mark =>
-                   lengthMeasured (at mark),
                  mergeUnsafe=appendMeasured checkpoint,
+                 (* The search polls once per formula it takes in. *)
                  initialFormulasOf=fn goal =>
-                   mapFirstMeasured checkpoint
+                   mapMeasured checkpoint Lib.I
                      (blastRule.initialBranchMeasured checkpoint goal),
                  initialBranchOf=initSearchBranchMeasured
                    checkpoint freshToken,
@@ -1322,11 +1289,16 @@ fun runGoal resumable cleanup_policy instrumentation
          noteUnificationSuccess,noteEqualityAttempt,noteEqualitySuccess,
          noteLiteralAttempt,noteLiteralSuccess,addVarsAt,varsInVarsAt,
          foldPremVarsAt,unifyAt,tryCloseAt,pruneAt,equalSubstAt,joinMdAt,
-         negGoalsAt,mapNegLitsAt,existsGoalAt,lengthPremsAt,addTrackedLitAt,
+         negGoalsAt,mapNegLitsAt,existsGoalAt,addTrackedLitAt,
          appendUnsafeAt,safeRulesFor,unsafeRulesFor,noteUnsafeRuleAttempt,
          mapPairAt,requeueGammaAt,recursivePremiseAt,mayUndoAt,normAt,
-         lengthBranchesAt,lengthRulesAt,mergeUnsafe,initialFormulasOf,
-         initialBranchOf,cleanupRun} = searchWorkers
+         mergeUnsafe,initialFormulasOf,initialBranchOf,
+         cleanupRun} = searchWorkers
+
+    (* A function, not a worker: a record field cannot be polymorphic.  The
+       plain build's inert checkpoint makes it [List.length]. *)
+    fun lengthAt mark values =
+      lengthMeasured (fn () => checkpointAt mark) values
 
     val prepared =
       SOME (initialFormulasOf goal)
@@ -1385,6 +1357,91 @@ fun runGoal resumable cleanup_policy instrumentation
                | NONE => raise exn)
       end
 
+    (* The rule loop both expansion arms share.  [fire] receives each rule
+       that unified with [formula]; [limAfter unchanged] is the child's
+       depth bound, [unchanged] when the unifier bound nothing, and [next]
+       rolls back and tries the remaining rules. *)
+    fun tryRules {mark, formula, lim, rule_count, noteAttempt, fire} =
+      let
+        fun deeper [] = raise NEWBRANCHES
+          | deeper ((rule : tableau_rule) :: other) =
+              let
+                val _ = checkpointAt mark
+                val pattern = #pattern rule
+                val rule_vars = addVarsAt mark (pattern, [])
+                val _ = checkpointAt mark
+                val _ = noteAttempt ()
+              in
+                if not (ruleHasCompatibleMajor rule formula) then
+                  deeper other
+                else if not
+                     (unifyAt mark
+                       (rule_vars, pattern, trackedTerm formula)) then
+                  deeper other
+                else
+                  let
+                    val _ = noteUnificationSuccess ()
+                    val _ = checkpointAt mark
+                    val updated = mark < trailSize state
+                    fun limAfter unchanged =
+                      if updated then
+                        lim - instantiationPenalty rule_count -
+                        (if guessedAt (fn () => checkpointAt mark)
+                              state mark rule_vars
+                         then 1 else 0)
+                      else unchanged
+                  in
+                    fire {rule = rule, other = other, updated = updated,
+                          limAfter = limAfter,
+                          next = fn () => (rollbackAt mark; deeper other)}
+                  end
+              end
+      in
+        deeper
+      end
+
+    (* A premise's tracked formulae and the assumptions it introduces. *)
+    fun premiseChild mark (premise, hidden) =
+      let
+        val _ = checkpointAt mark
+        val (tracked, visible_introduced) = trackPremise freshToken premise
+      in
+        (tracked, addHiddenAssumption freshToken hidden visible_introduced)
+      end
+
+    fun premiseBranches (rule : tableau_rule) child brs prems =
+      let
+        fun make [] = brs
+          | make (premise :: rest) = child premise :: make rest
+      in
+        make (ListPair.zip (prems, #hidden_assumptions rule))
+      end
+
+    fun contraposing mark formula prems (lits, levels) =
+      let val checkpoint = fn () => checkpointAt mark
+      in
+        not (isGoal (trackedTerm formula)) andalso
+        existsMeasured checkpoint (existsGoalAt mark) prems andalso
+        branchHasTokenlessGoal checkpoint (lits, levels)
+      end
+
+    (* Contrapose before the rule fires rather than after: ccontr moves the
+       conclusion, and the conclusion is this branch's goal only until the
+       rule replaces it.  [restore] puts the expanded formula back, so
+       restarting on the result re-selects this same rule. *)
+    fun contraposedBranch mark
+          {lits, levels, restore, vars, lim, assumptions} : search_branch =
+      let
+        val (lits', levels', assumptions') =
+          contraposeGoals (fn () => checkpointAt mark) freshToken
+            (lits, levels, assumptions)
+        val pairs' = restore levels'
+        val _ = rollbackAt mark
+      in
+        {pairs = pairs', lits = lits', vars = vars, lim = lim,
+         assumptions = assumptions'}
+      end
+
     fun prv (tacs, trace, choices, brs) =
       let
         val entry_mark = if resumable then trailSize state else 0
@@ -1409,46 +1466,34 @@ fun runGoal resumable cleanup_policy instrumentation
             let
               exception PRV
               val mark = trailSize state
-              val branches = lengthBranchesAt mark brs0
+              val branches = lengthAt mark brs0
               val next_vars = remainingVars brs
               val formula =
                 withTrackedTerm (normAt mark (trackedTerm formula)) formula
               val rules = safeRulesFor vars (trackedTerm formula)
-              val rule_count = lengthRulesAt mark rules
+              val rule_count = lengthAt mark rules
 
-              fun newBranches rule (vars', lim') prems =
+              fun child rule (vars', lim') (premise, hidden) =
                 let
-                  fun make [] = brs
-                    | make ((premise, hidden) :: rest) =
-                        let
-                          val _ = checkpointAt mark
-                          val (tracked, visible_introduced) =
-                            trackPremise freshToken premise
-                          val introduced =
-                            addHiddenAssumption freshToken hidden
-                              visible_introduced
-                          val joined = joinMdAt mark md tracked
-                          val child_assumptions =
-                            childAssumptions safeChildOrigin rule false
-                              formula assumptions introduced
-                          val branch =
-                            if existsGoalAt mark premise then
-                              {pairs =
-                                 (joined, []) ::
-                                 negGoalsAt mark ((safe, unsafe) :: pairs),
-                               lits = mapNegLitsAt mark lits,
-                               vars = vars', lim = lim',
-                               assumptions = child_assumptions}
-                            else
-                              {pairs =
-                                 (joined, []) :: (safe, unsafe) :: pairs,
-                               lits = lits, vars = vars', lim = lim',
-                               assumptions = child_assumptions}
-                        in
-                          branch :: make rest
-                        end
+                  val (tracked, introduced) =
+                    premiseChild mark (premise, hidden)
+                  val joined = joinMdAt mark md tracked
+                  val child_assumptions =
+                    childAssumptions safeChildOrigin rule false
+                      formula assumptions introduced
                 in
-                  make (ListPair.zip (prems, #hidden_assumptions rule))
+                  if existsGoalAt mark premise then
+                    {pairs =
+                       (joined, []) ::
+                       negGoalsAt mark ((safe, unsafe) :: pairs),
+                     lits = mapNegLitsAt mark lits,
+                     vars = vars', lim = lim',
+                     assumptions = child_assumptions}
+                  else
+                    {pairs =
+                       (joined, []) :: (safe, unsafe) :: pairs,
+                     lits = lits, vars = vars', lim = lim',
+                     assumptions = child_assumptions}
                 end
 
               (* The lead positions worth retrying a split from.  Only a
@@ -1458,183 +1503,128 @@ fun runGoal resumable cleanup_policy instrumentation
               fun sharedLeads prems =
                 let
                   fun premiseVars premise = foldPremVarsAt mark [premise] []
-                  fun meets seen [] = false
-                    | meets seen (variable :: rest) =
-                        (checkpointAt mark;
-                         mem_var (variable, seen) orelse meets seen rest)
+                  fun meets seen =
+                    existsMeasured (fn () => checkpointAt mark)
+                      (fn variable => mem_var (variable, seen))
                   fun shared _ [] = false
                     | shared seen (premise :: rest) =
                         let val vars = premiseVars premise
                         in
                           meets seen vars orelse shared (vars @ seen) rest
                         end
-                  val count = lengthPremsAt mark prems
+                  val count = lengthAt mark prems
                 in
                   if count < 2 orelse not (shared [] prems) then []
                   else List.tabulate (count - 1, fn lead => lead + 1)
                 end
 
-              fun deeper [] = raise NEWBRANCHES
-                | deeper ((rule : tableau_rule) :: other) =
+              fun fire {rule : tableau_rule, other = _, updated, limAfter,
+                        next} =
+                let
+                  val prems = #premises rule
+                  val unified = trailSize state
+                  val lim' = limAfter lim
+                  val vars0 = varsInVarsAt mark vars
+                  val choices' = Choice (mark, branches, PRV) :: choices
+                  val major =
+                    ruleMajor safeRuleOrigin rule formula assumptions
+                  val contraposing =
+                    contraposing mark formula prems
+                      (lits, (safe, unsafe) :: pairs)
+
+                  fun restore ((safe', unsafe') :: rest) =
+                        ((formula, md) :: safe', unsafe') :: rest
+                    | restore [] = []
+
+                  fun descend limit variant =
                     let
-                      val _ = checkpointAt mark
-                      val pattern = #pattern rule
-                      val prems = #premises rule
-                      val rule_vars = addVarsAt mark (pattern, [])
-                      val _ = checkpointAt mark
-                      val _ = noteSafeRuleAttempt ()
+                      val prems' = #premises variant
+                      val vars' = foldPremVarsAt mark prems' vars0
+                      val tacs' =
+                        SafeRule
+                          {rule = variant, updated = updated,
+                           major = major} :: tacs
                     in
-                      if not (ruleHasCompatibleMajor rule formula) then
-                        deeper other
-                      else if not
-                           (unifyAt mark
-                             (rule_vars, pattern, trackedTerm formula)) then
-                        deeper other
+                      if null prems' then
+                        let
+                          val before_prune = !pruned
+                          val choices'' =
+                            pruneAt mark (branches, next_vars, choices')
+                            handle searchBudget.LimitReached limit =>
+                              (pruned := before_prune;
+                               raise searchBudget.LimitReached limit)
+                        in
+                          (noteRuleInference limit
+                           handle searchBudget.LimitReached work =>
+                             (pruned := before_prune;
+                              raise searchBudget.LimitReached work));
+                          closed := !closed + 1;
+                          prv (tacs', brs0 :: trace, choices'', brs)
+                        end
+                      else if limit < 0 then
+                        (rollbackAt mark; raise NEWBRANCHES)
                       else
                         let
-                          val _ = noteUnificationSuccess ()
-                          val _ = checkpointAt mark
-                          val updated = mark < trailSize state
-                          val unified = trailSize state
-                          val lim' =
-                            if updated then
-                              lim - instantiationPenalty rule_count -
-                              (if guessedAt (fn () => checkpointAt mark)
-                                    state mark rule_vars
-                               then 1 else 0)
-                            else lim
-                          val vars0 = varsInVarsAt mark vars
-                          val choices' =
-                            Choice (mark, branches, PRV) :: choices
-                          val major =
-                            ruleMajor safeRuleOrigin rule formula
-                              assumptions
-                          val checkpoint = fn () => checkpointAt mark
-                          val contraposing =
-                            not (isGoal (trackedTerm formula)) andalso
-                            existsMeasured checkpoint (existsGoalAt mark)
-                              prems andalso
-                            branchHasTokenlessGoal checkpoint
-                              (lits, (safe, unsafe) :: pairs)
-
-                          (* Contrapose before the rule fires rather than
-                             after: ccontr moves the conclusion, and the
-                             conclusion is this branch's goal only until
-                             the rule replaces it.  Restarting on the
-                             contraposed branch re-selects this same
-                             rule. *)
-                          fun contraposeFirst () =
-                            let
-                              val (lits', levels, assumptions') =
-                                contraposeGoals checkpoint freshToken
-                                  (lits, (safe, unsafe) :: pairs,
-                                   assumptions)
-                              val pairs' =
-                                case levels of
-                                    (safe', unsafe') :: rest =>
-                                      ((formula, md) :: safe', unsafe')
-                                        :: rest
-                                  | [] => []
-                              val _ = rollbackAt mark
-                            in
-                              prv
-                                (DeferGoal :: tacs, brs0 :: trace, choices,
-                                 {pairs = pairs', lits = lits',
-                                  vars = vars, lim = lim,
-                                  assumptions = assumptions'} :: brs)
-                            end
-
-                          fun descend limit variant =
-                            let
-                              val prems' = #premises variant
-                              val vars' =
-                                foldPremVarsAt mark prems' vars0
-                              val tacs' =
-                                SafeRule
-                                  {rule = variant, updated = updated,
-                                   major = major} :: tacs
-                            in
-                              if null prems' then
-                                let
-                                  val before_prune = !pruned
-                                  val choices'' =
-                                    pruneAt mark
-                                      (branches, next_vars, choices')
-                                    handle searchBudget.LimitReached limit =>
-                                      (pruned := before_prune;
-                                       raise searchBudget.LimitReached
-                                         limit)
-                                in
-                                  (noteRuleInference limit
-                                   handle searchBudget.LimitReached work =>
-                                     (pruned := before_prune;
-                                      raise searchBudget.LimitReached
-                                        work));
-                                  closed := !closed + 1;
-                                  prv
-                                    (tacs', brs0 :: trace,
-                                     choices'', brs)
-                                end
-                              else if limit < 0 then
-                                (rollbackAt mark; raise NEWBRANCHES)
-                              else
-                                let
-                                  val children =
-                                    newBranches variant (vars', limit)
-                                      prems'
-                                  val count = lengthPremsAt mark prems'
-                                in
-                                  noteRuleInference limit;
-                                  created := !created + count - 1;
-                                  prv
-                                    (tacs', brs0 :: trace, choices',
-                                     children)
-                                end
-                            end
-
-                          fun exhausted () =
-                            if updated then
-                              (rollbackAt mark; deeper other)
-                            else backtrack choices
-
-                          (* Reordering is not free: it is the one part of
-                             a safe rule that commits, so it is priced
-                             like an instantiating safe rule and a branch
-                             can afford only as many reorderings as its
-                             remaining depth pays for. *)
-                          val retry_lim =
-                            lim' - instantiationPenalty rule_count
-
-                          (* Sibling branches that share an unbound
-                             variable are not independent: whichever is
-                             attempted first decides the variable and the
-                             other inherits that decision.  Both orders
-                             are equally safe, so which sibling leads is a
-                             genuine choice, and on failure the split is
-                             retried with each of the others leading. *)
-                          fun retry [] = exhausted ()
-                            | retry (index :: rest) =
-                                (case blastRule.rotatePremises index rule of
-                                     NONE => retry rest
-                                   | SOME variant =>
-                                       (rollbackAt unified;
-                                        preserve
-                                          (fn PRV => SOME (fn () => retry rest)
-                                            | _ => NONE)
-                                          (fn () =>
-                                            descend retry_lim variant)))
+                          val children =
+                            premiseBranches variant
+                              (child variant (vars', limit)) brs prems'
+                          val count = lengthAt mark prems'
                         in
-                          if contraposing then contraposeFirst ()
-                          else
-                            preserve
-                              (fn PRV =>
-                                    SOME (fn () =>
-                                      if retry_lim < 0 then exhausted ()
-                                      else retry (sharedLeads prems))
-                                | _ => NONE)
-                              (fn () => descend lim' rule)
+                          noteRuleInference limit;
+                          created := !created + count - 1;
+                          prv (tacs', brs0 :: trace, choices', children)
                         end
                     end
+
+                  fun exhausted () =
+                    if updated then next () else backtrack choices
+
+                  (* Reordering is not free: it is the one part of a safe
+                     rule that commits, so it is priced like an
+                     instantiating safe rule and a branch can afford only
+                     as many reorderings as its remaining depth pays
+                     for. *)
+                  val retry_lim = lim' - instantiationPenalty rule_count
+
+                  (* Sibling branches that share an unbound variable are
+                     not independent: whichever is attempted first decides
+                     the variable and the other inherits that decision.
+                     Both orders are equally safe, so which sibling leads
+                     is a genuine choice, and on failure the split is
+                     retried with each of the others leading. *)
+                  fun retry [] = exhausted ()
+                    | retry (index :: rest) =
+                        (case blastRule.rotatePremises index rule of
+                             NONE => retry rest
+                           | SOME variant =>
+                               (rollbackAt unified;
+                                preserve
+                                  (fn PRV => SOME (fn () => retry rest)
+                                    | _ => NONE)
+                                  (fn () => descend retry_lim variant)))
+                in
+                  if contraposing then
+                    prv
+                      (DeferGoal :: tacs, brs0 :: trace, choices,
+                       contraposedBranch mark
+                         {lits = lits, levels = (safe, unsafe) :: pairs,
+                          restore = restore, vars = vars, lim = lim,
+                          assumptions = assumptions} :: brs)
+                  else
+                    preserve
+                      (fn PRV =>
+                            SOME (fn () =>
+                              if retry_lim < 0 then exhausted ()
+                              else retry (sharedLeads prems))
+                        | _ => NONE)
+                      (fn () => descend lim' rule)
+                end
+
+              val deeper =
+                tryRules
+                  {mark = mark, formula = formula, lim = lim,
+                   rule_count = rule_count,
+                   noteAttempt = noteSafeRuleAttempt, fire = fire}
 
               fun closeF [] = raise CLOSEF
                 | closeF (literal :: literals) =
@@ -1680,8 +1670,8 @@ fun runGoal resumable cleanup_policy instrumentation
                        (fn () =>
                          onClose
                            (fn () => closeLevels rest)
-                           (fn () => closeF (map first level_unsafe)))
-                       (fn () => closeF (map first level_safe)))
+                           (fn () => closeF (map Lib.fst level_unsafe)))
+                       (fn () => closeF (map Lib.fst level_safe)))
 
               fun cascade () =
                 if lim < 0 then backtrack choices
@@ -1779,19 +1769,15 @@ fun runGoal resumable cleanup_policy instrumentation
               val formula =
                 withTrackedTerm (normAt mark (trackedTerm formula)) formula
               val rules = unsafeRulesFor vars (trackedTerm formula)
-              val rule_count = lengthRulesAt mark rules
-              val branches = lengthBranchesAt mark brs0
+              val rule_count = lengthAt mark rules
+              val branches = lengthAt mark brs0
 
-              fun newPremise
-                    (rule, vars', pattern, duplicate, lim')
+              fun child (rule, vars', pattern, duplicate, lim')
                     (premise, hidden) =
                 let
                   val _ = checkpointAt mark
-                  val (tracked, visible_introduced) =
-                    trackPremise freshToken premise
-                  val introduced =
-                    addHiddenAssumption freshToken hidden
-                      visible_introduced
+                  val (tracked, introduced) =
+                    premiseChild mark (premise, hidden)
                   val safe' = mapPairAt mark tracked
                   val unsafe' =
                     requeueGammaAt mark (formula, md) unsafe duplicate
@@ -1812,116 +1798,72 @@ fun runGoal resumable cleanup_policy instrumentation
                    assumptions = child_assumptions}
                 end
 
-              fun newBranches (arguments as (rule, _, _, _, _)) prems =
+              fun fire {rule : tableau_rule, other, updated, limAfter, next} =
                 let
-                  fun make [] = brs
-                    | make (premise :: rest) =
-                        (checkpointAt mark;
-                         newPremise arguments premise :: make rest)
+                  val pattern = #pattern rule
+                  val prems = #premises rule
+                  val old_vars = varsInVarsAt mark vars
+                  val new_vars = foldPremVarsAt mark prems old_vars
+                  val duplicate = md
+                  val lim' = limAfter (lim - 1)
+                  val undo =
+                    mayUndoAt mark
+                      {other_rules = not (null other),
+                       updated = updated,
+                       old_vars = old_vars,
+                       new_vars = new_vars}
+                  val major =
+                    ruleMajor unsafeRuleOrigin rule formula assumptions
+                  val step =
+                    UnsafeRule
+                      {rule = rule, updated = updated,
+                       duplicate = duplicate, major = major}
+                  val contraposing =
+                    contraposing mark formula prems (lits, [])
+
+                  fun descend () =
+                    if killsAllAlternatives lim' prems then
+                      (rollbackAt mark; raise NEWBRANCHES)
+                    else
+                      let
+                        val children =
+                          premiseBranches rule
+                            (child
+                               (rule, new_vars, pattern, duplicate, lim'))
+                            brs prems
+                        val count = lengthAt mark prems
+                      in
+                        noteRuleInference lim';
+                        if null prems then closed := !closed + 1
+                        else created := !created + count - 1;
+                        prv
+                          (step :: tacs, brs0 :: trace,
+                           Choice (mark, branches, PRV) :: choices,
+                           children)
+                      end
                 in
-                  make (ListPair.zip (prems, #hidden_assumptions rule))
+                  if contraposing then
+                    prv
+                      (DeferGoal :: tacs, brs0 :: trace, choices,
+                       contraposedBranch mark
+                         {lits = lits, levels = [],
+                          restore = fn _ => [([], (formula, md) :: unsafe)],
+                          vars = vars, lim = lim,
+                          assumptions = assumptions} :: brs)
+                  else
+                    preserve
+                      (fn PRV =>
+                            SOME (fn () =>
+                              if undo then next () else backtrack choices)
+                        | _ => NONE)
+                      descend
                 end
 
-              fun deeper [] = raise NEWBRANCHES
-                | deeper ((rule : tableau_rule) :: other) =
-                    let
-                      val _ = checkpointAt mark
-                      val pattern = #pattern rule
-                      val prems = #premises rule
-                      val rule_vars = addVarsAt mark (pattern, [])
-                      val _ = checkpointAt mark
-                      val _ = noteUnsafeRuleAttempt ()
-                    in
-                      if not (ruleHasCompatibleMajor rule formula) then
-                        deeper other
-                      else if not
-                           (unifyAt mark
-                             (rule_vars, pattern, trackedTerm formula)) then
-                        deeper other
-                      else
-                        let
-                          val _ = noteUnificationSuccess ()
-                          val _ = checkpointAt mark
-                          val updated = mark < trailSize state
-                          val old_vars = varsInVarsAt mark vars
-                          val new_vars = foldPremVarsAt mark prems old_vars
-                          val duplicate = md
-                          val lim' =
-                            if updated then
-                              lim - instantiationPenalty rule_count -
-                              (if guessedAt (fn () => checkpointAt mark)
-                                    state mark rule_vars
-                               then 1 else 0)
-                            else lim - 1
-                          val undo =
-                            mayUndoAt mark
-                              {other_rules = not (null other),
-                               updated = updated,
-                               old_vars = old_vars,
-                               new_vars = new_vars}
-                          val major =
-                            ruleMajor unsafeRuleOrigin rule formula
-                              assumptions
-                          val step =
-                            UnsafeRule
-                              {rule = rule, updated = updated,
-                               duplicate = duplicate, major = major}
-                          val checkpoint = fn () => checkpointAt mark
-                          val contraposing =
-                            not (isGoal (trackedTerm formula)) andalso
-                            existsMeasured checkpoint (existsGoalAt mark)
-                              prems andalso
-                            branchHasTokenlessGoal checkpoint (lits, [])
-
-                          (* As on the safe side: the goals this rule would
-                             negate are the branch's conclusion, and only a
-                             conclusion can be contraposed. *)
-                          fun contraposeFirst () =
-                            let
-                              val (lits', _, assumptions') =
-                                contraposeGoals checkpoint freshToken
-                                  (lits, [], assumptions)
-                              val _ = rollbackAt mark
-                            in
-                              prv
-                                (DeferGoal :: tacs, brs0 :: trace, choices,
-                                 {pairs = [([], (formula, md) :: unsafe)],
-                                  lits = lits', vars = vars, lim = lim,
-                                  assumptions = assumptions'} :: brs)
-                            end
-
-                          fun descend () =
-                            if killsAllAlternatives lim' prems then
-                              (rollbackAt mark; raise NEWBRANCHES)
-                            else
-                              let
-                                val children =
-                                  newBranches
-                                    (rule, new_vars, pattern, duplicate,
-                                     lim') prems
-                                val count = lengthPremsAt mark prems
-                              in
-                                noteRuleInference lim';
-                                if null prems then closed := !closed + 1
-                                else created := !created + count - 1;
-                                prv
-                                  (step :: tacs, brs0 :: trace,
-                                   Choice (mark, branches, PRV) :: choices,
-                                   children)
-                              end
-                        in
-                          if contraposing then contraposeFirst ()
-                          else
-                            preserve
-                              (fn PRV =>
-                                    SOME (fn () =>
-                                      if undo then
-                                        (rollbackAt mark; deeper other)
-                                      else backtrack choices)
-                                | _ => NONE)
-                              descend
-                        end
-                    end
+              val deeper =
+                tryRules
+                  {mark = mark, formula = formula, lim = lim,
+                   rule_count = rule_count,
+                   noteAttempt = noteUnsafeRuleAttempt, fire = fire}
 
             in
               if lim < 1 then backtrack choices
@@ -2077,14 +2019,10 @@ fun searchGoalWithStats claset depth goal cont =
       | RunYielded _ => raise Fail "statistics tableau yielded"
   end
 
-(* Statistics instrumentation selects the same plain workers as [Off] and
-   adds two counter updates per committed transition, so the production
-   entry point uses it: the inference and resource-cost counters are what
-   the shared work meter reports. *)
+(* The production entry point keeps the statistics: the inference and
+   resource-cost counters are what the shared work meter reports. *)
 fun searchGoal claset depth goal cont =
-  case runGoal false Restore Stats claset depth goal cont of
-      RunDone report => #result report
-    | RunYielded _ => raise Fail "ordinary tableau yielded"
+  #result (searchGoalWithStats claset depth goal cont)
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)

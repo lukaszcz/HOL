@@ -23,24 +23,11 @@ fun apply_aesop_simp_to_global delta rewrites =
     rewrites'
   end
 
-val _ =
-  if List.exists (equal "aesop_simp") (ThmSetData.all_set_types ()) orelse
-     ThmAttribute.is_attribute "aesop_simp"
-  then
-    raise ERR "registration"
-      "settype or attribute aesop_simp already exists"
-  else
-    ()
-
 val aesop_simp_data =
-  ThmSetData.export_with_ancestry
-    {settype = "aesop_simp",
-     delta_ops =
-       {apply_to_global = apply_aesop_simp_to_global,
-        thy_finaliser = NONE,
-        uptodate_delta = K true,
-        initial_value = [],
-        apply_delta = apply_aesop_simp_delta}}
+  thmTable.register
+    {settype = "aesop_simp", initial_value = [],
+     apply_delta = apply_aesop_simp_delta,
+     apply_to_global = apply_aesop_simp_to_global}
 
 fun aesop_simp_rewrites () =
   #get_global_value aesop_simp_data ()
@@ -61,31 +48,48 @@ type cached_simpset = {generation : int, simpset : simpLib.simpset}
    conditions in safe mode.  The derivation itself is not shared either:
    clasimp_ss also carries split_ss, which the aesop simpset deliberately
    leaves to the search. *)
+fun aesop_simpset ss rewrites =
+  ss
+  (* The conditional congruence is weakened here too; see
+     clasimpLib.weaken_cond_congruence for why a recursive equation
+     with a conditional right-hand side needs it.  The branch
+     reasoning this simpset gives up is the branch reasoning it
+     already leaves to the search. *)
+  |> clasimpLib.weaken_cond_congruence
+  |> simpLib.set_cond_depth clasimpLib.cond_depth
+  (* Matched modulo eta, as Isabelle's higher-order patterns are; see
+     clasimpLib.derive_clasimp_ss for why a rule and a goal otherwise
+     miss each other over an eta step. *)
+  |> (fn ss' => simpLib.++ (ss', boolSimps.ETA_ss))
+  |> simpLib.set_safe_solvers [clasimpLib.safe_solver]
+  |> simpLib.set_unsafe_solvers [linarithLib.linarith_solver]
+  |> (fn ss' => simpLib.++ (ss', simpLib.rewrites rewrites))
+
 fun derive_aesop_ss ss _ : cached_simpset =
   {generation = Sref.value aesop_simp_generation,
-   simpset =
-     ss
-     (* The conditional congruence is weakened here too; see
-        clasimpLib.weaken_cond_congruence for why a recursive equation
-        with a conditional right-hand side needs it.  The branch
-        reasoning this simpset gives up is the branch reasoning it
-        already leaves to the search. *)
-     |> clasimpLib.weaken_cond_congruence
-     |> simpLib.set_cond_depth 40
-     (* Matched modulo eta, as Isabelle's higher-order patterns are; see
-        clasimpLib.derive_clasimp_ss for why a rule and a goal otherwise
-        miss each other over an eta step. *)
-     |> (fn ss' => simpLib.++ (ss', boolSimps.ETA_ss))
-     |> simpLib.set_safe_solvers [clasimpLib.safe_solver]
-     |> simpLib.set_unsafe_solvers [linarithLib.linarith_solver]
-     |> (fn ss' =>
-          simpLib.++ (ss', simpLib.rewrites (aesop_simp_rewrites ())))}
+   simpset = aesop_simpset ss (aesop_simp_rewrites ())}
 
 val {get = get_cached_aesop_ss, get_of = _} =
   BasicProvers.make_simpset_derived_value
     "aesopData.aesop_ss"
     derive_aesop_ss
     {generation = ~1, simpset = simpLib.empty_ss}
+
+(* The derived value above moves only with srw_ss, so an aesop_simp
+   addition alone is derived once here.  It is keyed on both inputs by
+   identity: a context restore rewinds the rewrites but not the generation
+   counter. *)
+val latest_aesop_ss :
+    {base : simpLib.simpset, rewrites : Thm.thm list,
+     simpset : simpLib.simpset} option ref = ref NONE
+
+fun derive_latest base rewrites =
+  let val simpset = aesop_simpset base rewrites
+  in
+    latest_aesop_ss :=
+      SOME {base = base, rewrites = rewrites, simpset = simpset};
+    simpset
+  end
 
 fun aesop_ss () =
   let
@@ -95,9 +99,16 @@ fun aesop_ss () =
       #simpset cached
     else
       let
-        val fresh = derive_aesop_ss (BasicProvers.srw_ss ()) cached
+        val base = BasicProvers.srw_ss ()
+        val rewrites = aesop_simp_rewrites ()
       in
-        #simpset fresh
+        case !latest_aesop_ss of
+            SOME {base = base', rewrites = rewrites', simpset} =>
+              if Portable.pointer_eq (base, base') andalso
+                 Portable.pointer_eq (rewrites, rewrites')
+              then simpset
+              else derive_latest base rewrites
+          | NONE => derive_latest base rewrites
       end
   end
 

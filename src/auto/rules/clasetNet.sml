@@ -31,7 +31,7 @@
 structure clasetNet :> clasetNet =
 struct
 
-open HolKernel KernelTypes
+open HolKernel KernelTypes listUtil
 
 type term = Term.term
 
@@ -45,8 +45,6 @@ datatype label =
 datatype 'a net = NODE of 'a list * (label * 'a net) list
 
 val empty = NODE ([], [])
-
-fun no_checkpoint () = ()
 
 fun const_label tm =
   let val {Name, Thy, ...} = dest_thy_const tm
@@ -99,33 +97,34 @@ fun query_label checkpoint bvars tm =
   else if is_comb tm then SOME Cmb
   else SOME (const_label tm)
 
-fun edge checkpoint label [] = NONE
-  | edge checkpoint label ((label', net) :: rest) =
-      (checkpoint ();
-       if label = label' then SOME net else edge checkpoint label rest)
+fun edge checkpoint label edges =
+  Option.map #2 (findMeasured checkpoint (fn (l, _) => l = label) edges)
 
 fun replace_edge label net [] = [(label, net)]
   | replace_edge label net ((entry as (label', _)) :: rest) =
       if label = label' then (label, net) :: rest
       else entry :: replace_edge label net rest
 
-fun stored_labels patvars bvars tm0 =
+fun stored_labels patvars pat =
   let
-    val tm = eta_contract tm0
-    val label = stored_label patvars bvars tm
+    fun labels bvars tm0 rest =
+      let
+        val tm = eta_contract tm0
+        val label = stored_label patvars bvars tm
+      in
+        case label of
+            Lam =>
+              let val (bvar, body) = dest_abs tm
+              in label :: labels (bvar :: bvars) body rest
+              end
+          | Cmb =>
+              let val (rator, rand) = dest_comb tm
+              in label :: labels bvars rator (labels bvars rand rest)
+              end
+          | _ => label :: rest
+      end
   in
-    case label of
-        Lam =>
-          let val (bvar, body) = dest_abs tm
-          in label :: stored_labels patvars (bvar :: bvars) body
-          end
-      | Cmb =>
-          let val (rator, rand) = dest_comb tm
-          in
-            label :: stored_labels patvars bvars rator @
-                     stored_labels patvars bvars rand
-          end
-      | _ => [label]
+    labels [] pat []
   end
 
 fun insert ({pat, patvars}, value) net =
@@ -142,12 +141,8 @@ fun insert ({pat, patvars}, value) net =
             NODE (tips, replace_edge label child' edges)
           end
   in
-    enter (stored_labels patvars [] pat) net
+    enter (stored_labels patvars pat) net
   end
-
-fun append checkpoint [] right = right
-  | append checkpoint (item :: items) right =
-      (checkpoint (); item :: append checkpoint items right)
 
 fun follow checkpoint normal_walk (tm, bvars) rest (NODE (_, edges)) =
   let
@@ -172,7 +167,7 @@ fun follow checkpoint normal_walk (tm, bvars) rest (NODE (_, edges)) =
             end
         | SOME label => exact label rest
   in
-    append checkpoint exact_branch vbranch
+    appendMeasured checkpoint exact_branch vbranch
   end
 
 fun match tm net =
@@ -184,17 +179,10 @@ fun match tm net =
     walk [(tm, [])] net
   end
 
-fun unify_with checkpoint {q, qvars} net =
+fun unifyMeasured checkpoint {q, qvars} net =
   let
-    fun concat_map _ [] = []
-      | concat_map f (item :: items) =
-          (checkpoint ();
-           append checkpoint (f item) (concat_map f items))
-
-    fun bound _ [] = false
-      | bound tm (item :: items) =
-          (checkpoint ();
-           aconv tm item orelse bound tm items)
+    fun concat_map f items = concatMapMeasured checkpoint f items
+    fun bound tm bvars = existsMeasured checkpoint (aconv tm) bvars
 
     fun skip_one_m (NODE (_, edges)) =
       let
@@ -225,9 +213,7 @@ fun unify_with checkpoint {q, qvars} net =
     walk [(q, [])] net
   end
 
-fun unify query net = unify_with no_checkpoint query net
-fun unifyMeasured checkpoint query net =
-  unify_with checkpoint query net
+fun unify query net = unifyMeasured no_checkpoint query net
 
 fun vfilter pred net =
   let

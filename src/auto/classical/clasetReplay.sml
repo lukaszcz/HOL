@@ -70,6 +70,18 @@ val classical_trace = ref 0
 val _ = Feedback.register_trace ("classical", classical_trace, 7)
 
 fun make_record fields = StepRecord fields
+
+fun new_free_names (asl, w) goals =
+  let
+    val old_frees = free_varsl (w :: asl)
+    fun names (child_asl, child_w) =
+      map (fst o dest_var)
+        (List.filter
+          (fn variable => not (tmem variable old_frees))
+          (free_varsl (child_w :: child_asl)))
+  in
+    map names goals
+  end
 fun kind_of (StepRecord {kind, ...}) = kind
 fun target_of (StepRecord {target, ...}) = target
 fun consumed_of (StepRecord {consumed, ...}) = consumed
@@ -284,36 +296,13 @@ fun rebuild_exact_prefix
     EQ_MP (ALPHA (concl generalized) premise) generalized
   end
 
-fun rule_child parent_asl premise names =
-  let
-    val (bounds, body) = strip_forall premise
-    val _ =
-      if length bounds = length names then ()
-      else
-        raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
-          "recorded eigenvariable arity is corrupt"
-    val fresh =
-      ListPair.map
-        (fn (bound, name) => mk_var (name, type_of bound))
-        (bounds, names)
-    val substitution =
-      ListPair.map
-        (fn (bound, variable) => {redex = bound, residue = variable})
-        (bounds, fresh)
-    val body' = Term.subst substitution body
-    val (antecedents, conclusion) = strip_imp_only body'
-  in
-    ((cons_assumptions antecedents parent_asl, conclusion),
-     {fresh = fresh, assumptions = antecedents, premise = premise})
-  end
-
-fun blast_rule_child parent_asl premise names descriptor =
+fun rule_child function_name parent_asl premise names descriptor =
   let
     val bounds = exact_prefix_bounds descriptor premise
     val _ =
       if length bounds = length names then ()
       else
-        raise mk_HOL_ERR "clasetReplay" "BLAST_RULE_TAC"
+        raise mk_HOL_ERR "clasetReplay" function_name
           "recorded eigenvariable arity is corrupt"
     val fresh =
       ListPair.map
@@ -364,7 +353,7 @@ fun rule_tac_with function_name make_children
             end
     fun allowed_parameter {redex, residue} =
       is_var redex andalso is_var residue andalso
-      List.exists (Term.aconv redex) parameters
+      tmem redex parameters
     val _ =
       if List.all allowed_parameter term_substitution then ()
       else
@@ -443,10 +432,12 @@ fun rule_tac_with function_name make_children
     raise mk_HOL_ERR "clasetReplay" function_name
       "an elimination rule has no major premise"
 
+(* The whole forall-then-implication prefix of each premise. *)
 fun ordinary_rule_children parent_asl premises eigenvariables =
   ListPair.map
     (fn (premise, names) =>
-      rule_child parent_asl premise names)
+      rule_child "RULE_TAC" parent_asl premise names
+        (exact_prefix_descriptor premise))
     (premises, eigenvariables)
 
 fun RULE_TAC fields goal _ =
@@ -508,7 +499,8 @@ fun BLAST_RULE_TAC
       if length premises = length prefixes then
         ListPair.map
           (fn ((premise, child_names), descriptor) =>
-            blast_rule_child parent_asl premise child_names descriptor)
+            rule_child "BLAST_RULE_TAC" parent_asl premise child_names
+              descriptor)
           (ListPair.zip (premises, names), prefixes)
       else
         raise mk_HOL_ERR "clasetReplay" "BLAST_RULE_TAC"
@@ -518,13 +510,6 @@ fun BLAST_RULE_TAC
       rule_tac_with "BLAST_RULE_TAC" make_children
         {theorem = theorem, elim = elim, consumed = consumed,
          parameters = parameters, eigenvariables = eigenvariables} goal
-  end
-
-val HYP_SUBST_TAC =
-  let
-    val {hyp_subst_tac, ...} = clasetLib.claset_config
-  in
-    Tactical.THEN (hyp_subst_tac, Tactical.REPEAT hyp_subst_tac)
   end
 
 (* The classical hyp-subst step saturates, and stops where the equality it
@@ -673,9 +658,6 @@ fun COMPUTE_CLASET_HYP_SUBST_TAC_IN ctxt goal =
       | computed => computed
   end
 
-fun COMPUTE_CLASET_HYP_SUBST_TAC goal =
-  COMPUTE_CLASET_HYP_SUBST_TAC_IN (Context.snapshot ()) goal
-
 (* Blast records one equality substitution at a time.  Unlike the classical
    hyp-subst slot, affected assumptions are stably moved to the front. *)
 fun eta_atom_conv tm =
@@ -813,9 +795,6 @@ fun BLAST_HYP_SUBST_TAC_AT {position, changed, side} goal ctxt =
 
 fun COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN ctxt position goal =
   blast_hyp_subst_tac_at position NONE goal ctxt
-
-fun COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal =
-  COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN (Context.snapshot()) position goal
 
 fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) ctxt =
   let
@@ -1023,7 +1002,6 @@ fun rule_action make store = RULE_TAC (make store)
 fun forward_rule_action make store =
   FORWARD_RULE_TAC (make store)
 fun blast_rule_action make store = BLAST_RULE_TAC (make store)
-val hyp_subst_action = fn _ => HYP_SUBST_TAC
 fun claset_hyp_subst_action_at eliminations _ =
   CLASET_HYP_SUBST_TAC_AT eliminations
 fun blast_hyp_subst_action_at fields _ =
@@ -1043,7 +1021,7 @@ fun move_assumption_to_back_action pos _ =
    the covering store already has to both the children and a theorem schema
    for the validation.  The schema makes instantiation happen before the
    opaque closure consumes the replayed child theorems. *)
-fun grounded_fixed_action (goals, validation) store _ _ =
+fun grounded_fixed_action (goals, validation) store =
   let
     fun ground_goal (child_asl, child_w) =
       (map (clasetMeta.norm store) child_asl,
@@ -1083,25 +1061,9 @@ fun grounded_fixed_action (goals, validation) store _ _ =
     (map ground_goal goals, ground_validation)
   end
 
-fun fixed_action_on recorded result store current ctxt =
+fun fixed_action_on recorded result store current _ =
   if boolSyntax.goal_eq recorded current then result
-  else grounded_fixed_action result store current ctxt
-
-(* Compatibility for callers that did not record the wrapper's input.  A
-   marked direct replay keeps the symbolic result, as it did historically;
-   complete engine records use [fixed_action_on]. *)
-fun fixed_action (result as (goals, validation)) store
-    (goal as (asl, w)) ctxt =
-  let
-    val input_terms = w :: asl
-    val marked_input =
-      List.exists clasetMeta.is_meta (free_varsl input_terms) orelse
-      List.exists clasetMeta.is_tymeta
-        (List.concat (map type_vars_in_term input_terms))
-  in
-    if marked_input then result
-    else grounded_fixed_action (goals, validation) store goal ctxt
-  end
+  else grounded_fixed_action result store
 
 fun empty count =
   if count < 0 then
@@ -1111,10 +1073,6 @@ fun empty count =
       {roots = List.tabulate (count, fn _ => NONE), length = 0,
        open_paths = List.tabulate (count, fn index => [index])}
 
-
-fun replace_nth values index replacement =
-  List.take (values, index) @ replacement :: List.drop (values, index + 1)
-
 fun install path record roots =
   let
     fun descend [] _ =
@@ -1122,7 +1080,7 @@ fun install path record roots =
             "the target does not identify an open goal"
       | descend [index] options =
           (case List.nth (options, index) of
-               NONE => replace_nth options index (SOME record)
+               NONE => Lib.apnth (K (SOME record)) index options
              | SOME _ =>
                  raise mk_HOL_ERR "clasetReplay" "append"
                    "the target does not identify an open goal")
@@ -1135,14 +1093,15 @@ fun install path record roots =
                  (StepRecord
                    {kind, target, consumed, created, eigenvariables,
                     validation, action, children}) =>
-                 replace_nth options index
-                   (SOME
+                 Lib.apnth
+                   (K (SOME
                      (StepRecord
                        {kind = kind, target = target, consumed = consumed,
                         created = created,
                         eigenvariables = eigenvariables,
                         validation = validation, action = action,
                         children = descend rest children})))
+                   index options)
   in
     descend path roots
     handle Subscript =>
@@ -1359,9 +1318,6 @@ fun replay_in ctxt
                {goal = goal, step = NONE,
                 message = Feedback.exn_to_string error,
                 script = to_string script})
-
-fun replay grounded goal =
-  replay_in (Context.snapshot ()) grounded goal
 
 fun goal_string (asl, w) =
   let

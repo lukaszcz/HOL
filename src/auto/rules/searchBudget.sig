@@ -30,4 +30,12 @@ sig
      dimension remains unbounded.  This preserves usage and lets a
      suspended invocation resume with its existing cursors. *)
   val extend : budget -> kind -> int -> unit
+
+  (* One charge callback per kind; [free_charger] charges nothing. *)
+  type charger =
+    {candidate : unit -> unit,
+     application : unit -> unit,
+     normalization : unit -> unit}
+  val free_charger : charger
+  val charger : budget -> charger
 end

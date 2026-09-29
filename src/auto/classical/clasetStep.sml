@@ -78,25 +78,13 @@ fun supplied_major_thm store major target =
 val nth1 = clasetNorm.nth1 ("clasetStep", "nth1")
 val delete_nth = clasetNorm.delete_nth ("clasetStep", "delete_nth")
 
-fun position_map f values =
+fun numbered values =
   let
     fun recurse _ [] = []
       | recurse pos (value :: rest) =
-          (pos, f value) :: recurse (pos + 1) rest
+          (pos, value) :: recurse (pos + 1) rest
   in
     recurse 1 values
-  end
-
-fun new_free_names_by_goal (asl, w) goals =
-  let
-    val old_frees = free_varsl (w :: asl)
-    fun names (child_asl, child_w) =
-      map (fst o dest_var)
-        (List.filter
-          (fn variable => not (tmem variable old_frees))
-          (free_varsl (child_w :: child_asl)))
-  in
-    map names goals
   end
 
 datatype direct =
@@ -169,7 +157,7 @@ fun tactic_direct_in ctxt kind consumed node pos tactic =
     val rendered = clasetGoal.render node pos
     val result as (goals, _) =
       aligned_result (tactic rendered ctxt)
-    val eigens = new_free_names_by_goal rendered goals
+    val eigens = clasetReplay.new_free_names rendered goals
   in
     SOME
       (Direct
@@ -217,7 +205,7 @@ fun assumption_results (node, pos) =
                closed = [], store = store}
           end
       in
-        map result (List.filter closes (position_map (fn x => x) asl))
+        map result (List.filter closes (numbered asl))
       end)
 
 fun contradiction_results (node, pos) =
@@ -227,7 +215,7 @@ fun contradiction_results (node, pos) =
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
         val normalized_w = normalize_term store w
-        val positioned = position_map (fn x => x) asl
+        val positioned = numbered asl
 
         fun negatives [] = []
           | negatives ((neg_pos, neg_tm) :: rest) =
@@ -284,7 +272,7 @@ fun mp_results (node, pos) =
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
         val normalized_w = normalize_term store w
-        val positioned = position_map (fn x => x) asl
+        val positioned = numbered asl
         val {params, ...} = clasetGoal.goal_at node pos
 
         fun implications [] = []
@@ -372,7 +360,8 @@ fun dedup_tagged [] = []
         entry :: dedup_tagged (drop_same rest)
       end
 
-fun candidates mode part (asl, w) =
+fun candidates mode part
+      ({conclusion, assumptions} : clasetGoal.spellings) =
   let
     val (intro_lookup, elim_lookup) =
       case mode of
@@ -397,20 +386,10 @@ fun candidates mode part (asl, w) =
        against [f p x] -- it leaves both forms alone and neither of them
        reaches the other.  [crossed_conv] and [applied_conv] are the two
        total spellings; asking for both is what makes "both spellings" true
-       there. *)
-    fun spelling conversion tm = rhs (concl (conversion tm))
-    fun lookup which tm =
-      let
-        val forms =
-          Lib.op_mk_set aconv
-            [tm, spelling clasetNorm.membership_conv tm,
-             spelling clasetNorm.crossed_conv tm,
-             spelling clasetNorm.applied_conv tm]
-      in
-        List.concat (map (which part) forms)
-      end
-    val intros = lookup intro_lookup w
-    val elims = List.concat (map (lookup elim_lookup) asl)
+       there.  [clasetGoal.lookup_spellings] supplies the forms. *)
+    fun lookup which forms = List.concat (map (which part) forms)
+    val intros = lookup intro_lookup conclusion
+    val elims = List.concat (map (lookup elim_lookup) assumptions)
   in
     dedup_tagged (clasetRules.candidate_order (intros @ elims))
   end
@@ -467,10 +446,6 @@ fun same_term_meta left right =
   is_var left andalso is_var right andalso
   fst (dest_var left) = fst (dest_var right)
 
-fun same_type_meta left right =
-  clasetMeta.is_tymeta left andalso clasetMeta.is_tymeta right andalso
-  dest_vartype left = dest_vartype right
-
 fun unresolved_in_premises store
   ({terms, types} : clasetUnify.rule_metas) premises =
   let
@@ -482,7 +457,7 @@ fun unresolved_in_premises store
     fun created_term meta =
       List.exists (fn created => same_term_meta created meta) terms
     fun created_type ty =
-      List.exists (fn created => same_type_meta created ty) types
+      List.exists (fn created => clasetMeta.same_tymeta created ty) types
   in
     List.exists created_term premise_metas orelse
     List.exists created_type premise_types
@@ -494,7 +469,7 @@ fun ground_created store
     fun ground_type (meta, current) =
       let val normalized = clasetMeta.norm_type current meta
       in
-        if same_type_meta meta normalized then
+        if clasetMeta.same_tymeta meta normalized then
           (case clasetMeta.bind_ty (meta, Type.bool) current of
                SOME next => next
              | NONE => current)
@@ -562,70 +537,48 @@ fun settle_rule mode (core : thm) metas asl note_skip residual_terms store =
 fun cgoal_render store ({asl, w, ...} : clasetGoal.cgoal) =
   (map (normalize_term store) asl, normalize_term store w)
 
-fun rule_validation normalized_rule supplied children premises target =
-  let
-    fun rebuild ((child, premise), child_thm) =
-      let
-        val {params, ...} : clasetGoal.cgoal = child
-        val (bounds, body) = strip_forall premise
-        val fresh = List.drop (params, length params - length bounds)
-        val substitution =
-          ListPair.map (fn (bound, variable) =>
-            {redex = bound, residue = variable}) (bounds, fresh)
-        val body' = Term.subst substitution body
-        val (antecedents, _) = strip_imp_only body'
-        val discharged =
-          List.foldr (fn (antecedent, th) => DISCH antecedent th)
-            child_thm antecedents
-        val generalized = GENL fresh discharged
-      in
-        EQ_MP (ALPHA (concl generalized) premise) generalized
-      end
+fun rule_validation normalized_rule supplied rebuilds target child_thms =
+  if length child_thms <> length rebuilds then
+    raise mk_HOL_ERR "clasetStep" "rule_validation"
+      "rule validation arity"
+  else
+    let
+      val premise_thms =
+        ListPair.map
+          (fn (data, theorem) =>
+            clasetReplay.rebuild_exact_prefix data theorem)
+          (rebuilds, child_thms)
+      val result =
+        Drule.LIST_MP (supplied @ premise_thms) normalized_rule
+    in
+      align_conclusion target result
+    end
 
-    fun validate child_thms =
-      if length child_thms <> length children then
-        raise mk_HOL_ERR "clasetStep" "rule_validation"
-          "rule validation arity"
-      else
-        let
-          val premise_thms =
-            ListPair.map rebuild
-              (ListPair.zip (children, premises), child_thms)
-          val result =
-            Drule.LIST_MP (supplied @ premise_thms) normalized_rule
-        in
-          align_conclusion target result
-        end
+(* The rebuild of a child that took its premise's whole prefix: the child's
+   last parameters are the premise's bound variables. *)
+fun full_prefix_rebuild (({params, ...} : clasetGoal.cgoal), premise) =
+  let
+    val (bounds, body) = strip_forall premise
+    val fresh = List.drop (params, length params - length bounds)
+    val substitution =
+      ListPair.map (fn (bound, variable) =>
+        {redex = bound, residue = variable}) (bounds, fresh)
+    val (antecedents, _) = strip_imp_only (Term.subst substitution body)
   in
-    validate
+    {fresh = fresh, assumptions = antecedents, premise = premise}
   end
 
-fun exact_rule_validation normalized_rule supplied rebuilds target =
+fun replay_theorem normalized_rule store =
   let
-    fun validate child_thms =
-      if length child_thms <> length rebuilds then
-        raise mk_HOL_ERR "clasetStep" "exact_rule_validation"
-          "rule validation arity"
-      else
-        let
-          val premise_thms =
-            ListPair.map
-              (fn (data, theorem) =>
-                clasetReplay.rebuild_exact_prefix data theorem)
-              (rebuilds, child_thms)
-          val result =
-            Drule.LIST_MP (supplied @ premise_thms) normalized_rule
-        in
-          align_conclusion target result
-        end
+    val (type_substitution, term_substitution) = clasetMeta.collapse store
   in
-    validate
+    Drule.INST_TY_TERM
+      (term_substitution, type_substitution) normalized_rule
   end
 
 fun theorem_equal left right =
   aconv (concl left) (concl right) andalso
-  ListPair.allEq (fn (left_tm, right_tm) => aconv left_tm right_tm)
-    (hyp left, hyp right)
+  Lib.list_eq aconv (hyp left) (hyp right)
 
 (* The claset stores each declaration's derived forms, so this identifies
    the declaration behind an applied theorem by reading them rather than by
@@ -663,11 +616,11 @@ fun rule_origin cs duplicated theorem =
     search (clasetLib.all_rules cs)
   end
 
-datatype prefix_policy = LegacyPrefixes | ExactBlastPrefixes
+datatype prefix_policy = FullPrefixes | ExactBlastPrefixes
 
 fun minor_prefixes policy is_elim premises =
   case policy of
-      LegacyPrefixes => NONE
+      FullPrefixes => NONE
     | ExactBlastPrefixes =>
         let val minors = if is_elim then tl premises else premises
         in SOME (map clasetReplay.exact_prefix_descriptor minors) end
@@ -747,35 +700,30 @@ fun try_rule policy mode cs duplicated node pos
     val validation =
       case rebuilds of
           NONE =>
-            rule_validation normalized_rule supplied_thms children
-              normalized_premises target
+            (fn child_thms =>
+              rule_validation normalized_rule supplied_thms
+                (ListPair.map full_prefix_rebuild
+                  (children, normalized_premises))
+                target child_thms)
         | SOME data =>
-            exact_rule_validation normalized_rule supplied_thms data target
+            rule_validation normalized_rule supplied_thms data target
     val old_params = #params (clasetGoal.goal_at node pos)
     fun child_eigens ({params, ...} : clasetGoal.cgoal) =
       map (fst o dest_var)
         (List.filter
           (fn parameter =>
-            not (List.exists (Term.aconv parameter) old_params))
+            not (tmem parameter old_params))
           params)
     val new_eigens = map child_eigens children
     val created = #metas fresh
     val (original, variant) = rule_origin cs duplicated theorem
 
-    fun replay_theorem store =
-      let
-        val (type_substitution, term_substitution) =
-          clasetMeta.collapse store
-      in
-        Drule.INST_TY_TERM
-          (term_substitution, type_substitution) normalized_rule
-      end
     fun replay_instance store =
-      {theorem = replay_theorem store, elim = is_elim,
+      {theorem = replay_theorem normalized_rule store, elim = is_elim,
        consumed = consumed, parameters = old_params,
        eigenvariables = new_eigens}
     fun blast_replay_instance descriptors store =
-      {theorem = replay_theorem store, elim = is_elim,
+      {theorem = replay_theorem normalized_rule store, elim = is_elim,
        consumed = consumed, parameters = old_params,
        eigenvariables = new_eigens, prefixes = descriptors}
     val action =
@@ -827,7 +775,7 @@ fun try_forward charge mode {source, form} immediate node pos
       of
           NONE => raise Match
         | SOME store => store
-    val positioned = position_map (fn value => value) asl
+    val positioned = numbered asl
 
     val earlier = List.take (immediate_premises, immediate - 1)
     val residual_terms =
@@ -861,17 +809,9 @@ fun try_forward charge mode {source, form} immediate node pos
               raise mk_HOL_ERR "clasetStep" "try_forward"
                 "forward validation arity"
 
-        fun replay_theorem store =
-          let
-            val (type_substitution, term_substitution) =
-              clasetMeta.collapse store
-          in
-            Drule.INST_TY_TERM
-              (term_substitution, type_substitution) normalized_rule
-          end
-
         fun replay_instance store =
-          {theorem = replay_theorem store, immediate = immediate,
+          {theorem = replay_theorem normalized_rule store,
+           immediate = immediate,
            assumptions = positions}
       in
         (added,
@@ -981,7 +921,7 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
     val parent_store = clasetGoal.store node
 
     val remaining =
-      ref (position_map (fn value => value) assumptions)
+      ref (numbered assumptions)
     val current = ref (NONE : (term * direct) seq.seq option)
 
     fun attempts () =
@@ -1091,16 +1031,16 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
   seq.delay
     (fn () =>
       let
-        val rendered as (asl, _) = clasetGoal.render node pos
+        val (asl, _) = clasetGoal.render node pos
         val tagged = List.filter (weight_filter o #1)
-          (candidates mode part rendered)
+          (candidates mode part (clasetGoal.lookup_spellings node pos))
 
         fun intro_application entry =
           seq.delay
             (fn () =>
               case total
                 (fn () =>
-                  try_rule LegacyPrefixes mode cs duplicated node pos
+                  try_rule FullPrefixes mode cs duplicated node pos
                     entry NONE) ()
               of
                   SOME result => seq.result result
@@ -1112,7 +1052,7 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
                 (fn () =>
                   case total
                     (fn () =>
-                      try_rule LegacyPrefixes mode cs duplicated node pos
+                      try_rule FullPrefixes mode cs duplicated node pos
                         entry
                         (SOME (assumption_pos, major))) ()
                   of
@@ -1123,7 +1063,7 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
         fun applications (entry as (_, (false, _))) =
               intro_application entry
           | applications (entry as (_, (true, _))) =
-              elim_applications entry (position_map (fn x => x) asl)
+              elim_applications entry (numbered asl)
 
         fun entries [] = seq.empty
           | entries (entry :: rest) =
@@ -1240,36 +1180,16 @@ fun builtin_results_in ctxt (node, pos) =
           NONE => seq.empty
         | SOME (result as (goals, _)) =>
             let
-              val {params, ...} = clasetGoal.goal_at node pos
-              val input_frees =
-                free_varsl (params @ (#2 rendered :: #1 rendered))
-
-              fun is_new variable =
-                not (List.exists (fn old => aconv old variable)
-                  input_frees)
-              fun lift_child (child_asl, child_w) =
-                let
-                  val fresh =
-                    List.filter is_new
-                      (free_varsl (child_w :: child_asl))
-                in
-                  ({params = params @ fresh,
-                    asl = child_asl, w = child_w}, fresh)
-                end
-
-              val lifted = map lift_child goals
+              val lifted = clasetGoal.lift_children node pos goals
               val children = map #1 lifted
               val child_params = map #2 lifted
-              val new_params = List.concat child_params
-              fun register (param, store) =
-                if clasetMeta.is_eigen store param then store
-                else
-                  case clasetMeta.register_eigen param store of
-                      SOME next => next
-                    | NONE =>
-                        raise mk_HOL_ERR "clasetStep" "builtin_results"
-                          "a generated parameter is not fresh"
-              val store = List.foldl register initial_store new_params
+              val store =
+                case clasetGoal.register_eigens
+                       (List.concat child_params) initial_store of
+                    SOME registered => registered
+                  | NONE =>
+                      raise mk_HOL_ERR "clasetStep" "builtin_results"
+                        "a generated parameter is not fresh"
             in
               seq.result
                 (Direct
@@ -1317,9 +1237,6 @@ fun builtin_results_in ctxt (node, pos) =
     else seq.empty
   end
 
-fun builtin_results input =
-  builtin_results_in (Context.snapshot ()) input
-
 fun swapped_builtin_results_in ctxt (node, pos) =
   list_seq
     (fn () =>
@@ -1350,7 +1267,7 @@ fun swapped_builtin_results_in ctxt (node, pos) =
             else NONE
           end
       in
-        List.mapPartial attempt (position_map (fn value => value) asl)
+        List.mapPartial attempt (numbered asl)
       end)
 
 fun has_metavariables node pos =
@@ -1434,9 +1351,6 @@ fun plain_tactic_results_in ctxt kind action tactic (node, pos) =
                      store = clasetGoal.store node})
               end
       end)
-
-fun plain_tactic_results kind action tactic input =
-  plain_tactic_results_in (Context.snapshot()) kind action tactic input
 
 (* T1 affectedness is computed on the branch syntax, before beta/eta
    normalization.  Instantiate engine bindings structurally, but preserve
@@ -1523,12 +1437,6 @@ fun blast_hyp_subst_results_at_in ctxt
           NONE => []
         | SOME direct => [direct])
 
-fun blast_hyp_subst_results input =
-  blast_hyp_subst_results_in (Context.snapshot()) input
-
-fun blast_hyp_subst_results_at fields input =
-  blast_hyp_subst_results_at_in (Context.snapshot()) fields input
-
 fun ccontr_results_in ctxt =
   plain_tactic_results_in ctxt CContr
     clasetReplay.goal_negation_action
@@ -1539,38 +1447,12 @@ fun move_back_results_in ctxt position =
     (clasetReplay.move_assumption_to_back_action position)
     (clasetReplay.MOVE_ASSUMPTION_TO_BACK_TAC position)
 
-val ccontr_results =
-  plain_tactic_results CContr
-    clasetReplay.goal_negation_action
-    clasetReplay.GOAL_NEGATION_TAC
-
-fun move_back_results position =
-  plain_tactic_results (MoveAssumptionToBack position)
-    (clasetReplay.move_assumption_to_back_action position)
-    (clasetReplay.MOVE_ASSUMPTION_TO_BACK_TAC position)
-
 fun rendered_conclusion node pos = #2 (clasetGoal.render node pos)
-
-fun eta_forall_bound tm =
-  case strip_comb tm of
-      (head, [predicate]) =>
-        (case total Type.dom_rng (type_of predicate) of
-             SOME (domain, range) =>
-               let
-                 val bound = genvar domain
-                 val forall_head = #1 (strip_comb (mk_forall (bound, T)))
-               in
-                 if range = bool andalso same_const head forall_head then
-                   SOME bound
-                 else NONE
-               end
-           | NONE => NONE)
-    | _ => NONE
 
 fun forall_bound tm =
   case total dest_forall tm of
       SOME (bound, _) => SOME bound
-    | NONE => eta_forall_bound tm
+    | NONE => Option.map #1 (clasetReplay.eta_forall_predicate tm)
 
 fun disch_results_in ctxt (input as (node, pos)) =
   if is_imp_only (rendered_conclusion node pos) then
@@ -1609,12 +1491,6 @@ fun gen_results_in ctxt (input as (node, pos)) =
                 end
         end
     | NONE => seq.empty
-
-fun disch_results input =
-  disch_results_in (Context.snapshot()) input
-
-fun gen_results input =
-  gen_results_in (Context.snapshot()) input
 
 fun safe_cascade_in ctxt cs input =
   first_nonempty
@@ -1772,7 +1648,7 @@ fun unifying_assumption_results (node, pos) =
         val prepared = prepare_unifying_assumption node pos
       in
         List.mapPartial (unifying_assumption_candidate prepared)
-          (position_map (fn value => value) (#asl prepared))
+          (numbered (#asl prepared))
       end)
 
 fun unifying_assumption_results_at asm_pos (node, pos) =
@@ -1903,7 +1779,7 @@ fun unifying_contradiction_results (node, pos) =
       let
         val prepared = prepare_unifying_contradiction node pos
         val {asl, w, params, store = initial_store} = prepared
-        val positioned = position_map (fn value => value) asl
+        val positioned = numbered asl
 
         fun major_alternatives (major_pos, major) =
           case prepare_contradiction_major
@@ -1963,10 +1839,6 @@ fun inst_cascade cs input =
 fun unsafe_cascade cs =
   rule_results clasetUnify.Unify cs false
     (clasetLib.unsafe_part cs) all_weights
-
-fun dup_cascade cs =
-  rule_results clasetUnify.Unify cs true
-    (clasetLib.dup_part cs) all_weights
 
 fun depth_cascade part cs input =
   append_results (instp_cascade cs)
@@ -2032,13 +1904,13 @@ val blast_contradiction_step =
 fun rule_step {theorem, elim, mode} =
   direct_step
     (supplied_rule_results_with (fn () => ())
-      AllMajors LegacyPrefixes mode
+      AllMajors FullPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
 fun rule_step_budgeted budget {theorem, elim, mode} =
   direct_step
     (supplied_rule_results_with
       (fn () => searchBudget.charge budget searchBudget.Candidate)
-      AllMajors LegacyPrefixes mode
+      AllMajors FullPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
 fun forward_rule_step_with charge {theorem, immediate, mode} =
   let
@@ -2090,15 +1962,6 @@ fun blast_rule_step_at cs {theorem, elim, major} =
     (exact_rule_results_with (ExactMajor major) cs
       {theorem = theorem, elim = elim})
 
-val blast_disch_step = direct_step disch_results
-val blast_gen_step = direct_step gen_results
-val blast_ccontr_step = direct_step ccontr_results
-val blast_hyp_subst_step = direct_step blast_hyp_subst_results
-fun blast_hyp_subst_step_at fields =
-  direct_step (blast_hyp_subst_results_at fields)
-fun blast_move_back_step position =
-  direct_step (move_back_results position)
-
 fun blast_disch_step_in ctxt = direct_step (disch_results_in ctxt)
 fun blast_gen_step_in ctxt = direct_step (gen_results_in ctxt)
 fun blast_ccontr_step_in ctxt = direct_step (ccontr_results_in ctxt)
@@ -2114,7 +1977,7 @@ fun wrapper_direct rendered goals validation store =
   in
     Direct
       {kind = Wrapper, consumed = NONE, created = no_created,
-       eigenvariables = new_free_names_by_goal rendered goals,
+       eigenvariables = clasetReplay.new_free_names rendered goals,
        result = result, children = NONE,
        action = clasetReplay.fixed_action_on rendered result,
        closed = map (fn _ => NONE) goals, store = store}
@@ -2205,15 +2068,9 @@ fun safe_step_in ctxt cs =
   wrapped_step_in ctxt clasetLib.app_safe_wrappers
     (safe_cascade_in ctxt) cs
 
-fun safe_step cs =
-  fn input => safe_step_in (Context.snapshot ()) cs input
-
 fun clarify_step_in ctxt cs =
   wrapped_step_in ctxt clasetLib.app_safe_wrappers
     (clarify_cascade_in ctxt) cs
-
-fun clarify_step cs =
-  fn input => clarify_step_in (Context.snapshot ()) cs input
 
 (* Unsafe steps carry no wrappers: the claset's safe wrappers apply only
    to safe and clarify cascades. *)
@@ -2221,13 +2078,9 @@ fun no_wrappers _ tactic = tactic
 
 fun inst0_step cs = wrapped_step no_wrappers inst0_cascade cs
 
-fun instp_step cs = wrapped_step no_wrappers instp_cascade cs
-
 fun inst_step cs = wrapped_step no_wrappers inst_cascade cs
 
 fun unsafe_step cs = wrapped_step no_wrappers unsafe_cascade cs
-
-fun dup_step cs = wrapped_step no_wrappers dup_cascade cs
 
 fun first_result sequence =
   case seq.cases sequence of
@@ -2259,9 +2112,6 @@ fun safe_steps_at_full_with charge step cs node pos =
       | SOME (record, next) =>
           SOME (repeat [(pos, record, next)] next)
   end
-
-fun safe_steps_at_full cs node pos =
-  safe_steps_at_full_with (fn _ => ()) safe_step cs node pos
 
 fun safe_steps_at_full_in ctxt cs node pos =
   safe_steps_at_full_with (fn _ => ())
@@ -2299,9 +2149,6 @@ fun safe_saturation_with steps cs node =
     saturate [] node
   end
 
-fun safe_saturation cs node =
-  safe_saturation_with safe_steps_at_full cs node
-
 fun safe_saturation_in ctxt cs node =
   safe_saturation_with (safe_steps_at_full_in ctxt) cs node
 
@@ -2322,8 +2169,8 @@ fun undetermined_metas node =
     val store = clasetGoal.store node
     fun goal_terms ({asl, w, ...} : clasetGoal.cgoal) = w :: asl
     val surface =
-      List.filter clasetMeta.is_meta
-        (free_varsl (List.concat (map goal_terms (clasetGoal.goals node))))
+      clasetGoal.marked_terms
+        (List.concat (map goal_terms (clasetGoal.goals node)))
   in
     Lib.op_U clasetMeta.same_meta (map (clasetMeta.metas_of store) surface)
   end
@@ -2356,8 +2203,7 @@ fun guessed_meta metas direct =
               (map (fn (asl, w) => w :: asl) (#1 (direct_result direct)))
         in
           List.exists refines metas orelse
-          List.exists created_meta
-            (List.filter clasetMeta.is_meta (free_varsl children))
+          List.exists created_meta (clasetGoal.marked_terms children)
         end
 
 fun sift keep metas sequence =
@@ -2450,9 +2296,6 @@ fun general_step_in ctxt fast cs (input as (node, _)) =
 fun step_in ctxt cs = general_step_in ctxt true cs
 fun slow_step_in ctxt cs = general_step_in ctxt false cs
 
-fun step cs input = step_in (Context.snapshot ()) cs input
-fun slow_step cs input = slow_step_in (Context.snapshot ()) cs input
-
 (* The children an inference leaves are solved one at a time, and the
    one taken first is the first whose conclusion does not stand on an
    unknown.  Nothing in such a conclusion constrains the unknown, so the
@@ -2510,8 +2353,5 @@ fun depth_step_in ctxt cs part bound (node, pos) =
   in
     if bound < 0 then seq.empty else solve_one bound (node, pos)
   end
-
-fun depth_step cs part bound input =
-  depth_step_in (Context.snapshot ()) cs part bound input
 
 end

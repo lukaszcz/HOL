@@ -38,9 +38,7 @@ sig
   (* The full splitting search shares one invocation budget with every
      nested certificate search and guard proof.  A proof is returned
      only after replay and reconstruction validate the original term. *)
-  val LINARITH_PROVE_BUDGETED :
-    searchBudget.budget -> term -> budget_outcome
-  (* The explicit-context form composes inside another proof without
+  (* The explicit context composes inside another proof without
      installing an ambient context override. *)
   val LINARITH_PROVE_BUDGETED_IN :
     Context.t -> searchBudget.budget -> term -> budget_outcome
@@ -50,8 +48,8 @@ sig
   val LINARITH_ss : simpLib.ssfrag
   val linarith_solver : Traverse.ssolver
   (* These closures charge the owning invocation for arithmetic search and
-     replay inside simplification.  The legacy values above keep their
-     unbudgeted compatibility behavior for standalone simpsets. *)
+     replay inside simplification.  The values above are unbudgeted and
+     share the process-wide result cache. *)
   val LINARITH_REDUCER_BUDGETED :
     Context.t -> searchBudget.budget -> Traverse.reducer
   val LINARITH_ss_budgeted :

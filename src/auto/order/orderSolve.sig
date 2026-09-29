@@ -2,15 +2,11 @@ signature orderSolve =
 sig
   include Abbrev
 
-  (* How many distinct terms a single refutation may relate.  The search
-     is linear in the edges per source and the sources are the goal's own
-     distinctions, so the bound is on the size of the relation graph a
-     goal presents rather than on the depth of a chain. *)
+  (* How many distinct terms a single unbudgeted refutation may relate.
+     The search is linear in the edges per source and the sources are the
+     goal's own distinctions, so the bound is on the size of the relation
+     graph a goal presents rather than on the depth of a chain. *)
   val node_limit : int ref
-
-  (* [F] from a contradictory set of literals, with the literals'
-     theorems as its hypotheses. *)
-  val refute : orderData.context -> orderData.fact list -> thm option
 
   (* The term, proved by refuting its negation against the order the
      theorems supply.  Raises [HOL_ERR] when no context refutes it.
@@ -26,13 +22,15 @@ sig
         {kind : searchBudget.kind, usage : searchBudget.usage}
 
   (* A per-invocation budget bounds graph/fact scans, reachability rounds,
-     derived order steps and reduction admissions.  It bypasses the legacy
-     node_limit, while the old entry points keep that compatibility cap. *)
+     derived order steps and reduction admissions, in place of
+     node_limit, which caps only the unbudgeted entries above. *)
   val prove_with_budget :
     searchBudget.budget -> thm list -> term -> budget_outcome
   (* Reuse a reducer's already derived order contexts while charging its
-     invocation for the search and reconstruction work. *)
+     invocation for the search and reconstruction work.  NONE when no
+     context decides the term; a work cutoff raises
+     searchBudget.LimitReached. *)
   val prove_using_budgeted :
     searchBudget.budget -> orderData.context list -> thm list -> term ->
-    budget_outcome
+    thm option
 end

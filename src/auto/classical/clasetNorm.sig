@@ -43,5 +43,4 @@ sig
     origin -> int -> term -> term list * term
   val nth1 : origin -> 'a list -> int -> 'a
   val delete_nth : origin -> 'a list -> int -> 'a list
-  val term_size : term -> int
 end

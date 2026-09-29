@@ -87,16 +87,38 @@ type parent_index =
    goal_children : (rid, gid list) Redblackmap.dict,
    copy_children : (gid, gid list) Redblackmap.dict}
 
-datatype tree =
-  Tree of
-    {root : gid,
-     goals : (gid, goal) Redblackmap.dict,
-     rapps : (rid, rapp) Redblackmap.dict,
-     clusters : (cid, cluster) Redblackmap.dict,
-     index : parent_index,
-     queue : queue_entry searchHeap.heap,
-     next_gid : int, next_rid : int, next_cid : int,
-     next_insertion : int}
+type tree_fields =
+  {root : gid,
+   goals : (gid, goal) Redblackmap.dict,
+   rapps : (rid, rapp) Redblackmap.dict,
+   clusters : (cid, cluster) Redblackmap.dict,
+   index : parent_index,
+   queue : queue_entry searchHeap.heap,
+   next_gid : int, next_rid : int, next_cid : int,
+   next_insertion : int}
+
+datatype tree = Tree of tree_fields
+
+fun upd_tree z =
+  let
+    fun from root goals rapps clusters index queue next_gid next_rid
+             next_cid next_insertion =
+      {root = root, goals = goals, rapps = rapps, clusters = clusters,
+       index = index, queue = queue, next_gid = next_gid,
+       next_rid = next_rid, next_cid = next_cid,
+       next_insertion = next_insertion}
+    fun from' next_insertion next_cid next_rid next_gid queue index
+              clusters rapps goals root =
+      from root goals rapps clusters index queue next_gid next_rid
+        next_cid next_insertion
+    fun to f
+          {root, goals, rapps, clusters, index, queue, next_gid, next_rid,
+           next_cid, next_insertion} =
+      f root goals rapps clusters index queue next_gid next_rid next_cid
+        next_insertion
+  in
+    FunctionalRecordUpdate.makeUpdate10 (from, from', to)
+  end z
 
 val ERR = mk_HOL_ERR "aesopTree"
 val root_cluster = 0
@@ -189,17 +211,6 @@ fun queue_compare
   case Real.compare (right, left) of
       EQUAL => Int.compare (left_count, right_count)
     | result => result
-
-(* Every field but the root is replaced, so a caller that changes the goal
-   or rapp table has to say what the parent index becomes. *)
-fun tree_with (Tree {root, ...})
-      {goals, rapps, clusters, index, queue, next_gid, next_rid,
-       next_cid, next_insertion} =
-  Tree
-    {root = root, goals = goals, rapps = rapps, clusters = clusters,
-     index = index, queue = queue, next_gid = next_gid,
-     next_rid = next_rid, next_cid = next_cid,
-     next_insertion = next_insertion}
 
 fun root (Tree {root, ...}) = root
 
@@ -294,18 +305,6 @@ fun changed node next =
   null (clasetGoal.goals next) orelse
   not (clasetGoal.equal (node, next))
 
-fun new_free_names (asl, w) goals =
-  let
-    val old_frees = free_varsl (w :: asl)
-    fun is_new variable =
-      not (List.exists (fn old => aconv variable old) old_frees)
-    fun names (child_asl, child_w) =
-      map (fst o dest_var)
-        (List.filter is_new (free_varsl (child_w :: child_asl)))
-  in
-    map names goals
-  end
-
 (* One rendered-tactic alternative, as the single-goal replay record that
    reproduces it.  [rendered] is the parent goal the tactic ran on. *)
 fun rendered_record node rendered (result as (goals, validation)) =
@@ -314,7 +313,7 @@ fun rendered_record node rendered (result as (goals, validation)) =
       (clasetReplay.make_record
          {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
           created = {terms = [], types = []},
-          eigenvariables = new_free_names rendered goals,
+          eigenvariables = clasetReplay.new_free_names rendered goals,
           validation = validation,
           action = clasetReplay.fixed_action_on rendered result,
           children = map (fn _ => NONE) goals},
@@ -352,16 +351,10 @@ fun rule_results_in ctxt ({apply, ...} : rule) node =
         seq.flatten
           (seq.fromList (map (fn step => engine_results step node) steps))
 
-fun rule_results rule node =
-  rule_results_in (Context.snapshot ()) rule node
-
 fun unique_rule_result_in ctxt rule node =
   case seq.take 2 (rule_results_in ctxt rule node) of
       [result] => SOME result
     | _ => NONE
-
-fun unique_rule_result rule node =
-  unique_rule_result_in (Context.snapshot ()) rule node
 
 (* A copied goal discharges its original sibling but is not a child the
    rule action emitted, so replay never descends into one. *)
@@ -481,7 +474,7 @@ fun derive_rapp tree ({clusters, ...} : rapp) =
     val states = map (#state o cluster tree) clusters
   in
     if List.all (fn state => state = Proved) states then Proved
-    else if List.exists (fn state => state = Stuck) states then Stuck
+    else if Lib.mem Stuck states then Stuck
     else Unknown
   end
 
@@ -514,17 +507,12 @@ fun derive_goal tree (current : goal) =
     else Unknown
   end
 
-fun refresh_once
-      (tree as
-       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
-             next_cid, next_insertion, ...}) =
+fun refresh_once (tree as Tree (fields as {goals, rapps, clusters, ...})) =
   let
     fun rebuild (new_goals, new_rapps, new_clusters) =
-      tree_with tree
-        {goals = new_goals, rapps = new_rapps, clusters = new_clusters,
-         index = index, queue = queue, next_gid = next_gid,
-         next_rid = next_rid, next_cid = next_cid,
-         next_insertion = next_insertion}
+      Tree
+        (upd_tree fields (Fld #goals new_goals) (Fld #rapps new_rapps)
+           (Fld #clusters new_clusters) $$)
     val clusters' =
       Redblackmap.map
         (fn (_, current) =>
@@ -575,19 +563,15 @@ fun refresh tree =
   end
 
 fun enqueue_goal id
-      (tree as
-       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
-             next_cid, next_insertion, ...}) =
+      (tree as Tree (fields as {queue, next_insertion, ...})) =
   let
     val current = goal tree id
     val entry =
       {goal = id, prio = #prio current, insertion = next_insertion}
   in
-    tree_with tree
-      {goals = goals, rapps = rapps, clusters = clusters,
-       index = index, queue = searchHeap.add entry queue,
-       next_gid = next_gid, next_rid = next_rid, next_cid = next_cid,
-       next_insertion = next_insertion + 1}
+    Tree
+      (upd_tree fields (Fld #queue (searchHeap.add entry queue))
+         (Fld #next_insertion (next_insertion + 1)) $$)
   end
 
 fun create {node, unsafe_cursor} =
@@ -710,7 +694,7 @@ fun phase_probability aesopRule.RSafe = 100
 fun ancestry tree start =
   let
     fun walk seen id =
-      if List.exists (fn known => known = id) seen then
+      if Lib.mem id seen then
         raise ERR "ancestry" "cycle in goal ancestry"
       else
         case #parent (goal tree id) of
@@ -725,7 +709,7 @@ fun ancestry tree start =
 fun original_goal tree start =
   let
     fun walk seen id =
-      if List.exists (fn known => known = id) seen then
+      if Lib.mem id seen then
         raise ERR "original_goal" "cycle in copy links"
       else
         case #copy_of (goal tree id) of
@@ -794,7 +778,7 @@ fun copying_sources tree parent_id assigned child_store child_cgoals =
       map (fn (id, _) => original_goal tree id) bounded_path
 
     fun is_path_origin id =
-      List.exists (fn path_id => path_id = id) path_originals
+      Lib.mem id path_originals
 
     fun sibling_sources (path_goal, parent_rapp) =
       List.filter
@@ -809,7 +793,7 @@ fun copying_sources tree parent_id assigned child_store child_cgoals =
         (* Canonical origins both skip copies of path goals and collapse
            multiple candidates copied from the same goal. *)
         if is_path_origin original orelse
-           List.exists (fn known => known = original) seen
+           Lib.mem original seen
         then (seen, sources)
         else (original :: seen, id :: sources)
       end
@@ -824,8 +808,10 @@ fun copying_sources tree parent_id assigned child_store child_cgoals =
 fun install_rapp parent_id
       ({rule, phase, records, node, forwarded} : rapp_data)
       (tree as
-       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
-             next_cid, next_insertion, ...}) =
+       Tree
+         (fields as
+          {goals, rapps, clusters, index, next_gid, next_rid, next_cid,
+           ...})) =
   let
     val parent = goal tree parent_id
     val _ =
@@ -894,11 +880,9 @@ fun install_rapp parent_id
        index: it exists only to group the new goals by dependency
        overlap, which reads the goal table alone. *)
     val provisional =
-      tree_with tree
-        {goals = goals_with_children, rapps = rapps,
-         clusters = clusters, index = index, queue = queue,
-         next_gid = next_gid', next_rid = next_rid,
-         next_cid = next_cid, next_insertion = next_insertion}
+      Tree
+        (upd_tree fields (Fld #goals goals_with_children)
+           (Fld #next_gid next_gid') $$)
     val groups = components provisional child_ids
 
     fun make_cluster
@@ -929,20 +913,21 @@ fun install_rapp parent_id
        assigned = assigned,
        clusters = cluster_ids, state = Unknown}
     val installed =
-      tree_with tree
-        {goals = clustered_goals,
-         rapps = Redblackmap.insert (rapps, rid, current_rapp),
-         clusters =
-           Redblackmap.insertList
-             (clusters, List.rev cluster_entries),
-         index =
-           index_install
-             {parent = parent_id, rid = rid, children = child_ids,
-              copies = copy_links}
-             index,
-         queue = queue, next_gid = next_gid',
-         next_rid = next_rid + 1, next_cid = next_cid',
-         next_insertion = next_insertion}
+      Tree
+        (upd_tree fields
+           (Fld #goals clustered_goals)
+           (Fld #rapps (Redblackmap.insert (rapps, rid, current_rapp)))
+           (Fld #clusters
+              (Redblackmap.insertList
+                 (clusters, List.rev cluster_entries)))
+           (Fld #index
+              (index_install
+                 {parent = parent_id, rid = rid, children = child_ids,
+                  copies = copy_links}
+                 index))
+           (Fld #next_gid next_gid')
+           (Fld #next_rid (next_rid + 1))
+           (Fld #next_cid next_cid') $$)
     val queued =
       List.foldl
         (fn (id, current) => enqueue_goal id current)
@@ -953,19 +938,11 @@ fun install_rapp parent_id
 
 (* [update] rewrites the fields of an existing goal; it neither adds nor
    removes one, and never touches the parent link, so the index stands. *)
-fun map_goal id update
-      (tree as
-       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
-             next_cid, next_insertion, ...}) =
-  let
-    val current = goal tree id
-  in
-    tree_with tree
-      {goals = Redblackmap.insert (goals, id, update current),
-       rapps = rapps, clusters = clusters, index = index,
-       queue = queue, next_gid = next_gid, next_rid = next_rid,
-       next_cid = next_cid, next_insertion = next_insertion}
-  end
+fun map_goal id update (tree as Tree (fields as {goals, ...})) =
+  Tree
+    (upd_tree fields
+       (Fld #goals (Redblackmap.insert (goals, id, update (goal tree id))))
+       $$)
 
 fun replace_norm norm deps (goal : goal) : goal =
   upd_goal goal (Fld #norm norm) (Fld #deps deps) $$
@@ -1036,7 +1013,7 @@ fun nonterminal state = state = Unknown
 fun goal_irrelevant tree id =
   let
     fun goal_path seen gid =
-      if List.exists (fn known => known = gid) seen then
+      if Lib.mem gid seen then
         raise ERR "goal_irrelevant" "cycle in goal ancestry"
       else
         let val current = goal tree gid
@@ -1072,25 +1049,13 @@ fun cluster_irrelevant tree id =
 
 fun pop_goal_with skip tree =
   let
-    fun pop
-          (current as
-           Tree {goals, rapps, clusters, index, queue, next_gid,
-                 next_rid, next_cid, next_insertion, ...}) =
+    (* Insertion counters are unique, so [queue_compare] is total. *)
+    fun pop (current as Tree (fields as {queue, ...})) =
       if searchHeap.is_empty queue then (NONE, current)
       else
         let
-          val (entries, queue') = searchHeap.delete_all_min queue
-          val entry = hd entries
-          val queue'' =
-            List.foldl
-              (fn (entry, current) => searchHeap.add entry current)
-              queue' (tl entries)
-          val rest =
-            tree_with current
-              {goals = goals, rapps = rapps, clusters = clusters,
-               index = index, queue = queue'', next_gid = next_gid,
-               next_rid = next_rid, next_cid = next_cid,
-               next_insertion = next_insertion}
+          val (entry, queue') = searchHeap.delete_min queue
+          val rest = Tree (upd_tree fields (Fld #queue queue') $$)
           val id = #goal entry
         in
           if skip rest id then pop rest

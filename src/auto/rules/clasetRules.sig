@@ -84,6 +84,8 @@ sig
      in [dest_decls] order without re-sorting. *)
   val decl_order : decl * decl -> order
   val merge_decls : decls * decls -> decl list * decls
+  (* Fewer subgoals first, then more recent declarations. *)
+  val compare_tag : tag * tag -> order
   val candidate_order : (tag * brl) list -> (tag * brl) list
   val candidate_order_measured :
     (unit -> unit) -> (tag * brl) list -> (tag * brl) list

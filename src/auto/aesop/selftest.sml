@@ -507,7 +507,8 @@ val _ =
                    clasetReplay.ground (clasetGoal.store node)
                      (clasetGoal.replay node)
                in
-                 case clasetReplay.replay grounded original of
+                 case clasetReplay.replay_in (Context.snapshot ())
+                        grounded original of
                      clasetReplay.Replayed
                        ([(added :: retained, target)], _) =>
                          aconv added forward_conclusion andalso
@@ -842,7 +843,7 @@ val norm_restart_tree0 =
 val norm_restart_root =
   aesopTree.root norm_restart_tree0
 val norm_restart_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10, rules = norm_restart_rules}
     norm_restart_root norm_restart_tree0
 
@@ -872,7 +873,7 @@ val norm_simp_tree0 =
 val norm_simp_root =
   aesopTree.root norm_simp_tree0
 val norm_simp_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10,
      rules = [custom_norm_simp, negative_norm]}
     norm_simp_root norm_simp_tree0
@@ -951,7 +952,7 @@ val norm_builtin_tree0 =
 val norm_builtin_root =
   aesopTree.root norm_builtin_tree0
 val norm_builtin_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10, rules = aesopRule.norm_builtins []}
     norm_builtin_root norm_builtin_tree0
 
@@ -982,7 +983,7 @@ val norm_subst_tree0 =
 val norm_subst_root =
   aesopTree.root norm_subst_tree0
 val norm_subst_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10, rules = aesopRule.norm_builtins []}
     norm_subst_root norm_subst_tree0
 
@@ -1019,7 +1020,7 @@ fun run_simp_controls controls =
     val root = aesopTree.root tree0
   in
     (root,
-     aesopNorm.normalise
+     aesopNorm.normalise_in (Context.snapshot ()) NONE
        {max_depth = 10,
         rules = [aesopRule.simp_rule controls]} root tree0)
   end
@@ -1059,7 +1060,7 @@ val branching_norm_tree0 =
 val branching_norm_root =
   aesopTree.root branching_norm_tree0
 val branching_norm_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10, rules = [branching_norm_rule]}
     branching_norm_root branching_norm_tree0
 
@@ -1074,7 +1075,8 @@ val _ =
          | _ => false)
 
 fun duplicated_disch input =
-  case seq.cases (clasetStep.blast_disch_step input) of
+  case seq.cases (clasetStep.blast_disch_step_in (Context.snapshot ())
+                    input) of
       NONE => seq.empty
     | SOME (result, _) => seq.fromList [result, result]
 
@@ -1088,7 +1090,7 @@ val alternative_norm_tree0 =
 val alternative_norm_root =
   aesopTree.root alternative_norm_tree0
 val alternative_norm_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10, rules = [alternative_norm_rule]}
     alternative_norm_root alternative_norm_tree0
 
@@ -1117,7 +1119,7 @@ val binding_norm_tree0 =
 val binding_norm_root =
   aesopTree.root binding_norm_tree0
 val binding_norm_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 10, rules = [binding_norm_rule]}
     binding_norm_root binding_norm_tree0
 
@@ -1146,7 +1148,7 @@ val looping_norm_tree0 =
 val looping_norm_root =
   aesopTree.root looping_norm_tree0
 val looping_norm_outcome =
-  aesopNorm.normalise
+  aesopNorm.normalise_in (Context.snapshot ()) NONE
     {max_depth = 3, rules = looping_norm_rules}
     looping_norm_root looping_norm_tree0
 
@@ -1676,14 +1678,16 @@ val bookkeeping_store6 =
   valOf
     (clasetMeta.bind_ty (assigned_type, Type.bool)
       bookkeeping_store5)
+val bookkeeping_goal : Abbrev.goal = ([], boolSyntax.T)
 val bookkeeping_result =
-  Tactical.ALL_TAC ([], boolSyntax.T) (Context.snapshot())
+  Tactical.ALL_TAC bookkeeping_goal (Context.snapshot())
 val bookkeeping_record =
   clasetReplay.make_record
     {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
      created = {terms = [created_meta], types = [created_type]},
      eigenvariables = [], validation = #2 bookkeeping_result,
-     action = clasetReplay.fixed_action bookkeeping_result,
+     action =
+       clasetReplay.fixed_action_on bookkeeping_goal bookkeeping_result,
      children = []}
 val bookkeeping_root_goal =
   tree_cgoal
@@ -1719,13 +1723,14 @@ val _ =
 
 fun tree_creation_record terms types =
   let
-    val result = Tactical.ALL_TAC ([], boolSyntax.T) (Context.snapshot())
+    val goal = ([], boolSyntax.T)
+    val result = Tactical.ALL_TAC goal (Context.snapshot())
   in
     clasetReplay.make_record
       {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
        created = {terms = terms, types = types},
        eigenvariables = [], validation = #2 result,
-       action = clasetReplay.fixed_action result, children = []}
+       action = clasetReplay.fixed_action_on goal result, children = []}
   end
 
 fun bind_tree_meta meta value store =
@@ -2044,7 +2049,7 @@ val search_commit_tree0 =
   new_tree clasetMeta.empty (tree_cgoal [] [] boolSyntax.T) []
 val search_commit_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules =
          search_source []
@@ -2099,7 +2104,7 @@ val search_fallback_rule =
      theorem = boolTheory.TRUTH, mode = clasetUnify.Match}
 val search_multi_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules =
          search_source []
@@ -2129,7 +2134,7 @@ val search_postpone_tree0 =
     (tree_cgoal [] [boolSyntax.T] search_postpone_meta) []
 val search_postpone_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules =
          search_source []
@@ -2177,7 +2182,7 @@ val search_drop_tree0 =
     (tree_cgoal [] [search_drop_assumption] search_drop_target) []
 val search_drop_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules =
          search_source []
@@ -2211,7 +2216,7 @@ fun search_forward_rules mode =
      theorem = forward_theorem, mode = mode}]
 val search_forward_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules =
          search_source [] search_forward_rules []}
@@ -2266,7 +2271,7 @@ fun search_wide_rules mode =
      theorem = boolTheory.AND1_THM, mode = mode}]
 val search_wide_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules = search_source [] search_wide_rules []}
       (new_tree clasetMeta.empty
@@ -2304,11 +2309,13 @@ val search_frontier_goal =
      boolSyntax.mk_conj (search_frontier_p, search_frontier_q))
 val search_disch_rule : aesopRule.rule =
   {name = "disch", phase = aesopRule.RNorm 0,
-   apply = aesopRule.EngineStep clasetStep.blast_disch_step,
+   apply = aesopRule.EngineStep
+     (fn input =>
+       clasetStep.blast_disch_step_in (Context.snapshot ()) input),
    once = false}
 val search_frontier_tree =
   search_tree
-    (aesopSearch.safe_saturate
+    (aesopSearch.safe_saturate_in (Context.snapshot ())
       {max_depth = 10,
        rules =
          search_source [search_disch_rule]
@@ -2338,7 +2345,7 @@ val search_unsafe_alternatives : aesopRule.rule =
   {name = "unsafe-alternatives", phase = aesopRule.RUnsafe 70,
    apply = aesopRule.EngineStep duplicate_search_step, once = false}
 val search_unsafe_alternative_outcome =
-  aesopSearch.search aesopSearch.default_config
+  aesopSearch.search_in (Context.snapshot ()) aesopSearch.default_config
     (search_source [] (fn _ => []) [search_unsafe_alternatives])
     (new_tree clasetMeta.empty
       (tree_cgoal [] [] boolSyntax.T) [])
@@ -2368,7 +2375,7 @@ val search_reoffer_unsafe =
     {name = "unsafe-eighty", phase = aesopRule.RUnsafe 80,
      theorem = boolTheory.TRUTH, mode = clasetUnify.Unify}
 val search_reoffer_outcome =
-  aesopSearch.search aesopSearch.default_config
+  aesopSearch.search_in (Context.snapshot ()) aesopSearch.default_config
     (search_source []
       (fn clasetUnify.Match => []
         | clasetUnify.Unify => [hd (aesopRule.closers ())])
@@ -2431,7 +2438,8 @@ fun transitivity_source
   end
 
 val transitivity_outcome =
-  aesopSearch.search aesopSearch.default_config transitivity_source
+  aesopSearch.search_in (Context.snapshot ())
+    aesopSearch.default_config transitivity_source
     (new_tree clasetMeta.empty
       (tree_cgoal []
         [transitivity_xa, transitivity_az] transitivity_xz) [])
@@ -2500,7 +2508,7 @@ val replay_norm_p =
 val replay_norm_target =
   boolSyntax.mk_imp (replay_norm_p, replay_norm_p)
 val replay_norm_outcome =
-  aesopSearch.search aesopSearch.default_config
+  aesopSearch.search_in (Context.snapshot ()) aesopSearch.default_config
     (search_source [search_disch_rule]
       (fn _ => aesopRule.closers ()) [])
     (new_tree clasetMeta.empty
@@ -2524,7 +2532,7 @@ fun replay_wrapper_rules mode =
       theorem = boolTheory.TRUTH, mode = mode},
    search_split_rule]
 val replay_wrapper_outcome =
-  aesopSearch.search aesopSearch.default_config
+  aesopSearch.search_in (Context.snapshot ()) aesopSearch.default_config
     (search_source []
       replay_wrapper_rules [])
     (new_tree clasetMeta.empty
@@ -2593,7 +2601,7 @@ fun replay_dropped_source
 val replay_dropped_goal =
   ([replay_dropped_all], replay_dropped_exists)
 val replay_dropped_outcome =
-  aesopSearch.search aesopSearch.default_config
+  aesopSearch.search_in (Context.snapshot ()) aesopSearch.default_config
     replay_dropped_source
     (new_tree clasetMeta.empty
       (tree_cgoal [] [replay_dropped_all]
@@ -2633,13 +2641,13 @@ val _ =
              end
          | _ => false)
 
-fun replay_wrapper_record (goals, validation) =
+fun replay_wrapper_record goal (goals, validation) =
   clasetReplay.make_record
     {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
      created = {terms = [], types = []},
      eigenvariables = map (fn _ => []) goals,
      validation = validation,
-     action = clasetReplay.fixed_action (goals, validation),
+     action = clasetReplay.fixed_action_on goal (goals, validation),
      children = map (fn _ => NONE) goals}
 
 val (corrupt_meta, corrupt_store0) =
@@ -2664,7 +2672,7 @@ val corrupt_split =
     (map
       (fn (asl, w) => tree_cgoal [] asl w)
       (#1 corrupt_split_result))
-    [replay_wrapper_record corrupt_split_result]
+    [replay_wrapper_record corrupt_goal corrupt_split_result]
 val [corrupt_left, corrupt_right] =
   #goals corrupt_split
 val corrupt_close_result =
@@ -2672,12 +2680,12 @@ val corrupt_close_result =
 val corrupt_left_closed =
   install_tree_rapp (#tree corrupt_split) corrupt_left
     aesopRule.RSafe "corrupt-left" corrupt_store_true []
-    [replay_wrapper_record corrupt_close_result]
+    [replay_wrapper_record ([], boolSyntax.T) corrupt_close_result]
 val corrupt_tree =
   #tree
     (install_tree_rapp (#tree corrupt_left_closed) corrupt_right
       aesopRule.RSafe "corrupt-right" corrupt_store_false []
-      [replay_wrapper_record corrupt_close_result])
+      [replay_wrapper_record ([], boolSyntax.T) corrupt_close_result])
 
 val _ =
   check
@@ -2701,7 +2709,7 @@ val interrupt_tree =
   #tree
     (install_tree_rapp interrupt_tree1 interrupt_root aesopRule.RSafe
       "interrupt-close" clasetMeta.empty []
-      [replay_wrapper_record interrupt_result])
+      [replay_wrapper_record interrupt_goal interrupt_result])
 
 (* The engine-bug diagnostic is a catch-all, so it has to make one
    exception for the interrupt that stopped the user's proof. *)
@@ -2721,7 +2729,7 @@ val search_limit_close =
     {name = "limit-close", phase = aesopRule.RUnsafe 50,
      theorem = boolTheory.TRUTH, mode = clasetUnify.Unify}
 val search_rapp_limit_outcome =
-  aesopSearch.search {max_rapps = 0, max_depth = 10}
+  aesopSearch.search_in (Context.snapshot ()) {max_rapps = 0, max_depth = 10}
     (search_source [] (fn _ => []) [search_limit_close])
     (new_tree clasetMeta.empty
       (tree_cgoal [] [] search_limit_goal) [])
@@ -2754,7 +2762,7 @@ val search_wide_unsafe : aesopRule.rule =
   {name = "unsafe-wide", phase = aesopRule.RUnsafe 70,
    apply = aesopRule.EngineStep triple_search_step, once = false}
 val search_skip_outcome =
-  aesopSearch.search {max_rapps = 2, max_depth = 10}
+  aesopSearch.search_in (Context.snapshot ()) {max_rapps = 2, max_depth = 10}
     (search_source [] (fn _ => [])
       [search_wide_unsafe, search_limit_close])
     (new_tree clasetMeta.empty
@@ -2780,7 +2788,7 @@ val search_safe_limit_close =
     {name = "safe-limit-close", phase = aesopRule.RSafe,
      theorem = boolTheory.TRUTH, mode = clasetUnify.Match}
 val search_safe_rapp_limit_outcome =
-  aesopSearch.search {max_rapps = 0, max_depth = 10}
+  aesopSearch.search_in (Context.snapshot ()) {max_rapps = 0, max_depth = 10}
     (search_source []
       (fn _ => [search_safe_limit_close]) [])
     (new_tree clasetMeta.empty
@@ -2806,7 +2814,7 @@ val search_depth_split =
 val search_depth_target =
   boolSyntax.mk_conj (search_limit_goal, search_limit_goal)
 val search_depth_limit_outcome =
-  aesopSearch.search {max_rapps = 10, max_depth = 1}
+  aesopSearch.search_in (Context.snapshot ()) {max_rapps = 10, max_depth = 1}
     (search_source [] (fn _ => []) [search_depth_split])
     (new_tree clasetMeta.empty
       (tree_cgoal [] [] search_depth_target) [])
@@ -2834,7 +2842,7 @@ val search_safe_goal_target =
     (boolSyntax.F,
      boolSyntax.mk_conj (search_safe_goal_p, search_safe_goal_q))
 val search_safe_goal_outcome =
-  aesopSearch.search aesopSearch.default_config
+  aesopSearch.search_in (Context.snapshot ()) aesopSearch.default_config
     (search_source [] (fn _ => [search_split_rule]) [])
     (new_tree clasetMeta.empty
       (tree_cgoal [] [] search_safe_goal_target) [])
@@ -2893,14 +2901,16 @@ val _ =
              (Feedback.MESG_outstream, remember)
              (fn () =>
                (ignore
-                  (aesopSearch.search aesopSearch.default_config
+                  (aesopSearch.search_in (Context.snapshot ())
+                     aesopSearch.default_config
                     transitivity_source
                     (new_tree clasetMeta.empty
                       (tree_cgoal []
                         [transitivity_xa, transitivity_az]
                         transitivity_xz) []));
                 ignore
-                  (aesopSearch.search aesopSearch.default_config
+                  (aesopSearch.search_in (Context.snapshot ())
+                     aesopSearch.default_config
                     (search_source [] (fn _ => []) [])
                     (new_tree clasetMeta.empty
                       (tree_cgoal [] [] search_limit_goal) [])))) ()
@@ -3837,6 +3847,17 @@ val _ =
              [0, count div 2, count])
          [201, 0, 1, 199, 200, 257])
 
+(* The first resumption of a fresh budgeted session. *)
+fun run_session budget config claset simpset goal =
+  aesopSearch.resume_budget_session
+    (aesopLib.CS_AESOP_SESSION budget config claset simpset goal)
+
+fun session_cutoff (aesopSearch.ResumedYielded {kind, usage, ...}) =
+      SOME (kind, usage)
+  | session_cutoff (aesopSearch.ResumedLimitReached {kind, usage}) =
+      SOME (kind, usage)
+  | session_cutoff (aesopSearch.ResumedFinished _) = NONE
+
 val _ =
   check
     ("budgeted Aesop distinguishes cutoff from a funded forward proof",
@@ -3848,7 +3869,7 @@ val _ =
              {candidates = SOME 0, applications = NONE,
               normalization = NONE}
          val cutoff =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED empty_budget
+           run_session empty_budget
              {max_rapps = 1000, max_depth = 50}
              forward_clutter_cs simpLib.empty_ss goal
          val no_applications =
@@ -3856,7 +3877,7 @@ val _ =
              {candidates = NONE, applications = SOME 0,
               normalization = NONE}
          val application_cutoff =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED no_applications
+           run_session no_applications
              {max_rapps = 1000, max_depth = 50}
              forward_clutter_cs simpLib.empty_ss goal
          val no_normalization =
@@ -3864,12 +3885,12 @@ val _ =
              {candidates = NONE, applications = NONE,
               normalization = SOME 0}
          val normalization_cutoff =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED no_normalization
+           run_session no_normalization
              {max_rapps = 1000, max_depth = 50}
              forward_clutter_cs simpLib.empty_ss goal
          val funded = searchBudget.unbounded ()
          val completed =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED funded
+           run_session funded
              {max_rapps = 1000, max_depth = 50}
              forward_clutter_cs simpLib.empty_ss goal
          val terminal_budget =
@@ -3892,24 +3913,21 @@ val _ =
                      false) handle HOL_ERR _ => true)
              | _ => false
        in
-         (case cutoff of
-              aesopSearch.WorkLimitReached
-                {kind = searchBudget.Candidate, usage} =>
-                  #candidates usage = 0
+         (case session_cutoff cutoff of
+              SOME (searchBudget.Candidate, usage) =>
+                #candidates usage = 0
             | _ => false) andalso
-         (case application_cutoff of
-              aesopSearch.WorkLimitReached
-                {kind = searchBudget.Application, usage} =>
-                  #applications usage = 0 andalso
-                  #candidates usage > 0
+         (case session_cutoff application_cutoff of
+              SOME (searchBudget.Application, usage) =>
+                #applications usage = 0 andalso
+                #candidates usage > 0
             | _ => false) andalso
-         (case normalization_cutoff of
-              aesopSearch.WorkLimitReached
-                {kind = searchBudget.Normalization, usage} =>
-                  #normalization usage = 0
+         (case session_cutoff normalization_cutoff of
+              SOME (searchBudget.Normalization, usage) =>
+                #normalization usage = 0
             | _ => false) andalso
          (case completed of
-              aesopSearch.SearchFinished
+              aesopSearch.ResumedFinished
                 (aesopSearch.SearchProved tree) =>
                   closes_goal (aesopSearch.REPLAY_TAC tree) goal
             | _ => false) andalso
@@ -3947,7 +3965,7 @@ val _ =
            aesopLib.CS_AESOP_SESSION small config
              forward_clutter_cs simpLib.empty_ss goal
          val reference =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED large config
+           run_session large config
              forward_clutter_cs simpLib.empty_ss goal
          fun resume 0 _ _ = NONE
            | resume turns current yielded =
@@ -3965,7 +3983,7 @@ val _ =
        in
          case (resume 100 session false, reference) of
              (SOME (true, tree),
-              aesopSearch.SearchFinished
+              aesopSearch.ResumedFinished
                 (aesopSearch.SearchProved _)) =>
                closes_goal (aesopSearch.REPLAY_TAC tree) goal andalso
                #candidates (searchBudget.usage small) =
@@ -3989,7 +4007,7 @@ val _ =
            aesopLib.CS_AESOP_SESSION small config
              forward_clutter_unsafe_cs simpLib.empty_ss goal
          val reference =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED large config
+           run_session large config
              forward_clutter_unsafe_cs simpLib.empty_ss goal
          fun resume 0 _ _ = NONE
            | resume turns current yielded =
@@ -4007,7 +4025,7 @@ val _ =
        in
          case (resume 100 session false, reference) of
              (SOME (true, tree),
-              aesopSearch.SearchFinished
+              aesopSearch.ResumedFinished
                 (aesopSearch.SearchProved _)) =>
                let
                  val used = searchBudget.usage small
@@ -4074,13 +4092,14 @@ fun counted_resume make_source =
     val session =
       aesopSearch.new_budget_session small config make_source tree
     val reference =
-      aesopSearch.search_with_budget large config make_source tree
+      aesopSearch.resume_budget_session
+        (aesopSearch.new_budget_session large config make_source tree)
     val first = aesopSearch.resume_budget_session session
   in
     case (first, reference) of
         (aesopSearch.ResumedYielded
            {kind = searchBudget.Candidate, ...},
-         aesopSearch.SearchFinished
+         aesopSearch.ResumedFinished
            (aesopSearch.SearchProved _)) =>
           (searchBudget.extend small searchBudget.Candidate 1;
            case aesopSearch.resume_budget_session session of
@@ -4357,7 +4376,7 @@ val _ =
              {candidates = SOME 0, applications = NONE,
               normalization = NONE}
          val rules =
-           aesopRule.claset_rules_with_budget budget
+           aesopRule.claset_rules_with (SOME budget)
              {claset = elim_dest_cs, mode = clasetUnify.Match,
               conclusion = elim_q, assumptions = [elim_p],
               qvars = HOLset.empty Term.compare,
@@ -4425,7 +4444,7 @@ val _ =
            aesopLib.CS_AESOP_SESSION small config
              split_cs simpLib.empty_ss goal
          val reference =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED large config
+           run_session large config
              split_cs simpLib.empty_ss goal
          fun resume 0 _ _ = NONE
            | resume turns current yielded =
@@ -4443,7 +4462,7 @@ val _ =
        in
          case (resume 200 session false, reference) of
              (SOME (true, tree),
-              aesopSearch.SearchFinished
+              aesopSearch.ResumedFinished
                 (aesopSearch.SearchProved _)) =>
                closes_goal (aesopSearch.REPLAY_TAC tree) goal andalso
                #candidates (searchBudget.usage small) > 200
@@ -4459,12 +4478,12 @@ val _ =
          val target =
            Term.mk_var ("budget_failure_target", Type.bool)
          val result =
-           aesopLib.CS_AESOP_SEARCH_BUDGETED budget
+           run_session budget
              aesopLib.default_config clasetLib.empty_cs
              simpLib.empty_ss ([], target)
        in
          case result of
-             aesopSearch.SearchFinished
+             aesopSearch.ResumedFinished
                (aesopSearch.SearchFailed {safe_goals, ...}) =>
                  let
                    val usage_before = searchBudget.usage budget

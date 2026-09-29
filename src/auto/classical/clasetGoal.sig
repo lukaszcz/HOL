@@ -12,7 +12,13 @@ sig
   type exact_prefix_rebuild = clasetReplay.exact_prefix_rebuild
   type binding_mark = {terms : meta list, types : tymeta list}
   type binding_marks = binding_mark list
+  type spellings = {conclusion : term list, assumptions : term list list}
   type node
+
+  val empty_mark : binding_mark
+  (* The metavariables, and type metavariables, occurring in the terms. *)
+  val marked_terms : term list -> meta list
+  val marked_types : term list -> tymeta list
 
   (* Assumptions, including markerLib labels and abbreviations, are kept in
      their original order and otherwise treated as opaque formulae. *)
@@ -96,4 +102,17 @@ sig
      rather than weakening this rigid interface. *)
   val render : node -> int -> goal
   val unrender : node -> int -> goal list * validation -> node option
+  (* Each child as a goal of the node, over the parameters of the goal at
+     the position and the child's own new free variables, which are also
+     returned. *)
+  val lift_children :
+    node -> int -> goal list -> (cgoal * term list) list
+  (* Registers each variable not yet an eigenvariable; NONE when one is
+     not fresh. *)
+  val register_eigens : term list -> store -> store option
+
+  (* Each formula of the rendered goal as posed and as
+     [clasetNorm.membership_conv], [crossed_conv] and [applied_conv] spell
+     it, without repeats: the forms a rule-index lookup asks for. *)
+  val lookup_spellings : node -> int -> spellings
 end

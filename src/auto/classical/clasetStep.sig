@@ -29,25 +29,17 @@ sig
     clasetLib.claset -> bool -> thm -> thm * rule_variant
 
   (* [_in] carries the tactic's proof context through lazy wrapper and
-     built-in tactic calls.  The old step entry points snapshot at their
-     invocation boundary. *)
-  val safe_step : clasetLib.claset -> step
+     built-in tactic calls.  A step without it snapshots the context at
+     its invocation boundary. *)
   val safe_step_in : Context.t -> clasetLib.claset -> step
-  val clarify_step : clasetLib.claset -> step
   val clarify_step_in : Context.t -> clasetLib.claset -> step
   val inst0_step : clasetLib.claset -> step
-  val instp_step : clasetLib.claset -> step
   val inst_step : clasetLib.claset -> step
   val unsafe_step : clasetLib.claset -> step
-  val dup_step : clasetLib.claset -> step
-  val step : clasetLib.claset -> step
   val step_in : Context.t -> clasetLib.claset -> step
-  val slow_step : clasetLib.claset -> step
   val slow_step_in : Context.t -> clasetLib.claset -> step
 
   (* Every transition in a complete safe fixed point, in replay order. *)
-  val safe_saturation :
-    clasetLib.claset -> node -> (goalpos * step_record * node) list
   val safe_saturation_in :
     Context.t -> clasetLib.claset -> node ->
     (goalpos * step_record * node) list
@@ -117,14 +109,6 @@ sig
     clasetLib.claset ->
     {theorem : thm, elim : bool, major : int option} -> step
 
-  val blast_disch_step : step
-  val blast_gen_step : step
-  val blast_ccontr_step : step
-  val blast_hyp_subst_step : step
-  val blast_hyp_subst_step_at :
-    {equality : int, changed : bool list,
-     side : hyp_subst_side} -> step
-  val blast_move_back_step : int -> step
   val blast_disch_step_in : Context.t -> step
   val blast_gen_step_in : Context.t -> step
   val blast_ccontr_step_in : Context.t -> step
@@ -135,10 +119,9 @@ sig
      side : hyp_subst_side} -> step
   val blast_move_back_step_in : Context.t -> int -> step
 
-  (* [depth_step cs part m] selects the duplicating or non-duplicating
-     unsafe net through [part].  Safe and inst0 inferences cost nothing;
-     an instp/part inference costs one unit. *)
-  val depth_step : clasetLib.claset -> clasetLib.claset_part -> int -> step
+  (* [depth_step_in ctxt cs part m] selects the duplicating or
+     non-duplicating unsafe net through [part].  Safe and inst0 inferences
+     cost nothing; an instp/part inference costs one unit. *)
   val depth_step_in :
     Context.t -> clasetLib.claset -> clasetLib.claset_part ->
     int -> step

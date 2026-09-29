@@ -35,27 +35,11 @@ type report = {
 
 val default_budget = Time.fromSeconds 5
 
-fun member_aconv tm = List.exists (Term.aconv tm)
-
-fun distinct_terms terms =
-  let
-    fun keep (tm, seen) =
-      if member_aconv tm seen then seen else tm :: seen
-  in
-    List.rev (List.foldl keep [] terms)
-  end
-
-fun without remove terms =
-  List.filter (fn tm => not (member_aconv tm remove)) terms
-
 fun conjunction [] = boolSyntax.T
   | conjunction terms = boolSyntax.list_mk_conj terms
 
 fun disjunction [] = boolSyntax.F
   | disjunction terms = boolSyntax.list_mk_disj terms
-
-fun quantify_all term =
-  boolSyntax.list_mk_forall (distinct_terms (free_vars term), term)
 
 fun safe_zero form =
   [{kind = SafeZero, term = Thm.concl (#thm form)}]
@@ -69,13 +53,13 @@ fun intro_obligations theorem =
     else
       let
         val premise_vars = free_varsl prems
-        val extras = without (free_vars (#concl form)) premise_vars
+        val extras =
+          Lib.op_set_diff Term.aconv premise_vars (free_vars (#concl form))
         val recovered =
-          boolSyntax.list_mk_exists (distinct_terms extras,
-            conjunction prems)
+          boolSyntax.list_mk_exists (extras, conjunction prems)
         val implication = boolSyntax.mk_imp (#concl form, recovered)
       in
-        [{kind = IntroInversion, term = quantify_all implication}]
+        [{kind = IntroInversion, term = boolSyntax.gen_all implication}]
       end
   end
 
@@ -112,7 +96,7 @@ fun preservation major ({eigen, hyps} : branch) =
   let
     val implication = boolSyntax.mk_imp (conjunction hyps, major)
   in
-    boolSyntax.list_mk_forall (eigen, quantify_all implication)
+    boolSyntax.list_mk_forall (eigen, boolSyntax.gen_all implication)
   end
 
 fun elim_obligations theorem =
@@ -126,7 +110,7 @@ fun elim_obligations theorem =
           let
             val branches = map (minor_branch (#concl form)) minors
             val exhaustive =
-              quantify_all
+              boolSyntax.gen_all
                 (boolSyntax.mk_imp
                   (major, disjunction (map branch_exists branches)))
             val preservation_obligations =
@@ -218,12 +202,11 @@ fun validate_waivers waivers =
   let
     fun valid ({rule, reason, date} : waiver) =
       rule <> "" andalso reason <> "" andalso date <> ""
-    fun duplicate ({rule, ...} : waiver) =
-      length
-        (List.filter
-          (fn ({rule = other, ...} : waiver) => other = rule) waivers) > 1
+    val distinct =
+      length (listUtil.distinct_by String.compare #rule waivers) =
+      length waivers
   in
-    if List.all valid waivers andalso not (List.exists duplicate waivers)
+    if List.all valid waivers andalso distinct
     then ()
     else
       raise ERR "validate_waivers"

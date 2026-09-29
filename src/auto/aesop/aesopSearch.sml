@@ -39,11 +39,6 @@ datatype search_outcome =
       {tree : tree, safe_goals : unit -> (gid * cgoal) list,
        reason : failure_reason}
 
-datatype budget_outcome =
-    SearchFinished of search_outcome
-  | WorkLimitReached of
-      {kind : searchBudget.kind, usage : searchBudget.usage}
-
 datatype safe_phase =
     Committed of tree
   | Deferred of aesopTree.rapp_data list
@@ -440,10 +435,7 @@ fun next_safe_with ctxt include_irrelevant pop_goal
                 source (rule_input clasetUnify.Match initial_goal)
             in
               case
-                (case budget of
-                     NONE => aesopNorm.normalise_in ctxt
-                   | SOME meter =>
-                       aesopNorm.normalise_budgeted_in ctxt meter)
+                aesopNorm.normalise_in ctxt budget
                   {max_depth = max_depth, rules = #norm initial_rules}
                   id remaining
               of
@@ -519,9 +511,6 @@ fun safe_saturate_in ctxt config tree =
   in
     saturate tree
   end
-
-fun safe_saturate config tree =
-  safe_saturate_in (Context.snapshot ()) config tree
 
 fun proved_ancestor tree (goal : aesopTree.goal) =
   case #parent goal of
@@ -991,9 +980,6 @@ fun search_core ctxt budget config rules initial =
 fun search_in ctxt config rules initial =
   search_core ctxt NONE config rules initial
 
-fun search config rules initial =
-  search_in (Context.snapshot ()) config rules initial
-
 fun new_budget_session_in ctxt budget config make_rules initial :
       budget_session =
   {context = ctxt, budget = budget, config = config,
@@ -1062,25 +1048,6 @@ fun resume_budget_session
     else
       (terminal := true;
        ResumedLimitReached {kind = kind, usage = usage})
-
-(* The original one-shot budgeted entry point keeps its result type.
-   Callers that allocate more work use the session API above. *)
-fun search_with_budget_in ctxt budget config make_rules initial =
-  (case
-     resume_budget_session
-       (new_budget_session_in ctxt budget config make_rules initial)
-   of
-       ResumedFinished outcome => SearchFinished outcome
-     | ResumedYielded {kind, usage, ...} =>
-         WorkLimitReached {kind = kind, usage = usage}
-     | ResumedLimitReached {kind, usage} =>
-         WorkLimitReached {kind = kind, usage = usage})
-  handle searchBudget.LimitReached (kind, usage) =>
-    WorkLimitReached {kind = kind, usage = usage}
-
-fun search_with_budget budget config make_rules initial =
-  search_with_budget_in (Context.snapshot ()) budget config
-    make_rules initial
 
 fun proved_rapp tree id =
   case
@@ -1296,7 +1263,7 @@ fun extract tree =
       let
         val actual = selected_goal selection original
         val _ =
-          if List.exists (fn id => id = actual) ancestors then
+          if Lib.mem actual ancestors then
             raise ERR "extract" "cycle in the winning forest"
           else ()
         val current = aesopTree.goal tree actual

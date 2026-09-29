@@ -71,10 +71,4 @@ fun NCHANGED tac g ctxt =
               | _ => true)
          (tac g ctxt))
 
-fun NFIRST [] = NNO_TAC
-  | NFIRST (tac :: tacs) = NORELSE (tac, NFIRST tacs)
-
-fun nEVERY [] = NALL_TAC
-  | nEVERY (tac :: tacs) = NTHEN (tac, nEVERY tacs)
-
 end

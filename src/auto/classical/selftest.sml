@@ -1787,6 +1787,8 @@ fun first_step step cs goal =
       NONE => NONE
     | SOME (result, _) => SOME result
 
+fun safe_step cs = clasetStep.safe_step_in (Context.snapshot ()) cs
+
 fun rendered_goals node =
   let
     fun recurse pos [] = []
@@ -1983,7 +1985,7 @@ val _ =
          val assumption = Term.mk_comb (abstraction, eta)
          val input = ([assumption], boolSyntax.mk_eq (f, f))
        in
-         case first_step clasetStep.safe_step clasetLib.empty_cs input of
+         case first_step safe_step clasetLib.empty_cs input of
              NONE => false
            | SOME (record, node) =>
                (case clasetStep.kind_of record of
@@ -2005,7 +2007,8 @@ val _ =
          val accepted = ([closing_child], target)
          val rejected = ([], target)
        in
-         case first_step clasetStep.clarify_step cs accepted of
+         case first_step (clasetStep.clarify_step_in (Context.snapshot ()))
+                cs accepted of
              NONE => false
            | SOME (record, node) =>
                (case clasetStep.kind_of record of
@@ -2013,7 +2016,9 @@ val _ =
                       length (clasetGoal.goals node) = 1 andalso
                       valid_step accepted (record, node) andalso
                       not (Option.isSome
-                        (first_step clasetStep.clarify_step cs rejected))
+                        (first_step
+                          (clasetStep.clarify_step_in (Context.snapshot ()))
+                          cs rejected))
                   | _ => false)
        end)
 
@@ -2038,7 +2043,7 @@ val _ =
            Lib.with_flag
              (Feedback.MESG_outstream, record_notice)
              (fn () =>
-               first_step clasetStep.safe_step cs ([], boolSyntax.T)) ()
+               first_step safe_step cs ([], boolSyntax.T)) ()
          val _ = Feedback.set_trace "classical" old_trace
        in
          not (Option.isSome result) andalso
@@ -2059,7 +2064,7 @@ val _ =
              clasetLib.empty_cs
          val goal = ([], boolSyntax.T)
        in
-         case first_step clasetStep.safe_step cs goal of
+         case first_step safe_step cs goal of
              NONE => false
            | SOME (record, node) =>
                (case clasetStep.kind_of record of
@@ -2076,7 +2081,7 @@ val _ =
          val goal =
            ([boolSyntax.mk_neg proposition, proposition], goal_r)
        in
-         case first_step clasetStep.safe_step clasetLib.empty_cs goal of
+         case first_step safe_step clasetLib.empty_cs goal of
              NONE => false
            | SOME (record, node) =>
                (case clasetStep.kind_of record of
@@ -2098,7 +2103,7 @@ val _ =
              clasetLib.empty_cs
          val goal = ([], negative)
        in
-         case first_step clasetStep.safe_step cs goal of
+         case first_step safe_step cs goal of
              NONE => false
            | SOME (record, node) =>
                let
@@ -2121,7 +2126,7 @@ val _ =
            clasetLib.add_selims [("or", boolTheory.OR_ELIM_THM)]
              clasetLib.empty_cs
          val sequence =
-           clasetStep.safe_step cs (clasetGoal.from_goal goal, 1)
+           safe_step cs (clasetGoal.from_goal goal, 1)
          fun drain results remaining =
            case seq.cases remaining of
                NONE => List.rev results
@@ -2150,7 +2155,7 @@ val _ =
            clasetLib.add_sintros [("local", rule)] clasetLib.empty_cs
          val goal = ([assumption], boolSyntax.T)
        in
-         case first_step clasetStep.safe_step cs goal of
+         case first_step safe_step cs goal of
              NONE => false
            | SOME result => valid_step goal result
        end)
@@ -2167,7 +2172,7 @@ val _ =
            ([], boolSyntax.mk_forall
              (x, Term.mk_comb (predicate, x)))
        in
-         case first_step clasetStep.safe_step clasetLib.empty_cs goal of
+         case first_step safe_step clasetLib.empty_cs goal of
              NONE => false
            | SOME (record, node) =>
                (case clasetStep.kind_of record of
@@ -2398,7 +2403,7 @@ val _ =
 (* TASK_07 group 1: golden safe-cascade ordering. *)
 
 fun step_gives cs goal expected_kind expected_goals =
-  case first_step clasetStep.safe_step cs goal of
+  case first_step safe_step cs goal of
       NONE => false
     | SOME (record, node) =>
         expected_kind (clasetStep.kind_of record) andalso
@@ -2477,7 +2482,7 @@ val _ =
              (phase1_x, Term.mk_comb (phase1_p, phase1_x))
          val goal = ([phase1_eq], quantified)
        in
-         case first_step clasetStep.safe_step cascade_cs goal of
+         case first_step safe_step cascade_cs goal of
              NONE => false
            | SOME (record, node) =>
                (case (clasetStep.kind_of record, rendered_goals node) of
@@ -2512,7 +2517,7 @@ val _ =
          val goal =
            ([], boolSyntax.mk_forall (bound, mk_comb (paired, bound)))
        in
-         case first_step clasetStep.safe_step cascade_cs goal of
+         case first_step safe_step cascade_cs goal of
              NONE => false
            | SOME (record, node) =>
                (case (clasetStep.kind_of record, rendered_goals node) of
@@ -2544,7 +2549,7 @@ val _ =
          val free = Term.mk_var ("phase1_free_v", pair_type)
          val goal = ([], mk_comb (paired, free))
        in
-         case first_step clasetStep.safe_step cascade_cs goal of
+         case first_step safe_step cascade_cs goal of
              NONE => false
            | SOME (record, node) =>
                (case (clasetStep.kind_of record, rendered_goals node) of
@@ -2573,7 +2578,7 @@ val _ =
               store = store, level = 0}
        in
          not (Option.isSome
-           (seq.cases (clasetStep.safe_step cascade_cs (node, 1))))
+           (seq.cases (safe_step cascade_cs (node, 1))))
        end)
 
 val _ =
@@ -2624,7 +2629,8 @@ val _ =
              clasetLib.empty_cs
          val goal = ([implication], phase1_pa)
        in
-         case first_step clasetStep.clarify_step cs goal of
+         case first_step (clasetStep.clarify_step_in (Context.snapshot ()))
+                cs goal of
              NONE => false
            | SOME (record, node) =>
                same_goals (rendered_goals node)
@@ -2646,7 +2652,8 @@ val _ =
              (phase1_pa, boolSyntax.mk_conj (phase1_qa, phase1_ra))
        in
          not (Option.isSome
-           (first_step clasetStep.clarify_step cs ([], target)))
+           (first_step (clasetStep.clarify_step_in (Context.snapshot ()))
+              cs ([], target)))
        end)
 
 val _ =
@@ -2661,7 +2668,8 @@ val _ =
          val goal =
            ([phase1_pa], boolSyntax.mk_conj (phase1_pa, phase1_qa))
        in
-         case first_step clasetStep.clarify_step cs goal of
+         case first_step (clasetStep.clarify_step_in (Context.snapshot ()))
+                cs goal of
              NONE => false
            | SOME (record, node) =>
                same_goals (rendered_goals node)
@@ -2681,7 +2689,8 @@ val _ =
          val goal =
            ([phase1_qa], boolSyntax.mk_conj (phase1_pa, phase1_qa))
        in
-         case first_step clasetStep.clarify_step cs goal of
+         case first_step (clasetStep.clarify_step_in (Context.snapshot ()))
+                cs goal of
              NONE => false
            | SOME (record, node) =>
                same_goals (rendered_goals node)
@@ -2703,7 +2712,8 @@ val _ =
          val goal = ([negated, disjunction], phase1_ra)
          val expected = [([phase1_qa, negated], phase1_ra)]
        in
-         case first_step clasetStep.clarify_step cs goal of
+         case first_step (clasetStep.clarify_step_in (Context.snapshot ()))
+                cs goal of
              NONE => false
            | SOME (record, node) =>
                same_goals (rendered_goals node) expected andalso
@@ -2957,7 +2967,7 @@ val _ =
                clasetLib.empty_cs)
          val goal = ([], target)
        in
-         case first_step clasetStep.safe_step cs goal of
+         case first_step safe_step cs goal of
              NONE => false
            | SOME (record, node) =>
                (case clasetStep.kind_of record of
@@ -2998,7 +3008,7 @@ val _ =
          val right = boolSyntax.mk_eq (fx, phase1_x)
          fun refuses equality =
            not (Option.isSome
-             (first_step clasetStep.safe_step clasetLib.empty_cs
+             (first_step safe_step clasetLib.empty_cs
                ([equality], phase1_pa)))
        in
          refuses left andalso refuses right
@@ -3130,7 +3140,7 @@ val _ =
 
 val _ =
   test
-    ("slow_step APPEND keeps unsafe alternatives after inst_step",
+    ("slow_step_in APPEND keeps unsafe alternatives after inst_step",
      fn () =>
        let
          val witness = Term.mk_var ("slow_append_x", Type.ind)
@@ -3149,9 +3159,11 @@ val _ =
                clasetLib.empty_cs)
          val node = clasetGoal.from_goal ([], boolSyntax.T)
          val fast =
-           drain_steps (clasetStep.step cs (node, 1))
+           drain_steps
+             (clasetStep.step_in (Context.snapshot ()) cs (node, 1))
          val slow =
-           drain_steps (clasetStep.slow_step cs (node, 1))
+           drain_steps
+             (clasetStep.slow_step_in (Context.snapshot ()) cs (node, 1))
          fun child_target (_, result_node) =
            #2 (the_singleton (rendered_goals result_node))
        in
@@ -3219,13 +3231,17 @@ fun guess_order_expected rules =
 val _ =
   test
     ("an unsafe step that guesses nothing precedes a unifying guess",
-     fn () => guess_order_expected (guess_order_offered clasetStep.step))
+     fn () =>
+       guess_order_expected
+         (guess_order_offered (clasetStep.step_in (Context.snapshot ()))))
 
 val _ =
   test
     ("the slow rung keeps every alternative and defers the guesses",
      fn () =>
-       guess_order_expected (guess_order_offered clasetStep.slow_step))
+       guess_order_expected
+         (guess_order_offered
+           (clasetStep.slow_step_in (Context.snapshot ()))))
 
 (* The other way a step leaves an unknown undetermined: [FORALL_ELIM_THM]
    settles the assumption it reads and the goal it leaves, but the instance
@@ -3263,7 +3279,9 @@ val _ =
               store = store, level = 0}
          val rules =
            guess_order_rules
-             (drain_steps (clasetStep.step guess_created_cs (node, 1)))
+             (drain_steps
+               (clasetStep.step_in (Context.snapshot ()) guess_created_cs
+                 (node, 1)))
          fun stated theorem = List.exists (aconv (concl theorem))
        in
          case rules of
@@ -3305,7 +3323,7 @@ val _ =
        in
          not (Option.isSome
            (seq.cases
-             (clasetStep.safe_step clasetLib.empty_cs (node, 1))))
+             (safe_step clasetLib.empty_cs (node, 1))))
        end)
 
 (* The refusal is the equality's, not the goal's: a rigid equality still
@@ -3324,7 +3342,7 @@ val _ =
               mk_comb (subst_predicate, meta)] store
        in
          case seq.cases
-           (clasetStep.safe_step clasetLib.empty_cs (node, 1))
+           (safe_step clasetLib.empty_cs (node, 1))
          of
              NONE => false
            | SOME ((record, next), _) =>
@@ -3383,12 +3401,15 @@ val _ =
              {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
               created = {terms = [], types = []},
               eigenvariables = [], validation = (fn _ => proof),
-              action = clasetReplay.fixed_action ([], fn _ => proof),
+              action =
+                clasetReplay.fixed_action_on ([expanded], target)
+                  ([], fn _ => proof),
               children = []}
          val script = clasetReplay.append (clasetReplay.empty 1) record
          val grounded = clasetReplay.ground clasetMeta.empty script
        in
-         case clasetReplay.replay grounded ([contracted], target) of
+         case clasetReplay.replay_in (Context.snapshot ())
+                grounded ([contracted], target) of
              clasetReplay.Replayed ([], validation) =>
                let
                  val theorem = validation []
@@ -3419,7 +3440,7 @@ val _ =
             mk_comb (subst_predicate, subst_variable))
        in
          case seq.cases
-           (clasetStep.safe_step clasetLib.empty_cs (node, 1))
+           (safe_step clasetLib.empty_cs (node, 1))
          of
              NONE => false
            | SOME ((record, _), _) =>
@@ -3428,7 +3449,8 @@ val _ =
                    clasetReplay.append (clasetReplay.empty 1) record
                  val grounded = clasetReplay.ground instantiated script
                in
-                 case clasetReplay.replay grounded original of
+                 case clasetReplay.replay_in (Context.snapshot ())
+                        grounded original of
                      clasetReplay.Replayed ([child], _) =>
                        same_goal
                          (child,
@@ -3453,14 +3475,16 @@ val _ =
                  {params = [], asl = [phase1_qa], w = phase1_qa}],
               store = clasetMeta.empty, level = 0}
        in
-         case seq.cases (clasetStep.step clasetLib.empty_cs (node, 2)) of
+         case seq.cases
+                (clasetStep.step_in (Context.snapshot ()) clasetLib.empty_cs
+                  (node, 2)) of
              NONE => false
            | SOME ((_, next), _) => List.null (clasetGoal.goals next)
        end)
 
 val _ =
   test
-    ("depth_step selects duplicate versus consuming unsafe rules",
+    ("depth_step_in selects duplicate versus consuming unsafe rules",
      fn () =>
        let
          val bound = Term.mk_var ("depth_bound", Type.ind)
@@ -3497,14 +3521,14 @@ val _ =
 
          val _ =
            seq.length
-             (clasetStep.depth_step cs (clasetLib.unsafe_part cs) 1
-               (node, 1))
+             (clasetStep.depth_step_in (Context.snapshot ()) cs
+               (clasetLib.unsafe_part cs) 1 (node, 1))
          val unsafe_runs = !observations
          val _ = observations := []
          val _ =
            seq.length
-             (clasetStep.depth_step cs (clasetLib.dup_part cs) 1
-               (node, 1))
+             (clasetStep.depth_step_in (Context.snapshot ()) cs
+               (clasetLib.dup_part cs) 1 (node, 1))
          val dup_runs = !observations
        in
          not (List.null unsafe_runs) andalso
@@ -4446,7 +4470,7 @@ val _ =
                    val grounded =
                      clasetReplay.ground (clasetGoal.store next) script
                  in
-                   case clasetReplay.replay grounded
+                   case clasetReplay.replay_in (Context.snapshot ()) grounded
                           ([source_major], target) of
                        clasetReplay.Replayed
                          (children as
@@ -4534,7 +4558,7 @@ val _ =
                    val grounded =
                      clasetReplay.ground (clasetGoal.store next) script
                  in
-                   case clasetReplay.replay grounded
+                   case clasetReplay.replay_in (Context.snapshot ()) grounded
                           ([], source_target) of
                        clasetReplay.Replayed
                          (children as
@@ -4624,7 +4648,7 @@ val _ =
                    val grounded =
                      clasetReplay.ground (clasetGoal.store next) script
                  in
-                   case clasetReplay.replay grounded
+                   case clasetReplay.replay_in (Context.snapshot ()) grounded
                           ([major], source_target) of
                        clasetReplay.Replayed
                          (children as
@@ -4723,7 +4747,8 @@ val _ =
                           val grounded =
                             clasetReplay.ground replay_store script
                         in
-                          case clasetReplay.replay grounded
+                          case clasetReplay.replay_in (Context.snapshot ())
+                                 grounded
                                  ([], boolSyntax.T) of
                               clasetReplay.Replayed
                                 (children as
@@ -5001,12 +5026,12 @@ val _ =
              [("replay-and", boolTheory.AND_INTRO_THM)]
              clasetLib.empty_cs
          val (rule_record, after_rule) =
-           first_node_step clasetStep.safe_step cs
+           first_node_step safe_step cs
              (clasetGoal.from_goal original) 1
          val (_, after_left) =
-           first_node_step clasetStep.safe_step cs after_rule 1
+           first_node_step safe_step cs after_rule 1
          val (_, solved) =
-           first_node_step clasetStep.safe_step cs after_left 1
+           first_node_step safe_step cs after_left 1
        in
          (case clasetStep.kind_of rule_record of
               clasetStep.RuleApplication
@@ -5131,7 +5156,8 @@ val _ =
          val grounded =
            clasetReplay.ground clasetMeta.empty script
        in
-         case clasetReplay.replay grounded ([phase1_pa], phase1_pa) of
+         case clasetReplay.replay_in (Context.snapshot ())
+                grounded ([phase1_pa], phase1_pa) of
              clasetReplay.ReplayFailed _ => true
            | clasetReplay.Replayed _ => false
        end)
@@ -5156,7 +5182,7 @@ val _ =
              ("meta-conjunction", safe_before Tactic.CONJ_TAC)
              clasetLib.empty_cs
        in
-         case seq.cases (clasetStep.safe_step cs (node, 1)) of
+         case seq.cases (safe_step cs (node, 1)) of
              NONE => false
            | SOME ((record, lifted), _) =>
                let
@@ -5210,7 +5236,8 @@ val _ =
            clasetLib.add_unsafe_wrapper ("second", second)
              clasetLib.empty_cs
        in
-         case seq.cases (clasetStep.step cs (node, 1)) of
+         case seq.cases
+                (clasetStep.step_in (Context.snapshot ()) cs (node, 1)) of
              NONE => false
            | SOME ((record, next), _) =>
                (case clasetStep.kind_of record of
@@ -5246,7 +5273,7 @@ val _ =
              ("foreign-marker", fn _ => forged)
              clasetLib.empty_cs
        in
-         case seq.cases (clasetStep.safe_step cs (node, 1)) of
+         case seq.cases (safe_step cs (node, 1)) of
              NONE => true
            | SOME _ => false
        end)
@@ -6656,8 +6683,8 @@ fun depth_solves cs bound node =
   List.exists
     (List.null o clasetGoal.goals o #2)
     (drain_steps
-      (clasetStep.depth_step cs (clasetLib.dup_part cs) bound
-        (node, 1)))
+      (clasetStep.depth_step_in (Context.snapshot ()) cs
+        (clasetLib.dup_part cs) bound (node, 1)))
 
 val _ =
   test
@@ -6774,7 +6801,8 @@ val _ =
          val node = clasetGoal.from_goal original
          val (_, substituted) =
            case seq.cases
-             (clasetStep.blast_hyp_subst_step (node, 1)) of
+             (clasetStep.blast_hyp_subst_step_in (Context.snapshot ())
+               (node, 1)) of
                SOME (result, _) => result
              | NONE => raise Fail "blast hyp-subst did not apply"
          val expected =
@@ -6826,7 +6854,7 @@ val _ =
               store = store0, level = 0}
          val (_, substituted) =
            case seq.cases
-             (clasetStep.blast_hyp_subst_step_at
+             (clasetStep.blast_hyp_subst_step_at_in (Context.snapshot ())
                {equality = 1, changed = [false, true, false],
                 side = clasetStep.EliminateLeft}
                (root, 1)) of
@@ -6885,7 +6913,7 @@ val _ =
        fn () =>
          exact ([app q x, app p x], app q x)
            (drain_exact
-             (clasetStep.blast_hyp_subst_step_at
+             (clasetStep.blast_hyp_subst_step_at_in (Context.snapshot ())
                {equality = 1, changed = [false, true],
                 side = clasetStep.EliminateRight}
                (node, 1))));
@@ -6893,7 +6921,9 @@ val _ =
       ("an unrecorded hyp-subst keeps the left-first orientation",
        fn () =>
          exact ([app p y, app q y], app q y)
-           [hd (drain_exact (clasetStep.blast_hyp_subst_step (node, 1)))])
+           [hd (drain_exact
+                 (clasetStep.blast_hyp_subst_step_in (Context.snapshot ())
+                   (node, 1)))])
   end
 
 val _ =
@@ -6977,7 +7007,8 @@ val _ =
          val root = clasetGoal.from_goal goal
          val (_, substituted) =
            case seq.cases
-             (clasetStep.blast_hyp_subst_step (root, 1)) of
+             (clasetStep.blast_hyp_subst_step_in (Context.snapshot ())
+               (root, 1)) of
                SOME (result, _) => result
              | NONE => raise Fail "beta replay substitution"
          val (_, closed) =
@@ -7140,7 +7171,8 @@ val _ =
              | _ => NONE
          val strict_result =
            case strict of
-               [(_, node)] => clasetReplay.replay (grounded node) drifted_goal
+               [(_, node)] => clasetReplay.replay_in (Context.snapshot ())
+                                (grounded node) drifted_goal
              | _ => raise Fail "missing strict assumption transition"
        in
          (case legacy_result of
@@ -7228,13 +7260,13 @@ val _ =
          val node = clasetGoal.from_goal goal
          val results =
            drain_exact
-             (clasetStep.blast_hyp_subst_step_at
+             (clasetStep.blast_hyp_subst_step_at_in (Context.snapshot ())
                {equality = 2, changed = [true, false, true],
                 side = clasetStep.EliminateLeft}
                (node, 1))
          val wrong =
            seq.null
-             (clasetStep.blast_hyp_subst_step_at
+             (clasetStep.blast_hyp_subst_step_at_in (Context.snapshot ())
                {equality = 5, changed = [],
                 side = clasetStep.EliminateLeft} (node, 1))
        in
@@ -7290,14 +7322,15 @@ val _ =
          val substitution_node = clasetGoal.from_goal substitution_goal
          val substitutions =
            drain_exact
-             (clasetStep.blast_hyp_subst_step
+             (clasetStep.blast_hyp_subst_step_in (Context.snapshot ())
                (substitution_node, 1))
          val selected_substitutions =
            List.concat
              (map
                (fn (equality, changed) =>
                  drain_exact
-                   (clasetStep.blast_hyp_subst_step_at
+                   (clasetStep.blast_hyp_subst_step_at_in
+                     (Context.snapshot ())
                      {equality = equality, changed = changed,
                       side = clasetStep.EliminateLeft}
                      (substitution_node, 1)))
@@ -7372,7 +7405,7 @@ fun member_step implication goal expected =
       clasetLib.add_sintros [("member-crossing", ASSUME implication)]
         clasetLib.empty_cs
   in
-    case first_step clasetStep.safe_step cs goal of
+    case first_step safe_step cs goal of
         NONE => false
       | SOME (record, node) =>
           same_goals (rendered_goals node) [expected] andalso
@@ -7854,8 +7887,8 @@ val _ =
              clasetLib.empty_cs
          val safe_only =
            null
-             (clasetStep.safe_saturation clasetLib.empty_cs
-               (clasetGoal.from_goal goal))
+             (clasetStep.safe_saturation_in (Context.snapshot ())
+               clasetLib.empty_cs (clasetGoal.from_goal goal))
        in
          safe_only andalso
          (case seq.cases (classicalLib.CS_FAST_TAC cs goal ctxt) of

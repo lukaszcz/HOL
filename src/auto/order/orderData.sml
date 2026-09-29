@@ -22,22 +22,7 @@ datatype literal =
 
 type fact = {literal : literal, theorem : thm}
 
-type meter =
-  {candidate : unit -> unit,
-   application : unit -> unit,
-   normalization : unit -> unit}
-
-val free_meter : meter =
-  {candidate = fn () => (), application = fn () => (),
-   normalization = fn () => ()}
-
-fun budget_meter budget : meter =
-  {candidate = fn () =>
-     searchBudget.charge budget searchBudget.Candidate,
-   application = fn () =>
-     searchBudget.charge budget searchBudget.Application,
-   normalization = fn () =>
-     searchBudget.charge budget searchBudget.Normalization}
+type meter = searchBudget.charger
 
 fun candidate (meter : meter) = #candidate meter ()
 fun application (meter : meter) = #application meter ()
@@ -212,15 +197,9 @@ fun context_of_with meter (relation, entries) =
            | _ =>
                SOME (weak_context_with meter relation entries Conv.ALL_CONV))
 
-fun contexts_with meter theorems =
+fun contexts meter theorems =
   List.mapPartial (context_of_with meter)
     (group_with meter (axioms_of_with meter theorems))
-
-fun contexts theorems =
-  contexts_with free_meter theorems
-
-fun contexts_budgeted budget theorems =
-  contexts_with (budget_meter budget) theorems
 
 val order_names =
   axiom_names @
@@ -340,26 +319,13 @@ fun reduce (context : context) tm = Conv.QCONV (#reduction context) tm
 
 fun normalise context theorem = CONV_RULE (reduce context) theorem
 
-fun facts_of_with meter context theorem =
+fun facts_of meter context theorem =
   (normalization meter;
    List.mapPartial
      (fn atom => (candidate meter; classify_with meter context atom))
      (conjuncts_with meter (normalise context theorem)))
 
-fun facts_of context theorem =
-  facts_of_with free_meter context theorem
-
-fun facts_of_all context theorems =
-  List.concat (List.map (facts_of context) theorems)
-
-fun facts_of_budgeted budget context theorem =
-  facts_of_with (budget_meter budget) context theorem
-
-fun facts_of_all_budgeted budget context theorems =
-  let
-    val meter = budget_meter budget
-  in
-    List.concat (List.map (facts_of_with meter context) theorems)
-  end
+fun facts_of_all meter context theorems =
+  List.concat (List.map (facts_of meter context) theorems)
 
 end

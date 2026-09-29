@@ -5,27 +5,7 @@ open Abbrev HolKernel
 
 val ERR = mk_HOL_ERR "linarithData"
 
-fun same_type left right = Type.compare (left, right) = EQUAL
-
-(* The layer's deduplication idiom, spelled once: one item per key, in
-   order of first occurrence.  Every caller here keys on something
-   ordered -- a conclusion, a coefficient row, an atom -- so the set is
-   the comparison's, and a scan for the key with a linear membership
-   test would cost a quadratic number of those comparisons over lists
-   that accumulate across the rounds of a search. *)
-fun distinct_by compare key items =
-  let
-    fun add (item, entry as (seen, kept)) =
-      let
-        val item_key = key item
-      in
-        if HOLset.member (seen, item_key) then entry
-        else (HOLset.add (seen, item_key), item :: kept)
-      end
-    val (_, kept) = List.foldl add (HOLset.empty compare, []) items
-  in
-    List.rev kept
-  end
+fun same_type (left : hol_type) right = left = right
 
 fun dest_divmod {dest_div,dest_mod} tm =
   case Lib.total dest_div tm of
@@ -370,19 +350,6 @@ val all_injection_rewrite_conv =
       rewrites_conv
         (List.concat (map #rewrites (injection_entries ()))))
 
-val persistent_name = KernelSig.name_toString
-
-(* A REMOVE delta carries a table key and is applied as it stands.  It
-   is resolved where the retraction is written (see removal_key below),
-   not here: this is the path every descendant theory's replay takes, so
-   resolving an unqualified name against the loading theory would make
-   one delta designate a different entry in every theory below it. *)
-fun apply_arith_delta delta table =
-  case delta of
-      ThmSetData.ADD (name, theorem) =>
-        Symtab.update (persistent_name name, theorem) table
-    | ThmSetData.REMOVE key => Symtab.delete_safe key table
-
 (* The P-form test is the whole of split validation; the two channels
    differ only in how they name what they rejected. *)
 fun check_asm_split function what theorem =
@@ -392,80 +359,36 @@ fun check_asm_split function what theorem =
 fun apply_arith_split_delta delta table =
   case delta of
       ThmSetData.ADD (name, theorem) =>
-        let
-          val _ =
-            check_asm_split "apply_arith_split_delta"
-              ("[arith_split] theorem " ^ persistent_name name) theorem
-        in
-          Symtab.update (persistent_name name, theorem) table
-        end
-    | ThmSetData.REMOVE key => Symtab.delete_safe key table
-
-fun guard_registration settype =
-  if List.exists (equal settype) (ThmSetData.all_set_types ()) orelse
-     ThmAttribute.is_attribute settype
-  then
-    raise ERR "registration"
-      ("settype or attribute " ^ settype ^ " already exists")
-  else
-    ()
-
-val _ = guard_registration "arith"
-val _ = guard_registration "arith_split"
+        (check_asm_split "apply_arith_split_delta"
+           ("[arith_split] theorem " ^ KernelSig.name_toString name)
+           theorem;
+         thmTable.apply_delta delta table)
+    | ThmSetData.REMOVE _ => thmTable.apply_delta delta table
 
 val arith_data =
-  ThmSetData.export_with_ancestry
-    {settype = "arith",
-     delta_ops =
-       {apply_to_global = apply_arith_delta,
-        thy_finaliser = NONE,
-        uptodate_delta = K true,
-        initial_value = Symtab.empty,
-        apply_delta = apply_arith_delta}}
+  thmTable.register
+    {settype = "arith", initial_value = Symtab.empty,
+     apply_delta = thmTable.apply_delta,
+     apply_to_global = thmTable.apply_delta}
 
 val arith_split_data =
-  ThmSetData.export_with_ancestry
-    {settype = "arith_split",
-     delta_ops =
-       {apply_to_global = apply_arith_split_delta,
-        thy_finaliser = NONE,
-        uptodate_delta = K true,
-        initial_value = Symtab.empty,
-        apply_delta = apply_arith_split_delta}}
+  thmTable.register
+    {settype = "arith_split", initial_value = Symtab.empty,
+     apply_delta = apply_arith_split_delta,
+     apply_to_global = apply_arith_split_delta}
 
-fun table_thms data = map #2 (Symtab.dest (#get_global_value data ()))
-
-fun arith_facts () = table_thms arith_data
-fun arith_split_thms () = table_thms arith_split_data
-
-(* The key the retraction denotes, computed here because here is where
-   the theory it was written in is the current one, and here is where
-   the user is present to be told that it denotes nothing.  The spelling
-   is shared with every other theorem-set table via clasetLib's
-   normalisation; it leaves a name that can spell no key at all alone,
-   and such a name is exactly one without the kernel separator, so that
-   is what we reject. *)
-fun removal_key function name =
-  let
-    val key = clasetLib.normalise_rule_name name
-  in
-    if String.isSubstring "$" key then key
-    else raise ERR function ("Malformed name: " ^ name)
-  end
-
-fun remove data apply_delta function name =
-  let
-    val delta = ThmSetData.REMOVE (removal_key function name)
-    val _ = #update_global_value data (apply_delta delta)
-  in
-    #record_delta data delta
-  end
+fun arith_facts () = thmTable.thms arith_data
+fun arith_split_thms () = thmTable.thms arith_split_data
 
 fun remove_arith name =
-  remove arith_data apply_arith_delta "remove_arith" name
+  thmTable.remove
+    {data = arith_data, apply_to_global = thmTable.apply_delta,
+     error = ERR "remove_arith"} name
 
 fun remove_arith_split name =
-  remove arith_split_data apply_arith_split_delta "remove_arith_split" name
+  thmTable.remove
+    {data = arith_split_data, apply_to_global = apply_arith_split_delta,
+     error = ERR "remove_arith_split"} name
 
 (* The table's own theorems are the key, compared by pointer.  Its key
    set is not enough: an add under a name the table already holds --

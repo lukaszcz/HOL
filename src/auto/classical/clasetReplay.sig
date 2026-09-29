@@ -60,6 +60,9 @@ sig
      created : created, eigenvariables : string list list,
      validation : validation, action : replay_action,
      children : step_record option list} -> step_record
+  (* Per child goal, the names of its free variables the parent lacks:
+     a record's eigenvariables. *)
+  val new_free_names : goal -> goal list -> string list list
 
   val kind_of : step_record -> step_kind
   val target_of : step_record -> int
@@ -80,10 +83,9 @@ sig
   val grounded_store : grounded_script -> clasetMeta.store
   val grounded_to_string : grounded_script -> string
 
-  (* [replay] reports malformed scripts as data.  [REPLAY_TAC] is the
-     classical-driver policy: it raises a diagnostic HOL_ERR.  [replay_in]
-     and [REPLAY_TAC] use the supplied proof context for every action. *)
-  val replay : grounded_script -> goal -> replay_outcome
+  (* [replay_in] reports malformed scripts as data.  [REPLAY_TAC] is the
+     classical-driver policy: it raises a diagnostic HOL_ERR.  Both use
+     the supplied proof context for every action. *)
   val replay_in : Context.t -> grounded_script -> goal -> replay_outcome
   val REPLAY_TAC : grounded_script -> tactic
 
@@ -113,22 +115,18 @@ sig
     {assumptions : term list, residual : term,
      rebuild : exact_prefix_rebuild}
   val rebuild_exact_prefix : exact_prefix_rebuild -> thm -> thm
-  val HYP_SUBST_TAC : tactic
   val CLASET_HYP_SUBST_TAC_AT : hyp_subst_elimination list -> tactic
-  val COMPUTE_CLASET_HYP_SUBST_TAC :
-    goal -> hyp_subst_elimination list * (goal list * validation)
   val COMPUTE_CLASET_HYP_SUBST_TAC_IN :
     Context.t -> goal ->
     hyp_subst_elimination list * (goal list * validation)
   val BLAST_HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC_AT :
     {position : int, changed : bool list, side : hyp_subst_side} -> tactic
-  val COMPUTE_BLAST_HYP_SUBST_TAC_AT :
-    int -> goal ->
-    {changed : bool list, side : hyp_subst_side} * (goal list * validation)
   val COMPUTE_BLAST_HYP_SUBST_TAC_AT_IN :
     Context.t -> int -> goal ->
     {changed : bool list, side : hyp_subst_side} * (goal list * validation)
+  (* A genvar of [P]'s domain and [P], for a contracted [$! P]. *)
+  val eta_forall_predicate : term -> (term * term) option
   val GEN_NAMED_TAC : string -> tactic
   val SPLIT_PAIRED_TAC : tactic
   val SPLIT_PAIRED_VAR_TAC :
@@ -157,7 +155,6 @@ sig
       {theorem : thm, elim : bool, consumed : int option,
        parameters : term list, eigenvariables : string list list,
        prefixes : exact_prefix_descriptor list}) -> replay_action
-  val hyp_subst_action : replay_action
   val claset_hyp_subst_action_at :
     hyp_subst_elimination list -> replay_action
   val blast_hyp_subst_action_at :
@@ -171,6 +168,5 @@ sig
   val goal_negation_action : replay_action
   val swapped_builtin_action : int -> replay_action
   val move_assumption_to_back_action : int -> replay_action
-  val fixed_action : goal list * validation -> replay_action
   val fixed_action_on : goal -> goal list * validation -> replay_action
 end
