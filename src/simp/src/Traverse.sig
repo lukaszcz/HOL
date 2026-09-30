@@ -87,7 +87,9 @@ sig
                  relation : (term * (term -> thm))} -> conv
        }
 
-  (* dest_reducer fails on a CONTEXT_REDUCER; reducer_data reads either. *)
+  (* Through dest_reducer a CONTEXT_REDUCER runs at the default
+     side-condition depth (!Cond_rewr.stack_limit) and term order
+     (Cond_rewr.ac_term_ord); reducer_data keeps the configured ones. *)
 
   val dest_reducer : reducer ->
         {name : string option,

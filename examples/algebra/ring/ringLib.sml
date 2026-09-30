@@ -273,15 +273,19 @@ in
   fun RING_RING_WORD ths tm = let
       val dty = type_of(rand tm);
       val rty = mk_type(ring_tyname,[dty]);
-      (* The ring interpretation need not itself be a free variable.  The
-         explicit-record entry point supplies [toRing r], so discover the
-         unique ring-valued subterm in addition to the traditional [r]
-         variable case. *)
+      (* Prefer free ring variables; without one (e.g. [toRing q] from
+         EXPLICIT_RING_TAC), use ring-valued subterms with no bound vars. *)
+      val fvs = freesl (tm :: map concl ths)
+      val rvars = filter (curry (op =) rty o type_of) fvs
+      fun unbound t = all (fn v => tmem v fvs) (free_vars t)
       val rtms =
-        setify_term
-          (List.concat
-            (map (find_terms (curry (op =) rty o type_of))
-              (tm :: map concl ths)))
+        if not (null rvars) then rvars
+        else
+          filter unbound
+            (setify_term
+              (List.concat
+                (map (find_terms (curry (op =) rty o type_of))
+                  (tm :: map concl ths))))
    in
       if length rtms <> 1
       then failwith "RING_RULE: can't deduce which ring" else

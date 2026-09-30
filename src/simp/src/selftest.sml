@@ -652,6 +652,20 @@ in
      checkexn = fn Conv.UNCHANGED => true | _ => false}
     unchanged_tm
 
+  val _ = let
+    val d = traversedata_for_ss bool_ss
+    val {name,initial,addcontext,apply} =
+      Traverse.dest_reducer (hd (#rewriters d))
+    val r = Traverse.REDUCER {name=name, initial=initial,
+                              addcontext=addcontext, apply=apply}
+  in
+    convtest ("dest_reducer reads simpLib's context rewriter",
+              Traverse.TRAVERSE
+                {limit= #limit d, rewriters=[r], dprocs= #dprocs d,
+                 travrules= #travrules d, relation= #relation d} [],
+              ``p /\ T``, ``p:bool``)
+  end
+
   val _ = convtest
     ("default pipeline: QCONV turns unchanged result into reflexivity",
      QCONV (SIMP_CONV bool_ss []), unchanged_tm, unchanged_tm)
@@ -786,6 +800,21 @@ in
      SIMP_CONV_CHILD_FIRST (fn () => ()) empty_ss [],
      ``(h:('a -> 'b) -> 'c) (\x:'a. (f:'a -> 'b) x)``,
      ``(h:('a -> 'b) -> 'c) (f:'a -> 'b)``)
+  val eta_hcong =
+    Tactical.prove
+      (``!f f' c c' k k'. (f = f') /\ (c:'a = c') /\ (k:'a->bool = k') ==>
+           ((eh:('a->'a)->'a->('a->bool)->'a) f c k = eh f' c' k')``,
+       SIMP_TAC bool_ss [])
+  val _ = convtest
+    ("child-first eta head survives a later non-eta abstraction",
+     SIMP_CONV_CHILD_FIRST (fn () => ())
+       (pureSimps.pure_ss ++ SSFRAG {name=NONE, convs=[], rewrs=[], ac=[],
+          filter=NONE, dprocs=[], congs=[eta_hcong]})
+       [ASSUME ``!x:'a. (ef:'a->'a) x = eg x``,
+        ASSUME ``!c (k:'a->bool).
+                   (eh:('a->'a)->'a->('a->bool)->'a) ef c k = c``],
+     ``(eh:('a->'a)->'a->('a->bool)->'a) (\x. ef x) c (\y. y = z /\ p)``,
+     ``c:'a``)
   val _ = convtest
     ("child-first does not eta-contract a quantifier predicate",
      QCONV (SIMP_CONV_CHILD_FIRST (fn () => ()) empty_ss []),

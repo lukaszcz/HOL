@@ -55,8 +55,12 @@ datatype reducer =
                       relation : term * (term -> thm)} -> conv
               };
 fun dest_reducer (REDUCER x) = x
-  | dest_reducer (CONTEXT_REDUCER _) =
-      raise ERR "dest_reducer" "not a REDUCER"
+  | dest_reducer (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                cond_depth= !Cond_rewr.stack_limit,
+                term_ord=Cond_rewr.ac_term_ord, relation=relation}}
 
 fun reducer_data (REDUCER {name,initial,addcontext,apply}) =
       {name=name, initial=initial, addcontext=addcontext,
@@ -286,7 +290,7 @@ fun eta_argument tm =
     if is_abs (rand tm) andalso
        not (boolSyntax.is_exists tm orelse
             boolSyntax.is_forall tm orelse boolSyntax.is_select tm)
-    then RAND_CONV ETA_CONV tm
+    then (RAND_CONV ETA_CONV ORELSEC RATOR_CONV eta_argument) tm
     else RATOR_CONV eta_argument tm
   else NO_CONV tm
 

@@ -474,10 +474,7 @@ fun BASIC_CONV DPname DP tm = let
             val (igoal, initvfn) =
                 case HOLset.find (fn (_, b) => not b) non_pbs of
                   NONE => (tm, I)
-                | SOME _ =>
-                  if goal_qtype tm = qsUNIV then
-                    (tacCONV move_quants_up tTHEN tacRGEN) tm
-                  else tacRGEN tm
+                | SOME _ => tacRGEN tm
             val init_nonpbs =
                 Listsort.sort (inv_img_cmp #1 subtm_rel)
                               (HOLset.listItems

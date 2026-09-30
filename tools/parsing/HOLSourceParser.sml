@@ -346,10 +346,20 @@ fun parseSML file read parseError: scope -> result = let
         (_, "") => rev acc
       | value => parseAttributeValues (value :: acc)
 
+  (* SML lexes [norm=~3] as "=~" "3"; re-lex from the "~". *)
+  fun parseAttributeEq () =
+    case token () of
+        tk as (start, IdentTk) =>
+          (case ident start of
+               "=" => SOME start
+             | "=~" => (lookahead := []; pos := start + 1; SOME start)
+             | _ => (unread tk; NONE))
+      | tk => (unread tk; NONE)
+
   fun parseKVals (): kvals = {
     key = parseIdentifierOrKw true,
     bind = Option.map (fn eq_ => {eq_ = eq_, vals = parseAttributeValues []})
-      (parseKeyword "=" NONE) }
+      (parseAttributeEq ()) }
 
   fun parseAttrs f: 'a attrs = case parseSymbol #"[" NONE of
     NONE => NONE

@@ -77,7 +77,15 @@ val _ = List.app (rule_test RING_RULE) [
     ==> ring_mul r x y = ring_0 r”),
       ("RING_RULE_08",
        “x IN ring_carrier r /\ y IN ring_carrier r
-    ==> x = ring_add r y (ring_sub r x y)”)
+    ==> x = ring_add r y (ring_sub r x y)”),
+      (* Not from HOL-Light: other ring-valued subterms besides free [r]. *)
+      ("RING_RULE_compound_ring",
+       “ring_mul (r:'a Ring) x (c ((g:'a Ring -> 'a Ring) r)) =
+        ring_mul r (c (g r)) x”),
+      ("RING_RULE_bound_ring",
+       “ring_mul (r:'a Ring) x
+          (c (\s:'a Ring. ring_add s (ring_1 s) (ring_1 s))) =
+        ring_mul r (c (\s. ring_add s (ring_1 s) (ring_1 s))) x”)
       ];
 
 fun tactic_solves tactic goal =

@@ -31,14 +31,16 @@ with selftests.  Its real scope is wider than the entries suggest: Holmake
 recurses from `linarith/instances/` into src/integer, src/real, src/rational
 and their closure, and a failure in any of those is reported against the
 `src/auto/linarith/instances` entry.  The sequence then builds the
-post-`boss` `seeds/` and `benchmarks/` entries in that order.
-`bin/build -F -t` checks the full distribution.
+post-`boss` `seeds/`, `examples/algebra/ring`, `benchmarks/` and
+`examples/` entries in that order.
+`bin/build -F -t` checks the full distribution except `benchmarks/` and
+`examples/`.
 
 Numeric attribute values (`[elim=75]`, `[norm=~3]`) need a quote filter
-built from the current `tools/parsing/HolLex`.  That lexer is generated
-by configure, not by any Holmakefile rule, so after pulling run
-`poly < tools/smart-configure.sml` — a stale `bin/unquote` reports the
-mis-lex as a syntax error in the theorem, not as a stale filter.
+built from the current `tools/parsing/HOLSourceParser.sml`.  Configure,
+not any Holmakefile rule, compiles it into `bin/` and the heaps, so
+after pulling run `poly < tools/smart-configure.sml` — a stale filter
+reports `expected close delimiter` at the attribute.
 
 Theory scripts live in `rules/`, `linarith/`, `linarith/instances/`,
 `linarith/theory_tests/` and `aesop/theory_tests/`; in `classical/`,
@@ -60,8 +62,9 @@ their own Holmakefile (diamond merges, reload idempotence, batched
 delta replay); `linarith/theory_tests/` holds the round-trip scenarios
 for the `[arith]`/`[arith_split]` tables.
 
-The layer is registered in `SRCRELNAMES` in
-`src/parallel_builds/core/Holmakefile`, so `bin/build -F` exercises it.
+The library directories are registered in `SRCRELNAMES` in
+`src/parallel_builds/core/Holmakefile`, so `bin/build -F` exercises them;
+`benchmarks/` and `examples/` are built only by `upto-auto`.
 
 ## Architecture
 
@@ -148,5 +151,6 @@ belongs to the parallel build band.
 - Run: `Holmake` + `./selftest.exe` in the directory while editing;
   use the `upto-auto` gate before a change is done and `bin/build -F -t`
   before PR handoff or after any change outside `src/auto/` (simp,
-  seeding).  New subdirectories go into `tools/sequences/upto-auto`
-  and `SRCRELNAMES`.
+  seeding).  New library subdirectories go into
+  `tools/sequences/upto-auto` and `SRCRELNAMES`; new corpus or example
+  subdirectories into `upto-auto` only.

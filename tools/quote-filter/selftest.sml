@@ -110,6 +110,13 @@ in
   (* ... but it must still fire for a body of HOL terms. *)
   rejects "unclosed Definition body"
         ("Definition foo:\n  f x = x\nfun bar y = y\n");
+  translates "numeric attribute value"
+        "Theorem foo[elim=75]:\n  T\nProof\n  simp[]\nQED\n"
+        "\"foo[elim = 75]\"";
+  (* SML lexes "=~3" as the symbolic identifier "=~" then 3. *)
+  translates "signed attribute value"
+        "Theorem foo[norm=~3]:\n  T\nProof\n  simp[]\nQED\n"
+        "\"foo[norm = ~3]\"";
 
   OS.Process.exit
     (if !failures = 0 then OS.Process.success else OS.Process.failure)
