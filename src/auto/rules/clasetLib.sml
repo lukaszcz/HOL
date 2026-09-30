@@ -1188,7 +1188,7 @@ fun simp_arg_bucket theorem =
       SOME {name="Simp",payload=Theorem rule,...} => (SimpRule,rule)
     | SOME {name="Iff",payload=Theorem rule,...} => (IffRule,rule)
     | _ =>
-        if markerLib.is_generic_simp_marker theorem
+        if markerLib.is_directive theorem
         then (SimpControl, theorem)
         else (Plain, theorem)
 
@@ -1232,12 +1232,8 @@ fun check_aesop_markers function theorems =
    unwrapped to their theorem payload or discarded as inert here. *)
 fun invocation_facts theorems =
   let
-    fun unwrap theorem =
-      case markerLib.dest_generic_simp_wrapper theorem of
-          NONE => theorem
-        | SOME payload => payload
     val {simp_rules, iff_rules, rest, ...} =
-      classify_simp_args (map unwrap theorems)
+      classify_simp_args (map markerLib.strip_wrappers theorems)
   in
     if not (null simp_rules) then
       raise mk_HOL_ERR "clasetLib" "invocation_facts"

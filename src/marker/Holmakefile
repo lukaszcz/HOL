@@ -15,7 +15,7 @@ endif
 markerLib.uo: markerLib.sml markerLib.ui $(TABLE_UID) markerSyntax.uo \
               markerTheory.uo $(dprot $(SIGOBJ)/HolKernel.ui) \
               $(dprot $(SIGOBJ)/KNametab.ui) \
-              $(dprot $(SIGOBJ)/BoundedRewrites.uo)
+              $(dprot $(SIGOBJ)/BoundedRewrites.ui)
 	$(HOLMOSMLC) Overlay.ui Table.ui -c $<
 
 selftest.exe: selftest.uo

@@ -1561,33 +1561,12 @@ val ExclSF = markerLib.ExclSF
 val Req0   = markerLib.mk_Req0
 val ReqD   = markerLib.mk_ReqD
 
-val is_AC = markerLib.is_AC
-val is_Cong = markerLib.is_Cong
-val is_Split = markerLib.is_Split
-
 local open markerLib
 in
-fun extract_excls (excls, exfrags, rest) l =
-    case l of
-        [] => (List.rev excls, List.rev exfrags, List.rev rest)
-      | th::ths =>
-        case markerLib.destExcl th of
-            SOME nm => extract_excls (nm::excls, exfrags, rest) ths
-          | NONE => case markerLib.destExclSF th of
-                        NONE => extract_excls (excls, exfrags, th::rest) ths
-                      | SOME nm => extract_excls (excls, nm::exfrags, rest) ths
-
-fun extract_frags (frags, rest) l =
-    case l of
-        [] => (List.rev frags, List.rev rest)
-      | th :: ths => case markerLib.destFRAG th of
-                         NONE => extract_frags (frags, th :: rest) ths
-                       | SOME fragnm => (
-                         case lookup_named_frag fragnm of
-                             NONE => raise ERR ("extract_frags",
-                                                "No frag called " ^ fragnm)
-                           | SOME sf => extract_frags (sf::frags, rest) ths
-                       )
+fun frag_of fragnm =
+    case lookup_named_frag fragnm of
+        NONE => raise ERR ("process_tags", "No frag called " ^ fragnm)
+      | SOME sf => sf
 
 fun SF ssfrag =
     case frag_name ssfrag of
@@ -1612,8 +1591,8 @@ fun SF ssfrag =
    assumptions are documented never to fail.  Where the marker was
    written explicitly the drop is reported, because silently ignoring a
    rule that was asked for is worse than a warning. *)
-fun add_split_marker report th ss =
-    add_split (destSplit th) ss
+fun add_split_marker report split ss =
+    add_split split ss
     handle HOL_ERR e =>
       (if report then
          HOL_WARNING "simpLib" "process_tags"
@@ -1621,22 +1600,65 @@ fun add_split_marker report th ss =
        else ();
        ss)
 
+fun tactic_only name =
+    raise ERR ("process_tags",
+               name ^ " is a tactic directive; it cannot be honoured by a " ^
+               "conversion or rule")
+
+(* Sort a theorem-list argument by directive, keeping argument order.
+   Requirement directives are honoured only by the tactics, which strip
+   them (mk_require_tac) before reaching here; one arriving anyway would
+   be used as a rewrite and carry its marker$ hypothesis into every
+   result, so it is an error.  An assumption that is itself a requirement
+   marker passes through: its hypothesis is already the goal's.
+   Assumption-policy directives are the tactic layer's too, but
+   rule-level calls inside a tactic (SIMP_RULE within FULL_SIMP_TAC) still
+   see them, so they are dropped.  Bounded rewrites are honoured by the
+   rewriter and pass through. *)
 fun process_tags0 {report} ss thl =
     let
-      val (Congs,rst) = Lib.partition is_Cong thl
-      val (Splits,rst) = Lib.partition is_Split rst
-      val (ACs,rst) = Lib.partition is_AC rst
-      val (excludes, exclfrags, rst) = extract_excls ([],[],[]) rst
-      val (frags, rst) = extract_frags ([],[]) rst
+      fun sort (th, acc as (congs, splits, acs, excls, exclfrags, frags,
+                            rest)) =
+          case dest_directive th of
+              NONE =>
+                (congs, splits, acs, excls, exclfrags, frags, th :: rest)
+            | SOME (DCong c) =>
+                (normCong c :: congs, splits, acs, excls, exclfrags, frags,
+                 rest)
+            | SOME (DSplit sp) =>
+                (congs, sp :: splits, acs, excls, exclfrags, frags, rest)
+            | SOME (DAC p) =>
+                (congs, splits, p :: acs, excls, exclfrags, frags, rest)
+            | SOME (DExcl nm) =>
+                (congs, splits, acs, nm :: excls, exclfrags, frags, rest)
+            | SOME (DExclSF nm) =>
+                (congs, splits, acs, excls, nm :: exclfrags, frags, rest)
+            | SOME (DFRAG nm) =>
+                (congs, splits, acs, excls, exclfrags, frag_of nm :: frags,
+                 rest)
+            | SOME (DBounded _) =>
+                (congs, splits, acs, excls, exclfrags, frags, th :: rest)
+            | SOME (DReq0 _) =>
+                if report then tactic_only "Req0"
+                else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
+            | SOME (DReqD _) =>
+                if report then tactic_only "ReqD"
+                else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
+            | SOME DNoAsms => acc
+            | SOME (DIgnAsm _) => acc
+            | SOME (DAbbr _) => acc
+            | SOME (DLabel _) => acc
+      val (congs, splits, acs, excludes, exclfrags, frags, rst) =
+          List.foldr sort ([], [], [], [], [], [], []) thl
     in
       (* When no marker matched, the argument simpset is returned as it
          stands rather than rebuilt.  [GEN_GLOBAL_SIMP_TAC]'s traversal
          cache tests its key with [Portable.pointer_eq], so physical
          identity here -- not merely an equal simpset -- is what keeps
          that tactic's assumption scan linear. *)
-      if null Congs andalso null Splits andalso null ACs andalso
+      if null congs andalso null splits andalso null acs andalso
          null excludes andalso null frags andalso null exclfrags
-      then (ss,thl)
+      then (ss, rst)
       else
         let
           val base =
@@ -1645,16 +1667,16 @@ fun process_tags0 {report} ss thl =
             SSFRAG_CON
               (updfrag empty_frag_data
                  (Fld #name (SOME "Cong and/or AC"))
-                 (Fld #ac (map unAC ACs))
-                 (Fld #congs (map (normCong o unCong) Congs)) $$)
+                 (Fld #ac acs)
+                 (Fld #congs congs) $$)
           (* Cong/AC is named but never user-excludable; SF-derived frags
              go through force_add so they override any active exclusion. *)
           val withCongAc = base ++ cong_ac
           val withFrags =
             List.foldl (fn (f,ss) => force_add ss f) withCongAc frags
           val withSplits =
-            List.foldl (fn (th,ss) => add_split_marker report th ss)
-                       withFrags Splits
+            List.foldl (fn (sp,ss) => add_split_marker report sp ss)
+                       withFrags splits
           val invocation =
             apply_exclusions {report=report} withSplits excludes
         in

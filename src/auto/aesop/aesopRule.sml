@@ -325,13 +325,9 @@ fun split_rules () : split_ruleset =
   end
 
 fun is_no_asms theorem =
-  let
-    val payload =
-      Option.getOpt
-        (markerLib.dest_generic_simp_wrapper theorem, theorem)
-  in
-    aconv (concl payload) (concl markerLib.NoAsms)
-  end
+  case markerLib.dest_directive (markerLib.strip_wrappers theorem) of
+      SOME markerLib.DNoAsms => true
+    | _ => false
 
 fun simp_rule_with {name, simpset, controls} : rule =
   let

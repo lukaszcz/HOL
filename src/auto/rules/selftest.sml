@@ -2941,10 +2941,10 @@ val _ =
 
 val _ =
   test
-    ("generic simp-marker recognition excludes every claset marker",
+    ("directive recognition excludes every claset marker",
      fn () =>
        List.all
-         (not o markerLib.is_generic_simp_marker)
+         (not o markerLib.is_directive)
          claset_marker_theorems)
 
 val _ =
@@ -3082,7 +3082,7 @@ val _ =
              (List.take (markers, 4) @ [plain] @
               List.drop (markers, 4))
        in
-         List.all markerLib.is_generic_simp_marker markers andalso
+         List.all markerLib.is_directive markers andalso
          same_rules (rules_of baseline_cs) (rules_of with_markers_cs)
            andalso
          null (rules_of with_markers_cs) andalso
@@ -3103,7 +3103,7 @@ val _ =
              (markerLib.mk_ReqD (BoundedRewrites.Once payload))
          val (cs, facts) = invocation_claset empty_cs [wrapped]
        in
-         markerLib.is_generic_simp_marker wrapped andalso
+         markerLib.is_directive wrapped andalso
          null (rules_of cs) andalso
          ListPair.allEq (fn (left, right) => same_thm left right)
            (facts, [payload])

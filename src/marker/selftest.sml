@@ -4,28 +4,60 @@ val _ = new_theory "scratch"
 
 val _ = set_trace "Unicode" 0
 
-fun marker_test (name, th) =
-    (tprint ("is_generic_simp_marker: " ^ name);
-     if is_generic_simp_marker th then OK ()
-     else die "generic simplifier marker was not recognised")
-
-val generic_simp_markers =
-    [("AC", AC TRUTH TRUTH),
-     ("Cong", Cong TRUTH),
-     ("Split", Split TRUTH),
-     ("Excl", Excl "marker-selftest"),
-     ("ExclSF", ExclSF "marker-selftest"),
-     ("FRAG", FRAG "marker-selftest"),
-     ("Req0", mk_Req0 TRUTH),
-     ("ReqD", mk_ReqD TRUTH),
-     ("bounded", BoundedRewrites.Once TRUTH)]
-
-val _ = List.app marker_test generic_simp_markers
-
-val _ = tprint "is_generic_simp_marker: plain theorem"
+(* Every directive constructor must be recognised with the identity and
+   payload its consumer needs, and nothing else may be. *)
 val _ =
-    if not (is_generic_simp_marker TRUTH) then OK ()
-    else die "plain theorem was recognised as a generic simplifier marker"
+  let
+    val th = ASSUME “p:bool”
+    fun same th' =
+        HOLset.equal(hypset th, hypset th') andalso concl th ~~ concl th'
+    fun check (name, mk, ok) =
+        (tprint ("dest_directive: " ^ name);
+         case dest_directive (mk ()) of
+             NONE => die "not recognised"
+           | SOME d => if ok d then OK ()
+                       else die "wrong identity or payload")
+    fun rejects (name, mk) =
+        (tprint ("dest_directive: " ^ name ^ " is not a directive");
+         if isSome (dest_directive (mk ())) then die "recognised"
+         else OK ())
+  in
+    List.app check [
+      ("AC", fn () => AC th TRUTH,
+       fn DAC (a, b) => same a andalso concl b ~~ T | _ => false),
+      ("Cong", fn () => Cong th, fn DCong a => same a | _ => false),
+      ("Split", fn () => Split th, fn DSplit a => same a | _ => false),
+      ("Excl", fn () => Excl "nm", fn DExcl "nm" => true | _ => false),
+      ("ExclSF", fn () => ExclSF "nm", fn DExclSF "nm" => true | _ => false),
+      ("FRAG", fn () => FRAG "nm", fn DFRAG "nm" => true | _ => false),
+      ("Req0", fn () => mk_Req0 th, fn DReq0 a => same a | _ => false),
+      ("ReqD", fn () => mk_ReqD th, fn DReqD a => same a | _ => false),
+      ("Once", fn () => BoundedRewrites.Once th,
+       fn DBounded (a, 1) => same a | _ => false),
+      ("Ntimes 3", fn () => BoundedRewrites.Ntimes th 3,
+       fn DBounded (a, 3) => same a | _ => false),
+      ("NoAsms", fn () => NoAsms, fn DNoAsms => true | _ => false),
+      ("IgnAsm", fn () => IgnAsm ‘x = _’,
+       fn DIgnAsm s => String.isSuffix "x = _" s | _ => false),
+      ("Abbr", fn () => Abbr`v`, fn DAbbr "v" => true | _ => false),
+      ("L", fn () => L "lab", fn DLabel "lab" => true | _ => false),
+      ("Req0 wraps Cong", fn () => mk_Req0 (Cong th),
+       fn DReq0 a => (case dest_directive a of
+                          SOME (DCong b) => same b
+                        | _ => false)
+        | _ => false)
+    ];
+    tprint "strip_wrappers: Req0 over ReqD over Once";
+    if same (strip_wrappers (mk_Req0 (mk_ReqD (BoundedRewrites.Once th))))
+    then OK () else die "payload not reached";
+    List.app rejects [
+      ("TRUTH", fn () => TRUTH),
+      ("assumption", fn () => th),
+      ("reflexive equation", fn () => REFL “x:'a”),
+      ("equation", fn () => ASSUME “x:'a = y”),
+      ("implication from a marker", fn () => ASSUME “marker$Req0 ==> p”)
+    ]
+  end
 
 (* The theorem list handed to the recursive pass must be stripped of
    Req0/ReqD just like the outer one.  simpLib re-enters through [recur]

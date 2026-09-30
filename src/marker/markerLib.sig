@@ -44,15 +44,30 @@ sig
   val dest_ReqD : thm -> thm option
   val mk_require_tac : (thm list -> tactic) -> (thm list -> tactic)
 
-  val is_AC : thm -> bool
-  val is_Cong : thm -> bool
-  val is_Split : thm -> bool
-
-  (* True iff the theorem carries a generic simplifier-control marker.
-     Owners of new such markers must extend this predicate here. *)
-  val is_generic_simp_marker : thm -> bool
-  (* Repeatedly remove content-bearing generic simplifier wrappers. *)
-  val dest_generic_simp_wrapper : thm -> thm option
+  (* The theorem-list directive vocabulary: theorems that control the
+     tactic or simpset they are passed to instead of being used as facts.
+     Every consumer of a theorem list must classify through
+     dest_directive, dropping or rejecting a directive it cannot honour
+     rather than using it as a rewrite.  Hypothesis-carried wrappers
+     (Req0, ReqD, bounds) are reported before the payload's own head. *)
+  datatype directive =
+      DAC of thm * thm
+    | DCong of thm
+    | DSplit of thm
+    | DExcl of string
+    | DExclSF of string
+    | DFRAG of string
+    | DReq0 of thm
+    | DReqD of thm
+    | DBounded of thm * int
+    | DNoAsms
+    | DIgnAsm of string
+    | DAbbr of string
+    | DLabel of string
+  val dest_directive : thm -> directive option
+  val is_directive   : thm -> bool
+  (* The payload under any Req0, ReqD and bound wrappers. *)
+  val strip_wrappers : thm -> thm
 
   val ABB                 : term -> term -> tactic
   val ABB'                : {redex : term, residue : term} -> tactic
