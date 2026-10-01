@@ -19,7 +19,6 @@ sig
   val fetch       : string -> string -> thm
   val fetch_knm   : KernelSig.kernelname -> thm
   val lookup      : KernelSig.kernelname -> DB_dtype.data_value option
-  val lookup_name : string -> data list (* includes private theorems *)
   val thms        : string -> (string * thm) list
 
   val theorem     : string -> thm

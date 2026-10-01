@@ -305,7 +305,7 @@ Proof
   impl_tac
   >- (rw[] >> rename [‘(J ⊗ n,m) ∈ form_functions (Skolem1 (J ⊗ k) _ _)’] >>
       mp_tac (form_functions_Skolem1 |> CONJUNCT1 |> GEN_ALL) >>
-      simp[SUBSET_DEF, Excl "FV_extras", Excl "form_functions_Skolem1"] >>
+      simp[SUBSET_DEF, Excl "FV_extras"] >>
       disch_then drule >> simp[] >> rw[] >> simp[] >>
       metis_tac[DECIDE “x < k ⇒ x < k + 1”]) >>
   disch_then (qx_choose_then ‘N’ strip_assume_tac) >> qexists_tac ‘N’ >>
@@ -363,7 +363,7 @@ Proof
   impl_tac
   >- (rw[] >> rename [‘(J ⊗ n,m) ∈ form_functions _’] >>
       mp_tac (form_functions_Skolem1 |> CONJUNCT1 |> GEN_ALL) >>
-      simp[SUBSET_DEF, Excl "form_functions_Skolem1", Excl "FV_extras"] >>
+      simp[SUBSET_DEF, Excl "FV_extras"] >>
       disch_then drule >> rw[Excl "FV_extras"] >> simp[] >>
       first_x_assum drule >> simp[]) >>
   strip_tac >>
@@ -825,7 +825,7 @@ Theorem holds_specialize[simp]:
         ((∀v. valuation M v ⇒ holds M v (specialize p)) ⇔
          (∀v. valuation M v ⇒ holds M v p))
 Proof
-  Induct_on ‘p’ >> simp[Excl "holds_def", Excl "HOLDS", holds_uclose]
+  Induct_on ‘p’ >> simp[Excl "HOLDS", holds_uclose]
 QED
 
 Theorem specialize_satisfies:

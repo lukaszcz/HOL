@@ -516,30 +516,6 @@ fun simpset_has_rule_target {pending : rule_exclusion list} name
      simpset_has_dproc name ss)
   end
 
-(* A valid theorem name need not currently be installed in the simpset:
-   theory scripts use Excl defensively around a theorem they have just put
-   on the goal.  Accept an exact database binding as a rule target, while a
-   spelling that denotes neither a binding nor installed strategy remains a
-   diagnosed typo.  A name that carries its theory -- in either spelling --
-   is one exact lookup; a bare name is sought database-wide, but by the
-   exact-name entry point, which is a lookup per theory rather than a
-   regexp run over every binding in the database. *)
-fun theorem_name_exists original =
-  let
-    fun bound thy name =
-      thy <> "-" andalso isSome (DB.lookup {Thy=thy,Name=name})
-    fun anywhere name = not (null (DB.lookup_name name))
-  in
-    case String.fields (equal #"$") original of
-        [thy,name] => bound thy name
-      | _ =>
-        case String.fields (equal #".") original of
-            [name] => anywhere name
-          | [thy,name] => bound thy name
-          | _ => false
-  end
-  handle HOL_ERR _ => false
-
 fun dphas_name_from nms reducer =
   case #name (Traverse.reducer_data reducer) of
       SOME name => Lib.mem name nms
@@ -900,12 +876,11 @@ fun case_display_exists display =
   end
 
 (* A namespaced Excl says which kind of target is meant, so matching
-   nothing there is a diagnosed typo -- [no_target].  An unqualified one is
-   written defensively often enough -- around a theorem that may not be
-   installed, or naming a conversion or decision procedure that was never a
-   simpset entry at all -- that matching nothing is reported and ignored
-   instead of aborting the tactic.  A name that matches several kinds stays
-   an error either way: there is no way to guess which was meant. *)
+   nothing there is a diagnosed typo -- [no_target].  An unqualified one
+   that matches nothing in the simpset is a no-op, which is reported so
+   that its author can remove it, but does not abort the tactic.  A name
+   that matches several kinds stays an error either way: there is no way to
+   guess which was meant. *)
 fun no_target original =
   raise ERR ("process_tags", "Excl did not match " ^ original)
 
@@ -934,8 +909,7 @@ fun resolve_exclusion {report,pending} ss original =
       case Lib.total excl_simpset_name name of
           NONE => NONE
         | SOME pattern =>
-            if simpset_has_rule_target {pending=pending} name ss orelse
-               theorem_name_exists name
+            if simpset_has_rule_target {pending=pending} name ss
             then SOME {original = name, pattern = pattern}
             else NONE
   in

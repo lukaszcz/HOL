@@ -1894,35 +1894,47 @@ local
        String.isSubstring "ambiguous" (Feedback.message_of error)
        | _ => false} ()
 
-  val _ = shouldfail
-    {testfn=SIMP_CONV empty_ss [Excl "bool.CONJ_COMM"],
-     printresult=thm_to_string,
-     printarg=term_to_string,
-     checkexn=fn UNCHANGED => true | _ => false}
-    ``selftest_catalogue_p:bool``
-  (* An unqualified Excl that matches nothing is reported and ignored:
-     names such as NORMEQ_CONV denote conversions that were never simpset
-     entries under that name, and theory scripts write them defensively
-     beside a temp_delsimps of the same name.  A namespaced Excl states
-     which kind of target is meant, so there matching nothing still
-     aborts. *)
+  (* Only the simpset's entries contest a name: bool.CONJ_COMM exists but
+     is no rule of this simpset, so the looper is the sole target. *)
+  val theorem_named_looper_ss =
+    add_looper ("CONJ_COMM",fn _ => CONJ_TAC) empty_ss
+  val _ = tprint "a looper named like an uninstalled theorem is excludable"
+  val _ =
+    if tactic_result [entry_goal]
+         (run (SIMP_TAC theorem_named_looper_ss [Excl "CONJ_COMM"])
+              entry_goal)
+    then OK()
+    else die "an uninstalled theorem made the looper's name ambiguous"
+
+  (* An unqualified Excl that matches nothing in the simpset is a no-op,
+     reported so that its author can remove it.  Only the simpset decides:
+     a theorem that exists but is not installed is as much a no-op as a
+     name that denotes nothing.  A namespaced Excl states which kind of
+     target is meant, so there matching nothing still aborts. *)
   val excl_true_t = ``T /\ (selftest_catalogue_p:bool)``
   val excl_warnings = ref ([] : string list)
   val excl_outstream = !Feedback.WARNING_outstream
   val _ = Feedback.WARNING_outstream :=
             (fn s => excl_warnings := s :: !excl_warnings)
+  fun excl_warned name =
+    List.exists (String.isSubstring name) (!excl_warnings)
+    before excl_warnings := []
   val _ = convtest
     ("unmatched unqualified Excl leaves the simpset alone",
      SIMP_CONV bool_ss [Excl "definitely_not_a_theorem"],
      excl_true_t, ``selftest_catalogue_p:bool``)
-  val unmatched_warned =
-    List.exists (String.isSubstring "definitely_not_a_theorem")
-                (!excl_warnings)
-  val _ = excl_warnings := []
+  val unmatched_warned = excl_warned "definitely_not_a_theorem"
   val _ = convtest
-    ("Excl takes the kernel Thy$Name spelling",
-     SIMP_CONV bool_ss [Excl "bool$CONJ_COMM"],
+    ("Excl of a theorem the simpset does not hold leaves it alone",
+     SIMP_CONV bool_ss [Excl "CONJ_COMM"],
      excl_true_t, ``selftest_catalogue_p:bool``)
+  val uninstalled_warned = excl_warned "CONJ_COMM"
+  val _ = shouldfail
+    {testfn=SIMP_CONV bool_ss [Excl "bool$AND_CLAUSES"],
+     printresult=thm_to_string,
+     printarg=K "Excl takes the kernel Thy$Name spelling",
+     checkexn=fn UNCHANGED => true | _ => false}
+    excl_true_t
   val kernel_name_matched = null (!excl_warnings)
   val _ = Feedback.WARNING_outstream := excl_outstream
 
@@ -1930,6 +1942,11 @@ local
   val _ =
     if unmatched_warned then OK()
     else die "unmatched unqualified Excl was ignored silently"
+
+  val _ = tprint "Excl of a theorem the simpset does not hold is reported"
+  val _ =
+    if uninstalled_warned then OK()
+    else die "Excl of an uninstalled theorem was ignored silently"
 
   val _ = tprint "a kernel-spelled Excl resolves to its theorem"
   val _ =
