@@ -16,14 +16,6 @@ sig
     | Aesop
     | Metis
     | Linarith
-    | IntArith
-    | Cooper
-    | NumRing
-    | IntRing
-    | IntIdeal
-    | ExplicitRing
-    | RealRing
-    | RealField
 
   type named_thm = {name : string, theorem : thm}
 
@@ -55,19 +47,12 @@ sig
          the argument reaches a method reading either half. *)
     | IffAdd of named_thm
 
-  (* [Otherwise] is Isabelle's [ORELSE] between two whole recipes: the
-     right one runs only where the left declines.  It exists because
-     some Isabelle methods are themselves disjunctions -- [algebra] is
-     [ring_tac ORELSE ideal_tac] -- and choosing one side by reading
-     the goal would let a mapping failure be recorded as a HOL4
-     limitation. *)
   (* [Repeat] is Isabelle's method combinator [+]: the recipe runs once
      and then as often as it keeps applying. *)
   datatype method_recipe =
       Invoke of tactic_id * method_arg list
     | Then of method_recipe * method_recipe
     | AllGoals of method_recipe * method_recipe
-    | Otherwise of method_recipe * method_recipe
     | Repeat of method_recipe
 
   type exclusion = {name : string, theorem : thm}
@@ -167,7 +152,7 @@ sig
 
   (* True of the methods that consult the source theory's default
      simpset.  Isabelle's [blast], [safe], [clarify] and [metis], and
-     its arithmetic and algebra decision procedures, do not: they take
+     its arithmetic decision procedures, do not: they take
      the claset, the facts they are handed, or nothing but the goal.
      The distinction is not cosmetic here -- a benchmark tactic given a
      non-empty argument list runs a simplification pass that a source

@@ -34,8 +34,6 @@ fun family_goals () =
     | "listmap" => benchListMap.goals
     | "classical" => benchClassical.goals
     | "linarith" => benchLinarith.goals
-    | "presburger" => benchPresburger.goals
-    | "algebra" => benchAlgebra.goals
     | _ => raise Fail ("unknown HOLBENCHFAMILY: " ^ family)
 
 fun selected_goal () =
@@ -55,7 +53,6 @@ fun first_arguments recipe =
       benchLib.Invoke (_, arguments) => arguments
     | benchLib.Then (left, _) => first_arguments left
     | benchLib.AllGoals (left, _) => first_arguments left
-    | benchLib.Otherwise (left, _) => first_arguments left
     | benchLib.Repeat inner => first_arguments inner
 
 fun override_tactic name =
@@ -93,6 +90,4 @@ val _ =
           | "listmap" => ignore (benchListMap.run level)
           | "classical" => ignore (benchClassical.run level)
           | "linarith" => ignore (benchLinarith.run level)
-          | "presburger" => ignore (benchPresburger.run level)
-          | "algebra" => ignore (benchAlgebra.run level)
           | _ => raise Fail ("unknown HOLBENCHFAMILY: " ^ family)

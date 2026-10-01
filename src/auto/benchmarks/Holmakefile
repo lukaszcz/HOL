@@ -1,6 +1,6 @@
 INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
            ../linarith/instances ../seeds ../../integer ../../real \
-           ../../rational ../../num/reduce/src ../../../examples/algebra/ring
+           ../../rational ../../num/reduce/src
 
 all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe guards.exe
 .PHONY: all
@@ -27,8 +27,7 @@ selftest.uo: benchLib.uo benchGuards.uo benchRecipe.uo benchNames.uo \
              benchMapCorpus.uo benchOptionCorpus.uo \
              benchProductCorpus.uo benchStringCorpus.uo \
              benchLibraryShortfalls.uo benchListMap.uo \
-             benchLinarith.uo benchPresburger.uo benchAlgebra.uo \
-             parityLib.uo
+             benchLinarith.uo parityLib.uo
 
 benchProductCorpus.uo: parityTranslationTheory.uo
 benchMapCorpus.uo: parityTranslationTheory.uo
@@ -57,7 +56,6 @@ benchListRel1.uo: parityTranslationTheory.uo
 benchMeasures.uo: parityTranslationTheory.uo
 benchListLex.uo: parityTranslationTheory.uo
 benchListRelations.uo: parityTranslationTheory.uo
-benchAlgebra.uo: parityAlgebraTranslationTheory.uo
 
 parityLib.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
               benchSetShortfalls.uo benchSets.uo \
@@ -78,7 +76,7 @@ parityLib.uo: benchLib.uo benchClassical.uo benchSetCorpus.uo \
               benchMapCorpus.uo benchOptionCorpus.uo \
               benchProductCorpus.uo benchStringCorpus.uo \
               benchLibraryShortfalls.uo benchListMap.uo \
-              benchLinarith.uo benchPresburger.uo benchAlgebra.uo
+              benchLinarith.uo
 
 genparity.uo: parityLib.uo
 
@@ -134,5 +132,5 @@ EXTRA_CLEANS = selftest.exe focus.exe genparity.exe guards.exe \
                benchmarks-selftest.log guards-findings.md
 
 # The family drivers reach the harness only through benchDerive.
-benchSets.uo benchClassical.uo benchAlgebra.uo benchListMap.uo \
-benchLinarith.uo benchPresburger.uo: benchDerive.uo
+benchSets.uo benchClassical.uo benchListMap.uo benchLinarith.uo: \
+benchDerive.uo

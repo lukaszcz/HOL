@@ -31,8 +31,8 @@ with selftests.  Its real scope is wider than the entries suggest: Holmake
 recurses from `linarith/instances/` into src/integer, src/real, src/rational
 and their closure, and a failure in any of those is reported against the
 `src/auto/linarith/instances` entry.  The sequence then builds the
-post-`boss` `seeds/`, `examples/algebra/ring`, `benchmarks/` and
-`examples/` entries in that order.
+post-`boss` `seeds/`, `benchmarks/` and `examples/` entries in that
+order.
 `bin/build -F -t` checks the full distribution except `benchmarks/` and
 `examples/`.
 
@@ -120,8 +120,8 @@ belongs to the parallel build band.
   residual goals for non-closing (`SAFE_TAC`-style) tactics; add
   negative cases (safe tactics must refuse unsafe steps); no theory or
   claset/simpset state left behind on success or failure.
-- Strength benchmarks (Pelletier, translated Isabelle goals, arith/
-  algebra corpora) are selftest assertions: solved-goal counts + time
+- Strength benchmarks (Pelletier, translated Isabelle goals, arith
+  corpora) are selftest assertions: solved-goal counts + time
   budgets.  Exhaustive corpora sit behind a higher `HOLSELFTESTLEVEL`;
   never prune goals to make a gate pass.
 - The benchmark harness asserts the exact assigned-tactic solved set and the

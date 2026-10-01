@@ -66,9 +66,9 @@ An Isabelle proof can name a fact HOL4 states nowhere -- neither in a library no
 
 ## Source accounting
 
-Source mining identified 1,070 relevant Isabelle results. Nine pairs translated to the same HOL4 statement except for bound variable names, so they are tested once. This leaves 1,061 distinct source-derived results. Eleven existing HOL4 integer regression goals are also included, giving 1,072 accounted results in total:
+Source mining identified 1,036 relevant Isabelle results. Seven pairs translated to the same HOL4 statement except for bound variable names, so they are tested once. This leaves 1,029 distinct source-derived results:
 
-- 1070 are executable HOL4 benchmark goals.
+- 1027 are executable HOL4 benchmark goals.
 - 2 could not be translated faithfully and are listed by identifier and reason in the benchmark files.
 - 0 source results are missing from both groups.
 
@@ -84,18 +84,14 @@ A **family** is a subject-area group:
 - **Sets** contains set and relation reasoning.
 - **List/map** contains lists, finite maps, options, strings, and product types.
 - **Linarith** contains linear arithmetic over natural numbers, integers, real numbers, and rational numbers.
-- **Presburger** contains quantified additive arithmetic over natural numbers and integers.
-- **Algebra** contains polynomial, ring, and field identities.
 
 | Family | Executable goals | Solved by assigned tactic | Routine selftest goals |
 |---|---:|---:|---:|
 | Classical | 25 | 25 | 4 |
 | Sets | 353 | 345 | 4 |
 | List/map | 602 | 551 | 5 |
-| Linarith | 46 | 46 | 4 |
-| Presburger | 34 | 34 | 8 |
-| Algebra | 10 | 8 | 3 |
-| **Total** | **1070** | **1009** | **28** |
+| Linarith | 47 | 47 | 4 |
+| **Total** | **1027** | **968** | **17** |
 
 ## Cost of the solutions
 
@@ -106,15 +102,13 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Classical | 25 | 22 | 3 | 0 | 0 | 0.5 | 33 | 516 |
 | Sets | 345 | 329 | 12 | 4 | 0 | 5.2 | 0 | 1813 |
 | List/map | 551 | 492 | 58 | 1 | 0 | 1.2 | 0 | 433 |
-| Linarith | 46 | 44 | 2 | 0 | 0 | 0.2 | 0 | 0 |
-| Presburger | 34 | 32 | 1 | 1 | 0 | 1.4 | 0 | 0 |
-| Algebra | 8 | 7 | 0 | 1 | 0 | 7.3 | 0 | 0 |
-| **Total** | **1009** | **926** | **76** | **7** | **0** | **7.3** | **0** | **1813** |
+| Linarith | 47 | 44 | 2 | 1 | 0 | 1.4 | 0 | 0 |
+| **Total** | **968** | **887** | **75** | **6** | **0** | **5.2** | **0** | **1813** |
 
 ## Documented results not solved by the assigned tactic
 
 - **Accepted scope exclusions** are executable goals deliberately outside the supported tactic scope, with a recorded reason.
-- **Assigned-tactic limitations** are executable goals for which the assigned tactic failed or exceeded 30 seconds. Each one has a dated record naming its root cause, in `benchmarks/benchSetShortfalls.sml`, `benchmarks/benchLibraryShortfalls.sml` or `benchmarks/benchAlgebra.sml`.
+- **Assigned-tactic limitations** are executable goals for which the assigned tactic failed or exceeded 30 seconds. Each one has a dated record naming its root cause, in `benchmarks/benchSetShortfalls.sml` or `benchmarks/benchLibraryShortfalls.sml`.
 - **Unavailable translations** are source results that could not be represented faithfully as HOL4 goals. They are not included in the executable-goal count.
 - **Unaccounted source results** would be source results that are neither executable nor documented as unavailable. This number must remain zero.
 
@@ -124,9 +118,7 @@ A solve at 28 seconds is not the same result as a solve in milliseconds, and the
 | Sets | 0 | 8 | 0 | 0 |
 | List/map | 0 | 51 | 2 | 0 |
 | Linarith | 0 | 0 | 0 | 0 |
-| Presburger | 0 | 0 | 0 | 0 |
-| Algebra | 0 | 2 | 0 | 0 |
-| **Total** | **0** | **61** | **2** | **0** |
+| **Total** | **0** | **59** | **2** | **0** |
 
 For every family, executable goals equal assigned-tactic solutions plus accepted scope exclusions plus assigned-tactic limitations.
 
@@ -140,8 +132,6 @@ The exhaustive run also tries three general-purpose HOL4 tactics on every goal w
 | Sets | 0 | 0 | 1 |
 | List/map | 2 | 0 | 2 |
 | Linarith | 0 | 0 | 0 |
-| Presburger | 0 | 0 | 0 |
-| Algebra | 0 | 0 | 0 |
 | **Total** | **2** | **0** | **3** |
 
 ## Seed-rule safety check

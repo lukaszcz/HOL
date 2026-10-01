@@ -4,19 +4,13 @@ struct
 val resolver =
   {theorems = benchNames.theorems,
    normalised_subject = benchNames.normalised_subject,
-   tactics = benchTactics.tactics,
+   tactic = benchTactics.tactic,
    ambient = benchAmbient.arguments_at}
 
 (* The Isabelle line a goal was proved at, which is what the ambient
    context is cut by. *)
 fun source_of ({file, line, ...} : benchLib.provenance) =
   file ^ ":" ^ Int.toString line
-
-(* Everything the corpus took from Isabelle carries an Isabelle method
-   to derive from.  The HOL4 regression goals the corpus adds alongside
-   them do not, and are the only entries this rejects. *)
-fun derivable (entry : benchLib.source_goal) =
-  String.isPrefix "src/HOL/" (#file (#provenance entry))
 
 (* Two distinct Isabelle facts can translate onto one HOL4 theorem --
    [list.pred_set] and [list_all_iff] are both [EVERY_MEM] -- and a
@@ -34,8 +28,6 @@ fun without_self goal recipe =
           benchLib.Then (strip left, strip right)
       | strip (benchLib.AllGoals (left, right)) =
           benchLib.AllGoals (strip left, strip right)
-      | strip (benchLib.Otherwise (left, right)) =
-          benchLib.Otherwise (strip left, strip right)
       | strip (benchLib.Repeat inner) = benchLib.Repeat (strip inner)
   in
     strip recipe
@@ -93,13 +85,5 @@ fun prepare family entries =
   in
     map prepared entries
   end
-
-fun native procedure entry =
-  if derivable entry then
-    raise Feedback.mk_HOL_ERR "benchDerive" "native"
-      (#id entry ^ " comes from Isabelle; its tactic is derived, \
-       \not named")
-  else
-    benchLib.prepare_goal (benchLib.Invoke (procedure, [])) entry
 
 end

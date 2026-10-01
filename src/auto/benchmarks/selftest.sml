@@ -666,7 +666,6 @@ val _ =
    because the ambient context is cut by Isabelle's theory order.  The
    goals below are not corpus entries, so they are stated at the line
    of the source file the corpus draws their kind of goal from. *)
-val groebner_source = "src/HOL/Examples/Groebner_Examples.thy:1"
 val classical_source = "src/HOL/ex/Classical.thy:1"
 
 val recipe_constructor_names =
@@ -690,11 +689,7 @@ val _ =
           "intro-unsafe(list$LENGTH_REVERSE)",
           "elim-safe(list$LENGTH_REVERSE)",
           "dest-unsafe(list$LENGTH_REVERSE)",
-          "cong(list$LENGTH_REVERSE)"] andalso
-       String.isSubstring "otherwise("
-         (benchLib.recipe_name
-           (benchDerive.recipe_of groebner_source ``!i : int. i * 1 = i``
-              "by algebra")))
+          "cong(list$LENGTH_REVERSE)"])
 
 (* ---- The ambient set --------------------------------------------- *)
 
@@ -1860,15 +1855,10 @@ val _ =
        benchRecipe.render (parses "by blast (* somewhat slow *)")
        = "by blast")
 
-(* Isabelle's [algebra] presimplifies with its [add:] theorems before
-   it normalizes -- groebner.ML seeds a simpset with them -- so [add:]
-   means the same thing there as everywhere else. *)
 val _ =
   check
-    ("add: is a simpset entry for every method that spells it",
+    ("add: is a simpset entry",
      fn () =>
-       modifiers_of "by (algebra add: sq_def)"
-       = [benchRecipe.SimpAdd ["sq_def"]] andalso
        modifiers_of "by (simp add: sq_def)"
        = [benchRecipe.SimpAdd ["sq_def"]])
 
@@ -1896,7 +1886,7 @@ val _ =
        in
          List.all stable
            ["by blast", "by (simp add: dom_def)", "by(auto simp: Pow_def)",
-            "using assms by (algebra add: collinear_def)",
+            "using assms by (simp add: collinear_def)",
             "unfolding mono_def by auto",
             "by auto (auto elim!: le_funE)",
             "by (auto simp del: X simp: X [symmetric])"]
@@ -1917,7 +1907,7 @@ val corpus_methods =
       if List.exists (equal method) (!seen) then ()
       else seen := method :: !seen
   in
-    app (note o #source_method) (List.filter from_isabelle corpus_goals);
+    app (note o #source_method) corpus_goals;
     List.rev (!seen)
   end
 
@@ -2007,8 +1997,7 @@ val _ =
        let
          val goals =
            benchClassical.goals @ benchSets.goals @ benchListMap.goals @
-           benchLinarith.goals @ benchPresburger.goals @
-           benchAlgebra.goals
+           benchLinarith.goals
          fun states ({theorem, ...} : benchLib.named_thm)
                     ({goal, ...} : benchLib.corpus_goal) =
            benchLib.theorem_is_goal goal theorem
@@ -2318,85 +2307,20 @@ val _ =
              String.concatWith ", " uncovered_heads ^ "\n");
         null uncovered_heads))
 
-(* The goal is read for its carrier and nothing else, so a
-   non-arithmetic method must answer the same whatever it is shown. *)
-val _ =
-  check
-    ("a non-arithmetic method ignores the goal it is shown",
-     fn () =>
-       List.all
-         (fn name =>
-           benchTactics.tactics name ``T`` =
-           benchTactics.tactics name ``!n : num. n + 0 = n``)
-         ["simp", "auto", "blast", "force", "fastforce", "metis"])
-
-val _ =
-  check
-    ("algebra picks its instances from the goal's carrier",
-     fn () =>
-       benchTactics.tactics "algebra" ``!n : num. n * 1 = n`` =
-         [benchLib.NumRing] andalso
-       benchTactics.tactics "algebra" ``!r : real. r * 1 = r`` =
-         [benchLib.RealField])
-
-(* Isabelle's [algebra_tac] is [ring_tac ORELSE ideal_tac].  The
-   integer carrier is the one where HOL4 has both procedures, and it
-   offers both rather than reading the goal to pick one.  What the
-   shape of the goal must not do is decide: an existential conclusion
-   used to route the goal straight to the ideal procedure. *)
-val _ =
-  check
-    ("algebra offers the ring normaliser before the ideal procedure",
-     fn () =>
-       benchTactics.tactics "algebra" ``!i : int. i * 1 = i`` =
-         [benchLib.IntRing, benchLib.IntIdeal] andalso
-       benchTactics.tactics "algebra"
-         ``!a b n : int. ?d. b - a = n * d`` =
-         [benchLib.IntRing, benchLib.IntIdeal])
-
-val _ =
-  check
-    ("an integer algebra method derives an Otherwise chain",
-     fn () =>
-       case benchDerive.recipe_of groebner_source ``!i : int. i * 1 = i``
-              "by algebra" of
-           benchLib.Otherwise
-             (benchLib.Invoke (benchLib.IntRing, []),
-              benchLib.Invoke (benchLib.IntIdeal, [])) => true
-         | _ => false)
-
-(* The case the two readings disagree on.  [intLib.INT_RING_TAC]
-   declines a divisibility goal, and its conclusion is not existential,
-   so the chooser this replaced would have stopped at the normaliser
-   and reported no proof.  Not a corpus goal. *)
-val divides_goal =
-  ``!a b c : int. a int_divides b ==> a int_divides (b * c)``
-
-val _ =
-  check
-    ("the second alternative closes what the first declines",
-     fn () =>
-       recipe_solves
-         (benchDerive.recipe_of groebner_source divides_goal "by algebra")
-         divides_goal andalso
-       not
-         (recipe_solves (benchLib.Invoke (benchLib.IntRing, []))
-            divides_goal))
-
 val _ =
   check
     ("an uncovered Isabelle method is an error, not a default tactic",
      fn () =>
        raises_with ["no HOL4 tactic", "sledgehammer"]
-         (fn () => benchTactics.tactics "sledgehammer" ``T``))
+         (fn () => benchTactics.tactic "sledgehammer"))
 
 (* ---- Phase B: recipes derived from the source method -------------- *)
 
 (* The end-to-end claim Phase B makes: what the harness runs on a
-   translated goal follows from the method string and the goal's
-   carrier type alone.  A corpus entry has no recipe field to write,
-   so this cannot be satisfied by editing entries; it fails if a goal
-   reaches the harness by any route other than [benchDerive.prepare]. *)
+   translated goal follows from the method string and the goal alone.
+   A corpus entry has no recipe field to write, so this cannot be
+   satisfied by editing entries; it fails if a goal reaches the harness
+   by any route other than [benchDerive.prepare]. *)
 fun derivation_mismatch (entry : benchLib.corpus_goal) =
   let
     val derived =
@@ -2415,9 +2339,7 @@ fun derivation_mismatch (entry : benchLib.corpus_goal) =
   handle Portable.Interrupt => raise Portable.Interrupt
        | exn => SOME (#id entry ^ ": " ^ Feedback.exn_to_string exn)
 
-val translated_goals = List.filter from_isabelle corpus_goals
-
-val mismatched = List.mapPartial derivation_mismatch translated_goals
+val mismatched = List.mapPartial derivation_mismatch corpus_goals
 
 val _ =
   check
@@ -2431,32 +2353,12 @@ val _ =
              "\n  (" ^ Int.toString (length mismatched) ^ " in all)\n");
         null mismatched))
 
-(* The one route by which a tactic is named rather than derived is
-   confined to goals that have no Isabelle proof to be measured
-   against. *)
+(* A recipe is derived from an Isabelle method, so a goal from anywhere
+   else has nothing to be measured against. *)
 val _ =
   check
-    ("a translated goal cannot be given a named tactic",
-     fn () =>
-       raises_with ["comes from Isabelle", "unit-native"]
-         (fn () =>
-           ignore
-             (benchDerive.native benchLib.Blast
-               {id = "unit-native", goal = boolSyntax.mk_eq (p, p),
-                source_method = "by blast", provenance = provenance,
-                representative = false})))
-
-(* The goals with no Isabelle method are the HOL4 integer regression
-   goals the corpus adds; they are named here so a new one cannot slip
-   past the parser by having no method to parse. *)
-val _ =
-  check
-    ("only the HOL4 regression goals lack an Isabelle method",
-     fn () =>
-       List.all
-         (fn entry => #file (#provenance entry) =
-                      "src/integer/testing/test_cases.sml")
-         (List.filter (not o from_isabelle) corpus_goals))
+    ("every corpus goal comes from Isabelle",
+     fn () => List.all from_isabelle corpus_goals)
 
 fun registered_definition theorem =
   List.exists
@@ -2503,8 +2405,6 @@ fun recipe_theorems (benchLib.Invoke (_, arguments)) =
       recipe_theorems left @ recipe_theorems right
   | recipe_theorems (benchLib.AllGoals (left, right)) =
       recipe_theorems left @ recipe_theorems right
-  | recipe_theorems (benchLib.Otherwise (left, right)) =
-      recipe_theorems left @ recipe_theorems right
   | recipe_theorems (benchLib.Repeat inner) = recipe_theorems inner
 
 fun recipe_argument_names (benchLib.Invoke (_, arguments)) =
@@ -2512,8 +2412,6 @@ fun recipe_argument_names (benchLib.Invoke (_, arguments)) =
   | recipe_argument_names (benchLib.Then (left, right)) =
       recipe_argument_names left @ recipe_argument_names right
   | recipe_argument_names (benchLib.AllGoals (left, right)) =
-      recipe_argument_names left @ recipe_argument_names right
-  | recipe_argument_names (benchLib.Otherwise (left, right)) =
       recipe_argument_names left @ recipe_argument_names right
   | recipe_argument_names (benchLib.Repeat inner) =
       recipe_argument_names inner
@@ -2523,8 +2421,6 @@ fun first_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
       first_recipe_arguments left
   | first_recipe_arguments (benchLib.AllGoals (left, _)) =
       first_recipe_arguments left
-  | first_recipe_arguments (benchLib.Otherwise (left, _)) =
-      first_recipe_arguments left
   | first_recipe_arguments (benchLib.Repeat inner) =
       first_recipe_arguments inner
 
@@ -2532,8 +2428,6 @@ fun last_recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
   | last_recipe_arguments (benchLib.Then (_, right)) =
       last_recipe_arguments right
   | last_recipe_arguments (benchLib.AllGoals (_, right)) =
-      last_recipe_arguments right
-  | last_recipe_arguments (benchLib.Otherwise (_, right)) =
       last_recipe_arguments right
   | last_recipe_arguments (benchLib.Repeat inner) =
       last_recipe_arguments inner
@@ -2548,7 +2442,7 @@ fun without_argument_names names arguments =
 
 val every_corpus_goal =
   benchClassical.goals @ benchSets.goals @ benchListMap.goals @
-  benchLinarith.goals @ benchPresburger.goals @ benchAlgebra.goals
+  benchLinarith.goals
 
 (* A [split:] element the splitter cannot analyse is dropped with a
    warning, and the goal is then measured under a method it was not
@@ -2564,8 +2458,6 @@ fun recipe_splits (benchLib.Invoke (_, arguments)) =
   | recipe_splits (benchLib.Then (left, right)) =
       recipe_splits left @ recipe_splits right
   | recipe_splits (benchLib.AllGoals (left, right)) =
-      recipe_splits left @ recipe_splits right
-  | recipe_splits (benchLib.Otherwise (left, right)) =
       recipe_splits left @ recipe_splits right
   | recipe_splits (benchLib.Repeat inner) = recipe_splits inner
 
@@ -2624,9 +2516,6 @@ val _ =
                               | arguments
                                   (benchLib.AllGoals (left, right)) =
                                   arguments left @ arguments right
-                              | arguments
-                                  (benchLib.Otherwise (left, right)) =
-                                  arguments left @ arguments right
                               | arguments (benchLib.Repeat inner) =
                                   arguments inner
                           in
@@ -2657,8 +2546,6 @@ fun recipe_arguments (benchLib.Invoke (_, arguments)) = arguments
   | recipe_arguments (benchLib.Then (left, right)) =
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (benchLib.AllGoals (left, right)) =
-      recipe_arguments left @ recipe_arguments right
-  | recipe_arguments (benchLib.Otherwise (left, right)) =
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (benchLib.Repeat inner) = recipe_arguments inner
 
@@ -2712,7 +2599,7 @@ val auto_recipe = benchLib.Invoke (benchLib.Auto, [])
 
 val absolute_recurrence_goal =
   recipe_goal "unit-absolute-recurrence" linarith_recipe
-    (#goal (goal_named "presburger_L102" benchPresburger.goals))
+    (#goal (goal_named "presburger_L102" benchLinarith.goals))
 
 val _ =
   check
@@ -3295,103 +3182,6 @@ val _ =
          (recipe_solves (benchLib.Invoke (benchLib.Simp, []))
             image_congruence_goal))
 
-val integer_ideal_goal = goal_named "groebner_L113" benchAlgebra.goals
-
-val _ =
-  check
-    ("integer ring normalization alone leaves the witness goal",
-     fn () =>
-       not
-         (benchLib.outcome_solved
-           (benchLib.run_goal (Time.fromSeconds 30)
-              (benchLib.Invoke (benchLib.IntRing, []))
-              integer_ideal_goal)))
-
-val integer_algebra_goals =
-  map Thm.concl
-    [parityAlgebraTranslationTheory.source_idom_simultaneous_squares_int,
-     parityAlgebraTranslationTheory.source_idom_four_square_int,
-     parityAlgebraTranslationTheory.source_idom_eight_square_int]
-
-val _ =
-  check
-    ("integral-domain identities specialize to HOL4 integers",
-     fn () =>
-       List.all
-         (fn goal =>
-           let val (variables, _) = boolSyntax.strip_forall goal
-           in
-             not (null variables) andalso
-             List.all
-               (fn variable => type_of variable = intSyntax.int_ty)
-               variables
-           end)
-         integer_algebra_goals)
-
-fun remove_first predicate items =
-  case items of
-      [] => []
-    | item :: rest =>
-        if predicate item then rest
-        else item :: remove_first predicate rest
-
-fun weaken_antecedent predicate goal =
-  let
-    val (variables, body) = boolSyntax.strip_forall goal
-    val (antecedent, conclusion) = boolSyntax.dest_imp body
-    val clauses = boolSyntax.strip_conj antecedent
-    val weakened = boolSyntax.list_mk_conj
-      (remove_first predicate clauses)
-  in
-    boolSyntax.list_mk_forall
-      (variables, boolSyntax.mk_imp (weakened, conclusion))
-  end
-
-fun headed_by wanted term =
-  let val (head, _) = strip_comb term
-  in same_const head wanted end
-  handle HOL_ERR _ => false
-
-fun is_membership term =
-  pred_setSyntax.is_in term
-  handle HOL_ERR _ => false
-
-val four_square_goal = goal_named "groebner_L72" benchAlgebra.goals
-val without_integral_domain =
-  weaken_antecedent
-    (headed_by ``ring$IntegralDomain``) (#goal four_square_goal)
-val without_carrier_membership =
-  weaken_antecedent is_membership (#goal four_square_goal)
-
-val _ =
-  check
-    ("explicit ring normalization rejects a missing domain assumption",
-     fn () =>
-       not (recipe_solves (#recipe four_square_goal)
-              without_integral_domain))
-
-val _ =
-  check
-    ("explicit ring normalization rejects missing carrier membership",
-     fn () =>
-       not (recipe_solves (#recipe four_square_goal)
-              without_carrier_membership))
-
-val corrupted_ring_certificate_goal =
-  ``!x : 'a.
-      ringLib$ring_mul (r : 'a ringLib$Ring) x x =
-        ringLib$ring_0 r ==>
-      ringLib$ring_mul r x x = ringLib$ring_0 r``
-
-val _ =
-  check
-    ("ring replay rejects a deliberately corrupted cofactor",
-     fn () =>
-       ((ringLib.RING_REPLAY_COFACTORS corrupted_ring_certificate_goal
-           [``ringLib$ring_0 (r : 'a ringLib$Ring)``];
-         false)
-        handle HOL_ERR _ => true))
-
 fun family_ok expected run =
   let
     val result : benchLib.family_result =
@@ -3422,19 +3212,15 @@ val _ =
          val source_outcomes =
            length benchClassical.goals + length benchSets.goals +
            length benchListMap.goals + length benchLinarith.goals +
-           (length benchPresburger.goals - 11) +
-           length benchAlgebra.goals +
            count_cause benchLib.TranslationGap benchSets.shortfalls +
-           count_cause benchLib.TranslationGap benchListMap.shortfalls +
-           count_cause benchLib.TranslationGap benchAlgebra.shortfalls
+           count_cause benchLib.TranslationGap benchListMap.shortfalls
        in
-         source_outcomes = 1061 andalso source_outcomes + 11 = 1072
+         source_outcomes = 1029
        end)
 
 val all_shortfalls =
   benchClassical.shortfalls @ benchSets.shortfalls @
-  benchListMap.shortfalls @ benchLinarith.shortfalls @
-  benchPresburger.shortfalls @ benchAlgebra.shortfalls
+  benchListMap.shortfalls @ benchLinarith.shortfalls
 
 (* The registers are not empty and are not meant to be: they carry the
    measured non-solutions.  What has to hold is that every record says
@@ -3506,24 +3292,8 @@ val _ =
     ("linear-arithmetic representative slice is exact",
      fn () =>
        not (family_selected "linarith") orelse family_ok
-         (if benchLib.selftest_level () >= 2 then 46 else 4)
+         (if benchLib.selftest_level () >= 2 then 47 else 4)
          benchLinarith.run)
-
-val _ =
-  check
-    ("Presburger representative slice is exact",
-     fn () =>
-       not (family_selected "presburger") orelse family_ok
-         (if benchLib.selftest_level () >= 2 then 34 else 8)
-         benchPresburger.run)
-
-val _ =
-  check
-    ("algebra representative slice and accepted gaps are exact",
-     fn () =>
-       not (family_selected "algebra") orelse family_ok
-         (if benchLib.selftest_level () >= 2 then 10 else 3)
-         benchAlgebra.run)
 
 (* A6.  Goal statements are owner-signed: a changed hash means a goal
    statement moved, which needs an explicit decision rather than an
@@ -3547,11 +3317,16 @@ val _ =
    translation constant rather than inlining its body: seventeen goals
    carry an update, and against the inlined conditional none of the
    results Isabelle states of the unapplied constant can be stated at
-   all. *)
+   all.
+
+   The Linarith signature moved on the owner's decision to drop the
+   Presburger family, whose one [arith] goal joined this one.  The
+   Classical signature moved with the Algebra family: the harness
+   loaded ringLib for it, whose overload read [classical_L124]'s
+   predicate variable [R] as [r.carrier]. *)
 val goal_term_pins =
-  [("Classical", "49F818B8"), ("Sets", "7641FC9E"),
-   ("List/map", "507D17D7"), ("Linarith", "E9DDA580"),
-   ("Presburger", "5A7FD8D5"), ("Algebra", "4C63E77A")]
+  [("Classical", "DF9E4108"), ("Sets", "7641FC9E"),
+   ("List/map", "507D17D7"), ("Linarith", "3F5B7CE4")]
 
 val _ =
   check

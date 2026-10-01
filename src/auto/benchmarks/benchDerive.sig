@@ -2,8 +2,10 @@ signature benchDerive =
 sig
   (* The recipe an entry's Isabelle method calls for.
 
-     The only inputs are the method string the source proof used, the
-     goal's carrier type, and the Isabelle line the proof sits on.
+     The inputs are the method string the source proof used, the
+     Isabelle line the proof sits on, and the goal -- read only to
+     instantiate a citation the method resolves against the goal's
+     assumptions and to withhold a citation that states the goal.
      Nothing is read that an author could tune per goal: citations
      resolve through the global [benchNames] table and method heads
      through [benchTactics], both keyed by name alone, and the ambient
@@ -28,23 +30,10 @@ sig
      already been prepared. *)
   val self_supplied_of : string -> Term.term -> string -> string list
 
-  (* True of the entries translated from Isabelle, which is where a
-     method string exists to derive from.  False of the HOL4 regression
-     goals the corpus adds alongside them. *)
-  val derivable : benchLib.source_goal -> bool
-
   (* Every authored goal of one family, with its derived recipe and
      exclusions attached and checked.  This is the only route from what
      a corpus file writes to what the harness runs; [family] appears in
      the error a rejected entry raises. *)
   val prepare :
     string -> benchLib.source_goal list -> benchLib.corpus_goal list
-
-  (* A goal that came from HOL4 rather than from Isabelle, run under a
-     named procedure.  There is no Isabelle proof to compare against and
-     so no parity claim to inflate; this is the one route by which a
-     tactic is written down instead of derived, and it is confined to
-     entries [derivable] rejects. *)
-  val native :
-    benchLib.tactic_id -> benchLib.source_goal -> benchLib.corpus_goal
 end

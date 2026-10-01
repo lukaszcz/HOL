@@ -712,7 +712,6 @@ val table : (string * (unit -> resolution)) list =
   ("Uniq_def", inlined),
   ("apfst_def", inlined),
   ("apsnd_def", inlined),
-  ("collinear_def", inlined),
   ("combine_options_def", inlined),
   ("dom_def", inlined),
   ("equal", inlined),
@@ -731,11 +730,6 @@ val table : (string * (unit -> resolution)) list =
   ("scomp_def", inlined),
   ("scomp_unfold", inlined),
   ("simp_implies_def", inlined),
-  ("split_def", inlined),
-  (* Groebner_Examples.thy defines [sq]; the translation keeps it as a
-     constant, so the citation resolves to its equation. *)
-  ("sq_def",
-   library "parityAlgebraTranslation" "source_ring_sq_def"),
 
   (* ---- Rules a HOL4 engine or the ambient context supplies
          without an argument ---- *)
@@ -905,8 +899,6 @@ val table : (string * (unit -> resolution)) list =
    library "pred_set" "INJECTIVE_IMAGE_FINITE"),
   ("finite_trancl_ntranl",
    translated "source_finite_tc_ntrancl"),
-  ("fst_conv",
-   library "pair" "FST"),
   ("fun_Compl_def",
    library "pred_set" "COMPL_DEF"),
   ("fun_diff_def",
@@ -1086,8 +1078,6 @@ val table : (string * (unit -> resolution)) list =
    symmetric (library "list" "LIST_TO_SET_MAP")),
   ("set_replicate_conv_if",
    translated "source_set_replicate_conv_if"),
-  ("snd_conv",
-   library "pair" "SND"),
   ("sorted_iff_nth_mono_less",
    translated "source_sorted_iff_nth_mono_less"),
   ("sorted_wrt_iff_nth_less",

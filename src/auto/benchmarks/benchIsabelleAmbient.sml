@@ -289,7 +289,6 @@ val ancestry =
        "src/HOL/Set_Interval.thy",
        "src/HOL/Transitive_Closure.thy",
        "src/HOL/Wellfounded.thy"]),
-     ("src/HOL/Examples/Groebner_Examples.thy", after_everything),
      ("src/HOL/ex/Arith_Examples.thy", after_everything),
      ("src/HOL/ex/Classical.thy", after_everything),
      ("src/HOL/ex/PresburgerEx.thy", after_everything),

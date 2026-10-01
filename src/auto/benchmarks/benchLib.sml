@@ -23,14 +23,6 @@ datatype tactic_id =
   | Aesop
   | Metis
   | Linarith
-  | IntArith
-  | Cooper
-  | NumRing
-  | IntRing
-  | IntIdeal
-  | ExplicitRing
-  | RealRing
-  | RealField
 
 type named_thm = {name : string, theorem : thm}
 
@@ -53,7 +45,6 @@ datatype method_recipe =
     Invoke of tactic_id * method_arg list
   | Then of method_recipe * method_recipe
   | AllGoals of method_recipe * method_recipe
-  | Otherwise of method_recipe * method_recipe
   | Repeat of method_recipe
 
 type exclusion = {name : string, theorem : thm}
@@ -122,14 +113,6 @@ fun tactic_name Simp = "simp"
   | tactic_name Aesop = "AESOP_TAC"
   | tactic_name Metis = "AMBIENT_METIS_TAC"
   | tactic_name Linarith = "LINARITH_TAC"
-  | tactic_name IntArith = "intLib.ARITH_TAC"
-  | tactic_name Cooper = "intLib.COOPER_TAC"
-  | tactic_name NumRing = "Grobner.NUM_RING"
-  | tactic_name IntRing = "intLib.INT_RING_TAC"
-  | tactic_name IntIdeal = "intLib.INTEGER_TAC"
-  | tactic_name ExplicitRing = "ringLib.EXPLICIT_RING_TAC"
-  | tactic_name RealRing = "RealField.REAL_RING"
-  | tactic_name RealField = "RealField.REAL_FIELD_TAC"
 
 fun strength_name SafeRule = "safe"
   | strength_name UnsafeRule = "unsafe"
@@ -167,8 +150,6 @@ fun recipe_name recipe =
           "then(" ^ render left ^ ", " ^ render right ^ ")"
       | render (AllGoals (left, right)) =
           "all-goals(" ^ render left ^ ", " ^ render right ^ ")"
-      | render (Otherwise (left, right)) =
-          "otherwise(" ^ render left ^ ", " ^ render right ^ ")"
       | render (Repeat inner) = "repeat(" ^ render inner ^ ")"
   in
     render recipe
@@ -178,8 +159,6 @@ fun recipe_has_tactic wanted (Invoke (tactic_id, _)) = wanted = tactic_id
   | recipe_has_tactic wanted (Then (left, right)) =
       recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
   | recipe_has_tactic wanted (AllGoals (left, right)) =
-      recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
-  | recipe_has_tactic wanted (Otherwise (left, right)) =
       recipe_has_tactic wanted left orelse recipe_has_tactic wanted right
   | recipe_has_tactic wanted (Repeat inner) = recipe_has_tactic wanted inner
 
@@ -674,8 +653,6 @@ fun recipe_arguments (Invoke (_, arguments)) = arguments
   | recipe_arguments (Then (left, right)) =
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (AllGoals (left, right)) =
-      recipe_arguments left @ recipe_arguments right
-  | recipe_arguments (Otherwise (left, right)) =
       recipe_arguments left @ recipe_arguments right
   | recipe_arguments (Repeat inner) = recipe_arguments inner
 
@@ -1546,38 +1523,6 @@ fun tactic_for simpset goal Simp args exclusions =
       with_facts args
         (linarithLib.LINARITH_TAC
           (all_class_args args))
-  (* Bind the current integer backends into the benchmark image. *)
-  | tactic_for _ _ IntArith args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     intLib.ARITH_TAC)
-  | tactic_for _ _ Cooper args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     intLib.COOPER_TAC)
-  | tactic_for _ _ NumRing args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     Tactical.CONV_TAC Grobner.NUM_RING)
-  | tactic_for _ _ IntRing args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     intLib.INT_RING_TAC)
-  | tactic_for _ _ IntIdeal args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     intLib.INTEGER_TAC)
-  | tactic_for _ _ ExplicitRing args _ =
-      Tactical.THEN
-        (Tactical.REPEAT Tactic.STRIP_TAC,
-         Tactical.THEN
-           (insert_facts (List.mapPartial fact_arg args),
-            Tactical.THEN
-              (simpLib.SIMP_TAC
-                 (clasimpLib.clasimp_ss ())
-                 (List.mapPartial simp_arg args),
-               ringLib.EXPLICIT_RING_TAC)))
-  | tactic_for _ _ RealRing args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     Tactical.CONV_TAC RealField.REAL_RING)
-  | tactic_for _ _ RealField args _ =
-      Tactical.THEN (insert_facts (List.mapPartial fact_arg args),
-                     RealField.REAL_FIELD_TAC)
 
 (* The simpset is prepared once for the goal and handed to every
    tactic the recipe composes, which each built their own before.  A
@@ -1600,12 +1545,6 @@ fun compile_recipe simpset entry recipe =
            compile_recipe simpset entry right)
     | AllGoals (left, right) =>
         Tactical.THEN
-          (compile_recipe simpset entry left,
-           compile_recipe simpset entry right)
-    (* [Tactical.ORELSE] catches [HOL_ERR] and nothing else, so a
-       budget interrupt still passes through the alternation. *)
-    | Otherwise (left, right) =>
-        Tactical.ORELSE
           (compile_recipe simpset entry left,
            compile_recipe simpset entry right)
     (* Isabelle's [+] applies its method once and then repeats it, so a

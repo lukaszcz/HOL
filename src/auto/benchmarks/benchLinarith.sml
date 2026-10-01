@@ -70,10 +70,26 @@ val source_index =
 fun representative number =
   List.exists (equal number) [1, 3, 5, 19]
 
+(* PresburgerEx.thy's one [arith] proof; its [presburger] proofs name
+   a procedure the layer does not have and are not in the corpus. *)
+val presburger_ex_arith : benchLib.source_goal =
+  {id = "presburger_L102",
+   goal =
+     ``x3 = ABS x2 - x1 ==> x4 = ABS x3 - x2 ==>
+       x5 = ABS x4 - x3 ==> x6 = ABS x5 - x4 ==>
+       x7 = ABS x6 - x5 ==> x8 = ABS x7 - x6 ==>
+       x9 = ABS x8 - x7 ==> x10 = ABS x9 - x8 ==>
+       x11 = ABS x10 - x9 ==> x1 = x10 /\ x2 = (x11 : int)``,
+   source_method = "by arith",
+   provenance =
+     {file = "src/HOL/ex/PresburgerEx.thy", line = 102, commit = commit},
+   representative = false}
+
 val raw_goals =
   map
     (fn (number, line) => entry number line (representative number))
-    source_index
+    source_index @
+  [presburger_ex_arith]
 
 val goals = benchDerive.prepare "linarith" raw_goals
 

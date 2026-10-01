@@ -74,17 +74,7 @@ val families : family list =
    {name = "Linarith", size = length benchLinarith.goals,
     slice = representative_count benchLinarith.goals,
     goals = benchLinarith.goals,
-    shortfalls = benchLinarith.shortfalls, run = benchLinarith.run},
-   {name = "Presburger", size = length benchPresburger.goals,
-    slice = representative_count benchPresburger.goals,
-    goals = benchPresburger.goals,
-    shortfalls = benchPresburger.shortfalls,
-    run = benchPresburger.run},
-   {name = "Algebra", size = length benchAlgebra.goals,
-    slice = representative_count benchAlgebra.goals,
-    goals = benchAlgebra.goals,
-    shortfalls = benchAlgebra.shortfalls,
-    run = benchAlgebra.run}]
+    shortfalls = benchLinarith.shortfalls, run = benchLinarith.run}]
 
 fun measure_family ({name, size, slice, shortfalls, run, ...} : family) =
   let
@@ -237,13 +227,11 @@ fun dropped_citations ({goals, ...} : family) =
   List.mapPartial
     (fn ({id, goal, source_method, provenance, ...}
            : benchLib.corpus_goal) =>
-      if not (String.isPrefix "src/HOL/" (#file provenance)) then NONE
-      else
-        case benchDerive.self_supplied_of
-               (#file provenance ^ ":" ^ Int.toString (#line provenance))
-               goal source_method of
-            [] => NONE
-          | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
+      case benchDerive.self_supplied_of
+             (#file provenance ^ ":" ^ Int.toString (#line provenance))
+             goal source_method of
+          [] => NONE
+        | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
     goals
 
 (* A citation the name table answers with [Unrepresented] names an
@@ -264,15 +252,13 @@ fun unrepresented_citations ({goals, ...} : family) =
       else kept @ [name]
   in
     List.mapPartial
-      (fn ({id, source_method, provenance, ...} : benchLib.corpus_goal) =>
-        if not (String.isPrefix "src/HOL/" (#file provenance)) then NONE
-        else
-          case List.foldl once []
-                 (List.filter absent
-                   (benchRecipe.cited_names
-                     (benchRecipe.parse source_method))) of
-              [] => NONE
-            | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
+      (fn ({id, source_method, ...} : benchLib.corpus_goal) =>
+        case List.foldl once []
+               (List.filter absent
+                 (benchRecipe.cited_names
+                   (benchRecipe.parse source_method))) of
+            [] => NONE
+          | names => SOME (id ^ " (" ^ String.concatWith ", " names ^ ")"))
       goals
   end
 
@@ -439,12 +425,10 @@ fun render () =
      withheld_section () @
      unrepresented_section () @
      ["## Source accounting\n\n",
-      "Source mining identified 1,070 relevant Isabelle results. Nine ",
+      "Source mining identified 1,036 relevant Isabelle results. Seven ",
       "pairs translated to the same HOL4 statement except for bound ",
-      "variable names, so they are tested once. This leaves 1,061 ",
-      "distinct source-derived results. Eleven existing HOL4 integer ",
-      "regression goals are also included, giving 1,072 accounted ",
-      "results in total:\n\n",
+      "variable names, so they are tested once. This leaves 1,029 ",
+      "distinct source-derived results:\n\n",
       "- ", executable, " are executable HOL4 benchmark goals.\n",
       "- ", unavailable, " could not be translated faithfully and are ",
       "listed by identifier and reason in the benchmark files.\n",
@@ -466,10 +450,7 @@ fun render () =
       "- **List/map** contains lists, finite maps, options, strings, ",
       "and product types.\n",
       "- **Linarith** contains linear arithmetic over natural numbers, ",
-      "integers, real numbers, and rational numbers.\n",
-      "- **Presburger** contains quantified additive arithmetic over ",
-      "natural numbers and integers.\n",
-      "- **Algebra** contains polynomial, ring, and field identities.\n\n",
+      "integers, real numbers, and rational numbers.\n\n",
       "| Family | Executable goals | Solved by assigned tactic | ",
       "Routine selftest goals |\n",
       "|---|---:|---:|---:|\n"] @
@@ -507,9 +488,8 @@ fun render () =
       "- **Assigned-tactic limitations** are executable goals for which ",
       "the assigned tactic failed or exceeded 30 seconds. Each one has ",
       "a dated record naming its root cause, in ",
-      "`benchmarks/benchSetShortfalls.sml`, ",
-      "`benchmarks/benchLibraryShortfalls.sml` or ",
-      "`benchmarks/benchAlgebra.sml`.\n",
+      "`benchmarks/benchSetShortfalls.sml` or ",
+      "`benchmarks/benchLibraryShortfalls.sml`.\n",
       "- **Unavailable translations** are source results that could not ",
       "be represented faithfully as HOL4 goals. They are not included ",
       "in the executable-goal count.\n",

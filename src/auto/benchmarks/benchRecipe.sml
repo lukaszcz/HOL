@@ -164,10 +164,7 @@ fun words tokens =
     go tokens []
   end
 
-(* [add:] is a simpset entry for every method that spells it,
-   [algebra] included: its [add:] theorems seed the simpset it
-   presimplifies the goal with before it normalizes, so an added
-   definition unfolds rather than arriving as a hypothesis. *)
+(* [add:] is a simpset entry for every method that spells it. *)
 fun modifier_of source head key names =
   case key of
       "add:" => SimpAdd names
@@ -349,7 +346,7 @@ fun method_heads ({methods, ...} : parsed) = map #name methods
 type resolver = {
   theorems : string -> benchLib.named_thm list,
   normalised_subject : string -> bool,
-  tactics : string -> term -> benchLib.tactic_id list,
+  tactic : string -> benchLib.tactic_id,
   ambient : string -> benchLib.method_arg list
 }
 
@@ -446,7 +443,7 @@ fun at_assumptions citation goal theorem =
             (citation, "no leading assumption of the goal matches a premise")
   end
 
-fun to_recipe ({theorems, normalised_subject, tactics, ambient} : resolver)
+fun to_recipe ({theorems, normalised_subject, tactic, ambient} : resolver)
               {goal, source} ({facts, unfolded, methods} : parsed) =
   let
     (* A citation resolved against the goal's assumptions is answered by
@@ -507,13 +504,7 @@ fun to_recipe ({theorems, normalised_subject, tactics, ambient} : resolver)
       end
     fun invoke ({name, modifiers, repeated} : method) =
       let
-        fun alternatives [] =
-              raise Unparseable (name, "names no HOL4 tactic")
-          | alternatives [identifier] = step modifiers identifier
-          | alternatives (identifier :: rest) =
-              benchLib.Otherwise (step modifiers identifier,
-                                  alternatives rest)
-        val applied = alternatives (tactics name goal)
+        val applied = step modifiers (tactic name)
       in
         if repeated then benchLib.Repeat applied else applied
       end

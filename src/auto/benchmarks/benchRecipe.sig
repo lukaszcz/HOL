@@ -73,18 +73,16 @@ sig
        the same way wherever a citation becomes a rewrite -- [simp add:]
        and [unfolding] alike.  See [benchLib.RewriteAddBottomUp]. *)
     normalised_subject : string -> bool,
-    tactics : string -> Term.term -> benchLib.tactic_id list,
+    tactic : string -> benchLib.tactic_id,
     ambient : string -> benchLib.method_arg list
   }
 
   (* The recipe the method denotes.  [resolver] supplies the HOL4 theorem
-     for an Isabelle name and the HOL4 tactics for a method name at this
-     goal; the goal is passed because Isabelle's [algebra] and [arith] are
-     polymorphic where HOL4's counterparts are carrier-indexed, and
-     [source] -- the goal's Isabelle line, "src/HOL/<theory>.thy:<line>"
-     -- because the ambient context answers to where the proof sits.  A method
-     naming more than one tactic becomes an [Otherwise] chain in the
-     order the resolver gives them. *)
+     for an Isabelle name and the HOL4 tactic for a method name; the goal
+     is passed because a citation can be resolved against its
+     assumptions, and [source] -- the goal's Isabelle line,
+     "src/HOL/<theory>.thy:<line>" -- because the ambient context
+     answers to where the proof sits. *)
   val to_recipe :
     resolver -> {goal : Term.term, source : string} -> parsed ->
     benchLib.method_recipe

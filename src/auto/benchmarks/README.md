@@ -20,17 +20,17 @@ The SML interfaces call the complete collection a `corpus`.  A `shortfall`
 is a dated record saying that a goal is outside the accepted scope, exposes
 a current tactic limitation, or could not be translated faithfully.  The
 selftest compares actual results with those records in both directions.
-`benchSetShortfalls`, `benchLibraryShortfalls` and `benchAlgebra` hold the
-current ledgers; each record names a root cause, not just an identifier.
+`benchSetShortfalls` and `benchLibraryShortfalls` hold the current
+ledgers; each record names a root cause, not just an identifier.
 
 Recipes are not authored.  `benchRecipe` parses the entry's Isabelle method
-string and `benchTactics` maps each method name to the HOL4 tactics it
-stands for, so a goal cannot be given an argument its source proof did not
-name.  A method that is itself a disjunction becomes one -- Isabelle's
-`algebra` is `ring_tac ORELSE ideal_tac`, and the recipe offers both in
-that order rather than reading the goal to pick a side.  A method string
-the parser does not understand is a hard error, never a silent fallback to
-a bare tactic.  `benchNames` is a single global table from
+string and `benchTactics` maps each method name to the `src/auto` tactic
+it stands for, so a goal cannot be given an argument its source proof did
+not name.  Only methods the layer has a counterpart for are in the table:
+Isabelle's `algebra` is not, and `arith` and `presburger` stand for
+`LINARITH_TAC`, the layer's one arithmetic tactic.  A method string the
+parser does not understand is a hard error, never a silent fallback to a
+bare tactic.  `benchNames` is a single global table from
 Isabelle theorem name to HOL4 theorem; it is keyed by name only and knows
 nothing about which goal is asking.  Where a citation's attribute
 resolves it against the enclosing lemma's assumptions --
@@ -84,11 +84,11 @@ executable goal and also tries selected alternative tactics -- counting a
 goal only where the alternative closed it and the assigned tactic did not.
 Alternative-tactic results never decide whether the test passes.
 
-Source mining produced 1,061 distinct executable Isabelle results after
-deduplicating translated statements up to bound-variable renaming.  Eleven
-existing HOL4 integer regression goals are added, for 1,072 executable goals
-in total.  They come from six Isabelle theories plus a handful of `ex/`
-files: this is Isabelle's base library, not Isabelle/HOL.
+Source mining produced 1,029 distinct Isabelle results after deduplicating
+translated statements up to bound-variable renaming; 1,027 are executable
+goals and two could not be translated faithfully.  They come from six
+Isabelle theories plus a handful of `ex/` files: this is Isabelle's base
+library, not Isabelle/HOL.
 
 Each goal is run under a wall-clock budget, enforced by `Timeout.apply`
 under thread attributes that admit asynchronous interrupts: a runaway
