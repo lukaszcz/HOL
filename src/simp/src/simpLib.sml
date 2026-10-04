@@ -19,6 +19,33 @@ structure Set = Binaryset
 
 type thname = KernelSig.kernelname
 
+val source_serial = ref 0
+fun source_token () = (source_serial := !source_serial + 1; !source_serial)
+type 'a source_slot = {item : 'a, token : int}
+fun source_slot item = {item=item, token=source_token ()}
+type source_origin =
+  {event : int, slot : int, component : int, conjunct : int}
+datatype rewrite_source = RewriteSource of
+  {origin : source_origin, rewrite : thname option * thm,
+   bound : (int ref * int) option}
+
+fun source_rewrite (RewriteSource {rewrite,...}) = rewrite
+
+fun rewrite_source_compare
+      (RewriteSource {origin=a,...},RewriteSource {origin=b,...}) =
+  Lib.pair_compare
+    (Lib.pair_compare (Int.compare,Int.compare),
+     Lib.pair_compare (Int.compare,Int.compare))
+    (((#event a,#slot a),(#component a,#conjunct a)),
+     ((#event b,#slot b),(#component b,#conjunct b)))
+
+fun same_rewrite_source
+      (RewriteSource {origin=o1,rewrite=(n1,t1),bound=b1},
+       RewriteSource {origin=o2,rewrite=(n2,t2),bound=b2}) =
+  o1 = o2 andalso n1 = n2 andalso aconv (concl t1) (concl t2) andalso
+  HOLset.equal (hypset t1, hypset t2) andalso
+  Option.map #2 b1 = Option.map #2 b2
+
 local open markerTheory in end;
 
 fun ERR x      = STRUCT_ERR "simpLib" x ;
@@ -48,7 +75,10 @@ type contextual_convdata =
    key : (term list * term) option,
    trace : int,
    conv : reducer_ctxt -> conv}
-type tagged_convdata = {thypart : string option, cd : contextual_convdata}
+type tagged_convdata =
+  {thypart : string option, cd : contextual_convdata,
+   source : (thname option * thm) option,
+   bound : (int ref * int) option}
 
 fun lift_convdata {name,key,trace,conv} : contextual_convdata =
   {name=name, key=key, trace=trace,
@@ -83,7 +113,9 @@ fun mk_rewr_convdata (nmopt,(thm,tag)) : tagged_convdata option = let
           NONE => (NONE, "rewrite:<anonymous>")
         | SOME (thypart,b) => (thypart, "rewrite:"^b)
 in
-  SOME {thypart = thypart,
+  SOME {thypart = thypart, source = SOME (nmopt, th),
+        bound = (case tag of
+                     UNBOUNDED => NONE | BOUNDED r => SOME (r, !r)),
         cd = {name  = nm,
               key   = SOME (free_varsl (hyp th),
                             lhs (#2 (strip_imp (concl th)))),
@@ -109,7 +141,8 @@ type relsimpdata = {refl: thm, trans:thm, weakenings:thm list,
 type conv_info =
   {name : string,
    conval : reducer_ctxt -> conv}
-type net_conv_info = {thypart : string option, ci : conv_info}
+type net_conv_info =
+  {thypart : string option, ci : conv_info, bound : (int ref * int) option}
 type net = net_conv_info Ho_Net.net
 type weakener_data =
   Travrules.preorder list * thm list * Traverse.reducer
@@ -128,8 +161,9 @@ and looper_entry = LooperEntry of
 and ssfrag = SSFRAG_CON of {
     name           : string option,
     convs          : tagged_convdata list,
-    rewrs          : (thname option * thm) list,
-    ac             : (thm * thm) list,
+    rewrs          : (thname option * thm) source_slot list,
+    ac             : (thm * thm) source_slot list,
+    views          : (rewrite_source * thm) list,
     filter         : (controlled_thm -> controlled_thm list) option,
     dprocs         : Traverse.reducer list,
     congs          : thm list,
@@ -138,7 +172,9 @@ and ssfrag = SSFRAG_CON of {
     unsafe_solvers : Traverse.ssolver list,
     safe_solvers   : Traverse.ssolver list
 }
-and history_item = ADDFRAG of ssfrag
+and history_item =
+    ADDFRAG of ssfrag * int *
+      (tagged_convdata * rewrite_source) list option * rewrite_source list
                  | DELETE_EVENT of rule_exclusion list
                  | ADDWEAKENER of weakener_data
                  | STRATEGY_EVENT of strategy_event
@@ -162,6 +198,8 @@ and simpset = SS of {
     mk_rewrs       : controlled_thm -> controlled_thm list,
     history        : history_item list,
     initial_net    : net,
+    rewrite_sources : (thname option * thm) list,
+    native_sources : rewrite_source list,
     dprocs         : reducer list,
     travrules      : travrules,
     limit          : int option,
@@ -188,25 +226,26 @@ fun ordinary_looper (name,apply) =
 
 fun updfrag z =
   let
-    fun from name convs rewrs ac filter dprocs congs relsimps loopers
+    fun from name convs rewrs ac views filter dprocs congs relsimps loopers
              unsafe_solvers safe_solvers =
-      {name=name, convs=convs, rewrs=rewrs, ac=ac, filter=filter,
+      {name=name, convs=convs, rewrs=rewrs, ac=ac, views=views, filter=filter,
        dprocs=dprocs, congs=congs, relsimps=relsimps, loopers=loopers,
        unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers}
     fun from' safe_solvers unsafe_solvers loopers relsimps congs
-              dprocs filter ac rewrs convs name =
-      from name convs rewrs ac filter dprocs congs relsimps loopers
+              dprocs filter views ac rewrs convs name =
+      from name convs rewrs ac views filter dprocs congs relsimps loopers
         unsafe_solvers safe_solvers
-    fun to f {name,convs,rewrs,ac,filter,dprocs,congs,relsimps,loopers,
+    fun to f {name,convs,rewrs,ac,views,filter,dprocs,congs,relsimps,loopers,
               unsafe_solvers,safe_solvers} =
-      f name convs rewrs ac filter dprocs congs relsimps loopers
+      f name convs rewrs ac views filter dprocs congs relsimps loopers
         unsafe_solvers safe_solvers
   in
-    FunctionalRecordUpdate.makeUpdate11 (from,from',to)
+    FunctionalRecordUpdate.makeUpdate12 (from,from',to)
   end z
 
 val empty_frag_data =
-  {name=NONE, convs=[], rewrs=[], ac=[], filter=NONE, dprocs=[], congs=[],
+  {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+   dprocs=[], congs=[],
    relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[]}
 val empty_ssfrag = SSFRAG_CON empty_frag_data
 
@@ -215,12 +254,19 @@ fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
     (updfrag empty_frag_data
        (Fld #name name)
        (Fld #convs
-          (map (fn c => {thypart=NONE,cd=lift_convdata c}) convs))
-       (Fld #rewrs rewrs) (Fld #ac ac) (Fld #filter filter)
+          (map (fn c => {thypart=NONE,cd=lift_convdata c,
+                        source=NONE,bound=NONE}) convs))
+       (Fld #rewrs (map source_slot rewrs))
+       (Fld #ac (map source_slot ac)) (Fld #filter filter)
        (Fld #dprocs dprocs) (Fld #congs (map normCong congs)) $$)
 
 fun ssf_upd_rewrs f (SSFRAG_CON s) =
-  SSFRAG_CON (updfrag s (Fld #rewrs (f (#rewrs s))) $$)
+  SSFRAG_CON
+    (updfrag s (Fld #rewrs (map source_slot (f (map #item (#rewrs s))))) $$)
+
+fun ssf_filter_rewrs keep (SSFRAG_CON s) =
+  SSFRAG_CON
+    (updfrag s (Fld #rewrs (List.filter (keep o #item) (#rewrs s))) $$)
 
 (* ----------------------------------------------------------------------
     maintain a global database of (named) ssfrags
@@ -260,22 +306,28 @@ fun name_ss s (SSFRAG_CON f) =
 fun rewrites rewrs =
   SSFRAG_CON
     (updfrag empty_frag_data
-       (Fld #rewrs (map (fn th => (NONE,th)) rewrs)) $$)
+       (Fld #rewrs (map (source_slot o pair NONE) rewrs)) $$)
 
 fun rewrites_with_names rewrs =
   SSFRAG_CON
-    (updfrag empty_frag_data (Fld #rewrs (map (apfst SOME) rewrs)) $$)
+    (updfrag empty_frag_data
+       (Fld #rewrs (map (source_slot o apfst SOME) rewrs)) $$)
+
+fun rewrite_views views =
+  SSFRAG_CON (updfrag empty_frag_data (Fld #views views) $$)
 
 fun dproc_ss dproc =
   SSFRAG_CON (updfrag empty_frag_data (Fld #dprocs [dproc]) $$)
 
 fun ac_ss aclist =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #ac aclist) $$)
+  SSFRAG_CON (updfrag empty_frag_data
+                (Fld #ac (map source_slot aclist)) $$)
 
 fun conv_ss conv =
   SSFRAG_CON
     (updfrag empty_frag_data
-       (Fld #convs [{thypart=NONE,cd=lift_convdata conv}]) $$)
+       (Fld #convs [{thypart=NONE,cd=lift_convdata conv,
+                    source=NONE,bound=NONE}]) $$)
 
 fun relsimp_ss rsdata =
   SSFRAG_CON (updfrag empty_frag_data (Fld #relsimps [rsdata]) $$)
@@ -291,7 +343,7 @@ fun safe_solver_ss solver =
   SSFRAG_CON (updfrag empty_frag_data (Fld #safe_solvers [solver]) $$)
 
 fun D (SSFRAG_CON s) = s;
-fun frag_rewrites ssf = map #2 (#rewrs (D ssf))
+fun frag_rewrites ssf = map (#2 o #item) (#rewrs (D ssf))
 
 fun add_named_rwt nth ssfrag = ssf_upd_rewrs (cons (apfst SOME nth)) ssfrag
 
@@ -312,10 +364,11 @@ fun merge_ss (s:ssfrag list) =
   SSFRAG_CON
     { name     = merge_names (map (#name o D) s),
       convs    = flatten (map (#convs o D) s),
-      rewrs    = flatten (map (#rewrs o D) s),
+      rewrs    = map (source_slot o #item) (flatten (map (#rewrs o D) s)),
       filter   = SOME (end_foldr (op oo) (mapfilter (the o #filter o D) s))
                  handle HOL_ERR _ => NONE,
-      ac       = flatten (map (#ac o D) s),
+      ac       = map (source_slot o #item) (flatten (map (#ac o D) s)),
+      views    = flatten (map (#views o D) s),
       dprocs   = flatten (map (#dprocs o D) s),
       congs    = flatten (map (#congs o D) s),
       relsimps = flatten (map (#relsimps o D) s),
@@ -366,22 +419,25 @@ val empty_excluded : string Binaryset.set = Binaryset.empty String.compare
    at each of them. *)
 fun updSS z =
   let
-    fun from mk_rewrs history initial_net dprocs travrules limit excluded
-             strategy =
+    fun from mk_rewrs history initial_net rewrite_sources native_sources
+             dprocs travrules limit excluded strategy =
       {mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
+       rewrite_sources=rewrite_sources, native_sources=native_sources,
        dprocs=dprocs, travrules=travrules, limit=limit, excluded=excluded,
        strategy=strategy}
     (* fields in reverse order to the above *)
-    fun from' strategy excluded limit travrules dprocs initial_net history
-              mk_rewrs =
+    fun from' strategy excluded limit travrules dprocs native_sources
+              rewrite_sources initial_net history mk_rewrs =
       {mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
+       rewrite_sources=rewrite_sources, native_sources=native_sources,
        dprocs=dprocs, travrules=travrules, limit=limit, excluded=excluded,
        strategy=strategy}
-    fun to f {mk_rewrs,history,initial_net,dprocs,travrules,limit,excluded,
-              strategy} =
-      f mk_rewrs history initial_net dprocs travrules limit excluded strategy
+    fun to f {mk_rewrs,history,initial_net,rewrite_sources,native_sources,
+              dprocs,travrules,limit,excluded,strategy} =
+      f mk_rewrs history initial_net rewrite_sources native_sources
+        dprocs travrules limit excluded strategy
   in
-    FunctionalRecordUpdate.makeUpdate8 (from, from', to)
+    FunctionalRecordUpdate.makeUpdate10 (from, from', to)
   end z
 
 fun ssupd_net f (SS s) =
@@ -393,17 +449,20 @@ val empty_strategy : strategy_data =
 
 val empty_ss =
   SS{mk_rewrs=fn x => [x], history=[], limit=NONE, initial_net=empty,
+     rewrite_sources=[], native_sources=[],
      dprocs=[], travrules=EQ_tr, excluded=empty_excluded,
      strategy=empty_strategy}
 
  fun ssfrags_of (SS x) =
-     List.mapPartial (fn ADDFRAG sf => SOME sf | _ => NONE) (#history x)
+     List.mapPartial
+       (fn ADDFRAG (sf,_,_,_) => SOME sf | _ => NONE) (#history x)
+
+fun rewrite_source_handles (SS s) = #native_sources s
 
 fun optprint NONE = "NONE"
   | optprint (SOME s) = "SOME "^s
-fun name_match ({thypart,ci}:net_conv_info) (* thing in simpset's net *) pats =
+fun entry_name_match (thypart, ssnm) pats =
     let (* true will lead to removal *)
-      val ssnm = #name ci
       fun check1 (patthyopt, patbase) =
           let
             val checknamepart =
@@ -418,6 +477,9 @@ fun name_match ({thypart,ci}:net_conv_info) (* thing in simpset's net *) pats =
     in
       List.exists check1 pats
     end
+
+fun name_match ({thypart,ci,...}:net_conv_info) pats =
+  entry_name_match (thypart, #name ci) pats
 
 (* A user key names a theorem in the kernel [Thy$Name] spelling, in the
    [Thy.Name] spelling, or with no theory part at all.  A dot is not
@@ -532,13 +594,29 @@ fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 fun delete_exclusions (excls : rule_exclusion list) (ss as SS s) =
     if null excls then ss
     else
+      let
+        val patterns = map #pattern excls
+        fun retained (nm, _) =
+          let
+            val (thy, name) =
+              case nm of NONE => (NONE, "<anonymous>")
+                       | SOME {Thy,Name} => (SOME Thy, Name)
+          in
+            not (entry_name_match (thy, "rewrite:" ^ name) patterns)
+          end
+      in
       SS (updSS s
             (Fld #initial_net
                (filter_net_by_exclusions excls (#initial_net s)))
+            (Fld #rewrite_sources
+               (List.filter retained (#rewrite_sources s)))
+            (Fld #native_sources
+               (List.filter (retained o source_rewrite) (#native_sources s)))
             (Fld #history (DELETE_EVENT excls :: #history s))
             (Fld #dprocs
                (filter_dprocs_by_names (map #original excls) (#dprocs s)))
             $$)
+      end
 
 fun exclusion_of_name p : rule_exclusion =
   {original = p, pattern = munge_simpset_name p}
@@ -576,10 +654,12 @@ fun remove_simps nms ss = ss -* nms
  val any = mk_var("x",Type.alpha);
 
  fun net_add_conv
-       {thypart,cd = data as {name,key,trace,conv}:contextual_convdata} =
+       {thypart,source,bound,
+        cd = data as {name,key,trace,conv}:contextual_convdata} =
      enter (option_cases #1 [] key,
             option_cases #2 any key,
-            {thypart = thypart, ci = {name = name, conval = USER_CONV data}})
+            {thypart = thypart, bound = bound,
+             ci = {name = name, conval = USER_CONV data}})
 
 (* itlist is like foldr, so that theorems get added to the context starting
    from the end of the list *)
@@ -1259,7 +1339,67 @@ fun mk_tactic_solver (name,tac) =
          SOME n => Binaryset.member(excluded, n)
        | NONE => false
 
- fun op++(ss as SS sset, f as SSFRAG_CON ssf) =
+ fun numbered f xs =
+   #2 (List.foldl (fn (x,(i,acc)) => (i+1, f (i,x)::acc))
+                  (1,[]) xs) |> List.rev
+
+ fun compile_native event mk_rewrs slot component item =
+   let
+     fun convert (conjunct,rw) =
+       case mk_rewr_convdata rw of
+           NONE => NONE
+         | SOME (cd as {source=SOME rewrite,bound,...}) =>
+             SOME (cd,RewriteSource
+               {origin={event=event,slot=slot,component=component,
+                        conjunct=conjunct},rewrite=rewrite,bound=bound})
+         | SOME _ => NONE
+   in
+     List.mapPartial I (numbered convert (mk_named_rewrs mk_rewrs item))
+   end
+
+ fun compile_native_rewrite event mk_rewrs {item=(nm,th),token} =
+   compile_native event mk_rewrs token 0 (nm,dest_tagged_rewrite th)
+
+ datatype rewrite_bundle = RewriteBundle of
+   {parts : (ssfrag * int *
+             (tagged_convdata * rewrite_source) list) list,
+    rules : (thm * rewrite_source list) list,
+    context : thm list,
+    native : (tagged_convdata * rewrite_source) list}
+
+ (* Compilation alone cannot prime an ambient reducer with supplied facts. *)
+ fun prepare_rewrite_bundle (SS data) theorems =
+   let
+     val fragment = name_ss "PREPARED_REWRITES" (rewrites theorems)
+     val event = source_token ()
+     fun rule (slot as {item=(_,th),...}) =
+       (th,compile_native_rewrite event (#mk_rewrs data) slot)
+     val compiled = map rule (#rewrs (D fragment))
+   in
+     RewriteBundle
+       {parts=[(fragment,event,List.concat (map #2 compiled))],
+        rules=map (fn (th,rules) => (th,map #2 rules)) compiled,
+        context=map (#1 o dest_tagged_rewrite) theorems,
+        native=List.concat (map #2 compiled)}
+   end
+
+ fun rewrite_bundle_rules (RewriteBundle {rules,...}) = rules
+
+ (* Combine already compiled bindings; preserve each event and control. *)
+ fun combine_rewrite_bundles bundles =
+   let
+     val data = map (fn RewriteBundle data => data) bundles
+     val parts = List.concat (map #parts data)
+     val events = map #2 parts
+     val _ = length (Lib.mk_set events) = length events orelse
+       raise ERR ("combine_rewrite_bundles","duplicate binding")
+   in RewriteBundle
+        {parts=parts,rules=List.concat (map #rules data),
+         context=List.concat (map #context data),
+         native=List.concat (map #native data)} end
+
+ fun add_frag_native native_override prepared suspended rebind event
+       (ss as SS sset, f as SSFRAG_CON ssf) =
    if is_excluded ss f then ss
    else let
    val mk_rewrs' = #mk_rewrs sset
@@ -1267,14 +1407,40 @@ fun mk_tactic_solver (name,tac) =
    val travrules = #travrules sset
    val initial_net = #initial_net sset
    val dprocs' = #dprocs sset
-   val {convs,rewrs,filter,ac,dprocs,congs,relsimps,...} = ssf
+   val {convs,rewrs,filter,ac,views,dprocs,congs,relsimps,...} = ssf
    val mk_rewrs = case filter of
                     SOME f => f oo mk_rewrs'
                   | _ => mk_rewrs'
-   val crewrs = map (fn (nmopt,th) => (nmopt, dest_tagged_rewrite th)) rewrs
-   val rewrs' : (thname option * controlled_thm) list =
-       flatten (map (mk_named_rewrs mk_rewrs') (ac_rewrites ac @ crewrs))
-   val newconvdata = convs @ List.mapPartial mk_rewr_convdata rewrs'
+   fun compile_ac {item,token} =
+     flatten (numbered
+       (fn (i,rw) => compile_native event mk_rewrs' token i rw)
+       (mk_ac item []))
+   val all_native = case native_override of
+       SOME compiled => compiled
+     | NONE => flatten
+         (map compile_ac ac @
+          map (compile_native_rewrite event mk_rewrs') rewrs)
+   val retained = if null suspended then all_native else List.filter
+     (fn (_,source) => not (List.exists
+       (fn removed => same_rewrite_source (removed,source)) suspended))
+     all_native
+   val native = case rebind of NONE => retained | SOME bind => map bind retained
+   val native_sources = map #2 native @ #native_sources sset
+   fun compile_view (source,view) =
+     case List.find (fn current => same_rewrite_source (source,current))
+                    native_sources of
+         NONE => NONE
+       | SOME (RewriteSource {rewrite=(nm,_),bound,...}) =>
+           let
+             val control =
+               case bound of NONE => UNBOUNDED | SOME (r,_) => BOUNDED r
+           in
+             case mk_rewr_convdata (nm,(view,control)) of
+                 NONE => NONE
+               | SOME {thypart,cd,source,...} =>
+                   SOME {thypart=thypart,cd=cd,source=source,bound=bound}
+           end
+   val newconvdata = convs @ map #1 native @ List.mapPartial compile_view views
    val net = net_add_convs initial_net newconvdata
    fun travrel (TRAVRULES{relations,...}) = relations
    val sset_rels = travrel travrules
@@ -1282,7 +1448,41 @@ fun mk_tactic_solver (name,tac) =
       assume the provided dprocs in the frag have already been
       primed *)
    val relreducers = map rsd_reducer relsimps
-   val new_dprocs = map (Traverse.addctxt (map #2 rewrs)) dprocs' @ dprocs @
+   fun by_slot sources = List.foldl
+     (fn ((_,source as RewriteSource {origin,...}),found) =>
+       if #component origin <> 0 then found
+       else
+         let val slot = #slot origin
+             val previous = Option.getOpt (Binarymap.peek (found,slot),[])
+         in Binarymap.insert (found,slot,source::previous) end)
+     (Binarymap.mkDict Int.compare) sources
+   fun reduced_context () =
+     let
+       val original_slots = by_slot all_native
+       val retained_slots = by_slot native
+       fun context {item=(_,theorem),token} =
+         let
+           val original = Option.getOpt
+             (Binarymap.peek (original_slots,token),[])
+           val retained = Option.getOpt
+             (Binarymap.peek (retained_slots,token),[])
+           fun payload (RewriteSource {rewrite=(_,th),bound,...}) =
+             case bound of NONE => th
+               | SOME (_,declared) => BoundedRewrites.Ntimes th declared
+         in
+           if length original = length retained then [theorem]
+           else map payload (List.rev retained)
+         end
+     in
+       List.concat (map context rewrs)
+     end
+   val context_thms = if null suspended then map (#2 o #item) rewrs
+                      else reduced_context ()
+   val context_thms =
+     if prepared then map (#1 o dest_tagged_rewrite) context_thms
+     else context_thms
+   val new_dprocs =
+     map (Traverse.addctxt context_thms) dprocs' @ dprocs @
                     relreducers
 
    val reltravs = map rsd_travrules relsimps
@@ -1298,8 +1498,13 @@ fun mk_tactic_solver (name,tac) =
  in
    SS (updSS sset
          (Fld #mk_rewrs mk_rewrs)
-         (Fld #history (ADDFRAG f :: history))
+         (Fld #history (ADDFRAG
+            (f,event,if prepared then SOME all_native else NONE,suspended)
+            :: history))
          (Fld #initial_net net)
+         (Fld #rewrite_sources
+            (List.mapPartial #source newconvdata @ #rewrite_sources sset))
+         (Fld #native_sources native_sources)
          (Fld #dprocs new_dprocs)
          (Fld #travrules
             (merge_travrules
@@ -1308,16 +1513,76 @@ fun mk_tactic_solver (name,tac) =
          $$)
  end
 
+ fun add_frag prepared event args =
+   add_frag_native NONE prepared [] NONE event args
+
+ fun op++ args = add_frag false (source_token ()) args
+
+ fun install_rewrite_bundle (RewriteBundle {parts,...}) views
+       (ss as SS data) =
+   let
+     val events = map #2 parts
+     val _ = not (List.exists
+       (fn ADDFRAG (_,previous,_,_) => Lib.mem previous events | _ => false)
+       (#history data)) orelse
+       raise ERR ("install_rewrite_bundle","binding already installed")
+     fun install ((fragment,event,native),SS data) =
+       let
+         val name = valOf (frag_name fragment)
+         val excluded = Binaryset.delete (#excluded data,name)
+           handle NotFound => #excluded data
+         val owned = List.filter
+           (fn (source,_) => List.exists
+             (fn (_,original) => same_rewrite_source (source,original))
+             native) views
+         val fragment =
+           SSFRAG_CON (updfrag (D fragment) (Fld #views owned) $$)
+       in add_frag_native (SOME native) true [] NONE event
+            (SS (updSS data (Fld #excluded excluded) $$),fragment) end
+   in List.foldl install ss parts end
+
 val mk_simpset = foldl (fn (f,ss) => ss ++ f) empty_ss
 
 fun set_mk_rewrs mk_rewrs (SS s) =
   SS (updSS s (Fld #mk_rewrs mk_rewrs) $$)
 
-fun build_from_history h0 =
+(* Ordinary replay resets declared quotas, including a quota shared by
+   several compiled conjuncts. Prepared shapes need no rewrite-maker call. *)
+fun freshen_prepared_native native =
+  let
+    val counters = ref []
+    fun fresh counter declared =
+      case List.find (fn (old,_) => Portable.pointer_eq (old,counter))
+                     (!counters) of
+          SOME (_,current) => current
+        | NONE =>
+            let val current = ref declared
+            in counters := (counter,current) :: !counters; current end
+    fun reset (pair as (_,RewriteSource {origin,rewrite,bound})) =
+      case bound of
+          NONE => pair
+        | SOME (counter,declared) =>
+            let
+              val current = fresh counter declared
+              val (name,theorem) = rewrite
+              val data = valOf
+                (mk_rewr_convdata (name,(theorem,BOUNDED current)))
+            in (data,RewriteSource
+                 {origin=origin,rewrite=rewrite,bound=SOME (current,declared)})
+            end
+  in map reset native end
+
+fun build_from_history_with rebind h0 =
     let
       fun foldthis (hi, ss) =
           case hi of
-              ADDFRAG sf => ss ++ sf
+              ADDFRAG (sf,event,cached,suspended) =>
+                let
+                  val native = case rebind of
+                      NONE => Option.map freshen_prepared_native cached
+                    | SOME _ => cached
+                in add_frag_native native (Option.isSome cached)
+                     suspended rebind event (ss,sf) end
             | DELETE_EVENT excls => delete_exclusions excls ss
             | ADDWEAKENER wd => add_weakener wd ss
             | STRATEGY_EVENT event => strategy_op event ss
@@ -1328,24 +1593,93 @@ fun build_from_history h0 =
       List.foldl foldthis empty_ss (List.rev h0)
     end
 
+fun build_from_history h0 = build_from_history_with NONE h0
+
 fun setexcluded e (SS s) =
   SS (updSS s (Fld #excluded e) $$)
 
-fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
+fun rebind_source_controls current (pair as (_,source)) =
+  case Binarymap.peek (current,source) of
+      NONE => pair
+    | SOME (previous as RewriteSource {bound,...}) =>
+        if not (same_rewrite_source (previous,source)) then pair
+        else
+          case bound of
+              NONE => pair
+            | SOME (counter,_) =>
+                let
+                  val RewriteSource {origin,rewrite,...} = source
+                  val (name,theorem) = rewrite
+                in
+                  case mk_rewr_convdata
+                         (name,(theorem,BOUNDED counter)) of
+                      NONE => raise ERR ("rebind_source_controls",
+                        "retained source is no longer a rewrite")
+                    | SOME {thypart,cd,source=statement,...} =>
+                        ({thypart=thypart,cd=cd,source=statement,
+                          bound=bound},
+                         RewriteSource
+                           {origin=origin,rewrite=rewrite,bound=bound})
+                end
+
+fun suspend_rewrite_sources [] ss = ss
+  | suspend_rewrite_sources requested (ss as SS data) =
+    let
+      val current = List.foldl
+        (fn (source,found) => Binarymap.insert (found,source,source))
+        (Binarymap.mkDict rewrite_source_compare) (#native_sources data)
+      fun active source =
+        case Binarymap.peek (current,source) of
+            SOME installed =>
+              if same_rewrite_source (source,installed) then SOME installed
+              else NONE
+          | NONE => NONE
+      val removed = List.mapPartial active requested
+      val removed = HOLset.listItems
+        (HOLset.addList (HOLset.empty rewrite_source_compare,removed))
+      fun suspend (ADDFRAG (fragment,event,prepared,previous)) =
+            ADDFRAG (fragment,event,prepared,
+              List.filter
+                (fn RewriteSource {origin,...} => #event origin = event)
+                removed @ previous)
+        | suspend item = item
+      val rebind = rebind_source_controls current
+    in
+      if null removed then ss
+      else build_from_history_with (SOME rebind) (map suspend (#history data))
+             |> fupdlimit (fn _ => #limit data)
+             |> setexcluded (#excluded data)
+    end
+
+fun remove_ssfrags_with_controls preserve names
+      (SS{history,limit,excluded,native_sources,...}) =
     let
       val s = Set.addList (Binaryset.empty String.compare, names)
       val nil_included = Set.member(s, "")
       fun member (SSFRAG_CON{name = SOME n,...}) = Binaryset.member(s,n)
         | member (SSFRAG_CON{name = NONE,...}) = nil_included
-      fun filterthis (hi as ADDFRAG f) = not(member f)
+      fun filterthis (ADDFRAG (f,_,_,_)) = not(member f)
         | filterthis hi = true
       val history' = List.filter filterthis history
       val _ = length history' < length history orelse
               raise Conv.UNCHANGED
+      val rebind = if not preserve then NONE else
+        SOME (rebind_source_controls (List.foldl
+          (fn (source as RewriteSource {bound,...},found) =>
+            case bound of
+                NONE => found
+              | SOME _ => Binarymap.insert (found,source,source))
+          (Binarymap.mkDict rewrite_source_compare) native_sources))
     in
-      build_from_history history' |> fupdlimit (fn _ => limit)
-                                  |> setexcluded excluded
+      build_from_history_with rebind history'
+        |> fupdlimit (fn _ => limit) |> setexcluded excluded
     end
+
+fun remove_ssfrags names ss = remove_ssfrags_with_controls false names ss
+
+(* An invocation replay shares each compatible surviving native counter. *)
+fun remove_ssfrags_preserving_controls names ss =
+  remove_ssfrags_with_controls true names ss
 
 (* Drops from every fragment the rewrites a predicate rejects, leaving
    the rest of the simpset's history in place.  Rebuilding a simpset
@@ -1357,21 +1691,42 @@ fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
 
    Returns the simpset itself where the predicate rejects nothing, so
    the common case costs no replay, and never raises Conv.UNCHANGED. *)
-fun filter_rewrites keep (ss as SS{history,limit,excluded,...}) =
+fun filter_rewrites_with_controls preserve keep
+      (ss as SS{history,limit,excluded,native_sources,...}) =
     let
-      fun filtered (ADDFRAG f) = ADDFRAG (ssf_upd_rewrs (List.filter keep) f)
+      fun filtered (ADDFRAG (f,event,cached,suspended)) =
+            let
+              val fragment = ssf_filter_rewrs keep f
+              val slots = Binaryset.addList (Binaryset.empty Int.compare,
+                map #token (#rewrs (D fragment)) @
+                map #token (#ac (D fragment)))
+              fun retained (_,RewriteSource {origin,...}) =
+                Binaryset.member (slots,#slot origin)
+            in ADDFRAG (fragment,event,
+                 Option.map (List.filter retained) cached,suspended) end
         | filtered item = item
       fun rewrite_count items =
           List.foldl
-            (fn (ADDFRAG f, n) => n + length (frag_rewrites f)
+            (fn (ADDFRAG (f,_,_,_), n) => n + length (frag_rewrites f)
               | (_, n) => n)
             0 items
       val history' = map filtered history
     in
       if rewrite_count history' = rewrite_count history then ss
-      else build_from_history history' |> fupdlimit (fn _ => limit)
-                                       |> setexcluded excluded
+      else
+        let
+          val rebind = if not preserve then NONE else
+            SOME (rebind_source_controls (List.foldl
+              (fn (source as RewriteSource {bound,...},found) =>
+                case bound of NONE => found
+                  | SOME _ => Binarymap.insert (found,source,source))
+              (Binarymap.mkDict rewrite_source_compare) native_sources))
+        in build_from_history_with rebind history'
+             |> fupdlimit (fn _ => limit) |> setexcluded excluded end
     end
+
+val filter_rewrites = filter_rewrites_with_controls false
+val filter_rewrites_preserving_controls = filter_rewrites_with_controls true
 
 (* Like `remove_ssfrags`, but additionally records the names so that any
    subsequent `++` of a fragment with one of those names is silently
@@ -1393,7 +1748,7 @@ fun exclude_ssfrags names (ss as SS{history,limit,excluded,...}) =
       fun isexcl (SSFRAG_CON{name = SOME n,...}) =
             Binaryset.member(excluded',n)
         | isexcl (SSFRAG_CON{name = NONE,...}) = nil_included
-      fun filterthis (hi as ADDFRAG f) = not(isexcl f)
+      fun filterthis (ADDFRAG (f,_,_,_)) = not(isexcl f)
         | filterthis hi = true
       val history' = List.filter filterthis history
     in
@@ -1426,10 +1781,82 @@ fun clear_rules (SS s) =
     SS (updSS s
           (Fld #history history)
           (Fld #initial_net empty)
+          (Fld #rewrite_sources [])
+          (Fld #native_sources [])
           (Fld #dprocs [])
           (Fld #travrules EQ_tr)
           (Fld #strategy strategy)
           $$)
+  end
+
+(* Conversion identities survive replay; deletions affect their keys too. *)
+fun rewrite_context_changes (SS old,SS current) =
+  let
+    fun snapshot history =
+      let
+        fun scan [] _ convs structural makers =
+              (convs,structural,makers)
+          | scan (item::rest) excluded convs structural makers =
+              case item of
+                  DELETE_EVENT excls =>
+                    scan rest (map #pattern excls @ excluded)
+                         convs structural makers
+                | ADDFRAG (SSFRAG_CON f,event,_,_) =>
+                    let
+                      fun add ([],_,found) = found
+                        | add ({thypart,cd={name,key,...},...}::cs,i,found) =
+                            if entry_name_match (thypart,name) excluded then
+                              add (cs,i+1,found)
+                            else add (cs,i+1,((event,i),key)::found)
+                      val special =
+                        not (null (#ac f) andalso null (#dprocs f) andalso
+                             null (#congs f) andalso null (#relsimps f) andalso
+                             null (#views f)) orelse Option.isSome (#filter f)
+                    in
+                      scan rest excluded (add (#convs f,1,convs))
+                        (if special then item::structural else structural)
+                        makers
+                    end
+                | ADDWEAKENER _ =>
+                    scan rest excluded convs (item::structural) makers
+                | SET_MK_REWRS f =>
+                    scan rest excluded convs structural (f::makers)
+                | _ => scan rest excluded convs structural makers
+      in scan history [] [] [] [] end
+    val (old_convs,old_structure,old_makers) = snapshot (#history old)
+    val (new_convs,new_structure,new_makers) = snapshot (#history current)
+    fun same_prepared (NONE,NONE) = true
+      | same_prepared (SOME a,SOME b) = Portable.pointer_eq (a,b)
+      | same_prepared _ = false
+    fun same_structure (ADDFRAG (_,a,p,_),ADDFRAG (_,b,q,_)) =
+          a = b andalso same_prepared (p,q)
+      | same_structure (a,b) = Portable.pointer_eq (a,b)
+    fun absent others (identity,key) =
+      not (List.exists (fn (other,_) => identity = other) others)
+    val changed = List.filter (absent new_convs) old_convs @
+                  List.filter (absent old_convs) new_convs
+    val old_strategy = #strategy old
+    val new_strategy = #strategy current
+    fun same_option (NONE,NONE) = true
+      | same_option (SOME a,SOME b) = Portable.pointer_eq (a,b)
+      | same_option _ = false
+    val strategy_changed =
+      #cond_depth old_strategy <> #cond_depth new_strategy orelse
+      not (same_option
+        (#subgoaler old_strategy,#subgoaler new_strategy)) orelse
+      not (same_option (#term_ord old_strategy,#term_ord new_strategy)) orelse
+      not (ListPair.allEq Portable.pointer_eq
+        (#unsafe_solvers old_strategy,#unsafe_solvers new_strategy))
+    val rebuild =
+      #limit old <> #limit current orelse strategy_changed orelse
+      not (Portable.pointer_eq (#dprocs old,#dprocs current)) orelse
+      not (ListPair.allEq same_structure (old_structure,new_structure)) orelse
+      not (ListPair.allEq Portable.pointer_eq (old_makers,new_makers)) orelse
+      List.exists (fn (_,key) => not (Option.isSome key)) changed
+  in
+    {keys=List.mapPartial #2 changed, rebuild=rebuild,
+     context_sensitive=not (null (#dprocs old) andalso
+                            null (#dprocs current))}
   end
 
 (*---------------------------------------------------------------------------*)
@@ -1458,7 +1885,7 @@ fun clear_rules (SS s) =
      List.mapPartial mk_rewr_convdata rwts
    end
 
- fun rewriter_for_ss_prepared
+ fun rewriter_for_ss_prepared traversal
        (SS{mk_rewrs,travrules,initial_net,...}) prepared = let
    val prepared_net =
      net_add_convs initial_net (prepared_convdata mk_rewrs prepared)
@@ -1477,15 +1904,25 @@ fun clear_rules (SS s) =
      val net = (raise context) handle CONVNET net => net
      val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
                  term_ord=term_ord}
+     (* A protected partial application must also survive the ETA fragment. *)
+     fun apply_entry ({ci = {name,conval},...} : net_conv_info) =
+       case traversal of
+           ChildFirst policy =>
+             if name = "ETA_CONV (eta reduction)" andalso
+                is_comb tm andalso is_abs (rand tm) andalso
+                Traverse.keep_abstraction policy tm then
+               raise UNCHANGED
+             else conval ctxt tm
+         | ParentFirst => conval ctxt tm
    in
-     tryfind (fn {ci = {conval,...},...} => conval ctxt tm) (lookup tm net)
+     tryfind apply_entry (lookup tm net)
    end
    in CONTEXT_REDUCER
         {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
          initial=CONVNET prepared_net}
    end;
 
- fun traversedata_for_ss_prepared
+ fun traversedata_for_ss_prepared traversal
        (ss as (SS ssdata)) (prepared : prepared_rewrites)
        : Traverse.traverse_data =
    let
@@ -1494,7 +1931,7 @@ fun clear_rules (SS s) =
        else
          map (Traverse.addctxt (source_thms prepared)) (#dprocs ssdata)
    in
-      {rewriters=[rewriter_for_ss_prepared ss prepared],
+      {rewriters=[rewriter_for_ss_prepared traversal ss prepared],
        dprocs=dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
@@ -1514,11 +1951,13 @@ fun clear_rules (SS s) =
        term_ord= #term_ord strategy}
    end;
 
- fun xtraversedata_for_ss_prepared ss prepared : Traverse.xtraverse_data =
-   (traversedata_for_ss_prepared ss prepared, traverseconfig_for_ss ss);
+ fun xtraversedata_for_ss_prepared traversal ss prepared
+       : Traverse.xtraverse_data =
+   (traversedata_for_ss_prepared traversal ss prepared,
+    traverseconfig_for_ss ss);
 
- fun traversedata_for_ss ss = traversedata_for_ss_prepared ss [];
- fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ss [];
+ fun traversedata_for_ss ss = traversedata_for_ss_prepared ParentFirst ss [];
+ fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ParentFirst ss [];
 
  fun SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context =
    Traverse.TRAVERSE_WITH_CONTEXT traversal xdata
@@ -1641,7 +2080,7 @@ fun process_tags0 {report} ss thl =
             SSFRAG_CON
               (updfrag empty_frag_data
                  (Fld #name (SOME "Cong and/or AC"))
-                 (Fld #ac acs)
+                 (Fld #ac (map source_slot acs))
                  (Fld #congs congs) $$)
           (* Cong/AC is named but never user-excludable; SF-derived frags
              go through force_add so they override any active exclusion. *)
@@ -1664,18 +2103,136 @@ fun process_tags0 {report} ss thl =
 fun process_tags ss thl = process_tags0 {report=true} ss thl
 fun process_asm_tags ss thl = process_tags0 {report=false} ss thl
 
+fun prepare_rewrite_arguments (ss as SS original) thl =
+  let
+    val (prepared as SS data,rewrites) = process_tags ss thl
+    val retained =
+      if Portable.pointer_eq (ss,prepared) then prepared
+      else
+        let
+          val controls = List.foldl
+            (fn (source as RewriteSource {bound,...},found) =>
+              case bound of NONE => found
+                | SOME _ => Binarymap.insert (found,source,source))
+            (Binarymap.mkDict rewrite_source_compare)
+            (#native_sources original)
+        in
+          if Binarymap.numItems controls = 0 then prepared
+          else build_from_history_with
+            (SOME (rebind_source_controls controls)) (#history data)
+            |> fupdlimit (fn _ => #limit data)
+            |> setexcluded (#excluded data)
+        end
+  in (retained,rewrites) end
+
+(* Compiled sources reflect filters and exclusions; additions share tails. *)
+fun rewrite_sources ss thl =
+  let
+    val (SS data, supplied) = process_asm_tags ss thl
+  in
+    (#rewrite_sources data, map (#1 o dest_tagged_rewrite) supplied)
+  end
+
 fun SIMP_CONV ss l tm =
   let val (ss', l') = process_tags ss l
   in TRY_CONV (SIMP_QCONV ss' l') tm
   end;
 
-fun SIMP_CONV_CHILD_FIRST charge ss l tm =
+fun SIMP_CONV_CHILD_FIRST policy ss l tm =
   let val (ss', l') = process_tags ss l
   in
     TRY_CONV
       (SIMP_QCONV_WITH_XDATA
-         (ChildFirst charge) (xtraversedata_for_ss ss') l' []) tm
+         (ChildFirst policy)
+         (xtraversedata_for_ss_prepared (ChildFirst policy) ss' []) l' []) tm
   end;
+
+fun prepare_child_first_with_observer observer
+      (policy : Traverse.child_first_policy) (ss as SS data) =
+  let
+    val callback_failure = ref (NONE : exn option)
+    fun protected callback argument =
+      case !callback_failure of
+          SOME e => raise e
+        | NONE => callback argument
+            handle e => (callback_failure := SOME e; raise e)
+    val policy =
+      {charge=protected (#charge policy),
+       keep_abstraction= #keep_abstraction policy}
+    val observer = Option.map protected observer
+    val xdata = xtraversedata_for_ss_prepared (ChildFirst policy) ss []
+    val bounds = Ho_Net.fold'
+      (fn ({bound,...} : net_conv_info) => fn found =>
+        case bound of NONE => found | SOME allowance => allowance :: found)
+      (#initial_net data) []
+    fun scoped conversion tm =
+      let
+        val saved = map (fn (r, _) => (r, !r)) bounds
+        val previous_failure = !callback_failure
+        fun restore () =
+          (List.app (fn (r, n) => r := n) saved;
+           callback_failure := previous_failure)
+        fun run argument =
+          let
+            val _ = callback_failure := NONE
+            val _ = List.app (fn (r, declared) => r := declared) bounds
+            val theorem = conversion argument
+          in
+            case !callback_failure of
+                NONE => theorem | SOME e => raise e
+          end
+          handle e =>
+            (case !callback_failure of
+                 NONE => raise e | SOME original => raise original)
+      in
+        Portable.finally restore run tm
+      end
+    val traversal =
+      case observer of
+          NONE => (fn premises =>
+            SIMP_QCONV_WITH_XDATA (ChildFirst policy) xdata premises [])
+        | SOME visit => (fn premises =>
+            Traverse.CHILD_FIRST_WITH_OBSERVER visit policy xdata
+              {reducer_context=premises, solver_context=[]})
+    fun child premises = QCONV (TRY_CONV (traversal premises))
+    fun observed conversion tm =
+      case observer of
+          NONE => conversion tm
+        | SOME visit =>
+            let
+              val _ = visit tm
+              val theorem = conversion tm
+              val _ = visit (boolSyntax.rhs (concl theorem))
+            in theorem end
+    fun opaque_fragment (SSFRAG_CON {congs,relsimps,...}) =
+      not (null congs andalso null relsimps)
+    val opaque = not (null (#dprocs data)) orelse
+                 List.exists opaque_fragment (ssfrags_of ss)
+    fun reducible tm =
+      not (null (Ho_Net.lookup tm (#initial_net data))) orelse
+      (is_comb tm andalso
+       (is_abs (rator tm) orelse
+        reducible (rator tm) orelse reducible (rand tm))) orelse
+      (is_abs tm andalso reducible (#2 (dest_abs tm)))
+    fun arguments_reducible tm =
+      if is_comb tm then
+        (is_abs (rand tm) andalso
+         not (Traverse.keep_abstraction policy tm)) orelse
+        reducible (rand tm) orelse arguments_reducible (rator tm)
+      else if is_abs tm then reducible (#2 (dest_abs tm))
+      else false
+  in
+    {normalize = fn premises => scoped (observed (child premises)),
+     arguments = fn premises => scoped (observed
+       (Traverse.NORMALIZE_ARGUMENTS policy (child premises))),
+     may_reduce_arguments = fn tm => opaque orelse arguments_reducible tm}
+  end;
+
+fun prepare_child_first policy =
+  prepare_child_first_with_observer NONE policy;
+
+fun prepare_child_first_observed observe policy =
+  prepare_child_first_with_observer (SOME observe) policy;
 
 fun SIMP_PROVE ss l t =
   let val (ss', l') = process_tags ss l
@@ -1813,8 +2370,9 @@ fun gen_simp_tac_with_xdata traversal
 fun GEN_SIMP_TAC mode =
   gen_simp_tac_with_xdata ParentFirst xtraversedata_for_ss [] mode
 
-fun GEN_SIMP_TAC_CHILD_FIRST charge mode =
-  gen_simp_tac_with_xdata (ChildFirst charge) xtraversedata_for_ss [] mode
+fun GEN_SIMP_TAC_CHILD_FIRST policy mode =
+  gen_simp_tac_with_xdata (ChildFirst policy)
+    (fn ss => xtraversedata_for_ss_prepared (ChildFirst policy) ss []) [] mode
 
 fun ASM_SIMP_TAC ss = GEN_SIMP_TAC {safe=false} ss
 val asm_simp_tac = ASM_SIMP_TAC
@@ -1946,13 +2504,13 @@ fun then_annotated (goals,validation) next ctxt =
 fun rotate_assumption cfg =
     popper_of cfg (BF_ASSUME_TAC (not (#oldestfirst cfg)))
 
-fun counted_psr traversal cfg ss xdata_of solver_context g ctxt =
+fun counted_psr traversal cfg ss xdata_of solver_context assumptions g ctxt =
     let
       (* [simplify] runs inside a callback, so what it learns about the
          assumption is smuggled out through this cell. *)
       val outcome = ref (NONE : {changed:bool, expected:goal list} option)
       fun simplify th =
-        ASSUM_LIST
+        assumptions
           (fn asms => fn popped_goal => fn ctxt =>
              let
                val (invocation_ss,reducer_context) =
@@ -1983,7 +2541,7 @@ fun counted_psr traversal cfg ss xdata_of solver_context g ctxt =
       (map (fn goal => (goal,info)) goals,validation)
     end
 
-fun counted_pass traversal cfg ss xdata_of solver_context initial_k
+fun counted_pass traversal cfg ss xdata_of solver_context assumptions initial_k
                  (g as (asl,_)) ctxt =
     let
       val n = length asl
@@ -2001,7 +2559,7 @@ fun counted_pass traversal cfg ss xdata_of solver_context initial_k
                 in (map (fn g => (g,info)) goals,validation)
                 end
               else counted_psr traversal cfg ss xdata_of
-                     solver_context goal ctxt
+                     solver_context assumptions goal ctxt
             fun next {changed,structural} =
               let
                 val k =
@@ -2022,17 +2580,61 @@ fun counted_pass traversal cfg ss xdata_of solver_context initial_k
       loop initial g ctxt
     end
 
-fun gen_global_simp_tac_with traversal mode
+fun gen_global_simp_tac_with_bound traversal bound mode
       ({base,concl_in_fixpoint,imp_rebuild,imp_premises} : xsimptac_config)
       ss0 =
+  let
+    val (bound_context,bound_controls) = case bound of
+        NONE => ([],NONE)
+      | SOME (RewriteBundle {context,native,...}) =>
+          let
+            val controls = List.foldl
+              (fn ((_,source as RewriteSource {bound,...}),found) =>
+                case bound of NONE => found
+                  | SOME _ => Binarymap.insert (found,source,source))
+              (Binarymap.mkDict rewrite_source_compare) native
+          in (context,if Binarymap.numItems controls = 0 then NONE
+                      else SOME controls) end
+    (* Only marker-adjusted copies need replay; marker-free passes share ss0. *)
+    fun retain_bound_controls (ss as SS data) =
+      case bound_controls of
+          NONE => ss
+        | SOME controls =>
+            if Portable.pointer_eq (ss0,ss) then ss
+            else build_from_history_with
+              (SOME (rebind_source_controls controls)) (#history data)
+              |> fupdlimit (fn _ => #limit data)
+              |> setexcluded (#excluded data)
+  in
     markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
         markerLib.LLABEL_RES_THEN (
           fn thl =>
              let
+               (* Tactic-only assumption controls are not rewrite tags.
+                  Bound passes retain them for each changing proof context. *)
+               val assumption_controls = case bound of NONE => []
+                 | SOME _ => List.filter
+                     (fn th => case markerLib.dest_directive th of
+                         SOME markerLib.DNoAsms => true
+                       | SOME (markerLib.DIgnAsm _) => true
+                       | _ => false) thl
+               val assumptions =
+                 if null assumption_controls then ASSUM_LIST
+                 else markerLib.process_taclist_then
+                   {arg=assumption_controls}
+               fun selected_context context target ctxt =
+                 if null assumption_controls then context
+                 else
+                   let
+                     val selected = ref []
+                     val _ = assumptions
+                       (fn ths => (selected := ths; ALL_TAC))
+                       (map concl context,target) ctxt
+                   in !selected end
                val (ss1,thl') = process_tags ss0 thl
                val prepared = prepare_rewrites thl'
-               val solver_context = source_thms prepared
+               val solver_context = bound_context @ source_thms prepared
                (* Each local marker-adjusted simpset compiles these prepared
                   rules while retaining their invocation-wide controls. *)
                val ss = ss1
@@ -2065,7 +2667,9 @@ fun gen_global_simp_tac_with traversal mode
                    fun build () =
                      let
                        val data =
-                         xtraversedata_for_ss_prepared invocation_ss prepared
+                         xtraversedata_for_ss_prepared
+                           traversal (retain_bound_controls invocation_ss)
+                           prepared
                      in
                        traversal_cache := SOME (invocation_ss,data);
                        data
@@ -2080,10 +2684,12 @@ fun gen_global_simp_tac_with traversal mode
 
                val conclusion_tac =
                  gen_simp_tac_with_xdata
-                   traversal traversal_state solver_context mode ss []
+                   traversal traversal_state solver_context mode ss
+                   assumption_controls
 
-               fun root_rewrite_of context target =
+               fun root_rewrite_of context target ctxt =
                  let
+                   val context = selected_context context target ctxt
                    val (invocation_ss,reducer_context) =
                      process_asm_tags ss context
                    val root_rewrite =
@@ -2109,7 +2715,7 @@ fun gen_global_simp_tac_with traversal mode
                fun root_first (goal as (asl,w)) ctxt =
                  if not (can boolSyntax.dest_imp_only w) then ALL_TAC goal ctxt
                  else
-                   case root_rewrite_of (map ASSUME asl) w of
+                   case root_rewrite_of (map ASSUME asl) w ctxt of
                        NONE => ALL_TAC goal ctxt
                      | SOME eq =>
                          let
@@ -2123,17 +2729,17 @@ fun gen_global_simp_tac_with traversal mode
                (* [outer] is a suffix of the assumption list and [assumed]
                   the matching suffix of its theorems, so that the scan
                   does not re-[ASSUME] the tail it is about to walk. *)
-               fun find_rebuild nested (outer,assumed) count =
+               fun find_rebuild nested (outer,assumed) count ctxt =
                  case (outer,assumed) of
                      (a::rest, _::assumed_rest) =>
                        let
                          val target = mk_imp (a,nested)
                        in
-                         case root_rewrite_of assumed_rest target of
+                         case root_rewrite_of assumed_rest target ctxt of
                              SOME eq => SOME (count,target,eq)
                            | NONE =>
                                find_rebuild target (rest,assumed_rest)
-                                            (count + 1)
+                                            (count + 1) ctxt
                        end
                    | _ => NONE
 
@@ -2141,7 +2747,7 @@ fun gen_global_simp_tac_with traversal mode
                  let
                    val pass as (annotated,validation) =
                      counted_pass traversal base ss traversal_state
-                       solver_context k goal ctxt
+                       solver_context assumptions k goal ctxt
                    val unchanged =
                      same_goals (map #1 annotated,[goal])
                    fun clear_change state =
@@ -2184,7 +2790,7 @@ fun gen_global_simp_tac_with traversal mode
                  end
 
                and rebuild (goal as (asl,w)) ctxt =
-                 case find_rebuild w (asl,map ASSUME asl) 1 of
+                 case find_rebuild w (asl,map ASSUME asl) 1 ctxt of
                      NONE => ALL_TAC goal ctxt
                    | SOME (count,target,eq) =>
                        let
@@ -2204,12 +2810,20 @@ fun gen_global_simp_tac_with traversal mode
         )
       )
     )
+  end
+
+fun gen_global_simp_tac_with traversal =
+  gen_global_simp_tac_with_bound traversal NONE
 
 fun GEN_GLOBAL_SIMP_TAC mode =
   gen_global_simp_tac_with ParentFirst mode
 
-fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST charge mode =
-  gen_global_simp_tac_with (ChildFirst charge) mode
+fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST policy mode =
+  gen_global_simp_tac_with (ChildFirst policy) mode
+
+fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy mode cfg ss bundle =
+  gen_global_simp_tac_with_bound (ChildFirst policy) (SOME bundle)
+    mode cfg ss
 
 fun global_simp_tac cfg =
     GEN_GLOBAL_SIMP_TAC {safe=false}
@@ -2244,8 +2858,10 @@ fun tyi_to_ssdata tyinfo =
            (Fld #name (SOME ("Datatype " ^ tyname)))
            (Fld #convs
               (map
-                (fn c => {thypart=SOME thy,cd=lift_convdata c}) convs))
-           (Fld #rewrs rewrs) $$)
+                (fn c =>
+                   {thypart=SOME thy,cd=lift_convdata c,
+                    source=NONE,bound=NONE}) convs))
+           (Fld #rewrs (map source_slot rewrs)) $$)
     end
 
 fun type_ssfrag ty =
@@ -2274,12 +2890,13 @@ fun merge_names list =
 
 fun dest_convdata tcd  =
     let
-      val {thypart,cd={name,key,...} : contextual_convdata} = tcd
+      val {thypart,source,bound,
+           cd={name,key,...} : contextual_convdata} = tcd
     in
       (thypart,name,Option.map #2 key)
     end
 
-fun pp_ssfrag (SSFRAG_CON {name,convs,rewrs,ac,dprocs,congs,...}) =
+fun pp_ssfrag (SSFRAG_CON {name,convs,rewrs,ac,views,dprocs,congs,...}) =
  let open Portable smpp
      val name = (case name of SOME s => s | NONE => "<anonymous>")
      val convs = map dest_convdata convs
@@ -2323,8 +2940,10 @@ fun pp_ssfrag (SSFRAG_CON {name,convs,rewrs,ac,dprocs,congs,...}) =
      vblock("Conversions",pp_conv_info,convs) >>
      vblock("Decision procedures",add_string,dps) >>
      vblock("Congruence rules",pp_thm,congs) >>
-     vblock("AC rewrites",pp_thm_pair,ac) >>
-     vblock("Rewrite rules",pp_named_thm,rewrs)
+     vblock("AC rewrites",pp_thm_pair,map #item ac) >>
+     vblock("Rewrite rules",pp_named_thm,map #item rewrs) >>
+     vblock("Rewrite views",pp_named_thm,
+            map (fn (s,th) => (#1 (source_rewrite s),th)) views)
    )
  end
 
@@ -2333,7 +2952,8 @@ fun pp_simpset (ss as SS {initial_net,strategy,...}) =
     val {loopers,unsafe_solvers,safe_solvers,...} = strategy
     open Portable smpp
     val empty_strset = Set.empty String.compare
-    fun foldthis {thypart, ci = {name,...}} nms = opttheory thypart name::nms
+    fun foldthis {thypart, ci = {name,...},...} nms =
+      opttheory thypart name::nms
     val keysl = Ho_Net.fold' foldthis initial_net []
     val keys = Listsort.sort String.compare keysl
     val (rewrites0,others0) = Lib.partition (String.isPrefix "rewrite:") keys

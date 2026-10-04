@@ -22,6 +22,10 @@ checks; it is not a solved-goal score.
 | Persistent claset transport | `clasimp/selftest.sml` uses an explicit base-claset destruction rule through `CS_AUTO_TAC` and scoped public `AUTO_TAC`, and a safe introduction rule through `CS_CLARSIMP_TAC`. Each needs a supplied rewrite before the rule view reaches the goal; a polymorphic rule is checked at both `num` and `bool`. |
 | Reloaded persistent transport | `clasimp/theory_tests/transportPersistentBaseScript.sml` declares a safe destruction rule; its child theory closes the differently spelled goal with public `AUTO_TAC` and a supplied bridge rewrite. |
 | Contextual FORCE transport | `clasimp/selftest.sml` keeps only FORCE's best-first leg and closes a rule/goal spelling mismatch after the ordinary search exhausts. |
+| Atomic FORCE normalization | Fresh opaque rules make a simplification wrapper exceed a small resumable slice. The wrapper runs once and reconstructs the exact theorem; a separate invocation-limit check still reports `LimitReached`. |
+| Compatible partial type matches | Three fresh polymorphic predicates exercise disjoint matches, competing carriers and renamed binders. Existing ordered partial instances remain, followed only by distinct maximal compatible joins; a zero candidate allowance propagates. |
+| Rule-derived abstraction positions | Fresh consumer constants exercise generic abstraction arguments at different positions. Their rule-derived policy preserves those arguments, while ordinary eta contraction and unrelated positions retain their previous behavior. |
+| Supplied rewrite precedence | Fresh rules exercise immediate ambient converses, sibling conjuncts, conditional supplied rules, Once/Ntimes consumption, excluded sources and longer cycles. Only unconditional immediate ambient converses are suspended; longer cycles retain typed limits. |
 
 The following temporary source ablations were run, then removed:
 
@@ -67,3 +71,29 @@ entry points can still request smaller limits. The budgeted reducer uses
 an invocation-local RCACHE so arithmetic context components, negative
 answers and dynamic `[arith]` facts follow the legacy proof path while
 cache misses charge the invocation.
+
+The deferred public continuation additionally passes a fresh
+public-rule argument fixture and a compound-goal quota fixture. The raw
+pass closes one conjunct with a supplied Once/Ntimes rewrite; a remaining
+conjunct needs an ambient rewrite view. Resuming the residual goals retains
+the raw subproof and its spent quota. Retrying the original goal instead
+fails the two positive cases, while a second occurrence cannot consume a
+new Once allowance. The six mechanism ablations below use isolated module
+copies with the same executable definitions as this integration, original
+selftest dependencies and unchanged fresh regression fixtures. Each
+variant covers all four benchmark families and 1027 goals.
+
+| Removed mechanism | Independent semantic failure |
+| --- | --- |
+| F1 rewrite LHS views | The fresh proper-argument rule no longer fires; the compound Once/Ntimes fixture reports `false false true`, restored to `true true true` with the continuation. |
+| F2 rule-derived abstraction policy | The fresh generic-abstraction fixture fails overall. Its seven scope controls still pass; the installed consumer loses its abstraction. |
+| F3 atomic invocation charging | The fresh wrapper's invocation-limit test still passes, but the once-across-a-slice test fails. |
+| F4 applicability before charging | The fresh non-arithmetic atom changes candidate usage instead of declining without charges. |
+| F5 compatible maximal joins | The fresh partial-type fixture loses its maximal joined instance. |
+| F6 immediate converse suspension | The indexed fresh-rule vector loses four positive converse cases; the restored vector is all true. |
+
+These tests establish mechanisms independently of corpus names. Corpus
+dependencies overlap: F1 compensates for F2 on CollectI/D, while F2 is
+needed for several F1 views. F3 and F4 both support ran_map_upd_Some.
+The ablated variants expose those interactions; the complete engine
+retains all previously solved goals and recovers the 15 targets.

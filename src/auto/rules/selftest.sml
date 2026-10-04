@@ -3917,3 +3917,122 @@ val _ =
        in
          #expansions outer = 2
        end)
+
+(* Disjoint sites need a single compatible type instance of the fact. *)
+fun joined_fact_fixture body =
+  let
+    open boolLib arithmeticTheory listTheory
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = Theory.new_theory "joinedFactFixture"
+        val p_def =
+          new_definition ("join_p_def", ``join_p (x:'a) = T``)
+        val q_def =
+          new_definition ("join_q_def", ``join_q (x:'a) = T``)
+        val r_def =
+          new_definition ("join_r_def", ``join_r (x:'a) = T``)
+        val target_def =
+          new_definition ("join_target_def", ``join_target = T``)
+        val fact =
+          GENL [``x:'a``, ``y:'b``, ``z:'c``]
+            (CONJ (EQT_ELIM (ISPEC ``x:'a`` p_def))
+               (CONJ (EQT_ELIM (ISPEC ``y:'b`` q_def))
+                  (EQT_ELIM (ISPEC ``z:'c`` r_def))))
+        val target = lhs (concl target_def)
+        fun inserted budget fact assumptions =
+          let
+            val (remaining, validate) =
+              Tactical.VALID
+                (clasetLib.INSERT_FACTS_TAC_BUDGETED budget [fact])
+                (assumptions, target) (Context.snapshot ())
+            val theorem = validate [EQT_ELIM target_def]
+            val _ =
+              if aconv (concl theorem) target andalso null (hyp theorem)
+              then () else raise Fail "fact insertion validation"
+          in
+            case remaining of
+                [(current, _)] =>
+                  List.filter
+                    (fn tm => length (fst (strip_forall tm)) = 3) current
+              | _ => raise Fail "one insertion goal expected"
+          end
+        fun shapes facts =
+          map
+            (map
+               (fn v =>
+                 let val ty = type_of v in
+                   if Type.is_vartype ty then "fresh"
+                   else if ty = numSyntax.num then "num"
+                   else if ty = Type.bool then "bool"
+                   else if ty = listSyntax.mk_list_type numSyntax.num
+                   then "num list"
+                   else Parse.type_to_string ty
+                 end) o fst o strip_forall) facts
+        fun inspect label assumptions =
+          let
+            val result =
+              shapes (inserted (searchBudget.unbounded ()) fact assumptions)
+          in result end
+      in
+        body (fact, inserted, shapes, inspect)
+      end
+  in
+    Portable.finally (fn () => Context.restore saved) run ()
+  end;
+
+val joined_fixture_result =
+  joined_fact_fixture
+    (fn (fact, inserted, shapes, inspect) =>
+      let
+        val two = inspect "TWO_SITES" [``join_p (0:num)``, ``join_q T``]
+        val three =
+          inspect "THREE_SITES"
+            [``join_p (0:num)``, ``join_q T``, ``join_r ([]:num list)``]
+        val alternatives =
+          inspect "ALTERNATIVES"
+            [``join_p (0:num)``, ``join_p T``, ``join_q T``,
+             ``join_r ([]:num list)``]
+        val conflict =
+          inspect "CONFLICT" [``join_p (0:num)``, ``join_p T``]
+        val binders = fst (strip_forall (concl fact))
+        val renamed_binders =
+          ListPair.map
+            (fn (name, binder) => mk_var (name, type_of binder))
+            (["renamed_x", "renamed_y", "renamed_z"], binders)
+        val renamed = GENL renamed_binders (Drule.SPECL renamed_binders fact)
+        val renamed_two =
+          shapes
+            (inserted (searchBudget.unbounded ()) renamed
+               [``join_p (0:num)``, ``join_q T``])
+        val budget =
+          searchBudget.create
+            {candidates = SOME 0, applications = NONE,
+             normalization = NONE}
+        val cutoff =
+          ((inserted budget fact [``join_p (0:num)``]; false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, _) => true)
+      in
+        two = [["fresh", "bool", "fresh"],
+                  ["num", "fresh", "fresh"],
+                  ["num", "bool", "fresh"]] andalso
+           three = [["fresh", "fresh", "num list"],
+                    ["fresh", "bool", "fresh"],
+                    ["num", "fresh", "fresh"],
+                    ["num", "bool", "num list"]] andalso
+           conflict = [["num", "fresh", "fresh"],
+                       ["bool", "fresh", "fresh"]] andalso
+           alternatives =
+             [["fresh", "fresh", "num list"],
+              ["fresh", "bool", "fresh"],
+              ["num", "fresh", "fresh"],
+              ["bool", "fresh", "fresh"],
+              ["num", "bool", "num list"],
+              ["bool", "bool", "num list"]] andalso
+           two = renamed_two andalso cutoff
+      end);
+
+val _ =
+  (tprint "compatible partial fact types admit only maximal joins";
+   if joined_fixture_result then OK () else die "compatible join missing");

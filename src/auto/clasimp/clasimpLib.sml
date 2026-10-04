@@ -596,12 +596,270 @@ fun derive_clasimp_ss ss _ =
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   |> simpLib.set_subgoaler witness_subgoaler
 
+(* Generic abstraction arguments are keyed by constant identity and arity. *)
+type abstraction_position = KernelSig.kernelid * int
+val position_compare =
+  Lib.pair_compare (KernelSig.id_compare, Int.compare)
+val no_positions = HOLset.empty position_compare
+
+fun rule_abstraction_positions theorem positions =
+  let
+    val fixed = free_varsl (hyp theorem)
+    fun collect bound tm found =
+      if is_abs tm then
+        let val (v, body) = dest_abs tm
+        in collect (v :: bound) body found end
+      else if is_comb tm then
+        let
+          val (head, args) = strip_comb tm
+          val argument = rand tm
+          val selected =
+            if is_const head andalso is_abs argument then
+              let
+                val (v, body) = dest_abs argument
+                val pattern = if is_comb body then rator body else body
+              in
+                is_comb body andalso aconv (rand body) v andalso
+                is_var pattern andalso not (aconv pattern v) andalso
+                not (boolSyntax.tmem pattern (bound @ fixed))
+              end
+            else false
+          val next =
+            if selected then
+              let val {Name, ...} = Term.dest_thy_constid head
+              in HOLset.add (found, (Name, length args)) end
+            else found
+        in
+          collect bound (rator tm) (collect bound argument next)
+        end
+      else found
+    fun statement tm found =
+      let
+        val body = #2 (boolSyntax.strip_forall tm)
+        val result = #2 (boolSyntax.strip_imp_only body)
+      in
+        if boolSyntax.is_conj result then
+          let val (left, right) = boolSyntax.dest_conj result
+          in statement right (statement left found) end
+        else
+          collect [] (boolSyntax.lhs result handle HOL_ERR _ => result) found
+      end
+  in
+    statement (concl theorem) positions
+  end
+
+(* Supplied rule sources share tails with cached ambient metadata. *)
+val position_cache =
+  ref ([] : ((simpLib.thname option * thm) list *
+              abstraction_position HOLset.set) list)
+
+fun positions_of_sources sources =
+  let
+    fun cached rules =
+      List.find
+        (fn (previous, _) => Portable.pointer_eq (previous, rules))
+        (!position_cache)
+    fun suffix rules pending =
+      case cached rules of
+          SOME entry => (entry, pending)
+        | NONE =>
+            case rules of
+                [] => (([], no_positions), pending)
+              | (_, theorem) :: rest => suffix rest (theorem :: pending)
+    val (entry as (_, initial), added) = suffix sources []
+    val result = List.foldl
+      (fn (theorem, found) => rule_abstraction_positions theorem found)
+      initial added
+    val previous =
+      List.filter
+        (fn (key, _) => not (Portable.pointer_eq (key, sources)) andalso
+                       not (Portable.pointer_eq (key, #1 entry)))
+        (!position_cache)
+    val anchor =
+      if Portable.pointer_eq (sources, #1 entry) then [] else [entry]
+    val count = 31 - length anchor
+    val retained = List.take (previous, Int.min (count, length previous))
+  in
+    position_cache := (sources, result) :: (anchor @ retained);
+    result
+  end
+
+fun position_policy charge positions : Traverse.child_first_policy =
+  let
+    fun keep tm =
+      let
+        val (head, args) = strip_comb tm
+        val {Name, ...} = Term.dest_thy_constid head
+      in
+        HOLset.member (positions, (Name, length args))
+      end
+      handle HOL_ERR _ => false
+  in
+    {charge=charge, keep_abstraction=keep}
+  end
+
+fun abstraction_policy charge ss arguments =
+  let
+    val (sources,supplied) = simpLib.rewrite_sources ss arguments
+    val positions = List.foldl
+      (fn (theorem,found) => rule_abstraction_positions theorem found)
+      (positions_of_sources sources) supplied
+  in position_policy charge positions end
+
 (* A simpset with its static ORDER and LINARITH decision procedures
    removed, and which of the two it carried. *)
 type decision_base =
   {stripped : simpLib.simpset, order : bool, linarith : bool}
 
-(* [remove_ssfrags] replays the simpset's whole history. *)
+(* Prepare once for the whole source inventory. No rule is selected by
+   goal relevance or size. Opaque reducers conservatively defeat the
+   indexed pre-test. Original rewrite controls are restored by simpLib. *)
+datatype lhs_view_rejection =
+    NoReducibleArguments | UnchangedLHS | JoinableLHS
+  | RenamingUnstable | DerivationLimited | UnsupportedLHS
+
+type lhs_view_entry =
+  {origin : simpLib.rewrite_source,
+   source : simpLib.thname option * thm, view : thm option,
+   rejection : lhs_view_rejection option, footprint : term list,
+   abstraction_positions : abstraction_position list, normalization : int}
+
+fun rename_view_variables theorem =
+  let
+    val variables = Listsort.sort Term.compare
+      (free_varsl (concl theorem :: hyp theorem))
+    val width = size (Int.toString (length variables))
+    val reversed = rev variables
+    val fresh = List.tabulate (length variables,
+      fn n => variant variables
+        (mk_var ("lhs_view_" ^
+                 StringCvt.padLeft #"0" width (Int.toString n),
+                 type_of (List.nth (reversed,n)))))
+    val replacements = ListPair.mapEq
+      (fn (v,w) => {redex=v,residue=w}) (variables,rev fresh)
+    val inverse = map
+      (fn {redex,residue} => {redex=residue,residue=redex}) replacements
+  in (Thm.INST replacements theorem,Term.subst inverse) end
+
+fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
+  let
+    exception DerivationLimit
+    datatype candidate_result =
+        Rejected of lhs_view_rejection
+      | Candidate of term * term * thm
+    val remaining = ref 20000
+    val callback_failure = ref (NONE : exn option)
+    val footprint = ref (HOLset.empty Term.compare)
+    fun remember tm = footprint := HOLset.add (!footprint, tm)
+    fun inventory tm =
+      (remember tm;
+       if is_comb tm then (inventory (rator tm); inventory (rand tm))
+       else if is_abs tm then inventory (#2 (dest_abs tm))
+       else ())
+    fun charge () =
+      if !remaining = 0 then raise DerivationLimit
+      else
+        (remaining := !remaining - 1;
+         caller_charge ()
+           handle e => (callback_failure := SOME e; raise e))
+    val policy = position_policy charge positions
+    val prepared = simpLib.prepare_child_first_observed remember policy ss
+    fun candidate theorem =
+      let
+        val specialised = Drule.SPEC_ALL theorem
+        val _ = List.app inventory (concl specialised :: hyp specialised)
+        val (premises, equation) =
+          boolSyntax.strip_imp_only (concl specialised)
+        val (left, right) = boolSyntax.dest_eq equation
+      in
+        if null premises andalso
+           not (#may_reduce_arguments prepared left) then
+          Rejected NoReducibleArguments
+        else
+          let
+            val assumptions = map Thm.ASSUME premises
+            val normal = #arguments prepared assumptions left
+            val left' = boolSyntax.rhs (concl normal)
+            val _ = inventory left'
+          in
+            if aconv left left' then Rejected UnchangedLHS
+            else if aconv left' right then Rejected JoinableLHS
+            else
+              let
+                val right_normal = #normalize prepared assumptions right
+                val right' = boolSyntax.rhs (concl right_normal)
+                val _ = inventory right'
+                val body = List.foldl
+                  (fn (p, th) => Thm.MP th (Thm.ASSUME p))
+                  specialised premises
+                val derived = Thm.TRANS (Thm.SYM normal) body
+                val discharged = List.foldr
+                  (fn (p, th) => Thm.DISCH p th) derived premises
+              in
+                if aconv left' right' then Rejected JoinableLHS
+                else if not (null (hyp discharged)) then
+                  Rejected UnsupportedLHS
+                else Candidate (left', right', Drule.GEN_ALL discharged)
+              end
+          end
+      end
+    fun derive theorem =
+      case candidate theorem of
+          Rejected reason => (NONE, SOME reason)
+        | Candidate (left, right, view) =>
+            let val (other, undo) =
+                  rename_view_variables (Drule.SPEC_ALL theorem)
+            in
+              case candidate other of
+                  Candidate (left', right', _) =>
+                    if aconv left (undo left') andalso
+                       aconv right (undo right')
+                    then (SOME view, NONE)
+                    else (NONE, SOME RenamingUnstable)
+                | Rejected _ => (NONE, SOME RenamingUnstable)
+            end
+    fun one origin : lhs_view_entry =
+      let
+        val source as (_, theorem) = simpLib.source_rewrite origin
+        val _ = remaining := 20000
+        val _ = callback_failure := NONE
+        val _ = footprint := HOLset.empty Term.compare
+        val (view, rejection) =
+          derive theorem
+          handle DerivationLimit => (NONE, SOME DerivationLimited)
+               | HOL_ERR _ =>
+                   (case !callback_failure of
+                        SOME e => raise e
+                      | NONE => (NONE, SOME UnsupportedLHS))
+      in
+        {origin=origin, source=source, view=view, rejection=rejection,
+         footprint=HOLset.listItems (!footprint),
+         abstraction_positions=HOLset.listItems
+           (rule_abstraction_positions theorem no_positions),
+         normalization=20000 - !remaining}
+      end
+  in one end
+
+fun prepare_lhs_view_derivation caller_charge ss =
+  prepare_lhs_view_derivation_with_positions caller_charge ss
+    (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
+
+fun derive_lhs_view_entries caller_charge ss =
+  map (prepare_lhs_view_derivation caller_charge ss)
+      (simpLib.rewrite_source_handles ss)
+
+fun derive_lhs_view_entries_with_positions caller_charge ss positions =
+  map (prepare_lhs_view_derivation_with_positions caller_charge ss
+        (HOLset.addList (no_positions,positions)))
+      (simpLib.rewrite_source_handles ss)
+
+fun derive_lhs_views charge ss =
+  List.mapPartial
+    (fn ({source=(name, theorem), view,...} : lhs_view_entry) =>
+      Option.map (fn derived => (name, theorem, derived)) view)
+    (derive_lhs_view_entries charge ss)
+
+(* Decision-fragment replay must retain consumed native rewrite controls. *)
 fun strip_decisions ss =
   let
     val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
@@ -609,7 +867,8 @@ fun strip_decisions ss =
     val order = present "ORDER"
     val linarith = present "LINARITH"
     val removed =
-      simpLib.remove_ssfrags (List.filter present ["ORDER", "LINARITH"]) ss
+      simpLib.remove_ssfrags_preserving_controls
+        (List.filter present ["ORDER", "LINARITH"]) ss
       handle Conv.UNCHANGED => ss
     val stripped =
       if linarith then
@@ -620,21 +879,837 @@ fun strip_decisions ss =
     {stripped = stripped, order = order, linarith = linarith}
   end
 
-(* The decision base is derived lazily with the simpset it strips, so it is
-   stale exactly when the simpset is.  BasicProvers marks the cache stale
-   whenever srw_ss changes. *)
+fun supplied_view_associations entries = List.mapPartial
+  (fn ({origin,view,...} : lhs_view_entry) =>
+    Option.map (fn theorem => (origin,theorem)) view) entries
+
+type source_set = simpLib.rewrite_source HOLset.set
+type source_index = (simpLib.rewrite_source,lhs_view_entry) Binarymap.dict
+type dependency_index = (KernelSig.kernelid,source_set) Binarymap.dict
+datatype lhs_view_table = LHSViewTable of
+  {simpset : simpLib.simpset, sources : simpLib.rewrite_source list,
+   entries : lhs_view_entry list, index : source_index,
+   heads : dependency_index,
+   rewrite_patterns : simpLib.rewrite_source Net.net,
+   positions : abstraction_position HOLset.set,
+   generation : int, derived : int, reused : int, rebuild : bool,
+   normalization : int, full : simpLib.simpset Susp.susp,
+   decisions : decision_base Susp.susp,plain : decision_base Susp.susp}
+
+fun lhs_view_table_entries (LHSViewTable data) = #entries data
+fun lhs_view_table_generation (LHSViewTable data) = #generation data
+fun lhs_view_table_stats (LHSViewTable data) =
+  {derived= #derived data,reused= #reused data,rebuild= #rebuild data,
+   normalization= #normalization data}
+
+val view_generation = ref 0
+val source_compare = simpLib.rewrite_source_compare
+val no_sources = HOLset.empty source_compare
+(* Net.match conservatively indexes the same first-order patterns as
+   REWR_CONV. Types and repeated variables are checked by the conversion. *)
+fun rewrite_pattern_index sources = List.foldl
+  (fn (source,index) =>
+    let
+      val theorem = Drule.SPEC_ALL (#2 (simpLib.source_rewrite source))
+      val left = boolSyntax.lhs
+        (#2 (boolSyntax.strip_imp_only (concl theorem)))
+    in Net.insert (left,source) index end) Net.empty sources
+
+fun table_indices entries =
+  let
+    fun entry (entry : lhs_view_entry,(sources,heads)) =
+      let
+        val origin = #origin entry
+        fun add tm found =
+          case Lib.total Term.dest_thy_constid (fst (strip_comb tm)) of
+              NONE => found
+            | SOME {Name,...} =>
+                let
+                  val previous = Option.getOpt
+                    (Binarymap.peek (found,Name),no_sources)
+                in Binarymap.insert (found,Name,HOLset.add (previous,origin))
+                end
+      in
+        (Binarymap.insert (sources,origin,entry),
+         List.foldl (fn (tm,index) => add tm index) heads (#footprint entry))
+      end
+  in
+    List.foldl entry
+      (Binarymap.mkDict source_compare,Binarymap.mkDict KernelSig.id_compare)
+      entries
+  end
+
+(* Opaque reducers can change answers when their primed context changes. *)
+fun update_lhs_view_table_with_positions caller_charge previous ss positions =
+  let
+    val sources = simpLib.rewrite_source_handles ss
+    val charged = ref 0
+    fun charge () = (charged := !charged + 1; caller_charge ())
+    fun key source =
+      let
+        val (_,theorem) = simpLib.source_rewrite source
+      in
+        (free_varsl (hyp theorem),
+         boolSyntax.lhs (#2 (boolSyntax.strip_imp_only (concl theorem))))
+      end
+    fun retained index source =
+      case Binarymap.peek (index,source) of
+          NONE => NONE
+        | SOME entry =>
+            if simpLib.same_rewrite_source (source,#origin entry)
+            then SOME entry else NONE
+    fun affected heads keys =
+      let
+        fun add ((_,pattern),found) =
+          case Lib.total Term.dest_thy_constid (fst (strip_comb pattern)) of
+              NONE => NONE
+            | SOME {Name,...} =>
+                Option.map
+                  (fn selected => HOLset.union
+                    (selected,Option.getOpt (Binarymap.peek (heads,Name),
+                                             no_sources))) found
+        fun fold [] found = found
+          | fold _ NONE = NONE
+          | fold (pattern::rest) found = fold rest (add (pattern,found))
+      in fold keys (SOME no_sources) end
+    val (old_index,dirty,rebuild) =
+      case previous of
+          NONE => (Binarymap.mkDict source_compare,NONE,true)
+        | SOME (LHSViewTable old) =>
+            let
+              val context = simpLib.rewrite_context_changes (#simpset old,ss)
+              (* Append-mostly inventories share their unchanged suffix. *)
+              fun additions remaining added =
+                if Portable.pointer_eq (remaining,#sources old) then
+                  SOME (rev added)
+                else case remaining of
+                         [] => NONE
+                       | source::rest => additions rest (source::added)
+              val new_index = List.foldl
+                (fn (source,index) => Binarymap.insert (index,source,source))
+                (Binarymap.mkDict source_compare) sources
+              val added =
+                case additions sources [] of
+                    SOME added => added
+                  | NONE => List.filter
+                      (not o Option.isSome o retained (#index old)) sources
+              val removed = List.filter
+                (fn source =>
+                  case Binarymap.peek (new_index,source) of
+                      NONE => true
+                    | SOME current =>
+                        not (simpLib.same_rewrite_source (source,current)))
+                (#sources old)
+              val keys = map key (added @ removed) @ #keys context
+              val full = #rebuild context orelse
+                not (HOLset.equal (#positions old,positions)) orelse
+                (#context_sensitive context andalso
+                 not (null added andalso null removed andalso null keys))
+              val selected = if full then NONE else affected (#heads old) keys
+            in
+              (#index old,selected,full orelse not (Option.isSome selected))
+            end
+    fun stale source =
+      not (Option.isSome (retained old_index source)) orelse
+      (case dirty of NONE => true | SOME found => HOLset.member (found,source))
+    val pending = List.filter stale sources
+    val derive =
+      if null pending then NONE
+      else SOME
+        (prepare_lhs_view_derivation_with_positions charge ss positions)
+    fun obtain source =
+      if stale source then valOf derive source
+      else
+        let val old = valOf (retained old_index source)
+        in
+          {origin=source,source=simpLib.source_rewrite source,
+           view= #view old,rejection= #rejection old,
+           footprint= #footprint old,
+           abstraction_positions= #abstraction_positions old,
+           normalization= #normalization old}
+        end
+    val entries = map obtain sources
+    val (index,heads) = table_indices entries
+    val rewrite_patterns = rewrite_pattern_index sources
+    val full = Susp.delay (fn () =>
+      case supplied_view_associations entries of
+          [] => ss
+        | views => simpLib.++ (ss,simpLib.name_ss "CLASIMP_REWRITE_VIEWS"
+                                   (simpLib.rewrite_views views)))
+    val _ = view_generation := !view_generation + 1
+  in
+    LHSViewTable
+      {simpset=ss,sources=sources,entries=entries,index=index,heads=heads,
+       rewrite_patterns=rewrite_patterns,
+       positions=positions,generation= !view_generation,
+       derived=length pending,reused=length sources - length pending,
+       rebuild=rebuild,normalization= !charged,full=full,
+       decisions=Susp.delay (fn () => strip_decisions (Susp.force full)),
+       plain=Susp.delay (fn () => strip_decisions ss)}
+  end
+
+fun update_lhs_view_table caller_charge previous ss =
+  update_lhs_view_table_with_positions caller_charge previous ss
+    (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
+
+(* Bounded memoization is independent of when callers request a table. *)
+fun make_lhs_view_cache caller_charge =
+  let
+    val tables = ref ([] : lhs_view_table list)
+    fun simpset (LHSViewTable data) = #simpset data
+    fun previous ss sources =
+      let
+        (* Several tables can share the same native inventory while their
+           conversions or decision procedures differ. Break that tie by
+           actual context changes before choosing a predecessor. *)
+        fun context_rank table =
+          let val changes = simpLib.rewrite_context_changes (simpset table,ss)
+          in
+            (if #rebuild changes then 1 else 0,
+             (if #context_sensitive changes then 1 else 0,
+              length (#keys changes)))
+          end
+        val rank_compare = Lib.pair_compare
+          (Int.compare,Lib.pair_compare (Int.compare,Int.compare))
+        fun prefer (table,old) =
+          if rank_compare (context_rank table,context_rank old) = LESS
+          then table else old
+        fun matching remaining = List.filter
+          (fn LHSViewTable data =>
+            Portable.pointer_eq (remaining,#sources data)) (!tables)
+        fun suffix remaining =
+          case matching remaining of
+              first::rest => SOME (List.foldl prefer first rest)
+            | [] => case remaining of [] => NONE | _::rest => suffix rest
+        fun score (table as LHSViewTable data,(best,count)) =
+          let
+            val reused = List.foldl
+              (fn (source,n) =>
+                case Binarymap.peek (#index data,source) of
+                    NONE => n
+                  | SOME entry =>
+                      if simpLib.same_rewrite_source (source,#origin entry)
+                      then n+1 else n) 0 sources
+          in
+            if reused > count then (SOME table,reused)
+            else if reused = count then
+              (SOME (case best of NONE => table
+                                 | SOME old => prefer (table,old)),count)
+            else (best,count)
+          end
+      in
+        case suffix sources of SOME table => SOME table
+          | NONE => #1 (List.foldl score (NONE,~1) (!tables))
+      end
+    fun get ss =
+      case List.find (fn table => Portable.pointer_eq (simpset table,ss))
+                     (!tables) of
+          SOME table => table
+        | NONE =>
+            let
+              val table = update_lhs_view_table caller_charge
+                (previous ss (simpLib.rewrite_source_handles ss)) ss
+              val kept = List.take (!tables,Int.min (7,length (!tables)))
+            in tables := table::kept; table end
+  in get end
+
+fun marker_skip theorem =
+  Option.isSome (clasetLib.marker_of theorem) orelse
+  (case markerLib.dest_directive theorem of
+       NONE => false
+     | SOME (markerLib.DBounded (body,_)) => marker_skip body
+     | SOME _ => true)
+
+datatype supplied_rule_binding = SuppliedRuleBinding of
+  {bundle : simpLib.rewrite_bundle,controls : thm list,originals : thm list,
+   positions : abstraction_position HOLset.set}
+
+(* Bind before any first pass; deferred views must retain these origins. *)
+fun prepare_supplied_rules ss arguments =
+  let
+    val (controls,originals) = List.partition marker_skip arguments
+    val bundle = simpLib.prepare_rewrite_bundle ss originals
+    val positions = List.foldl
+      (fn ((_,sources),found) => List.foldl
+        (fn (source,found) => rule_abstraction_positions
+          (#2 (simpLib.source_rewrite source)) found) found sources)
+      no_positions (simpLib.rewrite_bundle_rules bundle)
+  in SuppliedRuleBinding
+       {bundle=bundle,controls=controls,originals=originals,positions=positions}
+  end
+
+fun supplied_rule_controls (SuppliedRuleBinding data) = #controls data
+fun supplied_rule_originals (SuppliedRuleBinding data) = #originals data
+fun supplied_rule_policy charge ss (SuppliedRuleBinding data) =
+  position_policy charge (HOLset.union (#positions data,
+    positions_of_sources (#1 (simpLib.rewrite_sources ss []))))
+fun install_supplied_rules (SuppliedRuleBinding {bundle,...}) =
+  simpLib.install_rewrite_bundle bundle []
+
+datatype supplied_view_binding = SuppliedViewBinding of
+  {rules : supplied_rule_binding,entries : lhs_view_entry list,
+   positions : abstraction_position HOLset.set,
+   table : lhs_view_table,suspended : simpLib.rewrite_source list,
+   normalization : int,derived : int,memoized : int}
+
+fun supplied_view_entries (SuppliedViewBinding data) = #entries data
+fun supplied_view_controls (SuppliedViewBinding data) =
+  supplied_rule_controls (#rules data)
+fun supplied_view_table (SuppliedViewBinding data) = #table data
+fun supplied_view_suspended (SuppliedViewBinding data) = #suspended data
+fun supplied_view_stats (SuppliedViewBinding data) =
+  {normalization= #normalization data,derived= #derived data,
+   memoized= #memoized data}
+fun supplied_view_policy charge (SuppliedViewBinding data) =
+  position_policy charge (#positions data)
+fun install_supplied_views
+      (SuppliedViewBinding {rules=SuppliedRuleBinding {bundle,...},
+                            entries,suspended,...}) ss =
+  simpLib.install_rewrite_bundle bundle (supplied_view_associations entries)
+    (simpLib.suspend_rewrite_sources suspended ss)
+
+(* Attach to surviving originals, including an already exhausted quota. *)
+fun add_supplied_views (SuppliedViewBinding {entries,suspended,...}) ss =
+  let val working = simpLib.suspend_rewrite_sources suspended ss
+  in
+    case supplied_view_associations entries of
+        [] => working
+      | views => simpLib.++ (working,simpLib.name_ss "SUPPLIED_REWRITE_VIEWS"
+                                (simpLib.rewrite_views views))
+  end
+
+fun trace_suspended_converses sources = List.app
+  (fn source => trace 1 (fn () =>
+    "suspending ambient converse " ^
+    (case simpLib.source_rewrite source of
+         (SOME {Thy,Name},_) => Thy ^ "." ^ Name
+       | (NONE,theorem) => Parse.thm_to_string theorem))) sources
+
+type supplied_view_memo =
+  {generation : int,theorem : thm,
+   positions : abstraction_position HOLset.set,
+   sources : (simpLib.thname option * thm) list,
+   entries : lhs_view_entry list option,
+   converses : (simpLib.rewrite_source list * int) option}
+
+(* Replay each unit before returning a cached theorem, including cutoffs. *)
+fun replay_normalization charge units =
+  let fun loop 0 = () | loop n = (charge (); loop (n-1))
+  in loop units end
+
+fun converse_sources caller_charge patterns sources =
+  let
+    val callback_failure = ref (NONE : exn option)
+    fun charge () = caller_charge ()
+      handle e => (callback_failure := SOME e; raise e)
+    fun check_callback () =
+      case !callback_failure of NONE => () | SOME e => raise e
+    (* Cache both root matches and their union over the RHS subtree.
+       Descend only where the origin can match; attempt a rewrite only
+       at a possible root. The actual conversion still establishes the
+       one parallel rewrite predicate, without normalizing either side. *)
+    val subtrees = ref (Binarymap.mkDict Term.compare)
+    fun candidates tm =
+      (charge ();
+       case Binarymap.peek (!subtrees,tm) of
+           SOME found => found
+         | NONE =>
+             let
+               fun add (source,found) =
+                 let
+                   val theorem = Drule.SPEC_ALL
+                     (#2 (simpLib.source_rewrite source))
+                   val pattern = boolSyntax.lhs
+                     (#2 (boolSyntax.strip_imp_only (concl theorem)))
+                   val _ = charge ()
+                 in
+                   if Lib.can (Type.match_type (type_of pattern))
+                        (type_of tm) then HOLset.add (found,source)
+                   else found
+                 end
+               val own = List.foldl add no_sources (Net.match tm patterns)
+               val found = if is_comb tm then
+                   HOLset.union (own,HOLset.union
+                     (#2 (candidates (rator tm)),#2 (candidates (rand tm))))
+                 else if is_abs tm then
+                   HOLset.union (own,#2 (candidates (#2 (dest_abs tm))))
+                 else own
+               val result = (own,found)
+               val _ = subtrees := Binarymap.insert (!subtrees,tm,result)
+             in result end)
+    fun once origin rewrite tm =
+      let val (own,below) = candidates tm
+      in
+        if not (HOLset.member (below,origin)) then raise Conv.UNCHANGED
+        else if HOLset.member (own,origin) then Conv.TRY_CONV
+          (Conv.ORELSEC
+            (fn target => (charge (); rewrite target),
+             Conv.SUB_CONV (once origin rewrite))) tm
+        else Conv.SUB_CONV (once origin rewrite) tm
+      end
+    fun converse source found =
+      let
+        val supplied = Drule.SPEC_ALL (#2 (simpLib.source_rewrite source))
+        val (left,right) = boolSyntax.dest_eq
+          (#2 (boolSyntax.strip_imp_only (concl supplied)))
+        fun consider (origin,found) =
+          let
+            val theorem = Drule.SPEC_ALL
+              (#2 (simpLib.source_rewrite origin))
+          in
+            if not (null (hyp theorem)) orelse
+               not (boolSyntax.is_eq (concl theorem)) then found
+            else
+              let
+                val _ = charge ()
+                val rewrite = Conv.REWR_CONV theorem
+                val result = Conv.QCONV (once origin rewrite) right
+                val _ = check_callback ()
+              in
+                if aconv (boolSyntax.rhs (concl result)) left then
+                  HOLset.add (found,origin) else found
+              end
+          end
+      in
+        List.foldl consider found (HOLset.listItems (#2 (candidates right)))
+      end
+      handle HOL_ERR _ => (check_callback (); found)
+  in
+    List.foldl (fn (source,found) => converse source found) no_sources sources
+  end
+
+fun compatible_supplied_source ((name,theorem),(old_name,old_theorem)) =
+  name = old_name andalso aconv (concl theorem) (concl old_theorem)
+  andalso HOLset.equal (hypset theorem,hypset old_theorem)
+
+datatype supplied_converse_binding = SuppliedConverseBinding of
+  {rules : supplied_rule_binding,ambient : simpLib.simpset,
+   working : simpLib.simpset,positions : abstraction_position HOLset.set,
+   suspended : simpLib.rewrite_source list,charge : unit -> unit,
+   normalization : int,derived : int,memoized : int}
+
+type converse_inventory =
+  {simpset : simpLib.simpset,generation : int,
+   positions : abstraction_position HOLset.set,
+   patterns : simpLib.rewrite_source Net.net}
+
+fun make_supplied_converse_cache () =
+  let
+    val inventories = ref ([] : converse_inventory list)
+    val generation = ref 0
+    val memo = ref ([] : supplied_view_memo list)
+    val masked = ref ([] : (int * source_set * simpLib.simpset) list)
+    fun inventory ss =
+      case List.find (fn (data : converse_inventory) =>
+        Portable.pointer_eq (#simpset data,ss)) (!inventories) of
+          SOME data => data
+        | NONE =>
+            let
+              val patterns = rewrite_pattern_index
+                (simpLib.rewrite_source_handles ss)
+              val positions = positions_of_sources
+                (#1 (simpLib.rewrite_sources ss []))
+              val _ = generation := !generation + 1
+              val data = {simpset=ss,generation= !generation,
+                          patterns=patterns,positions=positions}
+              val kept = List.take
+                (!inventories,Int.min (7,length (!inventories)))
+            in inventories := data::kept; data end
+    fun working (data : converse_inventory) suspended =
+      if HOLset.isEmpty suspended then #simpset data
+      else case List.find
+        (fn (generation,previous,_) => generation = #generation data andalso
+          HOLset.equal (previous,suspended)) (!masked) of
+          SOME (_,_,ss) => ss
+        | NONE =>
+            let
+              val ss = simpLib.suspend_rewrite_sources
+                (HOLset.listItems suspended) (#simpset data)
+              val kept = List.take (!masked,Int.min (7,length (!masked)))
+            in masked := (#generation data,suspended,ss)::kept; ss end
+    fun bind caller_charge ambient
+          (binding as SuppliedRuleBinding {bundle,positions,...}) =
+      let
+        val rules = simpLib.rewrite_bundle_rules bundle
+        val has_sources = List.exists (not o null o #2) rules
+        val input = if has_sources then SOME (inventory ambient) else NONE
+        val initial_positions = HOLset.union (positions,
+          case input of SOME data => #positions data
+            | NONE => positions_of_sources
+                (#1 (simpLib.rewrite_sources ambient [])))
+        val charged = ref 0
+        val derived = ref 0
+        val memoized = ref 0
+        fun charge () = (caller_charge (); charged := !charged + 1)
+        fun detect (data : converse_inventory) (theorem,sources) =
+          let
+            fun matches (entry : supplied_view_memo) =
+              #generation entry = #generation data andalso
+              Portable.pointer_eq (#theorem entry,theorem) andalso
+              HOLset.equal (#positions entry,initial_positions) andalso
+              ListPair.allEq compatible_supplied_source
+                (map simpLib.source_rewrite sources,#sources entry)
+          in
+            case Option.mapPartial #converses (List.find matches (!memo)) of
+                SOME (suspended,units) =>
+                  (replay_normalization charge units;
+                   memoized := !memoized + 1; suspended)
+              | NONE =>
+                  let
+                    val start = !charged
+                    val suspended = HOLset.listItems (converse_sources charge
+                      (#patterns data) sources)
+                    val entry =
+                      {generation= #generation data,theorem=theorem,
+                       positions=initial_positions,
+                       sources=map simpLib.source_rewrite sources,entries=NONE,
+                       converses=SOME (suspended,!charged-start)}
+                    val previous = List.filter (not o matches) (!memo)
+                    val kept = List.take
+                      (previous,Int.min (255,length previous))
+                    val _ = memo := entry::kept
+                    val _ = derived := !derived + 1
+                  in suspended end
+          end
+        val suspended = case input of NONE => no_sources
+          | SOME data => HOLset.addList
+              (no_sources,List.concat (map (detect data) rules))
+        val _ = trace_suspended_converses (HOLset.listItems suspended)
+        val working = case input of NONE => ambient
+          | SOME data => working data suspended
+        val effective_positions =
+          if HOLset.isEmpty suspended then initial_positions
+          else HOLset.union (positions,positions_of_sources
+            (#1 (simpLib.rewrite_sources working [])))
+      in SuppliedConverseBinding
+           {rules=binding,ambient=ambient,working=working,
+            positions=effective_positions,charge=caller_charge,
+            suspended=HOLset.listItems suspended,normalization= !charged,
+            derived= !derived,memoized= !memoized}
+      end
+  in bind end
+
+fun supplied_converse_rules (SuppliedConverseBinding data) = #rules data
+fun supplied_converse_working (SuppliedConverseBinding data) = #working data
+fun supplied_converse_policy (SuppliedConverseBinding data) =
+  position_policy (#charge data) (#positions data)
+fun supplied_converse_suspended (SuppliedConverseBinding data) = #suspended data
+fun supplied_converse_stats (SuppliedConverseBinding data) =
+  {normalization= #normalization data,derived= #derived data,
+   memoized= #memoized data}
+
+fun make_supplied_view_cache_core () =
+  let
+    val memo = ref ([] : supplied_view_memo list)
+    val adjusted = ref
+      ([] : (int * source_set * abstraction_position HOLset.set *
+             lhs_view_table) list)
+    (* Supplied rules affect policy, never the ambient reducer inventory. *)
+    fun working_table (ambient as LHSViewTable table) suspended supplied
+          prepared =
+      let
+        val already_masked = case prepared of
+            SOME ss => Portable.pointer_eq (ss,#simpset table)
+          | NONE => false
+        val effective_suspension = if already_masked then no_sources
+          else suspended
+      in
+      if HOLset.isEmpty effective_suspension andalso
+         HOLset.isSubset (supplied,#positions table) then ambient
+      else
+        case List.find
+          (fn (generation,previous,positions,_) =>
+            generation = #generation table andalso
+            HOLset.equal (previous,suspended) andalso
+            HOLset.equal (positions,supplied)) (!adjusted) of
+            SOME (_,_,_,table) => table
+          | NONE =>
+              let
+                val ss = case prepared of SOME ss => ss
+                  | NONE => if HOLset.isEmpty suspended then #simpset table
+                    else simpLib.suspend_rewrite_sources
+                      (HOLset.listItems suspended) (#simpset table)
+                val positions = if HOLset.isEmpty effective_suspension then
+                    #positions table
+                  else positions_of_sources
+                    (#1 (simpLib.rewrite_sources ss []))
+                val next = update_lhs_view_table_with_positions (fn () => ())
+                  (SOME ambient) ss (HOLset.union (positions,supplied))
+                val kept = List.take
+                  (!adjusted,Int.min (7,length (!adjusted)))
+              in
+                adjusted := (#generation table,suspended,supplied,next)::kept;
+                next
+              end
+      end
+    fun matching generation positions theorem sources
+          (entry : supplied_view_memo) =
+      #generation entry = generation andalso
+      Portable.pointer_eq (#theorem entry,theorem) andalso
+      HOLset.equal (#positions entry,positions) andalso
+      ListPair.allEq compatible_supplied_source
+        (map simpLib.source_rewrite sources,#sources entry)
+    fun store matches entry =
+      let val previous = List.filter (not o matches) (!memo)
+          val kept = List.take (previous,Int.min (255,length previous))
+      in memo := entry::kept end
+    fun rebind (source,old : lhs_view_entry) : lhs_view_entry =
+      {origin=source,source=simpLib.source_rewrite source,
+       view= #view old,rejection= #rejection old,footprint= #footprint old,
+       abstraction_positions= #abstraction_positions old,
+       normalization= #normalization old}
+    fun bind prior caller_charge (ambient as LHSViewTable table)
+          (binding as SuppliedRuleBinding
+            {bundle,positions=supplied_positions,...}) =
+      let
+        val rules = simpLib.rewrite_bundle_rules bundle
+        val initial_positions = HOLset.union
+          (#positions table,supplied_positions)
+        val _ = case prior of NONE => ()
+          | SOME (SuppliedConverseBinding data) =>
+              if Portable.pointer_eq (#simpset table,#ambient data) orelse
+                 Portable.pointer_eq (#simpset table,#working data) then ()
+              else raise ERR "make_supplied_view_cache_after"
+                "ambient table belongs to another binding"
+        val charged = ref (case prior of NONE => 0
+          | SOME (SuppliedConverseBinding data) => #normalization data)
+        fun charge () = (caller_charge (); charged := !charged + 1)
+        fun detect (theorem,sources) =
+          let
+            val matches = matching (#generation table) initial_positions
+              theorem sources
+            val previous = List.find matches (!memo)
+          in
+            case Option.mapPartial #converses previous of
+                SOME (suspended,units) =>
+                  (replay_normalization charge units; suspended)
+              | NONE =>
+                  let
+                    val start = !charged
+                    val suspended = HOLset.listItems
+                      (converse_sources charge
+                        (#rewrite_patterns table) sources)
+                    val entry =
+                      {generation= #generation table,theorem=theorem,
+                       positions=initial_positions,
+                       sources=map simpLib.source_rewrite sources,
+                       entries=Option.mapPartial #entries previous,
+                       converses=SOME (suspended,!charged-start)}
+                    val _ = store matches entry
+                  in suspended end
+          end
+        val suspended = HOLset.addList (no_sources,case prior of
+            NONE => List.concat (map detect rules)
+          | SOME (SuppliedConverseBinding data) => #suspended data)
+        val prepared = case prior of NONE => NONE
+          | SOME (SuppliedConverseBinding data) => SOME (#working data)
+        val effective as LHSViewTable working =
+          working_table ambient suspended supplied_positions prepared
+        val positions = #positions working
+        val _ = case prior of NONE => ()
+          | SOME (SuppliedConverseBinding data) =>
+              if HOLset.equal (positions,#positions data) then ()
+              else raise ERR "make_supplied_view_cache_after"
+                "ambient table has another abstraction policy"
+        val derive = Susp.delay (fn () =>
+          prepare_lhs_view_derivation_with_positions charge
+            (#simpset working) positions)
+        val derived = ref 0
+        val memoized = ref 0
+        fun one (theorem,sources) =
+          let
+            val matches = matching (#generation working) positions
+              theorem sources
+            val previous = List.find matches (!memo)
+          in
+            case Option.mapPartial #entries previous of
+                SOME old_entries =>
+                  let
+                    val entries = ListPair.mapEq rebind (sources,old_entries)
+                    val _ = List.app
+                      (fn (entry : lhs_view_entry) =>
+                        replay_normalization charge (#normalization entry))
+                      entries
+                    val _ = memoized := !memoized + 1
+                  in entries end
+              | NONE =>
+                  let
+                    val entries = map (Susp.force derive) sources
+                    val entry =
+                      {generation= #generation working,theorem=theorem,
+                       positions=positions,
+                       sources=map simpLib.source_rewrite sources,
+                       entries=SOME entries,
+                       converses=Option.mapPartial #converses previous}
+                    val _ = store matches entry
+                    val _ = derived := !derived + 1
+                  in entries end
+          end
+        val entries = List.concat (map one rules)
+        val _ = case prior of SOME _ => ()
+          | NONE => trace_suspended_converses (HOLset.listItems suspended)
+      in
+        SuppliedViewBinding
+          {rules=binding,entries=entries,positions=positions,
+           table=effective,suspended=HOLset.listItems suspended,
+           normalization= !charged,derived= !derived,memoized= !memoized}
+      end
+  in
+    {bind=bind NONE,
+     after=fn table => fn early as SuppliedConverseBinding data =>
+       bind (SOME early) (#charge data) table (#rules data)}
+  end
+
+fun make_supplied_view_cache () = #bind (make_supplied_view_cache_core ())
+fun make_supplied_view_cache_after () =
+  #after (make_supplied_view_cache_core ())
+
+datatype bound_simplification = BoundSimplification of
+  {rules : supplied_rule_binding,policy : Traverse.child_first_policy,
+   initial : simpLib.simpset,viewed : simpLib.simpset Susp.susp}
+
+val bound_supplied_views = make_supplied_view_cache_after ()
+
+fun make_bound_simplification prepare_runtime provide_table early =
+  let
+    val rules as SuppliedRuleBinding {bundle,...} =
+      supplied_converse_rules early
+    val raw = supplied_converse_working early
+    val prepared = prepare_runtime raw
+    val initial = if null (supplied_rule_originals rules) then prepared
+      else install_supplied_rules rules prepared
+    fun viewed () =
+      let
+        val binding = bound_supplied_views (provide_table ()) early
+        val ambient = supplied_view_associations
+          (lhs_view_table_entries (supplied_view_table binding))
+        val with_ambient = case ambient of [] => initial
+          | _ => simpLib.++ (initial,simpLib.name_ss "CLASIMP_REWRITE_VIEWS"
+              (simpLib.rewrite_views ambient))
+        (* Ambient aliases cannot outrank the caller's installed rules. *)
+        val originals = if null ambient then [] else List.concat
+          (map (fn (_,sources) => map
+            (fn source => (source,#2 (simpLib.source_rewrite source))) sources)
+            (simpLib.rewrite_bundle_rules bundle))
+        val ordered = case originals of [] => with_ambient
+          | _ => simpLib.++
+              (with_ambient,simpLib.name_ss "SUPPLIED_REWRITE_PRECEDENCE"
+                (simpLib.rewrite_views originals))
+      in add_supplied_views binding ordered end
+  in BoundSimplification
+       {rules=rules,policy=supplied_converse_policy early,initial=initial,
+        viewed=Susp.delay viewed}
+  end
+
+fun bound_simplification_simpset viewed (BoundSimplification data) =
+  if viewed then Susp.force (#viewed data) else #initial data
+
+fun bound_simplification_policy (BoundSimplification data) = #policy data
+
+(* Residual goals continue with views under the same bound occurrences,
+   normalization callback and invocation budget; completed proofs remain. *)
+fun deferred_view_tactic make goal ctxt =
+  let
+    val initial = (SOME (make false goal ctxt),NONE)
+      handle error as HOL_ERR _ => (NONE,SOME error)
+    fun continue answer =
+      Tactical.THEN
+        ((fn _ => fn _ => answer),
+         (fn current => fn context => make true current context)) goal ctxt
+      handle HOL_ERR _ => answer
+  in
+    case initial of
+        (SOME ([],validate),_) => ([],validate)
+      | (SOME answer,_) => continue answer
+      | (_,SOME error) => (make true goal ctxt handle HOL_ERR _ => raise error)
+      | _ => raise ERR "deferred_view_tactic" "missing first result"
+  end
+
+datatype working_simpset = WorkingSimpset of
+  {original : simpLib.simpset,table : lhs_view_table Susp.susp,
+   full : simpLib.simpset Susp.susp,
+   decisions : decision_base Susp.susp,plain : decision_base Susp.susp}
+
+fun working_original (WorkingSimpset data) = #original data
+fun working_view_table (WorkingSimpset data) = Susp.force (#table data)
+fun working_full_simpset (WorkingSimpset data) = Susp.force (#full data)
+fun working_decision_base (WorkingSimpset data) =
+  Susp.force (#decisions data)
+fun working_plain_decision_base (WorkingSimpset data) =
+  Susp.force (#plain data)
+
+(* Retain lazy working states as well as completed predecessor tables.
+   Forcing plain decisions cannot trigger ambient view construction. *)
+fun make_working_simpset_cache caller_charge =
+  let
+    val tables = make_lhs_view_cache caller_charge
+    val states = ref ([] : working_simpset list)
+    fun get ss =
+      case List.find
+        (fn state => Portable.pointer_eq (working_original state,ss))
+        (!states) of
+          SOME state => state
+        | NONE =>
+            let
+              val table = Susp.delay (fn () => tables ss)
+              val full = Susp.delay (fn () =>
+                let val LHSViewTable data = Susp.force table
+                in Susp.force (#full data) end)
+              val state = WorkingSimpset
+                {original=ss,table=table,full=full,
+                 decisions=Susp.delay (fn () =>
+                   let val LHSViewTable data = Susp.force table
+                   in Susp.force (#decisions data) end),
+                 plain=Susp.delay (fn () => strip_decisions ss)}
+              val kept = List.take (!states,Int.min (7,length (!states)))
+            in states := state::kept; state end
+  in get end
+
+val cached_working_simpset = make_working_simpset_cache (fn () => ())
+
+(* Materialize the adjusted table, never its earlier raw-simpset policy. *)
+fun working_simpset_for (SuppliedViewBinding {table,...}) =
+  let val LHSViewTable data = table
+  in WorkingSimpset
+       {original= #simpset data,table=Susp.delay (fn () => table),
+        full= #full data,decisions= #decisions data,plain= #plain data}
+  end
+
+(* BasicProvers supplies the initialization seed, not the predecessor.
+   The bounded identity/source memo above retains completed tables across
+   changes; the derived value owns its lazy working state. Public tactic
+   placement of view construction is separate from this cached value. *)
 val {get = clasimp_derived, get_of = _} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
        let val full = derive_clasimp_ss ss ()
-       in {full = full, decisions = Susp.delay (fn () => strip_decisions full)}
+       in {full = full,
+           positions = positions_of_sources
+             (#1 (simpLib.rewrite_sources full [])),
+           working = cached_working_simpset full}
        end)
-    {full = simpLib.empty_ss,
-     decisions = Susp.delay (fn () => strip_decisions simpLib.empty_ss)}
+    {full = simpLib.empty_ss, positions = no_positions,
+     working = cached_working_simpset simpLib.empty_ss}
 
-fun clasimp_ss () = #full (clasimp_derived ())
+val selected_default = ref (NONE : working_simpset option)
 
-fun clasimp_decision_base () = Susp.force (#decisions (clasimp_derived ()))
+fun clasimp_value () =
+  let val value = clasimp_derived ()
+  in selected_default := SOME (#working value); value end
+
+fun clasimp_ss () = #full (clasimp_value ())
+
+fun clasimp_working_simpset () = #working (clasimp_value ())
+
+fun working_simpset_of ss =
+  case !selected_default of
+      SOME state =>
+        if Portable.pointer_eq (ss,working_original state) then state
+        else cached_working_simpset ss
+    | NONE => cached_working_simpset ss
+
+fun clasimp_decision_base () =
+  working_plain_decision_base (clasimp_working_simpset ())
 
 (* Isabelle's asm_full_simp_tac simplifies premises mutually and turns the
    mksimps_pairs decomposition of premises into usable rewrites.
@@ -701,11 +1776,83 @@ fun budgeted_decisions_of ctxt budget
   end
 
 fun budgeted_decisions ctxt budget ss =
-  budgeted_decisions_of ctxt budget (strip_decisions ss)
+  budgeted_decisions_of ctxt budget
+    (working_plain_decision_base (working_simpset_of ss))
 
-fun ambient_simp charge safe ss =
+val bound_converses = make_supplied_converse_cache ()
+
+fun strip_requirements theorem =
+  let
+    val theorem = Option.getOpt (markerLib.dest_Req0 theorem,theorem)
+  in Option.getOpt (markerLib.dest_ReqD theorem,theorem) end
+
+fun is_requirement theorem =
+  Option.isSome (markerLib.dest_Req0 theorem) orelse
+  Option.isSome (markerLib.dest_ReqD theorem)
+
+fun is_tactic_control theorem =
+  case markerLib.dest_directive theorem of
+      SOME markerLib.DNoAsms => true
+    | SOME (markerLib.DIgnAsm _) => true
+    | SOME (markerLib.DAbbr _) => true
+    | SOME (markerLib.DLabel _) => true
+    | _ => false
+
+fun is_assumption_control theorem =
+  case markerLib.dest_directive theorem of
+      SOME markerLib.DNoAsms => true
+    | SOME (markerLib.DIgnAsm _) => true
+    | _ => false
+
+fun prepare_invocation_rules ss arguments =
+  let
+    val controls = List.filter
+      (fn theorem => is_requirement theorem orelse is_tactic_control theorem)
+      arguments
+    val (ambient,originals) = simpLib.prepare_rewrite_arguments ss
+      (map strip_requirements arguments)
+    val SuppliedRuleBinding data = prepare_supplied_rules ambient originals
+    val rules = SuppliedRuleBinding
+      {bundle= #bundle data,controls=controls @ #controls data,
+       originals= #originals data,positions= #positions data}
+  in (ambient,rules) end
+
+fun prepare_bound_rules runtime charge ambient rules =
+  let
+    val early = bound_converses charge ambient rules
+    val working = working_simpset_of ambient
+  in make_bound_simplification runtime
+       (fn () => working_view_table working) early end
+
+fun prepare_bound_simplification runtime charge ss arguments =
+  let val (ambient,rules) = prepare_invocation_rules ss arguments
+  in prepare_bound_rules runtime charge ambient rules end
+
+(* A generic callback can pass its simpset to a CS tactic and discard its
+   theorem list. Keep compiled supplied origins and facts scoped to that
+   callback application, rather than reclassifying them as ambient rules. *)
+type callback_binding =
+  {simpset : simpLib.simpset,ambient : simpLib.simpset,
+   rules : supplied_rule_binding,environment : clasetFacts.environment,
+   base_cs : clasetLib.claset,controls : thm list,
+   active : (searchBudget.budget * bound_simplification) option ref}
+
+val callback_bindings = ref ([] : callback_binding list)
+
+fun callback_binding_for ss = List.find
+  (fn binding => Portable.pointer_eq (ss,#simpset binding))
+  (!callback_bindings)
+
+fun with_callback_binding binding action =
+  let val saved = !callback_bindings
+  in
+    callback_bindings := binding::saved;
+    Portable.finally (fn () => callback_bindings := saved) action ()
+  end
+
+fun ambient_simp policy safe ss =
   simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
-    charge {safe = safe} asm_full_simp_config ss
+    policy {safe = safe} asm_full_simp_config ss
 
 (* Where the two sides are sets -- functions into bool -- the pointwise
    reading is membership and not application.  Every set and list fact
@@ -733,7 +1880,11 @@ val membership_extensionality =
    the invocation states on the membership and nothing else is; the scan
    runs once where the tactic is built rather than once per equation the
    traversal reaches. *)
-fun membership_heads ss =
+(* Fragment declarations omit aliases and may include rules the compiler
+   discarded. Read the same active inventory the simplifier was given. *)
+fun effective_rewrites ss = map #2 (#1 (simpLib.rewrite_sources ss []))
+
+fun membership_heads_of rewrites =
   let
     fun subject theorem =
       let
@@ -764,11 +1915,10 @@ fun membership_heads ss =
   in
     List.foldl record (Binaryset.empty (Lib.pair_compare (String.compare,
                                                           String.compare)))
-      (List.concat
-        (map readings
-          (List.concat
-            (map simpLib.frag_rewrites (simpLib.ssfrags_of ss)))))
+      (List.concat (map readings rewrites))
   end
+
+fun membership_heads ss = membership_heads_of (effective_rewrites ss)
 
 (* Which of the two readings an equation is given is decided by its
    sides.  A side headed by a constant HOL4 states facts about on the
@@ -969,8 +2119,9 @@ end
    ambient simplification has simplified it: an assumption that states a
    permutation is its own decreasing rewrite, so the pass that reads the
    goal's own equations turns it into T and drops it. *)
-fun with_permutation_instances step simp_args =
-  Tactical.ASSUM_LIST
+fun with_permutation_instances_controlled controls step simp_args =
+  (if null controls then Tactical.ASSUM_LIST
+   else markerLib.process_taclist_then {arg=controls})
     (fn theorems =>
        fn goal =>
          let
@@ -987,29 +2138,54 @@ fun with_permutation_instances step simp_args =
            step (simp_args @ instances) goal
          end)
 
-fun asm_full_simp_with charge ss simp_args =
-  with_permutation_instances
-    (fn args => ambient_simp charge false ss args)
+fun asm_full_simp_with policy ss simp_args =
+  with_permutation_instances_controlled []
+    (fn args => ambient_simp policy false ss args)
     simp_args
 
-fun safe_asm_full_simp_with charge ss simp_args =
-  ambient_simp charge true ss simp_args
+fun safe_asm_full_simp_with policy ss simp_args =
+  ambient_simp policy true ss simp_args
 
-fun asm_full_simp ss simp_args goal =
+fun bound_global_simp config safe viewed
+      (state as BoundSimplification {rules=SuppliedRuleBinding data,
+                                    policy,...}) extras =
+  let
+    val (required,controls) = List.partition is_requirement (#controls data)
+    val step = simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND
+      policy {safe=safe} config (bound_simplification_simpset viewed state)
+      (#bundle data) (controls @ extras)
+    (* Their payloads already belong to the bundle. Only the requirement
+       checks recur here; recompiling the payload would grant fresh quotas. *)
+  in markerLib.mk_require_tac (fn _ => step) required end
+
+fun asm_full_simp_bound viewed
+      (state as BoundSimplification {rules=SuppliedRuleBinding data,...})
+      extras =
+  with_permutation_instances_controlled
+    (List.filter is_assumption_control (#controls data @ extras))
+    (bound_global_simp asm_full_simp_config false viewed state) extras
+
+fun safe_asm_full_simp_bound viewed state =
+  bound_global_simp asm_full_simp_config true viewed state
+
+fun standalone_simp safe ss arguments goal =
   let val budget = normalization_budget ()
   in
-    fn ctxt =>
-      asm_full_simp_with (charge_normalization budget)
-        (budgeted_decisions ctxt budget ss) simp_args goal ctxt
+    markerLib.ABBRS_THEN (markerLib.LLABEL_RES_THEN
+      (fn resolved => fn current => fn ctxt =>
+        let val state = prepare_bound_simplification
+              (budgeted_decisions ctxt budget) (charge_normalization budget)
+              ss resolved
+        in
+          deferred_view_tactic
+            (fn viewed =>
+              (if safe then safe_asm_full_simp_bound else asm_full_simp_bound)
+                viewed state []) current ctxt
+        end)) arguments goal
   end
 
-fun safe_asm_full_simp ss simp_args goal =
-  let val budget = normalization_budget ()
-  in
-    fn ctxt =>
-      safe_asm_full_simp_with (charge_normalization budget)
-        (budgeted_decisions ctxt budget ss) simp_args goal ctxt
-  end
+val asm_full_simp = standalone_simp false
+val safe_asm_full_simp = standalone_simp true
 
 (* Inside the classical cascade the split between assumptions and
    conclusion is the cascade's own: its negation introduction strips a
@@ -1027,32 +2203,47 @@ val cascade_simp_config : simpLib.xsimptac_config =
    imp_rebuild = false,
    imp_premises = false}
 
-fun cascade_safe_simp charge ss =
-  simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
-    charge {safe = true} cascade_simp_config ss
+fun cascade_safe_simp_bound viewed state =
+  bound_global_simp cascade_simp_config true viewed state
 
-fun add_simp_wrapper_with charge ss simp_args =
+fun cascade_safe_simp policy ss =
+  simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
+    policy {safe = true} cascade_simp_config ss
+
+fun add_simp_wrapper_tactic simplify =
   let
     fun wrapper step =
       NTactical.NAPPEND
         (NTactical.NCHANGED
-           (NTactical.LIFT (asm_full_simp_with charge ss simp_args)),
+           (NTactical.LIFT simplify),
          step)
   in
     clasetLib.add_unsafe_wrapper ("asm_full_simp_tac", wrapper)
   end
 
-fun add_safe_simp_wrapper_with charge ss simp_args =
+fun add_safe_simp_wrapper_tactic simplify =
   let
     fun wrapper step =
       NTactical.NORELSE
         (step,
          NTactical.NCHANGED
-           (NTactical.LIFT (cascade_safe_simp charge ss simp_args)))
+           (NTactical.LIFT simplify))
   in
     clasetLib.add_safe_wrapper
       ("safe_asm_full_simp_tac", wrapper)
   end
+
+fun add_simp_wrapper_with policy ss simp_args =
+  add_simp_wrapper_tactic (asm_full_simp_with policy ss simp_args)
+
+fun add_safe_simp_wrapper_with policy ss simp_args =
+  add_safe_simp_wrapper_tactic (cascade_safe_simp policy ss simp_args)
+
+fun add_simp_wrapper_bound viewed state extras =
+  add_simp_wrapper_tactic (asm_full_simp_bound viewed state extras)
+
+fun add_safe_simp_wrapper_bound viewed state extras =
+  add_safe_simp_wrapper_tactic (cascade_safe_simp_bound viewed state extras)
 
 (* Standalone wrapper constructors retain their existing interface. Each
    embedded simplification owns a budget when a caller invokes it. *)
@@ -1076,7 +2267,9 @@ fun add_safe_simp_wrapper ss simp_args =
               (fn goal =>
                  let val budget = normalization_budget ()
                  in cascade_safe_simp
-                      (charge_normalization budget) ss simp_args goal
+                      (abstraction_policy
+                         (charge_normalization budget) ss simp_args)
+                      ss simp_args goal
                  end)))
   in
     clasetLib.add_safe_wrapper
@@ -1619,12 +2812,10 @@ fun route_simp_argument (theorem, (cs, rewrites)) =
            (extended, rewrites))
       | NONE => (cs, theorem :: rewrites)
 
-fun extend_invocation
-      {iff_prefix,simp_rules,iff_rules,claset,simpset} =
+fun invocation_declarations iff_prefix simp_rules iff_rules claset =
   let
     val (routed_claset, rewritable) =
       List.foldr route_simp_argument (claset, []) simp_rules
-    val simp_ss = simpLib.++ (simpset, simpLib.rewrites rewritable)
     val declarations =
       map
         (fn (index, rule) =>
@@ -1634,17 +2825,41 @@ fun extend_invocation
       List.foldl
         (fn ({rules,...}, cs) => add_iff_rules rules cs)
         routed_claset declarations
+  in (invocation_cs,rewritable,List.rev (map #rewrite declarations)) end
+
+fun extend_invocation
+      {iff_prefix,simp_rules,iff_rules,claset,simpset} =
+  let
+    val (invocation_cs,rewritable,iff_rewrites) =
+      invocation_declarations iff_prefix simp_rules iff_rules claset
+    val simp_ss =
+      if null rewritable then simpset
+      else simpLib.++ (simpset, simpLib.rewrites rewritable)
     (* A single fragment rebuilds the rewrite net once.  Its head has the
        highest precedence, so reverse the declarations to match successive
        fragment insertion. *)
     val invocation_ss =
-      if null declarations then simp_ss
+      if null iff_rewrites then simp_ss
       else
         simpLib.++
           (simp_ss,
-           simpLib.rewrites (List.rev (map #rewrite declarations)))
+           simpLib.rewrites iff_rewrites)
   in
     (invocation_cs, invocation_ss)
+  end
+
+datatype invocation_rewrites = InvocationRewrites of
+  {ambient : simpLib.simpset,supplied : thm list}
+
+fun extend_bound_invocation
+      {iff_prefix,simp_rules,iff_rules,claset,
+       simpset=InvocationRewrites {ambient,supplied}} =
+  let
+    val (cs,rewritable,iff_rewrites) =
+      invocation_declarations iff_prefix simp_rules iff_rules claset
+  in
+    (cs,InvocationRewrites
+      {ambient=ambient,supplied=iff_rewrites @ rewritable @ supplied})
   end
 
 fun no_extra_markers theorems cs = (cs, theorems)
@@ -1653,17 +2868,24 @@ val curry_premises =
   Conv.REDEPTH_CONV (Conv.REWR_CONV (Conv.GSYM boolTheory.AND_IMP_INTRO))
 
 (* The simpset's normal form of a rule, with conjoined premises curried. *)
-fun rule_normal_form_conv budget ss =
+fun finish_rule_normal_form (policy : Traverse.child_first_policy) conversion =
   Conv.THENC
-    (simpLib.SIMP_CONV_CHILD_FIRST (charge_normalization budget) ss [],
+    (conversion,
      fn term =>
-       (charge_normalization budget ();
+       (#charge policy ();
         Conv.QCONV curry_premises term))
+
+fun rule_normal_form_conv policy ss = finish_rule_normal_form policy
+  (simpLib.SIMP_CONV_CHILD_FIRST policy ss [])
+
+fun bound_rule_normal_form_conv policy ss =
+  let val prepared = simpLib.prepare_child_first policy ss
+  in finish_rule_normal_form policy (#normalize prepared []) end
 
 (* Keep the original declaration and add a certified view for the
    simpset's representation. Exclude a rule's own rewrite statement or
    an equivalence of which the rule is one direction. *)
-fun transport_claset_rules budget ss rules cs =
+fun transport_claset_rules_with filter normal_form budget policy ss rules cs =
   let
     fun conversion theorem =
       let
@@ -1682,12 +2904,12 @@ fun transport_claset_rules budget ss rules cs =
           end
           handle HOL_ERR _ => false
         val without_self =
-          simpLib.filter_rewrites
+          filter
             (fn (_, rewrite) =>
               not (aconv (concl rewrite) statement) andalso
               not (own_direction rewrite)) ss
       in
-        rule_normal_form_conv budget without_self
+        normal_form policy without_self
       end
     fun add ((spec, (_, theorem)), current) =
       let
@@ -1724,6 +2946,11 @@ fun transport_claset_rules budget ss rules cs =
   in
     List.foldl add cs rules
   end
+
+val transport_claset_rules = transport_claset_rules_with
+  simpLib.filter_rewrites rule_normal_form_conv
+val transport_bound_claset_rules = transport_claset_rules_with
+  simpLib.filter_rewrites_preserving_controls bound_rule_normal_form_conv
 
 fun safe_named_rule ((spec : clasetLib.rulespec), _) = #safe spec
 
@@ -1824,11 +3051,9 @@ fun transport_candidates budget ss goals candidates =
     List.filter related candidates
   end
 
-fun with_claset_transport budget ss candidates cs build goal ctxt =
+fun with_claset_transport_from transport budget policy ss candidates cs build
+      initial goal ctxt =
   let
-    val initial =
-      (SOME (build cs goal ctxt), NONE)
-      handle exn as HOL_ERR _ => (NONE, SOME exn)
     fun initial_result () =
       case initial of
           (SOME result, _) => result
@@ -1844,7 +3069,7 @@ fun with_claset_transport budget ss candidates cs build goal ctxt =
         val relevant =
           transport_candidates budget ss sites candidates
         val extended =
-          transport_claset_rules budget ss relevant cs
+          transport budget policy ss relevant cs
       in
         if length (clasetLib.rules_of extended) =
            length (clasetLib.rules_of cs) then initial_result ()
@@ -1869,12 +3094,234 @@ fun with_claset_transport budget ss candidates cs build goal ctxt =
       | _ => improve ()
   end
 
+fun with_claset_transport budget policy ss candidates cs build goal ctxt =
+  let
+    val initial = (SOME (build cs goal ctxt),NONE)
+      handle exn as HOL_ERR _ => (NONE,SOME exn)
+  in with_claset_transport_from transport_claset_rules budget policy ss
+       candidates cs build initial goal ctxt end
+
 fun process_clasimp_args body base_cs base_ss =
-  clasetLib.with_invocation_args
-    {iff_prefix="__clasimp_iff_arg_", extra_markers=no_extra_markers}
-    (fn cs => fn SOME ss => body cs ss
-      | _ => raise ERR "process_clasimp_args" "simpset was not installed")
-    base_cs (SOME {base=base_ss, extend=extend_invocation})
+  clasetLib.with_invocation_fact_env
+    {iff_prefix="__clasimp_iff_arg_",extra_markers=no_extra_markers,
+     consumer=clasetLib.SearchFacts}
+    (fn cs => fn simpset => fn controls => fn environment =>
+      case simpset of
+          SOME (InvocationRewrites {ambient,supplied}) =>
+            markerLib.LLABEL_RES_THEN
+              (fn arguments => fn goal => fn ctxt =>
+                let
+                  val (ambient,rules) =
+                    prepare_invocation_rules ambient arguments
+                  val ss = install_supplied_rules rules ambient
+                  val binding =
+                    {simpset=ss,ambient=ambient,rules=rules,
+                     environment=environment,base_cs=base_cs,
+                     controls=controls,active=ref NONE}
+                in with_callback_binding binding
+                     (fn () => body cs ss controls goal ctxt) end)
+              (map #theorem
+                (clasetFacts.schematic_views environment) @ supplied)
+        | NONE => raise ERR "process_clasimp_args"
+            "simpset was not installed")
+    base_cs (SOME
+      {base=InvocationRewrites {ambient=base_ss,supplied=[]},
+       extend=extend_bound_invocation})
+
+fun process_clasimp_args_with_policy budget body =
+  process_clasimp_args
+    (fn cs => fn ss => fn arguments =>
+      body (abstraction_policy (charge_normalization budget) ss arguments)
+        cs ss arguments)
+
+fun process_clasimp_bound_args consumer budget runtime body base_cs base_ss =
+  clasetLib.with_invocation_fact_env_budgeted budget
+    {iff_prefix="__clasimp_iff_arg_",extra_markers=no_extra_markers,
+     consumer=consumer}
+    (fn cs => fn simpset => fn controls => fn environment =>
+      case simpset of
+          SOME (InvocationRewrites {ambient,supplied}) =>
+            markerLib.LLABEL_RES_THEN
+              (fn arguments =>
+                let
+                  val bound = prepare_bound_simplification runtime
+                    (charge_normalization budget) ambient arguments
+                in body bound cs environment end)
+              (controls @ map #theorem
+                (clasetFacts.schematic_views environment) @ supplied)
+        | NONE => raise ERR "process_clasimp_bound_args"
+            "simpset was not installed")
+    base_cs (SOME
+      {base=InvocationRewrites {ambient=base_ss,supplied=[]},
+       extend=extend_bound_invocation})
+
+fun add_bound_fact_aliases [] state = state
+  | add_bound_fact_aliases aliases (BoundSimplification data) =
+      let
+        fun install ss = simpLib.++ (ss,simpLib.name_ss "CLASIMP_FACT_VIEWS"
+          (simpLib.rewrite_views aliases))
+      in BoundSimplification
+           {rules= #rules data,policy= #policy data,
+            initial=install (#initial data),
+            viewed=Susp.delay (fn () => install (Susp.force (#viewed data)))}
+      end
+
+(* Fact aliases retain compiled origins; normalization cannot spend them. *)
+fun transport_bound_facts viewed
+      (state as BoundSimplification {rules=SuppliedRuleBinding data,
+                                    policy,...}) environment =
+  case clasetFacts.schematic_views environment of
+      [] => (state,[])
+    | views =>
+  let
+    fun is_fact (theorem,_) = List.exists
+      (fn (view : clasetFacts.view) =>
+        Portable.pointer_eq (theorem,#theorem view)) views
+    val sources = List.concat (map #2 (List.filter is_fact
+      (simpLib.rewrite_bundle_rules (#bundle data))))
+    val basis = simpLib.suspend_rewrite_sources sources
+      (bound_simplification_simpset viewed state)
+    exception FactViewLimit
+    val remaining = ref 20000
+    fun charge () = if !remaining = 0 then raise FactViewLimit
+      else (remaining := !remaining - 1; #charge policy ())
+    val local_policy =
+      {charge=charge,keep_abstraction= #keep_abstraction policy}
+    val prepared = simpLib.prepare_child_first local_policy basis
+    fun supported original derived = List.all
+      (fn assumption => boolSyntax.tmem assumption (hyp original))
+      (hyp derived)
+    fun candidate theorem =
+      let
+        val specialised = Drule.SPEC_ALL theorem
+        val (premises,equation) =
+          boolSyntax.strip_imp_only (concl specialised)
+        val (left,right) = boolSyntax.dest_eq equation
+        val assumptions = map Thm.ASSUME premises
+        val normal = #normalize prepared assumptions left
+        val left' = boolSyntax.rhs (concl normal)
+      in
+        if aconv left left' orelse aconv left' right then NONE
+        else
+          let
+            val right' = boolSyntax.rhs
+              (concl (#normalize prepared assumptions right))
+            val body = List.foldl
+              (fn (premise,th) => Thm.MP th (Thm.ASSUME premise))
+              specialised premises
+            val derived = Thm.TRANS (Thm.SYM normal) body
+            val discharged = List.foldr
+              (fn (premise,th) => Thm.DISCH premise th) derived premises
+          in
+            if aconv left' right' orelse
+               not (supported specialised discharged) then NONE
+            else SOME (List.foldl
+              (fn (assumption,th) => Drule.ADD_ASSUM assumption th)
+              discharged (hyp specialised))
+          end
+      end
+    fun alias source =
+      let
+        val theorem = #2 (simpLib.source_rewrite source)
+        val _ = remaining := 20000
+      in
+        case candidate theorem of
+            NONE => NONE
+          | SOME derived =>
+              let val (other,undo) = rename_view_variables theorem
+              in case candidate other of
+                  SOME renamed => if aconv (concl derived)
+                      (undo (concl renamed))
+                    then SOME (source,Drule.GEN_ALL derived) else NONE
+                | NONE => NONE end
+      end
+      handle FactViewLimit => NONE | HOL_ERR _ => NONE
+           | Conv.UNCHANGED => NONE
+    fun transport (view : clasetFacts.view) =
+      let
+        val _ = remaining := 20000
+        val conversion = finish_rule_normal_form local_policy
+          (#normalize prepared [])
+        val derived = clasetFacts.transport_view conversion view
+        val theorem = #theorem derived
+      in
+        if aconv (concl theorem) (concl (#theorem view)) orelse
+           aconv (concl theorem) boolSyntax.T orelse
+           not (supported (#theorem view) theorem) then NONE
+        else SOME derived
+      end
+      handle FactViewLimit => NONE | HOL_ERR _ => NONE
+           | Conv.UNCHANGED => NONE
+  in
+    (add_bound_fact_aliases (List.mapPartial alias sources) state,
+     List.mapPartial transport views)
+  end
+
+fun add_transported_facts consumer budget transported cs =
+  let
+    fun implication theorem =
+      boolSyntax.is_imp_only (concl (Drule.SPEC_ALL theorem))
+    fun add (view : clasetFacts.view,current) =
+      if implication (#source view) andalso implication (#theorem view) then
+        let
+          val name = clasetLib.fresh_rule_name
+            {prefix="__clasimp_transport_",from=0} current
+          val _ = searchBudget.charge budget searchBudget.Application
+        in clasetLib.add_derived_rule
+             {kind=clasetRules.Dest,safe=false,prio=NONE}
+             (name,#theorem view) current end
+        handle HOL_ERR _ => current
+      else current
+  in if consumer <> clasetLib.SearchFacts then cs
+     else List.foldl add cs transported end
+
+fun bound_fact_views viewed consumer budget body base_cs
+      bound cs environment goal ctxt =
+      let
+        fun attempt state current =
+          (SOME (body state current environment goal ctxt),NONE)
+          handle exn as HOL_ERR _ => (NONE,SOME exn)
+        val initial = attempt bound cs
+        fun result (SOME answer,_) = answer
+          | result (_,SOME error) = raise error
+          | result _ = raise ERR "process_clasimp_bound_fact_views"
+              "missing result"
+        fun improve () =
+          let
+            val (next,transported) =
+              transport_bound_facts viewed bound environment
+            val fact_cs = add_transported_facts consumer budget transported cs
+            val candidates = clasetLib.rules_of base_cs @
+              clasetLib.invocation_marker_rules cs
+            val eligible = if consumer = clasetLib.SafeFacts
+              then List.filter safe_named_rule candidates else candidates
+            val policy = bound_simplification_policy next
+            val ss = bound_simplification_simpset viewed next
+            val same = Portable.pointer_eq (bound,next) andalso
+              Portable.pointer_eq (cs,fact_cs)
+            val start = if same then initial else attempt next fact_cs
+            val completed =
+              SOME (with_claset_transport_from transport_bound_claset_rules
+                budget policy ss eligible fact_cs
+                (fn current => body next current environment)
+                start goal ctxt)
+              handle HOL_ERR _ => NONE
+          in
+            case (initial,completed) of
+                ((SOME (goals,_),_),SOME (new_goals,validate)) =>
+                  if length new_goals < length goals then (new_goals,validate)
+                  else result initial
+              | ((NONE,_),SOME answer) => answer
+              | _ => result initial
+          end
+      in case initial of (SOME ([],validate),_) => ([],validate)
+           | _ => improve () end
+
+fun process_clasimp_bound_fact_views viewed consumer budget runtime body
+      base_cs base_ss =
+  process_clasimp_bound_args consumer budget runtime
+    (bound_fact_views viewed consumer budget body base_cs)
+    base_cs base_ss
 
 fun process_clasimp_args_fact_views consumer budget
     body base_cs base_ss =
@@ -1887,7 +3334,10 @@ fun process_clasimp_args_fact_views consumer budget
             let
               val views =
                 clasetFacts.schematic_views environment
-              val conversion = rule_normal_form_conv budget ss
+              val policy =
+                abstraction_policy (charge_normalization budget) ss
+                  (controls @ map #theorem views)
+              val conversion = rule_normal_form_conv policy ss
               fun transport (view : clasetFacts.view) =
                 let
                   val derived =
@@ -1937,8 +3387,8 @@ fun process_clasimp_args_fact_views consumer budget
               val arguments =
                 controls @ map #theorem (views @ transported)
             in
-              with_claset_transport budget ss eligible fact_cs
-                (fn current => body current ss arguments)
+              with_claset_transport budget policy ss eligible fact_cs
+                (fn current => body policy current ss arguments)
             end
         | NONE =>
             raise ERR "process_clasimp_args_fact_views"
@@ -1987,7 +3437,7 @@ fun states_a_reading theorem =
    built.  Applying it inside the [can] is what keeps one unusable
    rewrite in the simpset from raising out of the test and standing
    the step down everywhere. *)
-fun read_by_a_rewrite ss term =
+fun read_by_a_rewrite rewrites term =
   let
     fun readings theorem =
       Drule.CONJUNCTS (Drule.SPEC_ALL theorem) handle HOL_ERR _ => [theorem]
@@ -1996,17 +3446,18 @@ fun read_by_a_rewrite ss term =
       Lib.can (fn subject => Conv.REWR_CONV theorem subject) term
   in
     List.exists (List.exists applies o readings)
-      (List.concat (map simpLib.frag_rewrites (simpLib.ssfrags_of ss)))
+      rewrites
   end
 
 fun extensional_normalize ss =
   let
-    val heads = membership_heads ss
+    val rewrites = effective_rewrites ss
+    val heads = membership_heads_of rewrites
   in
     Tactical.CONV_TAC
       (Conv.CHANGED_CONV
          (fn term =>
-            if read_by_a_rewrite ss term then
+            if read_by_a_rewrite rewrites term then
               raise ERR "extensional_normalize"
                 "a rewrite of the invocation's takes the equation"
             else
@@ -2066,10 +3517,34 @@ fun staged_auto_search {blast, depth} tableau_cs classical_cs =
     Tactical.FIRST (tableau @ classical)
   end
 
-fun auto_with {blast, depth} charge cs ss simp_args =
+type simplification_driver =
+  {policy : Traverse.child_first_policy,ss : simpLib.simpset,
+   simplify : tactic,safe_simplify : tactic,
+   add_simp : clasetLib.claset -> clasetLib.claset,
+   add_safe_simp : clasetLib.claset -> clasetLib.claset}
+
+fun ordinary_simplification_driver policy ss arguments :
+      simplification_driver =
+  {policy=policy,ss=ss,
+   simplify=asm_full_simp_with policy ss arguments,
+   safe_simplify=safe_asm_full_simp_with policy ss arguments,
+   add_simp=add_simp_wrapper_with policy ss arguments,
+   add_safe_simp=add_safe_simp_wrapper_with policy ss arguments}
+
+fun bound_simplification_driver viewed state : simplification_driver =
+  {policy=bound_simplification_policy state,
+   ss=bound_simplification_simpset viewed state,
+   simplify=asm_full_simp_bound viewed state [],
+   safe_simplify=safe_asm_full_simp_bound viewed state [],
+   add_simp=add_simp_wrapper_bound viewed state [],
+   add_safe_simp=add_safe_simp_wrapper_bound viewed state []}
+
+fun auto_driver {blast, depth}
+      ({policy,ss,simplify,add_simp,add_safe_simp,...} :
+        simplification_driver) cs =
   let
-    val search_cs = add_simp_wrapper_with charge ss simp_args cs
-    val final_cs = add_safe_simp_wrapper_with charge ss simp_args cs
+    val search_cs = add_simp cs
+    val final_cs = add_safe_simp cs
     val initial_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
     val search =
@@ -2084,9 +3559,8 @@ fun auto_with {blast, depth} charge cs ss simp_args =
        metavariables, so one TRY per subgoal (from THEN) is equivalent. *)
     val script =
       Tactical.EVERY
-        [Tactical.TRY (extensional_normalize_with charge ss),
-         with_extensionality_with charge ss
-           (asm_full_simp_with charge ss simp_args),
+        [Tactical.TRY (extensional_normalize_with (#charge policy) ss),
+         with_extensionality_with (#charge policy) ss simplify,
          Tactical.TRY initial_safe,
          Tactical.TRY search,
          Tactical.TRY final_safe]
@@ -2094,21 +3568,63 @@ fun auto_with {blast, depth} charge cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-fun CS_of safe_only body cs ss goal ctxt =
+fun auto_with bounds policy cs ss arguments =
+  auto_driver bounds (ordinary_simplification_driver policy ss arguments) cs
+
+fun callback_bound_rules ambient rules [] goal ctxt = (ambient,rules)
+  | callback_bound_rules ambient (SuppliedRuleBinding supplied)
+      controls goal ctxt =
+      let
+        val resolved = ref []
+        val _ = markerLib.LLABEL_RES_THEN
+          (fn arguments => (resolved := arguments; Tactical.ALL_TAC))
+          controls goal ctxt
+        val (ambient,SuppliedRuleBinding additional) =
+          prepare_invocation_rules ambient (!resolved)
+        val rules = SuppliedRuleBinding
+          {bundle=simpLib.combine_rewrite_bundles
+             [#bundle additional,#bundle supplied],
+           controls= #controls additional @ #controls supplied,
+           originals= #originals additional @ #originals supplied,
+           positions=HOLset.union
+             (#positions additional,#positions supplied)}
+      in (ambient,rules) end
+
+fun CS_of_with allocate safe_only body cs ss goal ctxt =
   let
-    val budget = normalization_budget ()
-    val ss = budgeted_decisions ctxt budget ss
-    val candidates = clasetLib.rules_of cs
-    val eligible =
-      if safe_only then List.filter safe_named_rule candidates
-      else candidates
+    val consumer = if safe_only then clasetLib.SafeFacts
+      else clasetLib.SearchFacts
+    fun run budget state current _ =
+      deferred_view_tactic (fn viewed =>
+        body budget (bound_simplification_driver viewed state) current)
   in
-    with_claset_transport budget ss eligible cs
-      (fn current =>
-        body (charge_normalization budget) current ss []) goal ctxt
+    case callback_binding_for ss of
+        NONE =>
+          let val budget = allocate ()
+          in process_clasimp_bound_fact_views true consumer budget
+               (budgeted_decisions ctxt budget) (run budget)
+               cs ss [] goal ctxt end
+      | SOME {ambient,rules,environment,base_cs,controls,active,...} =>
+          let
+            val (budget,state) = case !active of SOME bound => bound
+              | NONE =>
+                  let
+                    val budget = allocate ()
+                    val (ambient,rules) = callback_bound_rules ambient rules
+                      controls goal ctxt
+                    val state = prepare_bound_rules
+                      (budgeted_decisions ctxt budget)
+                      (charge_normalization budget) ambient rules
+                  in active := SOME (budget,state); (budget,state) end
+          in bound_fact_views true consumer budget (run budget)
+               base_cs
+               state cs environment goal ctxt end
   end
 
-fun CS_AUTO_TAC bounds = CS_of false (auto_with bounds)
+fun CS_of safe_only body =
+  CS_of_with normalization_budget safe_only (fn _ => body)
+
+fun CS_AUTO_TAC bounds = CS_of false (auto_driver bounds)
 
 type force_slice =
   {candidates : int, applications : int, normalization : int}
@@ -2150,14 +3666,14 @@ fun valid_slice
       ({candidates, applications, normalization} : force_slice) =
   candidates > 0 andalso applications > 0 andalso normalization > 0
 
-fun force_search schedule budget cs ss simp_args goal ctxt =
+fun force_search schedule budget add_simp cs goal ctxt =
   let
     val {best, tableau, depth, blast_depth, classical_depth} =
       schedule
     val best_budget = searchBudget.child budget (slice_limits best)
-    val best_cs =
-      add_simp_wrapper_with
-        (charge_normalization best_budget) ss simp_args cs
+    (* Atomic simplification retains its invocation policy and budget;
+       yielding engines alone receive the resumable slice budgets. *)
+    val best_cs = add_simp cs
     val best_session =
       classicalLib.CS_FIRST_BEST_SESSION best_budget
         best_cs goal ctxt
@@ -2268,9 +3784,7 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                         val turn =
                           searchBudget.child budget
                             (slice_limits (!depth_slice))
-                        val depth_cs =
-                          add_simp_wrapper_with
-                            (charge_normalization turn) ss simp_args cs
+                        val depth_cs = add_simp cs
                         val session =
                           classicalLib.CS_DEPTH_SESSION turn
                             {dup = false} bound depth_cs goal ctxt
@@ -2307,7 +3821,8 @@ fun force_search schedule budget cs ss simp_args goal ctxt =
                   "all FORCE search engines exhausted"
   end
 
-fun force_with name budget charge cs ss simp_args =
+fun force_driver name budget
+      ({policy,ss,simplify,add_simp,...} : simplification_driver) cs =
   let
     val schedule as
       {best, tableau, depth, blast_depth, classical_depth} =
@@ -2317,7 +3832,7 @@ fun force_with name budget charge cs ss simp_args =
          valid_slice depth andalso blast_depth >= 0 andalso
          classical_depth >= 0 then ()
       else raise ERR "force_with" "invalid FORCE schedule"
-    val search_cs = add_simp_wrapper_with charge ss simp_args cs
+    val search_cs = add_simp cs
     val clarify =
       NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
 
@@ -2326,36 +3841,31 @@ fun force_with name budget charge cs ss simp_args =
        constructor constraints from which tableau search builds a witness. *)
     val safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC search_cs)
-    val search = force_search schedule budget cs ss simp_args
+    val search = force_search schedule budget add_simp cs
     val script =
       Tactical.EVERY
         [Tactical.TRY clarify,
-         Tactical.TRY (extensional_normalize_with charge ss),
-         asm_full_simp_with charge ss simp_args,
-         with_extensionality_with charge ss
-           (asm_full_simp_with charge ss simp_args),
+         Tactical.TRY (extensional_normalize_with (#charge policy) ss),
+         simplify,
+         with_extensionality_with (#charge policy) ss simplify,
          Tactical.TRY safe,
          search]
   in
     must_close name script
   end
 
-fun CS_FORCE_TAC cs ss goal ctxt =
-  let
-    val budget = force_budget ()
-    val ss = budgeted_decisions ctxt budget ss
-  in
-    with_claset_transport budget ss
-      (clasetLib.rules_of cs) cs
-      (fn current =>
-        force_with "CS_FORCE_TAC" budget
-          (charge_normalization budget) current ss []) goal ctxt
-  end
+fun force_with name budget policy cs ss arguments =
+  force_driver name budget
+    (ordinary_simplification_driver policy ss arguments) cs
+
+val CS_FORCE_TAC = CS_of_with force_budget false
+  (force_driver "CS_FORCE_TAC")
 
 (* The classical search drivers already succeed only with a closed engine
    state.  must_close is the public contract guard in case that invariant
    changes; it does not add another search step. *)
-fun search_with_simp name engine charge cs ss simp_args =
+fun search_driver name engine
+      ({policy,ss,add_simp,...} : simplification_driver) cs =
   let
     val clarify =
       NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
@@ -2363,10 +3873,14 @@ fun search_with_simp name engine charge cs ss simp_args =
     must_close name
       (Tactical.EVERY
          [Tactical.TRY clarify,
-          Tactical.TRY (extensional_normalize_with charge ss),
+          Tactical.TRY (extensional_normalize_with (#charge policy) ss),
           NTactical.DETERM
-            (engine (add_simp_wrapper_with charge ss simp_args cs))])
+            (engine (add_simp cs))])
   end
+
+fun search_with_simp name engine policy cs ss arguments =
+  search_driver name engine
+    (ordinary_simplification_driver policy ss arguments) cs
 
 val simp_search =
   (classicalLib.CS_FAST_TAC, classicalLib.CS_SLOW_TAC,
@@ -2374,21 +3888,21 @@ val simp_search =
 val (fast_search, slow_search, best_search) = simp_search
 
 val CS_FASTFORCE_TAC =
-  CS_of false (search_with_simp "CS_FASTFORCE_TAC" fast_search)
+  CS_of false (search_driver "CS_FASTFORCE_TAC" fast_search)
 val CS_SLOWSIMP_TAC =
-  CS_of false (search_with_simp "CS_SLOWSIMP_TAC" slow_search)
+  CS_of false (search_driver "CS_SLOWSIMP_TAC" slow_search)
 val CS_BESTSIMP_TAC =
-  CS_of false (search_with_simp "CS_BESTSIMP_TAC" best_search)
+  CS_of false (search_driver "CS_BESTSIMP_TAC" best_search)
 
-fun clarsimp_with charge cs ss simp_args =
+fun clarsimp_driver
+      ({safe_simplify,add_safe_simp,...} : simplification_driver) cs =
   let
     val clarify =
       NTactical.DETERM
-        (classicalLib.CS_CLARIFY_TAC
-           (add_safe_simp_wrapper_with charge ss simp_args cs))
+        (classicalLib.CS_CLARIFY_TAC (add_safe_simp cs))
     val script =
       Tactical.THEN
-        (safe_asm_full_simp_with charge ss simp_args,
+        (safe_simplify,
          (* Isabelle's clarify tactic succeeds unchanged.  The HOL4
             CS_CLARIFY_TAC deliberately fails on a no-op, so TRY restores
             the sequencing behavior; CHANGED_TAC below guards the complete
@@ -2398,7 +3912,26 @@ fun clarsimp_with charge cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-val CS_CLARSIMP_TAC = CS_of true clarsimp_with
+fun clarsimp_with policy cs ss arguments =
+  clarsimp_driver (ordinary_simplification_driver policy ss arguments) cs
+
+val CS_CLARSIMP_TAC = CS_of true clarsimp_driver
+
+fun auto_bound bounds viewed state =
+  auto_driver bounds (bound_simplification_driver viewed state)
+
+fun force_bound budget viewed state =
+  force_driver "FORCE_TAC" budget (bound_simplification_driver viewed state)
+
+fun search_bound name engine viewed state =
+  search_driver name engine (bound_simplification_driver viewed state)
+
+val fastforce_bound = search_bound "FASTFORCE_TAC" fast_search
+val slowsimp_bound = search_bound "SLOWSIMP_TAC" slow_search
+val bestsimp_bound = search_bound "BESTSIMP_TAC" best_search
+
+fun clarsimp_bound viewed state =
+  clarsimp_driver (bound_simplification_driver viewed state)
 
 fun restore_normalized_target budget target validation theorems =
   let
@@ -2420,67 +3953,58 @@ fun restore_normalized_target budget target validation theorems =
       end
   end
 
-fun public_using_budgeted budget process body theorems
-    (goal as (_, target)) ctxt =
+(* Public entry points request certified views only for an open raw pass. *)
+fun deferred_bound_driver make state cs =
+  deferred_view_tactic (fn viewed => make viewed state cs)
+
+fun public_bound_using_budgeted budget consumer body theorems
+      (goal as (_,target)) ctxt =
   let
-    val simpset =
-      simpLib.set_subgoaler
-        (witness_subgoaler_budgeted budget)
-        (budgeted_decisions_of ctxt budget (clasimp_decision_base ()))
-    val (goals, validation) =
-      process budget (body (charge_normalization budget))
-        (clasetLib.the_claset ()) simpset theorems goal ctxt
-  in
-    (goals, restore_normalized_target budget target validation)
-  end
+    fun runtime ss = simpLib.set_subgoaler
+      (witness_subgoaler_budgeted budget) (budgeted_decisions ctxt budget ss)
+    val (goals,validation) =
+      process_clasimp_bound_fact_views true consumer budget runtime
+        (fn state => fn cs => fn _ => body state cs)
+        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
+  in (goals,restore_normalized_target budget target validation) end
 
-fun public_using_with allocate process make_body theorems goal ctxt =
+fun public_bound_using_with allocate consumer make_body arguments goal ctxt =
   let val budget = allocate ()
-  in
-    public_using_budgeted budget process (make_body budget)
-      theorems goal ctxt
-  end
+  in public_bound_using_budgeted budget consumer (make_body budget)
+       arguments goal ctxt end
 
-fun public_using process body =
-  public_using_with normalization_budget process (fn _ => body)
+fun public_bound_using consumer body =
+  public_bound_using_with normalization_budget consumer (fn _ => body)
 
-fun public body = public_using (fn _ => process_clasimp_args) body
-
-fun AUTO_DEPTH_TAC bounds theorems =
-  public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
-    (auto_with bounds) theorems
+fun AUTO_DEPTH_TAC bounds =
+  public_bound_using clasetLib.SearchFacts
+    (deferred_bound_driver (auto_bound bounds))
 
 fun AUTO_TAC theorems =
-  AUTO_DEPTH_TAC {blast = 4, depth = 2} theorems
+  AUTO_DEPTH_TAC {blast=4,depth=2} theorems
 
-fun FORCE_TAC theorems =
-  public_using_with force_budget
-    (process_clasimp_args_fact_views clasetLib.SearchFacts)
-    (force_with "FORCE_TAC") theorems
+val FORCE_TAC = public_bound_using_with force_budget clasetLib.SearchFacts
+  (fn budget => deferred_bound_driver (force_bound budget))
 
-fun FORCE_TAC_BUDGETED budget theorems =
-  public_using_budgeted budget
-    (process_clasimp_args_fact_views clasetLib.SearchFacts)
-    (force_with "FORCE_TAC" budget) theorems
+fun FORCE_TAC_BUDGETED budget =
+  public_bound_using_budgeted budget clasetLib.SearchFacts
+    (deferred_bound_driver (force_bound budget))
 
-fun FASTFORCE_TAC theorems =
-  public_using (process_clasimp_args_fact_views clasetLib.SearchFacts)
-    (search_with_simp "FASTFORCE_TAC" fast_search) theorems
+val FASTFORCE_TAC =
+  public_bound_using clasetLib.SearchFacts
+    (deferred_bound_driver fastforce_bound)
+val SLOWSIMP_TAC =
+  public_bound_using clasetLib.SearchFacts
+    (deferred_bound_driver slowsimp_bound)
+val BESTSIMP_TAC =
+  public_bound_using clasetLib.SearchFacts
+    (deferred_bound_driver bestsimp_bound)
+val CLARSIMP_TAC =
+  public_bound_using clasetLib.SafeFacts (deferred_bound_driver clarsimp_bound)
 
-fun SLOWSIMP_TAC theorems =
-  public (search_with_simp "SLOWSIMP_TAC" slow_search) theorems
-
-fun BESTSIMP_TAC theorems =
-  public (search_with_simp "BESTSIMP_TAC" best_search) theorems
-
-fun CLARSIMP_TAC theorems =
-  public_using (process_clasimp_args_fact_views clasetLib.SafeFacts)
-    clarsimp_with theorems
-
-fun CLARSIMP_TAC_BUDGETED budget theorems =
-  public_using_budgeted budget
-    (process_clasimp_args_fact_views clasetLib.SafeFacts)
-    clarsimp_with theorems
+fun CLARSIMP_TAC_BUDGETED budget =
+  public_bound_using_budgeted budget clasetLib.SafeFacts
+    (deferred_bound_driver clarsimp_bound)
 
 (* A first-order step meets a goal the simplification before it left in
    the ambient normal form, and HOL4's normal forms are not the ones its

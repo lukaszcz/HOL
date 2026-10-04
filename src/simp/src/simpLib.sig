@@ -62,6 +62,7 @@ sig
 
   type ssfrag
   type simpset
+  type rewrite_source
 
   val SSFRAG :
     {name : string option,
@@ -133,8 +134,57 @@ sig
 
   val empty_ss        : simpset
   val ssfrags_of      : simpset -> ssfrag list
+  (* Actual compiled rewrite sources after the supplied controls, and
+     untagged supplied rewrites. Conversions are excluded. Strategy and
+     decision-procedure copies share the source list; new rules prepend
+     their sources. Filtering, exclusions and clearing remove sources. *)
+  val rewrite_sources : simpset -> thm list ->
+      (thname option * thm) list * thm list
+  (* Handles identify native rule occurrences across history replay;
+     installed views are omitted. Views share the current source's
+     exact compiled name and rewrite allowance, and disappear if that
+     source is removed or its compiled statement changes. *)
+  val rewrite_source_handles : simpset -> rewrite_source list
+  (* Apply ordinary argument directives before binding supplied rewrites.
+     Compatible surviving native occurrences retain their remaining uses. *)
+  val prepare_rewrite_arguments : simpset -> thm list -> simpset * thm list
+  val source_rewrite : rewrite_source -> thname option * thm
+  val same_rewrite_source : rewrite_source * rewrite_source -> bool
+  (* Stable origin order; compatibility also requires same_rewrite_source. *)
+  val rewrite_source_compare : rewrite_source * rewrite_source -> order
+  val rewrite_views : (rewrite_source * thm) list -> ssfrag
+  type rewrite_bundle
+  (* Compile supplied rules without installing or priming ambient reducers.
+     Install once per simpset; nested consumers of the same binding and its
+     associated views share the compiled rules' actual controls. History
+     replay retains these compiled shapes without calling the rewrite maker
+     again. Ordinary replay resets declared quotas, preserving sharing
+     between conjuncts; opt-in control preservation keeps remaining uses. *)
+  val prepare_rewrite_bundle : simpset -> thm list -> rewrite_bundle
+  (* Combine existing compiled bundles without refreshing quotas or origins.
+     Duplicate bindings are rejected; installation retains each event. *)
+  val combine_rewrite_bundles : rewrite_bundle list -> rewrite_bundle
+  val rewrite_bundle_rules : rewrite_bundle ->
+    (thm * rewrite_source list) list
+  val install_rewrite_bundle : rewrite_bundle ->
+    (rewrite_source * thm) list -> simpset -> simpset
+  (* Suspend exact active compiled occurrences and their attached views.
+     Other conjuncts keep their names and remaining rewrite allowances;
+     history replay retains suspension and opaque contexts lose the
+     suspended conjuncts. Missing/incompatible handles change nothing. *)
+  val suspend_rewrite_sources : rewrite_source list -> simpset -> simpset
+  (* Changed conversion keys and opaque traversal/context changes.
+     Existing decision procedures may depend on every added context rule. *)
+  val rewrite_context_changes : simpset * simpset ->
+    {keys : (term list * term) list, rebuild : bool,
+     context_sensitive : bool}
   val mk_simpset      : ssfrag list -> simpset
   val remove_ssfrags  : string list -> simpset -> simpset
+  (* Opt-in fragment removal sharing surviving sources' actual controls,
+     including exhausted counters, with the input and its existing views.
+     Missing names raise UNCHANGED, as with ordinary removal. *)
+  val remove_ssfrags_preserving_controls :
+    string list -> simpset -> simpset
 
   (* Removes from every fragment the rewrites the predicate rejects,
      keeping the rest of the simpset's history -- what it has excluded
@@ -143,6 +193,10 @@ sig
      fragments alone.  Returns the simpset itself where nothing is
      rejected, and never raises Conv.UNCHANGED. *)
   val filter_rewrites :
+    ((thname option * thm) -> bool) -> simpset -> simpset
+  (* Invocation filtering retains surviving sources' actual controls,
+     including exhausted quotas shared with their installed aliases. *)
+  val filter_rewrites_preserving_controls :
     ((thname option * thm) -> bool) -> simpset -> simpset
 
   (* Like remove_ssfrags, but additionally records the names so that any
@@ -209,11 +263,34 @@ sig
    val SIMP_CONV  : simpset -> thm list -> conv
    (* Opt-in child-first conversion. A certified eta contraction preserves
       function argument heads before child descent, except at logical
-      binders. Congruence rules control descent; charge runs before this
-      contraction, descent and reducer work. The ordinary SIMP_CONV
-      strategy is unchanged. *)
+      binders and applications selected by keep_abstraction. The standard
+      ETA fragment also respects this selection after descent. Congruence
+      rules control descent; charge runs before contraction, descent and
+      reducer work. Traverse.charge_only retains the contraction policy.
+      The ordinary SIMP_CONV strategy is unchanged. *)
    val SIMP_CONV_CHILD_FIRST :
-     (unit -> unit) -> simpset -> thm list -> conv
+     Traverse.child_first_policy -> simpset -> thm list -> conv
+
+   (* Prepare one ambient child-first traversal for rewrite-view
+      derivation. Arguments preserves the root. Each conversion uses
+      fresh declared bounded allowances privately and restores the
+      caller's counters, including on exceptions. Derivation cannot
+      spend an invocation's allowance or depend on earlier consumption.
+      The indexed
+      pre-test is conservative for opaque reducers and congruences;
+      conditional premises require attempting normalization regardless. *)
+   val prepare_child_first : Traverse.child_first_policy -> simpset ->
+     {normalize : thm list -> conv,
+      arguments : thm list -> conv,
+      may_reduce_arguments : term -> bool}
+   (* As prepare_child_first, also observing inputs, results and every
+      child/condition offered to traversal. Failed conditional attempts
+      and unchanged terms remain dependencies. *)
+   val prepare_child_first_observed :
+     (term -> unit) -> Traverse.child_first_policy -> simpset ->
+     {normalize : thm list -> conv,
+      arguments : thm list -> conv,
+      may_reduce_arguments : term -> bool}
 
    (* ---------------------------------------------------------------------
     * SIMP_TAC : simpset -> tactic
@@ -242,7 +319,7 @@ sig
    type simp_mode = {safe : bool}
    val GEN_SIMP_TAC  : simp_mode -> simpset -> thm list -> tactic
    val GEN_SIMP_TAC_CHILD_FIRST :
-     (unit -> unit) -> simp_mode -> simpset -> thm list -> tactic
+     Traverse.child_first_policy -> simp_mode -> simpset -> thm list -> tactic
    val SIMP_TAC      : simpset -> thm list -> tactic
    val simp_tac      : simpset -> thm list -> tactic
    val ASM_SIMP_TAC  : simpset -> thm list -> tactic
@@ -274,8 +351,14 @@ sig
       traversal for each simplification pass. Root-rebuild flags retain
       their explicit wrapper behavior. *)
    val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST :
-     (unit -> unit) -> simp_mode -> xsimptac_config ->
+     Traverse.child_first_policy -> simp_mode -> xsimptac_config ->
      simpset -> thm list -> tactic
+   (* The bundle is already installed in the given invocation simpset.
+      Retain its untagged solver context and own rewrite controls across
+      local marker replay; never reinstall or recompile it as arguments. *)
+   val GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND :
+     Traverse.child_first_policy -> simp_mode -> xsimptac_config ->
+     simpset -> rewrite_bundle -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
      (* do allasms until quiescence, then simp in the goal as well *)
 

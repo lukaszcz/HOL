@@ -1261,6 +1261,132 @@ fun matchable_subterms_with charge free term =
 
 fun head_name term = fst (dest_const (fst (strip_comb term)))
 
+(* Maximal compatible unions avoid enumerating every compatible subset. *)
+fun maximal_type_joins_with charge substitutions =
+  case substitutions of
+      [] => []
+    | [_] => []
+    | _ =>
+        let
+          fun compatible
+                (left : (hol_type, hol_type) Lib.subst) right =
+            (charge searchBudget.Candidate;
+             List.all
+               (fn {redex, residue} =>
+                 case List.find
+                        (fn {redex = other, residue = _} =>
+                          Type.compare (redex, other) = EQUAL) right of
+                     NONE => true
+                   | SOME {redex = _, residue = other} =>
+                       Type.compare (residue, other) = EQUAL)
+               left)
+          fun same_types left right =
+            length left = length right andalso
+            (charge searchBudget.Candidate;
+             List.all
+               (fn {redex, residue} =>
+                 List.exists
+                   (fn {redex = other, residue = value} =>
+                     Type.compare (redex, other) = EQUAL andalso
+                     Type.compare (residue, value) = EQUAL)
+                   right)
+               left)
+          val unique =
+            List.foldl
+              (fn (types, kept) =>
+                if List.exists (same_types types) kept then kept
+                else kept @ [types]) [] substitutions
+        in
+          case unique of
+              [] => []
+            | [_] => []
+            | _ =>
+                let
+                  val parts = Vector.fromList unique
+                  val count = Vector.length parts
+                  val neighbors = Array.array (count, [])
+                  fun connect i j =
+                    if j = count then ()
+                    else
+                      (if compatible (Vector.sub (parts, i))
+                           (Vector.sub (parts, j)) then
+                         (Array.update (neighbors, i,
+                            j :: Array.sub (neighbors, i));
+                          Array.update (neighbors, j,
+                            i :: Array.sub (neighbors, j)))
+                       else ();
+                       connect i (j + 1))
+                  val _ =
+                    List.app (fn i => connect i (i + 1))
+                      (List.tabulate (count, fn i => i))
+                  fun adjacent i j =
+                    (charge searchBudget.Candidate;
+                     Lib.mem j (Array.sub (neighbors, i)))
+                  fun intersect i candidates =
+                    List.filter (adjacent i) candidates
+                  fun pivot pending excluded =
+                    case pending @ excluded of
+                        [] => NONE
+                      | first :: rest =>
+                          SOME (#1
+                            (List.foldl
+                               (fn (i, (best, score)) =>
+                                 let val size = length (intersect i pending)
+                                 in
+                                   if size > score then (i, size)
+                                   else (best, score)
+                                 end)
+                               (first, length (intersect first pending))
+                               rest))
+                  val found = ref []
+                  fun visit chosen pending excluded =
+                    if null pending andalso null excluded then
+                      (charge searchBudget.Candidate;
+                       found := Listsort.sort Int.compare chosen :: !found)
+                    else
+                      let
+                        val candidates =
+                          case pivot pending excluded of
+                              NONE => pending
+                            | SOME i =>
+                                List.filter (fn j => not (adjacent i j))
+                                  pending
+                        fun branches [] _ _ = ()
+                          | branches (i :: rest) available seen =
+                              (visit (i :: chosen)
+                                 (intersect i available) (intersect i seen);
+                               branches rest
+                                 (List.filter (fn j => i <> j) available)
+                                 (i :: seen))
+                      in
+                        branches candidates pending excluded
+                      end
+                  val _ = visit [] (List.tabulate (count, fn i => i)) []
+                  val cliques =
+                    Listsort.sort (List.collate Int.compare) (!found)
+                  fun union_parts indices =
+                    List.foldl
+                      (fn (i, joined) =>
+                        List.foldl
+                          (fn ({redex, residue}, kept) =>
+                            if List.exists
+                                 (fn {redex = other, residue = _} =>
+                                   (charge searchBudget.Candidate;
+                                    Type.compare (redex, other) = EQUAL))
+                                 kept then kept
+                            else kept @ [{redex = redex, residue = residue}])
+                          joined (Vector.sub (parts, i))) [] indices
+                in
+                  List.mapPartial
+                    (fn indices =>
+                      case indices of
+                          [] => NONE
+                        | [_] => NONE
+                        | _ => SOME (union_parts indices))
+                    cliques
+                end
+        end
+
 (* A fact reaches a goal as an assumption, and the kernel fixes an
    assumption's type variables.  The same statement declared to the
    claset is instantiated freely, so a fact stated at [:'a -> 'b] is
@@ -1401,24 +1527,25 @@ fun goal_type_instances_with charge (assumptions, target) fact =
                         NONE)
                     sites)
                 patterns))
+        fun add_instance (types, kept) =
+          let
+            val _ = charge searchBudget.Normalization
+            val instance = Thm.INST_TYPE types match_fact
+          in
+            if List.exists
+                 (fn earlier =>
+                   (charge searchBudget.Candidate;
+                    aconv (Thm.concl earlier) (Thm.concl instance))
+                   andalso same_support (Thm.hyp earlier)
+                     (Thm.hyp instance))
+                 kept
+            then kept
+            else kept @ [instance]
+          end
+        val instances = List.foldl add_instance [] substitutions
         val instances =
-          List.foldl
-            (fn (types, kept) =>
-              let
-                val _ = charge searchBudget.Normalization
-                val instance = Thm.INST_TYPE types match_fact
-              in
-                if List.exists
-                     (fn earlier =>
-                       (charge searchBudget.Candidate;
-                        aconv (Thm.concl earlier) (Thm.concl instance))
-                       andalso same_support (Thm.hyp earlier)
-                         (Thm.hyp instance))
-                     kept
-                then kept
-                else kept @ [instance]
-              end)
-            [] substitutions
+          List.foldl add_instance instances
+            (maximal_type_joins_with charge substitutions)
       in
         if null instances then [fact]
         else if null alien then fact :: instances

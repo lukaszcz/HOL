@@ -36,6 +36,175 @@ sig
 
   val clasimp_ss : unit -> simpLib.simpset
 
+  (* From-scratch certified LHS-view candidates, for derivation and its
+     exactness/performance checks. Each triple retains its original
+     source and name. This does not install views or alter rewrite
+     controls. Derivation has a finite per-source allowance; the caller's
+     charge callback is shared by both normalization attempts. *)
+  val derive_lhs_views : (unit -> unit) -> simpLib.simpset ->
+    (simpLib.thname option * thm * thm) list
+
+  datatype lhs_view_rejection =
+      NoReducibleArguments | UnchangedLHS | JoinableLHS
+    | RenamingUnstable | DerivationLimited | UnsupportedLHS
+  type lhs_view_entry =
+    {origin : simpLib.rewrite_source,
+     source : simpLib.thname option * thm, view : thm option,
+     rejection : lhs_view_rejection option, footprint : term list,
+     abstraction_positions : (KernelSig.kernelid * int) list,
+     normalization : int}
+  (* The same derivation including rejected sources, visited dependencies
+     and replay charges. Each entry retains its native source handle;
+     installed views are not sources for another derivation.
+     An unchanged LHS after failed conditional work
+     is distinguished from an indexed proof of irreducibility. *)
+  val derive_lhs_view_entries : (unit -> unit) -> simpLib.simpset ->
+    lhs_view_entry list
+  (* Fresh derivation with a complete explicit abstraction-position policy,
+     for comparison with invocation tables adjusted by supplied rules. *)
+  val derive_lhs_view_entries_with_positions : (unit -> unit) ->
+    simpLib.simpset -> (KernelSig.kernelid * int) list -> lhs_view_entry list
+
+  type lhs_view_table
+  (* Eight identity-memoized tables with exact dependency invalidation.
+     Each table owns lazy viewed/decision bases, including policy-adjusted
+     tables; materializing them does not re-derive an earlier raw policy.
+     This constructor does not install a table in the public tactics.
+     Stats describe construction work; identity hits do no derivation. *)
+  val make_lhs_view_cache : (unit -> unit) ->
+    simpLib.simpset -> lhs_view_table
+  val lhs_view_table_entries : lhs_view_table -> lhs_view_entry list
+  val lhs_view_table_generation : lhs_view_table -> int
+  val lhs_view_table_stats : lhs_view_table ->
+    {derived : int, reused : int, rebuild : bool, normalization : int}
+
+  type working_simpset
+  (* Eight lazy identity-memoized working states, backed by the bounded
+     incremental table cache. A viewed simpset installs one named fragment
+     with native-source controls; its decision base retains those views.
+     Plain decisions never force view construction. A failed construction
+     can be retried and does not insert a partial predecessor table. *)
+  val make_working_simpset_cache : (unit -> unit) ->
+    simpLib.simpset -> working_simpset
+  val working_original : working_simpset -> simpLib.simpset
+  val working_view_table : working_simpset -> lhs_view_table
+  val working_full_simpset : working_simpset -> simpLib.simpset
+  val working_decision_base : working_simpset ->
+    {stripped : simpLib.simpset, order : bool, linarith : bool}
+  val working_plain_decision_base : working_simpset ->
+    {stripped : simpLib.simpset, order : bool, linarith : bool}
+  (* The default state is owned by the stateful derivation hook. Explicit
+     simpsets test the last requested default's identity first, then use
+     the same bounded cache without forcing an unused default derivation.
+     Public tactic placement of view construction remains independent. *)
+  val clasimp_working_simpset : unit -> working_simpset
+  val working_simpset_of : simpLib.simpset -> working_simpset
+
+  type supplied_rule_binding
+  (* Compile originals before a first pass without priming the ambient set;
+     deferred views retain their origins and remaining allowances. *)
+  val prepare_supplied_rules : simpLib.simpset -> thm list ->
+    supplied_rule_binding
+  val supplied_rule_controls : supplied_rule_binding -> thm list
+  val supplied_rule_originals : supplied_rule_binding -> thm list
+  (* Use cached compiled positions, including filter/exclusion decisions,
+     together with the given ambient set; never recompile raw arguments. *)
+  val supplied_rule_policy : (unit -> unit) -> simpLib.simpset ->
+    supplied_rule_binding -> Traverse.child_first_policy
+  val install_supplied_rules : supplied_rule_binding ->
+    simpLib.simpset -> simpLib.simpset
+
+  type supplied_view_binding
+  (* Detect ambient converses by one parallel rewrite, then derive bound
+     originals against the ambient table with those occurrences suspended.
+     The 256-entry memo keys theorem identity, the table generation for
+     each stage and its effective abstraction policy. Hits replay every
+     recorded normalization charge. Completed stages survive a later
+     cutoff; incomplete groups do not. Eight derived ambient tables cache
+     exact suspension sets and supplied abstraction positions. The ambient
+     and supplied entries share the surviving invocation policy. This
+     constructor does not bind public tactics. *)
+  val make_supplied_view_cache : unit ->
+    (unit -> unit) -> lhs_view_table -> supplied_rule_binding ->
+    supplied_view_binding
+  val supplied_view_entries : supplied_view_binding -> lhs_view_entry list
+  val supplied_view_controls : supplied_view_binding -> thm list
+  (* Ambient table after suspension and abstraction-policy adjustment, and
+     the exact original ambient occurrences suspended for this binding. *)
+  val supplied_view_table : supplied_view_binding -> lhs_view_table
+  val supplied_view_suspended : supplied_view_binding ->
+    simpLib.rewrite_source list
+  val supplied_view_stats : supplied_view_binding ->
+    {normalization : int, derived : int, memoized : int}
+  val supplied_view_policy : (unit -> unit) -> supplied_view_binding ->
+    Traverse.child_first_policy
+  (* Materialize the binding's adjusted ambient table, sharing its cached
+     viewed simpset and decision base without re-deriving the raw table.
+     This does not install supplied originals or select public placement. *)
+  val working_simpset_for : supplied_view_binding -> working_simpset
+  val install_supplied_views : supplied_view_binding ->
+    simpLib.simpset -> simpLib.simpset
+  (* Add only views after a first pass; never reinstall the originals. *)
+  val add_supplied_views : supplied_view_binding ->
+    simpLib.simpset -> simpLib.simpset
+
+  type supplied_converse_binding
+  (* Before a first pass, detect converses from native patterns without
+     forcing ambient views. The binding owns the caller's normalization
+     callback; late views continue charging it without repeating detection.
+     Eight
+     native inventories and masked sets, plus 256 completed theorem groups,
+     are retained; hits replay charges and incomplete groups are absent. *)
+  val make_supplied_converse_cache : unit -> (unit -> unit) ->
+    simpLib.simpset -> supplied_rule_binding -> supplied_converse_binding
+  val supplied_converse_rules : supplied_converse_binding ->
+    supplied_rule_binding
+  val supplied_converse_working : supplied_converse_binding -> simpLib.simpset
+  val supplied_converse_policy : supplied_converse_binding ->
+    Traverse.child_first_policy
+  val supplied_converse_suspended : supplied_converse_binding ->
+    simpLib.rewrite_source list
+  val supplied_converse_stats : supplied_converse_binding ->
+    {normalization : int, derived : int, memoized : int}
+  val make_supplied_view_cache_after : unit -> lhs_view_table ->
+    supplied_converse_binding -> supplied_view_binding
+
+  type bound_simplification
+  (* The early binding already reflects invocation rewrite controls.
+     Prepare the runtime basis once, install its originals once, and
+     retain a lazy table provider without selecting public placement.
+     Requested views attach to that same installed simpset and share its
+     remaining original/ambient allowances. Existing supplied occurrences
+     keep precedence over newly attached ambient views. The provider may
+     be eager, deferred or backed by a persisted table. *)
+  val make_bound_simplification :
+    (simpLib.simpset -> simpLib.simpset) -> (unit -> lhs_view_table) ->
+    supplied_converse_binding -> bound_simplification
+  val bound_simplification_simpset : bool -> bound_simplification ->
+    simpLib.simpset
+  val bound_simplification_policy : bound_simplification ->
+    Traverse.child_first_policy
+  (* Select raw or viewed state explicitly; each consumer retains the
+     installed originals and their solver context. Extra arguments are
+     local/dynamic rules, not the already bound original citations. *)
+  val asm_full_simp_bound : bool -> bound_simplification -> thm list -> tactic
+  val safe_asm_full_simp_bound : bool -> bound_simplification ->
+    thm list -> tactic
+  val cascade_safe_simp_bound : bool -> bound_simplification ->
+    thm list -> tactic
+  (* Apply simp directives before early binding; table placement stays lazy.
+     Requirement payloads share native origins; checks recur per simp step.
+     Assumption controls recur over each pass's current context. Callers
+     resolve goal-dependent abbreviations and label references first;
+     the public standalone entry points perform that resolution. *)
+  val prepare_bound_simplification :
+    (simpLib.simpset -> simpLib.simpset) -> (unit -> unit) ->
+    simpLib.simpset -> thm list -> bound_simplification
+  val add_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
+    clasetLib.claset -> clasetLib.claset
+  val add_safe_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
+    clasetLib.claset -> clasetLib.claset
+
   (* [with_extensionality ss simplify] runs [simplify] and, where it
      leaves a goal whose conclusion is an equation between functions,
      takes that equation pointwise and runs [simplify] again.  HOL4's
@@ -59,7 +228,8 @@ sig
      applied, and read as a membership meets none of them.  It asks this
      of the equation it is given: a caller whose own pass reaches
      equations below the goal's conclusion asks it of each of those.
-     Applied to the simpset alone it collects the simpset's heads once.
+     Applied to the simpset alone it collects the compiled heads once,
+     including installed views and respecting removals and filters.
      Exported for the same reason as [states_a_reading] below. *)
   val reads_as_membership : simpLib.simpset -> term -> bool
 
@@ -73,6 +243,8 @@ sig
      make the same decision about its own set-equality pass. *)
   val states_a_reading : thm -> bool
 
+  (* Bind citations once, suspending ambient converses for this invocation.
+     Public ambient views remain pending the construction-placement choice. *)
   val asm_full_simp : simpLib.simpset -> thm list -> tactic
   val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic
 
@@ -139,10 +311,30 @@ sig
      claset : clasetLib.claset, simpset : simpLib.simpset} ->
     clasetLib.claset * simpLib.simpset
 
-  (* Shared packaging for theorem-list clasimp tactics.  The body receives
-     the temporary claset, temporary simpset, and generic simp controls. *)
+  (* Shared packaging for theorem-list clasimp tactics. The body receives
+     the temporary claset, temporary simpset, and unchanged simp controls.
+     CS consumers inside the callback reuse compiled supplied origins and
+     its fact environment. The binding expires on return or exception. *)
   val process_clasimp_args :
     (clasetLib.claset -> simpLib.simpset -> thm list -> tactic) ->
+    clasetLib.claset -> simpLib.simpset -> thm list -> tactic
+
+  (* Keep declaration payloads apart from ambient view reducers. Resolve
+     labels before one binding; retain the invocation fact environment. *)
+  val process_clasimp_bound_args : clasetLib.fact_consumer ->
+    searchBudget.budget -> (simpLib.simpset -> simpLib.simpset) ->
+    (bound_simplification -> clasetLib.claset ->
+     clasetFacts.environment -> tactic) ->
+    clasetLib.claset -> simpLib.simpset -> thm list -> tactic
+
+  (* Retry open work with certified fact/rule transport, retaining the
+     bound originals, policy and fact environment. Derivation restores
+     remaining quotas; aliases require compiled sources. The boolean selects
+     raw or viewed state explicitly, without choosing a public default. *)
+  val process_clasimp_bound_fact_views : bool -> clasetLib.fact_consumer ->
+    searchBudget.budget -> (simpLib.simpset -> simpLib.simpset) ->
+    (bound_simplification -> clasetLib.claset ->
+     clasetFacts.environment -> tactic) ->
     clasetLib.claset -> simpLib.simpset -> thm list -> tactic
 
   (* Contextual AUTO, FORCE, FASTFORCE, SLOWSIMP, BESTSIMP and CLARSIMP
@@ -170,6 +362,21 @@ sig
     clasetLib.claset -> simpLib.simpset -> tactic
   val CS_CLARSIMP_TAC :
     clasetLib.claset -> simpLib.simpset -> tactic
+
+  (* Driver stages retain one bound invocation across direct and nested
+     simplification. View selection remains explicit for table placement. *)
+  val auto_bound : {blast : int, depth : int} -> bool ->
+    bound_simplification -> clasetLib.claset -> tactic
+  val force_bound : searchBudget.budget -> bool ->
+    bound_simplification -> clasetLib.claset -> tactic
+  val fastforce_bound : bool ->
+    bound_simplification -> clasetLib.claset -> tactic
+  val slowsimp_bound : bool ->
+    bound_simplification -> clasetLib.claset -> tactic
+  val bestsimp_bound : bool ->
+    bound_simplification -> clasetLib.claset -> tactic
+  val clarsimp_bound : bool ->
+    bound_simplification -> clasetLib.claset -> tactic
 
   val AUTO_DEPTH_TAC :
     {blast : int, depth : int} -> thm list -> tactic

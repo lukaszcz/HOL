@@ -2562,6 +2562,172 @@ val _ =
          (simpLib.FULL_SIMP_TAC linarith_side_ss [])
          ([public_x_le_y, public_y_le_z], min_side_goal))
 
+fun private_budget_test body =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = Theory.new_theory "linarithBudgetGateSelftest"
+        val name = "budget_gate_atom"
+        val _ = Theory.new_constant (name, Type.bool)
+        val atom =
+          Term.prim_mk_const
+            {Thy = Theory.current_theory (), Name = name}
+        val assumptions =
+          List.tabulate
+            (64, fn index =>
+              let
+                fun variable suffix =
+                  Term.mk_var
+                    ("budget_gate_" ^ Int.toString index ^ suffix,
+                     numSyntax.num)
+              in
+                Thm.ASSUME
+                  (num_leq (variable "_left") (variable "_right"))
+              end)
+        fun conversion budget tm =
+          let
+            val {initial, addcontext, apply, ...} =
+              Traverse.dest_reducer
+                (linarithLib.LINARITH_REDUCER_BUDGETED
+                   (Context.snapshot ()) budget)
+          in
+            apply
+              {solver = fn _ => Conv.NO_CONV,
+               conv = fn _ => Conv.NO_CONV,
+               context = addcontext (initial, assumptions),
+               stack = [],
+               relation = (boolSyntax.equality, Thm.REFL)} tm
+          end
+      in
+        body (atom, assumptions, conversion)
+      end
+  in
+    Portable.finally (fn () => Context.restore saved) run ()
+  end
+
+val _ =
+  check
+    ("LINARITH gates a non-arithmetic atom before candidate charges",
+     fn () =>
+       private_budget_test
+         (fn (atom, _, conversion) =>
+           let
+             fun declined budget =
+               let
+                 val prior_usage = searchBudget.usage budget
+                 val refused =
+                   ((ignore (conversion budget atom); false)
+                    handle Feedback.HOL_ERR _ => true
+                         | searchBudget.LimitReached _ => false)
+               in
+                 refused andalso searchBudget.usage budget = prior_usage
+               end
+             val zero =
+               searchBudget.create
+                 {candidates = SOME 0, applications = NONE,
+                  normalization = NONE}
+           in
+             declined (searchBudget.unbounded ()) andalso declined zero
+           end))
+
+val _ =
+  check
+    ("LINARITH still charges and certifies an arithmetic atom",
+     fn () =>
+       private_budget_test
+         (fn (_, assumptions, conversion) =>
+           let
+             val target = Thm.concl (hd assumptions)
+             val context = map Thm.concl assumptions
+             val funded = searchBudget.unbounded ()
+             val (remaining, validation) =
+               Tactical.VALID
+                 (Tactic.CONV_TAC (conversion funded))
+                 (context, target) (Context.snapshot ())
+             val theorem = validation []
+             val zero =
+               searchBudget.create
+                 {candidates = SOME 0, applications = NONE,
+                  normalization = NONE}
+             val limited =
+               ((ignore (conversion zero target); false)
+                handle searchBudget.LimitReached
+                         (searchBudget.Candidate, used) =>
+                         #candidates used = 0
+                     | _ => false)
+           in
+             null remaining andalso Term.aconv (Thm.concl theorem) target
+             andalso
+             List.all
+               (fn premise => List.exists (Term.aconv premise) context)
+               (Thm.hyp theorem)
+             andalso #candidates (searchBudget.usage funded) > 0
+             andalso limited
+           end))
+
+val _ =
+  check
+    ("ORDER gates an unrelated atom before candidate charges",
+     fn () =>
+       let
+         val saved = Context.snapshot ()
+         fun run () =
+           let
+             val _ = Theory.new_theory "orderBudgetGateSelftest"
+             val name = "budget_gate_atom"
+             val _ = Theory.new_constant (name, Type.bool)
+             val atom =
+               Term.prim_mk_const
+                 {Thy = Theory.current_theory (), Name = name}
+             val assumptions =
+               List.tabulate
+                 (64, fn index =>
+                   let
+                     fun variable suffix =
+                       Term.mk_var
+                         ("budget_gate_" ^ Int.toString index ^ suffix,
+                          numSyntax.num)
+                   in
+                     Thm.ASSUME
+                       (numSyntax.mk_leq
+                          (variable "_left", variable "_right"))
+                   end)
+             fun declined budget =
+               let
+                 val ss =
+                   simpLib.++
+                     (simpLib.empty_ss, orderLib.ORDER_ss_budgeted budget)
+                 val {initial, addcontext, apply, ...} =
+                   Traverse.dest_reducer
+                     (hd (#dprocs (simpLib.traversedata_for_ss ss)))
+                 val context = addcontext (initial, assumptions)
+                 val prior_usage = searchBudget.usage budget
+                 val refused =
+                   ((ignore
+                       (apply
+                          {solver = fn _ => Conv.NO_CONV,
+                           conv = fn _ => Conv.NO_CONV,
+                           context = context, stack = [],
+                           relation = (boolSyntax.equality, Thm.REFL)}
+                          atom);
+                     false)
+                    handle Feedback.HOL_ERR _ => true
+                         | searchBudget.LimitReached _ => false)
+               in
+                 refused andalso searchBudget.usage budget = prior_usage
+               end
+             val zero =
+               searchBudget.create
+                 {candidates = SOME 0, applications = NONE,
+                  normalization = NONE}
+           in
+             declined (searchBudget.unbounded ()) andalso declined zero
+           end
+       in
+         Portable.finally (fn () => Context.restore saved) run ()
+       end)
+
 val _ =
   check
     ("budgeted LINARITH reducer charges its nested proof",

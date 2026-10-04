@@ -1471,8 +1471,8 @@ fun budgeted_context_prove ctxt budget context tm =
 (* A failed arithmetic question may be offered many times as the context
    grows.  RCACHE partitions that context by arithmetic variables and
    remembers which components cannot prove the question.  Its table is
-   local to this reducer or solver installation.  We charge examination
-   of the input context, and a limit or interrupt is rethrown even when
+   local to this reducer or solver installation.  Applicability gates
+   input-context charges, and a limit or interrupt is rethrown even when
    RCACHE's ordinary failed-conversion path catches the exception. *)
 fun memo_budgeted_with_arith ctxt budget =
   let
@@ -1485,45 +1485,48 @@ fun memo_budgeted_with_arith ctxt budget =
       EQT_INTRO (budgeted_context_prove ctxt budget context tm)
       handle Declined _ => decline ""
            | error => (deferred := SOME error; raise error)
+    (* ask screens every cache question before charging its context. *)
     val (cached, table) =
       Cache.RCACHE {capacity = 2000, per_key_cap = 50}
-        (linarith_vars, cache_check, conversion)
+        (linarith_vars, fn _ => true, conversion)
     fun ask context tm =
-      let
-        val current_generation = linarithData.generation ()
-        val current_facts = linarithData.arith_facts ()
-        val _ =
-          if current_generation = !generation andalso
-             same_thms current_facts (!facts)
-          then ()
-          else (Cache.clear_cache table;
-                generation := current_generation;
-                facts := current_facts)
-        val (source_facts, assumed) =
-          arith_envelope current_facts
-        val _ = deferred := NONE
-        val _ =
-          searchBudget.charge budget searchBudget.Candidate
-        val _ =
-          List.app
-            (fn _ =>
-              searchBudget.charge budget searchBudget.Candidate)
-            (context @ assumed)
-        val equation =
-          cached (context @ assumed) tm
-          handle error =>
-            (case !deferred of
-                 SOME original =>
-                   (Cache.clear_cache table; raise original)
-               | NONE => decline "")
-      in
-        case !deferred of
-            SOME original =>
-              (Cache.clear_cache table; raise original)
-          | NONE =>
-              Lib.rev_itlist PROVE_HYP source_facts
-                (EQT_ELIM equation)
-      end
+      if not (cache_check tm) then decline ""
+      else
+        let
+          val current_generation = linarithData.generation ()
+          val current_facts = linarithData.arith_facts ()
+          val _ =
+            if current_generation = !generation andalso
+               same_thms current_facts (!facts)
+            then ()
+            else (Cache.clear_cache table;
+                  generation := current_generation;
+                  facts := current_facts)
+          val (source_facts, assumed) =
+            arith_envelope current_facts
+          val _ = deferred := NONE
+          val _ =
+            searchBudget.charge budget searchBudget.Candidate
+          val _ =
+            List.app
+              (fn _ =>
+                searchBudget.charge budget searchBudget.Candidate)
+              (context @ assumed)
+          val equation =
+            cached (context @ assumed) tm
+            handle error =>
+              (case !deferred of
+                   SOME original =>
+                     (Cache.clear_cache table; raise original)
+                 | NONE => decline "")
+        in
+          case !deferred of
+              SOME original =>
+                (Cache.clear_cache table; raise original)
+            | NONE =>
+                Lib.rev_itlist PROVE_HYP source_facts
+                  (EQT_ELIM equation)
+        end
   in
     ask
   end

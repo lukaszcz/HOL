@@ -7,7 +7,9 @@ unbounded, and negative limits or extensions are errors. Charges happen
 before the admitted work. A yield retains usage, and extending that budget
 does not reset it. Semantic depth bounds remain separate from these counts.
 Bounded child turns charge their own counters and the enclosing invocation
-atomically. Extending a child's local limit preserves both sets of counts.
+atomically for resumable work. Atomic simplification within a FORCE turn
+charges the invocation alone. Extending a child's local limit preserves
+both sets of counts.
 
 The implemented checkpoints are:
 
@@ -16,7 +18,12 @@ The implemented checkpoints are:
   on theorem specialization and type instances; application charges on
   admitted assumptions. The budgeted fact environment also charges
   classification, first construction of a lazy schematic view, and
-  admitted search-rule declarations. Clasimp's fact-view tactics pass
+  admitted search-rule declarations. Literal insertion retains its
+  ordered partial type instances and appends distinct maximal compatible
+  joins. Compatibility checks, cached graph queries and emitted joins
+  charge candidates; theorem instantiation and duplicate/support checks
+  charge as for the original instances. Zero or one partial match adds
+  no join work. Clasimp's fact-view tactics pass
   their invocation budget through these paths. The ordinary insertion
   entry point is unchanged.
 - Clasimp's opt-in child-first traversal: normalization charges before
@@ -35,6 +42,89 @@ The implemented checkpoints are:
   `LimitReached` without translating it into tactic failure. FORCE's
   initial simplification, extensional conversions, and target transport
   charge the same normalization budget.
+- Clasimp's explicit supplied-view binding charges normalization before
+  each RHS subtree inventory lookup, candidate type check, conversion
+  preparation and parallel converse-rewrite attempt. A native pattern net
+  and shared subtree inventories avoid impossible root matches and whole
+  branches; the actual predicate stays one parallel rewrite. The binding
+  then charges certified view derivation against the remaining
+  ambient rules. Its bounded memo replays those exact units, so cold and
+  warm bindings have the same usage and typed cutoff. Converse detection
+  uses the input table generation; views use the post-suspension table
+  generation and effective abstraction policy. A completed stage can be
+  reused after a later cutoff; an incomplete theorem group is not cached.
+  The staged binding first detects from an eight-entry native inventory
+  cache without constructing ambient views or querying ambient reducers.
+  Detection keys that inventory's generation; its 256-entry theorem memo
+  replays the same units. A late binding retains the original callback,
+  suspensions and compiled originals, continuing view derivation without
+  recharging detection. Its reported normalization total covers both
+  binding stages, excluding intervening goal-simplification charges.
+  Ambient table construction and incremental invalidation are simpset
+  derivation, outside an invocation's counters. Empty or control-only
+  supplied arguments do no detection or supplied-view work. Public
+  consumers request the ambient table only after an open raw pass; a
+  completed raw proof pays no ambient derivation cost.
+  Supplied abstraction positions also adjust the ambient table's policy;
+  this cached simpset derivation stays outside the invocation's counters.
+  Both sets of views use surviving ambient positions plus supplied
+  positions, while only ambient rewrites reduce either set of views.
+  The stateful/default and explicit working caches retain lazy view tables
+  and viewed decision bases. Their ordinary decision-base reads do not
+  construct views. Construction is outside the invocation's counters;
+  subsequent identity reads repeat no derivation. A failed table force can
+  be retried without retaining incomplete entries. Cached decision bases
+  also retain consumed rewrite allowances across repeated reads, rather
+  than reviving them through history replay.
+  Completed adjusted tables own the same lazy viewed values used by bound
+  working states. Opt-in decision-fragment replay preserves actual native
+  counters across plain, full and stripped copies, including earlier
+  consumption; it does not grant a new allowance when a view is attached.
+  The opt-in bound global simplifier takes an already installed bundle
+  separately from additional arguments. Its cached untagged originals
+  remain solver context in mutual passes, root rewrites, implication
+  rebuilds and final solving. It never reinstalls the bundle as arguments.
+  Marker-adjusted copies rebind compatible bundle counters, including
+  exhausted counters shared by views. The marker-free path uses the input
+  directly; building the control index visits only supplied bundle sources.
+  An explicit bound invocation state prepares its runtime simpset once.
+  Its raw and viewed consumers share the binding's normalization callback,
+  original solver context and actual remaining counters. Ambient views are
+  attached lazily; aliases of supplied occurrences retain their precedence
+  without creating native occurrences or granting more rewrite uses.
+  Successful view attachment is retained; an interrupted provider is retried.
+  Preparing arguments applies existing simp directives before binding and
+  retains compatible surviving native counters, including earlier consumption.
+  Marker-free inputs incur no control-index scan or history replay. Bound
+  search wrappers reuse the installed bundle and shared callback at unsafe,
+  depth, safe and clarify steps; they never compile the original citations
+  as additional arguments, which would grant sibling conjuncts fresh uses.
+  Opt-in bound fact and declaration transport starts only after an open
+  initial attempt. All retries use the same fact environment and bundle.
+  Fact aliases share their compiled source counters; removed sources
+  contribute no aliases. Derivation has a private 20000-unit cap per fact
+  source or schematic fact view and also charges the invocation callback.
+  Private cap exhaustion rejects that view; a typed invocation limit
+  propagates. Prepared normalization restores actual counters on both
+  success and exceptions. Filtering declarations preserves surviving
+  counters and cached supplied compilation, rather than resetting quotas.
+  Public default, budgeted and explicit-simpset tactic drivers now enter
+  that binding once; direct safe and unsafe simplification do likewise.
+  Runtime decisions are prepared after converse suspension and before
+  original installation, with one callback and context for nested search.
+  The raw pass does not force its lazy ambient-table provider. If it
+  leaves work open, the viewed pass continues the residual goals and
+  composes their validations with the raw subproofs. It retains the same
+  callback, invocation budget and spent allowances; neither a view nor
+  a continuation grants fresh rewrite uses. Once declarations retain
+  their quota across fixpoint passes, search wrappers, safe saturation
+  and transport retries.
+  A CS consumer reached through the generic argument callback retains its
+  already compiled declarations and fact environment. Its first CS call
+  selects the invocation budget and runtime context; later CS calls in
+  that callback share them. Deferred generic control payloads compile
+  once and join the declaration bundle with their existing source IDs and
+  counters. Callback nesting and exceptions restore the enclosing scope.
 - Classical best-first: candidate charges on heap selections, lazy child
   pulls, and forward-rule premise scans; application charges on node
   expansion; normalization charges before kernel replay. A budgeted depth
@@ -58,6 +148,8 @@ The implemented checkpoints are:
   application charges on row-pair elimination, disequality branches,
   and search nodes; normalization charges on decomposition, row
   construction, preprocessing, augmentation, and justification replay.
+  The budgeted reducer checks arithmetic applicability before charging
+  its question and input-context candidates; a declined atom costs none.
 
 Classical and Aesop candidate yields retain their search sessions. Classical
 also retains a candidate awaiting kernel replay when the normalization limit
@@ -80,6 +172,11 @@ yielded slices double for the next turn. Tableau runs at one configured
 depth and retains its owned frontier and pending reconstruction across
 turns on the same child budget. Every round offers one turn to each active
 engine, and a parent limit reports a typed cutoff.
+First-best and depth simplification wrappers are atomic: their normalization
+charges use the invocation budget, so a small turn slice cannot restart a
+partially completed simplification. Resumable selections, expansions and
+replay still charge the child slice; the invocation limit bounds each
+atomic step and propagates a typed cutoff.
 `FORCE_TAC_BUDGETED` accepts a caller-owned budget; the ordinary FORCE
 entry points allocate finite default candidate, application, and
 normalization limits.

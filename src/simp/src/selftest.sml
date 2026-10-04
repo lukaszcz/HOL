@@ -761,7 +761,9 @@ in
   val child_visits =
     visits
       (Traverse.TRAVERSE_WITH_CONTEXT
-         (Traverse.ChildFirst (fn () => child_charges := !child_charges + 1))
+         (Traverse.ChildFirst
+            (Traverse.charge_only
+               (fn () => child_charges := !child_charges + 1)))
          visit_data
          {reducer_context=[], solver_context=[]})
   val _ =
@@ -776,7 +778,8 @@ in
     (tprint "child-first traversal propagates a work cutoff";
      if ((ignore
             (Traverse.TRAVERSE_WITH_CONTEXT
-               (Traverse.ChildFirst (fn () => raise ChildWorkLimit))
+               (Traverse.ChildFirst
+                  (Traverse.charge_only (fn () => raise ChildWorkLimit)))
                visit_data {reducer_context=[], solver_context=[]}
                visit_term);
           false)
@@ -786,18 +789,19 @@ in
   val child_bool_conv =
     QCONV
       (Traverse.TRAVERSE_WITH_CONTEXT
-         (Traverse.ChildFirst (fn () => ())) (xtraversedata_for_ss bool_ss)
+         (Traverse.ChildFirst (Traverse.charge_only (fn () => ())))
+         (xtraversedata_for_ss bool_ss)
          {reducer_context=[], solver_context=[]})
   val _ = convtest
     ("child-first congruence passes a premise to its consequent",
      child_bool_conv, ``p ==> p /\ q``, ``p ==> q``)
   val _ = convtest
     ("opt-in child-first simplifier conversion is public",
-     SIMP_CONV_CHILD_FIRST (fn () => ()) bool_ss [],
+     SIMP_CONV_CHILD_FIRST (Traverse.charge_only (fn () => ())) bool_ss [],
      ``p ==> p /\ q``, ``p ==> q``)
   val _ = convtest
     ("child-first keeps an eta function head before descent",
-     SIMP_CONV_CHILD_FIRST (fn () => ()) empty_ss [],
+     SIMP_CONV_CHILD_FIRST (Traverse.charge_only (fn () => ())) empty_ss [],
      ``(h:('a -> 'b) -> 'c) (\x:'a. (f:'a -> 'b) x)``,
      ``(h:('a -> 'b) -> 'c) (f:'a -> 'b)``)
   val eta_hcong =
@@ -807,7 +811,7 @@ in
        SIMP_TAC bool_ss [])
   val _ = convtest
     ("child-first eta head survives a later non-eta abstraction",
-     SIMP_CONV_CHILD_FIRST (fn () => ())
+     SIMP_CONV_CHILD_FIRST (Traverse.charge_only (fn () => ()))
        (pureSimps.pure_ss ++ SSFRAG {name=NONE, convs=[], rewrs=[], ac=[],
           filter=NONE, dprocs=[], congs=[eta_hcong]})
        [ASSUME ``!x:'a. (ef:'a->'a) x = eg x``,
@@ -817,13 +821,15 @@ in
      ``c:'a``)
   val _ = convtest
     ("child-first does not eta-contract a quantifier predicate",
-     QCONV (SIMP_CONV_CHILD_FIRST (fn () => ()) empty_ss []),
+     QCONV (SIMP_CONV_CHILD_FIRST
+              (Traverse.charge_only (fn () => ())) empty_ss []),
      ``!x:'a. P x``, ``!x:'a. P x``)
   val _ =
     (tprint "child-first simplifier conversion propagates its budget";
      if ((ignore
             (SIMP_CONV_CHILD_FIRST
-               (fn () => raise ChildWorkLimit) bool_ss []
+               (Traverse.charge_only (fn () => raise ChildWorkLimit))
+               bool_ss []
                ``p /\ T``);
           false)
          handle ChildWorkLimit => true)
@@ -841,13 +847,14 @@ in
      overlap_term, ``q ==> F``)
   val _ = convtest
     ("child-first traversal gives the normalized child to its parent",
-     SIMP_CONV_CHILD_FIRST (fn () => ())
+     SIMP_CONV_CHILD_FIRST (Traverse.charge_only (fn () => ()))
        pureSimps.pure_ss overlap_rules,
      overlap_term, ``q = F``)
   val _ =
     (tprint "child-first tactic simplifies the conclusion";
      case valid
-            (GEN_SIMP_TAC_CHILD_FIRST (fn () => ()) {safe=false}
+            (GEN_SIMP_TAC_CHILD_FIRST
+               (Traverse.charge_only (fn () => ())) {safe=false}
                pureSimps.pure_ss overlap_rules)
             ([], overlap_term) of
          [([], result)] =>
@@ -861,7 +868,8 @@ in
   val _ =
     (tprint "child-first global tactic uses the same traversal";
      case valid
-            (GEN_GLOBAL_SIMP_TAC_CHILD_FIRST (fn () => ())
+            (GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
+               (Traverse.charge_only (fn () => ()))
                {safe=false} child_global_config
                pureSimps.pure_ss overlap_rules)
             ([], overlap_term) of
@@ -3118,5 +3126,1151 @@ val _ =
   end
 
 (* ---------------------------------------------------------------------- *)
+
+fun child_policy charge keep : Traverse.child_first_policy =
+  {charge=charge, keep_abstraction=keep};
+
+fun abstraction_policy_fixture body =
+  let
+    open boolLib
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = Theory.new_theory "abstractionPolicyFixture"
+        val c_def =
+          new_definition
+            ("policy_c_def", ``policy_c (f:'a -> 'b) (x:'a) = f x``)
+        val _ = new_constant ("policy_p", Type.bool --> Type.bool)
+        val _ = new_constant ("policy_x", Type.bool)
+        val rule =
+          Tactical.prove
+            (``!(P:'a -> 'b) x. policy_c (\v. P v) x = P x``,
+             Tactical.EVERY
+               [Rewrite.REWRITE_TAC [c_def], Tactic.BETA_TAC,
+                Rewrite.REWRITE_TAC []])
+        val c = fst (strip_comb (lhs (concl (SPEC_ALL c_def))))
+        val {Thy = c_thy, Name = c_name, ...} = dest_thy_const c
+        fun keep tm =
+          let
+            val {Thy, Name, ...} = dest_thy_const (fst (strip_comb tm))
+          in Thy = c_thy andalso Name = c_name end
+          handle HOL_ERR _ => false
+        val ss = simpLib.++ (simpLib.empty_ss, boolSimps.ETA_ss)
+        val charges = ref 0
+        fun charge () = charges := !charges + 1
+        fun converted pred rules input output =
+          let
+            val theorem =
+              Conv.QCONV
+                (simpLib.SIMP_CONV_CHILD_FIRST (child_policy charge pred)
+                   ss rules) input
+          in
+            aconv (lhs (concl theorem)) input andalso
+            aconv (rhs (concl theorem)) output andalso null (hyp theorem)
+          end
+        val full = ``policy_c (\v. policy_p v) policy_x``
+        val applied = ``policy_p policy_x``
+        val partial = ``policy_c (\v. policy_p v)``
+        val plain_partial = ``policy_c policy_p``
+        val plain_full = ``policy_c policy_p policy_x``
+        val parent = simpLib.SIMP_CONV ss [rule] full
+        val binders =
+          [``!v:bool. policy_p v``, ``?v:bool. policy_p v``,
+           ``@v:bool. policy_p v``]
+        val name = {Thy=Theory.current_theory (), Name="policy_source"}
+        val installed = ss ++ rewrites_with_names [(name, rule)]
+        val (sources, _) = rewrite_sources installed []
+        val (extended, _) = rewrite_sources (installed ++ rewrites [rule]) []
+        val (copied, _) = rewrite_sources (set_cond_depth 3 installed) []
+        val (excluded, _) = rewrite_sources installed [Excl "policy_source"]
+        val (filtered, _) =
+          rewrite_sources (filter_rewrites (fn _ => false) installed) []
+        val (cleared, _) = rewrite_sources (clear_rules installed) []
+        val (conversions, supplied) = rewrite_sources ss [rule]
+        val source_metadata =
+          length sources = 1 andalso length extended = 2 andalso
+          Portable.pointer_eq (tl extended, sources) andalso
+          Portable.pointer_eq (copied, sources) andalso
+          null excluded andalso null filtered andalso null cleared andalso
+          null conversions andalso length supplied = 1 andalso
+          aconv (concl (hd supplied)) (concl rule)
+      in
+        body
+          (converted keep [rule] full applied,
+           converted keep [] partial partial,
+           converted (fn _ => false) [rule] full plain_full,
+           converted (fn _ => false) [] partial plain_partial,
+           aconv (lhs (concl parent)) full andalso
+             aconv (rhs (concl parent)) applied andalso null (hyp parent),
+           List.all
+             (fn tm => converted (fn _ => true) [] tm tm andalso
+                       converted (fn _ => false) [] tm tm) binders,
+           !charges > 0, source_metadata)
+      end
+  in
+    Portable.finally (fn () => Context.restore saved) run ()
+  end;
+
+val result = abstraction_policy_fixture
+  (fn (full, partial, false_full, false_partial, parent, binders,
+       charges, sources) =>
+    (print ("POLICY_RESULTS " ^
+       String.concatWith " "
+         (map Bool.toString
+           [full, partial, false_full, false_partial, parent, binders,
+            charges, sources]) ^ "\n");
+     full andalso partial andalso false_full andalso false_partial andalso
+     parent andalso binders andalso charges andalso sources));
+
+val _ = (tprint "child-first policies protect full and partial clients";
+         if result then OK () else die "abstraction policy unavailable");
+
+fun prepared_normalization_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = Theory.new_theory "preparedNormalizationFixture"
+        val g = new_definition ("prepared_g_def", ``prepared_g x = T``)
+        val h = new_definition ("prepared_h_def", ``prepared_h x = T``)
+        val c = new_definition
+          ("prepared_c_def", ``prepared_c (x:bool) = T``)
+        val reducer = Tactical.prove
+          (``!x:bool. prepared_g x = prepared_h x``,
+           Rewrite.REWRITE_TAC [g, h])
+        val ss = simpLib.empty_ss && [Once reducer, c]
+        val input = ``prepared_c (prepared_g (x:bool))``
+        val expected = ``prepared_c (prepared_h (x:bool))``
+        val charges = ref 0
+        val stop = ref NONE
+        exception Stopped
+        fun charge () =
+          (charges := !charges + 1;
+           if !stop = SOME (!charges) then raise Stopped else ())
+        val prepared = prepare_child_first (Traverse.charge_only charge) ss
+        fun checked theorem output =
+          null (hyp theorem) andalso aconv (lhs (concl theorem)) input
+          andalso aconv (rhs (concl theorem)) output
+        val first = #arguments prepared [] input
+        val count = !charges
+        val second = #arguments prepared [] input
+        val _ = charges := 0
+        val _ = stop := SOME count
+        val stopped =
+          ((ignore (#arguments prepared [] input); false)
+           handle Stopped => true)
+        val _ = stop := NONE
+        val after_failure = #arguments prepared [] input
+        val actual = QCONV (SIMP_CONV_CHILD_FIRST
+          (Traverse.charge_only (fn () => ())) ss []) ``prepared_g (x:bool)``
+        val exhausted =
+          QCONV (SIMP_CONV_CHILD_FIRST (Traverse.charge_only (fn () => ()))
+            ss []) ``prepared_g (x:bool)``
+        val after_consumption = #arguments prepared [] input
+        val still_exhausted = QCONV (SIMP_CONV_CHILD_FIRST
+          (Traverse.charge_only (fn () => ())) ss []) ``prepared_g (x:bool)``
+        val bare = prepare_child_first (Traverse.charge_only (fn () => ()))
+          simpLib.empty_ss
+        val keyless = simpLib.conv_ss
+          {name="prepared opaque", key=NONE, trace=0,
+           conv=fn _ => fn _ => Conv.NO_CONV}
+        val opaque = prepare_child_first
+          (Traverse.charge_only (fn () => ())) (simpLib.empty_ss ++ keyless)
+      in
+        checked first expected andalso checked second expected andalso
+        count > 0 andalso stopped andalso checked after_failure expected
+        andalso aconv (rhs (concl actual)) ``prepared_h (x:bool)``
+        andalso aconv (rhs (concl exhausted)) ``prepared_g (x:bool)``
+        andalso checked after_consumption expected
+        andalso aconv (rhs (concl still_exhausted)) ``prepared_g (x:bool)``
+        andalso #may_reduce_arguments prepared input
+        andalso not (#may_reduce_arguments bare ``prepared_c (x:bool)``)
+        andalso #may_reduce_arguments opaque ``prepared_c (x:bool)``
+      end
+  in
+    Portable.finally (fn () => Context.restore saved) run ()
+  end;
+
+val _ = (tprint "prepared argument normalization preserves root and bounds";
+         if prepared_normalization_fixture () then OK ()
+         else die "prepared normalization changed root or rewrite allowance");
+
+fun normalization_observer_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = Theory.new_theory "normalizationObserverFixture"
+        val g = new_definition ("observer_g_def", ``observer_g x = T``)
+        val h = new_definition ("observer_h_def", ``observer_h x = T``)
+        val p = new_definition ("observer_p_def", ``observer_p x = T``)
+        val c = new_definition
+          ("observer_c_def", ``observer_c (x:bool) = T``)
+        val rule = Tactical.prove
+          (``!x:bool. observer_p x ==> (observer_g x = observer_h x)``,
+           Rewrite.REWRITE_TAC [g,h,p])
+        val ss = simpLib.empty_ss ++ rewrites [rule]
+        val target = ``observer_c (observer_g (x:bool))``
+        val condition = ``observer_p (x:bool)``
+        val seen = ref ([] : term list)
+        val observed_charges = ref 0
+        val plain_charges = ref 0
+        val observed = prepare_child_first_observed
+          (fn tm => seen := tm :: !seen)
+          (Traverse.charge_only
+             (fn () => observed_charges := !observed_charges + 1)) ss
+        val plain = prepare_child_first
+          (Traverse.charge_only
+             (fn () => plain_charges := !plain_charges + 1)) ss
+        val first = #arguments observed [] target
+        val second = #arguments plain [] target
+        val same_charge = !observed_charges = !plain_charges
+        val unchanged = ``observer_h (x:bool)``
+        val untouched = #normalize observed [] unchanged
+        fun visited tm = List.exists (aconv tm) (!seen)
+        exception ObserverStopped
+        val throwing = prepare_child_first_observed
+          (fn tm => if aconv tm condition then raise ObserverStopped else ())
+          (Traverse.charge_only (fn () => ())) ss
+        val propagated =
+          ((ignore (#arguments throwing [] target); false)
+           handle ObserverStopped => true)
+        val in_condition = ref false
+        exception ChargeStopped
+        val charged = prepare_child_first_observed
+          (fn tm => if aconv tm condition then in_condition := true else ())
+          (Traverse.charge_only
+             (fn () => if !in_condition then raise ChargeStopped else ())) ss
+        val charge_propagated =
+          ((ignore (#arguments charged [] target); false)
+           handle ChargeStopped => true)
+        val hol_error = prepare_child_first_observed
+          (fn tm => if aconv tm condition then
+              raise mk_HOL_ERR "observer" "visit" "callback stopped"
+            else ())
+          (Traverse.charge_only (fn () => ())) ss
+        val hol_error_propagated =
+          ((ignore (#arguments hol_error [] target); false)
+           handle HOL_ERR error =>
+             Feedback.message_of error = "callback stopped")
+      in
+        let
+          val checks =
+            [null (hyp first), null (hyp second),
+             aconv (concl first) (concl second),
+             aconv (rhs (concl first)) target, same_charge,
+             !plain_charges > 0,
+             aconv (rhs (concl untouched)) unchanged,
+             visited condition, visited unchanged,
+             visited ``x:bool``, propagated, charge_propagated,
+             hol_error_propagated]
+          val _ = print ("OBSERVER_RESULTS " ^
+            String.concatWith " " (map Bool.toString checks) ^ "\n")
+        in List.all (fn passed => passed) checks end
+      end
+  in
+    Portable.finally (fn () => Context.restore saved) run ()
+  end;
+
+val _ = (tprint "normalization observes unchanged and failed-condition terms";
+         if normalization_observer_fixture () then OK ()
+         else die "incomplete normalization dependencies or changed charges");
+
+fun rewrite_view_control_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = Theory.new_theory "rewriteViewControlFixture"
+        val g = new_definition ("view_g_def", ``view_g (x:bool) = T``)
+        val h = new_definition ("view_h_def", ``view_h (x:bool) = T``)
+        val c = new_definition ("view_c_def", ``view_c (x:bool) = T``)
+        val d = new_definition ("view_d_def", ``view_d (x:bool) = T``)
+        val k = new_definition ("view_k_def", ``view_k (x:bool) = T``)
+        val reducer = Tactical.prove
+          (``!x. view_g x = view_h x``, Rewrite.REWRITE_TAC [g,h])
+        val original = Tactical.prove
+          (``!x. view_c (view_g x) = view_k x``,
+           Rewrite.REWRITE_TAC [c,k])
+        val sibling = Tactical.prove
+          (``!x. view_d (view_g x) = view_k x``,
+           Rewrite.REWRITE_TAC [d,k])
+        val x = ``x:bool``
+        val view = GEN x
+          (TRANS (SYM (AP_TERM ``view_c`` (SPEC x reducer)))
+                 (SPEC x original))
+        val name = {Thy=Theory.current_theory (),Name="view_source"}
+        val original_tm = ``view_c (view_g x)``
+        val view_tm = ``view_c (view_h x)``
+        val sibling_tm = ``view_d (view_g x)``
+        val result_tm = ``view_k x``
+        fun frag rule =
+          name_ss "view originals" (rewrites_with_names [(name,rule)])
+        fun attach rule =
+          let
+            val ss = empty_ss ++ frag rule
+            val source = hd (rewrite_source_handles ss)
+          in ss ++ name_ss "views" (rewrite_views [(source,view)]) end
+        fun conversion child ss =
+          if child then
+            SIMP_CONV_CHILD_FIRST (Traverse.charge_only (fn () => ())) ss []
+          else SIMP_CONV ss []
+        fun converted child ss input expected =
+          let val th = QCONV (conversion child ss) input
+          in null (hyp th) andalso aconv (lhs (concl th)) input andalso
+             aconv (rhs (concl th)) expected end
+        fun once child view_first =
+          let
+            val ss = attach (Once original)
+            val (first,second) =
+              if view_first then (view_tm,original_tm)
+              else (original_tm,view_tm)
+          in converted child ss first result_tm andalso
+             converted child ss second second end
+        fun twice child =
+          let val ss = attach (Ntimes original 2)
+          in converted child ss original_tm result_tm andalso
+             converted child ss view_tm result_tm andalso
+             converted child ss original_tm original_tm end
+        val ss = attach (Once original)
+        val _ = ignore (conversion false ss original_tm)
+        val prepared =
+          prepare_child_first (Traverse.charge_only (fn () => ())) ss
+        val private_view = #normalize prepared [] view_tm
+        val private_bound =
+          aconv (rhs (concl private_view)) result_tm andalso
+          converted false ss view_tm view_tm
+        val replayed = remove_ssfrags ["unrelated"]
+          (attach (Once original) ++
+           name_ss "unrelated" (rewrites [Once sibling]))
+        val replay_shared =
+          converted false replayed view_tm result_tm andalso
+          converted false replayed original_tm original_tm
+        val removed = remove_ssfrags ["view originals"] (attach original)
+        val filtered = filter_rewrites (fn _ => false) (attach original)
+        val removal =
+          converted false removed view_tm view_tm andalso
+          converted false filtered view_tm view_tm andalso
+          null (rewrite_source_handles removed) andalso
+          null (rewrite_source_handles filtered)
+        val exclusion = attach original -* ["view_source.1"]
+        val excluded = converted false exclusion view_tm view_tm andalso
+                       converted false exclusion original_tm original_tm
+        fun multi_install () =
+          let
+            val multi =
+              pureSimps.pure_ss ++ frag (Once (CONJ original sibling))
+            val source = valOf (List.find
+              (fn s => #1 (source_rewrite s) = SOME
+                {Thy=Theory.current_theory (),Name="view_source.1"})
+              (rewrite_source_handles multi))
+          in multi ++ rewrite_views [(source,view)] end
+        val multi_view = multi_install ()
+        val sibling_shares =
+          converted false multi_view view_tm result_tm andalso
+          converted false multi_view sibling_tm sibling_tm
+        val multi_excluded = multi_install () -* ["view_source.1"]
+        val conjunct_exclusion =
+          converted false multi_excluded view_tm view_tm andalso
+          converted false multi_excluded sibling_tm result_tm
+        val duplicate_frag = frag (Once original)
+        val duplicate_ss = empty_ss ++ duplicate_frag ++ duplicate_frag
+        val duplicate_sources = rewrite_source_handles duplicate_ss
+        val duplicate_identity =
+          length duplicate_sources = 2 andalso
+          not (same_rewrite_source (hd duplicate_sources,
+                                   hd (tl duplicate_sources)))
+        val duplicate_view = duplicate_ss ++
+          rewrite_views (map (fn s => (s,view)) duplicate_sources)
+        val duplicate_allowances =
+          converted false duplicate_view view_tm result_tm andalso
+          converted false duplicate_view original_tm result_tm andalso
+          converted false duplicate_view view_tm view_tm
+        val raw_duplicates = empty_ss ++ rewrites
+          [Once original,Once original]
+        val raw_sources = rewrite_source_handles raw_duplicates
+        val raw_identity = length raw_sources = 2 andalso
+          not (same_rewrite_source (hd raw_sources,hd (tl raw_sources)))
+        val merged_ss =
+          empty_ss ++ merge_ss [duplicate_frag,duplicate_frag]
+        val merged_sources = rewrite_source_handles merged_ss
+        val merged_identity =
+          length merged_sources = 2 andalso
+          not (same_rewrite_source (hd merged_sources,hd (tl merged_sources)))
+        val support_ss =
+          empty_ss ++ frag (Once original) ++
+          name_ss "other proof" (rewrites_with_names
+            [(name,Once (TRANS (SPEC x original) (REFL result_tm)))])
+        val actual_source = hd (tl (rewrite_source_handles support_ss))
+        val support_views = support_ss ++ rewrite_views [(actual_source,view)]
+        val support_removed = remove_ssfrags ["view originals"] support_views
+        val proof_identity =
+          converted false support_removed view_tm view_tm andalso
+          converted false support_removed original_tm result_tm
+        val support_filtered = filter_rewrites
+          (fn (_,th) => not (aconv (concl th) (concl original))) support_views
+        val filtered_proof_identity =
+          converted false support_filtered view_tm view_tm andalso
+          converted false support_filtered original_tm result_tm
+        val stable_ss =
+          attach original ++ name_ss "remove sibling" (rewrites [sibling])
+        val stable = hd (tl (rewrite_source_handles stable_ss))
+        val stable_replayed = remove_ssfrags ["remove sibling"] stable_ss
+        val replay_identity =
+          same_rewrite_source
+            (stable,hd (rewrite_source_handles stable_replayed)) andalso
+          converted false stable_replayed view_tm result_tm
+        val filter_replayed = filter_rewrites
+          (fn (_,th) => not (aconv (concl th) (concl sibling))) stable_ss
+        val filter_identity =
+          same_rewrite_source
+            (stable,hd (rewrite_source_handles filter_replayed)) andalso
+          converted false filter_replayed view_tm result_tm
+        val native_only = length (rewrite_source_handles (attach original)) = 1
+        val marker_excluded = QCONV
+          (SIMP_CONV (attach original) [Excl "view_source.1"]) view_tm
+        val marker_exclusion = aconv (rhs (concl marker_excluded)) view_tm
+        val stale_base = empty_ss ++ frag original
+        val stale_source = hd (rewrite_source_handles stale_base)
+        val stale_views = (stale_base -* ["view_source.1"]) ++
+          rewrite_views [(stale_source,view)]
+        val stale_exclusion = converted false stale_views view_tm view_tm
+        val ac_op = new_definition
+          ("view_op_def", ``view_op (x:bool) (y:bool) = T``)
+        val comm = Tactical.prove
+          (``!x y. view_op x y = view_op y x``,
+           Rewrite.REWRITE_TAC [ac_op])
+        val assoc = Tactical.prove
+          (``!x y z. view_op (view_op x y) z = view_op x (view_op y z)``,
+           Rewrite.REWRITE_TAC [ac_op])
+        val ac_base = empty_ss ++ ac_ss [(comm,assoc)]
+        val ac_sources = rewrite_source_handles ac_base
+        val ac_replayed = remove_ssfrags ["remove ac sibling"]
+          (ac_base ++ name_ss "remove ac sibling" (rewrites [sibling]))
+        val ac_identity = length ac_sources = 3 andalso
+          ListPair.allEq same_rewrite_source
+            (ac_sources,rewrite_source_handles ac_replayed) andalso
+          not (same_rewrite_source (hd ac_sources,hd (tl ac_sources)))
+        val checks =
+          [once false false, once false true, once true false, once true true,
+           twice false, twice true, private_bound, replay_shared, removal,
+           excluded, sibling_shares, conjunct_exclusion, duplicate_identity,
+           merged_identity, proof_identity, replay_identity, filter_identity,
+           native_only, duplicate_allowances, raw_identity,
+           filtered_proof_identity, marker_exclusion, stale_exclusion,
+           ac_identity]
+        val _ = print ("VIEW_CONTROL_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "rewrite views share source identity and replayed allowances";
+         if rewrite_view_control_fixture () then OK ()
+         else die "rewrite views lost their source or allowance");
+
+(* Suspension removes one compiled conjunct, retaining history and quotas. *)
+fun rewrite_suspension_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "rewriteSuspensionFixture"
+        val g = new_definition ("susp_g_def", ``susp_g (x:bool) = T``)
+        val h = new_definition ("susp_h_def", ``susp_h (x:bool) = T``)
+        val c = new_definition ("susp_c_def", ``susp_c (x:bool) = T``)
+        val d = new_definition ("susp_d_def", ``susp_d (x:bool) = T``)
+        val k = new_definition ("susp_k_def", ``susp_k (x:bool) = T``)
+        val u = new_definition ("susp_u_def", ``susp_u (x:bool) = T``)
+        fun proof tm = Tactical.prove (tm,REWRITE_TAC [g,h,c,d,k,u])
+        val original = proof ``!x. susp_c (susp_g x) = susp_k x``
+        val sibling = proof ``!x. susp_d (susp_g x) = susp_k x``
+        val unrelated = proof ``!x. susp_u x = susp_k x``
+        val reducer = proof ``!x. susp_g x = susp_h x``
+        val name = {Thy=current_theory (),Name="susp_source"}
+        fun fragment th = name_ss "susp originals"
+          (rewrites_with_names [(name,th)])
+        val x = ``x:bool``
+        fun view head source = GEN x
+          (TRANS (SYM (AP_TERM head (SPEC x reducer))) (SPEC x source))
+        val cview = view ``susp_c`` original
+        val dview = view ``susp_d`` sibling
+        fun source ss suffix = valOf (List.find
+          (fn source => #1 (source_rewrite source) = SOME
+            {Thy=current_theory (),Name="susp_source." ^ suffix})
+          (rewrite_source_handles ss))
+        fun installed th =
+          let val ss = pureSimps.pure_ss ++ fragment th
+          in ss ++ name_ss "susp views"
+            (rewrite_views [(source ss "1",cview),(source ss "2",dview)])
+          end
+        val conj = CONJ original sibling
+        val ctm = ``susp_c (susp_g x)``
+        val dtm = ``susp_d (susp_g x)``
+        val cvtm = ``susp_c (susp_h x)``
+        val dvtm = ``susp_d (susp_h x)``
+        val ktm = ``susp_k x``
+        val utm = ``susp_u x``
+        fun converted ss input expected =
+          let val th = QCONV (SIMP_CONV ss []) input
+          in null (hyp th) andalso aconv (rhs (concl th)) expected andalso
+             null (valid (ACCEPT_TAC th) ([],mk_eq (input,expected))) end
+        val ss = installed conj
+        val selected = source ss "1"
+        val retained = source ss "2"
+        val suspended = suspend_rewrite_sources [selected] ss
+        val native_removed = length (rewrite_source_handles suspended) + 1 =
+          length (rewrite_source_handles ss)
+        val original_removed = converted suspended ctm ctm
+        val view_removed = converted suspended cvtm cvtm
+        val sibling_active = converted suspended dtm ktm
+        val sibling_view = converted suspended dvtm ktm
+        val sibling_identity = same_rewrite_source
+          (retained,source suspended "2")
+        val source_unchanged = converted ss ctm ktm andalso
+          converted ss cvtm ktm
+        val dummy = name_ss "susp dummy" (rewrites [unrelated])
+        val replayed = remove_ssfrags ["susp dummy"] (suspended ++ dummy)
+        val replay = converted replayed ctm ctm andalso
+          converted replayed cvtm cvtm andalso converted replayed dtm ktm
+        val filtered = filter_rewrites
+          (fn (_,th) => not (aconv (concl th) (concl unrelated)))
+          (suspended ++ dummy)
+        val filter_replay = converted filtered ctm ctm andalso
+          converted filtered dtm ktm
+        val excluded = suspended -* ["susp_source.2"]
+        val exact_name = converted excluded dtm dtm andalso
+          converted excluded dvtm dvtm andalso converted excluded ctm ctm
+        val repeated = Portable.pointer_eq
+          (suspend_rewrite_sources [selected] suspended,suspended)
+        val empty = Portable.pointer_eq
+          (suspend_rewrite_sources [] ss,ss)
+        val other = installed conj
+        val stale = Portable.pointer_eq
+          (suspend_rewrite_sources [source other "1"] ss,ss)
+        val deduplicated = suspend_rewrite_sources [selected,selected] ss
+        val dedup = length (rewrite_source_handles deduplicated) =
+          length (rewrite_source_handles suspended)
+        val twice_installed =
+          pureSimps.pure_ss ++ fragment conj ++ fragment conj
+        val occurrences = List.filter
+          (fn origin =>
+            #1 (source_rewrite origin) = #1 (source_rewrite selected))
+          (rewrite_source_handles twice_installed)
+        val one_event = suspend_rewrite_sources [hd occurrences] twice_installed
+        val event_identity = length (rewrite_source_handles one_event) + 1 =
+          length (rewrite_source_handles twice_installed) andalso
+          converted one_event ctm ktm
+        val raw = empty_ss ++ rewrites [original,original]
+        val one_slot = suspend_rewrite_sources
+          [hd (rewrite_source_handles raw)] raw
+        val slot_identity = length (rewrite_source_handles one_slot) = 1 andalso
+          converted one_slot ctm ktm
+        val once = installed (Once conj)
+        val consumed = converted once ctm ktm
+        val exhausted = suspend_rewrite_sources [source once "1"] once
+        val quota = consumed andalso converted exhausted dtm dtm andalso
+          converted exhausted dvtm dvtm
+        val prepared = prepare_child_first
+          (Traverse.charge_only (fn () => ())) exhausted
+        val private_th = #normalize prepared [] dvtm
+        val declared = aconv (rhs (concl private_th)) ktm andalso
+          converted exhausted dvtm dvtm
+        val twice = installed (Ntimes conj 2)
+        val first = converted twice ctm ktm
+        val remaining = suspend_rewrite_sources [source twice "1"] twice
+        val partial_quota = first andalso converted remaining dvtm ktm andalso
+          converted remaining dtm dtm andalso converted twice dtm dtm
+        val unrelated_once = installed conj ++
+          name_ss "susp bounded sibling" (rewrites [Once unrelated])
+        val used_unrelated = converted unrelated_once utm ktm
+        val unrelated_kept = suspend_rewrite_sources
+          [source unrelated_once "1"] unrelated_once
+        val other_quota = used_unrelated andalso
+          converted unrelated_kept utm utm
+        exception SuspContext of thm list
+        val added = ref ([] : thm list)
+        fun context_rules th = CONJUNCTS (SPEC_ALL th)
+        fun is_original th = aconv (concl th) (concl (SPEC_ALL original))
+        fun is_sibling th = aconv (concl th) (concl (SPEC_ALL sibling))
+        val decision = Traverse.CONTEXT_REDUCER
+          {name=SOME "susp context",initial=SuspContext [],
+           addcontext=fn (SuspContext old,more) =>
+             (added := List.concat (map context_rules more) @ !added;
+              SuspContext (List.concat (map context_rules more) @ old))
+             | _ => raise Fail "susp context",
+           apply=fn {context,...} => fn tm =>
+             case context of SuspContext rules =>
+               if List.exists is_original rules then
+                 REWR_CONV (SPEC_ALL original) tm else NO_CONV tm
+               | _ => raise Fail "susp context"}
+        val context_ss = pureSimps.pure_ss ++ dproc_ss decision ++ fragment conj
+        val _ = added := []
+        val context_suspended = suspend_rewrite_sources
+          [source context_ss "1"] context_ss
+        val context = not (List.exists is_original (!added)) andalso
+          List.exists is_sibling (!added) andalso
+          converted context_suspended ctm ctm andalso
+          converted context_suspended dtm ktm
+        val checks =
+          [native_removed,original_removed,view_removed,sibling_active,
+           sibling_view,sibling_identity,source_unchanged,replay,filter_replay,
+           exact_name,repeated,empty,stale,dedup,event_identity,slot_identity,
+           quota,declared,partial_quota,other_quota,context]
+        val _ = print ("SUSPENSION_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "conjunct suspension retains sibling names and allowances";
+         if rewrite_suspension_fixture () then OK ()
+         else die "conjunct suspension lost history, siblings or controls");
+
+(* Invocation fragment removal preserves the sources' consumed counters. *)
+fun control_replay_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "controlReplayFixture"
+        val g = new_definition ("rep_g_def", ``rep_g (x:bool) = T``)
+        val h = new_definition ("rep_h_def", ``rep_h (x:bool) = T``)
+        val c = new_definition ("rep_c_def", ``rep_c (x:bool) = T``)
+        val k = new_definition ("rep_k_def", ``rep_k (x:bool) = T``)
+        val u = new_definition ("rep_u_def", ``rep_u (x:bool) = T``)
+        fun proof tm = Tactical.prove (tm,REWRITE_TAC [g,h,c,k,u])
+        val original = proof ``!x. rep_c (rep_g x) = rep_k x``
+        val reducer = proof ``!x. rep_g x = rep_h x``
+        val unrelated = proof ``!x. rep_u x = rep_k x``
+        val x = ``x:bool``
+        val view = GEN x (TRANS
+          (SYM (AP_TERM ``rep_c`` (SPEC x reducer))) (SPEC x original))
+        val name = {Thy=current_theory (),Name="replay_source"}
+        fun source ss = valOf (List.find
+          (fn source => #1 (source_rewrite source) = SOME
+            {Thy=current_theory (),Name="replay_source.1"})
+          (rewrite_source_handles ss))
+        val dummy = name_ss "replay dummy" (rewrites [unrelated])
+        fun installed th =
+          let val ss = pureSimps.pure_ss ++ dummy ++
+                name_ss "replay originals" (rewrites_with_names [(name,th)])
+          in ss ++ name_ss "replay views" (rewrite_views [(source ss,view)]) end
+        val tm = ``rep_c (rep_g x)``
+        val vtm = ``rep_c (rep_h x)``
+        val result = ``rep_k x``
+        fun converted ss input expected =
+          let val th = QCONV (SIMP_CONV ss []) input
+          in null (hyp th) andalso aconv (rhs (concl th)) expected andalso
+             null (valid (ACCEPT_TAC th) ([],mk_eq (input,expected))) end
+        fun replay ss = remove_ssfrags_preserving_controls ["replay dummy"] ss
+        val once = installed (Once original)
+        val used = converted once tm result
+        val exhausted = replay once
+        val exhausted_quota = used andalso converted exhausted tm tm andalso
+          converted exhausted vtm vtm
+        val twice = installed (Ntimes original 2)
+        val used_view = converted twice vtm result
+        val partial = replay twice
+        val shared = used_view andalso converted partial tm result andalso
+          converted twice vtm vtm andalso converted partial vtm vtm
+        val ordinary = remove_ssfrags ["replay dummy"] once
+        val ordinary_unchanged = converted ordinary tm result
+        val unbounded = replay (installed original)
+        val unbounded_rules = converted unbounded tm result andalso
+          converted unbounded vtm result
+        val excluded_th = QCONV
+          (SIMP_CONV unbounded [Excl "replay_source"]) vtm
+        val excluded = null (hyp excluded_th) andalso
+          aconv (rhs (concl excluded_th)) vtm andalso
+          null (valid (ACCEPT_TAC excluded_th) ([],mk_eq (vtm,vtm)))
+        val identity = same_rewrite_source (source once,source exhausted)
+        val missing = ((ignore
+          (remove_ssfrags_preserving_controls ["missing"] once); false)
+          handle UNCHANGED => true)
+        val bundle = prepare_rewrite_bundle pureSimps.pure_ss [Once original]
+        val bundle_source = hd (#2 (hd (rewrite_bundle_rules bundle)))
+        val prepared = install_rewrite_bundle bundle [(bundle_source,view)]
+          (pureSimps.pure_ss ++ dummy)
+        val prepared_used = converted prepared vtm result
+        val prepared_replayed = replay prepared
+        val prepared_quota = prepared_used andalso
+          converted prepared_replayed tm tm andalso
+          converted prepared_replayed vtm vtm
+        val checks = [exhausted_quota,shared,ordinary_unchanged,unbounded_rules,
+                      excluded,identity,missing,prepared_quota]
+        val _ = print ("CONTROL_REPLAY_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "invocation fragment replay preserves consumed controls";
+         if control_replay_fixture () then OK ()
+         else die "invocation replay revived a source or its view");
+
+(* Installed bindings keep source context and counters through global passes. *)
+fun bound_global_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "boundGlobalFixture"
+        val i = new_definition ("bg_i_def", ``bg_i (x:bool) = T``)
+        val o_def = new_definition ("bg_o_def", ``bg_o (x:bool) = T``)
+        val rule = Tactical.prove
+          (``!x. bg_i x = bg_o x``,REWRITE_TAC [i,o_def])
+        val sentinel = REFL ``bg_sentinel:bool``
+        val input = ``bg_i x``
+        val output = ``bg_o x``
+        val cfg : xsimptac_config =
+          {base={strip=false,elimvars=false,droptrues=false,oldestfirst=true},
+           concl_in_fixpoint=true,imp_rebuild=true,imp_premises=true}
+        val policy : Traverse.child_first_policy =
+          {charge=fn () => (),keep_abstraction=K false}
+        fun tactic ss bundle arguments =
+          GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy {safe=false}
+            cfg ss bundle arguments
+        fun checked tac goal =
+          let
+            val (goals,validation) = runtac (VALID tac) goal
+            val proofs = map
+              (fn residual => Tactical.prove_goal
+                (residual,REWRITE_TAC [i,o_def,boolTheory.EXCLUDED_MIDDLE]))
+              goals
+            val theorem = validation proofs
+            val _ = if aconv (concl theorem) (#2 goal) then ()
+                    else raise Fail "bound global validation"
+          in goals end
+        fun same (left,right) = ListPair.allEq
+          (fn ((asl,w),(bsl,v)) => aconv w v andalso
+            ListPair.allEq (fn (a,b) => aconv a b) (asl,bsl)) (left,right)
+        val compiles = ref 0
+        val base = empty_ss ++ SSFRAG
+          {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
+           filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
+        val bundle = prepare_rewrite_bundle base [Once rule]
+        val installed = install_rewrite_bundle bundle [] base
+        val pass = tactic installed bundle []
+        val first = same (checked pass ([],input),[([],output)])
+        val second = same (checked pass ([],input),[([],input)])
+        val compile_once = !compiles = 1
+        val twice_bundle = prepare_rewrite_bundle empty_ss [Ntimes rule 2]
+        val twice = tactic (install_rewrite_bundle twice_bundle [] empty_ss)
+          twice_bundle []
+        val partial = same (checked twice ([],input),[([],output)]) andalso
+          same (checked twice ([],input),[([],output)]) andalso
+          same (checked twice ([],input),[([],input)])
+        val dummy = name_ss "bound global dummy" (rewrites [sentinel])
+        val marker_base = empty_ss ++ dummy
+        val marker_bundle = prepare_rewrite_bundle marker_base [Once rule]
+        val marker_ss = install_rewrite_bundle marker_bundle [] marker_base
+        val consumed = QCONV (SIMP_CONV marker_ss []) input
+        val marker = concl (ExclSF "bound global dummy")
+        val marker_goal = ([marker],input)
+        val exhausted = aconv (rhs (concl consumed)) output andalso
+          same (checked (tactic marker_ss marker_bundle []) marker_goal,
+                [marker_goal])
+        val condition = SPEC ``bg_p:bool`` boolTheory.EXCLUDED_MIDDLE
+        val condition_tm = concl condition
+        val conditional = DISCH condition_tm
+          (EQT_INTRO (ASSUME condition_tm))
+        val solver_calls = ref 0
+        val untagged = ref true
+        fun solver {context_thms,...} tm =
+          let
+            val found = List.filter
+              (fn th => aconv (concl th) (concl sentinel)) context_thms
+            val _ = solver_calls := !solver_calls + 1
+            val _ = untagged := (!untagged andalso
+              List.all (not o can BoundedRewrites.DEST_BOUNDED) found)
+          in
+            if aconv tm condition_tm andalso not (null found) then condition
+            else raise mk_HOL_ERR "boundGlobal" "solver" "missing context"
+          end
+        val solver_base = add_unsafe_solver
+          {name="bound global context",solve=solver}
+          (empty_ss ++ rewrites [conditional])
+        val context_bundle = prepare_rewrite_bundle solver_base [Once sentinel]
+        val context_ss = install_rewrite_bundle context_bundle [] solver_base
+        val context_tac = tactic context_ss context_bundle []
+        val deferred = !solver_calls = 0
+        val context_result = null (checked context_tac
+          ([condition_tm],condition_tm))
+        val traversal_context = context_result andalso !solver_calls >= 2
+          andalso !untagged
+        val final_base = add_unsafe_solver
+          {name="bound final context",solve=solver} empty_ss
+        val final_bundle = prepare_rewrite_bundle final_base [Once sentinel]
+        val final_ss = install_rewrite_bundle final_bundle [] final_base
+        val final_context = null (checked (tactic final_ss final_bundle [])
+          ([],condition_tm))
+        val root_rule = DISCH condition_tm (Tactical.prove
+          (``(bg_i x ==> bg_i y) = (bg_o x ==> bg_o y)``,
+           REWRITE_TAC [i,o_def]))
+        val root_base = add_unsafe_solver
+          {name="bound root context",solve=solver}
+          (empty_ss ++ rewrites [root_rule])
+        val root_bundle = prepare_rewrite_bundle root_base [Once sentinel]
+        val root_ss = install_rewrite_bundle root_bundle [] root_base
+        val root_first = same
+          (checked (tactic root_ss root_bundle [])
+            ([],``bg_i x ==> bg_i y``),
+           [([``bg_o x``],``bg_o y``)])
+        val rebuild_bundle = prepare_rewrite_bundle root_base [Once sentinel]
+        val rebuild_ss = install_rewrite_bundle rebuild_bundle [] root_base
+        val rebuild_context = same
+          (checked (tactic rebuild_ss rebuild_bundle [])
+            ([``bg_i x``],``bg_i y``),
+           [([``bg_o x``],``bg_o y``)])
+        val marker_source = hd (#2 (hd (rewrite_bundle_rules marker_bundle)))
+        val marker_views = marker_ss ++ name_ss "bound global views"
+          (rewrite_views [(marker_source,rule)])
+        val view_controls = same
+          (checked (tactic marker_views marker_bundle []) marker_goal,
+           [marker_goal])
+        val empty_bundle = prepare_rewrite_bundle pureSimps.pure_ss []
+        val empty_bound = install_rewrite_bundle empty_bundle []
+          pureSimps.pure_ss
+        val _ = new_constant ("bg_context_p",bool)
+        val context_goal = ([``bg_context_p``],``bg_i bg_context_p``)
+        val ordinary_context = same
+          (checked (tactic empty_bound empty_bundle []) context_goal,
+           [([``bg_context_p``],``bg_i T``)])
+        val no_context = same
+          (checked (tactic empty_bound empty_bundle [markerLib.NoAsms])
+            context_goal,[context_goal])
+        val ignored_context = same
+          (checked (tactic empty_bound empty_bundle
+            [markerLib.IgnAsm `bg_context_p`]) context_goal,[context_goal])
+        val checks = [first,second,compile_once,partial,exhausted,deferred,
+                      traversal_context,final_context,root_first,
+                      rebuild_context,view_controls,ordinary_context,
+                      no_context,ignored_context]
+        val _ = print ("BOUND_GLOBAL_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "bound global passes retain source context and controls";
+         if bound_global_fixture () then OK ()
+         else die "bound global pass lost context or revived controls");
+
+(* Argument controls precede binding without reviving surviving occurrences. *)
+fun bound_arguments_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "boundArgumentsFixture"
+        val i = new_definition ("ba_i_def", ``ba_i (x:bool) = T``)
+        val o_def = new_definition ("ba_o_def", ``ba_o (x:bool) = T``)
+        val rule = Tactical.prove
+          (``!x. ba_i x = ba_o x``,REWRITE_TAC [i,o_def])
+        val input = ``ba_i x``
+        val output = ``ba_o x``
+        val name = {Thy=Theory.current_theory (),Name="survivor"}
+        fun base () = pureSimps.pure_ss ++ name_ss "bound argument survivor"
+          (rewrites_with_names [(name,Ntimes rule 2)]) ++
+          name_ss "bound argument dummy" (rewrites [REFL ``ba_sentinel:bool``])
+        fun result ss = rhs (concl (QCONV (SIMP_CONV ss []) input))
+        val ordinary = base ()
+        val bounded = Once rule
+        val (unchanged,originals) = prepare_rewrite_arguments ordinary
+          [bounded]
+        val identity = Portable.pointer_eq (ordinary,unchanged) andalso
+          (case originals of [theorem] => Portable.pointer_eq (theorem,bounded)
+           | _ => false)
+        val first = result ordinary
+        val (prepared,rest) = prepare_rewrite_arguments ordinary
+          [ExclSF "bound argument dummy",Once rule]
+        val partial = aconv first output andalso aconv (result prepared) output
+          andalso aconv (result prepared) input
+          andalso aconv (result ordinary) input
+        val tags = case rest of [theorem] =>
+          let val (payload,uses) = BoundedRewrites.DEST_BOUNDED theorem
+          in uses = 1 andalso aconv (concl payload) (concl rule)
+             andalso null (hyp payload) end
+          | _ => false
+        val exhausted = base ()
+        val _ = result exhausted
+        val _ = result exhausted
+        val (after_exhaustion,_) = prepare_rewrite_arguments exhausted
+          [ExclSF "bound argument dummy"]
+        val no_revival = aconv (result after_exhaustion) input
+        val (excluded,_) = prepare_rewrite_arguments (base ())
+          [Excl "rule:boundArgumentsFixture.survivor"]
+        val exclusion = aconv (result excluded) input
+        val (with_fragment,_) = prepare_rewrite_arguments excluded
+          [SF (name_ss "bound argument added" (rewrites [rule]))]
+        val addition = aconv (result with_fragment) output
+        val checks = [identity,partial,tags,no_revival,exclusion,addition]
+        val _ = print ("BOUND_ARGUMENT_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "argument preparation retains surviving rewrite controls";
+         if bound_arguments_fixture () then OK ()
+         else die "argument preparation revives rewrite controls");
+
+(* History edits must reuse an invocation's already compiled originals. *)
+fun prepared_replay_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "preparedReplayFixture"
+        val i = new_definition ("pr_i_def", ``pr_i (x:bool) = T``)
+        val h = new_definition ("pr_h_def", ``pr_h (x:bool) = T``)
+        val o_def = new_definition ("pr_o_def", ``pr_o (x:bool) = T``)
+        val a = new_definition ("pr_a_def", ``pr_a (x:bool) = T``)
+        val b = new_definition ("pr_b_def", ``pr_b (x:bool) = T``)
+        fun proof tm = Tactical.prove
+          (tm,REWRITE_TAC [i,h,o_def,a,b])
+        val original = proof ``!x. pr_i x = pr_o x``
+        val view = proof ``!x. pr_h x = pr_o x``
+        val sibling = proof ``!x. pr_a x = pr_b x``
+        val compiles = ref 0
+        val dummy = name_ss "prepared replay dummy"
+          (rewrites [REFL ``pr_sentinel:bool``])
+        val base = pureSimps.pure_ss ++ dummy ++ SSFRAG
+          {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
+           filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
+        val bundle = prepare_rewrite_bundle base
+          [Ntimes original 2,Once sibling]
+        val rules = rewrite_bundle_rules bundle
+        val first = hd (#2 (hd rules))
+        val second = hd (#2 (List.nth (rules,1)))
+        val installed = install_rewrite_bundle bundle [(first,view)] base
+        fun result ss tm =
+          let
+            val (goals,validation) = runtac
+              (VALID (CONV_TAC (QCONV (SIMP_CONV ss [])))) ([],tm)
+            val proofs = map (fn goal => Tactical.prove_goal
+              (goal,REWRITE_TAC [i,h,o_def,a,b])) goals
+            val theorem = validation proofs
+            val _ = if null (hyp theorem) andalso aconv (concl theorem) tm
+                    then () else raise Fail "prepared replay validation"
+          in
+            case goals of
+                [([],target)] => target
+              | [] => T
+              | _ => raise Fail "prepared replay residual"
+          end
+        val input = ``pr_i x``
+        val alias = ``pr_h x``
+        val output = ``pr_o x``
+        val compiled = !compiles = 2
+        val consumed = aconv (result installed input) output
+        val replayed = remove_ssfrags_preserving_controls
+          ["prepared replay dummy"] installed
+        val reused = !compiles = 2
+        val shared = aconv (result replayed alias) output andalso
+          aconv (result replayed input) input andalso
+          aconv (result installed alias) alias
+        val masked = suspend_rewrite_sources [second] replayed
+        val mask_cached = !compiles = 2
+        val mask_exact = aconv (result masked ``pr_a x``) ``pr_a x`` andalso
+          aconv (result masked input) input
+        val (excluded,_) = prepare_rewrite_arguments replayed
+          [ExclSF "missing prepared replay fragment"]
+        val marker_cached = !compiles = 2
+        val no_revival = aconv (result excluded input) input
+        val filtered = filter_rewrites
+          (fn (_,th) => not (can (find_term (aconv ``pr_i``)) (concl th)))
+          replayed
+        val filter_cached = !compiles = 2
+        val filter_exact = not (List.exists
+          (fn source => same_rewrite_source (source,first))
+          (rewrite_source_handles filtered)) andalso
+          List.exists (fn source => same_rewrite_source (source,second))
+            (rewrite_source_handles filtered) andalso
+          aconv (result filtered alias) alias andalso
+          aconv (result filtered ``pr_a x``) ``pr_b x``
+        val ordinary = remove_ssfrags
+          ["prepared replay dummy"] installed
+        val ordinary_controls = aconv (result ordinary input) output andalso
+          aconv (result ordinary alias) output andalso
+          aconv (result ordinary input) input
+        val conjoined = prepare_rewrite_bundle base
+          [Ntimes (CONJ original sibling) 2]
+        val conjoined_compiles = !compiles
+        val conjunction = install_rewrite_bundle conjoined [] base
+        val _ = result conjunction input
+        val _ = result conjunction ``pr_a x``
+        val fresh_conjunction = remove_ssfrags
+          ["prepared replay dummy"] conjunction
+        val conjunction_uses = aconv (result fresh_conjunction input) output
+          andalso aconv (result fresh_conjunction ``pr_a x``) ``pr_b x``
+          andalso aconv (result fresh_conjunction input) input
+          andalso aconv (result fresh_conjunction ``pr_a x``) ``pr_a x``
+        val conjunction_cached = !compiles = conjoined_compiles
+        val checks = [compiled,consumed,reused,shared,mask_cached,mask_exact,
+                      marker_cached,no_revival,filter_cached,filter_exact,
+                      ordinary_controls,conjunction_uses,conjunction_cached]
+        val _ = print ("PREPARED_REPLAY_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "prepared originals survive history edits without compilation";
+         if prepared_replay_fixture () then OK ()
+         else die "history replay recompiles a prepared original bundle");
+
+(* Rule transport filters its own citation without refreshing survivors. *)
+fun bound_filter_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "boundFilterFixture"
+        val i = new_definition ("bf_i_def", ``bf_i (x:bool) = T``)
+        val h = new_definition ("bf_h_def", ``bf_h (x:bool) = T``)
+        val o_def = new_definition ("bf_o_def", ``bf_o (x:bool) = T``)
+        val a = new_definition ("bf_a_def", ``bf_a (x:bool) = T``)
+        val b = new_definition ("bf_b_def", ``bf_b (x:bool) = T``)
+        fun proof tm = Tactical.prove
+          (tm,REWRITE_TAC [i,h,o_def,a,b])
+        val rule = proof ``!x. bf_i x = bf_o x``
+        val alias = proof ``!x. bf_h x = bf_o x``
+        val removed_rule = proof ``!x. bf_a x = bf_b x``
+        val compiles = ref 0
+        val base = pureSimps.pure_ss ++ SSFRAG
+          {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
+           filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
+        val bundle = prepare_rewrite_bundle base
+          [Ntimes rule 2,Once removed_rule]
+        val source = hd (#2 (hd (rewrite_bundle_rules bundle)))
+        val installed = install_rewrite_bundle bundle [(source,alias)] base
+        fun result ss tm =
+          let
+            val (goals,validate) = runtac
+              (VALID (CONV_TAC (QCONV (SIMP_CONV ss [])))) ([],tm)
+            val theorem = validate (map (fn goal => Tactical.prove_goal
+              (goal,REWRITE_TAC [i,h,o_def,a,b])) goals)
+            val _ = if null (hyp theorem) andalso aconv (concl theorem) tm
+                    then () else raise Fail "bound filter validation"
+          in case goals of [([],target)] => target | [] => T
+               | _ => raise Fail "bound filter residual" end
+        fun keep (_,th) = not (can (find_term (aconv ``bf_a``)) (concl th))
+        val input = ``bf_i x``
+        val view_input = ``bf_h x``
+        val output = ``bf_o x``
+        val consumed = aconv (result installed input) output
+        val filtered = filter_rewrites_preserving_controls keep installed
+        val compile_once = !compiles = 2
+        val partial = aconv (result filtered view_input) output
+        val exhausted = aconv (result filtered input) input andalso
+          aconv (result installed view_input) view_input
+        val exact = aconv (result filtered ``bf_a x``) ``bf_a x``
+        val unchanged = filter_rewrites_preserving_controls (K true) filtered
+        val identity = Portable.pointer_eq (unchanged,filtered)
+        val ordinary = filter_rewrites keep installed
+        val ordinary_reset = aconv (result ordinary input) output andalso
+          aconv (result ordinary view_input) output andalso
+          aconv (result ordinary input) input
+        val ambient = pureSimps.pure_ss ++ rewrites [Ntimes rule 2]
+        val ambient_with_self = ambient ++ rewrites [removed_rule]
+        val _ = result ambient_with_self input
+        val ambient_filtered = filter_rewrites_preserving_controls
+          keep ambient_with_self
+        val ambient_shared = aconv (result ambient_filtered input) output
+          andalso aconv (result ambient_filtered input) input
+          andalso aconv (result ambient_with_self input) input
+        val checks = [consumed,compile_once,partial,exhausted,exact,identity,
+                      ordinary_reset,ambient_shared]
+        val _ = print ("BOUND_FILTER_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "invocation filtering retains supplied and ambient quotas";
+         if bound_filter_fixture () then OK ()
+         else die "invocation filtering refreshes surviving rewrite quotas");
+
+(* Combining bundles preserves consumed counters, events and aliases. *)
+fun combined_bundle_fixture () =
+  let
+    val saved = Context.snapshot ()
+    fun run () =
+      let
+        val _ = new_theory "combinedBundleFixture"
+        val a = new_definition ("cb_a_def", ``cb_a (x:bool) = T``)
+        val b = new_definition ("cb_b_def", ``cb_b (x:bool) = T``)
+        val c = new_definition ("cb_c_def", ``cb_c (x:bool) = T``)
+        val d = new_definition ("cb_d_def", ``cb_d (x:bool) = T``)
+        val e = new_definition ("cb_e_def", ``cb_e (x:bool) = T``)
+        fun proof tm = Tactical.prove (tm,REWRITE_TAC [a,b,c,d,e])
+        val first = proof ``!x. cb_a x = cb_b x``
+        val second = proof ``!x. cb_c x = cb_d x``
+        val alias = proof ``!x. cb_e x = cb_b x``
+        val compiles = ref 0
+        val base = pureSimps.pure_ss ++ SSFRAG
+          {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
+           filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
+        val one = prepare_rewrite_bundle base [Ntimes first 2]
+        val two = prepare_rewrite_bundle base [Once second]
+        val source = hd (#2 (hd (rewrite_bundle_rules one)))
+        val original = install_rewrite_bundle one [] base
+        fun result ss tm =
+          let
+            val (goals,validate) = runtac
+              (VALID (CONV_TAC (QCONV (SIMP_CONV ss [])))) ([],tm)
+            val theorem = validate (map (fn goal => Tactical.prove_goal
+              (goal,REWRITE_TAC [a,b,c,d,e])) goals)
+            val _ = if null (hyp theorem) andalso aconv (concl theorem) tm
+                    then () else raise Fail "combined bundle validation"
+          in case goals of [([],target)] => target | [] => T
+               | _ => raise Fail "combined bundle residual" end
+        val partial = aconv (result original ``cb_a x``) ``cb_b x``
+        val combined = combine_rewrite_bundles [one,two]
+        val groups = rewrite_bundle_rules combined
+        val same_source = same_rewrite_source
+          (source,hd (#2 (hd groups))) andalso length groups = 2
+        val installed = install_rewrite_bundle combined [(source,alias)] base
+        val alias_used = aconv (result installed ``cb_e x``) ``cb_b x``
+        val exhausted = aconv (result original ``cb_a x``) ``cb_a x``
+          andalso aconv (result installed ``cb_a x``) ``cb_a x``
+        val other_used = aconv (result installed ``cb_c x``) ``cb_d x``
+          andalso aconv (result installed ``cb_c x``) ``cb_c x``
+        val duplicate = (ignore (combine_rewrite_bundles [one,one]); false)
+          handle HOL_ERR _ => true
+        val reinstall =
+          (ignore (install_rewrite_bundle combined [] original); false)
+          handle HOL_ERR _ => true
+        val cached = !compiles = 2
+        val checks = [partial,same_source,alias_used,exhausted,other_used,
+                      duplicate,reinstall,cached]
+        val _ = print ("COMBINED_BUNDLE_RESULTS " ^
+          String.concatWith " " (map Bool.toString checks) ^ "\n")
+      in List.all I checks end
+  in Portable.finally (fn () => Context.restore saved) run () end;
+
+val _ = (tprint "combined bundles retain sources and actual rewrite quotas";
+         if combined_bundle_fixture () then OK ()
+         else die "combining bundles refreshes a quota or loses an origin");
+
+(* Rebuilding a solver list does not change its ordered solver identities. *)
+val _ =
+  let
+    val first = mk_tactic_solver ("context_first", Tactical.NO_TAC)
+    val second = mk_tactic_solver ("context_second", Tactical.NO_TAC)
+    fun configured () = set_unsafe_solvers [first] empty_ss
+    val original = configured ()
+    val equivalent = configured ()
+    val changed = set_unsafe_solvers [second] original
+    val removed = set_unsafe_solvers [] original
+    val reordered = set_unsafe_solvers [second,first] original
+    val reverse = set_unsafe_solvers [first,second] original
+    fun rebuild next = #rebuild (rewrite_context_changes (original,next))
+    val checks =
+      [not (rebuild original),not (rebuild equivalent),rebuild changed,
+       rebuild removed,
+       #rebuild (rewrite_context_changes (reordered,reverse))]
+    val _ = print ("SOLVER_CONTEXT_RESULTS " ^
+      String.concatWith " " (map Bool.toString checks) ^ "\n")
+  in
+    tprint "rewrite context compares ordered solver identities";
+    if List.all I checks then OK ()
+    else die "solver context identity, removal or order is incorrect"
+  end
 
 val _ = exit_count0 failcount

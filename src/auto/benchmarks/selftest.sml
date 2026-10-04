@@ -61,8 +61,10 @@ fun prepared ({id, goal, source_method, recipe, provenance,
 (* ---- the time budget has to preempt, not merely label it --------- *)
 
 (* A budget that merely labels an overrun would let one goal run
-   without bound, so this asserts the elapsed time, not just the
-   verdict.  [Timeout.apply] runs its payload under the caller's thread
+   without bound, so assert that the payload is interrupted before it
+   completes, not just that the verdict labels an overrun. Scheduling
+   pauses must not impose a separate wall-clock acceptance deadline.
+   [Timeout.apply] runs its payload under the caller's thread
    attributes; those are observed here to admit the timer's interrupt,
    which is what makes the cut-off real.
 
@@ -73,15 +75,15 @@ val _ =
     ("a runaway computation is cut off at its budget",
      fn () =>
        let
+         val completed = ref false
          fun spin deadline =
-           if Time.> (Time.now (), deadline) then () else spin deadline
-         val started = Time.now ()
+           if Time.> (Time.now (), deadline) then completed := true
+           else spin deadline
          val outcome =
            benchLib.within_budget (Time.fromSeconds 1)
              (fn () => spin (Time.+ (Time.now (), Time.fromSeconds 10)))
-         val elapsed = Time.- (Time.now (), started)
        in
-         not (isSome outcome) andalso Time.< (elapsed, Time.fromSeconds 5)
+         not (isSome outcome) andalso not (!completed)
        end)
 
 val failed_goal : benchLib.corpus_goal =
@@ -2765,12 +2767,15 @@ val _ =
      fn () =>
        let
          val recipe = auto_recipe
+         (* Verify rejection after complete ambient preparation; allow
+            shared-machine pauses without imposing a performance gate. *)
+         val rejection_budget = Time.fromSeconds 60
          val target =
            ``(!aset : bool set.
                 !hidden. hidden IN aset ==> hidden IN aset) ==>
              (property : bool -> bool) T``
        in
-         case benchLib.run_goal (Time.fromSeconds 5) recipe
+         case benchLib.run_goal rejection_budget recipe
                 (recipe_goal "unit-scope-escape" recipe target) of
              benchLib.FAILED _ => true
            | _ => false

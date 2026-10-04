@@ -187,17 +187,38 @@ sig
    (* ParentFirst is XTRAVERSE's order.  ChildFirst is opt-in child-first
       traversal. A certified eta contraction of a function argument may
       run before descent to preserve its head; logical binder predicates
-      are excluded. Congruence rules decide which children are visited and
-      their context. The callback charges before head preservation,
+      are excluded. keep_abstraction selects applications whose argument
+      must retain its abstraction. Congruence rules decide which children
+      are visited and their context. charge runs before head preservation,
       descent or a reducer attempt, and its exception propagates to the
-      invocation owner. *)
-   datatype traversal_policy = ParentFirst | ChildFirst of (unit -> unit)
+      invocation owner. Caller-supplied reducers control their own
+      conversions; simpLib also protects against its standard ETA reducer. *)
+   type child_first_policy =
+       {charge : unit -> unit, keep_abstraction : term -> bool}
+   datatype traversal_policy =
+       ParentFirst | ChildFirst of child_first_policy
+
+   val charge_only : (unit -> unit) -> child_first_policy
+   val keep_abstraction : child_first_policy -> term -> bool
+
+   (* Normalize proper arguments (or an abstraction's body), preserving
+      the root. Repeat policy-selected eta contraction and child
+      normalization until stable; charge bounds repeated passes. *)
+   val NORMALIZE_ARGUMENTS : child_first_policy -> conv -> conv
 
    (* As XTRAVERSE in the given order, but keep initial reducer additions
       separate from theorems which extend generic solver and
       binder-capture contexts only. *)
    val TRAVERSE_WITH_CONTEXT :
        traversal_policy -> xtraverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
+
+   (* Opt-in dependency observation for child-first derivation. Observe
+      each term offered to descent/reducers, including unchanged terms
+      and side conditions whose proof attempts fail. This does not
+      change charging or catch exceptions from the observer. *)
+   val CHILD_FIRST_WITH_OBSERVER :
+       (term -> unit) -> child_first_policy -> xtraverse_data ->
        {reducer_context : thm list, solver_context : thm list} -> conv
 
    (* Apply one reducer at the root, without descending.  Recursive
