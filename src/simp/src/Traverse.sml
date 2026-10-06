@@ -383,6 +383,115 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child =
       end
   in normalize end
 
+(* The default public entry deliberately retains the specialized legacy
+   engine. Keep its callback stages and eager factories in baseline order;
+   the extended engine below owns observer, policy and prover features.
+   Sharing those closures here would reintroduce default allocation costs. *)
+fun LEGACY_TRAVERSE_IN_CONTEXT
+      ({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data)
+      stack ctxt tm = let
+  open Uref
+  val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
+  val add_context' = add_context false rewriters dprocs
+  val get_relation' = get_relation travrules
+  val lim_r = Uref.new limit
+  fun check r = case !r of NONE => ()
+    | SOME n => if n <= 0 then
+                               (trace(2,TEXT "Limit exhausted");
+                                raise ERR "TRAVERSE_IN_CONTEXT"
+                                          "Limit exhausted")
+                             else ()
+  fun dec r = case !r of NONE => ()
+    | SOME n => r := SOME (n - 1)
+  fun trav_with_rel rel_info stack context  = let
+    val PREORDER(relname , _, _) = rel_info
+    fun apply_relation f = f relname
+    val congprocs' = mapfilter apply_relation congprocs
+    val weakenprocs' = mapfilter apply_relation weakenprocs
+    val op IFCQC = GEN_IFCQC rel_info
+    val op THENCQC = GEN_THENCQC rel_info
+    val op THENQC = GEN_THENQC rel_info
+    val REPEATQC = GEN_REPEATQC rel_info
+    fun mkrefl t = let
+        val PREORDER(_, _, irefl) = rel_info
+    in
+        irefl {Rinst = relname, arg = t}
+    end
+
+    fun trav stack context = let
+      val TSTATE {contexts1,contexts2, freevars, ...} = context
+      fun trav_with_rel' new_relation stack context =
+          if samerel relname new_relation then trav stack context
+          else
+              trav_with_rel (get_relation' new_relation) stack context
+
+      fun ctxt_solver stack tm = let
+        val old = !lim_r
+      in
+        EQT_ELIM (trav_with_rel' equality stack context tm)
+        handle e as HOL_ERR _ => (lim_r := old ; raise e)
+      end
+      fun ctxt_conv stack tm = let
+        val old = !lim_r
+      in
+        trav_with_rel' equality stack context tm
+        handle e as HOL_ERR _ => (lim_r := old ; raise e)
+      end
+      fun apply_reducer reducer context tm =
+          (case reducer of
+               REDUCER rdata =>
+                 (#apply rdata) {solver=ctxt_solver,
+                                 conv=ctxt_conv,
+                                 context=context,
+                                 stack=stack, relation=(relname, mkrefl)} tm
+             | CONTEXT_REDUCER {apply,...} =>
+                 apply {solver=ctxt_solver, conv=ctxt_conv, context=context,
+                        stack=stack, relation=(relname, mkrefl),
+                        cond_depth= !Cond_rewr.stack_limit,
+                        term_ord=Cond_rewr.ac_term_ord} tm
+             | CONFIG_REDUCER {apply,...} =>
+                 apply {solver=ctxt_solver, conv=ctxt_conv, context=context,
+                        stack=stack, relation=(relname, mkrefl),
+                        cond_depth=NONE, term_ord=Cond_rewr.ac_term_ord} tm)
+          before dec lim_r
+      fun high_priority tm =
+          (check lim_r;
+           FIRST_CONV (mapfilter2 apply_reducer rewriters contexts1) tm)
+      fun low_priority tm =
+          (check lim_r ;
+           FIRST_CONV (mapfilter2 apply_reducer dprocs contexts2) tm)
+      fun depther (thms,relation) =
+          trav_with_rel' relation stack (add_context' (context,thms))
+      val congproc_args =
+          {solver=(fn tm => ctxt_solver stack tm), (* do not eta-convert! *)
+           depther=depther,
+           freevars=freevars}
+      fun apply_congproc congproc = congproc congproc_args
+      val descend = FIRSTCQC_CONV (mapfilter apply_congproc congprocs')
+      val weaken = FIRST_CONV (mapfilter apply_congproc weakenprocs')
+
+      fun loop tm = let
+        val conv =
+            REPEATQC high_priority THENQC
+            (descend IFCQC
+                (fn change =>
+                  ((if change then high_priority else NO_CONV) ORELSEC
+                   low_priority ORELSEC weaken) THENCQC loop))
+               (* THENCQC above causes the loop to happen only if
+                  the stuff before it hasn't raised an exception *)
+      in
+        (trace(4,REDUCE ("Reducing",tm)); conv tm)
+      end;
+    in
+      loop
+    end
+  in
+    trav stack context
+  end
+in
+  trav_with_rel (get_relation' rel) stack ctxt tm
+end
+
 fun TRAVERSE_IN_CONTEXT legacy_cong_schedule observer policy root_only
       (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
         config as {subgoaler,solvers,cond_depth,term_ord}
@@ -625,8 +734,7 @@ fun TRAVERSE (data as {rewriters,dprocs,...} : traverse_data) thms =
     val context =
       add_context false rewriters dprocs (initial_context data,thms)
   in
-    TRAVERSE_IN_CONTEXT true NONE ParentFirst false (data,default_config)
-      [] context
+    LEGACY_TRAVERSE_IN_CONTEXT data [] context
   end
 
 end (* struct *)

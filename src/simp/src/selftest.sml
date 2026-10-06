@@ -5324,4 +5324,66 @@ in
   ()
 end
 
+(* Legacy factory scheduling and live reducer controls must interact in
+   baseline order, while the private construction-time context is reused. *)
+val _ = let
+  val a = ``c2_a:bool``
+  val b = ``c2_b:bool``
+  val ab = ASSUME (boolSyntax.mk_eq (a,b))
+  val probe = (a,b)
+  val log = ref ([] : string list)
+  fun record s = log := !log @ [s]
+  fun reject tm = NO_CONV tm
+  exception C2Context
+  val additions = ref 0
+  fun addcontext (ctxt,_) =
+    (additions := !additions + 1; ctxt)
+  val mutator = Traverse.CONTEXT_REDUCER
+    {name=NONE,initial=C2Context,addcontext=addcontext,
+     apply=fn {cond_depth,term_ord,...} => fn tm =>
+       if aconv tm a then
+         (if cond_depth = 13 andalso
+             term_ord probe = Cond_rewr.ac_term_ord probe
+          then record "context-live-13" else raise Fail "context controls";
+          Cond_rewr.stack_limit := 23;
+          reject tm)
+       else reject tm}
+  val native = Traverse.CONFIG_REDUCER
+    {name=NONE,initial=C2Context,addcontext=fn (c,_) => c,
+     apply=fn {cond_depth,term_ord,...} => fn tm =>
+       if aconv tm a then
+         (if not (Option.isSome cond_depth) andalso
+             !Cond_rewr.stack_limit = 23 andalso
+             term_ord probe = Cond_rewr.ac_term_ord probe
+          then record "config-none-live-23" else raise Fail "config controls";
+          ab)
+       else reject tm}
+  val weakener : Opening.congproc = fn _ =>
+    (record "weak-relation";
+     fn _ => (record "weak-factory";
+              Cond_rewr.stack_limit := 13;
+              reject))
+  val data : Traverse.traverse_data =
+    {limit=NONE,rewriters=[mutator,native],dprocs=[],
+     relation=boolSyntax.equality,
+     travrules=Travrules.TRAVRULES
+       {relations=[Travrules.EQ_preorder],congprocs=[],
+        weakenprocs=[weakener]}}
+  val cv = Traverse.TRAVERSE data [ASSUME ``c2_fact:bool``]
+  val _ = tprint "C2 legacy private context initialized before application"
+  val _ = if !additions = 1 andalso null (!log) then OK ()
+          else die "legacy context or factory construction stage changed"
+  val old = !Cond_rewr.stack_limit
+  val _ = Portable.finally (fn () => Cond_rewr.stack_limit := old)
+    (fn () =>
+      (convtest ("C2 weakener factory feeds live reducer controls",cv,a,b);
+       convtest ("C2 CONFIG NONE/order and live context survive reuse",cv,a,b)))
+    ()
+  val _ = tprint "C2 factory order and reusable context callback count"
+  val expected = ["weak-relation","weak-factory","context-live-13",
+                  "config-none-live-23"]
+  val _ = if !additions = 1 andalso !log = expected @ expected then OK ()
+          else die "factory/reducer callback order or context reuse changed"
+in () end
+
 val _ = exit_count0 failcount
