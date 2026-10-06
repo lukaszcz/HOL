@@ -33,6 +33,18 @@ val equality = boolSyntax.equality;
 
 type context = exn   (* well known SML hack to allow any kind of data *)
 
+type reducer_config_data =
+  {name : string option,
+   initial: context,
+   addcontext : context * thm list -> context,
+   apply: {solver:term list -> term -> thm,
+           conv: term list -> term -> thm,
+           context: context,
+           stack: term list,
+           cond_depth: int option,
+           term_ord: term * term -> order,
+           relation : term * (term -> thm)} -> conv}
+
 datatype reducer =
   REDUCER of {name : string option,
               initial: context,
@@ -53,13 +65,20 @@ datatype reducer =
                       cond_depth: int,
                       term_ord: term * term -> order,
                       relation : term * (term -> thm)} -> conv
-              };
+              }
+  | CONFIG_REDUCER of reducer_config_data;
 fun dest_reducer (REDUCER x) = x
   | dest_reducer (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
       {name=name, initial=initial, addcontext=addcontext,
        apply=fn {solver,conv,context,stack,relation} =>
          apply {solver=solver, conv=conv, context=context, stack=stack,
                 cond_depth= !Cond_rewr.stack_limit,
+                term_ord=Cond_rewr.ac_term_ord, relation=relation}}
+  | dest_reducer (CONFIG_REDUCER {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                cond_depth=NONE,
                 term_ord=Cond_rewr.ac_term_ord, relation=relation}}
 
 fun reducer_data (REDUCER {name,initial,addcontext,apply}) =
@@ -68,12 +87,38 @@ fun reducer_data (REDUCER {name,initial,addcontext,apply}) =
          apply {solver=solver, conv=conv, context=context, stack=stack,
                 relation=relation}}
   | reducer_data (CONTEXT_REDUCER x) = x
+  | reducer_data (CONFIG_REDUCER {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,cond_depth,term_ord,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                cond_depth=SOME cond_depth, term_ord=term_ord,
+                relation=relation}}
+
+fun reducer_config_data (CONFIG_REDUCER x) = x
+  | reducer_config_data (REDUCER {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,cond_depth,term_ord,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                relation=relation}}
+  | reducer_config_data (CONTEXT_REDUCER
+                          {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,cond_depth,term_ord,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                cond_depth=(case cond_depth of
+                                NONE => !Cond_rewr.stack_limit
+                              | SOME n => n),
+                term_ord=term_ord, relation=relation}}
 
 fun addctxt ths (REDUCER {name,initial,addcontext,apply}) =
     REDUCER{name = name, initial = addcontext(initial,ths), apply = apply,
             addcontext = addcontext}
   | addctxt ths (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
     CONTEXT_REDUCER
+      {name=name, initial=addcontext (initial,ths), apply=apply,
+       addcontext=addcontext}
+  | addctxt ths (CONFIG_REDUCER {name,initial,addcontext,apply}) =
+    CONFIG_REDUCER
       {name=name, initial=addcontext (initial,ths), apply=apply,
        addcontext=addcontext}
 
@@ -101,8 +146,8 @@ fun initial_context {rewriters:reducer list,
                      dprocs:reducer list,
                      travrules=TRAVRULES tsdata,
                      relation, limit} =
-  TSTATE{contexts1=map (#initial o reducer_data) rewriters,
-         contexts2=map (#initial o reducer_data) dprocs,
+  TSTATE{contexts1=map (#initial o reducer_config_data) rewriters,
+         contexts2=map (#initial o reducer_config_data) dprocs,
          context_thms=[],
          freevars=[],
          relation_info = find_relation relation (#relations tsdata),
@@ -114,8 +159,8 @@ fun initial_context {rewriters:reducer list,
  * ---------------------------------------------------------------------*)
 
 fun add_context rewriters dprocs = let
-  val rewrite_collectors' = map (#addcontext o reducer_data) rewriters
-  val dproc_collectors' = map (#addcontext o reducer_data) dprocs
+  val rewrite_collectors' = map (#addcontext o reducer_config_data) rewriters
+  val dproc_collectors' = map (#addcontext o reducer_config_data) dprocs
   fun doit (context, thms) = let
     val TSTATE {contexts1,contexts2,context_thms,freevars,
                 relation_info,relation} = context
@@ -335,11 +380,8 @@ fun TRAVERSE_IN_CONTEXT observer policy root_only
      HOL_ERR, and reducer dispatch can treat those as a failed attempt.
      Retain the original callback exception across the whole traversal. *)
   val aborted = ref (NONE : exn option)
-  (* An unconfigured depth follows the user-level default, and is read
-     afresh at every reducer application as it was when the depth was
-     read inside Cond_rewr.COND_REWR_CONV itself. *)
-  fun current_cond_depth () =
-      Option.getOpt (cond_depth, !Cond_rewr.stack_limit)
+  (* CONFIG_REDUCER transports NONE unchanged: native candidates read the
+     live default themselves.  Older CONTEXT_REDUCER clients need an int. *)
   val term_ord = Option.getOpt (term_ord, Cond_rewr.ac_term_ord)
   fun check r = case !r of NONE => ()
     | SOME n => if n <= 0 then
@@ -448,7 +490,14 @@ fun TRAVERSE_IN_CONTEXT observer policy root_only
                        stack=stack, relation=reducer_relation} tm
             | CONTEXT_REDUCER {apply,...} =>
                 apply {solver=ctxt_solver, conv=ctxt_conv, context=context,
-                       stack=stack, cond_depth=current_cond_depth (),
+                       stack=stack,
+                       cond_depth=(case cond_depth of
+                                       NONE => !Cond_rewr.stack_limit
+                                     | SOME n => n),
+                       term_ord=term_ord, relation=reducer_relation} tm
+            | CONFIG_REDUCER {apply,...} =>
+                apply {solver=ctxt_solver, conv=ctxt_conv, context=context,
+                       stack=stack, cond_depth=cond_depth,
                        term_ord=term_ord, relation=reducer_relation} tm)
          before dec lim_r)
       fun high_priority tm =

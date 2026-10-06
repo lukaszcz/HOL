@@ -178,7 +178,7 @@ val cong_reducer =
 
 fun eq_reducer_wrapper reducer =
   let
-    val {name,initial,addcontext,apply} = reducer_data reducer
+    val {name,initial,addcontext,apply} = reducer_config_data reducer
     fun wrapped (args as {relation=(_,refl),...}) tm =
       let
         val eqthm = apply args tm
@@ -186,7 +186,7 @@ fun eq_reducer_wrapper reducer =
         CONV_RULE (RAND_CONV (REWR_CONV eqthm)) (refl tm)
       end
   in
-    CONTEXT_REDUCER
+    CONFIG_REDUCER
       {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
   end;
 

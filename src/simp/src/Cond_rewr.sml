@@ -170,7 +170,7 @@ fun ac_term_ord(tm1,tm2) =
        vperm(tm1,tm2) andalso
        HOLset.equal(FVL [tm1] empty_tmset, FVL [tm2] empty_tmset)
 
-   fun COND_REWR_CONV_WITH_CONTEXT (nm,th) bounded =
+   fun COND_REWR_CONV_WITH_CONFIG (nm,th) bounded =
       let val eqn = snd (strip_imp (concl th))
           val isperm = is_var_perm (dest_eq eqn)
           val instth = HO_PART_MATCH (lhs o snd o strip_imp) th
@@ -183,7 +183,10 @@ fun ac_term_ord(tm1,tm2) =
             val _ = if exists (C (op_mem aconv) stack) conditions
                         then (trace(1, TEXT "looping - cut");
                               failwith "looping!") else ()
-            val _ = if length stack + length conditions > cond_depth
+            val depth = case cond_depth of
+                            NONE => !stack_limit
+                          | SOME n => n
+            val _ = if length stack + length conditions > depth
                     then (trace(1, TEXT "looping - stack limit reached");
                           failwith "stack limit") else ()
             val (l,r) = dest_eq eqn
@@ -226,15 +229,22 @@ fun ac_term_ord(tm1,tm2) =
       end
       handle e  => WRAP_ERR("COND_REWR_CONV (construction) ",e);
 
-   (* The user-level defaults are read where they were read before the
-      settings were per-traversal: the depth at each application of the
-      conversion, the order once and for all. *)
-   fun COND_REWR_CONV nmth bounded =
-      let val conv = COND_REWR_CONV_WITH_CONTEXT nmth bounded
+   fun COND_REWR_CONV_WITH_CONTEXT nmth bounded =
+      let val conv = COND_REWR_CONV_WITH_CONFIG nmth bounded
       in
-        fn solver => fn stack => fn tm =>
-           conv {solver=solver, stack=stack, cond_depth= !stack_limit,
-                 term_ord=ac_term_ord} tm
+        fn {solver,stack,cond_depth,term_ord} =>
+           conv {solver=solver, stack=stack, cond_depth=SOME cond_depth,
+                 term_ord=term_ord}
+      end;
+
+   (* Keep the unset depth live until each candidate's depth check, not
+      merely until its reducer begins trying a list of candidates. *)
+   fun COND_REWR_CONV nmth bounded =
+      let val conv = COND_REWR_CONV_WITH_CONFIG nmth bounded
+      in
+        fn solver => fn stack =>
+           conv {solver=solver, stack=stack, cond_depth=NONE,
+                 term_ord=ac_term_ord}
       end;
 
 

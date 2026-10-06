@@ -1196,6 +1196,64 @@ in
     if !Cond_rewr.stack_limit = 4 then OK()
     else die "cond_depth did not restore the global stack limit"
 
+  (* R5: only baseline APIs.  Keep the target atomic so failed rewriting
+     cannot descend and retry the root with a newly sampled depth.  The
+     fixed key and shared fragment put the failing user candidate before
+     the native conditional rewrite in the same reducer application. *)
+  val _ = let
+    val target = ``r5_depth_target : bool``
+    val condition = ``r5_depth_condition : bool``
+    val attempts = ref 0
+    val saved_depth = !Cond_rewr.stack_limit
+    fun mutate_depth _ _ _ =
+      (attempts := !attempts + 1;
+       Cond_rewr.stack_limit := 4;
+       raise mk_HOL_ERR "selftest" "r5_mutate_depth" "try next candidate")
+    val fragment =
+      SSFRAG
+        {name=NONE, congs=[], ac=[], filter=NONE, dprocs=[],
+         convs=[{name="R5 failing depth mutation",
+                 key=SOME ([target],target), trace=0, conv=mutate_depth}],
+         rewrs=[(NONE,ASSUME (mk_imp (condition, mk_eq (target,T))))]}
+    val ss = pureSimps.pure_ss ++ fragment
+    val facts = [ASSUME (mk_eq (condition,T))]
+    val _ = Lib.with_flag (Cond_rewr.stack_limit,0)
+      (fn () => convtest
+        ("cond_depth: NONE is live between native rewrite candidates",
+         SIMP_CONV ss facts, target, T)) ()
+    val _ = tprint "cond_depth: failing mutation ran once and restored depth"
+  in
+    if !attempts = 1 andalso !Cond_rewr.stack_limit = saved_depth then OK()
+    else die "R5 candidate ordering or depth restoration failed"
+  end
+
+  (* The same mutation must not override an invocation-local integer. *)
+  val _ = let
+    val target = ``r5_configured_depth_target : bool``
+    val condition = ``r5_configured_depth_condition : bool``
+    val attempts = ref 0
+    fun mutate_depth _ _ _ =
+      (attempts := !attempts + 1;
+       Cond_rewr.stack_limit := 4;
+       raise mk_HOL_ERR "selftest" "r5_mutate_depth" "try next candidate")
+    val fragment =
+      SSFRAG
+        {name=NONE, congs=[], ac=[], filter=NONE, dprocs=[],
+         convs=[{name="R5 configured failing depth mutation",
+                 key=SOME ([target],target), trace=0, conv=mutate_depth}],
+         rewrs=[(NONE,ASSUME (mk_imp (condition, mk_eq (target,T))))]}
+    val ss = set_cond_depth 0 (pureSimps.pure_ss ++ fragment)
+    val _ = Lib.with_flag (Cond_rewr.stack_limit,0)
+      (fn () => convtest
+        ("cond_depth: configured zero ignores candidate default mutation",
+         QCONV (SIMP_CONV ss [ASSUME (mk_eq (condition,T))]),
+         target, target)) ()
+    val _ = tprint "cond_depth: configured mutation candidate was attempted"
+  in
+    if !attempts = 1 then OK()
+    else die "R5 configured candidate ordering failed"
+  end
+
   fun reverse_order pair =
     case Cond_rewr.ac_term_ord pair of
         LESS => GREATER
@@ -4647,6 +4705,67 @@ in
         lifetime (name ^ " + " ^ setting) (build o configure) [1,1,1])
       [("CONGRUENCE_SIMP_QCONV",cong_qconv)])
     tactic_settings
+end
+
+(* R4: FRAG lookup and dispatch wait for the goal's current Context.
+   Use only baseline APIs; restore the fragment database on every exit. *)
+local
+  val atom = ``r4_fragment_p:bool``
+  val goal = ([],``T /\ r4_fragment_p``)
+  val expected = [([],atom)]
+  val rule = CONJUNCT1 (SPEC atom boolTheory.AND_CLAUSES)
+  val cfg = {strip=false,elimvars=false,droptrues=false,oldestfirst=true}
+  val builders =
+    [("ASM_SIMP_TAC",ASM_SIMP_TAC empty_ss),
+     ("SIMP_TAC",SIMP_TAC empty_ss),
+     ("global_simp_tac",global_simp_tac cfg empty_ss)]
+
+  fun pin msg constructed =
+    (tprint msg;
+     require_msg
+       (fn Exn.Res (sgs,_) => list_eq goal_eq expected sgs | _ => false)
+       (K "saved tactic did not use the application-time fragment")
+       (fn () => runtac (VALID (Exn.release constructed)) goal) ())
+
+  fun delayed (label,build) = let
+    val saved = Context.snapshot ()
+    fun run () = let
+      val name = "r4_late_registration_" ^ label
+      val constructed = Exn.capture build [markerLib.FRAG name]
+      val _ = register_frag (name_ss name (rewrites [rule]))
+    in
+      pin ("R4 delayed FRAG registration: " ^ label) constructed
+    end
+  in Portable.finally (fn () => Context.restore saved) run () end
+
+  fun contexts (label,build) = let
+    val absent = Context.snapshot ()
+    fun run () = let
+      val name = "r4_context_registration_" ^ label
+      val directive = markerLib.FRAG name
+      val _ = register_frag (name_ss name (rewrites [rule]))
+      val present = Context.snapshot ()
+      val constructed = Exn.capture build [directive]
+      val _ = Context.restore absent
+      val _ = tprint ("R4 saved tactic sees absent Context: " ^ label)
+      val _ = require_msg
+        (fn Exn.Exn (HOL_ERR e) =>
+              String.isSubstring ("No frag called " ^ name)
+                (Feedback.message_of e)
+          | _ => false)
+        (K "missing fragment must fail at application, not construction")
+        (fn () => runtac (VALID (Exn.release constructed)) goal) ()
+      val from_absent = Exn.capture build [directive]
+      val _ = Context.restore present
+      val _ = pin ("R4 saved tactic sees restored Context: " ^ label)
+        constructed
+    in
+      pin ("R4 tactic constructed in absent Context: " ^ label) from_absent
+    end
+  in Portable.finally (fn () => Context.restore absent) run () end
+in
+  val _ = List.app delayed builders
+  val _ = List.app contexts builders
 end
 
 (* ++ rejects a malformed bounded tag before any public filter callback,

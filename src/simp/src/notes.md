@@ -40,7 +40,14 @@
         |- input  R   output
 
     where `R` might be as given in the `relation` field.
-    A `CONTEXT_REDUCER`'s `apply` is additionally passed the traversal's side-condition depth and term order.
+    A `CONTEXT_REDUCER`'s `apply` is additionally passed the traversal's
+    side-condition depth and term order.
+    A `CONFIG_REDUCER` receives an optional depth instead: `SOME n` is an
+    explicit depth, while `NONE` leaves the default live for each native
+    conditional rewrite candidate to read `Cond_rewr.stack_limit`.
+    Both older constructor record shapes and the `dest_reducer` and
+    `reducer_data` signatures are unchanged; `reducer_config_data` retains
+    the option when adapting reducers (including `congLib` wrappers).
 
     Arithmetic decision procedures are `reducer`s.
     Their context is the list of theorems that they believe to be relevant (*i.e.*, Presburger terms), and they ignore all of the information provided by `apply` except the context.

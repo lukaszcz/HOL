@@ -65,10 +65,12 @@ type convdata = {name  : string,
                  key   : (term list * term) option,
                  trace : int,
                  conv  : (term list -> term -> thm) -> term list -> conv};
+(* NONE must reach each native candidate intact: a preceding failing
+   user conversion can change Cond_rewr.stack_limit in the same net lookup. *)
 type reducer_ctxt =
   {solver : term list -> term -> thm,
    stack : term list,
-   cond_depth : int,
+   cond_depth : int option,
    term_ord : term * term -> order}
 type contextual_convdata =
   {name : string,
@@ -121,7 +123,7 @@ in
                             lhs (#2 (strip_imp (concl th)))),
               trace = 100, (* no need to provide extra tracing here;
                               COND_REWR_CONV provides enough tracing itself *)
-              conv  = appconv (COND_REWR_CONV_WITH_CONTEXT (nm,th), tag)}
+              conv  = appconv (COND_REWR_CONV_WITH_CONFIG (nm,th), tag)}
        } before
   trace(2, LZ_TEXT(fn () => "New rewrite: " ^ thm_to_string th))
   handle HOL_ERR _ =>
@@ -1950,7 +1952,7 @@ fun rewrite_context_changes (SS old,SS current) =
    in
      tryfind apply_entry (lookup tm net)
    end
-   in CONTEXT_REDUCER
+   in CONFIG_REDUCER
         {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
          initial=CONVNET prepared_net}
    end;
@@ -2434,10 +2436,10 @@ fun strategy_free ss ths =
     not (Option.isSome (#term_ord s)) andalso List.all arg_free ths
   end
 
-fun ASM_SIMP_TAC ss ths =
+fun ASM_SIMP_TAC ss ths gl =
     if strategy_free ss ths then
-      markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss)
-    else GEN_SIMP_TAC {safe=false} ss ths
+      markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss) gl
+    else GEN_SIMP_TAC {safe=false} ss ths gl
 val asm_simp_tac = ASM_SIMP_TAC
 fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
 val simp_tac = SIMP_TAC
@@ -2891,7 +2893,7 @@ fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy mode cfg ss bundle =
   gen_global_simp_tac_with_bound (ChildFirst policy) (SOME bundle)
     mode cfg ss
 
-fun global_simp_tac cfg ss0 thl =
+fun global_simp_tac cfg ss0 thl gl =
     if strategy_free ss0 thl then
       (markerLib.mk_require_tac (
         markerLib.ABBRS_THEN (
@@ -2906,11 +2908,11 @@ fun global_simp_tac cfg ss0 thl =
                end
           )
         )
-      )) thl
+      )) thl gl
     else
       GEN_GLOBAL_SIMP_TAC {safe=false}
         {base=cfg,concl_in_fixpoint=false,imp_rebuild=false,
-         imp_premises=false} ss0 thl
+         imp_premises=false} ss0 thl gl
 
 
 

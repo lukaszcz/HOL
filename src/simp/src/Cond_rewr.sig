@@ -59,6 +59,14 @@ sig
                         stack : term list,
                         cond_depth : int,
                         term_ord : term * term -> order} -> conv
+  (* NONE reads stack_limit at each candidate's depth check; SOME n is
+     an explicit invocation-local depth, independent of the reference. *)
+  val COND_REWR_CONV_WITH_CONFIG :
+                       string * thm -> bool ->
+                       {solver : term list -> term -> thm,
+                        stack : term list,
+                        cond_depth : int option,
+                        term_ord : term * term -> order} -> conv
   val QUANTIFY_CONDITIONS : controlled_thm -> controlled_thm list
 
   (* The user-level default for the side-condition depth.  It applies to

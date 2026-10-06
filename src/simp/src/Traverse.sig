@@ -64,6 +64,20 @@ sig
     * initial:  The inital context.
     * ---------------------------------------------------------------------*)
 
+  (* Option-valued depth transport keeps the live default distinguishable
+     from a configured integer, without changing either older constructor. *)
+  type reducer_config_data =
+        {name : string option,
+         initial: context,
+         addcontext : context * thm list -> context,
+         apply: {solver:term list -> term -> thm,
+                 conv: term list -> term -> thm,
+                 context: context,
+                 stack:term list,
+                 cond_depth:int option,
+                 term_ord:term * term -> order,
+                 relation : (term * (term -> thm))} -> conv}
+
   datatype reducer = REDUCER of {
          name : string option,
          initial: context,
@@ -86,10 +100,13 @@ sig
                  term_ord:term * term -> order,
                  relation : (term * (term -> thm))} -> conv
        }
+       | CONFIG_REDUCER of reducer_config_data
 
   (* Through dest_reducer a CONTEXT_REDUCER runs at the default
      side-condition depth (!Cond_rewr.stack_limit) and term order
-     (Cond_rewr.ac_term_ord); reducer_data keeps the configured ones. *)
+     (Cond_rewr.ac_term_ord); a CONFIG_REDUCER receives NONE for live depth.
+     reducer_data supplies an explicit depth; reducer_config_data preserves
+     NONE for CONFIG_REDUCER and samples it for CONTEXT_REDUCER. *)
 
   val dest_reducer : reducer ->
         {name : string option,
@@ -112,6 +129,8 @@ sig
                  cond_depth:int,
                  term_ord:term * term -> order,
                  relation : (term * (term -> thm))} -> conv}
+
+  val reducer_config_data : reducer -> reducer_config_data
 
   val addctxt : thm list -> reducer -> reducer
 
