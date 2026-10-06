@@ -8,77 +8,37 @@ simpLib.add_looper :
 
 ------------------------------------------------------------------------
 
-Adds a named tactic looper to a simpset.
+Adds a named looper to a simpset.
 
-A call to `add_looper (name, make_tac) ss` returns a new simpset.  The
-function `make_tac` is given the active simpset and must return a tactic.
-The name identifies the looper for updating, deletion, pretty-printing,
-and per-invocation exclusion.
+A looper is a tactic that the simplification tactics apply to a goal
+that rewriting and the final solvers leave open; see
+[`simpLib.GEN_SIMP_TAC`](#simpLib.GEN_SIMP_TAC). In
+`add_looper (name, mk) ss`, `mk` receives the simpset of the current
+call and returns the tactic. Loopers are tried in the order they were
+added. A new `name` is appended; an existing one has its tactic
+replaced in place.
 
-Loopers form the tactic layer of simplification.  On a goal, the
-simplifier first rewrites, then tries the selected final solvers.  If no
-solver closes the goal, it tries the registered loopers in list order,
-using the first one that succeeds.  After a looper succeeds, the whole
-sequence is restarted independently on every subgoal it produced.  A
-looper may also close the goal.
-
-A looper must fail when it is not applicable.  In particular, it should
-not behave like `ALL_TAC`: success without progress causes the restart
-to repeat indefinitely when the simpset is unlimited.  Raising
-`Conv.UNCHANGED` is treated as tactic failure.  A successful application
-should close the goal or make genuine progress.
-
-Looper names are unique within a simpset.  If `name` is new,
-`add_looper` appends it, so older registrations have priority.  If the
-name is already present, its function is replaced in its existing
-position.  Thus updating a looper does not change the order in which
-loopers are tried.
-
-The bound installed by `simpLib.limit n` also bounds looper execution.
-There are at most `n` successful looper rounds in one top-level
-simplification-tactic invocation, with one counter shared by all
-subgoals.  Failed looper attempts do not consume the counter.  An
-unlimited simpset has no such protection against a non-progressing
-looper.
-
-In a theorem-list argument, `Excl name` suppresses the named looper for
-that simplifier invocation without changing the original simpset.  Use
-`del_looper` for persistent removal from a derived simpset.
-
-Loopers are used by tactic simplifiers based on `GEN_SIMP_TAC`, including
-`SIMP_TAC` and `ASM_SIMP_TAC`.  They are deliberately outside the
-conversion boundary: `SIMP_CONV`, `SIMP_PROVE`, `SIMP_RULE`, and
-`ASM_SIMP_RULE` do not run them.  The rule-based phases of compound
-tactics likewise remain conversion-only.
+The tactic must fail when it does not apply (`Conv.UNCHANGED` counts as
+failure) and make progress when it succeeds. `Excl name` in a theorem
+list disables the looper for that call.
 
 ### Failure
 
-`add_looper` itself never fails and does not run the supplied function.
-A later tactic invocation may fail internally or diverge if the looper
-violates the contract above.
+Never fails.
 
 ### Example
 
-This simpset splits conjunction goals after ordinary simplification has
-reached a fixed point:
-
 ``` hol4
-fun split_conjunctions _ = CONJ_TAC
-
-val conjunction_ss =
-  simpLib.empty_ss
-  |> simpLib.add_looper ("split conjunctions", split_conjunctions)
-
-(* SIMP_TAC conjunction_ss [] turns the goal p /\ q into goals p and q. *)
-
-(* This invocation leaves a conjunction goal unsplit. *)
-(* SIMP_TAC conjunction_ss [Excl "split conjunctions"] *)
+>> val c = Context.snapshot();
+>>_ val conj_ss = simpLib.add_looper ("conj", fn _ => CONJ_TAC) bool_ss;
+>> SIMP_TAC conj_ss [] ([], “p ∧ q”) c;
+>> SIMP_TAC conj_ss [Excl "conj"] ([], “p ∧ q”) c;
 ```
 
 ### See also
 
+[`simpLib.GEN_SIMP_TAC`](#simpLib.GEN_SIMP_TAC),
 [`simpLib.del_looper`](#simpLib.del_looper),
 [`simpLib.set_looper`](#simpLib.set_looper),
 [`simpLib.looper_ss`](#simpLib.looper_ss),
-[`simpLib.SIMP_TAC`](#simpLib.SIMP_TAC),
-[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV)
+[`simpLib.add_split`](#simpLib.add_split).

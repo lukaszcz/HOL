@@ -8,105 +8,62 @@ simpLib.GEN_GLOBAL_SIMP_TAC :
 
 ------------------------------------------------------------------------
 
-Globally simplifies a goal under extended fixpoint control.
+Simplifies assumptions and conclusion together to a fixpoint.
 
-The configuration type is
-
-``` hol4
-type xsimptac_config =
-  {base : simptac_config,
-   concl_in_fixpoint : bool,
-   imp_rebuild : bool}
-```
-
-where `simptac_config` is
+The configuration types are
 
 ``` hol4
 type simptac_config =
-  {strip : bool,
-   elimvars : bool,
-   droptrues : bool,
-   oldestfirst : bool}
+  {strip : bool, elimvars : bool, droptrues : bool, oldestfirst : bool}
+type xsimptac_config =
+  {base : simptac_config, concl_in_fixpoint : bool,
+   imp_rebuild : bool, imp_premises : bool}
 ```
 
-`GEN_GLOBAL_SIMP_TAC mode cfg ss ths` repeatedly simplifies every
-assumption using all of the other assumptions, `ths`, and `ss`.  This
-reaches a mutual fixpoint, so a rule exposed by a later assumption can
-cause an earlier one to be revisited.  Change counting avoids
-reprocessing a tail already known to be fixed; this scheduling
-optimization does not change the normal result.
+`GEN_GLOBAL_SIMP_TAC mode cfg ss ths` simplifies each assumption with
+`ss`, `ths` and the other assumptions until none changes, then
+simplifies the conclusion with `GEN_SIMP_TAC mode`. The fields of
+`#base cfg` control how a simplified assumption is put back: `strip`
+strips it, `elimvars` substitutes it away if it is an eliminable
+equation, `droptrues` drops it if it is `T`, and `oldestfirst` processes
+the oldest assumption first. The other fields of `cfg` enable:
 
-The fields of `#base cfg` control processing of each simplified
-assumption.  `strip` applies `STRIP_ALL_THEN` when putting it back;
-`elimvars` uses an eliminable equality as a variable substitution;
-`droptrues` discards an assumption simplified to `T`; and `oldestfirst`
-selects the oldest assumption first rather than the newest.
+-   `concl_in_fixpoint`: the conclusion is simplified after every pass
+    over the assumptions, and the passes restart if it changes.
+-   `imp_premises`: an implicational conclusion is first rewritten at
+    the root if possible, and its antecedents are then moved into the
+    assumptions.
+-   `imp_rebuild`: at the fixpoint, the implications `a1 ==> w`,
+    `a2 ==> a1 ==> w`, ... built from the conclusion `w` and the
+    assumptions `a1`, `a2`, ... are tried, most recent assumption
+    first, against the rewrites of `ss` and `ths` at the root; the first
+    that rewrites replaces them, and simplification restarts.
 
-The extra fields control the extent of the fixpoint:
-
-* If `concl_in_fixpoint` is `false`, assumptions first reach their
-  fixpoint and the conclusion is then simplified once.  If it is
-  `true`, the conclusion is simplified after every assumption pass.  A
-  changed or structurally split conclusion restarts the assumption
-  pass on each resulting goal.
-* If `imp_rebuild` is `true`, the tactic also looks for a root rewrite
-  of progressively nested, discharged forms `a ==> w`.  On the first
-  hit it replaces that implication, strips its leading implications
-  back into assumptions, and restarts the whole fixpoint.  This permits
-  implication-left rewrites to rebuild the assumption/conclusion
-  structure.  If the field is `false`, this extra root-rewrite search
-  is omitted.
-
-The `safe` field of `mode` selects the safe or unsafe final-solver list
-for each tactic-level conclusion simplification, both after assumption
-passes when `concl_in_fixpoint` is enabled and in the final conclusion
-pass.  It does not change rewriting: traversal side conditions continue
-to use unsafe solvers, and loopers continue to run.  Simplification of
-each individual assumption is conversion-only.  Rewrite markers in
-`ths` are processed, and the remaining theorems are available
-throughout both the assumption and conclusion phases.
-
-The existing `global_simp_tac base` is equivalent to
-
-``` hol4
-simpLib.GEN_GLOBAL_SIMP_TAC
-  {safe = false}
-  {base = base, concl_in_fixpoint = false, imp_rebuild = false}
-```
-
-Thus its conclusion remains outside the mutual fixpoint and implication
-rebuilding is disabled by default.
+`global_simp_tac base` is `GEN_GLOBAL_SIMP_TAC {safe = false}` with
+`base` and the other fields false.
 
 ### Failure
 
-The tactic does not fail merely because no simplification is possible,
-but it may diverge.  Exceptions from user conversions, loopers, solvers,
-or ordering functions may propagate.
+Never fails, but may diverge.
 
 ### Example
 
-The following schematic configuration enables both extended modes while
-using the usual stripping and truth-dropping policy.
-
 ``` hol4
-val base_cfg =
-  {strip = true, elimvars = false,
-   droptrues = true, oldestfirst = true}
-
-val extended_global =
-  simpLib.GEN_GLOBAL_SIMP_TAC
-    {safe = false}
-    {base = base_cfg,
-     concl_in_fixpoint = true,
-     imp_rebuild = true}
-    bool_ss
+>> val c = Context.snapshot();
+>>_ val base = {strip = true, elimvars = false,
+                droptrues = true, oldestfirst = true};
+>> simpLib.GEN_GLOBAL_SIMP_TAC {safe = false}
+     {base = base, concl_in_fixpoint = false,
+      imp_rebuild = false, imp_premises = false}
+     bool_ss [] ([], “x = 1 ⇒ y = x ⇒ P y”) c;
+>> simpLib.GEN_GLOBAL_SIMP_TAC {safe = false}
+     {base = base, concl_in_fixpoint = false,
+      imp_rebuild = false, imp_premises = true}
+     bool_ss [] ([], “x = 1 ⇒ y = x ⇒ P y”) c;
 ```
-
-It can then be applied as `extended_global ths`.
 
 ### See also
 
+[`simpLib.GEN_SIMP_TAC`](#simpLib.GEN_SIMP_TAC),
 [`bossLib.gs`](#bossLib.gs),
-[`simpLib.SIMP_TAC`](#simpLib.SIMP_TAC),
-[`simpLib.SIMP_RULE`](#simpLib.SIMP_RULE),
-[`simpLib.clear_rules`](#simpLib.clear_rules)
+[`bossLib.FULL_SIMP_TAC`](#bossLib.FULL_SIMP_TAC).

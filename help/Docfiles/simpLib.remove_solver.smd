@@ -1,4 +1,4 @@
->>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `remove_solver`
 
 ``` hol4
@@ -9,28 +9,23 @@ simpLib.remove_solver : string -> simpset -> simpset
 
 Removes a named solver from a simpset.
 
-`remove_solver name ss` removes every entry called `name` from both the
-safe and unsafe solver lists of `ss`. If neither list contains `name`,
-the simpset is returned unchanged and no warning is issued.
-
-This operation is persistent on the returned simpset. To suppress a
-named solver only for one simplifier invocation, pass `Excl name` in
-that invocation's theorem list.
+`remove_solver name ss` removes the solvers named `name` from both the
+safe and the unsafe solvers of `ss`.
 
 ### Failure
 
-Never fails.
+Never fails. Returns `ss` if it has no solver `name`.
 
 ### Example
 
 ``` hol4
-val ss_without_arithmetic =
-  simpLib.remove_solver "linear arithmetic" ss;
+>> val decide = {name = "decide", solve = K DECIDE} : Traverse.ssolver;
+>>_ val ss = simpLib.add_unsafe_solver decide bool_ss;
+>>+ SIMP_CONV (simpLib.remove_solver "decide" ss)
+      [arithmeticTheory.LESS_MOD] “x MOD (x + 1)”;
 ```
 
 ### See also
 
 [`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
-[`simpLib.add_safe_solver`](#simpLib.add_safe_solver),
-[`simpLib.set_unsafe_solvers`](#simpLib.set_unsafe_solvers),
-[`simpLib.set_safe_solvers`](#simpLib.set_safe_solvers)
+[`simpLib.add_safe_solver`](#simpLib.add_safe_solver).

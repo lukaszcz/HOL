@@ -1,0 +1,48 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `GEN_SIMP_TAC`
+
+``` hol4
+simpLib.GEN_SIMP_TAC : simp_mode -> simpset -> thm list -> tactic
+```
+
+------------------------------------------------------------------------
+
+Simplifies a goal, then applies a simpset's final solvers and loopers.
+
+`GEN_SIMP_TAC {safe} ss ths` processes the markers in `ths` and then:
+
+1.  rewrites the goal with `ss`, `ths` and the assumptions;
+2.  tries the final solvers of `ss` in order on the result: the safe
+    solvers if `safe` is true, the unsafe solvers otherwise;
+3.  if none proves it, applies the first looper of `ss` that succeeds
+    and repeats from step 1 on every resulting subgoal.
+
+A theorem returned by a final solver must have the goal as conclusion
+and only goal assumptions as hypotheses; otherwise the solver is taken
+to have failed. With `limit n ss`, at most `n` looper applications
+succeed in one call. `ASM_SIMP_TAC` is `GEN_SIMP_TAC {safe = false}`,
+so every simplification tactic runs final solvers and loopers;
+`SIMP_CONV`, `SIMP_RULE` and `SIMP_PROVE` run neither.
+
+### Failure
+
+Never fails, but diverges if a looper succeeds without making progress
+and `ss` has no limit.
+
+### Example
+
+``` hol4
+>> val c = Context.snapshot();
+>>_ val ss = simpLib.add_safe_solver
+              (simpLib.mk_tactic_solver ("arith", DECIDE_TAC)) bool_ss;
+>> simpLib.GEN_SIMP_TAC {safe = true} ss [] ([], “x < x + 1”) c;
+>> simpLib.GEN_SIMP_TAC {safe = false} ss [] ([], “x < x + 1”) c;
+```
+
+### See also
+
+[`bossLib.ASM_SIMP_TAC`](#bossLib.ASM_SIMP_TAC),
+[`simpLib.add_looper`](#simpLib.add_looper),
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.add_safe_solver`](#simpLib.add_safe_solver),
+[`simpLib.GEN_GLOBAL_SIMP_TAC`](#simpLib.GEN_GLOBAL_SIMP_TAC).
