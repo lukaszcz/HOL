@@ -67,9 +67,19 @@ BARE_DEPS = $(patsubst %,../%,$(SMT_DEPS))
 
 DEPS = $(patsubst %,%.uo,$(BARE_DEPS))
 
-all: $(HOLHEAP) selftest.exe
+all: $(HOLHEAP) smtreplayheap selftest.exe
 
 $(HOLHEAP): $(DEPS) $(dprot $(HOLDIR)/src/real/analysis/realheap)
 	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \
 		-b $(protect $(HOLDIR)/src/real/analysis/realheap) $(BARE_DEPS)
+
+# Repeated proof-driver invocations share the compiled replay libraries.
+# Keep solver entry points out: executable/version detection must happen in
+# the calling process, not when this reusable heap is built.
+REPLAY_DEPS = Z3_ProofReplay CPC_ProofReplay SmtLib_Parser
+REPLAY_OBJECTS = $(patsubst %,%.uo,$(REPLAY_DEPS))
+EXTRA_CLEANS += smtreplayheap
+smtreplayheap: $(HOLHEAP) $(REPLAY_OBJECTS)
+	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \
+		-b $(protect $(HOLHEAP)) $(REPLAY_DEPS)
 endif

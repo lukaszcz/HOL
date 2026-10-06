@@ -31,7 +31,7 @@ struct
      The type check is essential for a rewrite between proof-local FP
      variables, where no smtfloat constant need occur. *)
   fun has_fp_theory_term t =
-    Lib.can (HolKernel.find_term is_fp_theory_term) t
+    SmtResource.contains is_fp_theory_term t
 
   fun unsupported t =
     raise ERR "unsupported"
@@ -318,6 +318,41 @@ struct
           raise ERR "tier2_bv_prove" "word residue is not valid"
     end
 
+  (* Shared word circuits must not be unfolded by BBLAST's tree visitor.
+     Normalize the entire circuit in one checked word-graph invocation, so
+     operators shared by different atoms share their projection proofs too.
+     Discharge the resulting Boolean graph by checked CNF/SAT replay. *)
+  val tier2_word_graph_prove = SmtWordGraph.prove
+
+  fun check_word_circuit_goal case_id t =
+    if SmtResource.term_nodes_up_to 257 t > 256 then
+      SmtResource.check_dag_size_for "FloatingPoint" case_id
+        (SmtResource.dag_nodes_up_to
+          SmtResource.max_skeleton_replay_dag_nodes t)
+    else SmtResource.check_bitblast_goal case_id t
+
+  fun word_circuit_prove_with word_prover t =
+    if Term.aconv t boolSyntax.T then boolTheory.TRUTH
+    else if SmtResource.term_nodes_up_to 257 t > 256 then
+      let
+        (* Opaque word atoms suffice for purely Boolean certificate steps.
+           Their embedded word circuits need not enter the word normalizer
+           at all.  A satisfiable abstraction is only an ordinary decline. *)
+        val measure = SmtSkeletonProve.term_measure t
+        val propositional =
+          if #dag_nodes measure > SmtResource.max_skeleton_replay_dag_nodes
+          then NONE
+          else (SOME (SmtSkeletonProve.propositional_prove t)
+            handle HolSatLib.SAT_cex _ => NONE
+                 | HolSatLib.SAT_satisfiable _ => NONE)
+      in
+        case propositional of SOME theorem => theorem
+        | NONE => word_prover t
+      end
+    else tier2_bv_prove t
+
+  val word_circuit_prove = word_circuit_prove_with tier2_word_graph_prove
+
   val tier2_case_id = "tier2-atom"
   val packed_bits_case_id = "tier2-packed-bits"
 
@@ -337,12 +372,12 @@ struct
      defines each packed word as the FP representative; checked per-bit
      definitions below connect Z3's later Boolean formula to that word
      formula. *)
-  fun definition_bitblast_uncapped definitions t =
+  fun definition_bitblast_uncapped_with word_prover definitions t =
   let
-    val _ = Lib.can (HolKernel.find_term
-      (wordsSyntax.is_word_type o Term.type_of)) t orelse
+    val _ = SmtResource.contains
+      (wordsSyntax.is_word_type o Term.type_of) t orelse
       raise ERR "definition_bitblast_prove" "no packed word in conclusion"
-    val free_vars = HOLset.addList (Term.empty_tmset, Term.free_vars t)
+    val free_vars = Term.FVL_dag [t] Term.empty_tmset
     fun relevant definition =
       pure_word_definition definition andalso
       HOLset.member (free_vars, Lib.fst (boolSyntax.dest_eq definition))
@@ -352,22 +387,32 @@ struct
       else ()
     val definition_thms = List.map Thm.ASSUME definitions
     val normalized =
-      simpLib.SIMP_CONV simpLib.empty_ss definition_thms t
-      handle Conv.UNCHANGED => Thm.REFL t
+      Library.checked_definition_rewrite_conv definition_thms t
     val residue = boolSyntax.rhs (Thm.concl normalized)
-    val () = SmtResource.check_bitblast_goal packed_bits_case_id residue
-    val residue_thm =
-      if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
-      else tier2_bv_prove residue
+    val residue_thm = word_circuit_prove_with word_prover residue
   in
     Thm.EQ_MP (Thm.SYM normalized) residue_thm
   end
 
-  fun definition_bitblast_prove definitions t =
-    SmtResource.with_bitblast_step_time packed_bits_case_id
+  fun definition_bitblast_prove_with word_prover definitions t =
+    (* Once the FP atom has been lowered to its packed bit-vector residue,
+       charge the replay against the larger bit-vector budget.  Using the
+       small FP-admission budget here incorrectly rejects valid wider-format
+       comparisons during their final Boolean replay. *)
+    SmtResource.with_resource_step_time "BitVector" packed_bits_case_id
       (fn t =>
-        (SmtResource.check_bitblast_goal packed_bits_case_id t;
-         definition_bitblast_uncapped definitions t)) t
+        (* Definition conversion traverses the stored DAG under the existing
+           BV source-size bound.  The subsequent Boolean or word procedure
+           checks its own graph before constructing a SAT certificate. *)
+        (SmtResource.check_dag_size_with_limit "BitVector" packed_bits_case_id
+           SmtResource.max_bv_replay_term_nodes
+           (SmtResource.dag_nodes_up_to SmtResource.max_bv_replay_term_nodes t);
+         definition_bitblast_uncapped_with word_prover definitions t)) t
+
+  val definition_bitblast_uncapped =
+    definition_bitblast_uncapped_with tier2_word_graph_prove
+  val definition_bitblast_prove =
+    definition_bitblast_prove_with tier2_word_graph_prove
 
   fun tier2_bitblast_uncapped decompositions t =
   let
@@ -569,7 +614,7 @@ struct
             in theorem end
     in convert root end
 
-  fun symbolic_arithmetic_uncapped allow_direct_mul t =
+  fun symbolic_arithmetic_uncapped_with word_prover allow_direct_mul t =
   let
     fun trace_stage stage =
       if OS.Process.getEnv "HOL4_FP_TRACE" = SOME "1" then
@@ -609,15 +654,19 @@ struct
         (SmtResource.dag_nodes_up_to 200001
           (boolSyntax.rhs (Thm.concl normalized))))
     val residue = boolSyntax.rhs (Thm.concl normalized)
-    val () = SmtResource.check_bitblast_goal case_id residue
     val residue_thm =
       if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
-      else (trace_stage "bitblast begin"; tier2_bv_prove residue)
+      else if SmtResource.term_nodes_up_to 257 residue > 256 then
+        (trace_stage "word graph begin";
+         word_prover residue)
+      else
+        (SmtResource.check_bitblast_goal case_id residue;
+         trace_stage "bitblast begin"; tier2_bv_prove residue)
   in
     Thm.EQ_MP (Thm.SYM normalized) residue_thm
   end
 
-  fun symbolic_arithmetic_prove_mode allow_direct_mul t =
+  fun symbolic_arithmetic_prove_mode_with word_prover allow_direct_mul t =
     let
       val case_id =
         if dag_contains "fp-mul-domain" is_mul_const t then
@@ -625,8 +674,13 @@ struct
         else addsub_case_id
     in
       SmtResource.with_bitblast_step_time case_id
-        (symbolic_arithmetic_uncapped allow_direct_mul) t
+        (symbolic_arithmetic_uncapped_with word_prover allow_direct_mul) t
     end
+
+  val symbolic_arithmetic_uncapped =
+    symbolic_arithmetic_uncapped_with tier2_word_graph_prove
+  val symbolic_arithmetic_prove_mode =
+    symbolic_arithmetic_prove_mode_with tier2_word_graph_prove
 
   val symbolic_arithmetic_prove = symbolic_arithmetic_prove_mode true
 
@@ -747,6 +801,12 @@ struct
   fun fp_prove_with_context arith_prove eligible_decompositions
       all_decompositions =
     fp_prove_with_context_mode symbolic_arithmetic_replay_prove arith_prove
+      eligible_decompositions all_decompositions
+
+  fun fp_prove_with_word_prover word_prover arith_prove
+      eligible_decompositions all_decompositions =
+    fp_prove_with_context_mode
+      (symbolic_arithmetic_prove_mode_with word_prover false) arith_prove
       eligible_decompositions all_decompositions
 
   fun fp_prove_with_decompositions_and_arith arith_prove decompositions =

@@ -228,74 +228,143 @@ val empty_varset = HOLset.empty var_compare
 
 fun fast_term_eq (t1:term) (t2:term) = Portable.pointer_eq (t1,t2)
 
+(* Constant-work index hints for identity caches.  Sampling operand paths
+   reaches beyond homogeneous application prefixes without unfolding DAGs.
+   Closures stay opaque, and exact pointer/depth checks resolve every hit. *)
+fun pointer_bucket depth modulus root =
+  let
+    fun string_hash name = CharVector.foldl
+      (fn (character, hash) =>
+        Word.+ (Word.* (hash, 0w33),
+          Word.fromInt (Char.ord character))) 0w17 name
+    fun head term =
+      case term of
+        Fv (name, _) => string_hash name
+      | Bv index => Word.fromInt index
+      | Const (id, _) => Word.fromInt (KernelSig.epoch_of id)
+      | Comb _ => 0w17
+      | Abs _ => 0w19
+      | Clos _ => 0w23
+    fun sample 0 _ term = head term
+      | sample depth first term =
+          case term of
+            Comb (operator, operand) =>
+              let val child =
+                case (first, operator) of
+                  (true, Comb (_, argument)) => argument
+                | _ => operand
+              in Word.+ (Word.* (head operator, 0w37),
+                Word.+ (Word.* (0w17, sample (depth - 1) first child),
+                  0w29)) end
+          | Abs (_, body) =>
+              Word.+ (Word.* (0w41, sample (depth - 1) first body), 0w31)
+          | _ => head term
+    (* The two sampled paths have the same prefix in unary applications,
+       abstractions and physically shared operands.  Traverse that prefix
+       once, retaining exactly the same pair of hints as separate sampling. *)
+    fun samples 0 term = let val code = head term in (code, code) end
+      | samples depth (Comb (operator, operand)) =
+          let
+            val first = case operator of
+                Comb (_, argument) => argument | _ => operand
+            val (left, right) = if fast_term_eq first operand then
+                samples (depth - 1) operand
+              else (sample (depth - 1) true first,
+                    sample (depth - 1) false operand)
+            val prefix = Word.+ (Word.* (head operator, 0w37), 0w29)
+            fun mix code = Word.+ (prefix, Word.* (0w17, code))
+          in (mix left, mix right) end
+      | samples depth (Abs (_, body)) =
+          let
+            val (left, right) = samples (depth - 1) body
+            fun mix code = Word.+ (Word.* (0w41, code), 0w31)
+          in (mix left, mix right) end
+      | samples _ term = let val code = head term in (code, code) end
+    val (left, right) = samples (Int.max (0, depth)) root
+  in Word.toInt (Word.mod
+    (Word.+ (Word.* (0w37, left), right),
+     Word.fromInt modulus)) end
+
+val raw_pointer_bucket = pointer_bucket 4
+
+(* Only recursive comparisons can revisit a shared subgraph.  Comparing
+   leaves or different non-closure constructors is already constant work;
+   hashing and retaining those pairs cannot avoid a recursive traversal. *)
+fun recursive_pair (Comb _, Comb _) = true
+  | recursive_pair (Abs _, Abs _) = true
+  | recursive_pair (Clos _, _) = true
+  | recursive_pair (_, Clos _) = true
+  | recursive_pair _ = false
+
+(* Operation-local identity tables start small and grow with their retained
+   states.  Tiny conversions must not allocate thousands of empty buckets.
+   Growth changes indexing only; the supplied exact key check decides hits.
+   Retain each computed hint across insertion and growth.  In particular,
+   [memo] samples a missed key once, not again after recursive computation. *)
+fun new_identity_cache maximum hash equal =
+  let
+    val table = ref NONE
+    val count = ref 0
+    fun find (key, hint) =
+      case !table of
+        NONE => NONE
+      | SOME buckets =>
+          let
+            fun seek [] = NONE
+              | seek ((saved, _, value) :: rest) =
+                  if equal (key, saved) then SOME value else seek rest
+          in seek (Array.sub (buckets, hint mod Array.length buckets)) end
+    fun retain (key, hint) value =
+      let
+        val current = case !table of
+            SOME buckets => buckets
+          | NONE => Array.array (Int.min (32, maximum), [])
+        val capacity = Array.length current
+        val buckets =
+          if capacity < maximum andalso !count >= 2 * capacity then
+            let
+              val grown = Array.array (Int.min (maximum, 2 * capacity), [])
+              fun reindex (entry as (_, hint, _)) =
+                let val bucket = hint mod Array.length grown in
+                  Array.update (grown, bucket,
+                    entry :: Array.sub (grown, bucket))
+                end
+              val _ = Array.app (List.app reindex) current
+            in grown end
+          else current
+        val bucket = hint mod Array.length buckets
+        val _ = Array.update (buckets, bucket,
+          (key, hint, value) :: Array.sub (buckets, bucket))
+      in table := SOME buckets; count := !count + 1 end
+    fun lookup key = find (key, hash key)
+    fun save key value = retain (key, hash key) value
+    fun memo key compute =
+      let val prepared = (key, hash key) in
+        case find prepared of
+          SOME value => value
+        | NONE =>
+            let val value = compute ()
+            in retain prepared value; value end
+      end
+  in {lookup = lookup, save = save, memo = memo} end
+
 fun compare (t1,t2) =
   if fast_term_eq t1 t2 then EQUAL
   else
     let
       val bucket_count = 4093
-      val cache = ref
-        (NONE : (((term * term) * order) list Array.array) option)
-      fun get_cache () =
-        case !cache of
-          SOME buckets => buckets
-        | NONE =>
-            let
-              val buckets = Array.array
-                (bucket_count, [] : ((term * term) * order) list)
-              val _ = cache := SOME buckets
-            in buckets end
-      fun string_hash string =
-        let
-          fun loop index hash =
-            if index = String.size string then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
-        in loop 0 5381 end
-      fun head_hash tm =
-        case tm of
-          Fv(name,_) => string_hash name
-        | Bv index => index mod bucket_count
-        | Const(id,_) => string_hash (KernelSig.id_toString id)
-        | Comb _ => 17
-        | Abs _ => 19
-        | Clos _ => 23
-      fun term_hash tm =
-        let
-          fun bounded 0 term = head_hash term
-            | bounded depth term =
-                case term of
-                  Comb(operator, operand) =>
-                    (bounded (depth - 1) operator * 37 +
-                     bounded (depth - 1) operand * 17 + 3) mod bucket_count
-                | Abs(_,body) =>
-                    (bounded (depth - 1) body * 41 + 5) mod bucket_count
-                | _ => head_hash term
-        in bounded 8 tm end
-      fun cache_index left right =
+      val term_hash = raw_pointer_bucket bucket_count
+      fun cache_index (left, right) =
         (term_hash left * 37 + term_hash right) mod bucket_count
-      fun lookup [] _ _ = NONE
-        | lookup ((((saved1, saved2), result) :: rest)) left right =
-            if fast_term_eq saved1 left andalso fast_term_eq saved2 right then
-              SOME result
-            else lookup rest left right
+      val {memo, ...} = new_identity_cache bucket_count cache_index
+        (fn ((left, right), (saved_left, saved_right)) =>
+          fast_term_eq left saved_left andalso fast_term_eq right saved_right)
       fun cmp depth left right =
         if fast_term_eq left right then EQUAL
-        else if depth < 8 then compute (depth + 1) left right
+        else if depth < 8 orelse not (recursive_pair (left, right)) then
+          compute (depth + 1) left right
         else
-          let
-            val buckets = get_cache ()
-            val bucket = cache_index left right
-          in
-            case lookup (Array.sub(buckets,bucket)) left right of
-              SOME result => result
-            | NONE =>
-                let
-                  val result = compute (depth + 1) left right
-                  val _ = Array.update (buckets,bucket,
-                    (((left,right),result) :: Array.sub(buckets,bucket)))
-                in result end
-          end
+          memo (left, right) (fn () => compute (depth + 1) left right)
       and compute depth left right =
         case (left,right) of
           (left as Clos _, right) => cmp depth (push_clos left) right
@@ -402,12 +471,13 @@ in
    node.  This lets [Clos] inspect only indices actually referenced by its
    body, through [Subst.exp_rel], without expanding an explicit substitution.
 
-   Portable ML exposes pointer equality but no identity hash, so lookup is
-   linear in the number of distinct nodes already seen.  One resumable tree
-   step runs at lookup start and before every pointer comparison, preventing
-   that quadratic lookup from starving an ordinary tree traversal.  The first
-   visitor to finish supplies the exact result.  Set operations, closure work,
-   and pointer steps do not have a claimed constant-time bound. *)
+   A bounded structural hash partitions the identity cache without expanding
+   closures.  Hash collisions are resolved by pointer equality, so the hash
+   cannot affect the result.  One resumable tree step runs at lookup start
+   and before every pointer comparison, preventing even a collision-heavy
+   cache from starving an ordinary tree traversal.  The first visitor to
+   finish supplies the exact result.  Set operations, closure work, and
+   pointer steps do not have a claimed constant-time bound. *)
 fun FVL_dag roots initial =
   let
     type summary = {fvs : term HOLset.set, bvs : int HOLset.set}
@@ -417,7 +487,8 @@ fun FVL_dag roots initial =
       | PrepareClos of term * term Subst.subs * term
       | FinishClos of term * term * int list * (int * term) list
     val empty_indices = HOLset.empty Int.compare
-    val summaries = ref ([] : (term * summary) list)
+    val bucket_count = 4093
+    val term_hash = raw_pointer_bucket bucket_count
     val tree_pending = ref roots
     val tree_free = ref initial
     fun tree_step () =
@@ -433,22 +504,15 @@ fun FVL_dag roots initial =
            | Abs (_, body) => tree_pending := body :: pending
            | Clos _ => tree_pending := push_clos term :: pending
            | _ => tree_pending := pending)
-    fun lookup term =
-      let
-        fun seek [] = NONE
-          | seek ((prior, summary) :: rest) =
-              (tree_step ();
-               if Portable.pointer_eq (term, prior) then SOME summary
-               else seek rest)
-      in
-        tree_step ();
-        seek (!summaries)
-      end
+    val {lookup = find_summary, save, ...} =
+      new_identity_cache bucket_count term_hash
+        (fn (term, prior) =>
+          (tree_step (); Portable.pointer_eq (term, prior)))
+    fun lookup term = (tree_step (); find_summary term)
     fun completed term =
       case lookup term of
         SOME summary => summary
       | NONE => raise Fail "Term.FVL_dag: incomplete traversal"
-    fun save term summary = summaries := (term, summary) :: !summaries
     fun union_summary ({fvs = left_fvs, bvs = left_bvs},
         {fvs = right_fvs, bvs = right_bvs}) =
       {fvs = HOLset.union (left_fvs, right_fvs),
@@ -777,70 +841,21 @@ local
   fun subsEQ(s1,s2) = s1 = s2
 in
 fun aconv t1 t2 =
+  if EQ (t1, t2) then true else
   let
     val bucket_count = 4093
-    val cache = ref
-      (NONE : (((term * term) * bool) list Array.array) option)
-    fun get_cache () =
-      case !cache of
-        SOME buckets => buckets
-      | NONE =>
-          let
-            val buckets = Array.array
-              (bucket_count, [] : ((term * term) * bool) list)
-            val _ = cache := SOME buckets
-          in buckets end
-    fun string_hash string =
-      let
-        fun loop index hash =
-          if index = String.size string then hash
-          else loop (index + 1)
-            ((hash * 33 + Char.ord (String.sub (string, index))) mod
-             bucket_count)
-      in loop 0 5381 end
-    fun head_hash tm =
-      case tm of
-        Fv(name,_) => string_hash name
-      | Bv index => index mod bucket_count
-      | Const(id,_) => string_hash (KernelSig.id_toString id)
-      | Comb _ => 17
-      | Abs _ => 19
-      | Clos _ => 23
-    fun term_hash tm =
-      let
-        fun bounded 0 term = head_hash term
-          | bounded depth term =
-              case term of
-                Comb(operator, operand) =>
-                  (bounded (depth - 1) operator * 37 +
-                   bounded (depth - 1) operand * 17 + 3) mod bucket_count
-              | Abs(_,body) =>
-                  (bounded (depth - 1) body * 41 + 5) mod bucket_count
-              | _ => head_hash term
-      in bounded 8 tm end
-    fun pair_hash left right =
+    val term_hash = raw_pointer_bucket bucket_count
+    fun pair_hash (left, right) =
       (term_hash left * 37 + term_hash right) mod bucket_count
-    fun lookup [] _ _ = NONE
-      | lookup ((((saved1, saved2), result) :: rest)) left right =
-          if EQ(saved1,left) andalso EQ(saved2,right) then SOME result
-          else lookup rest left right
+    val {memo, ...} = new_identity_cache bucket_count pair_hash
+      (fn ((left, right), (saved_left, saved_right)) =>
+        EQ (left, saved_left) andalso EQ (right, saved_right))
     fun compare depth left right =
       if EQ(left,right) then true
-      else if depth < 8 then compute (depth + 1) left right
+      else if depth < 8 orelse not (recursive_pair (left, right)) then
+        compute (depth + 1) left right
       else
-        let
-          val buckets = get_cache ()
-          val bucket = pair_hash left right
-        in
-          case lookup (Array.sub(buckets,bucket)) left right of
-            SOME result => result
-          | NONE =>
-              let
-                val result = compute (depth + 1) left right
-                val _ = Array.update(buckets,bucket,
-                  (((left,right),result) :: Array.sub(buckets,bucket)))
-              in result end
-        end
+        memo (left, right) (fn () => compute (depth + 1) left right)
     and compute depth left right =
       case (left,right) of
         (Comb(M,N),Comb(P,Q)) =>
@@ -866,51 +881,21 @@ fun beta_conv (Comb(Abs(_,Body), Bv 0)) = Body
      let
        datatype beta_result = Unchanged | Changed of term
        val bucket_count = 4093
-       val cache = Array.array
-         (bucket_count, [] : ((term * int) * beta_result) list)
-       fun string_hash string =
-         let
-           fun loop index hash =
-             if index = String.size string then hash
-             else loop (index + 1)
-               ((hash * 33 + Char.ord (String.sub (string, index))) mod
-                bucket_count)
-         in loop 0 5381 end
-       fun constructor_hash tm =
-         case tm of
-           Fv(name,_) => string_hash name
-         | Bv index => index mod bucket_count
-         | Const(id,_) => string_hash (KernelSig.id_toString id)
-         | Comb _ => 17
-         | Abs _ => 19
-         | Clos _ => 23
        fun cache_index (tm, depth) =
-         (constructor_hash tm * 37 + depth) mod bucket_count
-       fun lookup (key as (tm, depth)) =
-         let
-           fun seek [] = NONE
-             | seek ((((saved, saved_depth), outcome)) :: rest) =
-                 if depth = saved_depth andalso fast_term_eq tm saved then
-                   SOME outcome
-                 else seek rest
-         in seek (Array.sub (cache, cache_index key)) end
+         (raw_pointer_bucket bucket_count tm * 37 + depth) mod bucket_count
+       val {memo, ...} = new_identity_cache bucket_count cache_index
+         (fn ((tm, depth), (saved, saved_depth)) =>
+           depth = saved_depth andalso fast_term_eq tm saved)
        fun finish tm Unchanged = tm
          | finish _ (Changed result) = result
-       fun remember (key as (tm, _)) outcome =
-         let val index = cache_index key
-         in
-           Array.update
-             (cache, index, (key, outcome) :: Array.sub (cache, index));
-           finish tm outcome
-         end
-       fun subs (key as (tm, depth)) =
-         case lookup key of
-           SOME outcome => finish tm outcome
-         | NONE => remember key
-             (case tm of
-                Bv index =>
-                  if index = depth then Changed Rand else Unchanged
-              | Comb(Rator,Operand) =>
+       fun subs (tm as Bv index, depth) =
+             if index = depth then Rand else tm
+         | subs (tm as Fv _, _) = tm
+         | subs (tm as Const _, _) = tm
+         | subs (key as (tm, depth)) =
+         finish tm (memo key (fn () =>
+             case tm of
+                Comb(Rator,Operand) =>
                   let
                     val Rator' = subs (Rator, depth)
                     val Operand' = subs (Operand, depth)
@@ -926,7 +911,7 @@ fun beta_conv (Comb(Abs(_,Body), Bv 0)) = Body
                     else Changed (Abs(variable, body'))
                   end
               | tm as Clos _ => Changed (subs (push_clos tm, depth))
-              | _ => Unchanged)
+              | _ => Unchanged))
      in
        subs (Body,0)
      end
@@ -985,9 +970,8 @@ in
 fun subst [] = I
   | subst theta =
     let
-      (* Most kernel substitutions are tiny.  Pay for a deeper cache key only
-         when a large simultaneous substitution can revisit a broad,
-         homogeneous term graph. *)
+      (* Large simultaneous substitutions can retain a broad graph.  Give
+         their identity cache more buckets; both sizes use bounded raw keys. *)
       val large_substitution = List.length theta > 256
       val (fmap,b) = addb theta (emptysubst, true)
       fun apply root =
@@ -998,74 +982,19 @@ fun subst [] = I
              whose roots all have the same operator.  Collisions are harmless
              because pointer identity remains the decisive cache key. *)
           val bucket_count = if large_substitution then 16381 else 4093
-          val cache = Array.array
-            (bucket_count, [] : (term * subst_result) list)
-          fun string_hash string =
-            let
-              fun loop index hash =
-                if index = String.size string then hash
-                else loop (index + 1)
-                  ((hash * 33 + Char.ord (String.sub (string, index))) mod
-                   bucket_count)
-            in loop 0 5381 end
-          fun head_hash tm =
-            case tm of
-              Fv(name,_) => string_hash name
-            | Bv index => index mod bucket_count
-            | Const(id,_) => string_hash (KernelSig.id_toString id)
-            | Comb _ => 17
-            | Abs _ => 19
-            | Clos _ => 23
-          fun cache_index tm =
-            let
-              fun spine (Comb(operator, operand), arity, _) =
-                    spine (operator, arity + 1, SOME operand)
-                | spine (head, arity, first) = (head, arity, first)
-              fun shallow term =
-                let
-                  val (head, arity, first) = spine (term, 0, NONE)
-                  val first_hash = case first of NONE => 0 | SOME arg =>
-                    head_hash (#1 (spine (arg, 0, NONE)))
-                in
-                  (head_hash head * 37 + arity * 17 + first_hash) mod
-                    bucket_count
-                end
-              fun hash 0 term = head_hash term
-                | hash depth term =
-                    case term of
-                      Comb(operator, operand) =>
-                        (31 + 41 * hash (depth - 1) operator +
-                         67 * hash (depth - 1) operand) mod bucket_count
-                    | Abs(_, body) =>
-                        (37 + 73 * hash (depth - 1) body) mod bucket_count
-                    | _ => head_hash term
-            in if large_substitution then hash 8 tm else shallow tm end
-          fun lookup tm =
-            let
-              fun seek [] = NONE
-                | seek ((saved, outcome) :: rest) =
-                    if fast_term_eq tm saved then SOME outcome else seek rest
-            in seek (Array.sub (cache, cache_index tm)) end
+          val cache_index = raw_pointer_bucket bucket_count
+          val {memo, ...} = new_identity_cache bucket_count cache_index
+            (fn (tm, saved) => fast_term_eq tm saved)
           fun finish tm Unchanged = tm
             | finish _ (Changed result) = result
-          fun remember tm outcome =
-            let val index = cache_index tm
-            in
-              Array.update
-                (cache, index, (tm, outcome) :: Array.sub (cache, index));
-              finish tm outcome
-            end
-          fun vsubs tm =
-            case lookup tm of
-              SOME outcome => finish tm outcome
-            | NONE => remember tm
-                (case tm of
-                   v as Fv _ =>
-                     (case peek(fmap,v) of
-                        NONE => Unchanged
-                      | SOME y =>
-                          if fast_term_eq v y then Unchanged else Changed y)
-                 | Comb(Rator,Rand) =>
+          fun vsubs (v as Fv _) =
+                (case peek(fmap,v) of NONE => v | SOME y => y)
+            | vsubs (tm as Const _) = tm
+            | vsubs (tm as Bv _) = tm
+            | vsubs tm =
+            finish tm (memo tm (fn () =>
+                case tm of
+                   Comb(Rator,Rand) =>
                      let val Rator' = vsubs Rator
                          val Rand' = vsubs Rand
                      in
@@ -1080,12 +1009,10 @@ fun subst [] = I
                         else Changed (Abs(Bvar,Body'))
                      end
                  | c as Clos _ => Changed (vsubs (push_clos c))
-                 | _ => Unchanged)
+                 | _ => Unchanged))
           fun subs tm =
-            case lookup tm of
-              SOME outcome => finish tm outcome
-            | NONE => remember tm
-                (case peek(fmap,tm) of
+            finish tm (memo tm (fn () =>
+                case peek(fmap,tm) of
                    SOME residue =>
                      if fast_term_eq tm residue then Unchanged
                      else Changed residue
@@ -1106,7 +1033,7 @@ fun subst [] = I
                              else Changed (Abs(Bvar,Body'))
                           end
                       | Clos _ => Changed (subs(push_clos tm))
-                      | _ => Unchanged))
+                      | _ => Unchanged)))
         in
           (if b then vsubs else subs) root
         end

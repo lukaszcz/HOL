@@ -1186,27 +1186,10 @@ in
         (Term.prim_mk_const {Thy = "rich_list", Name = name}) args
 
     fun mk_seq_extract (s, i, n) =
-      let
-        val invalid = boolSyntax.list_mk_disj [
-          intSyntax.mk_less (i, intSyntax.zero_tm),
-          intSyntax.mk_leq (n, intSyntax.zero_tm),
-          numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i)]
-      in
-        boolSyntax.mk_cond (invalid, listSyntax.mk_nil (listSyntax.eltype s),
-          listSyntax.mk_take (intSyntax.mk_Num n,
-            listSyntax.mk_drop (intSyntax.mk_Num i, s)))
-      end
+      holsmt_app "smt_seq_extract" [s, i, n]
 
     fun mk_seq_at (s, i) =
-      let
-        val invalid = boolSyntax.mk_disj
-          (intSyntax.mk_less (i, intSyntax.zero_tm),
-           numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i))
-      in
-        boolSyntax.mk_cond (invalid, listSyntax.mk_nil (listSyntax.eltype s),
-          listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num i, s),
-            listSyntax.mk_nil (listSyntax.eltype s)))
-      end
+      holsmt_app "smt_seq_at" [s, i]
 
     fun mk_seq_len s =
       Term.mk_comb (intSyntax.int_injection, listSyntax.mk_length s)

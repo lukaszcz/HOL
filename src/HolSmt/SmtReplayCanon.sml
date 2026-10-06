@@ -87,9 +87,13 @@ struct
 
   fun reorient_equality_conv tm =
     let
-      val reversed = boolSyntax.mk_eq (Lib.swap (boolSyntax.dest_eq tm))
+      val (left, right) = boolSyntax.dest_eq tm
+      val reversed = boolSyntax.mk_eq (right, left)
     in
-      if Term.compare (reversed, tm) = LESS then Conv.SYM_CONV tm
+      if Term.compare (right, left) = LESS then
+        Drule.IMP_ANTISYM_RULE
+          (Thm.DISCH tm (Thm.SYM (Thm.ASSUME tm)))
+          (Thm.DISCH reversed (Thm.SYM (Thm.ASSUME reversed)))
       else raise Conv.UNCHANGED
     end
 
@@ -107,26 +111,147 @@ struct
     end
 
   fun boolean_commute_conv tm =
-    if boolSyntax.is_conj tm then
-      reorient_binary_conv boolSyntax.dest_conj boolTheory.CONJ_COMM tm
-    else if boolSyntax.is_disj tm then
-      reorient_binary_conv boolSyntax.dest_disj boolTheory.DISJ_COMM tm
-    else raise Conv.UNCHANGED
+    let
+      fun conjunction source =
+        let val premise = Thm.ASSUME source in
+          Thm.DISCH source
+            (Thm.CONJ (Thm.CONJUNCT2 premise) (Thm.CONJUNCT1 premise))
+        end
+      fun disjunction source left right =
+        Thm.DISCH source
+          (Thm.DISJ_CASES (Thm.ASSUME source)
+            (Thm.DISJ2 right (Thm.ASSUME left))
+            (Thm.DISJ1 (Thm.ASSUME right) left))
+      val (left, right, forward, backward) =
+        if boolSyntax.is_conj tm then
+          let
+            val (left, right) = boolSyntax.dest_conj tm
+            val reverse = boolSyntax.mk_conj (right, left)
+          in (left, right,
+              fn () => conjunction tm,
+              fn () => conjunction reverse) end
+        else if boolSyntax.is_disj tm then
+          let
+            val (left, right) = boolSyntax.dest_disj tm
+            val reverse = boolSyntax.mk_disj (right, left)
+          in (left, right,
+              fn () => disjunction tm left right,
+              fn () => disjunction reverse right left) end
+        else raise Conv.UNCHANGED
+    in
+      if Term.compare (right, left) = LESS then
+        Drule.IMP_ANTISYM_RULE (forward ()) (backward ())
+      else raise Conv.UNCHANGED
+    end
 
-  val z3_primary_rewrite_canon_conv = compose
-    [Conv.TOP_DEPTH_CONV reorient_equality_conv,
-     Conv.TOP_DEPTH_CONV boolean_commute_conv,
-     Conv.TOP_DEPTH_CONV reorient_equality_conv]
+  (* Canonical orientation only permutes children.  Visit each physically
+     shared input node once, normalize its children first, and cache the
+     checked equality for this invocation.  Tree-depth conversions revisit
+     exponentially many paths through solver-generated shared circuits. *)
+  fun dag_conversion revisit orient root =
+    let
+      val bucket_count = 4093
+      val cache = Array.array
+        (bucket_count, [] : (Term.term * Thm.thm) list)
+      val active = ref ([] : Term.term list)
+      fun normalize term =
+        let
+          val index = SmtResource.pointer_bucket bucket_count term
+          val bucket = Array.sub (cache, index)
+        in
+          case List.find
+              (fn (saved, _) => Portable.pointer_eq (saved, term)) bucket of
+            SOME (_, theorem) => theorem
+          | NONE =>
+              let
+                val _ = not (List.exists
+                    (fn prior => Portable.pointer_eq (prior, term))
+                    (!active)) orelse
+                  raise ERR "dag_conversion" "cyclic rewrite expansion"
+                val _ = active := term :: !active
+                val children =
+                  if Term.is_comb term then
+                    let
+                      val (operator, operand) = Term.dest_comb term
+                      val operator_thm = normalize operator
+                      val operand_thm = normalize operand
+                    in
+                      if Portable.pointer_eq (operator,
+                           boolSyntax.rhs (Thm.concl operator_thm)) andalso
+                         Portable.pointer_eq (operand,
+                           boolSyntax.rhs (Thm.concl operand_thm)) then
+                        Thm.REFL term
+                      else Thm.MK_COMB (operator_thm, operand_thm)
+                    end
+                  else if Term.is_abs term then
+                    let
+                      val (variable, body) = Term.dest_abs term
+                      val body_thm = normalize body
+                    in
+                      if Portable.pointer_eq
+                           (body, boolSyntax.rhs (Thm.concl body_thm)) then
+                        Thm.REFL term
+                      else Thm.ABS variable body_thm
+                    end
+                  else Thm.REFL term
+                val current = boolSyntax.rhs (Thm.concl children)
+                val orientation = Conv.QCONV (Conv.TRY_CONV orient) current
+                val right = boolSyntax.rhs (Thm.concl orientation)
+                val orientation =
+                  if revisit andalso not (Term.aconv current right) then
+                    Thm.TRANS orientation (normalize right)
+                  else orientation
+                val theorem =
+                  if Portable.pointer_eq (term, current) then orientation
+                  else if Portable.pointer_eq (current,
+                      boolSyntax.rhs (Thm.concl orientation)) then children
+                  else Thm.TRANS children orientation
+                val _ = Array.update (cache, index,
+                  (term, theorem) :: Array.sub (cache, index))
+                val _ = active := tl (!active)
+              in theorem end
+        end
+    in normalize root end
+
+  val dag_orientation_conv = dag_conversion false
+  val dag_rewrite_conv = dag_conversion true
+
+  (* Canonicalize physical sharing without changing any HOL syntax.  The
+     postorder visitor interns alpha-equal terms after their children have
+     been shared; every reuse is justified by kernel ALPHA, never by a hash. *)
+  fun share_conv root =
+    let
+      val index = SmtResource.new_bounded_term_index
+        SmtResource.max_bv_replay_term_nodes
+      val representatives = ref (Redblackmap.mkDict Int.compare)
+      fun intern term =
+        case index term of
+          NONE => Thm.REFL term
+        | SOME id =>
+            (case Redblackmap.peek (!representatives, id) of
+               SOME representative => Thm.ALPHA term representative
+             | NONE =>
+                 (representatives := Redblackmap.insert
+                    (!representatives, id, term);
+                  Thm.REFL term))
+    in dag_orientation_conv intern root end
+
+  (* The head patterns are disjoint.  Orienting each parent after all of its
+     children therefore establishes both normal forms in one postorder pass,
+     including equalities whose Boolean operands were just permuted. *)
+  val z3_primary_rewrite_canon_conv = dag_orientation_conv
+    (Conv.FIRST_CONV [reorient_equality_conv, boolean_commute_conv])
 
   (* Z3 may express the same arithmetic rewrite through a dual relation,
      a negated conditional guard, or commuted addition.  These rules are
      deliberately separate from the primary canonicalizer: their broader
      normalization is accepted only when it closes the concrete difference
      between the two sides of the rewrite. *)
-  val z3_cond_polarity_conv = Rewrite.PURE_REWRITE_CONV
-    [HolSmtTheory.COND_NEG]
+  val z3_cond_polarity_conv =
+    dag_orientation_conv (Conv.REWR_CONV HolSmtTheory.COND_NEG)
 
-  val z3_relation_dual_conv = Rewrite.PURE_REWRITE_CONV
+  val z3_relation_dual_conv = dag_orientation_conv
+    (Conv.FIRST_CONV (List.map Conv.REWR_CONV
     [integerTheory.INT_GT,
      integerTheory.INT_GE,
      integerTheory.INT_NOT_LT,
@@ -134,7 +259,7 @@ struct
      realTheory.real_gt,
      realTheory.real_ge,
      realTheory.REAL_NOT_LT,
-     realTheory.REAL_NOT_LE]
+     realTheory.REAL_NOT_LE]))
 
   (* After relation aliases are normalized, a non-strict order in an ite
      guard is the complement of the reversed strict order.  Expose that
@@ -170,9 +295,9 @@ struct
 
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
-     Conv.TOP_DEPTH_CONV z3_order_cond_polarity_conv,
+     dag_orientation_conv z3_order_cond_polarity_conv,
      z3_cond_polarity_conv,
-     Conv.TOP_DEPTH_CONV additive_order_conv,
+     dag_orientation_conv additive_order_conv,
      z3_primary_rewrite_canon_conv]
 
   fun equality_operands_alpha_equal tm =

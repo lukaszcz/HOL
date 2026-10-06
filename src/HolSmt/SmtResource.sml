@@ -27,13 +27,12 @@ struct
      primary defense; these limits are the heap-pressure backstop. *)
   val max_bv_replay_step_time = Time.fromSeconds 90
   val max_bv_replay_term_nodes = 2000000
-  (* TASK_18's authentic word12 bridge had 584 distinct target DAG nodes
-     despite 66,027,023 unfolded tree nodes.  Its slower held-out word32 row
-     completed in 4.584 s.  This replay class is intentionally measured as a
-     DAG: 4,096 nodes gives more than 7x structural headroom and 30 seconds
-     gives more than 6x time headroom while bounding pathological skeletons. *)
+  (* This replay class is measured as a DAG, not an unfolded tree.  The
+     authentic word32 midpoint proof contains a 4,332-node shared skeleton;
+     8,192 is the next fixed power-of-two capacity.  Each admitted attempt
+     still has its independent 30-second kernel-replay boundary. *)
   val max_skeleton_replay_step_time = Time.fromSeconds 30
-  val max_skeleton_replay_dag_nodes = 4096
+  val max_skeleton_replay_dag_nodes = 8192
   (* Discharging a deferred proof hypothesis runs a general first-order
      search, so bound it: an undischargeable hypothesis must fail with a
      diagnostic rather than hang the replay. *)
@@ -388,41 +387,233 @@ struct
   fun check_term_size case_id observed =
     check_term_size_for "FloatingPoint" case_id observed
 
-  (* Proof-parser terms are DAGs with extensive let-sharing.  [term_size]
-     unfolds that sharing and turned a 100 KB comparison into 335 million
-     visits before the cap could fire.  Preserve its tree-node semantics but
-     stop as soon as the fixed limit is exceeded. *)
-  fun term_nodes_up_to limit root =
+  (* Pointer-cache indexing must distinguish broad, homogeneous application
+     DAGs without unfolding their trees.  Two bounded operand paths reach
+     beyond the identical operator prefixes of curried applications.  This
+     is only an index hint: every hit is resolved by exact pointer equality. *)
+  val pointer_bucket = Term.pointer_bucket 16
+
+  (* Repeated primitive types should not migrate to the cold end of a
+     type-admission cache as independently allocated types are discovered.
+     Move a physical hit to the front; retain every entry and use no
+     structural equality or context-dependent classifier as a cache key. *)
+  fun recent_pointer_lookup cache key =
     let
-      fun loop ([], count) = count
-        | loop (tm :: pending, count) =
-            let val count = count + 1
-            in
-              if count > limit then count
-              else if Term.is_comb tm then
-                let val (rator, rand) = Term.dest_comb tm
-                in loop (rator :: rand :: pending, count) end
-              else if Term.is_abs tm then
-                let
-                  val remaining = limit - count + 1
-                in
-                  case Term.term_size_bounded remaining tm of
-                    NONE => limit + 1
-                  | SOME _ =>
-                      let val (binder, body) = Term.dest_abs tm
-                      in loop (binder :: body :: pending, count) end
-                end
-              else
-                loop (pending, count)
-            end
+      fun seek _ [] = NONE
+        | seek previous ((entry as (saved, value)) :: rest) =
+            if Portable.pointer_eq (key, saved) then
+              (if List.null previous then ()
+               else cache := entry :: List.revAppend (previous, rest);
+               SOME value)
+            else seek (entry :: previous) rest
+    in seek [] (!cache) end
+
+  (* Preserve the binder-inclusive unfolded-tree metric, but compute each
+     shared compound node's size once.  Summaries saturate at limit + 1;
+     neither sharing nor memoization changes admission.  Keep the raw-size
+     preflight before opening a binder, since dest_abs may normalize its
+     entire body.  An ordinary tree visitor advances at every lookup and
+     pointer comparison, so collision-heavy or unshared inputs can finish
+     without waiting for the memoized traversal.  Cache hints only index
+     exact physical-identity checks. *)
+  fun term_nodes_up_to limit root =
+    if limit < 1 then 1
+    else
+    let
+      exception Exceeded
+      exception TreeComplete of int
+      datatype action = Visit of Term.term
+        | Finish of Term.term * int * Term.term * Term.term
+      val maximum_buckets = 4093
+      val buckets = ref (Array.array
+        (32, [] : (Term.term * int * int) list))
+      val entries = ref 0
+      val observed = ref 0
+      val tree_pending = ref [root]
+      val tree_count = ref 0
+      fun tree_step () =
+        case !tree_pending of
+          [] => raise TreeComplete (!tree_count)
+        | term :: rest =>
+            let
+              val count = !tree_count + 1
+              val _ = if count <= limit then () else raise Exceeded
+              val children =
+                if Term.is_comb term then
+                  let val (left, right) = Term.dest_comb term
+                  in [left, right] end
+                else if Term.is_abs term then
+                  (case Term.term_size_bounded (limit - count + 1) term of
+                     NONE => raise Exceeded
+                   | SOME _ =>
+                       let val (binder, body) = Term.dest_abs term
+                       in [binder, body] end)
+                else []
+            in tree_pending := children @ rest; tree_count := count end
+      val hint = pointer_bucket maximum_buckets
+      fun find term code =
+        (tree_step ();
+         case List.find
+            (fn (prior, _, _) =>
+              (tree_step (); Portable.pointer_eq (term, prior)))
+            (Array.sub (!buckets, code mod Array.length (!buckets))) of
+          SOME (_, _, size) => SOME size
+        | NONE => NONE)
+      fun save term code size =
+        let
+          val current = !buckets
+          val capacity = Array.length current
+          val grown =
+            if capacity < maximum_buckets andalso
+               !entries >= 2 * capacity then
+              let
+                val target = Array.array
+                  (Int.min (maximum_buckets, 2 * capacity), [])
+                fun reindex (entry as (_, code, _)) =
+                  let val slot = code mod Array.length target in
+                    Array.update (target, slot,
+                      entry :: Array.sub (target, slot))
+                  end
+                val _ = Array.app (List.app reindex) current
+              in target end
+            else current
+          val slot = code mod Array.length grown
+          val _ = Array.update (grown, slot,
+            (term, code, size) :: Array.sub (grown, slot))
+        in buckets := grown; entries := !entries + 1 end
+      fun compound term = Term.is_comb term orelse Term.is_abs term
+      fun completed term =
+        if not (compound term) then 1
+        else case find term (hint term) of
+          SOME size => size
+        | NONE => raise ERR "term_nodes_up_to" "incomplete size traversal"
+      fun loop [] = completed root
+        | loop (Visit term :: pending) =
+            if not (compound term) then loop pending
+            else
+              let val code = hint term in
+                case find term code of
+                  SOME _ => loop pending
+                | NONE =>
+                    let
+                      val _ = observed := !observed + 1
+                      val _ = if !observed <= limit then ()
+                        else raise Exceeded
+                      val (left, right) =
+                        if Term.is_comb term then Term.dest_comb term
+                        else case Term.term_size_bounded limit term of
+                          NONE => raise Exceeded
+                        | SOME _ => Term.dest_abs term
+                    in loop (Visit left :: Visit right ::
+                      Finish (term, code, left, right) :: pending) end
+              end
+        | loop (Finish (term, code, left, right) :: pending) =
+            let
+              val left_size = completed left
+              val right_size = completed right
+              val _ = if left_size < limit andalso
+                         right_size <= limit - left_size - 1 then ()
+                else raise Exceeded
+              val _ = save term code (1 + left_size + right_size)
+            in loop pending end
     in
-      loop ([root], 0)
+      loop [Visit root] handle Exceeded => limit + 1
+        | TreeComplete size => size
     end
 
   fun check_resource_goal category case_id goal =
     let val limit = max_term_nodes_for category in
       check_term_size_for category case_id (term_nodes_up_to limit goal)
     end
+
+  (* Exact structural keys for bounded replay caches.  Compound keys compare
+     canonical child IDs instead of repeatedly comparing entire term DAGs.
+     Types and declaration identities are part of leaf keys; abstractions
+     retain the public kernel's alpha-equivalence boundary.  Exhaustion is a
+     cache miss, not a replay refusal, and reservations bound pending work as
+     well as retained physical nodes. *)
+  fun new_bounded_term_index maximum =
+    let
+      datatype key = Variable of string * int
+        | Constant of KernelSig.kernelid * int
+        | Application of int * int
+      fun compare (Variable fields, Variable fields') =
+            Lib.pair_compare (String.compare, Int.compare) (fields, fields')
+        | compare (Variable _, _) = LESS
+        | compare (_, Variable _) = GREATER
+        | compare (Constant fields, Constant fields') =
+            Lib.pair_compare (KernelSig.id_compare, Int.compare)
+              (fields, fields')
+        | compare (Constant _, _) = LESS
+        | compare (_, Constant _) = GREATER
+        | compare (Application fields, Application fields') =
+            Lib.pair_compare (Int.compare, Int.compare) (fields, fields')
+      val nodes = ref (Redblackmap.mkDict compare)
+      val abstractions = ref (Redblackmap.mkDict Term.compare)
+      val types = ref (Redblackmap.mkDict Type.compare)
+      val next = ref 0
+      val reserved = ref 0
+      val count = 4093
+      val physical = Array.array
+        (count, [] : (Term.term * int) list)
+      fun type_id ty =
+        case Redblackmap.peek (!types, ty) of
+          SOME id => id
+        | NONE =>
+            let val id = Redblackmap.numItems (!types)
+            in types := Redblackmap.insert (!types, ty, id); id end
+      fun fresh () = let val id = !next in next := id + 1; id end
+      fun intern key =
+        case Redblackmap.peek (!nodes, key) of
+          SOME id => id
+        | NONE =>
+            let val id = fresh ()
+            in nodes := Redblackmap.insert (!nodes, key, id); id end
+      fun visit term =
+        let
+          val bucket = pointer_bucket count term
+          val found = List.find
+            (fn (prior, _) => Portable.pointer_eq (term, prior))
+            (Array.sub (physical, bucket))
+        in
+          case found of
+            SOME (_, id) => SOME id
+          | NONE =>
+              if !reserved >= maximum then NONE
+              else
+                let
+                  val _ = reserved := !reserved + 1
+                  val result =
+                    if Term.is_var term then SOME (intern
+                      (Variable (#1 (Term.dest_var term),
+                        type_id (Term.type_of term))))
+                    else if Term.is_const term then
+                      let val {Name, Ty, ...} = Term.dest_thy_constid term in
+                        SOME (intern (Constant (Name, type_id Ty)))
+                      end
+                    else if Term.is_comb term then
+                      let val (left, right) = Term.dest_comb term in
+                        case (visit left, visit right) of
+                          (SOME left_id, SOME right_id) =>
+                            SOME (intern (Application (left_id, right_id)))
+                        | _ => NONE
+                      end
+                    else
+                      (case Redblackmap.peek (!abstractions, term) of
+                         SOME id => SOME id
+                       | NONE =>
+                           let val id = fresh () in
+                             abstractions := Redblackmap.insert
+                               (!abstractions, term, id);
+                             SOME id
+                           end)
+                  val _ = case result of
+                      NONE => ()
+                    | SOME id => Array.update (physical, bucket,
+                        (term, id) :: Array.sub (physical, bucket))
+                in result end
+        end
+    in visit end
 
   (* Replay terms are DAGs.  Count each node once while retaining the
      saturated unfolded-tree metric used by the skeleton profiler.  Keeping
@@ -461,38 +652,13 @@ struct
   (* A compact diagnostic scan with a hard distinct-node bound.  Edges count
      children of each admitted DAG node once; identifier sizes come only from
      variable and constant metadata and never render a term. *)
-  fun bounded_structure_with_inspector inspect limit root : bounded_structure =
+  fun bounded_structure_with_children children_of inspect limit root
+      : bounded_structure =
     let
       val bucket_count = 4093
       val seen_buckets =
         Array.array (bucket_count, [] : Term.term list)
-      fun name_hash name =
-        let
-          fun loop index hash =
-            if index = String.size name then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (name, index))) mod
-               bucket_count)
-        in loop 0 5381 end
-      fun pointer_hash term =
-        let
-          fun hash depth term =
-            if Term.is_var term then name_hash (#1 (Term.dest_var term))
-            else if Term.is_const term then
-              name_hash (#Name (Term.dest_thy_const term))
-            else if depth = 0 then
-              if Term.is_abs term then 17 else 19
-            else if Term.is_abs term then
-              let val (_, body) = Term.dest_abs term
-              in (23 + 37 * hash (depth - 1) body) mod bucket_count end
-            else
-              let val (operator, operand) = Term.dest_comb term
-              in
-                (29 + 37 * hash (depth - 1) operator +
-                 hash (depth - 1) operand) mod bucket_count
-              end
-        in hash 3 term end
-        handle Feedback.HOL_ERR _ => 31
+      val pointer_hash = pointer_bucket bucket_count
       fun seen term =
         let
           val index = pointer_hash term
@@ -520,7 +686,7 @@ struct
               let
                 val _ = inspect term
                 val nodes = nodes + 1
-                val children = term_children term
+                val children = children_of term
                 val edges = saturated_add edges (List.length children)
                 val depth = Int.max (depth, binder_depth)
                 val identifier = Int.max
@@ -540,7 +706,10 @@ struct
               end
     in
       loop ([(root, 0)], 0, 0, 0, 0)
-    end
+  end
+
+  val bounded_structure_with_inspector =
+    bounded_structure_with_children term_children
 
   fun bounded_structure limit root =
     bounded_structure_with_inspector (fn _ => ()) limit root
@@ -595,21 +764,83 @@ struct
 
   fun term_measure term =
     let
-      val sizes = ref (Redblackmap.mkDict Term.compare)
-      fun visit term =
-        case Redblackmap.peek (!sizes, term) of
-          SOME size => size
+      datatype key = Variable of string * int
+        | Constant of KernelSig.kernelid * int
+        | Application of int * int
+      fun key_compare (Variable (name, ty), Variable (name', ty')) =
+            Lib.pair_compare (String.compare, Int.compare)
+              ((name, ty), (name', ty'))
+        | key_compare (Variable _, _) = LESS
+        | key_compare (_, Variable _) = GREATER
+        | key_compare (Constant (id, ty), Constant (id', ty')) =
+            Lib.pair_compare (KernelSig.id_compare, Int.compare)
+              ((id, ty), (id', ty'))
+        | key_compare (Constant _, _) = LESS
+        | key_compare (_, Constant _) = GREATER
+        | key_compare (Application children, Application children') =
+            Lib.pair_compare (Int.compare, Int.compare) (children, children')
+      val nodes = ref (Redblackmap.mkDict key_compare)
+      val abstractions = ref (Redblackmap.mkDict Term.compare)
+      val types = ref (Redblackmap.mkDict Type.compare)
+      val next = ref 0
+      val buckets = 4093
+      val physical = Array.array (buckets, [] : (Term.term * (int * int)) list)
+      fun type_id ty =
+        case Redblackmap.peek (!types, ty) of
+          SOME id => id
         | NONE =>
-            let
-              val size = List.foldl
-                (fn (child, result) => saturated_add result (visit child))
-                1 (term_children term)
-              val _ = sizes := Redblackmap.insert (!sizes, term, size)
-            in
-              size
-            end
+            let val id = Redblackmap.numItems (!types)
+            in types := Redblackmap.insert (!types, ty, id); id end
+      fun fresh size =
+        let val id = !next in next := id + 1; (id, size) end
+      fun intern key size =
+        case Redblackmap.peek (!nodes, key) of
+          SOME result => result
+        | NONE =>
+            let val result = fresh size
+            in nodes := Redblackmap.insert (!nodes, key, result); result end
+      fun visit term =
+        let
+          val bucket = pointer_bucket buckets term
+        in
+          case List.find (fn (saved, _) => Portable.pointer_eq (term, saved))
+              (Array.sub (physical, bucket)) of
+            SOME (_, result) => result
+          | NONE =>
+              let
+                val result =
+                  if Term.is_var term then intern
+                    (Variable (#1 (Term.dest_var term),
+                       type_id (Term.type_of term))) 1
+                  else if Term.is_const term then
+                    let val {Name, Ty, ...} = Term.dest_thy_constid term in
+                      intern (Constant (Name, type_id Ty)) 1
+                    end
+                  else if Term.is_comb term then
+                    let
+                      val (left, right) = Term.dest_comb term
+                      val (left_id, left_size) = visit left
+                      val (right_id, right_size) = visit right
+                    in intern (Application (left_id, right_id))
+                      (saturated_add 1 (saturated_add left_size right_size)) end
+                  else
+                    (* Alpha-equivalence of abstractions is a public-kernel
+                       boundary.  Retain the old structural key and bounded
+                       opening here; all surrounding applications use IDs. *)
+                    (case Redblackmap.peek (!abstractions, term) of
+                       SOME result => result
+                     | NONE =>
+                         let val result = fresh (List.foldl
+                           (fn (child, size) => saturated_add size
+                             (#2 (visit child))) 1 (term_children term))
+                         in abstractions := Redblackmap.insert
+                           (!abstractions, term, result); result end)
+                val _ = Array.update (physical, bucket,
+                  (term, result) :: Array.sub (physical, bucket))
+              in result end
+        end
     in
-      {tree_nodes = visit term, dag_nodes = Redblackmap.numItems (!sizes)}
+      {tree_nodes = #2 (visit term), dag_nodes = !next}
     end
 
   fun tree_nodes term = #tree_nodes (term_measure term)
@@ -636,6 +867,29 @@ struct
     if observed <= maximum then ()
     else raise_gate "check_dag_size_with_limit"
       (dag_size_diagnostic_with_limit category case_id maximum observed)
+
+  (* Classification must certify absence over the stored DAG, not enumerate
+     every path through its unfolded tree.  Finding a witness ends the scan;
+     an incomplete bounded scan is a resource refusal, never false absence. *)
+  fun contains_with_pruning prune predicate root =
+    let
+      exception Found
+      val maximum = max_bv_replay_term_nodes
+      fun inspect node =
+        if not (prune node) andalso predicate node then raise Found else ()
+      fun children node = if prune node then [] else term_children node
+    in
+      (let
+         val summary = bounded_structure_with_children
+           children inspect maximum root
+         val _ = if #complete summary then () else
+           check_dag_size_with_limit "Skeleton" "theory-classification"
+             maximum (#dag_nodes summary)
+       in false end)
+      handle Found => true
+    end
+
+  val contains = contains_with_pruning (fn _ => false)
 
   fun check_bitblast_goal case_id goal =
     check_resource_goal "FloatingPoint" case_id goal

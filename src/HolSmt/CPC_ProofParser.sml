@@ -74,26 +74,22 @@ local
           Type.compare (Term.type_of saved, Term.type_of candidate) = EQUAL
         else Term.is_abs saved andalso Term.is_abs candidate andalso
           Term.aconv saved candidate
-      fun bucket_entries candidate = Array.sub
-        (!cpc_term_intern, term_intern_hash candidate)
-      fun pointer_lookup candidate = List.find
-        (fn saved => Portable.pointer_eq (saved, candidate))
-        (bucket_entries candidate)
-      fun lookup candidate = List.find
+      fun lookup bucket candidate = List.find
         (fn saved => same_candidate saved candidate)
-        (bucket_entries candidate)
-      fun insert candidate =
+        (Array.sub (!cpc_term_intern, bucket))
+      fun insert bucket candidate =
         let
-          val bucket = term_intern_hash candidate
           val entries = Array.sub (!cpc_term_intern, bucket)
         in
           Array.update (!cpc_term_intern, bucket, candidate :: entries);
           candidate
         end
       fun intern candidate =
-        case pointer_lookup candidate of
-          SOME saved => saved
-        | NONE =>
+        let val bucket = term_intern_hash candidate in
+          case List.find (fn saved => Portable.pointer_eq (saved, candidate))
+              (Array.sub (!cpc_term_intern, bucket)) of
+            SOME saved => saved
+          | NONE =>
             if Term.is_comb candidate then
               let
                 val (operator, operand) = Term.dest_comb candidate
@@ -103,15 +99,22 @@ local
                   if Portable.pointer_eq (operator, operator') andalso
                      Portable.pointer_eq (operand, operand') then candidate
                   else Term.mk_comb (operator', operand')
+                (* Compute a candidate's hash once for both lookup and
+                   insertion; child canonicalization needs a new hash only
+                   when it actually rebuilt the candidate. *)
+                val rebuilt_bucket =
+                  if Portable.pointer_eq (candidate, rebuilt) then bucket
+                  else term_intern_hash rebuilt
               in
-                case lookup rebuilt of
+                case lookup rebuilt_bucket rebuilt of
                   SOME saved => saved
-                | NONE => insert rebuilt
+                | NONE => insert rebuilt_bucket rebuilt
               end
             else
-              case lookup candidate of
+              case lookup bucket candidate of
                 SOME saved => saved
-              | NONE => insert candidate
+              | NONE => insert bucket candidate
+        end
     in intern term end
 
   fun intern_located ({term, provenance} : located_term) =
@@ -524,6 +527,8 @@ local
   val cpc_fp_private_bindings_ref =
     ref ([] : cpc_fp_private_binding list)
 
+  val cpc_fp_private_unbound_count = ref 0
+
   fun cpc_fp_private_bindings () = !cpc_fp_private_bindings_ref
 
   fun cpc_fp_private_abbreviation token sort_marker source =
@@ -555,7 +560,13 @@ local
       raise ERR "cpc_fp_private_parsefn" "unexpected indices"
     else
       case args of
-        [sort_marker] => Term.mk_var (token, Term.type_of sort_marker)
+        [sort_marker] =>
+          let
+            val serial = !cpc_fp_private_unbound_count
+            val _ = cpc_fp_private_unbound_count := serial + 1
+          in Term.mk_var
+            (token ^ "#unbound" ^ Int.toString serial,
+             Term.type_of sort_marker) end
       | [sort_marker, source] =>
           cpc_fp_private_abbreviation token sort_marker source
       | _ => raise ERR "cpc_fp_private_parsefn"
@@ -774,9 +785,7 @@ local
     cpc_expect_type where_ cpc_reglan_ty term
 
   fun cpc_reglan_equiv left right =
-    Term.list_mk_comb
-      (Term.prim_mk_const
-        {Thy = "smtstring", Name = "reglan_equiv"}, [left, right])
+    SmtRegLanProve.mk_equiv (left, right)
 
   (* RegLan is an extensional sort in SMT-LIB and cvc5's CPC calculus.  This
      dictionary is proof-local: source HOL equality remains constructor
@@ -3610,6 +3619,7 @@ in
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
       val _ = cpc_fp_private_bindings_ref := []
+      val _ = cpc_fp_private_unbound_count := 0
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
       val _ = cpc_term_intern :=
         Array.array (term_intern_bucket_count, [])

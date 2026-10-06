@@ -88,6 +88,10 @@ sig
   val compare       : term * term -> order
   val term_eq       : term -> term -> bool
   val fast_term_eq  : term -> term -> bool
+  (* Bounded operand-path sampling for physical-identity cache buckets.
+     Arguments are sampling depth and positive bucket count.  Equal pointers
+     have equal indices; structural/alpha equality is NOT a key guarantee. *)
+  val pointer_bucket : int -> int -> term -> int
 
   val empty_tmset   : term set
   val empty_varset  : term set

@@ -108,7 +108,7 @@ struct
       fun is_set_syntax tm =
         pred_setSyntax.is_in tm orelse is_set_constant tm
     in
-      Lib.can (HolKernel.find_term is_set_syntax) t
+      SmtResource.contains is_set_syntax t
     end
 
   (* A Z3 Set is an Array with Bool range, so a pointwise map lemma can
@@ -117,9 +117,9 @@ struct
      local admission; do not use it for CPC trust classification, where a
      higher-order equality constant can otherwise look Set-shaped. *)
   fun has_set_variable t =
-    Lib.can (HolKernel.find_term
+    SmtResource.contains
       (fn tm => Term.is_var tm andalso
-        pred_setSyntax.is_set_type (Term.type_of tm))) t
+        pred_setSyntax.is_set_type (Term.type_of tm)) t
 
   (* A minimal, array-oriented simpset for the RW_TAC-based provers below.
      It deliberately avoids the general arithmetic decision procedures that
@@ -151,7 +151,7 @@ struct
           ], bossLib.METIS_TAC []))) ()
 
   fun has_update_comb t =
-    Lib.can (HolKernel.find_term combinSyntax.is_update_comb) t
+    SmtResource.contains combinSyntax.is_update_comb t
 
   (* Genuine array lemmas either contain an UPDATE (store) combinator, or are
      extensionality equalities between function-typed terms.  Arithmetic goals
@@ -170,11 +170,11 @@ struct
 
   (* Z3's array-map captures beta-reduce to base-typed equalities, while
      retaining their non-Boolean array variables. *)
-  fun has_array_variable t = Lib.can (HolKernel.find_term (fn tm =>
+  fun has_array_variable t = SmtResource.contains (fn tm =>
     Term.is_var tm andalso
     (case Lib.total Type.dom_rng (Term.type_of tm) of
        SOME (_, range) => Type.compare (range, Type.bool) <> EQUAL
-     | NONE => false))) t
+     | NONE => false)) t
 
   (* Reflexive Boolean or equality conclusions close by kernel truth or
      reflexivity before array-shape admission. *)

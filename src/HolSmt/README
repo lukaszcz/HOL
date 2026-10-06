@@ -9,7 +9,8 @@ CPC_Proof.sml           Version-gated cvc5 CPC proof-rule registry.
 CPC_ProofParser.sml     Parser for untrusted cvc5 CPC proof text.
 CPC_ProofReplay.sml     Kernel-checked replay of supported CPC rules.
 Holmakefile             Makefile for Holmake.  Also builds the smtheap HOL
-                        heap, selftest.exe, and smtfloat-diff.exe.
+                        heap, the preloaded smtreplayheap for proof drivers,
+                        selftest.exe, and smtfloat-diff.exe.
 HolSmtLib.{sig,sml}     Entry point into HolSmtLib. Provides GENERIC_SMT_TAC
                         and derived tactics to call SMT solvers.
 HolSmtScript.sml        Various theorems for HolSmtLib.
@@ -686,7 +687,7 @@ the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
 
   extra=$(printf '%s\n%s' "$input" "$logic")
   "$HOL4_ROOT/bin/hol" --gcthreads=1 run \
-    --holstate="$HOL4_ROOT/src/HolSmt/smtheap" \
+    --holstate="$HOL4_ROOT/src/HolSmt/smtreplayheap" \
     --extra "$extra" typecheck_driver
 
 The checked Z3 and cvc5 CPC drivers use the same command with

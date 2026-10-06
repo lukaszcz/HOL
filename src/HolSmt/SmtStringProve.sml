@@ -76,7 +76,7 @@ struct
     in Redblackset.member (names, (Thy, Name)) end
 
   fun mentions_any names t =
-    Lib.can (HolKernel.find_term (is_named_const names)) t
+    SmtResource.contains (is_named_const names) t
 
   fun list_element_type tm =
     Lib.total listSyntax.dest_list_type (Term.type_of tm)

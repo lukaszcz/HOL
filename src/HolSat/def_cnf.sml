@@ -222,19 +222,36 @@ fun clausify tm lfn eq cls =
         val xth = ADD_ASSUM tm (EQ_MP tth (REFL(rbapply lfn (land eq))))
     in zip (strip_conj(rand(concl eth))) (CONJUNCTS xth) @ cls end
 
+(* DIMACS numbers name the distinct propositional atoms of the clauses,
+   not just their free HOL variables.  An already-CNF problem can contain a
+   compound Boolean atom, and counting FVL alone underallocates the reverse
+   map used by termToDimacs. *)
+fun cnf_atom_count clauses =
+    let
+      fun positive literal =
+          if is_neg literal then dest_neg literal else literal
+      fun add_clause (clause, atoms) =
+          List.foldl (fn (literal, seen) =>
+                        HOLset.add (seen, positive literal)) atoms
+                     (strip_disj clause)
+    in HOLset.numItems
+         (List.foldl add_clause (HOLset.empty Term.compare) clauses)
+    end
+
 fun to_cnf is_cnf tm =
     if is_cnf then
-        (NONE,HOLset.numItems(FVL[tm](HOLset.empty Term.var_compare)),
-         RBM.mkDict Term.var_compare,
-         Array.fromList (zip (strip_conj(dest_neg tm))
-                             (CONJUNCTSR (ASSUME (dest_neg tm)))))
+        let val clauses = strip_conj (dest_neg tm)
+        in (NONE, cnf_atom_count clauses,
+            RBM.mkDict Term.var_compare,
+            Array.fromList
+              (zip clauses (CONJUNCTSR (ASSUME (dest_neg tm))))) end
     else let
         val th = ASSUME tm
         val (is_cnf,ths) = GCONJUNCTS tm th
         val (cnfv,vc,eqs,tops,lfn) =
             if is_cnf then
             let val tops = List.map (fn (_,th) => (concl th,th)) ths
-            in (NONE,HOLset.numItems (FVL [tm] (HOLset.empty Term.var_compare)),
+            in (NONE, cnf_atom_count (List.map fst tops),
                 [],tops,RBM.mkDict Term.var_compare) end else
             let
                 val cnfv = (!cnfv_ref)

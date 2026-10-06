@@ -3,6 +3,8 @@ signature minisatProve = sig
   exception SAT_cex of Thm.thm
   exception SAT_satisfiable of unit
   val GEN_SAT : satConfig.sat_config -> Thm.thm
+  (* Always check UNSAT proofs; report SAT without model reconstruction. *)
+  val GEN_SAT_PROVE_ONLY : satConfig.sat_config -> Thm.thm
   val SAT_PROVE : Term.term -> Thm.thm
   val SAT_PROVE_ONLY : Term.term -> Thm.thm
   val SAT_ORACLE : Term.term -> Thm.thm

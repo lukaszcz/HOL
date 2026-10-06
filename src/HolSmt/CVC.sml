@@ -314,11 +314,17 @@ structure CVC = struct
           val _ = if !Library.trace > 1 then
               Feedback.HOL_MESG "HolSmtLib: checking CVC proof"
             else ()
-          val thm = quiet (fn () =>
+          val replay_checked = fn () =>
             SmtResource.profile_phase "cvc/cpc-replay"
               (quiet_replay
                 (replay (SmtLib.translation_definitions translation)))
-              (finite_hyps @ As, g, proof))
+              (finite_hyps @ As, g, proof)
+          val trace_replay =
+            OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1" orelse
+            OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
+          val thm =
+            if trace_replay then replay_checked ()
+            else quiet replay_checked
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr

@@ -180,10 +180,12 @@ fun GEN_SAT_WITH check_sat_model conf =
     handle initexp th => th
 
 fun GEN_SAT conf = GEN_SAT_WITH true conf
+fun GEN_SAT_PROVE_ONLY conf =
+    GEN_SAT_WITH false (set_flag_is_proved true conf)
 
 (* default config invokes pre-installed MiniSat 1.14p *)
 fun SAT_PROVE tm = GEN_SAT (set_term tm base_config)
-fun SAT_PROVE_ONLY tm = GEN_SAT_WITH false (set_term tm base_config)
+fun SAT_PROVE_ONLY tm = GEN_SAT_PROVE_ONLY (set_term tm base_config)
 fun SAT_ORACLE tm =
     GEN_SAT ((set_term tm o set_flag_is_proved false) base_config)
 

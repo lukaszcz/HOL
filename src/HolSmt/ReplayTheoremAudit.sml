@@ -293,7 +293,6 @@ val non_replay_exports : exemption list =
       "smt_rounding_induction",
       "smt_rounding_nchotomy",
       "smtfp_SmtFp_round_zero",
-      "smtfp_add_RNE_comm",
       "smtfp_add_nan",
       "smtfp_add_nan_circuit_correspondence",
       "smtfp_addsub_circuit_correspondence",

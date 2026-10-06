@@ -8,6 +8,25 @@ val _ = diemode := Remember failcount
 
 val _ = Portable.catch_SIGINT()
 
+val _ = let
+  fun shared 0 term = term
+    | shared n term =
+        let val child = shared (n - 1) term in mk_conj (child, child) end
+  val rigid = ``dag_unify_rigid:bool``
+  val flexible = ``dag_unify_flexible:bool``
+  val target = shared 28 rigid
+  fun check theta = aconv (subst theta flexible) target
+in
+  tprint "Unification occurs check preserves shared DAGs";
+  require (check_result check)
+    (Unify.simp_unify_terms [rigid] flexible) target;
+  tprint "Unification rejects a cyclic shared substitution";
+  require (check_HOL_ERR (fn _ => true))
+    (Unify.simp_unify_terms [] flexible) (shared 28 flexible);
+  tprint "Unification skips equal shared subgraphs";
+  require (check_result null) (Unify.simp_unify_terms [rigid] target) target
+end
+
 (* earlier versions of the simplifier would go into an infinite loop on
    terms of this form. *)
 val const_term = ``(ARB : bool -> bool) ((ARB : bool -> bool) ARB)``

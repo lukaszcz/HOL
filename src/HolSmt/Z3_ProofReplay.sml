@@ -130,6 +130,7 @@ local
     (* One mutable atom cache for the complete proof replay.  Every general
        reduction node in this state shares its owning-theory expansions. *)
     skeleton_context : SmtSkeletonProve.context,
+    word_context : SmtWordGraph.context,
     (* General regex-index consequences are derived from the asserted DAG.
        Share their checked specializations across all nodes in one proof. *)
     string_index_cache : SmtStringProve.contextual_index_cache,
@@ -148,6 +149,7 @@ local
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
+      word_context = #word_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     }
@@ -185,6 +187,7 @@ local
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
+      word_context = #word_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     } end
@@ -210,6 +213,7 @@ local
       bit_decompositions = #bit_decompositions s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
+      word_context = #word_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     } end
@@ -1339,18 +1343,67 @@ local
   fun z3_and_elim (state, thm, t) =
     (state, Library.conj_elim (thm, t))
 
+  (* SMT's n-ary [distinct] and width-annotated word literals can parse
+     back with different HOL wrappers.  Normalize only these proved
+     encoding identities and Boolean units, never arbitrary consequences
+     of an assertion.  In particular, do not solve the asserted formula. *)
+  val assertion_unit_rewrites =
+    List.take (Drule.CONJUNCTS (Drule.SPEC_ALL boolTheory.AND_CLAUSES), 2) @
+    List.take (List.drop
+      (Drule.CONJUNCTS (Drule.SPEC_ALL boolTheory.OR_CLAUSES), 2), 2)
+
+  fun assertion_word_literal_conv target =
+    if wordsSyntax.is_w2w target andalso
+       wordsSyntax.is_n2w (Lib.snd (Term.dest_comb target)) then
+      wordsLib.WORD_EVAL_CONV target
+    else raise ERR "assertion_word_literal_conv" "not a literal word cast"
+
+  fun assertion_encoding_conv target =
+    Conv.QCONV (Conv.DEPTH_CONV (Conv.FIRST_CONV
+      (ALL_DISTINCT_CONV :: assertion_word_literal_conv ::
+       List.map Conv.REWR_CONV
+         (wordsTheory.w2w_id :: assertion_unit_rewrites)))) target
+
   fun z3_asserted (state : state, t) =
   let
-    val _ = List.exists (Term.aconv t)
-      (HOLset.listItems (#allowed_asserted_hyps state)) orelse
+    val allowed = HOLset.listItems (#allowed_asserted_hyps state)
+    fun reject () =
       raise ERR "z3_asserted"
         (asserted_membership_diagnostic ^
          ": proof asserted a term outside {~goal} U assumptions; term=" ^
          Library.term_to_string t)
-    (* [ASSUME] is sound only after the translation-membership gate above. *)
-    val theorem = Thm.ASSUME t
+    fun regroup () =
+      let
+        fun source theorem =
+          Drule.CONJUNCTS
+            (Thm.EQ_MP (assertion_encoding_conv (Thm.concl theorem))
+              theorem)
+        val sources = List.concat (List.map (source o Thm.ASSUME) allowed)
+        val conversion = assertion_encoding_conv t
+        fun derive target =
+          case List.find (Term.aconv target o Thm.concl) sources of
+            SOME theorem => theorem
+          | NONE =>
+              if Teq target then boolTheory.TRUTH
+              else
+                case Lib.total boolSyntax.dest_conj target of
+                  SOME (left, right) => Thm.CONJ (derive left) (derive right)
+                | NONE => reject ()
+      in
+        Thm.EQ_MP (Thm.SYM conversion)
+          (derive (boolSyntax.rhs (Thm.concl conversion)))
+      end
+    (* ASSUME is applied only to original translation inputs.  Z3 may merge
+       assertions, reassociate them, or project an input conjunction; all
+       such nodes retain the original hypotheses through kernel CONJ rules. *)
+    val theorem =
+      if List.exists (Term.aconv t) allowed then Thm.ASSUME t
+      else regroup ()
+    val state = List.foldl
+      (fn (hypothesis, state) => state_assert state hypothesis)
+      state (Thm.hyp theorem)
   in
-    (state_assert state t, theorem)
+    (state, theorem)
   end
 
   fun z3_commutativity (state, t) =
@@ -3219,8 +3272,7 @@ local
                TextIO.flushOut TextIO.stdOut)
             else ()
           val _ = trace_stage "measure"
-          val measure = admitted_def_axiom_measure
-            SmtSkeletonProve.term_measure target
+          val _ = admitted_def_axiom_measure (fn _ => ()) target
           fun skeleton_prove () =
             let
               val _ = SmtResource.profile_phase
@@ -3237,7 +3289,8 @@ local
                          | SOME _ => SOME observe_skeleton_node_cache)
                         (fn () => SmtSkeletonProve.attempt_with_owners
                           def_axiom_skeleton_context
-                          def_axiom_skeleton_owners measure target)) () of
+                          def_axiom_skeleton_owners
+                          (SmtSkeletonProve.term_measure target) target)) () of
                     SmtSkeletonProve.Proved result =>
                       let
                         val theorem = #theorem result
@@ -3284,7 +3337,11 @@ local
                 handle Feedback.HOL_ERR holerr =>
                   if SmtResource.is_resource_gate holerr then
                     raise Feedback.HOL_ERR holerr
-                  else skeleton ()
+                  else
+                    (profile "def-axiom(1c2)(clause-frontier)"
+                      (SmtSkeletonProve.clause_frontier_prove
+                        max_def_axiom_boolean_spine_nodes) target
+                     handle Feedback.HOL_ERR _ => skeleton ())
               fun direct () =
                 let
                   fun prove_schema profile_name schema theorem_prove =
@@ -3482,6 +3539,15 @@ local
         else raise ERR "rewrite_boolean_constant_schema"
           "no inner Boolean equality"
       val (first, second) = boolSyntax.dest_eq inner
+    in
+      (* Reflexive equality is a kernel fact at every HOL type, including
+         opaque theory sorts.  It is not a theory-specific FP obligation or
+         an independent propositional atom. *)
+      if Term.aconv outer boolSyntax.T andalso Term.aconv first second then
+        let val theorem = Drule.EQT_INTRO (Thm.ALPHA first second) in
+          if inner_on_left then theorem else Thm.SYM theorem
+        end
+      else let
       val (constant, proposition, constant_on_left) =
         if Term.aconv first boolSyntax.T orelse
            Term.aconv first boolSyntax.F then
@@ -3517,6 +3583,7 @@ local
         raise ERR "rewrite_boolean_constant_schema"
           "schema endpoint mismatch"
     in theorem end
+    end
 
   fun rewrite_fp_sub_boolean_normal_form target =
     let
@@ -3764,6 +3831,52 @@ local
            convert ())) schematic_target
     end
 
+  (* A Z3 definition axiom may be a shared Boolean circuit over word
+     operations.  Normalize those operations by checked word theorems, then
+     replay the remaining propositional circuit with a checked SAT proof.
+     This keeps shared bit-vector structure intact instead of repeatedly
+     splitting the same conditional branches. *)
+  fun def_axiom_word_circuit target =
+    let
+      val maximum = SmtResource.max_skeleton_replay_dag_nodes
+      val nodes = SmtResource.dag_nodes_up_to (maximum + 1) target
+      val _ = nodes <= maximum andalso
+        term_contains_type wordsSyntax.is_word_type target orelse
+        raise ERR "def_axiom_word_circuit"
+          "goal is outside the bounded word-circuit domain"
+    in
+      SmtResource.with_resource_step_time "BitVector"
+        "z3-def-axiom-word-circuit"
+        (fn target =>
+          let
+            val normalized = SmtWordGraph.normalize target
+            val residue = boolSyntax.rhs (Thm.concl normalized)
+            val circuit =
+              CPC_ProofReplay.prove_boolean_circuit residue
+            val theorem = Thm.EQ_MP (Thm.SYM normalized) circuit
+            val _ = Term.aconv (Thm.concl theorem) target orelse
+              raise ERR "def_axiom_word_circuit"
+                "normalized proof endpoint mismatch"
+          in theorem end) target
+    end
+
+  fun def_axiom_case_split target =
+    Tactical.TAC_PROOF (([], target),
+      Tactical.THEN
+        (Tactical.REPEAT Tactic.COND_CASES_TAC,
+         bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+           [boolTheory.EQ_SYM_EQ]))
+
+  fun def_axiom_word_circuit_route target =
+    (profile "def-axiom(2)(word-circuit)"
+      def_axiom_word_circuit target)
+    handle HolSatLib.SAT_cex _ =>
+      raise ERR "def_axiom_word_circuit_route"
+        "checked SAT abstraction declined"
+         | Conv.UNCHANGED =>
+      raise ERR "def_axiom_word_circuit_route"
+        "word normalization left the goal unchanged"
+
   fun z3_def_axiom (state, t) =
     (* Recognize excluded-middle clauses from their Boolean spine before
        generic proforma matching.  This avoids traversing deeply shared
@@ -3780,6 +3893,11 @@ local
       (def_axiom_skeleton_prove state) t)
     handle DEF_AXIOM_STRUCTURAL_UNEXPECTED exn => raise exn
          | Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        raise Feedback.HOL_ERR holerr
+      else
+    (state, def_axiom_word_circuit_route t)
+    handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
@@ -3821,11 +3939,7 @@ local
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
-      (state, Tactical.TAC_PROOF (([], t),
-        Tactical.THEN
-          (Tactical.REPEAT Tactic.COND_CASES_TAC,
-           bossLib.ASM_SIMP_TAC boolSimps.bool_ss
-             [boolTheory.EQ_SYM_EQ])))
+      (state, def_axiom_case_split t)
 
   (* (!x. ?y. !z. P) = P *)
   fun z3_elim_unused (state, t) =
@@ -4272,7 +4386,11 @@ local
   end
 
   fun z3_monotonicity (state, thms, t) =
-    (state, monotonicity_prove (thms, t))
+    (state,
+     if SmtRegLanProve.is_equiv t orelse
+        List.exists (SmtRegLanProve.is_equiv o Thm.concl) thms then
+       SmtRegLanProve.congruence thms t
+     else monotonicity_prove (thms, t))
 
   fun z3_mp (state, thm1, thm2, t) =
     (state, Thm.MP thm2 thm1 handle Feedback.HOL_ERR _ => Thm.EQ_MP thm2 thm1)
@@ -4509,7 +4627,12 @@ local
      used are equivalence modulo namings, equality and equivalence, i.e. `~`,
      `=` or `iff`, all represented in HOL4 terms as `boolSyntax.mk_eq`. *)
   fun z3_refl (state, t) =
-  let
+  if SmtRegLanProve.is_equiv t then
+    let val (left, right) = SmtRegLanProve.dest_equiv t in
+      if Term.aconv left right then (state, SmtRegLanProve.refl left)
+      else raise ERR "z3_refl" "regular-language endpoints differ"
+    end
+  else let
     val (lhs, rhs) = boolSyntax.dest_eq t
   in
     (state, Thm.ALPHA lhs rhs)
@@ -4526,6 +4649,8 @@ local
   fun word_decider_attempt name prove target =
     prove target
       handle HolSatLib.SAT_cex _ =>
+        raise ERR name "word decision procedure found a counterexample"
+           | HolSatLib.SAT_satisfiable _ =>
         raise ERR name "word decision procedure found a counterexample"
 
   fun bv_resource_prove_after_admission case_id prove target =
@@ -4630,56 +4755,106 @@ local
     bv_resource_prove_after_admission "rewrite(17)"
       (rewrite17_under_budget normalize decide definitions) target
 
-  fun bv_rewrite_prove_with_pre_bblast rewrite_profile direct_bv lowered_bv
+  fun rewrite16 rewrite_profile target =
+    bv_resource_prove_after_admission "rewrite(16)"
+      (Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV" target
+        (rewrite_profile "rewrite(16)(WORD_ARITH_CONV)"
+          (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
+            word_arith_prove))) target
+
+  fun bv_rewrite_prove_with_word_prover word_prover
+      rewrite_profile direct_bv lowered_bv
       pre_bblast definitions target =
     let
       val route = classify_bv_rewrite
         direct_bv lowered_bv definitions target
-      fun rewrite16 target =
-        bv_resource_prove_after_admission "rewrite(16)"
-          (Library.require_fastpath "Z3 rewrite WORD_ARITH_CONV" target
-            (rewrite_profile "rewrite(16)(WORD_ARITH_CONV)"
-              (word_decider_attempt "z3_rewrite(WORD_ARITH_CONV)"
-                word_arith_prove))) target
+      val decomposition_attempted = ref false
+      fun decompose_once target =
+        if !decomposition_attempted then
+          raise ERR "bv_rewrite_prove" "congruence already declined"
+        else (decomposition_attempted := true; pre_bblast target)
+      fun shared_circuit legacy target =
+        if SmtResource.term_nodes_up_to 257 target <= 256 then legacy target
+        else
+          let
+            fun circuit target = bv_next_rung
+              (rewrite_profile "rewrite(18)(word-graph)"
+                (SmtResource.with_resource_step_time
+                  "BitVector" "word-circuit-replay"
+                  (word_decider_attempt "z3_rewrite(word-graph)"
+                    word_prover))) legacy target
+          in
+            (* SAT observes quantified formulas as opaque atoms.  First
+               isolate checked body equalities by binder congruence rather
+               than expand their word circuits beneath the binder.  Keep
+               original-target admission and every recursive resource gate;
+               an ordinary decline still reaches the complete circuit path. *)
+            if SmtResource.contains Term.is_abs target then
+              bv_next_rung
+                (bv_resource_prove_after_admission
+                  "rewrite(18)(binder-congruence)" decompose_once)
+                circuit target
+            else circuit target
+          end
       fun rewrite17_production definitions target =
         rewrite_profile "rewrite(17)(translator-definitions+word)"
           (rewrite17 Rewrite.PURE_REWRITE_CONV word_decide_raw definitions)
           target
-      fun rewrite18 case_id target =
+      fun rewrite18 case_id boolean_residue target =
         bv_resource_prove_after_admission case_id
           (fn target =>
-            (* BBLAST supports quantifiers, so this is an ordering preference,
-               not a domain rejection.  Let the existing general congruence
-               route remove shared binder structure first; ordinary decline
-               retains the complete BBLAST fallback. *)
-            if #found (term_contains_measure Term.is_abs target) then
-              bv_next_rung pre_bblast
+            let
+              (* A Boolean consequence of lowered word atoms can be proved
+                 without expanding the atoms.  SAT's checked propositional
+                 proof is only a preflight for the lowered Boolean route;
+                 a counterexample to the abstraction is inconclusive. *)
+              fun propositional target =
+                rewrite_profile "rewrite(18)(lowered-boolean-sat)"
+                  (SmtResource.with_resource_step_time "Skeleton"
+                    "z3-lowered-bv-propositional"
+                    (fn target =>
+                      (SmtResource.check_resource_goal "Skeleton"
+                         "z3-lowered-bv-propositional" target;
+                       SmtSkeletonProve.checked_sat_prove target))) target
+                handle HolSatLib.SAT_cex _ =>
+                  raise ERR "bv_rewrite_prove"
+                    "lowered Boolean abstraction has a counterexample"
+                     | Feedback.HOL_ERR _ =>
+                  raise ERR "bv_rewrite_prove"
+                    "lowered Boolean abstraction declined"
+              (* Congruence can isolate a small word rewrite inside any
+                 shared application skeleton.  BBLAST remains complete. *)
+              val word_route = bv_next_rung decompose_once
                 (rewrite_profile "rewrite(18)(BBLAST)"
                   (word_decider_attempt "z3_rewrite(BBLAST)"
                     (Feedback.trace ("print blast counterexamples", 0)
-                      blastLib.BBLAST_PROVE))) target
-            else
-              rewrite_profile "rewrite(18)(BBLAST)"
-                (word_decider_attempt "z3_rewrite(BBLAST)"
-                  (Feedback.trace ("print blast counterexamples", 0)
-                    blastLib.BBLAST_PROVE)) target) target
+                      blastLib.BBLAST_PROVE)))
+            in
+              if boolean_residue then
+                bv_next_rung propositional word_route target
+              else word_route target
+            end) target
     in
       case route of
         DirectBV occurring =>
-          bv_next_rung rewrite16
+          shared_circuit (bv_next_rung (rewrite16 rewrite_profile)
             (if List.null occurring then
-               rewrite18 "rewrite(18)"
+               rewrite18 "rewrite(18)" false
              else
                bv_next_rung (rewrite17_production occurring)
-                 (rewrite18 "rewrite(18)")) target
+                 (rewrite18 "rewrite(18)" false))) target
       | LoweredBV =>
           (* Boolean fpa2bv residue bypasses inapplicable WORD_ARITH and
              definition scans, but uses the same gated complete BBLAST. *)
-          rewrite18 "rewrite(18)(lowered-bv)" target
+          shared_circuit
+            (rewrite18 "rewrite(18)(lowered-bv)" true) target
       | DefinedBV occurring => rewrite17_production occurring target
       | OutsideBV =>
           raise ERR "bv_rewrite_prove" "goal is outside the BV rewrite family"
     end
+
+  val bv_rewrite_prove_with_pre_bblast =
+    bv_rewrite_prove_with_word_prover SmtWordGraph.prove
 
   fun no_pre_bblast _ =
     raise ERR "bv_rewrite_prove" "no pre-BBLAST decomposition"
@@ -4690,7 +4865,8 @@ local
       no_pre_bblast definitions target
 
   fun bv_rewrite_prove rewrite_profile pre_bblast (state : state) =
-    bv_rewrite_prove_with_pre_bblast rewrite_profile has_word_atom
+    bv_rewrite_prove_with_word_prover
+      (SmtWordGraph.prove_in (#word_context state)) rewrite_profile has_word_atom
       (has_allocated_fp_bv_atom state) pre_bblast
       (#translation_definitions state)
 
@@ -4744,6 +4920,9 @@ local
       fun dest_negated_exists tm =
         let
           val existential = boolSyntax.dest_neg tm
+          val _ = boolSyntax.is_exists existential orelse
+            raise ERR "quantified_boolean_rewrite_prove"
+              "rewrite operand is not a negated existential"
           val (variables, body) = boolSyntax.strip_exists existential
           val _ = List.null variables andalso
             raise ERR "quantified_boolean_rewrite_prove"
@@ -4847,24 +5026,25 @@ local
       raise DEFINITION_REWRITE_ERROR (Feedback.HOL_ERR holerr)
 
   fun has_arithmetic_operator target =
-    Lib.can (HolKernel.find_term (fn tm =>
+    SmtResource.contains (fn tm =>
       Term.is_const tm andalso
       let val {Thy, ...} = Term.dest_thy_const tm in
         Thy = "integer" orelse Thy = "real" orelse Thy = "intreal"
-      end)) target
+      end) target
 
   fun linear_arithmetic_rewrite_prove target =
     let
       fun arithmetic_variable variable =
         SmtReplayCanon.is_arith_type (Term.type_of variable)
-      val _ = List.all arithmetic_variable (Term.free_vars target) orelse
+      val _ = HOLset.foldl (fn (variable, accepted) =>
+        accepted andalso arithmetic_variable variable) true
+        (Term.FVL_dag [target] Term.empty_tmset) orelse
         raise ERR "linear_arithmetic_rewrite_prove"
           "rewrite has a non-arithmetic variable"
       val _ = has_arithmetic_operator target orelse
         raise ERR "linear_arithmetic_rewrite_prove"
           "rewrite has no integer or real operator"
-      val _ = not (Lib.can
-        (HolKernel.find_term (Lib.can boolSyntax.dest_cond)) target) orelse
+      val _ = not (SmtResource.contains boolSyntax.is_cond target) orelse
         raise ERR "linear_arithmetic_rewrite_prove"
           "conditional rewrite is outside polynomial normal form"
     in
@@ -4924,8 +5104,12 @@ local
       val _ = not (List.null rewrite_theorems) orelse
         raise ERR "definition_normalization_prove"
           "no checked proof-local equality definition"
-      val normalization = Rewrite.PURE_REWRITE_CONV rewrite_theorems target
+      val normalization =
+        Library.checked_definition_rewrite_conv rewrite_theorems target
       val normalized = boolSyntax.rhs (Thm.concl normalization)
+      val _ = not (Term.aconv target normalized) orelse
+        raise ERR "definition_normalization_prove"
+          "checked definitions do not occur in target"
     in
       (normalization, normalized)
     end
@@ -4948,7 +5132,8 @@ local
         end
       val decision = reflexive ()
         handle Feedback.HOL_ERR _ =>
-          let val variables = Term.free_vars normalized in
+          let val variables = HOLset.listItems
+            (Term.FVL_dag [normalized] Term.empty_tmset) in
             if not (List.null variables) andalso
                List.all (SmtReplayCanon.is_arith_type o Term.type_of) variables
             then profile "definition-normalization(owner:arithmetic)"
@@ -5124,10 +5309,9 @@ local
             (state, Thm.ALPHA left right)
           else
             let
-              val _ = Term.term_size left < Term.term_size left_parent andalso
-                  Term.term_size right < Term.term_size right_parent orelse
-                raise ERR "skeleton_congruence"
-                  "recursive residue did not strictly shrink"
+              (* Every caller peels a connective, application or binder.
+                 The recursive obligations are its proper children; counting
+                 their unfolded trees would destroy circuit sharing. *)
               val target = boolSyntax.mk_eq (left, right)
               val (state', theorem) = recursive_rewrite_boundary
                 RecursiveSkeleton z3_rewrite (state, target)
@@ -5186,6 +5370,51 @@ local
             (!state_ref,
              Thm.AP_TERM (Term.rator left) abstraction_theorem)
           end
+        fun conditional (state, left, right) =
+          let
+            val (left_guard, left_yes, left_no) = boolSyntax.dest_cond left
+            val (right_guard, right_yes, right_no) = boolSyntax.dest_cond right
+            fun propositional_guard guard =
+              let
+                val target = boolSyntax.mk_eq (left_guard, guard)
+                val measure = admitted_def_axiom_measure
+                  SmtSkeletonProve.term_measure target
+              in
+                case SmtSkeletonProve.attempt_with_owners
+                    def_axiom_skeleton_context
+                    def_axiom_skeleton_owners measure target of
+                  SmtSkeletonProve.Proved result => SOME (#theorem result)
+                | SmtSkeletonProve.Declined => NONE
+              end
+            fun build state guard_theorem yes no flipped =
+              let
+                val (state', yes_theorem) = child (state, left, right)
+                  (left_yes, yes)
+                val (state'', no_theorem) = child (state', left, right)
+                  (left_no, no)
+                val head = Term.rator (Term.rator (Term.rator left))
+                val congruence = Thm.MK_COMB
+                  (Thm.MK_COMB
+                    (Thm.MK_COMB (Thm.REFL head, guard_theorem),
+                     yes_theorem), no_theorem)
+                val result = if flipped then Thm.TRANS congruence
+                    (Conv.REWR_CONV HolSmtTheory.COND_NEG
+                      (boolSyntax.rhs (Thm.concl congruence)))
+                  else congruence
+              in (state'', result) end
+          in
+            case propositional_guard right_guard of
+              SOME theorem =>
+                build state theorem right_yes right_no false
+            | NONE =>
+                case propositional_guard (boolSyntax.mk_neg right_guard) of
+                  SOME theorem =>
+                    build state theorem right_no right_yes true
+                | NONE =>
+                    let val (state', theorem) = child (state, left, right)
+                        (left_guard, right_guard)
+                    in build state' theorem right_yes right_no false end
+          end
         fun boolean_equality term =
           let val (left, right) = boolSyntax.dest_eq term in
             Term.type_of left = Type.bool andalso
@@ -5199,14 +5428,43 @@ local
             binary boolSyntax.dest_conj (state, l, r)
           else if boolSyntax.is_disj l andalso boolSyntax.is_disj r then
             binary boolSyntax.dest_disj (state, l, r)
+          else if boolSyntax.is_imp l andalso boolSyntax.is_disj r then
+            let
+              val bridge = Conv.REWR_CONV boolTheory.IMP_DISJ_THM l
+              val normalized = boolSyntax.rhs (Thm.concl bridge)
+              val (state', aligned) =
+                binary boolSyntax.dest_disj (state, normalized, r)
+            in (state', Thm.TRANS bridge aligned) end
+          else if boolSyntax.is_disj l andalso boolSyntax.is_imp r then
+            let
+              val bridge = Conv.REWR_CONV boolTheory.IMP_DISJ_THM r
+              val normalized = boolSyntax.rhs (Thm.concl bridge)
+              val (state', aligned) =
+                binary boolSyntax.dest_disj (state, l, normalized)
+            in (state', Thm.TRANS aligned (Thm.SYM bridge)) end
           else if boolSyntax.is_imp l andalso boolSyntax.is_imp r then
             binary boolSyntax.dest_imp (state, l, r)
           else if boolean_equality l andalso boolean_equality r then
             binary boolSyntax.dest_eq (state, l, r)
+          else if boolSyntax.is_cond l andalso boolSyntax.is_cond r then
+            conditional (state, l, r)
           else if boolSyntax.is_forall l andalso boolSyntax.is_forall r then
             quantified boolSyntax.dest_forall (state, l, r)
           else if boolSyntax.is_exists l andalso boolSyntax.is_exists r then
             quantified boolSyntax.dest_exists (state, l, r)
+          else if Term.is_comb l andalso Term.is_comb r then
+            let
+              val _ = same_head (l, r)
+              val (left_operator, left_operand) = Term.dest_comb l
+              val (right_operator, right_operand) = Term.dest_comb r
+              val (state', operator_theorem) = child (state, l, r)
+                (left_operator, right_operator)
+              val (state'', operand_theorem) = child (state', l, r)
+                (left_operand, right_operand)
+            in
+              (state'', Thm.MK_COMB
+                (operator_theorem, operand_theorem))
+            end
           else
             raise ERR "skeleton_congruence"
               "rewrite does not have a shared supported skeleton head"
@@ -5270,17 +5528,27 @@ local
     if SmtFpProve.has_fp_theory_term t then
       let
         fun bounded_propositional target =
-          case SmtSkeletonDispatch.attempt
-              (#skeleton_context state) target of
-            SmtSkeletonDispatch.Proved result =>
-              rewrite_profile "propositional"
-                "rewrite(fp-preflight)(skeleton)"
-                (fn () => #theorem result) ()
-          | SmtSkeletonDispatch.Declined =>
-              rewrite_profile "propositional"
-                "rewrite(fp-preflight)(TAUT_PROVE)"
-                (bounded_taut_prove "FloatingPoint"
-                  "z3-rewrite-propositional") target
+          rewrite_profile "propositional"
+            "rewrite(fp-preflight)(skeleton)"
+            (SmtResource.with_resource_step_time
+              "Skeleton" "z3-rewrite-propositional"
+              (fn target =>
+                let
+                  val measure = admitted_def_axiom_measure
+                    SmtSkeletonProve.term_measure target
+                in
+                  (* This rung decides only propositional identities:
+                     theory atoms remain opaque.  A SAT abstraction declines
+                     to the FP procedure, not to a tree-expanding tautology
+                     search or an unrelated theory reduction. *)
+                  case SmtSkeletonProve.attempt_with_owners
+                      def_axiom_skeleton_context
+                      def_axiom_skeleton_owners measure target of
+                    SmtSkeletonProve.Proved result => #theorem result
+                  | SmtSkeletonProve.Declined =>
+                      raise ERR "bounded_propositional"
+                        "rewrite requires floating-point theory semantics"
+                end)) target
       in
       ((state, bounded_propositional t)
         handle Feedback.HOL_ERR holerr =>
@@ -5302,7 +5570,8 @@ local
                procedure and fails loudly at its unsupported/D4 boundary. *)
             val thm = rewrite_profile "floating-point"
               "rewrite(4)(fp)"
-              (SmtFpProve.fp_prove_with_context arith_prove
+              (SmtFpProve.fp_prove_with_word_prover
+                (SmtWordGraph.prove_in (#word_context state)) arith_prove
                 eligible_decompositions all_decompositions) t
               handle Feedback.HOL_ERR holerr =>
                 raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
@@ -5356,6 +5625,20 @@ local
                   Library.require_fastpath "Z3 rewrite proforma" target
                     Z3_ProformaThms.prove_rewrite target)
                 t)
+              handle Feedback.HOL_ERR _ =>
+              (* Shared application structure is a kernel congruence
+                 obligation even when its result has function type.  Try
+                 that checked decomposition before admitting the equality
+                 as an Array extensionality problem. *)
+              (if is_function_type (Term.type_of l) andalso
+                  Term.is_comb l andalso Term.is_comb r then
+                 (pre_bblast_skeleton_attempted := true;
+                  record_measured_target MeasuredSkeletonCongruence t;
+                  rewrite_profile "boolean/binder-skeleton"
+                    "rewrite(9a)(skeleton-congruence)"
+                    skeleton_congruence ())
+               else raise ERR "z3_rewrite"
+                 "no function-valued application congruence")
               handle Feedback.HOL_ERR _ =>
                 let
                 (* E1(b): the budgeted array/set procedure covers selected
@@ -5475,8 +5758,7 @@ local
        The resulting theorem retains only checked definitional hypotheses,
        which final replay eliminates as usual. *)
     (let
-       val free_vars = HOLset.addList
-         (Term.empty_tmset, Term.free_vars t)
+       val free_vars = Term.FVL_dag [t] Term.empty_tmset
        val packed_vars = fp_packed_vars state
        val _ = List.exists
            (fn var => HOLset.member (free_vars, var)) packed_vars orelse
@@ -5487,7 +5769,8 @@ local
        val thm =
          (rewrite_profile "floating-point/bit-vectors"
             "rewrite(15)(fp-packed-bits)"
-            (SmtFpProve.definition_bitblast_prove definitions) t
+            (SmtFpProve.definition_bitblast_prove_with
+              (SmtWordGraph.prove_in (#word_context state)) definitions) t
           handle Feedback.HOL_ERR holerr =>
             if SmtResource.is_resource_gate holerr then
               raise Feedback.HOL_ERR holerr
@@ -5692,6 +5975,9 @@ local
        | ASSERTED_EQUALITY_REWRITE_ERROR error => raise error
 
   fun z3_rewrite_entry (state, target) =
+  if SmtRegLanProve.is_equiv target then
+    (state, SmtRegLanProve.rewrite target)
+  else
   (* Perform the String resource admission before canonical orientation.  The
      latter is a generic conversion and can otherwise walk an oversized
      String concatenation spine before the owning budget gets a chance to
@@ -5814,7 +6100,8 @@ local
   end
 
   fun z3_symm (state, thm, t) =
-    (state, Thm.SYM thm)
+    (state, if SmtRegLanProve.is_equiv (Thm.concl thm) then
+       SmtRegLanProve.sym thm else Thm.SYM thm)
 
   datatype th_lemma_cache_policy =
       D1PerformanceCache
@@ -6601,12 +6888,32 @@ local
   fun z3_th_lemma_fp _ (state, thms, t) =
   let
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    fun traced_head term =
+      let val (head, _) = boolSyntax.strip_comb term in
+        if Term.is_const head then
+          let val {Thy, Name, ...} = Term.dest_thy_const head
+          in Thy ^ "$" ^ Name end
+        else if Term.is_var head then "variable"
+        else "compound"
+      end
     fun trace_fp stage =
-      if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
-         !replay_completed_steps < 700 then
+      if (OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "full" orelse
+          OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
+          !replay_completed_steps < 700) then
         (Feedback.HOL_MESG
           ("Z3 FP lemma: " ^ stage ^ " nodes=" ^
-           Int.toString (SmtResource.dag_nodes_up_to 1025 t'));
+           Int.toString (SmtResource.dag_nodes_up_to 1025 t') ^
+           " completed=" ^ Int.toString (!replay_completed_steps) ^
+           (case Lib.total boolSyntax.dest_eq t of
+              SOME (left, right) =>
+                " heads=" ^ traced_head left ^ "," ^ traced_head right
+            | NONE => " head=" ^ traced_head t) ^
+           (if stage = "begin" andalso
+               OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "full" andalso
+               Option.isSome (Term.term_size_bounded 3000 t') then
+              " target=" ^ SmtResource.bounded_text 2500
+                (Library.term_to_string t')
+            else ""));
          TextIO.flushOut TextIO.stdOut)
       else ()
     fun symbolic_fp target =
@@ -6653,7 +6960,15 @@ local
             (!rounding_sources)
         val implication = List.foldr boolSyntax.mk_imp target
           (List.map Thm.concl facts)
-        val proved = CPC_ProofReplay.prove_boolean_circuit implication
+        val normalized =
+          SmtResource.with_resource_step_time "BitVector"
+            "z3-fp-shared-word-normalize"
+            SmtWordGraph.normalize implication
+          handle Conv.UNCHANGED => Thm.REFL implication
+        val residue = boolSyntax.rhs (Thm.concl normalized)
+        val circuit =
+          CPC_ProofReplay.prove_boolean_circuit residue
+        val proved = Thm.EQ_MP (Thm.SYM normalized) circuit
         val proof = List.foldl
           (fn (fact, theorem) => Thm.MP theorem fact) proved facts
         val _ = List.null (Thm.hyp proof) andalso
@@ -6896,7 +7211,8 @@ local
       SmtStringProve.char_prove
 
   fun z3_trans (state, thm1, thm2, t) =
-    (state, Thm.TRANS thm1 thm2)
+    (state, if SmtRegLanProve.is_equiv t then
+       SmtRegLanProve.trans thm1 thm2 else Thm.TRANS thm1 thm2)
 
   (* `z3_trans_star` is supposed to handle multiple symmetry and transitivity
      rules. Z3 provides the following example:
@@ -6963,7 +7279,10 @@ local
   end
 
   fun z3_trans_star (state, thms, t) =
-    (state, profile "trans_star[exact]" trans_star_exact_prove (thms, t))
+    if SmtRegLanProve.is_equiv t then
+      (state, SmtRegLanProve.congruence thms t)
+    else (state, profile "trans_star[exact]"
+      trans_star_exact_prove (thms, t))
     handle (exact_err as Feedback.HOL_ERR _) =>
       (state, profile "trans_star[metis-fallback]" metis_prove (thms, t))
       handle Feedback.HOL_ERR _ => raise exact_err
@@ -7548,8 +7867,10 @@ local
                   val _ = replay_completed_steps :=
                     !replay_completed_steps + 1
                   val _ =
-                    if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" =
-                       SOME "1" andalso
+                    if (OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" =
+                        SOME "1" orelse
+                        OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" =
+                        SOME "full") andalso
                        !replay_completed_steps mod 100 = 0 then
                       (Feedback.HOL_MESG
                         ("Z3 replay progress: completed=" ^
@@ -8328,6 +8649,7 @@ in
   fun bv_rewrite_prove_for_test target =
     bv_rewrite_prove_with_context profile has_word_atom (fn _ => false)
       [] target
+  val bv_rewrite16_for_test = rewrite16 profile
   fun bv_rewrite_prove_with_definitions_for_test definitions target =
     bv_rewrite_prove_with_context profile has_word_atom (fn _ => false)
       definitions target
@@ -8435,6 +8757,7 @@ in
     bit_decompositions = proof_bit_decompositions proof,
     translation_definitions = definitions,
     skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
+    word_context = SmtWordGraph.new_context (),
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }

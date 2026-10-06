@@ -229,9 +229,8 @@ struct
       val nodes = ref 0
       val edges = ref 0
       fun intern ty =
-        case List.find
-            (fn (saved, _) => Portable.pointer_eq (ty, saved)) (!physical) of
-          SOME (_, node) => node
+        case SmtResource.recent_pointer_lookup physical ty of
+          SOME node => node
         | NONE =>
             let
               val arguments = if Type.is_vartype ty then []
@@ -483,6 +482,14 @@ struct
       (boolSyntax.mk_conj (idempotent_variable, idempotent_variable),
        idempotent_variable))
 
+  val gate_reduction_conv = Conv.FIRST_CONV
+    (List.map Conv.REWR_CONV
+      (boolTheory.REFL_CLAUSE :: boolTheory.COND_ID ::
+       List.concat (List.map (Drule.CONJUNCTS o Drule.SPEC_ALL)
+         [boolTheory.AND_CLAUSES, boolTheory.OR_CLAUSES,
+          boolTheory.NOT_CLAUSES, boolTheory.IMP_CLAUSES,
+          boolTheory.EQ_CLAUSES, boolTheory.COND_CLAUSES])))
+
   datatype raw_key =
       RawVariable of string * int
     | RawConstant of KernelSig.kernelid * int
@@ -568,7 +575,7 @@ struct
      by a checked equality with the current occurrence as its exact left
      endpoint.  Whole abstractions form the public-kernel boundary and are
      compared only after bounded raw and type-work admission. *)
-  fun build_cnf_graph skeleton =
+  fun build_cnf_graph_mode reduce_gates skeleton =
     let
       val maximum = SmtResource.max_bv_replay_term_nodes
       val type_admission = new_type_admission_context ()
@@ -583,25 +590,7 @@ struct
       val physical_bucket_count = 4093
       val raw_physical = Array.array
         (physical_bucket_count, [] : (term * raw_node) list)
-      fun hash_string string =
-        CharVector.foldl (fn (character, hash) =>
-          (hash * 33 + Char.ord character) mod physical_bucket_count)
-          17 string
-      fun shallow_hash 0 term =
-            if Term.is_var term then hash_string (#1 (Term.dest_var term))
-            else if Term.is_const term then
-              hash_string (#Name (Term.dest_thy_const term))
-            else if Term.is_abs term then 5 else 7
-        | shallow_hash depth term =
-            if Term.is_comb term then
-              (41 * shallow_hash (depth - 1) (Term.rator term) +
-               67 * shallow_hash (depth - 1) (Term.rand term) + 11) mod
-                physical_bucket_count
-            else if Term.is_abs term then
-              (73 * shallow_hash (depth - 1) (Term.body term) + 13) mod
-                physical_bucket_count
-            else shallow_hash 0 term
-      fun physical_bucket term = shallow_hash 3 term
+      val physical_bucket = SmtResource.pointer_bucket physical_bucket_count
       fun physical_find buckets term =
         List.find
           (fn (saved, _) => Portable.pointer_eq (term, saved))
@@ -829,6 +818,31 @@ struct
           GraphConditional
             (List.nth (ids, 0), List.nth (ids, 1), List.nth (ids, 2))
         else GraphEquality (List.nth (ids, 0), List.nth (ids, 1))
+      fun reduce_gate rebuilt children =
+        let
+          val variables = ref (Redblackmap.mkDict Int.compare)
+          val substitution = ref []
+          fun abstract (node as GraphNode {id, kind, ...}) =
+            case kind of
+              GraphTrue => boolSyntax.T
+            | GraphFalse => boolSyntax.F
+            | _ =>
+                (case Redblackmap.peek (!variables, id) of
+                   SOME variable => variable
+                 | NONE =>
+                     let val variable = Term.genvar Type.bool in
+                       variables := Redblackmap.insert
+                         (!variables, id, variable);
+                       substitution := (variable |->
+                         graph_representative node) :: !substitution;
+                       variable
+                     end)
+          val head = #1 (boolSyntax.strip_comb rebuilt)
+          val schematic = Term.list_mk_comb
+            (head, List.map abstract children)
+          val theorem = Conv.QCONV
+            (Conv.TRY_CONV gate_reduction_conv) schematic
+        in anchor_left rebuilt (Thm.INST (!substitution) theorem) end
       fun visit occurrence =
         case physical_find graph_physical occurrence of
           SOME (_, saved) => saved
@@ -888,9 +902,49 @@ struct
                                equality = theorem,
                                tree_nodes = graph_tree_nodes child}
                           end
-                        else
-                          add_graph (connective_kind rebuilt child_ids)
-                            rebuilt congruence tree_nodes
+                        else if reduce_gates then
+                          let
+                            val reduction = reduce_gate rebuilt child_nodes
+                            val residue = boolSyntax.rhs (Thm.concl reduction)
+                          in
+                            if not (Term.aconv rebuilt residue) then
+                              let
+                                val node = visit residue
+                                val GraphNode {id, kind, representative,
+                                  tree_nodes, ...} = node
+                              in
+                                GraphNode {id = id, kind = kind,
+                                  representative = representative,
+                                  tree_nodes = tree_nodes,
+                                  equality = Thm.TRANS congruence
+                                    (Thm.TRANS reduction
+                                      (graph_equality node))}
+                              end
+                            else
+                              let
+                                val commutative = boolSyntax.is_conj rebuilt
+                                  orelse boolSyntax.is_disj rebuilt
+                                  orelse boolSyntax.is_eq rebuilt
+                                val reverse = commutative andalso
+                                  List.nth (child_ids, 0) >
+                                  List.nth (child_ids, 1)
+                                val oriented = if not reverse then congruence
+                                  else Thm.TRANS congruence
+                                    (Conv.REWR_CONV
+                                      (if boolSyntax.is_conj rebuilt then
+                                         boolTheory.CONJ_SYM
+                                       else if boolSyntax.is_disj rebuilt then
+                                         boolTheory.DISJ_SYM
+                                       else boolTheory.EQ_SYM_EQ) rebuilt)
+                                val ids = if reverse then List.rev child_ids
+                                  else child_ids
+                                val right = boolSyntax.rhs
+                                  (Thm.concl oriented)
+                              in add_graph (connective_kind right ids)
+                                right oriented tree_nodes end
+                          end
+                        else add_graph (connective_kind rebuilt child_ids)
+                          rebuilt congruence tree_nodes
                       end
               val _ = physical_insert graph_physical occurrence saved
               val _ = graph_observations := !graph_observations + 1
@@ -921,26 +975,102 @@ struct
            (!graph_entries))}
     end
 
-  fun checked_graph_sat_prove entries root =
+  val build_cnf_graph = build_cnf_graph_mode false
+
+  type sat_context =
+    {proofs : (term * thm * int) list ref, nodes : int ref}
+
+  fun new_sat_context () : sat_context = {proofs = ref [], nodes = ref 0}
+
+  fun cached_sat_proof (context : sat_context) target cost prove =
+    let
+      val maximum = SmtResource.max_skeleton_replay_dag_nodes
+      fun validate theorem =
+        (if List.null (Thm.hyp theorem) then ()
+         else raise ERR "cached_sat_proof" "SAT certificate has hypotheses";
+         Library.check_oracle_tags "SmtSkeletonProve"
+           "schematic SAT certificate" theorem;
+         Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) target) theorem)
+      fun find [] _ = NONE
+        | find ((entry as (saved, theorem, _)) :: rest) prior =
+            if Term.aconv saved target then
+              ( #proofs context := entry :: List.revAppend (prior, rest);
+                SOME theorem)
+            else find rest (entry :: prior)
+      fun retain theorem =
+        if cost > maximum then ()
+        else
+          let
+            fun fit entries nodes =
+              if nodes + cost <= maximum then (entries, nodes)
+              else case entries of
+                [] => ([], 0)
+              | (_, _, old_cost) :: rest => fit rest (nodes - old_cost)
+            val (oldest_first, nodes) = fit
+              (List.rev (!(#proofs context))) (!(#nodes context))
+          in
+            #proofs context := (target, theorem, cost) ::
+              List.rev oldest_first;
+            #nodes context := nodes + cost
+          end
+      val theorem = case find (!(#proofs context)) [] of
+          SOME theorem => phase "skeleton/schematic-certificate-hit"
+            validate theorem
+        | NONE => let val theorem = validate (prove ())
+                  in retain theorem; theorem end
+    in theorem end
+
+  fun checked_graph_sat_prove_in context entries root =
     let
       fun node_id (GraphNode {id, ...}) = id
       fun node_kind (GraphNode {kind, ...}) = kind
       fun node_representative (GraphNode {representative, ...}) =
         representative
+      (* Reduction and interning may leave dead gates in the construction
+         inventory.  Only dependencies of the observed output belong to the
+         SAT problem; their checked definitions suffice for reconstruction. *)
+      val inventory = List.foldl
+        (fn (node, dictionary) => Redblackmap.insert
+          (dictionary, node_id node, node))
+        (Redblackmap.mkDict Int.compare) entries
+      val live = ref (HOLset.empty Int.compare)
+      fun mark id =
+        if HOLset.member (!live, id) then ()
+        else
+          let
+            val node = Redblackmap.find (inventory, id)
+            val _ = live := HOLset.add (!live, id)
+            val children = case node_kind node of
+                GraphNegation child => [child]
+              | GraphConjunction (left, right) => [left, right]
+              | GraphDisjunction (left, right) => [left, right]
+              | GraphImplication (left, right) => [left, right]
+              | GraphEquality (left, right) => [left, right]
+              | GraphConditional (test, yes, no) => [test, yes, no]
+              | _ => []
+          in List.app mark children end
+      val _ = mark (node_id root)
+      val entries = List.filter
+        (fn node => HOLset.member (!live, node_id node)) entries
       fun generated kind =
         case kind of GraphTrue => false | GraphFalse => false | _ => true
       val variables = List.foldl
         (fn (node, dictionary) =>
           if generated (node_kind node) then
             Redblackmap.insert
-              (dictionary, node_id node, Term.genvar Type.bool)
+              (dictionary, node_id node, Term.mk_var
+                ("skeleton_node_" ^ Int.toString (node_id node), Type.bool))
           else dictionary)
         (Redblackmap.mkDict Int.compare) entries
+      val kinds = List.foldl
+        (fn (node, dictionary) => Redblackmap.insert
+          (dictionary, node_id node, node_kind node))
+        (Redblackmap.mkDict Int.compare) entries
       fun symbolic id =
-        case List.find (fn node => node_id node = id) entries of
+        case Redblackmap.peek (kinds, id) of
           NONE => raise ERR "checked_graph_sat_prove" "unknown graph node ID"
-        | SOME node =>
-            (case node_kind node of
+        | SOME kind =>
+            (case kind of
                GraphTrue => boolSyntax.T
              | GraphFalse => boolSyntax.F
              | _ => Redblackmap.find (variables, id))
@@ -971,12 +1101,16 @@ struct
         (fn node => boolSyntax.mk_eq
           (symbolic (node_id node), body (node_kind node)))
         connective_nodes
-      val antecedent =
-        case equations of [] => boolSyntax.T
-        | _ => boolSyntax.list_mk_conj equations
+      val cnf_equivalence = phase "skeleton/gate-cnf"
+        (SmtCircuitSat.balanced_equivalences o
+         List.map SmtCircuitSat.definition_cnf) equations
+      val antecedent = boolSyntax.lhs (Thm.concl cnf_equivalence)
+      val cnf = boolSyntax.rhs (Thm.concl cnf_equivalence)
       val target = boolSyntax.mk_imp
         (antecedent, symbolic (node_id root))
-      val sat_measure = term_measure target
+      val sat_target = boolSyntax.mk_imp (cnf, symbolic (node_id root))
+      val sat_measure = phase "skeleton/sat-target-measure"
+        term_measure sat_target
       val substitution = List.map
         (fn node => Redblackmap.find (variables, node_id node) |->
           node_representative node)
@@ -988,26 +1122,34 @@ struct
            List.all (Term.is_var o #redex) substitution then ()
         else raise ERR "checked_graph_sat_prove"
           "generated graph substitution domains overlap"
-      val definition_theorem =
-        case connective_nodes of
-          [] => boolTheory.TRUTH
-        | _ => Drule.LIST_CONJ
-            (List.map (Thm.REFL o node_representative) connective_nodes)
-      val _ = observe_sat_target target
-      val target_theorem =
+      val definition_theorem = phase "skeleton/reflexive-definitions"
+        (SmtCircuitSat.balanced_conjunction o
+         List.map (Thm.REFL o node_representative)) connective_nodes
+      val _ = observe_sat_target sat_target
+      fun prove () = cached_sat_proof context sat_target
+        (#dag_nodes sat_measure)
+        (fn () => SmtCircuitSat.prove_cnf (cnf, symbolic (node_id root)))
+      val cnf_theorem =
         case !sat_completion_observer of
           NONE => phase "skeleton/sat-search+checking"
-            checked_sat_prove target
+            prove ()
         | SOME observer =>
             let
               val started = Time.now ()
               val theorem = phase "skeleton/sat-search+checking"
-                checked_sat_prove target
+                prove ()
               val elapsed = Time.- (Time.now (), started)
-              val _ = observer (target, elapsed)
+              val _ = observer (sat_target, elapsed)
             in
               theorem
             end
+      val target_theorem = phase "skeleton/circuit-implication"
+        (fn () =>
+          let val supplied_cnf = Thm.EQ_MP cnf_equivalence
+            (Thm.ASSUME antecedent)
+          in Thm.DISCH antecedent (Thm.MP cnf_theorem supplied_cnf) end) ()
+      val _ = Term.aconv (Thm.concl target_theorem) target orelse
+        raise ERR "checked_graph_sat_prove" "circuit implication mismatch"
       val instantiated = phase "skeleton/combined-instantiation"
         (fn substitution => Thm.INST substitution target_theorem)
         substitution
@@ -1015,12 +1157,291 @@ struct
         (fn definitions => Thm.MP instantiated definitions)
         definition_theorem
     in
-      {theorem = theorem, sat_target = target,
+      {theorem = theorem, sat_target = sat_target,
        sat_tree_nodes = #tree_nodes sat_measure,
        sat_dag_nodes = #dag_nodes sat_measure}
     end
 
+  fun checked_graph_sat_prove entries root =
+    checked_graph_sat_prove_in (new_sat_context ()) entries root
+
   exception PROCEDURE_UNABLE
+
+  (* Pure propositional replay has no atom-reduction stage.  Construct its
+     typed CNF graph directly, keeping all theory atoms opaque, and use the
+     same checked circuit certificate and kernel transport as owned replay. *)
+  (* A clause about a Boolean gate needs its immediate truth table, not the
+     circuits computing its inputs.  Try an opaque clause first, then expose
+     each literal's outer connective in turn.  Substitution of the opaque
+     atoms into a checked tautology proves the exact original clause.  This
+     is incomplete by design; callers retain the full graph procedure. *)
+  fun clause_frontier_prove limit target =
+    let
+      val work = ref 0
+      fun tick () =
+        (work := !work + 1;
+         if !work <= limit then ()
+         else raise ERR "clause_frontier_prove" "Boolean frontier too large")
+      fun clauses term =
+        (tick ();
+         if boolSyntax.is_disj term then
+           let val (left, right) = boolSyntax.dest_disj term
+           in clauses left @ clauses right end
+         else [term])
+      fun base term =
+        if boolSyntax.is_neg term then base (boolSyntax.dest_neg term)
+        else term
+      val literals = clauses target
+      val candidates = List.filter
+        (fn term => case skeleton_children term of
+           SOME (_ :: _) => true | _ => false) (List.map base literals)
+      fun attempt exposed =
+        let
+          val _ = work := 0
+          val atoms = ref (Redblackmap.mkDict Term.compare)
+          val substitution = ref []
+          (* A gate input may itself be a disjunction spread along the clause
+             spine.  Preserve any occurrence of that complete input as one
+             atom, rather than flattening it and losing the gate relation. *)
+          val stops = HOLset.addList (Term.empty_tmset,
+            List.concat (List.map
+              (fn term => Option.getOpt (skeleton_children term, []))
+              (HOLset.listItems exposed)))
+          fun atom term =
+            case Redblackmap.peek (!atoms, term) of
+              SOME variable => variable
+            | NONE =>
+                let val variable = Term.genvar Type.bool in
+                  atoms := Redblackmap.insert (!atoms, term, variable);
+                  substitution := {redex = variable, residue = term} ::
+                    !substitution;
+                  variable
+                end
+          fun opaque term = (tick ();
+            if Term.aconv term boolSyntax.T orelse
+               Term.aconv term boolSyntax.F then term
+            else if boolSyntax.is_neg term then
+              boolSyntax.mk_neg (opaque (boolSyntax.dest_neg term))
+            else atom term)
+          fun literal term = (tick ();
+            if boolSyntax.is_neg term then
+              boolSyntax.mk_neg (literal (boolSyntax.dest_neg term))
+            else if HOLset.member (exposed, term) then
+              let
+                val (head, children) = boolSyntax.strip_comb term
+              in Term.list_mk_comb (head, List.map literal children) end
+            else opaque term)
+          fun clause term = (tick ();
+            if HOLset.member (stops, base term) then opaque term
+            else if boolSyntax.is_disj term then
+              let val (left, right) = boolSyntax.dest_disj term
+              in boolSyntax.mk_disj (clause left, clause right) end
+            else literal term)
+          val schematic = clause target
+          val variables = List.map #2 (Redblackmap.listItems (!atoms))
+          val valuations = List.foldl
+            (fn (_, count) => if count > limit div 2 then limit + 1
+                             else count * 2) 1 variables
+          val _ = if valuations <= limit then ()
+            else raise ERR "clause_frontier_prove"
+              "Boolean truth table too large"
+          val valuation = Array.array (List.length variables, false)
+          fun compile term =
+            if Term.aconv term boolSyntax.T then (fn () => true)
+            else if Term.aconv term boolSyntax.F then (fn () => false)
+            else if Term.is_var term then
+              let val index = Lib.index (Term.aconv term) variables
+              in fn () => Array.sub (valuation, index) end
+            else
+              let
+                val evaluations = List.map compile
+                  (valOf (skeleton_children term))
+                fun first () = List.nth (evaluations, 0) ()
+                fun second () = List.nth (evaluations, 1) ()
+              in
+                if boolSyntax.is_neg term then (fn () => not (first ()))
+                else if boolSyntax.is_conj term then
+                  (fn () => first () andalso second ())
+                else if boolSyntax.is_disj term then
+                  (fn () => first () orelse second ())
+                else if boolSyntax.is_imp term then
+                  (fn () => not (first ()) orelse second ())
+                else if boolSyntax.is_eq term then
+                  (fn () => first () = second ())
+                else (fn () => if first () then second ()
+                              else List.nth (evaluations, 2) ())
+              end
+          val evaluate = compile schematic
+          fun all_valuations index =
+            if index = Array.length valuation then evaluate ()
+            else
+              (Array.update (valuation, index, false);
+               all_valuations (index + 1) andalso
+               (Array.update (valuation, index, true);
+                all_valuations (index + 1)))
+          (* This unchecked search can only decline an attempt.  Acceptance
+             still requires the exhaustive kernel proof below. *)
+          val _ = if all_valuations 0 then ()
+            else raise ERR "clause_frontier_prove"
+              "Boolean frontier has a counterexample"
+          (* The finite truth table is checked in process.  Hundreds of
+             tiny gate clauses must not each launch a SAT subprocess. *)
+          val theorem = Tactical.TAC_PROOF (([], schematic),
+            List.foldr (fn (variable, continuation) =>
+              Tactical.THEN (Tactic.BOOL_CASES_TAC variable, continuation))
+              (simpLib.ASM_SIMP_TAC boolSimps.bool_ss []) variables)
+          val instantiated = Thm.INST (!substitution) theorem
+          val exact = Thm.EQ_MP
+            (Thm.ALPHA (Thm.concl instantiated) target) instantiated
+          val _ = Library.check_oracle_tags "SmtSkeletonProve"
+            "clause-frontier" exact
+        in exact end
+      fun try [] = raise ERR "clause_frontier_prove"
+            "no tautological Boolean frontier"
+        | try (candidate :: rest) = attempt candidate
+            handle Feedback.HOL_ERR _ => try rest
+    in
+      try (Term.empty_tmset ::
+        List.map (fn term => HOLset.add (Term.empty_tmset, term)) candidates @
+        [HOLset.addList (Term.empty_tmset, candidates)])
+    end
+
+  fun propositional_prove_in context target =
+    let
+      val _ = Term.type_of target = Type.bool orelse
+        raise ERR "propositional_prove" "target is not Boolean"
+      val graph = phase "skeleton/propositional-cnf"
+        (build_cnf_graph_mode true) target
+      val GraphNode {kind, ...} = #root graph
+      val actual = case kind of
+          GraphTrue => boolTheory.TRUTH
+        | _ => #theorem (phase "skeleton/propositional-sat"
+            (checked_graph_sat_prove_in context (#entries graph)) (#root graph))
+      val _ = List.null (Thm.hyp actual) orelse
+        raise ERR "propositional_prove" "SAT theorem has hypotheses"
+      val GraphNode {equality, ...} = #root graph
+      val theorem = Thm.EQ_MP (Thm.SYM equality) actual
+      val _ = Term.aconv (Thm.concl theorem) target orelse
+        raise ERR "propositional_prove" "conclusion does not match target"
+      val _ = Library.check_oracle_tags
+        "SmtSkeletonProve" "propositional-replay" theorem
+    in theorem end
+
+  fun propositional_prove target =
+    propositional_prove_in (new_sat_context ()) target
+
+  (* Expose only conditional control flow at equality observations.  Values
+     of every type remain opaque; distributing equality over COND uses the
+     polymorphic kernel-checked COND_RAND/COND_RATOR laws.  Memoization bounds
+     the potentially quadratic product of two conditional value DAGs. *)
+  fun conditional_equality_conv target =
+    let
+      val cache = ref (Redblackmap.mkDict Term.compare)
+      val visited = ref 0
+      fun visit term =
+        case Redblackmap.peek (!cache, term) of
+          SOME theorem => anchor_left term theorem
+        | NONE =>
+            let
+              val _ = visited := !visited + 1
+              val _ = !visited <=
+                  SmtResource.max_skeleton_replay_dag_nodes orelse
+                raise ERR "conditional_equality_conv"
+                  "conditional equality frontier too large"
+              fun equality () =
+                let
+                  val (left, right) = boolSyntax.dest_eq term
+                  fun distribute conversion =
+                    let val theorem = conversion term in
+                      Thm.TRANS theorem
+                        (visit (boolSyntax.rhs (Thm.concl theorem)))
+                    end
+                in
+                  if Term.aconv left right then
+                    Conv.REWR_CONV boolTheory.REFL_CLAUSE term
+                  else if boolSyntax.is_cond right then
+                    distribute (Conv.REWR_CONV boolTheory.COND_RAND)
+                  else if boolSyntax.is_cond left then
+                    distribute (Conv.THENC
+                      (Conv.RATOR_CONV
+                         (Conv.REWR_CONV boolTheory.COND_RAND),
+                       Conv.REWR_CONV boolTheory.COND_RATOR))
+                  else if Term.compare (left, right) = GREATER then
+                    Conv.REWR_CONV boolTheory.EQ_SYM_EQ term
+                  else Thm.REFL term
+                end
+              val theorem =
+                case skeleton_children term of
+                  SOME children => anchor_left term
+                    (connective_congruence term (List.map visit children))
+                | NONE =>
+                    if boolSyntax.is_eq term then equality ()
+                    else Thm.REFL term
+              val _ = cache := Redblackmap.insert (!cache, term, theorem)
+            in theorem end
+    in visit target end
+
+  (* Lift checked Boolean equivalences through arbitrary typed applications.
+     Theory operators stay uninterpreted: their arguments must be equal by
+     congruence, not by an assumed theory identity.  Maximal Boolean islands
+     are discharged once rather than lowering all surrounding word circuits. *)
+  fun congruence_prove_in context target =
+    let
+      val (left, right) = boolSyntax.dest_eq target
+      val cache = ref (Redblackmap.mkDict
+        (pair_compare (Term.compare, Term.compare)))
+      val visited = ref 0
+      fun boolean_island left right =
+        Term.type_of left = Type.bool andalso
+        (Option.isSome (skeleton_children left) orelse
+         Option.isSome (skeleton_children right))
+      fun visit (left, right) =
+        if Term.aconv left right then Thm.ALPHA left right
+        else
+          case Redblackmap.peek (!cache, (left, right)) of
+            SOME theorem => theorem
+          | NONE =>
+              let
+                val _ = visited := !visited + 1
+                val _ = !visited <=
+                    SmtResource.max_skeleton_replay_dag_nodes orelse
+                  raise ERR "congruence_prove" "congruence frontier too large"
+                fun structural () =
+                  if Term.is_comb left andalso Term.is_comb right then
+                    let
+                      val (left_head, left_arg) = Term.dest_comb left
+                      val (right_head, right_arg) = Term.dest_comb right
+                    in
+                      Thm.MK_COMB (visit (left_head, right_head),
+                        visit (left_arg, right_arg))
+                    end
+                  else raise ERR "congruence_prove"
+                    "opaque endpoints are not equal"
+                fun boolean () =
+                  let
+                    val equality = boolSyntax.mk_eq (left, right)
+                    val normalized = conditional_equality_conv equality
+                    val residue = boolSyntax.rhs (Thm.concl normalized)
+                  in Thm.EQ_MP (Thm.SYM normalized)
+                    (propositional_prove_in context residue) end
+                val theorem =
+                  if boolean_island left right then
+                    boolean ()
+                  else structural ()
+                val _ = cache := Redblackmap.insert
+                  (!cache, (left, right), theorem)
+              in theorem end
+      val theorem = visit (left, right)
+      val exact = Thm.EQ_MP
+        (Thm.ALPHA (Thm.concl theorem) target) theorem
+      val _ = List.null (Thm.hyp exact) orelse
+        raise ERR "congruence_prove" "congruence introduced hypotheses"
+      val _ = Library.check_oracle_tags
+        "SmtSkeletonProve" "Boolean congruence" exact
+    in exact end
+
+  fun congruence_prove target =
+    congruence_prove_in (new_sat_context ()) target
 
   fun prove_with_owners
       (Context {procedures, fallback, atom_cache}) owners
@@ -1352,5 +1773,7 @@ struct
              (Feedback.HOL_MESG "SKELETON PROCEDURE_UNABLE"; Declined)
          | HolSatLib.SAT_cex _ =>
              (Feedback.HOL_MESG "SKELETON SAT_CEX"; Declined)
+         | HolSatLib.SAT_satisfiable _ =>
+             (Feedback.HOL_MESG "SKELETON SAT"; Declined)
 
 end

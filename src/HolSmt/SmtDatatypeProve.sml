@@ -196,8 +196,18 @@ struct
     Drule.ISPEC tm (TypeBase.nchotomy_of (Term.type_of tm))
 
   fun split_terms_of_goal (assumptions, conclusion) =
-    datatype_split_terms
-      (boolSyntax.list_mk_conj (conclusion :: assumptions))
+    let
+      val target = boolSyntax.list_mk_conj (conclusion :: assumptions)
+      val candidates = datatype_split_terms target
+      val scrutinees = List.mapPartial
+        (fn term => Option.map (fn (_, scrutinee, _) => scrutinee)
+          (Lib.total TypeBase.dest_case term)) (subterms target)
+      fun is_scrutinee candidate =
+        List.exists (Term.aconv candidate) scrutinees
+      val (active, other) = List.partition is_scrutinee candidates
+    in
+      active @ other
+    end
 
   (* Rediscover after every substitution: splitting an innermost application
      changes each enclosing datatype application, so a precomputed list is
@@ -205,17 +215,20 @@ struct
      budget; recursive datatypes can introduce fresh constructor fields, but
      no branch can case-split more often than that original finite count. *)
   fun datatype_split_fixpoint_tac thms budget goal =
-    if budget = 0 then
-      bossLib.RW_TAC (bossLib.srw_ss()) thms goal
-    else
-      case split_terms_of_goal goal of
-        [] => bossLib.RW_TAC (bossLib.srw_ss()) thms goal
-      | split_term :: _ =>
-          Tactical.THEN
-            (profile "datatype(split)"
-               Tactic.FULL_STRUCT_CASES_TAC
-               (nchotomy_for_term split_term),
-             datatype_split_fixpoint_tac thms (budget - 1)) goal
+    Tactical.THEN
+      (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) thms,
+       fn simplified =>
+         if budget = 0 then Tactical.ALL_TAC simplified
+         else
+           case split_terms_of_goal simplified of
+             [] => Tactical.ALL_TAC simplified
+           | split_term :: _ =>
+               Tactical.THEN
+                 (profile "datatype(split)"
+                    Tactic.FULL_STRUCT_CASES_TAC
+                    (nchotomy_for_term split_term),
+                  datatype_split_fixpoint_tac thms (budget - 1))
+                 simplified) goal
 
   fun exhaustiveness_prove t =
     let

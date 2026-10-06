@@ -297,6 +297,37 @@ local
   fun term_contains_conjunction term =
     not (List.null (HolKernel.find_terms boolSyntax.is_conj term))
 
+  (* CPC's n-ary [and] elaborates to [list_mk_conj], hence to this
+     right-associated HOL shape.  Unlike source-occurrence provenance, these
+     operand boundaries are present in the checked theorem itself. *)
+  fun right_associated_conjuncts term =
+    let val (left, right) = boolSyntax.dest_conj term in
+      left ::
+      (case Lib.total boolSyntax.dest_conj right of
+         SOME _ => right_associated_conjuncts right
+       | NONE => [right])
+    end
+
+  (* A proof step can legitimately omit its raw source occurrence after the
+     theorem has been kernel-checked.  The only topology that a later
+     conclusion-less CPC rule needs to recover is an AND operand boundary;
+     its right-associated HOL encoding is checked directly above.  Keep every
+     other shell unavailable.  In particular, do not rebuild equality or
+     application trees from a large checked theorem: source-occurrence facts
+     are not recoverable from them, and retaining them defeats live-proof
+     compaction. *)
+  fun recovered_checked_provenance reason term =
+    let
+      fun recover term =
+        case Lib.total boolSyntax.dest_conj term of
+          SOME _ =>
+            ConjunctionProvenance
+              (ParsedConjunction,
+               List.map recover (right_associated_conjuncts term))
+        | NONE => UnavailableProvenance
+            ("checked result has no recoverable AND boundary: " ^ reason)
+    in recover term end
+
   (* A successful kernel theorem proves when no conjunction occurrence is
      present at all.  In that case Atomic is exact, while equality boundaries
      remain visible in HOL and can be retained recursively.  Any theorem that
@@ -312,12 +343,29 @@ local
       | NONE => AtomicProvenance
 
   (* E1(c): repeated-conclusion theorem reuse is a redundant performance
-     cache.  The historical benchmark switch can disable it independently;
-     actual insert/probe work also passes through the one shared fast-path
-     resource boundary below. *)
+     cache.  It is opt-in because Net matching is structural and can dominate
+     replay of a large, already explicit CPC proof DAG.  Actual insert/probe
+     work also passes through the one shared fast-path resource boundary
+     below. *)
   val theorem_cache_enabled =
-    OS.Process.getEnv "HOL4_CPC_THEOREM_CACHE" <> SOME "0" andalso
+    OS.Process.getEnv "HOL4_CPC_THEOREM_CACHE" = SOME "1" andalso
     not (Library.no_fastpath ())
+
+  (* The theorem cache is a replay acceleration only: CPC's explicit premise
+     graph is the authoritative liveness relation.  Retain just small,
+     hypothesis-free results, whose contexts cannot capture a large scope,
+     and periodically replace the cache as a whole.  This keeps memoization
+     bounded independently of certificate size without changing which kernel
+     theorem a rule is required to reconstruct. *)
+  val max_cached_theorem_dag_nodes = 256
+
+  val max_cached_theorem_entries = 1024
+
+  fun cacheable_theorem theorem =
+    HOLset.isEmpty (Thm.hypset theorem) andalso
+    SmtResource.dag_nodes_up_to
+      (max_cached_theorem_dag_nodes + 1) (Thm.concl theorem) <=
+    max_cached_theorem_dag_nodes
 
   fun theorem_cache_fastpath target prove input =
     Library.require_fastpath "CPC theorem cache" target prove input
@@ -388,19 +436,22 @@ local
     let
       val term = Thm.concl theorem
       val provenance =
-        if not (use_compact_provenance term) andalso
-           not (contains_binder_block_dag provenance) then
-          UnavailableProvenance
-            "exact provenance exceeds the compact metadata budget"
-        else
-          case provenance of
-            UnavailableProvenance reason =>
-              conjunction_free_semantic_provenance reason term
-          | AmbiguousProvenance reason =>
-              if term_contains_conjunction term then
-                AmbiguousProvenance reason
-              else conjunction_free_semantic_provenance reason term
-          | exact => exact
+        case provenance of
+          UnavailableProvenance reason =>
+            recovered_checked_provenance reason term
+        | AmbiguousProvenance reason =>
+            if SmtResource.dag_nodes_up_to
+                 (max_exact_provenance_dag_nodes + 1) term >
+               max_exact_provenance_dag_nodes orelse
+               term_contains_conjunction term then
+              AmbiguousProvenance reason
+            else conjunction_free_semantic_provenance reason term
+        | exact =>
+            if not (use_compact_provenance term) andalso
+               not (contains_binder_block_dag exact) then
+              UnavailableProvenance
+                "exact provenance exceeds the compact metadata budget"
+            else exact
     in
       {thm = theorem, located = {term = term, provenance = provenance}}
     end
@@ -452,16 +503,24 @@ local
     if not theorem_cache_enabled then
       (profile_event "CPC(cache:insert_disabled)";
        state)
+    else if not (cacheable_theorem thm) then
+      (profile_event "CPC(cache:insert_not_cacheable)";
+       state)
     else
+      let
+        val stats = #cache_stats state
+        val reset = !(#cardinality stats) >= max_cached_theorem_entries
+        val thm_cache = if reset then Net.empty else #thm_cache state
+        val () = if reset then profile_event "CPC(cache:reset)" else ()
+      in
       case optional_fastpath fastpath (Thm.concl thm)
           (fn () => Net.insert (Thm.concl thm, {thm = thm})
-            (#thm_cache state)) () of
+            thm_cache) () of
         NONE =>
         (profile_event "CPC(cache:insert_budget_refused)";
          state)
       | SOME thm_cache => let
-          val stats = #cache_stats state
-          val cardinality = !(#cardinality stats) + 1
+          val cardinality = if reset then 1 else !(#cardinality stats) + 1
           val () = #cardinality stats := cardinality
           val () = #peak_cardinality stats :=
             Int.max (!(#peak_cardinality stats), cardinality)
@@ -474,6 +533,7 @@ local
           thm_cache = thm_cache,
           cache_stats = stats
         } end
+      end
 
   fun cache_thm state thm =
     cache_thm_with_fastpath theorem_cache_fastpath state thm
@@ -689,47 +749,10 @@ local
 
   fun is_reglan_equiv proposition = Lib.can dest_reglan_equiv proposition
 
-  fun replay_reglan_refl regex =
-    let
-      val generic = Drule.SPEC_ALL smtstringTheory.reglan_equiv_refl
-      val target = Term.list_mk_comb (reglan_equiv_tm, [regex, regex])
-    in
-      Drule.INST_TY_TERM (Term.match_term (Thm.concl generic) target)
-        generic
-    end
-
-  fun replay_reglan_sym premise =
-    Drule.MATCH_MP smtstringTheory.reglan_equiv_sym premise
-
-  fun replay_reglan_trans first second =
-    let
-      val (left, middle) = dest_reglan_equiv (Thm.concl first)
-      val (middle', right) = dest_reglan_equiv (Thm.concl second)
-      val _ = Term.aconv middle middle' orelse raise ERR "trans"
-        "RegLan equivalence middle endpoints differ"
-    in
-      Drule.MATCH_MP smtstringTheory.reglan_equiv_trans
-        (Thm.CONJ first second)
-    end
-
-  val reglan_congruence_theorems =
-    [smtstringTheory.reglan_eq_imp_equiv,
-     smtstringTheory.reglan_equiv_refl,
-     smtstringTheory.reglan_equiv_sym,
-     smtstringTheory.reglan_equiv_trans,
-     smtstringTheory.reglan_equiv_equiv_eq,
-     smtstringTheory.reglan_concat_equiv,
-     smtstringTheory.reglan_union_equiv,
-     smtstringTheory.reglan_inter_equiv,
-     smtstringTheory.reglan_diff_equiv,
-     smtstringTheory.reglan_comp_equiv,
-     smtstringTheory.reglan_star_equiv,
-     smtstringTheory.reglan_plus_equiv,
-     smtstringTheory.reglan_opt_equiv,
-     smtstringTheory.reglan_power_equiv,
-     smtstringTheory.reglan_loop_equiv,
-     smtstringTheory.reglan_cond_equiv,
-     smtstringTheory.smt_in_re_equiv_eq]
+  val replay_reglan_refl = SmtRegLanProve.refl
+  val replay_reglan_sym = SmtRegLanProve.sym
+  val replay_reglan_trans = SmtRegLanProve.trans
+  val reglan_congruence_theorems = SmtRegLanProve.congruence_theorems
 
   fun replay_reglan_cong conclusion prems =
     case conclusion of
@@ -2507,6 +2530,16 @@ local
         Term.aconv left right
     | NONE => false
 
+  (* Canonicalization changes only sharing and binder names.  The kernel's
+     DAG-aware ALPHA rule checks that exact invariant at the endpoints;
+     rebuilding a second congruence theorem at every descendant is redundant.
+     The parser interner supplies a candidate, never an equality oracle. *)
+  fun canonical_term_conv root =
+    let val canonical = CPC_ProofParser.intern_cpc_term root in
+      if Portable.pointer_eq (root, canonical) then Thm.REFL root
+      else Thm.ALPHA root canonical
+    end
+
   fun replay_trans prems =
     case prems of
       [] => raise ERR "trans" "expected CPC equality premises"
@@ -3046,9 +3079,69 @@ local
     Drule.EQF_ELIM (expect_one_premise "false_elim" prems)
 
   fun replay_true_elim prems =
-    let val premise = expect_one_premise "true_elim" prems in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else Drule.EQT_ELIM premise
+    let
+      val premise = expect_one_premise "true_elim" prems
+      val conclusion = Thm.concl premise
+      (* A conclusion-less CPC TRANS can preserve a Boolean normal form at
+         an endpoint, rather than the literal [true] named by CVC's internal
+         term.  Reconstruct its truth structurally.  This is deliberately
+         not a general simplifier: normal-form connectives are rebuilt by
+         kernel inferences and leaves must be reflexive equalities. *)
+      fun prove_true_normal_form term =
+        let
+          val _ = SmtResource.check_dag_size_for "Skeleton"
+            "cpc-true-elim-normalization"
+            (SmtResource.dag_nodes_up_to
+              (SmtResource.max_skeleton_replay_dag_nodes + 1) term)
+          fun prove term =
+            if Term.aconv term boolSyntax.T then boolTheory.TRUTH
+            else
+              case Lib.total boolSyntax.dest_conj term of
+                SOME (left, right) => Thm.CONJ (prove left) (prove right)
+              | NONE =>
+                  (case Lib.total boolSyntax.dest_disj term of
+                     SOME (left, right) =>
+                       (Thm.DISJ1 (prove left) right
+                        handle Feedback.HOL_ERR _ =>
+                          Thm.DISJ2 left (prove right))
+                   | NONE =>
+                       (case Lib.total boolSyntax.dest_imp term of
+                          SOME (left, right) => Thm.DISCH left (prove right)
+                        | NONE =>
+                            let val (left, right) = boolSyntax.dest_eq term in
+                              if Term.aconv left right then Thm.REFL left
+                              else if Type.compare
+                                  (Term.type_of left, Type.bool) = EQUAL then
+                                Thm.TRANS (Drule.EQT_INTRO (prove left))
+                                  (Thm.SYM
+                                    (Drule.EQT_INTRO (prove right)))
+                              else raise ERR "true_elim"
+                                "Boolean normal form has a non-reflexive leaf"
+                            end))
+          val theorem = SmtResource.with_resource_step_time "Skeleton"
+            "cpc-true-elim-normalization" prove term
+        in theorem
+        end
+    in
+      if Term.aconv conclusion boolSyntax.T then premise
+      else
+        let val (left, right) = boolSyntax.dest_eq conclusion in
+          (* CPC [true_elim] removes either orientation of an equality with
+             truth.  HOL's [EQT_ELIM] has one orientation, so normalize the
+             checked equality first rather than relying on certificate
+             orientation. *)
+          if Term.aconv right boolSyntax.T then Drule.EQT_ELIM premise
+          else if Term.aconv left boolSyntax.T then
+            Drule.EQT_ELIM (Thm.SYM premise)
+          else
+            (* Congruence and transitivity can leave an evaluable Boolean
+               normal form in place of CPC's literal [true].  Establish that
+               normal form by its checked Boolean structure before eliminating
+               it. *)
+            (Thm.EQ_MP (Thm.SYM premise) (prove_true_normal_form right)
+             handle Feedback.HOL_ERR _ =>
+               Thm.EQ_MP premise (prove_true_normal_form left))
+        end
     end
 
   fun replay_true_elim_result ([premise_step] : replayed_step list) =
@@ -3105,18 +3198,9 @@ local
     let
       val premise = step_theorem premise_step
       val conjunction = Thm.concl premise
-      val (source, conjunct_provenances) =
-        case step_provenance premise_step of
-          ConjunctionProvenance (source, conjuncts) => (source, conjuncts)
-        | UnavailableProvenance reason => raise ERR "and_elim"
-            ("CPC and_elim provenance unavailable: " ^ reason)
-        | AmbiguousProvenance reason => raise ERR "and_elim"
-            ("CPC and_elim provenance ambiguous: " ^ reason)
-        | _ => raise ERR "and_elim"
-            "CPC and_elim premise has no conjunction occurrence provenance"
-      val arity = List.length conjunct_provenances
-      val _ = arity >= 2 orelse raise ERR "and_elim"
-        "CPC and_elim conjunction provenance has fewer than two operands"
+      val index =
+        Arbnum.toInt (numSyntax.dest_numeral (intSyntax.dest_injected
+          (expect_one_arg "and_elim" args)))
       fun split n term =
         if n = 1 then [term]
         else if n > 1 then
@@ -3125,36 +3209,58 @@ local
             end
         else raise ERR "and_elim"
             "CPC conjunction provenance arity must be positive"
-      val conjuncts = split arity conjunction
-        handle Feedback.HOL_ERR _ => raise ERR "and_elim"
-          ("CPC conjunction provenance arity " ^ Int.toString arity ^
-           " does not match premise " ^
-           Library.term_to_string conjunction)
-      val index =
-        Arbnum.toInt (numSyntax.dest_numeral (intSyntax.dest_injected
-          (expect_one_arg "and_elim" args)))
-      val conjunct = List.nth (conjuncts, index)
-        handle Subscript => raise ERR "and_elim"
-          ("CPC conjunction index " ^ Int.toString index ^
-           " is outside parsed arity " ^ Int.toString arity ^
-           " for premise " ^ Library.term_to_string conjunction)
-      val selected_provenance = List.nth (conjunct_provenances, index)
-        handle Subscript => raise ERR "and_elim"
-          ("CPC conjunction provenance index " ^ Int.toString index ^
-           " is outside arity " ^ Int.toString arity)
-      val _ = profile_event ("CPC(and_elim:provenance/" ^
-        conjunction_source_name source ^ ")")
+      fun recover_without_provenance provenance =
+        let
+          val conjunct = List.nth (right_associated_conjuncts conjunction,
+                                   index)
+            handle Feedback.HOL_ERR _ => raise ERR "and_elim"
+              ("CPC and_elim premise has no recoverable conjunction: " ^
+               provenance_shape provenance)
+              | Subscript => raise ERR "and_elim"
+              ("CPC conjunction index " ^ Int.toString index ^
+               " is outside the recovered arity for premise " ^
+               Library.term_to_string conjunction)
+          val theorem = Library.conj_elim (premise, conjunct)
+          val _ = profile_event "CPC(and_elim:recovered)"
+        in (theorem,
+            recovered_checked_provenance
+              "and_elim selected an operand after metadata compaction"
+              conjunct)
+        end
+      fun replay_with_provenance (source, conjunct_provenances) =
+        let
+          val arity = List.length conjunct_provenances
+          val _ = arity >= 2 orelse raise ERR "and_elim"
+            "CPC and_elim conjunction provenance has fewer than two operands"
+          val conjuncts = split arity conjunction
+            handle Feedback.HOL_ERR _ => raise ERR "and_elim"
+              ("CPC conjunction provenance arity " ^ Int.toString arity ^
+               " does not match premise " ^
+               Library.term_to_string conjunction)
+          val conjunct = List.nth (conjuncts, index)
+            handle Subscript => raise ERR "and_elim"
+              ("CPC conjunction index " ^ Int.toString index ^
+               " is outside parsed arity " ^ Int.toString arity ^
+               " for premise " ^ Library.term_to_string conjunction)
+          val selected_provenance = List.nth (conjunct_provenances, index)
+            handle Subscript => raise ERR "and_elim"
+              ("CPC conjunction provenance index " ^ Int.toString index ^
+               " is outside arity " ^ Int.toString arity)
+          val _ = profile_event ("CPC(and_elim:provenance/" ^
+            conjunction_source_name source ^ ")")
+        in (Library.conj_elim (premise, conjunct), selected_provenance) end
+      val (theorem, provenance) =
+        case step_provenance premise_step of
+          ConjunctionProvenance pair => replay_with_provenance pair
+        | unavailable => recover_without_provenance unavailable
       val _ = case conclusion of
           NONE => ()
         | SOME target =>
-            if Term.aconv target conjunct then ()
+            if Term.aconv target (Thm.concl theorem) then ()
             else raise ERR "and_elim"
               "declared CPC result differs from its indexed conjunct"
     in
-      case Lib.total Library.conj_elim (premise, conjunct) of
-        SOME theorem => (theorem, selected_provenance)
-      | NONE => raise ERR "and_elim"
-          "declared CPC result is not a conjunct of its premise"
+      (theorem, provenance)
     end
 
   fun tautology name target =
@@ -3168,8 +3274,10 @@ local
   fun xor_tautology target =
     Tactical.TAC_PROOF (([], target),
       Tactical.THEN
-        (bossLib.SIMP_TAC (bossLib.srw_ss()) [HolSmtTheory.xor_def],
-         tautLib.TAUT_TAC))
+        (profile "CPC(xor_tautology:simp)"
+           (bossLib.SIMP_TAC (bossLib.srw_ss())
+             [HolSmtTheory.xor_def]),
+         profile "CPC(xor_tautology:taut)" tautLib.TAUT_TAC))
 
   fun tautological_consequence premise target =
     Thm.MP (tautLib.TAUT_PROVE
@@ -4157,8 +4265,20 @@ local
       fun conjunction_implication source destination =
         let
           val assumption = Thm.ASSUME source
-          val leaves = ref ([] : (Term.term * Thm.thm) list)
+          (* ACI normalization compares each destination leaf against the
+             source collection.  This must be an indexed exact term set:
+             the former linear search makes a large bit-blasted clause
+             quadratic in its leaves.  [Term.compare] is alpha-aware, so a
+             successful lookup is precisely the equality required by the
+             kernel inference below. *)
+          val leaves = ref (Redblackmap.mkDict Term.compare :
+            (Term.term, Thm.thm) Redblackmap.dict)
           val seen = ref (Redblackmap.mkDict Term.compare)
+          fun remember term theorem =
+            case Redblackmap.peek (!leaves, term) of
+              SOME _ => ()
+            | NONE =>
+                leaves := Redblackmap.insert (!leaves, term, theorem)
           fun collect term theorem =
             case SmtSkeletonProve.pointer_cache_peek (!seen) term of
               SOME () => ()
@@ -4171,19 +4291,13 @@ local
                      SOME (left, right) =>
                        (collect left (Thm.CONJUNCT1 theorem);
                         collect right (Thm.CONJUNCT2 theorem))
-                   | NONE => leaves := (term, theorem) :: !leaves)
+                   | NONE => remember term theorem)
           val _ = collect source assumption
           fun leaf_theorem term =
-            case List.find
-                (fn (saved, _) => Portable.pointer_eq (term, saved))
-                (!leaves) of
-              SOME (_, theorem) => theorem
-            | NONE =>
-                (case List.find
-                    (fn (saved, _) => Term.aconv term saved) (!leaves) of
-                   SOME (_, theorem) => theorem
-                 | NONE => raise ERR "aci_norm"
-                     "conjunction normalization changed a leaf")
+            case Redblackmap.peek (!leaves, term) of
+              SOME theorem => theorem
+            | NONE => raise ERR "aci_norm"
+                "conjunction normalization changed a leaf"
           val memo = ref (Redblackmap.mkDict Term.compare)
           fun derive term =
             case SmtSkeletonProve.pointer_cache_peek (!memo) term of
@@ -4214,38 +4328,43 @@ local
         in Drule.IMP_ANTISYM_RULE forward reverse end
       fun disjunction_implication source destination =
         let
-          fun same left right = Portable.pointer_eq (left, right) orelse
-            Term.aconv left right
-          fun contains leaf root =
-            let
-              val seen = ref ([] : Term.term list)
-              fun search term =
-                if List.exists (fn saved =>
-                     Portable.pointer_eq (saved, term)) (!seen) then false
-                else
-                  (seen := term :: !seen;
-                   same leaf term orelse
-                   case Lib.total boolSyntax.dest_disj term of
-                     SOME (left, right) =>
-                       search left orelse search right
-                   | NONE => false)
-            in search root end
+          (* Index a representative destination path for each leaf.  The
+             previous [contains] search walked the destination afresh for
+             every source leaf; this is the same exact ACI construction with
+             linear indexing and logarithmic leaf lookup. *)
+          val destination_paths = ref (Redblackmap.mkDict Term.compare :
+            (Term.term, bool list) Redblackmap.dict)
+          fun remember term path =
+            case Redblackmap.peek (!destination_paths, term) of
+              SOME _ => ()
+            | NONE =>
+                destination_paths := Redblackmap.insert
+                  (!destination_paths, term, List.rev path)
+          fun index term path =
+            if Term.aconv term boolSyntax.T orelse
+               Term.aconv term boolSyntax.F then ()
+            else
+              case Lib.total boolSyntax.dest_disj term of
+                SOME (left, right) =>
+                  (index left (true :: path); index right (false :: path))
+              | NONE => remember term path
+          val _ = index destination []
           fun from_false theorem =
             Thm.MP (Thm.SPEC destination boolTheory.FALSITY) theorem
-          fun inject theorem term =
+          fun place theorem term [] = theorem
+            | place theorem term (left_branch :: rest) =
+                let val (left, right) = boolSyntax.dest_disj term in
+                  if left_branch then
+                    Thm.DISJ1 (place theorem left rest) right
+                  else Thm.DISJ2 left (place theorem right rest)
+                end
+          fun inject theorem =
             let val leaf = Thm.concl theorem in
               if Term.aconv leaf boolSyntax.F then from_false theorem
-              else if Term.aconv term boolSyntax.T then boolTheory.TRUTH
-              else if same leaf term then theorem
+              else if Term.aconv destination boolSyntax.T then boolTheory.TRUTH
               else
-                case Lib.total boolSyntax.dest_disj term of
-                  SOME (left, right) =>
-                    if contains leaf left then
-                      Thm.DISJ1 (inject theorem left) right
-                    else if contains leaf right then
-                      Thm.DISJ2 left (inject theorem right)
-                    else raise ERR "aci_norm"
-                      "disjunction normalization changed a leaf"
+                case Redblackmap.peek (!destination_paths, leaf) of
+                  SOME path => place theorem destination path
                 | NONE => raise ERR "aci_norm"
                     "disjunction normalization changed a leaf"
             end
@@ -4263,7 +4382,7 @@ local
                           Thm.DISJ_CASES theorem
                             (derive left (Thm.ASSUME left))
                             (derive right (Thm.ASSUME right))
-                      | NONE => inject theorem destination
+                      | NONE => inject theorem
                   val _ = memo := SmtSkeletonProve.pointer_cache_insert
                     (!memo) term result
                 in result end
@@ -4296,18 +4415,20 @@ local
                   List.exists (fn saved => Name = saved)
                     ["word_and", "word_or", "word_xor"] orelse
             raise ERR "aci_norm" "not a word AC operator"
-          val atoms = ref
-            ([] : (Term.term * Term.term) list)
+          (* AC abstraction also needs exact term indexing: a list makes a
+             wide word expression repeatedly compare every accumulated atom.
+             The structural dictionary is alpha-aware, matching the
+             equivalence used by the final instantiated kernel theorem. *)
+          val atoms = ref (Redblackmap.mkDict Term.compare :
+            (Term.term, Term.term) Redblackmap.dict)
           fun atom term =
-            case List.find
-                (fn (saved, _) =>
-                  Portable.pointer_eq (saved, term) orelse
-                  Term.aconv saved term) (!atoms) of
-              SOME (_, variable) => variable
+            case Redblackmap.peek (!atoms, term) of
+              SOME variable => variable
             | NONE =>
                 let
                   val variable = Term.genvar (Term.type_of term)
-                  val _ = atoms := (term, variable) :: !atoms
+                  val _ = atoms := Redblackmap.insert
+                    (!atoms, term, variable)
                 in variable end
           fun abstract term =
             let val (head, arguments) = boolSyntax.strip_comb term in
@@ -4319,7 +4440,7 @@ local
             handle Feedback.HOL_ERR _ => atom term
           val generic_target = boolSyntax.mk_eq
             (abstract left, abstract right)
-          val _ = List.length (!atoms) <= 64 orelse
+          val _ = Redblackmap.numItems (!atoms) <= 64 orelse
             raise ERR "aci_norm" "word AC schema has too many leaves"
           val laws =
             if Name = "word_and" then
@@ -4334,7 +4455,7 @@ local
               wordsLib.WORD_ARITH_PROVE generic_target
           val substitutions = List.map
             (fn (term, variable) => {redex = variable, residue = term})
-            (!atoms)
+            (Redblackmap.listItems (!atoms))
         in Thm.INST substitutions generic end
     in
       if reflexive then Thm.REFL (Lib.fst (boolSyntax.dest_eq target))
@@ -5226,78 +5347,10 @@ local
     | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
     | mk_disj_terms [] = boolSyntax.F
 
-  (* Alpha-equivalence over a term DAG.  [Term.aconv] is intentionally a
-     simple tree walk; CPC aliases can present two separately assembled roots
-     with exponentially shared descendants.  Shallow syntax hashing gives
-     pointer-pair memoization without relying on a non-portable pointer hash. *)
-  fun shared_aconv left right =
-    if Portable.pointer_eq (left, right) then true
-    else if Option.isSome (Term.term_size_bounded 64 left) andalso
-            Option.isSome (Term.term_size_bounded 64 right) then
-      Term.aconv left right
-    else
-    let
-      val bucket_count = 4093
-      val buckets = Array.array
-        (bucket_count, [] : (Term.term * Term.term * bool) list)
-      fun string_hash string =
-        let
-          fun loop index hash =
-            if index = String.size string then hash
-            else loop (index + 1)
-              ((hash * 33 + Char.ord (String.sub (string, index))) mod
-               bucket_count)
-        in loop 0 7 end
-      fun spine (term, arity) =
-        if Term.is_comb term then spine (Term.rator term, arity + 1)
-        else (term, arity)
-      fun root_hash term =
-        let val (head, arity) = spine (term, 0) in
-          if Term.is_const head then
-            let val {Thy, Name, ...} = Term.dest_thy_const head in
-              (string_hash Thy * 37 + string_hash Name * 17 + arity) mod
-              bucket_count
-            end
-          else if Term.is_var head then
-            let val (name, _) = Term.dest_var head in
-              (string_hash name * 37 + arity) mod bucket_count
-            end
-          else if Term.is_abs head then (101 + arity) mod bucket_count
-          else (211 + arity) mod bucket_count
-        end
-      fun index left right =
-        (root_hash left * 67 + root_hash right) mod bucket_count
-      fun find [] _ _ = NONE
-        | find ((saved_left, saved_right, result) :: rest) left right =
-            if Portable.pointer_eq (left, saved_left) andalso
-               Portable.pointer_eq (right, saved_right) then SOME result
-            else find rest left right
-      fun compare left right =
-        if Portable.pointer_eq (left, right) then true
-        else
-          let
-            val bucket = index left right
-          in
-            case find (Array.sub (buckets, bucket)) left right of
-              SOME result => result
-            | NONE =>
-                let
-                  val result =
-                    if Term.type_of left <> Term.type_of right then false
-                    else if Term.is_comb left andalso Term.is_comb right then
-                      compare (Term.rator left) (Term.rator right) andalso
-                      compare (Term.rand left) (Term.rand right)
-                    else if Term.is_abs left andalso Term.is_abs right then
-                      Term.type_of (Term.bvar left) =
-                        Term.type_of (Term.bvar right) andalso
-                      compare (Term.body left) (Term.body right)
-                    else Term.aconv left right
-                  val entries = Array.sub (buckets, bucket)
-                  val _ = Array.update
-                    (buckets, bucket, (left, right, result) :: entries)
-                in result end
-          end
-    in compare left right end
+  (* The kernel comparison preserves physical DAG sharing and uses an
+     operation-local identity memo.  Reuse it rather than retain a second
+     alpha-equivalence engine and recount each candidate's entire DAG. *)
+  val shared_aconv = Term.aconv
 
   val boolean_dag_bucket_count = 16381
 
@@ -5539,14 +5592,42 @@ local
   fun prove_boolean_dag_tautology label goal =
     prove_boolean_dag_tautology_stopping [] label goal
 
+  fun xor_graph_tautology target =
+    let
+      val normalization =
+        profile "CPC(xor_graph:simplify)"
+          (simpLib.SIMP_CONV (bossLib.srw_ss())
+            [HolSmtTheory.xor_def]) target
+        handle Conv.UNCHANGED => Thm.REFL target
+      val residue = boolSyntax.rhs (Thm.concl normalization)
+      val law =
+        if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
+        else
+          (profile "CPC(xor_graph:sat)"
+             (prove_boolean_dag_tautology "cpc-trans-xor-graph")
+             residue
+           handle HolSatLib.SAT_cex _ =>
+             raise ERR "xor_graph_tautology"
+               "normalized bridge is not propositionally valid")
+    in
+      Thm.EQ_MP (Thm.SYM normalization) law
+    end
+
   fun prove_word_graph_tautology_uncached feature target =
     let
+      fun trace_stage stage =
+        if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full" then
+          (Feedback.HOL_MESG ("CPC word graph " ^ stage);
+           TextIO.flushOut TextIO.stdOut)
+        else ()
       fun node_conversion term =
         SmtFpGraph.convert_word_projection term
         handle Conv.UNCHANGED =>
           (Conv.REWR_CONV
              smtfloatReplayRoundingTheory.word_compare_index term
-           handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED)
+           handle Feedback.HOL_ERR _ =>
+             (Conv.REWR_CONV HolSmtTheory.xor_def term
+              handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED))
              | Empty => raise Conv.UNCHANGED
              | Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
@@ -5568,9 +5649,17 @@ local
                   else loop (remaining - 1) (Thm.TRANS theorem next)
                 end
         in loop 8 (Thm.REFL term) end
+      val _ = trace_stage "normalize begin"
       val conversion = SmtResource.with_bitblast_step_time
         (feature ^ "-normalize") normalize_all target
+      val _ = trace_stage "normalize end"
       val residue = boolSyntax.rhs (Thm.concl conversion)
+      (* Word-graph replay owns normalization of word/FP projections.  If it
+         made no change, defer the untouched Boolean formula to the checked
+         propositional/XOR rungs instead of bit-blasting the same circuit. *)
+      val _ = if Portable.pointer_eq (residue, target) then
+        raise Conv.UNCHANGED
+      else ()
       fun sat suffix formula =
         prove_boolean_dag_tautology (feature ^ suffix) formula
       fun prove_residue () =
@@ -5589,7 +5678,8 @@ local
             "residue is not a Boolean tautology"
       val residue_theorem =
         if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
-        else prove_residue ()
+        else (trace_stage "sat begin"; prove_residue ())
+      val _ = trace_stage "sat end"
     in Thm.EQ_MP (Thm.SYM conversion) residue_theorem end
 
   val word_graph_tautology_cache = ref
@@ -5613,7 +5703,53 @@ local
           in theorem end
     end
 
-  fun replay_direct_nary_cong source prems =
+  (* A CPC nary_cong certificate supplies one premise for each immediate
+     argument of its source application.  Reconstruct that application spine
+     directly: descending through each argument is both unnecessary and can
+     repeatedly traverse a shared bit-vector/FP circuit.  The fallback below
+     retains the general occurrence-based reconstruction for non-flat input. *)
+  fun replay_flat_nary_cong source prems =
+    let
+      fun expose premise =
+        if boolSyntax.is_eq (Thm.concl premise) then premise
+        else Drule.EQT_INTRO premise
+      fun orient argument premise =
+        let
+          val premise = expose premise
+          val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+        in
+          if Portable.pointer_eq (argument, left) then premise
+          else if Portable.pointer_eq (argument, right) then Thm.SYM premise
+          else if shared_aconv argument left then
+            SmtSkeletonProve.anchor_left argument premise
+          else if shared_aconv argument right then
+            SmtSkeletonProve.anchor_left argument (Thm.SYM premise)
+          else raise ERR "nary_cong"
+            "premise does not rewrite an immediate source argument"
+        end
+      fun orient_all [] [] = []
+        | orient_all (argument :: arguments) (premise :: premises) =
+            orient argument premise :: orient_all arguments premises
+        | orient_all _ _ = raise ERR "nary_cong"
+            "certificate premise count differs from source application arity"
+      val (head, arguments) = boolSyntax.strip_comb source
+      val argument_equalities = orient_all arguments prems
+      val theorem = List.foldl
+        (fn (argument_equality, application_equality) =>
+          Thm.MK_COMB (application_equality, argument_equality))
+        (Thm.REFL head) argument_equalities
+    in
+      SmtSkeletonProve.anchor_left source theorem
+    end
+
+  fun replay_nary_cong source prems =
+    replay_flat_nary_cong source prems
+    handle Feedback.HOL_ERR error =>
+      if SmtResource.is_resource_gate error then
+        raise Feedback.HOL_ERR error
+      else replay_direct_nary_cong source prems
+
+  and replay_direct_nary_cong source prems =
     let
       fun expose premise =
         if boolSyntax.is_eq (Thm.concl premise) then premise
@@ -5782,42 +5918,6 @@ local
         in raise ERR "nary_cong" "DAG congruence made no progress" end
     in theorem end
 
-  fun canonical_term_conv root =
-    let
-      val memo = ref (Redblackmap.mkDict Term.compare)
-      fun convert term =
-        case SmtSkeletonProve.pointer_cache_peek (!memo) term of
-          SOME theorem => theorem
-        | NONE =>
-            let
-              val direct = CPC_ProofParser.intern_cpc_term term
-            in
-              if Portable.pointer_eq (term, direct) then Thm.REFL term
-              else
-                let
-                  val rebuilt =
-                    if Term.is_comb term then
-                      let val (operator, operand) = Term.dest_comb term
-                      in Thm.MK_COMB (convert operator, convert operand) end
-                    else if Term.is_abs term then
-                      let val (variable, body) = Term.dest_abs term
-                      in Thm.ABS variable (convert body) end
-                    else Thm.REFL term
-                  val rebuilt =
-                    if Portable.pointer_eq
-                         (boolSyntax.lhs (Thm.concl rebuilt), term) then rebuilt
-                    else Thm.TRANS (Thm.REFL term) rebuilt
-                  val right = boolSyntax.rhs (Thm.concl rebuilt)
-                  val canonical = CPC_ProofParser.intern_cpc_term right
-                  val theorem =
-                    if Portable.pointer_eq (right, canonical) then rebuilt
-                    else Thm.TRANS rebuilt (Thm.REFL canonical)
-                  val _ = memo := SmtSkeletonProve.pointer_cache_insert
-                    (!memo) term theorem
-                in theorem end
-            end
-    in convert root end
-
   fun replay_shared_trans prems =
     let
       fun compose (next, accumulated) =
@@ -5845,6 +5945,31 @@ local
 
   fun replay_shared_trans_result premise_steps =
     let
+      fun shared_phase name work =
+        if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full" then
+          let
+            val timer = Timer.startCPUTimer ()
+            val _ = Feedback.HOL_MESG ("CPC shared begin " ^ name)
+            val _ = TextIO.flushOut TextIO.stdOut
+            val result = profile ("CPC(trans:shared/" ^ name ^ ")")
+              work ()
+              handle exn =>
+                let
+                  val {nongc, ...} = Timer.checkCPUTimes timer
+                  val _ = Feedback.HOL_MESG
+                    ("CPC shared failed " ^ name ^ " cpu=" ^
+                     Time.toString (#usr nongc))
+                  val _ = TextIO.flushOut TextIO.stdOut
+                in raise exn end
+            val {nongc, ...} = Timer.checkCPUTimes timer
+            val _ = Feedback.HOL_MESG
+              ("CPC shared end " ^ name ^ " cpu=" ^
+               Time.toString (#usr nongc))
+            val _ = TextIO.flushOut TextIO.stdOut
+          in result end
+        else work ()
+      fun same left right =
+        shared_phase "compare" (fn () => shared_aconv left right)
       fun endpoints step =
         case step_provenance step of
           EqualityProvenance pair => SOME pair
@@ -5863,46 +5988,57 @@ local
                  SOME (select (accumulated_pair, next_pair))
              | _ => NONE)
           fun canonical_pair left right =
-            if shared_aconv left right then
-              (SmtSkeletonProve.bounded_nodewise_equality
-                 SmtResource.max_skeleton_replay_dag_nodes left right,
+            if same left right then
+              (shared_phase "nodewise" (fn () =>
+                 SmtSkeletonProve.bounded_nodewise_equality
+                   SmtResource.max_skeleton_replay_dag_nodes left right),
                Thm.REFL right)
             else
             let
-              val left_theorem = canonical_term_conv left
-              val right_theorem = canonical_term_conv right
+              val left_theorem = shared_phase "canonical_term"
+                (fn () => canonical_term_conv left)
+              val right_theorem = shared_phase "canonical_term"
+                (fn () => canonical_term_conv right)
               val left_canonical = boolSyntax.rhs (Thm.concl left_theorem)
               val right_canonical = boolSyntax.rhs (Thm.concl right_theorem)
-              val same =
+              val canonical_same =
                 Portable.pointer_eq (left_canonical, right_canonical) orelse
-                shared_aconv left_canonical right_canonical
+                same left_canonical right_canonical
               val (left_theorem, right_theorem) =
-                if same then (left_theorem, right_theorem)
+                if canonical_same then (left_theorem, right_theorem)
                 else
                   let
                     val bridge_target = boolSyntax.mk_eq
                       (left_canonical, right_canonical)
-                    val bridge =
-                      (prove_word_graph_tautology
-                         "cpc-trans-word" bridge_target
-                       handle Conv.UNCHANGED =>
-                         replay_aci_norm [bridge_target]
-                            | Feedback.HOL_ERR holerr =>
+                    fun after_word () =
+                      (profile "CPC(rung:trans/XOR_GRAPH)"
+                         xor_graph_tautology bridge_target
+                       handle Feedback.HOL_ERR holerr =>
                          if SmtResource.is_resource_gate holerr then
                            raise Feedback.HOL_ERR holerr
-                         else replay_aci_norm [bridge_target])
-                      handle Feedback.HOL_ERR holerr =>
-                        if SmtResource.is_resource_gate holerr then
-                          raise Feedback.HOL_ERR holerr
-                        else
-                          (profile "CPC(rung:trans/TAUT)"
-                             tautLib.TAUT_PROVE bridge_target
-                           handle Feedback.HOL_ERR holerr =>
-                             if SmtResource.is_resource_gate holerr then
-                               raise Feedback.HOL_ERR holerr
-                             else
-                               profile "CPC(rung:trans/XOR_TAUT)"
-                                 xor_tautology bridge_target)
+                         else
+                           (profile "CPC(rung:trans/XOR_TAUT)"
+                              xor_tautology bridge_target
+                            handle Feedback.HOL_ERR holerr =>
+                              if SmtResource.is_resource_gate holerr then
+                                raise Feedback.HOL_ERR holerr
+                              else shared_phase "bridge_aci" (fn () =>
+                                replay_aci_norm [bridge_target])))
+                    val bridge =
+                      ((shared_phase "bridge_word" (fn () =>
+                          prove_word_graph_tautology
+                            "cpc-trans-word" bridge_target)
+                        handle Conv.UNCHANGED => after_word ()
+                         | Feedback.HOL_ERR holerr =>
+                          if SmtResource.is_resource_gate holerr then
+                            raise Feedback.HOL_ERR holerr
+                          else after_word ())
+                       handle Feedback.HOL_ERR holerr =>
+                         if SmtResource.is_resource_gate holerr then
+                           raise Feedback.HOL_ERR holerr
+                         else
+                           profile "CPC(rung:trans/TAUT)"
+                             tautLib.TAUT_PROVE bridge_target)
                   in
                     (Thm.TRANS left_theorem bridge, right_theorem)
                   end
@@ -5944,22 +6080,22 @@ local
           if Portable.pointer_eq (accumulated_right, next_left) then
             result (Thm.TRANS accumulated next)
               (fn ((left, _), (_, right)) => (left, right))
-          else if shared_aconv accumulated_right next_left then
+          else if same accumulated_right next_left then
             right_left ()
           else if Portable.pointer_eq (accumulated_right, next_right) then
             result (Thm.TRANS accumulated (Thm.SYM next))
               (fn ((left, _), (right, _)) => (left, right))
-          else if shared_aconv accumulated_right next_right then
+          else if same accumulated_right next_right then
             right_right ()
           else if Portable.pointer_eq (accumulated_left, next_left) then
             result (Thm.TRANS (Thm.SYM accumulated) next)
               (fn ((_, right), (_, next_right)) => (right, next_right))
-          else if shared_aconv accumulated_left next_left then
+          else if same accumulated_left next_left then
             left_left ()
           else if Portable.pointer_eq (accumulated_left, next_right) then
             result (Thm.TRANS (Thm.SYM accumulated) (Thm.SYM next))
               (fn ((_, right), (next_left, _)) => (right, next_left))
-          else if shared_aconv accumulated_left next_right then
+          else if same accumulated_left next_right then
             left_right ()
           else
             (right_left ()
@@ -7227,13 +7363,23 @@ local
       (Term.term, Thm.thm) Redblackmap.dict)
   val fp_atom_bridge_laws = ref ([] : Thm.thm list)
 
-  val circuit_cnf_atom = Library.prove
-    (``(p : bool) = q <=> (p \/ ~q) /\ (~p \/ q)``,
-     tautLib.TAUT_TAC)
-  val circuit_cnf_true = Library.prove
-    (``((p : bool) = T) <=> p``, tautLib.TAUT_TAC)
-  val circuit_cnf_false = Library.prove
-    (``((p : bool) = F) <=> ~p``, tautLib.TAUT_TAC)
+  val rounding_partition_law = Library.prove
+    (``!mode : smt_rounding.
+       (mode = RNE \/ mode = RNA \/ mode = RTP \/
+        mode = RTN \/ mode = RTZ) /\
+       ~(mode = RNE /\ mode = RNA) /\
+       ~(mode = RNE /\ mode = RTP) /\
+       ~(mode = RNE /\ mode = RTN) /\
+       ~(mode = RNE /\ mode = RTZ) /\
+       ~(mode = RNA /\ mode = RTP) /\
+       ~(mode = RNA /\ mode = RTN) /\
+       ~(mode = RNA /\ mode = RTZ) /\
+       ~(mode = RTP /\ mode = RTN) /\
+       ~(mode = RTP /\ mode = RTZ) /\
+       ~(mode = RTN /\ mode = RTZ)``,
+     metisLib.METIS_TAC
+       [smtfloatTheory.smt_rounding_cases,
+        smtfloatTheory.smt_rounding_distinctness])
 
   fun prove_boolean_circuit_tautology goal =
     if boolSyntax.is_eq goal andalso
@@ -7276,7 +7422,31 @@ local
       val active = Array.array
         (boolean_dag_bucket_count,
          [] : (Term.term * unit) list)
-      fun bucket_index term = boolean_dag_term_hash 4 term
+      (* Shallow hashes cluster independently expanded word circuits with
+         the same operator prefix.  Memoize a whole-DAG hash instead, so
+         each physical application is visited once.  Abstractions stay
+         opaque, making the hash independent of binder names without
+         opening binders.  Hashes select buckets only: every structural
+         reuse still requires exact alpha-equivalence. *)
+      val hashes = Array.array
+        (boolean_dag_bucket_count, [] : (Term.term * int) list)
+      fun bucket_index term =
+        let val index = boolean_dag_term_hash 4 term in
+          case List.find (fn (saved, _) => Portable.pointer_eq (saved, term))
+              (Array.sub (hashes, index)) of
+            SOME (_, hash) => hash
+          | NONE =>
+              let
+                val hash =
+                  if Term.is_comb term then
+                    (41 * bucket_index (Term.rator term) +
+                     67 * bucket_index (Term.rand term) + 31) mod
+                    boolean_dag_bucket_count
+                  else boolean_dag_term_hash 0 term
+                val _ = Array.update (hashes, index,
+                  (term, hash) :: Array.sub (hashes, index))
+              in hash end
+        end
       fun pointer_lookup table term =
         case List.find (fn (saved, _) =>
             Portable.pointer_eq (saved, term))
@@ -7317,9 +7487,12 @@ local
               val _ = insert leaves term result
               val _ = leaf_count := !leaf_count + 1
             in result end
-      val fp_atom_leaf_rewrites =
+      (* SMT Core XOR is a Boolean gate, not an opaque theory atom.  Both
+         circuit paths use this checked definition before abstracting leaves. *)
+      val circuit_leaf_rewrites =
         List.map Conv.REWR_CONV
-          [fcpTheory.COND_COMPONENT,
+          [HolSmtTheory.xor_def,
+           fcpTheory.COND_COMPONENT,
            smtfloatReplayRoundingTheory.word_and_index0,
            smtfloatReplayRoundingTheory.word_or_index0,
            smtfloatReplayRoundingTheory.word_xor_index0,
@@ -7676,7 +7849,11 @@ local
           val _ = numSyntax.is_numeral index orelse
             raise Conv.UNCHANGED
           val (head, arguments) = boolSyntax.strip_comb word
-          val _ = Term.is_const head orelse raise Conv.UNCHANGED
+          (* Variable-word projections are primitive circuit atoms too.
+             Their guarded word_bit spelling must normalize to the same
+             FCP index in the structural path as in the ordinary path. *)
+          val _ = Term.is_const head orelse Term.is_var head orelse
+            raise Conv.UNCHANGED
           val (variables, law) =
             case List.find (fn (saved_head, saved_index, _, _) =>
                 Term.aconv saved_head head andalso
@@ -7741,12 +7918,12 @@ local
               else NONE of
                SOME theorem => SOME theorem
              | NONE => case Lib.total
-                (Conv.FIRST_CONV fp_atom_leaf_rewrites) term of
+                (Conv.FIRST_CONV circuit_leaf_rewrites) term of
                SOME theorem => SOME theorem
              | NONE =>
                let
                  fun attempt conversion =
-                   SOME (conversion term)
+                   SOME (Conv.CHANGED_CONV conversion term)
                    handle Conv.UNCHANGED => NONE
                         | Feedback.HOL_ERR holerr =>
                             if SmtResource.is_resource_gate holerr then
@@ -7892,7 +8069,8 @@ local
                 else
                   let
                     fun attempt conversion =
-                      SOME (conversion term)
+                      (* Reflexivity must not hide a later applicable rule. *)
+                      SOME (Conv.CHANGED_CONV conversion term)
                       handle Conv.UNCHANGED => NONE
                            | Feedback.HOL_ERR holerr =>
                                if SmtResource.is_resource_gate holerr then
@@ -7965,12 +8143,15 @@ local
                       end
                     val normalized =
                       case first_conversion
-                          fp_atom_leaf_rewrites of
+                          circuit_leaf_rewrites of
                         SOME theorem => SOME theorem
                       | NONE =>
                       case if SmtFpGraph.lower_atom_domain term then
                           attempt SmtFpGraph.convert_atom
                         else NONE of
+                        SOME theorem => SOME theorem
+                      | NONE =>
+                      case attempt projection_index_conversion of
                         SOME theorem => SOME theorem
                       | NONE =>
                       case attempt packed_index_conversion of
@@ -7980,6 +8161,12 @@ local
                         SOME theorem => SOME theorem
                       | NONE =>
                       case attempt arithmetic_bit_conversion of
+                        SOME theorem => SOME theorem
+                      | NONE =>
+                      (* Lower one operator with schematic operands, as in
+                         the structural path; do not repeatedly normalize
+                         the whole shared word below each projection. *)
+                      case attempt word_projection_schema of
                         SOME theorem => SOME theorem
                       | NONE =>
                       case attempt word_relation_schema of
@@ -8032,56 +8219,15 @@ local
         "BitVector" "cpc-fp-circuit-lower" circuit goal
       val definitions = List.rev (!definitions)
       fun cnf_definition (_, definition, _) =
-        let
-          val (_, skeleton) = boolSyntax.dest_eq definition
-          val law =
-            if boolSyntax.is_neg skeleton then satTheory.dc_neg
-            else if boolSyntax.is_conj skeleton then
-              satTheory.dc_conj
-            else if boolSyntax.is_disj skeleton then
-              satTheory.dc_disj
-            else if boolSyntax.is_imp skeleton then satTheory.dc_imp
-            else if boolSyntax.is_eq skeleton andalso
-                    Term.type_of
-                      (#1 (boolSyntax.dest_eq skeleton)) = Type.bool then
-              satTheory.dc_eq
-            else if boolSyntax.is_cond skeleton then
-              satTheory.dc_cond
-            else if Term.is_var skeleton then circuit_cnf_atom
-            else if Term.aconv skeleton boolSyntax.T then
-              circuit_cnf_true
-            else if Term.aconv skeleton boolSyntax.F then
-              circuit_cnf_false
-            else raise ERR "trust"
-              "unsupported Boolean circuit definition"
-          val theorem = Drule.INST_TY_TERM
-            (Term.match_term
-              (boolSyntax.lhs (Thm.concl law)) definition) law
-        in theorem end
-      fun balanced_equivalences [] = Thm.REFL boolSyntax.T
-        | balanced_equivalences [theorem] = theorem
-        | balanced_equivalences theorems =
-            let
-              val count = List.length theorems
-              val half = count div 2
-              val conjunction = Term.rator (Term.rator
-                (boolSyntax.mk_conj
-                  (boolSyntax.T, boolSyntax.T)))
-              val left = balanced_equivalences
-                (List.take (theorems, half))
-              val right = balanced_equivalences
-                (List.drop (theorems, half))
-            in Thm.MK_COMB
-              (Thm.MK_COMB (Thm.REFL conjunction, left), right)
-            end
+        SmtCircuitSat.definition_cnf definition
       val cnf_equivalence = SmtResource.with_resource_step_time
         "BitVector" "cpc-fp-circuit-cnf"
-        (fn () => balanced_equivalences
+        (fn () => SmtCircuitSat.balanced_equivalences
           (List.map cnf_definition definitions)) ()
+      val cnf_body = boolSyntax.rhs (Thm.concl cnf_equivalence)
       val template =
         if List.null definitions then root
-        else boolSyntax.mk_imp
-          (boolSyntax.rhs (Thm.concl cnf_equivalence), root)
+        else boolSyntax.mk_imp (cnf_body, root)
       val large_circuit = List.length definitions > 256
       val _ =
         if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
@@ -8250,7 +8396,21 @@ local
       val law = SmtResource.with_resource_step_time
         (if large_circuit then "BitVector" else "Skeleton")
         "cpc-trust-fp-atom-circuit-sat"
-        HolSatLib.SAT_PROVE_ONLY template
+        (fn () =>
+          if List.null definitions then
+            HolSatLib.SAT_PROVE_ONLY template
+          else
+            SmtCircuitSat.prove_cnf (cnf_body, root)) ()
+        handle Feedback.HOL_ERR holerr =>
+          (if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1" orelse
+              OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full" then
+             (Feedback.HOL_MESG
+               ("CPC FP circuit SAT declined: " ^
+                SmtResource.bounded_text 200
+                  (Feedback.message_of holerr));
+              TextIO.flushOut TextIO.stdOut)
+           else ();
+           raise Feedback.HOL_ERR holerr)
       val _ = if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" =
             SOME "full" orelse
             OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" =
@@ -8764,12 +8924,25 @@ local
           raise ERR "trust" "FP word circuit is not valid"
       fun replay_fp_atom_bridge_uncached () =
             let
+              fun trace_start stage =
+                if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
+                   orelse OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" =
+                     SOME "full" then
+                  (Feedback.HOL_MESG ("CPC FP bridge: " ^ stage);
+                   TextIO.flushOut TextIO.stdOut)
+                else ()
+              val _ = trace_start "source collection begin"
               fun is_fp_type ty =
                 let val {Thy, Tyop, ...} = Type.dest_thy_type ty
                 in Thy = "smtfloat" andalso Tyop = "smtfp" end
                 handle Feedback.HOL_ERR _ => false
+              fun is_rounding_type ty =
+                let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+                in Thy = "smtfloat" andalso Tyop = "smt_rounding" end
+                handle Feedback.HOL_ERR _ => false
               fun source_value term =
-                is_fp_type (Term.type_of term) andalso
+                (is_fp_type (Term.type_of term) orelse
+                 is_rounding_type (Term.type_of term)) andalso
                 (Term.is_var term orelse boolSyntax.is_select term)
               val source_seen = ref (HOLset.empty Term.compare)
               val sources = ref ([] : Term.term list)
@@ -8791,21 +8964,66 @@ local
                 in if List.null roots then [target] else roots end
                 handle Feedback.HOL_ERR _ => [target]
               val _ = List.app collect_sources source_roots
+              val _ = trace_start "source collection complete"
+              (* The bridge is parametric in FP operands.  Schematic
+                 sources keep a large Hilbert-choice/Skolem operand opaque
+                 while its checked canonical-field law is proved once for
+                 a variable and then instantiated by the kernel. *)
               val abstract_large =
-                SmtResource.dag_nodes_up_to 2001 target > 2000 orelse
+                SmtResource.dag_nodes_up_to
+                  (max_cached_theorem_dag_nodes + 1) target >
+                  max_cached_theorem_dag_nodes orelse
                 (let val (left, _) = boolSyntax.dest_eq target
                  in Term.type_of left <> Type.bool end
                  handle Feedback.HOL_ERR _ => false)
+              fun trace_bridge stage =
+                if abstract_large andalso
+                   (OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
+                    orelse OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" =
+                      SOME "full") then
+                  (Feedback.HOL_MESG ("CPC FP bridge: " ^ stage);
+                   TextIO.flushOut TextIO.stdOut)
+                else ()
+              val _ = trace_bridge
+                ("sources=" ^ Int.toString (List.length (!sources)))
               val source_variables =
                 List.map (Term.genvar o Term.type_of) (!sources)
               val source_pairs = ListPair.zip (!sources, source_variables)
+              (* The source may be a large choice term occurring inside many
+                 circuit nodes.  A shallow, alpha-invariant fingerprint
+                 avoids repeatedly alpha-comparing it with unrelated nodes;
+                 equal fingerprints are only a prefilter, never a proof of
+                 equality. *)
+              fun source_hash 0 term =
+                    if Term.is_const term then
+                      let val {Thy, Name, ...} = Term.dest_thy_const term
+                      in (boolean_dag_string_hash Thy * 37 +
+                          boolean_dag_string_hash Name) mod
+                         boolean_dag_bucket_count end
+                    else if Term.is_var term then 3
+                    else if Term.is_abs term then 5
+                    else 7
+                | source_hash depth term =
+                    if Term.is_comb term then
+                      (source_hash (depth - 1) (Term.rator term) * 41 +
+                       source_hash (depth - 1) (Term.rand term) * 67 + 11)
+                      mod boolean_dag_bucket_count
+                    else if Term.is_abs term then
+                      (source_hash (depth - 1) (Term.body term) * 73 + 13)
+                      mod boolean_dag_bucket_count
+                    else source_hash 0 term
+              val source_fingerprints = List.map
+                (fn (source, variable) =>
+                  (source, variable, source_hash 5 source)) source_pairs
               fun source_replacement term =
                 case if abstract_large then
-                    List.find (fn (source, _) =>
+                    let val fingerprint = source_hash 5 term
+                    in List.find (fn (source, _, saved) =>
                       Portable.pointer_eq (source, term) orelse
-                      Term.aconv source term) source_pairs
+                      (fingerprint = saved andalso
+                       Term.aconv source term)) source_fingerprints end
                   else NONE of
-                  SOME (_, variable) => SOME variable
+                  SOME (_, variable, _) => SOME variable
                 | NONE => NONE
               val abstraction_memo = ref
                 (Redblackmap.mkDict Term.compare :
@@ -8828,6 +9046,7 @@ local
                         Redblackmap.insert (!abstraction_memo, term, result)
                     in result end
               val schematic_target = abstract_sources target
+              val _ = trace_bridge "sources abstracted"
               val schematic_sources =
                 if abstract_large then source_variables else !sources
               val arithmetic_leaf_ss = simpLib.++
@@ -8898,40 +9117,117 @@ local
                      else raise Conv.UNCHANGED
                    end)
                 handle Empty => raise Conv.UNCHANGED
-              val fp_memo = ref
-                (Redblackmap.mkDict Term.compare :
-                  (Term.term, Thm.thm) Redblackmap.dict)
+              (* A single proof-local DAG walk determines whether a subtree
+                 changes while building its checked equality.  NONE means
+                 reflexivity suffices; only changed branches need MK_COMB.
+                 This avoids a separate occurrence scan of large word
+                 circuits before lowering their FP atoms. *)
+              val fp_memo = Array.array
+                (boolean_dag_bucket_count,
+                 [] : (Term.term * Thm.thm option) list)
+              val fp_lower_nodes = ref 0
+              fun fp_memo_index term =
+                boolean_dag_term_hash 4 term
+              fun fp_memo_peek term =
+                case List.find (fn (saved, _) =>
+                    Portable.pointer_eq (saved, term))
+                    (Array.sub (fp_memo, fp_memo_index term)) of
+                  SOME (_, result) => SOME result
+                | NONE => NONE
+              fun fp_memo_insert term result =
+                let val index = fp_memo_index term in
+                  Array.update (fp_memo, index,
+                    (term, result) :: Array.sub (fp_memo, index))
+                end
+              fun proof_or_refl term result =
+                case result of
+                  SOME theorem => theorem
+                | NONE => Thm.REFL term
+              (* The instantiated equality constant carries the operand
+                 type; no traversal of either potentially large operand is
+                 needed to inspect it. *)
+              fun equality_operand_type term =
+                let
+                  val equality = Term.rator (Term.rator term)
+                  val (operand_type, _) =
+                    Type.dom_rng (Term.type_of equality)
+                in operand_type end
               fun lower_fp_atoms term =
-                case Redblackmap.peek (!fp_memo, term) of
-                  SOME theorem => SmtSkeletonProve.anchor_left term theorem
+                case fp_memo_peek term of
+                  SOME (SOME theorem) =>
+                    SOME (SmtSkeletonProve.anchor_left term theorem)
+                | SOME NONE => NONE
                 | NONE =>
-                    (case Redblackmap.peek (!fp_atom_lowerings, term) of
-                       SOME theorem =>
-                         SmtSkeletonProve.anchor_left term theorem
-                     | NONE =>
                     let
-                      val theorem =
-                        if SmtFpGraph.lower_atom_domain term then
-                          SmtFpGraph.convert_atom term
-                        else if Term.is_comb term then
-                          Thm.MK_COMB
-                            (lower_fp_atoms (Term.rator term),
-                             lower_fp_atoms (Term.rand term))
-                        else Thm.REFL term
-                      val _ = fp_memo :=
-                        Redblackmap.insert (!fp_memo, term, theorem)
-                      val _ = fp_atom_lowerings :=
-                        Redblackmap.insert
-                          (!fp_atom_lowerings, term, theorem)
-                    in theorem end)
-              val (left, right) = boolSyntax.dest_eq schematic_target
-              val direct_fp_equality = Term.type_of left <> Type.bool
+                      val _ = fp_lower_nodes := !fp_lower_nodes + 1
+                      val _ = if !fp_lower_nodes mod 1000 = 0 then
+                          trace_bridge ("FP lowering nodes=" ^
+                            Int.toString (!fp_lower_nodes))
+                        else ()
+                      val atom = SmtFpGraph.lower_atom_domain term
+                      val cached = if atom then
+                          Redblackmap.peek (!fp_atom_lowerings, term)
+                        else NONE
+                      val result =
+                        case cached of
+                          SOME proof => SOME
+                            (SmtSkeletonProve.anchor_left term proof)
+                        | NONE =>
+                            if atom then
+                              let
+                                val _ = trace_bridge
+                                  "FP atom lowering begin"
+                                val proof =
+                                  SmtFpGraph.convert_atom term
+                                val _ = trace_bridge
+                                  "FP atom lowering complete"
+                              in SOME proof end
+                            else if Term.is_comb term then
+                              let
+                                val operator = Term.rator term
+                                val operand = Term.rand term
+                                val operator_proof =
+                                  lower_fp_atoms operator
+                                val operand_proof =
+                                  lower_fp_atoms operand
+                              in
+                                case (operator_proof, operand_proof) of
+                                  (NONE, NONE) => NONE
+                                | _ => SOME (Thm.MK_COMB
+                                    (proof_or_refl operator operator_proof,
+                                     proof_or_refl operand operand_proof))
+                              end
+                            else NONE
+                      val _ = fp_memo_insert term result
+                      val _ = if atom then
+                          (case result of
+                             SOME theorem =>
+                               fp_atom_lowerings := Redblackmap.insert
+                                 (!fp_atom_lowerings, term, theorem)
+                           | NONE => ())
+                        else ()
+                    in result end
+              (* A deferred CPC obligation may be a Boolean FP clause as
+                 well as an equality.  In the clause case the same checked
+                 atom conversion transports the proposition directly. *)
+              val equality_target = boolSyntax.is_eq schematic_target
+              val (left, right) =
+                if equality_target then
+                  boolSyntax.dest_eq schematic_target
+                else (schematic_target, boolSyntax.T)
+              val _ = trace_bridge "FP lowering setup complete"
+              val direct_fp_equality =
+                equality_target andalso
+                equality_operand_type schematic_target <> Type.bool
+              val _ = trace_bridge "FP equality type classified"
               val left_conversion =
                 if direct_fp_equality then Thm.REFL left
-                else lower_fp_atoms left
+                else proof_or_refl left (lower_fp_atoms left)
+              val _ = trace_bridge "left FP atoms lowered"
               val right_conversion =
                 if direct_fp_equality then Thm.REFL right
-                else lower_fp_atoms right
+                else proof_or_refl right (lower_fp_atoms right)
+              val _ = trace_bridge "right FP atoms lowered"
               val left_residue = boolSyntax.rhs
                 (Thm.concl left_conversion)
               val right_residue = boolSyntax.rhs
@@ -8990,12 +9286,12 @@ local
                   fun word_equality_schema current =
                     let
                       val (left, right) = boolSyntax.dest_eq current
-                      val ty = Term.type_of left
-                      val _ = ty = Term.type_of right andalso
-                              wordsSyntax.is_word_type ty orelse
+                      val ty = equality_operand_type current
+                      val _ = wordsSyntax.is_word_type ty orelse
                         raise ERR "trust" "not a word equality"
                       val width = Arbnum.toInt
-                        (fcpLib.index_to_num (wordsSyntax.dim_of left))
+                        (fcpLib.index_to_num
+                          (wordsSyntax.dest_word_type ty))
                       val _ = width <= 256 orelse raise ERR "trust"
                         "word equality exceeds decomposition width"
                       val (left_var, right_var, law) =
@@ -9095,15 +9391,21 @@ local
                 in walk term end
               val left_word =
                 if direct_fp_equality then Thm.REFL left_residue
+                else if abstract_large then
+                  normalize_boolean_atoms left_residue
                 else normalize_words
                   "cpc-trust-fp-atom-normalize-left" 1 left_residue
+              val _ = trace_bridge "left word atoms normalized"
               val right_word =
-                if direct_fp_equality then Thm.REFL right_residue
+                if not equality_target orelse direct_fp_equality then
+                  Thm.REFL right_residue
+                else if abstract_large then
+                  normalize_boolean_atoms right_residue
                 else normalize_words
                   "cpc-trust-fp-atom-normalize-right" 32 right_residue
+              val _ = trace_bridge "right word atoms normalized"
               val left_theorem = Thm.TRANS left_conversion left_word
               val right_theorem = Thm.TRANS right_conversion right_word
-              val equality = Term.rator (Term.rator schematic_target)
               val normalized =
                 if direct_fp_equality then
                   let
@@ -9111,10 +9413,16 @@ local
                     val atom_residue = boolSyntax.rhs (Thm.concl atom)
                     val word = normalize_boolean_atoms atom_residue
                   in Thm.TRANS atom word end
-                else Thm.MK_COMB
-                  (Thm.MK_COMB (Thm.REFL equality, left_theorem),
-                   right_theorem)
+                else if equality_target then
+                  let
+                    val equality =
+                      Term.rator (Term.rator schematic_target)
+                  in Thm.MK_COMB
+                    (Thm.MK_COMB (Thm.REFL equality, left_theorem),
+                     right_theorem) end
+                else left_theorem
               val residue = boolSyntax.rhs (Thm.concl normalized)
+              val _ = trace_bridge "FP bridge normalized"
               fun canonical_fact source =
                 case if Term.is_var source then
                     Redblackmap.peek
@@ -9131,7 +9439,8 @@ local
                   val beta = Conv.TOP_DEPTH_CONV Thm.BETA_CONV formula
                     handle Conv.UNCHANGED => Thm.REFL formula
                   val beta_residue = boolSyntax.rhs (Thm.concl beta)
-                  val lowered = lower_fp_atoms beta_residue
+                  val lowered = proof_or_refl beta_residue
+                    (lower_fp_atoms beta_residue)
                   val lowered_residue = boolSyntax.rhs (Thm.concl lowered)
                   val word = normalize_boolean_atoms lowered_residue
                   val theorem = Thm.EQ_MP word
@@ -9143,7 +9452,14 @@ local
                          (source, theorem))
                     else ()
                 in theorem end
-              val canonical_facts = List.map canonical_fact schematic_sources
+              fun rounding_fact source =
+                Drule.SPECL [source] rounding_partition_law
+              val canonical_facts = List.map
+                (fn source =>
+                  if is_rounding_type (Term.type_of source) then
+                    rounding_fact source
+                  else canonical_fact source) schematic_sources
+              val _ = trace_bridge "canonical facts proved"
               fun prove_from assumptions proofs =
                 let
                   val implication = List.foldr boolSyntax.mk_imp
@@ -9155,6 +9471,7 @@ local
                 end
               val proof = prove_from
                 (List.map Thm.concl canonical_facts) canonical_facts
+              val _ = trace_bridge "Boolean circuit proved"
               val schematic = Thm.EQ_MP (Thm.SYM normalized) proof
               val substitutions = ListPair.mapEq
                 (fn (source, variable) =>
@@ -9167,25 +9484,68 @@ local
           "normalized FP atom bridge is not valid"
       fun replay_fp_atom_bridge () =
         let
+          (* Matching a concrete cached bridge against a large FP circuit
+             may traverse its unfolded tree.  This bounded rigid-skeleton
+             check only rejects impossible matches; variables remain
+             wildcards and every survivor still goes through match_term. *)
+          fun compatible 0 _ _ = true
+            | compatible depth pattern actual =
+                if Term.is_var pattern then true
+                else if Term.is_const pattern then
+                  Term.is_const actual andalso
+                  let
+                    val left = Term.dest_thy_const pattern
+                    val right = Term.dest_thy_const actual
+                  in #Thy left = #Thy right andalso
+                     #Name left = #Name right end
+                else if Term.is_comb pattern then
+                  Term.is_comb actual andalso
+                  compatible (depth - 1)
+                    (Term.rator pattern) (Term.rator actual) andalso
+                  compatible (depth - 1)
+                    (Term.rand pattern) (Term.rand actual)
+                else if Term.is_abs pattern then
+                  Term.is_abs actual andalso
+                  compatible (depth - 1)
+                    (Term.body pattern) (Term.body actual)
+                else false
+          val trace =
+            OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1" orelse
+            OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
+          fun report message =
+            if trace then
+              (Feedback.HOL_MESG ("CPC FP bridge: " ^ message);
+               TextIO.flushOut TextIO.stdOut)
+            else ()
           fun instantiate theorem =
-            let
-              val proof = Drule.INST_TY_TERM
-                (Term.match_term (Thm.concl theorem) target) theorem
-            in
-              if Term.aconv (Thm.concl proof) target then SOME proof
-              else NONE
-            end
+            SmtResource.with_resource_step_time "Skeleton"
+              "cpc-fp-bridge-cache-match"
+              (fn theorem =>
+                let
+                  val proof = Drule.INST_TY_TERM
+                    (Term.match_term (Thm.concl theorem) target) theorem
+                in
+                  if Term.aconv (Thm.concl proof) target then SOME proof
+                  else NONE
+                end) theorem
             handle Feedback.HOL_ERR _ => NONE
           fun cached [] = NONE
             | cached (theorem :: rest) =
                 (case instantiate theorem of
                    SOME proof => SOME proof
                  | NONE => cached rest)
+          val candidates = List.filter
+            (fn theorem => compatible 8 (Thm.concl theorem) target)
+            (!fp_atom_bridge_laws)
+          val _ = report ("cache candidates=" ^
+            Int.toString (List.length candidates) ^ "/" ^
+            Int.toString (List.length (!fp_atom_bridge_laws)))
         in
-          case cached (!fp_atom_bridge_laws) of
-            SOME proof => proof
+          case cached candidates of
+            SOME proof => (report "cache hit"; proof)
           | NONE =>
               let
+                val _ = report "cache miss; reconstructing bridge"
                 val proof = replay_fp_atom_bridge_uncached ()
                 val symmetric =
                   if boolSyntax.is_eq (Thm.concl proof) then
@@ -9224,6 +9584,12 @@ local
          same proposition independently. *)
       fun deferred_fp_trust () =
         let
+          (* Deferral is only for the first certificate pass.  During
+             closure the caller requires an independent checked proof;
+             recreating ASSUME here cannot discharge the obligation and
+             can traverse an enormous instantiated witness unnecessarily. *)
+          val _ = force_fp andalso raise ERR "trust"
+            "forced FP checking could not prove the deferred obligation"
           val seen = ref ([] : Term.term list)
           val variables = ref ([] : Term.term list)
           fun visited term =
@@ -9264,19 +9630,12 @@ local
         prover () handle SmtFpGraph.Declined _ => continuation ()
           | Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
-            (if force_fp andalso
-                (OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
-                 orelse OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" =
-                   SOME "full") then
-               (Feedback.HOL_MESG
-                 ("CPC FP checked fallback: " ^
-                  SmtResource.bounded_text 200
-                    (Feedback.message_of holerr));
-                TextIO.flushOut TextIO.stdOut)
-             else ();
-             continuation ())
+            (continuation ()
+             handle Feedback.HOL_ERR fallback_error =>
+               if SmtResource.is_resource_gate fallback_error then
+                 raise Feedback.HOL_ERR fallback_error
+               else raise Feedback.HOL_ERR holerr)
+          else continuation ()
       fun replay_seq () =
         let
           val context =
@@ -9337,13 +9696,6 @@ local
                 else List.exists visit (SmtResource.term_children term)
               end
         in visit root end
-      fun replay_fp_operator_law () =
-        let
-          val generic = Drule.SPEC_ALL
-            smtfloatReplayRoundingTheory.smtfp_sub_add_negate
-          val theorem = Drule.INST_TY_TERM
-            (Term.match_term (Thm.concl generic) target) generic
-        in theorem end
       fun replay_boolean_case_rewrite () =
         let
           val (left, right) = boolSyntax.dest_eq target
@@ -9364,9 +9716,39 @@ local
               val _ = condition_matches pivot encoding orelse
                 raise ERR "trust"
                   "Boolean equality is not a direct conditional encoding"
-            in Tactical.TAC_PROOF (([], target),
-              Tactical.THEN (Tactic.BOOL_CASES_TAC pivot,
-                bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [])) end
+              val trace =
+                (OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1" orelse
+                 OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full")
+                andalso SmtResource.dag_nodes_up_to 257 target > 256
+              fun report stage =
+                if trace then
+                  (Feedback.HOL_MESG
+                    ("CPC Boolean case bridge: " ^ stage);
+                   TextIO.flushOut TextIO.stdOut)
+                else ()
+              fun case_proof condition goal =
+                Tactical.TAC_PROOF (([], goal),
+                  Tactical.THEN (Tactic.BOOL_CASES_TAC condition,
+                    bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) []))
+              fun schematic () =
+                let
+                  val variable = Term.genvar Type.bool
+                  val goal = Term.subst
+                    [{redex = pivot, residue = variable}] target
+                  val _ = report "schematic goal ready"
+                  val theorem = case_proof variable goal
+                in Thm.INST
+                  [{redex = variable, residue = pivot}] theorem end
+              val _ = report "schematic attempt"
+            in
+              (SmtResource.with_resource_step_time "Skeleton"
+                "cpc-trust-boolean-case-schema" schematic ()
+               handle Feedback.HOL_ERR _ =>
+                 (report "bounded concrete fallback";
+                  SmtResource.with_resource_step_time "BitVector"
+                    "cpc-trust-boolean-case-concrete"
+                    (fn () => case_proof pivot target) ()))
+            end
         in
           prove left right handle Feedback.HOL_ERR _ => prove right left
         end
@@ -9458,8 +9840,7 @@ local
       else if force_fp orelse fp_term_dag target then
         if direct_fp_equality_target () then
           next_fp
-            (fn () => profile "CPC(rung:trust/fp-operator-law)"
-              replay_fp_operator_law ())
+            (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
             (fn () => next_fp
               (fn () => profile "CPC(rung:trust/fp-atom-bridge)"
                 replay_fp_atom_bridge ())
@@ -9485,13 +9866,28 @@ local
               (fn () => next_fp
                 (fn () => profile "CPC(rung:trust/fp-eq-components)"
                   replay_fp_eq_components ())
-                (fn () => next_fp
-                  (fn () => profile "CPC(rung:trust/fp-atom-bridge)"
-                    replay_fp_atom_bridge ())
-                  (fn () => next_fp
-                    (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
-                    (fn () => profile "CPC(rung:trust/fp_deferred)"
-                      deferred_fp_trust ()))))
+                (fn () =>
+                  let
+                    fun native () = profile "CPC(rung:trust/fp)"
+                      replay_fp ()
+                    fun bridge () =
+                      profile "CPC(rung:trust/fp-atom-bridge)"
+                        replay_fp_atom_bridge ()
+                    fun defer () =
+                      profile "CPC(rung:trust/fp_deferred)"
+                        deferred_fp_trust ()
+                    val large = SmtResource.dag_nodes_up_to
+                      (max_cached_theorem_dag_nodes + 1) target >
+                      max_cached_theorem_dag_nodes
+                  in
+                    (* A large FP operand is schematic in the checked atom
+                       bridge.  Try that bounded route before asking the
+                       native prover to expand its full bit circuit. *)
+                    if large then next_fp bridge
+                      (fn () => next_fp native defer)
+                    else next_fp native
+                      (fn () => next_fp bridge defer)
+                  end))
         else if SmtResource.dag_nodes_up_to 257 target > 256 then
           if force_fp then
             next_fp
@@ -10677,9 +11073,11 @@ local
         handle Feedback.HOL_ERR _ => boolSyntax.mk_neg literal
       val recent_semantic_aliases = ref ([] : Term.term list)
       fun resolve_pair_on_with_hashed_stop_match require_both stop_match
-          hashed_stops first_pivot first second =
+          use_structural_equality hashed_stops first_pivot first second =
         let
           val second_pivot = complement first_pivot
+          val equal = if use_structural_equality then
+            structural_literal_equal else literal_equal
           fun is_stop term =
             let val hash = literal_hash 6 term in
               List.exists (fn (saved_hash, stop) =>
@@ -10708,27 +11106,50 @@ local
             first_pivot (Thm.concl first)
           val second_lits = strip_resolution_clause
             second_pivot (Thm.concl second)
-          val first_removed = remove_first first_pivot first_lits
-          val second_removed = remove_first second_pivot second_lits
+          val first_removed =
+            remove_first_using equal first_pivot first_lits
+          val second_removed =
+            remove_first_using equal second_pivot second_lits
           val first_rest = case first_removed of
               SOME rest => List.filter
                 (fn literal =>
-                  not (structural_literal_equal first_pivot literal))
+                  not (equal first_pivot literal))
                 rest
             | NONE => first_lits
           val second_rest = case second_removed of
               SOME rest => List.filter
                 (fn literal =>
-                  not (structural_literal_equal second_pivot literal))
+                  not (equal second_pivot literal))
                 rest
             | NONE => second_lits
           fun unique literals =
-            List.rev (List.foldl
-              (fn (literal, kept) =>
-                if List.exists (structural_literal_equal literal) kept then
-                  kept
-                else literal :: kept)
-              [] literals)
+            if use_structural_equality then
+              let
+                val buckets = ref (Redblackmap.mkDict Int.compare)
+                fun keep (literal, kept) =
+                  let
+                    val hash = literal_hash 6 literal
+                    val bucket =
+                      case Redblackmap.peek (!buckets, hash) of
+                        SOME saved => saved
+                      | NONE => []
+                  in
+                    if List.exists
+                        (structural_literal_equal literal) bucket then
+                      kept
+                    else
+                      (buckets := Redblackmap.insert
+                        (!buckets, hash, literal :: bucket);
+                       literal :: kept)
+                  end
+              in List.rev (List.foldl keep [] literals) end
+            else
+              List.rev (List.foldl
+                (fn (literal, kept) =>
+                  if List.exists (literal_equal literal) kept then
+                    kept
+                  else literal :: kept)
+                [] literals)
           val first_tail = mk_disj_terms first_rest
           val second_tail = mk_disj_terms second_rest
           val result_literals = unique (first_rest @ second_rest)
@@ -10740,11 +11161,11 @@ local
           val _ = recent_semantic_aliases := semantic_aliases
           val _ = ()
           fun prove_member literal target =
-            if literal_equal literal target then
+            if equal literal target then
               convert_literal (Thm.ASSUME literal) target
             else
               let val (left, right) = boolSyntax.dest_disj target in
-                if literal_equal literal left then
+                if equal literal left then
                   Thm.DISJ1 (convert_literal (Thm.ASSUME literal) left) right
                 else Thm.DISJ2 left (prove_member literal right)
               end
@@ -10752,7 +11173,7 @@ local
             let
               val target = boolSyntax.mk_disj (pivot, tail)
               fun branch theorem =
-                if literal_equal (Thm.concl theorem) pivot then
+                if equal (Thm.concl theorem) pivot then
                   Thm.DISJ1 (convert_literal theorem pivot) tail
                 else
                   (Thm.DISJ2 pivot
@@ -10835,7 +11256,7 @@ local
              Library.term_to_string first_pivot ^ ": " ^
              Feedback.message_of holerr)
       fun resolve_pair_on_with_stop_match require_both stop_match stops =
-        resolve_pair_on_with_hashed_stop_match require_both stop_match
+        resolve_pair_on_with_hashed_stop_match require_both stop_match false
           (List.map (fn stop => (literal_hash 6 stop, stop)) stops)
       fun resolve_pair_on stops = resolve_pair_on_with_stop_match false
         (fn left => fn right => Portable.pointer_eq (left, right)) stops
@@ -10843,7 +11264,7 @@ local
         false structural_literal_equal stops
       fun resolve_pair_on_structural_strict_hashed stops =
         resolve_pair_on_with_hashed_stop_match true
-          structural_literal_equal stops
+          structural_literal_equal true stops
       fun replay_chain target polarities pivots =
         let
           val expected = List.length prems - 1
@@ -11835,43 +12256,11 @@ local
                 (boolSyntax.mk_imp (source_root, target_root)) definitions
               val law = HolSatLib.SAT_PROVE goal
               val instantiated = Thm.INST (!substitutions) law
-              val alignment_memo = ref
-                ([] : (Term.term * Term.term * Thm.thm) list)
-              fun align left right =
-                case List.find (fn (saved_left, saved_right, _) =>
-                    Portable.pointer_eq (left, saved_left) andalso
-                    Portable.pointer_eq (right, saved_right))
-                    (!alignment_memo) of
-                  SOME (_, _, theorem) => theorem
-                | NONE =>
-                    let
-                      val theorem =
-                        if Portable.pointer_eq (left, right) then
-                          Thm.REFL left
-                        else if Term.is_comb left andalso
-                                Term.is_comb right then
-                          Thm.MK_COMB
-                            (align (Term.rator left) (Term.rator right),
-                             align (Term.rand left) (Term.rand right))
-                        else
-                          let
-                            val left_conversion =
-                              canonical_term_conv left
-                            val right_conversion =
-                              canonical_term_conv right
-                            val left_canonical = boolSyntax.rhs
-                              (Thm.concl left_conversion)
-                            val right_canonical = boolSyntax.rhs
-                              (Thm.concl right_conversion)
-                            val _ = Portable.pointer_eq
-                                (left_canonical, right_canonical) orelse
-                              raise ERR "resolution"
-                                "circuit definition endpoints differ"
-                          in Thm.TRANS left_conversion
-                            (Thm.SYM right_conversion) end
-                      val _ = alignment_memo :=
-                        (left, right, theorem) :: !alignment_memo
-                    in theorem end
+              (* Instantiating circuit definitions restores their exact
+                 syntax.  XOR's semantic unfolding is proved separately
+                 below; every remaining alignment is kernel alpha-equality,
+                 not a new congruence proof over the whole concrete DAG. *)
+              val align = Thm.ALPHA
               fun discharge ((term, _), result) =
                 let
                   val antecedent = #1
@@ -11982,18 +12371,7 @@ local
                 "direct Boolean alignment has too many leaves"
               val law = HolSatLib.SAT_PROVE template
               val law = Thm.INST (!substitutions) law
-              fun align left right =
-                if Portable.pointer_eq (left, right) then Thm.REFL left
-                else if Term.is_comb left andalso Term.is_comb right then
-                  Thm.MK_COMB
-                    (align (Term.rator left) (Term.rator right),
-                     align (Term.rand left) (Term.rand right))
-                else
-                  let
-                    val left_conversion = canonical_term_conv left
-                    val right_conversion = canonical_term_conv right
-                  in Thm.TRANS left_conversion
-                    (Thm.SYM right_conversion) end
+              val align = Thm.ALPHA
               val (law_source, law_target) =
                 boolSyntax.dest_imp (Thm.concl law)
               val source_theorem = Thm.EQ_MP
@@ -12185,16 +12563,16 @@ local
           val unused_prems = ref ([] : Thm.thm list)
           val unused_annotations = ref
             ([] : (Thm.thm * Term.term) list)
-          fun annotated_chain_using strict_resolver resolver
-              record_unused () =
+          fun annotated_chain_using premises destination pivot_terms
+              strict_resolver resolver record_unused () =
             let
               val annotation_index = ref 0
               fun hashed stop = (literal_hash 6 stop, stop)
               val target_clause_stops = List.map hashed
-                (List.filter boolSyntax.is_disj (strip_clause target))
+                (List.filter boolSyntax.is_disj (strip_clause destination))
               val remaining_pivot_stops = ref
                 (List.map hashed (List.filter boolSyntax.is_disj
-                  (pivots @ List.map complement pivots)))
+                  (pivot_terms @ List.map complement pivot_terms)))
               fun retire_stop stop =
                 if not (boolSyntax.is_disj stop) then ()
                 else
@@ -12216,11 +12594,36 @@ local
                     handle Feedback.HOL_ERR _ =>
                       if Term.is_var head then "variable" else "compound"
                 in name ^ "/" ^ Int.toString (List.length arguments) end
-            in case prems of
+            in case premises of
               first :: rest => List.foldl
                 (fn ((next, (polarity, pivot)), accumulated) =>
                   let
                     val _ = annotation_index := !annotation_index + 1
+                    val _ = if OS.Process.getEnv
+                        "HOL4_CPC_REPLAY_TRACE" = SOME "full" andalso
+                        !annotation_index mod 16 = 0 then
+                      (Feedback.HOL_MESG
+                        ("CPC chain annotated pivot " ^
+                         Int.toString (!annotation_index) ^ "/" ^
+                         Int.toString (List.length rest));
+                       TextIO.flushOut TextIO.stdOut)
+                    else ()
+                    val _ = if OS.Process.getEnv
+                        "HOL4_CPC_REPLAY_TRACE" = SOME "full" andalso
+                        List.length premises >= 128 andalso
+                        List.length premises < 256 andalso
+                        !annotation_index >= 160 then
+                      (Feedback.HOL_MESG
+                        ("CPC chain annotated detail " ^
+                         Int.toString (!annotation_index) ^
+                         " accumulated=" ^
+                         Int.toString (List.length
+                           (strip_clause (Thm.concl accumulated))) ^
+                         " next=" ^
+                         Int.toString (List.length
+                           (strip_clause (Thm.concl next))));
+                       TextIO.flushOut TextIO.stdOut)
+                    else ()
                     val annotated = signed_pivot polarity pivot
                     val active_stops =
                       target_clause_stops @ !remaining_pivot_stops
@@ -12235,6 +12638,17 @@ local
                       case strict annotated of
                         SOME result => SOME result
                       | NONE => strict (complement annotated)
+                    val _ = if OS.Process.getEnv
+                        "HOL4_CPC_REPLAY_TRACE" = SOME "full" andalso
+                        List.length premises >= 128 andalso
+                        List.length premises < 256 andalso
+                        !annotation_index >= 160 then
+                      (Feedback.HOL_MESG
+                        ("CPC chain annotated strict " ^
+                         Int.toString (!annotation_index) ^ " " ^
+                         Bool.toString (Option.isSome strict_result));
+                       TextIO.flushOut TextIO.stdOut)
+                    else ()
                     val (selected, resolved, used) =
                       case strict_result of
                         SOME (selected, resolved) =>
@@ -12249,32 +12663,124 @@ local
                       else ()
                     val _ = retire_stop pivot
                     val _ = retire_stop (complement pivot)
+                    val _ = if OS.Process.getEnv
+                        "HOL4_CPC_REPLAY_TRACE" = SOME "full" andalso
+                        List.length premises >= 128 andalso
+                        List.length premises < 256 andalso
+                        !annotation_index >= 160 then
+                      (Feedback.HOL_MESG
+                        ("CPC chain annotated done " ^
+                         Int.toString (!annotation_index) ^
+                         " result=" ^
+                         Int.toString (List.length
+                           (strip_clause (Thm.concl resolved))) ^
+                         " strict=" ^ Bool.toString used);
+                       TextIO.flushOut TextIO.stdOut)
+                    else ()
                   in resolved end)
-                first (ListPair.zip (rest, ListPair.zip (polarities, pivots)))
+                first (ListPair.zip
+                  (rest, ListPair.zip (polarities, pivot_terms)))
             | [] => raise ERR "resolution" "empty resolution chain"
             end
           fun annotated_chain () =
-            annotated_chain_using resolve_pair_on_structural_strict_hashed
+            annotated_chain_using prems target pivots
+              resolve_pair_on_structural_strict_hashed
               resolve_pair_on_structural true ()
           fun structural_annotated_chain () =
-            annotated_chain_using resolve_pair_on_structural_strict_hashed
+            annotated_chain_using prems target pivots
+              resolve_pair_on_structural_strict_hashed
               resolve_pair_on false ()
+          fun abstract_structural_annotated_chain () =
+            let
+              val bucket_count = 16381
+              val atoms = Array.array
+                (bucket_count, [] : (int * Term.term * Term.term) list)
+              val substitutions = ref
+                ([] : {redex : Term.term, residue : Term.term} list)
+              fun atom term =
+                let
+                  val hash = literal_hash 6 term
+                  val index = hash mod bucket_count
+                in
+                  case List.find (fn (saved_hash, saved, _) =>
+                      hash = saved_hash andalso
+                      structural_literal_equal saved term)
+                      (Array.sub (atoms, index)) of
+                    SOME (_, _, variable) => variable
+                  | NONE =>
+                      let
+                        val variable = Term.genvar Type.bool
+                        val _ = Array.update
+                          (atoms, index,
+                           (hash, term, variable) ::
+                           Array.sub (atoms, index))
+                        val _ = substitutions :=
+                          {redex = variable, residue = term} ::
+                          !substitutions
+                      in variable end
+                end
+              val memo = ref (Redblackmap.mkDict Term.compare :
+                (Term.term, Term.term) Redblackmap.dict)
+              fun abstract_term term =
+                case Redblackmap.peek (!memo, term) of
+                  SOME result => result
+                | NONE =>
+                    let
+                      val result =
+                        if Term.aconv term boolSyntax.T orelse
+                           Term.aconv term boolSyntax.F then term
+                        else
+                          case Lib.total boolSyntax.dest_disj term of
+                            SOME (left, right) => boolSyntax.mk_disj
+                              (abstract_term left, abstract_term right)
+                          | NONE =>
+                              (case Lib.total boolSyntax.dest_neg term of
+                                 SOME body =>
+                                   boolSyntax.mk_neg (abstract_term body)
+                               | NONE => atom term)
+                      val _ = memo := Redblackmap.insert
+                        (!memo, term, result)
+                    in result end
+              val abstract_prems = List.map
+                (abstract_term o Thm.concl) prems
+              val abstract_target = abstract_term target
+              val abstract_pivots = List.map abstract_term pivots
+              val abstract_result = annotated_chain_using
+                (List.map Thm.ASSUME abstract_prems)
+                abstract_target abstract_pivots
+                resolve_pair_on_structural_strict_hashed
+                resolve_pair_on_structural false ()
+              val law = List.foldr
+                (fn (premise, theorem) => Thm.DISCH premise theorem)
+                abstract_result abstract_prems
+              val instantiated = Thm.INST (!substitutions) law
+            in List.foldl
+              (fn (premise, theorem) => Thm.MP theorem premise)
+              instantiated prems end
           fun dynamic_schema_consequence () =
             let
-              val atoms = ref
-                ([] : (int * Term.term * Term.term) list)
+              val bucket_count = 16381
+              fun bucket hash = hash mod bucket_count
+              val atoms = Array.array
+                (bucket_count,
+                 [] : (int * Term.term * Term.term) list)
               val substitutions = ref
                 ([] : {redex : Term.term, residue : Term.term} list)
               fun atom term =
                 let val hash = literal_hash 6 term in
                   case List.find (fn (saved_hash, saved, _) =>
                       hash = saved_hash andalso
-                      structural_literal_equal saved term) (!atoms) of
+                      structural_literal_equal saved term)
+                      (Array.sub (atoms, bucket hash)) of
                     SOME (_, _, variable) => variable
                   | NONE =>
                       let
                         val variable = Term.genvar Type.bool
-                        val _ = atoms := (hash, term, variable) :: !atoms
+                        val index = bucket hash
+                        val _ = Array.update
+                          (atoms, index,
+                           (hash, term, variable) ::
+                           Array.sub (atoms, index))
                         val _ = substitutions :=
                           {redex = variable, residue = term} :: !substitutions
                       in variable end
@@ -12286,8 +12792,16 @@ local
                   case Lib.total boolSyntax.dest_neg term of
                     SOME body => boolSyntax.mk_neg (atom body)
                   | NONE => atom term
-              fun hashed term = (literal_hash 6 term, term)
-              val stops = List.map hashed
+              val stops = Array.array
+                (bucket_count, [] : (int * Term.term) list)
+              fun add_stop term =
+                let
+                  val hash = literal_hash 6 term
+                  val index = bucket hash
+                in Array.update
+                  (stops, index,
+                   (hash, term) :: Array.sub (stops, index)) end
+              val _ = List.app add_stop
                 (List.filter boolSyntax.is_disj
                   (strip_clause target @ pivots @
                    List.map complement pivots))
@@ -12296,7 +12810,8 @@ local
                   val hash = literal_hash 6 term
                   val stopped = List.exists (fn (saved_hash, stop) =>
                     hash = saved_hash andalso
-                    structural_literal_equal term stop) stops
+                    structural_literal_equal term stop)
+                    (Array.sub (stops, bucket hash))
                 in
                   if stopped then abstract_literal term
                   else
@@ -12561,45 +13076,329 @@ local
                     raise Feedback.HOL_ERR holerr
                   else pivot_schema_consequence ()
             end
-          fun schematic_then_annotated () =
-            (profile "CPC(chain:schematic)"
-               schematic_chain_consequence ()
-             handle Feedback.HOL_ERR holerr =>
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else profile "CPC(chain:annotated)"
-                 annotated_chain ())
+          fun trace_chain name =
+            if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
+               orelse
+               (OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
+                andalso List.length prems >= 128)
+            then Feedback.HOL_MESG ("CPC chain " ^ name ^ " begin")
+            else ()
+          (* Reconstruct a long pivot chain in a propositional schema.
+             The kernel checks every abstract resolution step, but the
+             potentially large concrete FP/word literals are substituted
+             only once, after the entire chain has been established. *)
+          fun structural_schema_chain_consequence () =
+            let
+              val bucket_count = 16381
+              val atoms = Array.array
+                (bucket_count,
+                 [] : (int * Term.term * Term.term) list)
+              val substitutions = ref
+                ([] : {redex : Term.term, residue : Term.term} list)
+              fun atom term =
+                let
+                  val hash = literal_hash 6 term
+                  val index = hash mod bucket_count
+                in
+                  case List.find (fn (saved_hash, saved, _) =>
+                      hash = saved_hash andalso
+                      structural_literal_equal saved term)
+                      (Array.sub (atoms, index)) of
+                    SOME (_, _, variable) => variable
+                  | NONE =>
+                      let
+                        val variable = Term.genvar Type.bool
+                        val _ = Array.update
+                          (atoms, index,
+                           (hash, term, variable) ::
+                           Array.sub (atoms, index))
+                        val _ = substitutions :=
+                          {redex = variable, residue = term} ::
+                          !substitutions
+                      in variable end
+                end
+              fun abstract_literal term =
+                if Term.aconv term boolSyntax.T orelse
+                   Term.aconv term boolSyntax.F then term
+                else
+                  case Lib.total boolSyntax.dest_neg term of
+                    SOME body => boolSyntax.mk_neg (atom body)
+                  | NONE => atom term
+              fun abstract_clause term =
+                if is_chain_stop term then abstract_literal term
+                else
+                  case Lib.total boolSyntax.dest_disj term of
+                    SOME (left, right) => boolSyntax.mk_disj
+                      (abstract_clause left, abstract_clause right)
+                  | NONE => abstract_literal term
+              val abstract_prems = List.map
+                (abstract_clause o Thm.concl) prems
+              val abstract_pivots = ListPair.mapEq
+                (fn (polarity, pivot) =>
+                  abstract_literal (signed_pivot polarity pivot))
+                (polarities, pivots)
+              fun refutation_resolved () =
+                let
+                  fun clause_literals term =
+                    case Lib.total boolSyntax.dest_disj term of
+                      SOME (left, right) =>
+                        clause_literals left @ clause_literals right
+                    | NONE =>
+                        if Term.aconv term boolSyntax.F then []
+                        else [term]
+                  fun refute_literal literal =
+                    if Term.aconv literal boolSyntax.F then
+                      Thm.ASSUME boolSyntax.F
+                    else
+                      case Lib.total boolSyntax.dest_neg literal of
+                        SOME _ => Thm.MP (Thm.ASSUME literal)
+                          (Thm.ASSUME (complement literal))
+                      | NONE => Thm.MP
+                          (Thm.ASSUME (complement literal))
+                          (Thm.ASSUME literal)
+                  fun refute_clause clause =
+                    case Lib.total boolSyntax.dest_disj clause of
+                      SOME (left, right) =>
+                        Thm.DISJ_CASES (Thm.ASSUME clause)
+                          (refute_clause left) (refute_clause right)
+                    | NONE => refute_literal clause
+                  fun contains literal literals =
+                    List.exists (structural_literal_equal literal) literals
+                  fun without literal literals =
+                    List.filter
+                      (fn candidate =>
+                        not (structural_literal_equal literal candidate))
+                      literals
+                  fun unique literals =
+                    let
+                      val buckets = ref (Redblackmap.mkDict Int.compare)
+                      fun keep (literal, kept) =
+                        let
+                          val hash = literal_hash 6 literal
+                          val bucket =
+                            case Redblackmap.peek (!buckets, hash) of
+                              SOME saved => saved
+                            | NONE => []
+                        in
+                          if List.exists
+                              (structural_literal_equal literal) bucket then
+                            kept
+                          else
+                            (buckets := Redblackmap.insert
+                              (!buckets, hash, literal :: bucket);
+                             literal :: kept)
+                        end
+                    in List.rev (List.foldl keep [] literals) end
+                  fun advance ((next_literals, next_refutation), pivot)
+                      (literals, refutation) =
+                    let
+                      val selected =
+                        if contains pivot literals andalso
+                           contains (complement pivot) next_literals then
+                          SOME pivot
+                        else if contains (complement pivot) literals andalso
+                                contains pivot next_literals then
+                          SOME (complement pivot)
+                        else NONE
+                    in
+                      case selected of
+                        SOME chosen =>
+                          let
+                            val opposite = complement chosen
+                            val survivors = unique
+                              (without chosen literals @
+                               without opposite next_literals)
+                            val contradiction =
+                              case Lib.total boolSyntax.dest_neg chosen of
+                                SOME atom => Thm.DISJ_CASES
+                                  (Thm.SPEC atom
+                                    boolTheory.EXCLUDED_MIDDLE)
+                                  refutation next_refutation
+                              | NONE => Thm.DISJ_CASES
+                                  (Thm.SPEC chosen
+                                    boolTheory.EXCLUDED_MIDDLE)
+                                  next_refutation refutation
+                          in (survivors, contradiction) end
+                      | NONE =>
+                          let
+                            val opposite = complement pivot
+                            val first_present = contains pivot literals
+                            val second_present =
+                              contains opposite next_literals
+                            val survivors = unique
+                              ((if first_present then
+                                  without pivot literals else literals) @
+                               (if second_present then
+                                  without opposite next_literals
+                                else next_literals))
+                          in
+                            (survivors,
+                             if first_present then next_refutation
+                             else refutation)
+                          end
+                    end
+                  val states = List.map
+                    (fn clause =>
+                      (clause_literals clause, refute_clause clause))
+                    abstract_prems
+                  val (literals, contradiction) =
+                    case states of
+                      first :: rest => List.foldl
+                        (fn ((next, pivot), accumulated) =>
+                          advance (next, pivot) accumulated)
+                        first (ListPair.zip (rest, abstract_pivots))
+                    | [] => raise ERR "resolution"
+                        "empty abstract refutation chain"
+                  val clause = mk_disj_terms literals
+                  fun deny literal =
+                    let
+                      val contradiction = Thm.MP
+                        (Thm.ASSUME (boolSyntax.mk_neg clause))
+                        (Library.disj_intro
+                          (Thm.ASSUME literal, clause))
+                    in
+                      case Lib.total boolSyntax.dest_neg literal of
+                        SOME atom => Thm.CCONTR atom contradiction
+                      | NONE => Thm.NOT_INTRO
+                          (Thm.DISCH literal contradiction)
+                    end
+                  val resolved =
+                    if List.null literals then contradiction
+                    else
+                      Thm.CCONTR clause
+                        (List.foldl
+                          (fn (literal, theorem) =>
+                            Drule.PROVE_HYP (deny literal) theorem)
+                          contradiction literals)
+                  val residual = List.filter (fn hyp => not (List.exists
+                      (structural_literal_equal hyp) abstract_prems))
+                      (Thm.hyp resolved)
+                  val _ = List.null residual orelse
+                    raise ERR "resolution"
+                      ("abstract refutation has an undischarged literal " ^
+                       Library.term_to_string
+                         (Term.subst (!substitutions)
+                           (List.hd residual)))
+                in resolved end
+              fun resolve accumulated next pivot =
+                let
+                  fun strict candidate =
+                    SOME (resolve_pair_on_structural_strict_hashed []
+                      candidate accumulated next)
+                    handle Feedback.HOL_ERR holerr =>
+                      if SmtResource.is_resource_gate holerr then
+                        raise Feedback.HOL_ERR holerr
+                      else NONE
+                in
+                  case strict pivot of
+                    SOME theorem => theorem
+                  | NONE =>
+                      (case strict (complement pivot) of
+                         SOME theorem => theorem
+                       | NONE => resolve_pair_on_structural [] pivot
+                           accumulated next)
+                end
+              fun explicit_resolved () =
+                case List.map Thm.ASSUME abstract_prems of
+                  first :: rest => List.foldl
+                    (fn ((next, pivot), accumulated) =>
+                      resolve accumulated next pivot)
+                    first (ListPair.zip (rest, abstract_pivots))
+                | [] => raise ERR "resolution" "empty abstract chain"
+              val resolved =
+                (trace_chain "refutation schema";
+                 let val theorem = refutation_resolved ()
+                 in trace_chain "refutation schema complete";
+                    theorem end)
+                handle Feedback.HOL_ERR holerr =>
+                  if SmtResource.is_resource_gate holerr then
+                    raise Feedback.HOL_ERR holerr
+                  else
+                    (trace_chain ("refutation schema error " ^
+                      Feedback.message_of holerr);
+                     explicit_resolved ())
+              val law = List.foldr
+                (fn (premise, theorem) => Thm.DISCH premise theorem)
+                resolved abstract_prems
+              val instantiated = Thm.INST (!substitutions) law
+            in List.foldl
+              (fn (premise, theorem) => Thm.MP theorem premise)
+              instantiated prems end
+          fun annotated_then_schematic () =
+            let val _ = trace_chain "annotated" in
+              profile "CPC(chain:annotated)" annotated_chain ()
+              handle Feedback.HOL_ERR holerr =>
+                if SmtResource.is_resource_gate holerr then
+                  raise Feedback.HOL_ERR holerr
+                else (trace_chain "schematic";
+                      profile "CPC(chain:schematic)"
+                        schematic_chain_consequence ())
+            end
           fun dynamic_then_annotated () =
-            (profile "CPC(chain:dynamic)"
-               dynamic_schema_consequence ()
-             handle HolSatLib.SAT_cex _ => schematic_then_annotated ()
-                  | Feedback.HOL_ERR holerr =>
-                 if SmtResource.is_resource_gate holerr then
-                   raise Feedback.HOL_ERR holerr
-                 else schematic_then_annotated ())
+            let val _ = trace_chain "dynamic" in
+              profile "CPC(chain:dynamic)" dynamic_schema_consequence ()
+              handle HolSatLib.SAT_cex _ =>
+                (trace_chain "dynamic counterexample";
+                 annotated_then_schematic ())
+                   | Feedback.HOL_ERR holerr =>
+                  if SmtResource.is_resource_gate holerr then
+                    raise Feedback.HOL_ERR holerr
+                  else (trace_chain
+                          ("dynamic error " ^
+                           Feedback.message_of holerr);
+                        annotated_then_schematic ())
+            end
           fun annotated_then_dynamic () =
-            (profile "CPC(chain:annotated)"
+            (trace_chain "annotated";
+             profile "CPC(chain:annotated)"
                annotated_chain ()
              handle Feedback.HOL_ERR holerr =>
                if SmtResource.is_resource_gate holerr then
                  raise Feedback.HOL_ERR holerr
-               else profile "CPC(chain:dynamic)"
-                 dynamic_schema_consequence ())
+               else dynamic_then_annotated ())
+          fun structural_then fallback () =
+            (trace_chain "structural schema";
+             profile "CPC(chain:structural-schema)"
+               structural_schema_chain_consequence ()
+             handle Feedback.HOL_ERR holerr =>
+               (trace_chain
+                 ("structural schema error " ^
+                  Feedback.message_of holerr);
+                fallback ()))
+          fun schematic_then_dynamic () =
+            (trace_chain "schematic";
+             profile "CPC(chain:schematic)"
+               schematic_chain_consequence ()
+             handle HolSatLib.SAT_cex _ => dynamic_then_annotated ()
+                  | Feedback.HOL_ERR holerr =>
+               if SmtResource.is_resource_gate holerr then
+                 raise Feedback.HOL_ERR holerr
+               else dynamic_then_annotated ())
           val result = profile "CPC(chain:initial)" (fn () =>
+            (* Large explicit pivot chains replay directly; medium chains
+               use the pivot schema before the all-premise SAT abstraction.
+               Every route constructs a checked theorem. *)
             (if List.length prems = 2 then annotated_then_dynamic ()
+             else if List.length prems >= 256 then
+               structural_then annotated_then_dynamic ()
+             else if List.length prems >= 128 then
+               structural_then schematic_then_dynamic ()
              else dynamic_then_annotated ())
             handle Feedback.HOL_ERR holerr =>
               if SmtResource.is_resource_gate holerr then
                 raise Feedback.HOL_ERR holerr
-              else profile "CPC(chain:sat)"
-                sat_chain_consequence ()) ()
+              else (trace_chain "sat";
+                    profile "CPC(chain:sat)" sat_chain_consequence ())) ()
+          val _ = trace_chain "initial complete"
           val target_literals = strip_chain_clause target
           fun is_target_literal literal = List.exists
             (fn target_literal => literal_equal literal target_literal)
             target_literals
           fun extras theorem = List.filter
             (fn literal => not (is_target_literal literal))
-            (strip_chain_clause (Thm.concl theorem))
+            (List.filter (fn literal => not (List.exists
+              (structural_literal_equal literal) target_literals))
+              (strip_chain_clause (Thm.concl theorem)))
           fun cleanup theorem [] = theorem
             | cleanup theorem remaining =
                 let
@@ -12640,12 +13439,19 @@ local
             profile "CPC(chain:annotated_cleanup)"
               (fn () => annotated_cleanup result
                 (List.rev (!unused_annotations)) []) ()
+          val _ = trace_chain "annotated cleanup complete"
           val cleaned_result = profile "CPC(chain:cleanup)"
             (fn () => cleanup annotated_cleaned annotated_remaining) ()
+          val _ = trace_chain "cleanup complete"
           val structural_extras = List.filter
             (fn literal => not (List.exists
               (structural_literal_equal literal) target_literals))
             (strip_chain_clause (Thm.concl cleaned_result))
+          val _ = if OS.Process.getEnv
+              "HOL4_CPC_REPLAY_TRACE" = SOME "full" then
+            trace_chain ("structural extras " ^
+              Int.toString (List.length structural_extras))
+          else ()
           fun structural_deep_literals term =
             if boolSyntax.is_disj term then
               let val (left, right) = boolSyntax.dest_disj term
@@ -12673,6 +13479,7 @@ local
               (structural_literal_equal literal) target_literals))
             (List.concat (List.map structural_deep_literals
               structural_extras))
+          val _ = trace_chain "deep extras complete"
           fun atomic_boolean_literal term =
             if boolSyntax.is_disj term orelse boolSyntax.is_conj term then false
             else case Lib.total boolSyntax.dest_neg term of
@@ -12710,6 +13517,7 @@ local
             handle Feedback.HOL_ERR _ => literal
           fun deep_disjunction_alignment () =
             let
+              val _ = trace_chain "deep disjunction alignment"
               fun deep_literals term =
                 if boolSyntax.is_disj term then
                   let val (left, right) = boolSyntax.dest_disj term
@@ -12734,6 +13542,8 @@ local
                          (premise :: kept))
               val (deep_cleaned, deep_remaining) =
                 resolve_remaining cleaned_result (!unused_prems) []
+              val _ = trace_chain ("deep remaining " ^
+                Int.toString (List.length deep_remaining))
               fun prove_member literal destination =
                 if literal_equal literal destination then
                   convert_literal (Thm.ASSUME literal) destination
@@ -12837,10 +13647,12 @@ local
                     in theorem end)
               fun work () = Thm.MP
                 (prove (Thm.concl deep_cleaned)) deep_cleaned
+              val _ = trace_chain "deep proof begin"
             in SmtResource.with_bitblast_step_time
               "cpc-resolution-deep-disjunction-alignment" work () end
           fun schematic_supported_alignment () =
             let
+              val _ = trace_chain "schematic supported alignment"
               val atoms = ref ([] : (Term.term * Term.term) list)
               val substitutions = ref
                 ([] : {redex : Term.term, residue : Term.term} list)
@@ -12941,48 +13753,63 @@ local
               val theorem = Thm.INST (!substitutions) law
               val normalized_result = Thm.MP theorem normalized_supported
             in Thm.EQ_MP (Thm.SYM target_conversion) normalized_result end
-          fun boolean_dag_cleaned_alignment () =
+          fun boolean_dag_convert_leaf term =
+            if word_bridge_literal term then
+              let
+                val conversion = normalize_literal term
+                val residue = boolSyntax.rhs (Thm.concl conversion)
+              in if Term.aconv term residue then NONE
+                 else SOME conversion end
+            else
+              let
+                val negated = Lib.total boolSyntax.dest_neg term
+                val atom = case negated of
+                    SOME body => body
+                  | NONE => term
+                val (head, _) = boolSyntax.strip_comb atom
+                val {Thy, Name, ...} = Term.dest_thy_const head
+                val _ = Thy = "smtfloat" andalso
+                  String.isPrefix "smtfp_" Name orelse
+                  raise Conv.UNCHANGED
+                val conversion = case negated of
+                    SOME _ => Conv.RAND_CONV SmtFpGraph.convert_atom term
+                  | NONE => SmtFpGraph.convert_atom term
+              in SOME conversion end
+              handle Conv.UNCHANGED => NONE
+                   | Feedback.HOL_ERR holerr =>
+                if SmtResource.is_resource_gate holerr then
+                  raise Feedback.HOL_ERR holerr
+                else NONE
+          fun boolean_dag_prove_from theorem =
             let
-              val structural_result = structural_annotated_chain ()
-              val combined_result = Thm.CONJ
-                cleaned_result structural_result
               val implication = boolSyntax.mk_imp
-                (Thm.concl combined_result, target)
-              fun convert_leaf term =
-                if word_bridge_literal term then
-                  let
-                    val conversion = normalize_literal term
-                    val residue = boolSyntax.rhs (Thm.concl conversion)
-                  in if Term.aconv term residue then NONE
-                     else SOME conversion end
-                else
-                  let
-                    val negated = Lib.total boolSyntax.dest_neg term
-                    val atom = case negated of
-                        SOME body => body
-                      | NONE => term
-                    val (head, _) = boolSyntax.strip_comb atom
-                    val {Thy, Name, ...} = Term.dest_thy_const head
-                    val _ = Thy = "smtfloat" andalso
-                      String.isPrefix "smtfp_" Name orelse
-                      raise Conv.UNCHANGED
-                    val conversion = case negated of
-                        SOME _ => Conv.RAND_CONV
-                          SmtFpGraph.convert_atom term
-                      | NONE => SmtFpGraph.convert_atom term
-                  in SOME conversion end
-                  handle Conv.UNCHANGED => NONE
-                       | Feedback.HOL_ERR holerr =>
-                    if SmtResource.is_resource_gate holerr then
-                      raise Feedback.HOL_ERR holerr
-                    else NONE
+                (Thm.concl theorem, target)
               val law =
                 prove_boolean_dag_tautology_with_leaf_conversion_using
-                  (SOME 3) HolSatLib.SAT_PROVE [] convert_leaf
+                  (SOME 3) HolSatLib.SAT_PROVE []
+                  boolean_dag_convert_leaf
                   "cpc-resolution-boolean-dag-alignment" implication
-            in Thm.MP law combined_result end
+            in Thm.MP law theorem end
+          fun boolean_dag_cleaned_alignment () =
+            (trace_chain "boolean DAG cleaned first";
+             boolean_dag_prove_from cleaned_result)
+          fun boolean_dag_combined_alignment () =
+            let
+              val _ = trace_chain "boolean DAG combined fallback"
+              fun align theorem = boolean_dag_prove_from
+                (Thm.CONJ cleaned_result theorem)
+            in
+              align (abstract_structural_annotated_chain ())
+              handle HolSatLib.SAT_cex _ =>
+                       align (structural_annotated_chain ())
+                   | Feedback.HOL_ERR holerr =>
+                       if SmtResource.is_resource_gate holerr then
+                         raise Feedback.HOL_ERR holerr
+                       else align (structural_annotated_chain ())
+            end
           fun direct_chain_alignment () =
             let
+              val _ = trace_chain "direct alignment"
               val implication = boolSyntax.mk_imp
                 (Thm.concl alignment_source, target)
               fun node_conversion term =
@@ -13017,18 +13844,21 @@ local
                   "cpc-resolution-result-alignment" implication
             in Thm.MP law alignment_source end
           fun circuit_alignment [] =
+                (trace_chain "circuit alignment final";
                 if List.length target_literals <= 3 then
                   semantic_word_tseitin target alignment_source
-                else semantic_tseitin_atom target alignment_source
+                else semantic_tseitin_atom target alignment_source)
             | circuit_alignment (source :: rest) =
-                (semantic_tseitin_atom target source
+                (trace_chain "circuit alignment candidate";
+                 semantic_tseitin_atom target source
                  handle HolSatLib.SAT_cex _ => circuit_alignment rest
                       | Feedback.HOL_ERR holerr =>
                           if SmtResource.is_resource_gate holerr then
                             raise Feedback.HOL_ERR holerr
                           else circuit_alignment rest)
           fun original_alignment () =
-            ((if List.length prems > 32 then
+            (trace_chain "original alignment";
+             (if List.length prems > 32 then
                 circuit_alignment
                   [cleaned_result, supported_result, alignment_source]
               else semantic_taut_reorder supported_result)
@@ -13047,57 +13877,94 @@ local
              handle Feedback.HOL_ERR _ => contextual_target cleaned_result
              handle Feedback.HOL_ERR _ =>
                tautological_consequences prems target)
+          fun boolean_dag_later_alignment () =
+            let
+              fun original_then_combined () =
+                original_alignment ()
+                handle HolSatLib.SAT_cex _ =>
+                         boolean_dag_combined_alignment ()
+                     | Conv.UNCHANGED =>
+                         boolean_dag_combined_alignment ()
+                     | Feedback.HOL_ERR holerr =>
+                         if SmtResource.is_resource_gate holerr then
+                           raise Feedback.HOL_ERR holerr
+                         else boolean_dag_combined_alignment ()
+            in
+              deep_disjunction_alignment ()
+              handle HolSatLib.SAT_cex _ => original_then_combined ()
+                   | Conv.UNCHANGED => original_then_combined ()
+                   | Feedback.HOL_ERR holerr =>
+                       if SmtResource.is_resource_gate holerr then
+                         raise Feedback.HOL_ERR holerr
+                       else original_then_combined ()
+            end
           val use_supported_schema =
             List.length prems > 150 andalso
             List.length prems <= 250 andalso
             not (List.null (!unused_prems)) andalso
             List.length target_literals <= 16 andalso
-            List.length (strip_chain_clause
+              List.length (strip_chain_clause
               (Thm.concl cleaned_result)) -
               List.length target_literals > 0
+          val _ = trace_chain ("supported schema " ^
+            Bool.toString use_supported_schema ^ " unused=" ^
+            Int.toString (List.length (!unused_prems)) ^ " target=" ^
+            Int.toString (List.length target_literals))
+          val _ = trace_chain "checking Boolean DAG eligibility"
+          val boolean_dag_eligible =
+            List.null (!unused_prems) andalso
+            not (List.null structural_extras) andalso
+            List.all atomic_boolean_literal target_literals andalso
+            List.length structural_deep_extras <= 64 andalso
+            List.all supported_deep_literal structural_deep_extras
+          val _ = trace_chain ("Boolean DAG eligible " ^
+            Bool.toString boolean_dag_eligible)
+          fun semantic_extras_empty () =
+            let
+              val _ = trace_chain "checking semantic extras"
+              val result = List.null (extras cleaned_result)
+              val _ = trace_chain ("semantic extras empty " ^
+                Bool.toString result)
+            in result end
+          val _ = trace_chain "alignment setup complete"
         in
           profile "CPC(chain:alignment)" (fn () =>
-          if shared_aconv (Thm.concl cleaned_result) target then
+          if List.null structural_extras andalso
+             shared_aconv (Thm.concl cleaned_result) target then
             cleaned_result
-          else if List.null (!unused_prems) andalso
-                  not (List.null structural_extras) andalso
-                  List.all atomic_boolean_literal target_literals andalso
-                  List.length structural_deep_extras <= 64 andalso
-                  List.all supported_deep_literal
-                    structural_deep_extras then
+          else if List.length prems = 2 then
+            (* Binary resolution has a compact Boolean consequence from its
+               two exact premise theorems.  Check that DAG directly before
+               trying the broader semantic alignment ladder, whose generic
+               term abstraction is needlessly expensive on bit-blasted FP
+               literals. *)
+            (direct_chain_alignment ()
+             handle HolSatLib.SAT_cex _ => original_alignment ()
+                  | Feedback.HOL_ERR holerr =>
+                      if SmtResource.is_resource_gate holerr then
+                        raise Feedback.HOL_ERR holerr
+                      else original_alignment ())
+          else if boolean_dag_eligible then
             (boolean_dag_cleaned_alignment ()
              handle HolSatLib.SAT_cex _ =>
-               (deep_disjunction_alignment ()
-                handle Conv.UNCHANGED => original_alignment ()
-                     | Feedback.HOL_ERR holerr =>
-                   if SmtResource.is_resource_gate holerr then
-                     raise Feedback.HOL_ERR holerr
-                   else original_alignment ())
+                      boolean_dag_later_alignment ()
                   | Feedback.HOL_ERR holerr =>
                if SmtResource.is_resource_gate holerr then
                  raise Feedback.HOL_ERR holerr
-               else
-                 (deep_disjunction_alignment ()
-                  handle Conv.UNCHANGED => original_alignment ()
-                       | Feedback.HOL_ERR deep_error =>
-                     if SmtResource.is_resource_gate deep_error then
-                       raise Feedback.HOL_ERR deep_error
-                     else original_alignment ()))
-          else if List.null (extras cleaned_result) then
+               else boolean_dag_later_alignment ())
+          else if semantic_extras_empty () then
             reorder_to_target cleaned_result
           else if use_supported_schema then
-            (deep_disjunction_alignment ()
-             handle Conv.UNCHANGED => original_alignment ()
+            (schematic_supported_alignment ()
+             handle HolSatLib.SAT_cex _ => original_alignment ()
+                  | Conv.UNCHANGED => original_alignment ()
                   | Feedback.HOL_ERR holerr =>
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else
-                 (direct_chain_alignment ()
-                  handle HolSatLib.SAT_cex _ => original_alignment ()
-                       | Feedback.HOL_ERR schema_error =>
-                    if SmtResource.is_resource_gate schema_error then
-                      raise Feedback.HOL_ERR schema_error
-                    else original_alignment ()))
+               (trace_chain
+                  ("schematic supported error " ^
+                   Feedback.message_of holerr);
+                direct_chain_alignment ()
+                handle HolSatLib.SAT_cex _ => original_alignment ()
+                     | Feedback.HOL_ERR _ => original_alignment ()))
           else original_alignment ()) ()
         end
       fun has_non_arithmetic_equality tm =
@@ -13159,29 +14026,34 @@ local
          else tautological_consequences prems target)
         handle HolSatLib.SAT_cex _ =>
           raise ERR "resolution" "propositional consequence is invalid"
+      (* Macro/chain resolution records its resolvent as the first argument,
+         followed by one polarity and one pivot for every premise after the
+         first.  This annotation is the general rule contract, including the
+         two-premise case.  Replaying it directly avoids handing a large
+         bit-blasted clause to a blind propositional tautology procedure. *)
+      fun annotated_macro_chain target =
+        let
+          val pivot_count = List.length prems - 1
+        in
+          case args of
+            recorded_target :: annotation =>
+              if pivot_count > 0 andalso
+                 List.length annotation = 2 * pivot_count then
+                (replay_chain recorded_target
+                   (List.take (annotation, pivot_count))
+                   (List.drop (annotation, pivot_count))
+                 handle HolSatLib.SAT_cex _ =>
+                   tautological_checked target
+                      | Feedback.HOL_ERR replay_error =>
+                   if SmtResource.is_resource_gate replay_error then
+                     raise Feedback.HOL_ERR replay_error
+                   else tautological_checked target)
+              else tautological_checked target
+          | [] => tautological_checked target
+        end
       fun prove target =
-        (profile "CPC(rung:resolution/tautological)" (fn () =>
-         if List.length prems > 2 then
-           let
-             val n = List.length prems - 1
-             fun annotated_chain () =
-               case args of
-                 _ :: annotation =>
-                   if List.length annotation = 2 * n then
-                     (replay_chain target
-                        (List.take (annotation, n))
-                        (List.drop (annotation, n))
-                      handle HolSatLib.SAT_cex _ =>
-                        tautological_checked target
-                           | Feedback.HOL_ERR replay_error =>
-                        if SmtResource.is_resource_gate replay_error then
-                          raise Feedback.HOL_ERR replay_error
-                        else tautological_checked target)
-                   else tautological_checked target
-               | [] => raise ERR "resolution"
-                   "missing resolution-chain annotation"
-           in annotated_chain () end
-         else tautological_checked target) ()
+        (profile "CPC(rung:resolution/annotated_macro)"
+           annotated_macro_chain target
          handle Feedback.HOL_ERR _ =>
            (case profile "CPC(rung:resolution/complementary)"
              (fn () => resolve_complementary_literals prems target) () of
@@ -15550,6 +16422,18 @@ local
           [smtstringTheory.reglan_equiv_power_loop]
         else missing_recipe ()
       fun seq_family_prove () =
+        let
+          (* Recipes state Seq semantics independently of the parser's
+             choice of named operators or their defining HOL expressions.
+             Normalize that representation with checked definitions before
+             running the fixed family proof. *)
+          val prove_source_implication = prove_implication
+          fun prove_implication tactic =
+            prove_source_implication (Tactical.THEN
+              (Rewrite.PURE_REWRITE_TAC
+                 [HolSmtTheory.smt_seq_extract_def,
+                  HolSmtTheory.smt_seq_at_def], tactic))
+        in
         if name = "str-eq-ctn-false" then
           prove_implication (metisLib.METIS_TAC
             [boolTheory.EQ_CLAUSES, listTheory.APPEND_ASSOC,
@@ -15591,10 +16475,7 @@ local
             [HolSmtTheory.smt_seq_extract_body_full_eq])
         else if name = "str-at-elim" then
           let
-            val generic = Rewrite.REWRITE_RULE
-              [HolSmtTheory.smt_seq_at_def,
-               HolSmtTheory.smt_seq_extract_def]
-              HolSmtTheory.smt_seq_at_extract
+            val generic = HolSmtTheory.smt_seq_at_extract
           in
             (Drule.INST_TY_TERM
                (Term.match_term (Thm.concl generic) expected) generic
@@ -16042,6 +16923,7 @@ local
                 name = "seq-rev-unit" then
           owning_procedure ()
         else missing_recipe ()
+        end
       fun source_uses_hol_sequence () =
         List.exists
           (fn (((_, kind, source), argument)) =>
@@ -16712,7 +17594,10 @@ local
               "direct result differs from the declared conclusion"
       fun attempt work fallback =
         work () handle Feedback.HOL_ERR _ => fallback ()
-      fun trans_phase _ work = work ()
+      fun trans_phase name work =
+        if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full" then
+          profile ("CPC(trans:" ^ name ^ ")") work ()
+        else work ()
       (* Canonical rung shared by trans and eq_resolve: replay canonically,
          then restore the declared conclusion through the weak canonicalizer
          and, failing that, the strong one. *)
@@ -17751,20 +18636,25 @@ local
                 else
                ((case (conclusion, located_args) of
                    (NONE, [source]) =>
-                     let
-                       val dag_nodes = SmtResource.dag_nodes_up_to
-                         (max_exact_provenance_dag_nodes + 1) (#term source)
-                       val exact_small =
-                         dag_nodes <= max_exact_provenance_dag_nodes andalso
-                         Option.isSome (Term.term_size_bounded
-                           (16 * max_exact_provenance_dag_nodes)
-                           (#term source))
-                     in
-                       if not exact_small andalso
-                          (#name rule = "nary_cong" orelse
-                           (#name rule = "cong" andalso
-                            not (has_binder_shell
-                              (#provenance source)))) then
+                    let
+                      val dag_nodes = SmtResource.dag_nodes_up_to
+                        (max_exact_provenance_dag_nodes + 1) (#term source)
+                      val exact_small =
+                        dag_nodes <= max_exact_provenance_dag_nodes andalso
+                        Option.isSome (Term.term_size_bounded
+                          (16 * max_exact_provenance_dag_nodes)
+                          (#term source))
+                    in
+                       if #name rule = "nary_cong" then
+                         (* NARY_CONG is an operandwise rule.  Rebuild its
+                            source application with checked kernel congruence
+                            at the immediate argument spine; non-flat inputs
+                            use the general DAG reconstruction. *)
+                         raw_unavailable_result
+                           "n-Cong n-ary congruence checked operandwise"
+                           (replay_nary_cong (#term source) prems)
+                       else if not exact_small andalso
+                               not (has_binder_shell (#provenance source)) then
                          raw_unavailable_result
                            "congruence checked operandwise"
                            (replay_direct_nary_cong (#term source) prems)
@@ -18234,7 +19124,18 @@ local
              "CPC(chain:sat)",
              "CPC(chain:annotated_cleanup)",
              "CPC(chain:cleanup)",
-             "CPC(chain:alignment)"]
+             "CPC(chain:alignment)",
+             "CPC(trans:shared/compare)",
+             "CPC(trans:shared/nodewise)",
+             "CPC(trans:shared/canonical_term)",
+             "CPC(rung:trans/GRAPH_TAUT)_OK",
+             "CPC(rung:trans/TAUT)_OK",
+             "CPC(rung:trans/XOR_GRAPH)_OK",
+             "CPC(rung:trans/XOR_TAUT)_OK",
+             "CPC(xor_tautology:simp)_OK",
+             "CPC(xor_tautology:taut)_OK",
+             "CPC(xor_graph:simplify)_OK",
+             "CPC(xor_graph:sat)_OK"]
           val ranked = Listsort.sort
             (fn ((_, left), (_, right)) =>
               Time.compare (#usr right, #usr left)) results
@@ -18256,14 +19157,14 @@ local
             val count = !traced_steps + 1
             val _ = traced_steps := count
           in
-            if count mod 25 = 0 orelse
-               (trace_setting = SOME "full" andalso count >= 13000) then
+            if count mod 25 = 0 orelse trace_setting = SOME "full" then
               let
                 val {nongc, gc} = Timer.checkCPUTimes replay_cpu_timer
                 val gc_time = Time.+ (#usr gc, #sys gc)
               in
                 Feedback.HOL_MESG
                   ("CPC replay progress: step=" ^ #id step ^
+                   " rule=" ^ #name (#rule step) ^
                    " count=" ^ Int.toString count ^
                    " live=" ^ Int.toString
                      (Redblackmap.numItems (#steps current)) ^
@@ -18302,33 +19203,70 @@ local
                SOME command => [command]
              | NONE => raise ERR "replay_commands"
                  ("diagnostic step not found: " ^ wanted))
-      fun add_use (id, uses) =
-        let val count = Option.getOpt (Redblackmap.peek (uses, id), 0)
-        in Redblackmap.insert (uses, id, count + 1) end
-      val remaining_uses = ref (List.foldl
-        (fn (command, uses) =>
+      val _ = if trace_steps then
+        (Feedback.HOL_MESG
+           ("CPC replay setup: commands=" ^
+            Int.toString (List.length commands));
+         TextIO.flushOut TextIO.stdOut)
+        else ()
+      (* The liveness pass touches every certificate edge before replay
+         starts.  A functional map rebuilds a logarithmic search tree for
+         every edge, which becomes the dominant cost on large CPC proofs.
+         This proof-local mutable index records exactly the same use counts
+         while making the prepass linear in the number of edges. *)
+      val use_count_bucket_count = 65537
+      val use_counts = Array.array
+        (use_count_bucket_count, [] : (string * int ref) list)
+      fun use_count_hash id =
+        let
+          fun loop index hash =
+            if index = String.size id then hash
+            else loop (index + 1)
+              ((hash * 33 + Char.ord (String.sub (id, index))) mod
+               use_count_bucket_count)
+        in loop 0 5381 end
+      fun use_count_ref id =
+        let
+          val bucket = use_count_hash id
+          val entries = Array.sub (use_counts, bucket)
+        in
+          case List.find (fn (saved, _) => saved = id) entries of
+            SOME (_, count) => count
+          | NONE =>
+              let val count = ref 0 in
+                Array.update (use_counts, bucket, (id, count) :: entries);
+                count
+              end
+        end
+      fun add_use id =
+        let val count = use_count_ref id in count := !count + 1 end
+      val _ = List.app
+        (fn command =>
           case command of
-            STEP {premises, ...} => List.foldl add_use uses premises
-          | _ => uses)
-        (Redblackmap.mkDict String.compare) commands)
-      fun keep id = Option.getOpt
-        (Redblackmap.peek (!remaining_uses, id), 0) > 0
+            STEP {premises, ...} => List.app add_use premises
+          | _ => ()) commands
+      val _ = if trace_steps then
+        (Feedback.HOL_MESG "CPC replay setup: liveness complete";
+         TextIO.flushOut TextIO.stdOut)
+        else ()
+      fun use_count id =
+        case List.find (fn (saved, _) => saved = id)
+          (Array.sub (use_counts, use_count_hash id)) of
+          SOME (_, count) => !count
+        | NONE => 0
+      fun keep id = use_count id > 0
       fun discard_unreferenced state id =
         if keep id then state else remove_step state id
       fun consume state id =
-        case Redblackmap.peek (!remaining_uses, id) of
-          NONE => raise ERR "replay_commands"
-            ("missing premise-use count for step '" ^ id ^ "'")
-        | SOME count =>
-            let
-              val _ = count > 0 orelse raise ERR "replay_commands"
-                ("exhausted premise-use count for step '" ^ id ^ "'")
-              val remaining = count - 1
-              val _ = remaining_uses := Redblackmap.insert
-                (!remaining_uses, id, remaining)
-            in
-              if remaining = 0 then remove_step state id else state
-            end
+        let
+          val count = use_count_ref id
+          val _ = !count > 0 orelse raise ERR "replay_commands"
+            ("missing or exhausted premise-use count for step '" ^ id ^ "'")
+          val remaining = !count - 1
+          val _ = count := remaining
+        in
+          if remaining = 0 then remove_step state id else state
+        end
       fun finish state id premises =
         discard_unreferenced
           (List.foldl
@@ -18336,6 +19274,10 @@ local
             state premises) id
       val strong_canon = strong_cpc_canon_conv
         (#translation_definitions initial)
+      val _ = if trace_steps then
+        (Feedback.HOL_MESG "CPC replay setup: canonicalizer ready";
+         TextIO.flushOut TextIO.stdOut)
+        else ()
       fun loop state commands =
         case commands of
           [] => raise ERR "replay_commands" "empty CPC proof"
@@ -18372,6 +19314,7 @@ local
               val _ = if trace_steps then
                 (Feedback.HOL_MESG
                    ("CPC replay progress: completed=" ^ #id step);
+                 trace_profile ();
                  TextIO.flushOut TextIO.stdOut)
               else ()
             in result end
@@ -18478,7 +19421,8 @@ local
 
 in
 
-  val prove_boolean_circuit = prove_boolean_circuit_tautology
+  val prove_boolean_circuit =
+    prove_boolean_circuit_tautology
   val sharing_aware_aconv = shared_aconv
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
   val replay_rare_rewrite_for_test = replay_rare_rewrite
@@ -18518,6 +19462,7 @@ in
     end
 
   val strong_cpc_canon_conv_for_test = strong_cpc_canon_conv
+  val canonical_term_conv_for_test = canonical_term_conv
 
   fun replay_process_scope_for_test args prems =
     replay_process_scope (strong_cpc_canon_conv []) args prems
@@ -19012,9 +19957,8 @@ in
      not repeatedly traverse a large Skolem term.  Eliminate all such
      abbreviations in one checked kernel instantiation before any deferred
      FP premise is discharged. *)
-  fun instantiate_cpc_fp_private_markers theorem =
+  fun cpc_fp_private_substitutions bindings =
     let
-      val bindings = CPC_ProofParser.cpc_fp_private_bindings ()
       fun unary theory name argument =
         let
           val constant = Term.prim_mk_const {Thy = theory, Name = name}
@@ -19071,10 +20015,226 @@ in
             raise ERR "instantiate_cpc_fp_private_markers"
               (kind ^ " witness has the wrong type")
         in {redex = marker, residue = replacement} end
-      val substitutions = List.map witness bindings
-    in
+    in List.map witness bindings end
+
+  fun instantiate_cpc_fp_private_bindings bindings theorem =
+    let val substitutions = cpc_fp_private_substitutions bindings in
       if List.null substitutions then theorem
       else Thm.INST substitutions theorem
+    end
+
+  fun instantiate_cpc_fp_private_markers theorem =
+    instantiate_cpc_fp_private_bindings
+      (CPC_ProofParser.cpc_fp_private_bindings ()) theorem
+
+  (* Older CPC producers omit the operand on private FP components.  Each
+     occurrence is a fresh internal bitvector, not the same nullary HOL
+     constant as another occurrence with the same printed spelling.  The
+     checked classification bridges identify the FP operands; search the
+     finite one-to-one assignments of the remaining components to those
+     operands, accepting only an assignment for which every deferred bridge
+     has an independent kernel proof.  No TRUST proposition is assumed. *)
+  fun instantiate_cpc_fp_unbound_markers state allowed theorem =
+    let
+      val kinds =
+        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND",
+         "@fp.ZERO", "@fp.NAN", "@fp.INF"]
+      fun marker_kind term =
+        let val (name, _) = Term.dest_var term in
+          List.find (fn kind =>
+            String.isPrefix (kind ^ "#unbound") name) kinds
+        end handle Feedback.HOL_ERR _ => NONE
+      fun unique terms = List.rev (List.foldl
+        (fn (term, kept) =>
+          if List.exists (Term.aconv term) kept then kept
+          else term :: kept) [] terms)
+      fun markers term =
+        let
+          val found = ref ([] : (Term.term * string) list)
+          val graph = SmtResource.bounded_structure_with_inspector
+            (fn node =>
+              case marker_kind node of
+                SOME kind => found := (node, kind) :: !found
+              | NONE => ())
+            SmtResource.max_bitblast_term_nodes term
+          val _ = #complete graph orelse
+            raise ERR "instantiate_cpc_fp_unbound_markers"
+              "private FP marker scan exceeded the DAG resource limit"
+        in !found end
+      val extra = HOLset.listItems
+        (HOLset.difference (Thm.hypset theorem, allowed))
+      val _ = List.all (List.null o markers)
+          (HOLset.listItems allowed) orelse
+        raise ERR "instantiate_cpc_fp_unbound_markers"
+          "private FP component occurs in the original proof context"
+      val all_markers = unique
+        (List.map #1 (List.concat (List.map markers extra)))
+      fun classified_source term =
+        let
+          val (head, arguments) = boolSyntax.strip_comb term
+          val {Thy, Name, ...} = Term.dest_thy_const head
+        in
+          case (Thy, Name, arguments) of
+            ("smtfloat", "smtfp_is_zero", [source]) =>
+              SOME ("@fp.ZERO", source)
+          | ("smtfloat", "smtfp_is_nan", [source]) =>
+              SOME ("@fp.NAN", source)
+          | ("smtfloat", "smtfp_is_infinite", [source]) =>
+              SOME ("@fp.INF", source)
+          | _ => NONE
+        end handle Feedback.HOL_ERR _ => NONE
+      fun anchor atom encoding =
+        case classified_source atom of
+          NONE => NONE
+        | SOME (kind, source) =>
+            (case List.filter (fn (_, found_kind) =>
+                found_kind = kind) (markers encoding) of
+               [(marker, _)] => SOME
+                 ({marker = marker, kind = kind, source = source} :
+                   CPC_ProofParser.cpc_fp_private_binding)
+             | _ => NONE)
+      fun anchors hypothesis =
+        case Lib.total boolSyntax.dest_eq hypothesis of
+          SOME (left, right) =>
+            List.mapPartial Lib.I
+              [anchor left right, anchor right left]
+        | NONE => []
+      val fixed = List.concat (List.map anchors extra)
+      val sources = unique (List.map #source fixed)
+      fun fixed_source marker =
+        case List.filter (fn binding =>
+            Term.aconv (#marker binding) marker) fixed of
+          [] => NONE
+        | first :: rest =>
+            if List.all (fn binding =>
+                Term.aconv (#source binding) (#source first)) rest then
+              SOME (#source first)
+            else raise ERR "instantiate_cpc_fp_unbound_markers"
+              "inconsistent private FP classification anchors"
+      fun assignments kind group =
+        let
+          fun choose [] _ chosen = [List.rev chosen]
+            | choose (marker :: remaining) used chosen =
+                let
+                  val available =
+                    case fixed_source marker of
+                      SOME source => [source]
+                    | NONE => sources
+                in
+                  List.concat (List.map (fn source =>
+                    if List.exists (Term.aconv source) used then []
+                    else choose remaining (source :: used)
+                      ({marker = marker, kind = kind,
+                        source = source} :: chosen)) available)
+                end
+        in choose group [] [] end
+      val groups = List.map (fn kind =>
+        (kind, List.filter (fn marker =>
+          marker_kind marker = SOME kind) all_markers)) kinds
+      fun combine [] = [[]]
+        | combine ((kind, group) :: remaining) =
+            let val tails = combine remaining in
+              List.concat (List.map (fn bindings =>
+                List.map (fn tail => bindings @ tail) tails)
+                (assignments kind group))
+            end
+      val candidates = combine groups
+      val _ = List.length candidates <= 4096 orelse
+        raise ERR "instantiate_cpc_fp_unbound_markers"
+          "private FP witness search exceeds fixed assignment budget"
+      fun fp_bridge hypothesis =
+        case Lib.total boolSyntax.dest_eq hypothesis of
+          SOME (left, right) =>
+            SmtFpGraph.lower_atom_domain left orelse
+            SmtFpGraph.lower_atom_domain right orelse
+            SmtFpGraph.lower_atom_domain hypothesis
+        | NONE => false
+      fun fp_operation_cost hypothesis =
+        let
+          val atom =
+            case Lib.total boolSyntax.dest_eq hypothesis of
+              SOME (left, right) =>
+                if SmtFpGraph.lower_atom_domain left then left
+                else if SmtFpGraph.lower_atom_domain right then right
+                else hypothesis
+            | NONE => hypothesis
+          fun cost term =
+            if boolSyntax.is_select term then 0
+            else if Term.is_comb term then
+              let
+                val (head, arguments) = boolSyntax.strip_comb term
+                val own =
+                  if Term.is_const head then
+                    let val {Thy, Name, ...} =
+                      Term.dest_thy_const head
+                    in if Thy = "smtfloat" andalso
+                         List.exists (fn operation => Name = operation)
+                           ["smtfp_add", "smtfp_sub", "smtfp_mul",
+                            "smtfp_div", "smtfp_fma", "smtfp_sqrt"]
+                       then 1 else 0 end
+                  else 0
+              in own + List.foldl
+                (fn (argument, total) => cost argument + total)
+                0 arguments end
+            else 0
+        in cost atom end
+      (* Cheap atom bridges filter impossible private-symbol assignments
+         before the shared arithmetic circuits are lowered.  Every bridge
+         is still checked before a witness assignment can be selected. *)
+      val bridges = Listsort.sort
+        (fn (left, right) =>
+          Int.compare (fp_operation_cost left,
+                       fp_operation_cost right))
+        (List.filter fp_bridge extra)
+      fun trace_private message =
+        if OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full" then
+          (Feedback.HOL_MESG ("CPC private FP " ^ message);
+           TextIO.flushOut TextIO.stdOut)
+        else ()
+      fun valid bindings =
+        let
+          val substitutions = cpc_fp_private_substitutions bindings
+          fun check hypothesis =
+            let
+              val _ = trace_private
+                ("bridge cost=" ^
+                 Int.toString (fp_operation_cost hypothesis) ^ " begin")
+              val instance = Term.subst substitutions hypothesis
+              val proof = replay_trust true state [] [instance]
+              val _ = trace_private "bridge proved"
+            in
+              Term.aconv (Thm.concl proof) instance andalso
+              HOLset.isSubset (Thm.hypset proof, allowed)
+            end
+        in List.all check bridges end
+        (* A resource gate is inconclusive for this candidate, just as a
+           failed checked proof is.  Other finite assignments may still
+           admit a checked proof; none is accepted without one. *)
+        handle Feedback.HOL_ERR holerr =>
+          (trace_private ("bridge failed: " ^
+             Feedback.message_of holerr); false)
+             | HolSatLib.SAT_cex _ =>
+          (trace_private "bridge counterexample"; false)
+      val candidate_index = ref 0
+      fun find [] = raise ERR "instantiate_cpc_fp_unbound_markers"
+          "no checked assignment discharges private FP bridges"
+        | find (candidate :: remaining) =
+            (candidate_index := !candidate_index + 1;
+             trace_private ("candidate " ^
+               Int.toString (!candidate_index) ^ "/" ^
+               Int.toString (List.length candidates));
+             List.app (fn binding => trace_private
+               (#kind binding ^ " " ^
+                Library.term_to_string (#marker binding) ^ " -> " ^
+                Library.term_to_string (#source binding))) candidate;
+             if valid candidate then candidate else find remaining)
+    in
+      if List.null all_markers then theorem
+      else if List.null fixed then
+        raise ERR "instantiate_cpc_fp_unbound_markers"
+          "private FP components have no classification anchors"
+      else instantiate_cpc_fp_private_bindings
+        (find candidates) theorem
     end
 
   fun discharge_later_checked_steps state allowed theorem =
@@ -19239,7 +20399,10 @@ in
         handle Feedback.HOL_ERR holerr =>
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
-          else (trace_checked "deferred"; result)
+          else
+            (trace_checked
+               ("deferred: " ^ Feedback.message_of holerr);
+             result)
     in
       HOLset.foldl discharge theorem extra
     end
@@ -19274,6 +20437,9 @@ in
       val thm = profile "CPC(check:fp_private_abbreviations)"
         instantiate_cpc_fp_private_markers thm
       val _ = trace_check "private markers instantiated"
+      val thm = profile "CPC(check:fp_private_unbound)"
+        (instantiate_cpc_fp_unbound_markers state allowed) thm
+      val _ = trace_check "unbound private markers reconstructed"
       val thm = profile "CPC(check:discharge_later_checked_steps)"
         (discharge_later_checked_steps state allowed) thm
       val _ = trace_check "checked hypotheses discharged"
@@ -19299,6 +20465,14 @@ in
 
   fun replay_trust_for_test target =
     replay_trust true (initial_state [] []) [] [target]
+
+  fun discharge_private_fp_for_test theorem =
+    let
+      val state = initial_state [] []
+      val allowed = Term.empty_tmset
+      val instantiated = instantiate_cpc_fp_unbound_markers
+        state allowed theorem
+    in discharge_later_checked_steps state allowed instantiated end
 
   fun replay_root_with_definitions_for_test definitions proof =
     let

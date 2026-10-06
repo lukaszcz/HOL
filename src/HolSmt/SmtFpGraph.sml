@@ -1065,7 +1065,26 @@ struct
     end
 
   fun lower_atom_domain term =
-    (ignore (classify_atom term); true)
+    let
+      (* Inspect the instantiated head before asking for the type of a
+         potentially huge Boolean/word application.  The full classifier
+         still checks every admitted candidate. *)
+      val candidate =
+        if boolSyntax.is_eq term then
+          let
+            val equality = Term.rator (Term.rator term)
+            val (operand_type, _) =
+              Type.dom_rng (Term.type_of equality)
+          in is_fp_type operand_type end
+        else
+          case head_name term of
+            SOME ("smtfloat", name) =>
+              List.exists (fn atom => atom = name) atom_names
+          | _ => false
+    in
+      candidate andalso
+      (ignore (classify_atom term); true)
+    end
     handle Declined _ => false
          | Feedback.HOL_ERR _ => false
 

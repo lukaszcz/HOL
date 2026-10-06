@@ -12,7 +12,7 @@ struct
     let val {Thy, Name, ...} = Term.dest_thy_const tm
     in Thy = thy andalso List.exists (Lib.equal Name) names end
 
-  fun mentions pred t = Lib.can (HolKernel.find_term pred) t
+  val mentions = SmtResource.contains
 
   fun is_bag_constant tm =
     named "bag"
@@ -25,6 +25,7 @@ struct
      [\x. a x + b x].  Do not classify arbitrary Int-valued lambdas as bags:
      array and arithmetic lemmas use those too. *)
   fun is_int_count_lambda tm =
+    Term.is_abs tm andalso
     let
       val (x, body) = Term.dest_abs tm
       val (head, args) = boolSyntax.strip_comb body

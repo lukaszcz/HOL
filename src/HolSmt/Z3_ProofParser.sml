@@ -1635,6 +1635,13 @@ local
       (z3_string_tmdict z3_version)
     (* union of user-declared names and Z3's inference rule names *)
     val tmdict = Library.union_dict tmdict z3_builtin_dict
+    (* Proof equality on RegLan is extensional.  The source dictionary is
+       deliberately unchanged, as HOL regex constructor equality is not
+       language equivalence. *)
+    val tmdict = Library.extend_dict
+      (("=", SmtLib_Theories.chainable
+        (SmtLib_Theories.same_type_binary SmtRegLanProve.proof_equality)),
+       tmdict)
     (* parse the stream *)
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG "HolSmtLib: parsing Z3 proof"

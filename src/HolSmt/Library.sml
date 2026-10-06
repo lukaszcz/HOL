@@ -586,15 +586,21 @@ struct
     (* Only proof-local names may be solved by replay unification.  Treat
        every other free variable in the goal as a rigid constant; otherwise
        a syntactic mismatch can be hidden by "defining" a user variable. *)
-    val goal_vars = Term.FVL [lhs, rhs] Term.empty_tmset
+    val goal_vars = SmtResource.profile_phase "definition-unification/free-vars"
+      (fn () => Term.FVL_dag [lhs, rhs] Term.empty_tmset) ()
     val protected = HOLset.listItems (HOLset.difference (goal_vars, var_set))
-    val substs = Unify.simp_unify_terms protected lhs rhs
+    val substs = SmtResource.profile_phase "definition-unification/search"
+      (fn () => Unify.simp_unify_terms protected lhs rhs) ()
       handle Feedback.HOL_ERR holerr =>
+        SmtResource.profile_phase "definition-unification/diagnostic" (fn () =>
         raise Feedback.mk_HOL_ERR "Library" "gen_instantiation"
           ("simp_unify_terms rejected protected goal variables: " ^
-           Feedback.message_of holerr ^ "; lhs=" ^ term_to_string lhs ^
-           "; rhs=" ^ term_to_string rhs ^ "; protected=" ^
-           String.concatWith ", " (List.map term_to_string protected))
+           Feedback.message_of holerr ^ "; protected-count=" ^
+           Int.toString (List.length protected) ^
+           (if !trace < 3 then "" else
+              "; lhs=" ^ term_to_string lhs ^ "; rhs=" ^ term_to_string rhs ^
+              "; protected=" ^ String.concatWith ", "
+                (List.map term_to_string protected)))) ()
     fun orient {redex, residue} = orient_def var_set (redex, residue)
     val oriented_substs = List.map orient substs
     val _ = List.all (fn (name, _) => HOLset.member (var_set, name))
@@ -603,11 +609,47 @@ struct
         "unification produced a definition for a non-Z3 variable"
     val asl = List.map boolSyntax.mk_eq oriented_substs
     val thms = List.map Thm.ASSUME asl
-    val concl = boolSyntax.mk_eq (lhs, rhs)
   in
-    Tactical.TAC_PROOF ((asl, concl), Tactical.THEN (Tactic.SUBST_TAC thms,
-      Tactic.REFL_TAC))
+    let
+      val theta = ListPair.map
+        (fn ((name, _), theorem) => {redex = name, residue = theorem})
+        (oriented_substs, thms)
+      val left = Drule.SUBST_CONV theta lhs lhs
+      val right = Drule.SUBST_CONV theta rhs rhs
+      val bridge = Thm.ALPHA
+        (boolSyntax.rhs (Thm.concl left))
+        (boolSyntax.rhs (Thm.concl right))
+    in
+      Thm.TRANS left (Thm.TRANS bridge (Thm.SYM right))
+    end
   end
+
+  (* Normalize checked variable definitions by capture-avoiding kernel
+     substitution.  Each layer substitutes simultaneously over the stored
+     DAG; an acyclic definition graph stabilizes within its variable count.
+     Cyclic expansion is an ordinary, bounded normalization refusal. *)
+  fun checked_definition_rewrite_conv definitions target =
+    let
+      fun entry theorem =
+        let val variable = boolSyntax.lhs (Thm.concl theorem) in
+          if Term.is_var variable then {redex = variable, residue = theorem}
+          else raise Feedback.mk_HOL_ERR "Library"
+            "checked_definition_rewrite_conv"
+            "left endpoint is not a variable"
+        end
+      val theta = List.map entry definitions
+      fun normalize remaining term =
+        let
+          val step = Drule.SUBST_CONV theta term term
+          val residue = boolSyntax.rhs (Thm.concl step)
+        in
+          if Term.aconv term residue then Thm.REFL term
+          else if remaining = 0 then
+            raise Feedback.mk_HOL_ERR "Library"
+              "checked_definition_rewrite_conv" "cyclic definition expansion"
+          else Thm.TRANS step (normalize (remaining - 1) residue)
+        end
+    in normalize (List.length definitions) target end
 
   (* Prove ``left = right`` where the two sides are related by `conv` (up to
      alpha-equivalence).  `conv` is applied to whichever side changes; the
@@ -735,7 +777,7 @@ struct
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
 
   (* the constant 'c' occurs somewhere in 'tm' *)
-  fun contains_const c tm = Lib.can (HolKernel.find_term (same_const c)) tm
+  fun contains_const c tm = SmtResource.contains (same_const c) tm
 
   (* every subterm of 'tm' (including 'tm' itself), in pre-order; threading an
      accumulator keeps the walk linear rather than quadratic in the size of

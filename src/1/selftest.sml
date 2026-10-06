@@ -5,7 +5,117 @@ val _ = set_trace "Unicode" 0
 
 val _ = new_theory "scratch"
 
+val _ = let
+  fun shared 0 term = term
+    | shared n term =
+        let val child = shared (n - 1) term in mk_conj (child, child) end
+  val variable = mk_var ("subst_dag_variable", Type.bool)
+  val body = shared 28 variable
+  val fact = ASSUME (mk_eq (variable, boolSyntax.T))
+  val expected = mk_eq (body, shared 28 boolSyntax.T)
+  fun check theorem = aconv (concl theorem) expected andalso
+    List.length (hyp theorem) = 1 andalso
+    aconv (hd (hyp theorem)) (concl fact)
+in
+  tprint "Kernel substitution preserves shared DAGs and hypotheses";
+  require (check_result check)
+    (Drule.SUBST_CONV [variable |-> fact] body) body
+end
+
+val _ = let
+  val variable = mk_var ("beta_bucket_variable", Type.bool)
+  val binder = mk_var ("beta_bucket_binder", Type.bool)
+  fun leaf index = mk_comb
+    (mk_var ("beta_bucket_" ^ Int.toString index, Type.bool --> Type.bool),
+     variable)
+  val nested = mk_eq
+    (mk_abs (binder, mk_conj (variable, binder)), mk_abs (binder, binder))
+  val body = boolSyntax.list_mk_conj
+    (nested :: List.tabulate (1024, leaf))
+  val source = mk_comb (mk_abs (variable, body), boolSyntax.T)
+  val expected = Term.subst [variable |-> boolSyntax.T] body
+  fun check theorem = List.null (hyp theorem) andalso
+    aconv (concl theorem) (mk_eq (source, expected))
+in
+  tprint "Beta reduction preserves broad application graphs and binder depth";
+  require (check_result check) Thm.BETA_CONV source
+end
+
 val goal_compare = pair_compare(list_compare Term.compare, Term.compare)
+
+val _ = let
+  val _ = tprint "Recursive comparisons retain typed leaf semantics"
+  val bool_leaf = mk_var ("comparison_leaf", Type.bool)
+  val ind_leaf = mk_var ("comparison_leaf", Type.ind)
+  fun wrap 0 leaf = leaf
+    | wrap depth leaf = boolSyntax.mk_eq
+        (wrap (depth - 1) leaf, wrap (depth - 1) leaf)
+  fun shared_wrap 0 leaf = leaf
+    | shared_wrap depth leaf = let val child = shared_wrap (depth - 1) leaf
+        in boolSyntax.mk_eq (child, child) end
+  val bool_left = shared_wrap 24 bool_leaf
+  val bool_right = shared_wrap 24 (mk_var ("comparison_leaf", Type.bool))
+  val ind_right = shared_wrap 24 ind_leaf
+  val leaf_order = Type.compare (Type.bool, Type.ind)
+  val samples = [bool_leaf, ind_leaf, boolSyntax.T,
+    mk_abs (bool_leaf, bool_leaf), wrap 6 bool_leaf, wrap 6 ind_leaf]
+  fun reverse LESS = GREATER | reverse GREATER = LESS | reverse EQUAL = EQUAL
+  fun check left right =
+    Term.compare (left, right) = reverse (Term.compare (right, left)) andalso
+    (Term.compare (left, right) = EQUAL) = aconv left right
+in
+  if Term.compare (bool_left, bool_right) <> EQUAL orelse
+     not (aconv bool_left bool_right) then
+    die "comparison lost independently built equal DAGs"
+  else if Term.compare (bool_leaf, ind_leaf) <> leaf_order orelse
+          Term.compare (bool_left, ind_right) = EQUAL orelse
+          aconv bool_left ind_right then
+    die "comparison ignored a deep leaf's type"
+  else if not (List.all (fn left => List.all (check left) samples) samples) then
+    die "comparison changed leaf or constructor ordering"
+  else OK ()
+end
+
+val _ = let
+  val _ = tprint "Shared pointer-hint sampling matches separate paths"
+  val variable = mk_var ("pointer_hint_variable", Type.bool)
+  fun string_hash name = CharVector.foldl
+    (fn (character, hash) => Word.+ (Word.* (hash, 0w33),
+      Word.fromInt (Char.ord character))) 0w17 name
+  fun head term =
+    if is_var term then string_hash (#1 (dest_var term))
+    else if is_const term then
+      Word.fromInt (KernelSig.epoch_of (#Name (dest_thy_constid term)))
+    else if is_comb term then 0w17 else 0w19
+  fun sample 0 _ term = head term
+    | sample depth first term =
+        if is_comb term then
+          let
+            val (operator, operand) = dest_comb term
+            val child = if first andalso is_comb operator then
+                #2 (dest_comb operator) else operand
+          in Word.+ (Word.* (head operator, 0w37),
+            Word.+ (Word.* (0w17, sample (depth - 1) first child), 0w29)) end
+        else if is_abs term then
+          Word.+ (Word.* (0w41,
+            sample (depth - 1) first (#2 (dest_abs term))), 0w31)
+        else head term
+  fun reference depth modulus term = Word.toInt (Word.mod
+    (Word.+ (Word.* (0w37, sample (Int.max (0, depth)) true term),
+      sample (Int.max (0, depth)) false term), Word.fromInt modulus))
+  fun shared 0 = variable
+    | shared depth = let val child = shared (depth - 1)
+        in mk_conj (child, child) end
+  val terms = [variable, boolSyntax.T, mk_neg variable, shared 24,
+    mk_conj (variable, mk_neg variable), mk_abs (variable, boolSyntax.T)]
+  fun check term = List.all (fn depth => List.all (fn modulus =>
+    Term.pointer_bucket depth modulus term = reference depth modulus term)
+    [1, 32, 4093]) [~1, 0, 1, 4, 16]
+in
+  if List.all check terms then OK ()
+  else die "shared sampling changed a pointer-cache hint"
+end
+
 val goals_compare = list_compare goal_compare
 fun goals_eq gs1 gs2 = goals_compare (gs1, gs2) = EQUAL
 
@@ -197,9 +307,9 @@ val _ = let
   val shadowed_lazy_closed = concl
     (Specialize boolSyntax.T
       (Specialize free shadowed_reflexivity))
-  (* Identity lookup is deliberately quadratic in distinct nodes.  This
-     ordinary chain exercises that documented tradeoff without changing the
-     existing [FVL] path used by callers that do not request DAG sharing. *)
+  (* Repeated constructor prefixes collide in the bounded identity hash.
+     The cooperative tree visitor must still finish ordinary chains, while
+     the DAG visitor must retain sharing on exponentially large trees. *)
   val large_ordinary_dag = independent_branch 1200
   val larger_ordinary_dag = independent_branch 3000
   val deeper_shared_free = shared_branch 120 free

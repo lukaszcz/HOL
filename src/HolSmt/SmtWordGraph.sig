@@ -19,6 +19,12 @@ sig
      memo_hits : int}
 
   val normalize : Conv.conv
+  val prove : Term.term -> Thm.thm
+  (* Closed normalization proofs may be reused across certificate steps.
+     Each context belongs to one replay and has a bounded cache. *)
+  type context
+  val new_context : unit -> context
+  val prove_in : context -> Term.term -> Thm.thm
   val normalize_with_metrics : Term.term -> Thm.thm * metrics
   val normalize_with_node_conversion : Conv.conv -> Conv.conv
   val normalize_with_node_conversion_and_metrics :

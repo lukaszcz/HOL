@@ -25,7 +25,8 @@ fun restrict_tmenv P E =
 fun occ env v =
     let fun f t =
         exists (fn fv => aconv fv v orelse f (lookup fv env)
-                handle HOL_ERR _ => false) (free_vars t)
+                handle HOL_ERR _ => false)
+               (HOLset.listItems (Term.FVL_dag [t] Term.empty_tmset))
         handle HOL_ERR _ => false
     in f
     end;
@@ -44,6 +45,7 @@ fun simp_unify_terms_in_env consts tm1 tm2 env =
  let val tm1' = deref_tmenv env tm1
      val tm2' = deref_tmenv env tm2
  in
+   if aconv tm1' tm2' then env else
    if is_var tm1' andalso not (op_mem aconv tm1' consts)
    then if is_var tm2' andalso not (op_mem aconv tm2' consts)
         then if aconv tm1' tm2' then env else bind env tm1' tm2'

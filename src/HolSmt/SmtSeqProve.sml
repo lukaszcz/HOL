@@ -8,12 +8,12 @@ struct
   val ERR = Feedback.mk_HOL_ERR "SmtSeqProve"
 
   fun is_smtstr_value tm =
-    case boolSyntax.strip_comb tm of
-      (head, [_]) =>
+    Term.is_comb tm andalso
+    let val (head, _) = Term.dest_comb tm in
         Term.is_const head andalso
         let val {Thy, Name, ...} = Term.dest_thy_const head
         in Thy = "smtstring" andalso Name = "SmtStr" end
-    | _ => false
+    end
 
   fun list_element_type tm =
     Lib.total listSyntax.dest_list_type (Term.type_of tm)
@@ -37,18 +37,8 @@ struct
                "smt_seq_indexof", "smt_seq_replace", "smt_seq_replace_all",
                "smt_seq_update"])
         end
-      fun visit tm =
-        if is_smtstr_value tm then false
-        else if sequence_head tm then true
-        else
-          (let val (rator, rand) = Term.dest_comb tm
-           in visit rator orelse visit rand end
-           handle Feedback.HOL_ERR _ =>
-             (let val (_, body) = Term.dest_abs tm
-              in visit body end
-              handle Feedback.HOL_ERR _ => false))
     in
-      visit t
+      SmtResource.contains_with_pruning is_smtstr_value sequence_head t
     end
 
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
@@ -97,7 +87,7 @@ struct
     let val {Thy, Name, ...} = Term.dest_thy_const tm
     in Thy = thy andalso List.exists (Lib.equal Name) names end
 
-  fun mentions pred t = Lib.can (HolKernel.find_term pred) t
+  val mentions = SmtResource.contains
 
   fun is_append tm = named "list" ["APPEND"] tm
   fun is_length tm = named "list" ["LENGTH"] tm

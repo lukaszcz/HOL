@@ -63,11 +63,39 @@ struct
       else [th, undisched]
     end
 
+  (* Operation theorems commonly have format side conditions.  Indexing only
+     their implication leaves a valid, concrete rewrite invisible to replay.
+     Move such antecedents into the sequent as an additional form: [prove]
+     still independently discharges every resulting hypothesis, so this is a
+     matching extension rather than an assumption or a solver-specific
+     shortcut. *)
+  fun undisch_all th =
+    case Lib.total boolSyntax.dest_imp (Thm.concl th) of
+      SOME _ => undisch_all (Drule.UNDISCH th)
+    | NONE => th
+
+  fun side_condition_forms th =
+    List.concat (List.map
+      (fn form =>
+        let val discharged = undisch_all form in
+          if Term.aconv (Thm.concl discharged) (Thm.concl form) then [form]
+          else [form, discharged]
+        end)
+      (thm_forms th))
+
   fun thm_net_from_list thms =
     let
       fun insert (th, net) = Net.insert (Thm.concl th, th) net
     in
       List.foldl insert Net.empty (List.concat (List.map thm_forms thms))
+    end
+
+  fun side_condition_net_from_list thms =
+    let
+      fun insert (th, net) = Net.insert (Thm.concl th, th) net
+    in
+      List.foldl insert Net.empty
+        (List.concat (List.map side_condition_forms thms))
     end
 
   val array_thm_list = [
@@ -176,7 +204,13 @@ struct
        smtfloatTheory.smtfp_abs_bits,
        smtfloatTheory.smtfp_neg_neg,
        smtfloatTheory.smtfp_abs_abs,
-       smtfloatTheory.smtfp_abs_neg] @
+       smtfloatTheory.smtfp_abs_neg,
+       (* The FP replay net is solver-neutral.  These are general HOL
+          operation laws, indexed before any finite circuit lowering so a
+          solver's congruence or rewrite step is reconstructed by direct
+          instantiation of its checked semantic theorem. *)
+       smtfloatReplayRoundingTheory.smtfp_sub_add_negate,
+       smtfloatTheory.smtfp_add_RNE_comm] @
       (* Ground rewrites use reflexivity; symbolic comparisons contain
          equality/symmetry transport and an fp.eq atom. *)
       [smtfloatTheory.smtfp_equality_refl,
@@ -190,7 +224,7 @@ struct
        Drule.SPEC_ALL smtfloatTheory.smt_rounding_cases] @
       rounding_distinct_thms
 
-    val fp_thms = thm_net_from_list fp_thm_list
+    val fp_thms = side_condition_net_from_list fp_thm_list
   end
 
 local

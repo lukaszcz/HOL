@@ -45,3 +45,35 @@ val _ = require_msg
           (fn tm => (ignore (SAT_PROVE_ONLY tm); false)
              handle SAT_satisfiable _ => true)
           ``p \/ q``
+
+(* Explicit CNF counts propositional atoms, which need not be HOL
+   variables.  Here P is the only free variable but P T and P F are
+   distinct DIMACS atoms.  Proof-only mode must also override an oracle
+   flag supplied in the configuration. *)
+val _ = tprint "explicit CNF counts compound Boolean atoms"
+val _ = require_msg
+          (check_result (fn th =>
+            let val (oracles, axioms) = Tag.dest_tag (tag th)
+            in null (hyp th) andalso
+               concl th ~~ ``~((P:bool->bool) T /\ ~P T /\ P F /\ ~P F)``
+               andalso List.all (fn name => name = "DISK_THM") oracles
+               andalso null axioms
+            end))
+          thm_to_string
+          (fn tm => GEN_SAT_PROVE_ONLY
+            (satConfig.set_flag_is_proved false
+              (satConfig.set_flag_is_cnf true
+                (satConfig.set_term tm satConfig.base_config))))
+          ``(P:bool->bool) T /\ ~P T /\ P F /\ ~P F``
+
+val _ = tprint "proof-only explicit CNF rejects SAT without model checking"
+val _ = require_msg
+          (check_result (fn rejected => rejected))
+          Bool.toString
+          (fn tm =>
+            (ignore (GEN_SAT_PROVE_ONLY
+              (satConfig.set_flag_is_cnf true
+                (satConfig.set_term tm satConfig.base_config)));
+             false)
+            handle SAT_satisfiable _ => true)
+          ``(P:bool->bool) T /\ ~P F``

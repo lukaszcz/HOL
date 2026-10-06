@@ -457,6 +457,51 @@ fun all_varsl tm_list = itlist (union o all_vars) tm_list []
 
 (* term comparison *)
 fun fast_term_eq t1 t2 = Portable.pointer_eq (t1,t2)
+
+fun pointer_bucket depth modulus root =
+  let
+    fun name_hash name = CharVector.foldl
+      (fn (character, hash) => Word.+ (Word.* (hash, 0w33),
+        Word.fromInt (Char.ord character))) 0w17 name
+    fun head (Var (name, _)) = name_hash name
+      | head (Const (id, _)) = Word.fromInt (KernelSig.epoch_of id)
+      | head (App _) = 0w17
+      | head (Abs _) = 0w19
+    fun sample 0 _ term = head term
+      | sample depth first term =
+          case term of
+            App (operator, operand) =>
+              let val child = case (first, operator) of
+                    (true, App (_, argument)) => argument
+                  | _ => operand
+              in Word.+ (Word.* (head operator, 0w37),
+                Word.+ (Word.* (0w17, sample (depth - 1) first child),
+                  0w29)) end
+          | Abs (_, body) =>
+              Word.+ (Word.* (0w41, sample (depth - 1) first body), 0w31)
+          | _ => head term
+    fun samples 0 term = let val code = head term in (code, code) end
+      | samples depth (App (operator, operand)) =
+          let
+            val first = case operator of
+                App (_, argument) => argument | _ => operand
+            val (left, right) = if Portable.pointer_eq (first, operand) then
+                samples (depth - 1) operand
+              else (sample (depth - 1) true first,
+                    sample (depth - 1) false operand)
+            val prefix = Word.+ (Word.* (head operator, 0w37), 0w29)
+            fun mix code = Word.+ (prefix, Word.* (0w17, code))
+          in (mix left, mix right) end
+      | samples depth (Abs (_, body)) =
+          let
+            val (left, right) = samples (depth - 1) body
+            fun mix code = Word.+ (Word.* (0w41, code), 0w31)
+          in (mix left, mix right) end
+      | samples _ term = let val code = head term in (code, code) end
+    val (left, right) = samples (Int.max (0, depth)) root
+  in Word.toInt (Word.mod
+    (Word.+ (Word.* (0w37, left), right),
+     Word.fromInt modulus)) end
 structure Map = Binarymap
 val empty_env = Map.mkDict var_compare
 fun compare p = let

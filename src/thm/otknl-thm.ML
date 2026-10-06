@@ -454,7 +454,7 @@ fun BETA_CONV tm =
  *---------------------------------------------------------------------------*)
 
 fun SUBST replacements template (th as THM(O,asl,c,_)) =
- let val fvs = Term.FVL [template] Term.empty_varset
+ let val fvs = Term.FVL_dag [template] Term.empty_varset
      val (ltheta, rtheta, hyps, oracles) =
          itlist (fn {redex, residue = THM(ocls,h,c,_)} =>
                  fn (tuple as (ltheta,rtheta,hyps,Ocls)) =>
