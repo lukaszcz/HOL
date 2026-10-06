@@ -165,14 +165,14 @@ sig
                          travrules: Travrules.travrules,
                          relation: term};
 
+   (* Initialize reducer contexts once when the conversion is constructed. *)
    val TRAVERSE : traverse_data -> thm list -> conv
 
    (* The traversal-strategy settings that traverse_data does not carry.
       An unset field takes the value TRAVERSE runs at: no subgoaler, no
       extra solvers, !Cond_rewr.stack_limit as the side-condition depth
-      and Cond_rewr.ac_term_ord as the permutative term order.  The
-      unconfigured settings are default_config, so that
-        XTRAVERSE (data, default_config) = TRAVERSE data. *)
+      and Cond_rewr.ac_term_ord as the permutative term order.
+      default_config supplies these unconfigured settings. *)
    type traverse_config = {subgoaler: subgoaler option,
                            solvers: ssolver list,
                            cond_depth: int option,
@@ -182,6 +182,8 @@ sig
 
    val default_config : traverse_config
 
+   (* Unlike TRAVERSE, refresh supplied reducer contexts on each application,
+      even with default_config. *)
    val XTRAVERSE : xtraverse_data -> thm list -> conv
 
    (* ParentFirst is XTRAVERSE's order.  ChildFirst is opt-in child-first

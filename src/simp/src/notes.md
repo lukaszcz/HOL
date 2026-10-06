@@ -71,7 +71,7 @@
 
 :   (From `Opening`.)
     A congproc is a function that will set up recursive simplification of an input term.
-    With the exception of the core equality congruences (`MK_COMB` and `ABS`) these are all built with the function `CONGPROC`.
+    With the exception of the core equality congruences (`MK_COMB` and `ABS`) these are built with `CONGPROC` or `THREADED_CONGPROC`.
     In addition to the term, the congproc is passed a record of important data containing
 
     -   `depther`: a function which will be applied to subterms to produce simplified sub-terms
@@ -104,7 +104,18 @@ With neither subgoaler nor solvers, the original `EQT_ELIM` path is taken.
 The depth and term order are options in `traverse_config`, resolved at traversal entry (unset: `!Cond_rewr.stack_limit`, read at each reducer application, and `Cond_rewr.ac_term_ord`) and passed explicitly to `COND_REWR_CONV_WITH_CONTEXT`.
 There is no dynamically scoped state, so a nested traversal never inherits its caller's settings.
 
+## Exclusion names
+
+Bare `Excl` and `-*` retain develop's dots-only parser and ancestry check;
+extended kernel `$` spellings and relaxed theory names require `rule:`.
+Strict history entries are reparsed on replay; `rule:` keeps its resolved
+pattern. Unmatched bare names silently record develop's rule deletion.
+
 ## Prepared global rewrites
+
+The old simplification tactics dispatch strategy-free calls to develop's
+code; strategy-bearing calls run as the new engines. Explicit
+`GEN_GLOBAL_SIMP_TAC` calls always select counted prepared passes.
 
 `GEN_GLOBAL_SIMP_TAC` decodes its ordinary theorem arguments once, without adding them to the simpset history.
 Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded rewrites share one invocation-wide control; their source theorems go to the solver context.
@@ -130,12 +141,16 @@ Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded
     The `...` portion is where decision procedures get to fire, and where weakenprocs get a chance to fire.
     These effectively see the term in bottom-up fashion as a result.
 
-    `XTRAVERSE` is `TRAVERSE` with a `traverse_config` (subgoaler, solvers, depth, term order); `ROOT_REWRITE` applies the reducers at the root only.
+    `TRAVERSE` initializes supplied contexts at conversion construction;
+    explicit `XTRAVERSE` refreshes them per application and accepts a
+    `traverse_config` (subgoaler, solvers, depth, term order).
+    `ROOT_REWRITE` applies the reducers at the root only.
 
 `CONGPROC`
 
 :   (From `Opening`.)
     This builds a *congproc* given a `congrule` theorem and a general notion of reflexivity in the function `refl`.
+    Only `simpLib.threaded_cong_ss` selects `THREADED_CONGPROC`, which reads intermediate results from later antecedents and beta-reduces applied result variables; ordinary congruences keep `CONGPROC`.
     It’s important that `refl` be able to generate reflexivity theorems for multiple relations at once: this allows different relations to appear in the assumptions of `congrule`; the conclusion might want to draw conclusions about equality even as one of the assumptions is about another relation again (as happens in weakening congruences).
 
     One problem here is that reprocessing of assumptions can unnecessarily descend into terms that have already been processed once.

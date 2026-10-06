@@ -39,8 +39,15 @@ the oldest assumption first. The other fields of `cfg` enable:
     first, against the rewrites of `ss` and `ths` at the root; the first
     that rewrites replaces them, and simplification restarts.
 
-`global_simp_tac base` is `GEN_GLOBAL_SIMP_TAC {safe = false}` with
-`base` and the other fields false.
+For strategy-bearing calls, `global_simp_tac base` runs as
+`GEN_GLOBAL_SIMP_TAC {safe = false}` with `base` and the other fields
+false. Strategy-free calls retain develop's tactic definition: repeat
+whole assumption passes while the goals change, then simplify the
+conclusion. Strategy-free means no loopers, solvers, subgoaler,
+condition depth or term order set on `ss`, and no `Split` or
+strategy-bearing `SF` fragment in `ths`, including beneath requirement
+or bounded-rewrite wrappers. Use `GEN_GLOBAL_SIMP_TAC` explicitly to
+request the counted-pass engine even without a strategy.
 
 ### Failure
 

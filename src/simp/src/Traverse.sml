@@ -518,8 +518,9 @@ end
  * TRAVERSE
  *
  * ---------------------------------------------------------------------*)
-(* Reducer contexts contain mutable rewrite controls, so rebuild the context
-   for every application of a reusable conversion. *)
+(* The explicit extended entry points refresh supplied reducer contexts
+   for every application.  Legacy TRAVERSE retains its construction-time
+   context, including mutable rewrite controls and user callback results. *)
 fun GEN_TRAVERSE_WITH_CONTEXT observer policy root_only
       (xdata as (data,_) : xtraverse_data)
       {reducer_context,solver_context} tm =
@@ -547,7 +548,14 @@ fun CHILD_FIRST_WITH_OBSERVER observe policy =
 val ROOT_REWRITE_WITH_CONTEXT =
   GEN_TRAVERSE_WITH_CONTEXT NONE ParentFirst true
 
-(* The unextended entry point runs at the unconfigured settings. *)
-fun TRAVERSE (data : traverse_data) = XTRAVERSE (data, default_config)
+(* Initialize once, before returning the reusable legacy conversion. *)
+fun TRAVERSE (data as {rewriters,dprocs,...} : traverse_data) thms =
+  let
+    val context =
+      add_context rewriters dprocs (initial_context data,thms)
+  in
+    TRAVERSE_IN_CONTEXT NONE ParentFirst false (data,default_config)
+      [] context
+  end
 
 end (* struct *)

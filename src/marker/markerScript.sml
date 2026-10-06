@@ -113,6 +113,7 @@ val Req0_def = new_definition("Req0_def", “Req0 = T”);
 val ReqD_def = new_definition("ReqD_def", “ReqD = T”);
 val Cong_def = new_definition("Cong_def", ``Cong (x:bool) = x``);
 val Split_def = new_definition("Split_def", ``Split (x:bool) = x``);
+val _ = remove_ovl_mapping "Split" {Name = "Split", Thy = "marker"}
 val Exclude_def = new_definition("Exclude_def", “Exclude (x:'a) = T”);
 val ExcludeFrag_def = new_definition("ExcludeFrag_def", “ExcludeFrag (x:'a) = T”);
 val FRAG_def = new_definition("FRAG_def", “FRAG (x:'a) = T”);

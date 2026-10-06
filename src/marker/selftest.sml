@@ -4,6 +4,12 @@ val _ = new_theory "scratch"
 
 val _ = set_trace "Unicode" 0
 
+val _ =
+  (tprint "Split parses as a variable";
+   require_msg
+     (check_result (fn t => is_var t andalso #1 (dest_var t) = "Split"))
+     term_to_string I “Split”)
+
 (* Every directive constructor must be recognised with the identity and
    payload its consumer needs, and nothing else may be. *)
 val _ =
@@ -26,7 +32,8 @@ val _ =
       ("AC", fn () => AC th TRUTH,
        fn DAC (a, b) => same a andalso concl b ~~ T | _ => false),
       ("Cong", fn () => Cong th, fn DCong a => same a | _ => false),
-      ("Split", fn () => Split th, fn DSplit a => same a | _ => false),
+      ("Split", fn () => markerLib.Split th,
+       fn DSplit a => same a | _ => false),
       ("Excl", fn () => Excl "nm", fn DExcl "nm" => true | _ => false),
       ("ExclSF", fn () => ExclSF "nm", fn DExclSF "nm" => true | _ => false),
       ("FRAG", fn () => FRAG "nm", fn DFRAG "nm" => true | _ => false),
@@ -100,6 +107,118 @@ val goals_print =
       HOLPP.block HOLPP.CONSISTENT 0 o
       HOLPP.pr_list goalStack.pp_goal [HOLPP.NL, HOLPP.NL]
     )
+
+(* The non-recursive entry point retains develop's ordering: filter the
+   goal assumptions first, then strip every Req0/ReqD payload.  Only the
+   final theorem's requirement checks survive across arguments. *)
+val _ =
+  let
+    fun req_test (name, thl, input, output) =
+        (tprint ("process_taclist_then: " ^ name);
+         require_msg (check_result (goals_eq [([], output)])) goals_print
+           (testtac (process_taclist_then {arg = thl} PURE_REWRITE_TAC))
+           ([], input))
+  in
+    List.app req_test [
+      ("Req0 fires", [mk_Req0 AND_CLAUSES], “p /\ T”, “p:bool”),
+      ("Req0 succeeds without a match", [mk_Req0 AND_CLAUSES],
+       “p /\ q”, “p /\ q”),
+      ("ReqD fires", [mk_ReqD AND_CLAUSES], “p /\ T”, “p:bool”),
+      ("Req0 over ReqD", [mk_Req0 (mk_ReqD AND_CLAUSES)],
+       “p /\ T”, “p:bool”)
+    ];
+    List.app
+      (fn (name, marked, input, errname) =>
+          shouldfail {
+            checkexn = check_HOL_ERRexn
+                         (fn (_, f, _) => f = errname),
+            printarg = K ("process_taclist_then: " ^ name),
+            printresult = goals_print,
+            testfn = testtac
+                       (process_taclist_then {arg = [marked]} (K ALL_TAC))
+          } ([], input))
+      [("Req0 rejects remaining matches", mk_Req0 AND_CLAUSES,
+        “p /\ T”, "REQUIRE0_TAC"),
+       ("ReqD rejects no decrease", mk_ReqD AND_CLAUSES,
+        “p /\ q”, "REQUIRE_DECREASE_TAC")]
+  end
+
+(* Develop restarts wrapper construction from the original tactic for
+   each argument: even an unmarked final theorem drops earlier checks.
+   Check payload stripping/order as well as the surviving requirement. *)
+val _ =
+  let
+    val goal = ([], “p /\ T”)
+    fun strip th =
+        let val th = case dest_Req0 th of SOME t => t | NONE => th
+        in case dest_ReqD th of SOME t => t | NONE => th end
+    fun same (a, b) =
+        HOLset.equal(hypset a, hypset b) andalso concl a ~~ concl b
+    fun stripped expected actual =
+        if ListPair.allEq same (expected, actual) then ALL_TAC
+        else raise Fail "requirement payloads changed or leaked"
+    fun check route (name, thl, errname) =
+        let
+          val tac = route (stripped (map strip thl)) thl
+          val label = "multiple requirements: " ^ name
+        in
+          case errname of
+              NONE =>
+              (tprint label;
+               require_msg (check_result (goals_eq [goal])) goals_print
+                 (testtac tac) goal)
+            | SOME f =>
+              shouldfail {
+                checkexn = check_HOL_ERRexn (fn (_, name, _) => name = f),
+                printarg = K label, printresult = goals_print,
+                testfn = testtac tac
+              } goal
+        end
+    val req0err = SOME "REQUIRE0_TAC"
+    val reqDerr = SOME "REQUIRE_DECREASE_TAC"
+  in
+    List.app (check mk_require_tac) [
+      ("ReqD then unmarked drops ReqD", [mk_ReqD AND_CLAUSES, TRUTH], NONE),
+      ("unmarked then ReqD checks ReqD", [TRUTH, mk_ReqD AND_CLAUSES],
+       reqDerr),
+      ("Req0 then unmarked drops Req0", [mk_Req0 AND_CLAUSES, TRUTH], NONE),
+      ("unmarked then Req0 checks Req0", [TRUTH, mk_Req0 AND_CLAUSES],
+       req0err),
+      ("ReqD then distinct Req0 drops ReqD",
+       [mk_ReqD AND_CLAUSES, mk_Req0 NOT_CLAUSES], NONE),
+      ("distinct Req0 then ReqD checks ReqD",
+       [mk_Req0 NOT_CLAUSES, mk_ReqD AND_CLAUSES], reqDerr),
+      ("Req0 then distinct Req0 drops first check",
+       [mk_Req0 AND_CLAUSES, mk_Req0 NOT_CLAUSES], NONE),
+      ("distinct Req0 then Req0 checks last argument",
+       [mk_Req0 NOT_CLAUSES, mk_Req0 AND_CLAUSES], req0err)
+    ];
+    List.app
+      (check (fn tac => fn thl =>
+          process_taclist_then_recur {arg = thl} (K tac))) [
+      ("recursive route retains earlier ReqD",
+       [mk_ReqD AND_CLAUSES, TRUTH], reqDerr),
+      ("recursive route retains earlier Req0",
+       [mk_Req0 AND_CLAUSES, TRUTH], req0err)
+    ]
+  end
+
+(* This distinguishes develop's entry point from a delegation to [recur]:
+   the latter strips only the supplied arguments, not goal assumptions. *)
+val _ =
+  let
+    val req0 = prim_mk_const {Thy = "marker", Name = "Req0"}
+    fun stripped thl =
+        if List.exists (fn th => isSome (dest_Req0 th) orelse
+                                 isSome (dest_ReqD th)) thl then
+          raise mk_HOL_ERR "markerSelftest" "stripped" "Req wrapper leaked"
+        else ALL_TAC
+    val goal = ([req0], “p:bool”)
+  in
+    tprint "process_taclist_then strips Req0 from goal assumptions";
+    require_msg (check_result (goals_eq [goal])) goals_print
+      (testtac (process_taclist_then {arg = []} stripped)) goal
+  end
 
 val L12_asms = [“L1 :- (x:'a) = a”, “L2 :- (y:'a) = b”]
 val _ = tprint "LLABEL_RES_THEN(1)"

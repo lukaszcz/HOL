@@ -125,12 +125,39 @@ val _ = let
     ASM_REWRITE_TAC [] THEN ASM_CASES_TAC ``Q (x:'a) : bool`` THEN
     RES_TAC THEN ASM_REWRITE_TAC [])
   val cong_ss =
-    SSFRAG {name = SOME "BOUNDEDEXISTS", congs = [bounded_exists_cong],
-            convs = [], rewrs = [], ac = [], filter = NONE, dprocs = []}
+    name_ss "BOUNDEDEXISTS" (threaded_cong_ss [bounded_exists_cong])
+  val ordinary_cong_ss =
+    SSFRAG {name = SOME "ORDINARYBOUNDEDEXISTS",
+            congs = [bounded_exists_cong], convs = [], rewrs = [],
+            ac = [], filter = NONE, dprocs = []}
+  val tm = ``?x:'a. (x = x) /\ C x``
+  val develop_result = ``?x:'a. (\x:'a. T) x /\ C x``
+  val mixed_ss = bool_ss ++ merge_ss
+    [ordinary_cong_ss, threaded_cong_ss [boolTheory.COND_CONG]]
+  val merged_ss = bool_ss ++ merge_ss [empty_ssfrag, cong_ss]
+  val replayed_ss = remove_ssfrags ["CONG_REPLAY_DECOY"]
+    (merged_ss ++ name_ss "CONG_REPLAY_DECOY" empty_ssfrag)
+  val _ = convtest
+    ("ordinary applied-result congruence keeps develop's beta redex",
+     SIMP_CONV (bool_ss ++ ordinary_cong_ss) [], tm, develop_result)
+  val _ = convtest
+    ("Cong marker keeps develop's applied-result handling",
+     SIMP_CONV bool_ss [Cong bounded_exists_cong], tm, develop_result)
+  val _ = convtest
+    ("threaded rules do not opt ordinary rules in",
+     SIMP_CONV mixed_ss [], tm, develop_result)
+  val _ = convtest
+    ("SF carries threaded congruences",
+     SIMP_CONV bool_ss [SF cong_ss], tm, ``?x:'a. T /\ C x``)
+  val _ = convtest
+    ("merged threaded congruence keeps beta reduction",
+     SIMP_CONV merged_ss [], tm, ``?x:'a. T /\ C x``)
+  val _ = convtest
+    ("history replay keeps threaded congruences",
+     SIMP_CONV replayed_ss [], tm, ``?x:'a. T /\ C x``)
 in
   convtest ("congruence rebuilds a beta reduced term",
-            SIMP_CONV (bool_ss ++ cong_ss) [],
-            ``?x:'a. (x = x) /\ C x``,
+            SIMP_CONV (bool_ss ++ cong_ss) [], tm,
             ``?x:'a. T /\ C x``)
 end
 
@@ -146,8 +173,7 @@ val _ = let
     ASM_REWRITE_TAC [] THEN ASM_CASES_TAC ``Q (x:'a) : bool`` THEN
     RES_TAC THEN ASM_REWRITE_TAC [])
   val cong_ss =
-    SSFRAG {name = SOME "BOUNDEDEXISTS", congs = [bounded_exists_cong],
-            convs = [], rewrs = [], ac = [], filter = NONE, dprocs = []}
+    name_ss "BOUNDEDEXISTS" (threaded_cong_ss [bounded_exists_cong])
   val redex_term = ``?x:'a. (x = x) /\ D ((\y:'a. T) x)``
   val _ = tprint "congruence answers about the term it was given"
 in
@@ -173,14 +199,21 @@ val _ = let
     DISCH_THEN (fn rebuilt => REWRITE_TAC [GSYM rebuilt]) THEN
     AP_TERM_TAC THEN ABS_TAC THEN ASM_REWRITE_TAC [] THEN
     ASM_CASES_TAC ``Q (x:'a) : bool`` THEN RES_TAC THEN ASM_REWRITE_TAC [])
-  val cong_ss =
-    SSFRAG {name = SOME "THREADED", congs = [threaded_cong],
+  val cong_ss = name_ss "THREADED" (threaded_cong_ss [threaded_cong])
+  val ordinary_cong_ss =
+    SSFRAG {name = SOME "ORDINARYTHREADED", congs = [threaded_cong],
             convs = [], rewrs = [], ac = [], filter = NONE, dprocs = []}
+  val rewrs = [ASSUME ``!y:'a. bnd y ==> (bdy y <=> bdy' y)``]
+  val tm = ``?x:'a. bnd x /\ bdy x``
+  val _ = convtest
+    ("ordinary intermediate-result congruence keeps develop's result",
+     QCONV (SIMP_CONV (bool_ss ++ ordinary_cong_ss) rewrs), tm, tm)
+  val _ = convtest
+    ("Cong marker keeps develop's intermediate-result handling",
+     QCONV (SIMP_CONV bool_ss (Cong threaded_cong :: rewrs)), tm, tm)
 in
   convtest ("congruence threads an intermediate result",
-            SIMP_CONV (bool_ss ++ cong_ss)
-                      [ASSUME ``!y:'a. bnd y ==> (bdy y <=> bdy' y)``],
-            ``?x:'a. bnd x /\ bdy x``,
+            SIMP_CONV (bool_ss ++ cong_ss) rewrs, tm,
             ``?x:'a. bnd x /\ bdy' x``)
 end
 
@@ -404,7 +437,8 @@ in
   List.app (ignore o test) [
     (mktag "bool_ss -* COND_CLAUSES (1)", ["COND_CLAUSES"], T_t, T_t),
     (mktag "bool_ss -* COND_CLAUSES (2)", ["COND_CLAUSES"], F_t, F_t),
-    (mktag "bool_ss -* bool$COND_CLAUSES", ["bool$COND_CLAUSES"], T_t, T_t),
+    (mktag "bool_ss -* bool$COND_CLAUSES is a no-op",
+     ["bool$COND_CLAUSES"], T_t, “p:'b”),
     (mktag "bool_ss -* COND_CLAUSES.1", ["COND_CLAUSES.1"], T_t, T_t),
     (mktag "bool_ss -* COND_CLAUSES.2", ["COND_CLAUSES.2"], T_t, “p:'b”),
     (mktag "bool_ss -* BETA_CONV", ["BETA_CONV"], beta_t, beta_t),
@@ -423,8 +457,9 @@ in
   List.app (ignore o excltest) [
     (mkex_tag "bool_ss & \"COND_CLAUSES.1\"", ["COND_CLAUSES.1"],
      T_t, T_t),
-    (* the kernel Thy$Name spelling names the same rewrite as Thy.Name *)
-    (mkex_tag "bool_ss & \"bool$COND_CLAUSES\"", ["bool$COND_CLAUSES"],
+    (* Extended kernel spelling is available under the rule namespace. *)
+    (mkex_tag "bool_ss & \"rule:bool$COND_CLAUSES\"",
+     ["rule:bool$COND_CLAUSES"],
      T_t, T_t),
     (mkex_tag "bool_ss & \"BETA_CONV\"", ["BETA_CONV"], beta_t, beta_t)
   ];
@@ -489,6 +524,16 @@ List.app (ignore o req_test) [
   ("req0 succeeds (cond_rwt)", [Req0 oneone], oneone_asm,
    “(f:'a -> 'b) x = f y”, SOME “x:'a = y”),
   ("req0 fails (cond_rwt)", [Req0 oneone], [], “(f:'a -> 'b) x = f y”, NONE),
+  (* Legacy checks survive only on the final argument, even though every
+     requirement payload is stripped and passed to the simplifier. *)
+  ("reqD before unmarked is dropped", [ReqD AND_CLAUSES, TRUTH], [],
+   “p /\ q”, SOME “p /\ q”),
+  ("reqD after unmarked is checked", [TRUTH, ReqD AND_CLAUSES], [],
+   “p /\ q”, NONE),
+  ("req0 before unmarked is dropped", [Req0 oneone, TRUTH], [],
+   “(f:'a -> 'b) x = f y”, SOME “(f:'a -> 'b) x = f y”),
+  ("req0 after unmarked is checked", [TRUTH, Req0 oneone], [],
+   “(f:'a -> 'b) x = f y”, NONE),
   ("req0/Once fails", [Req0 (Once AND_CLAUSES)], [], “p /\ T /\ q /\ T”, NONE),
   ("reqD/Once succeeds", [ReqD (Once AND_CLAUSES)], [] ,
    “p /\ T /\ q /\ T”, SOME “x:α”),
@@ -571,6 +616,115 @@ in
      asm_simp_tac bss1 [],
     ([“x = F”], “P(x:bool):bool”), [([“x = F”], “P F:bool”)])
   ]
+end
+
+(* ---------------------------------------------------------------------- *)
+(* Old tactic dispatch: develop's passes versus the counted-pass engine.  *)
+
+val _ = let
+  val cfg = {strip=false,elimvars=false,droptrues=false,oldestfirst=true}
+  val xcfg = {base=cfg,concl_in_fixpoint=false,imp_rebuild=false,
+              imp_premises=false}
+  fun check msg expected tac goal =
+    (tprint msg;
+     require_msg (fn Exn.Res gs => list_eq goal_eq expected gs
+                  | _ => false)
+                 (fn gs => printgoals (gs,())) (valid tac) goal)
+
+  (* This conversion is deliberately not idempotent: its second visit to
+     a expands it. Develop repeats the entire pass after b changes; the
+     counted engine skips a, which was unchanged after b in the first
+     pass. Expansion fires only once, so both schedules terminate. *)
+  fun fixture () =
+    let
+      val a = ``dispatch_a:bool``
+      val b0 = ``dispatch_b /\ T``
+      val b1 = ``dispatch_b:bool``
+      val c = ``dispatch_c:bool``
+      val visits = ref 0
+      val expanded = ref false
+      fun probe _ _ tm =
+        if aconv tm a then
+          (visits := !visits + 1;
+           if !visits = 2 andalso not (!expanded) then
+             (expanded := true;
+              SYM (REWRITE_CONV [AND_CLAUSES] (mk_conj (a,T))))
+           else NO_CONV tm)
+        else if aconv tm b0 then REWRITE_CONV [AND_CLAUSES] tm
+        else NO_CONV tm
+      val ss = empty_ss ++
+        conv_ss {name="dispatch non-idempotent probe",key=NONE,trace=0,
+                 conv=probe}
+      val w = ``dispatch_goal:bool``
+    in
+      (ss,([a,b0,c],w),[([mk_conj(a,T),b1,c],w)],[([a,b1,c],w)])
+    end
+  fun old_call msg update ths =
+    let val (ss,goal,develop,_) = fixture ()
+    in check msg develop (global_simp_tac cfg (update ss) ths) goal end
+  fun new_call msg update ths =
+    let val (ss,goal,_,counted) = fixture ()
+    in check msg counted (global_simp_tac cfg (update ss) ths) goal end
+  val _ = old_call "strategy-free global tactic repeats whole passes" I []
+  val _ = let val (ss,goal,_,counted) = fixture ()
+          in check "explicit GEN_GLOBAL_SIMP_TAC keeps counted passes"
+               counted (GEN_GLOBAL_SIMP_TAC {safe=false} xcfg ss []) goal
+          end
+  val _ = old_call "bare Excl preserves the develop global schedule" I
+                   [Excl "dispatch_unmatched_rule"]
+  val plain_frag = name_ss "dispatch strategy-free fragment" (rewrites [])
+  val _ = old_call "strategy-free SF preserves the develop schedule" I
+                   [SF plain_frag]
+
+  val failing_solver = mk_tactic_solver ("dispatch solver",NO_TAC)
+  fun preserving_subgoaler ({recurse,...} : Traverse.simp_prover_ctxt) =
+    recurse
+  val _ = List.app
+    (fn (name,update) => new_call ("global dispatch: " ^ name) update [])
+    [("looper",add_looper ("dispatch looper",K NO_TAC)),
+     ("unsafe solver",add_unsafe_solver failing_solver),
+     ("safe solver",add_safe_solver failing_solver),
+     ("subgoaler",set_subgoaler preserving_subgoaler),
+     ("condition depth",set_cond_depth 4),
+     ("term order",set_term_ord Cond_rewr.ac_term_ord)]
+  val loop_frag = name_ss "dispatch looper fragment"
+                   (looper_ss ("dispatch fragment looper",K NO_TAC))
+  val unsafe_frag = name_ss "dispatch unsafe fragment"
+                     (solver_ss failing_solver)
+  val safe_frag = name_ss "dispatch safe fragment"
+                   (safe_solver_ss failing_solver)
+  val _ = List.app
+    (fn (name,th) => new_call ("global dispatch: " ^ name) I [th])
+    [("SF looper",SF loop_frag),
+     ("SF unsafe solver",SF unsafe_frag),
+     ("SF safe solver",SF safe_frag),
+     ("Req0 SF looper",Req0 (SF loop_frag)),
+     ("Once SF looper",Once (SF loop_frag))]
+
+  val solved_tm = ``dispatch_solver_p \/ ~dispatch_solver_p``
+  val solved_th = SPEC ``dispatch_solver_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val solving_frag = name_ss "dispatch solving fragment"
+    (solver_ss (mk_tactic_solver
+       ("dispatch fragment solver",ACCEPT_TAC solved_th)))
+  val _ = check "ASM_SIMP_TAC dispatches a solver-bearing SF" []
+    (ASM_SIMP_TAC empty_ss [SF solving_frag]) ([],solved_tm)
+  val _ = check "SIMP_TAC dispatches a requirement-wrapped solver SF" []
+    (SIMP_TAC empty_ss [Req0 (SF solving_frag)]) ([],solved_tm)
+
+  fun legacy_asm ss ths =
+    markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss)
+  fun parity msg ths goal =
+    let val expected =
+          valid (legacy_asm bool_ss (markerLib.NoAsms::ths)) goal
+    in check msg expected (SIMP_TAC bool_ss ths) goal end
+  val _ = parity "strategy-free SIMP_TAC preserves develop Req0"
+                   [Req0 AND_CLAUSES] ([],``dispatch_p /\ T``)
+  val _ = parity "strategy-free SIMP_TAC preserves develop ReqD"
+                   [ReqD AND_CLAUSES] ([],``dispatch_p /\ T``)
+  val _ = parity "strategy-free SIMP_TAC preserves develop ReqD/Once"
+                   [ReqD (Once AND_CLAUSES)]
+                   ([],``dispatch_p /\ T /\ dispatch_q /\ T``)
+in
 end
 
 (* ---------------------------------------------------------------------- *)
@@ -1074,7 +1228,7 @@ in
      once_order_conv, ``once_x:'a = once_y``, ``once_y:'a = once_x``)
 
   val _ = convtest
-    ("TRAVERSE refreshes Once for each conversion application",
+    ("XTRAVERSE refreshes Once for each conversion application",
      once_order_conv, ``once_u:'a = once_v``, ``once_v:'a = once_u``)
 
   val order_probe = (``nested_order_x:'a``, ``nested_order_y:'a``)
@@ -1894,8 +2048,26 @@ local
     then OK()
     else die "qualified rule exclusion removed the looper"
   val _ = shouldfail
+    {testfn=SIMP_CONV shared_ss [Excl "shared_identity"],
+     printresult=thm_to_string,
+     printarg=K "bare Excl prefers the rewrite over a same-named looper",
+     checkexn=fn UNCHANGED => true | _ => false}
+    ``shared_rule_left:'a``
+  val _ = tprint "bare rule exclusion leaves a same-named looper"
+  val _ =
+    if tactic_result entry_subgoals
+         (run (SIMP_TAC shared_ss [Excl "shared_identity"]) entry_goal)
+    then OK()
+    else die "bare rule exclusion removed the looper"
+  val ambiguous_ss =
+    empty_ss
+    |> add_looper ("shared_strategy",fn _ => CONJ_TAC)
+    |> add_unsafe_solver
+         {name="shared_strategy",solve=fn _ => fn _ =>
+            solver_failure "shared_strategy"}
+  val _ = shouldfail
     {testfn=fn () =>
-       runtac (VALID (SIMP_TAC shared_ss [Excl "shared_identity"]))
+       runtac (VALID (SIMP_TAC ambiguous_ss [Excl "shared_strategy"]))
               entry_goal,
      printresult=K "unexpected success", printarg=K "ambiguous Excl",
      checkexn=fn HOL_ERR error =>
@@ -1937,10 +2109,19 @@ local
      SIMP_CONV bool_ss [Excl "CONJ_COMM"],
      excl_true_t, ``selftest_catalogue_p:bool``)
   val uninstalled_warned = excl_warned "CONJ_COMM"
+  val _ = convtest
+    ("bare kernel-spelled Excl is a no-op, as on develop",
+     SIMP_CONV bool_ss [Excl "bool$AND_CLAUSES"],
+     excl_true_t, ``selftest_catalogue_p:bool``)
+  val bare_kernel_warned = excl_warned "bool$AND_CLAUSES"
+  val _ = convtest
+    ("-* leaves the kernel spelling uninterpreted, as on develop",
+     SIMP_CONV (bool_ss -* ["bool$AND_CLAUSES"]) [],
+     excl_true_t, ``selftest_catalogue_p:bool``)
   val _ = shouldfail
-    {testfn=SIMP_CONV bool_ss [Excl "bool$AND_CLAUSES"],
+    {testfn=SIMP_CONV bool_ss [Excl "rule:bool$AND_CLAUSES"],
      printresult=thm_to_string,
-     printarg=K "Excl takes the kernel Thy$Name spelling",
+     printarg=K "rule: Excl takes the kernel Thy$Name spelling",
      checkexn=fn UNCHANGED => true | _ => false}
     excl_true_t
   val kernel_name_matched = null (!excl_warnings)
@@ -1956,10 +2137,15 @@ local
     if uninstalled_warned then die "Excl of an uninstalled theorem warned"
     else OK()
 
-  val _ = tprint "a kernel-spelled Excl resolves to its theorem"
+  val _ = tprint "bare kernel-spelled Excl is silent"
+  val _ =
+    if bare_kernel_warned then die "bare Thy$Name Excl warned"
+    else OK()
+
+  val _ = tprint "a kernel-spelled rule: Excl resolves to its theorem"
   val _ =
     if kernel_name_matched then OK()
-    else die "Thy$Name Excl was treated as matching nothing"
+    else die "Thy$Name rule: Excl was treated as matching nothing"
 
   val _ = shouldfail
     {testfn=fn () =>
@@ -1973,10 +2159,8 @@ local
 
   (* A simpset entry keeps whatever theory its rewrite was named with, and
      nothing requires that theory to be an ancestor of the one being
-     built.  Excl reaches such an entry by its qualified name in either
-     spelling: the stricter reading, which rejects the theory part
-     outright, would leave an installed rewrite with no name that excludes
-     it. *)
+     built.  The rule: namespace reaches such an entry by its qualified
+     name in either spelling.  Bare Excl retains develop's strict parser. *)
   val unloaded_thy = "no_such_ancestor_selftest"
   val unloaded_rwt =
     ASSUME ``(unloaded_rule_left:'a) = unloaded_rule_right``
@@ -1997,12 +2181,34 @@ local
       unloaded_lhs
   val _ =
     unloaded_excluded
-      ("Thy.Name Excl of a rewrite from an unloaded theory",
-       unloaded_thy ^ ".unloaded_identity")
+      ("Thy.Name rule: Excl of a rewrite from an unloaded theory",
+       "rule:" ^ unloaded_thy ^ ".unloaded_identity")
   val _ =
     unloaded_excluded
-      ("Thy$Name Excl of a rewrite from an unloaded theory",
-       unloaded_thy ^ "$unloaded_identity")
+      ("Thy$Name rule: Excl of a rewrite from an unloaded theory",
+       "rule:" ^ unloaded_thy ^ "$unloaded_identity")
+
+  val _ = shouldfail
+    {testfn=fn () =>
+       SIMP_CONV unloaded_ss [Excl (unloaded_thy ^ ".unloaded_identity")]
+         unloaded_lhs,
+     printresult=thm_to_string,
+     printarg=K "bare dotted Excl rejects a non-ancestor, as on develop",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "bad theory name" (Feedback.message_of error)
+       | _ => false} ()
+  val dotted_looper_ss =
+    add_looper (unloaded_thy ^ ".looper",fn _ => CONJ_TAC) empty_ss
+  val _ = shouldfail
+    {testfn=fn () =>
+       runtac (VALID
+         (SIMP_TAC dotted_looper_ss [Excl (unloaded_thy ^ ".looper")]))
+         entry_goal,
+     printresult=K "unexpected success",
+     printarg=K "bare Excl cannot bypass the strict parser for a looper",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "bad theory name" (Feedback.message_of error)
+       | _ => false} ()
 
   (* [-*] is published with the stricter reading and keeps it. *)
   val _ = shouldfail
@@ -2013,12 +2219,84 @@ local
        String.isSubstring "bad theory name" (Feedback.message_of error)
        | _ => false} ()
 
-  (* The exclusion is recorded in the simpset's history, and rebuilding a
-     simpset replays that record.  The replay has to reach the same
-     simpset, so it reapplies the exclusion as resolved rather than asking
-     again what the recorded name means. *)
+  (* An unmatched bare Excl still records a deletion.  Removing a filter
+     recompiles surviving fragments, but must not revive the deleted rule.
+     These constructions use only develop's public simplifier API. *)
+  val history_filter =
+    SSFRAG
+      {name=SOME "exclusion history filter", convs=[], rewrs=[], ac=[],
+       filter=SOME (fn _ => []), dprocs=[], congs=[]}
+  val history_lhs = ``history_filtered_a:bool``
+  val history_rule = ASSUME ``history_filtered_a:bool = T``
+  val history_filtered =
+    mk_simpset
+      [history_filter,
+       name_ss "exclusion history rewrite"
+         (rewrites_with_names [({Thy="",Name="history_r"},history_rule)])]
+  val _ = convtest
+    ("removing a rewrite filter revives an undeleted rule",
+     SIMP_CONV
+       (remove_ssfrags ["exclusion history filter"] history_filtered) [],
+     history_lhs, ``T``)
+  val history_excluded = history_filtered && [Excl "history_r"]
+  val _ = convtest
+    ("unmatched bare Excl survives filter-removal replay",
+     QCONV (SIMP_CONV
+       (remove_ssfrags ["exclusion history filter"] history_excluded) []),
+     history_lhs, history_lhs)
+  val _ = convtest
+    ("unmatched bare Excl survives filter-exclusion replay",
+     QCONV (SIMP_CONV
+       (exclude_ssfrags ["exclusion history filter"] history_excluded) []),
+     history_lhs, history_lhs)
+  val _ = convtest
+    ("unmatched -* survives filter-removal replay",
+     QCONV (SIMP_CONV
+       (remove_ssfrags ["exclusion history filter"]
+          (history_filtered -* ["history_r"])) []),
+     history_lhs, history_lhs)
+
+  (* Strict history reparses under the current theory ancestry, just as
+     develop's DELETE_EVENT did.  Link a temporary ancestor without
+     exporting a theory, then restore the context before replaying. *)
+  val _ = let
+    val saved = Context.snapshot ()
+    fun run () = let
+      val replay_thy = "strictExclusionReplayFixture"
+      val _ = Theory.link_parents (replay_thy,"selftest") []
+      val dummy = "strict exclusion replay dummy"
+      val replay_ss =
+        mk_simpset
+          [name_ss dummy empty_ssfrag,
+           rewrites_with_names
+             [({Thy=replay_thy,Name="history_r"},history_rule)]]
+      val qualified = replay_thy ^ ".history_r"
+      val strict_deleted = replay_ss -* [qualified]
+      val strict_bare = replay_ss && [Excl qualified]
+      val relaxed_deleted = replay_ss && [Excl ("rule:" ^ qualified)]
+      val _ = Context.restore saved
+      fun strict_replay (description,ss) =
+        shouldfail
+          {testfn=remove_ssfrags [dummy], printresult=K "unexpected success",
+           printarg=K description,
+           checkexn=fn HOL_ERR error =>
+             String.isSubstring "bad theory name" (Feedback.message_of error)
+             | _ => false} ss
+      val _ = strict_replay
+        ("-* history reparses names after Context.restore",strict_deleted)
+      val _ = strict_replay
+        ("bare Excl history reparses names after Context.restore",strict_bare)
+      val _ = convtest
+        ("rule: history retains its parsed pattern after Context.restore",
+         QCONV (SIMP_CONV (remove_ssfrags [dummy] relaxed_deleted) []),
+         history_lhs, history_lhs)
+    in () end
+  in Portable.finally (fn () => Context.restore saved) run () end
+
+  (* A relaxed rule: exclusion is recorded with its resolved pattern, so
+     rebuilding does not ask again what that name means. *)
   val unloaded_after_excl =
-    unloaded_ss && [Excl (unloaded_thy ^ ".unloaded_identity")]
+    unloaded_ss && [Excl ("rule:" ^ unloaded_thy ^ ".unloaded_identity")]
   val unloaded_replayed =
     exclude_ssfrags ["no_such_fragment_selftest"] unloaded_after_excl
   val _ = shouldfail
@@ -2028,14 +2306,14 @@ local
      checkexn=fn UNCHANGED => true | _ => false}
     unloaded_lhs
 
-  (* A qualified name that no entry answers to removes nothing, silently. *)
+  (* An ancestor-qualified bare name matching nothing is a silent no-op. *)
   val unloaded_warnings = ref ([] : string list)
   val unloaded_outstream = !Feedback.WARNING_outstream
   val _ = Feedback.WARNING_outstream :=
             (fn s => unloaded_warnings := s :: !unloaded_warnings)
   val _ = convtest
     ("unmatched qualified Excl leaves the simpset alone",
-     SIMP_CONV unloaded_ss [Excl (unloaded_thy ^ ".definitely_not_a_rule")],
+     SIMP_CONV unloaded_ss [Excl "bool.definitely_not_a_rule"],
      unloaded_lhs, unloaded_rhs)
   val unloaded_typo_warned =
     List.exists (String.isSubstring "definitely_not_a_rule")
@@ -2437,33 +2715,26 @@ val _ = let
           else die "Excl left the named split looper active"
       | _ => die "named split exclusion produced the wrong subgoals"
 
-  val _ = tprint "Excl split.case suppresses TypeBase splits"
+  val _ = tprint "Excl case: suppresses TypeBase splits"
   val _ =
     case valid (SIMP_TAC (bool_ss ++ split_ss)
-                 [Excl "split.case bool"]) split_goal of
+                 [Excl "case:bool"]) split_goal of
         [([], result)] =>
           if aconv result (#2 split_goal) then OK()
           else die "split.case exclusion left the TypeBase split active"
       | _ => die "TypeBase split exclusion produced the wrong subgoals"
 
-  (* An unqualified name that matches nothing is ignored, so
-     the TypeBase splits stay in force; the case: namespace still aborts. *)
-  val unmatched_case_run =
-    Feedback.quiet_warnings
-      (Lib.total
-         (fn () =>
-            valid (SIMP_TAC (bool_ss ++ split_ss)
-                    [Excl "split.case definitely_not_a_type"]) split_goal))
-  val _ = tprint "unmatched split.case Excl leaves TypeBase splits alone"
-  val _ =
-    case unmatched_case_run () of
-        NONE => die "unmatched split.case exclusion aborted SIMP_TAC"
-      | SOME [([], result)] =>
-          if not (aconv result (#2 split_goal)) andalso
-             not (can (find_term is_cond) result)
-          then OK()
-          else die "unmatched split.case exclusion suppressed the split"
-      | SOME _ => die "unmatched split.case exclusion changed the subgoals"
+  (* The dot in the display name is parsed strictly by bare Excl. *)
+  val _ = shouldfail
+    {testfn=fn () =>
+       runtac (VALID
+         (SIMP_TAC (bool_ss ++ split_ss) [Excl "split.case bool"]))
+         split_goal,
+     printresult=K "unexpected success",
+     printarg=K "bare split.case Excl rejects its theory part",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "bad theory name" (Feedback.message_of error)
+       | _ => false} ()
 
   val _ = shouldfail
     {testfn=fn () =>
@@ -4271,5 +4542,173 @@ val _ =
     if List.all I checks then OK ()
     else die "solver context identity, removal or order is incorrect"
   end
+
+(* ---------------------------------------------------------------------- *)
+(* R2: reusable legacy contexts versus explicit extended-engine refresh.   *)
+(* These lifetime goldens distinguish construction from application;       *)
+(* single-use conversions cannot detect this difference.                  *)
+(* ---------------------------------------------------------------------- *)
+local
+  exception R2_CONTEXT
+  val atom = ``r2_context_p:bool``
+  val input = ``T /\ r2_context_p``
+  val once = BoundedRewrites.Once
+    (CONJUNCT1 (SPEC atom boolTheory.AND_CLAUSES))
+  val cong_qconv =
+    congLib.CONGRUENCE_SIMP_QCONV boolSyntax.equality
+      (congLib.mk_congset [])
+  val legacy_builders =
+    [("TRAVERSE",fn ss => Traverse.TRAVERSE (traversedata_for_ss ss)),
+     ("CONGRUENCE_SIMP_QCONV",cong_qconv)]
+
+  (* An atomic input avoids congruence-generated context additions. *)
+  fun lifetime name build expected =
+    let
+      val calls = ref 0
+      val reducer = Traverse.REDUCER
+        {name=SOME "R2 context callback",initial=R2_CONTEXT,
+         addcontext=fn (ctxt,_) => (calls := !calls + 1; ctxt),
+         apply=fn _ => NO_CONV}
+      val ss = pureSimps.pure_ss ++ dproc_ss reducer
+      val cv = build ss [boolTheory.TRUTH]
+      val constructed = !calls
+      val _ = QCONV (TRY_CONV cv) atom
+      val first = !calls
+      val _ = QCONV (TRY_CONV cv) atom
+    in
+      tprint ("context lifetime: " ^ name);
+      if [constructed,first,!calls] = expected then OK ()
+      else die "initial context callback ran at the wrong time"
+    end
+
+  fun once_lifetime name build refresh =
+    let
+      val cv = QCONV (TRY_CONV (build pureSimps.pure_ss [once]))
+    in
+      convtest (name ^ ": reusable Once first application",cv,input,atom);
+      convtest (name ^ ": reusable Once second application",cv,input,
+                if refresh then atom else input);
+      convtest (name ^ ": new construction decodes a fresh Once",
+                QCONV (TRY_CONV (build pureSimps.pure_ss [once])),
+                input,atom)
+    end
+
+  val rejecting_solver : Traverse.ssolver =
+    {name="R2 rejecting solver",solve=fn _ => fn tm => NO_CONV tm}
+  val conversion_settings =
+    [("subgoaler",set_subgoaler (fn _ => REFL)),
+     ("unsafe solver",set_unsafe_solvers [rejecting_solver]),
+     ("condition depth",set_cond_depth 4),
+     ("term order",set_term_ord Cond_rewr.ac_term_ord)]
+  val tactic_settings =
+    [("safe solver",set_safe_solvers [rejecting_solver]),
+     ("looper",set_looper ("R2 unused looper",K ALL_TAC))]
+in
+  val _ = List.app
+    (fn (name,build) => lifetime name build [1,1,1]) legacy_builders
+  val _ = List.app
+    (fn (name,build) => once_lifetime name build false)
+    (List.take (legacy_builders,1))
+
+  (* The old total wrappers deliberately construct their QCONV inside tm
+     on develop too. Do not move their construction ahead of tm. *)
+  val _ = lifetime "SIMP_CONV (develop's delayed wrapper)"
+    SIMP_CONV [0,1,2]
+  val _ = lifetime "CONGRUENCE_SIMP_CONV (develop's delayed wrapper)"
+    (congLib.CONGRUENCE_SIMP_CONV boolSyntax.equality
+       (congLib.mk_congset [])) [0,1,2]
+
+  (* Explicit extended APIs refresh even at the unconfigured settings. *)
+  val _ = lifetime "XTRAVERSE with default_config"
+    (fn ss => Traverse.XTRAVERSE
+       (traversedata_for_ss ss,Traverse.default_config)) [0,1,2]
+  val _ = lifetime "TRAVERSE_WITH_CONTEXT with default_config"
+    (fn ss => fn ths => Traverse.TRAVERSE_WITH_CONTEXT Traverse.ParentFirst
+       (traversedata_for_ss ss,Traverse.default_config)
+       {reducer_context=ths,solver_context=[]}) [0,1,2]
+  val _ = lifetime "ROOT_REWRITE with default_config"
+    (fn ss => Traverse.ROOT_REWRITE
+       (traversedata_for_ss ss,Traverse.default_config)) [0,1,2]
+  val _ = once_lifetime "XTRAVERSE with default_config"
+    (fn ss => Traverse.XTRAVERSE
+       (traversedata_for_ss ss,Traverse.default_config)) true
+
+  (* Conversions consume these four settings, but not safe solvers/loopers.
+     Merely storing a tactic-only setting must not opt a QCONV into refresh. *)
+  val _ = List.app
+    (fn (setting,configure) => List.app
+      (fn (name,build) =>
+        lifetime (name ^ " + " ^ setting) (build o configure) [0,1,2])
+      [("CONGRUENCE_SIMP_QCONV",cong_qconv)])
+    conversion_settings
+  val _ = List.app
+    (fn (setting,configure) => List.app
+      (fn (name,build) =>
+        lifetime (name ^ " + " ^ setting) (build o configure) [1,1,1])
+      [("CONGRUENCE_SIMP_QCONV",cong_qconv)])
+    tactic_settings
+end
+
+(* ++ rejects a malformed bounded tag before any public filter callback,
+   and runs all makers before conversion/trace callbacks. *)
+local
+  exception SCHEDULE_FILTER
+  val rule = CONJUNCT1
+    (SPEC ``schedule_p:bool`` boolTheory.AND_CLAUSES)
+  val malformed = ADD_ASSUM
+    (mk_comb (boolSyntax.bounded_tm,mk_var ("not_a_number",bool))) rule
+  fun frag filter ac rewrs =
+    SSFRAG {name=NONE,congs=[],convs=[],rewrs=map (pair NONE) rewrs,ac=ac,
+            filter=filter,dprocs=[]}
+
+  fun malformed_order (name,ac,rewrs,throws) =
+    let
+      val calls = ref 0
+      fun maker rw =
+        (calls := !calls + 1;
+         if throws then raise SCHEDULE_FILTER else [rw])
+      val ss = empty_ss ++ frag (SOME maker) [] []
+      val result = Exn.capture (fn () => ss ++ frag NONE ac rewrs) ()
+      val correct =
+        case result of Exn.Exn Option => !calls = 0 | _ => false
+    in
+      tprint ("++ malformed tag precedes filter: " ^ name);
+      if correct then OK ()
+      else die "filter ran before all ordinary bounded tags were decoded"
+    end
+
+  fun staged_order (name,ac,rewrs,count) =
+    let
+      val events = ref ([] : string list)
+      fun record event = events := event :: !events
+      fun maker rw = (record "maker"; [rw])
+      val ss = empty_ss ++ frag (SOME maker) [] []
+      val listener = "++ staged compilation parity"
+      fun watch (2,Trace.LZ_TEXT text) =
+            if String.isPrefix "New rewrite: " (text ()) then
+              record "convert"
+            else ()
+        | watch _ = ()
+      val _ = Listener.add_listener Trace.trace_hook (listener,watch)
+      val _ = Portable.finally
+        (fn () => ignore (Listener.remove_listener Trace.trace_hook listener))
+        (fn () => ignore (ss ++ frag NONE ac rewrs)) ()
+      val expected = List.tabulate (count,K "maker") @
+                     List.tabulate (count,K "convert")
+    in
+      tprint ("++ all makers precede conversions: " ^ name);
+      if List.rev (!events) = expected then OK ()
+      else die "rewrite-maker and conversion callbacks were interleaved"
+    end
+in
+  val _ = List.app malformed_order
+    [("ordinary/effect",[],[rule,malformed],false),
+     ("ordinary/exception",[],[rule,malformed],true),
+     ("AC/effect",[(CONJ_COMM,CONJ_ASSOC)],[malformed],false),
+     ("AC/exception",[(CONJ_COMM,CONJ_ASSOC)],[malformed],true)]
+  val _ = List.app staged_order
+    [("ordinary",[],[rule,rule],2),
+     ("AC and ordinary",[(CONJ_COMM,CONJ_ASSOC)],[rule,rule],5)]
+end
 
 val _ = exit_count0 failcount

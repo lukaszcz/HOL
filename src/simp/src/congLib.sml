@@ -280,7 +280,12 @@ fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
             ([eq_congsTravrule,#travrules traversedata] @
              #travrules csdata)}
   in
-    XTRAVERSE (data,traverseconfig)
+    (* Match SIMP_QCONV: only conversion-consumed settings opt into
+       per-application context refresh. *)
+    case traverseconfig of
+        {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
+          TRAVERSE data
+      | _ => XTRAVERSE (data,traverseconfig)
   end;
 
 

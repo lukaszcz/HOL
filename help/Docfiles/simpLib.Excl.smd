@@ -1,0 +1,56 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `Excl`
+
+``` hol4
+simpLib.Excl : string -> thm
+```
+
+------------------------------------------------------------------------
+
+Excludes named simplifier components for one invocation.
+
+`Excl name` is a directive in the theorem list of a simplification
+conversion or tactic. A bare name uses the same parser and rule matching
+as `ss -* [name]`: qualification uses dots, not the kernel `Thy$Name`
+spelling. A two-part dotted name whose second part is not numeric
+requires its theory part to be an ancestor of the current theory;
+otherwise it raises `bad theory name`. An unmatched bare name is a silent
+no-op. Thus bare `Excl "bool$AND_CLAUSES"` does not exclude the rewrite
+`bool.AND_CLAUSES`.
+
+If no rewrite or named decision procedure matches, a bare name can
+instead exclude a looper, solver, split display or case display. Matching
+several of these kinds is an ambiguity error. Use a namespace to select
+the intended kind explicitly:
+
+- `rule:name` excludes rewrites and named decision procedures. For
+  rewrites it also accepts `Thy$Name` and theory parts that are not
+  ancestors of the current theory.
+- `looper:name` excludes an ordinary looper.
+- `solver:name` excludes a named solver.
+- `split:name` excludes the split rule with that name.
+- `case:ty` excludes the datatype splits for `ty`.
+
+Namespaced exclusions that match nothing raise an error. In particular,
+use `Excl "case:bool"`, not the bare display name `"split.case bool"`,
+whose dot invokes the strict rewrite-name parser.
+
+### Failure
+
+The constructor never fails. Processing the directive can fail for an
+invalid bare name, an ambiguous target or an unmatched namespaced name.
+
+### Example
+
+``` hol4
+>> SIMP_CONV bool_ss [Excl "bool$AND_CLAUSES"] “T ∧ p”;
+>> QCONV (SIMP_CONV bool_ss [Excl "rule:bool$AND_CLAUSES"]) “T ∧ p”;
+```
+
+### See also
+
+[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV),
+[`simpLib.add_looper`](#simpLib.add_looper),
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.add_split`](#simpLib.add_split),
+[`simpLib.split_ss`](#simpLib.split_ss).

@@ -158,7 +158,7 @@ fun beta_reduce_rebuilt nconds abstraction thm =
 
 val equality = boolSyntax.equality
 
-fun CONGPROC refl congrule =
+fun gen_CONGPROC {threaded : bool} refl congrule =
 let
 
    (* this discharges each antecedent of the congruence rule.  Each
@@ -193,22 +193,29 @@ let
       term only where it is an operator or sits inside the arguments of a
       non-constant operator (a matched variable may become an abstraction
       that applies it); a variable renamed by the matcher is not a rule
-      variable and is always reduced. *)
-   fun applicable tm acc =
-       case dest_term tm of
-           COMB _ =>
-             let val (f,args) = strip_comb tm
-             in
-               if is_const f then itlist applicable args acc
-               else map (#1 o dest_var) (free_vars tm) @ acc
-             end
-         | LAMB (_,b) => applicable b acc
-         | _ => acc
-   val applied_names = applicable (rand conc) []
-   val var_names = map (#1 o dest_var) vars
-   fun may_leave_redex genv =
-       let val name = #1 (dest_var genv)
-       in not (mem name var_names) orelse mem name applied_names end
+      variable and is always reduced.  Do not scan the rule at all for
+      ordinary congruences. *)
+   val may_leave_redex =
+       if threaded then
+         let
+           fun applicable tm acc =
+               case dest_term tm of
+                   COMB _ =>
+                     let val (f,args) = strip_comb tm
+                     in
+                       if is_const f then itlist applicable args acc
+                       else map (#1 o dest_var) (free_vars tm) @ acc
+                     end
+                 | LAMB (_,b) => applicable b acc
+                 | _ => acc
+           val applied_names = applicable (rand conc) []
+           val var_names = map (#1 o dest_var) vars
+         in
+           fn genv =>
+             let val name = #1 (dest_var genv)
+             in not (mem name var_names) orelse mem name applied_names end
+         end
+       else K false
 
 in fn relation =>
   if not (samerel rel relation) andalso not (same_const rel relation) then
@@ -231,17 +238,25 @@ in fn relation =>
        conclusion, which holds the traversed term, is scanned at most once
        and only for a genvar the right-hand side lacks. *)
     val rhs_genvars = filter is_genvar (free_vars (rand conc))
-    val all_genvars = ref NONE
-    fun conclusion_genvars () =
-        case !all_genvars of
-            SOME gvs => gvs
-          | NONE =>
-              let val gvs = filter is_genvar (free_vars (concl match_thm))
-              in all_genvars := SOME gvs; gvs end
-    fun is_result v =
-        is_genvar v andalso
-        (op_mem aconv v rhs_genvars orelse
-         op_mem aconv v (conclusion_genvars ()))
+    val is_result =
+        if threaded then
+          let
+            val all_genvars = ref NONE
+            fun conclusion_genvars () =
+                case !all_genvars of
+                    SOME gvs => gvs
+                  | NONE =>
+                      let
+                        val gvs = filter is_genvar
+                                         (free_vars (concl match_thm))
+                      in all_genvars := SOME gvs; gvs end
+          in
+            fn v => is_genvar v andalso
+                    (op_mem aconv v rhs_genvars orelse
+                     op_mem aconv v (conclusion_genvars ()))
+          end
+        (* Develop's result test: no whole-conclusion scan. *)
+        else fn v => op_mem aconv v rhs_genvars
 
     (* this function does all the work of solving the side conditions
        one by one.  The integer is the number of side conditions
@@ -309,7 +324,7 @@ in fn relation =>
                 val spec_match_thm = SPEC gen_abs_res (GEN genv match_thm)
                 val rebuilt_thm = MP spec_match_thm gen_abs_rewr_thm
                 val new_match_thm =
-                    if may_leave_redex genv then
+                    if threaded andalso may_leave_redex genv then
                       beta_reduce_rebuilt (n - 1) gen_abs_res rebuilt_thm
                     else rebuilt_thm
             in process_subgoals (n-1,new_match_thm,more_flags,
@@ -338,6 +353,8 @@ in fn relation =>
   end
 end;
 
+val CONGPROC = gen_CONGPROC {threaded=false}
+val THREADED_CONGPROC = gen_CONGPROC {threaded=true}
 
 (* ---------------------------------------------------------------------
  * EQ_CONGPROC

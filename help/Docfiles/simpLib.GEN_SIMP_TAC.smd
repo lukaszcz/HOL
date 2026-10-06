@@ -20,9 +20,15 @@ Simplifies a goal, then applies a simpset's final solvers and loopers.
 A theorem returned by a final solver must have the goal as conclusion
 and only goal assumptions as hypotheses; otherwise the solver is taken
 to have failed. With `limit n ss`, at most `n` looper applications
-succeed in one call. `ASM_SIMP_TAC` is `GEN_SIMP_TAC {safe = false}`,
-so every simplification tactic runs final solvers and loopers;
-`SIMP_CONV`, `SIMP_RULE` and `SIMP_PROVE` run neither.
+succeed in one call. For strategy-bearing calls, `ASM_SIMP_TAC` runs as
+`GEN_SIMP_TAC {safe = false}`. Strategy-free calls of `ASM_SIMP_TAC` and
+`SIMP_TAC` retain develop's tactic definitions. A call is strategy-free
+when `ss` has no loopers, solvers, subgoaler, condition depth or term
+order set, and `ths` contains neither `Split` nor an `SF` fragment with
+loopers or solvers, including beneath requirement or bounded-rewrite
+wrappers. `FULL_SIMP_TAC` and `REV_FULL_SIMP_TAC` inherit this dispatch in
+their final goal step. `SIMP_CONV`, `SIMP_RULE` and `SIMP_PROVE` run
+neither final solvers nor loopers.
 
 ### Failure
 

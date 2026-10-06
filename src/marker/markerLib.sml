@@ -136,7 +136,8 @@ fun reqD_modify tacf th =
         NONE => (tacf,th)
       | SOME th => (Ho_Rewrite.REQUIRE_DECREASE_TAC th o tacf, th)
 
-(* Separate the Req0/ReqD-stripped theorems from the tactic wrapper that
+(* Unlike legacy mk_require_tac, accumulate checks for every argument.
+   Separate the Req0/ReqD-stripped theorems from the tactic wrapper that
    checks the requirements, so that a caller which hands the same
    theorems to a tactic more than once (process_taclist_then_recur) can
    strip them just once.  A marker left in place is used as an ordinary
@@ -159,9 +160,19 @@ fun require_split thl =
     end
 
 fun mk_require_tac tac thl =
-    let val (thl, tacf) = require_split thl
+    let
+      fun recurse (accths,acctac) ths =
+          case ths of
+              [] => acctac (List.rev accths)
+            | th::rest =>
+              let
+                val (tac,th) = req0_modify tac th
+                val (tac,th) = reqD_modify tac th
+              in
+                recurse (th::accths,tac) rest
+              end
     in
-      tacf (tac thl)
+      recurse ([], tac) thl
     end
 
 (*---------------------------------------------------------------------------*)
@@ -827,8 +838,12 @@ fun process_taclist_then_recur {arg} thltac (gl as (asl,g)) =
         (pre, require_tacf (filter_then asms aslPs (thltac recur))) gl
     end
 
-fun process_taclist_then args thltac =
-    process_taclist_then_recur args (fn _ => thltac)
+fun process_taclist_then {arg} thltac (gl as (asl,g)) =
+    let val tacoptions = map dest_tacmarked arg
+        val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+    in
+      Tactical.THEN(pre, filter_then asms aslPs (mk_require_tac thltac)) gl
+    end
 
 (* ----------------------------------------------------------------------
     suspend : string -> tactic

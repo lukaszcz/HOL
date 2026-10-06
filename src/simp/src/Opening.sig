@@ -76,6 +76,7 @@ signature Opening = sig
                     depther : (thm list * term) -> conv} -> conv
    val samerel            : term -> term -> bool
    val CONGPROC           : ({Rinst:term,arg:term} -> thm) -> thm -> congproc
+   val THREADED_CONGPROC  : ({Rinst:term,arg:term} -> thm) -> thm -> congproc
    val rel_of_congrule    : thm -> term
    val nconds_of_congrule : thm -> int
 

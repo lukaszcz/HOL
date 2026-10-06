@@ -99,6 +99,7 @@ sig
 
   val rewrites       : thm list -> ssfrag
   val rewrites_with_names : (thname * thm) list -> ssfrag
+  val threaded_cong_ss : thm list -> ssfrag
   val dproc_ss       : Traverse.reducer -> ssfrag
   val ac_ss          : (thm * thm) list -> ssfrag
   val conv_ss        : convdata -> ssfrag
