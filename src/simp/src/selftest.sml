@@ -1914,11 +1914,11 @@ local
     then OK()
     else die "an uninstalled theorem made the looper's name ambiguous"
 
-  (* An unqualified Excl that matches nothing in the simpset is a no-op,
-     reported so that its author can remove it.  Only the simpset decides:
-     a theorem that exists but is not installed is as much a no-op as a
-     name that denotes nothing.  A namespaced Excl states which kind of
-     target is meant, so there matching nothing still aborts. *)
+  (* An unqualified Excl that matches nothing in the simpset is a silent
+     no-op, as on develop.  Only the simpset decides: a theorem that exists
+     but is not installed is as much a no-op as a name that denotes
+     nothing.  A namespaced Excl states which kind of target is meant, so
+     there matching nothing still aborts. *)
   val excl_true_t = ``T /\ (selftest_catalogue_p:bool)``
   val excl_warnings = ref ([] : string list)
   val excl_outstream = !Feedback.WARNING_outstream
@@ -1946,15 +1946,15 @@ local
   val kernel_name_matched = null (!excl_warnings)
   val _ = Feedback.WARNING_outstream := excl_outstream
 
-  val _ = tprint "unmatched unqualified Excl is reported"
+  val _ = tprint "unmatched unqualified Excl is silent"
   val _ =
-    if unmatched_warned then OK()
-    else die "unmatched unqualified Excl was ignored silently"
+    if unmatched_warned then die "unmatched unqualified Excl warned"
+    else OK()
 
-  val _ = tprint "Excl of a theorem the simpset does not hold is reported"
+  val _ = tprint "Excl of a theorem the simpset does not hold is silent"
   val _ =
-    if uninstalled_warned then OK()
-    else die "Excl of an uninstalled theorem was ignored silently"
+    if uninstalled_warned then die "Excl of an uninstalled theorem warned"
+    else OK()
 
   val _ = tprint "a kernel-spelled Excl resolves to its theorem"
   val _ =
@@ -2028,8 +2028,7 @@ local
      checkexn=fn UNCHANGED => true | _ => false}
     unloaded_lhs
 
-  (* A qualified name that neither an entry nor a theorem answers to stays
-     the diagnosed typo it was: reported, and removing nothing. *)
+  (* A qualified name that no entry answers to removes nothing, silently. *)
   val unloaded_warnings = ref ([] : string list)
   val unloaded_outstream = !Feedback.WARNING_outstream
   val _ = Feedback.WARNING_outstream :=
@@ -2042,10 +2041,10 @@ local
     List.exists (String.isSubstring "definitely_not_a_rule")
                 (!unloaded_warnings)
   val _ = Feedback.WARNING_outstream := unloaded_outstream
-  val _ = tprint "unmatched qualified Excl is reported"
+  val _ = tprint "unmatched qualified Excl is silent"
   val _ =
-    if unloaded_typo_warned then OK()
-    else die "unmatched qualified Excl was ignored silently"
+    if unloaded_typo_warned then die "unmatched qualified Excl warned"
+    else OK()
 
   val bounded_calls = ref 0
   fun bounded_conjunction_looper _ g =
@@ -2447,7 +2446,7 @@ val _ = let
           else die "split.case exclusion left the TypeBase split active"
       | _ => die "TypeBase split exclusion produced the wrong subgoals"
 
-  (* An unqualified name that matches nothing is reported and ignored, so
+  (* An unqualified name that matches nothing is ignored, so
      the TypeBase splits stay in force; the case: namespace still aborts. *)
   val unmatched_case_run =
     Feedback.quiet_warnings

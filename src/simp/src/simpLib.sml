@@ -522,8 +522,7 @@ fun munge_simpset_name p =
    qualified spelling is what a user writes to exclude it.  So for
    exclusion a theory part whose only fault is not being an ancestor is
    read positionally and matched against the entries.  Nothing else is
-   relaxed: a key too many dots deep is still rejected, and a key that no
-   entry and no theorem answers to is still the diagnosed typo it was. *)
+   relaxed: a key too many dots deep is still rejected. *)
 fun excl_simpset_name p =
   parse_simpset_name {unknown_thy = fn (thy,name) => (SOME thy,name)} p
 
@@ -957,9 +956,8 @@ fun case_display_exists display =
 
 (* A namespaced Excl says which kind of target is meant, so matching
    nothing there is a diagnosed typo -- [no_target].  An unqualified one
-   that matches nothing in the simpset is a no-op, which is reported so
-   that its author can remove it, but does not abort the tactic.  A name
-   that matches several kinds stays an error either way: there is no way to
+   that matches nothing in the simpset is a silent no-op, as it has always
+   been.  A name that matches several kinds is an error: there is no way to
    guess which was meant. *)
 fun no_target original =
   raise ERR ("process_tags", "Excl did not match " ^ original)
@@ -971,19 +969,14 @@ fun ambiguous_target original =
      " is ambiguous; qualify it with rule:, looper:, solver:, " ^
      "split:, or case:")
 
-fun optional_target {report} original [] =
-      (if report then
-         HOL_WARNING "simpLib" "process_tags"
-                     ("Ignoring Excl that matched nothing: " ^ original)
-       else ();
-       NONE)
-  | optional_target _ _ [target] = SOME target
-  | optional_target _ original _ = ambiguous_target original
+fun optional_target _ [] = NONE
+  | optional_target _ [target] = SOME target
+  | optional_target original _ = ambiguous_target original
 
 (* A rule name is parsed once, here, and the pattern travels with the
    target: neither [apply_exclusion] nor the history replay that follows
    it gets to parse the name a second time. *)
-fun resolve_exclusion {report,pending} ss original =
+fun resolve_exclusion {pending} ss original =
   let
     fun rule_target name =
       case Lib.total excl_simpset_name name of
@@ -1045,7 +1038,7 @@ fun resolve_exclusion {report,pending} ss original =
                           (if case_display_exists original
                            then [ExcludeCase original] else [])
                       in
-                        optional_target {report=report} original targets
+                        optional_target original targets
                       end
   end
 
@@ -1086,10 +1079,10 @@ fun apply_exclusion (target,ss) =
    exclusion been applied where it was written.  The other kinds touch
    disjoint parts of the simpset, so their order relative to the deferred
    filter -- in the simpset and in its history -- does not matter. *)
-fun apply_exclusions {report} ss names =
+fun apply_exclusions ss names =
   let
     fun step (name,(ss,pending)) =
-      case resolve_exclusion {report=report,pending=pending} ss name of
+      case resolve_exclusion {pending=pending} ss name of
           NONE => (ss,pending)
         | SOME (ExcludeRule excl) => (ss,excl::pending)
         | SOME target => (apply_exclusion (target,ss),pending)
@@ -2091,7 +2084,7 @@ fun process_tags0 {report} ss thl =
             List.foldl (fn (sp,ss) => add_split_marker report sp ss)
                        withFrags splits
           val invocation =
-            apply_exclusions {report=report} withSplits excludes
+            apply_exclusions withSplits excludes
         in
           (invocation, rst)
         end
