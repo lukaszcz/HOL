@@ -26,6 +26,7 @@ val _ =
       ("AC", fn () => AC th TRUTH,
        fn DAC (a, b) => same a andalso concl b ~~ T | _ => false),
       ("Cong", fn () => Cong th, fn DCong a => same a | _ => false),
+      ("Split", fn () => Split th, fn DSplit a => same a | _ => false),
       ("Excl", fn () => Excl "nm", fn DExcl "nm" => true | _ => false),
       ("ExclSF", fn () => ExclSF "nm", fn DExclSF "nm" => true | _ => false),
       ("FRAG", fn () => FRAG "nm", fn DFRAG "nm" => true | _ => false),
@@ -46,6 +47,9 @@ val _ =
                         | _ => false)
         | _ => false)
     ];
+    tprint "strip_wrappers: Req0 over ReqD over Once";
+    if same (strip_wrappers (mk_Req0 (mk_ReqD (BoundedRewrites.Once th))))
+    then OK () else die "payload not reached";
     List.app rejects [
       ("TRUTH", fn () => TRUTH),
       ("assumption", fn () => th),
@@ -55,6 +59,38 @@ val _ =
     ]
   end
 
+(* The theorem list handed to the recursive pass must be stripped of
+   Req0/ReqD just like the outer one.  simpLib re-enters through [recur]
+   after a looper fires; a marker surviving there is used as an ordinary
+   rewrite, and the marker$Req0 hypothesis it carries then lands in the
+   justification of the subgoal it rewrote, which fails the enclosing
+   proof. *)
+val _ =
+  let
+    val leaked = ref ([] : term list)
+    val calls = ref 0
+    fun marker_hyps th =
+        List.filter (fn t => #Thy (dest_thy_const t) = "marker"
+                             handle HOL_ERR _ => false)
+                    (hyp th)
+    fun start recur =
+        let
+          fun main thl =
+              (leaked := !leaked @ List.concat (map marker_hyps thl);
+               calls := !calls + 1;
+               if !calls >= 2 then ALL_TAC else recur main)
+        in
+          main
+        end
+  in
+    tprint "process_taclist_then_recur strips Req0 for recursion";
+    ignore (runtac (process_taclist_then_recur
+              {arg = [mk_Req0 TRUTH]} start) ([], “p:bool”));
+    if !calls < 2 then die "the recursive pass never ran"
+    else if null (!leaked) then OK()
+    else die ("marker hypotheses reached the tactic: " ^
+              String.concatWith ", " (map term_to_string (!leaked)))
+  end
 
 fun testtac tac = #1 o runtac (VALID tac)
 val goal_print = HOLPP.pp_to_string 75 goalStack.pp_goal
@@ -164,6 +200,17 @@ val _ = require_msg
 
 fun thm_eq (hyps,t) th =
     HOLset.equal(hyps, hypset th) andalso t ~~ concl th
+
+val _ =
+    let val th = ASSUME “p:bool”
+    in
+      tprint "Split marker round-trip";
+      require_msg
+        (check_result (thm_eq (hypset th, concl th)))
+        thm_to_string
+        (destSplit o Split)
+        th
+    end
 
 fun mklab s t = mk_comb(mk_comb(“suspendlabel”, mk_var(s, “:ind”)), t)
 val rhyp = mklab "3 r" “!r q p. suspendimp p (suspendimp q r)”

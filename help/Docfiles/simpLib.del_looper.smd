@@ -1,0 +1,59 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `del_looper`
+
+``` hol4
+simpLib.del_looper : string -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Removes a named tactic looper from a simpset.
+
+A call to `del_looper name ss` returns a new simpset without the looper
+whose registration name is exactly `name`.  Other loopers retain their
+relative order.  If a looper with that name is subsequently added again,
+it is new at that point and is appended after the remaining loopers.
+
+The removal is recorded as a simpset strategy update, so it is preserved
+when later operations rebuild the simpset from its fragment history.
+The operation does not remove rewrite rules, solvers, or a simpset
+fragment merely because one of them has the same name.
+
+For a temporary alternative, placing `Excl name` in a simplification
+tactic's theorem list suppresses the matching looper for that invocation
+only.  This is often preferable when the looper should remain available
+in the reusable simpset.
+
+Loopers run only after rewriting and final solving have failed.  The
+first applicable looper is used, and simplification restarts on all of
+its subgoals.  The simpset bound set by `simpLib.limit` caps successful
+looper rounds across the whole tactic invocation.  Removing a looper
+therefore also removes its participation in this ordered, bounded loop.
+
+This operation affects tactic simplification only.  Loopers do not cross
+into `SIMP_CONV`, `SIMP_PROVE`, `SIMP_RULE`, or `ASM_SIMP_RULE`, whether
+or not they are present in the simpset.
+
+### Failure
+
+If no looper has the given name, `del_looper` issues a HOL warning and
+returns the original simpset unchanged.  It does not raise an exception
+for that case.
+
+### Example
+
+``` hol4
+val with_split =
+  simpLib.add_looper
+    ("split conjunctions", fn _ => CONJ_TAC)
+    simpLib.empty_ss
+
+val without_split =
+  simpLib.del_looper "split conjunctions" with_split
+```
+
+### See also
+
+[`simpLib.add_looper`](#simpLib.add_looper),
+[`simpLib.set_looper`](#simpLib.set_looper),
+[`simpLib.looper_ss`](#simpLib.looper_ss)

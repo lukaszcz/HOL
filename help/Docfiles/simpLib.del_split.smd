@@ -1,0 +1,51 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `del_split`
+
+``` hol4
+simpLib.del_split : string -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Removes a named split looper from a simpset.
+
+For an unprefixed argument `name`, a call `del_split name ss` looks for
+both `"split " ^ name` and `"split_asm " ^ name` and removes whichever
+are present. The name is normally a fully qualified theorem database
+name such as `pickTheory$pick_split`.
+
+An argument already beginning with `"split "` or `"split_asm "` is
+treated as an exact strategy name, so only that one looper is considered.
+No theory qualification or short-name expansion is otherwise performed.
+
+Only the returned simpset is changed. In particular, `del_split` does
+not remove a theorem registered in the persistent `[split]` set used by
+[`simpLib.split_ss`](#simpLib.split_ss). Such a dynamically selected rule
+can instead be suppressed for a simplifier invocation with an `Excl`
+marker naming its split strategy.
+
+### Failure
+
+Never fails. If no candidate strategy name is present, the original
+simpset is returned without a warning.
+
+### Example
+
+Continuing with a simpset containing the stored conclusion rule
+`pickTheory$pick_split`:
+
+``` hol4
+val without_pick =
+  simpLib.del_split "pickTheory$pick_split" pick_ss;
+
+(* This exact form removes only the conclusion-rule strategy. *)
+val also_without_pick =
+  simpLib.del_split "split pickTheory$pick_split" pick_ss;
+```
+
+### See also
+
+[`simpLib.add_split`](#simpLib.add_split),
+[`simpLib.split_ss`](#simpLib.split_ss),
+[`simpLib.Split`](#simpLib.Split),
+[`simpLib.del_looper`](#simpLib.del_looper)

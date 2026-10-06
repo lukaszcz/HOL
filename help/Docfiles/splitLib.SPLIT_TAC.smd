@@ -1,0 +1,124 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `SPLIT_TAC`
+
+``` hol4
+splitLib.SPLIT_TAC : thm list -> tactic
+```
+
+------------------------------------------------------------------------
+
+Performs one rule-directed split, preferring the conclusion to the
+assumptions.
+
+A conclusion split rule normally has the schematic form
+
+``` hol4
+|- !P ... . P (c a1 ... an) = branch_formula
+```
+
+where `P` is a universally quantified, Boolean-valued predicate and `c`
+is a constant. The theorem must have no hypotheses. A rule whose
+right-hand side is syntactically a negation is instead classified as an
+*assumption split rule*:
+
+``` hol4
+|- !P ... . P (c a1 ... an) = ~branch_formula
+```
+
+The distinction is structural; it is not inferred from the logical
+meaning of the theorem.
+
+`SPLIT_TAC rules` first searches the conclusion using the conclusion
+rules. It selects one matching constant-headed redex, instantiates `P`
+with its surrounding Boolean context, and rewrites that context with the
+rule. All alpha-equivalent occurrences of the selected redex in that
+context are replaced. Candidate occurrences are ordered by the required
+enclosing-binder depth, then by term depth and left-to-right position.
+
+If the conclusion cannot be changed, the tactic searches the assumptions
+using the assumption rules. It chooses the first assumption containing a
+key constant, replaces that assumption by the facts obtained from the
+instantiated rule, and may thereby create multiple goals. In particular,
+a merely syntactic occurrence of a key in an earlier assumption can
+prevent a later assumption from being tried if the former cannot
+actually be split.
+
+Exactly one rule application is performed. Repetition, when wanted, must
+be supplied by a surrounding tactic or by the simplifier's looper
+machinery.
+
+### The `[split]` attribute
+
+A stored theorem can be registered in the persistent split theorem set
+by attaching the argument-free `split` attribute:
+
+``` hol4
+Theorem pick_split[split]:
+  !P. P (pick b x y) <=>
+      (b ==> P x) /\ (~b ==> P y)
+Proof
+  ...
+QED
+```
+
+Registration checks the rule format described above. Stored registrations
+are identified by their full database names, such as
+`myTheory$pick_split`, and are inherited through theory ancestry. The
+[`simpLib.split_ss`](#simpLib.split_ss) fragment consults this set at run
+time. `SPLIT_TAC` itself does not: it uses only its explicit theorem
+list.
+
+Within a simplifier invocation, a registered conclusion rule is named
+`split myTheory$pick_split`; an assumption rule is named
+`split_asm myTheory$pick_split`. These names can be passed to `Excl` to
+suppress an individual rule for that invocation.
+
+### Failure
+
+Constructing the tactic fails if any supplied theorem is malformed. A
+rule is malformed if it has hypotheses, its conclusion is not an
+equality, its left side is not `P (c a1 ... an)`, `P` is not a
+universally quantified Boolean-valued variable of the right type, or the
+redex is not constant-headed.
+
+Application fails if no conclusion rule changes the conclusion and no
+assumption rule can split the selected assumption. Instantiation errors
+from one conclusion candidate are skipped in favour of later candidates.
+
+### Example
+
+The following is a static illustration of one conclusion-splitting
+step:
+
+``` hol4
+val bool_split = splitLib.type_split_of ``:bool``;
+
+(* Goal before:  P (if b then x else y)
+
+   splitLib.SPLIT_TAC [bool_split]
+
+   Goal after:   (b ==> P x) /\ (~b ==> P y)
+*)
+```
+
+### Comparison with global case splitting
+
+`SPLIT_TAC` rewrites one case-like redex inside a Boolean context. To
+case-split a chosen scrutinee globally across the whole goal, use
+[`bossLib.Cases_on`](#bossLib.Cases_on). To find a `case` expression,
+case-split its scrutinee globally, and simplify the resulting goals, use
+[`BasicProvers.CASE_TAC`](#BasicProvers.CASE_TAC).
+
+There is one unrelated local shadow of this name in the examples tree:
+`examples/machine-code/hoare-triple/set_sepScript.sml:60` defines a local
+`SPLIT_TAC` as a simplification-and-METIS tactic. Qualify the library
+operation as `splitLib.SPLIT_TAC` in that scope.
+
+### See also
+
+[`simpLib.split_ss`](#simpLib.split_ss),
+[`simpLib.add_split`](#simpLib.add_split),
+[`simpLib.del_split`](#simpLib.del_split),
+[`simpLib.Split`](#simpLib.Split),
+[`bossLib.Cases_on`](#bossLib.Cases_on),
+[`BasicProvers.CASE_TAC`](#BasicProvers.CASE_TAC)

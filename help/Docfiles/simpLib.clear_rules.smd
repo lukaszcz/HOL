@@ -1,0 +1,68 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `clear_rules`
+
+``` hol4
+simpLib.clear_rules : simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Removes simplification rules while retaining a simpset's strategy.
+
+A call to `clear_rules ss` returns a simpset with all of the following
+removed:
+
+* ordinary rewrite rules and simpset conversions;
+* congruence rules, relation simplification data, and decision
+  procedures;
+* loopers, including splitters installed as loopers; and
+* the added-fragment history and its fragment names.
+
+The result retains all of the following:
+
+* the rewrite-maker function, including filters used when later
+  theorems are added;
+* the simpset limit and the set of excluded fragment names;
+* the unsafe and safe final-solver lists and the subgoaler;
+* the configured conditional depth and term ordering; and
+* recorded per-invocation looper exclusions.
+
+The retained settings are recorded in the new history, so they survive
+later history-rebuilding operations such as removing a fragment added
+after the call.  The basic equality traversal remains available.
+
+Consequently,
+
+``` hol4
+simpLib.SIMP_TAC (simpLib.clear_rules ss) ths
+```
+
+is the rewrite-rule analogue of “simplify only with `ths`”.  It is not
+a claim that no other tactic mechanism can act: retained subgoaling and
+final solvers may still prove conditions or goals, and the retained
+rewrite maker controls how `ths` become rewrite rules.  Loopers and old
+decision procedures, however, cannot act because they were cleared.
+
+### Failure
+
+Never fails.
+
+### Example
+
+This schematic tactic ignores the rules and fragments in `bool_ss`, but
+uses its rewrite-maker and strategy settings when adding the supplied
+rules.
+
+``` hol4
+val only_ss = simpLib.clear_rules bool_ss
+val only_tac = simpLib.SIMP_TAC only_ss [rule1, rule2]
+```
+
+### See also
+
+[`simpLib.mk_simpset`](#simpLib.mk_simpset),
+[`simpLib.remove_ssfrags`](#simpLib.remove_ssfrags),
+[`simpLib.exclude_ssfrags`](#simpLib.exclude_ssfrags),
+[`simpLib.SIMP_TAC`](#simpLib.SIMP_TAC),
+[`simpLib.set_cond_depth`](#simpLib.set_cond_depth),
+[`simpLib.set_term_ord`](#simpLib.set_term_ord)

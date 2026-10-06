@@ -74,6 +74,22 @@ sig
                  stack:term list,
                  relation : (term * (term -> thm))} -> conv
        }
+       | CONTEXT_REDUCER of {
+         name : string option,
+         initial: context,
+         addcontext : context * thm list -> context,
+         apply: {solver:term list -> term -> thm,
+                 conv: term list -> term -> thm,
+                 context: context,
+                 stack:term list,
+                 cond_depth:int,
+                 term_ord:term * term -> order,
+                 relation : (term * (term -> thm))} -> conv
+       }
+
+  (* Through dest_reducer a CONTEXT_REDUCER runs at the default
+     side-condition depth (!Cond_rewr.stack_limit) and term order
+     (Cond_rewr.ac_term_ord); reducer_data keeps the configured ones. *)
 
   val dest_reducer : reducer ->
         {name : string option,
@@ -85,7 +101,27 @@ sig
                  stack:term list,
                  relation : (term * (term -> thm))} -> conv}
 
+  val reducer_data : reducer ->
+        {name : string option,
+         initial: context,
+         addcontext : context * thm list -> context,
+         apply: {solver:term list -> term -> thm,
+                 conv: term list -> term -> thm,
+                 context: context,
+                 stack:term list,
+                 cond_depth:int,
+                 term_ord:term * term -> order,
+                 relation : (term * (term -> thm))} -> conv}
+
   val addctxt : thm list -> reducer -> reducer
+
+  type simp_prover_ctxt =
+       {stack        : term list,
+        context_thms : thm list,
+        recurse      : term -> thm}
+  type ssolver =
+       {name : string, solve : simp_prover_ctxt -> term -> thm}
+  type subgoaler = simp_prover_ctxt -> term -> thm
 
  (* ----------------------------------------------------------------------
      TRAVERSE : {rewriters: reducer list,
@@ -130,5 +166,67 @@ sig
                          relation: term};
 
    val TRAVERSE : traverse_data -> thm list -> conv
+
+   (* The traversal-strategy settings that traverse_data does not carry.
+      An unset field takes the value TRAVERSE runs at: no subgoaler, no
+      extra solvers, !Cond_rewr.stack_limit as the side-condition depth
+      and Cond_rewr.ac_term_ord as the permutative term order.  The
+      unconfigured settings are default_config, so that
+        XTRAVERSE (data, default_config) = TRAVERSE data. *)
+   type traverse_config = {subgoaler: subgoaler option,
+                           solvers: ssolver list,
+                           cond_depth: int option,
+                           term_ord: (term * term -> order) option};
+
+   type xtraverse_data = traverse_data * traverse_config
+
+   val default_config : traverse_config
+
+   val XTRAVERSE : xtraverse_data -> thm list -> conv
+
+   (* ParentFirst is XTRAVERSE's order.  ChildFirst is opt-in child-first
+      traversal. A certified eta contraction of a function argument may
+      run before descent to preserve its head; logical binder predicates
+      are excluded. keep_abstraction selects applications whose argument
+      must retain its abstraction. Congruence rules decide which children
+      are visited and their context. charge runs before head preservation,
+      descent or a reducer attempt, and its exception propagates to the
+      invocation owner. Caller-supplied reducers control their own
+      conversions; simpLib also protects against its standard ETA reducer. *)
+   type child_first_policy =
+       {charge : unit -> unit, keep_abstraction : term -> bool}
+   datatype traversal_policy =
+       ParentFirst | ChildFirst of child_first_policy
+
+   val charge_only : (unit -> unit) -> child_first_policy
+   val keep_abstraction : child_first_policy -> term -> bool
+
+   (* Normalize proper arguments (or an abstraction's body), preserving
+      the root. Repeat policy-selected eta contraction and child
+      normalization until stable; charge bounds repeated passes. *)
+   val NORMALIZE_ARGUMENTS : child_first_policy -> conv -> conv
+
+   (* As XTRAVERSE in the given order, but keep initial reducer additions
+      separate from theorems which extend generic solver and
+      binder-capture contexts only. *)
+   val TRAVERSE_WITH_CONTEXT :
+       traversal_policy -> xtraverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
+
+   (* Opt-in dependency observation for child-first derivation. Observe
+      each term offered to descent/reducers, including unchanged terms
+      and side conditions whose proof attempts fail. This does not
+      change charging or catch exceptions from the observer. *)
+   val CHILD_FIRST_WITH_OBSERVER :
+       (term -> unit) -> child_first_policy -> xtraverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
+
+   (* Apply one reducer at the root, without descending.  Recursive
+      side-condition proving still uses the full traversal. *)
+   val ROOT_REWRITE : xtraverse_data -> thm list -> conv
+
+   val ROOT_REWRITE_WITH_CONTEXT :
+       xtraverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
 
 end (* sig *)

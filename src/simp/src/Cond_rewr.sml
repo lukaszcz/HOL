@@ -8,6 +8,8 @@ type controlled_thm = BoundedRewrites.controlled_thm
 fun WRAP_ERR x = STRUCT_WRAP "Cond_rewr" x;
 fun ERR x      = STRUCT_ERR "Cond_rewr" x;
 
+(* The user-level default depth for nested side-condition solving: setting
+   it affects every simpset that does not configure the depth itself. *)
 val stack_limit = ref 4;
 
 (* Which rewrites fired, for a human watching a simplification.  This is
@@ -168,20 +170,20 @@ fun ac_term_ord(tm1,tm2) =
        vperm(tm1,tm2) andalso
        HOLset.equal(FVL [tm1] empty_tmset, FVL [tm2] empty_tmset)
 
-   fun COND_REWR_CONV (nm,th) bounded =
+   fun COND_REWR_CONV_WITH_CONTEXT (nm,th) bounded =
       let val eqn = snd (strip_imp (concl th))
           val isperm = is_var_perm (dest_eq eqn)
           val instth = HO_PART_MATCH (lhs o snd o strip_imp) th
                        handle HOL_ERR _ => ERR("COND_REWR_CONV",
                          "bad theorem argument (not a conditional equation)")
       in
-      fn solver => fn stack => fn tm =>
+      fn {solver,stack,cond_depth,term_ord} => fn tm =>
        (let val conditional_eqn = instth tm
             val (conditions,eqn) = strip_imp (concl conditional_eqn)
             val _ = if exists (C (op_mem aconv) stack) conditions
                         then (trace(1, TEXT "looping - cut");
                               failwith "looping!") else ()
-            val _ = if length stack + length conditions > (!stack_limit)
+            val _ = if length stack + length conditions > cond_depth
                     then (trace(1, TEXT "looping - stack limit reached");
                           failwith "stack limit") else ()
             val (l,r) = dest_eq eqn
@@ -191,7 +193,7 @@ fun ac_term_ord(tm1,tm2) =
                  failwith "looping rewrite")
               else ()
 
-            val _ = if isperm andalso ac_term_ord(l, r) <> GREATER andalso
+            val _ = if isperm andalso term_ord (l, r) <> GREATER andalso
                        not bounded
                     then
                       (trace(4, IGNORE("possibly looping",conditional_eqn));
@@ -223,6 +225,17 @@ fun ac_term_ord(tm1,tm2) =
         handle e => WRAP_ERR("COND_REWR_CONV (application)",e))
       end
       handle e  => WRAP_ERR("COND_REWR_CONV (construction) ",e);
+
+   (* The user-level defaults are read where they were read before the
+      settings were per-traversal: the depth at each application of the
+      conversion, the order once and for all. *)
+   fun COND_REWR_CONV nmth bounded =
+      let val conv = COND_REWR_CONV_WITH_CONTEXT nmth bounded
+      in
+        fn solver => fn stack => fn tm =>
+           conv {solver=solver, stack=stack, cond_depth= !stack_limit,
+                 term_ord=ac_term_ord} tm
+      end;
 
 
 val BOUNDED_t = mk_thy_const {Thy = "bool", Name = "BOUNDED",

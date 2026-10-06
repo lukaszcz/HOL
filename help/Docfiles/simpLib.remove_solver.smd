@@ -1,0 +1,36 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `remove_solver`
+
+``` hol4
+simpLib.remove_solver : string -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Removes a named solver from a simpset.
+
+`remove_solver name ss` removes every entry called `name` from both the
+safe and unsafe solver lists of `ss`. If neither list contains `name`,
+the simpset is returned unchanged and no warning is issued.
+
+This operation is persistent on the returned simpset. To suppress a
+named solver only for one simplifier invocation, pass `Excl name` in
+that invocation's theorem list.
+
+### Failure
+
+Never fails.
+
+### Example
+
+``` hol4
+val ss_without_arithmetic =
+  simpLib.remove_solver "linear arithmetic" ss;
+```
+
+### See also
+
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.add_safe_solver`](#simpLib.add_safe_solver),
+[`simpLib.set_unsafe_solvers`](#simpLib.set_unsafe_solvers),
+[`simpLib.set_safe_solvers`](#simpLib.set_safe_solvers)

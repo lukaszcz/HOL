@@ -74,9 +74,19 @@ fun unAC th = let val th1 = PURE_REWRITE_RULE [AC_DEF] th
               in (CONJUNCT1 th1, CONJUNCT2 th1)
               end;
 
-fun Cong th = EQ_MP (SYM(SPEC (concl th) markerTheory.Cong_def)) th;
+fun genCong def th = EQ_MP (SYM (SPEC (concl th) def)) th
+
+fun genUnCong marker def th =
+  (if same_const marker (rator (concl th)) then
+     SOME (PURE_REWRITE_RULE [def] th)
+   else NONE)
+  handle HOL_ERR _ => NONE
+
+fun Cong th = genCong markerTheory.Cong_def th;
+fun Split th = genCong markerTheory.Split_def th;
 
 fun unCong th = PURE_REWRITE_RULE [Cong_def] th;
+fun destSplit th = PURE_REWRITE_RULE [Split_def] th;
 
 fun genmktagged th nm =
     let val v = mk_var(nm, alpha)
@@ -117,29 +127,41 @@ fun dest_ReqD th =
     if HOLset.member(hypset th, ReqD_t) then SOME (PROVE_HYP ReqD_th th)
     else NONE
 
-fun req0_modify tac th =
+fun req0_modify tacf th =
     case dest_Req0 th of
-        NONE => (tac,th)
-      | SOME th => (Ho_Rewrite.REQUIRE0_TAC th o tac, th)
-fun reqD_modify tac th =
+        NONE => (tacf,th)
+      | SOME th => (Ho_Rewrite.REQUIRE0_TAC th o tacf, th)
+fun reqD_modify tacf th =
     case dest_ReqD th of
-        NONE => (tac,th)
-      | SOME th => (Ho_Rewrite.REQUIRE_DECREASE_TAC th o tac, th)
+        NONE => (tacf,th)
+      | SOME th => (Ho_Rewrite.REQUIRE_DECREASE_TAC th o tacf, th)
 
-fun mk_require_tac tac thl =
+(* Separate the Req0/ReqD-stripped theorems from the tactic wrapper that
+   checks the requirements, so that a caller which hands the same
+   theorems to a tactic more than once (process_taclist_then_recur) can
+   strip them just once.  A marker left in place is used as an ordinary
+   rewrite, and the marker$Req0 hypothesis it carries then lands in the
+   justification of the goal it rewrote. *)
+fun require_split thl =
     let
-      fun recurse (accths,acctac) ths =
+      fun recurse (accths,acctacf) ths =
           case ths of
-              [] => acctac (List.rev accths)
+              [] => (List.rev accths, acctacf)
             | th::rest =>
               let
-                val (tac,th) = req0_modify tac th
-                val (tac,th) = reqD_modify tac th
+                val (tacf,th) = req0_modify acctacf th
+                val (tacf,th) = reqD_modify tacf th
               in
-                recurse (th::accths,tac) rest
+                recurse (th::accths,tacf) rest
               end
     in
-      recurse ([], tac) thl
+      recurse ([], I) thl
+    end
+
+fun mk_require_tac tac thl =
+    let val (thl, tacf) = require_split thl
+    in
+      tacf (tac thl)
     end
 
 (*---------------------------------------------------------------------------*)
@@ -655,6 +677,7 @@ val _ = Parse.temp_add_user_printer("markerLib.IgnAsm",
 datatype directive =
     DAC of thm * thm
   | DCong of thm
+  | DSplit of thm
   | DExcl of string
   | DExclSF of string
   | DFRAG of string
@@ -683,6 +706,8 @@ fun dest_directive th =
       fun head () =
           if has_marker_head AC_tm th then SOME (DAC (unAC th))
           else if has_marker_head Cong_tm th then SOME (DCong (unCong th))
+          else if has_marker_head Split_tm th then
+            SOME (DSplit (destSplit th))
           else if aconv (concl th) NoAsms_t then SOME DNoAsms
           else if has_marker_head IgnAsm_t th then
             SOME (DIgnAsm (#1 (dest_var (rand (concl th)))))
@@ -701,6 +726,13 @@ fun dest_directive th =
     end
 
 val is_directive = Option.isSome o dest_directive
+
+fun strip_wrappers th =
+    case dest_directive th of
+        SOME (DReq0 p) => strip_wrappers p
+      | SOME (DReqD p) => strip_wrappers p
+      | SOME (DBounded (p, _)) => strip_wrappers p
+      | _ => th
 
 datatype tacoptions = TO_NoAsms | TO_IgnAsm of string |
                       TO_Abbr of string | TO_Label of string |
@@ -776,12 +808,27 @@ fun filter_then asms aslPs thltac (gl as (asl0,g)) =
       thltac (map ASSUME asl @ asms) gl
     end
 
-fun process_taclist_then {arg} thltac (gl as (asl,g)) =
-    let val tacoptions = map dest_tacmarked arg
-        val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+(* Decode markers and run pretactics once.  The callback's [recur] closure
+   reapplies only the saved assumption policy to a later subgoal.  The
+   Req0/ReqD stripping is done here rather than by mk_require_tac inside
+   filter_then, because [recur] must hand the later subgoal the stripped
+   theorems too: they are the same theorems, and one that still carried
+   its marker would take the marker$ hypothesis into the recursive pass's
+   justification. *)
+fun process_taclist_then_recur {arg} thltac (gl as (asl,g)) =
+    let
+      val tacoptions = map dest_tacmarked arg
+      val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+      val (asms, require_tacf) = require_split asms
+      fun recur (next : thm list -> tactic) : tactic =
+        filter_then asms aslPs next
     in
-      Tactical.THEN(pre, filter_then asms aslPs (mk_require_tac thltac)) gl
+      Tactical.THEN
+        (pre, require_tacf (filter_then asms aslPs (thltac recur))) gl
     end
+
+fun process_taclist_then args thltac =
+    process_taclist_then_recur args (fn _ => thltac)
 
 (* ----------------------------------------------------------------------
     suspend : string -> tactic

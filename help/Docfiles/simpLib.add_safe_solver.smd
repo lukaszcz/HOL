@@ -1,0 +1,42 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `add_safe_solver`
+
+``` hol4
+simpLib.add_safe_solver : Traverse.ssolver -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Adds a named safe final solver to a simpset.
+
+`add_safe_solver solver ss` appends `solver` to the safe solver list of
+`ss`. Solvers are tried in registration order. If that list already
+contains the solver's name, the existing entry is retained and no second
+active entry is created. The explicit addition is still recorded, so it
+survives a later history rebuild that removes a fragment which supplied
+the earlier entry.
+
+Safe solvers are used to solve the whole residual goal after the rewrite
+phase of `GEN_SIMP_TAC {safe=true}`. They are not used by
+`GEN_SIMP_TAC {safe=false}`, and are never used to discharge conditional
+rewrite side conditions inside the simplifier engine. Engine side
+conditions always use the unsafe list, even in safe tactic mode. See
+`add_unsafe_solver` for the solver context and the complete pipeline.
+
+The safe/unsafe distinction controls solver selection; every returned
+theorem is still checked by the HOL kernel and by the simplifier's
+final-solver wrapper.
+
+### Failure
+
+`add_safe_solver` itself never fails. At use time, a `HOL_ERR` from a
+solver causes the remaining safe solvers to be tried; other exceptions
+propagate.
+
+### See also
+
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.set_safe_solvers`](#simpLib.set_safe_solvers),
+[`simpLib.remove_solver`](#simpLib.remove_solver),
+[`simpLib.mk_tactic_solver`](#simpLib.mk_tactic_solver),
+[`simpLib.safe_solver_ss`](#simpLib.safe_solver_ss)

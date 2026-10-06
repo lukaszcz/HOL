@@ -4,7 +4,7 @@ EXTRA_CLEANS = selftest.exe simp-selftest.log
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo simpLib.uo
+selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo splitLib.uo simpLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL
