@@ -4963,4 +4963,365 @@ in
   ()
 end
 
+(* R7 baseline-only pins. Setup precedes hooks/meters; no new strategy API.
+   Count.mk_meter leaves counting enabled, as with the existing Count pins. *)
+local
+  val goal = ([],mk_var ("r7_goal",bool))
+  val missing = markerSyntax.L "r7_nonexistent_label"
+  val cong = markerLib.Cong boolTheory.LET_CONG
+  fun bound name th = ADD_ASSUM
+    (mk_comb (boolSyntax.bounded_tm,mk_var (name,bool))) th
+  val badbound = bound "notanint" TRUTH
+  val reqcong = markerLib.mk_Req0 cong
+  val reqdcong = markerLib.mk_ReqD cong
+  val mixed = markerLib.mk_Req0 (markerLib.mk_ReqD (bound "3" cong))
+  val later = bound "~3" (bound "a_bad" TRUTH)
+  val invalid_frag = ASSUME
+    (mk_comb (inst [alpha |-> bool] (rator (concl (markerLib.FRAG "x"))),
+              boolSyntax.T))
+  val left = markerLib.FRAG "r7_missing_left"
+  val right = markerLib.FRAG "r7_missing_right"
+
+  fun error_has text result =
+    case result of
+        Exn.Exn (HOL_ERR e) =>
+          String.isSubstring text (Feedback.message_of e)
+      | _ => false
+  val is_missing = error_has
+    "No assumption with label r7_nonexistent_label"
+  fun check label condition detail =
+    (tprint label; if condition then OK () else die detail)
+
+  fun with_hooks fmt out action = let
+    val saved_mon = !Rewrite.monitoring
+    val saved_emit = !Feedback.emit_MESG
+    val saved_fmt = !Feedback.MESG_to_string
+    val saved_out = !Feedback.MESG_outstream
+    fun restore () =
+      (Rewrite.monitoring := saved_mon;
+       Feedback.emit_MESG := saved_emit;
+       Feedback.MESG_to_string := saved_fmt;
+       Feedback.MESG_outstream := saved_out)
+    fun run () =
+      (Rewrite.monitoring := true;
+       Feedback.emit_MESG := true;
+       Feedback.MESG_to_string := fmt;
+       Feedback.MESG_outstream := out;
+       action ())
+  in Portable.finally restore run () end
+
+  fun messages label expected args = let
+    val raw = ref ([] : string list)
+    val out = ref ([] : string list)
+    (* Saved tactic construction is also required to remain inert. *)
+    val constructed = Exn.capture (SIMP_TAC empty_ss) args
+    fun run () = let
+      val result = Exn.capture
+        (fn () => runtac (Exn.release constructed) goal) ()
+    in
+      check label
+        (is_missing result andalso length (!raw) = expected andalso
+         length (!out) = expected)
+        ("wrong error/message count: formatter=" ^
+         Int.toString (length (!raw)) ^ ", output=" ^
+         Int.toString (length (!out)))
+    end
+  in
+    with_hooks (fn s => (raw := s :: !raw; s))
+      (fn s => out := s :: !out) run
+  end
+
+  exception R7SecondMessage
+  fun throwing output = let
+    val calls = ref 0
+    fun bump () =
+      (calls := !calls + 1;
+       if !calls = 2 then raise R7SecondMessage else ())
+    fun fmt s = (if output then () else bump (); s)
+    fun out _ = if output then bump () else ()
+    fun run () = let
+      val result = Exn.capture
+        (fn () => runtac (SIMP_TAC empty_ss [cong,missing]) goal) ()
+    in
+      check ("R7 second " ^ (if output then "output" else "formatter") ^
+             " exception is not reached")
+        (is_missing result andalso !calls = 1)
+        "early marker decode reached the throwing hook"
+    end
+  in with_hooks fmt out run end
+
+  fun counted action = let
+    val meter = Count.mk_meter ()
+    val result = Exn.capture action ()
+  in (result,#prims (Count.read meter)) end
+
+  fun decode_count label th = let
+    (* Missing label stops before requirement stripping or simplification.
+       Compare against exactly one isolated public classification attempt. *)
+    val (_,one_decode) = counted (fn () => markerLib.dest_directive th)
+    val (result,tactic_count) = counted
+      (fn () => runtac (SIMP_TAC empty_ss [th,missing]) goal)
+  in
+    check label (is_missing result andalso one_decode > 0 andalso
+                 tactic_count = one_decode)
+      ("one decode=" ^ Int.toString one_decode ^
+       ", tactic=" ^ Int.toString tactic_count)
+  end
+
+  fun stage label expected args =
+    check label
+      (error_has expected (Exn.capture
+        (fn () => runtac (SIMP_TAC empty_ss args) goal) ()))
+      "wrong old-stage error winner"
+
+  (* Actual Cong rewrite monitor changes ordinary fragment Context before
+     process_tags performs its own fresh lookup. No branch-only fields. *)
+  fun context_case kind = let
+    val saved = Context.snapshot ()
+    val name = "r7_context_" ^ kind
+    val atom = mk_var ("r7_context_p",bool)
+    val gl = ([],mk_conj (boolSyntax.T,atom))
+    val rule = CONJUNCT1 (SPEC atom boolTheory.AND_CLAUSES)
+    val directive = markerLib.FRAG name
+    val calls = ref 0
+    fun run () = let
+      val _ = register_frag (name_ss name (rewrites [rule]))
+      val present = Context.snapshot ()
+      val _ = Context.restore saved
+      val _ = if kind = "change" then
+                ignore (register_frag (name_ss name (rewrites [])))
+              else if kind = "remove" then Context.restore present else ()
+      fun fmt s =
+        (calls := !calls + 1;
+         if !calls = 1 then
+           if kind = "register" then
+             ignore (register_frag (name_ss name (rewrites [rule])))
+           else if kind = "remove" then Context.restore saved
+           else Context.restore present
+         else ();
+         s)
+      val result = with_hooks fmt (K ())
+        (fn () => Exn.capture
+          (fn () => runtac (VALID (SIMP_TAC empty_ss [cong,directive])) gl)
+          ())
+      val correct =
+        if kind = "remove" then error_has ("No frag called " ^ name) result
+        else case result of
+                 Exn.Res (sgs,_) => list_eq goal_eq [([],atom)] sgs
+               | _ => false
+    in
+      check ("R7 Cong callback " ^ kind ^ " uses fresh old-stage FRAG")
+        (correct andalso !calls > 0) "stale/early fragment lookup"
+    end
+  in Portable.finally (fn () => Context.restore saved) run () end
+in
+  val _ = messages "R7 Cong: preserve old formatter/output callbacks"
+    1 [cong,missing]
+  val _ = messages "R7 Req0 Cong: do not inspect wrapped payload early"
+    0 [reqcong,missing]
+  val _ = decode_count "R7 malformed bound: one old-stage decode only"
+    badbound
+  val _ = messages "R7 ReqD Cong: do not inspect wrapped payload early"
+    0 [reqdcong,missing]
+  val _ = messages "R7 mixed Req0/ReqD/bound Cong: no early payload"
+    0 [mixed,missing]
+  val _ = messages "R7 valid bound Cong: no early payload"
+    0 [bound "2" cong,missing]
+  val _ = messages "R7 malformed bound Cong: same conclusion head"
+    1 [bound "notanint" cong,missing]
+  val _ = messages "R7 AC: no early proof decoder"
+    1 [markerLib.AC boolTheory.CONJ_COMM boolTheory.CONJ_ASSOC,missing]
+  val _ = throwing false
+  val _ = throwing true
+  val _ = decode_count "R7 Req0: only old-stage discharge" reqcong
+  val _ = decode_count "R7 ReqD: only old-stage discharge" reqdcong
+  val _ = decode_count "R7 valid bound: only old-stage discharge"
+    (bound "3" TRUTH)
+  val _ = decode_count "R7 malformed first bound does not skip to later"
+    later
+  val _ = decode_count "R7 negative bound: preserve decoder policy"
+    (bound "~2" TRUTH)
+  val _ = decode_count "R7 numeric prefix bound: preserve decoder policy"
+    (bound "2suffix" TRUTH)
+  val _ = stage "R7 missing label precedes missing FRAG"
+    "No assumption with label r7_nonexistent_label" [missing,left]
+  val _ = stage "R7 Abbr pretactic precedes missing FRAG"
+    "No assumption of the form" [markerSyntax.Abbr [QUOTE "r7_absent"],left]
+  val _ = stage "R7 two missing FRAGs retain right-fold error ordering"
+    "No frag called r7_missing_right" [left,right]
+  val _ = messages "R7 non-variable FRAG is not a named lookup"
+    0 [invalid_frag,missing]
+  val _ = List.app context_case ["register","restore","change","remove"]
+end;
+
+(* R7 branch-only controls: projection through wrapper metadata, no descent
+   into AC/Cong, and initial goal-time Context still selects the strategy. *)
+local
+  val missing = markerSyntax.L "r7_branch_missing_label"
+  val goal = ([],mk_var ("r7_branch_goal",bool))
+  val split = markerLib.Split TRUTH
+  fun bound name th = ADD_ASSUM
+    (mk_comb (boolSyntax.bounded_tm,mk_var (name,bool))) th
+  fun counted f = let
+    val meter = Count.mk_meter ()
+    val result = Exn.capture f ()
+  in (result,#prims (Count.read meter)) end
+  fun stage_count (name,th) = let
+    val (_,expected) = counted (fn () => markerLib.dest_directive th)
+    val (result,actual) = counted
+      (fn () => runtac (SIMP_TAC empty_ss [th,missing]) goal)
+    val correct = case result of
+        Exn.Exn (HOL_ERR e) => String.isSubstring
+          "No assumption with label r7_branch_missing_label"
+          (Feedback.message_of e)
+      | _ => false
+  in
+    tprint ("R7 pure Split projection: " ^ name);
+    if correct andalso expected > 0 andalso actual = expected then OK ()
+    else die ("one decoder=" ^ Int.toString expected ^
+              ", tactic=" ^ Int.toString actual)
+  end
+  val _ = List.app stage_count
+    [("bare",split),
+     ("Req0",markerLib.mk_Req0 split),
+     ("ReqD",markerLib.mk_ReqD split),
+     ("valid bound",bound "2" split),
+     ("malformed bound",bound "a_bad" split),
+     ("malformed first, valid later",bound "~3" (bound "a_bad" split)),
+     ("mixed wrappers",markerLib.mk_Req0
+        (markerLib.mk_ReqD (bound "2" split))),
+     ("Cong does not expose Split",markerLib.Cong split),
+     ("AC does not expose Split",markerLib.AC split TRUTH)]
+
+  val cfg = {strip=false,elimvars=false,droptrues=false,oldestfirst=true}
+  val builders =
+    [("ASM_SIMP_TAC",ASM_SIMP_TAC empty_ss),
+     ("SIMP_TAC",SIMP_TAC empty_ss),
+     ("global_simp_tac",global_simp_tac cfg empty_ss)]
+  val p = mk_var ("r7_saved_sf_p",bool)
+  val solved = SPEC p boolTheory.EXCLUDED_MIDDLE
+  val gl = ([],concl solved)
+  fun saved_sf (label,build) (initial,target) = let
+    val saved = Context.snapshot ()
+    val name = "r7_saved_sf_" ^ label
+    val directive = markerLib.FRAG name
+    fun run () = let
+      val _ = register_frag (name_ss name (rewrites []))
+      val plain = Context.snapshot ()
+      val _ = Context.restore saved
+      val _ = register_frag (name_ss name
+        (solver_ss (mk_tactic_solver ("r7 saved solver",ACCEPT_TAC solved))))
+      val strategy = Context.snapshot ()
+      fun select "absent" = Context.restore saved
+        | select "plain" = Context.restore plain
+        | select _ = Context.restore strategy
+      val _ = select initial
+      val constructed = Exn.capture build [directive]
+      val _ = select target
+      val result = Exn.capture
+        (fn () => runtac (VALID (Exn.release constructed)) gl) ()
+      val expected = if target = "plain" then [gl] else []
+    in
+      tprint ("R7 goal-time SF " ^ label ^ ": " ^ initial ^ " -> " ^ target);
+      case result of
+          Exn.Res (sgs,_) =>
+            if list_eq goal_eq expected sgs then OK ()
+            else die "saved tactic selected its construction-time strategy"
+        | _ => die "saved SF tactic failed"
+    end
+  in Portable.finally (fn () => Context.restore saved) run () end
+  val _ = List.app
+    (fn builder => List.app (saved_sf builder)
+      [("absent","strategy"),("strategy","plain"),("plain","strategy")])
+    builders
+  val _ = let
+    val ss = add_unsafe_solver
+      (mk_tactic_solver ("r7 explicit solver",ACCEPT_TAC solved)) empty_ss
+    val result = Exn.capture
+      (fn () => runtac (VALID (GEN_SIMP_TAC {safe=false} ss [])) gl) ()
+  in
+    tprint "R7 explicit GEN_SIMP_TAC still bypasses old dispatch";
+    case result of Exn.Res ([],_) => OK ()
+      | _ => die "explicit generalized strategy stopped solving"
+  end
+in
+  ()
+end
+
+(* P1: unread generic facts must still protect binders; readable facts
+   retain reducer-prepend / solver-append / recursive-prepend ordering. *)
+val _ = let
+  val x = ``perf_capture_x:bool``
+  val capture_rule = ASSUME ``perf_capture_c = (perf_capture_x:bool)``
+  val input = ``\perf_capture_x:bool. perf_capture_c:bool``
+  val output = ``\perf_capture_y:bool. perf_capture_x:bool``
+  val bare_data = traversedata_for_ss pureSimps.pure_ss
+  val installed_data = traversedata_for_ss
+    (pureSimps.pure_ss ++ rewrites [capture_rule])
+  fun capture data context = Traverse.TRAVERSE_WITH_CONTEXT
+    Traverse.ParentFirst (data,Traverse.default_config) context
+  val _ = convtest
+    ("P1 no provider: reducer facts retain hypothesis free variables",
+     capture bare_data {reducer_context=[capture_rule],solver_context=[]},
+     input,output)
+  val _ = convtest
+    ("P1 no provider: solver facts retain hypothesis free variables",
+     capture installed_data
+       {reducer_context=[],solver_context=[ASSUME x]},input,output)
+
+  val a = ``perf_order_a:bool``
+  val b = ``perf_order_b:bool``
+  val condition = ``perf_order_condition:bool``
+  val reducers = map ASSUME [``perf_r1:bool``,``perf_r2:bool``]
+  val solvers = map ASSUME [``perf_s1:bool``,``perf_s2:bool``]
+  val nested = map ASSUME [``perf_n1:bool``,``perf_n2:bool``]
+  fun order_test subgoal = let
+    val seen = ref ([] : term list list)
+    fun record thms = seen := !seen @ [map concl thms]
+    fun subgoaler {context_thms,...} tm =
+      (record context_thms; EQT_INTRO (ASSUME tm))
+    fun solver {context_thms,...} tm =
+      (record context_thms; ASSUME tm)
+    val reducer = Traverse.REDUCER
+      {name=NONE,initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn {solver,stack,...} => fn tm =>
+         if aconv tm a orelse aconv tm b then
+           (ignore (solver stack condition); NO_CONV tm)
+         else NO_CONV tm}
+    val congproc : Opening.congproc = fn _ => fn {depther,...} => fn tm =>
+      if aconv tm a then
+        (ignore (QCONV (TRY_CONV
+           (depther (nested,boolSyntax.equality))) b);
+         raise UNCHANGED)
+      else NO_CONV tm
+    val data : Traverse.traverse_data =
+      {rewriters=[reducer],dprocs=[],limit=NONE,
+       relation=boolSyntax.equality,
+       travrules=Travrules.TRAVRULES
+         {relations=[Travrules.EQ_preorder],congprocs=[congproc],
+          weakenprocs=[]}}
+    val config : Traverse.traverse_config =
+      {subgoaler=if subgoal then SOME subgoaler else NONE,
+       solvers=if subgoal then [] else [{name="order",solve=solver}],
+       cond_depth=NONE,term_ord=NONE}
+    val _ = QCONV (TRY_CONV
+      (Traverse.TRAVERSE_WITH_CONTEXT Traverse.ParentFirst
+        (data,config) {reducer_context=reducers,solver_context=solvers})) a
+    val expected = map (map concl)
+      [reducers @ solvers,nested @ reducers @ solvers]
+  in
+    tprint ("P1 " ^ (if subgoal then "subgoaler" else "unsafe solver") ^
+            ": exact initial and recursive fact order");
+    if ListPair.allEq
+         (fn (xs,ys) => ListPair.allEq
+           (fn (x,y) => aconv x y) (xs,ys)) (!seen,expected)
+    then OK () else die "generic fact sequence changed"
+  end
+  val _ = order_test true
+  val _ = order_test false
+in
+  ()
+end
+
 val _ = exit_count0 failcount

@@ -142,12 +142,21 @@ datatype trav_state =
              context_thms : thm list,
              freevars : term list};
 
+(* Project setup fields without constructing an unused apply adapter. *)
+fun reducer_initial (REDUCER {initial,...}) = initial
+  | reducer_initial (CONTEXT_REDUCER {initial,...}) = initial
+  | reducer_initial (CONFIG_REDUCER {initial,...}) = initial
+
+fun reducer_addcontext (REDUCER {addcontext,...}) = addcontext
+  | reducer_addcontext (CONTEXT_REDUCER {addcontext,...}) = addcontext
+  | reducer_addcontext (CONFIG_REDUCER {addcontext,...}) = addcontext
+
 fun initial_context {rewriters:reducer list,
                      dprocs:reducer list,
                      travrules=TRAVRULES tsdata,
                      relation, limit} =
-  TSTATE{contexts1=map (#initial o reducer_config_data) rewriters,
-         contexts2=map (#initial o reducer_config_data) dprocs,
+  TSTATE{contexts1=map reducer_initial rewriters,
+         contexts2=map reducer_initial dprocs,
          context_thms=[],
          freevars=[],
          relation_info = find_relation relation (#relations tsdata),
@@ -158,9 +167,9 @@ fun initial_context {rewriters:reducer list,
  *
  * ---------------------------------------------------------------------*)
 
-fun add_context rewriters dprocs = let
-  val rewrite_collectors' = map (#addcontext o reducer_config_data) rewriters
-  val dproc_collectors' = map (#addcontext o reducer_config_data) dprocs
+fun add_context collect_thms rewriters dprocs = let
+  val rewrite_collectors' = map reducer_addcontext rewriters
+  val dproc_collectors' = map reducer_addcontext dprocs
   fun doit (context, thms) = let
     val TSTATE {contexts1,contexts2,context_thms,freevars,
                 relation_info,relation} = context
@@ -182,7 +191,8 @@ fun add_context rewriters dprocs = let
       in
         TSTATE{contexts1=newcontexts1,
                contexts2=newcontexts2,
-               context_thms=thms @ context_thms,
+               context_thms=if collect_thms then thms @ context_thms
+                            else context_thms,
                freevars=newfreevars,
                relation=relation, relation_info = relation_info}
       end
@@ -194,7 +204,7 @@ end
 (* Add facts to the generic prover and binder-capture contexts without also
    reinstalling them in every reducer.  Hypothesis free variables force
    capture-avoiding renaming when traversal descends under a binder. *)
-fun add_solver_context (context, thms) =
+fun add_solver_context collect_thms (context, thms) =
   if null thms then context
   else
     let
@@ -209,7 +219,8 @@ fun add_solver_context (context, thms) =
     in
       TSTATE
         {contexts1=contexts1, contexts2=contexts2,
-         context_thms=context_thms @ thms,
+         context_thms=if collect_thms then context_thms @ thms
+                      else context_thms,
          freevars=freevars @ more_freevars,
          relation=relation, relation_info=relation_info}
     end
@@ -325,6 +336,11 @@ type xtraverse_data = traverse_data * traverse_config
 val default_config : traverse_config =
   {subgoaler=NONE, solvers=[], cond_depth=NONE, term_ord=NONE};
 
+(* Only the configured prover pipeline can expose generic facts. *)
+fun needs_prover_context
+      ({subgoaler=NONE,solvers=[],...} : traverse_config) = false
+  | needs_prover_context _ = true
+
 type child_first_policy =
   {charge : unit -> unit, keep_abstraction : term -> bool}
 datatype traversal_policy = ParentFirst | ChildFirst of child_first_policy
@@ -369,11 +385,13 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child =
 
 fun TRAVERSE_IN_CONTEXT legacy_cong_schedule observer policy root_only
       (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
-        {subgoaler,solvers,cond_depth,term_ord} : traverse_config))
+        config as {subgoaler,solvers,cond_depth,term_ord}
+          : traverse_config))
       stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
-  val add_context' = add_context rewriters dprocs
+  val add_context' =
+    add_context (needs_prover_context config) rewriters dprocs
   val get_relation' = get_relation travrules
   val lim_r = Uref.new limit
   (* Conditional-rewrite wrappers can turn callback exceptions into
@@ -407,11 +425,9 @@ fun TRAVERSE_IN_CONTEXT legacy_cong_schedule observer policy root_only
                SOME e => raise e
              | NONE => (observe tm; charge ())
                  handle e => (aborted := SOME e; raise e))
-  (* [trav_with_rel] yields both entry conversions for a context: [root]
-     reduces at the root only, [loop] traverses the whole term.  Only the
-     caller below picks between them; every recursive call continues with
-     [loop], so root-only-ness never propagates inwards. *)
-  fun trav_with_rel rel_info stack context  = let
+  (* Select a root entry only at the outside. Every recursive context
+     uses the full loop, including side conditions of a root rewrite. *)
+  fun trav_with_rel select_root rel_info stack context = let
     val PREORDER(relname , _, _) = rel_info
     fun apply_relation f = f relname
     val congprocs' = mapfilter apply_relation congprocs
@@ -427,16 +443,13 @@ fun TRAVERSE_IN_CONTEXT legacy_cong_schedule observer policy root_only
     end
     val reducer_relation = (relname, mkrefl)
 
-    fun trav stack context =
-        let val {loop, root = _} = trav_convs stack context in loop end
-    and trav_convs stack context = let
+    fun trav stack context = trav_entry false stack context
+    and trav_entry select_root stack context = let
       val TSTATE {contexts1,contexts2,context_thms,freevars,...} = context
       fun trav_with_rel' new_relation stack context =
           if samerel relname new_relation then trav stack context
           else
-            let val {loop, root = _} =
-                    trav_with_rel (get_relation' new_relation) stack context
-            in loop end
+            trav_with_rel false (get_relation' new_relation) stack context
 
       fun ctxt_solver stack tm = let
         val _ = observe tm
@@ -554,15 +567,15 @@ fun TRAVERSE_IN_CONTEXT legacy_cong_schedule observer policy root_only
         (trace(4,REDUCE ("Reducing",tm)); conv tm)
       end;
     in
-      {root = high_priority ORELSEC low_priority, loop = loop}
+      if select_root then high_priority ORELSEC low_priority else loop
     end
   in
-    trav_convs stack context
+    trav_entry select_root stack context
   end
-  val {root,loop} = trav_with_rel (get_relation' rel) stack ctxt
+  val entry = trav_with_rel root_only (get_relation' rel) stack ctxt
 in
   let
-    val theorem = (if root_only then root else loop) tm
+    val theorem = entry tm
   in
     case !aborted of NONE => theorem | SOME e => raise e
   end
@@ -578,13 +591,14 @@ end
    for every application.  Legacy TRAVERSE retains its construction-time
    context, including mutable rewrite controls and user callback results. *)
 fun GEN_TRAVERSE_WITH_CONTEXT observer policy root_only
-      (xdata as (data,_) : xtraverse_data)
+      (xdata as (data,config) : xtraverse_data)
       {reducer_context,solver_context} tm =
    let
      val {dprocs,rewriters,...} = data
+     val collect_thms = needs_prover_context config
      val context' =
-       add_solver_context
-         (add_context rewriters dprocs
+       add_solver_context collect_thms
+         (add_context collect_thms rewriters dprocs
             (initial_context data,reducer_context),
           solver_context)
    in
@@ -609,7 +623,7 @@ val ROOT_REWRITE_WITH_CONTEXT =
 fun TRAVERSE (data as {rewriters,dprocs,...} : traverse_data) thms =
   let
     val context =
-      add_context rewriters dprocs (initial_context data,thms)
+      add_context false rewriters dprocs (initial_context data,thms)
   in
     TRAVERSE_IN_CONTEXT true NONE ParentFirst false (data,default_config)
       [] context

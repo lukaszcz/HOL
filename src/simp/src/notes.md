@@ -96,10 +96,17 @@
 
 ## Context
 
-`trav_state` keeps, alongside each reducer's private context, `context_thms`: the actual theorems, for solvers and subgoalers.
-`add_context` adds a batch of theorems to both, and their hypotheses' free variables to `freevars`.
-`TRAVERSE_WITH_CONTEXT` splits its initial theorems: `reducer_context` goes to both, `solver_context` only to `context_thms` and `freevars`.
-This lets a caller show solvers the source of an already-installed rule without installing it twice or refreshing a bounded rewrite.
+`trav_state` keeps each reducer's private context and hypothesis free
+variables. It stores generic `context_thms` only when a configured subgoaler
+or unsafe solver can read them; with neither, the generic list stays empty.
+`add_context` still delivers every batch to the reducers and preserves its
+hypotheses' free variables, regardless of generic fact storage.
+`TRAVERSE_WITH_CONTEXT` splits its initial theorems: `reducer_context` goes
+through reducer collectors, while `solver_context` only contributes generic
+facts (when readable) and hypothesis free variables for binder capture.
+Reducer batches prepend generic facts; separated solver batches append them.
+This lets a caller show solvers the source of an already-installed rule
+without installing it twice or refreshing a bounded rewrite.
 
 ## Side conditions
 
@@ -153,7 +160,9 @@ Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded
     once per traversal context, before any root reduction, as on develop.
     Explicit `XTRAVERSE` refreshes contexts per application and accepts a
     `traverse_config` (subgoaler, solvers, depth, term order).
-    `ROOT_REWRITE` applies the reducers at the root only.
+    `ROOT_REWRITE` applies the reducers at the root only. Entry selection
+    does not propagate to recursive conversions or side-condition proving:
+    these still use full traversal, including relation-changing recursion.
 
 `CONGPROC`
 

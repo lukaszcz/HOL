@@ -2424,11 +2424,20 @@ fun strategy_free ss ths =
     val s = strategy_of ss
     fun frag_free (SSFRAG_CON {loopers,unsafe_solvers,safe_solvers,...}) =
       null loopers andalso null unsafe_solvers andalso null safe_solvers
+    (* Req0/ReqD and successful bounded removal preserve concl; a failed
+       bound falls through to that same head. Do not build proofs or run
+       monitor hooks here, nor inspect payloads underneath AC or Cong. *)
     fun arg_free th =
-      case markerLib.dest_directive (markerLib.strip_wrappers th) of
-          SOME (markerLib.DSplit _) => false
-        | SOME (markerLib.DFRAG nm) => frag_free (frag_of nm)
-        | _ => true
+      if (same_const markerSyntax.Split_tm
+            (#1 (strip_comb (concl th))) handle HOL_ERR _ => false) then
+        false
+      else
+        case markerLib.destFRAG th of
+            NONE => true
+          | SOME nm =>
+              (case lookup_named_frag nm of
+                   NONE => true (* Defer errors to the old lookup stage. *)
+                 | SOME frag => frag_free frag)
   in
     null (#loopers s) andalso null (#unsafe_solvers s) andalso
     null (#safe_solvers s) andalso not (Option.isSome (#subgoaler s)) andalso
