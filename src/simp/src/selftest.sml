@@ -4830,4 +4830,137 @@ in
      ("AC and ordinary",[(CONJ_COMM,CONJ_ASSOC)],[rule,rule],5)]
 end
 
+(* R6 legacy congruence-factory scheduling; baseline-only APIs. *)
+val _ = let
+  val a = ``r6_a:bool``
+  val b = ``r6_b:bool``
+  val c = ``r6_c:bool``
+  val ab = ASSUME (boolSyntax.mk_eq (a,b))
+  val bc = ASSUME (boolSyntax.mk_eq (b,c))
+  exception R6Context
+  exception R6RootStop
+  fun label tm =
+    if aconv tm a then "a"
+    else if aconv tm b then "b"
+    else if aconv tm c then "c"
+    else "other"
+  fun record log s = log := s :: !log
+  fun events log = List.rev (!log)
+  fun check name condition =
+    (tprint name;
+     if condition then OK () else die "R6 baseline schedule mismatch")
+  fun reducer action =
+    Traverse.REDUCER
+      {name=NONE, initial=R6Context,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn {solver,conv,context,stack,relation} => action}
+  fun failing_factory log tag : Opening.congproc =
+    fn _ =>
+      (record log ("relation-" ^ tag);
+       fn {solver,freevars,depther} =>
+         (record log ("factory-" ^ tag);
+          fn tm => (record log (tag ^ ":" ^ label tm); NO_CONV tm)))
+  fun make rewriters dprocs congprocs weakenprocs =
+    Traverse.TRAVERSE
+      {rewriters=rewriters, dprocs=dprocs, limit=NONE,
+       relation=boolSyntax.equality,
+       travrules=Travrules.TRAVRULES
+         {relations=[Travrules.EQ_preorder],
+          congprocs=congprocs, weakenprocs=weakenprocs}} []
+  fun proves th left right =
+    aconv (lhs (concl th)) left andalso aconv (rhs (concl th)) right
+
+  (* Context factories must precede even the first root reducer. *)
+  val order_log = ref ([] : string list)
+  val root_reducer = reducer (fn tm =>
+    (record order_log ("R:" ^ label tm);
+     if aconv tm a then ab else NO_CONV tm))
+  val order_cv = make [root_reducer] []
+    [failing_factory order_log "C"] [failing_factory order_log "W"]
+  val _ = check "R6 factories are not run when TRAVERSE is constructed"
+    (null (!order_log))
+  val order_th = order_cv a
+  val _ = check "R6 context factories precede root reducer attempts"
+    (proves order_th a b andalso events order_log =
+       ["relation-C", "relation-W", "factory-C", "factory-W",
+        "R:a", "R:b", "C:b", "W:b"])
+
+  (* loop revisits three roots without reconstructing trav_convs.
+     Reusing the outer conversion, however, creates a fresh trav_convs. *)
+  val retry_log = ref ([] : string list)
+  val retry_reducer = reducer (fn tm =>
+    (record retry_log ("D:" ^ label tm);
+     if aconv tm a then ab
+     else if aconv tm b then bc
+     else NO_CONV tm))
+  val retry_cv = make [] [retry_reducer]
+    [failing_factory retry_log "C"] [failing_factory retry_log "W"]
+  val retry_expected =
+    ["relation-C", "relation-W", "factory-C", "factory-W",
+     "C:a", "D:a", "C:b", "D:b", "C:c", "D:c", "W:c"]
+  val retry_th1 = retry_cv a
+  val _ = check "R6 one factory construction across three loop tries"
+    (proves retry_th1 a c andalso events retry_log = retry_expected)
+  val retry_th2 = retry_cv a
+  val _ = check "R6 factories refresh once on conversion reuse"
+    (proves retry_th2 a c andalso
+     events retry_log = retry_expected @ retry_expected)
+
+  (* A non-HOL_ERR from the root reducer prevents either conversion
+     from being used. It is raised at term application, not in the
+     reducer factory that mapfilter2 filters. *)
+  val unused_log = ref ([] : string list)
+  val stop_reducer = reducer (fn tm =>
+    (record unused_log ("R:" ^ label tm); raise R6RootStop))
+  val stop_cv = make [stop_reducer] []
+    [failing_factory unused_log "C"] [failing_factory unused_log "W"]
+  val stopped = (ignore (stop_cv a); false) handle R6RootStop => true
+  val _ = check "R6 factories run even when root abort skips descent"
+    (stopped andalso events unused_log =
+      ["relation-C", "relation-W", "factory-C", "factory-W", "R:a"])
+
+  (* A construction-time rejection is cached. Moving construction past
+     the successful root rewrite changes the actual result theorem. *)
+  val ready = ref false
+  val gated_builds = ref 0
+  val gated : Opening.congproc = fn _ =>
+    fn {solver,freevars,depther} =>
+      (gated_builds := !gated_builds + 1;
+       if !ready then
+         (fn tm => if aconv tm b then bc else NO_CONV tm)
+       else raise mk_HOL_ERR "R6" "factory" "not ready")
+  val enable_reducer = reducer (fn tm =>
+    if aconv tm a then (ready := true; ab) else NO_CONV tm)
+  val gated_cv = make [enable_reducer] [] [gated] []
+  val gated_th = gated_cv a
+  val _ = check "R6 factory rejection before root rewrite is retained"
+    (proves gated_th a b andalso !ready andalso !gated_builds = 1)
+
+  (* Explicit extended entries retain their lazy factory scheduling. *)
+  val extended_log = ref ([] : string list)
+  val extended_data =
+    {rewriters=[reducer (fn tm =>
+       (record extended_log ("R:" ^ label tm);
+        if aconv tm a then ab else NO_CONV tm))],
+     dprocs=[], limit=NONE, relation=boolSyntax.equality,
+     travrules=Travrules.TRAVRULES
+       {relations=[Travrules.EQ_preorder],
+        congprocs=[failing_factory extended_log "C"],
+        weakenprocs=[failing_factory extended_log "W"]}}
+  val root_th = Traverse.ROOT_REWRITE
+    (extended_data,Traverse.default_config) [] a
+  val _ = check "R6 explicit root avoids unused context factories"
+    (proves root_th a b andalso events extended_log =
+       ["relation-C", "relation-W", "R:a"])
+  val _ = extended_log := []
+  val extended_th = Traverse.XTRAVERSE
+    (extended_data,Traverse.default_config) [] a
+  val _ = check "R6 explicit traversal retains lazy factory scheduling"
+    (proves extended_th a b andalso events extended_log =
+       ["relation-C", "relation-W", "R:a", "R:b",
+        "factory-C", "C:b", "factory-W", "W:b"])
+in
+  ()
+end
+
 val _ = exit_count0 failcount

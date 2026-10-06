@@ -367,7 +367,7 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child =
       end
   in normalize end
 
-fun TRAVERSE_IN_CONTEXT observer policy root_only
+fun TRAVERSE_IN_CONTEXT legacy_cong_schedule observer policy root_only
       (({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data,
         {subgoaler,solvers,cond_depth,term_ord} : traverse_config))
       stack ctxt tm = let
@@ -513,12 +513,19 @@ fun TRAVERSE_IN_CONTEXT observer policy root_only
            depther=depther,
            freevars=freevars}
       fun apply_congproc congproc = congproc congproc_args
-      fun descend tm =
-        (charge tm;
-         FIRSTCQC_CONV (mapfilter apply_congproc congprocs') tm)
-      fun weaken tm =
-        (charge tm;
-         FIRST_CONV (mapfilter apply_congproc weakenprocs') tm)
+      (* Preserve eager per-context factory construction only for the
+         ordinary legacy entry point. Extended paths retain lazy attempts. *)
+      val (descend,weaken) =
+        if legacy_cong_schedule then
+          (FIRSTCQC_CONV (mapfilter apply_congproc congprocs'),
+           FIRST_CONV (mapfilter apply_congproc weakenprocs'))
+        else
+          (fn tm =>
+             (charge tm;
+              FIRSTCQC_CONV (mapfilter apply_congproc congprocs') tm),
+           fn tm =>
+             (charge tm;
+              FIRST_CONV (mapfilter apply_congproc weakenprocs') tm))
 
       fun loop tm = let
         val conv =
@@ -581,7 +588,8 @@ fun GEN_TRAVERSE_WITH_CONTEXT observer policy root_only
             (initial_context data,reducer_context),
           solver_context)
    in
-     TRAVERSE_IN_CONTEXT observer policy root_only xdata [] context' tm
+     TRAVERSE_IN_CONTEXT false observer policy root_only
+       xdata [] context' tm
    end;
 
 fun GEN_TRAVERSE policy root_only xdata thms =
@@ -603,7 +611,7 @@ fun TRAVERSE (data as {rewriters,dprocs,...} : traverse_data) thms =
     val context =
       add_context rewriters dprocs (initial_context data,thms)
   in
-    TRAVERSE_IN_CONTEXT NONE ParentFirst false (data,default_config)
+    TRAVERSE_IN_CONTEXT true NONE ParentFirst false (data,default_config)
       [] context
   end
 

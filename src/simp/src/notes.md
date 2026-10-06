@@ -148,8 +148,10 @@ Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded
     The `...` portion is where decision procedures get to fire, and where weakenprocs get a chance to fire.
     These effectively see the term in bottom-up fashion as a result.
 
-    `TRAVERSE` initializes supplied contexts at conversion construction;
-    explicit `XTRAVERSE` refreshes them per application and accepts a
+    `TRAVERSE` initializes supplied contexts at conversion construction.
+    On each application, it constructs congruence and weakener conversions
+    once per traversal context, before any root reduction, as on develop.
+    Explicit `XTRAVERSE` refreshes contexts per application and accepts a
     `traverse_config` (subgoaler, solvers, depth, term order).
     `ROOT_REWRITE` applies the reducers at the root only.
 
