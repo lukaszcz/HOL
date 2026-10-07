@@ -27775,6 +27775,13 @@ fun cpc_clause_producer_occurrences_success () =
       \(step @out :rule chain_m_resolution :premises (@a @b) \
       \:args ((or q p) (@list true) (@list (or r s))))" ``q \/ p`` 2
     val _ = check
+      "(assume @a (or (or p q) r)) (assume @nr (not r)) \
+      \(step @out :rule chain_m_resolution :premises (@a @nr) \
+      \:args ((or p q) (@list true) (@list r)))" ``p \/ q`` 2
+    val _ = assert
+      (cpc_profile_call_count "CPC(rung:resolution/normalized_occurrences)" = 0,
+       "exact recorded target boundaries triggered theory normalization")
+    val _ = check
       "(step @cnf :rule cnf_implies_pos :args ((=> p q))) \
       \(step @order :rule reordering :premises (@cnf) \
       \:args ((or q (not p) (not (=> p q))))) \

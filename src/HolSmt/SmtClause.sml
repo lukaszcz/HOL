@@ -271,9 +271,22 @@ struct
       val aligned = case destination of
           NONE => SOME result
         | SOME literals => align literals result
-    in case aligned of
+      (* A resolved literal may itself be the entire recorded disjunction.
+         Its source occurrence remains opaque, but the recorded target can
+         supply new outer boundaries when the instantiated HOL endpoints
+         agree exactly.  This needs no theory normalization or SAT search. *)
+      val checked = case aligned of
+          SOME clause => SOME (clause, NONE)
+        | NONE => case target of
+            NONE => NONE
+          | SOME target_literals =>
+              if same (Term.subst (!substitutions) (term (literals result)))
+                  (term target_literals) then
+                SOME (result, SOME target_literals)
+              else NONE
+    in case checked of
         NONE => NONE
-      | SOME checked =>
+      | SOME (checked, recorded_literals) =>
           let
             val law = Thm.DISCH root (theorem checked)
             val _ = List.null (Thm.hyp law) orelse
@@ -282,8 +295,10 @@ struct
             val actual_roots = SmtCircuitSat.balanced_conjunction
               (List.map theorem premises)
             val result = Thm.MP instantiated actual_roots
-            val literals = List.map (Term.subst (!substitutions))
-              (literals checked)
+            val literals = case recorded_literals of
+                SOME literals => literals
+              | NONE => List.map (Term.subst (!substitutions))
+                  (literals checked)
           in SOME (from_literals literals result) end
     end
 
