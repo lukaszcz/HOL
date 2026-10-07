@@ -24,6 +24,26 @@ local
 
   fun profile_event name = Profile.profile name (fn () => ()) ()
 
+  (* Opt-in diagnostics.  Timers include exceptional exits and never select
+     a proof route.  The command loop can enable them for a step interval. *)
+  val resolution_profile_enabled = ref false
+  val _ = Feedback.register_btrace
+    ("CPC_resolution_profile", resolution_profile_enabled)
+  val resolution_profile_counts = ref ([] : (string * int) list)
+  fun resolution_profile name action input =
+    if !resolution_profile_enabled then
+      profile ("CPC(resolution-detail:" ^ name ^ ")") action input
+    else action input
+  fun resolution_count name amount =
+    if not (!resolution_profile_enabled) then ()
+    else
+      let
+        fun add [] = [(name, amount)]
+          | add ((key, value) :: rest) =
+              if key = name then (key, value + amount) :: rest
+              else (key, value) :: add rest
+      in resolution_profile_counts := add (!resolution_profile_counts) end
+
 
   val max_exact_provenance_dag_nodes = 256
 
@@ -12148,8 +12168,24 @@ local
                 (align law_target target_expanded)
                 (Thm.SYM target_conversion)
             in Thm.EQ_MP target_alignment expanded_result end
+          val previous_tseitin = ref
+            (NONE : (Term.term * Term.term) option)
           fun semantic_tseitin_atom destination theorem =
+            resolution_profile "tseitin/total" (fn () =>
             let
+              val _ = if not (!resolution_profile_enabled) then ()
+                else
+                  let val source = Thm.concl theorem in
+                    resolution_count "tseitin/attempts" 1;
+                    (case !previous_tseitin of
+                       SOME (prior_source, prior_target) =>
+                         if Portable.pointer_eq (source, prior_source) andalso
+                            Portable.pointer_eq (destination, prior_target)
+                         then resolution_count
+                           "tseitin/consecutive-duplicates" 1 else ()
+                     | NONE => ());
+                    previous_tseitin := SOME (source, destination)
+                  end
               val memo = ref ([] : (Term.term * Term.term) list)
               val leaves = ref
                 ([] : (Term.term * Term.term) list)
@@ -12247,15 +12283,24 @@ local
                       val _ = memo := (term, result) :: !memo
                     in result end
               val source = Thm.concl theorem
-              val source_root = circuit source
-              val target_root = circuit destination
+              val source_root = resolution_profile "tseitin/source-circuit"
+                circuit source
+              val target_root = resolution_profile "tseitin/target-circuit"
+                circuit destination
               val definitions = List.rev (!definitions)
-              val goal = List.foldr
+              val _ = if !resolution_profile_enabled then
+                (resolution_count "tseitin/nodes" (List.length (!memo));
+                 resolution_count "tseitin/leaves" (List.length (!leaves));
+                 resolution_count "tseitin/definitions"
+                   (List.length definitions)) else ()
+              val goal = resolution_profile "tseitin/goal" (fn () => List.foldr
                 (fn ((_, definition), body) =>
                   boolSyntax.mk_imp (definition, body))
-                (boolSyntax.mk_imp (source_root, target_root)) definitions
-              val law = HolSatLib.SAT_PROVE goal
-              val instantiated = Thm.INST (!substitutions) law
+                (boolSyntax.mk_imp (source_root, target_root)) definitions) ()
+              val law = resolution_profile "tseitin/sat"
+                HolSatLib.SAT_PROVE goal
+              val instantiated = resolution_profile "tseitin/instantiate"
+                (Thm.INST (!substitutions)) law
               (* Instantiating circuit definitions restores their exact
                  syntax.  XOR's semantic unfolding is proved separately
                  below; every remaining alignment is kernel alpha-equality,
@@ -12266,7 +12311,8 @@ local
                   val antecedent = #1
                     (boolSyntax.dest_imp (Thm.concl result))
                   val (left, right) = boolSyntax.dest_eq antecedent
-                  val definition_theorem =
+                  val definition_theorem = resolution_profile
+                    "tseitin/definition-proof" (fn () =>
                     if is_xor term then
                       let
                         val unfolded = Conv.REWR_CONV
@@ -12275,10 +12321,12 @@ local
                           (Thm.concl unfolded)
                       in Thm.TRANS unfolded
                         (align unfolded_right right) end
-                    else align left right
-                in Thm.MP result definition_theorem end
-              val law = List.foldl discharge instantiated definitions
-            in Thm.MP law theorem end
+                    else align left right) ()
+                in resolution_profile "tseitin/definition-mp"
+                  (Thm.MP result) definition_theorem end
+              val law = resolution_profile "tseitin/discharge"
+                (fn () => List.foldl discharge instantiated definitions) ()
+            in resolution_profile "tseitin/apply" (Thm.MP law) theorem end) ()
           fun semantic_word_tseitin destination theorem =
             let
               val memo = ref ([] : (Term.term * Thm.thm) list)
@@ -13848,9 +13896,10 @@ local
                 if List.length target_literals <= 3 then
                   semantic_word_tseitin target alignment_source
                 else semantic_tseitin_atom target alignment_source)
-            | circuit_alignment (source :: rest) =
+            | circuit_alignment ((label, source) :: rest) =
                 (trace_chain "circuit alignment candidate";
-                 semantic_tseitin_atom target source
+                 resolution_profile ("candidate/" ^ label)
+                   (semantic_tseitin_atom target) source
                  handle HolSatLib.SAT_cex _ => circuit_alignment rest
                       | Feedback.HOL_ERR holerr =>
                           if SmtResource.is_resource_gate holerr then
@@ -13860,7 +13909,9 @@ local
             (trace_chain "original alignment";
              (if List.length prems > 32 then
                 circuit_alignment
-                  [cleaned_result, supported_result, alignment_source]
+                  [("cleaned", cleaned_result),
+                   ("supported", supported_result),
+                   ("premises", alignment_source)]
               else semantic_taut_reorder supported_result)
              handle Feedback.HOL_ERR holerr =>
                if SmtResource.is_resource_gate holerr then
@@ -13869,7 +13920,8 @@ local
              handle HolSatLib.SAT_cex _ =>
                       reorder_to_target cleaned_result
                   | Feedback.HOL_ERR _ =>
-                      (semantic_circuit_reorder alignment_source
+                      (resolution_profile "circuit-reorder"
+                         semantic_circuit_reorder alignment_source
                        handle HolSatLib.SAT_cex _ =>
                               reorder_to_target cleaned_result
                             | Feedback.HOL_ERR _ =>
@@ -13890,7 +13942,8 @@ local
                            raise Feedback.HOL_ERR holerr
                          else boolean_dag_combined_alignment ()
             in
-              deep_disjunction_alignment ()
+              resolution_profile "deep-disjunction"
+                deep_disjunction_alignment ()
               handle HolSatLib.SAT_cex _ => original_then_combined ()
                    | Conv.UNCHANGED => original_then_combined ()
                    | Feedback.HOL_ERR holerr =>
@@ -13928,6 +13981,7 @@ local
             in result end
           val _ = trace_chain "alignment setup complete"
         in
+          resolution_profile "alignment" (fn () =>
           profile "CPC(chain:alignment)" (fn () =>
           if List.null structural_extras andalso
              shared_aconv (Thm.concl cleaned_result) target then
@@ -13938,14 +13992,15 @@ local
                trying the broader semantic alignment ladder, whose generic
                term abstraction is needlessly expensive on bit-blasted FP
                literals. *)
-            (direct_chain_alignment ()
+            (resolution_profile "direct" direct_chain_alignment ()
              handle HolSatLib.SAT_cex _ => original_alignment ()
                   | Feedback.HOL_ERR holerr =>
                       if SmtResource.is_resource_gate holerr then
                         raise Feedback.HOL_ERR holerr
                       else original_alignment ())
           else if boolean_dag_eligible then
-            (boolean_dag_cleaned_alignment ()
+            (resolution_profile "boolean-dag/cleaned"
+               boolean_dag_cleaned_alignment ()
              handle HolSatLib.SAT_cex _ =>
                       boolean_dag_later_alignment ()
                   | Feedback.HOL_ERR holerr =>
@@ -13953,9 +14008,10 @@ local
                  raise Feedback.HOL_ERR holerr
                else boolean_dag_later_alignment ())
           else if semantic_extras_empty () then
-            reorder_to_target cleaned_result
+            resolution_profile "reorder" reorder_to_target cleaned_result
           else if use_supported_schema then
-            (schematic_supported_alignment ()
+            (resolution_profile "supported-schema"
+               schematic_supported_alignment ()
              handle HolSatLib.SAT_cex _ => original_alignment ()
                   | Conv.UNCHANGED => original_alignment ()
                   | Feedback.HOL_ERR holerr =>
@@ -13965,7 +14021,7 @@ local
                 direct_chain_alignment ()
                 handle HolSatLib.SAT_cex _ => original_alignment ()
                      | Feedback.HOL_ERR _ => original_alignment ()))
-          else original_alignment ()) ()
+          else original_alignment ()) ()) ()
         end
       fun has_non_arithmetic_equality tm =
         let
@@ -19098,6 +19154,20 @@ local
 
   fun replay_commands initial commands =
     let
+      fun profile_bound name =
+        case OS.Process.getEnv name of
+          NONE => NONE
+        | SOME text =>
+            (case Int.fromString text of
+               SOME n => if n > 0 then SOME n else
+                 raise ERR "replay_commands" (name ^ " must be positive")
+             | NONE => raise ERR "replay_commands"
+                 (name ^ " must be a positive step number"))
+      val profile_from = profile_bound "HOL4_CPC_PROFILE_FROM"
+      val profile_to = profile_bound "HOL4_CPC_PROFILE_TO"
+      val profile_step_count = ref 0
+      val _ = if Option.isSome profile_from then
+        resolution_profile_counts := [] else ()
       val trace_setting = OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE"
       val trace_steps = trace_setting = SOME "1" orelse
         trace_setting = SOME "full"
@@ -19274,6 +19344,23 @@ local
             state premises) id
       val strong_canon = strong_cpc_canon_conv
         (#translation_definitions initial)
+      fun measured_step state step =
+        case profile_from of
+          NONE => replay_step strong_canon state step
+        | SOME first =>
+            let
+              val _ = profile_step_count := !profile_step_count + 1
+              val count = !profile_step_count
+              val selected = count >= first andalso
+                (case profile_to of NONE => true | SOME last => count <= last)
+              fun work () = resolution_profile "step"
+                (replay_step strong_canon state) step
+            in
+              if selected then
+                Feedback.trace ("CPC_resolution_profile", 1)
+                  (Feedback.trace ("HolSatLib_profile", 1) work) ()
+              else replay_step strong_canon state step
+            end
       val _ = if trace_steps then
         (Feedback.HOL_MESG "CPC replay setup: canonicalizer ready";
          TextIO.flushOut TextIO.stdOut)
@@ -19310,7 +19397,7 @@ local
         | [STEP step] =>
             let
               val _ = trace_step state step
-              val result = replay_step strong_canon state step
+              val result = measured_step state step
               val _ = if trace_steps then
                 (Feedback.HOL_MESG
                    ("CPC replay progress: completed=" ^ #id step);
@@ -19321,10 +19408,18 @@ local
         | STEP step :: rest =>
             let
               val _ = trace_step state step
-              val (state, _) = replay_step strong_canon state step
+              val (state, _) = measured_step state step
               val state = finish state (#id step) (#premises step)
             in loop state rest end
-    in loop initial commands end
+      fun report () =
+        if not (Option.isSome profile_from) then ()
+        else
+          (Feedback.HOL_MESG ("CPC resolution counters: " ^
+             String.concatWith " " (List.map
+               (fn (name, count) => name ^ "=" ^ Int.toString count)
+               (!resolution_profile_counts)));
+           TextIO.flushOut TextIO.stdOut)
+    in Portable.finally report (fn () => loop initial commands) () end
 
   (* cvc5's preprocessing can expose canonical arithmetic spellings, record
      and datatype eliminators, and FP bit representations in a proof
