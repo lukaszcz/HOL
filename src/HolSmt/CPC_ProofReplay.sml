@@ -13560,6 +13560,21 @@ local
                 (fn (theorem, accumulated) =>
                   Thm.CONJ accumulated theorem) first rest
             | [] => cleaned_result
+          val complete_source = SmtCircuitSat.balanced_conjunction prems
+          fun complete_alignment_then fallback () =
+            (* A weakened chain result can omit Boolean relationships that
+               are still present in the certificate's original premises.
+               Check their complete implication before converting literals
+               in speculative strengthening attempts.  Ordinary Boolean
+               decline leaves the existing theory-aware routes available. *)
+            (resolution_profile "complete/raw"
+               (semantic_tseitin_atom target) complete_source
+             handle HolSatLib.SAT_cex _ => fallback ()
+                  | Conv.UNCHANGED => fallback ()
+                  | Feedback.HOL_ERR holerr =>
+                      if SmtResource.is_resource_gate holerr then
+                        raise Feedback.HOL_ERR holerr
+                      else fallback ())
           fun chain_atom literal =
             boolSyntax.dest_neg literal
             handle Feedback.HOL_ERR _ => literal
@@ -13951,7 +13966,10 @@ local
           if List.null structural_extras andalso
              shared_aconv (Thm.concl cleaned_result) target then
             cleaned_result
-          else if List.length prems = 2 then
+          else if List.null structural_extras then
+            resolution_profile "reorder" reorder_to_target cleaned_result
+          else complete_alignment_then (fn () =>
+          if List.length prems = 2 then
             (* Binary resolution has a compact Boolean consequence from its
                two exact premise theorems.  Check that DAG directly before
                trying the broader semantic alignment ladder, whose generic
@@ -13986,7 +14004,7 @@ local
                 direct_chain_alignment ()
                 handle HolSatLib.SAT_cex _ => original_alignment ()
                      | Feedback.HOL_ERR _ => original_alignment ()))
-          else original_alignment ()) ()) ()
+          else original_alignment ()) ()) ()) ()
         end
       fun has_non_arithmetic_equality tm =
         let

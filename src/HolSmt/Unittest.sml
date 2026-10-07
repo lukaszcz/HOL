@@ -28063,6 +28063,37 @@ fun cpc_disjunction_planning_exceptions () =
       | _ => die "planning accepted a conversion with a hypothesis"
   in () end
 
+fun cpc_complete_resolution_obligation_success () =
+  let
+    fun proof destination = parse_cpc_proof_string
+      ("((declare-const p Bool) (declare-const q Bool) " ^
+       "(declare-const r Bool) (declare-const s Bool) " ^
+       "(assume @a (or p (and q r))) (assume @np (not p)) " ^
+       "(assume @unused s) " ^
+       "(step @out :rule chain_m_resolution " ^
+       ":premises (@a @np @unused) :args (" ^ destination ^
+       " (@list true true) (@list p s))))")
+    val _ = Profile.reset_all ()
+    val theorem = Feedback.trace ("CPC_resolution_profile", 1)
+      CPC_ProofReplay.replay_root_for_test (proof "(or q r)")
+    val _ = assert (Thm.concl theorem ~~ ``q \/ r``,
+      "complete resolution obligation changed its recorded target")
+    val _ = assert (List.length (Thm.hyp theorem) = 3,
+      "complete resolution obligation discarded an unused premise")
+    val _ = assert
+      (cpc_profile_call_count "CPC(resolution-detail:complete/raw)_OK" = 1
+       andalso cpc_profile_call_count
+         "CPC(resolution-detail:deep-disjunction)" = 0,
+       "complete Boolean obligation entered speculative deep alignment")
+    val _ = check_oracle_tags "CPC complete resolution obligation" theorem
+    val _ = case Exn.capture CPC_ProofReplay.replay_root_for_test
+        (proof "false") of
+        Exn.Exn (HOL_ERR _) => ()
+      | Exn.Exn (HolSatLib.SAT_cex _) => ()
+      | Exn.Res _ => die "complete resolution accepted invalid strengthening"
+      | Exn.Exn error => raise error
+  in () end
+
 fun cpc_multi_premise_sat_clause_resolution_success () =
   let
     val theorem = CPC_ProofReplay.replay_root_for_test
@@ -28665,6 +28696,8 @@ let
       cpc_disjunction_planning_exceptions),
     ("cpc_multi_premise_sat_clause_resolution_success",
       cpc_multi_premise_sat_clause_resolution_success),
+    ("cpc_complete_resolution_obligation_success",
+      cpc_complete_resolution_obligation_success),
     ("cpc_long_structural_resolution_success",
       cpc_long_structural_resolution_success),
     ("cpc_long_refutation_widening_success",
