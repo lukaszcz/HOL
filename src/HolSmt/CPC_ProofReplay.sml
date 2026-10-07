@@ -18250,7 +18250,23 @@ local
                 else (profile_event "CPC(occurrence-decline:conversion)";
                   NONE)) () of
           SOME result => result
-        | NONE => opaque (canonical_resolution ())
+        | NONE =>
+            let
+              val theorem = canonical_resolution ()
+              val recorded = case located_conclusion of
+                  SOME target => SOME target
+                | NONE =>
+                    if List.length prems > 1 andalso
+                        List.length located_args = 2 * List.length prems - 1
+                    then Lib.total List.hd located_args else NONE
+            in case recorded of
+                SOME target =>
+                  if Term.aconv (Thm.concl theorem) (#term target) then
+                    located_result "checked resolution recorded target"
+                      theorem target
+                  else opaque theorem
+              | NONE => opaque theorem
+            end
       fun canonical_reordering () =
         let
           val target = expect_one_arg "reordering" args
@@ -19007,9 +19023,17 @@ local
                            if SmtResource.is_resource_gate holerr then
                              raise Feedback.HOL_ERR holerr
                            else canonical_reordering ()
-                     in raw_unavailable_result
-                       "CPC clause reordering lacks explicit occurrences"
-                       theorem end
+                     in case located_args of
+                         [target] =>
+                           if Term.aconv (Thm.concl theorem) (#term target) then
+                             located_result
+                               "checked reordering recorded target"
+                               theorem target
+                           else raw_unavailable_result
+                             "reordering endpoint differs from recorded target"
+                             theorem
+                       | _ => raw_unavailable_result
+                           "reordering lacks one recorded target" theorem end
                end
            | "exists_elim" => opaque ( replay_rare_rewrite "exists-elim" args)
            | "cnf" =>

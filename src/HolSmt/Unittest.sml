@@ -27694,6 +27694,16 @@ fun cpc_clause_producer_occurrences_success () =
       \(assume @np (not p)) \
       \(step @out :rule chain_m_resolution :premises (@order @np) \
       \:args (q (@list true) (@list p)))" ``q:bool`` 2
+    (* The equality producer's omitted result need not expose its clause
+       boundaries.  Checked reordering still has an exact parsed target. *)
+    val _ = check
+      "(assume @a (or p q)) \
+      \(step @eq :rule refl :args ((or p q))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @order :rule reordering :premises (@opaque) :args ((or q p))) \
+      \(assume @np (not p)) \
+      \(step @out :rule chain_m_resolution :premises (@order @np) \
+      \:args (q (@list true) (@list p)))" ``q:bool`` 2
     val _ = check
       "(assume @p p) (assume @np (not p)) \
       \(step @out :rule resolution :premises (@p @np) :args (true p))"
