@@ -27878,9 +27878,11 @@ fun cpc_clause_normalization_success () =
     val _ = assert (Thm.concl theorem ~~ q andalso
       List.length (Thm.hyp theorem) = 2, "normalized chain changed its contract")
     val _ = assert
-      (cpc_profile_call_count "CPC(rung:resolution/normalized_occurrences)" = 1
+      (cpc_profile_call_count "CPC(rung:resolution/complete_raw)_OK" = 1
+       andalso cpc_profile_call_count
+         "CPC(rung:resolution/normalized_occurrences)" = 0
        andalso cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" = 0,
-       "normalized occurrence chain entered the secondary proof ladder")
+       "Boolean negation entered normalization or the secondary proof ladder")
   in check_oracle_tags "normalized CPC occurrence chain" theorem end
 
 fun cpc_clause_occurrences_success () =
@@ -28088,11 +28090,30 @@ fun cpc_complete_resolution_obligation_success () =
     val _ = assert (List.length (Thm.hyp theorem) = 3,
       "complete resolution obligation discarded an unused premise")
     val _ = assert
-      (cpc_profile_call_count "CPC(resolution-detail:complete/raw)_OK" = 1
+      (cpc_profile_call_count "CPC(rung:resolution/complete_raw)_OK" = 1
+       andalso cpc_profile_call_count
+         "CPC(rung:resolution/normalized_occurrences)" = 0
        andalso cpc_profile_call_count
          "CPC(resolution-detail:deep-disjunction)" = 0,
-       "complete Boolean obligation entered speculative deep alignment")
+       "complete Boolean obligation entered normalization or deep alignment")
     val _ = check_oracle_tags "CPC complete resolution obligation" theorem
+    val _ = Profile.reset_all ()
+    val nested = Feedback.trace ("CPC_resolution_profile", 1)
+      CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(declare-const r Bool) (assume @a (or (or p q) r)) \
+        \(assume @nr (not r)) (step @out :rule chain_m_resolution \
+        \:premises (@a @nr) :args ((or q p) (@list true) (@list r))))")
+    val _ = assert (Thm.concl nested ~~ ``q \/ p`` andalso
+      List.length (Thm.hyp nested) = 2,
+      "opaque OR literal alignment changed its target or hypotheses")
+    val _ = assert
+      (cpc_profile_call_count "CPC(rung:resolution/complete_raw)_OK" = 1
+       andalso cpc_profile_call_count
+         "CPC(rung:resolution/normalized_occurrences)" = 0,
+       "Boolean regrouping entered opaque literal normalization")
+    val _ = check_oracle_tags "CPC opaque OR complete obligation" nested
     val _ = case Exn.capture CPC_ProofReplay.replay_root_for_test
         (proof "false") of
         Exn.Exn (HOL_ERR _) => ()

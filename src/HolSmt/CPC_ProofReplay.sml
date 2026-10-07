@@ -10971,6 +10971,51 @@ local
         end
     in Option.map (fn p => fn () => realize p) (recognize source) end
 
+  fun semantic_tseitin_law source destination =
+    resolution_profile "tseitin/total" (fn () =>
+    let
+      fun unfold_xor term =
+        let
+          val (head, arguments) = boolSyntax.strip_comb term
+          val {Thy, Name, ...} = Term.dest_thy_const head
+        in
+          if Thy = "HolSmt" andalso Name = "xor" andalso
+              List.length arguments = 2 then
+            SOME (Conv.REWR_CONV HolSmtTheory.xor_def term)
+          else NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
+      (* This caller has no definition-count admission limit.  The
+         bounded Boolean DAG caller checks its own unchanged cap. *)
+      val graph = SmtBooleanGraph.new
+        {chunk_depth = NONE, stops = [],
+         stop_conversion = fn _ => NONE,
+         leaf = CPC_ProofParser.intern_cpc_term, unfold = unfold_xor}
+      val _ = resolution_profile "tseitin/source-circuit"
+        (#circuit graph) source
+      val _ = resolution_profile "tseitin/target-circuit"
+        (#circuit graph) destination
+      val root = #circuit graph
+        (boolSyntax.mk_imp (source, destination))
+      val definitions = #definitions graph ()
+      val _ = if not (!resolution_profile_enabled) then () else
+        let val {nodes, leaves} = #counts graph () in
+          resolution_count "tseitin/nodes" nodes;
+          resolution_count "tseitin/leaves" leaves;
+          resolution_count "tseitin/definitions"
+            (List.length definitions)
+        end
+      val law = SmtBooleanGraph.prove_cnf_using
+        (fn stage => fn action =>
+          resolution_profile ("tseitin/" ^ stage) action ())
+        {definitions = definitions,
+         substitutions = #substitutions graph (), root = root}
+      val _ = Term.aconv (Thm.concl law)
+          (boolSyntax.mk_imp (source, destination)) andalso
+          List.null (Thm.hyp law) orelse
+        raise ERR "resolution" "Boolean graph endpoint mismatch"
+    in law end) ()
+
   fun replay_resolution prems conclusion args =
     let
       (* A proof of T is a neutral resolution premise regardless of which
@@ -12249,50 +12294,6 @@ local
             in Thm.EQ_MP target_alignment expanded_result end
           val previous_tseitin = ref
             (NONE : (Term.term * Term.term) option)
-          fun semantic_tseitin_law source destination =
-            resolution_profile "tseitin/total" (fn () =>
-            let
-              fun unfold_xor term =
-                let
-                  val (head, arguments) = boolSyntax.strip_comb term
-                  val {Thy, Name, ...} = Term.dest_thy_const head
-                in
-                  if Thy = "HolSmt" andalso Name = "xor" andalso
-                      List.length arguments = 2 then
-                    SOME (Conv.REWR_CONV HolSmtTheory.xor_def term)
-                  else NONE
-                end
-                handle Feedback.HOL_ERR _ => NONE
-              (* This caller has no definition-count admission limit.  The
-                 bounded Boolean DAG caller checks its own unchanged cap. *)
-              val graph = SmtBooleanGraph.new
-                {chunk_depth = NONE, stops = [],
-                 stop_conversion = fn _ => NONE,
-                 leaf = CPC_ProofParser.intern_cpc_term, unfold = unfold_xor}
-              val _ = resolution_profile "tseitin/source-circuit"
-                (#circuit graph) source
-              val _ = resolution_profile "tseitin/target-circuit"
-                (#circuit graph) destination
-              val root = #circuit graph
-                (boolSyntax.mk_imp (source, destination))
-              val definitions = #definitions graph ()
-              val _ = if not (!resolution_profile_enabled) then () else
-                let val {nodes, leaves} = #counts graph () in
-                  resolution_count "tseitin/nodes" nodes;
-                  resolution_count "tseitin/leaves" leaves;
-                  resolution_count "tseitin/definitions"
-                    (List.length definitions)
-                end
-              val law = SmtBooleanGraph.prove_cnf_using
-                (fn stage => fn action =>
-                  resolution_profile ("tseitin/" ^ stage) action ())
-                {definitions = definitions,
-                 substitutions = #substitutions graph (), root = root}
-              val _ = Term.aconv (Thm.concl law)
-                  (boolSyntax.mk_imp (source, destination)) andalso
-                  List.null (Thm.hyp law) orelse
-                raise ERR "resolution" "Boolean graph endpoint mismatch"
-            in law end) ()
           val tseitin_attempts = SmtReplayAttempt.new
             {enabled = not (Library.no_fastpath ()), capacity = 16,
              hash = SmtBooleanGraph.hash 4}
@@ -18308,6 +18309,33 @@ local
                     decline "conflicting-targets"
                   else chain target annotations clause_prems
               | _ => decline "annotations"
+          fun complete_raw () =
+            let
+              val destination = case located_conclusion of
+                  SOME target => SOME target
+                | NONE => if List.length args = 2 then NONE
+                    else Lib.total List.hd located_args
+            in case destination of
+                NONE => NONE
+              | SOME target => case source_clause_literals target of
+                  NONE => NONE
+                | SOME literals =>
+                    let
+                      val source = SmtCircuitSat.balanced_conjunction prems
+                      val law = semantic_tseitin_law
+                        (Thm.concl source) (#term target)
+                      val theorem = Thm.MP law source
+                    in SOME (clause_result
+                      "complete original-premise Boolean implication"
+                      (SmtClause.from_literals literals theorem)) end
+            end
+            handle HolSatLib.SAT_cex _ => NONE
+                 | HolSatLib.SAT_satisfiable _ => NONE
+                 | Conv.UNCHANGED => NONE
+                 | Feedback.HOL_ERR holerr =>
+                     if SmtResource.is_resource_gate holerr then
+                       raise Feedback.HOL_ERR holerr
+                     else NONE
         in
           case run () of
             SOME result => SOME result
@@ -18315,8 +18343,15 @@ local
             else if List.length args = 2 andalso
                 not (Option.isSome located_conclusion) then
               decline "normalization-without-target"
-            else (normalized := true;
-              profile "CPC(rung:resolution/normalized_occurrences)" run ())
+            else
+              (* A structural decline need not require a theory rewrite.
+                 Check the complete recorded obligation before normalizing
+                 opaque literals; retain normalization for ordinary decline. *)
+              case profile "CPC(rung:resolution/complete_raw)"
+                  (fn () => complete_raw ()) () of
+                SOME result => SOME result
+              | NONE => (normalized := true;
+                  profile "CPC(rung:resolution/normalized_occurrences)" run ())
         end
       fun occurrence_resolution_or_fallback () =
         case profile "CPC(rung:resolution/occurrences)"
