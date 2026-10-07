@@ -10892,6 +10892,175 @@ local
     (Redblackmap.mkDict Term.compare :
       (Term.term, Thm.thm) Redblackmap.dict)
 
+  (* Recognition retains checked leaf bridges but does not construct the
+     recursive implication proof.  All tables belong to this one target and
+     conversion context.  Hashes only select buckets; typed alpha-equality
+     decides every hit.  Target paths include internal disjunctions, since
+     those can themselves be literal occurrences. *)
+  fun disjunction_alignment_plan
+      {target, hash, equivalence, conversion, count} source =
+    let
+      datatype insertion = Left of Term.term | Right of Term.term
+      datatype plan =
+          Member of Term.term * insertion list * Thm.thm option
+        | Disjunction of Term.term * plan * plan
+        | Conjunction of Term.term * bool * plan
+        | Conversion of Term.term * Thm.thm * plan
+      datatype decision = Visiting | Declined | Planned of plan
+      val buckets = 1021
+      val targets = Array.array
+        (buckets, [] : (Term.term * insertion list) list)
+      val memo = Array.array
+        (buckets, [] : (Term.term * decision) list)
+      val occurrences = ref ([] : (Term.term * insertion list) list)
+      fun index term = hash term mod buckets
+      fun same left right = Portable.pointer_eq (left, right) orelse
+        Term.aconv left right
+      fun target_index term path =
+        let val key = index term
+            val bucket = Array.sub (targets, key)
+        in
+          if List.exists (fn (saved, _) => same saved term) bucket then ()
+          else
+            (count "target-nodes" 1;
+             Array.update (targets, key, (term, path) :: bucket);
+             occurrences := (term, path) :: !occurrences;
+             case Lib.total boolSyntax.dest_disj term of
+               SOME (left, right) =>
+                 (target_index left (Left right :: path);
+                  target_index right (Right left :: path))
+             | NONE => ())
+        end
+      val _ = target_index target []
+      val target_occurrences = List.rev (!occurrences)
+      fun checked_equality left right theorem =
+        let
+          val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl theorem)
+          val _ = Library.check_oracle_tags
+            "CPC_ProofReplay" "disjunction plan bridge" theorem
+        in
+          if same lhs left andalso same rhs right andalso
+             List.null (Thm.hyp theorem) then theorem
+          else raise ERR "disjunction_alignment_plan"
+            "leaf bridge has incorrect endpoints or hypotheses"
+        end
+      fun membership term =
+        let
+          val _ = count "membership" 1
+          val exact = List.find (fn (saved, _) => same saved term)
+            (Array.sub (targets, index term))
+          fun semantic [] = NONE
+            | semantic ((literal, path) :: rest) =
+                case equivalence term literal of
+                  SOME theorem => SOME (Member (term, path,
+                    SOME (checked_equality term literal theorem)))
+                | NONE => semantic rest
+        in
+          case exact of
+            SOME (_, path) => SOME (Member (term, path, NONE))
+          | NONE => semantic target_occurrences
+        end
+      fun save term value =
+        let val key = index term
+        in Array.update (memo, key, (term, value) ::
+          List.filter (fn (saved, _) => not (same saved term))
+            (Array.sub (memo, key))) end
+      fun recognize term =
+        let
+          val _ = count "visits" 1
+        in
+          case List.find (fn (saved, _) => same saved term)
+              (Array.sub (memo, index term)) of
+            SOME (_, Planned result) =>
+              (count "repeated" 1; SOME result)
+          | SOME (_, _) => (count "repeated-decline" 1; NONE)
+          | NONE =>
+              let
+                val _ = count "nodes" 1
+                val _ = save term Visiting
+                val result =
+                  if boolSyntax.is_disj term then
+                    let val (left, right) = boolSyntax.dest_disj term
+                    in case recognize left of
+                         NONE => NONE
+                       | SOME l => Option.map
+                           (fn r => Disjunction (term, l, r))
+                           (recognize right)
+                    end
+                  else if boolSyntax.is_conj term then
+                    let val (left, right) = boolSyntax.dest_conj term
+                    in case recognize left of
+                         SOME l => SOME (Conjunction (term, true, l))
+                       | NONE => Option.map
+                           (fn r => Conjunction (term, false, r))
+                           (recognize right)
+                    end
+                  else case membership term of
+                    SOME member => SOME member
+                  | NONE =>
+                      (case conversion term of
+                         NONE => NONE
+                       | SOME bridge =>
+                           let
+                             val residue = boolSyntax.rhs (Thm.concl bridge)
+                             val bridge = checked_equality term residue bridge
+                           in Option.map
+                             (fn sub => Conversion (term, bridge, sub))
+                             (recognize residue) end)
+                val _ = save term (case result of
+                    NONE => Declined | SOME p => Planned p)
+                val _ = if Option.isSome result then () else count "declines" 1
+              in result end
+        end
+      val realized = Array.array
+        (buckets, [] : (Term.term * Thm.thm) list)
+      fun source_of (Member (term, _, _)) = term
+        | source_of (Disjunction (term, _, _)) = term
+        | source_of (Conjunction (term, _, _)) = term
+        | source_of (Conversion (term, _, _)) = term
+      fun realize p =
+        let val term = source_of p
+            val key = index term
+        in
+          case List.find (fn (saved, _) => same saved term)
+              (Array.sub (realized, key)) of
+            SOME (_, theorem) => theorem
+          | NONE =>
+              let
+                val _ = count "proof-nodes" 1
+                val _ = count "proof-edges" (case p of
+                    Member _ => 0 | Disjunction _ => 2 | _ => 1)
+                val assumption = Thm.ASSUME term
+                val result = case p of
+                    Member (_, path, bridge) =>
+                      List.foldl
+                        (fn (Left right, th) => Thm.DISJ1 th right
+                          | (Right left, th) => Thm.DISJ2 left th)
+                        (case bridge of NONE => assumption
+                         | SOME eq => Thm.EQ_MP eq assumption) path
+                  | Disjunction (_, l, r) =>
+                      let val (left, right) = boolSyntax.dest_disj term
+                      in Thm.DISJ_CASES assumption
+                        (Thm.MP (realize l) (Thm.ASSUME left))
+                        (Thm.MP (realize r) (Thm.ASSUME right)) end
+                  | Conjunction (_, first, sub) =>
+                      Thm.MP (realize sub)
+                        ((if first then Thm.CONJUNCT1 else Thm.CONJUNCT2)
+                          assumption)
+                  | Conversion (_, bridge, sub) =>
+                      Thm.MP (realize sub) (Thm.EQ_MP bridge assumption)
+                val theorem = Thm.DISCH term result
+                val _ = same (Thm.concl theorem)
+                    (boolSyntax.mk_imp (term, target)) andalso
+                    List.null (Thm.hyp theorem) orelse
+                  raise ERR "disjunction_alignment_plan"
+                    "realized plan has incorrect endpoints or hypotheses"
+                val _ = Array.update (realized, key,
+                  (term, theorem) :: Array.sub (realized, key))
+              in theorem end
+        end
+    in Option.map (fn p => fn () => realize p) (recognize source) end
+
   fun replay_resolution prems conclusion args =
     let
       (* A proof of T is a neutral resolution premise regardless of which
@@ -13582,27 +13751,21 @@ local
               fun resolve_remaining theorem [] kept =
                     (theorem, List.rev kept)
                 | resolve_remaining theorem (premise :: rest) kept =
-                    (case find_pivot theorem premise of
+                    (case resolution_profile "deep/pivot-search"
+                        (find_pivot theorem) premise of
                        SOME pivot => resolve_remaining
                          (resolve_pair_on [] pivot theorem premise)
                          (List.revAppend (kept, rest)) []
                      | NONE => resolve_remaining theorem rest
                          (premise :: kept))
               val (deep_cleaned, deep_remaining) =
-                resolve_remaining cleaned_result (!unused_prems) []
+                resolution_profile "deep/resolve-remaining"
+                  (fn () => resolve_remaining
+                    cleaned_result (!unused_prems) []) ()
+              val _ = resolution_count "deep/unused-premises"
+                (List.length (!unused_prems))
               val _ = trace_chain ("deep remaining " ^
                 Int.toString (List.length deep_remaining))
-              fun prove_member literal destination =
-                if literal_equal literal destination then
-                  convert_literal (Thm.ASSUME literal) destination
-                else
-                  let
-                    val (left, right) = boolSyntax.dest_disj destination
-                  in
-                    Thm.DISJ1 (prove_member literal left) right
-                    handle Feedback.HOL_ERR _ =>
-                      Thm.DISJ2 left (prove_member literal right)
-                  end
               fun fp_literal_conversion term =
                 let
                   val negated = Lib.total boolSyntax.dest_neg term
@@ -13639,63 +13802,34 @@ local
                       Thm.SPEC (boolSyntax.dest_neg body)
                         (Thm.CONJUNCT1 boolTheory.NOT_CLAUSES)
                 in Conv.REWR_CONV theorem term end
-              val memo = ref ([] : (Term.term * Thm.thm) list)
-              fun prove source =
-                (case List.find (fn (saved, _) =>
-                    Portable.pointer_eq (saved, source)) (!memo) of
-                  SOME (_, theorem) => theorem
-                | NONE =>
-                    let
-                      val theorem =
-                        if boolSyntax.is_disj source then
-                          let
-                            val (left, right) = boolSyntax.dest_disj source
-                            val left_law = prove left
-                            val right_law = prove right
-                            val source_assumption = Thm.ASSUME source
-                            val result = Thm.DISJ_CASES source_assumption
-                              (Thm.MP left_law (Thm.ASSUME left))
-                              (Thm.MP right_law (Thm.ASSUME right))
-                          in Thm.DISCH source result end
-                        else if boolSyntax.is_conj source then
-                          let
-                            val (left, right) = boolSyntax.dest_conj source
-                            val assumption = Thm.ASSUME source
-                            val consequence =
-                              (Thm.MP (prove left)
-                                 (Thm.CONJUNCT1 assumption)
-                               handle Conv.UNCHANGED =>
-                                 Thm.MP (prove right)
-                                   (Thm.CONJUNCT2 assumption)
-                                    | Feedback.HOL_ERR holerr =>
-                                 if SmtResource.is_resource_gate holerr then
-                                   raise Feedback.HOL_ERR holerr
-                                 else Thm.MP (prove right)
-                                   (Thm.CONJUNCT2 assumption))
-                          in Thm.DISCH source consequence end
-                        else
-                          (Thm.DISCH source (prove_member source target)
-                           handle Feedback.HOL_ERR member_error =>
-                             if SmtResource.is_resource_gate member_error then
-                               raise Feedback.HOL_ERR member_error
-                             else
-                               let
-                                 val conversion =
-                                   (boolean_negation_conversion source
-                                    handle Feedback.HOL_ERR _ =>
-                                      fp_literal_conversion source)
-                                 val residue = boolSyntax.rhs
-                                   (Thm.concl conversion)
-                                 val residue_law = prove residue
-                                 val residue_theorem = Thm.EQ_MP conversion
-                                   (Thm.ASSUME source)
-                               in Thm.DISCH source
-                                 (Thm.MP residue_law residue_theorem) end)
-                      val _ = memo := (source, theorem) :: !memo
-                    in theorem end)
-              fun work () = Thm.MP
-                (prove (Thm.concl deep_cleaned)) deep_cleaned
-              val _ = trace_chain "deep proof begin"
+              fun checked_conversion source =
+                resolution_profile "deep/leaf-conversion" (fn () =>
+                  SOME (boolean_negation_conversion source
+                    handle Feedback.HOL_ERR holerr =>
+                      if SmtResource.is_resource_gate holerr then
+                        raise Feedback.HOL_ERR holerr
+                      else fp_literal_conversion source)
+                  handle Conv.UNCHANGED => NONE) ()
+              fun checked_equivalence source destination =
+                resolution_profile "deep/membership" (fn () =>
+                  literal_equivalence source destination) ()
+              fun work () =
+                let
+                  val planned = resolution_profile "deep/recognition"
+                    (fn () => disjunction_alignment_plan
+                      {target = target, hash = literal_hash 6,
+                       equivalence = checked_equivalence,
+                       conversion = checked_conversion,
+                       count = fn name => resolution_count ("deep/" ^ name)}
+                      (Thm.concl deep_cleaned)) ()
+                in
+                  case planned of
+                    NONE => raise Conv.UNCHANGED
+                  | SOME realize => Thm.MP
+                      (resolution_profile "deep/realization" realize ())
+                      deep_cleaned
+                end
+              val _ = trace_chain "deep recognition begin"
             in SmtResource.with_bitblast_step_time
               "cpc-resolution-deep-disjunction-alignment" work () end
           fun schematic_supported_alignment () =
@@ -19522,6 +19656,7 @@ in
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
   val replay_rare_rewrite_for_test = replay_rare_rewrite
   val replay_factoring_for_test = replay_factoring
+  val disjunction_alignment_plan_for_test = disjunction_alignment_plan
 
   val theorem_cache_enabled_for_test = theorem_cache_enabled
 

@@ -27571,6 +27571,116 @@ fun run_cnf_graph_unittests () =
      ("z3_e0_replay_measurement_reserved_snapshot_success",
        z3_e0_replay_measurement_reserved_snapshot_success)]
 
+fun cpc_disjunction_planning_success () =
+  let
+    val p = ``p:bool``
+    val q = ``q:bool``
+    val r = ``r:bool``
+    val target = boolSyntax.mk_disj (p, q)
+    val counts = ref ([] : (string * int) list)
+    fun count name amount = counts := (name, amount) :: !counts
+    fun total name = List.foldl (fn ((key, amount), sum) =>
+      if key = name then sum + amount else sum) 0 (!counts)
+    fun plan destination conversion source =
+      CPC_ProofReplay.disjunction_alignment_plan_for_test
+        {target = destination, hash = fn _ => 0,
+         equivalence = fn _ => fn _ => NONE,
+         conversion = conversion, count = count} source
+    fun negation term =
+      SOME (Conv.REWR_CONV
+        (Thm.CONJUNCT1 boolTheory.NOT_CLAUSES) term)
+      handle HOL_ERR _ => NONE
+    fun check source =
+      let
+        val _ = counts := []
+        val recognized = plan target negation source
+        val _ = assert (total "proof-nodes" = 0,
+          "recognition constructed a recursive implication proof")
+        val realize = case recognized of SOME work => work
+          | NONE => raise Fail "supported disjunction plan declined"
+        val law = realize ()
+        val theorem = Thm.MP law (Thm.ASSUME source)
+        val nodes = total "proof-nodes"
+        val _ = ignore (realize ())
+        val _ = assert (total "proof-nodes" = nodes,
+          "realization rebuilt a shared implication proof")
+        val _ = assert (Thm.concl law ~~ boolSyntax.mk_imp (source, target)
+          andalso List.null (Thm.hyp law), "incorrect plan endpoints")
+        val _ = assert (Thm.concl theorem ~~ target andalso
+          List.length (Thm.hyp theorem) = 1 andalso
+          hd (Thm.hyp theorem) ~~ source, "plan changed source hypotheses")
+      in check_oracle_tags "CPC disjunction derivation plan" theorem end
+    fun shared 0 = p
+      | shared depth = let val child = shared (depth - 1)
+        in boolSyntax.mk_disj (child, child) end
+    val _ = List.app check
+      [p, q, boolSyntax.mk_disj (q, p),
+       boolSyntax.mk_conj (r, p), boolSyntax.mk_conj (p, r),
+       ``~~p:bool``, shared 20,
+       boolSyntax.mk_disj (boolSyntax.mk_conj (r, p), q)]
+    val _ = counts := []
+    val _ = assert (not (Option.isSome
+      (plan target negation (boolSyntax.mk_disj (shared 20, r)))),
+      "unsupported late branch was accepted")
+    val _ = assert (total "proof-nodes" = 0 andalso total "visits" < 50,
+      "failed shared recognition built or unfolded a proof tree")
+    val _ = counts := []
+    val bad = boolSyntax.mk_disj (r, r)
+    val _ = assert (not (Option.isSome
+      (plan target negation (boolSyntax.mk_conj (bad, bad)))),
+      "repeated unsupported source was accepted")
+    val _ = assert (total "repeated-decline" > 0 andalso
+      total "membership" = 1 andalso total "proof-nodes" = 0,
+      "ordinary declines were not memoized")
+    val _ = assert (not (Option.isSome
+      (plan target (fn term => SOME (Thm.REFL term)) r)),
+      "cyclic conversion was accepted")
+    val _ = check ``(p /\ q) \/ (p /\ q)``
+    val renamed = ``!y:bool. y``
+    val original = ``!x:bool. x``
+    val _ = case plan (boolSyntax.mk_disj (renamed, p))
+        (fn _ => NONE) original of
+        NONE => raise Fail "alpha-renamed literal declined"
+      | SOME realize => check_oracle_tags "CPC alpha plan" (realize ())
+    val num_function = ``f:num -> bool``
+    val _ = assert (not (Option.isSome
+      (plan ``(f:bool -> bool) T`` (fn _ => NONE)
+        (Term.mk_comb (num_function, ``0:num``)))),
+      "hash collision confused same names at different types")
+  in () end
+
+fun cpc_disjunction_planning_exceptions () =
+  let
+    val p = ``p:bool``
+    val q = ``q:bool``
+    fun plan conversion =
+      CPC_ProofReplay.disjunction_alignment_plan_for_test
+        {target = p, hash = fn _ => 0,
+         equivalence = fn _ => fn _ => NONE,
+         conversion = conversion, count = fn _ => fn _ => ()} q
+    fun expect label injected matches =
+      case Exn.capture (fn () => plan (fn _ => raise injected)) () of
+        Exn.Exn actual => assert (matches actual,
+          "planning changed " ^ label)
+      | Exn.Res _ => die ("planning swallowed " ^ label)
+    val resource = Feedback.mk_HOL_ERR "SmtResource" "plan test"
+      "resource-gated: injected planning refusal"
+    val _ = expect "resource refusal" resource
+      (fn HOL_ERR holerr => SmtResource.is_resource_gate holerr | _ => false)
+    val _ = expect "timeout" (Timeout.TIMEOUT Time.zeroTime)
+      (fn Timeout.TIMEOUT _ => true | _ => false)
+    val _ = expect "interrupt" Interrupt
+      (fn Interrupt => true | _ => false)
+    val _ = case Exn.capture (fn () => plan
+        (fn _ => SOME (Thm.REFL p))) () of
+        Exn.Exn (HOL_ERR _) => ()
+      | _ => die "planning accepted a conversion with incorrect endpoints"
+    val _ = case Exn.capture (fn () => plan
+        (fn _ => SOME (Thm.ASSUME (boolSyntax.mk_eq (q, p))))) () of
+        Exn.Exn (HOL_ERR _) => ()
+      | _ => die "planning accepted a conversion with a hypothesis"
+  in () end
+
 fun cpc_multi_premise_sat_clause_resolution_success () =
   let
     val theorem = CPC_ProofReplay.replay_root_for_test
@@ -28158,6 +28268,9 @@ let
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",
       cpc_proof_parser_version_resolution_success),
+    ("cpc_disjunction_planning_success", cpc_disjunction_planning_success),
+    ("cpc_disjunction_planning_exceptions",
+      cpc_disjunction_planning_exceptions),
     ("cpc_multi_premise_sat_clause_resolution_success",
       cpc_multi_premise_sat_clause_resolution_success),
     ("cpc_long_structural_resolution_success",
