@@ -20499,6 +20499,88 @@ in
     "node-cache observer lost partial events when the skeleton declined")
 end
 
+fun circuit_graph_admission_success () =
+let
+  val attempts = ref 0
+  fun prover goal =
+    (attempts := !attempts + 1; HolSatLib.SAT_PROVE goal)
+  fun goal count =
+    let
+      val atoms = List.tabulate (count, fn index =>
+        Term.mk_var ("admission" ^ Int.toString index, Type.bool))
+      val root = boolSyntax.lhs (Thm.concl
+        (SmtCircuitSat.balanced_equivalences (List.map Thm.REFL atoms)))
+    in boolSyntax.mk_imp (root, List.hd atoms) end
+  fun prove target = CPC_ProofReplay.boolean_dag_using_for_test
+    NONE prover [] (fn _ => NONE) "graph-admission-test" target
+  val admitted = goal 1200
+  val theorem = prove admitted
+  val _ = assert (Thm.concl theorem ~~ admitted andalso
+    List.null (Thm.hyp theorem) andalso !attempts = 1,
+    "bounded Boolean DAG did not admit its existing 1200 definitions")
+  val _ = check_oracle_tags "bounded Boolean DAG" theorem
+  val _ = case Exn.capture prove (goal 1201) of
+      Exn.Exn (HOL_ERR error) =>
+        assert (String.isSubstring "direct SAT limit"
+            (Feedback.message_of error) andalso !attempts = 1,
+          "Boolean DAG admission changed or checked after SAT")
+    | _ => die "bounded Boolean DAG admitted 1201 definitions"
+  val _ = case Exn.capture prove ``xor p q = ~(p = q)`` of
+      Exn.Exn (HolSatLib.SAT_cex _) => ()
+    | _ => die "bounded Boolean DAG changed its opaque XOR contract"
+in () end
+
+fun circuit_graph_checked_success () =
+let
+fun unfold tm = SOME (Conv.REWR_CONV HolSmtTheory.xor_def tm)
+  handle HOL_ERR _ => NONE;
+fun check valid goal =
+  let
+    val graph = SmtBooleanGraph.new
+      {chunk_depth = NONE, stops = [], stop_conversion = fn _ => NONE,
+       leaf = CPC_ProofParser.intern_cpc_term, unfold = unfold}
+    val root = #circuit graph goal
+    val result = Exn.capture (fn () => SmtBooleanGraph.prove_cnf_using
+      (fn name => fn action => action ())
+      {definitions = #definitions graph (),
+       substitutions = #substitutions graph (), root = root}) ()
+  in case result of
+      Exn.Res theorem =>
+        (assert (valid, "invalid Boolean graph was accepted");
+         assert (Term.aconv (Thm.concl theorem) goal,
+           "Boolean graph endpoint changed");
+         assert (List.null (Thm.hyp theorem), "Boolean graph retained hyps");
+         Library.check_oracle_tags "CpcBooleanGraph" "checked graph" theorem)
+    | Exn.Exn (HolSatLib.SAT_satisfiable _) =>
+        assert (not valid, "valid Boolean graph was rejected")
+    | Exn.Exn (HolSatLib.SAT_cex _) =>
+        assert (not valid, "valid Boolean graph was rejected by simplification")
+    | Exn.Exn exn => raise exn
+  end;
+
+val _ = List.app (check true)
+  [``(p:bool) ==> p``, ``(p /\ q) ==> p``,
+   ``((p ==> q) /\ p) ==> q``, ``(if p then q else r) = ((p /\ q) \/ (~p /\ r))``,
+   ``xor p q = ~(p = q)``, ``xor p q = xor q p``,
+   ``xor p (xor q r) = xor (xor p q) r``,
+   ``(!x:num. opaque x) ==> (!y:num. opaque y)``,
+   ``opaque (x:num) \/ ~opaque x``,
+   boolSyntax.mk_imp (boolSyntax.mk_conj
+     (``(f:num -> bool) (x:num)``, ``(f:bool -> bool) (x:bool)``),
+     ``(f:num -> bool) (x:num)``), boolSyntax.T];
+val _ = List.app (check false)
+  [``(p:bool) ==> q``, ``xor p q = (p = q)``, boolSyntax.F,
+   ``(!x:num. opaque x) ==> (!y:num. other y)``,
+   boolSyntax.mk_imp
+     (``(f:num -> bool) (x:num)``, ``(f:bool -> bool) (x:bool)``)];
+val protected = Term.genvar Type.bool;
+val _ = check true (boolSyntax.mk_imp (protected, protected));
+fun shared 0 = ``seed:bool``
+  | shared n = let val child = shared (n - 1)
+    in boolSyntax.mk_conj (child, child) end;
+val _ = check true (boolSyntax.mk_imp (shared 16, ``seed:bool``));
+in () end
+
 fun circuit_cnf_checked_success () =
 let
   val root = ``circuit_output:bool``
@@ -27998,6 +28080,8 @@ let
     ("cvc_cpc_command_uses_standard_proof",
       cvc_cpc_command_uses_standard_proof),
     ("binder_opening_resource_success", binder_opening_resource_success),
+    ("circuit_graph_admission_success", circuit_graph_admission_success),
+    ("circuit_graph_checked_success", circuit_graph_checked_success),
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),
     ("skeleton_typed_cnf_graph_success", skeleton_typed_cnf_graph_success),
     ("word_graph_conversion_success", word_graph_conversion_success),

@@ -5430,136 +5430,24 @@ local
     let
       val bucket_count = boolean_dag_bucket_count
       fun bucket_index term = boolean_dag_term_hash 4 term
-      val memo = Array.array
-        (bucket_count, [] : (Term.term * Term.term) list)
-      fun memo_peek term =
-        case List.find (fn (saved, _) =>
-            Portable.pointer_eq (saved, term) orelse
-            shared_aconv saved term)
-            (Array.sub (memo, bucket_index term)) of
-          SOME (_, result) => SOME result
-        | NONE => NONE
-      fun memo_insert term result =
-        let val index = bucket_index term in
-          Array.update
-            (memo, index, (term, result) :: Array.sub (memo, index))
-        end
-      val definitions = ref
-        ([] : (Term.term * Term.term * Thm.thm option) list)
-      val substitutions = ref
-        ([] : {redex : Term.term, residue : Term.term} list)
-      fun variable term =
-        let
-          val result = Term.genvar Type.bool
-          val _ = substitutions :=
-            {redex = result, residue = term} :: !substitutions
-        in result end
-      fun circuit_depth depth term =
-        case memo_peek term of
-          SOME result => result
-        | NONE =>
-            let
-              fun internal_with proof skeleton =
-                let
-                  val result = variable term
-                  val _ = definitions :=
-                    (term, boolSyntax.mk_eq (result, skeleton), proof) ::
-                    !definitions
-                in result end
-              fun internal skeleton =
-                case chunk_depth of
-                  NONE => internal_with NONE skeleton
-                | SOME limit =>
-                    if depth >= limit then internal_with NONE skeleton
-                    else skeleton
-              fun converted_leaf () =
-                case leaf_conversion term of
-                  SOME theorem =>
-                    let
-                      val residue = boolSyntax.rhs (Thm.concl theorem)
-                    in
-                      if Term.aconv term residue then variable term
-                      else internal_with (SOME theorem)
-                        (circuit_depth 0 residue)
-                    end
-                | NONE => variable term
-              val next_depth =
-                case chunk_depth of
-                  NONE => 0
-                | SOME limit => if depth >= limit then 0 else depth + 1
-              val result =
-                if List.exists (fn stop =>
-                     Portable.pointer_eq (stop, term) orelse
-                     shared_aconv stop term) stops then converted_leaf ()
-                else if Term.aconv term boolSyntax.T orelse
-                   Term.aconv term boolSyntax.F then term
-                else if boolSyntax.is_neg term then
-                  internal (boolSyntax.mk_neg
-                    (circuit_depth next_depth
-                      (boolSyntax.dest_neg term)))
-                else if boolSyntax.is_conj term then
-                  let val (left, right) = boolSyntax.dest_conj term
-                  in internal (boolSyntax.mk_conj
-                    (circuit_depth next_depth left,
-                     circuit_depth next_depth right)) end
-                else if boolSyntax.is_disj term then
-                  let val (left, right) = boolSyntax.dest_disj term
-                  in internal (boolSyntax.mk_disj
-                    (circuit_depth next_depth left,
-                     circuit_depth next_depth right)) end
-                else if boolSyntax.is_imp term then
-                  let val (left, right) = boolSyntax.dest_imp term
-                  in internal (boolSyntax.mk_imp
-                    (circuit_depth next_depth left,
-                     circuit_depth next_depth right)) end
-                else if boolSyntax.is_eq term andalso
-                        Term.type_of (#1 (boolSyntax.dest_eq term)) =
-                          Type.bool then
-                  let val (left, right) = boolSyntax.dest_eq term
-                  in internal (boolSyntax.mk_eq
-                    (circuit_depth next_depth left,
-                     circuit_depth next_depth right)) end
-                else if boolSyntax.is_cond term andalso
-                        Term.type_of (#2 (boolSyntax.dest_cond term)) =
-                          Type.bool then
-                  let val (condition, then_term, else_term) =
-                    boolSyntax.dest_cond term
-                  in internal (boolSyntax.mk_cond
-                    (circuit_depth next_depth condition,
-                     circuit_depth next_depth then_term,
-                     circuit_depth next_depth else_term)) end
-                else variable term
-              val _ = memo_insert term result
-            in result end
-      fun balanced_terms [] = boolSyntax.T
-        | balanced_terms [term] = term
-        | balanced_terms terms =
-            let
-              val half = List.length terms div 2
-            in boolSyntax.mk_conj
-              (balanced_terms (List.take (terms, half)),
-               balanced_terms (List.drop (terms, half)))
-            end
-      fun balanced_theorems [] = boolTheory.TRUTH
-        | balanced_theorems [theorem] = theorem
-        | balanced_theorems theorems =
-            let
-              val half = List.length theorems div 2
-            in Thm.CONJ
-              (balanced_theorems (List.take (theorems, half)))
-              (balanced_theorems (List.drop (theorems, half)))
-            end
-      val root = circuit_depth 0 goal
-      val definitions = List.rev (!definitions)
-      val definition_term = balanced_terms
-        (List.map (fn (_, definition, _) => definition) definitions)
+      val graph = SmtBooleanGraph.new
+        {chunk_depth = chunk_depth, stops = stops,
+         stop_conversion = leaf_conversion, leaf = fn term => term,
+         unfold = fn _ => NONE}
+      val root = #circuit graph goal
+      val definitions = #definitions graph ()
+      val substitutions = #substitutions graph ()
+      val definition_term = boolSyntax.lhs (Thm.concl
+        (SmtCircuitSat.balanced_equivalences
+          (List.map (fn (_, definition, _) => Thm.REFL definition)
+            definitions)))
       val template =
         if List.null definitions then root
         else boolSyntax.mk_imp (definition_term, root)
       val _ = List.length definitions <= 1200 orelse
         raise ERR "circuit" "Boolean circuit exceeds the direct SAT limit"
       val law = SmtResource.with_bitblast_step_time label prover template
-      val theorem = Thm.INST (!substitutions) law
+      val theorem = Thm.INST substitutions law
       val result =
         if List.null definitions then theorem
         else
@@ -5576,7 +5464,7 @@ local
             val instantiated_definitions = boolSyntax.strip_conj antecedent
             val proofs = ListPair.mapEq prove_definition
               (definitions, instantiated_definitions)
-            val conjunction = balanced_theorems proofs
+            val conjunction = SmtCircuitSat.balanced_conjunction proofs
           in Thm.MP theorem (Thm.EQ_MP (Thm.REFL antecedent) conjunction) end
       val alignment_memo = Array.array
         (bucket_count, [] : (Term.term * Term.term * Thm.thm) list)
@@ -12377,146 +12265,50 @@ local
                      | NONE => ());
                     previous_tseitin := SOME (source, destination)
                   end
-              val memo = ref ([] : (Term.term * Term.term) list)
-              val leaves = ref
-                ([] : (Term.term * Term.term) list)
-              val substitutions = ref
-                ([] : {redex : Term.term, residue : Term.term} list)
-              val definitions = ref
-                ([] : (Term.term * Term.term) list)
-              fun variable term =
-                let
-                  val variable = Term.genvar Type.bool
-                  val _ = substitutions :=
-                    {redex = variable, residue = term} :: !substitutions
-                in variable end
-              fun leaf term =
-                let
-                  val canonical = CPC_ProofParser.intern_cpc_term term
-                in
-                  case List.find (fn (saved, _) =>
-                      Portable.pointer_eq (saved, canonical)) (!leaves) of
-                    SOME (_, result) => result
-                  | NONE =>
-                      let
-                        val result = variable canonical
-                        val _ = leaves := (canonical, result) :: !leaves
-                      in result end
-                end
-              fun is_xor term =
+              fun unfold_xor term =
                 let
                   val (head, arguments) = boolSyntax.strip_comb term
                   val {Thy, Name, ...} = Term.dest_thy_const head
-                in Thy = "HolSmt" andalso Name = "xor" andalso
-                   List.length arguments = 2 end
-                handle Feedback.HOL_ERR _ => false
-              fun circuit term =
-                case List.find (fn (saved, _) =>
-                    Portable.pointer_eq (saved, term)) (!memo) of
-                  SOME (_, result) => result
-                | NONE =>
-                    let
-                      fun internal skeleton =
-                        let
-                          val result = variable term
-                          val definition = boolSyntax.mk_eq
-                            (result, skeleton)
-                          val _ = definitions :=
-                            (term, definition) :: !definitions
-                        in result end
-                      val result =
-                        if Term.aconv term boolSyntax.T orelse
-                           Term.aconv term boolSyntax.F then term
-                        else if boolSyntax.is_neg term then
-                          internal (boolSyntax.mk_neg
-                            (circuit (boolSyntax.dest_neg term)))
-                        else if boolSyntax.is_conj term then
-                          let val (left, right) =
-                            boolSyntax.dest_conj term
-                          in internal (boolSyntax.mk_conj
-                            (circuit left, circuit right)) end
-                        else if boolSyntax.is_disj term then
-                          let val (left, right) =
-                            boolSyntax.dest_disj term
-                          in internal (boolSyntax.mk_disj
-                            (circuit left, circuit right)) end
-                        else if boolSyntax.is_imp term then
-                          let val (left, right) =
-                            boolSyntax.dest_imp term
-                          in internal (boolSyntax.mk_imp
-                            (circuit left, circuit right)) end
-                        else if boolSyntax.is_eq term then
-                          let val (left, right) = boolSyntax.dest_eq term in
-                            if Term.type_of left = Type.bool then
-                              internal (boolSyntax.mk_eq
-                                (circuit left, circuit right))
-                            else leaf term
-                          end
-                        else if boolSyntax.is_cond term then
-                          let
-                            val (condition, then_term, else_term) =
-                              boolSyntax.dest_cond term
-                          in
-                            if Term.type_of then_term = Type.bool then
-                              internal (boolSyntax.mk_cond
-                                (circuit condition, circuit then_term,
-                                 circuit else_term))
-                            else leaf term
-                          end
-                        else if is_xor term then
-                          let val (left, right) =
-                            case boolSyntax.strip_comb term of
-                              (_, [left, right]) => (left, right)
-                            | _ => raise Fail "malformed xor"
-                          in internal (boolSyntax.mk_neg (boolSyntax.mk_eq
-                            (circuit left, circuit right))) end
-                        else leaf term
-                      val _ = memo := (term, result) :: !memo
-                    in result end
+                in
+                  if Thy = "HolSmt" andalso Name = "xor" andalso
+                      List.length arguments = 2 then
+                    SOME (Conv.REWR_CONV HolSmtTheory.xor_def term)
+                  else NONE
+                end
+                handle Feedback.HOL_ERR _ => NONE
+              (* This caller has no definition-count admission limit.  The
+                 bounded Boolean DAG caller checks its own unchanged cap. *)
+              val graph = SmtBooleanGraph.new
+                {chunk_depth = NONE, stops = [],
+                 stop_conversion = fn _ => NONE,
+                 leaf = CPC_ProofParser.intern_cpc_term, unfold = unfold_xor}
               val source = Thm.concl theorem
-              val source_root = resolution_profile "tseitin/source-circuit"
-                circuit source
-              val target_root = resolution_profile "tseitin/target-circuit"
-                circuit destination
-              val definitions = List.rev (!definitions)
-              val _ = if !resolution_profile_enabled then
-                (resolution_count "tseitin/nodes" (List.length (!memo));
-                 resolution_count "tseitin/leaves" (List.length (!leaves));
-                 resolution_count "tseitin/definitions"
-                   (List.length definitions)) else ()
-              val goal = resolution_profile "tseitin/goal" (fn () => List.foldr
-                (fn ((_, definition), body) =>
-                  boolSyntax.mk_imp (definition, body))
-                (boolSyntax.mk_imp (source_root, target_root)) definitions) ()
-              val law = resolution_profile "tseitin/sat"
-                HolSatLib.SAT_PROVE goal
-              val instantiated = resolution_profile "tseitin/instantiate"
-                (Thm.INST (!substitutions)) law
-              (* Instantiating circuit definitions restores their exact
-                 syntax.  XOR's semantic unfolding is proved separately
-                 below; every remaining alignment is kernel alpha-equality,
-                 not a new congruence proof over the whole concrete DAG. *)
-              val align = Thm.ALPHA
-              fun discharge ((term, _), result) =
-                let
-                  val antecedent = #1
-                    (boolSyntax.dest_imp (Thm.concl result))
-                  val (left, right) = boolSyntax.dest_eq antecedent
-                  val definition_theorem = resolution_profile
-                    "tseitin/definition-proof" (fn () =>
-                    if is_xor term then
-                      let
-                        val unfolded = Conv.REWR_CONV
-                          HolSmtTheory.xor_def term
-                        val unfolded_right = boolSyntax.rhs
-                          (Thm.concl unfolded)
-                      in Thm.TRANS unfolded
-                        (align unfolded_right right) end
-                    else align left right) ()
-                in resolution_profile "tseitin/definition-mp"
-                  (Thm.MP result) definition_theorem end
-              val law = resolution_profile "tseitin/discharge"
-                (fn () => List.foldl discharge instantiated definitions) ()
+              val _ = resolution_profile "tseitin/source-circuit"
+                (#circuit graph) source
+              val _ = resolution_profile "tseitin/target-circuit"
+                (#circuit graph) destination
+              val root = #circuit graph
+                (boolSyntax.mk_imp (source, destination))
+              val definitions = #definitions graph ()
+              val _ = if not (!resolution_profile_enabled) then () else
+                let val {nodes, leaves} = #counts graph () in
+                  resolution_count "tseitin/nodes" nodes;
+                  resolution_count "tseitin/leaves" leaves;
+                  resolution_count "tseitin/definitions"
+                    (List.length definitions)
+                end
+              val law = SmtBooleanGraph.prove_cnf_using
+                (fn stage => fn action =>
+                  resolution_profile ("tseitin/" ^ stage) action ())
+                {definitions = definitions,
+                 substitutions = #substitutions graph (), root = root}
+                handle HolSatLib.SAT_satisfiable _ =>
+                  raise ERR "resolution"
+                    "abstract Boolean implication is not valid"
+              val _ = Term.aconv (Thm.concl law)
+                  (boolSyntax.mk_imp (source, destination)) andalso
+                  List.null (Thm.hyp law) orelse
+                raise ERR "resolution" "Boolean graph endpoint mismatch"
             in resolution_profile "tseitin/apply" (Thm.MP law) theorem end) ()
           fun semantic_word_tseitin destination theorem =
             let
@@ -19854,6 +19646,8 @@ in
   val replay_rare_rewrite_for_test = replay_rare_rewrite
   val replay_factoring_for_test = replay_factoring
   val disjunction_alignment_plan_for_test = disjunction_alignment_plan
+  val boolean_dag_using_for_test =
+    prove_boolean_dag_tautology_with_leaf_conversion_using
 
   val theorem_cache_enabled_for_test = theorem_cache_enabled
 
