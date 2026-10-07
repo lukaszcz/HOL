@@ -734,7 +734,12 @@ struct
   fun next_named_rung name prover t continuation =
     let
       val _ = trace_rung ("begin=" ^ name)
-      val result = prover t
+      val result = SmtReplayObserve.run
+        (fn () =>
+          {domain = "fp/" ^ name, identifier = "",
+           premises = [], terms = [("goal", t)], scope = [],
+           definitions = [], metadata = []}) (fn theorem => theorem)
+        (fn () => prover t)
       val _ = trace_rung ("done=" ^ name)
     in result end
     handle Feedback.HOL_ERR holerr =>

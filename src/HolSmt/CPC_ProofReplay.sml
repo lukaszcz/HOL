@@ -18119,6 +18119,48 @@ local
                 "; arguments=" ^ String.concatWith "; "
                   (List.map Library.term_to_string args)))
         end
+      fun resolution_observation_inputs () =
+        let
+          val clauses = List.map (#clause o #result) premise_steps
+          fun named_terms label terms = Lib.mapi
+            (fn index => fn term =>
+              (label ^ Int.toString index, term)) terms
+          val occurrence_terms = List.concat (Lib.mapi
+            (fn index => fn clause => case clause of NONE => []
+              | SOME clause => named_terms
+                  ("premise-literal/" ^ Int.toString index ^ "/")
+                  (SmtClause.literals clause)) clauses)
+          val premise_metadata = List.concat (Lib.mapi
+            (fn index => fn (name, clause) =>
+              [("premise-id/" ^ Int.toString index, name),
+               ("clause-arity/" ^ Int.toString index,
+                case clause of NONE => "unknown"
+                  | SOME clause => Int.toString
+                      (List.length (SmtClause.literals clause)))])
+            (ListPair.zip (premises, clauses)))
+          fun definition index
+              (SmtLib.EmittedDefinition
+                {emitted_symbol, replay_head, unfolding}) =
+            case emitted_symbol of
+              SmtLib.EncodedSymbol {hol_term, smt_symbol, arity} =>
+                ((smt_symbol, replay_head, unfolding),
+                 ("emitted-hol-term/" ^ Int.toString index, hol_term),
+                 ("emitted-arity/" ^ Int.toString index, Int.toString arity))
+            | _ => raise ERR "resolution_observation_inputs"
+                "emitted definition lacks its exact encoded-symbol record"
+          val emitted = Lib.mapi definition (#translation_definitions state)
+        in
+          {domain = "cpc/resolution", identifier = id,
+           premises = Lib.mapi (fn index => fn theorem =>
+             (Int.toString index, theorem)) prems,
+           terms = (case conclusion of NONE => []
+              | SOME target => [("target", target)]) @
+             named_terms "argument/" args @ occurrence_terms @
+             List.map #2 emitted,
+           scope = HOLset.listItems (#asserted_hyps state) @ #scope_hyps state,
+           definitions = List.map #1 emitted,
+           metadata = premise_metadata @ List.map #3 emitted}
+        end
       fun occurrence_resolution_result () =
         let
           val normalized = ref false
@@ -19230,7 +19272,10 @@ local
                    | _ => UnavailableProvenance
                        "datatype equality lacks its exact result argument"
                in exact_result provenance theorem end
-           | "resolution" => occurrence_resolution_or_fallback ()
+           | "resolution" => SmtReplayObserve.run
+               resolution_observation_inputs
+               (fn (result : replay_result) => #thm result)
+               occurrence_resolution_or_fallback
            | "bool" => opaque ( replay_bool prems conclusion)
            | "arith" => opaque ( replay_arith prems conclusion)
            | "string" => opaque (
