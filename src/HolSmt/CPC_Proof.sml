@@ -1910,6 +1910,32 @@ struct
     provenance : term_provenance
   }
 
+  (* The Core parser right-associates exactly the operands of each source
+     OR application.  Split only that recorded arity; an operand which is
+     itself a disjunction remains one occurrence.  Unavailable provenance
+     never authorizes flattening the already elaborated HOL term. *)
+  fun source_clause_literals ({term, provenance} : located_term) =
+    let
+      fun operands 1 tm = SOME [tm]
+        | operands count tm =
+            if count < 2 then NONE
+            else case Lib.total boolSyntax.dest_disj tm of
+              SOME (left, right) => Option.map (fn rest => left :: rest)
+                (operands (count - 1) right)
+            | NONE => NONE
+    in
+      if Term.type_of term <> Type.bool then NONE
+      else case provenance of
+        ApplicationProvenance ("or", children) =>
+          operands (List.length children) term
+      | UnavailableProvenance _ => NONE
+      | AmbiguousProvenance _ => NONE
+      | AtomicProvenance =>
+          if boolSyntax.is_disj term then NONE
+          else SOME (if Term.aconv term boolSyntax.F then [] else [term])
+      | _ => SOME [term]
+    end
+
   type step = {
     id : string,
     conclusion : located_term option,

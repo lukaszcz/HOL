@@ -432,7 +432,8 @@ local
 
   type replay_result = {
     thm : Thm.thm,
-    located : located_term
+    located : located_term,
+    clause : SmtClause.clause option
   }
 
   type replayed_step = {
@@ -452,9 +453,24 @@ local
 
   fun step_provenance step = #provenance (step_located step)
 
+  fun clause_from_located theorem (located : located_term) =
+    if not (Term.aconv (Thm.concl theorem) (#term located)) then NONE
+    else Option.map (fn literals => SmtClause.from_literals literals theorem)
+      (source_clause_literals located)
+
+  fun clause_result reason clause : replay_result =
+    let val theorem = SmtClause.theorem clause in
+      {thm = theorem,
+       located = {term = Thm.concl theorem,
+         provenance = UnavailableProvenance reason},
+       clause = SOME clause}
+    end
+
   fun exact_result provenance theorem : replay_result =
     let
       val term = Thm.concl theorem
+      val clause = clause_from_located theorem
+        {term = term, provenance = provenance}
       val provenance =
         case provenance of
           UnavailableProvenance reason =>
@@ -473,7 +489,8 @@ local
                 "exact provenance exceeds the compact metadata budget"
             else exact
     in
-      {thm = theorem, located = {term = term, provenance = provenance}}
+      {thm = theorem, located = {term = term, provenance = provenance},
+       clause = clause}
     end
 
   fun unavailable_result reason theorem =
@@ -485,12 +502,14 @@ local
   fun raw_unavailable_result reason theorem = {
     thm = theorem,
     located = {term = Thm.concl theorem,
-      provenance = UnavailableProvenance reason}
+      provenance = UnavailableProvenance reason},
+    clause = NONE
   }
 
   fun located_result where_ theorem (located : located_term) =
     if Term.aconv (Thm.concl theorem) (#term located) then
-      {thm = theorem, located = located}
+      {thm = theorem, located = located,
+       clause = clause_from_located theorem located}
     else raise ERR where_
       ("CPC theorem/result provenance mismatch: theorem=" ^
        Library.term_to_string (Thm.concl theorem) ^ "; located=" ^
@@ -568,7 +587,8 @@ local
        installing this synchronized theorem/provenance pair. *)
     val result = {thm = theorem,
       located = {term = #term located,
-        provenance = compact_live_provenance (#provenance located)}}
+        provenance = compact_live_provenance (#provenance located)},
+      clause = #clause result}
   in {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = #scope_hyps state,
@@ -6199,7 +6219,7 @@ local
   fun real_div_reordering_conv strong_canon = compose_normal_form_conv
     expand_real_div_conv strong_canon
 
-  fun replay_cnf name args =
+  fun replay_cnf_with_literals name args =
     let
       fun implication tm = boolSyntax.dest_imp tm
       fun equality tm = boolSyntax.dest_eq tm
@@ -6244,70 +6264,70 @@ local
                   "CPC cnf_or_neg index is outside the disjunction"
             end
         | _ => raise ERR name "expected disjunction and index"
-      val conclusion =
+      val literals =
         case (name, args) of
           ("cnf_implies_neg1", [imp]) =>
-            let val (left, _) = implication imp in mk_disj_terms [left, imp] end
+            let val (left, _) = implication imp in [left, imp] end
         | ("cnf_implies_neg2", [imp]) =>
-            let val (_, right) = implication imp in mk_disj_terms [neg right, imp] end
+            let val (_, right) = implication imp in [neg right, imp] end
         | ("cnf_implies_pos", [imp]) =>
             let val (left, right) = implication imp
-            in mk_disj_terms [neg left, right, neg imp] end
+            in [neg left, right, neg imp] end
         | ("cnf_and_pos", as_) =>
             let val conjunction = List.hd as_
-            in mk_disj_terms [indexed_and as_, neg conjunction] end
+            in [indexed_and as_, neg conjunction] end
         | ("cnf_and_neg", [conjunction]) =>
-            mk_disj_terms (conjunction ::
+            (conjunction ::
               List.map neg (strip_conjunction conjunction))
         | ("cnf_or_neg", as_) =>
             let val disjunction = List.hd as_
-            in mk_disj_terms [disjunction, neg (indexed_or as_)] end
+            in [disjunction, neg (indexed_or as_)] end
         | ("cnf_or_pos", [disjunction]) =>
-            mk_disj_terms
               (boolSyntax.mk_neg disjunction :: strip_disjunction disjunction)
         | ("cnf_equiv_neg1", [eq]) =>
             let val (left, right) = equality eq
-            in mk_disj_terms [left, right, eq] end
+            in [left, right, eq] end
         | ("cnf_equiv_neg2", [eq]) =>
             let val (left, right) = equality eq
-            in mk_disj_terms [neg left, neg right, eq] end
+            in [neg left, neg right, eq] end
         | ("cnf_equiv_pos1", [eq]) =>
             let val (left, right) = equality eq
-            in mk_disj_terms [neg left, right, neg eq] end
+            in [neg left, right, neg eq] end
         | ("cnf_equiv_pos2", [eq]) =>
             let val (left, right) = equality eq
-            in mk_disj_terms [left, neg right, neg eq] end
+            in [left, neg right, neg eq] end
         | ("cnf_xor_pos1", [x]) =>
             let val (left, right) = xor x
-            in mk_disj_terms [neg x, left, right] end
+            in [neg x, left, right] end
         | ("cnf_xor_pos2", [x]) =>
             let val (left, right) = xor x
-            in mk_disj_terms [neg x, neg left, neg right] end
+            in [neg x, neg left, neg right] end
         | ("cnf_xor_neg1", [x]) =>
             let val (left, right) = xor x
-            in mk_disj_terms [x, neg left, right] end
+            in [x, neg left, right] end
         | ("cnf_xor_neg2", [x]) =>
             let val (left, right) = xor x
-            in mk_disj_terms [x, left, neg right] end
+            in [x, left, neg right] end
         | ("cnf_ite_pos1", [if_term]) =>
             let val (condition, then_term, _) = ite if_term
-            in mk_disj_terms [neg if_term, neg condition, then_term] end
+            in [neg if_term, neg condition, then_term] end
         | ("cnf_ite_pos2", [if_term]) =>
             let val (condition, _, else_term) = ite if_term
-            in mk_disj_terms [neg if_term, condition, else_term] end
+            in [neg if_term, condition, else_term] end
         | ("cnf_ite_pos3", [if_term]) =>
             let val (_, then_term, else_term) = ite if_term
-            in mk_disj_terms [neg if_term, then_term, else_term] end
+            in [neg if_term, then_term, else_term] end
         | ("cnf_ite_neg1", [if_term]) =>
             let val (condition, then_term, _) = ite if_term
-            in mk_disj_terms [if_term, neg condition, neg then_term] end
+            in [if_term, neg condition, neg then_term] end
         | ("cnf_ite_neg2", [if_term]) =>
             let val (condition, _, else_term) = ite if_term
-            in mk_disj_terms [if_term, condition, neg else_term] end
+            in [if_term, condition, neg else_term] end
         | ("cnf_ite_neg3", [if_term]) =>
             let val (_, then_term, else_term) = ite if_term
-            in mk_disj_terms [if_term, neg then_term, neg else_term] end
+            in [if_term, neg then_term, neg else_term] end
         | _ => raise ERR name "unsupported CPC CNF rule argument shape"
+      val conclusion = mk_disj_terms literals
       fun clause_from_implication implication =
         let
           val (premise, consequent) =
@@ -6462,7 +6482,7 @@ local
               clause_from_implication inclusion
             end
         | _ => raise ERR name "expected disjunction and index"
-    in
+      val theorem =
       if name = "cnf_and_pos" then cnf_and_pos_prove ()
       else if name = "cnf_and_neg" then
         schematic_tree_clause boolSyntax.dest_conj boolSyntax.mk_conj
@@ -6481,7 +6501,9 @@ local
             (Tactic.COND_CASES_TAC,
              tautLib.TAUT_TAC))
       else tautology name conclusion
-    end
+    in (theorem, literals) end
+
+  fun replay_cnf name args = #1 (replay_cnf_with_literals name args)
 
   fun replay_not_equiv_elim which prems =
     let
@@ -18305,6 +18327,138 @@ local
                 "; arguments=" ^ String.concatWith "; "
                   (List.map Library.term_to_string args)))
         end
+      fun occurrence_resolution_result () =
+        let
+          val normalized = ref false
+          val needs_normalization = ref false
+          val normalize_literals = SmtClause.new_normalizer
+            SmtReplayCanon.cpc_operand_canon_conv
+          fun normalize_clause clause =
+            if not (!normalized) then clause
+            else let
+              val (literals, bridge) = normalize_literals
+                (SmtClause.literals clause)
+            in SmtClause.from_literals literals
+              (Thm.EQ_MP bridge (SmtClause.theorem clause)) end
+          fun decline reason =
+            (if reason = "literal-alignment" orelse reason = "binary-pivot"
+             then needs_normalization := true else ();
+             profile_event ("CPC(occurrence-decline:" ^ reason ^ ")"); NONE)
+          fun clauses [] = SOME []
+            | clauses (premise :: rest) =
+                case (#clause (#result premise), clauses rest) of
+                  (SOME clause, SOME tail) => SOME (normalize_clause clause :: tail)
+                | _ => NONE
+          fun signed polarity pivot =
+            let val literal =
+              if Term.type_of pivot <> Type.bool then NONE
+              else if Term.aconv polarity boolSyntax.T then SOME pivot
+              else if Term.aconv polarity boolSyntax.F then
+                SOME (case Lib.total boolSyntax.dest_neg pivot of
+                  SOME body => body | NONE => boolSyntax.mk_neg pivot)
+              else NONE
+            in Option.map (fn term => if not (!normalized) then term
+              else List.hd (#1 (normalize_literals [term]))) literal end
+          fun pivots [] [] = SOME []
+            | pivots (polarity :: polarities) (pivot :: terms) =
+                (case (signed polarity pivot, pivots polarities terms) of
+                   (SOME literal, SOME tail) => SOME (literal :: tail)
+                 | _ => NONE)
+            | pivots _ _ = NONE
+          fun finish target clause =
+            case target of
+              NONE => SOME (clause_result
+                "annotated resolution has explicit occurrences" clause)
+            | SOME located =>
+                (case source_clause_literals located of
+                   NONE => decline "target-boundaries"
+                 | SOME literals =>
+                     let
+                       val (target_literals, bridge) =
+                         if !normalized then normalize_literals literals
+                         else (literals, Thm.REFL (SmtClause.term literals))
+                     in case SmtClause.align target_literals clause of
+                         NONE => decline "literal-alignment"
+                       | SOME aligned => SOME (clause_result
+                           "annotated resolution has explicit occurrences"
+                           (SmtClause.from_literals literals
+                             (Thm.EQ_MP (Thm.SYM bridge)
+                               (SmtClause.theorem aligned)))) end)
+          fun chain target annotations premises =
+            let val count = List.length premises - 1 in
+              if count < 1 orelse List.length annotations <> 2 * count then
+                decline "annotation-arity"
+              else case (pivots (List.take (annotations, count))
+                  (List.drop (annotations, count)),
+                  source_clause_literals target) of
+                (NONE, _) => decline "polarity"
+              | (_, NONE) => decline "target-boundaries"
+              | (SOME signed_pivots, SOME target_literals) =>
+                  let
+                    val (destination, bridge) = if !normalized then
+                        normalize_literals target_literals
+                      else (target_literals,
+                        Thm.REFL (SmtClause.term target_literals))
+                  in case SmtClause.resolve_chain
+                      {pivots = signed_pivots, premises = premises,
+                       target = SOME destination} of
+                      NONE => decline "literal-alignment"
+                    | SOME aligned => SOME (clause_result
+                        "annotated resolution has explicit occurrences"
+                        (SmtClause.from_literals target_literals
+                          (Thm.EQ_MP (Thm.SYM bridge)
+                            (SmtClause.theorem aligned))))
+                  end
+            end
+          fun run () = case clauses premise_steps of
+            NONE => decline "premise-boundaries"
+          | SOME clause_prems =>
+              case (located_args, args, clause_prems) of
+                ([_, _], [polarity, pivot], [first, second]) =>
+                  (case signed polarity pivot of
+                     NONE => decline "polarity"
+                   | SOME literal =>
+                       let
+                         val opposite = case Lib.total boolSyntax.dest_neg
+                             literal of SOME body => body
+                           | NONE => boolSyntax.mk_neg literal
+                       in
+                         if not (SmtClause.contains literal first andalso
+                             SmtClause.contains opposite second) then
+                           decline "binary-pivot"
+                         else case SmtClause.resolve_chain
+                             {pivots = [literal], premises = [first, second],
+                              target = NONE} of
+                           NONE => decline "binary-pivot"
+                         | SOME result => finish located_conclusion result
+                       end)
+              | (target :: _, _ :: annotations, _) =>
+                  if Option.getOpt (Option.map (fn located =>
+                      not (Term.aconv (#term located) (#term target)))
+                      located_conclusion, false) then
+                    decline "conflicting-targets"
+                  else chain target annotations clause_prems
+              | _ => decline "annotations"
+        in
+          case run () of
+            SOME result => SOME result
+          | NONE => if not (!needs_normalization) then NONE
+            else if List.length args = 2 andalso
+                not (Option.isSome located_conclusion) then
+              decline "normalization-without-target"
+            else (normalized := true;
+              profile "CPC(rung:resolution/normalized_occurrences)" run ())
+        end
+      fun occurrence_resolution_or_fallback () =
+        case profile "CPC(rung:resolution/occurrences)"
+            (fn () => occurrence_resolution_result ()
+              handle Feedback.HOL_ERR holerr =>
+                if SmtResource.is_resource_gate holerr then
+                  raise Feedback.HOL_ERR holerr
+                else (profile_event "CPC(occurrence-decline:conversion)";
+                  NONE)) () of
+          SOME result => result
+        | NONE => opaque (canonical_resolution ())
       fun canonical_reordering () =
         let
           val target = expect_one_arg "reordering" args
@@ -19019,20 +19173,58 @@ local
                    | exact => exact
                in exact_result provenance theorem end
            | "implies_elim" => opaque ( replay_implies_elim prems)
-           | "factoring" => opaque ( replay_factoring prems)
+           | "factoring" =>
+               let
+                 fun pointer_unique [] = []
+                   | pointer_unique (literal :: rest) = literal ::
+                       pointer_unique (List.filter (fn other =>
+                         not (Portable.pointer_eq (literal, other))) rest)
+                 val direct = case premise_steps of
+                     [premise] =>
+                       (case #clause (#result premise) of
+                          SOME clause =>
+                            if List.exists boolSyntax.is_disj
+                                (SmtClause.literals clause) then NONE
+                            else SmtClause.align
+                              (pointer_unique (SmtClause.literals clause))
+                              clause
+                        | NONE => NONE)
+                   | _ => NONE
+               in case direct of
+                   SOME clause => clause_result
+                     "factoring has explicit occurrences" clause
+                 | NONE => opaque (replay_factoring prems)
+               end
            | "reordering" =>
                let
-                 val theorem = replay_reordering prems args
-                   handle Feedback.HOL_ERR _ => canonical_reordering ()
-               in
-                 raw_unavailable_result
-                   "CPC clause reordering has no reusable occurrence provenance"
-                   theorem
+                 val direct = case (premise_steps, located_args) of
+                     ([premise], [target]) =>
+                       (case (#clause (#result premise),
+                              source_clause_literals target) of
+                          (SOME clause, SOME literals) =>
+                            SmtClause.align literals clause
+                        | _ => NONE)
+                   | _ => NONE
+               in case direct of
+                   SOME clause => clause_result
+                     "reordering has explicit occurrences" clause
+                 | NONE =>
+                     let
+                       val theorem = replay_reordering prems args
+                         handle Feedback.HOL_ERR holerr =>
+                           if SmtResource.is_resource_gate holerr then
+                             raise Feedback.HOL_ERR holerr
+                           else canonical_reordering ()
+                     in raw_unavailable_result
+                       "CPC clause reordering lacks explicit occurrences"
+                       theorem end
                end
            | "exists_elim" => opaque ( replay_rare_rewrite "exists-elim" args)
-           | "cnf" => raw_unavailable_result
-               "CPC CNF clause has no reusable occurrence provenance"
-               (replay_cnf (#name rule) args)
+           | "cnf" =>
+               let val (theorem, literals) =
+                 replay_cnf_with_literals (#name rule) args
+               in clause_result "CPC CNF clause has explicit occurrences"
+                 (SmtClause.from_literals literals theorem) end
            | "not_equiv_elim1" => opaque ( replay_not_equiv_elim "not_equiv_elim1" prems)
            | "not_equiv_elim2" => opaque ( replay_not_equiv_elim "not_equiv_elim2" prems)
            | "equiv_elim2" => opaque ( replay_equiv_elim2 conclusion prems)
@@ -19222,7 +19414,7 @@ local
                    | _ => UnavailableProvenance
                        "datatype equality lacks its exact result argument"
                in exact_result provenance theorem end
-           | "resolution" => opaque ( canonical_resolution ())
+           | "resolution" => occurrence_resolution_or_fallback ()
            | "bool" => opaque ( replay_bool prems conclusion)
            | "arith" => opaque ( replay_arith prems conclusion)
            | "string" => opaque (
@@ -19272,9 +19464,14 @@ local
               " produced a conclusion different from its certificate")) ()
       val result = case located_conclusion of
           SOME located =>
-            (case result_provenance result of
-               UnavailableProvenance _ => result
-             | _ => {thm = theorem, located = located})
+            let
+              val clause = case clause_from_located theorem located of
+                  SOME exact => SOME exact
+                | NONE => #clause result
+              val located = case result_provenance result of
+                  UnavailableProvenance _ => result_located result
+                | _ => located
+            in {thm = theorem, located = located, clause = clause} end
         | NONE => result
       val state = cache_step state id (#name rule) result
       val state =

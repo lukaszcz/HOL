@@ -27571,6 +27571,202 @@ fun run_cnf_graph_unittests () =
      ("z3_e0_replay_measurement_reserved_snapshot_success",
        z3_e0_replay_measurement_reserved_snapshot_success)]
 
+fun cpc_clause_producer_occurrences_success () =
+  let
+    val declarations = "(declare-const p Bool) (declare-const q Bool) \
+      \(declare-const r Bool) (declare-const s Bool) "
+    fun check body expected expected_hypotheses =
+      let
+        val proof = parse_cpc_proof_string ("(" ^ declarations ^ body ^ ")")
+        val _ = Profile.reset_all ()
+        val theorem = CPC_ProofReplay.replay_root_for_test proof
+        val _ = assert (Thm.concl theorem ~~ expected,
+          "occurrence producer replay changed its endpoint")
+        val _ = assert (List.length (Thm.hyp theorem) = expected_hypotheses,
+          "occurrence producer replay changed its hypotheses")
+        val _ = assert
+          (cpc_profile_call_count "CPC(rung:resolution/occurrences)" > 0 andalso
+           cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" = 0,
+           "supported occurrence chain entered the secondary proof ladder")
+      in check_oracle_tags "CPC clause occurrence producers" theorem end
+    val _ = check
+      "(assume @a (let ((whole (or p q))) (or whole r))) \
+      \(assume @b (not (or p q))) \
+      \(step @out :rule chain_m_resolution :premises (@a @b) \
+      \:args (r (@list true) (@list (or p q))))" ``r:bool`` 2
+    val _ = check
+      "(assume @a (or p q (or r s))) (assume @b (not (or r s))) \
+      \(step @out :rule chain_m_resolution :premises (@a @b) \
+      \:args ((or q p) (@list true) (@list (or r s))))" ``q \/ p`` 2
+    val _ = check
+      "(step @cnf :rule cnf_implies_pos :args ((=> p q))) \
+      \(step @order :rule reordering :premises (@cnf) \
+      \:args ((or q (not p) (not (=> p q))))) \
+      \(assume @p p) (assume @imp (=> p q)) \
+      \(step @out :rule chain_m_resolution :premises (@order @p @imp) \
+      \:args (q (@list false false) (@list p (=> p q))))" ``q:bool`` 2
+    val _ = check
+      "(assume @a (or p p q)) \
+      \(step @factor :rule factoring :premises (@a)) \
+      \(step @order :rule reordering :premises (@factor) :args ((or q p))) \
+      \(assume @np (not p)) \
+      \(step @out :rule chain_m_resolution :premises (@order @np) \
+      \:args (q (@list true) (@list p)))" ``q:bool`` 2
+    val _ = check
+      "(assume @p p) (assume @np (not p)) \
+      \(step @out :rule resolution :premises (@p @np) :args (true p))"
+      boolSyntax.F 2
+    val _ = check
+      "(assume @a (or p q p)) (assume @np (not p)) \
+      \(step @out :rule resolution :premises (@a @np) :args (true p))"
+      ``q \/ p`` 2
+    val _ = check
+      "(assume @a q) (assume @unused (or p r)) \
+      \(step @out :rule chain_m_resolution :premises (@a @unused) \
+      \:args ((or q s) (@list true) (@list p)))" ``q \/ s`` 2
+    val compound = ``p \/ q``
+    val _ = List.app (fn provenance => assert
+      (not (Option.isSome (CPC_Proof.source_clause_literals
+        {term = compound, provenance = provenance})),
+       "unavailable source provenance authorized clause flattening"))
+      [CPC_Proof.UnavailableProvenance "test",
+       CPC_Proof.AmbiguousProvenance "test", CPC_Proof.AtomicProvenance]
+  in () end
+
+fun cpc_clause_normalization_success () =
+  let
+    val p = ``p:bool``
+    val q = ``q:bool``
+    val conversions = ref 0
+    fun conversion term =
+      (conversions := !conversions + 1;
+       Rewrite.REWRITE_CONV [boolTheory.NOT_CLAUSES] term)
+    fun check reuse capacity =
+      let
+        val _ = conversions := 0
+        val normalize = SmtClause.new_normalizer_using
+          {reuse = reuse, capacity = capacity, conversion = conversion}
+        val (literals, bridge) = normalize [``~~p:bool``, q, ``~~p:bool``]
+        val _ = assert (ListPair.allEq (fn (a, b) => a ~~ b)
+          (literals, [p, q, p]), "normalization changed literal boundaries")
+        val _ = assert (boolSyntax.lhs (Thm.concl bridge) ~~
+          SmtClause.term [``~~p:bool``, q, ``~~p:bool``] andalso
+          boolSyntax.rhs (Thm.concl bridge) ~~ SmtClause.term [p, q, p]
+          andalso List.null (Thm.hyp bridge), "incorrect normalization bridge")
+        val _ = assert (!conversions =
+          (if reuse andalso capacity > 1 then 2 else 3),
+          "normalization reuse/eviction did not preserve conversion work")
+      in check_oracle_tags "CPC clause normalization" bridge end
+    val _ = check true 8
+    val _ = check true 1
+    val _ = check false 8
+    val _ = check true 0
+    fun terminal injected matches =
+      let val normalize = SmtClause.new_normalizer (fn _ => raise injected)
+      in case Exn.capture normalize [p] of
+          Exn.Exn actual => assert (matches actual,
+            "normalization changed a terminal exception")
+        | _ => die "normalization cached a terminal exception as a decline"
+      end
+    val _ = terminal Interrupt (fn Interrupt => true | _ => false)
+    val _ = terminal (Timeout.TIMEOUT Time.zeroTime)
+      (fn Timeout.TIMEOUT _ => true | _ => false)
+    val _ = terminal
+      (Feedback.mk_HOL_ERR "SmtResource" "normalization test"
+        "resource-gated: injected")
+      (fn HOL_ERR holerr => SmtResource.is_resource_gate holerr | _ => false)
+    val proof = parse_cpc_proof_string
+      "((declare-const p Bool) (declare-const q Bool) \
+      \(assume @a (not (not p))) (assume @b (or (not p) q)) \
+      \(step @out :rule chain_m_resolution :premises (@a @b) \
+      \:args (q (@list true) (@list p))))"
+    val _ = Profile.reset_all ()
+    val theorem = CPC_ProofReplay.replay_root_for_test proof
+    val _ = assert (Thm.concl theorem ~~ q andalso
+      List.length (Thm.hyp theorem) = 2, "normalized chain changed its contract")
+    val _ = assert
+      (cpc_profile_call_count "CPC(rung:resolution/normalized_occurrences)" = 1
+       andalso cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" = 0,
+       "normalized occurrence chain entered the secondary proof ladder")
+  in check_oracle_tags "normalized CPC occurrence chain" theorem end
+
+fun cpc_clause_occurrences_success () =
+  let
+    val p = ``p:bool``
+    val q = ``q:bool``
+    val r = ``r:bool``
+    val np = boolSyntax.mk_neg p
+    fun clause literals = SmtClause.from_literals literals
+      (Thm.ASSUME (SmtClause.term literals))
+    fun check literals result =
+      let val theorem = SmtClause.theorem result in
+        assert (Thm.concl theorem ~~ SmtClause.term literals,
+          "clause checker changed its endpoint");
+        assert (ListPair.allEq (fn (left, right) => left ~~ right)
+          (literals, SmtClause.literals result), "clause occurrences changed");
+        check_oracle_tags "ordered clause checker" theorem
+      end
+    fun resolution pivot left right expected =
+      case SmtClause.resolve pivot (clause left) (clause right) of
+        NONE => die "valid occurrence resolution declined"
+      | SOME result =>
+          (check expected result;
+           assert (HOLset.equal (Thm.hypset (SmtClause.theorem result),
+             HOLset.union (Thm.hypset (SmtClause.theorem (clause left)),
+               Thm.hypset (SmtClause.theorem (clause right)))),
+             "resolution changed premise hypotheses"))
+    val _ = List.app (fn (left, right, expected) =>
+      resolution p left right expected)
+      [([p], [np], []), ([p, q], [np], [q]),
+       ([q, p], [r, np], [q, r]),
+       ([q, r, p], [np, r, q], [q, r, r, q]),
+       ([p, p], [np, np], [p, np]),
+       ([p, q, p], [np], [q, p]),
+       ([p, boolSyntax.F], [np, q], [boolSyntax.F, q])]
+    val _ = resolution np [q, np] [p, r] [q, r]
+    val compound = boolSyntax.mk_disj (p, q)
+    val _ = resolution compound [r, compound]
+      [boolSyntax.mk_neg compound] [r]
+    val _ = assert (not (Option.isSome
+      (SmtClause.resolve p (clause [compound]) (clause [np]))),
+      "resolution flattened a disjunction used as one literal")
+    val _ = check [q, p]
+      (Option.valOf (SmtClause.align [q, p] (clause [p, q, p])))
+    val _ = check [q]
+      (Option.valOf (SmtClause.align [q] (clause [boolSyntax.F, q])))
+    val _ = check [r] (Option.valOf (SmtClause.align [r] (clause [])))
+    val _ = assert (not (Option.isSome
+      (SmtClause.align [p] (clause [p, q]))),
+      "occurrence alignment accepted an invalid strengthening")
+    val _ = check [compound, p]
+      (SmtClause.factor (clause [compound, p, compound, p]))
+    val _ = check [q] (SmtClause.resolve_or_weaken p
+      (clause [p, r]) (clause [q]))
+    val _ = check [] (SmtClause.resolve_or_weaken p
+      (clause [np]) (clause [p]))
+    val original = ``!x:bool. x``
+    val renamed = ``!y:bool. y``
+    val _ = check [renamed]
+      (Option.valOf (SmtClause.align [renamed] (clause [original])))
+    val _ = assert (not (SmtClause.contains ``(f:num -> bool) (x:num)``
+      (clause [``(f:bool -> bool) (x:bool)``])),
+      "clause index conflated same names at different types")
+    fun chain length =
+      let
+        fun atom index = Term.mk_var ("chain" ^ Int.toString index, Type.bool)
+        fun advance (index, current) = Option.valOf (SmtClause.resolve
+          (atom index) current (clause
+            [boolSyntax.mk_neg (atom index), atom (index + 1)]))
+        val result = List.foldl advance (clause [atom 0])
+          (List.tabulate (length, fn index => index))
+      in check [atom length] result end
+    val _ = List.app chain [1, 17, 257]
+    val _ = case Exn.capture (fn () => SmtClause.from_literals
+        [p, q] (Thm.ASSUME p)) () of
+        Exn.Exn (HOL_ERR _) => ()
+      | _ => die "clause constructor accepted an incorrect theorem connection"
+  in () end
+
 fun cpc_disjunction_planning_success () =
   let
     val p = ``p:bool``
@@ -27729,6 +27925,9 @@ fun cpc_long_structural_resolution_success () =
       "long structural resolution did not prove false")
     val _ = assert (List.length (Thm.hyp theorem) = count + 2,
       "long structural resolution lost premise hypotheses")
+    val _ = assert
+      (cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" = 0,
+       "long supported occurrence chain used the secondary proof ladder")
   in check_oracle_tags "CPC long structural resolution" theorem end
 
 fun cpc_long_refutation_widening_success () =
@@ -28268,6 +28467,10 @@ let
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",
       cpc_proof_parser_version_resolution_success),
+    ("cpc_clause_producer_occurrences_success",
+      cpc_clause_producer_occurrences_success),
+    ("cpc_clause_normalization_success", cpc_clause_normalization_success),
+    ("cpc_clause_occurrences_success", cpc_clause_occurrences_success),
     ("cpc_disjunction_planning_success", cpc_disjunction_planning_success),
     ("cpc_disjunction_planning_exceptions",
       cpc_disjunction_planning_exceptions),
