@@ -10,6 +10,23 @@ open satCommonTools dimacsTools satTheory
 
 in
 
+(* One switch is shared with minisatProve's opt-in HolSatLib profile. *)
+val sat_profile = ref false
+fun profile_stage name action input =
+    if !sat_profile then
+      Profile.profile_with_exn_name ("HolSat(" ^ name ^ ")") action input
+    else action input
+val replay_counts = ref ([] : (string * int) list)
+fun count name amount =
+    if not (!sat_profile) then () else
+      let val prior = case List.find (fn (saved, _) => saved = name)
+          (!replay_counts) of SOME (_, value) => value | NONE => 0 in
+        replay_counts := (name, prior + amount) ::
+          List.filter (fn (saved, _) => saved <> name) (!replay_counts)
+      end
+fun reset_replay_counts () = replay_counts := []
+fun get_replay_counts () = !replay_counts
+
 fun l2hh (h0::h1::t) = (h0,h1,t)
   | l2hh _ = raise Match
 
@@ -121,14 +138,16 @@ fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
              TextIO.flushOut TextIO.stdOut)
           else ()
         val _ = trace "discharge start"
-        val discharged = DISCH conjunction th
+        val discharged = profile_stage "replay-finish/discharge"
+          (DISCH conjunction) th
         val _ = trace "discharge done"
         val insts = RBM.foldl
           (fn (variable, term, result) =>
             (variable |-> term) :: result) [] lfn
         val _ = trace ("instantiate start count=" ^
           Int.toString (List.length insts))
-        val instantiated = INST insts discharged
+        val instantiated = profile_stage "replay-finish/instantiate"
+          (INST insts) discharged
         val _ = trace "instantiate done"
         val roots = Array.foldr
           (fn ((_, theorem), result) => theorem :: result) [] clauseth
@@ -141,9 +160,11 @@ fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
                   (balanced_theorems (List.take (theorems, half)))
                   (balanced_theorems (List.drop (theorems, half)))
               end
-        val premise = balanced_theorems roots
+        val premise = profile_stage "replay-finish/premises"
+          balanced_theorems roots
         val _ = trace "premise done"
-        val result = MP instantiated premise
+        val result = profile_stage "replay-finish/apply"
+          (MP instantiated) premise
         val _ = trace "MP done"
       in result end
 end
@@ -196,6 +217,11 @@ fun resolveChain lfn sva cl (nl,lnl) rci =
         val r1 = resolveClause lfn sva cl vi r0 c1i
         val res = List.foldl (fn ((vi,ci),th) =>
                                  resolveClause lfn sva cl vi th ci) r1 nlt
+        (* Dual clauses carry their surviving literals as hypotheses, plus
+           the root context.  Count these as such rather than claim they
+           are ordinary clause literals.  This walk is diagnostic only. *)
+        val _ = if not (!sat_profile) then () else
+          count "derived-dual-hypotheses" (List.length (hyp res))
         val _ = Dynarray.update(cl,rci,res)
     in () end
 

@@ -95,6 +95,8 @@ fun getIntBranch fin id h =
 (* the var component of the first pair is a dummy value ~1 *)
 fun addBranch lfn cl sva fin tc id =
     let val (br,brl) = getIntBranch fin id (id-(rshift tc))
+        val _ = if brl <= 1 then () else
+          (count "derived-clauses" 1; count "resolution-edges" (brl - 1))
         val res = if brl=1 (*(tl br = []) *)
                   then false (* delete *)
                   else
@@ -128,6 +130,9 @@ fun addClause lfn roots cl sva vc clauseth fin lit1 id =
     let val orc = (rshift lit1)-1
           (*-1 because right now orc's in proof log start at 1*)
         val l = getIntRoot fin (sat_getint fin)
+        val _ = if not (!sat_profile) then () else
+          (count "root-clauses" 1;
+           count "root-literal-occurrences" (List.length l))
           (*val _ = (print "\nR ";
                      print(int_to_string orc ^ "~" ^ int_to_string id)^ ": ");
                      List.app (fn i => print (int_to_string i ^ " ")) l) *)
@@ -186,14 +191,17 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
              TextIO.flushOut TextIO.stdOut)
           else ()
         val _ = trace "resolution roots start"
-        val roots = minisatResolve.root_context clauseth
+        val roots = profile_stage "replay-roots"
+          minisatResolve.root_context clauseth
         val _ = trace "resolution roots done"
         val _ = trace "resolution trace start"
-    in case parseTrace roots cl sva nr fname solver vc clauseth lfn proof of
+    in case profile_stage "replay-trace"
+        (parseTrace roots cl sva nr fname solver vc clauseth lfn) proof of
            SOME id =>
              let val _ = trace "resolution trace done"
-                 val result = minisatResolve.finish_resolution roots lfn
-                   clauseth (Dynarray.sub(cl,id-1))
+                 val result = profile_stage "replay-finish"
+                   (minisatResolve.finish_resolution roots lfn clauseth)
+                   (Dynarray.sub(cl,id-1))
                  val _ = trace "resolution finish done"
              in SOME result end
          | NONE => NONE

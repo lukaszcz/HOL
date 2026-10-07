@@ -21,7 +21,7 @@ val sat_limit = ref 100
   (* if > sat_limit clauses then interactive warning if using SML prover *)
 val _ = register_btrace ("HolSatLib_warn",sat_warn);
 
-val sat_profile = ref false
+val sat_profile = minisatResolve.sat_profile
 val _ = register_btrace ("HolSatLib_profile", sat_profile)
 fun profile_stage name action input =
     if !sat_profile then
