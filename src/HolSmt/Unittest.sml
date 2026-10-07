@@ -20499,6 +20499,100 @@ in
     "node-cache observer lost partial events when the skeleton declined")
 end
 
+fun replay_attempt_reuse_success () =
+let
+val p = ``p:bool``;
+val q = ``q:bool``;
+val calls = ref 0;
+fun schema source target () =
+  (calls := !calls + 1;
+   if Term.aconv source target then Thm.DISCH source (Thm.ASSUME source)
+   else HolSatLib.SAT_PROVE_ONLY (boolSyntax.mk_imp (source, target)));
+fun cache enabled capacity = SmtReplayAttempt.new
+  {enabled = enabled, capacity = capacity, hash = fn _ => 0};
+fun run (memo : SmtReplayAttempt.cache) procedure source target = #run memo
+  {procedure = procedure, source = source, target = target,
+   prove = schema source target};
+
+val memo = cache true 8;
+val _ = run memo "raw" p p;
+val law = run memo "raw" p p;
+val _ = assert (!calls = 1 andalso #hits (#statistics memo ()) = 1,
+  "closed schema was not reused");
+val theorem = Thm.MP law (Thm.CONJUNCT1 (Thm.CONJ (Thm.ASSUME p) (Thm.ASSUME q)));
+val _ = assert (List.length (Thm.hyp theorem) = 2,
+  "schema reuse discarded the actual premise hypotheses");
+val _ = Library.check_oracle_tags "CpcAttempt" "schema application" theorem;
+val _ = run memo "word-normalized" p p;
+val _ = assert (!calls = 2, "raw and word-normalized procedures conflated");
+fun decline () = ignore (run memo "raw" p q);
+val _ = List.app (fn _ => case Exn.capture decline () of
+    Exn.Exn (HolSatLib.SAT_satisfiable _) => ()
+  | _ => die "ordinary SAT decline changed category") [(), ()];
+val _ = assert (!calls = 3, "ordinary SAT decline repeated the procedure");
+val old = ``!x:bool. x``;
+val renamed = ``!y:bool. y``;
+val _ = run memo "raw" old old;
+val _ = run memo "raw" renamed renamed;
+val _ = assert (!calls = 4, "alpha-equivalent schema was not reused");
+val numeric = ``(f:num -> bool) (x:num)``;
+val boolean = ``(f:bool -> bool) (x:bool)``;
+val _ = run memo "raw" numeric numeric;
+val _ = run memo "raw" boolean boolean;
+val _ = assert (!calls = 6, "colliding typed atoms shared the wrong schema");
+val _ = List.app (fn _ => case Exn.capture
+    (fn () => run memo "raw" boolSyntax.T boolSyntax.F) () of
+      Exn.Exn (HolSatLib.SAT_cex theorem) =>
+        Library.check_oracle_tags "CpcAttempt" "simplification counterexample"
+          theorem
+    | _ => die "simplification SAT decline changed its constructor") [(), ()];
+val _ = assert (!calls = 7, "simplification SAT decline repeated its attempt");
+val _ = List.app (fn (enabled, capacity) =>
+  let val local_cache = cache enabled capacity
+      val prior_calls = !calls
+      val _ = run local_cache "raw" p p
+      val _ = run local_cache "raw" q q
+      val _ = run local_cache "raw" p p
+  in assert (!calls = prior_calls + 3,
+    "eviction or disabled reuse lost its miss") end)
+  [(true, 1), (true, 0), (false, 8)];
+fun terminal exn classify =
+  let val local_cache = cache true 8
+      val attempted = ref 0
+      fun call () = #run local_cache
+        {procedure = "raw", source = p, target = p,
+         prove = fn () => (attempted := !attempted + 1; raise exn)}
+      val _ = List.app (fn _ => case Exn.capture call () of
+          Exn.Exn error => assert (classify error, "terminal category changed")
+        | _ => die "terminal attempt returned a theorem") [(), ()]
+  in assert (!attempted = 2 andalso #retained (#statistics local_cache ()) = 0,
+    "terminal exception was cached as an ordinary decline") end;
+val _ = terminal Interrupt (fn Interrupt => true | _ => false);
+val _ = terminal (Timeout.TIMEOUT Time.zeroTime)
+  (fn Timeout.TIMEOUT _ => true | _ => false);
+val _ = terminal Conv.UNCHANGED (fn Conv.UNCHANGED => true | _ => false);
+val _ = terminal (Feedback.mk_HOL_ERR "test" "attempt" "unsupported conversion")
+  (fn HOL_ERR _ => true | _ => false);
+val resource = case Exn.capture (fn () => SmtResource.check_term_size
+    "attempt-resource" (SmtResource.max_bitblast_term_nodes + 1)) () of
+    Exn.Exn error => error
+  | _ => raise Fail "resource fixture was not refused";
+val _ = terminal resource
+  (fn HOL_ERR error => SmtResource.is_resource_gate error | _ => false);
+val bad = cache true 8;
+val invalid = ref 0;
+fun bad_schema () = #run bad
+  {procedure = "raw", source = p, target = p,
+   prove = fn () => (invalid := !invalid + 1;
+     Thm.CONJUNCT1 (Thm.CONJ
+       (Thm.DISCH p (Thm.ASSUME p)) (Thm.ASSUME q)))};
+val _ = List.app (fn _ => case Exn.capture bad_schema () of
+    Exn.Exn (HOL_ERR _) => ()
+  | _ => die "cache accepted a schema with hypotheses") [(), ()];
+val _ = assert (!invalid = 2 andalso #retained (#statistics bad ()) = 0,
+  "invalid schema validation was cached as a logical decline");
+in () end
+
 fun circuit_graph_admission_success () =
 let
   val attempts = ref 0
@@ -28090,6 +28184,7 @@ let
     ("cvc_cpc_command_uses_standard_proof",
       cvc_cpc_command_uses_standard_proof),
     ("binder_opening_resource_success", binder_opening_resource_success),
+    ("replay_attempt_reuse_success", replay_attempt_reuse_success),
     ("circuit_graph_admission_success", circuit_graph_admission_success),
     ("circuit_graph_checked_success", circuit_graph_checked_success),
     ("circuit_cnf_checked_success", circuit_cnf_checked_success),

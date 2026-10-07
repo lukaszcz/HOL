@@ -12249,22 +12249,9 @@ local
             in Thm.EQ_MP target_alignment expanded_result end
           val previous_tseitin = ref
             (NONE : (Term.term * Term.term) option)
-          fun semantic_tseitin_atom destination theorem =
+          fun semantic_tseitin_law source destination =
             resolution_profile "tseitin/total" (fn () =>
             let
-              val _ = if not (!resolution_profile_enabled) then ()
-                else
-                  let val source = Thm.concl theorem in
-                    resolution_count "tseitin/attempts" 1;
-                    (case !previous_tseitin of
-                       SOME (prior_source, prior_target) =>
-                         if Portable.pointer_eq (source, prior_source) andalso
-                            Portable.pointer_eq (destination, prior_target)
-                         then resolution_count
-                           "tseitin/consecutive-duplicates" 1 else ()
-                     | NONE => ());
-                    previous_tseitin := SOME (source, destination)
-                  end
               fun unfold_xor term =
                 let
                   val (head, arguments) = boolSyntax.strip_comb term
@@ -12282,7 +12269,6 @@ local
                 {chunk_depth = NONE, stops = [],
                  stop_conversion = fn _ => NONE,
                  leaf = CPC_ProofParser.intern_cpc_term, unfold = unfold_xor}
-              val source = Thm.concl theorem
               val _ = resolution_profile "tseitin/source-circuit"
                 (#circuit graph) source
               val _ = resolution_profile "tseitin/target-circuit"
@@ -12302,14 +12288,45 @@ local
                   resolution_profile ("tseitin/" ^ stage) action ())
                 {definitions = definitions,
                  substitutions = #substitutions graph (), root = root}
-                handle HolSatLib.SAT_satisfiable _ =>
-                  raise ERR "resolution"
-                    "abstract Boolean implication is not valid"
               val _ = Term.aconv (Thm.concl law)
                   (boolSyntax.mk_imp (source, destination)) andalso
                   List.null (Thm.hyp law) orelse
                 raise ERR "resolution" "Boolean graph endpoint mismatch"
-            in resolution_profile "tseitin/apply" (Thm.MP law) theorem end) ()
+            in law end) ()
+          val tseitin_attempts = SmtReplayAttempt.new
+            {enabled = not (Library.no_fastpath ()), capacity = 16,
+             hash = SmtBooleanGraph.hash 4}
+          fun semantic_tseitin_with procedure destination theorem =
+            let
+              val source = Thm.concl theorem
+              val _ = if not (!resolution_profile_enabled) then ()
+                else
+                  let val source = Thm.concl theorem in
+                    resolution_count "tseitin/attempts" 1;
+                    (case !previous_tseitin of
+                       SOME (prior_source, prior_target) =>
+                         if Portable.pointer_eq (source, prior_source) andalso
+                            Portable.pointer_eq (destination, prior_target)
+                         then resolution_count
+                           "tseitin/consecutive-duplicates" 1 else ()
+                     | NONE => ());
+                    previous_tseitin := SOME (source, destination)
+                  end
+              val prior = #statistics tseitin_attempts ()
+              val result = Exn.capture (#run tseitin_attempts)
+                {procedure = procedure, source = source, target = destination,
+                 prove = fn () => semantic_tseitin_law source destination}
+              val current = #statistics tseitin_attempts ()
+              val _ = resolution_count "tseitin/cache-hits"
+                (#hits current - #hits prior)
+              val _ = resolution_count "tseitin/cache-misses"
+                (#misses current - #misses prior)
+              val law = Exn.release result
+                handle HolSatLib.SAT_satisfiable _ =>
+                  raise ERR "resolution"
+                    "abstract Boolean implication is not valid"
+            in resolution_profile "tseitin/apply" (Thm.MP law) theorem end
+          val semantic_tseitin_atom = semantic_tseitin_with "raw"
           fun semantic_word_tseitin destination theorem =
             let
               val memo = ref ([] : (Term.term * Thm.thm) list)
@@ -12342,7 +12359,7 @@ local
               val target_normalized = boolSyntax.rhs
                 (Thm.concl target_conversion)
               val source_theorem = Thm.EQ_MP source_conversion theorem
-              val result = semantic_tseitin_atom target_normalized
+              val result = semantic_tseitin_with "word-normalized" target_normalized
                 source_theorem
             in
               Thm.EQ_MP (Thm.SYM target_conversion) result
