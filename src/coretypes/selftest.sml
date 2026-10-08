@@ -303,6 +303,17 @@ val spvcross2_def =
       |> CONV_RULE (RAND_CONV (SIMP_CONV bool_ss [FORALL_PROD]))
 val _ = test "sum+pair, pair components unused" spvcross2_def
 
+val spvcross3_def0 = new_recursive_definition{
+  name = "spvcross3_def",
+  rec_axiom = sumTheory.sum_Axiom,
+  def = “spvcross3 f (INL x) (p:'a # 'b) = f (FST p) /\
+         spvcross3 f (INR y) p = y”};
+(* both clauses must end up with pair patterns: it is the clause that uses
+   its pattern's variables that keeps the column from being vacuous *)
+val spvcross3_def =
+    spvcross3_def0 |> SIMP_RULE bool_ss [FORALL_PROD, FST]
+val _ = test "sum+pair, pair components used in one clause only" spvcross3_def
+
 
 
 val cpairdef = new_definition("cpairdef", “cpair (f,x) = T”)
@@ -383,8 +394,8 @@ fun bty1 ** bty2 = ftor({Thy="pair", Name="prod"}, [bty1,bty2])
 val _ = List.app testq2bnf [
       ("foo = C num | D", [("foo",constty “:num + unit”)]),
       ("foo = C num foo | D bool | E (foo list)",
-       [("foo", K “:num” ** the_arg ++ K “:bool” ++
-                ftor({Thy="scratch",Name="list"}, [the_arg]))]),
+       [("foo", K “:num” ** the_arg ++
+                (K “:bool” ++ ftor({Thy="scratch",Name="list"}, [the_arg])))]),
       ("foo = C num | D bar ; bar = barC (bool -> foo)",
        [("foo", K“:num” ++ mutrec_var "bar"),
         ("bar", ftor({Thy = "min", Name = "fun"},

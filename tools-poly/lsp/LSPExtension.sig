@@ -19,6 +19,12 @@ val fromLineCol: lines -> posLC -> int
    Mixing the two silently works under utf-8, where they agree, and
    skews every position in a line containing a non-ASCII character
    under utf-16. *)
+(* Whether a client-sent position names a column past the end of its
+   line, in the negotiated units.  `fromLineCol' clamps such a position
+   rather than running into the next line; this is how a caller finds
+   out that it had to. *)
+val posOvershoots: lines -> posLC -> bool
+
 val getLineColBytes: lines -> int -> posLC
 val fromLineColBytes: lines -> posLC -> int
 
@@ -155,8 +161,19 @@ type goal_state_response = {
      failed — the file byte range the client should surface as a
      runtime diagnostic (LSP squiggle).  NONE when there is no
      failure or the failure has no natural byte range (e.g. a
-     structural marker, or a timeout). *)
+     structural marker, or a timeout).
+
+     For a combinator that obliged what it brackets to prove a goal —
+     `>-`, `by`, `suffices_by` — this is the combinator itself, not
+     the branch under it: the branch is usually the text being
+     written, and marking all of it says nothing the reader doesn't
+     already know. *)
   failedRange: (int * int) option,
+  (* The paren closing the branch `failedRange` points at, when the
+     branch is parenthesised, so a client can mark both ends of it and
+     leave the middle alone.  NONE otherwise, and for every failure
+     that is not one of the three combinators above. *)
+  failedCloseRange: (int * int) option,
   (* `pretty` again, but taken apart: consecutive pieces whose texts
      concatenate to exactly what `pretty` prints once its colour
      escapes are removed.  Each piece carries what the pretty-printer
@@ -182,7 +199,19 @@ type theorem_context = {
   tacText: string,        (* raw text between `Proof` and `QED` *)
   tacStart: int,          (* file byte offset of `tacText` start *)
   cursor: int,            (* cursor byte offset (file coords) *)
-  compileDone: bool       (* has the file's own compile finished? *)
+  compileDone: bool,      (* has the file's own compile finished? *)
+  (* SOME for a `Resume thm[label]: tac QED' block.  The goal such a
+     body discharges is written nowhere in the file -- it is whatever
+     the parent proof suspended under `label' -- so `quote' is empty
+     and the hook looks the goal up in the suspension store instead of
+     parsing it.  NONE for Theorem and Triviality.
+
+     An option rather than an empty `suspension', because "" is a
+     legal label: `Resume foo:' with no attribute list defaults to it.
+     Strings only, like the rest of this signature: the structure is
+     compiled into `bin/hol' by polyc, below the kernel, and cannot
+     name a term. *)
+  resumeOf: {suspension: string, label: string} option
 }
 val goalStateAtPos:
   (hover_context * theorem_context -> goal_state_response option) ref
@@ -471,6 +500,15 @@ type check_scope = {resumeFrom: int, keptFrom: int option, bytes: int}
 val checkDeferred: (check_scope -> unit) ref
 val poolBusy: (unit -> bool) ref
 val cancelProofsAtOrAfter: (int -> unit) ref
+(* Bumped by the two cancellations that take proofs away wholesale --
+   `cancelProofsAtOrAfter` and `cancelAllProofs`, not `cancelProofAt`.
+   A pass that reuses the tail of an earlier one keeps that pass's
+   proofs rather than re-enqueueing them, which is only sound while
+   they are still there: an abandoned pass in between can have
+   cancelled the lot, and an abandoned pass leaves no other trace for
+   the next one to read.  Compare the value at the start of a pass
+   with the value the last completed pass recorded. *)
+val proofGeneration: int ref
 (* Give up on just this declaration's proofs, for an edit inside a
    `Proof ... QED` body: a tactic contributes nothing to the elaboration
    context, so every later declaration's obligation is unchanged and the
