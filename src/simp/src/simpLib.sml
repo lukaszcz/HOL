@@ -228,25 +228,34 @@ fun normCong cong_th = PURE_REWRITE_RULE [GSYM AND_IMP_INTRO] cong_th
 fun ordinary_looper (name,apply) =
   LooperEntry {kind=OrdinaryLooper,name=name,apply=apply}
 
-fun updfrag z =
-  let
-    fun from name convs rewrs ac views filter dprocs congs threaded_congs
-             relsimps loopers unsafe_solvers safe_solvers =
-      {name=name, convs=convs, rewrs=rewrs, ac=ac, views=views, filter=filter,
-       dprocs=dprocs, congs=congs, threaded_congs=threaded_congs,
-       relsimps=relsimps, loopers=loopers,
-       unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers}
-    fun from' safe_solvers unsafe_solvers loopers relsimps threaded_congs
-              congs dprocs filter views ac rewrs convs name =
-      from name convs rewrs ac views filter dprocs congs threaded_congs
-        relsimps loopers unsafe_solvers safe_solvers
-    fun to f {name,convs,rewrs,ac,views,filter,dprocs,congs,threaded_congs,
-              relsimps,loopers,unsafe_solvers,safe_solvers} =
-      f name convs rewrs ac views filter dprocs congs threaded_congs
-        relsimps loopers unsafe_solvers safe_solvers
-  in
-    FunctionalRecordUpdate.makeUpdate13 (from,from',to)
-  end z
+(* Constructor-anchored private setters retain the original payload values.
+   Replacement expressions are evaluated by callers, not by these setters. *)
+fun setfrag_name name
+      (SSFRAG_CON {convs,rewrs,ac,views,filter,dprocs,congs,threaded_congs,
+                   relsimps,loopers,unsafe_solvers,safe_solvers,...}) =
+  SSFRAG_CON
+    {name=name, convs=convs, rewrs=rewrs, ac=ac, views=views, filter=filter,
+     dprocs=dprocs, congs=congs, threaded_congs=threaded_congs,
+     relsimps=relsimps, loopers=loopers,
+     unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers}
+
+fun setfrag_rewrs rewrs
+      (SSFRAG_CON {name,convs,ac,views,filter,dprocs,congs,threaded_congs,
+                   relsimps,loopers,unsafe_solvers,safe_solvers,...}) =
+  SSFRAG_CON
+    {name=name, convs=convs, rewrs=rewrs, ac=ac, views=views, filter=filter,
+     dprocs=dprocs, congs=congs, threaded_congs=threaded_congs,
+     relsimps=relsimps, loopers=loopers,
+     unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers}
+
+fun setfrag_views views
+      (SSFRAG_CON {name,convs,rewrs,ac,filter,dprocs,congs,threaded_congs,
+                   relsimps,loopers,unsafe_solvers,safe_solvers,...}) =
+  SSFRAG_CON
+    {name=name, convs=convs, rewrs=rewrs, ac=ac, views=views, filter=filter,
+     dprocs=dprocs, congs=congs, threaded_congs=threaded_congs,
+     relsimps=relsimps, loopers=loopers,
+     unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers}
 
 val empty_frag_data =
   {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
@@ -255,23 +264,24 @@ val empty_frag_data =
 val empty_ssfrag = SSFRAG_CON empty_frag_data
 
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
-  SSFRAG_CON
-    (updfrag empty_frag_data
-       (Fld #name name)
-       (Fld #convs
-          (map (fn c => {thypart=NONE,cd=lift_convdata c,
-                        source=NONE,bound=NONE}) convs))
-       (Fld #rewrs (map source_slot rewrs))
-       (Fld #ac (map source_slot ac)) (Fld #filter filter)
-       (Fld #dprocs dprocs) (Fld #congs (map normCong congs)) $$)
+  let
+    val convs = map (fn c => {thypart=NONE,cd=lift_convdata c,
+                             source=NONE,bound=NONE}) convs
+    val rewrs = map source_slot rewrs
+    val ac = map source_slot ac
+    val congs = map normCong congs
+  in
+    SSFRAG_CON
+      {name=name, convs=convs, rewrs=rewrs, ac=ac, views=[], filter=filter,
+       dprocs=dprocs, congs=congs, threaded_congs=[], relsimps=[],
+       loopers=[], unsafe_solvers=[], safe_solvers=[]}
+  end
 
-fun ssf_upd_rewrs f (SSFRAG_CON s) =
-  SSFRAG_CON
-    (updfrag s (Fld #rewrs (map source_slot (f (map #item (#rewrs s))))) $$)
+fun ssf_upd_rewrs f (frag as SSFRAG_CON s) =
+  setfrag_rewrs (map source_slot (f (map #item (#rewrs s)))) frag
 
-fun ssf_filter_rewrs keep (SSFRAG_CON s) =
-  SSFRAG_CON
-    (updfrag s (Fld #rewrs (List.filter (keep o #item) (#rewrs s))) $$)
+fun ssf_filter_rewrs keep (frag as SSFRAG_CON s) =
+  setfrag_rewrs (List.filter (keep o #item) (#rewrs s)) frag
 
 (* ----------------------------------------------------------------------
     maintain a global database of (named) ssfrags
@@ -305,52 +315,65 @@ fun all_named_frags() = Symtab.keys (ssfragDB ())
 (* Operation on ssfrag values                                                *)
 (*---------------------------------------------------------------------------*)
 
-fun name_ss s (SSFRAG_CON f) =
-  SSFRAG_CON (updfrag f (Fld #name (SOME s)) $$)
+fun name_ss s frag = setfrag_name (SOME s) frag
 
 fun rewrites rewrs =
-  SSFRAG_CON
-    (updfrag empty_frag_data
-       (Fld #rewrs (map (source_slot o pair NONE) rewrs)) $$)
+  setfrag_rewrs (map (source_slot o pair NONE) rewrs) empty_ssfrag
 
 fun rewrites_with_names rewrs =
-  SSFRAG_CON
-    (updfrag empty_frag_data
-       (Fld #rewrs (map (source_slot o apfst SOME) rewrs)) $$)
+  setfrag_rewrs (map (source_slot o apfst SOME) rewrs) empty_ssfrag
 
-fun rewrite_views views =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #views views) $$)
+fun rewrite_views views = setfrag_views views empty_ssfrag
 
 fun threaded_cong_ss congs =
   SSFRAG_CON
-    (updfrag empty_frag_data
-       (Fld #threaded_congs (map normCong congs)) $$)
+    {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+     dprocs=[], congs=[], threaded_congs=map normCong congs, relsimps=[],
+     loopers=[], unsafe_solvers=[], safe_solvers=[]}
 
 fun dproc_ss dproc =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #dprocs [dproc]) $$)
+  SSFRAG_CON
+    {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+     dprocs=[dproc], congs=[], threaded_congs=[], relsimps=[],
+     loopers=[], unsafe_solvers=[], safe_solvers=[]}
 
 fun ac_ss aclist =
-  SSFRAG_CON (updfrag empty_frag_data
-                (Fld #ac (map source_slot aclist)) $$)
+  SSFRAG_CON
+    {name=NONE, convs=[], rewrs=[], ac=map source_slot aclist, views=[],
+     filter=NONE, dprocs=[], congs=[], threaded_congs=[], relsimps=[],
+     loopers=[], unsafe_solvers=[], safe_solvers=[]}
 
 fun conv_ss conv =
   SSFRAG_CON
-    (updfrag empty_frag_data
-       (Fld #convs [{thypart=NONE,cd=lift_convdata conv,
-                    source=NONE,bound=NONE}]) $$)
+    {name=NONE, convs=[{thypart=NONE,cd=lift_convdata conv,
+                       source=NONE,bound=NONE}],
+     rewrs=[], ac=[], views=[], filter=NONE, dprocs=[], congs=[],
+     threaded_congs=[], relsimps=[], loopers=[],
+     unsafe_solvers=[], safe_solvers=[]}
 
 fun relsimp_ss rsdata =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #relsimps [rsdata]) $$)
+  SSFRAG_CON
+    {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+     dprocs=[], congs=[], threaded_congs=[], relsimps=[rsdata],
+     loopers=[], unsafe_solvers=[], safe_solvers=[]}
 
 fun looper_ss looper =
   SSFRAG_CON
-    (updfrag empty_frag_data (Fld #loopers [ordinary_looper looper]) $$)
+    {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+     dprocs=[], congs=[], threaded_congs=[], relsimps=[],
+     loopers=[ordinary_looper looper], unsafe_solvers=[], safe_solvers=[]}
 
 fun solver_ss solver =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #unsafe_solvers [solver]) $$)
+  SSFRAG_CON
+    {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+     dprocs=[], congs=[], threaded_congs=[], relsimps=[],
+     loopers=[], unsafe_solvers=[solver], safe_solvers=[]}
 
 fun safe_solver_ss solver =
-  SSFRAG_CON (updfrag empty_frag_data (Fld #safe_solvers [solver]) $$)
+  SSFRAG_CON
+    {name=NONE, convs=[], rewrs=[], ac=[], views=[], filter=NONE,
+     dprocs=[], congs=[], threaded_congs=[], relsimps=[],
+     loopers=[], unsafe_solvers=[], safe_solvers=[solver]}
 
 fun D (SSFRAG_CON s) = s;
 fun frag_rewrites ssf = map (#2 o #item) (#rewrs (D ssf))
@@ -423,36 +446,17 @@ fun partition_ssfrags names ssdata =
 
 val empty_excluded : string Binaryset.set = Binaryset.empty String.compare
 
-(* The functional-record-update combinator (boolLib's [Fld] and [$$]) for
-   the record inside [SS]: every operation below rebuilds a simpset
-   through it, naming only the fields it changes, so that a new field is
-   declared here and defaulted in [empty_ss] instead of being re-listed
-   at each of them. *)
-fun updSS z =
-  let
-    fun from mk_rewrs history initial_net rewrite_sources native_sources
-             dprocs travrules limit excluded strategy =
-      {mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
-       rewrite_sources=rewrite_sources, native_sources=native_sources,
-       dprocs=dprocs, travrules=travrules, limit=limit, excluded=excluded,
-       strategy=strategy}
-    (* fields in reverse order to the above *)
-    fun from' strategy excluded limit travrules dprocs native_sources
-              rewrite_sources initial_net history mk_rewrs =
-      {mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
-       rewrite_sources=rewrite_sources, native_sources=native_sources,
-       dprocs=dprocs, travrules=travrules, limit=limit, excluded=excluded,
-       strategy=strategy}
-    fun to f {mk_rewrs,history,initial_net,rewrite_sources,native_sources,
-              dprocs,travrules,limit,excluded,strategy} =
-      f mk_rewrs history initial_net rewrite_sources native_sources
-        dprocs travrules limit excluded strategy
-  in
-    FunctionalRecordUpdate.makeUpdate10 (from, from', to)
-  end z
-
+(* Constructor-anchored updates retain the original flat payload values.
+   Multi-field updates below evaluate replacements in their original order. *)
 fun ssupd_net f (SS s) =
-  SS (updSS s (Fld #initial_net (f (#initial_net s))) $$)
+  let val initial_net = f (#initial_net s)
+  in
+    SS {mk_rewrs = #mk_rewrs s, history = #history s,
+        initial_net = initial_net, rewrite_sources = #rewrite_sources s,
+        native_sources = #native_sources s, dprocs = #dprocs s,
+        travrules = #travrules s, limit = #limit s,
+        excluded = #excluded s, strategy = #strategy s}
+  end
 
 val empty_strategy : strategy_data =
   {loopers=[], unsafe_solvers=[], safe_solvers=[], subgoaler=NONE,
@@ -611,17 +615,22 @@ fun delete_exclusions (excls : rule_exclusion list) (ss as SS s) =
             not (entry_name_match (thy, "rewrite:" ^ name) patterns)
           end
       in
-      SS (updSS s
-            (Fld #initial_net
-               (filter_net_by_exclusions excls (#initial_net s)))
-            (Fld #rewrite_sources
-               (List.filter retained (#rewrite_sources s)))
-            (Fld #native_sources
-               (List.filter (retained o source_rewrite) (#native_sources s)))
-            (Fld #history (DELETE_EVENT excls :: #history s))
-            (Fld #dprocs
-               (filter_dprocs_by_names (map #original excls) (#dprocs s)))
-            $$)
+        let
+          val initial_net =
+            filter_net_by_exclusions excls (#initial_net s)
+          val rewrite_sources = List.filter retained (#rewrite_sources s)
+          val native_sources =
+            List.filter (retained o source_rewrite) (#native_sources s)
+          val history = DELETE_EVENT excls :: #history s
+          val dprocs =
+            filter_dprocs_by_names (map #original excls) (#dprocs s)
+        in
+          SS {mk_rewrs = #mk_rewrs s, history = history,
+              initial_net = initial_net, rewrite_sources = rewrite_sources,
+              native_sources = native_sources, dprocs = dprocs,
+              travrules = #travrules s, limit = #limit s,
+              excluded = #excluded s, strategy = #strategy s}
+        end
       end
 
 fun exclusion_of_name p : rule_exclusion =
@@ -697,7 +706,14 @@ fun remove_simps nms ss = ss -* nms
           |> Lib.mk_set
 
  fun fupdlimit f (SS s) =
-   SS (updSS s (Fld #limit (f (#limit s))) $$)
+   let val limit = f (#limit s)
+   in
+     SS {mk_rewrs = #mk_rewrs s, history = #history s,
+         initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+         native_sources = #native_sources s, dprocs = #dprocs s,
+         travrules = #travrules s, limit = limit,
+         excluded = #excluded s, strategy = #strategy s}
+   end
 
  fun limit n = fupdlimit (fn _ => SOME n)
 
@@ -706,49 +722,82 @@ val unlimit = fupdlimit (fn _ => NONE)
 fun getlimit (SS ss) = #limit ss
 
 fun map_strategy f (SS s) =
-  SS (updSS s (Fld #strategy (f (#strategy s))) $$)
-
-(* As [updSS], but for [strategy_data]. *)
-fun updstrategy z =
-  let
-    fun from loopers unsafe_solvers safe_solvers subgoaler cond_depth
-             term_ord excl_loopers =
-      {loopers=loopers, unsafe_solvers=unsafe_solvers,
-       safe_solvers=safe_solvers, subgoaler=subgoaler,
-       cond_depth=cond_depth, term_ord=term_ord, excl_loopers=excl_loopers}
-    (* fields in reverse order to the above *)
-    fun from' excl_loopers term_ord cond_depth subgoaler safe_solvers
-              unsafe_solvers loopers =
-      {loopers=loopers, unsafe_solvers=unsafe_solvers,
-       safe_solvers=safe_solvers, subgoaler=subgoaler,
-       cond_depth=cond_depth, term_ord=term_ord, excl_loopers=excl_loopers}
-    fun to f {loopers,unsafe_solvers,safe_solvers,subgoaler,cond_depth,
-              term_ord,excl_loopers} =
-      f loopers unsafe_solvers safe_solvers subgoaler cond_depth term_ord
-        excl_loopers
+  let val strategy = f (#strategy s)
   in
-    FunctionalRecordUpdate.makeUpdate7 (from, from', to)
-  end z
+    SS {mk_rewrs = #mk_rewrs s, history = #history s,
+        initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+        native_sources = #native_sources s, dprocs = #dprocs s,
+        travrules = #travrules s, limit = #limit s,
+        excluded = #excluded s, strategy = strategy}
+  end
 
-(* Field updaters for [strategy_data]; every strategy change is expressed
-   as a composition of these. *)
+(* Monomorphic field updaters retain every other strategy value unchanged. *)
 fun upd_loopers f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #loopers (f (#loopers s))) $$
+  let val loopers = f (#loopers s)
+  in
+    {loopers = loopers, unsafe_solvers = #unsafe_solvers s,
+     safe_solvers = #safe_solvers s, subgoaler = #subgoaler s,
+     cond_depth = #cond_depth s, term_ord = #term_ord s,
+     excl_loopers = #excl_loopers s}
+  end
 fun upd_unsafe_solvers f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #unsafe_solvers (f (#unsafe_solvers s))) $$
+  let val unsafe_solvers = f (#unsafe_solvers s)
+  in
+    {loopers = #loopers s, unsafe_solvers = unsafe_solvers,
+     safe_solvers = #safe_solvers s, subgoaler = #subgoaler s,
+     cond_depth = #cond_depth s, term_ord = #term_ord s,
+     excl_loopers = #excl_loopers s}
+  end
 fun upd_safe_solvers f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #safe_solvers (f (#safe_solvers s))) $$
+  let val safe_solvers = f (#safe_solvers s)
+  in
+    {loopers = #loopers s, unsafe_solvers = #unsafe_solvers s,
+     safe_solvers = safe_solvers, subgoaler = #subgoaler s,
+     cond_depth = #cond_depth s, term_ord = #term_ord s,
+     excl_loopers = #excl_loopers s}
+  end
 fun upd_subgoaler f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #subgoaler (f (#subgoaler s))) $$
+  let val subgoaler = f (#subgoaler s)
+  in
+    {loopers = #loopers s, unsafe_solvers = #unsafe_solvers s,
+     safe_solvers = #safe_solvers s, subgoaler = subgoaler,
+     cond_depth = #cond_depth s, term_ord = #term_ord s,
+     excl_loopers = #excl_loopers s}
+  end
 fun upd_cond_depth f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #cond_depth (f (#cond_depth s))) $$
+  let val cond_depth = f (#cond_depth s)
+  in
+    {loopers = #loopers s, unsafe_solvers = #unsafe_solvers s,
+     safe_solvers = #safe_solvers s, subgoaler = #subgoaler s,
+     cond_depth = cond_depth, term_ord = #term_ord s,
+     excl_loopers = #excl_loopers s}
+  end
 fun upd_term_ord f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #term_ord (f (#term_ord s))) $$
+  let val term_ord = f (#term_ord s)
+  in
+    {loopers = #loopers s, unsafe_solvers = #unsafe_solvers s,
+     safe_solvers = #safe_solvers s, subgoaler = #subgoaler s,
+     cond_depth = #cond_depth s, term_ord = term_ord,
+     excl_loopers = #excl_loopers s}
+  end
 fun upd_excl_loopers f (s:strategy_data) : strategy_data =
-  updstrategy s (Fld #excl_loopers (f (#excl_loopers s))) $$
+  let val excl_loopers = f (#excl_loopers s)
+  in
+    {loopers = #loopers s, unsafe_solvers = #unsafe_solvers s,
+     safe_solvers = #safe_solvers s, subgoaler = #subgoaler s,
+     cond_depth = #cond_depth s, term_ord = #term_ord s,
+     excl_loopers = excl_loopers}
+  end
 
 fun fupdhistory f (SS s) =
-  SS (updSS s (Fld #history (f (#history s))) $$)
+  let val history = f (#history s)
+  in
+    SS {mk_rewrs = #mk_rewrs s, history = history,
+        initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+        native_sources = #native_sources s, dprocs = #dprocs s,
+        travrules = #travrules s, limit = #limit s,
+        excluded = #excluded s, strategy = #strategy s}
+  end
 
 fun record_strategy event =
   fupdhistory (fn history => STRATEGY_EVENT event::history)
@@ -1136,12 +1185,18 @@ fun mk_tactic_solver (name,tac) =
  end
 
  fun add_weakener (wd as (rels,congs,dp)) (SS s) =
-   SS (updSS s
-         (Fld #history (ADDWEAKENER wd :: #history s))
-         (Fld #travrules
-            (merge_travrules [#travrules s,wk_mk_travrules(rels,congs)]))
-         (Fld #dprocs (#dprocs s @ [dp]))
-         $$)
+   let
+     val history = ADDWEAKENER wd :: #history s
+     val travrules =
+       merge_travrules [#travrules s,wk_mk_travrules(rels,congs)]
+     val dprocs = #dprocs s @ [dp]
+   in
+     SS {mk_rewrs = #mk_rewrs s, history = history,
+         initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+         native_sources = #native_sources s, dprocs = dprocs,
+         travrules = travrules, limit = #limit s,
+         excluded = #excluded s, strategy = #strategy s}
+   end
 
 (* ----------------------------------------------------------------------
     add_relsimp : {trans,refl,weakenings,subsets} -> simpset -> simpset
@@ -1525,24 +1580,23 @@ fun mk_tactic_solver (name,tac) =
        |> upd_safe_solvers
             (fn ss => List.foldl add_solver ss (#safe_solvers ssf))
  in
-   SS (updSS sset
-         (Fld #mk_rewrs mk_rewrs)
-         (Fld #history (ADDFRAG
-            (f,event,if prepared then SOME all_native else NONE,suspended)
-            :: history))
-         (Fld #initial_net net)
-         (Fld #rewrite_sources
-            (List.mapPartial #source newconvdata @ #rewrite_sources sset))
-         (Fld #native_sources native_sources)
-         (Fld #dprocs new_dprocs)
-         (Fld #travrules
-            (merge_travrules
-               (travrules::mk_travrules relations congs::
-                (if null threaded_congs then reltravs
-                 else mk_threaded_travrules relations threaded_congs::
-                      reltravs))))
-         (Fld #strategy strategy)
-         $$)
+   let
+     val history = ADDFRAG
+       (f,event,if prepared then SOME all_native else NONE,suspended)
+       :: history
+     val rewrite_sources =
+       List.mapPartial #source newconvdata @ #rewrite_sources sset
+     val travrules =
+       merge_travrules
+         (travrules::mk_travrules relations congs::
+          (if null threaded_congs then reltravs
+           else mk_threaded_travrules relations threaded_congs::reltravs))
+   in
+     SS {mk_rewrs = mk_rewrs, history = history, initial_net = net,
+         rewrite_sources = rewrite_sources, native_sources = native_sources,
+         dprocs = new_dprocs, travrules = travrules, limit = #limit sset,
+         excluded = #excluded sset, strategy = strategy}
+   end
  end
 
  fun add_frag prepared event args =
@@ -1568,15 +1622,25 @@ fun mk_tactic_solver (name,tac) =
              (fn (_,original) => same_rewrite_source (source,original))
              native) views
          val fragment =
-           SSFRAG_CON (updfrag (D fragment) (Fld #views owned) $$)
+           setfrag_views owned fragment
        in add_frag_native (SOME native) true [] NONE event
-            (SS (updSS data (Fld #excluded excluded) $$),fragment) end
+            (SS {mk_rewrs = #mk_rewrs data, history = #history data,
+                 initial_net = #initial_net data,
+                 rewrite_sources = #rewrite_sources data,
+                 native_sources = #native_sources data,
+                 dprocs = #dprocs data, travrules = #travrules data,
+                 limit = #limit data, excluded = excluded,
+                 strategy = #strategy data},fragment) end
    in List.foldl install ss parts end
 
 val mk_simpset = foldl (fn (f,ss) => ss ++ f) empty_ss
 
 fun set_mk_rewrs mk_rewrs (SS s) =
-  SS (updSS s (Fld #mk_rewrs mk_rewrs) $$)
+  SS {mk_rewrs = mk_rewrs, history = #history s,
+      initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+      native_sources = #native_sources s, dprocs = #dprocs s,
+      travrules = #travrules s, limit = #limit s,
+      excluded = #excluded s, strategy = #strategy s}
 
 (* Ordinary replay resets declared quotas, including a quota shared by
    several compiled conjuncts. Prepared shapes need no rewrite-maker call. *)
@@ -1629,7 +1693,11 @@ fun build_from_history_with rebind h0 =
 fun build_from_history h0 = build_from_history_with NONE h0
 
 fun setexcluded e (SS s) =
-  SS (updSS s (Fld #excluded e) $$)
+  SS {mk_rewrs = #mk_rewrs s, history = #history s,
+      initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+      native_sources = #native_sources s, dprocs = #dprocs s,
+      travrules = #travrules s, limit = #limit s,
+      excluded = e, strategy = #strategy s}
 
 fun rebind_source_controls current (pair as (_,source)) =
   case Binarymap.peek (current,source) of
@@ -1811,15 +1879,10 @@ fun clear_rules (SS s) =
       [STRATEGY_EVENT (SET_STRATEGY_EVENT strategy),
        SET_MK_REWRS (#mk_rewrs s)]
   in
-    SS (updSS s
-          (Fld #history history)
-          (Fld #initial_net empty)
-          (Fld #rewrite_sources [])
-          (Fld #native_sources [])
-          (Fld #dprocs [])
-          (Fld #travrules EQ_tr)
-          (Fld #strategy strategy)
-          $$)
+    SS {mk_rewrs = #mk_rewrs s, history = history, initial_net = empty,
+        rewrite_sources = [], native_sources = [], dprocs = [],
+        travrules = EQ_tr, limit = #limit s, excluded = #excluded s,
+        strategy = strategy}
   end
 
 (* Conversion identities survive replay; deletions affect their keys too. *)
@@ -2121,10 +2184,10 @@ fun process_tags0 {report} ss thl =
             remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
           val cong_ac =
             SSFRAG_CON
-              (updfrag empty_frag_data
-                 (Fld #name (SOME "Cong and/or AC"))
-                 (Fld #ac (map source_slot acs))
-                 (Fld #congs congs) $$)
+              {name=SOME "Cong and/or AC", convs=[], rewrs=[],
+               ac=map source_slot acs, views=[], filter=NONE,
+               dprocs=[], congs=congs, threaded_congs=[], relsimps=[],
+               loopers=[], unsafe_solvers=[], safe_solvers=[]}
           (* Cong/AC is named but never user-excludable; SF-derived frags
              go through force_add so they override any active exclusion. *)
           val withCongAc = base ++ cong_ac
@@ -2945,16 +3008,15 @@ fun tyi_to_ssdata tyinfo =
       fun reduce (th, (i,A)) =
           (i + 1, (SOME (name_of th i), th) :: A)
       val (_, rewrs) = foldl reduce (1,[]) rws0
+      val name = SOME ("Datatype " ^ tyname)
+      val convs = map (fn c => {thypart=SOME thy,cd=lift_convdata c,
+                               source=NONE,bound=NONE}) convs
+      val rewrs = map source_slot rewrs
     in
       SSFRAG_CON
-        (updfrag empty_frag_data
-           (Fld #name (SOME ("Datatype " ^ tyname)))
-           (Fld #convs
-              (map
-                (fn c =>
-                   {thypart=SOME thy,cd=lift_convdata c,
-                    source=NONE,bound=NONE}) convs))
-           (Fld #rewrs (map source_slot rewrs)) $$)
+        {name=name, convs=convs, rewrs=rewrs, ac=[], views=[], filter=NONE,
+         dprocs=[], congs=[], threaded_congs=[], relsimps=[],
+         loopers=[], unsafe_solvers=[], safe_solvers=[]}
     end
 
 fun type_ssfrag ty =
