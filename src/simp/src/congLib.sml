@@ -182,8 +182,9 @@ fun eq_reducer_wrapper reducer =
     fun wrapped (args as {relation=(_,refl),...}) tm =
       let
         val eqthm = apply args tm
+        val relthm = refl tm
       in
-        CONV_RULE (RAND_CONV (REWR_CONV eqthm)) (refl tm)
+        CONV_RULE (RAND_CONV (REWR_CONV eqthm)) relthm
       end
   in
     CONFIG_REDUCER

@@ -5386,4 +5386,52 @@ val _ = let
           else die "factory/reducer callback order or context reuse changed"
 in () end
 
+(* REWR_CONV constructs PART_MATCH eagerly.  The old congruence wrapper
+   calls relation reflexivity BEFORE that factory, even for a quantified
+   equation returned by an ordinary reducer.  Keep this after the existing
+   Count pins: mk_meter leaves counting enabled. *)
+local
+  exception StageContext
+  exception StageEvent of unit ref
+  val payload = ref ()
+  val armed = ref false
+  val observed = ref (NONE : int option)
+  val meter = ref (NONE : Count.meter option)
+  val input = mk_var ("cong_stage_input",bool)
+  val x = mk_var ("cong_stage_x",bool)
+  val equation = GEN x (REFL x)
+  val fixture_ok = null (hyp equation) andalso
+    aconv (concl equation)
+      (boolSyntax.mk_forall (x,boolSyntax.mk_eq (x,x)))
+  fun reflexivity {Rinst,arg} =
+    if !armed then
+      (observed := SOME (#prims (Count.read (valOf (!meter))));
+       raise StageEvent payload)
+    else DISCH arg (ASSUME arg)
+  val preorder = Travrules.PREORDER
+    (boolSyntax.implication,Drule.IMP_TRANS,reflexivity)
+  val cs = congLib.mk_congset
+    [congLib.CSFRAG {relations=[preorder],rewrs=[],congs=[],dprocs=[]}]
+  val reducer = Traverse.REDUCER
+    {name=SOME "congLib factory stage",initial=StageContext,
+     addcontext=fn (ctxt,_) => ctxt,
+     apply=fn {relation=(rel,_),...} => fn tm =>
+       if Opening.samerel rel boolSyntax.implication then
+         (armed := true; meter := SOME (Count.mk_meter ()); equation)
+       else NO_CONV tm}
+  val cv = congLib.CONGRUENCE_SIMP_QCONV boolSyntax.implication cs
+    (pureSimps.pure_ss ++ dproc_ss reducer) []
+  val caught = (ignore (cv input); NONE) handle e => SOME e
+  val exact_event = case caught of
+      SOME (StageEvent r) => Portable.pointer_eq (r,payload)
+    | _ => false
+in
+  val _ = tprint "congLib reflexivity precedes rewrite factory primitives"
+  val _ = if fixture_ok andalso !observed = SOME 0 then OK ()
+          else die "rewrite factory ran before the reflexivity callback"
+  val _ = tprint "congLib reflexivity preserves foreign tag and payload"
+  val _ = if exact_event then OK ()
+          else die "reflexivity exception constructor or payload changed"
+end
+
 val _ = exit_count0 failcount
