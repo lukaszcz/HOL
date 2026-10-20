@@ -2045,7 +2045,7 @@ fun rewrite_context_changes (SS old,SS current) =
    in REDUCER {name=SOME "rewriter_for_ss", addcontext=addcontext,
                apply=apply, initial=initial} end;
 
- fun rewriter_for_ss_prepared traversal ss prepared = let
+ fun configured_rewriter_for_ss_prepared traversal ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
    fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
      val net = (raise context) handle CONVNET net => net
@@ -2070,7 +2070,7 @@ fun rewrite_context_changes (SS old,SS current) =
          initial=initial}
    end;
 
- fun traversedata_for_ss_prepared traversal
+ fun configured_traversedata_for_ss_prepared traversal
        (ss as (SS ssdata)) (prepared : prepared_rewrites)
        : Traverse.traverse_data =
    let
@@ -2079,16 +2079,22 @@ fun rewrite_context_changes (SS old,SS current) =
        else
          map (Traverse.addctxt (source_thms prepared)) (#dprocs ssdata)
    in
-      {rewriters=[rewriter_for_ss_prepared traversal ss prepared],
+      {rewriters=[configured_rewriter_for_ss_prepared traversal ss prepared],
        dprocs=dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
        limit = #limit ssdata}
    end;
 
- (* The traversal-strategy settings that traverse_data does not carry.
-    They are kept apart so that traversedata_for_ss can stay the record
-    the published signature promises. *)
+ (* The public legacy projection omits traversal-strategy settings and
+    forwards decision procedures unchanged, regardless of dispatch eligibility.
+    Both projections share installed matchers and their actual controls. *)
+ fun default_traversedata_for_ss (ss as SS data) : Traverse.traverse_data =
+   {rewriters=[legacy_rewriter_for_ss_prepared ss []],
+    dprocs= #dprocs data, relation=boolSyntax.equality,
+    travrules= #travrules data, limit= #limit data};
+
+ (* Settings used only by the explicit configured projection. *)
  fun traverseconfig_for_ss (SS ssdata) : Traverse.traverse_config =
    let
      val strategy = #strategy ssdata
@@ -2101,14 +2107,14 @@ fun rewrite_context_changes (SS old,SS current) =
 
  fun xtraversedata_for_ss_prepared traversal ss prepared
        : Traverse.xtraverse_data =
-   (traversedata_for_ss_prepared traversal ss prepared,
+   (configured_traversedata_for_ss_prepared traversal ss prepared,
     traverseconfig_for_ss ss);
 
- fun traversedata_for_ss ss = traversedata_for_ss_prepared ParentFirst ss [];
+ fun traversedata_for_ss ss = default_traversedata_for_ss ss;
  fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ParentFirst ss [];
 
  (* Eligibility is pure and precedes preparation or collector calls.
-    Public configured extraction above deliberately keeps its old shape. *)
+    Unlike public extraction, this optional accessor selects native dispatch. *)
  fun legacy_traversedata_for_ss (ss as SS data) =
    let
      fun ordinary (REDUCER _) = true | ordinary _ = false
@@ -2117,9 +2123,7 @@ fun rewrite_context_changes (SS old,SS current) =
          {subgoaler=NONE,unsafe_solvers=[],cond_depth=NONE,term_ord=NONE,
           ...} =>
            if List.all ordinary (#dprocs data) then
-             SOME {rewriters=[legacy_rewriter_for_ss_prepared ss []],
-                   dprocs= #dprocs data, relation=boolSyntax.equality,
-                   travrules= #travrules data, limit= #limit data}
+             SOME (default_traversedata_for_ss ss)
            else NONE
        | _ => NONE
    end;

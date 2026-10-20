@@ -1,0 +1,237 @@
+{
+  "base_revision": "a5ec9cbe9e8fb0a88b1bbdf72bf498599495714c",
+  "changed_text_whitespace": {
+    "checks": [
+      "no TAB characters",
+      "no trailing whitespace"
+    ],
+    "exit": 0,
+    "files": [
+      ".agent-files/tasks/PROGRESS.md",
+      "help/Docfiles/simpLib.legacy_traversedata_for_ss.smd",
+      "help/Docfiles/simpLib.traversedata_for_ss.smd",
+      "help/Docfiles/simpLib.xtraversedata_for_ss.smd",
+      "src/simp/compatibility/README.md",
+      "src/simp/compatibility/TRAVERSAL_PROJECTION.md",
+      "src/simp/compatibility/results/task04/validation.json",
+      "src/simp/src/notes.md",
+      "src/simp/src/selftest.sml",
+      "src/simp/src/simpLib.sig",
+      "src/simp/src/simpLib.sml"
+    ],
+    "note": "Raw/selected test logs excluded; git diff --check is also run on staged changes."
+  },
+  "commands": [
+    {
+      "argv": [
+        "$HOLDIR/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "-j1",
+        "--holstate=$HOLDIR/bin/hol.state0",
+        "selftest.exe"
+      ],
+      "cwd": "$HOLDIR/src/simp/src",
+      "exit": 0,
+      "log_sha256": "df08ad36ef4cafe2711692f1306ca572a8367b94df789691b6e8e4b442ccae0f",
+      "ok_markers": 0,
+      "tail": [
+        "HOLMOSMLC -o selftest.exe selftest.uo"
+      ]
+    },
+    {
+      "argv": [
+        "./selftest.exe"
+      ],
+      "cwd": "$HOLDIR/src/simp/src",
+      "exit": 0,
+      "log_sha256": "90d2c8f7ec90e9e39051587539d4f5df7301d67adc1b57f00199c01aed72c7df",
+      "ok_markers": 429
+    },
+    {
+      "argv": [
+        "$HOLDIR/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "-j1",
+        "--holstate=$HOLDIR/bin/hol.state0",
+        "selftest.exe"
+      ],
+      "cwd": "$HOLDIR/src/marker",
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "ok_markers": 0,
+      "tail": []
+    },
+    {
+      "argv": [
+        "./selftest.exe"
+      ],
+      "cwd": "$HOLDIR/src/marker",
+      "exit": 0,
+      "log_sha256": "1431849586d24ca76c17da540f5ceef3be56756d8ab9355e8b1215038988c08a",
+      "ok_markers": 61,
+      "tail": [
+        "Split marker round-trip ...                                                  (0.000s)      OK",
+        "suspend (1) ...                                                              (0.000s)      OK",
+        "suspend (2) ...                                                              (0.000s)      OK",
+        "extract_suspended_goal (1) ...                                               (0.000s)      OK",
+        "extract_suspended_goal (2) ...                                               (0.000s)      OK",
+        "extract_suspended_goal fails (1) ...                                         (0.000s)      OK",
+        "prim_resume (1a) ...                                                         (0.000s)      OK",
+        "prim_resume (1b) ...                                                         (0.000s)      OK",
+        "prim_resume resconj+closure ...                                              (0.000s)      OK",
+        "UNABBREV_TAC missing abbrev gives clear error ...                            UNABBREV_TAC \"MISSING_ABBR\" with no such abbrev ...                          (0.000s)      OK"
+      ]
+    },
+    {
+      "argv": [
+        "$HOLDIR/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "-j1",
+        "--holstate=$HOLDIR/bin/hol.state0",
+        "--no_prereqs",
+        "selftest.exe"
+      ],
+      "cwd": "$WORK/reducer-shape",
+      "exit": 0,
+      "log_sha256": "e5b8fa00113ba06b2007366d81acbb04fc01d9f491b7b2102539160892f00b56",
+      "ok_markers": 0,
+      "tail": [
+        "Holmake: Scanning $(HOLDIR)/src/simp/src",
+        "Holmake: Scanned 2 directories",
+        "HOLMOSMLC -o selftest.exe selftest.uo"
+      ]
+    },
+    {
+      "argv": [
+        "./selftest.exe"
+      ],
+      "cwd": "$WORK/reducer-shape",
+      "exit": 0,
+      "log_sha256": "8a1ab77a19cf6b61a9d0dc42d8cfc3bfad2e5bc0d12618d4b84866144f3edb2a",
+      "observations": [
+        "OBS probe=reducer-shape",
+        "OBS stage=setup.control",
+        "OBS setup.control.warning.count=0",
+        "OBS setup.control.exception=none",
+        "OBS setup.control.conclusion=T \u2227 compat_p \u21d4 compat_p",
+        "OBS setup.control.hypotheses=",
+        "OBS stage=setup.projection",
+        "OBS setup.projection.warning.count=0",
+        "OBS setup.projection.exception=none",
+        "OBS setup.result=ready",
+        "OBS stage=assertion.constructor",
+        "OBS assertion.constructor.result=REDUCER",
+        "OBS assertion.constructor.warning.count=0",
+        "OBS assertion.constructor.exception=none",
+        "OBS assertion.result=pass"
+      ],
+      "ok_markers": 7
+    },
+    {
+      "argv": [
+        "bin/build",
+        "-t",
+        "--seq=tools/sequences/upto-parallel"
+      ],
+      "cwd": "$HOLDIR",
+      "exit": 0,
+      "log_sha256": "b251877cf9f9dc8c1ff3d710842ed7b02980a5ab6f8028416c7f9f2d8e13766b",
+      "ok_markers": 29,
+      "tail": [
+        "Uploading files to $HOLDIR/sigobj",
+        "Building directory src/AI/machine_learning [20 Oct, 14:44:46]",
+        "Uploading files to $HOLDIR/sigobj",
+        "Building directory src/tactictoe/src [20 Oct, 14:44:46]",
+        "Uploading files to $HOLDIR/sigobj",
+        "Building directory src/holyhammer [20 Oct, 14:44:46]",
+        "Uploading files to $HOLDIR/sigobj",
+        "Skipping help documentation build (--no-helpdocs).",
+        "",
+        "Hol built successfully."
+      ]
+    },
+    {
+      "argv": [
+        "sha256sum",
+        "-c",
+        "inputs/SHA256SUMS"
+      ],
+      "cwd": "$HOLDIR/src/simp/compatibility",
+      "exit": 0,
+      "log_sha256": "735a466d0b650f46cb4d61a273534a2159c7c7d28f0dc945b39a75892d4a636a",
+      "ok_markers": 8,
+      "tail": [
+        "inputs/develop/selftest.sml: OK",
+        "inputs/investigation/README.md: OK",
+        "inputs/investigation/branch-compat.log: OK",
+        "inputs/investigation/branch-namespace.log: OK",
+        "inputs/investigation/compat-selftest.sml: OK",
+        "inputs/investigation/develop-compat.log: OK",
+        "inputs/investigation/develop-namespace.log: OK",
+        "inputs/investigation/namespace-selftest.sml: OK"
+      ]
+    },
+    {
+      "argv": [
+        "tools/h4pedant/h4pedant",
+        "src/simp/src/simpLib.sml",
+        "src/simp/src/simpLib.sig",
+        "src/simp/src/selftest.sml",
+        "src/simp/src/notes.md",
+        "help/Docfiles/simpLib.traversedata_for_ss.smd",
+        "help/Docfiles/simpLib.xtraversedata_for_ss.smd",
+        "help/Docfiles/simpLib.legacy_traversedata_for_ss.smd"
+      ],
+      "cwd": "$HOLDIR",
+      "exit": 1,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "note": "Invalid h4pedant invocation: arguments must be directories, not file paths. Corrected invocation follows.",
+      "ok_markers": 0,
+      "tail": []
+    },
+    {
+      "argv": [
+        "tools/h4pedant/h4pedant",
+        "src/simp/src"
+      ],
+      "cwd": "$HOLDIR",
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tail": []
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": "$HOLDIR",
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tail": []
+    }
+  ],
+  "evidence_notes": "Working-tree source hashes identify tested changes on base_revision; no committed-source paired harness was run for TASK_04. Focused probe uses host libraries. See TRAVERSAL_PROJECTION.md. Simplifier and routine receipts are the final reruns after adding observable solver/order positive controls.",
+  "probe_holmakefile": "HOLHEAP = $(HOLDIR)/bin/hol.state0\nINCLUDES = $HOLDIR/src/simp/src\nselftest.exe: selftest.uo\n\t$(HOLMOSMLC) -o $@ $<\n",
+  "probe_inputs_sha256": {
+    "src/simp/compatibility/probes/legacy/reducer-shape.sml": "fbfa30b7464b722d102d015a24b8779efb051fe2ea342f39801fdd25cb99860c",
+    "src/simp/compatibility/probes/support/LegacyFailures.sml": "349d417055c3c17b7b39ccc397e6043e02d48deadeba78e6ac436b2937658b5f"
+  },
+  "routine_selected": [
+    "Starting work on simp-selftest.log",
+    "simp-selftest.log                                           (3s)             OK",
+    "Hol built successfully."
+  ],
+  "source_sha256": {
+    "help/Docfiles/simpLib.legacy_traversedata_for_ss.smd": "c47bb3fc6b33be7ebe9fbb7508253ad9a24e0baf3e3a0c349b5b5fbda3799552",
+    "help/Docfiles/simpLib.traversedata_for_ss.smd": "6d1de014c805691268016a0e689f76bf589e062a3b216750e53778c5409fd48b",
+    "help/Docfiles/simpLib.xtraversedata_for_ss.smd": "d186d13a71e4809237e77cae77b17eb2b722bb31bface0022c773d6a050b5af6",
+    "src/simp/src/notes.md": "637441cc17f50cd57a5308e07056b8a78fcf595e863412c4c0909d81b2c7554e",
+    "src/simp/src/selftest.sml": "dd127d21669a134957352b997bb02d0c75e91da4575bf6a6a56aa7a567f21cb0",
+    "src/simp/src/simpLib.sig": "39d5516dfee0c57890d2f74036f4f253bc4f7ed349401d73b4015538c9ef999d",
+    "src/simp/src/simpLib.sml": "2db0bc49d0c058acd3edfcfe25ce3c6d3da413b5ae16750c21a1cb1b9d672d59"
+  }
+}

@@ -237,20 +237,23 @@ sig
 
   val add_relsimp  : relsimpdata -> simpset -> simpset
 
+  (* Unconditional legacy projection: the native rewriter is a REDUCER,
+     supplied decision procedures are unchanged, and simpset-specific
+     traversal configuration is omitted. Shares installed rewrite controls. *)
   val traversedata_for_ss: simpset -> Traverse.traverse_data
 
   (* Additive cooperation API for original-ABI consumers such as congLib.
      NONE means conversion settings or nonordinary decision procedures
      require the configured projection. Eligibility runs no callbacks;
-     SOME shares the existing index, matchers and actual bound controls.
-     Public traversedata_for_ss retains its configured reducer shape. *)
+     SOME is the same default projection as traversedata_for_ss, sharing
+     the existing index, matchers and actual bound controls. *)
   val legacy_traversedata_for_ss:
     simpset -> Traverse.traverse_data option
 
-  (* The traversal-strategy settings that traverse_data does not carry;
-     xtraversedata_for_ss is the pair the extended Traverse entry points
-     take.  traversedata_for_ss alone therefore describes a traversal at
-     the default settings, not at the simpset's own. *)
+  (* Explicit configured extraction: xtraversedata_for_ss pairs a native
+     CONFIG_REDUCER with the simpset's traversal-strategy settings for the
+     extended Traverse entry points. For configured reducer data alone,
+     use #1 (xtraversedata_for_ss ss), not traversedata_for_ss ss. *)
   val traverseconfig_for_ss: simpset -> Traverse.traverse_config
   val xtraversedata_for_ss: simpset -> Traverse.xtraverse_data
 

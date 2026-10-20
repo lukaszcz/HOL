@@ -23,10 +23,17 @@ bounded-rewrite controls. It neither recompiles installed rules nor resets
 remaining uses. Supplying facts to `Traverse.TRAVERSE` still invokes its
 collectors at conversion construction, as for other ordinary reducers.
 
-This function does not change `traversedata_for_ss`, which retains its
-configured native reducer shape, or `xtraversedata_for_ss`, which also
-carries the simpset's traversal configuration. It does not imply identical
-storage usage or measured performance.
+A `SOME` result uses the same default builder as `traversedata_for_ss`:
+its native rewriter is a `Traverse.REDUCER` and supplied decision procedures
+are unchanged. Unlike this optional dispatch accessor, `traversedata_for_ss`
+always returns that projection, even for ineligible inputs, omitting their
+simpset-specific traversal configuration.
+
+Use `xtraversedata_for_ss` for a configured native `CONFIG_REDUCER` paired
+with the simpset's traversal configuration. Consumers needing configured
+reducer data alone use `#1 (xtraversedata_for_ss ss)`. Both projections share
+installed bounded controls. This does not imply identical storage usage or
+measured performance.
 
 ### Failure
 

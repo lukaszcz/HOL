@@ -5,8 +5,10 @@ plan. Start with [BASELINE.md](BASELINE.md) for the pinned revisions,
 provenance and initial checks. [LEGACY_FAILURES.md](LEGACY_FAILURES.md)
 records TASK_02's eleven red regressions and repair handoff.
 [FRESH_LOAD.md](FRESH_LOAD.md) records TASK_03's clean-heap namespace
-regressions and explicit red targets. None changes implementation APIs or
-weakens legacy expectations.
+regressions and explicit red targets. Those baseline tasks do not change
+implementation APIs or weaken legacy expectations.
+[TRAVERSAL_PROJECTION.md](TRAVERSAL_PROJECTION.md) records TASK_04's restored
+public legacy projection, caller audit and passing focused/sanity checks.
 
 ## Layout
 
@@ -140,9 +142,9 @@ A deliberately red probe therefore makes this runner fail; record its
 precise expected failure separately rather than treating that as a pass.
 The default run now includes all TASK_02 probes: at the original audited
 revision it exits 1 after running every suite on both lanes. This is the
-separate pre-repair red-regression target; the normal `src/simp/src`
-selftest target remains unchanged. TASK_04/TASK_07 must repair the failures
-and include these assertions in normal coverage.
+separate pre-repair red-regression target. TASK_04 repairs the constructor
+failure and includes it in normal `src/simp/src/selftest.sml` coverage;
+TASK_07 must repair the ten exclusion failures and add their normal coverage.
 
 Capture each relevant observable, not merely the final RHS:
 

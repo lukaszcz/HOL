@@ -168,9 +168,19 @@ Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded
     Selects the trusted original-ABI projection when conversion settings
     are absent and every decision procedure is an ordinary `REDUCER`.
     Otherwise it retains the configured projection and appropriate engine.
-    Public `traversedata_for_ss` retains its configured native reducer;
-    `legacy_traversedata_for_ss` is an explicit optional cooperation API.
-    Eligibility inspection executes no collectors or conversions.
+    Public `traversedata_for_ss` unconditionally returns the legacy
+    projection, with a native `REDUCER` and unchanged supplied decision
+    procedures. It carries the relation, traversal rules and limit, but
+    omits simpset-specific traversal configuration, even for configured
+    inputs. `legacy_traversedata_for_ss` is the optional dispatch API:
+    after pure eligibility inspection it shares that same default builder.
+    Neither extraction invokes collectors or recompiles installed rules.
+
+    `xtraversedata_for_ss` instead uses the configured builder, returning
+    a native `CONFIG_REDUCER` paired with the simpset's configuration.
+    Branch-only consumers needing configured reducer data alone must use
+    `#1 (xtraversedata_for_ss ss)`. Both projections share the actual
+    installed bounded controls; extraction does not reset remaining uses.
 
 `TRAVERSE`
 

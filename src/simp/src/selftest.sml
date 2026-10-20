@@ -870,7 +870,7 @@ in
          solver_rewr
            {solver=solver, stack=stack, cond_depth=cond_depth,
             term_ord=term_ord}}
-  val pure_data = traversedata_for_ss pureSimps.pure_ss
+  val pure_data = #1 (xtraversedata_for_ss pureSimps.pure_ss)
 
   (* The entry points that take traversal-strategy settings take them
      alongside the traverse_data, so the tests below pair the two. *)
@@ -1054,7 +1054,7 @@ in
          context_rewr
            {solver=solver, stack=stack, cond_depth=cond_depth,
             term_ord=term_ord}}
-  val bool_data = traversedata_for_ss bool_ss
+  val bool_data = #1 (xtraversedata_for_ss bool_ss)
   fun context_solver {context_thms,...} tm =
     case List.find (fn th => aconv tm (concl th)) context_thms of
         SOME th => th
@@ -5455,8 +5455,8 @@ in
           else die "reflexivity exception constructor or payload changed"
 end
 
-(* Paired native runners and the conservative ordinary projection share
-   compiled rules, but keep the public configured projection unchanged. *)
+(* Paired native runners and the public/optional legacy projections share
+   compiled rules and controls with explicit configured extraction. *)
 local
   fun check name condition =
     (tprint name;
@@ -5571,13 +5571,13 @@ local
        filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
     val ss = base ++ rewrites [Ntimes equation 2]
     val before_projection = !compiles
-    val native = valOf (legacy_traversedata_for_ss ss)
     val public = traversedata_for_ss ss
-    val legacy_cv = total (Traverse.TRAVERSE native [])
-    val configured_cv = total (Traverse.TRAVERSE public [])
+    val configured = #1 (xtraversedata_for_ss ss)
+    val legacy_cv = total (Traverse.TRAVERSE public [])
+    val configured_cv = total (Traverse.TRAVERSE configured [])
     val construction_ok = before_projection = 1 andalso
-      !compiles = before_projection andalso native_shape native andalso
-      configured_rewriter public
+      !compiles = before_projection andalso native_shape public andalso
+      configured_rewriter configured
     val (first,second) = if legacy_first
       then (legacy_cv,configured_cv) else (configured_cv,legacy_cv)
     val th1 = first a
@@ -5590,7 +5590,7 @@ local
     same_thm th4 (REFL a) andalso !compiles = before_projection
   end
   val quota_checks = [quota_case true,quota_case false]
-  val _ = check "native/configured projections share quotas without compiling"
+  val _ = check "public/configured projections share quotas without compiling"
     (List.all I quota_checks)
 
   (* Views and preserving-control replay must carry both runners and the
@@ -5608,7 +5608,7 @@ local
   val view_native = total (Traverse.TRAVERSE
     (valOf (legacy_traversedata_for_ss view_base)) [])
   val view_configured = total (Traverse.TRAVERSE
-    (traversedata_for_ss viewed) [])
+    (#1 (xtraversedata_for_ss viewed)) [])
   val view_first = view_native view_a
   val replayed = remove_ssfrags_preserving_controls
     ["paired removable"] viewed
@@ -5655,8 +5655,29 @@ local
   val after_rejected = !additions
   val accepted = map legacy_traversedata_for_ss accepted_inputs
   val after_accepted = !additions
-  val public_shapes = map (configured_rewriter o traversedata_for_ss)
-    (base :: excluded)
+  val constructor_inputs = empty_ss :: bool_ss :: base :: excluded
+  (* TASK_02's literal legacy client binding belongs in normal coverage.
+     In particular, NONE from the dispatch accessor cannot gate this API. *)
+  val Traverse.REDUCER _ =
+    hd (#rewriters (traversedata_for_ss empty_ss))
+  fun public_projection ss = let
+    val public = traversedata_for_ss ss
+    val extended = #1 (xtraversedata_for_ss ss)
+    val native = case #rewriters public of
+        [Traverse.REDUCER _] => true | _ => false
+  in
+    native andalso
+    Portable.pointer_eq (#dprocs public,#dprocs extended) andalso
+    Portable.pointer_eq (#travrules public,#travrules extended) andalso
+    aconv (#relation public) boolSyntax.equality andalso
+    #limit public = #limit extended
+  end
+  val public_checks = map public_projection constructor_inputs
+  val configured_shapes = map (configured_rewriter o #1 o
+                                xtraversedata_for_ss) constructor_inputs
+  val _ = check "public projection preserves REDUCER and supplied dprocs"
+    (List.all I public_checks andalso List.all I configured_shapes andalso
+     !additions = after_accepted)
   val _ = check "native projection eligibility is pure and conservative"
     (before_rejected = after_rejected andalso
      after_rejected = after_accepted andalso
@@ -5664,8 +5685,84 @@ local
      List.all (not o Option.isSome) rejected andalso
      List.all (fn SOME data => native_shape data andalso
                               not (null (#dprocs data))
-                | NONE => false) accepted andalso
-     List.all I public_shapes)
+                | NONE => false) accepted)
+
+  (* Public extraction ignores simpset-specific traversal configuration,
+     including settings that make the optional dispatch accessor reject it. *)
+  val default_a = ``projection_default_a:bool``
+  val default_b = ``projection_default_b:bool``
+  val default_condition = ``projection_default_condition:bool``
+  val default_rule = ASSUME
+    (mk_imp (default_condition,mk_eq (default_a,default_b)))
+  val default_base = limit 3 (pureSimps.pure_ss ++ rewrites [default_rule])
+  val config_calls = ref 0
+  fun unused_subgoaler _ tm = (config_calls := !config_calls + 1; REFL tm)
+  val unused_solver : Traverse.ssolver =
+    {name="projection unused solver",solve=fn _ => fn tm =>
+      (config_calls := !config_calls + 1; NO_CONV tm)}
+  fun unused_order pair =
+    (config_calls := !config_calls + 1; Cond_rewr.ac_term_ord pair)
+  val default_inputs =
+    [set_subgoaler unused_subgoaler default_base,
+     set_unsafe_solvers [unused_solver] default_base,
+     set_cond_depth 0 default_base,
+     set_term_ord unused_order default_base]
+  fun default_case ss = let
+    val data = traversedata_for_ss ss
+    val th = total (Traverse.TRAVERSE data [ASSUME default_condition])
+      default_a
+  in
+    #limit data = SOME 3 andalso same_thm th (UNDISCH default_rule)
+  end
+  val default_checks = Lib.with_flag (Cond_rewr.stack_limit,4)
+    (fn () => map default_case default_inputs) ()
+  val configured_zero = total (Traverse.XTRAVERSE
+    (xtraversedata_for_ss (set_cond_depth 0 default_base))
+    [ASSUME default_condition]) default_a
+  val _ = check "public projection omits configuration; extended keeps it"
+    (List.all I default_checks andalso !config_calls = 0 andalso
+     same_thm configured_zero (REFL default_a) andalso
+     !Cond_rewr.stack_limit = saved_depth)
+
+  (* Positive controls make solver/order omission observable: a solved
+     condition above bypasses unsafe solvers, and ordinary rules need no
+     orientation check. These callbacks must affect only extended data. *)
+  val solver_calls = ref 0
+  val proving_solver : Traverse.ssolver =
+    {name="projection proving solver",solve=fn _ => fn tm =>
+      if aconv tm default_condition then
+        (solver_calls := !solver_calls + 1; ASSUME tm)
+      else NO_CONV tm}
+  val solver_ss = set_unsafe_solvers [proving_solver] default_base
+  val public_unsolved = total (Traverse.TRAVERSE
+    (traversedata_for_ss solver_ss) []) default_a
+  val before_solver = !solver_calls
+  val extended_solved = total (Traverse.XTRAVERSE
+    (xtraversedata_for_ss solver_ss) []) default_a
+  val _ = check "public omits unsafe solver; extended invokes it"
+    (same_thm public_unsolved (REFL default_a) andalso before_solver = 0
+     andalso same_thm extended_solved (UNDISCH default_rule) andalso
+     !solver_calls = 1)
+
+  val order_calls = ref 0
+  fun reverse_order pair =
+    (order_calls := !order_calls + 1;
+     case Cond_rewr.ac_term_ord pair of
+         LESS => GREATER | EQUAL => EQUAL | GREATER => LESS)
+  val order_ss = set_term_ord reverse_order
+    (pureSimps.pure_ss ++ rewrites [boolTheory.EQ_SYM_EQ])
+  val ascending = ``projection_order_a:'a = projection_order_b``
+  val descending = ``projection_order_b:'a = projection_order_a``
+  val public_ordered = total (Traverse.TRAVERSE
+    (traversedata_for_ss order_ss) []) descending
+  val before_order = !order_calls
+  val extended_ordered = total (Traverse.XTRAVERSE
+    (xtraversedata_for_ss order_ss) []) ascending
+  val _ = check "public uses default order; extended invokes custom order"
+    (aconv (concl public_ordered) (mk_eq (descending,ascending)) andalso
+     null (hyp public_ordered) andalso before_order = 0 andalso
+     aconv (concl extended_ordered) (mk_eq (ascending,descending)) andalso
+     null (hyp extended_ordered) andalso !order_calls > 0)
 
   (* A rejected contextual custom procedure must still be reached through
      the configured fallback, with its invocation-local controls intact. *)
@@ -5692,7 +5789,7 @@ local
     val second = SIMP_CONV ss [] fallback_a
   in
     not (Option.isSome native) andalso
-    configured_rewriter (traversedata_for_ss ss) andalso
+    configured_rewriter (#1 (xtraversedata_for_ss ss)) andalso
     same_thm first fallback_eq andalso same_thm second fallback_eq
   end
   val fallback_checks = Lib.with_flag (Cond_rewr.stack_limit,0)

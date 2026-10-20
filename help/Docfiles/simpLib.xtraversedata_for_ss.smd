@@ -1,0 +1,34 @@
+## `xtraversedata_for_ss`
+
+``` hol4
+simpLib.xtraversedata_for_ss : simpset -> Traverse.xtraverse_data
+```
+
+------------------------------------------------------------------------
+
+Extracts a configured traversal description, paired with the simpset's
+subgoaler, unsafe solvers, condition depth and term order. Its native
+rewriter is a `Traverse.CONFIG_REDUCER`; supplied decision procedures are
+unchanged. The data carries equality as its relation and the simpset's
+traversal rules and limit.
+
+Pass the complete pair to extended Traverse entry points such as
+`Traverse.XTRAVERSE`. Consumers needing configured reducer data alone use
+`#1 (xtraversedata_for_ss ss)`. The public legacy accessor
+`traversedata_for_ss` does not transport simpset-specific configuration and
+returns a native `Traverse.REDUCER` instead.
+
+Extraction invokes no collectors, does not recompile installed rewrites,
+and does not reset bounded uses. Legacy and configured projections share
+the actual installed bounded controls. Context initialization and reuse
+follow the chosen Traverse entry point's contract.
+
+### Failure
+
+Constructing or applying the returned traversal can fail as for the chosen
+Traverse entry point.
+
+### See also
+
+simpLib.traversedata_for_ss,
+simpLib.legacy_traversedata_for_ss
