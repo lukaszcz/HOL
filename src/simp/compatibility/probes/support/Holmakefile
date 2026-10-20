@@ -1,0 +1,9 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+# Native selftest must resolve private simplifier modules before sigobj is
+# populated by the directory's successful build. Paired suites instead copy
+# these sources beside their own Holmakefile with INCLUDES = ../lib.
+INCLUDES = ../../../src
+EXTRA_CLEANS = traversal-contracts.exe
+
+traversal-contracts.exe: RunTraversalContracts.uo
+	$(HOLMOSMLC) -o $@ $<

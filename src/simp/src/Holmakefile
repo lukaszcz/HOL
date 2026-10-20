@@ -1,5 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
-EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe
+EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
+  traversal-contracts.log
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
@@ -32,8 +33,18 @@ fresh-load-control fresh-load-attribute-first fresh-load-set-first \
 	  SIMP_COMPAT_CONTROL=$$(pwd)/$(FRESH_LOAD)/control.ML \
 	  ./fresh-load-selftest.exe
 
+# Shared legacy-only fixtures have their own dependency scope: they must
+# see these private modules before this directory is uploaded to sigobj.
+CONTRACTS = ../compatibility/probes/support
+.PHONY: traversal-contracts
+traversal-contracts: selftest.exe
+	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 -C $(CONTRACTS) \
+	  traversal-contracts.exe
+	$(tee cd $(CONTRACTS) && ./traversal-contracts.exe,\
+traversal-contracts.log)
+
 ifdef HOLSELFTESTLEVEL
-all: simp-selftest.log
+all: simp-selftest.log traversal-contracts
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)

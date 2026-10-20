@@ -1,0 +1,107 @@
+req0/Once fails ...                                                          (0.000s)      [32m[1mOK[0m
+reqD/Once succeeds ...                                                       (0.000s)      [32m[1mOK[0m
+strategy-free SIMP_TAC preserves develop ReqD/Once ...                       (0.000s)      [32m[1mOK[0m
+child-first traversal propagates a work cutoff ...                           [32m[1mOK[0m
+child-first congruence passes a premise to its consequent ...                (0.000s)      [32m[1mOK[0m
+opt-in child-first simplifier conversion is public ...                       (0.000s)      [32m[1mOK[0m
+child-first keeps an eta function head before descent ...                    (0.000s)      [32m[1mOK[0m
+child-first eta head survives a later non-eta abstraction ...                (0.000s)      [32m[1mOK[0m
+child-first does not eta-contract a quantifier predicate ...                 (0.000s)      [32m[1mOK[0m
+child-first simplifier conversion propagates its budget ...                  [32m[1mOK[0m
+child-first traversal gives the normalized child to its par ...              (0.000s)      [32m[1mOK[0m
+child-first tactic simplifies the conclusion ...                             [32m[1mOK[0m
+child-first global tactic uses the same traversal ...                        [32m[1mOK[0m
+solver pipeline: unsafe solver proves residual condition ...                 (0.000s)      [32m[1mOK[0m
+solver pipeline: congruence context theorem is visible ...                   (0.000s)      [32m[1mOK[0m
+solver pipeline: solver failure restores traversal limit ...                 (0.000s)      [32m[1mOK[0m
+solver pipeline: each recurse call restores its own limit s ...              (0.000s)      [32m[1mOK[0m
+solver pipeline propagates non-HOL exceptions ...                            (0.000s)      [32m[1mOK[0m
+cond_depth: depth ten fails at the default four ...                          (0.000s)      [32m[1mOK[0m
+cond_depth: per-traversal depth forty succeeds ...                           (0.000s)      [32m[1mOK[0m
+cond_depth: NONE honors the global stack limit ...                           (0.000s)      [32m[1mOK[0m
+cond_depth binding restores the global stack limit ...                       [32m[1mOK[0m
+cond_depth: NONE is live between native rewrite candidates ...               (0.000s)      [32m[1mOK[0m
+cond_depth: failing mutation ran once and restored depth ...                 [32m[1mOK[0m
+cond_depth: configured zero ignores candidate default mutat ...              (0.000s)      [32m[1mOK[0m
+cond_depth: configured mutation candidate was attempted ...                  [32m[1mOK[0m
+term_ord: default order chooses the ascending equality ...                   (0.000s)      [32m[1mOK[0m
+term_ord: custom order flips the equality normal form ...                    (0.000s)      [32m[1mOK[0m
+term_ord: Once bypasses a custom rejecting order ...                         (0.000s)      [32m[1mOK[0m
+XTRAVERSE refreshes Once for each conversion application ...                 (0.000s)      [32m[1mOK[0m
+nested traversal probe runs under cond_depth forty ...                       (0.000s)      [32m[1mOK[0m
+nested traversal does not inherit an outer cond_depth ...                    [32m[1mOK[0m
+nested traversal does not inherit an outer term_ord ...                      [32m[1mOK[0m
+congLib used the configured subgoaler and solver ...                         [32m[1mOK[0m
+set_cond_depth configures a simpset invocation ...                           (0.000s)      [32m[1mOK[0m
+set_term_ord configures permutative rewriting per simpset ...                (0.000s)      [32m[1mOK[0m
+global supplied Once rewrite is installed exactly once ...                   [32m[1mOK[0m
+global supplied Once lifetime spans assumptions and conclusion ...           [32m[1mOK[0m
+global ExclSF rebuild preserves supplied Once lifetime ...                   [32m[1mOK[0m
+child-first policies protect full and partial clients ...                    [32m[1mOK[0m
+context lifetime: TRAVERSE ...                                               [32m[1mOK[0m
+context lifetime: TRAVERSE native projection ...                             [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV ...                                  [32m[1mOK[0m
+TRAVERSE: reusable Once first application ...                                (0.000s)      [32m[1mOK[0m
+TRAVERSE: reusable Once second application ...                               (0.000s)      [32m[1mOK[0m
+TRAVERSE: new construction decodes a fresh Once ...                          (0.000s)      [32m[1mOK[0m
+TRAVERSE native projection: reusable Once first application ...              (0.000s)      [32m[1mOK[0m
+TRAVERSE native projection: reusable Once second applicatio ...              (0.000s)      [32m[1mOK[0m
+TRAVERSE native projection: new construction decodes a fres ...              (0.000s)      [32m[1mOK[0m
+context lifetime: TRAVERSE mixed + contextual ...                            [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV mixed + contextual ...               [32m[1mOK[0m
+context lifetime: TRAVERSE mixed + configured ...                            [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV mixed + configured ...               [32m[1mOK[0m
+context lifetime: SIMP_CONV (develop's delayed wrapper) ...                  [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_CONV (develop's delayed wrapper) ...       [32m[1mOK[0m
+context lifetime: XTRAVERSE with default_config ...                          [32m[1mOK[0m
+context lifetime: TRAVERSE_WITH_CONTEXT with default_config ...              [32m[1mOK[0m
+context lifetime: ROOT_REWRITE with default_config ...                       [32m[1mOK[0m
+XTRAVERSE with default_config: reusable Once first applicat ...              (0.000s)      [32m[1mOK[0m
+XTRAVERSE with default_config: reusable Once second applica ...              (0.000s)      [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + subgoaler ...                      [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + unsafe solver ...                  [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + condition depth ...                [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + term order ...                     [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + safe solver ...                    [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + looper ...                         [32m[1mOK[0m
+++ malformed tag precedes filter: ordinary/effect ...                        [32m[1mOK[0m
+++ malformed tag precedes filter: ordinary/exception ...                     [32m[1mOK[0m
+++ malformed tag precedes filter: AC/effect ...                              [32m[1mOK[0m
+++ malformed tag precedes filter: AC/exception ...                           [32m[1mOK[0m
+++ all makers precede conversions: ordinary ...                              [32m[1mOK[0m
+++ all makers precede conversions: AC and ordinary ...                       [32m[1mOK[0m
+R6 factories are not run when TRAVERSE is constructed ...                    [32m[1mOK[0m
+R6 context factories precede root reducer attempts ...                       [32m[1mOK[0m
+R6 one factory construction across three loop tries ...                      [32m[1mOK[0m
+R6 factories refresh once on conversion reuse ...                            [32m[1mOK[0m
+R6 factories run even when root abort skips descent ...                      [32m[1mOK[0m
+R6 factory rejection before root rewrite is retained ...                     [32m[1mOK[0m
+R6 explicit root avoids unused context factories ...                         [32m[1mOK[0m
+R6 explicit traversal retains lazy factory scheduling ...                    [32m[1mOK[0m
+R7 pure Split projection: bare ...                                           [32m[1mOK[0m
+R7 pure Split projection: Req0 ...                                           [32m[1mOK[0m
+R7 pure Split projection: ReqD ...                                           [32m[1mOK[0m
+R7 pure Split projection: valid bound ...                                    [32m[1mOK[0m
+R7 pure Split projection: malformed bound ...                                [32m[1mOK[0m
+R7 pure Split projection: malformed first, valid later ...                   [32m[1mOK[0m
+R7 pure Split projection: mixed wrappers ...                                 [32m[1mOK[0m
+R7 pure Split projection: Cong does not expose Split ...                     [32m[1mOK[0m
+R7 pure Split projection: AC does not expose Split ...                       [32m[1mOK[0m
+P1 subgoaler: exact initial and recursive fact order ...                     [32m[1mOK[0m
+C2 legacy private context initialized before application ...                 [32m[1mOK[0m
+C2 weakener factory feeds live reducer controls ...                          (0.000s)      [32m[1mOK[0m
+C2 CONFIG NONE/order and live context survive reuse ...                      (0.000s)      [32m[1mOK[0m
+C2 factory order and reusable context callback count ...                     [32m[1mOK[0m
+congLib reflexivity precedes rewrite factory primitives ...                  [32m[1mOK[0m
+congLib reflexivity preserves foreign tag and payload ...                    [32m[1mOK[0m
+paired runners preserve theorem, hypotheses and free params ...              [32m[1mOK[0m
+paired NONE depth is live; SOME zero/one remain isolated ...                 [32m[1mOK[0m
+paired solver failures preserve wrapping and Interrupt ...                   [32m[1mOK[0m
+public/configured projections share quotas without compiling ...             [32m[1mOK[0m
+late public/extended extraction cannot refresh spent quotas ...              [32m[1mOK[0m
+public projection preserves REDUCER and supplied dprocs ...                  [32m[1mOK[0m
+native projection eligibility is pure and conservative ...                   [32m[1mOK[0m
+public projection omits configuration; extended keeps it ...                 [32m[1mOK[0m
+configured fallback collector construction/use counts ...                    [32m[1mOK[0m
+configured fallback collector construction/use counts ...                    [32m[1mOK[0m
+rejected contextual procedures retain configured fallback ...                [32m[1mOK[0m

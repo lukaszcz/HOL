@@ -9,6 +9,8 @@ regressions and explicit red targets. Those baseline tasks do not change
 implementation APIs or weaken legacy expectations.
 [TRAVERSAL_PROJECTION.md](TRAVERSAL_PROJECTION.md) records TASK_04's restored
 public legacy projection, caller audit and passing focused/sanity checks.
+[TRAVERSAL_LIFETIMES.md](TRAVERSAL_LIFETIMES.md) records TASK_05's shared
+quota, staging, default and exception contracts and pinned differential.
 
 ## Layout
 
@@ -23,6 +25,8 @@ public legacy projection, caller audit and passing focused/sanity checks.
   `control.sml` is the ordinary-simplification control. `reducer-shape.sml`
   and `excl-{rule,solver,looper,split,case}-{unmatched,installed}.sml` are
   eleven independent red-regression executables, not xfails.
+  `traversal-lifetimes.sml` runs the legacy-only `TraversalContracts` fixture
+  against both lanes; the same fixture runs in normal Holmake selftests.
 - `probes/support/*.sml`: shared legacy-only assertion helpers, snapshotted
   once, hashed as `support_sha256`, and copied into each suite directory.
   Holmake discovers and builds these modules through ordinary dependencies.
@@ -56,6 +60,26 @@ python3 src/simp/compatibility/run.py \
 
 The output directory must not exist. Choose a unique path for each run.
 For later implementation commits use `--branch <commit>` (default HEAD).
+To select focused legacy probes, repeat `--suite <probe-stem>`; `control`
+and the unchanged develop selftest always run. Unknown names are errors.
+With no `--suite`, all probes still run, including unrepaired exclusion
+regressions. For the TASK_05 scope:
+
+```sh
+python3 src/simp/compatibility/run.py --branch HEAD \
+  --suite traversal-lifetimes --suite reducer-shape \
+  --output /tmp/compat-traversal-new-results
+(cd src/simp/src && ../../../bin/Holmake --no-project --no-cache -j1 \
+  --holstate="$HOLDIR/bin/hol.state0" traversal-contracts)
+```
+
+`$HOLDIR` is the absolute repository root. The normal `HOLSELFTESTLEVEL`
+build also runs `traversal-contracts`, alongside `simp-selftest.log`. Its
+support-directory Holmakefile resolves private simplifier modules before
+upload to `sigobj`, and the launcher executes from that directory. It
+records all trace actions, ordered callbacks, warnings (also forwarded to
+the original sink), and expected exceptions without stripping diagnostics.
+
 Only **committed** library sources are staged; uncommitted library edits
 are not tested. Probe bytes are snapshotted once from this directory and
 hashed before either lane. The reference is hard-coded to

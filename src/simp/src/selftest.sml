@@ -5593,6 +5593,47 @@ local
   val _ = check "public/configured projections share quotas without compiling"
     (List.all I quota_checks)
 
+  (* Extract again only after spending a use, then after exhaustion. The
+     complete explicit engine refreshes contexts, not installed quotas. *)
+  fun late_quota_case legacy_first = let
+    val a = ``late_quota_a:bool``
+    val b = ``late_quota_b:bool``
+    val equation = ASSUME (mk_eq (a,b))
+    val compiles = ref 0
+    val compilation_events = ref 0
+    fun watch (2,Trace.LZ_TEXT text) =
+          if String.isPrefix "New rewrite: " (text ()) then
+            compilation_events := !compilation_events + 1
+          else ()
+      | watch _ = ()
+    val base = empty_ss ++ SSFRAG
+      {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
+       filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
+    val ss = base ++ rewrites [Ntimes equation 2]
+    fun build legacy = total
+      (if legacy then Traverse.TRAVERSE (traversedata_for_ss ss) []
+       else Traverse.XTRAVERSE (xtraversedata_for_ss ss) [])
+    val listener = "late projection quota compilation"
+    val _ = Listener.add_listener Trace.trace_hook (listener,watch)
+    fun run () = let
+      val first = build legacy_first
+      val th1 = first a
+      val second = build (not legacy_first)
+      val th2 = second a
+      val exhausted = [first a,second a,build true a,build false a]
+    in
+      same_thm th1 equation andalso same_thm th2 equation andalso
+      List.all (fn th => same_thm th (REFL a)) exhausted andalso
+      !compiles = 1 andalso !compilation_events = 0
+    end
+  in
+    Portable.finally
+      (fn () => ignore (Listener.remove_listener Trace.trace_hook listener))
+      run ()
+  end
+  val _ = check "late public/extended extraction cannot refresh spent quotas"
+    (late_quota_case true andalso late_quota_case false)
+
   (* Views and preserving-control replay must carry both runners and the
      same remaining quota, not merely equivalent initial declarations. *)
   val view_a = ``projection_view_a:bool``
@@ -5784,12 +5825,22 @@ local
         apply=fn {cond_depth,...} => rewrite cond_depth}]
   fun fallback_case reducer = let
     val ss = set_cond_depth 1 (pureSimps.pure_ss ++ dproc_ss reducer)
+    val prior_additions = !additions
     val native = legacy_traversedata_for_ss ss
-    val first = SIMP_CONV ss [] fallback_a
-    val second = SIMP_CONV ss [] fallback_a
+    val configured = xtraversedata_for_ss ss
+    val cv = SIMP_CONV ss [TRUTH]
+    val constructed = !additions
+    val first = cv fallback_a
+    val after_first = !additions
+    val second = cv fallback_a
+    val stages = [constructed-prior_additions,after_first-prior_additions,
+                  !additions-prior_additions]
+    val _ = tprint "configured fallback collector construction/use counts"
+    val _ = if stages = [0,1,2] then OK ()
+            else die "fallback refreshed contexts at the wrong stage"
   in
     not (Option.isSome native) andalso
-    configured_rewriter (#1 (xtraversedata_for_ss ss)) andalso
+    configured_rewriter (#1 configured) andalso
     same_thm first fallback_eq andalso same_thm second fallback_eq
   end
   val fallback_checks = Lib.with_flag (Cond_rewr.stack_limit,0)

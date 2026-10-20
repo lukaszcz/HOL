@@ -135,6 +135,9 @@ def main():
     parser.add_argument("--branch", default="HEAD", help="committed revision")
     parser.add_argument("--output", type=Path, required=True,
                         help="new compact results directory (must not exist)")
+    parser.add_argument("--suite", action="append", default=[],
+                        help="select a legacy probe (repeatable); control and "
+                             "unchanged develop selftest always run")
     args = parser.parse_args()
     output = args.output.resolve()
     branch = git("rev-parse", args.branch + "^{commit}").decode().strip()
@@ -143,6 +146,11 @@ def main():
     if pinned.read_bytes() != original:
         raise RuntimeError("preserved develop selftest differs from pinned git")
     probes = sorted((HERE / "probes/legacy").glob("*.sml"))
+    if args.suite:
+        unknown = set(args.suite) - {p.stem for p in probes}
+        if unknown:
+            parser.error("unknown legacy suites: " + ", ".join(sorted(unknown)))
+        probes = [p for p in probes if p.stem in {"control", *args.suite}]
     support = [(p, p.read_bytes()) for p in
                sorted((HERE / "probes/support").glob("*.sml"))]
     suites = [(p.stem, p, p.read_bytes()) for p in probes]
