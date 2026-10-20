@@ -44,8 +44,11 @@ theory and registries. Environment variables select the scenario, absolute
 lane-local `simpLib` recipe, and deferred `control.ML`. Output retains raw
 combined diagnostics/warnings and ordered, single-line `OBS` records.
 `manifest.json` records inputs, source pins, heap/tool/shared-input hashes,
-recipes, audits, commands, exits and runtime precondition results. Exit 1
-is a real regression failure, not an expected-failure success status.
+recipes, audits, commands, exits and runtime precondition results. It also
+compares every ordered contract observation across lanes. Only `load.path`
+is treated separately: each must equal its actual private library path.
+Original observations are retained. Exit 1 is a real regression failure,
+not an expected-failure success status.
 
 ## Why this launcher really is clean
 

@@ -86,6 +86,9 @@ fun run () = let
     fun result (label,set) = let
       val _ = calls := []
       val th = during label (fn () => QCONV (SIMP_CONV set []) (hd atoms))
+      (* Preserve actual order as well as the membership assertion below. *)
+      val _ = observe (label ^ ".callback-order")
+        (String.concatWith ";" (rev (!calls)))
       val observed = Listsort.sort String.compare (!calls)
       val expected = Listsort.sort String.compare
         (List.filter (fn n => n <> name) dnames)

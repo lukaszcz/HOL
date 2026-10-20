@@ -31,6 +31,9 @@ dispositions, including the repaired ambient `ExcludeX` mapping.
 [API_MIGRATION.md](API_MIGRATION.md) is TASK_13's final API inventory,
 repository search/disposition record and documentation validation handoff
 for TASK_14 through TASK_17. Legacy clients require no migration.
+[PAIRED_VALIDATION.md](PAIRED_VALIDATION.md) records TASK_14's repaired-pin
+paired matrix, every raw-output difference, fresh-load preconditions,
+separate branch-only checks and qualified handoff to TASK_16/TASK_17.
 
 ## Layout
 
@@ -54,6 +57,8 @@ for TASK_14 through TASK_17. Legacy clients require no migration.
   `exclusion-parsing.sml` runs `ExclusionParsing`: Excl / `-*` strict
   parser/error/warning parity, numeric/dotted rewrite suffixes, exact dproc
   spelling, bare kernel strings, repetitions and current-theory replay.
+  `tactic-validations.sml` supplements the original suite with six nonempty
+  tactic validations, kernel-proved subgoals and full reconstructed theorems.
 - `probes/support/*.sml`: shared legacy-only assertion helpers, snapshotted
   once, hashed as `support_sha256`, and copied into each suite directory.
   Holmake discovers and builds these modules through ordinary dependencies.
@@ -191,6 +196,10 @@ working-tree state at invocation, exact argv/cwd/exit codes, loader-audit
 results and shared-input hashes. `$WORK` and `$HOLDIR` in commands are
 substitutions documented above. Each command's `*.log` retains stdout and
 stderr combined, in emitted order, without dropping warnings or exceptions.
+TASK_14's retained run logs are losslessly compressed with `.gz` appended
+to their logical manifest names. `paired_report.py` reads either form and
+produces an indexed per-observation matrix plus exact raw differences;
+see PAIRED_VALIDATION.md for commands and the narrow non-contract fields.
 Some logs contain ANSI colors, backspaces, timing and temporary paths.
 Do not claim that differing raw logs are equal after silently normalizing
 away relevant output. Successful library builds can have empty logs.

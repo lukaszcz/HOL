@@ -1,0 +1,46 @@
+{
+  "superseded_runs": [
+    {
+      "directory": "paired",
+      "passed": true,
+      "manifest_sha256": "546b77871c792e626c69ec8f7b8bac06e7040d0e38bfd884e257896dcd11271f",
+      "support_sha256": {
+        "probes/support/ExclusionHistory.sml": "5e0dcbea8f70a1d7ff482c43293c3b7c6a383e9a702881aecfaacc1b0c32dc47",
+        "probes/support/ExclusionParsing.sml": "47e8640328fcb0252c73816ca162e8b7c6fe9a3310c4d4bbb98196dd95679aba",
+        "probes/support/LegacyFailures.sml": "a9d92d3f7b8c537f2dda66a29c1edbe70bf461058539416d337204d65e266745",
+        "probes/support/RunExclusionContracts.sml": "88a6bd5bb77549b1ad6b0517942533424a9124b85f15e3d0d43029dc5c4ba441",
+        "probes/support/RunTraversalContracts.sml": "a3e88ce2fb3790d8dd5aa4ac34c45cad39ea26cd68bc24eb7832ead26b2ffd3f",
+        "probes/support/TraversalContracts.sml": "3c9eaba1d2652803df3e4e481a1d0307c86dcd36655ec40980b31672908eada1"
+      },
+      "disposition": "superseded by verified run after fixture-only adjustments and host routine validation"
+    },
+    {
+      "directory": "paired-final",
+      "passed": true,
+      "manifest_sha256": "7cc9efd33f634a5db153211c3538a9b6c6a2774170d9abbd2426d9a603b6433c",
+      "support_sha256": {
+        "probes/support/ExclusionHistory.sml": "5e0dcbea8f70a1d7ff482c43293c3b7c6a383e9a702881aecfaacc1b0c32dc47",
+        "probes/support/ExclusionParsing.sml": "47e8640328fcb0252c73816ca162e8b7c6fe9a3310c4d4bbb98196dd95679aba",
+        "probes/support/LegacyFailures.sml": "ce2035a4c406c031a3e20d9a364113fc97a3e20e0069317ad0a092d1da9f1c6e",
+        "probes/support/RunExclusionContracts.sml": "88a6bd5bb77549b1ad6b0517942533424a9124b85f15e3d0d43029dc5c4ba441",
+        "probes/support/RunTraversalContracts.sml": "a3e88ce2fb3790d8dd5aa4ac34c45cad39ea26cd68bc24eb7832ead26b2ffd3f",
+        "probes/support/TraversalContracts.sml": "3c9eaba1d2652803df3e4e481a1d0307c86dcd36655ec40980b31672908eada1"
+      },
+      "disposition": "superseded by verified run after fixture-only adjustments and host routine validation"
+    },
+    {
+      "directory": "fresh",
+      "passed": true,
+      "manifest_sha256": "0f52e5ef9e7a0d08cd580bde55c99f9a15e1760ac01b81d6c96ae00b8b3ae33a",
+      "support_sha256": null,
+      "disposition": "superseded by verified run after fixture-only adjustments and host routine validation"
+    }
+  ],
+  "constructor_red_expected": {
+    "branch": "62a6bdc3453c29e8f31faa72f2b70a245f44840d",
+    "command": "PYTHONDONTWRITEBYTECODE=1 python3 src/simp/compatibility/run.py --branch 62a6bdc3453c29e8f31faa72f2b70a245f44840d --suite reducer-shape --output /tmp/compat-task14-constructor-red",
+    "expected_runner_exit": 1,
+    "observed_runner_exit": 1,
+    "reason": "public legacy projection is not REDUCER; control and reference pass"
+  }
+}

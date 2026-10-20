@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fresh-heap namespace regressions; red until ordinary loading is neutral."""
+"""Paired fresh-heap namespace regressions with ordered observations."""
 
 import argparse
 import os
@@ -122,8 +122,33 @@ def main():
                         "run_exit": result.returncode,
                         "precondition_clean": precondition,
                         "passed": passed, "observations": observations,
+                        "expected_load_path": str(library / "simpLib"),
                     }
                     success = success and passed
+            # Keep original observations. The sole non-contract field is the
+            # deliberately different lane-local recipe path; validate it,
+            # then compare every other observation in its original order.
+            comparisons = {}
+            for scenario in scenarios:
+                traces = []
+                paths_valid = True
+                for lane in ("reference", "branch"):
+                    record = report["lanes"][lane]["scenarios"].get(scenario, {})
+                    observations = record.get("observations", [])
+                    path_lines = [s for s in observations
+                                  if s.startswith("OBS load.path=")]
+                    paths_valid = paths_valid and path_lines == [
+                        "OBS load.path=" + record.get("expected_load_path", "")]
+                    traces.append([s for s in observations
+                                   if not s.startswith("OBS load.path=")])
+                equal = paths_valid and bool(traces[0]) and traces[0] == traces[1]
+                comparisons[scenario] = {
+                    "load_paths_valid": paths_valid,
+                    "ordered_contract_observations_equal": equal,
+                    "non_contract_field": "load.path (lane-local recipe)",
+                }
+                success = success and equal
+            report["comparisons"] = comparisons
             for name, sha in report["tools_sha256"].items():
                 if digest((ROOT / name).read_bytes()) != sha:
                     raise RuntimeError(f"tool changed during run: {name}")

@@ -1,0 +1,72 @@
+# paired
+--- reference-exclusion-parsing.run.log
++++ branch-exclusion-parsing.run.log
+@@ -1881,10 +1881,10 @@
+ OBS bad -* a.b.c.d.exception.message=User key has too many dots
+ bad -* a.b.c.d ...                                                           [32m[1mOK[0m
+ Exporting theory "legacyfailure" ... done.
+-Theory "legacyfailure" took 0.00096s to build
++Theory "legacyfailure" took 0.00088s to build
+ <<HOL message: Created theory "parserMatrixFirst">>
+ Exporting theory "legacyfailure" ... done.
+-Theory "legacyfailure" took 0.00078s to build
++Theory "legacyfailure" took 0.00077s to build
+ <<HOL message: Created theory "parserMatrixSecond">>
+ parser replay really changed current theory ...                              [32m[1mOK[0m
+ OBS stage=new theory strict Excl replay
+# fresh
+--- reference-attribute-after.run.log
++++ branch-attribute-after.run.log
+@@ -15,7 +15,7 @@
+ OBS initial.bound.splitPersistLib=false
+ no preloaded splitPersistLib ...                                             [32m[1mOK[0m
+ OBS precondition=clean
+-OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/reference/lib/simpLib
++OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/branch/lib/simpLib
+ OBS load.exception=none
+ OBS load.warnings=0
+ dynamic simpLib load succeeds ...                                            [32m[1mOK[0m
+--- reference-attribute-first.run.log
++++ branch-attribute-first.run.log
+@@ -25,7 +25,7 @@
+ custom attribute handler identity ...                                        [32m[1mOK[0m
+ OBS before-load.attribute=true
+ OBS before-load.set=false
+-OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/reference/lib/simpLib
++OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/branch/lib/simpLib
+ OBS load.exception=none
+ OBS load.warnings=0
+ OBS after-load.attribute=true
+--- reference-control.run.log
++++ branch-control.run.log
+@@ -15,7 +15,7 @@
+ OBS initial.bound.splitPersistLib=false
+ no preloaded splitPersistLib ...                                             [32m[1mOK[0m
+ OBS precondition=clean
+-OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/reference/lib/simpLib
++OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/branch/lib/simpLib
+ OBS load.exception=none
+ OBS load.warnings=0
+ normal dynamic load succeeds ...                                             [32m[1mOK[0m
+--- reference-set-after.run.log
++++ branch-set-after.run.log
+@@ -15,7 +15,7 @@
+ OBS initial.bound.splitPersistLib=false
+ no preloaded splitPersistLib ...                                             [32m[1mOK[0m
+ OBS precondition=clean
+-OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/reference/lib/simpLib
++OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/branch/lib/simpLib
+ OBS load.exception=none
+ OBS load.warnings=0
+ dynamic simpLib load succeeds ...                                            [32m[1mOK[0m
+--- reference-set-first.run.log
++++ branch-set-first.run.log
+@@ -29,7 +29,7 @@
+ foreign exporter handler identity ...                                        [32m[1mOK[0m
+ OBS before-load.attribute=true
+ OBS before-load.set=true
+-OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/reference/lib/simpLib
++OBS load.path=/tmp/claude/hol-simp-fresh.19ps6jgq/branch/lib/simpLib
+ OBS load.exception=none
+ OBS load.warnings=0
+ OBS after-load.attribute=true

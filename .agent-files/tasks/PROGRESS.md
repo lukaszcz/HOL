@@ -12,15 +12,15 @@
 - TASK_10: done — acceptance verified; ownership/load/native/sanity reruns pass.
 - TASK_11: done — acceptance verified; fresh replay/native/sanity reruns pass.
 - TASK_12: done — acceptance verified; lifecycle/heap/audit/native/sanity reruns pass.
-- TASK_13: done — naming correction, doc render/native/sanity checks pass.
-- TASK_14: unblocked (not started).
+- TASK_13: done — acceptance verified; docs/search/native/sanity reruns pass.
+- TASK_14: done — acceptance verified; full paired matrix/native/sanity pass.
 - TASK_15: unblocked (not started).
-- TASK_16: blocked — needs 14, 15.
+- TASK_16: blocked — needs 15.
 - TASK_17: blocked — needs 16.
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_14_paired_differential_validation.md`.
+`.agent-files/tasks/TASK_15_downstream_and_routine_validation.md`.
 
 ## 3. Completion log
 
@@ -39,4 +39,5 @@ and evidence pointer.
 - TASK_10 — `613d7d8e1`; evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.
 - TASK_11 — `c8b193b98`; evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.
 - TASK_12 — `fa2099c07`; evidence: `src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `src/simp/compatibility/results/task12/`.
-- TASK_13 — `ee1ea6da1` + `[TASK_13] Correct exclusion naming documentation`; evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/{validation,naming-validation}.json`.
+- TASK_13 — `ee1ea6da1` + `5b5f07df2`; evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/{validation,naming-validation}.json`.
+- TASK_14 — `[TASK_14] Record pinned paired differential validation`; evidence: `src/simp/compatibility/PAIRED_VALIDATION.md` and `src/simp/compatibility/results/task14/`.

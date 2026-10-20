@@ -149,6 +149,13 @@ TASK_13 final API/migration inventory and search dispositions for TASK_14–17:
 `src/simp/compatibility/API_MIGRATION.md` and `results/task13/` under that
 compatibility directory. Legacy callers require no migration; branch-only
 extensions use configured extraction, ExclX and explicit split persistence.
+TASK_14 paired differential handoff for TASK_16/TASK_17:
+`src/simp/compatibility/PAIRED_VALIDATION.md` and `results/task14/` under that
+directory. All 17 ordinary inputs and five clean-load scenarios agree on
+legacy contracts at repaired pin `5b5f07df2` versus fixed develop; 3251 ordered
+observations, raw differences and separate branch-only/native checks are
+recorded. Mixed-source validation is not independent repository regression
+or universal equivalence; TASK_15/TASK_16 remain separate gates.
 
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`

@@ -92,12 +92,12 @@ fun constructor () =
       (not (null (#rewriters data)))
     val _ = observe "setup.result" "ready"
     val _ = during "assertion.constructor" (fn () =>
-      let
-        val Traverse.REDUCER _ =
-          hd (#rewriters (simpLib.traversedata_for_ss simpLib.empty_ss))
-      in
-        observe "assertion.constructor.result" "REDUCER"
-      end)
+      (* Exhaustive assertion avoids a fixture compiler warning when the
+         datatype has additional constructors. Only REDUCER may pass. *)
+      case #rewriters (simpLib.traversedata_for_ss simpLib.empty_ss) of
+          Traverse.REDUCER _ :: _ =>
+            observe "assertion.constructor.result" "REDUCER"
+        | _ => die "public legacy projection is not REDUCER")
   in
     finish ()
   end
