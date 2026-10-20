@@ -48,11 +48,24 @@ sig
   val COND_REWR_CONV : string * thm -> bool ->
                        (term list -> term -> thm) -> term list -> conv
 
-  (* As COND_REWR_CONV, but with the side-condition depth and the
-     permutative term order supplied by the caller rather than taken from
-     the user-level defaults.  This is the form a Traverse.CONTEXT_REDUCER
-     can hand its traversal's own settings to; COND_REWR_CONV is this one
-     at cond_depth = !stack_limit and term_ord = ac_term_ord. *)
+  (* Prepare a conditional rewrite once and share its matcher between
+     the original curried runner and an explicitly configured runner.
+     The caller retains the actual bound reference; bounded is its status.
+     The legacy runner reads stack_limit live at each candidate check.
+     Configured NONE does likewise; SOME n is independent of stack_limit. *)
+  val COND_REWR_CONVS : string * thm -> bool ->
+                       {legacy : (term list -> term -> thm) ->
+                                 term list -> conv,
+                        configured :
+                          {solver : term list -> term -> thm,
+                           stack : term list,
+                           cond_depth : int option,
+                           term_ord : term * term -> order} -> conv}
+
+  (* As COND_REWR_CONV, but with an explicit integer side-condition depth
+     and permutative term order.  This adapter passes SOME cond_depth to
+     the configured runner.  Unlike COND_REWR_CONV, it does not read the
+     live stack_limit reference at candidate checks. *)
   val COND_REWR_CONV_WITH_CONTEXT :
                        string * thm -> bool ->
                        {solver : term list -> term -> thm,

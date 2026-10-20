@@ -239,6 +239,14 @@ sig
 
   val traversedata_for_ss: simpset -> Traverse.traverse_data
 
+  (* Additive cooperation API for original-ABI consumers such as congLib.
+     NONE means conversion settings or nonordinary decision procedures
+     require the configured projection. Eligibility runs no callbacks;
+     SOME shares the existing index, matchers and actual bound controls.
+     Public traversedata_for_ss retains its configured reducer shape. *)
+  val legacy_traversedata_for_ss:
+    simpset -> Traverse.traverse_data option
+
   (* The traversal-strategy settings that traverse_data does not carry;
      xtraversedata_for_ss is the pair the extended Traverse entry points
      take.  traversedata_for_ss alone therefore describes a traversal at

@@ -96,9 +96,11 @@
 
 ## Context
 
-`trav_state` keeps each reducer's private context and hypothesis free
-variables. It stores generic `context_thms` only when a configured subgoaler
-or unsafe solver can read them; with neither, the generic list stays empty.
+For all-`REDUCER` inputs, `TRAVERSE` uses a private original five-field
+state: reducer contexts, relation information and hypothesis free variables.
+Mixed contextual/configured reducers retain the generalized legacy schedule.
+The generalized state stores generic `context_thms` only when a configured
+subgoaler or unsafe solver can read them; otherwise that list stays empty.
 `add_context` still delivers every batch to the reducers and preserves its
 hypotheses' free variables, regardless of generic fact storage.
 `TRAVERSE_WITH_CONTEXT` splits its initial theorems: `reducer_context` goes
@@ -115,8 +117,28 @@ Only `HOL_ERR` means a solver is inapplicable; on failure the traversal limit is
 With neither subgoaler nor solvers, the original `EQT_ELIM` path is taken.
 `traverseconfig_for_ss` always supplies the unsafe list, even under a safe tactic; safe solvers are only ever final solvers in `GEN_SIMP_TAC`.
 
-The depth and term order are options in `traverse_config`, resolved at traversal entry (unset: `!Cond_rewr.stack_limit`, read at each reducer application, and `Cond_rewr.ac_term_ord`) and passed explicitly to `COND_REWR_CONV_WITH_CONTEXT`.
-There is no dynamically scoped state, so a nested traversal never inherits its caller's settings.
+Native rule preparation produces direct legacy and configured runners
+sharing one matcher and the actual bound reference. Each net entry holds
+an original curried conversion and one cold companion containing the
+configured runner and quota metadata. Collector-created rules use this same
+insertion path; source handles alone do not inventory all bounded rules.
+Legacy candidate application selects only the original conversion.
+
+Depth and term order are options in `traverse_config`. On configured paths,
+native rewrites receive the depth option unchanged through `CONFIG_REDUCER`
+and `COND_REWR_CONV_WITH_CONFIG`. With `NONE`, each candidate-depth check
+reads the current `Cond_rewr.stack_limit`; a failing user conversion can
+change that default before the next candidate in the same net lookup.
+An explicit `SOME n` uses `n` without reading or updating that global.
+
+Older `CONTEXT_REDUCER` clients still receive an integer: an unset depth is
+resolved when their reducer is applied. `COND_REWR_CONV_WITH_CONTEXT` adapts
+an explicit integer to `SOME n`; it is not the live-default native path.
+The direct legacy runner reads the live stack limit at its candidate check
+and uses `Cond_rewr.ac_term_ord`. Configured term order defaults to that same
+function at traversal entry.
+Settings are passed explicitly, not installed by temporarily changing globals.
+A separate nested invocation uses its own configuration.
 
 ## Exclusion names
 
@@ -127,8 +149,11 @@ pattern. Unmatched bare names silently record develop's rule deletion.
 
 ## Prepared global rewrites
 
-The old simplification tactics dispatch strategy-free calls to develop's
-code; strategy-bearing calls run as the new engines. Explicit
+The old simplification tactics retain develop's marker processing and pass
+schedule for strategy-free invocations; strategy-bearing calls use the
+extended engines. This choice is made on the goal, not when a reusable
+tactic is constructed. Schedule compatibility does not imply a baseline-sized
+state, absence of extension bookkeeping or a measured speedup. Explicit
 `GEN_GLOBAL_SIMP_TAC` calls always select counted prepared passes.
 
 `GEN_GLOBAL_SIMP_TAC` decodes its ordinary theorem arguments once, without adding them to the simpset history.
@@ -140,7 +165,12 @@ Each traversal compiles them with its own marker-adjusted `mk_rewrs`, so bounded
 `SIMP_QCONV`
 
 :   (From `simpLib`.)
-    Calls `TRAVERSE` after building initial context values for all of the embedded reducers (giving a trav_state)
+    Selects the trusted original-ABI projection when conversion settings
+    are absent and every decision procedure is an ordinary `REDUCER`.
+    Otherwise it retains the configured projection and appropriate engine.
+    Public `traversedata_for_ss` retains its configured native reducer;
+    `legacy_traversedata_for_ss` is an explicit optional cooperation API.
+    Eligibility inspection executes no collectors or conversions.
 
 `TRAVERSE`
 

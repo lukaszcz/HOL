@@ -4617,16 +4617,18 @@ local
       (congLib.mk_congset [])
   val legacy_builders =
     [("TRAVERSE",fn ss => Traverse.TRAVERSE (traversedata_for_ss ss)),
+     ("TRAVERSE native projection",fn ss =>
+        Traverse.TRAVERSE (valOf (legacy_traversedata_for_ss ss))),
      ("CONGRUENCE_SIMP_QCONV",cong_qconv)]
 
   (* An atomic input avoids congruence-generated context additions. *)
-  fun lifetime name build expected =
+  fun lifetime_reducer lift name build expected =
     let
       val calls = ref 0
-      val reducer = Traverse.REDUCER
+      val reducer = lift (Traverse.REDUCER
         {name=SOME "R2 context callback",initial=R2_CONTEXT,
          addcontext=fn (ctxt,_) => (calls := !calls + 1; ctxt),
-         apply=fn _ => NO_CONV}
+         apply=fn _ => NO_CONV})
       val ss = pureSimps.pure_ss ++ dproc_ss reducer
       val cv = build ss [boolTheory.TRUTH]
       val constructed = !calls
@@ -4638,6 +4640,14 @@ local
       if [constructed,first,!calls] = expected then OK ()
       else die "initial context callback ran at the wrong time"
     end
+
+  fun lifetime name build expected =
+    lifetime_reducer I name build expected
+
+  fun contextual reducer =
+    Traverse.CONTEXT_REDUCER (Traverse.reducer_data reducer)
+  fun configured reducer =
+    Traverse.CONFIG_REDUCER (Traverse.reducer_config_data reducer)
 
   fun once_lifetime name build refresh =
     let
@@ -4666,7 +4676,18 @@ in
     (fn (name,build) => lifetime name build [1,1,1]) legacy_builders
   val _ = List.app
     (fn (name,build) => once_lifetime name build false)
-    (List.take (legacy_builders,1))
+    (List.take (legacy_builders,2))
+
+  (* Rejected native projections must keep the generalized legacy
+     construction-time collectors, not adopt XTRAVERSE refresh. *)
+  val _ = List.app
+    (fn (kind,lift) => List.app
+      (fn (name,build) =>
+        lifetime_reducer lift (name ^ " + " ^ kind) build [1,1,1])
+      [("TRAVERSE mixed",fn ss =>
+          Traverse.TRAVERSE (traversedata_for_ss ss)),
+       ("CONGRUENCE_SIMP_QCONV mixed",cong_qconv)])
+    [("contextual",contextual),("configured",configured)]
 
   (* The old total wrappers deliberately construct their QCONV inside tm
      on develop too. Do not move their construction ahead of tm. *)
@@ -5432,6 +5453,256 @@ in
   val _ = tprint "congLib reflexivity preserves foreign tag and payload"
   val _ = if exact_event then OK ()
           else die "reflexivity exception constructor or payload changed"
+end
+
+(* Paired native runners and the conservative ordinary projection share
+   compiled rules, but keep the public configured projection unchanged. *)
+local
+  fun check name condition =
+    (tprint name;
+     if condition then OK () else die "native runner regression")
+  fun same_terms xs ys =
+    length xs = length ys andalso
+    List.all (fn x => List.exists (aconv x) ys) xs
+  fun same_thm left right =
+    aconv (concl left) (concl right) andalso
+    same_terms (hyp left) (hyp right) andalso
+    same_terms (thm_frees left) (thm_frees right)
+  fun total cv = QCONV (TRY_CONV cv)
+
+  val p = ``paired_condition:bool``
+  val guard = ``paired_guard (paired_parameter:'a):bool``
+  val target = ``paired_predicate (paired_argument:'b):bool``
+  (* Do not GEN_ALL: guard's free parameter must remain in the hypotheses. *)
+  val rule = DISCH p (ADD_ASSUM guard (EQT_INTRO (ASSUME p)))
+  val expected = ADD_ASSUM guard (EQT_INTRO (ASSUME target))
+  val runners = Cond_rewr.COND_REWR_CONVS ("paired condition",rule) false
+  fun configured depth solver stack = #configured runners
+    {solver=solver,stack=stack,cond_depth=depth,
+     term_ord=Cond_rewr.ac_term_ord}
+  val solver_calls = ref ([] : term list list)
+  fun solve stack tm =
+    (solver_calls := stack :: !solver_calls; ASSUME tm)
+  val legacy_th = #legacy runners solve [] target
+  val configured_th = configured NONE solve [] target
+  val public_th =
+    Cond_rewr.COND_REWR_CONV ("public condition",rule) false solve [] target
+  val _ = check "paired runners preserve theorem, hypotheses and free params"
+    (same_thm legacy_th expected andalso
+     same_thm configured_th expected andalso same_thm public_th expected
+     andalso ListPair.allEq
+       (fn (xs,ys) => same_terms xs ys)
+       (!solver_calls,[[target],[target],[target]]))
+
+  (* Construct the runner before a preceding failed candidate mutates the
+     default. NONE must read it at the conditional candidate, not earlier. *)
+  fun depth_case runner initial changed succeeds =
+    Lib.with_flag (Cond_rewr.stack_limit,initial)
+      (fn () => let
+         val calls = ref 0
+         fun solve _ tm = (calls := !calls + 1; ASSUME tm)
+         val cv = runner solve []
+         fun first tm = (Cond_rewr.stack_limit := changed; NO_CONV tm)
+         val th = total (first ORELSEC cv) target
+       in
+         same_thm th (if succeeds then expected else REFL target)
+         andalso !calls = (if succeeds then 1 else 0)
+       end) ()
+  val saved_depth = !Cond_rewr.stack_limit
+  val depth_checks =
+    [depth_case (#legacy runners) 0 1 true,
+     depth_case (#legacy runners) 1 0 false,
+     depth_case (configured NONE) 0 1 true,
+     depth_case (configured NONE) 1 0 false,
+     depth_case (configured (SOME 0)) 0 4 false,
+     depth_case (configured (SOME 1)) 4 0 true,
+     depth_case
+       (Cond_rewr.COND_REWR_CONV ("public live depth",rule) false)
+       0 1 true]
+  val _ = check "paired NONE depth is live; SOME zero/one remain isolated"
+    (List.all I depth_checks andalso
+     !Cond_rewr.stack_limit = saved_depth)
+
+  (* The wrappers deliberately turn non-HOL_ERR solver failures into
+     HOL_ERR, except Interrupt. Compare that observable result, not an
+     unsupported assertion about retained foreign exception payloads. *)
+  exception PairedStop
+  val solver_errors =
+    [mk_HOL_ERR "paired solver" "application" "deliberate failure",
+     Conv.UNCHANGED,PairedStop,Portable.Interrupt]
+  fun failure runner error =
+    (runner (fn _ => fn _ => raise error) [] target;
+     NONE)
+    handle Portable.Interrupt => SOME ("Interrupt","Interrupt")
+         | e => SOME (General.exnName e,Feedback.exn_to_string e)
+  fun same_failure error =
+    let
+      val legacy = failure (#legacy runners) error
+      val observed_configured = failure (configured NONE) error
+      val explicit = failure (configured (SOME 1)) error
+    in
+      Option.isSome legacy andalso legacy = observed_configured andalso
+      legacy = explicit
+    end
+  val failure_checks = Lib.with_flag (Cond_rewr.stack_limit,1)
+    (fn () => map same_failure solver_errors) ()
+  val _ = check "paired solver failures preserve wrapping and Interrupt"
+    (List.all I failure_checks andalso
+     !Cond_rewr.stack_limit = saved_depth)
+
+  fun ordinary (Traverse.REDUCER _) = true | ordinary _ = false
+  fun configured_rewriter data =
+    case #rewriters (data : Traverse.traverse_data) of
+        [Traverse.CONFIG_REDUCER _] => true
+      | _ => false
+  fun native_shape data =
+    not (null (#rewriters (data : Traverse.traverse_data))) andalso
+    List.all ordinary (#rewriters data @ #dprocs data)
+
+  (* The quota is attached to an installed native occurrence. Alternating
+     real projections must spend that same quota in either starting order. *)
+  fun quota_case legacy_first = let
+    val a = ``projection_quota_a:bool``
+    val b = ``projection_quota_b:bool``
+    val equation = ASSUME (mk_eq (a,b))
+    val compiles = ref 0
+    val base = empty_ss ++ SSFRAG
+      {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
+       filter=SOME (fn th => (compiles := !compiles + 1; [th]))}
+    val ss = base ++ rewrites [Ntimes equation 2]
+    val before_projection = !compiles
+    val native = valOf (legacy_traversedata_for_ss ss)
+    val public = traversedata_for_ss ss
+    val legacy_cv = total (Traverse.TRAVERSE native [])
+    val configured_cv = total (Traverse.TRAVERSE public [])
+    val construction_ok = before_projection = 1 andalso
+      !compiles = before_projection andalso native_shape native andalso
+      configured_rewriter public
+    val (first,second) = if legacy_first
+      then (legacy_cv,configured_cv) else (configured_cv,legacy_cv)
+    val th1 = first a
+    val th2 = second a
+    val th3 = first a
+    val th4 = second a
+  in
+    construction_ok andalso same_thm th1 equation andalso
+    same_thm th2 equation andalso same_thm th3 (REFL a) andalso
+    same_thm th4 (REFL a) andalso !compiles = before_projection
+  end
+  val quota_checks = [quota_case true,quota_case false]
+  val _ = check "native/configured projections share quotas without compiling"
+    (List.all I quota_checks)
+
+  (* Views and preserving-control replay must carry both runners and the
+     same remaining quota, not merely equivalent initial declarations. *)
+  val view_a = ``projection_view_a:bool``
+  val view_b = ``projection_view_b:bool``
+  val view_eq = ASSUME (mk_eq (view_a,view_b))
+  val removable = SSFRAG
+    {name=SOME "paired removable",convs=[],rewrs=[],ac=[],
+     filter=NONE,dprocs=[],congs=[]}
+  val view_base = pureSimps.pure_ss ++ removable ++
+                  rewrites [Ntimes view_eq 3]
+  val view_source = hd (rewrite_source_handles view_base)
+  val viewed = view_base ++ rewrite_views [(view_source,view_eq)]
+  val view_native = total (Traverse.TRAVERSE
+    (valOf (legacy_traversedata_for_ss view_base)) [])
+  val view_configured = total (Traverse.TRAVERSE
+    (traversedata_for_ss viewed) [])
+  val view_first = view_native view_a
+  val replayed = remove_ssfrags_preserving_controls
+    ["paired removable"] viewed
+  val replay_native = total (Traverse.TRAVERSE
+    (valOf (legacy_traversedata_for_ss replayed)) [])
+  val view_second = view_configured view_a
+  val view_third = replay_native view_a
+  val view_exhausted = [view_native view_a,view_configured view_a,
+                        replay_native view_a]
+  val _ = check "views and preserving replay share both runner controls"
+    (same_thm view_first view_eq andalso same_thm view_second view_eq
+     andalso same_thm view_third view_eq andalso
+     List.all (fn th => same_thm th (REFL view_a)) view_exhausted)
+
+  exception ProjectionContext
+  val additions = ref 0
+  fun addcontext (context,_) = (additions := !additions + 1; context)
+  val ordinary_probe = Traverse.REDUCER
+    {name=NONE,initial=ProjectionContext,addcontext=addcontext,
+     apply=fn _ => NO_CONV}
+  val context_probe = Traverse.CONTEXT_REDUCER
+    {name=NONE,initial=ProjectionContext,addcontext=addcontext,
+     apply=fn _ => NO_CONV}
+  val config_probe = Traverse.CONFIG_REDUCER
+    {name=NONE,initial=ProjectionContext,addcontext=addcontext,
+     apply=fn _ => NO_CONV}
+  val base = bool_ss ++ dproc_ss ordinary_probe
+  val rejecting_solver : Traverse.ssolver =
+    {name="projection solver",solve=fn _ => NO_CONV}
+  val excluded =
+    [set_subgoaler (fn _ => REFL) base,
+     set_unsafe_solvers [rejecting_solver] base,
+     set_cond_depth 4 base,
+     set_term_ord Cond_rewr.ac_term_ord base,
+     base ++ dproc_ss context_probe,
+     base ++ dproc_ss config_probe]
+  val accepted_inputs =
+    [base,set_safe_solvers [rejecting_solver] base,
+     set_looper ("projection unused looper",K ALL_TAC) base]
+  (* Adding a fragment legitimately calls existing collectors, even for
+     []. Bracket extraction, rather than counting fixture construction. *)
+  val before_rejected = !additions
+  val rejected = map legacy_traversedata_for_ss excluded
+  val after_rejected = !additions
+  val accepted = map legacy_traversedata_for_ss accepted_inputs
+  val after_accepted = !additions
+  val public_shapes = map (configured_rewriter o traversedata_for_ss)
+    (base :: excluded)
+  val _ = check "native projection eligibility is pure and conservative"
+    (before_rejected = after_rejected andalso
+     after_rejected = after_accepted andalso
+     after_accepted = !additions andalso
+     List.all (not o Option.isSome) rejected andalso
+     List.all (fn SOME data => native_shape data andalso
+                              not (null (#dprocs data))
+                | NONE => false) accepted andalso
+     List.all I public_shapes)
+
+  (* A rejected contextual custom procedure must still be reached through
+     the configured fallback, with its invocation-local controls intact. *)
+  val fallback_a = ``projection_fallback_a:bool``
+  val fallback_b = ``projection_fallback_b:bool``
+  val fallback_eq = ASSUME (mk_eq (fallback_a,fallback_b))
+  val seen = ref ([] : int option list)
+  fun rewrite depth tm =
+    if aconv tm fallback_a then
+      (seen := depth :: !seen;
+       if depth = SOME 1 then fallback_eq else NO_CONV tm)
+    else NO_CONV tm
+  val fallback_reducers =
+    [Traverse.CONTEXT_REDUCER
+       {name=NONE,initial=ProjectionContext,addcontext=addcontext,
+        apply=fn {cond_depth,...} => rewrite (SOME cond_depth)},
+     Traverse.CONFIG_REDUCER
+       {name=NONE,initial=ProjectionContext,addcontext=addcontext,
+        apply=fn {cond_depth,...} => rewrite cond_depth}]
+  fun fallback_case reducer = let
+    val ss = set_cond_depth 1 (pureSimps.pure_ss ++ dproc_ss reducer)
+    val native = legacy_traversedata_for_ss ss
+    val first = SIMP_CONV ss [] fallback_a
+    val second = SIMP_CONV ss [] fallback_a
+  in
+    not (Option.isSome native) andalso
+    configured_rewriter (traversedata_for_ss ss) andalso
+    same_thm first fallback_eq andalso same_thm second fallback_eq
+  end
+  val fallback_checks = Lib.with_flag (Cond_rewr.stack_limit,0)
+    (fn () => map fallback_case fallback_reducers) ()
+  val _ = check "rejected contextual procedures retain configured fallback"
+    (List.all I fallback_checks andalso
+     !seen = [SOME 1,SOME 1,SOME 1,SOME 1] andalso
+     !Cond_rewr.stack_limit = saved_depth)
+in
+  ()
 end
 
 val _ = exit_count0 failcount

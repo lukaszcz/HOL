@@ -134,6 +134,77 @@ type subgoaler = simp_prover_ctxt -> term -> thm
  *    - stores the state of the reducers during the simpl. process
  * ---------------------------------------------------------------------*)
 
+(* Private baseline representation. Unlike trav_state, this carries no
+   generic prover facts. Reducer records are projected once at entry. *)
+type plain_reducer =
+  {name : string option,
+   initial: context,
+   addcontext : context * Thm.thm list -> context,
+   apply: {solver:term list -> term -> thm,
+           conv: term list -> term -> thm,
+           context: context,
+           stack: term list,
+           relation : term * (term -> thm)} -> conv}
+
+datatype original_trav_state =
+  ORIGINAL_TSTATE of {relation_info : preorder,
+                     relation : term,
+                     contexts1 : context list,
+                     contexts2 : context list,
+                     freevars : term list};
+
+(* Baseline correspondence (private names only):
+   trav_state -> original_trav_state, TSTATE -> ORIGINAL_TSTATE,
+   initial_context -> original_initial_context,
+   add_context -> original_add_context,
+   TRAVERSE_IN_CONTEXT -> ORIGINAL_TRAVERSE_IN_CONTEXT.
+   Representation substitutions: reducer -> plain_reducer;
+   #initial/#addcontext no longer compose with dest_reducer, and
+   apply_reducer takes the already-projected record, not REDUCER rdata.
+   All common conversion/relation helpers below remain shared. *)
+fun original_initial_context {rewriters:plain_reducer list,
+                              dprocs:plain_reducer list,
+                              travrules=TRAVRULES tsdata,
+                              relation, limit} =
+  ORIGINAL_TSTATE{contexts1=map #initial rewriters,
+                 contexts2=map #initial dprocs,
+                 freevars=[],
+                 relation_info = find_relation relation (#relations tsdata),
+                 relation = relation};
+
+fun original_add_context (rewriters : plain_reducer list)
+                         (dprocs : plain_reducer list) = let
+  val rewrite_collectors' = map #addcontext rewriters
+  val dproc_collectors' = map #addcontext dprocs
+  fun doit (context, thms) = let
+    val ORIGINAL_TSTATE {contexts1,contexts2,freevars,
+                         relation_info,relation} = context
+  in
+    if null thms then context
+    else let
+        val more_freevars = free_varsl (flatten (map hyp thms))
+        val _ = map (fn thm => trace(2,MORE_CONTEXT thm)) thms
+        fun mk_privcontext maker privcontext = maker (privcontext,thms)
+        val newcontexts1 =
+          if null thms then contexts1
+          else map2 mk_privcontext rewrite_collectors' contexts1
+        val newcontexts2 =
+          if null thms then contexts2
+          else map2 mk_privcontext dproc_collectors' contexts2
+        val newfreevars =
+          if null more_freevars then freevars
+          else more_freevars@freevars
+      in
+        ORIGINAL_TSTATE{contexts1=newcontexts1,
+                       contexts2=newcontexts2,
+                       freevars=newfreevars,
+                       relation=relation, relation_info = relation_info}
+      end
+  end
+in
+  doit
+end
+
 datatype trav_state =
   TSTATE of {relation_info : preorder,
              relation : term,
@@ -383,10 +454,105 @@ fun NORMALIZE_ARGUMENTS (policy : child_first_policy) child =
       end
   in normalize end
 
-(* The default public entry deliberately retains the specialized legacy
-   engine. Keep its callback stages and eager factories in baseline order;
-   the extended engine below owns observer, policy and prover features.
-   Sharing those closures here would reintroduce default allocation costs. *)
+(* Original traversal body, with the private substitutions listed above.
+   No extension defaults, reducer dispatch or generic prover state enter
+   this path. Keep factory construction and exception scopes unchanged. *)
+fun ORIGINAL_TRAVERSE_IN_CONTEXT
+      limit rewriters dprocs travrules rel stack ctxt tm = let
+  open Uref
+  val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
+  val add_context' = original_add_context rewriters dprocs
+  val get_relation' = get_relation travrules
+  val lim_r = Uref.new limit
+  fun check r = case !r of NONE => ()
+    | SOME n => if n <= 0 then
+                               (trace(2,TEXT "Limit exhausted");
+                                raise ERR "TRAVERSE_IN_CONTEXT"
+                                          "Limit exhausted")
+                             else ()
+  fun dec r = case !r of NONE => ()
+    | SOME n => r := SOME (n - 1)
+  fun trav_with_rel rel_info stack context  = let
+    val PREORDER(relname , _, _) = rel_info
+    fun apply_relation f = f relname
+    val congprocs' = mapfilter apply_relation congprocs
+    val weakenprocs' = mapfilter apply_relation weakenprocs
+    val op IFCQC = GEN_IFCQC rel_info
+    val op THENCQC = GEN_THENCQC rel_info
+    val op THENQC = GEN_THENQC rel_info
+    val REPEATQC = GEN_REPEATQC rel_info
+    fun mkrefl t = let
+        val PREORDER(_, _, irefl) = rel_info
+    in
+        irefl {Rinst = relname, arg = t}
+    end
+
+    fun trav stack context = let
+      val ORIGINAL_TSTATE {contexts1,contexts2, freevars, ...} = context
+      fun trav_with_rel' new_relation stack context =
+          if samerel relname new_relation then trav stack context
+          else
+              trav_with_rel (get_relation' new_relation) stack context
+
+      fun ctxt_solver stack tm = let
+        val old = !lim_r
+      in
+        EQT_ELIM (trav_with_rel' equality stack context tm)
+        handle e as HOL_ERR _ => (lim_r := old ; raise e)
+      end
+      fun ctxt_conv stack tm = let
+        val old = !lim_r
+      in
+        trav_with_rel' equality stack context tm
+        handle e as HOL_ERR _ => (lim_r := old ; raise e)
+      end
+      fun apply_reducer (rdata : plain_reducer) context tm =
+          (#apply rdata) {solver=ctxt_solver,
+                          conv=ctxt_conv,
+                          context=context,
+                          stack=stack, relation=(relname, mkrefl)}
+                         tm before
+          dec lim_r
+      fun high_priority tm =
+          (check lim_r;
+           FIRST_CONV (mapfilter2 apply_reducer rewriters contexts1) tm)
+      fun low_priority tm =
+          (check lim_r ;
+           FIRST_CONV (mapfilter2 apply_reducer dprocs contexts2) tm)
+      fun depther (thms,relation) =
+          trav_with_rel' relation stack (add_context' (context,thms))
+      val congproc_args =
+          {solver=(fn tm => ctxt_solver stack tm), (* do not eta-convert! *)
+           depther=depther,
+           freevars=freevars}
+      fun apply_congproc congproc = congproc congproc_args
+      val descend = FIRSTCQC_CONV (mapfilter apply_congproc congprocs')
+      val weaken = FIRST_CONV (mapfilter apply_congproc weakenprocs')
+
+      fun loop tm = let
+        val conv =
+            REPEATQC high_priority THENQC
+            (descend IFCQC
+                (fn change =>
+                  ((if change then high_priority else NO_CONV) ORELSEC
+                   low_priority ORELSEC weaken) THENCQC loop))
+               (* THENCQC above causes the loop to happen only if
+                  the stuff before it hasn't raised an exception *)
+      in
+        (trace(4,REDUCE ("Reducing",tm)); conv tm)
+      end;
+    in
+      loop
+    end
+  in
+    trav stack context
+  end
+in
+  trav_with_rel (get_relation' rel) stack ctxt tm
+end
+
+(* Mixed reducer representations retain the generalized legacy schedule
+   and its eager factories, without entering the configured engine. *)
 fun LEGACY_TRAVERSE_IN_CONTEXT
       ({limit,rewriters,dprocs,travrules,relation=rel} : traverse_data)
       stack ctxt tm = let
@@ -729,12 +895,34 @@ val ROOT_REWRITE_WITH_CONTEXT =
   GEN_TRAVERSE_WITH_CONTEXT NONE ParentFirst true
 
 (* Initialize once, before returning the reusable legacy conversion. *)
-fun TRAVERSE (data as {rewriters,dprocs,...} : traverse_data) thms =
+fun TRAVERSE
+      (data as {limit,rewriters,dprocs,travrules,relation} : traverse_data)
+      thms =
   let
-    val context =
-      add_context false rewriters dprocs (initial_context data,thms)
+    fun original (REDUCER _) = true
+      | original _ = false
   in
-    LEGACY_TRAVERSE_IN_CONTEXT data [] context
+    if List.all original rewriters andalso List.all original dprocs then
+      let
+        val rewriters = map dest_reducer rewriters
+        val dprocs = map dest_reducer dprocs
+        val original_data =
+          {limit=limit, rewriters=rewriters, dprocs=dprocs,
+           travrules=travrules, relation=relation}
+        val context =
+          original_add_context rewriters dprocs
+            (original_initial_context original_data,thms)
+      in
+        ORIGINAL_TRAVERSE_IN_CONTEXT
+          limit rewriters dprocs travrules relation [] context
+      end
+    else
+      let
+        val context =
+          add_context false rewriters dprocs (initial_context data,thms)
+      in
+        LEGACY_TRAVERSE_IN_CONTEXT data [] context
+      end
   end
 
 end (* struct *)

@@ -79,6 +79,7 @@ type contextual_convdata =
    conv : reducer_ctxt -> conv}
 type tagged_convdata =
   {thypart : string option, cd : contextual_convdata,
+   legacy : (term list -> term -> thm) -> term list -> conv,
    source : (thname option * thm) option,
    bound : (int ref * int) option}
 
@@ -96,15 +97,17 @@ type stdconvdata = { name: string,
 (*---------------------------------------------------------------------------*)
 
 (* boolean argument to c is whether or not the rewrite is bounded *)
-fun appconv (c,UNBOUNDED) = c false (* do not eta expand! *)
-  | appconv (c,BOUNDED r) =
+fun appconvs (prepare,UNBOUNDED) = prepare false
+  | appconvs (prepare,BOUNDED r) =
     let
-      val c = c true (* do not inline! *)
+      val {legacy,configured} = prepare true
     in
-      (fn ctxt => fn tm =>
-      if !r = 0 then failwith "exceeded rewrite bound"
-      else c ctxt tm before
-      Portable.dec r)
+      {legacy = fn solver => fn stack => fn tm =>
+         if !r = 0 then failwith "exceeded rewrite bound"
+         else legacy solver stack tm before Portable.dec r,
+       configured = fn ctxt => fn tm =>
+         if !r = 0 then failwith "exceeded rewrite bound"
+         else configured ctxt tm before Portable.dec r}
     end
 
 fun split_name {Thy,Name} = (SOME Thy, Name)
@@ -115,16 +118,19 @@ fun mk_rewr_convdata (nmopt,(thm,tag)) : tagged_convdata option = let
           NONE => (NONE, "rewrite:<anonymous>")
         | SOME (thypart,b) => (thypart, "rewrite:"^b)
 in
-  SOME {thypart = thypart, source = SOME (nmopt, th),
-        bound = (case tag of
-                     UNBOUNDED => NONE | BOUNDED r => SOME (r, !r)),
-        cd = {name  = nm,
-              key   = SOME (free_varsl (hyp th),
-                            lhs (#2 (strip_imp (concl th)))),
-              trace = 100, (* no need to provide extra tracing here;
-                              COND_REWR_CONV provides enough tracing itself *)
-              conv  = appconv (COND_REWR_CONV_WITH_CONFIG (nm,th), tag)}
-       } before
+  let
+    val bound = case tag of
+                    UNBOUNDED => NONE | BOUNDED r => SOME (r, !r)
+    val key = SOME (free_varsl (hyp th),
+                    lhs (#2 (strip_imp (concl th))))
+    val {legacy,configured} = appconvs (COND_REWR_CONVS (nm,th), tag)
+  in
+    SOME {thypart = thypart, source = SOME (nmopt, th), legacy = legacy,
+          bound = bound,
+          cd = {name = nm, key = key,
+                trace = 100, (* COND_REWR_CONV provides the tracing. *)
+                conv = configured}}
+  end before
   trace(2, LZ_TEXT(fn () => "New rewrite: " ^ thm_to_string th))
   handle HOL_ERR _ =>
          (trace (2, LZ_TEXT(fn () =>
@@ -142,9 +148,17 @@ type relsimpdata = {refl: thm, trans:thm, weakenings:thm list,
 
 type conv_info =
   {name : string,
-   conval : reducer_ctxt -> conv}
+   conval : (term list -> term -> thm) -> term list -> conv}
+(* Every entry owns its cold companion, including rules compiled from
+   supplied facts and addcontext, which source inventories do not cover.
+   A single insertion attaches runner and actual quota together; filtering
+   and persistent contexts retain or remove that association atomically.
+   The legacy evaluator only selects ci, never this companion. *)
+type configured_conv_info =
+  {conval : reducer_ctxt -> conv, bound : (int ref * int) option}
 type net_conv_info =
-  {thypart : string option, ci : conv_info, bound : (int ref * int) option}
+  {thypart : string option, ci : conv_info,
+   configured : configured_conv_info}
 type net = net_conv_info Ho_Net.net
 type weakener_data =
   Travrules.preorder list * thm list * Traverse.reducer
@@ -266,7 +280,7 @@ val empty_ssfrag = SSFRAG_CON empty_frag_data
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
   let
     val convs = map (fn c => {thypart=NONE,cd=lift_convdata c,
-                             source=NONE,bound=NONE}) convs
+                             legacy= #conv c,source=NONE,bound=NONE}) convs
     val rewrs = map source_slot rewrs
     val ac = map source_slot ac
     val congs = map normCong congs
@@ -346,7 +360,7 @@ fun ac_ss aclist =
 fun conv_ss conv =
   SSFRAG_CON
     {name=NONE, convs=[{thypart=NONE,cd=lift_convdata conv,
-                       source=NONE,bound=NONE}],
+                       legacy= #conv conv,source=NONE,bound=NONE}],
      rewrs=[], ac=[], views=[], filter=NONE, dprocs=[], congs=[],
      threaded_congs=[], relsimps=[], loopers=[],
      unsafe_solvers=[], safe_solvers=[]}
@@ -644,18 +658,30 @@ fun remove_simps nms ss = ss -* nms
 
 
   (* ---------------------------------------------------------------------
-   * USER_CONV wraps a bit of tracing around a user conversion.
+   * USER_CONVS shares trace strings between direct and configured runners.
    *
    * net_add_convs (internal function) adds conversions to the
    * initial context net.
    * ---------------------------------------------------------------------*)
 
- fun USER_CONV {name,key,trace=trace_level,conv} =
+ fun USER_CONVS {name,key,trace=trace_level,conv} legacy =
   let val trace_string1 = "trying "^name^" on"
       val trace_string2 = name^" ineffectual"
       val trace_string3 = name^" left term unchanged"
       val trace_string4 = name^" raised an unusual exception (ignored)"
-  in fn ctxt => fn tm =>
+      val legacy = fn solver => fn stack => fn tm =>
+      let val _ = trace(trace_level+2,REDUCE(trace_string1,tm))
+          val thm = legacy solver stack tm
+      in
+        trace(trace_level,PRODUCE(tm,name,thm));
+        thm
+      end
+      handle e as HOL_ERR _ =>
+             (trace (trace_level+2,TEXT trace_string2); raise e)
+           | e as Conv.UNCHANGED =>
+             (trace (trace_level+2,TEXT trace_string3); raise e)
+           | e => (trace (trace_level, TEXT trace_string4); raise e)
+      val configured = fn ctxt => fn tm =>
       let val _ = trace(trace_level+2,REDUCE(trace_string1,tm))
           val thm = conv ctxt tm
       in
@@ -667,17 +693,21 @@ fun remove_simps nms ss = ss -* nms
            | e as Conv.UNCHANGED =>
              (trace (trace_level+2,TEXT trace_string3); raise e)
            | e => (trace (trace_level, TEXT trace_string4); raise e)
-  end;
+  in {legacy=legacy,configured=configured} end;
 
  val any = mk_var("x",Type.alpha);
 
  fun net_add_conv
-       {thypart,source,bound,
+       {thypart,source,bound,legacy,
         cd = data as {name,key,trace,conv}:contextual_convdata} =
+   let val runners = USER_CONVS data legacy
+   in
      enter (option_cases #1 [] key,
             option_cases #2 any key,
-            {thypart = thypart, bound = bound,
-             ci = {name = name, conval = USER_CONV data}})
+            {thypart = thypart,
+             configured = {conval= #configured runners,bound=bound},
+             ci = {name = name, conval = #legacy runners}})
+   end
 
 (* itlist is like foldr, so that theorems get added to the context starting
    from the end of the list *)
@@ -1521,8 +1551,9 @@ fun mk_tactic_solver (name,tac) =
            in
              case mk_rewr_convdata (nm,(view,control)) of
                  NONE => NONE
-               | SOME {thypart,cd,source,...} =>
-                   SOME {thypart=thypart,cd=cd,source=source,bound=bound}
+               | SOME {thypart,cd,legacy,source,...} =>
+                   SOME {thypart=thypart,cd=cd,legacy=legacy,
+                         source=source,bound=bound}
            end
    val newconvdata = convs @ map #1 native @ List.mapPartial compile_view views
    val net = net_add_convs initial_net newconvdata
@@ -1716,8 +1747,9 @@ fun rebind_source_controls current (pair as (_,source)) =
                          (name,(theorem,BOUNDED counter)) of
                       NONE => raise ERR ("rebind_source_controls",
                         "retained source is no longer a rewrite")
-                    | SOME {thypart,cd,source=statement,...} =>
-                        ({thypart=thypart,cd=cd,source=statement,
+                    | SOME {thypart,cd,legacy,source=statement,...} =>
+                        ({thypart=thypart,cd=cd,legacy=legacy,
+                          source=statement,
                           bound=bound},
                          RewriteSource
                            {origin=origin,rewrite=rewrite,bound=bound})
@@ -1983,8 +2015,10 @@ fun rewrite_context_changes (SS old,SS current) =
      List.mapPartial mk_rewr_convdata rwts
    end
 
- fun rewriter_for_ss_prepared traversal
-       (SS{mk_rewrs,travrules,initial_net,...}) prepared = let
+ (* Both ABIs use this setup, once on the selected route. Collectors
+    continue compiling facts at their original consumption stage. *)
+ fun rewriter_context_for_ss_prepared
+       (SS{mk_rewrs,initial_net,...}) prepared = let
    val prepared_net =
      net_add_convs initial_net (prepared_convdata mk_rewrs prepared)
    fun addcontext (context,thms) = let
@@ -1998,12 +2032,28 @@ fun rewrite_context_changes (SS old,SS current) =
      CONVNET
        (net_add_convs net (List.mapPartial mk_rewr_convdata new_rwts))
    end
+   in {initial=CONVNET prepared_net,addcontext=addcontext} end;
+
+ fun legacy_rewriter_for_ss_prepared ss prepared = let
+   val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
+   fun apply {solver,conv,context,stack,relation} tm = let
+     val net = (raise context) handle CONVNET net => net
+   in
+     tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
+             (lookup tm net)
+   end
+   in REDUCER {name=SOME "rewriter_for_ss", addcontext=addcontext,
+               apply=apply, initial=initial} end;
+
+ fun rewriter_for_ss_prepared traversal ss prepared = let
+   val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
    fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
      val net = (raise context) handle CONVNET net => net
      val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
                  term_ord=term_ord}
      (* A protected partial application must also survive the ETA fragment. *)
-     fun apply_entry ({ci = {name,conval},...} : net_conv_info) =
+     fun apply_entry
+           ({ci = {name,...},configured={conval,...},...} : net_conv_info) =
        case traversal of
            ChildFirst policy =>
              if name = "ETA_CONV (eta reduction)" andalso
@@ -2017,7 +2067,7 @@ fun rewrite_context_changes (SS old,SS current) =
    end
    in CONFIG_REDUCER
         {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
-         initial=CONVNET prepared_net}
+         initial=initial}
    end;
 
  fun traversedata_for_ss_prepared traversal
@@ -2057,6 +2107,23 @@ fun rewrite_context_changes (SS old,SS current) =
  fun traversedata_for_ss ss = traversedata_for_ss_prepared ParentFirst ss [];
  fun xtraversedata_for_ss ss = xtraversedata_for_ss_prepared ParentFirst ss [];
 
+ (* Eligibility is pure and precedes preparation or collector calls.
+    Public configured extraction above deliberately keeps its old shape. *)
+ fun legacy_traversedata_for_ss (ss as SS data) =
+   let
+     fun ordinary (REDUCER _) = true | ordinary _ = false
+   in
+     case #strategy data of
+         {subgoaler=NONE,unsafe_solvers=[],cond_depth=NONE,term_ord=NONE,
+          ...} =>
+           if List.all ordinary (#dprocs data) then
+             SOME {rewriters=[legacy_rewriter_for_ss_prepared ss []],
+                   dprocs= #dprocs data, relation=boolSyntax.equality,
+                   travrules= #travrules data, limit= #limit data}
+           else NONE
+       | _ => NONE
+   end;
+
  fun SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context =
    Traverse.TRAVERSE_WITH_CONTEXT traversal xdata
      {reducer_context=reducer_context,solver_context=solver_context};
@@ -2064,13 +2131,16 @@ fun rewrite_context_changes (SS old,SS current) =
  (* Only settings consumed by conversions opt into the extended engine.
     Tactic-only loopers and safe solvers do not change context lifetime. *)
  fun SIMP_QCONV ss =
-   let val (data,config) = xtraversedata_for_ss ss
-   in
-     case config of
-         {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
-           Traverse.TRAVERSE data
-       | _ => Traverse.XTRAVERSE (data,config)
-   end;
+   case legacy_traversedata_for_ss ss of
+       SOME data => Traverse.TRAVERSE data
+     | NONE =>
+         let val (data,config) = xtraversedata_for_ss ss
+         in
+           case config of
+               {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
+                 Traverse.TRAVERSE data
+             | _ => Traverse.XTRAVERSE (data,config)
+         end;
 
 val Cong   = markerLib.Cong
 val Split  = markerLib.Split
@@ -2268,7 +2338,7 @@ fun prepare_child_first_with_observer observer
     val observer = Option.map protected observer
     val xdata = xtraversedata_for_ss_prepared (ChildFirst policy) ss []
     val bounds = Ho_Net.fold'
-      (fn ({bound,...} : net_conv_info) => fn found =>
+      (fn ({configured={bound,...},...} : net_conv_info) => fn found =>
         case bound of NONE => found | SOME allowance => allowance :: found)
       (#initial_net data) []
     fun scoped conversion tm =
@@ -3010,7 +3080,7 @@ fun tyi_to_ssdata tyinfo =
       val (_, rewrs) = foldl reduce (1,[]) rws0
       val name = SOME ("Datatype " ^ tyname)
       val convs = map (fn c => {thypart=SOME thy,cd=lift_convdata c,
-                               source=NONE,bound=NONE}) convs
+                               legacy= #conv c,source=NONE,bound=NONE}) convs
       val rewrs = map source_slot rewrs
     in
       SSFRAG_CON
@@ -3045,7 +3115,7 @@ fun merge_names list =
 
 fun dest_convdata tcd  =
     let
-      val {thypart,source,bound,
+      val {thypart,source,bound,legacy,
            cd={name,key,...} : contextual_convdata} = tcd
     in
       (thypart,name,Option.map #2 key)

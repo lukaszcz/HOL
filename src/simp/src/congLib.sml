@@ -176,7 +176,20 @@ val cong_reducer =
   end;
 
 
-fun eq_reducer_wrapper reducer =
+fun eq_reducer_wrapper (REDUCER {name,initial,addcontext,apply}) =
+  let
+    fun wrapped (args as {relation=(_,refl),...}) tm =
+      let
+        val eqthm = apply args tm
+        val relthm = refl tm
+      in
+        CONV_RULE (RAND_CONV (REWR_CONV eqthm)) relthm
+      end
+  in
+    REDUCER
+      {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
+  end
+  | eq_reducer_wrapper reducer =
   let
     val {name,initial,addcontext,apply} = reducer_config_data reducer
     fun wrapped (args as {relation=(_,refl),...}) tm =
@@ -271,7 +284,10 @@ fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
       {relations=(#relations csdata),
       congprocs=preorder_eq_congs,
       weakenprocs=[]};
-    val (traversedata,traverseconfig) = xtraversedata_for_ss ss;
+    val (traversedata,traverseconfig) =
+      case legacy_traversedata_for_ss ss of
+          SOME data => (data,Traverse.default_config)
+        | NONE => xtraversedata_for_ss ss;
     val data = {rewriters= (#cong_reducer csdata)::
           (map eq_reducer_wrapper (#rewriters traversedata)),
           dprocs= #dprocs csdata @
