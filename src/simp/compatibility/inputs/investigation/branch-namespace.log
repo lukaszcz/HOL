@@ -1,0 +1,6 @@
+simpLib loads after a user registers attribute split ...                     error in quse /home/lukasz/dev/HOL/worktrees/simplifier/src/simp/src/splitLib.sml : HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+error in load $(HOLDIR)/src/simp/src/splitLib : HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+error in load /home/lukasz/dev/HOL/worktrees/simplifier/src/simp/src/simpLib : HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+FAILED!
+loading simpLib raised
