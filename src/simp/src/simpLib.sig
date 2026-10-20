@@ -91,7 +91,11 @@ sig
   val Cong        : thm -> thm
   val Split       : thm -> thm
   val AC          : thm -> thm -> thm
+  (* Literal strict rule/conversion/dproc deletion, as with ss -* [name]. *)
   val Excl        : string -> thm
+  (* Explicit target resolution: rule:, looper:, solver:, split:, case:.
+     rule: accepts relaxed Thy.Name and Thy$Name; missing targets fail. *)
+  val ExclX       : string -> thm
   val ExclSF      : string -> thm
   val Req0        : thm -> thm
   val ReqD        : thm -> thm

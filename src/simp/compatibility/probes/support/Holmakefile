@@ -3,7 +3,10 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 # populated by the directory's successful build. Paired suites instead copy
 # these sources beside their own Holmakefile with INCLUDES = ../lib.
 INCLUDES = ../../../src
-EXTRA_CLEANS = traversal-contracts.exe
+EXTRA_CLEANS = traversal-contracts.exe exclusion-contracts.exe
 
 traversal-contracts.exe: RunTraversalContracts.uo
+	$(HOLMOSMLC) -o $@ $<
+
+exclusion-contracts.exe: RunExclusionContracts.uo
 	$(HOLMOSMLC) -o $@ $<

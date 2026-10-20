@@ -1,6 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
-  traversal-contracts.log
+  traversal-contracts.log exclusion-contracts.log
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
@@ -43,8 +43,15 @@ traversal-contracts: selftest.exe
 	$(tee cd $(CONTRACTS) && ./traversal-contracts.exe,\
 traversal-contracts.log)
 
+.PHONY: exclusion-contracts
+exclusion-contracts: selftest.exe
+	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 -C $(CONTRACTS) \
+	  exclusion-contracts.exe
+	$(tee cd $(CONTRACTS) && ./exclusion-contracts.exe,\
+exclusion-contracts.log)
+
 ifdef HOLSELFTESTLEVEL
-all: simp-selftest.log traversal-contracts
+all: simp-selftest.log traversal-contracts exclusion-contracts
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)

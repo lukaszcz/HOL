@@ -167,8 +167,8 @@ type weakener_data =
    net's entries against; [original] is the spelling a decision procedure
    is registered under, and the two are not interchangeable.  A rule
    exclusion carries its parsed pattern for immediate application.  Strict
-   names are reparsed on history replay, as on develop; only relaxed
-   [rule:] names keep their resolved patterns across theory contexts. *)
+   Excl names are reparsed on history replay, as on develop; ExclX rule
+   targets keep their resolved patterns across theory contexts. *)
 type rule_exclusion =
   {original : string, pattern : string option * string, strict : bool}
 
@@ -536,7 +536,7 @@ fun parse_simpset_name {unknown_thy} p =
       | _ => dotted ()
   end
 
-(* Develop's [munge_pat], used by [-*] and bare [Excl] names. *)
+(* Develop's [munge_pat], used by [-*] and every [Excl] name. *)
 fun munge_simpset_name p =
     case String.fields (equal #".") p of
         [_] => (NONE, p)
@@ -612,8 +612,8 @@ fun dphas_name_from nms reducer =
     | NONE => false
 fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 
-(* Apply already parsed exclusions.  Replay refreshes strict patterns
-   first, but retains resolved [rule:] patterns.  The history records that
+(* Apply already parsed exclusions. Replay refreshes strict Excl patterns
+   first, but retains resolved ExclX patterns. The history records that
    distinction even when no current entry matches a strict exclusion. *)
 fun delete_exclusions (excls : rule_exclusion list) (ss as SS s) =
     if null excls then ss
@@ -1011,7 +1011,7 @@ datatype exclusion_target =
   | ExcludeCase of string
 
 (* Membership in the split and case display spaces, rather than the lists
-   themselves: every Excl asks these questions, and enumerating the case
+   themselves: ExclX asks these questions, and enumerating the case
    displays means walking all of [TypeBase.elts()].  The display prefix
    settles almost every name before either store is touched. *)
 fun split_display_exists ss display =
@@ -1043,20 +1043,17 @@ fun case_display_exists display =
     List.exists names (TypeBase.elts ())
   end
 
-(* A namespaced Excl says which kind of target is meant, so matching
-   nothing there is a diagnosed typo -- [no_target].  An unqualified one
-   that matches nothing in the simpset is immediately a silent no-op, but
-   still records a strict rule deletion for replay, as on develop.
-   Bare names first use develop's rule reading; only when that
-   matches nothing do they fall through to the branch-only targets.  A
-   name matching several of those kinds is an error. *)
+(* Only ExclX resolves targets. Bare names first use develop's rule
+   reading; only when that matches nothing do they fall through to the
+   strategy targets. Multiple strategy kinds are ambiguous. Unlike literal
+   Excl, an explicit extended exclusion with no target is an error. *)
 fun no_target original =
-  raise ERR ("process_tags", "Excl did not match " ^ original)
+  raise ERR ("process_tags", "ExclX did not match " ^ original)
 
 fun ambiguous_target original =
   raise ERR
     ("process_tags",
-     "Excl name " ^ original ^
+     "ExclX name " ^ original ^
      " is ambiguous; qualify it with rule:, looper:, solver:, " ^
      "split:, or case:")
 
@@ -1064,8 +1061,8 @@ fun optional_target _ [] = NONE
   | optional_target _ [target] = SOME target
   | optional_target original _ = ambiguous_target original
 
-(* Parse once for resolution and immediate application.  History replay
-   reparses strict names only; [rule:] keeps the recorded pattern. *)
+(* Parse once for extended resolution and immediate application. History
+   replay retains the resolved rule pattern, including for bare names. *)
 fun resolve_exclusion {pending} ss original =
   let
     fun rule_target name pattern =
@@ -1114,7 +1111,10 @@ fun resolve_exclusion {pending} ss original =
                           else no_target original
                         end
                     | NONE =>
-                      let val excl = exclusion_of_name original
+                      let
+                        val excl =
+                          {original=original,
+                           pattern=munge_simpset_name original, strict=false}
                       in
                         if simpset_has_rule_target {pending=pending} excl ss
                         then SOME (ExcludeRule excl)
@@ -1132,7 +1132,7 @@ fun resolve_exclusion {pending} ss original =
                                then [ExcludeCase original] else [])
                           in
                             case optional_target original targets of
-                                NONE => SOME (ExcludeRule excl)
+                                NONE => no_target original
                               | target => target
                           end
                       end
@@ -1166,25 +1166,26 @@ fun apply_exclusion (target,ss) =
           (upd_excl_loopers
              (fn excluded => Binaryset.add (excluded,display))) ss
 
-(* Each rule exclusion filters the whole rewrite net, so the resolved
-   exclusions are collected and handed to [delete_exclusions] once.  They
-   carry their patterns, so the batch is applied without any name being
-   parsed twice.  The exclusions collected so far go back into
-   [resolve_exclusion], which is what makes the deferral invisible: a later
-   name still resolves against the simpset it would have seen had each
-   exclusion been applied where it was written.  The other kinds touch
-   disjoint parts of the simpset, so their order relative to the deferred
-   filter -- in the simpset and in its history -- does not matter. *)
-fun apply_exclusions ss names =
+datatype exclusion_request = LiteralExclusion of string
+                           | ExtendedExclusion of string
+
+(* Batch adjacent rule deletions, retaining their order and strictness.
+   Pending patterns mask rules during extended resolution. Flush before a
+   strategy event so history keeps the same order as direct application.
+   Literal names never inspect the extended namespaces or strategy stores,
+   and even unmatched ones record the same deletion as [-*]. *)
+fun apply_exclusions ss requests =
   let
-    fun step (name,(ss,pending)) =
-      case resolve_exclusion {pending=pending} ss name of
-          NONE => (ss,pending)
-        | SOME (ExcludeRule excl) => (ss,excl::pending)
-        | SOME target => (apply_exclusion (target,ss),pending)
-    val (excluded,pending) = List.foldl step (ss,[]) names
+    fun flush (ss,pending) = delete_exclusions (List.rev pending) ss
+    fun step (LiteralExclusion name,(ss,pending)) =
+          (ss,exclusion_of_name name :: pending)
+      | step (ExtendedExclusion name,state as (ss,pending)) =
+          case resolve_exclusion {pending=pending} ss name of
+              NONE => state
+            | SOME (ExcludeRule excl) => (ss,excl::pending)
+            | SOME target => (apply_exclusion (target,flush state),[])
   in
-    delete_exclusions (List.rev pending) excluded
+    flush (List.foldl step (ss,[]) requests)
   end
 
 fun mk_tactic_solver (name,tac) =
@@ -2150,6 +2151,7 @@ val Cong   = markerLib.Cong
 val Split  = markerLib.Split
 val AC     = markerLib.AC;
 val Excl   = markerLib.Excl
+val ExclX  = markerLib.ExclX
 val ExclSF = markerLib.ExclSF
 val Req0   = markerLib.mk_Req0
 val ReqD   = markerLib.mk_ReqD
@@ -2198,10 +2200,6 @@ fun tactic_only name =
                name ^ " is a tactic directive; it cannot be honoured by a " ^
                "conversion or rule")
 
-(* TASK_06 only introduces the marker. TASK_07 supplies its routing. *)
-fun unsupported_exclx () =
-    raise ERR ("process_tags", "ExclX routing is not implemented (TASK_07)")
-
 (* Sort a theorem-list argument by directive, keeping argument order.
    Requirement directives are honoured only by the tactics, which strip
    them (mk_require_tac) before reaching here; one arriving anyway would
@@ -2227,17 +2225,24 @@ fun process_tags0 {report} ss thl =
             | SOME (DAC p) =>
                 (congs, splits, p :: acs, excls, exclfrags, frags, rest)
             | SOME (DExcl nm) =>
-                (congs, splits, acs, nm :: excls, exclfrags, frags, rest)
-            | SOME (DExclX _) => unsupported_exclx ()
+                (congs, splits, acs, LiteralExclusion nm :: excls,
+                 exclfrags, frags, rest)
+            | SOME (DExclX nm) =>
+                (congs, splits, acs, ExtendedExclusion nm :: excls,
+                 exclfrags, frags, rest)
             | SOME (DExclSF nm) =>
                 (congs, splits, acs, excls, nm :: exclfrags, frags, rest)
             | SOME (DFRAG nm) =>
                 (congs, splits, acs, excls, exclfrags, frag_of nm :: frags,
                  rest)
             | SOME (DBounded _) =>
-                if isSome (destExclX th) then unsupported_exclx ()
-                else (congs, splits, acs, excls, exclfrags, frags,
-                      th :: rest)
+                (case destExclX th of
+                     SOME nm =>
+                       (congs, splits, acs, ExtendedExclusion nm :: excls,
+                        exclfrags, frags, rest)
+                   | NONE =>
+                       (congs, splits, acs, excls, exclfrags, frags,
+                        th :: rest))
             | SOME (DReq0 _) =>
                 if report then tactic_only "Req0"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)

@@ -142,10 +142,20 @@ A separate nested invocation uses its own configuration.
 
 ## Exclusion names
 
-Bare `Excl` and `-*` retain develop's dots-only parser and ancestry check;
-extended kernel `$` spellings and relaxed theory names require `rule:`.
-Strict history entries are reparsed on replay; `rule:` keeps its resolved
-pattern. Unmatched bare names silently record develop's rule deletion.
+Every `Excl` name and `-*` retain develop's dots-only parser and ancestry
+check, with no namespace interpretation or strategy fallback. Unmatched
+names silently record develop's rule deletion, including history entries
+that are reparsed on replay.
+
+Extended exclusions use the distinct `ExclX` marker. Its `rule:` namespace
+accepts kernel `Thy$Name` spellings and non-ancestor theory names, keeping
+its resolved pattern on replay. Bare `ExclX` names still use the strict
+parser and prefer rewrites/decision procedures, falling back to strategy
+targets only when neither matches. Multiple strategy kinds are ambiguous;
+`looper:`, `solver:`, `split:` and `case:` select them explicitly. Every
+unmatched `ExclX` name, including a bare name, is an error at processing,
+not construction. Bounded `ExclX` remains an invocation control rather
+than bounded deletion; requirement-wrapper precedence is unchanged.
 
 ## Prepared global rewrites
 

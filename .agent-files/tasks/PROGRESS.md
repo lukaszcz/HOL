@@ -4,10 +4,10 @@
 - TASK_02: done — acceptance verified; all eleven failures reproduced.
 - TASK_03: done — acceptance verified; ten fresh scenarios reproduced.
 - TASK_04: done — acceptance verified; focused tests and sanity rerun pass.
-- TASK_05: done — lifetime/shared-control contracts and differential pass.
-- TASK_06: done — marker/API boundary, native suites and sanity build pass.
-- TASK_07: unblocked (not started).
-- TASK_08: blocked — needs 07.
+- TASK_05: done — acceptance verified; differential/native/sanity reruns pass.
+- TASK_06: done — acceptance verified; marker/native/sanity reruns pass.
+- TASK_07: done — literal/extended routing, native/paired/sanity checks pass.
+- TASK_08: unblocked (not started).
 - TASK_09: blocked — needs 08.
 - TASK_10: unblocked (not started).
 - TASK_11: blocked — needs 10.
@@ -20,8 +20,8 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_07_separate_exclusion_routes.md` — restore literal
-Excl and route the explicit ExclX/DExclX marker.
+`.agent-files/tasks/TASK_08_exclusion_history_replay.md` — preserve
+extended split/case exclusion state through history replay.
 
 ## 3. Completion log
 
@@ -32,5 +32,6 @@ and evidence pointer.
 - TASK_02 — `ac0c5a1a5`; evidence: `src/simp/compatibility/LEGACY_FAILURES.md` and `src/simp/compatibility/results/task02/`.
 - TASK_03 — `a5ec9cbe9`; evidence: `src/simp/compatibility/FRESH_LOAD.md` and `src/simp/compatibility/results/task03/`.
 - TASK_04 — `667320e9b`; evidence: `src/simp/compatibility/TRAVERSAL_PROJECTION.md` and `src/simp/compatibility/results/task04/`.
-- TASK_05 — `[TASK_05] Validate traversal staging and shared controls` (commit subject); evidence: `src/simp/compatibility/TRAVERSAL_LIFETIMES.md` and `src/simp/compatibility/results/task05/`.
-- TASK_06 — `[TASK_06] Add a distinct extended exclusion marker` (commit subject); evidence: `src/simp/compatibility/EXTENDED_EXCLUSION_MARKER.md` and `src/simp/compatibility/results/task06/`.
+- TASK_05 — `3a1f4de0d`; evidence: `src/simp/compatibility/TRAVERSAL_LIFETIMES.md` and `src/simp/compatibility/results/task05/`.
+- TASK_06 — `d536a8893`; evidence: `src/simp/compatibility/EXTENDED_EXCLUSION_MARKER.md` and `src/simp/compatibility/results/task06/`.
+- TASK_07 — `[TASK_07] Separate literal and extended exclusion routes` (commit subject); evidence: `src/simp/compatibility/EXCLUSION_ROUTES.md` and `src/simp/compatibility/results/task07/`.

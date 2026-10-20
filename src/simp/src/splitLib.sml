@@ -80,7 +80,7 @@ fun split_thm_name th =
        theory that sees it, while [DB.Local] is only the current theory's
        name for a theorem it has not exported -- so a local alias of a
        stored theorem is the name no caller writes.  The name goes into
-       the looper display [del_split] and an [Excl] marker match, so
+       the looper display [del_split] and an [ExclX] marker match, so
        taking the alias would answer a retraction written against the
        stored name with no match at all. *)
     case stored locations of

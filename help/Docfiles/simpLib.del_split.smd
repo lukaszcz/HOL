@@ -12,7 +12,8 @@ Removes split rules from a simpset.
 `del_split name ss` removes the loopers `split name` and
 `split_asm name` added by `add_split`; if `name` itself begins with
 `split ` or `split_asm `, only that looper is removed. Rules with the
-`split` attribute are unaffected; disable them for one call with `Excl`.
+`split` attribute are unaffected; disable them for one call with
+`ExclX ("split:" ^ name)`; see [`simpLib.ExclX`](#simpLib.ExclX).
 
 ### Failure
 

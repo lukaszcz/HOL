@@ -23,15 +23,19 @@ likewise reject `ExclX`. No legacy string is reserved to mean `ExclX`.
 retain their usual precedence: `dest_directive` reports the outer wrapper
 before the marker payload. `markerLib.strip_wrappers` exposes the marker.
 
-### Availability
+### Simplifier routing
 
-This API currently supplies only the marker boundary, not a complete
-exclusion feature. Simplifier routing is assigned to compatibility TASK_07.
-Until that routing is implemented, simplifier calls reject `ExclX` with an
-explicit error, including when wrapped in `Once` or `Ntimes`. Existing
-`Excl` and `ExclSF` behavior is unchanged by this addition. The intended
-boundary is literal legacy exclusion through `Excl`, and explicit extended
-namespace selection through `ExclX`.
+[`simpLib.ExclX`](#simpLib.ExclX) uses this marker for extended exclusions,
+with explicit `rule:`, `looper:`, `solver:`, `split:` and `case:` namespaces.
+Bare names use the strict legacy rule parser before strategy fallback;
+all unmatched names, including bare ones, are errors when processed.
+Literal legacy deletion remains available through `Excl`.
+
+`Once` and `Ntimes` wrappers do not turn `ExclX` into bounded deletion:
+it remains an invocation-wide control. Requirement wrappers retain their
+usual precedence and checks. These are consumer semantics; constructing
+or recognizing the marker does no target lookup and never fails for an
+unmatched name.
 
 Constructing or recognizing this marker does not enable persistent `split`
 registration.
@@ -47,4 +51,5 @@ val NONE = markerLib.destExcl x;
 
 ### See also
 
-[`simpLib.Excl`](#simpLib.Excl).
+[`simpLib.Excl`](#simpLib.Excl),
+[`simpLib.ExclX`](#simpLib.ExclX).

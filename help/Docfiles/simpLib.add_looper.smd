@@ -19,11 +19,11 @@ added. A new `name` is appended; an existing one has its tactic
 replaced in place.
 
 The tactic must fail when it does not apply (`Conv.UNCHANGED` counts as
-failure) and make progress when it succeeds. `Excl ("looper:" ^ name)`
-in a theorem list disables the looper for that call. Bare `Excl name`
-first uses the rewrite-name parser and falls through to loopers only
-when no rewrite or decision procedure matches; see
-[`simpLib.Excl`](#simpLib.Excl).
+failure) and make progress when it succeeds. `ExclX ("looper:" ^ name)`
+in a theorem list disables the looper for that call. Bare `ExclX name`
+first uses the strict rewrite-name parser and falls through to strategy
+targets only when no rewrite or decision procedure matches; see
+[`simpLib.ExclX`](#simpLib.ExclX).
 
 ### Failure
 
@@ -35,7 +35,7 @@ Never fails.
 >> val c = Context.snapshot();
 >>_ val conj_ss = simpLib.add_looper ("conj", fn _ => CONJ_TAC) bool_ss;
 >> SIMP_TAC conj_ss [] ([], “p ∧ q”) c;
->> SIMP_TAC conj_ss [Excl "conj"] ([], “p ∧ q”) c;
+>> SIMP_TAC conj_ss [ExclX "looper:conj"] ([], “p ∧ q”) c;
 ```
 
 ### See also

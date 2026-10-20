@@ -102,10 +102,10 @@ fun constructor () =
     finish ()
   end
 
-fun prefix {prefix, installed} =
+(* Also run by the normal exclusion-contracts target, without exiting or
+   resetting the theory between cases. Keep the original fixture checks. *)
+fun prefix_checks {prefix, installed} =
   let
-    val suffix = if installed then "installed" else "unmatched"
-    val _ = start (prefix ^ suffix)
     val name = prefix ^ (if installed then "compat_probe"
                           else "compat_missing")
     val _ = observe "literal.name" name
@@ -145,7 +145,18 @@ fun prefix {prefix, installed} =
     val _ = callbacks "assertion.apply"
     val _ = check "legacy Excl leaves no active literal conversion"
       (result_is after_excl input andalso null (!calls))
+    val direct = during "assertion.direct" (fn () => ss -* [name])
+    val direct_th = during "assertion.direct.apply" (fn () =>
+      QCONV (SIMP_CONV direct []) input)
   in
-    finish ()
+    check "literal Excl agrees with -*, including no conversion callbacks"
+      (aconv (concl after_excl) (concl direct_th) andalso
+       HOLset.equal (hypset after_excl,hypset direct_th) andalso
+       null (!calls))
   end
+
+fun prefix (args as {prefix, installed}) =
+  (start (prefix ^ (if installed then "installed" else "unmatched"));
+   prefix_checks args;
+   finish ())
 end

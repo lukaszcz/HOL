@@ -29,11 +29,11 @@ solvers are tried on `c'` in order. They are also the final solvers of
 relatives.
 
 `add_unsafe_solver solver ss` appends `solver` unless `ss` already has
-an unsafe solver of the same name. `Excl ("solver:" ^ name)` in a
-theorem list disables the solver named `name` for that call. Bare `Excl name`
-first uses the rewrite-name parser and falls through to solvers only
-when no rewrite or decision procedure matches; see
-[`simpLib.Excl`](#simpLib.Excl).
+an unsafe solver of the same name. `ExclX ("solver:" ^ name)` in a
+theorem list disables the solver named `name` for that call. Bare
+`ExclX name` first uses the strict rewrite-name parser and falls through
+to strategy targets only when no rewrite or decision procedure matches;
+see [`simpLib.ExclX`](#simpLib.ExclX).
 
 ### Failure
 

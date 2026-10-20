@@ -16,8 +16,9 @@ which rejects malformed rules) and the split rules of every datatype
 whose case constant occurs fully applied in the goal. The fragment also
 rewrites `(b ==> t) /\ (~b ==> t)` to `t`.
 
-`Excl "split:thy$name"` disables the attribute rule `thy$name` for one
-call, and `Excl "case:ty"` the rules of datatype `ty`.
+`ExclX "split:thy$name"` disables the attribute rule `thy$name` for one
+call, and `ExclX "case:ty"` the rules of datatype `ty`; see
+[`simpLib.ExclX`](#simpLib.ExclX).
 
 ### Failure
 
@@ -29,7 +30,7 @@ Never fails.
 >> val c = Context.snapshot();
 >> SIMP_TAC (bool_ss ++ simpLib.split_ss) []
      ([], “P (if b then 1 else 2) : bool”) c;
->> SIMP_TAC (bool_ss ++ simpLib.split_ss) [Excl "case:bool"]
+>> SIMP_TAC (bool_ss ++ simpLib.split_ss) [ExclX "case:bool"]
      ([], “P (if b then 1 else 2) : bool”) c;
 ```
 

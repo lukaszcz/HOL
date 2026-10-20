@@ -13,8 +13,8 @@ Adds a split rule to a simpset.
 looper is named `split name`, or `split_asm name` for an assumption
 rule, where `name` is the database name of `th`, or `thy$c` if `th` is
 unnamed and its redex has head constant `thy$c`. Adding a rule with the
-same looper name replaces the old one. `Excl "split:name"` disables the
-rule for one call.
+same looper name replaces the old one. `ExclX "split:name"` disables the
+rule for one call; see [`simpLib.ExclX`](#simpLib.ExclX).
 
 ### Failure
 
@@ -28,7 +28,7 @@ Fails if `th` is not a split rule.
                    bool_ss;
 >> SIMP_TAC opt_ss []
      ([], “P (case x of NONE => 0 | SOME n => n + 1) : bool”) c;
->> SIMP_TAC opt_ss [Excl "split:option$option_CASE"]
+>> SIMP_TAC opt_ss [ExclX "split:option$option_CASE"]
      ([], “P (case x of NONE => 0 | SOME n => n + 1) : bool”) c;
 ```
 

@@ -1,0 +1,42 @@
+deletion via ExclX: rule:bool$COND_CLAUSES ...                               (0.000s)      [32m[1mOK[0m
+ExclX removes a named solver for one invocation ...                          [32m[1mOK[0m
+ExclX removes a named looper for one invocation ...                          [32m[1mOK[0m
+mixed literal/extended exclusions resolve in order ...                       [32m[1mOK[0m
+adjacent extended exclusions see pending rule deletions ...                  [32m[1mOK[0m
+ambiguous ExclX ...                                                          (0.000s)      [32m[1mOK[0m
+literal Excl never falls back to strategy targets ...                        [32m[1mOK[0m
+rule: ExclX takes the kernel Thy$Name spelling ...                           (0.000s)      [32m[1mOK[0m
+a kernel-spelled rule: ExclX resolves to its theorem ...                     [32m[1mOK[0m
+Thy.Name rule: ExclX of a rewrite from an unloaded theory ...                (0.000s)      [32m[1mOK[0m
+Thy$Name rule: ExclX of a rewrite from an unloaded theory ...                (0.000s)      [32m[1mOK[0m
+unmatched bare Excl survives filter-removal replay ...                       (0.000s)      [32m[1mOK[0m
+unmatched bare Excl survives filter-exclusion replay ...                     (0.000s)      [32m[1mOK[0m
+-* history reparses names after Context.restore ...                          (0.000s)      [32m[1mOK[0m
+bare Excl history reparses names after Context.restore ...                   (0.000s)      [32m[1mOK[0m
+bare ExclX history retains its resolved rule after Context. ...              (0.000s)      [32m[1mOK[0m
+ExclX suppresses a named split looper ...                                    [32m[1mOK[0m
+ExclX split: suppresses a named split looper ...                             [32m[1mOK[0m
+ExclX case: suppresses TypeBase splits ...                                   [32m[1mOK[0m
+ExclX boundary fixture is an active rewrite ...                              (0.000s)      [32m[1mOK[0m
+ExclX routes without leaking marker hypotheses ...                           [32m[1mOK[0m
+Once ExclX routes without leaking marker hypotheses ...                      [32m[1mOK[0m
+Ntimes ExclX routes without leaking marker hypotheses ...                    [32m[1mOK[0m
+Req0 ExclX remains tactic-only ...                                           (0.000s)      [32m[1mOK[0m
+Req0 ExclX is stripped before tactic exclusion ...                           [32m[1mOK[0m
+Req0 Once ExclX remains tactic-only ...                                      (0.000s)      [32m[1mOK[0m
+Req0 Once ExclX is stripped before tactic exclusion ...                      [32m[1mOK[0m
+ReqD ExclX still checks the requirement ...                                  (0.000s)      [32m[1mOK[0m
+ExclX rejects missing missing ...                                            (0.000s)      [32m[1mOK[0m
+ExclX rejects missing rule:missing ...                                       (0.000s)      [32m[1mOK[0m
+ExclX rejects missing looper:missing ...                                     (0.000s)      [32m[1mOK[0m
+ExclX rejects missing solver:missing ...                                     (0.000s)      [32m[1mOK[0m
+ExclX rejects missing split:missing ...                                      (0.000s)      [32m[1mOK[0m
+ExclX rejects missing case:missing ...                                       (0.000s)      [32m[1mOK[0m
+R7 missing label precedes ExclX target resolution ...                        [32m[1mOK[0m
+R7 FRAG lookup precedes ExclX target resolution ...                          [32m[1mOK[0m
+R7 pure ExclX inspection: bare ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: Req0 ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: ReqD ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: Once ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: malformed bound ...                                [32m[1mOK[0m
+R7 pure ExclX inspection: Req0 Once ...                                      [32m[1mOK[0m

@@ -457,12 +457,12 @@ in
   List.app (ignore o excltest) [
     (mkex_tag "bool_ss & \"COND_CLAUSES.1\"", ["COND_CLAUSES.1"],
      T_t, T_t),
-    (* Extended kernel spelling is available under the rule namespace. *)
-    (mkex_tag "bool_ss & \"rule:bool$COND_CLAUSES\"",
-     ["rule:bool$COND_CLAUSES"],
-     T_t, T_t),
     (mkex_tag "bool_ss & \"BETA_CONV\"", ["BETA_CONV"], beta_t, beta_t)
   ];
+  convtest
+    ("deletion via ExclX: rule:bool$COND_CLAUSES",
+     QCONV (SIMP_CONV bool_ss
+       [Excl "bool_case_thm",ExclX "rule:bool$COND_CLAUSES"]), T_t, T_t);
   List.app (ignore o exclsftest) [
     (mkexsf_tag "booleta_ss & ETA_ss", ["ETA"], eta_t, eta_t),
     (mkexsf_tag "booleta_ss & UNWIND_ss", ["UNWIND"], unwind_beta_t,
@@ -1974,15 +1974,15 @@ local
     then OK()
     else die "unsafe mode selected the wrong final-solver list"
 
-  val _ = tprint "Excl removes a named solver for one invocation"
+  val _ = tprint "ExclX removes a named solver for one invocation"
   val _ =
     if tactic_result [([],unsafe_tm)]
          (run (GEN_SIMP_TAC {safe=false} selection_ss
-                            [Excl "selftest.unsafe.solver"])
+                            [ExclX "selftest.unsafe.solver"])
               ([],unsafe_tm)) andalso
        !unsafe_calls = 1
     then OK()
-    else die "Excl did not remove the named solver"
+    else die "ExclX did not remove the named solver"
 
   val context_p = ``final_context_p:bool``
   val context_q = ``final_context_q:bool``
@@ -2067,21 +2067,21 @@ local
     then OK()
     else die "global_simp_tac did not use GEN_SIMP_TAC"
 
-  val _ = tprint "Excl removes a named looper for one invocation"
+  val _ = tprint "ExclX removes a named looper for one invocation"
   val _ =
     if tactic_result [entry_goal]
          (run (SIMP_TAC entry_looper_ss
-                        [Excl "selftest.entry.conjunction"])
+                        [ExclX "selftest.entry.conjunction"])
               entry_goal)
     then OK()
-    else die "Excl did not remove the named looper"
+    else die "ExclX did not remove the named looper"
 
   val split_named_user_ss =
     add_looper ("split user",fn _ => CONJ_TAC) empty_ss
   val _ = tprint "a user looper named split is resolved as a user looper"
   val _ =
     if tactic_result [entry_goal]
-         (run (SIMP_TAC split_named_user_ss [Excl "split user"])
+         (run (SIMP_TAC split_named_user_ss [ExclX "split user"])
               entry_goal)
     then OK()
     else die "the split namespace swallowed an ordinary looper"
@@ -2096,12 +2096,12 @@ local
     |> add_looper ("shared_identity",fn _ => CONJ_TAC)
   val _ = convtest
     ("qualified looper exclusion leaves a same-named rewrite",
-     SIMP_CONV shared_ss [Excl "looper:shared_identity"],
+     SIMP_CONV shared_ss [ExclX "looper:shared_identity"],
      ``shared_rule_left:'a``, ``shared_rule_right:'a``)
   val _ = tprint "qualified rule exclusion leaves a same-named looper"
   val _ =
     if tactic_result entry_subgoals
-         (run (SIMP_TAC shared_ss [Excl "rule:shared_identity"])
+         (run (SIMP_TAC shared_ss [ExclX "rule:shared_identity"])
               entry_goal)
     then OK()
     else die "qualified rule exclusion removed the looper"
@@ -2117,6 +2117,24 @@ local
          (run (SIMP_TAC shared_ss [Excl "shared_identity"]) entry_goal)
     then OK()
     else die "bare rule exclusion removed the looper"
+  (* Exclusion requests retain their argument order: once the rule is
+     gone, the extended bare name resolves to the looper instead. *)
+  val _ = tprint "mixed literal/extended exclusions resolve in order"
+  val _ =
+    if tactic_result [entry_goal]
+         (run (SIMP_TAC shared_ss
+           [Excl "shared_identity", ExclX "shared_identity"]) entry_goal)
+       andalso tactic_result entry_subgoals
+         (run (SIMP_TAC shared_ss
+           [ExclX "shared_identity", Excl "shared_identity"]) entry_goal)
+    then OK () else die "mixed exclusion order was lost"
+  val _ = tprint "adjacent extended exclusions see pending rule deletions"
+  val _ =
+    if tactic_result [entry_goal]
+         (run (SIMP_TAC shared_ss
+           [ExclX "rule:shared_identity", ExclX "shared_identity"])
+           entry_goal)
+    then OK () else die "extended resolution ignored pending exclusions"
   val ambiguous_ss =
     empty_ss
     |> add_looper ("shared_strategy",fn _ => CONJ_TAC)
@@ -2125,12 +2143,24 @@ local
             solver_failure "shared_strategy"}
   val _ = shouldfail
     {testfn=fn () =>
-       runtac (VALID (SIMP_TAC ambiguous_ss [Excl "shared_strategy"]))
+       runtac (VALID (SIMP_TAC ambiguous_ss [ExclX "shared_strategy"]))
               entry_goal,
-     printresult=K "unexpected success", printarg=K "ambiguous Excl",
+     printresult=K "unexpected success", printarg=K "ambiguous ExclX",
      checkexn=fn HOL_ERR error =>
        String.isSubstring "ambiguous" (Feedback.message_of error)
        | _ => false} ()
+
+  val _ = tprint "literal Excl never falls back to strategy targets"
+  val _ =
+    if tactic_result entry_subgoals
+         (run (SIMP_TAC ambiguous_ss [Excl "shared_strategy"]) entry_goal)
+       andalso tactic_result entry_subgoals
+         (run (SIMP_TAC entry_looper_ss
+           [Excl "selftest.entry.conjunction"]) entry_goal)
+       andalso tactic_result []
+         (run (GEN_SIMP_TAC {safe=false} selection_ss
+           [Excl "selftest.unsafe.solver"]) ([],unsafe_tm))
+    then OK () else die "literal Excl selected a strategy namespace"
 
   (* Only the simpset's entries contest a name: bool.CONJ_COMM exists but
      is no rule of this simpset, so the looper is the sole target. *)
@@ -2139,7 +2169,7 @@ local
   val _ = tprint "a looper named like an uninstalled theorem is excludable"
   val _ =
     if tactic_result [entry_goal]
-         (run (SIMP_TAC theorem_named_looper_ss [Excl "CONJ_COMM"])
+         (run (SIMP_TAC theorem_named_looper_ss [ExclX "CONJ_COMM"])
               entry_goal)
     then OK()
     else die "an uninstalled theorem made the looper's name ambiguous"
@@ -2147,8 +2177,8 @@ local
   (* An unqualified Excl that matches nothing in the simpset is a silent
      no-op, as on develop.  Only the simpset decides: a theorem that exists
      but is not installed is as much a no-op as a name that denotes
-     nothing.  A namespaced Excl states which kind of target is meant, so
-     there matching nothing still aborts. *)
+     nothing. ExclX explicitly selects a target, so matching nothing there
+     aborts. *)
   val excl_true_t = ``T /\ (selftest_catalogue_p:bool)``
   val excl_warnings = ref ([] : string list)
   val excl_outstream = !Feedback.WARNING_outstream
@@ -2177,9 +2207,9 @@ local
      SIMP_CONV (bool_ss -* ["bool$AND_CLAUSES"]) [],
      excl_true_t, ``selftest_catalogue_p:bool``)
   val _ = shouldfail
-    {testfn=SIMP_CONV bool_ss [Excl "rule:bool$AND_CLAUSES"],
+    {testfn=SIMP_CONV bool_ss [ExclX "rule:bool$AND_CLAUSES"],
      printresult=thm_to_string,
-     printarg=K "rule: Excl takes the kernel Thy$Name spelling",
+     printarg=K "rule: ExclX takes the kernel Thy$Name spelling",
      checkexn=fn UNCHANGED => true | _ => false}
     excl_true_t
   val kernel_name_matched = null (!excl_warnings)
@@ -2200,14 +2230,14 @@ local
     if bare_kernel_warned then die "bare Thy$Name Excl warned"
     else OK()
 
-  val _ = tprint "a kernel-spelled rule: Excl resolves to its theorem"
+  val _ = tprint "a kernel-spelled rule: ExclX resolves to its theorem"
   val _ =
     if kernel_name_matched then OK()
-    else die "Thy$Name rule: Excl was treated as matching nothing"
+    else die "Thy$Name rule: ExclX was treated as matching nothing"
 
   val _ = shouldfail
     {testfn=fn () =>
-       SIMP_CONV empty_ss [Excl "rule:definitely_not_a_theorem"]
+       SIMP_CONV empty_ss [ExclX "rule:definitely_not_a_theorem"]
          ``selftest_catalogue_p:bool``,
      printresult=thm_to_string,
      printarg=K "unknown namespaced theorem exclusion",
@@ -2232,18 +2262,18 @@ local
      SIMP_CONV unloaded_ss [], unloaded_lhs, unloaded_rhs)
   fun unloaded_excluded (description,name) =
     shouldfail
-      {testfn=SIMP_CONV unloaded_ss [Excl name],
+      {testfn=SIMP_CONV unloaded_ss [ExclX name],
        printresult=thm_to_string,
        printarg=K description,
        checkexn=fn UNCHANGED => true | _ => false}
       unloaded_lhs
   val _ =
     unloaded_excluded
-      ("Thy.Name rule: Excl of a rewrite from an unloaded theory",
+      ("Thy.Name rule: ExclX of a rewrite from an unloaded theory",
        "rule:" ^ unloaded_thy ^ ".unloaded_identity")
   val _ =
     unloaded_excluded
-      ("Thy$Name rule: Excl of a rewrite from an unloaded theory",
+      ("Thy$Name rule: ExclX of a rewrite from an unloaded theory",
        "rule:" ^ unloaded_thy ^ "$unloaded_identity")
 
   val _ = shouldfail
@@ -2331,7 +2361,8 @@ local
       val qualified = replay_thy ^ ".history_r"
       val strict_deleted = replay_ss -* [qualified]
       val strict_bare = replay_ss && [Excl qualified]
-      val relaxed_deleted = replay_ss && [Excl ("rule:" ^ qualified)]
+      val relaxed_deleted = replay_ss && [ExclX ("rule:" ^ qualified)]
+      val resolved_bare = replay_ss && [ExclX qualified]
       val _ = Context.restore saved
       fun strict_replay (description,ss) =
         shouldfail
@@ -2348,13 +2379,17 @@ local
         ("rule: history retains its parsed pattern after Context.restore",
          QCONV (SIMP_CONV (remove_ssfrags [dummy] relaxed_deleted) []),
          history_lhs, history_lhs)
+      val _ = convtest
+        ("bare ExclX history retains its resolved rule after Context.restore",
+         QCONV (SIMP_CONV (remove_ssfrags [dummy] resolved_bare) []),
+         history_lhs, history_lhs)
     in () end
   in Portable.finally (fn () => Context.restore saved) run () end
 
   (* A relaxed rule: exclusion is recorded with its resolved pattern, so
      rebuilding does not ask again what that name means. *)
   val unloaded_after_excl =
-    unloaded_ss && [Excl ("rule:" ^ unloaded_thy ^ ".unloaded_identity")]
+    unloaded_ss && [ExclX ("rule:" ^ unloaded_thy ^ ".unloaded_identity")]
   val unloaded_replayed =
     exclude_ssfrags ["no_such_fragment_selftest"] unloaded_after_excl
   val _ = shouldfail
@@ -2765,18 +2800,28 @@ val _ = let
 
   val split_name =
     "split " ^ Theory.current_theory () ^ "$simp_split_selftest_rule"
-  val _ = tprint "Excl suppresses a named split looper"
+  val _ = tprint "ExclX suppresses a named split looper"
   val _ =
-    case valid (SIMP_TAC with_split [Excl split_name]) split_goal of
+    case valid (SIMP_TAC with_split [ExclX split_name]) split_goal of
         [([], result)] =>
           if aconv result (#2 split_goal) then OK()
-          else die "Excl left the named split looper active"
+          else die "ExclX left the named split looper active"
       | _ => die "named split exclusion produced the wrong subgoals"
 
-  val _ = tprint "Excl case: suppresses TypeBase splits"
+  val _ = tprint "ExclX split: suppresses a named split looper"
+  val _ =
+    case valid (SIMP_TAC with_split
+      [ExclX ("split:" ^ Theory.current_theory () ^
+              "$simp_split_selftest_rule")]) split_goal of
+        [([],result)] =>
+          if aconv result (#2 split_goal) then OK ()
+          else die "namespaced split exclusion left its looper active"
+      | _ => die "namespaced split exclusion produced wrong subgoals"
+
+  val _ = tprint "ExclX case: suppresses TypeBase splits"
   val _ =
     case valid (SIMP_TAC (bool_ss ++ split_ss)
-                 [Excl "case:bool"]) split_goal of
+                 [ExclX "case:bool"]) split_goal of
         [([], result)] =>
           if aconv result (#2 split_goal) then OK()
           else die "split.case exclusion left the TypeBase split active"
@@ -2798,7 +2843,7 @@ val _ = let
     {testfn=fn () =>
        runtac (VALID
          (SIMP_TAC (bool_ss ++ split_ss)
-           [Excl "case:definitely_not_a_type"])) split_goal,
+           [ExclX "case:definitely_not_a_type"])) split_goal,
      printresult=K "unexpected success",
      printarg=K "nonexistent split.case exclusion",
      checkexn=fn HOL_ERR error =>
@@ -3453,28 +3498,65 @@ val _ =
                      concl (markerLib.IgnAsm ‘x = _’))]
   end
 
-(* TASK_06 exposes the marker, not its exclusion semantics. Until TASK_07
-   routes it, reject even bounded payloads rather than using them as facts. *)
+(* Explicit exclusions, including bounded payloads, are controls, not
+   rewrite facts. Requirements still enclose them and remain tactic-only. *)
 val _ =
   let
-    val x = markerLib.ExclX "rule:missing"
-    fun unsupported e = check_HOL_ERRexn
-      (fn (s, f, msg) => s = "simpLib" andalso f = "process_tags" andalso
-                        String.isSubstring "ExclX" msg andalso
-                        String.isSubstring "TASK_07" msg) e
-    fun refuses run (name, th) =
-        shouldfail {testfn = run, printarg = K name,
-                    printresult = K "unexpected success",
-                    checkexn = unsupported} th
+    fun check name b = (tprint name; if b then OK () else die name)
+    val tm = ``T /\ (exclusion_boundary_p:bool)``
+    val rule = CONJUNCT1 (SPEC_ALL boolTheory.AND_CLAUSES)
+    val ss = empty_ss ++ rewrites_with_names
+      [({Thy="",Name="boundary_rule"},rule)]
+    val x = ExclX "rule:boundary_rule"
     val markers = [("ExclX", x), ("Once ExclX", Once x),
                    ("Ntimes ExclX", Ntimes x 3)]
+    fun routes (name,th) =
+      let
+        val (prepared,rest) = prepare_rewrite_arguments ss [th]
+        val result = QCONV (SIMP_CONV prepared rest) tm
+        val direct = QCONV (SIMP_CONV ss [th]) tm
+        val via_and = QCONV (SIMP_CONV (ss && [th]) []) tm
+        val (goals,_) = runtac (VALID (SIMP_TAC ss [th])) ([],tm)
+      in
+        check (name ^ " routes without leaking marker hypotheses")
+          (null rest andalso null (hyp result) andalso
+           aconv (concl result) (mk_eq (tm,tm)) andalso
+           aconv (concl direct) (concl result) andalso null (hyp direct)
+           andalso aconv (concl via_and) (concl result)
+           andalso null (hyp via_and) andalso
+           case goals of [([],g)] => aconv g tm | _ => false)
+      end
+    fun requirement (name,th) =
+      (shouldfail
+         {testfn=fn () => SIMP_CONV ss [th] tm,
+          printarg=K (name ^ " remains tactic-only"),
+          printresult=thm_to_string,
+          checkexn=check_HOL_ERRexn
+            (fn (_,f,msg) => f = "process_tags" andalso
+                            String.isSubstring "tactic directive" msg)} ();
+       check (name ^ " is stripped before tactic exclusion")
+         (null (valid (SIMP_TAC ss [th]) ([],T))))
+    fun typo name = shouldfail
+      {testfn=fn () => empty_ss && [ExclX name],
+       printarg=K ("ExclX rejects missing " ^ name),
+       printresult=K "unexpected success",
+       checkexn=check_HOL_ERRexn
+         (fn (_,f,msg) => f = "process_tags" andalso
+                         String.isSubstring "did not match" msg)} ()
   in
-    List.app (refuses (fn th => SIMP_CONV empty_ss [th] T)) markers;
-    List.app (refuses (fn th => empty_ss && [th])) markers;
-    List.app (refuses (fn th =>
-      runtac (VALID (SIMP_TAC empty_ss [th])) ([], T)))
-      (markers @ [("Req0 ExclX", Req0 x), ("ReqD ExclX", ReqD x),
-                  ("Req0 Once ExclX", Req0 (Once x))])
+    convtest ("ExclX boundary fixture is an active rewrite",
+              SIMP_CONV ss [],tm,``exclusion_boundary_p:bool``);
+    List.app routes markers;
+    List.app requirement [("Req0 ExclX",Req0 x),
+                          ("Req0 Once ExclX",Req0 (Once x))];
+    shouldfail
+      {testfn=fn () => runtac (VALID (SIMP_TAC ss [ReqD x])) ([],tm),
+       printarg=K "ReqD ExclX still checks the requirement",
+       printresult=K "unexpected success",
+       checkexn=check_HOL_ERRexn
+         (fn (_,f,_) => f = "REQUIRE_DECREASE_TAC")} ();
+    List.app typo ["missing", "rule:missing", "looper:missing",
+                   "solver:missing", "split:missing", "case:missing"]
   end
 
 (* ---------------------------------------------------------------------- *)
@@ -4348,7 +4430,7 @@ fun bound_arguments_fixture () =
           [ExclSF "bound argument dummy"]
         val no_revival = aconv (result after_exhaustion) input
         val (excluded,_) = prepare_rewrite_arguments (base ())
-          [Excl "rule:boundArgumentsFixture.survivor"]
+          [ExclX "rule:boundArgumentsFixture.survivor"]
         val exclusion = aconv (result excluded) input
         val (with_fragment,_) = prepare_rewrite_arguments excluded
           [SF (name_ss "bound argument added" (rewrites [rule]))]
@@ -5196,6 +5278,11 @@ in
     "No frag called r7_missing_right" [left,right]
   val _ = messages "R7 non-variable FRAG is not a named lookup"
     0 [invalid_frag,missing]
+  val _ = stage "R7 missing label precedes ExclX target resolution"
+    "No assumption with label r7_nonexistent_label"
+    [ExclX "rule:r7_missing_target",missing]
+  val _ = stage "R7 FRAG lookup precedes ExclX target resolution"
+    "No frag called r7_missing_left" [ExclX "rule:r7_missing_target",left]
   val _ = List.app context_case ["register","restore","change","remove"]
 end;
 
@@ -5237,6 +5324,31 @@ local
         (markerLib.mk_ReqD (bound "2" split))),
      ("Cong does not expose Split",markerLib.Cong split),
      ("AC does not expose Split",markerLib.AC split TRUTH)]
+
+  (* ExclX inspection is proof-free, including wrapper payloads. A missing
+     label must win before bounds/requirements or target lookup. *)
+  val exclusion = ExclX "case:r7_missing_type"
+  fun exclusion_stage (name,th) = let
+    val (_,expected) = counted (fn () => markerLib.dest_directive th)
+    val (constructed,construction_count) = counted
+      (fn () => SIMP_TAC empty_ss [th,missing])
+    val (result,actual) = counted
+      (fn () => runtac (Exn.release constructed) goal)
+    val correct = case result of
+        Exn.Exn (HOL_ERR e) => String.isSubstring
+          "No assumption with label r7_branch_missing_label"
+          (Feedback.message_of e)
+      | _ => false
+  in
+    tprint ("R7 pure ExclX inspection: " ^ name);
+    if correct andalso construction_count = 0 andalso actual = expected
+    then OK () else die "ExclX caused early decoding/target resolution"
+  end
+  val _ = List.app exclusion_stage
+    [("bare",exclusion), ("Req0",Req0 exclusion),
+     ("ReqD",ReqD exclusion), ("Once",Once exclusion),
+     ("malformed bound",bound "a_bad" exclusion),
+     ("Req0 Once",Req0 (Once exclusion))]
 
   val cfg = {strip=false,elimvars=false,droptrues=false,oldestfirst=true}
   val builders =

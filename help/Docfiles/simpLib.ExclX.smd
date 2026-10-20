@@ -1,0 +1,69 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `ExclX`
+
+``` hol4
+simpLib.ExclX : string -> thm
+```
+
+------------------------------------------------------------------------
+
+Excludes named simplifier components for one invocation.
+
+`ExclX name` is a directive in the theorem list of a simplification
+conversion or tactic. Unlike literal [`simpLib.Excl`](#simpLib.Excl), it
+resolves an exclusion target and supports explicit namespaces:
+
+- `rule:name` excludes matching rewrites and named decision procedures.
+  Rewrite names accept `Thy$Name` as well as dotted qualification, and
+  the theory need not be an ancestor of the current theory. Numeric
+  dotted suffixes retain their usual meaning; names with too many dots
+  are still invalid. Decision procedures match the exact name string
+  after `rule:`.
+- `looper:name` excludes the ordinary looper named `name`.
+- `solver:name` excludes the named solver from the safe and unsafe lists.
+- `split:name` excludes the matching `split name` and `split_asm name`
+  displays, including rules registered with the `split` attribute.
+- `case:ty` excludes the datatype splits for `ty`, which may be an
+  unqualified type operator or a kernel-qualified `Thy$Tyop`.
+
+A bare name first goes through the same strict dots-only parser as
+`Excl` and `-*`, including its ancestry check. A matching rewrite or
+named decision procedure takes precedence over every strategy target.
+Only if neither matches does lookup fall back to ordinary loopers,
+solvers, split displays and case displays. Matching more than one of
+these strategy kinds is an ambiguity error; use a namespace to select
+the intended kind. Bare names cannot bypass strict parsing: use
+`ExclX "case:bool"`, not `ExclX "split.case bool"`, whose dot invokes
+the strict parser.
+
+Every unmatched `ExclX` name is an error, including an unmatched bare
+name. This differs from the silent unmatched deletion of `Excl` and `-*`.
+The supplied simpset is unchanged; exclusions affect only the invocation.
+
+`Once (ExclX name)` and `Ntimes (ExclX name) n` are still invocation-wide
+controls, not bounded deletions: the bound does not count exclusions or
+rewrite uses. Requirement wrappers (`Req0`, `ReqD`) retain their usual
+precedence and checks; wrapping an exclusion does not bypass them.
+
+### Failure
+
+The constructor never fails: it stores the string without parsing or
+looking up a target. Processing the directive can fail for an invalid
+name, an ambiguous strategy target or any unmatched name.
+
+### Example
+
+``` hol4
+>> QCONV (SIMP_CONV bool_ss [ExclX "rule:bool$AND_CLAUSES"]) “T ∧ p”;
+>> QCONV (SIMP_CONV bool_ss [Once (ExclX "rule:bool$AND_CLAUSES")]) “T ∧ p”;
+```
+
+### See also
+
+[`simpLib.Excl`](#simpLib.Excl),
+[`markerLib.ExclX`](#markerLib.ExclX),
+[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV),
+[`simpLib.add_looper`](#simpLib.add_looper),
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.add_split`](#simpLib.add_split),
+[`simpLib.split_ss`](#simpLib.split_ss).

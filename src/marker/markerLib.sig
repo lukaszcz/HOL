@@ -32,8 +32,8 @@ sig
 
   val Excl   : string -> thm
   val destExcl : thm -> string option
-  (* Distinct opt-in marker; strings are preserved literally. Simplifier
-     routing is not yet implemented (TASK_07), so simpLib rejects it. *)
+  (* Distinct opt-in marker; strings are preserved literally. simpLib
+     resolves extended exclusion targets when processing theorem lists. *)
   val ExclX : string -> thm
   val destExclX : thm -> string option
   val ExclSF : string -> thm

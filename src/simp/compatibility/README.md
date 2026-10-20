@@ -11,6 +11,8 @@ implementation APIs or weaken legacy expectations.
 public legacy projection, caller audit and passing focused/sanity checks.
 [TRAVERSAL_LIFETIMES.md](TRAVERSAL_LIFETIMES.md) records TASK_05's shared
 quota, staging, default and exception contracts and pinned differential.
+[EXCLUSION_ROUTES.md](EXCLUSION_ROUTES.md) records TASK_07's literal Excl /
+explicit ExclX routing, normal prefix coverage and replay handoff.
 
 ## Layout
 
@@ -24,7 +26,8 @@ quota, staging, default and exception contracts and pinned differential.
   Each becomes `selftest.sml` verbatim and runs unchanged in both lanes.
   `control.sml` is the ordinary-simplification control. `reducer-shape.sml`
   and `excl-{rule,solver,looper,split,case}-{unmatched,installed}.sml` are
-  eleven independent red-regression executables, not xfails.
+  eleven independent regression executables, not xfails; all are repaired
+  by TASK_04/TASK_07. The ten prefix cases also run in normal Holmake tests.
   `traversal-lifetimes.sml` runs the legacy-only `TraversalContracts` fixture
   against both lanes; the same fixture runs in normal Holmake selftests.
 - `probes/support/*.sml`: shared legacy-only assertion helpers, snapshotted
@@ -62,8 +65,8 @@ The output directory must not exist. Choose a unique path for each run.
 For later implementation commits use `--branch <commit>` (default HEAD).
 To select focused legacy probes, repeat `--suite <probe-stem>`; `control`
 and the unchanged develop selftest always run. Unknown names are errors.
-With no `--suite`, all probes still run, including unrepaired exclusion
-regressions. For the TASK_05 scope:
+With no `--suite`, all probes run, including the literal exclusion
+regressions. For the focused TASK_05 scope:
 
 ```sh
 python3 src/simp/compatibility/run.py --branch HEAD \
@@ -74,7 +77,10 @@ python3 src/simp/compatibility/run.py --branch HEAD \
 ```
 
 `$HOLDIR` is the absolute repository root. The normal `HOLSELFTESTLEVEL`
-build also runs `traversal-contracts`, alongside `simp-selftest.log`. Its
+build also runs `traversal-contracts` and `exclusion-contracts`, alongside
+`simp-selftest.log`. The latter runs all ten prefix fixtures, including
+silent unmatched names, real conversion/callback preconditions, deletion
+and direct `-*` comparisons. The traversal target's
 support-directory Holmakefile resolves private simplifier modules before
 upload to `sigobj`, and the launcher executes from that directory. It
 records all trace actions, ordered callbacks, warnings (also forwarded to
@@ -168,7 +174,8 @@ The default run now includes all TASK_02 probes: at the original audited
 revision it exits 1 after running every suite on both lanes. This is the
 separate pre-repair red-regression target. TASK_04 repairs the constructor
 failure and includes it in normal `src/simp/src/selftest.sml` coverage;
-TASK_07 must repair the ten exclusion failures and add their normal coverage.
+TASK_07 repairs the ten exclusion failures and adds their normal coverage
+as the `exclusion-contracts` target. Historical red results are unchanged.
 
 Capture each relevant observable, not merely the final RHS:
 
