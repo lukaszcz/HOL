@@ -1,3 +1,4 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `xtraversedata_for_ss`
 
 ``` hol4
@@ -20,15 +21,30 @@ returns a native `Traverse.REDUCER` instead.
 
 Extraction invokes no collectors, does not recompile installed rewrites,
 and does not reset bounded uses. Legacy and configured projections share
-the actual installed bounded controls. Context initialization and reuse
-follow the chosen Traverse entry point's contract.
+the actual installed bounded controls. `Traverse.XTRAVERSE pair facts`
+refreshes private reducer contexts on each application, even with default
+configuration. Raw `Traverse.TRAVERSE` initializes them at construction
+instead. Taking `#1` discards the configuration; it does not make raw
+`TRAVERSE` a configured runner or give it `XTRAVERSE`'s lifetime.
 
 ### Failure
 
 Constructing or applying the returned traversal can fail as for the chosen
 Traverse entry point.
 
+### Example
+
+Branch clients that previously expected configured public extraction use
+this explicit accessor instead. Existing legacy clients need no migration.
+
+``` hol4
+>>_ val ss = simpLib.set_cond_depth 2 bool_ss;
+>>_ val pair = simpLib.xtraversedata_for_ss ss;
+>> val Traverse.CONFIG_REDUCER _ = hd (#rewriters (#1 pair));
+>> Traverse.XTRAVERSE pair [] “T ∧ p”;
+```
+
 ### See also
 
-simpLib.traversedata_for_ss,
-simpLib.legacy_traversedata_for_ss
+[`simpLib.traversedata_for_ss`](#simpLib.traversedata_for_ss),
+[`simpLib.legacy_traversedata_for_ss`](#simpLib.legacy_traversedata_for_ss).

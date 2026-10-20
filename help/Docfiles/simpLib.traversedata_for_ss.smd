@@ -1,3 +1,4 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `traversedata_for_ss`
 
 ``` hol4
@@ -19,7 +20,10 @@ Extraction does not invoke collectors, recompile installed rewrites or
 reset their remaining bounded uses. The returned rewriter shares the
 installed index, matchers and actual bounded controls. Subsequent traversal
 construction and application retain the chosen Traverse entry point's
-context lifetime.
+context lifetime: `Traverse.TRAVERSE data facts` initializes private reducer
+contexts at conversion construction and reuses them on application.
+The total `simpLib.SIMP_CONV` wrapper delays construction until application;
+its lifetime must not be inferred from raw `TRAVERSE`.
 
 For configured extraction, use `xtraversedata_for_ss ss` with the extended
 Traverse entry points. Consumers needing only configured reducer data use
@@ -30,6 +34,17 @@ Traverse entry points. Consumers needing only configured reducer data use
 Extraction does not raise a simplification failure. Constructing or
 applying the returned traversal can fail as for `Traverse.TRAVERSE`.
 
+### Example
+
+Legacy constructor inspection needs no opt-in:
+
+``` hol4
+>>_ val data = simpLib.traversedata_for_ss simpLib.empty_ss;
+>> val Traverse.REDUCER _ = hd (#rewriters data);
+>> Traverse.TRAVERSE (simpLib.traversedata_for_ss bool_ss) [] “T ∧ p”;
+```
+
 ### See also
 
-simpLib.legacy_traversedata_for_ss
+[`simpLib.xtraversedata_for_ss`](#simpLib.xtraversedata_for_ss),
+[`simpLib.legacy_traversedata_for_ss`](#simpLib.legacy_traversedata_for_ss).

@@ -35,7 +35,7 @@ Never fails.
 >> val c = Context.snapshot();
 >>_ val conj_ss = simpLib.add_looper ("conj", fn _ => CONJ_TAC) bool_ss;
 >> SIMP_TAC conj_ss [] ([], “p ∧ q”) c;
->> SIMP_TAC conj_ss [ExclX "looper:conj"] ([], “p ∧ q”) c;
+>> SIMP_TAC conj_ss [simpLib.ExclX "looper:conj"] ([], “p ∧ q”) c;
 ```
 
 ### See also

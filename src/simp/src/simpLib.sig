@@ -91,10 +91,16 @@ sig
   val Cong        : thm -> thm
   val Split       : thm -> thm
   val AC          : thm -> thm -> thm
-  (* Literal strict rule/conversion/dproc deletion, as with ss -* [name]. *)
+  (* Literal strict rule/conversion/dproc deletion, as with ss -* [name].
+     No namespace/fallback interpretation. Unmatched names are silent;
+     history reparses strict names in the current theory on replay. *)
   val Excl        : string -> thm
   (* Explicit target resolution: rule:, looper:, solver:, split:, case:.
-     rule: accepts relaxed Thy.Name and Thy$Name; missing targets fail. *)
+     rule: accepts relaxed Thy.Name and Thy$Name. Bare names first use the
+     strict parser and rule/dproc priority, then strategy fallback.
+     Missing/ambiguous targets fail when processed, not at construction.
+     History keeps resolved rules/displays; split/case suppression also
+     applies to later additions. Does not enable persistent registration. *)
   val ExclX       : string -> thm
   val ExclSF      : string -> thm
   val Req0        : thm -> thm
@@ -243,7 +249,9 @@ sig
 
   (* Unconditional legacy projection: the native rewriter is a REDUCER,
      supplied decision procedures are unchanged, and simpset-specific
-     traversal configuration is omitted. Shares installed rewrite controls. *)
+     traversal configuration is omitted. No migration for legacy clients.
+     Extraction runs no collectors and shares installed rewrite controls;
+     TRAVERSE initializes private contexts at conversion construction. *)
   val traversedata_for_ss: simpset -> Traverse.traverse_data
 
   (* Additive cooperation API for original-ABI consumers such as congLib.
@@ -256,8 +264,11 @@ sig
 
   (* Explicit configured extraction: xtraversedata_for_ss pairs a native
      CONFIG_REDUCER with the simpset's traversal-strategy settings for the
-     extended Traverse entry points. For configured reducer data alone,
-     use #1 (xtraversedata_for_ss ss), not traversedata_for_ss ss. *)
+     extended Traverse entry points. XTRAVERSE refreshes private contexts
+     per application, even with default settings. Extraction itself runs
+     no collectors and shares installed bounded controls with the legacy
+     projection. For configured reducer data alone, use
+     #1 (xtraversedata_for_ss ss), not traversedata_for_ss ss. *)
   val traverseconfig_for_ss: simpset -> Traverse.traverse_config
   val xtraversedata_for_ss: simpset -> Traverse.xtraverse_data
 

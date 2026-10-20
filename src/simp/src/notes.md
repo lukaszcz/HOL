@@ -1,5 +1,32 @@
 # Note on the Simplifier Code
 
+## API migration: branch extensions only
+
+Legacy clients require no migration: keep `traversedata_for_ss`, literal
+`Excl`/`-*`, and ordinary simplifier imports. In particular, do not replace
+literal names merely because they contain `rule:`, `solver:`, `looper:`,
+`split:` or `case:`. Those strings acquire no namespace meaning in `Excl`.
+
+Clients of the branch's earlier extension contracts must opt in explicitly:
+
+- Configured native extraction: replace the earlier branch use of
+  `traversedata_for_ss` with `xtraversedata_for_ss ss`, normally the complete
+  pair for `Traverse.XTRAVERSE`. Use `#1` only for reducer data alone.
+- Namespace/fallback exclusions: replace the earlier branch use of `Excl`
+  with `ExclX`, preferably with an explicit `rule:`, `looper:`, `solver:`,
+  `split:` or `case:` namespace.
+- Persistent `[split]`: replace the earlier implicit load-time registration
+  assumption with an explicit `splitPersistLib` dependency on the earliest
+  split-bearing theory, as below.
+
+These opt-ins are not interchangeable compatibility wrappers. For example,
+`XTRAVERSE` refreshes contexts per application, while `TRAVERSE` initializes
+at construction; `ExclX` rejects missing targets, while literal `Excl` is
+silent. Both traversal projections share installed bounded controls.
+Finite regression results do not establish universal callback equivalence.
+The maintained search/disposition and validation handoff is
+`../compatibility/API_MIGRATION.md`.
+
 ## Persistent split rules (explicit opt-in)
 
 Ordinary `simpLib` and `splitLib` loading and split-rule queries claim no
@@ -191,9 +218,12 @@ Split/case ExclX targets record an incremental `EXCLUDE_LOOPER_EVENT` with
 one resolved display name. It suppresses later local additions and ambient
 split/TypeBase rules, including after fragment removal or Context.restore;
 replay does not resolve the target again. Local split deletion events
-precede this suppression event. Repetition is idempotent. Ordinary looper
-and solver deletions remain point-in-history removals, as do strict and
-resolved rule deletions: a later addition can reinstall those targets.
+precede this suppression event. Replaying suppression is idempotent, but
+processing a new `ExclX` still requires a matching target: a second exclusion
+of a removed local-only split fails, while an ambient persistent or TypeBase
+target remains resolvable. Ordinary looper and solver deletions remain
+point-in-history removals, as do strict and resolved rule deletions: a later
+addition can reinstall those targets.
 
 ## Prepared global rewrites
 

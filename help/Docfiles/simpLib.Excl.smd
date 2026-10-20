@@ -7,7 +7,8 @@ simpLib.Excl : string -> thm
 
 ------------------------------------------------------------------------
 
-Excludes named rewrites and decision procedures for one invocation.
+Excludes named rewrites, conversions and decision procedures for one
+invocation.
 
 `Excl name` is a directive in the theorem list of a simplification
 conversion or tactic. It uses exactly the same strict name parser and
@@ -33,7 +34,11 @@ extended exclusions.
 
 An unmatched name is silent, but still records the same deletion history
 as `-*`; it is not discarded just because no current rule matches.
-Strict names are reparsed when that history is replayed.
+Strict names are reparsed when that history is replayed, in the then-current
+theory context (including after `Context.restore`). A later addition may
+reinstall a deleted rule; this is not a prohibition on future additions.
+Legacy clients require no migration. Only clients of the branch's earlier
+extended namespace/fallback behavior should switch to `ExclX`.
 
 ### Failure
 

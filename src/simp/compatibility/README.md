@@ -28,6 +28,9 @@ descendant fixtures.
 lifecycle matrix, separate-process heap reload and normal regression gates.
 [LOAD_AUDIT.md](LOAD_AUDIT.md) gives explicit registration/syntax ownership
 dispositions, including the repaired ambient `ExcludeX` mapping.
+[API_MIGRATION.md](API_MIGRATION.md) is TASK_13's final API inventory,
+repository search/disposition record and documentation validation handoff
+for TASK_14 through TASK_17. Legacy clients require no migration.
 
 ## Layout
 

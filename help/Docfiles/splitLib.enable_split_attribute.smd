@@ -36,8 +36,9 @@ Malformed rules supplied later to the attribute are rejected separately.
 
 For a fresh import, explicit initialization must execute before the
 imported theory's data replay. An exporting script's call is not itself
-serialized as import-time initialization. Use the explicit opt-in module `splitPersistLib` in the earliest
-split-bearing script (before any `[split]` declaration):
+serialized as import-time initialization. Use the explicit opt-in module
+`splitPersistLib` in the earliest split-bearing script (before any `[split]`
+declaration):
 
 ``` hol4
 Theory mySplits[bare]

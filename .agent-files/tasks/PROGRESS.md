@@ -11,17 +11,17 @@
 - TASK_09: done — acceptance verified; matrix/native/paired/sanity reruns pass.
 - TASK_10: done — acceptance verified; ownership/load/native/sanity reruns pass.
 - TASK_11: done — acceptance verified; fresh replay/native/sanity reruns pass.
-- TASK_12: done — acceptance verified; lifecycle/heap/audit/native/sanity pass.
-- TASK_13: unblocked (not started).
-- TASK_14: blocked — needs 13.
-- TASK_15: blocked — needs 13.
+- TASK_12: done — acceptance verified; lifecycle/heap/audit/native/sanity reruns pass.
+- TASK_13: done — API/client sweep, doc examples, focused/sanity checks pass.
+- TASK_14: unblocked (not started).
+- TASK_15: unblocked (not started).
 - TASK_16: blocked — needs 14, 15.
 - TASK_17: blocked — needs 16.
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_13_documentation_and_migration_sweep.md` — complete
-API/migration documentation and repository-wide client sweep.
+`.agent-files/tasks/TASK_14_paired_differential_validation.md` — validate the
+repaired branch against pinned develop using the maintained legacy inputs.
 
 ## 3. Completion log
 
@@ -39,4 +39,5 @@ and evidence pointer.
 - TASK_09 — `e9b6cd09d`; evidence: `src/simp/compatibility/EXCLUSION_MATRIX.md` and `src/simp/compatibility/results/task09/`.
 - TASK_10 — `613d7d8e1`; evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.
 - TASK_11 — `c8b193b98`; evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.
-- TASK_12 — `[TASK_12] Validate split lifecycle and audit loading` (commit subject); evidence: `src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `src/simp/compatibility/results/task12/`.
+- TASK_12 — `fa2099c07`; evidence: `src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `src/simp/compatibility/results/task12/`.
+- TASK_13 — `[TASK_13] Complete API documentation and migration sweep` (commit subject); evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/`.

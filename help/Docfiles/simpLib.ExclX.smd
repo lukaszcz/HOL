@@ -13,7 +13,8 @@ Excludes named simplifier components for one invocation.
 conversion or tactic. Unlike literal [`simpLib.Excl`](#simpLib.Excl), it
 resolves an exclusion target and supports explicit namespaces:
 
-- `rule:name` excludes matching rewrites and named decision procedures.
+- `rule:name` excludes matching rewrites, conversions and named decision
+  procedures.
   Rewrite names accept `Thy$Name` as well as dotted qualification, and
   the theory need not be an ancestor of the current theory. Numeric
   dotted suffixes retain their usual meaning; names with too many dots
@@ -38,7 +39,31 @@ the strict parser.
 
 Every unmatched `ExclX` name is an error, including an unmatched bare
 name. This differs from the silent unmatched deletion of `Excl` and `-*`.
-The supplied simpset is unchanged; exclusions affect only the invocation.
+Constructing a reusable conversion or tactic need not process the directive
+until application. The supplied simpset is unchanged; exclusions affect only
+the invocation. Constructing or processing this marker does not enable the
+persistent `split` attribute. Local split rules and TypeBase targets remain
+available without registration.
+
+### History and repetition
+
+`ss && [ExclX name]` records the exclusion in the resulting simpset's
+history. Rule exclusions retain their resolved pattern, even for bare
+names; unlike `Excl`, replay does not reparse them in the current theory.
+Rule, ordinary looper and solver deletions act at that point in history:
+a later addition can reinstall the target.
+
+Split/case exclusions instead record suppression of the resolved displays,
+including across fragment removal/replay and `Context.restore`. A later
+local addition with the same excluded display remains suppressed. This is
+local simpset state, not a persistent theorem-set REMOVE; use
+`splitLib.exclude_split` for the latter.
+
+Replaying suppression is idempotent, but a newly processed `ExclX` must
+still resolve a target. Repeating a rule, ordinary looper or solver deletion
+usually fails once its target is gone. Repeating a split/case exclusion
+works while its ambient persistent/TypeBase target is still present; a
+removed local-only split no longer matches.
 
 `Once (ExclX name)` and `Ntimes (ExclX name) n` are still invocation-wide
 controls, not bounded deletions: the bound does not count exclusions or
@@ -54,8 +79,10 @@ name, an ambiguous strategy target or any unmatched name.
 ### Example
 
 ``` hol4
->> QCONV (SIMP_CONV bool_ss [ExclX "rule:bool$AND_CLAUSES"]) “T ∧ p”;
->> QCONV (SIMP_CONV bool_ss [Once (ExclX "rule:bool$AND_CLAUSES")]) “T ∧ p”;
+>> QCONV (SIMP_CONV bool_ss [simpLib.ExclX "rule:bool$AND_CLAUSES"])
+     “T ∧ p”;
+>> QCONV (SIMP_CONV bool_ss
+     [Once (simpLib.ExclX "rule:bool$AND_CLAUSES")]) “T ∧ p”;
 ```
 
 ### See also

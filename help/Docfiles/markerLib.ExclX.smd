@@ -1,3 +1,4 @@
+>>__ load "markerLib";
 ## `ExclX`
 
 ``` hol4
@@ -46,10 +47,11 @@ registration.
 ### Example
 
 ``` hol4
-val x = markerLib.ExclX "rule:Thy$Name";
-val SOME "rule:Thy$Name" = markerLib.destExclX x;
-val SOME (markerLib.DExclX "rule:Thy$Name") = markerLib.dest_directive x;
-val NONE = markerLib.destExcl x;
+>>_ val x = markerLib.ExclX "rule:Thy$Name";
+>> val SOME "rule:Thy$Name" = markerLib.destExclX x;
+>> val SOME (markerLib.DExclX "rule:Thy$Name") =
+     markerLib.dest_directive x;
+>> val NONE = markerLib.destExcl x;
 ```
 
 ### See also

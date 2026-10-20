@@ -40,7 +40,7 @@ Never fails.
 >> val c = Context.snapshot();
 >> SIMP_TAC (bool_ss ++ simpLib.split_ss) []
      ([], “P (if b then 1 else 2) : bool”) c;
->> SIMP_TAC (bool_ss ++ simpLib.split_ss) [ExclX "case:bool"]
+>> SIMP_TAC (bool_ss ++ simpLib.split_ss) [simpLib.ExclX "case:bool"]
      ([], “P (if b then 1 else 2) : bool”) c;
 ```
 

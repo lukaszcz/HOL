@@ -46,13 +46,18 @@ sig
      Call before using [split] or loading theories whose data must replay.
      Exported theories explicitly load splitPersistLib and record it with
      Theory.add_ML_dependency on the earliest split-bearing theory.
-     No simpLib dependency is needed for this initialization. *)
+     No simpLib dependency is needed for this initialization. Ownership
+     and rules follow Context.restore; after rewinding before opt-in,
+     call this API again rather than relying on a cached module load.
+     Serialized theory initialization, not a concurrent proof operation. *)
   val enable_split_attribute : unit -> unit
 
   (* Persistently retract [Thy.]Name, resolving an unqualified name in the
      current theory. Requires owned registration; never implicitly opts in.
      Unlike simpLib.del_split this writes a REMOVE for descendant replay.
-     Retracting an absent name is harmless. Does not delete the theorem. *)
+     Retracting an absent name is harmless. Does not delete the theorem.
+     REMOVE keys stay resolved across replay and Context.restore.
+     Pinned contexts reject writes, including new initialization above. *)
   val exclude_split : string -> unit
 
   (* The persistent [split] theorem set.  Before opt-in (or under foreign

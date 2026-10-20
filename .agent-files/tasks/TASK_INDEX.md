@@ -145,6 +145,10 @@ TASK_12 lifecycle/audit handoff for TASK_13/TASK_17:
 All bounded fresh-load, Context, theory replay and actual saved-heap scenarios
 pass. Ordinary load preserves foreign `Split`/`ExcludeX` syntax; use qualified
 `marker$ExcludeX` or the ML API, not a new ambient unqualified mapping.
+TASK_13 final API/migration inventory and search dispositions for TASK_14–17:
+`src/simp/compatibility/API_MIGRATION.md` and `results/task13/` under that
+compatibility directory. Legacy callers require no migration; branch-only
+extensions use configured extraction, ExclX and explicit split persistence.
 
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`
