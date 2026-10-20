@@ -157,6 +157,14 @@ unmatched `ExclX` name, including a bare name, is an error at processing,
 not construction. Bounded `ExclX` remains an invocation control rather
 than bounded deletion; requirement-wrapper precedence is unchanged.
 
+Split/case ExclX targets record an incremental `EXCLUDE_LOOPER_EVENT` with
+one resolved display name. It suppresses later local additions and ambient
+split/TypeBase rules, including after fragment removal or Context.restore;
+replay does not resolve the target again. Local split deletion events
+precede this suppression event. Repetition is idempotent. Ordinary looper
+and solver deletions remain point-in-history removals, as do strict and
+resolved rule deletions: a later addition can reinstall those targets.
+
 ## Prepared global rewrites
 
 The old simplification tactics retain develop's marker processing and pass

@@ -210,6 +210,11 @@ and strategy_event =
   | SET_SUBGOALER_EVENT of Traverse.subgoaler option
   | SET_COND_DEPTH_EVENT of int option
   | SET_TERM_ORD_EVENT of (term * term -> order) option
+  (* Add one resolved split/case display to the persistent suppression
+     set. Unlike DEL_LOOPER_EVENT this also suppresses later additions and
+     rules supplied by the ambient split/TypeBase stores. Replay never
+     resolves the display again. Repeated events are idempotent. *)
+  | EXCLUDE_LOOPER_EVENT of string
   | SET_EXCL_LOOPERS_EVENT of string Binaryset.set
   | SET_STRATEGY_EVENT of strategy_data
 and simpset = SS of {
@@ -896,6 +901,8 @@ fun apply_strategy_event event =
        | SET_SUBGOALER_EVENT subgoaler => upd_subgoaler (K subgoaler)
        | SET_COND_DEPTH_EVENT cond_depth => upd_cond_depth (K cond_depth)
        | SET_TERM_ORD_EVENT term_ord => upd_term_ord (K term_ord)
+       | EXCLUDE_LOOPER_EVENT display =>
+           upd_excl_loopers (fn excl => Binaryset.add (excl,display))
        | SET_EXCL_LOOPERS_EVENT excl => upd_excl_loopers (K excl)
        | SET_STRATEGY_EVENT strategy => K strategy)
 
@@ -1150,9 +1157,7 @@ fun exclude_split_display (display,ss) =
     val without_local =
       List.foldl (fn (id,result) => del_looper_id_quiet id result) ss ids
   in
-    map_strategy
-      (upd_excl_loopers (fn excluded => Binaryset.add (excluded,display)))
-      without_local
+    strategy_op (EXCLUDE_LOOPER_EVENT display) without_local
   end
 
 fun apply_exclusion (target,ss) =
@@ -1161,10 +1166,7 @@ fun apply_exclusion (target,ss) =
     | ExcludeLooper id => del_looper_id_quiet id ss
     | ExcludeSolver solver => remove_solver solver ss
     | ExcludeSplits displays => List.foldl exclude_split_display ss displays
-    | ExcludeCase display =>
-        map_strategy
-          (upd_excl_loopers
-             (fn excluded => Binaryset.add (excluded,display))) ss
+    | ExcludeCase display => strategy_op (EXCLUDE_LOOPER_EVENT display) ss
 
 datatype exclusion_request = LiteralExclusion of string
                            | ExtendedExclusion of string

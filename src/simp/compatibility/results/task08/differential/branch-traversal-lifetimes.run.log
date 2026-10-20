@@ -1,0 +1,322 @@
+<<HOL message: Created theory "traversallifetimes">>
+warning capture preconditions ...                                            [32m[1mOK[0m
+raw collector lifetime ...                                                   [32m[1mOK[0m
+cong-qconv collector lifetime ...                                            [32m[1mOK[0m
+simp-total collector lifetime ...                                            [32m[1mOK[0m
+cong-total collector lifetime ...                                            [32m[1mOK[0m
+OBS lifetime=raw:construct
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=raw:first
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=raw:second
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=raw:counts:1,1,1
+OBS lifetime=cong-qconv:construct
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=cong-qconv:first
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-qconv:second
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-qconv:counts:1,1,1
+OBS lifetime=simp-total:construct
+OBS lifetime=simp-total:first
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=simp-total:second
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=simp-total:counts:0,1,2
+OBS lifetime=cong-total:construct
+OBS lifetime=cong-total:first
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-total:second
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-total:counts:0,1,2
+initial collector order and fact order ...                                   [32m[1mOK[0m
+recursive collector order and private context ...                            [32m[1mOK[0m
+recursive collection does not mutate reusable context ...                    [32m[1mOK[0m
+empty initial facts do not invoke collectors ...                             [32m[1mOK[0m
+OBS collector=construct-collectors
+OBS collector=trace2:MORE_CONTEXT:lifetime_fact1 [lifetime_fact1]
+OBS collector=trace2:MORE_CONTEXT:lifetime_fact2 [lifetime_fact2]
+OBS collector=R1:0:lifetime_fact1;lifetime_fact2
+OBS collector=R2:0:lifetime_fact1;lifetime_fact2
+OBS collector=D1:0:lifetime_fact1;lifetime_fact2
+OBS collector=D2:0:lifetime_fact1;lifetime_fact2
+OBS collector=collectors-first-application
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_root
+OBS collector=trace2:MORE_CONTEXT:lifetime_nested_fact [lifetime_nested_fact]
+OBS collector=R1:1:lifetime_nested_fact
+OBS collector=R2:1:lifetime_nested_fact
+OBS collector=D1:1:lifetime_nested_fact
+OBS collector=D2:1:lifetime_nested_fact
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_child
+OBS collector=collectors-second-application
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_root
+OBS collector=trace2:MORE_CONTEXT:lifetime_nested_fact [lifetime_nested_fact]
+OBS collector=R1:1:lifetime_nested_fact
+OBS collector=R2:1:lifetime_nested_fact
+OBS collector=D1:1:lifetime_nested_fact
+OBS collector=D2:1:lifetime_nested_fact
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_child
+OBS collector=construct-empty-context
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_child
+legacy repeated extraction shares installed quota ...                        [32m[1mOK[0m
+OBS quota=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_quota_a \226\135\148 lifetime_quota_b
+OBS quota=extract-first
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace1:REWRITING:rewrite:<anonymous>:lifetime_quota_a:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace2:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace100:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=extract-partially-spent
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace1:REWRITING:rewrite:<anonymous>:lifetime_quota_a:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace2:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace100:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=extract-exhausted
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace102:TEXT:rewrite:<anonymous> ineffectual
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace102:TEXT:rewrite:<anonymous> ineffectual
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace102:TEXT:rewrite:<anonymous> ineffectual
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_a []
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_a []
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_a []
+collect once; no eager congruence factories ...                              [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+exact factory and reducer schedule ...                                       [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+factories refresh on reuse; collectors do not ...                            [32m[1mOK[0m
+collect once; no eager congruence factories ...                              [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+exact factory and reducer schedule ...                                       [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+factories refresh on reuse; collectors do not ...                            [32m[1mOK[0m
+collect once; no eager congruence factories ...                              [32m[1mOK[0m
+OBS factory/root abort payload.exception=Stop:Stop (ref ())
+factory/root abort payload ...                                               [32m[1mOK[0m
+exact factory and reducer schedule ...                                       [32m[1mOK[0m
+OBS factory/root abort payload.exception=Stop:Stop (ref ())
+factory/root abort payload ...                                               [32m[1mOK[0m
+factories refresh on reuse; collectors do not ...                            [32m[1mOK[0m
+factory rejection cached before root mutation ...                            [32m[1mOK[0m
+foreign factory exception is rejected, not propagated ...                    [32m[1mOK[0m
+OBS factory Interrupt.exception=Interrupt
+factory Interrupt ...                                                        [32m[1mOK[0m
+OBS factory=construct
+OBS factory=trace2:MORE_CONTEXT:T []
+OBS factory=collect
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=R:b
+OBS factory=C:b
+OBS factory=W:b
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=R:b
+OBS factory=C:b
+OBS factory=W:b
+OBS factory=construct
+OBS factory=trace2:MORE_CONTEXT:T []
+OBS factory=collect
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=C:a
+OBS factory=R:a
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_b
+OBS factory=C:b
+OBS factory=R:b
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_c
+OBS factory=C:c
+OBS factory=R:c
+OBS factory=W:c
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=C:a
+OBS factory=R:a
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_b
+OBS factory=C:b
+OBS factory=R:b
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_c
+OBS factory=C:c
+OBS factory=R:c
+OBS factory=W:c
+OBS factory=construct
+OBS factory=trace2:MORE_CONTEXT:T []
+OBS factory=collect
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=factory/root abort payload:exception:Stop:Stop (ref ())
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=factory/root abort payload:exception:Stop:Stop (ref ())
+OBS factory=gated-factory
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=construct-throwing-factory
+OBS factory=apply-throwing-factory
+OBS factory=throwing-factory
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=foreign-factory:returned
+OBS factory=throwing-factory
+OBS factory=factory Interrupt:exception:Interrupt
+live stack limit between native candidates ...                               [32m[1mOK[0m
+live default restored ...                                                    [32m[1mOK[0m
+reusable legacy depth zero ...                                               [32m[1mOK[0m
+reusable legacy reads depth at application ...                               [32m[1mOK[0m
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)
+OBS default=trace2:MORE_CONTEXT:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\148 T
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_target
+OBS default=trace2:REDUCE:trying lifetime depth mutator on:lifetime_depth_target
+OBS default=candidate:depth=4
+OBS default=trace2:TEXT:lifetime depth mutator ineffectual
+OBS default=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_depth_target
+OBS default=trace1:REWRITING:rewrite:<anonymous>:lifetime_depth_target:lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T) [lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:ATTEMPT:lifetime_depth_condition
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_condition
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_condition
+OBS default=trace1:REWRITING:rewrite:rewrite: from context:lifetime_depth_condition:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace100:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:SOLVED:lifetime_depth_condition [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:PRODUCE:lifetime_depth_target:rewrite:<anonymous>:lifetime_depth_target \226\135\148 T [lifetime_depth_condition \226\135\148 T;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace100:PRODUCE:lifetime_depth_target:rewrite:<anonymous>:lifetime_depth_target \226\135\148 T [lifetime_depth_condition \226\135\148 T;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:MORE_CONTEXT:lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T) [lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:MORE_CONTEXT:lifetime_depth_condition [lifetime_depth_condition]
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\148 T
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_target
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_target
+OBS default=trace1:TEXT:looping - stack limit reached
+OBS default=trace102:TEXT:rewrite:rewrite: from context ineffectual
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_target
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_target
+OBS default=trace1:REWRITING:rewrite:rewrite: from context:lifetime_depth_target:lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T) [lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:ATTEMPT:lifetime_depth_condition
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_condition
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_condition
+OBS default=trace1:REWRITING:rewrite:rewrite: from context:lifetime_depth_condition:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition]
+OBS default=trace2:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition]
+OBS default=trace100:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition]
+OBS default=trace2:SOLVED:lifetime_depth_condition [lifetime_depth_condition]
+OBS default=trace2:PRODUCE:lifetime_depth_target:rewrite:rewrite: from context:lifetime_depth_target \226\135\148 T [lifetime_depth_condition;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace100:PRODUCE:lifetime_depth_target:rewrite:rewrite: from context:lifetime_depth_target \226\135\148 T [lifetime_depth_condition;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=restored-depth:4
+OBS raw unchanged.exception=HOL_ERR:Conv:NO_CONV::\nException raised at Conv.NO_CONV:\n
+raw unchanged ...                                                            [32m[1mOK[0m
+OBS public unchanged.exception=UNCHANGED:UNCHANGED
+public unchanged ...                                                         [32m[1mOK[0m
+foreign exception delayed until application ...                              [32m[1mOK[0m
+OBS raw foreign payload.exception=Stop:Stop (ref ())
+raw foreign payload ...                                                      [32m[1mOK[0m
+OBS public foreign payload.exception=Stop:Stop (ref ())
+public foreign payload ...                                                   [32m[1mOK[0m
+cong total catches foreign exception at legacy boundary ...                  [32m[1mOK[0m
+foreign callback frequency ...                                               [32m[1mOK[0m
+OBS solver HOL_ERR.exception=HOL_ERR:Cond_rewr:COND_REWR_CONV (application):failure:\nException raised at Cond_rewr.COND_REWR_CONV (application):\nat lifetime solver.callback: failure\n
+solver HOL_ERR ...                                                           [32m[1mOK[0m
+OBS solver UNCHANGED.exception=HOL_ERR:Cond_rewr:COND_REWR_CONV (application):UNCHANGED:\nException raised at Cond_rewr.COND_REWR_CONV (application): UNCHANGED\n
+solver UNCHANGED ...                                                         [32m[1mOK[0m
+OBS solver Stop.exception=HOL_ERR:Cond_rewr:COND_REWR_CONV (application):Stop (ref ()):\nException raised at Cond_rewr.COND_REWR_CONV (application): Stop (ref ())\n
+solver Stop ...                                                              [32m[1mOK[0m
+OBS solver Interrupt.exception=Interrupt
+solver Interrupt ...                                                         [32m[1mOK[0m
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=raw unchanged:exception:HOL_ERR:Conv:NO_CONV::\nException raised at Conv.NO_CONV:\n
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=public unchanged:exception:UNCHANGED:UNCHANGED
+OBS exception=construct-foreign
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=foreign-reducer
+OBS exception=raw foreign payload:exception:Stop:Stop (ref ())
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=foreign-reducer
+OBS exception=public foreign payload:exception:Stop:Stop (ref ())
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=foreign-reducer
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=trace1:NOT_SOLVED:lifetime_condition
+OBS exception=solver HOL_ERR:exception:HOL_ERR:Cond_rewr:COND_REWR_CONV (application):failure:\nException raised at Cond_rewr.COND_REWR_CONV (application):\nat lifetime solver.callback: failure\n
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=solver UNCHANGED:exception:HOL_ERR:Cond_rewr:COND_REWR_CONV (application):UNCHANGED:\nException raised at Cond_rewr.COND_REWR_CONV (application): UNCHANGED\n
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=solver Stop:exception:HOL_ERR:Cond_rewr:COND_REWR_CONV (application):Stop (ref ()):\nException raised at Cond_rewr.COND_REWR_CONV (application): Stop (ref ())\n
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=solver Interrupt:exception:Interrupt
+OBS malformed bound precedes maker.exception=Option:Option
+malformed bound precedes maker ...                                           [32m[1mOK[0m
+no maker before malformed rejection ...                                      [32m[1mOK[0m
+all makers at installation only ...                                          [32m[1mOK[0m
+OBS maker=malformed bound precedes maker:exception:Option:Option
+OBS maker=install-two
+OBS maker=maker
+OBS maker=maker
+OBS maker=trace2:LZ_TEXT:New rewrite: \226\138\162 T \226\136\167 lifetime_maker_p \226\135\148 lifetime_maker_p
+OBS maker=trace2:LZ_TEXT:New rewrite: \226\138\162 T \226\136\167 lifetime_maker_p \226\135\148 lifetime_maker_p
+OBS maker=project-two
+<<HOL warning: TraversalContracts.collector: lifetime warning>>
+warning collector runs once, not on reuse ...                                [32m[1mOK[0m
+OBS warning=warning-construct
+OBS warning=trace2:MORE_CONTEXT:T []
+OBS warning=trace2:IGNORE:pointless rewrite:T []
+OBS warning=warning:<<HOL warning: TraversalContracts.collector: lifetime warning>>\n
+OBS warning=warning-collector-return
+OBS warning=warning-apply-twice
+OBS warning=trace4:REDUCE:Reducing:lifetime_warning_atom
+OBS warning=trace4:REDUCE:Reducing:lifetime_warning_atom

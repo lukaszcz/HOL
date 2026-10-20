@@ -1,0 +1,1493 @@
+HOLMOSMLC -o selftest.exe selftest.uo
+/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake --no-project --no-cache -j1 -C ../compatibility/probes/support  	  exclusion-contracts.exe
+Holmake: Scanning [1m$(HOLDIR)/src/simp/src[0m
+Holmake: Scanned 2 directories
+HOLMOSMLC -o exclusion-contracts.exe RunExclusionContracts.uo
+{ { { { cd ../compatibility/probes/support && ./exclusion-contracts.exe ; echo $? >&3; } | tee  exclusion-contracts.log >&4; } 3>&1; } |  { read xs; if [ $xs != "0" ] ; then /bin/rm -f  exclusion-contracts.log ; fi ; exit $xs; } } 4>&1
+/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/compatibility/probes/support/LegacyFailures.sml:96: warning: Pattern is not exhaustive.
+Found near
+  val
+     Traverse.REDUCER _ =
+        hd (#rewriters (simpLib.traversedata_for_ss simpLib.empty_ss))
+OBS probe=literal-prefix-contracts
+<<HOL message: Created theory "legacyfailure">>
+setup: warnings enabled, not promoted to errors ...                          [32m[1mOK[0m
+setup: fail-fast testutils ...                                               [32m[1mOK[0m
+OBS stage=setup.control
+OBS setup.control.warning.count=0
+OBS setup.control.exception=none
+setup.control is silent ...                                                  [32m[1mOK[0m
+OBS setup.control.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.control.hypotheses=
+setup: ordinary simplification works ...                                     [32m[1mOK[0m
+OBS literal.name=rule:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=rule:compat_probe
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=T ∧ compat_p
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=solver:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=solver:compat_probe
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=T ∧ compat_p
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=looper:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=looper:compat_probe
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=T ∧ compat_p
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=split:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=split:compat_probe
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=T ∧ compat_p
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=case:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS literal.name=case:compat_probe
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=T ∧ compat_p
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS stage=repeated strict deletion direct
+OBS repeated strict deletion direct.warning.count=0
+OBS repeated strict deletion direct.exception=none
+repeated strict deletion direct is silent ...                                [32m[1mOK[0m
+OBS repeated strict deletion direct.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS repeated strict deletion direct.hypotheses=
+repeated strict deletion direct full theorem ...                             [32m[1mOK[0m
+OBS stage=repeated strict deletion replay
+OBS repeated strict deletion replay.warning.count=0
+OBS repeated strict deletion replay.exception=none
+repeated strict deletion replay is silent ...                                [32m[1mOK[0m
+OBS repeated strict deletion replay.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS repeated strict deletion replay.hypotheses=
+repeated strict deletion replay full theorem ...                             [32m[1mOK[0m
+OBS stage=unmatched deletion before addition direct
+OBS unmatched deletion before addition direct.warning.count=0
+OBS unmatched deletion before addition direct.exception=none
+unmatched deletion before addition direct is silent ...                      [32m[1mOK[0m
+OBS unmatched deletion before addition direct.conclusion=replay_legacy_p ⇔ T
+OBS unmatched deletion before addition direct.hypotheses=replay_legacy_p ⇔ T
+unmatched deletion before addition direct full theorem ...                   [32m[1mOK[0m
+OBS stage=unmatched deletion before addition replay
+OBS unmatched deletion before addition replay.warning.count=0
+OBS unmatched deletion before addition replay.exception=none
+unmatched deletion before addition replay is silent ...                      [32m[1mOK[0m
+OBS unmatched deletion before addition replay.conclusion=replay_legacy_p ⇔ T
+OBS unmatched deletion before addition replay.hypotheses=replay_legacy_p ⇔ T
+unmatched deletion before addition replay full theorem ...                   [32m[1mOK[0m
+OBS stage=addition after deletion direct
+OBS addition after deletion direct.warning.count=0
+OBS addition after deletion direct.exception=none
+addition after deletion direct is silent ...                                 [32m[1mOK[0m
+OBS addition after deletion direct.conclusion=replay_legacy_p ⇔ T
+OBS addition after deletion direct.hypotheses=replay_legacy_p ⇔ T
+addition after deletion direct full theorem ...                              [32m[1mOK[0m
+OBS stage=addition after deletion replay
+OBS addition after deletion replay.warning.count=0
+OBS addition after deletion replay.exception=none
+addition after deletion replay is silent ...                                 [32m[1mOK[0m
+OBS addition after deletion replay.conclusion=replay_legacy_p ⇔ T
+OBS addition after deletion replay.hypotheses=replay_legacy_p ⇔ T
+addition after deletion replay full theorem ...                              [32m[1mOK[0m
+OBS stage=interleaved add delete direct
+OBS interleaved add delete direct.warning.count=0
+OBS interleaved add delete direct.exception=none
+interleaved add delete direct is silent ...                                  [32m[1mOK[0m
+OBS interleaved add delete direct.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS interleaved add delete direct.hypotheses=
+interleaved add delete direct full theorem ...                               [32m[1mOK[0m
+OBS stage=interleaved add delete replay
+OBS interleaved add delete replay.warning.count=0
+OBS interleaved add delete replay.exception=none
+interleaved add delete replay is silent ...                                  [32m[1mOK[0m
+OBS interleaved add delete replay.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS interleaved add delete replay.hypotheses=
+interleaved add delete replay full theorem ...                               [32m[1mOK[0m
+OBS stage=strict operator batch replay
+OBS strict operator batch replay.warning.count=0
+OBS strict operator batch replay.exception=none
+strict operator batch replay is silent ...                                   [32m[1mOK[0m
+OBS strict operator batch replay.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS strict operator batch replay.hypotheses=
+strict operator batch replay full theorem ...                                [32m[1mOK[0m
+OBS stage=strict dotted deletion with ancestor
+OBS strict dotted deletion with ancestor.warning.count=0
+OBS strict dotted deletion with ancestor.exception=none
+strict dotted deletion with ancestor is silent ...                           [32m[1mOK[0m
+OBS strict dotted deletion with ancestor.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS strict dotted deletion with ancestor.hypotheses=
+strict dotted deletion with ancestor full theorem ...                        [32m[1mOK[0m
+OBS strict Excl replay after context restore.exception=\nException raised at simpLib.-*: bad theory name: strictHistoryPairedFixture\n
+OBS strict Excl replay after context restore.exception.kind=HOL_ERR
+OBS strict Excl replay after context restore.exception.structure=simpLib
+OBS strict Excl replay after context restore.exception.function=-*
+OBS strict Excl replay after context restore.exception.message=bad theory name: strictHistoryPairedFixture
+strict Excl replay after context restore ...                                 [32m[1mOK[0m
+OBS strict operator replay after context restore.exception=\nException raised at simpLib.-*: bad theory name: strictHistoryPairedFixture\n
+OBS strict operator replay after context restore.exception.kind=HOL_ERR
+OBS strict operator replay after context restore.exception.structure=simpLib
+OBS strict operator replay after context restore.exception.function=-*
+OBS strict operator replay after context restore.exception.message=bad theory name: strictHistoryPairedFixture
+strict operator replay after context restore ...                             [32m[1mOK[0m
+OBS stage=strict replay after restoring ancestor
+OBS strict replay after restoring ancestor.warning.count=0
+OBS strict replay after restoring ancestor.exception=none
+strict replay after restoring ancestor is silent ...                         [32m[1mOK[0m
+OBS strict replay after restoring ancestor.conclusion=replay_legacy_p ⇔ replay_legacy_p
+OBS strict replay after restoring ancestor.hypotheses=
+strict replay after restoring ancestor full theorem ...                      [32m[1mOK[0m
+OBS assertion.result=pass
+{ { { { ./selftest.exe ; echo $? >&3; } | tee simp-selftest.log >&4; } 3>&1; } |  { read xs; if [ $xs != "0" ] ; then /bin/rm -f simp-selftest.log ; fi ; exit $xs; } } 4>&1
+<<HOL message: Created theory "scratch">>
+AC looping (if test appears to hang, it has failed) ...                      (0.000s)      [32m[1mOK[0m
+Permuted AC arguments ...                                                    (0.000s)      [32m[1mOK[0m
+Bounded rewrites (if test appears to hang, it has failed) ...                (0.000s)      [32m[1mOK[0m
+Abbreviations + ASM_SIMP_TAC ...                                             (0.000s)      [32m[1mOK[0m
+Bounded rewrites branch, and bypass permutative loop check ...               (0.000s)      [32m[1mOK[0m
+Bounded rewrites override mk_rewrites loop check ...                         (0.000s)      [32m[1mOK[0m
+Loop detection doesn't trigger on bound variable ...                         (0.000s)      [32m[1mOK[0m
+ordinary applied-result congruence keeps develop's beta red ...              (0.000s)      [32m[1mOK[0m
+Cong marker keeps develop's applied-result handling ...                      (0.000s)      [32m[1mOK[0m
+threaded rules do not opt ordinary rules in ...                              (0.000s)      [32m[1mOK[0m
+<<HOL warning: simpLib.SF: Registering ssfrag BOUNDEDEXISTS; this doesn't persist after theory export!>>
+SF carries threaded congruences ...                                          (0.000s)      [32m[1mOK[0m
+merged threaded congruence keeps beta reduction ...                          (0.000s)      [32m[1mOK[0m
+history replay keeps threaded congruences ...                                (0.000s)      [32m[1mOK[0m
+congruence rebuilds a beta reduced term ...                                  (0.000s)      [32m[1mOK[0m
+congruence answers about the term it was given ...                           [32m[1mOK[0m
+ordinary intermediate-result congruence keeps develop's res ...              (0.000s)      [32m[1mOK[0m
+Cong marker keeps develop's intermediate-result handling ...                 (0.000s)      [32m[1mOK[0m
+congruence threads an intermediate result ...                                (0.000s)      [32m[1mOK[0m
+Bounded rwts on variables don't get decremented prematurely ...              (0.000s)      [32m[1mOK[0m
+Bound on rewrites applies to all derived theorems jointly. ...               (0.000s)      [32m[1mOK[0m
+Congruence for conditional expressions ...                                   (0.000s)      [32m[1mOK[0m
+SimpL on operator returning non-boolean ...                                  (0.000s)      [32m[1mOK[0m
+remove_ssfrags throws UNCHANGED ...                                          (0.000s)      [32m[1mOK[0m
+Satisfy ...                                                                  (0.000s)      [32m[1mOK[0m
+Abbrev-simplification with abstraction ...                                   (0.000s)      [32m[1mOK[0m
+assume T=F and F=T (if hangs, it's failed) ...                               (0.000s)      [32m[1mOK[0m
+CONJ_ss with T=F and F=T assumptions (if hangs, it's failed) ...             (0.000s)      [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on ``hyp ==> (T = e)`` ...                           [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on “hyp ==> b” ...                                   [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on “hyp ==> ~b” ...                                  [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on “hyp ==> b=e” ...                                 [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on “a <> b ==> (a = ~b) ...                          [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on x = Abbrev x ...                                  [32m[1mOK[0m
+Cond_rewr.mk_cond_rewrs on bounded x <=> Abbrev x ...                        [32m[1mOK[0m
+rewrite deletion: bool_ss -* COND_CLAUSES (1) ...                            (0.000s)      [32m[1mOK[0m
+rewrite deletion: bool_ss -* COND_CLAUSES (2) ...                            (0.000s)      [32m[1mOK[0m
+rewrite deletion: bool_ss -* bool$COND_CLAUSES is a no-op ...                (0.000s)      [32m[1mOK[0m
+rewrite deletion: bool_ss -* COND_CLAUSES.1 ...                              (0.000s)      [32m[1mOK[0m
+rewrite deletion: bool_ss -* COND_CLAUSES.2 ...                              (0.000s)      [32m[1mOK[0m
+rewrite deletion: bool_ss -* BETA_CONV ...                                   (0.000s)      [32m[1mOK[0m
+rewrite deletion: bool_ss -* UNWIND_EXISTS_CONV ...                          (0.000s)      [32m[1mOK[0m
+rewrite deletion: rmfrags ["UNWIND"] bool_ss -* BETA_CONV ...                (0.000s)      [32m[1mOK[0m
+rewrite deletion: rmfrags ["UNWIND"] (bool_ss -* BETA_CONV) ...              (0.000s)      [32m[1mOK[0m
+deletion via Excl: bool_ss & "COND_CLAUSES.1" ...                            (0.000s)      [32m[1mOK[0m
+deletion via Excl: bool_ss & "BETA_CONV" ...                                 (0.000s)      [32m[1mOK[0m
+deletion via ExclX: rule:bool$COND_CLAUSES ...                               (0.000s)      [32m[1mOK[0m
+deletion via ExclSF: booleta_ss & ETA_ss ...                                 (0.000s)      [32m[1mOK[0m
+deletion via ExclSF: booleta_ss & UNWIND_ss ...                              (0.000s)      [32m[1mOK[0m
+deletion via ExclSF: booleta_ss & UNWIND_ss ...                              (0.000s)      [32m[1mOK[0m
+deletion via ExclSF: booleta_ss & CONG_ss ...                                (0.000s)      [32m[1mOK[0m
+Fragment removal: UNWIND ...                                                 (0.000s)      [32m[1mOK[0m
+Fragment removal: UNWIND on (bool_ss -* ["BETA_CONV"]) 1 ...                 (0.000s)      [32m[1mOK[0m
+Fragment removal: UNWIND on (bool_ss -* ["BETA_CONV"]) 2 ...                 (0.000s)      [32m[1mOK[0m
+req0 fires ...                                                               (0.000s)      [32m[1mOK[0m
+req0 fires trivially ...                                                     (0.000s)      [32m[1mOK[0m
+reqD fires ...                                                               (0.000s)      [32m[1mOK[0m
+reqD fails ...                                                               (0.000s)      [32m[1mOK[0m
+req0 succeeds (cond_rwt) ...                                                 (0.000s)      [32m[1mOK[0m
+req0 fails (cond_rwt) ...                                                    (0.000s)      [32m[1mOK[0m
+reqD before unmarked is dropped ...                                          (0.000s)      [32m[1mOK[0m
+reqD after unmarked is checked ...                                           (0.000s)      [32m[1mOK[0m
+req0 before unmarked is dropped ...                                          (0.000s)      [32m[1mOK[0m
+req0 after unmarked is checked ...                                           (0.000s)      [32m[1mOK[0m
+req0/Once fails ...                                                          (0.000s)      [32m[1mOK[0m
+reqD/Once succeeds ...                                                       (0.000s)      [32m[1mOK[0m
+req0/Twice succeeds ...                                                      (0.000s)      [32m[1mOK[0m
+SF ETA_ss succeeds ...                                                       (0.000s)      [32m[1mOK[0m
+SF ETA_ss & DNF_ss succeeds ...                                              (0.000s)      [32m[1mOK[0m
+SF DISJ_ss & DNF_ss succeeds ...                                             (0.000s)      [32m[1mOK[0m
+Abbrev var not rewritten ...                                                 (0.000s)      [32m[1mOK[0m
+simp_tac + Excl ...                                                          (0.000s)      [32m[1mOK[0m
+fs + Excl ...                                                                (0.000s)      [32m[1mOK[0m
+gs + Excl ...                                                                (0.000s)      [32m[1mOK[0m
+gs oldestfirst ...                                                           (0.000s)      [32m[1mOK[0m
+gs oldestfirst ...                                                           (0.000s)      [32m[1mOK[0m
+fs + Excl (in assumptions) ...                                               (0.000s)      [32m[1mOK[0m
+gs + Excl (in assumptions) ...                                               (0.000s)      [32m[1mOK[0m
+NoAsms ...                                                                   (0.000s)      [32m[1mOK[0m
+IgnAsm ...                                                                   (0.000s)      [32m[1mOK[0m
+IgnAsm (sub-match) ...                                                       (0.000s)      [32m[1mOK[0m
+Rewrite competition: ASM vs arg ...                                          (0.000s)      [32m[1mOK[0m
+Rewrite competition: ARG1 vs arg2 ...                                        (0.000s)      [32m[1mOK[0m
+Rewrite competition: ASM1 vs asm2 ...                                        (0.000s)      [32m[1mOK[0m
+Rewrite competition: ss1 vs SS2 ...                                          (0.000s)      [32m[1mOK[0m
+Rewrite competition: ARG vs ss ...                                           (0.000s)      [32m[1mOK[0m
+Rewrite competition: ASM vs ss ...                                           (0.000s)      [32m[1mOK[0m
+strategy-free global tactic repeats whole passes ...                         [132479]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+[132770]:   dispatch_a via dispatch non-idempotent probe simplifies to: dispatch_a ∧ T
+(0.001s)      [32m[1mOK[0m
+explicit GEN_GLOBAL_SIMP_TAC keeps counted passes ...                        [133144]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+bare Excl preserves the develop global schedule ...                          [133739]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+[134141]:   dispatch_a via dispatch non-idempotent probe simplifies to: dispatch_a ∧ T
+(0.001s)      [32m[1mOK[0m
+<<HOL warning: simpLib.SF: Registering ssfrag dispatch strategy-free fragment; this doesn't persist after theory export!>>
+strategy-free SF preserves the develop schedule ...                          [134743]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+[136888]:   dispatch_a via dispatch non-idempotent probe simplifies to: dispatch_a ∧ T
+[31m[1m[GC = 0.002] [0m(0.001s)      [32m[1mOK[0m
+global dispatch: looper ...                                                  [137243]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: unsafe solver ...                                           [137524]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: safe solver ...                                             [137784]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: subgoaler ...                                               [138039]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: condition depth ...                                         [138288]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: term order ...                                              [138546]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+<<HOL warning: simpLib.SF: Registering ssfrag dispatch looper fragment; this doesn't persist after theory export!>>
+<<HOL warning: simpLib.SF: Registering ssfrag dispatch unsafe fragment; this doesn't persist after theory export!>>
+<<HOL warning: simpLib.SF: Registering ssfrag dispatch safe fragment; this doesn't persist after theory export!>>
+global dispatch: SF looper ...                                               [138827]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: SF unsafe solver ...                                        [139079]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: SF safe solver ...                                          [139337]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: Req0 SF looper ...                                          [139686]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+global dispatch: Once SF looper ...                                          [139947]:   dispatch_b ∧ T via dispatch non-idempotent probe simplifies to: dispatch_b
+(0.000s)      [32m[1mOK[0m
+<<HOL warning: simpLib.SF: Registering ssfrag dispatch solving fragment; this doesn't persist after theory export!>>
+ASM_SIMP_TAC dispatches a solver-bearing SF ...                              (0.000s)      [32m[1mOK[0m
+SIMP_TAC dispatches a requirement-wrapped solver SF ...                      (0.000s)      [32m[1mOK[0m
+strategy-free SIMP_TAC preserves develop Req0 ...                            (0.000s)      [32m[1mOK[0m
+strategy-free SIMP_TAC preserves develop ReqD ...                            (0.000s)      [32m[1mOK[0m
+strategy-free SIMP_TAC preserves develop ReqD/Once ...                       (0.000s)      [32m[1mOK[0m
+default pipeline: recursive traversal proves a side conditi ...              (0.000s)      [32m[1mOK[0m
+default pipeline: failed side condition restores traversal  ...              (0.000s)      [32m[1mOK[0m
+default conditional-rewrite stack limit is four ...                          [32m[1mOK[0m
+default pipeline: four nested side conditions succeed ...                    (0.000s)      [32m[1mOK[0m
+default pipeline: fifth nested side condition is rejected ...                (0.000s)      [32m[1mOK[0m
+raw traversal maps congruence UNCHANGED to HOL_ERR ...                       (0.000s)      [32m[1mOK[0m
+public conversion propagates unchanged result ...                            (0.000s)      [32m[1mOK[0m
+dest_reducer reads simpLib's context rewriter ...                            (0.000s)      [32m[1mOK[0m
+default pipeline: QCONV turns unchanged result into reflexi ...              (0.000s)      [32m[1mOK[0m
+default pipeline: unchanged operator preserves changed argu ...              (0.000s)      [32m[1mOK[0m
+default pipeline: changed operator preserves unchanged argu ...              (0.000s)      [32m[1mOK[0m
+default pipeline: implication context rewrites its conseque ...              (0.000s)      [32m[1mOK[0m
+default pipeline: let context rewrites its body ...                          (0.000s)      [32m[1mOK[0m
+opt-in traversal visits children before parent reducers ...                  [32m[1mOK[0m
+child-first traversal propagates a work cutoff ...                           [32m[1mOK[0m
+child-first congruence passes a premise to its consequent ...                (0.000s)      [32m[1mOK[0m
+opt-in child-first simplifier conversion is public ...                       (0.000s)      [32m[1mOK[0m
+child-first keeps an eta function head before descent ...                    (0.000s)      [32m[1mOK[0m
+child-first eta head survives a later non-eta abstraction ...                (0.000s)      [32m[1mOK[0m
+child-first does not eta-contract a quantifier predicate ...                 (0.000s)      [32m[1mOK[0m
+child-first simplifier conversion propagates its budget ...                  [32m[1mOK[0m
+default traversal takes the parent overlap first ...                         (0.000s)      [32m[1mOK[0m
+child-first traversal gives the normalized child to its par ...              (0.000s)      [32m[1mOK[0m
+child-first tactic simplifies the conclusion ...                             [32m[1mOK[0m
+child-first global tactic uses the same traversal ...                        [32m[1mOK[0m
+solver pipeline: unsafe solver proves residual condition ...                 (0.000s)      [32m[1mOK[0m
+solver pipeline: congruence context theorem is visible ...                   (0.000s)      [32m[1mOK[0m
+solver pipeline: solver failure restores traversal limit ...                 (0.000s)      [32m[1mOK[0m
+solver pipeline: each recurse call restores its own limit s ...              (0.000s)      [32m[1mOK[0m
+solver pipeline propagates non-HOL exceptions ...                            (0.000s)      [32m[1mOK[0m
+TRAVERSE passes controls before a solver exception ...                       [32m[1mOK[0m
+cond_depth: depth ten fails at the default four ...                          (0.000s)      [32m[1mOK[0m
+cond_depth: per-traversal depth forty succeeds ...                           (0.000s)      [32m[1mOK[0m
+cond_depth: NONE honors the global stack limit ...                           (0.000s)      [32m[1mOK[0m
+cond_depth binding restores the global stack limit ...                       [32m[1mOK[0m
+cond_depth: NONE is live between native rewrite candidates ...               (0.000s)      [32m[1mOK[0m
+cond_depth: failing mutation ran once and restored depth ...                 [32m[1mOK[0m
+cond_depth: configured zero ignores candidate default mutat ...              (0.000s)      [32m[1mOK[0m
+cond_depth: configured mutation candidate was attempted ...                  [32m[1mOK[0m
+term_ord: default order chooses the ascending equality ...                   (0.000s)      [32m[1mOK[0m
+term_ord: custom order flips the equality normal form ...                    (0.000s)      [32m[1mOK[0m
+term_ord: Once bypasses a custom rejecting order ...                         (0.000s)      [32m[1mOK[0m
+XTRAVERSE refreshes Once for each conversion application ...                 (0.000s)      [32m[1mOK[0m
+nested traversal probe runs under cond_depth forty ...                       (0.000s)      [32m[1mOK[0m
+nested traversal does not inherit an outer cond_depth ...                    [32m[1mOK[0m
+nested traversal does not inherit an outer term_ord ...                      [32m[1mOK[0m
+nested traversal receives its own default controls ...                       [32m[1mOK[0m
+nested traversal honours the global stack limit ...                          [32m[1mOK[0m
+nested TRAVERSE calls keep independent traversal controls ...                (0.000s)      [32m[1mOK[0m
+both nested reducers received their own controls ...                         [32m[1mOK[0m
+congLib equality simplification smoke test ...                               (0.000s)      [32m[1mOK[0m
+congLib forwards simpset traversal controls ...                              (0.000s)      [32m[1mOK[0m
+congLib used the configured subgoaler and solver ...                         [32m[1mOK[0m
+looper add updates by name without changing order ...                        [32m[1mOK[0m
+set_looper replaces the registered looper list ...                           [32m[1mOK[0m
+del_looper removes a looper by name ...                                      [32m[1mOK[0m
+solver fragments append and deduplicate by name ...                          [32m[1mOK[0m
+history replay retains later duplicate solver additions ...                  [32m[1mOK[0m
+history rebuild removes fragment strategy payloads ...                       [32m[1mOK[0m
+pp_simpset prints unsafe and safe solver names ...                           [32m[1mOK[0m
+remove_solver removes names from both solver lists ...                       [32m[1mOK[0m
+remove_ssfrags preserves all strategy fields ...                             [32m[1mOK[0m
+clear_rules drops loopers but keeps strategy and solvers ...                 [32m[1mOK[0m
+clear_rules removes ordinary rewrite rules ...                               (0.000s)      [32m[1mOK[0m
+clear_rules preserves mk_rewrs through later history rebuil ...              (0.000s)      [32m[1mOK[0m
+filter_rewrites keeps a rewrite the simpset removed by name ...              (0.000s)      [32m[1mOK[0m
+filter_rewrites keeps the rewrites the predicate accepts ...                 (0.000s)      [32m[1mOK[0m
+filter_rewrites drops the rewrites the predicate rejects ...                 (0.000s)      [32m[1mOK[0m
+mk_tactic_solver discharges context theorem assumptions ...                  [32m[1mOK[0m
+mk_tactic_solver discharges a SIMP_CONV side condition ...                   (0.000s)      [32m[1mOK[0m
+surface_solver_f surface_solver_x ...                                        (0.000s)      [32m[1mOK[0m
+set_cond_depth configures a simpset invocation ...                           (0.000s)      [32m[1mOK[0m
+set_term_ord configures permutative rewriting per simpset ...                (0.000s)      [32m[1mOK[0m
+SSFRAG congs installs a COND congruence theorem ...                          (0.000s)      [32m[1mOK[0m
+GEN_SIMP_TAC restarts after a looper on every subgoal ...                    [32m[1mOK[0m
+GEN_SIMP_TAC safe mode selects only safe final solvers ...                   [32m[1mOK[0m
+GEN_SIMP_TAC unsafe mode selects only unsafe solvers ...                     [32m[1mOK[0m
+ExclX removes a named solver for one invocation ...                          [32m[1mOK[0m
+final solver sees tactic-layer context theorems ...                          [32m[1mOK[0m
+global_simp_tac final solver sees supplied theorems ...                      [32m[1mOK[0m
+FULL_SIMP_TAC runs loopers in its final goal step ...                        [32m[1mOK[0m
+global_simp_tac runs loopers in its final goal step ...                      [32m[1mOK[0m
+ExclX removes a named looper for one invocation ...                          [32m[1mOK[0m
+a user looper named split is resolved as a user looper ...                   [32m[1mOK[0m
+qualified looper exclusion leaves a same-named rewrite ...                   (0.000s)      [32m[1mOK[0m
+qualified rule exclusion leaves a same-named looper ...                      [32m[1mOK[0m
+bare Excl prefers the rewrite over a same-named looper ...                   (0.000s)      [32m[1mOK[0m
+bare rule exclusion leaves a same-named looper ...                           [32m[1mOK[0m
+mixed literal/extended exclusions resolve in order ...                       [32m[1mOK[0m
+adjacent extended exclusions see pending rule deletions ...                  [32m[1mOK[0m
+ambiguous ExclX ...                                                          (0.000s)      [32m[1mOK[0m
+literal Excl never falls back to strategy targets ...                        [32m[1mOK[0m
+a looper named like an uninstalled theorem is excludable ...                 [32m[1mOK[0m
+unmatched unqualified Excl leaves the simpset alone ...                      (0.000s)      [32m[1mOK[0m
+Excl of a theorem the simpset does not hold leaves it alone ...              (0.000s)      [32m[1mOK[0m
+bare kernel-spelled Excl is a no-op, as on develop ...                       (0.000s)      [32m[1mOK[0m
+-* leaves the kernel spelling uninterpreted, as on develop ...               (0.000s)      [32m[1mOK[0m
+rule: ExclX takes the kernel Thy$Name spelling ...                           (0.000s)      [32m[1mOK[0m
+unmatched unqualified Excl is silent ...                                     [32m[1mOK[0m
+Excl of a theorem the simpset does not hold is silent ...                    [32m[1mOK[0m
+bare kernel-spelled Excl is silent ...                                       [32m[1mOK[0m
+a kernel-spelled rule: ExclX resolves to its theorem ...                     [32m[1mOK[0m
+unknown namespaced theorem exclusion ...                                     (0.000s)      [32m[1mOK[0m
+a rewrite named in an unloaded theory is installed ...                       (0.000s)      [32m[1mOK[0m
+Thy.Name rule: ExclX of a rewrite from an unloaded theory ...                (0.000s)      [32m[1mOK[0m
+Thy$Name rule: ExclX of a rewrite from an unloaded theory ...                (0.000s)      [32m[1mOK[0m
+bare dotted Excl rejects a non-ancestor, as on develop ...                   (0.000s)      [32m[1mOK[0m
+bare Excl cannot bypass the strict parser for a looper ...                   (0.000s)      [32m[1mOK[0m
+-* on a name from an unloaded theory ...                                     (0.000s)      [32m[1mOK[0m
+removing a rewrite filter revives an undeleted rule ...                      (0.000s)      [32m[1mOK[0m
+unmatched bare Excl survives filter-removal replay ...                       (0.000s)      [32m[1mOK[0m
+unmatched bare Excl survives filter-exclusion replay ...                     (0.000s)      [32m[1mOK[0m
+unmatched -* survives filter-removal replay ...                              (0.000s)      [32m[1mOK[0m
+-* history reparses names after Context.restore ...                          (0.000s)      [32m[1mOK[0m
+bare Excl history reparses names after Context.restore ...                   (0.000s)      [32m[1mOK[0m
+mixed strict/resolved batch reparses only strict names ...                   (0.000s)      [32m[1mOK[0m
+rule: history retains its parsed pattern after Context.rest ...              (0.000s)      [32m[1mOK[0m
+bare ExclX history retains its resolved rule after Context. ...              (0.000s)      [32m[1mOK[0m
+mixed batch replays after restoring the naming context ...                   (0.000s)      [32m[1mOK[0m
+simpset rebuilt over a recorded qualified exclusion ...                      (0.000s)      [32m[1mOK[0m
+unmatched qualified Excl leaves the simpset alone ...                        (0.000s)      [32m[1mOK[0m
+unmatched qualified Excl is silent ...                                       [32m[1mOK[0m
+simpset limit bounds successful looper rounds ...                            [32m[1mOK[0m
+empty hooks preserve legacy ASM_SIMP_TAC theorems ...                        [32m[1mOK[0m
+empty hooks preserve legacy SIMP_TAC theorems ...                            [32m[1mOK[0m
+splitter: predicate need not be the first quantifier ...                     [32m[1mOK[0m
+splitter: conditional ...                                                    (0.000s)      [32m[1mOK[0m
+splitter: conditional under a referenced forall binder ...                   (0.000s)      [32m[1mOK[0m
+splitter: unreferenced binder remains in the context ...                     (0.000s)      [32m[1mOK[0m
+splitter: all alpha-equivalent occurrences are replaced ...                  (0.000s)      [32m[1mOK[0m
+splitter: outermost pack is selected first ...                               (0.000s)      [32m[1mOK[0m
+splitter: one split per conversion invocation ...                            (0.000s)      [32m[1mOK[0m
+splitter: distinct constant type shapes are not merged ...                   (0.000s)      [32m[1mOK[0m
+splitter rejects a rule with a free context variable ...                     (0.000s)      [32m[1mOK[0m
+splitter rejects a non-equational rule ...                                   (0.000s)      [32m[1mOK[0m
+splitter rejects a partial case application ...                              (0.000s)      [32m[1mOK[0m
+splitter enforces the binder-body type test ...                              (0.000s)      [32m[1mOK[0m
+splitter: SPLIT_TAC performs one conclusion split ...                        [32m[1mOK[0m
+splitter: conditional assumption split has clean cases ...                   [32m[1mOK[0m
+splitter: cleanup preserves a doubly negated assumption lhs ...              [32m[1mOK[0m
+splitter: SPLIT_TAC prefers conclusion rules ...                             [32m[1mOK[0m
+splitter: rhs shape routes conclusion rules away from asms ...               (0.000s)      [32m[1mOK[0m
+splitter: a later assumption is split when the first cannot ...              [32m[1mOK[0m
+splitter: naming a key does not make an assumption split ...                 (0.000s)      [32m[1mOK[0m
+splitter: SPLIT_TAC fails when nothing splits ...                            (0.000s)      [32m[1mOK[0m
+split settype and attribute are registered ...                               [32m[1mOK[0m
+datatype split cache returns the same rules twice ...                        [32m[1mOK[0m
+datatype split cache tracks TypeBase replacements ...                        [32m[1mOK[0m
+split_ss splits a conditional in the conclusion ...                          [32m[1mOK[0m
+split_ss uses TypeBase splits in assumptions ...                             [32m[1mOK[0m
+split_ss cases_simp collapses a trivial split ...                            (0.000s)      [32m[1mOK[0m
+add_split installs a conclusion looper by theorem name ...                   [32m[1mOK[0m
+del_split removes a conclusion looper by theorem name ...                    [32m[1mOK[0m
+Split installs a split for one invocation ...                                [32m[1mOK[0m
+ExclX suppresses a named split looper ...                                    [32m[1mOK[0m
+ExclX split: suppresses a named split looper ...                             [32m[1mOK[0m
+ExclX case: suppresses TypeBase splits ...                                   [32m[1mOK[0m
+case exclusion history: direct ...                                           [32m[1mOK[0m
+case exclusion history: remove fragment ...                                  [32m[1mOK[0m
+case exclusion history: exclude fragment ...                                 [32m[1mOK[0m
+case exclusion history: filter rewrites ...                                  [32m[1mOK[0m
+case exclusion before fragment: direct ...                                   [32m[1mOK[0m
+case exclusion before fragment: remove fragment ...                          [32m[1mOK[0m
+case exclusion before fragment: exclude fragment ...                         [32m[1mOK[0m
+case exclusion before fragment: filter rewrites ...                          [32m[1mOK[0m
+repeated case exclusion history: direct ...                                  [32m[1mOK[0m
+repeated case exclusion history: remove fragment ...                         [32m[1mOK[0m
+repeated case exclusion history: exclude fragment ...                        [32m[1mOK[0m
+repeated case exclusion history: filter rewrites ...                         [32m[1mOK[0m
+split exclusion before re-add: direct ...                                    [32m[1mOK[0m
+split exclusion before re-add: remove fragment ...                           [32m[1mOK[0m
+split exclusion before re-add: exclude fragment ...                          [32m[1mOK[0m
+split exclusion before re-add: filter rewrites ...                           [32m[1mOK[0m
+split exclusion around fragment add: direct ...                              [32m[1mOK[0m
+split exclusion around fragment add: remove fragment ...                     [32m[1mOK[0m
+split exclusion around fragment add: exclude fragment ...                    [32m[1mOK[0m
+split exclusion around fragment add: filter rewrites ...                     [32m[1mOK[0m
+split exclusion after add: direct ...                                        [32m[1mOK[0m
+split exclusion after add: remove fragment ...                               [32m[1mOK[0m
+split exclusion after add: exclude fragment ...                              [32m[1mOK[0m
+split exclusion after add: filter rewrites ...                               [32m[1mOK[0m
+persistent split replay control really splits ...                            [32m[1mOK[0m
+persistent split exclusion history: direct ...                               [32m[1mOK[0m
+persistent split exclusion history: remove fragment ...                      [32m[1mOK[0m
+persistent split exclusion history: exclude fragment ...                     [32m[1mOK[0m
+persistent split exclusion history: filter rewrites ...                      [32m[1mOK[0m
+mixed strict extended strategy history: direct ...                           [32m[1mOK[0m
+mixed strict extended strategy history: remove fragment ...                  [32m[1mOK[0m
+mixed strict extended strategy history: exclude fragment ...                 [32m[1mOK[0m
+mixed strict extended strategy history: filter rewrites ...                  [32m[1mOK[0m
+mixed strict extended rule batch survives strategy replay ...                (0.000s)      [32m[1mOK[0m
+persistent assumption split exclusion replay ...                             [32m[1mOK[0m
+case exclusion after Context.restore: direct ...                             [32m[1mOK[0m
+case exclusion after Context.restore: remove fragment ...                    [32m[1mOK[0m
+case exclusion after Context.restore: exclude fragment ...                   [32m[1mOK[0m
+case exclusion after Context.restore: filter rewrites ...                    [32m[1mOK[0m
+local split exclusion after Context.restore ...                              [32m[1mOK[0m
+persistent split exclusion after Context.restore ...                         [32m[1mOK[0m
+restored persistent split exclusion: direct ...                              [32m[1mOK[0m
+restored persistent split exclusion: remove fragment ...                     [32m[1mOK[0m
+restored persistent split exclusion: exclude fragment ...                    [32m[1mOK[0m
+restored persistent split exclusion: filter rewrites ...                     [32m[1mOK[0m
+bare split.case Excl rejects its theory part ...                             (0.000s)      [32m[1mOK[0m
+nonexistent split.case exclusion ...                                         (0.000s)      [32m[1mOK[0m
+simpset limit bounds splitter rounds ...                                     [32m[1mOK[0m
+add_split auto-routes an assumption split rule ...                           [32m[1mOK[0m
+unnamed Split rule splits under its head constant ...                        [32m[1mOK[0m
+an unnamed Split rule is retracted by its head constant ...                  [32m[1mOK[0m
+malformed Split rule leaves SIMP_TAC alone ...                               [32m[1mOK[0m
+Split-headed assumption does not abort global_simp_tac ...                   [32m[1mOK[0m
+Split-headed assumption does not abort ASM_SIMP_TAC ...                      [32m[1mOK[0m
+split_ss strength: conditional chooses one branch ...                        [32m[1mOK[0m
+split_ss strength: boolean conditional implication ...                       [32m[1mOK[0m
+split_ss strength: conditional occurs in opposite equality sides ...         [32m[1mOK[0m
+split_ss strength: nested conditional condition ...                          [32m[1mOK[0m
+split_ss strength: conditional under an application ...                      [32m[1mOK[0m
+global_simp_tac strip=false keeps assumptions whole ...                      [32m[1mOK[0m
+GEN_GLOBAL_SIMP_TAC uses later assumptions mutually ...                      [32m[1mOK[0m
+GEN_GLOBAL_SIMP_TAC closes a three-assumption mutual chain ...               [32m[1mOK[0m
+antecedents stay out of the fixpoint without imp_premises ...                [32m[1mOK[0m
+imp_premises brings the antecedents into the fixpoint ...                    [32m[1mOK[0m
+safe global simp does not use unsafe final instantiation ...                 [32m[1mOK[0m
+safe global simp uses unsafe traversal side-condition solvers ...            [32m[1mOK[0m
+[485471]:   schedule_b ∧ T via global schedule probe simplifies to: schedule_b
+global change counting skips the provably-fixed tail ...                     [32m[1mOK[0m
+[485773]:   schedule_b ∧ T via global schedule probe simplifies to: schedule_b
+concl_in_fixpoint simplifies the conclusion each pass ...                    [32m[1mOK[0m
+global structural net-noop pass terminates ...                               [486004]:   global_noop_a via global net-noop probe simplifies to: global_noop_a ∧ T
+[32m[1mOK[0m
+default global simplification keeps conclusion outside fixpoint ...          [486266]:   fix_concl_p ∧ T via global conclusion gate simplifies to: fix_concl_p
+[32m[1mOK[0m
+concl_in_fixpoint restarts changed assumptions ...                           [486446]:   fix_concl_p ∧ T via global conclusion gate simplifies to: fix_concl_p
+[486605]:   fix_asm_p ∧ T via global conclusion gate simplifies to: fix_asm_p
+[32m[1mOK[0m
+global supplied Once rewrite is installed exactly once ...                   [32m[1mOK[0m
+global supplied Once lifetime spans assumptions and conclusion ...           [32m[1mOK[0m
+global remaining ExclSF applies while simplifying assumptions ...            [32m[1mOK[0m
+global ExclSF rebuild preserves supplied Once lifetime ...                   [32m[1mOK[0m
+global traversals see supplied source theorem without bound tag ...          [32m[1mOK[0m
+root rewriting fully simplifies conditional-rule side condi ...              (0.000s)      [32m[1mOK[0m
+imp_rebuild rewrites a discharged assumption at the root ...                 [32m[1mOK[0m
+imp_rebuild applies remaining ExclSF before root rewriting ...               [32m[1mOK[0m
+imp_rebuild sees supplied theorems in its traversal context ...              [32m[1mOK[0m
+splitter: option case ...                                                    (0.000s)      [32m[1mOK[0m
+splitter: option case in an assumption ...                                   [32m[1mOK[0m
+splitter: Generic.thy Cartesian-product example ...                          (0.000s)      [32m[1mOK[0m
+splitter: list case ...                                                      (0.000s)      [32m[1mOK[0m
+split_ss splits a list case using TypeBase ...                               [32m[1mOK[0m
+SIMP_CONV refuses Req0 ...                                                   Req0 ...                                                                     (0.000s)      [32m[1mOK[0m
+SIMP_CONV refuses ReqD ...                                                   ReqD ...                                                                     (0.000s)      [32m[1mOK[0m
+SIMP_CONV drops NoAsms ...                                                   (0.000s)      [32m[1mOK[0m
+SIMP_CONV drops IgnAsm ...                                                   (0.000s)      [32m[1mOK[0m
+ExclX boundary fixture is an active rewrite ...                              (0.000s)      [32m[1mOK[0m
+ExclX routes without leaking marker hypotheses ...                           [32m[1mOK[0m
+Once ExclX routes without leaking marker hypotheses ...                      [32m[1mOK[0m
+Ntimes ExclX routes without leaking marker hypotheses ...                    [32m[1mOK[0m
+Req0 ExclX remains tactic-only ...                                           (0.000s)      [32m[1mOK[0m
+Req0 ExclX is stripped before tactic exclusion ...                           [32m[1mOK[0m
+Req0 Once ExclX remains tactic-only ...                                      (0.000s)      [32m[1mOK[0m
+Req0 Once ExclX is stripped before tactic exclusion ...                      [32m[1mOK[0m
+ReqD ExclX still checks the requirement ...                                  (0.000s)      [32m[1mOK[0m
+ExclX rejects missing missing ...                                            (0.000s)      [32m[1mOK[0m
+ExclX rejects missing rule:missing ...                                       (0.000s)      [32m[1mOK[0m
+ExclX rejects missing looper:missing ...                                     (0.000s)      [32m[1mOK[0m
+ExclX rejects missing solver:missing ...                                     (0.000s)      [32m[1mOK[0m
+ExclX rejects missing split:missing ...                                      (0.000s)      [32m[1mOK[0m
+ExclX rejects missing case:missing ...                                       (0.000s)      [32m[1mOK[0m
+Exporting theory "scratch" ... done.
+Theory "scratch" took 0.02157s to build
+<<HOL message: Created theory "abstractionPolicyFixture">>
+POLICY_RESULTS true true true true true true true true
+child-first policies protect full and partial clients ...                    [32m[1mOK[0m
+prepared argument normalization preserves root and bounds ...                Exporting theory "scratch" ... done.
+Theory "scratch" took 0.01887s to build
+<<HOL message: Created theory "preparedNormalizationFixture">>
+[32m[1mOK[0m
+normalization observes unchanged and failed-condition terms ...              Exporting theory "scratch" ... done.
+Theory "scratch" took 0.01899s to build
+<<HOL message: Created theory "normalizationObserverFixture">>
+OBSERVER_RESULTS true true true true true true true true true true true true true
+[32m[1mOK[0m
+rewrite views share source identity and replayed allowances ...              Exporting theory "scratch" ... done.
+Theory "scratch" took 0.15696s to build
+<<HOL message: Created theory "rewriteViewControlFixture">>
+VIEW_CONTROL_RESULTS true true true true true true true true true true true true true true true true true true true true true true true true
+[32m[1mOK[0m
+conjunct suspension retains sibling names and allowances ...                 Exporting theory "scratch" ... done.
+Theory "scratch" took 0.02678s to build
+<<HOL message: Created theory "rewriteSuspensionFixture">>
+SUSPENSION_RESULTS true true true true true true true true true true true true true true true true true true true true true
+[32m[1mOK[0m
+invocation fragment replay preserves consumed controls ...                   Exporting theory "scratch" ... done.
+Theory "scratch" took 0.01898s to build
+<<HOL message: Created theory "controlReplayFixture">>
+CONTROL_REPLAY_RESULTS true true true true true true true true
+[32m[1mOK[0m
+bound global passes retain source context and controls ...                   Exporting theory "scratch" ... done.
+Theory "scratch" took 0.01933s to build
+<<HOL message: Created theory "boundGlobalFixture">>
+BOUND_GLOBAL_RESULTS true true true true true true true true true true true true true true
+[32m[1mOK[0m
+argument preparation retains surviving rewrite controls ...                  Exporting theory "scratch" ... done.
+Theory "scratch" took 0.02712s to build
+<<HOL message: Created theory "boundArgumentsFixture">>
+<<HOL warning: simpLib.SF: Registering ssfrag bound argument added; this doesn't persist after theory export!>>
+BOUND_ARGUMENT_RESULTS true true true true true true
+[32m[1mOK[0m
+prepared originals survive history edits without compilation ...             Exporting theory "scratch" ... done.
+Theory "scratch" took 0.02653s to build
+<<HOL message: Created theory "preparedReplayFixture">>
+PREPARED_REPLAY_RESULTS true true true true true true true true true true true true true
+[32m[1mOK[0m
+invocation filtering retains supplied and ambient quotas ...                 Exporting theory "scratch" ... done.
+Theory "scratch" took 0.02727s to build
+<<HOL message: Created theory "boundFilterFixture">>
+BOUND_FILTER_RESULTS true true true true true true true true
+[32m[1mOK[0m
+combined bundles retain sources and actual rewrite quotas ...                Exporting theory "scratch" ... done.
+Theory "scratch" took 0.01913s to build
+<<HOL message: Created theory "combinedBundleFixture">>
+COMBINED_BUNDLE_RESULTS true true true true true true true true
+[32m[1mOK[0m
+SOLVER_CONTEXT_RESULTS true true true true true
+rewrite context compares ordered solver identities ...                       [32m[1mOK[0m
+context lifetime: TRAVERSE ...                                               [32m[1mOK[0m
+context lifetime: TRAVERSE native projection ...                             [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV ...                                  [32m[1mOK[0m
+TRAVERSE: reusable Once first application ...                                (0.000s)      [32m[1mOK[0m
+TRAVERSE: reusable Once second application ...                               (0.000s)      [32m[1mOK[0m
+TRAVERSE: new construction decodes a fresh Once ...                          (0.000s)      [32m[1mOK[0m
+TRAVERSE native projection: reusable Once first application ...              (0.000s)      [32m[1mOK[0m
+TRAVERSE native projection: reusable Once second applicatio ...              (0.000s)      [32m[1mOK[0m
+TRAVERSE native projection: new construction decodes a fres ...              (0.000s)      [32m[1mOK[0m
+context lifetime: TRAVERSE mixed + contextual ...                            [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV mixed + contextual ...               [32m[1mOK[0m
+context lifetime: TRAVERSE mixed + configured ...                            [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV mixed + configured ...               [32m[1mOK[0m
+context lifetime: SIMP_CONV (develop's delayed wrapper) ...                  [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_CONV (develop's delayed wrapper) ...       [32m[1mOK[0m
+context lifetime: XTRAVERSE with default_config ...                          [32m[1mOK[0m
+context lifetime: TRAVERSE_WITH_CONTEXT with default_config ...              [32m[1mOK[0m
+context lifetime: ROOT_REWRITE with default_config ...                       [32m[1mOK[0m
+XTRAVERSE with default_config: reusable Once first applicat ...              (0.000s)      [32m[1mOK[0m
+XTRAVERSE with default_config: reusable Once second applica ...              (0.000s)      [32m[1mOK[0m
+XTRAVERSE with default_config: new construction decodes a f ...              (0.000s)      [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + subgoaler ...                      [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + unsafe solver ...                  [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + condition depth ...                [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + term order ...                     [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + safe solver ...                    [32m[1mOK[0m
+context lifetime: CONGRUENCE_SIMP_QCONV + looper ...                         [32m[1mOK[0m
+R4 delayed FRAG registration: ASM_SIMP_TAC ...                               (0.000s)      [32m[1mOK[0m
+R4 delayed FRAG registration: SIMP_TAC ...                                   (0.000s)      [32m[1mOK[0m
+R4 delayed FRAG registration: global_simp_tac ...                            (0.000s)      [32m[1mOK[0m
+R4 saved tactic sees absent Context: ASM_SIMP_TAC ...                        (0.000s)      [32m[1mOK[0m
+R4 saved tactic sees restored Context: ASM_SIMP_TAC ...                      (0.000s)      [32m[1mOK[0m
+R4 tactic constructed in absent Context: ASM_SIMP_TAC ...                    (0.000s)      [32m[1mOK[0m
+R4 saved tactic sees absent Context: SIMP_TAC ...                            (0.000s)      [32m[1mOK[0m
+R4 saved tactic sees restored Context: SIMP_TAC ...                          (0.000s)      [32m[1mOK[0m
+R4 tactic constructed in absent Context: SIMP_TAC ...                        (0.000s)      [32m[1mOK[0m
+R4 saved tactic sees absent Context: global_simp_tac ...                     (0.000s)      [32m[1mOK[0m
+R4 saved tactic sees restored Context: global_simp_tac ...                   (0.000s)      [32m[1mOK[0m
+R4 tactic constructed in absent Context: global_simp_tac ...                 (0.000s)      [32m[1mOK[0m
+++ malformed tag precedes filter: ordinary/effect ...                        [32m[1mOK[0m
+++ malformed tag precedes filter: ordinary/exception ...                     [32m[1mOK[0m
+++ malformed tag precedes filter: AC/effect ...                              [32m[1mOK[0m
+++ malformed tag precedes filter: AC/exception ...                           [32m[1mOK[0m
+++ all makers precede conversions: ordinary ...                              [32m[1mOK[0m
+++ all makers precede conversions: AC and ordinary ...                       [32m[1mOK[0m
+R6 factories are not run when TRAVERSE is constructed ...                    [32m[1mOK[0m
+R6 context factories precede root reducer attempts ...                       [32m[1mOK[0m
+R6 one factory construction across three loop tries ...                      [32m[1mOK[0m
+R6 factories refresh once on conversion reuse ...                            [32m[1mOK[0m
+R6 factories run even when root abort skips descent ...                      [32m[1mOK[0m
+R6 factory rejection before root rewrite is retained ...                     [32m[1mOK[0m
+R6 explicit root avoids unused context factories ...                         [32m[1mOK[0m
+R6 explicit traversal retains lazy factory scheduling ...                    [32m[1mOK[0m
+R7 Cong: preserve old formatter/output callbacks ...                         [32m[1mOK[0m
+R7 Req0 Cong: do not inspect wrapped payload early ...                       [32m[1mOK[0m
+R7 malformed bound: one old-stage decode only ...                            [32m[1mOK[0m
+R7 ReqD Cong: do not inspect wrapped payload early ...                       [32m[1mOK[0m
+R7 mixed Req0/ReqD/bound Cong: no early payload ...                          [32m[1mOK[0m
+R7 valid bound Cong: no early payload ...                                    [32m[1mOK[0m
+R7 malformed bound Cong: same conclusion head ...                            [32m[1mOK[0m
+R7 AC: no early proof decoder ...                                            [32m[1mOK[0m
+R7 second formatter exception is not reached ...                             [32m[1mOK[0m
+R7 second output exception is not reached ...                                [32m[1mOK[0m
+R7 Req0: only old-stage discharge ...                                        [32m[1mOK[0m
+R7 ReqD: only old-stage discharge ...                                        [32m[1mOK[0m
+R7 valid bound: only old-stage discharge ...                                 [32m[1mOK[0m
+R7 malformed first bound does not skip to later ...                          [32m[1mOK[0m
+R7 negative bound: preserve decoder policy ...                               [32m[1mOK[0m
+R7 numeric prefix bound: preserve decoder policy ...                         [32m[1mOK[0m
+R7 missing label precedes missing FRAG ...                                   [32m[1mOK[0m
+R7 Abbr pretactic precedes missing FRAG ...                                  [32m[1mOK[0m
+R7 two missing FRAGs retain right-fold error ordering ...                    [32m[1mOK[0m
+R7 non-variable FRAG is not a named lookup ...                               [32m[1mOK[0m
+R7 missing label precedes ExclX target resolution ...                        [32m[1mOK[0m
+R7 FRAG lookup precedes ExclX target resolution ...                          [32m[1mOK[0m
+R7 Cong callback register uses fresh old-stage FRAG ...                      [32m[1mOK[0m
+R7 Cong callback restore uses fresh old-stage FRAG ...                       [32m[1mOK[0m
+R7 Cong callback change uses fresh old-stage FRAG ...                        [32m[1mOK[0m
+R7 Cong callback remove uses fresh old-stage FRAG ...                        [32m[1mOK[0m
+R7 pure Split projection: bare ...                                           [32m[1mOK[0m
+R7 pure Split projection: Req0 ...                                           [32m[1mOK[0m
+R7 pure Split projection: ReqD ...                                           [32m[1mOK[0m
+R7 pure Split projection: valid bound ...                                    [32m[1mOK[0m
+R7 pure Split projection: malformed bound ...                                [32m[1mOK[0m
+R7 pure Split projection: malformed first, valid later ...                   [32m[1mOK[0m
+R7 pure Split projection: mixed wrappers ...                                 [32m[1mOK[0m
+R7 pure Split projection: Cong does not expose Split ...                     [32m[1mOK[0m
+R7 pure Split projection: AC does not expose Split ...                       [32m[1mOK[0m
+R7 pure ExclX inspection: bare ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: Req0 ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: ReqD ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: Once ...                                           [32m[1mOK[0m
+R7 pure ExclX inspection: malformed bound ...                                [32m[1mOK[0m
+R7 pure ExclX inspection: Req0 Once ...                                      [32m[1mOK[0m
+R7 goal-time SF ASM_SIMP_TAC: absent -> strategy ...                         [32m[1mOK[0m
+R7 goal-time SF ASM_SIMP_TAC: strategy -> plain ...                          [32m[1mOK[0m
+R7 goal-time SF ASM_SIMP_TAC: plain -> strategy ...                          [32m[1mOK[0m
+R7 goal-time SF SIMP_TAC: absent -> strategy ...                             [32m[1mOK[0m
+R7 goal-time SF SIMP_TAC: strategy -> plain ...                              [32m[1mOK[0m
+R7 goal-time SF SIMP_TAC: plain -> strategy ...                              [32m[1mOK[0m
+R7 goal-time SF global_simp_tac: absent -> strategy ...                      [32m[1mOK[0m
+R7 goal-time SF global_simp_tac: strategy -> plain ...                       [32m[1mOK[0m
+R7 goal-time SF global_simp_tac: plain -> strategy ...                       [32m[1mOK[0m
+R7 explicit GEN_SIMP_TAC still bypasses old dispatch ...                     [32m[1mOK[0m
+P1 no provider: reducer facts retain hypothesis free variab ...              (0.000s)      [32m[1mOK[0m
+P1 no provider: solver facts retain hypothesis free variabl ...              (0.000s)      [32m[1mOK[0m
+P1 subgoaler: exact initial and recursive fact order ...                     [32m[1mOK[0m
+P1 unsafe solver: exact initial and recursive fact order ...                 [32m[1mOK[0m
+C2 legacy private context initialized before application ...                 [32m[1mOK[0m
+C2 weakener factory feeds live reducer controls ...                          (0.000s)      [32m[1mOK[0m
+C2 CONFIG NONE/order and live context survive reuse ...                      (0.000s)      [32m[1mOK[0m
+C2 factory order and reusable context callback count ...                     [32m[1mOK[0m
+congLib reflexivity precedes rewrite factory primitives ...                  [32m[1mOK[0m
+congLib reflexivity preserves foreign tag and payload ...                    [32m[1mOK[0m
+paired runners preserve theorem, hypotheses and free params ...              [32m[1mOK[0m
+paired NONE depth is live; SOME zero/one remain isolated ...                 [32m[1mOK[0m
+paired solver failures preserve wrapping and Interrupt ...                   [32m[1mOK[0m
+public/configured projections share quotas without compiling ...             [32m[1mOK[0m
+late public/extended extraction cannot refresh spent quotas ...              [32m[1mOK[0m
+views and preserving replay share both runner controls ...                   [32m[1mOK[0m
+public projection preserves REDUCER and supplied dprocs ...                  [32m[1mOK[0m
+native projection eligibility is pure and conservative ...                   [32m[1mOK[0m
+public projection omits configuration; extended keeps it ...                 [32m[1mOK[0m
+public omits unsafe solver; extended invokes it ...                          [32m[1mOK[0m
+public uses default order; extended invokes custom order ...                 [32m[1mOK[0m
+configured fallback collector construction/use counts ...                    [32m[1mOK[0m
+configured fallback collector construction/use counts ...                    [32m[1mOK[0m
+rejected contextual procedures retain configured fallback ...                [32m[1mOK[0m
+/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake --no-project --no-cache -j1 -C ../compatibility/probes/support  	  traversal-contracts.exe
+Holmake: Scanning [1m$(HOLDIR)/src/simp/src[0m
+Holmake: Scanned 2 directories
+HOLMOSMLC -o traversal-contracts.exe RunTraversalContracts.uo
+{ { { { cd ../compatibility/probes/support && ./traversal-contracts.exe ; echo $? >&3; } | tee  traversal-contracts.log >&4; } 3>&1; } |  { read xs; if [ $xs != "0" ] ; then /bin/rm -f  traversal-contracts.log ; fi ; exit $xs; } } 4>&1
+<<HOL message: Created theory "traversallifetimes">>
+warning capture preconditions ...                                            [32m[1mOK[0m
+raw collector lifetime ...                                                   [32m[1mOK[0m
+cong-qconv collector lifetime ...                                            [32m[1mOK[0m
+simp-total collector lifetime ...                                            [32m[1mOK[0m
+cong-total collector lifetime ...                                            [32m[1mOK[0m
+OBS lifetime=raw:construct
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=raw:first
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=raw:second
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=raw:counts:1,1,1
+OBS lifetime=cong-qconv:construct
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=cong-qconv:first
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-qconv:second
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-qconv:counts:1,1,1
+OBS lifetime=simp-total:construct
+OBS lifetime=simp-total:first
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=simp-total:second
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=simp-total:counts:0,1,2
+OBS lifetime=cong-total:construct
+OBS lifetime=cong-total:first
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-total:second
+OBS lifetime=trace2:MORE_CONTEXT:lifetime_fact [lifetime_fact]
+OBS lifetime=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_fact \226\135\148 T
+OBS lifetime=collect:0:lifetime_fact
+OBS lifetime=trace4:REDUCE:Reducing:lifetime_atom
+OBS lifetime=apply-context:1:lifetime_atom
+OBS lifetime=cong-total:counts:0,1,2
+initial collector order and fact order ...                                   [32m[1mOK[0m
+recursive collector order and private context ...                            [32m[1mOK[0m
+recursive collection does not mutate reusable context ...                    [32m[1mOK[0m
+empty initial facts do not invoke collectors ...                             [32m[1mOK[0m
+OBS collector=construct-collectors
+OBS collector=trace2:MORE_CONTEXT:lifetime_fact1 [lifetime_fact1]
+OBS collector=trace2:MORE_CONTEXT:lifetime_fact2 [lifetime_fact2]
+OBS collector=R1:0:lifetime_fact1;lifetime_fact2
+OBS collector=R2:0:lifetime_fact1;lifetime_fact2
+OBS collector=D1:0:lifetime_fact1;lifetime_fact2
+OBS collector=D2:0:lifetime_fact1;lifetime_fact2
+OBS collector=collectors-first-application
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_root
+OBS collector=trace2:MORE_CONTEXT:lifetime_nested_fact [lifetime_nested_fact]
+OBS collector=R1:1:lifetime_nested_fact
+OBS collector=R2:1:lifetime_nested_fact
+OBS collector=D1:1:lifetime_nested_fact
+OBS collector=D2:1:lifetime_nested_fact
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_child
+OBS collector=collectors-second-application
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_root
+OBS collector=trace2:MORE_CONTEXT:lifetime_nested_fact [lifetime_nested_fact]
+OBS collector=R1:1:lifetime_nested_fact
+OBS collector=R2:1:lifetime_nested_fact
+OBS collector=D1:1:lifetime_nested_fact
+OBS collector=D2:1:lifetime_nested_fact
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_child
+OBS collector=construct-empty-context
+OBS collector=trace4:REDUCE:Reducing:lifetime_collect_child
+legacy repeated extraction shares installed quota ...                        [32m[1mOK[0m
+OBS quota=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_quota_a \226\135\148 lifetime_quota_b
+OBS quota=extract-first
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace1:REWRITING:rewrite:<anonymous>:lifetime_quota_a:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace2:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace100:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=extract-partially-spent
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace1:REWRITING:rewrite:<anonymous>:lifetime_quota_a:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace2:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=trace100:PRODUCE:lifetime_quota_a:rewrite:<anonymous>:lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=extract-exhausted
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace102:TEXT:rewrite:<anonymous> ineffectual
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace102:TEXT:rewrite:<anonymous> ineffectual
+OBS quota=trace4:REDUCE:Reducing:lifetime_quota_a
+OBS quota=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_quota_a
+OBS quota=trace102:TEXT:rewrite:<anonymous> ineffectual
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_b [lifetime_quota_a \226\135\148 lifetime_quota_b]
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_a []
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_a []
+OBS quota=lifetime_quota_a \226\135\148 lifetime_quota_a []
+collect once; no eager congruence factories ...                              [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+exact factory and reducer schedule ...                                       [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+factories refresh on reuse; collectors do not ...                            [32m[1mOK[0m
+collect once; no eager congruence factories ...                              [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+exact factory and reducer schedule ...                                       [32m[1mOK[0m
+factory traversal theorem ...                                                [32m[1mOK[0m
+factories refresh on reuse; collectors do not ...                            [32m[1mOK[0m
+collect once; no eager congruence factories ...                              [32m[1mOK[0m
+OBS factory/root abort payload.exception=Stop:Stop (ref ())
+factory/root abort payload ...                                               [32m[1mOK[0m
+exact factory and reducer schedule ...                                       [32m[1mOK[0m
+OBS factory/root abort payload.exception=Stop:Stop (ref ())
+factory/root abort payload ...                                               [32m[1mOK[0m
+factories refresh on reuse; collectors do not ...                            [32m[1mOK[0m
+factory rejection cached before root mutation ...                            [32m[1mOK[0m
+foreign factory exception is rejected, not propagated ...                    [32m[1mOK[0m
+OBS factory Interrupt.exception=Interrupt
+factory Interrupt ...                                                        [32m[1mOK[0m
+OBS factory=construct
+OBS factory=trace2:MORE_CONTEXT:T []
+OBS factory=collect
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=R:b
+OBS factory=C:b
+OBS factory=W:b
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=R:b
+OBS factory=C:b
+OBS factory=W:b
+OBS factory=construct
+OBS factory=trace2:MORE_CONTEXT:T []
+OBS factory=collect
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=C:a
+OBS factory=R:a
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_b
+OBS factory=C:b
+OBS factory=R:b
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_c
+OBS factory=C:c
+OBS factory=R:c
+OBS factory=W:c
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=C:a
+OBS factory=R:a
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_b
+OBS factory=C:b
+OBS factory=R:b
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_c
+OBS factory=C:c
+OBS factory=R:c
+OBS factory=W:c
+OBS factory=construct
+OBS factory=trace2:MORE_CONTEXT:T []
+OBS factory=collect
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=factory/root abort payload:exception:Stop:Stop (ref ())
+OBS factory=relation-C
+OBS factory=relation-W
+OBS factory=factory-C
+OBS factory=factory-W
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=R:a
+OBS factory=factory/root abort payload:exception:Stop:Stop (ref ())
+OBS factory=gated-factory
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=construct-throwing-factory
+OBS factory=apply-throwing-factory
+OBS factory=throwing-factory
+OBS factory=trace4:REDUCE:Reducing:lifetime_factory_a
+OBS factory=foreign-factory:returned
+OBS factory=throwing-factory
+OBS factory=factory Interrupt:exception:Interrupt
+live stack limit between native candidates ...                               [32m[1mOK[0m
+live default restored ...                                                    [32m[1mOK[0m
+reusable legacy depth zero ...                                               [32m[1mOK[0m
+reusable legacy reads depth at application ...                               [32m[1mOK[0m
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)
+OBS default=trace2:MORE_CONTEXT:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\148 T
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_target
+OBS default=trace2:REDUCE:trying lifetime depth mutator on:lifetime_depth_target
+OBS default=candidate:depth=4
+OBS default=trace2:TEXT:lifetime depth mutator ineffectual
+OBS default=trace102:REDUCE:trying rewrite:<anonymous> on:lifetime_depth_target
+OBS default=trace1:REWRITING:rewrite:<anonymous>:lifetime_depth_target:lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T) [lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:ATTEMPT:lifetime_depth_condition
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_condition
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_condition
+OBS default=trace1:REWRITING:rewrite:rewrite: from context:lifetime_depth_condition:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace100:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:SOLVED:lifetime_depth_condition [lifetime_depth_condition \226\135\148 T]
+OBS default=trace2:PRODUCE:lifetime_depth_target:rewrite:<anonymous>:lifetime_depth_target \226\135\148 T [lifetime_depth_condition \226\135\148 T;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace100:PRODUCE:lifetime_depth_target:rewrite:<anonymous>:lifetime_depth_target \226\135\148 T [lifetime_depth_condition \226\135\148 T;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:MORE_CONTEXT:lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T) [lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:MORE_CONTEXT:lifetime_depth_condition [lifetime_depth_condition]
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)
+OBS default=trace2:LZ_TEXT:New rewrite:  [.] \226\138\162 lifetime_depth_condition \226\135\148 T
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_target
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_target
+OBS default=trace1:TEXT:looping - stack limit reached
+OBS default=trace102:TEXT:rewrite:rewrite: from context ineffectual
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_target
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_target
+OBS default=trace1:REWRITING:rewrite:rewrite: from context:lifetime_depth_target:lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T) [lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace2:ATTEMPT:lifetime_depth_condition
+OBS default=trace4:REDUCE:Reducing:lifetime_depth_condition
+OBS default=trace102:REDUCE:trying rewrite:rewrite: from context on:lifetime_depth_condition
+OBS default=trace1:REWRITING:rewrite:rewrite: from context:lifetime_depth_condition:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition]
+OBS default=trace2:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition]
+OBS default=trace100:PRODUCE:lifetime_depth_condition:rewrite:rewrite: from context:lifetime_depth_condition \226\135\148 T [lifetime_depth_condition]
+OBS default=trace2:SOLVED:lifetime_depth_condition [lifetime_depth_condition]
+OBS default=trace2:PRODUCE:lifetime_depth_target:rewrite:rewrite: from context:lifetime_depth_target \226\135\148 T [lifetime_depth_condition;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=trace100:PRODUCE:lifetime_depth_target:rewrite:rewrite: from context:lifetime_depth_target \226\135\148 T [lifetime_depth_condition;lifetime_depth_condition \226\135\146 (lifetime_depth_target \226\135\148 T)]
+OBS default=restored-depth:4
+OBS raw unchanged.exception=HOL_ERR:Conv:NO_CONV::\nException raised at Conv.NO_CONV:\n
+raw unchanged ...                                                            [32m[1mOK[0m
+OBS public unchanged.exception=UNCHANGED:UNCHANGED
+public unchanged ...                                                         [32m[1mOK[0m
+foreign exception delayed until application ...                              [32m[1mOK[0m
+OBS raw foreign payload.exception=Stop:Stop (ref ())
+raw foreign payload ...                                                      [32m[1mOK[0m
+OBS public foreign payload.exception=Stop:Stop (ref ())
+public foreign payload ...                                                   [32m[1mOK[0m
+cong total catches foreign exception at legacy boundary ...                  [32m[1mOK[0m
+foreign callback frequency ...                                               [32m[1mOK[0m
+OBS solver HOL_ERR.exception=HOL_ERR:Cond_rewr:COND_REWR_CONV (application):failure:\nException raised at Cond_rewr.COND_REWR_CONV (application):\nat lifetime solver.callback: failure\n
+solver HOL_ERR ...                                                           [32m[1mOK[0m
+OBS solver UNCHANGED.exception=HOL_ERR:Cond_rewr:COND_REWR_CONV (application):UNCHANGED:\nException raised at Cond_rewr.COND_REWR_CONV (application): UNCHANGED\n
+solver UNCHANGED ...                                                         [32m[1mOK[0m
+OBS solver Stop.exception=HOL_ERR:Cond_rewr:COND_REWR_CONV (application):Stop (ref ()):\nException raised at Cond_rewr.COND_REWR_CONV (application): Stop (ref ())\n
+solver Stop ...                                                              [32m[1mOK[0m
+OBS solver Interrupt.exception=Interrupt
+solver Interrupt ...                                                         [32m[1mOK[0m
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=raw unchanged:exception:HOL_ERR:Conv:NO_CONV::\nException raised at Conv.NO_CONV:\n
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=public unchanged:exception:UNCHANGED:UNCHANGED
+OBS exception=construct-foreign
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=foreign-reducer
+OBS exception=raw foreign payload:exception:Stop:Stop (ref ())
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=foreign-reducer
+OBS exception=public foreign payload:exception:Stop:Stop (ref ())
+OBS exception=trace4:REDUCE:Reducing:lifetime_exception_atom
+OBS exception=foreign-reducer
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=trace1:NOT_SOLVED:lifetime_condition
+OBS exception=solver HOL_ERR:exception:HOL_ERR:Cond_rewr:COND_REWR_CONV (application):failure:\nException raised at Cond_rewr.COND_REWR_CONV (application):\nat lifetime solver.callback: failure\n
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=solver UNCHANGED:exception:HOL_ERR:Cond_rewr:COND_REWR_CONV (application):UNCHANGED:\nException raised at Cond_rewr.COND_REWR_CONV (application): UNCHANGED\n
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=solver Stop:exception:HOL_ERR:Cond_rewr:COND_REWR_CONV (application):Stop (ref ()):\nException raised at Cond_rewr.COND_REWR_CONV (application): Stop (ref ())\n
+OBS exception=trace1:REWRITING:lifetime solver:lifetime_result:lifetime_condition \226\135\146 (lifetime_result \226\135\148 T) [lifetime_condition \226\135\146 (lifetime_result \226\135\148 T)]
+OBS exception=trace2:ATTEMPT:lifetime_condition
+OBS exception=solver Interrupt:exception:Interrupt
+OBS malformed bound precedes maker.exception=Option:Option
+malformed bound precedes maker ...                                           [32m[1mOK[0m
+no maker before malformed rejection ...                                      [32m[1mOK[0m
+all makers at installation only ...                                          [32m[1mOK[0m
+OBS maker=malformed bound precedes maker:exception:Option:Option
+OBS maker=install-two
+OBS maker=maker
+OBS maker=maker
+OBS maker=trace2:LZ_TEXT:New rewrite: \226\138\162 T \226\136\167 lifetime_maker_p \226\135\148 lifetime_maker_p
+OBS maker=trace2:LZ_TEXT:New rewrite: \226\138\162 T \226\136\167 lifetime_maker_p \226\135\148 lifetime_maker_p
+OBS maker=project-two
+<<HOL warning: TraversalContracts.collector: lifetime warning>>
+warning collector runs once, not on reuse ...                                [32m[1mOK[0m
+OBS warning=warning-construct
+OBS warning=trace2:MORE_CONTEXT:T []
+OBS warning=trace2:IGNORE:pointless rewrite:T []
+OBS warning=warning:<<HOL warning: TraversalContracts.collector: lifetime warning>>\n
+OBS warning=warning-collector-return
+OBS warning=warning-apply-twice
+OBS warning=trace4:REDUCE:Reducing:lifetime_warning_atom
+OBS warning=trace4:REDUCE:Reducing:lifetime_warning_atom

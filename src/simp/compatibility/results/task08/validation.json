@@ -1,0 +1,57 @@
+{
+  "checks": {
+    "diff-check": 0,
+    "differential": 0,
+    "fixture-type-errors": 1,
+    "frozen-inputs": 0,
+    "native-marker": 0,
+    "native-marker.run": 0,
+    "native-simp": 0,
+    "no-event": 1,
+    "pedant": 0,
+    "sanity": 0
+  },
+  "cleanup": "Temporary git index removed by trap; harness-owned library/suite products removed by TemporaryDirectory. No copied build tree remains.",
+  "commands": [
+    "bin/Holmake --no-project --no-cache -j1 -C src/marker --holstate=\"$PWD/bin/hol.state0\" HOLSELFTESTLEVEL=1",
+    "(cd src/marker && ./selftest.exe)",
+    "bin/Holmake --no-project --no-cache -j1 -C src/simp/src --holstate=\"$PWD/bin/hol.state0\" HOLSELFTESTLEVEL=1",
+    "bin/build -t --seq=tools/sequences/upto-parallel",
+    "python3 src/simp/compatibility/run.py --branch 189cdea5900fbb2724f2232dd844d9151597e5be --output src/simp/compatibility/results/task08/differential",
+    "tools/h4pedant/h4pedant src/marker src/simp/src src/simp/compatibility/probes",
+    "(cd src/simp/compatibility && sha256sum -c inputs/SHA256SUMS)",
+    "git diff --check"
+  ],
+  "differential": {
+    "all_instrumented_observations_equal": true,
+    "exclusion_history_equal_ordered_obs": 72,
+    "exclusion_history_ok_per_lane": 28,
+    "kind": "mixed-source; NOT independent repository builds",
+    "library_builds": 2,
+    "reference": "cccaa27d7099cbadc886983020cbe745db7793f3",
+    "suite_builds": 30,
+    "suite_runs": 30
+  },
+  "entry_head": "7d3eaccc9e99c71af6335759ae4b28d7d32c2fdf",
+  "native_ok": {
+    "exclusion_contracts": 158,
+    "marker": 70,
+    "simplifier": 507,
+    "traversal_contracts": 47
+  },
+  "negative_control": {
+    "change": "Omit recording only EXCLUDE_LOOPER_EVENT in strategy_op; retain direct application",
+    "expected_exit": 1,
+    "failures": 30,
+    "restored_before_final_validation": true
+  },
+  "source_sha256": {
+    "src/simp/compatibility/probes/legacy/exclusion-history.sml": "68927f2f551d93de7b5afac125bb4cf799ffe24df3898877dec2ef22b1b54357",
+    "src/simp/compatibility/probes/support/ExclusionHistory.sml": "5e0dcbea8f70a1d7ff482c43293c3b7c6a383e9a702881aecfaacc1b0c32dc47",
+    "src/simp/compatibility/probes/support/RunExclusionContracts.sml": "9acaf5f1928b5a3e7b9a101954df6f890e745679d1261fb2a1a269f3f3575d5b",
+    "src/simp/src/selftest.sml": "7745072bca9bc1b7ae62dc4ce653214769d98e86e000031a8605810a87a65d84",
+    "src/simp/src/simpLib.sml": "f8454e8e95fd047ff49764a4b5d207892e0f9e6b791555c58d186b6cd366cf89"
+  },
+  "source_snapshot": "189cdea5900fbb2724f2232dd844d9151597e5be",
+  "source_snapshot_matches_working_sources": true
+}

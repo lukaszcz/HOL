@@ -2363,6 +2363,10 @@ local
       val strict_bare = replay_ss && [Excl qualified]
       val relaxed_deleted = replay_ss && [ExclX ("rule:" ^ qualified)]
       val resolved_bare = replay_ss && [ExclX qualified]
+      val mixed = replay_ss &&
+        [Excl "unmatched_history_batch",ExclX ("rule:" ^ qualified),
+         Excl qualified,Excl "unmatched_history_batch"]
+      val present = Context.snapshot ()
       val _ = Context.restore saved
       fun strict_replay (description,ss) =
         shouldfail
@@ -2375,6 +2379,8 @@ local
         ("-* history reparses names after Context.restore",strict_deleted)
       val _ = strict_replay
         ("bare Excl history reparses names after Context.restore",strict_bare)
+      val _ = strict_replay
+        ("mixed strict/resolved batch reparses only strict names",mixed)
       val _ = convtest
         ("rule: history retains its parsed pattern after Context.restore",
          QCONV (SIMP_CONV (remove_ssfrags [dummy] relaxed_deleted) []),
@@ -2382,6 +2388,11 @@ local
       val _ = convtest
         ("bare ExclX history retains its resolved rule after Context.restore",
          QCONV (SIMP_CONV (remove_ssfrags [dummy] resolved_bare) []),
+         history_lhs, history_lhs)
+      val _ = Context.restore present
+      val _ = convtest
+        ("mixed batch replays after restoring the naming context",
+         QCONV (SIMP_CONV (remove_ssfrags [dummy] mixed) []),
          history_lhs, history_lhs)
     in () end
   in Portable.finally (fn () => Context.restore saved) run () end
@@ -2826,6 +2837,107 @@ val _ = let
           if aconv result (#2 split_goal) then OK()
           else die "split.case exclusion left the TypeBase split active"
       | _ => die "TypeBase split exclusion produced the wrong subgoals"
+
+  (* Split/case exclusions must survive every history rebuild, including
+     when the excluded target comes from a restored ambient store rather
+     than a local looper. Keep the temporary registrations context-local. *)
+  val _ = let
+    val saved = Context.snapshot ()
+    fun run () = let
+      val thy = Theory.current_theory ()
+      val key = thy ^ "$simp_split_selftest_rule"
+      val asm_key = thy ^ "$simp_split_selftest_asm_rule"
+      val dummy = "split exclusion replay dummy"
+      val disposable = ASSUME ``replay_disposable:bool = T``
+      val base = bool_ss ++ name_ss dummy (rewrites [disposable])
+      fun check_goal label ss goal =
+        (tprint label;
+         case valid (SIMP_TAC ss []) goal of
+             [(asms,result)] =>
+               if aconv result (#2 goal) andalso
+                  ListPair.allEq (uncurry aconv) (asms,#1 goal)
+               then OK () else die "excluded splitter was re-enabled"
+           | _ => die "excluded splitter changed the subgoals")
+      fun check label ss = check_goal label ss split_goal
+      fun replay_checks label ss =
+        (check (label ^ ": direct") ss;
+         check (label ^ ": remove fragment")
+           (remove_ssfrags [dummy] ss);
+         check (label ^ ": exclude fragment")
+           (exclude_ssfrags [dummy] ss);
+         check (label ^ ": filter rewrites")
+           (filter_rewrites (fn (_,th) =>
+              not (aconv (concl th) (concl disposable))) ss))
+      val case_deleted = (base ++ split_ss) && [ExclX "case:bool"]
+      val _ = replay_checks "case exclusion history" case_deleted
+      val case_before = (base && [ExclX "case:bool"]) ++ split_ss
+      val _ = replay_checks "case exclusion before fragment" case_before
+      val case_twice = case_deleted && [ExclX "case:bool"]
+      val _ = replay_checks "repeated case exclusion history" case_twice
+      val local_deleted = add_split named_if_split base &&
+        [ExclX ("split:" ^ key)]
+      val local_readded = add_split named_if_split local_deleted
+      val _ = replay_checks "split exclusion before re-add" local_readded
+      val _ = replay_checks "split exclusion around fragment add"
+        (add_split named_if_split
+          (local_deleted ++ name_ss "split replay addition" empty_ssfrag))
+      val _ = replay_checks "split exclusion after add"
+        (add_split named_if_split base && [ExclX ("split:" ^ key)])
+
+      (* Install persistent rules using the registered set's delta API.
+         TypeBase splitting is excluded separately so these controls cannot
+         pass merely because a different splitter produced the result. *)
+      val efns = valOf (ThmSetData.data_exportfns {settype="split"})
+      val _ = #add efns
+        {thy=thy,named_thm=({Thy=thy,Name="simp_split_selftest_rule"},
+                            named_if_split)}
+      val _ = #add efns
+        {thy=thy,named_thm=({Thy=thy,Name="simp_split_selftest_asm_rule"},
+                            named_if_asm_split)}
+      val registered = Context.snapshot ()
+      val persistent_base = (base ++ split_ss) && [ExclX "case:bool"]
+      val _ = tprint "persistent split replay control really splits"
+      val _ = case valid (SIMP_TAC persistent_base []) split_goal of
+          [([],result)] =>
+            if not (aconv result (#2 split_goal)) andalso
+               not (can (find_term is_cond) result)
+            then OK () else die "persistent split control did not split"
+        | _ => die "persistent split control produced wrong subgoals"
+      val deleted = persistent_base &&
+        [ExclX ("split:" ^ key),ExclX ("split:" ^ asm_key),
+         ExclX "case:bool",ExclX ("split:" ^ key)]
+      val _ = replay_checks "persistent split exclusion history" deleted
+      val mixed_rules = persistent_base ++ rewrites_with_names
+        [({Thy=thy,Name="split_replay_rule"},disposable)]
+      val mixed_deleted = mixed_rules &&
+        [Excl "split_replay_missing",ExclX ("rule:" ^ thy ^
+           "$split_replay_rule"),Excl "split_replay_rule",
+         ExclX ("split:" ^ key),Excl "split_replay_missing",
+         ExclX ("split:" ^ asm_key),ExclX "case:bool"]
+      val _ = replay_checks "mixed strict extended strategy history"
+        mixed_deleted
+      val _ = convtest
+        ("mixed strict extended rule batch survives strategy replay",
+         QCONV (SIMP_CONV
+           (remove_ssfrags [dummy] mixed_deleted) []),
+         ``replay_disposable:bool``, ``replay_disposable:bool``)
+      val _ = check_goal "persistent assumption split exclusion replay"
+        (remove_ssfrags [dummy] deleted) typebase_asm_goal
+      val _ = Context.restore saved
+      val _ = replay_checks "case exclusion after Context.restore"
+        case_deleted
+      val _ = check "local split exclusion after Context.restore"
+        (remove_ssfrags [dummy] local_readded)
+      (* Replay while the persistent target is absent, then restore its
+         registration. Neither resolution nor ambient state may replace
+         the recorded exclusion identity. *)
+      val absent_replayed = remove_ssfrags [dummy] deleted
+      val _ = Context.restore registered
+      val _ = check "persistent split exclusion after Context.restore"
+        absent_replayed
+      val _ = replay_checks "restored persistent split exclusion" deleted
+    in () end
+  in Portable.finally (fn () => Context.restore saved) run () end
 
   (* The dot in the display name is parsed strictly by bare Excl. *)
   val _ = shouldfail

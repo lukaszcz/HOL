@@ -6,9 +6,9 @@
 - TASK_04: done — acceptance verified; focused tests and sanity rerun pass.
 - TASK_05: done — acceptance verified; differential/native/sanity reruns pass.
 - TASK_06: done — acceptance verified; marker/native/sanity reruns pass.
-- TASK_07: done — literal/extended routing, native/paired/sanity checks pass.
-- TASK_08: unblocked (not started).
-- TASK_09: blocked — needs 08.
+- TASK_07: done — acceptance verified; native/paired/sanity reruns pass.
+- TASK_08: done — acceptance verified; replay/native/paired/sanity pass.
+- TASK_09: unblocked (not started).
 - TASK_10: unblocked (not started).
 - TASK_11: blocked — needs 10.
 - TASK_12: blocked — needs 09, 11.
@@ -20,8 +20,8 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_08_exclusion_history_replay.md` — preserve
-extended split/case exclusion state through history replay.
+`.agent-files/tasks/TASK_09_exclusion_contract_matrix.md` — expand
+parser, namespace and exclusion contract coverage.
 
 ## 3. Completion log
 
@@ -34,4 +34,5 @@ and evidence pointer.
 - TASK_04 — `667320e9b`; evidence: `src/simp/compatibility/TRAVERSAL_PROJECTION.md` and `src/simp/compatibility/results/task04/`.
 - TASK_05 — `3a1f4de0d`; evidence: `src/simp/compatibility/TRAVERSAL_LIFETIMES.md` and `src/simp/compatibility/results/task05/`.
 - TASK_06 — `d536a8893`; evidence: `src/simp/compatibility/EXTENDED_EXCLUSION_MARKER.md` and `src/simp/compatibility/results/task06/`.
-- TASK_07 — `[TASK_07] Separate literal and extended exclusion routes` (commit subject); evidence: `src/simp/compatibility/EXCLUSION_ROUTES.md` and `src/simp/compatibility/results/task07/`.
+- TASK_07 — `7d3eaccc9`; evidence: `src/simp/compatibility/EXCLUSION_ROUTES.md` and `src/simp/compatibility/results/task07/`.
+- TASK_08 — `[TASK_08] Preserve split and case exclusion history` (commit subject); evidence: `src/simp/compatibility/EXCLUSION_HISTORY.md` and `src/simp/compatibility/results/task08/`.

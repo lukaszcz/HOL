@@ -13,6 +13,8 @@ public legacy projection, caller audit and passing focused/sanity checks.
 quota, staging, default and exception contracts and pinned differential.
 [EXCLUSION_ROUTES.md](EXCLUSION_ROUTES.md) records TASK_07's literal Excl /
 explicit ExclX routing, normal prefix coverage and replay handoff.
+[EXCLUSION_HISTORY.md](EXCLUSION_HISTORY.md) records TASK_08's replay
+representation, split/case restoration tests and strict dotted-name pins.
 
 ## Layout
 
@@ -30,6 +32,9 @@ explicit ExclX routing, normal prefix coverage and replay handoff.
   by TASK_04/TASK_07. The ten prefix cases also run in normal Holmake tests.
   `traversal-lifetimes.sml` runs the legacy-only `TraversalContracts` fixture
   against both lanes; the same fixture runs in normal Holmake selftests.
+  `exclusion-history.sml` runs `ExclusionHistory` in both lanes and normal
+  exclusion-contracts coverage: strict dotted replay, context restoration,
+  unmatched/repeated deletions and interleaved additions.
 - `probes/support/*.sml`: shared legacy-only assertion helpers, snapshotted
   once, hashed as `support_sha256`, and copied into each suite directory.
   Holmake discovers and builds these modules through ordinary dependencies.
@@ -80,7 +85,8 @@ python3 src/simp/compatibility/run.py --branch HEAD \
 build also runs `traversal-contracts` and `exclusion-contracts`, alongside
 `simp-selftest.log`. The latter runs all ten prefix fixtures, including
 silent unmatched names, real conversion/callback preconditions, deletion
-and direct `-*` comparisons. The traversal target's
+and direct `-*` comparisons, plus the legacy-only history fixture. The
+traversal target's
 support-directory Holmakefile resolves private simplifier modules before
 upload to `sigobj`, and the launcher executes from that directory. It
 records all trace actions, ordered callbacks, warnings (also forwarded to
