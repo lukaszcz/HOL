@@ -15,6 +15,9 @@ quota, staging, default and exception contracts and pinned differential.
 explicit ExclX routing, normal prefix coverage and replay handoff.
 [EXCLUSION_HISTORY.md](EXCLUSION_HISTORY.md) records TASK_08's replay
 representation, split/case restoration tests and strict dotted-name pins.
+[EXCLUSION_MATRIX.md](EXCLUSION_MATRIX.md) maps TASK_09's full literal /
+explicit namespace contract to native and pinned-develop tests, including
+warning-sensitive errors, suffixes and genuine current-theory changes.
 
 ## Layout
 
@@ -35,6 +38,9 @@ representation, split/case restoration tests and strict dotted-name pins.
   `exclusion-history.sml` runs `ExclusionHistory` in both lanes and normal
   exclusion-contracts coverage: strict dotted replay, context restoration,
   unmatched/repeated deletions and interleaved additions.
+  `exclusion-parsing.sml` runs `ExclusionParsing`: Excl / `-*` strict
+  parser/error/warning parity, numeric/dotted rewrite suffixes, exact dproc
+  spelling, bare kernel strings, repetitions and current-theory replay.
 - `probes/support/*.sml`: shared legacy-only assertion helpers, snapshotted
   once, hashed as `support_sha256`, and copied into each suite directory.
   Holmake discovers and builds these modules through ordinary dependencies.
@@ -84,8 +90,9 @@ python3 src/simp/compatibility/run.py --branch HEAD \
 `$HOLDIR` is the absolute repository root. The normal `HOLSELFTESTLEVEL`
 build also runs `traversal-contracts` and `exclusion-contracts`, alongside
 `simp-selftest.log`. The latter runs all ten prefix fixtures, including
-silent unmatched names, real conversion/callback preconditions, deletion
-and direct `-*` comparisons, plus the legacy-only history fixture. The
+silent unmatched names, real conversion/callback preconditions, named
+rewrites and dprocs, overlapping names, deletion and direct `-*`
+comparisons/replay, plus the legacy-only history and parser fixtures. The
 traversal target's
 support-directory Holmakefile resolves private simplifier modules before
 upload to `sigobj`, and the launcher executes from that directory. It

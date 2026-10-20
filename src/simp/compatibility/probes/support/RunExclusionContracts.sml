@@ -6,4 +6,5 @@ val _ = List.app
       {prefix=prefix, installed=installed}) [false,true])
   ["rule:","solver:","looper:","split:","case:"];
 val _ = ExclusionHistory.run ();
+val _ = ExclusionParsing.run ();
 val _ = LegacyFailures.finish ();

@@ -1,0 +1,28 @@
+/tmp/claude/hol-simp-pair.h3tj6yt7/branch/reducer-shape/LegacyFailures.sml:96: warning: Pattern is not exhaustive.
+Found near
+  val
+     Traverse.REDUCER _ =
+        hd (#rewriters (simpLib.traversedata_for_ss simpLib.empty_ss))
+OBS probe=reducer-shape
+<<HOL message: Created theory "legacyfailure">>
+setup: warnings enabled, not promoted to errors ...                          [32m[1mOK[0m
+setup: fail-fast testutils ...                                               [32m[1mOK[0m
+OBS stage=setup.control
+OBS setup.control.warning.count=0
+OBS setup.control.exception=none
+setup.control is silent ...                                                  [32m[1mOK[0m
+OBS setup.control.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.control.hypotheses=
+setup: ordinary simplification works ...                                     [32m[1mOK[0m
+OBS stage=setup.projection
+OBS setup.projection.warning.count=0
+OBS setup.projection.exception=none
+setup.projection is silent ...                                               [32m[1mOK[0m
+setup: public projection has a first rewriter ...                            [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.constructor
+OBS assertion.constructor.result=REDUCER
+OBS assertion.constructor.warning.count=0
+OBS assertion.constructor.exception=none
+assertion.constructor is silent ...                                          [32m[1mOK[0m
+OBS assertion.result=pass

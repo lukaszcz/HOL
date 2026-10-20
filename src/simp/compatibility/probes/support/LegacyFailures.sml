@@ -102,6 +102,55 @@ fun constructor () =
     finish ()
   end
 
+(* Literal prefixed rewrites and dprocs use the same deletion route as
+   conversions. A longer overlapping name must survive exact deletion. *)
+fun prefix_stores name installed = let
+  val other = ``F \/ (compat_q:bool)``
+  val other_rhs = ``compat_q:bool``
+  val and_rule = CONJUNCT1 (SPEC_ALL boolTheory.AND_CLAUSES)
+  val or_rule = List.nth (CONJUNCTS (SPEC_ALL boolTheory.OR_CLAUSES),2)
+  val dummy = "prefix store replay dummy"
+  fun store kind = let
+    val calls = ref ([] : string list)
+    fun entry (n,th) =
+      if kind = "rewrite" then
+        rewrites_with_names [({Thy="bool",Name=n},th)]
+      else dproc_ss (Traverse.REDUCER
+        {name=SOME n,initial=Fail "prefix context",
+         addcontext=fn (ctxt,_) => ctxt,
+         apply=fn _ => fn tm =>
+           (calls := (n ^ ":" ^ term_to_string tm) :: !calls;
+            REWR_CONV th tm)})
+    val base = empty_ss ++ name_ss dummy empty_ssfrag ++
+               entry (name ^ "_tail",or_rule)
+    val ss = if installed then base ++ entry (name,and_rule) else base
+    fun results label set expected = let
+      val _ = calls := []
+      val (a,b) = during (kind ^ "." ^ label) (fn () =>
+        (QCONV (SIMP_CONV set []) input,
+         QCONV (SIMP_CONV set []) other))
+      val _ = theorem (kind ^ "." ^ label ^ ".target") a
+      val _ = theorem (kind ^ "." ^ label ^ ".overlap") b
+      val _ = observe (kind ^ "." ^ label ^ ".callbacks")
+        (String.concatWith ";" (rev (!calls)))
+    in
+      check (kind ^ " " ^ label ^ " deletes only the literal target")
+        (result_is a expected andalso
+         aconv (concl b) (mk_eq (other,other_rhs)) andalso null (hyp b)
+         andalso (label = "before" orelse
+           not (List.exists (String.isPrefix (name ^ ":")) (!calls))))
+    end
+    val _ = results "before" ss (if installed then simplified else input)
+    val literal = during (kind ^ ".Excl") (fn () => ss && [Excl name])
+    val operator = during (kind ^ ".operator") (fn () => ss -* [name])
+  in
+    results "Excl" literal input;
+    results "operator" operator input;
+    results "Excl.replay" (remove_ssfrags [dummy] literal) input;
+    results "operator.replay" (remove_ssfrags [dummy] operator) input
+  end
+in List.app store ["rewrite","dproc"] end
+
 (* Also run by the normal exclusion-contracts target, without exiting or
    resetting the theory between cases. Keep the original fixture checks. *)
 fun prefix_checks {prefix, installed} =
@@ -152,7 +201,8 @@ fun prefix_checks {prefix, installed} =
     check "literal Excl agrees with -*, including no conversion callbacks"
       (aconv (concl after_excl) (concl direct_th) andalso
        HOLset.equal (hypset after_excl,hypset direct_th) andalso
-       null (!calls))
+       null (!calls));
+    prefix_stores name installed
   end
 
 fun prefix (args as {prefix, installed}) =

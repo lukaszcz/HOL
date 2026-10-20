@@ -1,0 +1,180 @@
+/tmp/claude/hol-simp-pair.h3tj6yt7/branch/excl-case-unmatched/LegacyFailures.sml:96: warning: Pattern is not exhaustive.
+Found near
+  val
+     Traverse.REDUCER _ =
+        hd (#rewriters (simpLib.traversedata_for_ss simpLib.empty_ss))
+OBS probe=case:unmatched
+<<HOL message: Created theory "legacyfailure">>
+setup: warnings enabled, not promoted to errors ...                          [32m[1mOK[0m
+setup: fail-fast testutils ...                                               [32m[1mOK[0m
+OBS stage=setup.control
+OBS setup.control.warning.count=0
+OBS setup.control.exception=none
+setup.control is silent ...                                                  [32m[1mOK[0m
+OBS setup.control.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.control.hypotheses=
+setup: ordinary simplification works ...                                     [32m[1mOK[0m
+OBS literal.name=case:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=none
+assertion.exclude is silent ...                                              [32m[1mOK[0m
+OBS stage=assertion.apply
+OBS assertion.apply.warning.count=0
+OBS assertion.apply.exception=none
+assertion.apply is silent ...                                                [32m[1mOK[0m
+OBS assertion.apply.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS assertion.apply.hypotheses=
+OBS assertion.apply.callbacks=
+legacy Excl leaves no active literal conversion ...                          [32m[1mOK[0m
+OBS stage=assertion.direct
+OBS assertion.direct.warning.count=0
+OBS assertion.direct.exception=none
+assertion.direct is silent ...                                               [32m[1mOK[0m
+OBS stage=assertion.direct.apply
+OBS assertion.direct.apply.warning.count=0
+OBS assertion.direct.apply.exception=none
+assertion.direct.apply is silent ...                                         [32m[1mOK[0m
+literal Excl agrees with -*, including no conversion callbacks ...           [32m[1mOK[0m
+OBS stage=rewrite.before
+OBS rewrite.before.warning.count=0
+OBS rewrite.before.exception=none
+rewrite.before is silent ...                                                 [32m[1mOK[0m
+OBS rewrite.before.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS rewrite.before.target.hypotheses=
+OBS rewrite.before.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS rewrite.before.overlap.hypotheses=
+OBS rewrite.before.callbacks=
+rewrite before deletes only the literal target ...                           [32m[1mOK[0m
+OBS stage=rewrite.Excl
+OBS rewrite.Excl.warning.count=0
+OBS rewrite.Excl.exception=none
+rewrite.Excl is silent ...                                                   [32m[1mOK[0m
+OBS stage=rewrite.operator
+OBS rewrite.operator.warning.count=0
+OBS rewrite.operator.exception=none
+rewrite.operator is silent ...                                               [32m[1mOK[0m
+OBS stage=rewrite.Excl
+OBS rewrite.Excl.warning.count=0
+OBS rewrite.Excl.exception=none
+rewrite.Excl is silent ...                                                   [32m[1mOK[0m
+OBS rewrite.Excl.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS rewrite.Excl.target.hypotheses=
+OBS rewrite.Excl.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS rewrite.Excl.overlap.hypotheses=
+OBS rewrite.Excl.callbacks=
+rewrite Excl deletes only the literal target ...                             [32m[1mOK[0m
+OBS stage=rewrite.operator
+OBS rewrite.operator.warning.count=0
+OBS rewrite.operator.exception=none
+rewrite.operator is silent ...                                               [32m[1mOK[0m
+OBS rewrite.operator.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS rewrite.operator.target.hypotheses=
+OBS rewrite.operator.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS rewrite.operator.overlap.hypotheses=
+OBS rewrite.operator.callbacks=
+rewrite operator deletes only the literal target ...                         [32m[1mOK[0m
+OBS stage=rewrite.Excl.replay
+OBS rewrite.Excl.replay.warning.count=0
+OBS rewrite.Excl.replay.exception=none
+rewrite.Excl.replay is silent ...                                            [32m[1mOK[0m
+OBS rewrite.Excl.replay.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS rewrite.Excl.replay.target.hypotheses=
+OBS rewrite.Excl.replay.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS rewrite.Excl.replay.overlap.hypotheses=
+OBS rewrite.Excl.replay.callbacks=
+rewrite Excl.replay deletes only the literal target ...                      [32m[1mOK[0m
+OBS stage=rewrite.operator.replay
+OBS rewrite.operator.replay.warning.count=0
+OBS rewrite.operator.replay.exception=none
+rewrite.operator.replay is silent ...                                        [32m[1mOK[0m
+OBS rewrite.operator.replay.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS rewrite.operator.replay.target.hypotheses=
+OBS rewrite.operator.replay.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS rewrite.operator.replay.overlap.hypotheses=
+OBS rewrite.operator.replay.callbacks=
+rewrite operator.replay deletes only the literal target ...                  [32m[1mOK[0m
+OBS stage=dproc.before
+OBS dproc.before.warning.count=0
+OBS dproc.before.exception=none
+dproc.before is silent ...                                                   [32m[1mOK[0m
+OBS dproc.before.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS dproc.before.target.hypotheses=
+OBS dproc.before.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS dproc.before.overlap.hypotheses=
+OBS dproc.before.callbacks=case:compat_missing_tail:$/\;case:compat_missing_tail:T;case:compat_missing_tail:$/\ T;case:compat_missing_tail:compat_p;case:compat_missing_tail:T ∧ compat_p;case:compat_missing_tail:$\/;case:compat_missing_tail:F;case:compat_missing_tail:$\/ F;case:compat_missing_tail:compat_q;case:compat_missing_tail:F ∨ compat_q;case:compat_missing_tail:compat_q
+dproc before deletes only the literal target ...                             [32m[1mOK[0m
+OBS stage=dproc.Excl
+OBS dproc.Excl.warning.count=0
+OBS dproc.Excl.exception=none
+dproc.Excl is silent ...                                                     [32m[1mOK[0m
+OBS stage=dproc.operator
+OBS dproc.operator.warning.count=0
+OBS dproc.operator.exception=none
+dproc.operator is silent ...                                                 [32m[1mOK[0m
+OBS stage=dproc.Excl
+OBS dproc.Excl.warning.count=0
+OBS dproc.Excl.exception=none
+dproc.Excl is silent ...                                                     [32m[1mOK[0m
+OBS dproc.Excl.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS dproc.Excl.target.hypotheses=
+OBS dproc.Excl.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS dproc.Excl.overlap.hypotheses=
+OBS dproc.Excl.callbacks=case:compat_missing_tail:$/\;case:compat_missing_tail:T;case:compat_missing_tail:$/\ T;case:compat_missing_tail:compat_p;case:compat_missing_tail:T ∧ compat_p;case:compat_missing_tail:$\/;case:compat_missing_tail:F;case:compat_missing_tail:$\/ F;case:compat_missing_tail:compat_q;case:compat_missing_tail:F ∨ compat_q;case:compat_missing_tail:compat_q
+dproc Excl deletes only the literal target ...                               [32m[1mOK[0m
+OBS stage=dproc.operator
+OBS dproc.operator.warning.count=0
+OBS dproc.operator.exception=none
+dproc.operator is silent ...                                                 [32m[1mOK[0m
+OBS dproc.operator.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS dproc.operator.target.hypotheses=
+OBS dproc.operator.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS dproc.operator.overlap.hypotheses=
+OBS dproc.operator.callbacks=case:compat_missing_tail:$/\;case:compat_missing_tail:T;case:compat_missing_tail:$/\ T;case:compat_missing_tail:compat_p;case:compat_missing_tail:T ∧ compat_p;case:compat_missing_tail:$\/;case:compat_missing_tail:F;case:compat_missing_tail:$\/ F;case:compat_missing_tail:compat_q;case:compat_missing_tail:F ∨ compat_q;case:compat_missing_tail:compat_q
+dproc operator deletes only the literal target ...                           [32m[1mOK[0m
+OBS stage=dproc.Excl.replay
+OBS dproc.Excl.replay.warning.count=0
+OBS dproc.Excl.replay.exception=none
+dproc.Excl.replay is silent ...                                              [32m[1mOK[0m
+OBS dproc.Excl.replay.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS dproc.Excl.replay.target.hypotheses=
+OBS dproc.Excl.replay.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS dproc.Excl.replay.overlap.hypotheses=
+OBS dproc.Excl.replay.callbacks=case:compat_missing_tail:$/\;case:compat_missing_tail:T;case:compat_missing_tail:$/\ T;case:compat_missing_tail:compat_p;case:compat_missing_tail:T ∧ compat_p;case:compat_missing_tail:$\/;case:compat_missing_tail:F;case:compat_missing_tail:$\/ F;case:compat_missing_tail:compat_q;case:compat_missing_tail:F ∨ compat_q;case:compat_missing_tail:compat_q
+dproc Excl.replay deletes only the literal target ...                        [32m[1mOK[0m
+OBS stage=dproc.operator.replay
+OBS dproc.operator.replay.warning.count=0
+OBS dproc.operator.replay.exception=none
+dproc.operator.replay is silent ...                                          [32m[1mOK[0m
+OBS dproc.operator.replay.target.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS dproc.operator.replay.target.hypotheses=
+OBS dproc.operator.replay.overlap.conclusion=F ∨ compat_q ⇔ compat_q
+OBS dproc.operator.replay.overlap.hypotheses=
+OBS dproc.operator.replay.callbacks=case:compat_missing_tail:$/\;case:compat_missing_tail:T;case:compat_missing_tail:$/\ T;case:compat_missing_tail:compat_p;case:compat_missing_tail:T ∧ compat_p;case:compat_missing_tail:$\/;case:compat_missing_tail:F;case:compat_missing_tail:$\/ F;case:compat_missing_tail:compat_q;case:compat_missing_tail:F ∨ compat_q;case:compat_missing_tail:compat_q
+dproc operator.replay deletes only the literal target ...                    [32m[1mOK[0m
+OBS assertion.result=pass

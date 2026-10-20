@@ -3647,7 +3647,9 @@ val _ =
             (fn (_,f,msg) => f = "process_tags" andalso
                             String.isSubstring "tactic directive" msg)} ();
        check (name ^ " is stripped before tactic exclusion")
-         (null (valid (SIMP_TAC ss [th]) ([],T))))
+         (null (valid (SIMP_TAC ss [th]) ([],T)));
+       check (name ^ " suppresses the active rewrite on an unsolved goal")
+         (list_eq goal_eq (valid (SIMP_TAC ss [th]) ([],tm)) [([],tm)]))
     fun typo name = shouldfail
       {testfn=fn () => empty_ss && [ExclX name],
        printarg=K ("ExclX rejects missing " ^ name),
@@ -3670,6 +3672,196 @@ val _ =
     List.app typo ["missing", "rule:missing", "looper:missing",
                    "solver:missing", "split:missing", "case:missing"]
   end
+
+(* TASK_09: branch-only namespace selection and collision matrix. The
+   legacy-only prefix/parser matrix lives in exclusion-contracts. *)
+val _ = let
+  fun check name b = (tprint name; if b then OK () else die name)
+  fun silent label f = let
+    val sink = !Feedback.WARNING_outstream
+    val warnings = ref ([] : string list)
+    val _ = Feedback.WARNING_outstream :=
+      (fn s => (warnings := s :: !warnings; sink s))
+    val result = Exn.capture f ()
+    val _ = Feedback.WARNING_outstream := sink
+    val _ = check (label ^ " is silent") (null (!warnings))
+  in Exn.release result end
+  val _ = check "namespace matrix warnings are enabled"
+    (!Feedback.emit_WARNING andalso not (!Feedback.WARNINGs_as_ERRs))
+  val em = SPEC ``matrix_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val em2 = SPEC ``matrix_q:bool`` boolTheory.EXCLUDED_MIDDLE
+  val goal = ([],mk_conj (concl em,concl em2))
+  val split_goals = [([],concl em),([],concl em2)]
+  val calls = ref 0
+  fun solve _ tm =
+    (calls := !calls + 1;
+     if aconv tm (concl em) then em else NO_CONV tm)
+  fun looper _ = CONJ_TAC
+  val dummy = "extended matrix unrelated fragment"
+  val base = empty_ss ++ name_ss dummy empty_ssfrag
+  val shared = base |> add_looper ("matrix_shared",looper)
+    |> add_unsafe_solver {name="matrix_shared",solve=solve}
+    |> add_safe_solver {name="matrix_shared",solve=solve}
+  fun goals label set markers expected = silent label (fn () => let
+    val (actual,validate) = runtac (VALID (SIMP_TAC set markers)) goal
+    val th = validate (map (ASSUME o #2) actual)
+  in
+    check label (list_eq goal_eq actual expected andalso
+      aconv (concl th) (#2 goal) andalso
+      HOLset.equal (hypset th,
+        HOLset.fromList Term.compare (map #2 expected)))
+  end)
+  val _ = goals "namespace control looper and solver active"
+    shared [] [([],concl em2)]
+  val without_looper = silent "qualified looper construction"
+    (fn () => shared && [ExclX "looper:matrix_shared"])
+  val without_solver = silent "qualified solver construction"
+    (fn () => shared && [ExclX "solver:matrix_shared"])
+  val _ = goals "qualified looper really removes only the looper"
+    without_looper [] [goal]
+  val _ = calls := 0
+  val _ = goals "qualified solver really removes only the solver"
+    without_solver [] split_goals
+  val _ = check "qualified solver suppresses unsafe callbacks" (!calls = 0)
+  val _ = silent "qualified solver safe selection" (fn () =>
+    check "qualified solver suppresses safe callbacks"
+      (list_eq goal_eq
+        (valid (GEN_SIMP_TAC {safe=true} without_solver []) goal)
+        split_goals andalso !calls = 0))
+  val _ = goals "ordinary looper exclusion replay"
+    (remove_ssfrags [dummy] without_looper) [] [goal]
+  val _ = goals "ordinary solver exclusion replay"
+    (remove_ssfrags [dummy] without_solver) [] split_goals
+  val _ = goals "ordinary looper later re-addition replay"
+    (remove_ssfrags [dummy]
+      (add_looper ("matrix_shared",looper) without_looper))
+    [] [([],concl em2)]
+  val _ = goals "ordinary solver later re-addition replay"
+    (remove_ssfrags [dummy]
+      (add_unsafe_solver {name="matrix_shared",solve=solve} without_solver))
+    [] [([],concl em2)]
+  fun rejects label expected set markers = silent label (fn () =>
+    shouldfail
+      {testfn=fn () => set && markers, printarg=K label,
+       printresult=K "unexpected success",
+       checkexn=check_HOL_ERRexn (fn (_,_,msg) =>
+         String.isSubstring expected msg)} ())
+  val _ = rejects "shared strategy ambiguity" "ambiguous" shared
+    [ExclX "matrix_shared"]
+  val _ = goals "qualified solver then bare looper ordering" shared
+    [ExclX "solver:matrix_shared",ExclX "matrix_shared"] [goal]
+  val _ = goals "qualified looper then bare solver ordering" shared
+    [ExclX "looper:matrix_shared",ExclX "matrix_shared"] [goal]
+  val relaxed_looper = add_looper ("matrix.qualified looper",looper) base
+  val relaxed_solver = add_unsafe_solver
+    {name="matrix.qualified solver",solve=solve}
+    (add_looper ("matrix other looper",looper) base)
+  val _ = goals "relaxed looper display control is active"
+    relaxed_looper [] split_goals
+  val _ = goals "relaxed solver display control is active"
+    relaxed_solver [] [([],concl em2)]
+  val _ = goals "qualified looper accepts a relaxed dotted display"
+    relaxed_looper [ExclX "looper:matrix.qualified looper"] [goal]
+  val _ = goals "qualified solver accepts a relaxed dotted display"
+    relaxed_solver [ExclX "solver:matrix.qualified solver"] split_goals
+  val _ = rejects "bare dotted looper retains strict parsing" "bad theory"
+    relaxed_looper [ExclX "matrix.qualified looper"]
+  val _ = rejects "bare dotted solver retains strict parsing" "bad theory"
+    relaxed_solver [ExclX "matrix.qualified solver"]
+  val _ = rejects "ordinary repeated looper is unmatched" "did not match"
+    shared [ExclX "looper:matrix_shared",ExclX "looper:matrix_shared"]
+  val _ = rejects "ordinary repeated solver is unmatched" "did not match"
+    shared [ExclX "solver:matrix_shared",ExclX "solver:matrix_shared"]
+  val _ = List.app (fn name =>
+    rejects ("warning-sensitive missing " ^ name) "did not match" base
+      [ExclX name])
+    ["missing","rule:missing","looper:missing","solver:missing",
+     "split:missing","case:missing"]
+
+  (* Literal prefixed rules AND dprocs contest actual extended targets.
+     Both literal stores must be deleted without touching those targets. *)
+  val lhs = ``T /\ (matrix_literal:bool)``
+  val dinput = ``F \/ (matrix_literal:bool)``
+  val and_rule = CONJUNCT1 (SPEC_ALL boolTheory.AND_CLAUSES)
+  val or_rule = List.nth (CONJUNCTS (SPEC_ALL boolTheory.OR_CLAUSES),2)
+  val dproc_calls = ref 0
+  fun literal_stores name set =
+    set ++ rewrites_with_names [({Thy="",Name=name},and_rule)] ++
+    dproc_ss (Traverse.REDUCER
+      {name=SOME name,initial=Fail "matrix context",
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn _ => fn tm => (dproc_calls := !dproc_calls + 1;
+                               REWR_CONV or_rule tm)})
+  fun unchanged set tm = let
+    val th = QCONV (SIMP_CONV set []) tm
+  in aconv (concl th) (mk_eq (tm,tm)) andalso null (hyp th) end
+  fun collision (name,set,active) = silent ("literal collision " ^ name)
+    (fn () => let
+      val _ = List.app (fn (label,ss) =>
+        check (name ^ label ^ " unmatched literal preserves extended target")
+          (active ss))
+        [(" Excl",set && [Excl name]), (" -*",set -* [name]),
+         (" replay",remove_ssfrags [dummy] (set && [Excl name]))]
+      val installed = literal_stores name set
+      val _ = convtest (name ^ " literal rewrite active",
+        SIMP_CONV installed [],lhs,``matrix_literal:bool``)
+      val _ = convtest (name ^ " literal dproc active",
+        SIMP_CONV installed [],dinput,``matrix_literal:bool``)
+      fun deleted (label,ss) = let
+        val _ = dproc_calls := 0
+      in
+        check (name ^ label ^ " deletes both literal stores")
+          (unchanged ss lhs andalso unchanged ss dinput andalso
+           !dproc_calls = 0);
+        check (name ^ label ^ " preserves the extended target") (active ss)
+      end
+    in
+      List.app deleted
+        [(" Excl",installed && [Excl name]),
+         (" -*",installed -* [name]),
+         (" replay",remove_ssfrags [dummy]
+           (installed && [Excl name,Excl name]))]
+    end)
+  val target = ASSUME ``(matrix_rule_target:'a) = matrix_rule_result``
+  val rule_set = base ++ rewrites_with_names
+    [({Thy="",Name="matrix_rule"},target)]
+  val _ = collision ("rule:matrix_rule",rule_set,fn ss =>
+    aconv (rhs (concl (SIMP_CONV ss [] ``matrix_rule_target:'a``)))
+      ``matrix_rule_result:'a``)
+  val _ = collision ("looper:matrix_shared",shared,fn ss =>
+    list_eq goal_eq (valid (SIMP_TAC ss []) goal) [([],concl em2)])
+  val _ = collision ("solver:matrix_shared",shared,fn ss =>
+    list_eq goal_eq (valid (SIMP_TAC ss []) goal) [([],concl em2)])
+  val named_split = Feedback.quiet_messages save_thm
+    ("matrix_split",type_split_of ``:bool``)
+  val split_set = add_split named_split base
+  val split_goal = ([],``P (if b then x:'a else y):bool``)
+  fun active_split ss =
+    case valid (SIMP_TAC ss []) split_goal of
+      [([],tm)] => not (can (find_term is_cond) tm)
+    | _ => false
+  val _ = collision ("split:" ^ Theory.current_theory () ^ "$matrix_split",
+                     split_set,active_split)
+  val _ = collision ("case:bool",base ++ split_ss,active_split)
+
+  val a = ``matrix_suffix_a:bool``
+  val b = ``matrix_suffix_b:bool``
+  val ghost = "matrix_nonancestor"
+  val suffix_set = base ++ rewrites_with_names
+    [({Thy=ghost,Name="suffix.1"},ASSUME (mk_eq (a,T))),
+     ({Thy=ghost,Name="suffix.2"},ASSUME (mk_eq (b,T)))]
+  val _ = rejects "bare ExclX keeps strict initial parsing" "bad theory"
+    suffix_set [ExclX (ghost ^ ".suffix")]
+  val _ = List.app (fn spelling => silent ("relaxed suffix " ^ spelling)
+    (fn () => let
+      val deleted = suffix_set && [ExclX ("rule:" ^ spelling)]
+      fun result ss = unchanged ss a andalso
+        aconv (rhs (concl (SIMP_CONV ss [] b))) T
+    in
+      check ("relaxed suffix sibling preservation " ^ spelling)
+        (result deleted andalso result (remove_ssfrags [dummy] deleted))
+    end)) [ghost ^ ".suffix.1",ghost ^ "$suffix.1"]
+in () end
 
 (* ---------------------------------------------------------------------- *)
 
