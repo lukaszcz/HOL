@@ -16,6 +16,9 @@ sig
   val reserve_word : string -> unit
 
 
+  (* Read-only handler lookup, also for registry ownership checks. *)
+  val attribute_fns_of : Context.t -> string -> attrfuns option
+  val attribute_fns : string -> attrfuns option
   val is_attribute : string -> bool
   val all_attributes : unit -> string list
   val store_at_attribute : attrfun

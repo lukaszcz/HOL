@@ -7,7 +7,8 @@ splitLib.SPLIT_TAC : thm list -> tactic
 
 ------------------------------------------------------------------------
 
-Performs one case split with split rules.
+Performs one case split with split rules. No persistent split registration
+or call to `enable_split_attribute` is needed.
 
 A split rule is a theorem without hypotheses of the form
 

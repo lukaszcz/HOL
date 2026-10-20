@@ -133,6 +133,9 @@ under that directory. Final names: `markerLib.ExclX`, `destExclX`, `DExclX`,
 backed by `marker$ExcludeX`; simplifier routing belongs to TASK_07.
 TASK_09 coverage/handoff for TASK_13/TASK_14/TASK_17:
 `src/simp/compatibility/EXCLUSION_MATRIX.md` and `results/task09/`.
+TASK_10 ownership/storage and replay-ordering handoff for TASK_11:
+`src/simp/compatibility/SPLIT_REGISTRATION.md` and `results/task10/`.
+Final API: `splitLib.enable_split_attribute : unit -> unit`.
 
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`

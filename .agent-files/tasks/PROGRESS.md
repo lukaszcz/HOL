@@ -8,11 +8,11 @@
 - TASK_06: done — acceptance verified; marker/native/sanity reruns pass.
 - TASK_07: done — acceptance verified; native/paired/sanity reruns pass.
 - TASK_08: done — acceptance verified; replay/native/paired/sanity reruns pass.
-- TASK_09: done — acceptance verified; exclusion matrix/native/paired/sanity pass.
-- TASK_10: unblocked (not started).
-- TASK_11: blocked — needs 10.
+- TASK_09: done — acceptance verified; matrix/native/paired/sanity reruns pass.
+- TASK_10: done — acceptance verified; ownership/load/native/sanity pass.
+- TASK_11: unblocked (not started).
 - TASK_12: blocked — needs 11.
-- TASK_13: blocked — needs 09, 12.
+- TASK_13: blocked — needs 12.
 - TASK_14: blocked — needs 13.
 - TASK_15: blocked — needs 13.
 - TASK_16: blocked — needs 14, 15.
@@ -20,8 +20,8 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_10_explicit_split_registration.md` — explicit
-persistent split registration and load-time ownership.
+`.agent-files/tasks/TASK_11_split_persistence_and_clients.md` — explicit
+persistent split export/import ordering and theory-client migration.
 
 ## 3. Completion log
 
@@ -36,4 +36,5 @@ and evidence pointer.
 - TASK_06 — `d536a8893`; evidence: `src/simp/compatibility/EXTENDED_EXCLUSION_MARKER.md` and `src/simp/compatibility/results/task06/`.
 - TASK_07 — `7d3eaccc9`; evidence: `src/simp/compatibility/EXCLUSION_ROUTES.md` and `src/simp/compatibility/results/task07/`.
 - TASK_08 — `cd5c92412`; evidence: `src/simp/compatibility/EXCLUSION_HISTORY.md` and `src/simp/compatibility/results/task08/`.
-- TASK_09 — `[TASK_09] Complete exclusion contract coverage` (commit subject); evidence: `src/simp/compatibility/EXCLUSION_MATRIX.md` and `src/simp/compatibility/results/task09/`.
+- TASK_09 — `e9b6cd09d`; evidence: `src/simp/compatibility/EXCLUSION_MATRIX.md` and `src/simp/compatibility/results/task09/`.
+- TASK_10 — `[TASK_10] Make persistent split registration explicit` (commit subject); evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.

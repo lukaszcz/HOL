@@ -2716,7 +2716,15 @@ val _ = let
       ("simp_split_selftest_asm_rule",
        mk_asm_split (TypeBase.case_pred_disj_of ``:bool``))
 
-  val _ = tprint "split settype and attribute are registered"
+  val _ = tprint "split settype and attribute start unclaimed"
+  val _ =
+    if not (List.exists (equal "split") (ThmSetData.all_set_types ())) andalso
+       not (ThmAttribute.is_attribute "split") andalso null (split_thms ())
+    then OK ()
+    else die "ordinary loading claimed split registration"
+
+  val _ = enable_split_attribute ()
+  val _ = tprint "explicit split settype and attribute are registered"
   val _ =
     if List.exists (equal "split") (ThmSetData.all_set_types ()) andalso
        ThmAttribute.is_attribute "split"
@@ -2887,6 +2895,7 @@ val _ = let
       (* Install persistent rules using the registered set's delta API.
          TypeBase splitting is excluded separately so these controls cannot
          pass merely because a different splitter produced the result. *)
+      val _ = enable_split_attribute ()
       val efns = valOf (ThmSetData.data_exportfns {settype="split"})
       val _ = #add efns
         {thy=thy,named_thm=({Thy=thy,Name="simp_split_selftest_rule"},

@@ -3,8 +3,9 @@
 These are legacy-only tests, not extensions/opt-in tests. The same launcher
 and control bytes run on pinned develop and the implementation. No scenario
 is an xfail: every assertion expresses namespace-neutral loading, and a
-load error or warning fails the executable. Until TASK_10/TASK_12 repair
-registration, the implementation has four explicit red targets.
+load error or warning fails the executable. TASK_10 repairs registration;
+all five targets now pass and run in normal selftest coverage. Retained
+TASK_03 results still show the original four failures.
 
 ## Runnable targets
 
@@ -13,14 +14,14 @@ From `src/simp/src` (use this checkout's absolute path for `$HOLDIR`):
 ```sh
 $HOLDIR/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
   --holstate=$HOLDIR/bin/hol.state0 fresh-load-control
-# All five, continuing after failures; currently exits 1:
+# All five, continuing after failures; now exits 0:
 $HOLDIR/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
   --holstate=$HOLDIR/bin/hol.state0 fresh-load-regressions
 ```
 
 Individual targets: `fresh-load-{control,attribute-first,set-first,
-attribute-after,set-after}`. They are deliberately absent from `all` and
-`HOLSELFTESTLEVEL`. `fresh-load-selftest.exe` is built with the normal
+attribute-after,set-after}`. The aggregate runs under `HOLSELFTESTLEVEL`.
+`fresh-load-selftest.exe` is built with the normal
 `$(HOLMOSMLC) -o` recipe, linking **only** this directory's `selftest.uo`.
 Library prerequisites ensure dynamic recipes exist; they are not linked.
 This directory's Holmakefile selects `hol.state0` explicitly as well.
@@ -86,7 +87,7 @@ control additionally dynamically loads lane-local boolSimps and verifies
   attribute: there is no public set-only constructor/unregister operation.
   This scenario uses a **separate process** from the attribute-only test;
   it proves exporter/data preservation but cannot attribute the collision
-  solely to the set half of splitLib's disjunctive guard. No private
+  solely to a theorem-set-only ownership conflict. No private
   registry mutation or test-only registration repair is used.
 - `attribute-after` / `set-after`: each loads simpLib with no custom owner,
   records **both** registries, runs ordinary simplification, then attempts

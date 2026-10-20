@@ -1,0 +1,48 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `enable_split_attribute`
+
+``` hol4
+splitLib.enable_split_attribute : unit -> unit
+```
+
+------------------------------------------------------------------------
+
+Explicitly enables the persistent `split` attribute and theorem set.
+
+Call this before using `Theorem name[split]: ...`, or before importing
+split-bearing theories whose data must replay. Loading `splitLib` or
+`simpLib` alone claims neither namespace. Initialization does not depend
+on `simpLib`.
+
+Repeated calls preserve the library's existing registration and rules.
+Ownership and the data handle follow `Context.restore`. If either registry
+has been replaced by a foreign owner, initialization fails rather than
+replacing it. `splitLib.split_thms ()` and `named_split_thms ()` return
+empty lists before initialization or under foreign ownership, without
+registering anything or adopting foreign data.
+
+Pure split conversions/tactics, local `Split`/`add_split` rules, and
+TypeBase-driven `split_ss` do not need initialization.
+
+### Failure
+
+Fails before mutation if another owner has claimed either namespace, or
+if `split` is reserved/an abbreviation. Also rejects foreign listeners
+under its theory-data hook names, and new initialization inside a pinned
+context (an already-owned registration is still a no-op).
+Malformed rules supplied later to the attribute are rejected separately.
+
+### Comments
+
+For a fresh import, explicit initialization must execute before the
+imported theory's data replay. An exporting script's call is not itself
+serialized as import-time initialization. Arrange an explicit loader
+prelude/dependency; merely depending on `simpLib` does not opt in. See
+`src/simp/compatibility/SPLIT_REGISTRATION.md` for the replay ordering
+contract and the integration work scoped to TASK_11.
+
+### See also
+
+[`simpLib.split_ss`](#simpLib.split_ss),
+[`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
+[`simpLib.Split`](#simpLib.Split).

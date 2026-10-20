@@ -306,8 +306,60 @@ fun reader (rd as {strings,terms}) s = (* necessary eta-expansion! *)
   end
 
 structure LTD = LoadableThyData
+
+(* Listener registrations are process-global, but each theory-data instance
+   (including its UniversalType witness) belongs to a Context.  A permanent
+   per-name dispatcher must select that context's hook, not retain the first
+   instance's closure after a rewind/reinitialization. *)
+val hooks_slot : (TheoryDelta.t -> unit) Symtab.table Context.Data.slot =
+    Context.Data.new
+      {name="ThyDataSexp.hooks", empty=Symtab.empty,
+       pp=fn _ => "<ThyDataSexp.hooks>"}
+val dispatchers = Sref.new
+    (Symtab.empty : (TheoryDelta.t -> unit) Symtab.table)
+fun data_dispatcher name =
+    let
+      fun dispatch td =
+          case Symtab.lookup
+                 (Context.Data.get hooks_slot (Context.snapshot ())) name of
+              NONE => ()
+            | SOME f => f td
+      val dispatcher =
+          case Symtab.lookup (Sref.value dispatchers) name of
+              SOME f => f
+            | NONE => dispatch
+      val listener_name = "ThmSetData.onload." ^ name
+      val _ =
+          case List.find (fn (n,_) => n = listener_name)
+                         (Listener.listeners Theory.delta_hook) of
+              NONE => ()
+            | SOME (_,f) =>
+                if Portable.pointer_eq (f,dispatcher) then ()
+                else raise ERR "check_registration"
+                           ("Foreign listener: " ^ listener_name)
+    in
+      dispatcher
+    end
+
+fun check_registration names = List.app (ignore o data_dispatcher) names
+
+fun register_data_hook (name,hook) =
+    let
+      val dispatcher = data_dispatcher name
+      val listener_name = "ThmSetData.onload." ^ name
+      val _ =
+          if List.exists (fn (n,_) => n = listener_name)
+                         (Listener.listeners Theory.delta_hook)
+          then ()
+          else Theory.register_hook (listener_name,dispatcher)
+    in
+      Sref.update dispatchers (Symtab.update (name,dispatcher));
+      Context.Data.modify hooks_slot (Symtab.update (name,hook))
+    end
+
 fun new {thydataty, load, other_tds, merge} =
   let
+    val _ = check_registration [thydataty]
     val (todata, fromdata) =
         LTD.new{thydataty = thydataty, pp = bare_toString,
                 merge = (fn (t1,t2) => merge {old = t1, new = t2}),
@@ -354,7 +406,7 @@ fun new {thydataty, load, other_tds, merge} =
         LTD.set_theory_data{thydataty = thydataty, data = todata t}
 
   in
-    register_hook ("ThmSetData.onload." ^ thydataty, hook);
+    register_data_hook (thydataty, hook);
     List.app onload (ancestry "-");
     {export = export, segment_data = segment_data, set = set}
   end

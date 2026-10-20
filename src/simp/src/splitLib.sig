@@ -40,7 +40,16 @@ sig
   val goal_split_rule_groups : term list -> (hol_type * thm list) list
   val goal_split_rules : term list -> thm list
 
-  (* The persistent [split] theorem set. *)
+  (* Explicitly claim the persistent [split] attribute and theorem set.
+     Idempotent only for this library's ownership in the current Context;
+     foreign ownership of either registry is rejected before mutation.
+     Call before using [split] or loading theories whose data must replay.
+     No simpLib dependency is needed for this initialization. *)
+  val enable_split_attribute : unit -> unit
+
+  (* The persistent [split] theorem set.  Before opt-in (or under foreign
+     ownership), these return [] without registering or adopting data.
+     Pure/local and TypeBase splitting never require opt-in. *)
   val split_thms : unit -> thm list
   val named_split_thms : unit -> (string * thm) list
 

@@ -18,6 +18,9 @@ representation, split/case restoration tests and strict dotted-name pins.
 [EXCLUSION_MATRIX.md](EXCLUSION_MATRIX.md) maps TASK_09's full literal /
 explicit namespace contract to native and pinned-develop tests, including
 warning-sensitive errors, suffixes and genuine current-theory changes.
+[SPLIT_REGISTRATION.md](SPLIT_REGISTRATION.md) records TASK_10's explicit
+opt-in, context/registry ownership, passing clean-load probes and replay
+ordering contract for TASK_11.
 
 ## Layout
 
@@ -89,7 +92,9 @@ python3 src/simp/compatibility/run.py --branch HEAD \
 
 `$HOLDIR` is the absolute repository root. The normal `HOLSELFTESTLEVEL`
 build also runs `traversal-contracts` and `exclusion-contracts`, alongside
-`simp-selftest.log`. The latter runs all ten prefix fixtures, including
+`simp-selftest.log`. TASK_10 also enables `fresh-load-regressions` and
+`split-registration` in normal selftests. The exclusion target runs all ten
+prefix fixtures, including
 silent unmatched names, real conversion/callback preconditions, named
 rewrites and dprocs, overlapping names, deletion and direct `-*`
 comparisons/replay, plus the legacy-only history and parser fixtures. The

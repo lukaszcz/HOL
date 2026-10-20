@@ -1,0 +1,79 @@
+{
+  "landing_identifier": "[TASK_10] Make persistent split registration explicit",
+  "entry_head": "e9b6cd09d",
+  "tested_source_snapshot": "d26c40bfd55dde9140e43bde89427ec30bcf2335",
+  "source_snapshot_kind": "git commit-tree; branch not moved; landed compiled sources byte-identical",
+  "source_sha256": {
+    "src/1/ThmAttribute.sig": "bcb5ed9ccadab4ded1830a318f63bb674a31c80bac23194571ee479ddb80c69b",
+    "src/1/ThmAttribute.sml": "f3e73a24b02284a185bd87cac5280083989e7d3b3ef4549356f5465fe53cb20d",
+    "src/1/ThmSetData.sig": "1cf7b43ac258f3677cd99f4004e78db21c746a7d3e09458d771bb10bf2e1b502",
+    "src/1/ThmSetData.sml": "ce2a012ed22325f76ee0c66e17fe7e71b16746b54d23a29110ca8791fbf18bd2",
+    "src/postkernel/ThyDataSexp.sig": "3f50be80f1b3eb5568f97be76c608be4ea6e4dc3d6380a04c21f288d0d6033e4",
+    "src/postkernel/ThyDataSexp.sml": "981ade944a781e728a2cf640250267f67c863b50125aed3ca489d0ac1da39131",
+    "src/simp/src/splitLib.sig": "a202943262653dc4eec4ef696449ad714e0f8c3eb11af6d974cf9b2890c5ab5b",
+    "src/simp/src/splitLib.sml": "ff983e9ab6f2d33d9efea53b46f70653f3b412be2e06396ff7e4d639a04c9c07",
+    "src/simp/src/Holmakefile": "1b2d4578a1221bab32256d581e85da77c09e9c956b96fc8223faa0f8380e679a",
+    "src/simp/src/selftest.sml": "1ef6eb9864ccb1f4cc5b2900fe7a1a36d6283530797e2c03d040f31bd6bd7be8",
+    "src/simp/compatibility/probes/split-registration/Holmakefile": "cb93c6a38142b23a84befea83d9a14443bb85cfe6d3db89f95d77624260ec523",
+    "src/simp/compatibility/probes/split-registration/selftest.sml": "50efcc3f569a29a9c4f1e7e86b6cd002ac8bde01a59e7d809fa62b326cdfa0c0"
+  },
+  "checks": [
+    {
+      "argv": "bin/build -t --seq=tools/sequences/upto-parallel",
+      "exit": 0,
+      "evidence": "sanity.log.gz",
+      "result": "Hol built successfully."
+    },
+    {
+      "argv": "HOLSELFTESTLEVEL=1 bin/Holmake --no-project --no-cache --no_prereqs -j1 --holstate=\"$PWD/bin/hol.state0\" -C src/simp/src split-registration fresh-load-regressions traversal-contracts exclusion-contracts",
+      "exit": 0,
+      "evidence": "focused.log.gz"
+    },
+    {
+      "argv": "(cd src/simp/src && ./selftest.exe)",
+      "exit": 0,
+      "evidence": "simp-selftest.log.gz"
+    },
+    {
+      "argv": "python3 src/simp/compatibility/fresh_load.py --branch d26c40bfd55dde9140e43bde89427ec30bcf2335 --output src/simp/compatibility/results/task10/fresh-load-final",
+      "exit": 0,
+      "evidence": "fresh-load-final/manifest.json",
+      "result": "10/10 scenarios pass with clean preconditions; library/launcher builds pass"
+    },
+    {
+      "argv": "python3 src/simp/compatibility/run.py --branch d26c40bfd55dde9140e43bde89427ec30bcf2335 --output src/simp/compatibility/results/task10/differential-final",
+      "exit": 0,
+      "evidence": "differential-final/manifest.json",
+      "result": "32/32 builds/runs pass; 15 instrumented traces equal; both unchanged develop suites pass"
+    },
+    {
+      "argv": "tools/h4pedant/h4pedant src/1 src/postkernel src/simp/src src/simp/compatibility/probes",
+      "exit": 0,
+      "evidence": "pedant.log.gz"
+    },
+    {
+      "argv": "(cd src/simp/compatibility && sha256sum -c inputs/SHA256SUMS)",
+      "exit": 0,
+      "evidence": "input-integrity.log.gz"
+    },
+    {
+      "argv": "git diff --check && git diff --cached --check",
+      "exit": 0
+    }
+  ],
+  "native_OK_counts": {
+    "registration.log": 89,
+    "simp-selftest.log": 630,
+    "traversal-contracts.log": 47,
+    "exclusion-contracts.log": 929
+  },
+  "provenance": "Mixed-source paired harness; host kernel/heap/generated theories and registry implementation shared, not independently built develop.",
+  "scope": "TASK_10 complete; full theory export/import/client integration is TASK_11, not claimed here.",
+  "trial_notes": [
+    "Initial fixture compilation mistakes corrected.",
+    "Re-opt-in after Context rewind exposed duplicate process listener defect, repaired with Context-dispatched handlers.",
+    "One routine attempt timed out at 240s; subsequent complete attempts passed.",
+    "Initial h4pedant file-argument command exited 1; corrected directory invocation passes."
+  ],
+  "log_format": "All .log files losslessly gzip-compressed with mtime=0; manifest log filenames refer to originals (append .gz)."
+}

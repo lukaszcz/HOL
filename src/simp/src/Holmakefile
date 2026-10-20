@@ -1,6 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
-  traversal-contracts.log exclusion-contracts.log
+  traversal-contracts.log exclusion-contracts.log split-registration.log
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
@@ -8,7 +8,7 @@ all: $(DEFAULT_TARGETS) selftest.exe
 selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo splitLib.uo simpLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
-# Explicit pre-repair red targets. Do NOT add to all/HOLSELFTESTLEVEL yet.
+# Clean-heap namespace regressions. Only the launcher is linked.
 # Only the launcher is linked; library prerequisites are not imports.
 FRESH_LOAD = ../compatibility/probes/fresh-load
 FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after
@@ -50,8 +50,17 @@ exclusion-contracts: selftest.exe
 	$(tee cd $(CONTRACTS) && ./exclusion-contracts.exe,\
 exclusion-contracts.log)
 
+SPLIT_REGISTRATION = ../compatibility/probes/split-registration
+.PHONY: split-registration
+split-registration: selftest.exe
+	$(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C $(SPLIT_REGISTRATION) selftest.exe
+	$(tee cd $(SPLIT_REGISTRATION) && ./selftest.exe,\
+split-registration.log)
+
 ifdef HOLSELFTESTLEVEL
-all: simp-selftest.log traversal-contracts exclusion-contracts
+all: simp-selftest.log traversal-contracts exclusion-contracts \
+  fresh-load-regressions split-registration
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)

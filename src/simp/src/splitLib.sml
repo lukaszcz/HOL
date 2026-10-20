@@ -119,23 +119,80 @@ fun apply_split_delta delta db =
         end
     | ThmSetData.REMOVE key => Symtab.delete_safe key db
 
-val _ =
-  if List.exists (equal "split") (ThmSetData.all_set_types ()) orelse
-     ThmAttribute.is_attribute "split"
-  then raise ERR "registration" "settype or attribute split already exists"
-  else ()
+(* The handle and both registries travel together through Context.restore.
+   Merely having a handle is insufficient: clients may replace either
+   registry entry in the same context.  Retain the exact handler records
+   installed by the exporter, and never read a foreign owner's data. *)
+type split_registration =
+  {attribute : ThmAttribute.attrfuns,
+   exporter : ThmSetData.exportfns,
+   get : Context.t -> thm Symtab.table}
+val registration_slot : split_registration option Context.Data.slot =
+  Context.Data.new
+    {name="splitLib.registration", empty=NONE,
+     pp=fn _ => "<splitLib.registration>"}
 
-val split_data =
-  ThmSetData.export_with_ancestry
-    {settype="split",
-     delta_ops=
-       {apply_to_global=apply_split_delta,
-        thy_finaliser=NONE,
-        uptodate_delta=K true,
-        initial_value=Symtab.empty,
-        apply_delta=apply_split_delta}}
+fun owns_registration ctxt {attribute,exporter,get} =
+  (case ThmAttribute.attribute_fns_of ctxt "split" of
+       SOME current => Portable.pointer_eq (attribute,current)
+     | NONE => false) andalso
+  (case ThmSetData.data_exportfns_of ctxt {settype="split"} of
+       SOME current => Portable.pointer_eq (exporter,current)
+     | NONE => false)
 
-fun named_split_thms () = Symtab.dest (#get_global_value split_data ())
+fun enable_split_attribute () =
+  let
+    val ctxt = Context.snapshot ()
+    val owned =
+      case Context.Data.get registration_slot ctxt of
+          SOME registration => owns_registration ctxt registration
+        | NONE => false
+    fun conflict () =
+      raise ERR "enable_split_attribute"
+        "settype or attribute split already exists"
+  in
+    if owned then ()
+    else if Context.is_pinned () then
+      raise ERR "enable_split_attribute" "cannot initialize in a pinned context"
+    else if Option.isSome
+              (ThmAttribute.attribute_fns_of ctxt "split") orelse
+            Option.isSome
+              (ThmSetData.data_exportfns_of ctxt {settype="split"})
+    then conflict ()
+    else if List.exists (fn {abbrev,...} => abbrev = "split")
+              (ThmAttribute.current_abbreviations ()) orelse
+            not (null (#reserved
+              (ThmAttribute.extract_attributes "rule[split]")))
+    then conflict ()
+    else
+      let
+        val _ = ThyDataSexp.check_registration ["split.deltas","split.parents"]
+        val data = ThmSetData.export_with_ancestry
+          {settype="split",
+           delta_ops=
+             {apply_to_global=apply_split_delta,
+              thy_finaliser=NONE,
+              uptodate_delta=K true,
+              initial_value=Symtab.empty,
+              apply_delta=apply_split_delta}}
+        val registration =
+          {attribute=valOf (ThmAttribute.attribute_fns "split"),
+           exporter=valOf (ThmSetData.data_exportfns {settype="split"}),
+           get= #get_global_value_of data}
+      in
+        Context.Data.write registration_slot (SOME registration)
+      end
+  end
+
+fun named_split_thms () =
+  let val ctxt = Context.snapshot ()
+  in
+    case Context.Data.get registration_slot ctxt of
+        SOME (registration as {get,...}) =>
+          if owns_registration ctxt registration then Symtab.dest (get ctxt)
+          else []
+      | NONE => []
+  end
 fun split_thms () = map #2 (named_split_thms ())
 
 (* Turn a conclusion split rule [!P. P (c ...) = ...] into the rule for a

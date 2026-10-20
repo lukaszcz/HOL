@@ -12,9 +12,15 @@ Splits datatype case expressions and `split` rules during simplification.
 `split_ss` is the fragment `"split"`. Its looper `"splitter"` applies
 `splitLib.SPLIT_TAC` with the theorems of the current theory and its
 ancestors that carry the `split` attribute (`Theorem name[split]: ...`,
-which rejects malformed rules) and the split rules of every datatype
+which rejects malformed rules), after explicit
+`splitLib.enable_split_attribute ()`, and the split rules of every datatype
 whose case constant occurs fully applied in the goal. The fragment also
 rewrites `(b ==> t) /\ (~b ==> t)` to `t`.
+
+Loading this fragment does not register the attribute or theorem set.
+Without explicit initialization it uses only TypeBase rules; local `Split`
+rules also work without initialization. Initialization must precede data
+replay when importing persistent split rules.
 
 `ExclX "split:thy$name"` disables the attribute rule `thy$name` for one
 call, and `ExclX "case:ty"` the rules of datatype `ty`; see
@@ -36,6 +42,7 @@ Never fails.
 
 ### See also
 
+[`splitLib.enable_split_attribute`](#splitLib.enable_split_attribute),
 [`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
 [`simpLib.add_split`](#simpLib.add_split),
 [`simpLib.del_split`](#simpLib.del_split),
