@@ -21,6 +21,9 @@ warning-sensitive errors, suffixes and genuine current-theory changes.
 [SPLIT_REGISTRATION.md](SPLIT_REGISTRATION.md) records TASK_10's explicit
 opt-in, context/registry ownership, passing clean-load probes and replay
 ordering contract for TASK_11.
+[SPLIT_PERSISTENCE.md](SPLIT_PERSISTENCE.md) records TASK_11's opt-in module,
+exported dependency ordering, persistent removals and fresh parent/child/
+descendant fixtures.
 
 ## Layout
 
@@ -52,6 +55,9 @@ ordering contract for TASK_11.
   control. Run with `fresh_load.py`, not the ordinary `run.py`: ordinary
   suite imports preload `simpLib`. See its README for isolated scenarios,
   preloading checks and native Holmake targets.
+- `probes/split-persistence/`: real exported theory chain and separately
+  linked fresh-process importer. `split-persistence` runs six import/owner
+  scenarios under normal Holmake selftests; see SPLIT_PERSISTENCE.md.
 - `results/taskNN/`: named result records for subsequent tasks. Keep
   commands, exact revisions, input hashes, exit codes, and compact logs.
   Do not replace historical evidence with a later run under the same name.
@@ -93,7 +99,8 @@ python3 src/simp/compatibility/run.py --branch HEAD \
 `$HOLDIR` is the absolute repository root. The normal `HOLSELFTESTLEVEL`
 build also runs `traversal-contracts` and `exclusion-contracts`, alongside
 `simp-selftest.log`. TASK_10 also enables `fresh-load-regressions` and
-`split-registration` in normal selftests. The exclusion target runs all ten
+`split-registration` in normal selftests. TASK_11 adds `split-persistence`.
+The exclusion target runs all ten
 prefix fixtures, including
 silent unmatched names, real conversion/callback preconditions, named
 rewrites and dprocs, overlapping names, deletion and direct `-*`

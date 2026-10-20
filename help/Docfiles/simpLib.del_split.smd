@@ -14,6 +14,9 @@ Removes split rules from a simpset.
 `split ` or `split_asm `, only that looper is removed. Rules with the
 `split` attribute are unaffected; disable them for one call with
 `ExclX ("split:" ^ name)`; see [`simpLib.ExclX`](#simpLib.ExclX).
+To retract an attribute rule persistently for descendant replay, use
+`splitLib.exclude_split "Thy.Name"` after explicit registration.
+Local `del_split` never needs persistent registration.
 
 ### Failure
 
@@ -31,5 +34,6 @@ Never fails. Returns `ss` if no such looper exists.
 
 ### See also
 
+[`splitLib.exclude_split`](#splitLib.exclude_split),
 [`simpLib.add_split`](#simpLib.add_split),
 [`simpLib.split_ss`](#simpLib.split_ss).

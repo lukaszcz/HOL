@@ -58,6 +58,14 @@ pureSimps.sml: A simpset that transforms rewrites according to
                mk_cond_rewr from Cond_rewr.sml, but wrapping each in
                the BOUNDED/UNBOUNDED tag.
 
+splitLib.sml:  Pure/local datatype splitting and explicit persistent-rule
+               registration. Queries alone claim no attribute namespace.
+
+splitPersistLib.sml:
+               Explicit opt-in module for split-bearing theory scripts.
+               Record it with Theory.add_ML_dependency in exports so fresh
+               imports initialize before theory-data replay.
+
 selftest.sml:  Regression tests
 
 simpLib.sml:   Puts it all together. The simpset data structure is

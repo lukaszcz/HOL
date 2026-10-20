@@ -1,6 +1,7 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
-  traversal-contracts.log exclusion-contracts.log split-registration.log
+  traversal-contracts.log exclusion-contracts.log split-registration.log \
+  split-persistence.log
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
@@ -58,9 +59,15 @@ split-registration: selftest.exe
 	$(tee cd $(SPLIT_REGISTRATION) && ./selftest.exe,\
 split-registration.log)
 
+SPLIT_PERSISTENCE = ../compatibility/probes/split-persistence
+.PHONY: split-persistence
+split-persistence: selftest.exe splitPersistLib.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C $(SPLIT_PERSISTENCE) check,split-persistence.log)
+
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts \
-  fresh-load-regressions split-registration
+  fresh-load-regressions split-registration split-persistence
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)

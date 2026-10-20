@@ -126,13 +126,15 @@ fun apply_split_delta delta db =
 type split_registration =
   {attribute : ThmAttribute.attrfuns,
    exporter : ThmSetData.exportfns,
-   get : Context.t -> thm Symtab.table}
+   get : Context.t -> thm Symtab.table,
+   exclude : string -> unit}
 val registration_slot : split_registration option Context.Data.slot =
   Context.Data.new
     {name="splitLib.registration", empty=NONE,
      pp=fn _ => "<splitLib.registration>"}
 
-fun owns_registration ctxt {attribute,exporter,get} =
+fun owns_registration ctxt
+      ({attribute,exporter,...} : split_registration) =
   (case ThmAttribute.attribute_fns_of ctxt "split" of
        SOME current => Portable.pointer_eq (attribute,current)
      | NONE => false) andalso
@@ -178,10 +180,32 @@ fun enable_split_attribute () =
         val registration =
           {attribute=valOf (ThmAttribute.attribute_fns "split"),
            exporter=valOf (ThmSetData.data_exportfns {settype="split"}),
-           get= #get_global_value_of data}
+           get= #get_global_value_of data,
+           exclude=fn key =>
+             (#update_global_value data (apply_split_delta
+                (ThmSetData.REMOVE key));
+              #record_delta data (ThmSetData.REMOVE key))}
       in
         Context.Data.write registration_slot (SOME registration)
       end
+  end
+
+(* Resolve names in the writing theory, never in a replaying descendant.
+   Unlike del_split, this records a persistent REMOVE, not a local filter.
+   Do not implicitly initialize or write into a foreign owner's set. *)
+fun exclude_split name =
+  let val ctxt = Context.snapshot ()
+  in
+    if Context.is_pinned () then
+      raise ERR "exclude_split" "cannot retract in a pinned context"
+    else case Context.Data.get registration_slot ctxt of
+        SOME (registration as {exclude,...}) =>
+          if owns_registration ctxt registration then
+            exclude (persistent_name (ThmSetData.toKName name))
+          else raise ERR "exclude_split"
+                 "persistent split registration not owned"
+      | NONE => raise ERR "exclude_split"
+                  "persistent split registration not enabled"
   end
 
 fun named_split_thms () =

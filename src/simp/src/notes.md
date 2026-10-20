@@ -1,5 +1,35 @@
 # Note on the Simplifier Code
 
+## Persistent split rules (explicit opt-in)
+
+Ordinary `simpLib` and `splitLib` loading and split-rule queries claim no
+`split` attribute or theorem-set namespace. Local `Split`/`add_split` and
+TypeBase-driven `split_ss` work without opt-in; persistent queries return
+`[]` until library-owned registration is enabled.
+
+A split-bearing script explicitly includes `splitPersistLib` in `Libs`
+before its `[split]` declarations and calls
+`Theory.add_ML_dependency "splitPersistLib"`. The former enables the script;
+the latter initializes fresh imports before decoding and ancestry replay.
+Record this dependency on the earliest split-bearing theory: a child's
+ML dependencies cannot initialize its already-loading parents.
+An explicit loader prelude calling `splitLib.enable_split_attribute ()`
+before loading the whole graph is also supported.
+
+`splitLib.exclude_split "Thy.Name"` persistently retracts an ancestor's named
+rule; an unqualified name resolves in the writing theory. Exported REMOVE
+keys are already resolved and cannot delete a descendant's same-named rule.
+This differs from local `del_split` or `ExclX` exclusions. The theorem stays
+in DB. Both the attribute and exporter must remain library-owned; explicit
+initialization/removal rejects foreign ownership instead of replacing it.
+
+Ownership/data follow `Context.restore`, but the ML loader is process-global.
+After rewind to before opt-in, explicitly call the initialization API again;
+merely loading an already-loaded module may not execute its body. Arrange
+registration as serialized theory initialization, not during concurrent
+proofs. Arbitrary late/current-segment replay is not the supported contract.
+See `../compatibility/SPLIT_PERSISTENCE.md` for runnable fresh-process tests.
+
 ## Important Types
 
 **simpset**

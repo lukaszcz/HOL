@@ -136,6 +136,10 @@ TASK_09 coverage/handoff for TASK_13/TASK_14/TASK_17:
 TASK_10 ownership/storage and replay-ordering handoff for TASK_11:
 `src/simp/compatibility/SPLIT_REGISTRATION.md` and `results/task10/`.
 Final API: `splitLib.enable_split_attribute : unit -> unit`.
+TASK_11 persistence/client handoff for TASK_12:
+`src/simp/compatibility/SPLIT_PERSISTENCE.md` and `results/task11/`.
+Explicit exported opt-in module: `splitPersistLib`; persistent named
+retraction: `splitLib.exclude_split : string -> unit`.
 
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`

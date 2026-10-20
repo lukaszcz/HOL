@@ -36,13 +36,35 @@ Malformed rules supplied later to the attribute are rejected separately.
 
 For a fresh import, explicit initialization must execute before the
 imported theory's data replay. An exporting script's call is not itself
-serialized as import-time initialization. Arrange an explicit loader
-prelude/dependency; merely depending on `simpLib` does not opt in. See
-`src/simp/compatibility/SPLIT_REGISTRATION.md` for the replay ordering
-contract and the integration work scoped to TASK_11.
+serialized as import-time initialization. Use the explicit opt-in module `splitPersistLib` in the earliest
+split-bearing script (before any `[split]` declaration):
+
+``` hol4
+Theory mySplits[bare]
+Libs
+  HolKernel Parse boolLib splitLib splitPersistLib
+
+val _ = Theory.add_ML_dependency "splitPersistLib"
+```
+
+`Libs` enables registration for the script; `add_ML_dependency` makes the
+exported theory load the module before its data is decoded and replayed.
+Put the dependency on the earliest split-bearing theory, not only a child:
+parents load before a child's own ML dependencies. Descendant imports then
+inherit additions and `splitLib.exclude_split` removals in fresh processes.
+There is no implicit opt-in from ordinary `simpLib`/`splitLib` or queries.
+
+Alternatively an explicit loader prelude may call this function before
+loading the entire split-bearing theory graph. After `Context.restore`
+to before registration, call this function again: the process-global ML
+loader may already consider `splitPersistLib` loaded and not rerun its body.
+Registration is serialized theory initialization, not a concurrent proof
+operation. Arbitrary late/current-segment replay is not the supported
+ordering contract.
 
 ### See also
 
+[`splitLib.exclude_split`](#splitLib.exclude_split),
 [`simpLib.split_ss`](#simpLib.split_ss),
 [`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
 [`simpLib.Split`](#simpLib.Split).

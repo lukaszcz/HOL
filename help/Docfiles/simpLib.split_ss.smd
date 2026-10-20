@@ -20,7 +20,11 @@ rewrites `(b ==> t) /\ (~b ==> t)` to `t`.
 Loading this fragment does not register the attribute or theorem set.
 Without explicit initialization it uses only TypeBase rules; local `Split`
 rules also work without initialization. Initialization must precede data
-replay when importing persistent split rules.
+replay when importing persistent split rules. Exporting theories explicitly
+load `splitPersistLib` and record it with `Theory.add_ML_dependency` on the
+earliest split-bearing theory; see `splitLib.enable_split_attribute` for
+the script/import ordering recipe. Ancestor additions and persistent
+`splitLib.exclude_split` removals are then replayed on fresh imports.
 
 `ExclX "split:thy$name"` disables the attribute rule `thy$name` for one
 call, and `ExclX "case:ty"` the rules of datatype `ty`; see
@@ -43,6 +47,7 @@ Never fails.
 ### See also
 
 [`splitLib.enable_split_attribute`](#splitLib.enable_split_attribute),
+[`splitLib.exclude_split`](#splitLib.exclude_split),
 [`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
 [`simpLib.add_split`](#simpLib.add_split),
 [`simpLib.del_split`](#simpLib.del_split),

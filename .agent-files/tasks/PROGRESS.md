@@ -9,9 +9,9 @@
 - TASK_07: done — acceptance verified; native/paired/sanity reruns pass.
 - TASK_08: done — acceptance verified; replay/native/paired/sanity reruns pass.
 - TASK_09: done — acceptance verified; matrix/native/paired/sanity reruns pass.
-- TASK_10: done — acceptance verified; ownership/load/native/sanity pass.
-- TASK_11: unblocked (not started).
-- TASK_12: blocked — needs 11.
+- TASK_10: done — acceptance verified; ownership/load/native/sanity reruns pass.
+- TASK_11: done — acceptance verified; fresh replay/native/sanity pass.
+- TASK_12: unblocked (not started).
 - TASK_13: blocked — needs 12.
 - TASK_14: blocked — needs 13.
 - TASK_15: blocked — needs 13.
@@ -20,8 +20,8 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_11_split_persistence_and_clients.md` — explicit
-persistent split export/import ordering and theory-client migration.
+`.agent-files/tasks/TASK_12_split_lifecycle_and_load_audit.md` — full split
+lifecycle/heap reload coverage and registration/load audit.
 
 ## 3. Completion log
 
@@ -37,4 +37,5 @@ and evidence pointer.
 - TASK_07 — `7d3eaccc9`; evidence: `src/simp/compatibility/EXCLUSION_ROUTES.md` and `src/simp/compatibility/results/task07/`.
 - TASK_08 — `cd5c92412`; evidence: `src/simp/compatibility/EXCLUSION_HISTORY.md` and `src/simp/compatibility/results/task08/`.
 - TASK_09 — `e9b6cd09d`; evidence: `src/simp/compatibility/EXCLUSION_MATRIX.md` and `src/simp/compatibility/results/task09/`.
-- TASK_10 — `[TASK_10] Make persistent split registration explicit` (commit subject); evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.
+- TASK_10 — `613d7d8e1`; evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.
+- TASK_11 — `[TASK_11] Integrate explicit split persistence` (commit subject); evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.

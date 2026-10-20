@@ -37,7 +37,21 @@ fun conflict () =
          | NONE => false)
   end
 
+fun rejected_exclusion label =
+  let
+    val ctxt = Context.snapshot ()
+    val result = (exclude_split "rule"; NONE) handle HOL_ERR e => SOME e
+  in
+    check label
+      (Portable.pointer_eq (ctxt,Context.snapshot ()) andalso
+       (case result of
+            SOME e => Feedback.top_structure_of e = "splitLib" andalso
+                      Feedback.top_function_of e = "exclude_split"
+          | NONE => false))
+  end
+
 val uninitialized = Context.snapshot ()
+val _ = rejected_exclusion "persistent removal never implicitly opts in"
 val _ = check "ordinary static loading leaves split unclaimed" (free ())
 val _ = check "uninitialized queries return no rules" (empty () andalso free ())
 val rule = type_split_of ``:bool``
@@ -76,6 +90,24 @@ val _ = check "stored attribute adds named rule and persistent ADD"
         [ThmSetData.ADD (n,th)] => n = name andalso same th stored
       | _ => false))
 val owned = Context.snapshot ()
+val _ = exclude_split "rule"
+val _ = check "persistent removal resolves unqualified names at write time"
+  (empty () andalso
+   (case ThmSetData.current_data {settype="split"} of
+        [ThmSetData.ADD _, ThmSetData.REMOVE key] => key = thy ^ "$rule"
+      | _ => false))
+val _ = Context.restore owned
+val _ = check "restore recovers pre-removal data and private removal handle"
+  (has_rule () andalso
+   length (ThmSetData.current_data {settype="split"}) = 1)
+val _ = exclude_split (thy ^ ".rule")
+val _ = check "persistent removal accepts qualified names" (empty ())
+val _ = Context.restore owned
+val malformed_result =
+  (exclude_split "too.many.parts"; NONE) handle HOL_ERR e => SOME e
+val _ = check "malformed persistent removal leaves entire Context unchanged"
+  (Option.isSome malformed_result andalso
+   Portable.pointer_eq (owned,Context.snapshot ()))
 val _ = silent enable_split_attribute
 val _ = check "idempotent opt-in leaves the entire Context unchanged"
   (Portable.pointer_eq (owned,Context.snapshot ()))
@@ -123,6 +155,7 @@ fun foreign_attr _ = calls := !calls + 1
 val foreign_handlers = {localf=foreign_attr,storedf=foreign_attr}
 val _ = ThmAttribute.register_attribute ("split",foreign_handlers)
 val foreign_attribute = Context.snapshot ()
+val _ = rejected_exclusion "persistent removal rejects foreign attribute"
 val _ = silent conflict
 val _ = check "attribute conflict does not partially create a set"
   (empty () andalso
@@ -178,6 +211,7 @@ val _ = save_thm ("foreign",TRUTH)
 val _ = ThmSetData.new_exporter {settype="split",efns=foreign_efns}
 val _ = ThmAttribute.register_attribute ("split",attribute)
 val _ = check "set replacement alone invalidates existing handle" (empty ())
+val _ = rejected_exclusion "persistent removal rejects foreign exporter"
 val _ = silent conflict
 val _ = check "set-only conflict leaves original attribute untouched"
   (Portable.pointer_eq
@@ -257,9 +291,11 @@ val _ = check "cyclic abbreviation rejected without expansion"
 val _ = Context.restore uninitialized
 val _ = Context.with_context owned (fn () =>
   (check "pinned queries select owned snapshot" (has_rule ());
-   silent enable_split_attribute)) ()
-val _ = check "idempotent pinned opt-in does not mutate live context"
-  (free () andalso empty ())
+   silent enable_split_attribute;
+   rejected_exclusion "pinned removal rejects without changing pinned view")) ()
+val _ = check "pinned opt-in/removal do not mutate entire live context"
+  (Portable.pointer_eq (uninitialized,Context.snapshot ()) andalso
+   free () andalso empty ())
 val _ = Context.restore owned
 val _ = Context.with_context uninitialized (fn () =>
   let

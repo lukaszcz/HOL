@@ -44,8 +44,16 @@ sig
      Idempotent only for this library's ownership in the current Context;
      foreign ownership of either registry is rejected before mutation.
      Call before using [split] or loading theories whose data must replay.
+     Exported theories explicitly load splitPersistLib and record it with
+     Theory.add_ML_dependency on the earliest split-bearing theory.
      No simpLib dependency is needed for this initialization. *)
   val enable_split_attribute : unit -> unit
+
+  (* Persistently retract [Thy.]Name, resolving an unqualified name in the
+     current theory. Requires owned registration; never implicitly opts in.
+     Unlike simpLib.del_split this writes a REMOVE for descendant replay.
+     Retracting an absent name is harmless. Does not delete the theorem. *)
+  val exclude_split : string -> unit
 
   (* The persistent [split] theorem set.  Before opt-in (or under foreign
      ownership), these return [] without registering or adopting data.
