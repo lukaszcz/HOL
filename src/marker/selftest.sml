@@ -10,6 +10,19 @@ val _ =
      (check_result (fn t => is_var t andalso #1 (dest_var t) = "Split"))
      term_to_string I “Split”)
 
+val _ =
+  (tprint "ExcludeX parses as a variable without extension opt-in";
+   require_msg
+     (check_result (fn t => is_var t andalso #1 (dest_var t) = "ExcludeX"))
+     term_to_string I “ExcludeX”)
+
+val _ =
+  (tprint "qualified ExcludeX remains available";
+   require_msg
+     (check_result (same_const
+       (prim_mk_const {Thy="marker", Name="ExcludeX"})))
+     term_to_string I “marker$ExcludeX”)
+
 (* Every directive constructor must be recognised with the identity and
    payload its consumer needs, and nothing else may be. *)
 val _ =

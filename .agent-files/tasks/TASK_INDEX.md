@@ -140,6 +140,11 @@ TASK_11 persistence/client handoff for TASK_12:
 `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `results/task11/`.
 Explicit exported opt-in module: `splitPersistLib`; persistent named
 retraction: `splitLib.exclude_split : string -> unit`.
+TASK_12 lifecycle/audit handoff for TASK_13/TASK_17:
+`src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `results/task12/`.
+All bounded fresh-load, Context, theory replay and actual saved-heap scenarios
+pass. Ordinary load preserves foreign `Split`/`ExcludeX` syntax; use qualified
+`marker$ExcludeX` or the ML API, not a new ambient unqualified mapping.
 
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`

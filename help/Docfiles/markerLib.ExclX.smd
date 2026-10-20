@@ -13,6 +13,9 @@ Constructs and recognizes the distinct extended-exclusion marker.
 `marker$ExcludeX v`, where `v` is a variable whose name is exactly the ML
 string `name`. Like `Excl` and `ExclSF`, it stores names as variables, not
 HOL string literals. No parsing, prefix encoding or target lookup occurs.
+The theory constant is available as `marker$ExcludeX`; it introduces no
+unqualified `ExcludeX` parser mapping, so unrelated variables and overloads
+retain their meanings.
 
 `destExclX th` returns `SOME name` for this conclusion and `NONE` otherwise.
 It does not recognize legacy `Excl` or `ExclSF` markers; their recognizers

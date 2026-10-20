@@ -24,6 +24,10 @@ ordering contract for TASK_11.
 [SPLIT_PERSISTENCE.md](SPLIT_PERSISTENCE.md) records TASK_11's opt-in module,
 exported dependency ordering, persistent removals and fresh parent/child/
 descendant fixtures.
+[SPLIT_LIFECYCLE.md](SPLIT_LIFECYCLE.md) records TASK_12's complete bounded
+lifecycle matrix, separate-process heap reload and normal regression gates.
+[LOAD_AUDIT.md](LOAD_AUDIT.md) gives explicit registration/syntax ownership
+dispositions, including the repaired ambient `ExcludeX` mapping.
 
 ## Layout
 
@@ -57,7 +61,8 @@ descendant fixtures.
   preloading checks and native Holmake targets.
 - `probes/split-persistence/`: real exported theory chain and separately
   linked fresh-process importer. `split-persistence` runs six import/owner
-  scenarios under normal Holmake selftests; see SPLIT_PERSISTENCE.md.
+  scenarios plus separate heap-save/reload processes under normal Holmake
+  selftests; see SPLIT_PERSISTENCE.md and SPLIT_LIFECYCLE.md.
 - `results/taskNN/`: named result records for subsequent tasks. Keep
   commands, exact revisions, input hashes, exit codes, and compact logs.
   Do not replace historical evidence with a later run under the same name.

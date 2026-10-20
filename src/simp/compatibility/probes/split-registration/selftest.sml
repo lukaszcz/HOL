@@ -67,7 +67,28 @@ val _ = check "local Split works before initialization"
   (changed (SIMP_TAC bool_ss [Split rule]))
 val _ = check "TypeBase split_ss works before initialization"
   (changed (SIMP_TAC (bool_ss ++ split_ss) []))
-val _ = check "local and TypeBase use claim no namespace" (free () andalso empty ())
+val _ = check "extended case exclusion works before initialization"
+  (not (changed (SIMP_TAC (bool_ss ++ split_ss)
+                  [ExclX "case:bool"])));
+val local_ss = add_split rule bool_ss
+val local_exclusion = ExclX ("split:" ^ split_thm_name rule)
+val _ = check "extended named exclusion removes local Split before opt-in"
+  (not (changed (SIMP_TAC local_ss [local_exclusion])))
+val _ = check "extended named exclusion preserves TypeBase before opt-in"
+  (changed (SIMP_TAC (local_ss ++ split_ss) [local_exclusion]))
+val before_unmatched = Context.snapshot ()
+val unmatched =
+  (ignore (changed
+     (SIMP_TAC (bool_ss ++ split_ss) [ExclX "split:absent"])); NONE)
+  handle HOL_ERR e => SOME e
+val _ = check "unmatched explicit exclusion fails without registration"
+  (Portable.pointer_eq (before_unmatched,Context.snapshot ()) andalso
+   (case unmatched of SOME e =>
+      Feedback.top_function_of e = "process_tags" andalso
+      Feedback.message_of e = "ExclX did not match split:absent"
+    | NONE => false))
+val _ = check "local and TypeBase use claim no namespace"
+  (free () andalso empty ())
 
 val thy = Theory.current_theory ()
 val name = {Thy=thy,Name="rule"}

@@ -10,9 +10,9 @@
 - TASK_08: done — acceptance verified; replay/native/paired/sanity reruns pass.
 - TASK_09: done — acceptance verified; matrix/native/paired/sanity reruns pass.
 - TASK_10: done — acceptance verified; ownership/load/native/sanity reruns pass.
-- TASK_11: done — acceptance verified; fresh replay/native/sanity pass.
-- TASK_12: unblocked (not started).
-- TASK_13: blocked — needs 12.
+- TASK_11: done — acceptance verified; fresh replay/native/sanity reruns pass.
+- TASK_12: done — acceptance verified; lifecycle/heap/audit/native/sanity pass.
+- TASK_13: unblocked (not started).
 - TASK_14: blocked — needs 13.
 - TASK_15: blocked — needs 13.
 - TASK_16: blocked — needs 14, 15.
@@ -20,8 +20,8 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_12_split_lifecycle_and_load_audit.md` — full split
-lifecycle/heap reload coverage and registration/load audit.
+`.agent-files/tasks/TASK_13_documentation_and_migration_sweep.md` — complete
+API/migration documentation and repository-wide client sweep.
 
 ## 3. Completion log
 
@@ -38,4 +38,5 @@ and evidence pointer.
 - TASK_08 — `cd5c92412`; evidence: `src/simp/compatibility/EXCLUSION_HISTORY.md` and `src/simp/compatibility/results/task08/`.
 - TASK_09 — `e9b6cd09d`; evidence: `src/simp/compatibility/EXCLUSION_MATRIX.md` and `src/simp/compatibility/results/task09/`.
 - TASK_10 — `613d7d8e1`; evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.
-- TASK_11 — `[TASK_11] Integrate explicit split persistence` (commit subject); evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.
+- TASK_11 — `c8b193b98`; evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.
+- TASK_12 — `[TASK_12] Validate split lifecycle and audit loading` (commit subject); evidence: `src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `src/simp/compatibility/results/task12/`.

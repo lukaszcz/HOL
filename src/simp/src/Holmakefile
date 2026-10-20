@@ -1,7 +1,10 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   traversal-contracts.log exclusion-contracts.log split-registration.log \
-  split-persistence.log
+  split-persistence.log $(FRESH_LOAD)/selftest.exe $(FRESH_LOAD)/.hol/ \
+  $(SPLIT_REGISTRATION)/selftest.exe $(SPLIT_REGISTRATION)/.hol/ \
+  $(SPLIT_PERSISTENCE)/selftest.exe $(SPLIT_PERSISTENCE)/.hol/ \
+  $(SPLIT_PERSISTENCE)/split-lifecycle.state
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
@@ -9,10 +12,11 @@ all: $(DEFAULT_TARGETS) selftest.exe
 selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo splitLib.uo simpLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
-# Clean-heap namespace regressions. Only the launcher is linked.
-# Only the launcher is linked; library prerequisites are not imports.
+# Clean-heap namespace/syntax regressions. Only the launcher is linked;
+# library prerequisites are not imports.
 FRESH_LOAD = ../compatibility/probes/fresh-load
-FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after
+FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after \
+  syntax-first
 
 fresh-load-selftest.exe: $(FRESH_LOAD)/selftest.sml simpLib.uo boolSimps.uo
 	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
@@ -25,13 +29,16 @@ fresh-load-regressions: fresh-load-selftest.exe
 	  SIMP_COMPAT_SCENARIO=$$s \
 	  SIMP_COMPAT_PATH=$$(pwd)/simpLib \
 	  SIMP_COMPAT_CONTROL=$$(pwd)/$(FRESH_LOAD)/control.ML \
+	  SIMP_COMPAT_IDENTITY_PREFIX=$$(pwd)/$(FRESH_LOAD)/identity- \
 	  ./fresh-load-selftest.exe || status=1; done; exit $$status
 
 fresh-load-control fresh-load-attribute-first fresh-load-set-first \
-  fresh-load-attribute-after fresh-load-set-after: fresh-load-selftest.exe
+  fresh-load-attribute-after fresh-load-set-after fresh-load-syntax-first: \
+  fresh-load-selftest.exe
 	SIMP_COMPAT_SCENARIO=$(patsubst fresh-load-%,%,$@) \
 	  SIMP_COMPAT_PATH=$$(pwd)/simpLib \
 	  SIMP_COMPAT_CONTROL=$$(pwd)/$(FRESH_LOAD)/control.ML \
+	  SIMP_COMPAT_IDENTITY_PREFIX=$$(pwd)/$(FRESH_LOAD)/identity- \
 	  ./fresh-load-selftest.exe
 
 # Shared legacy-only fixtures have their own dependency scope: they must

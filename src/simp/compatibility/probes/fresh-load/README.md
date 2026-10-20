@@ -4,8 +4,9 @@ These are legacy-only tests, not extensions/opt-in tests. The same launcher
 and control bytes run on pinned develop and the implementation. No scenario
 is an xfail: every assertion expresses namespace-neutral loading, and a
 load error or warning fails the executable. TASK_10 repairs registration;
-all five targets now pass and run in normal selftest coverage. Retained
-TASK_03 results still show the original four failures.
+the original five targets now pass and run in normal selftest coverage.
+TASK_12 also runs a native `syntax-first` scenario and exact handler-record
+checks. Retained TASK_03 results still show the original four failures.
 
 ## Runnable targets
 
@@ -14,13 +15,14 @@ From `src/simp/src` (use this checkout's absolute path for `$HOLDIR`):
 ```sh
 $HOLDIR/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
   --holstate=$HOLDIR/bin/hol.state0 fresh-load-control
-# All five, continuing after failures; now exits 0:
+# All six native scenarios, continuing after failures; exits 0:
 $HOLDIR/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
   --holstate=$HOLDIR/bin/hol.state0 fresh-load-regressions
 ```
 
 Individual targets: `fresh-load-{control,attribute-first,set-first,
-attribute-after,set-after}`. The aggregate runs under `HOLSELFTESTLEVEL`.
+attribute-after,set-after,syntax-first}`. The aggregate runs under
+`HOLSELFTESTLEVEL`.
 `fresh-load-selftest.exe` is built with the normal
 `$(HOLMOSMLC) -o` recipe, linking **only** this directory's `selftest.uo`.
 Library prerequisites ensure dynamic recipes exist; they are not linked.
@@ -35,7 +37,7 @@ python3 src/simp/compatibility/fresh_load.py \
 ```
 
 Choose a nonexistent output directory. `--scenario <name>` selects one
-scenario (repeatable); default is all five. Library sources are staged
+scenario (repeatable); default is the original five. Library sources are staged
 from committed revisions, not the working tree. Each lane builds one
 clean launcher; **each scenario invokes a new OS process**, with its own
 theory and registries. Environment variables select the scenario, absolute
@@ -56,7 +58,7 @@ A fresh process is necessary but insufficient. Three checks are combined:
    load audit rejects host fallback for lane-local library modules.
 2. Before custom registration or dynamic loading, the launcher asserts
    both `Meta.loaded ()` and `PolyML.globalNameSpace.lookupStruct` lack
-   `simpLib` and `splitLib`. This checks the actual initial heap plus all
+   `simpLib`, `splitLib` and `splitPersistLib`. This checks the initial heap plus all
    transitive launcher imports, not just source dependency declarations.
 3. Both `ThmAttribute.is_attribute "split"` and
    `ThmSetData.all_set_types ()` must report unclaimed. This also rules out
@@ -97,6 +99,18 @@ control additionally dynamically loads lane-local boolSimps and verifies
 - `control`: normal dynamic load and ordinary simplification, without
   custom ownership. It records but does not assert namespace neutrality;
   this control must pass even while collision regressions remain red.
+
+- `syntax-first` (native only): installs unrelated `Split` and `ExcludeX`
+  overloads before loading simpLib, verifies those exact interpretations
+  survive, and checks qualified marker constants and unclaimed registries.
+  `syntax.ML` is used only after dynamic loading.
+
+Native Holmake targets additionally set `SIMP_COMPAT_IDENTITY_PREFIX` to
+load `identity-{before,after}.ML` around the owner-first dynamic import.
+These check pointer identity of both handler records. The new attribute
+inspection accessor is deliberately absent from the shared launcher's
+static dependency closure; pinned develop runs omit these native helpers
+and retain their original callback/data assertions.
 
 Observed operations forward every warning to the original sink, then
 restore it. Exceptions record constructor plus `Feedback.exn_to_string`

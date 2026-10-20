@@ -11,6 +11,7 @@ val scenario = env "SPLIT_PERSIST_SCENARIO"
 val _ = print ("OBS scenario=" ^ scenario ^ "\n")
 val _ = boolTheory.TRUTH
 val _ = Theory.new_theory "split_import_test"
+val initial_context = Context.snapshot ()
 val _ = check "clean registries in fresh executable"
   (not (ThmAttribute.is_attribute "split") andalso
    not (List.exists (equal "split") (ThmSetData.all_set_types ())))
@@ -18,6 +19,14 @@ val _ = List.app (fn name => check ("not preloaded: " ^ name)
   (not (loaded name)))
   ["splitLib", "simpLib", "splitPersistLib", "splitParentTheory",
    "splitChildTheory", "splitDescendantTheory"]
+
+(* A new launcher process loads the saved heap, not a second import in
+   the exporting process. The verifier runs in the restored namespace. *)
+val _ = if scenario = "heap-reload" then
+  (PolyML.SaveState.loadState (fixture "split-lifecycle.state");
+   Meta.qquse "heapVerify.ML";
+   OS.Process.exit OS.Process.success)
+  else ()
 
 val warnings = ref ([] : string list)
 val old_warning = !Feedback.WARNING_outstream
@@ -117,5 +126,6 @@ val _ = if not foreign then
                  (!calls = ["remove","add"]))
           end
 val _ = Feedback.WARNING_outstream := old_warning
+val _ = if scenario = "heap-save" then Meta.qquse "heapSave.ML" else ()
 val _ = print "OBS result=pass\n"
 val _ = OS.Process.exit OS.Process.success

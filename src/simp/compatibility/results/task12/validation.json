@@ -1,0 +1,240 @@
+{
+  "landing_identifier": "[TASK_12] Validate split lifecycle and audit loading",
+  "base_revision": "c8b193b9871528da14caf05f6492d2ad2ca80f73",
+  "pinned_develop": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "provenance": "Native configured worktree, source overlay hashes below. Not independent clean repository builds, a paired differential, or full -F gate.",
+  "source_sha256": {
+    "src/1/ThmAttribute.sml": "f3e73a24b02284a185bd87cac5280083989e7d3b3ef4549356f5465fe53cb20d",
+    "src/1/ThmSetData.sml": "ce2a012ed22325f76ee0c66e17fe7e71b16746b54d23a29110ca8791fbf18bd2",
+    "src/marker/markerScript.sml": "78458592309e39f4d1a69e0c3d7005b69a413e26da236ec4ede3b396f5740620",
+    "src/marker/selftest.sml": "428d2abbee5c074aa7ccb105b311f0e10a7c7351131b85eee24130ed72508b86",
+    "src/postkernel/ThyDataSexp.sml": "981ade944a781e728a2cf640250267f67c863b50125aed3ca489d0ac1da39131",
+    "src/simp/compatibility/probes/fresh-load/control.ML": "701d699703c5ff99797a4c8c361edaa09e95732f29c5b064a71286b3abdeceda",
+    "src/simp/compatibility/probes/fresh-load/identity-after.ML": "8233c4e2a3372c6644780bd60e64ba97f60ff36556166c1c6262ffc85e2e104e",
+    "src/simp/compatibility/probes/fresh-load/identity-before.ML": "2bd01f3f4a16dab7a5a5536220c1506a11ef0a48f36069ef28808b61d9f6c319",
+    "src/simp/compatibility/probes/fresh-load/selftest.sml": "1fe4ed9539f69f5507b7ecee6cada64370c3ec558b679d0fb6f88a19e622de7c",
+    "src/simp/compatibility/probes/fresh-load/syntax.ML": "118ff62175333c7e978c616f7b63601bc218484ba55ede4d0cf036d73e254833",
+    "src/simp/compatibility/probes/split-persistence/Holmakefile": "30d5951a192260b4df3c889391659707aeea2a9746e0f3abc353f19fac33eb0a",
+    "src/simp/compatibility/probes/split-persistence/heapSave.ML": "fe1b8f8d3aaadef7c3907ef1f56edf698601821d5c568870f82fe9d3090e39b3",
+    "src/simp/compatibility/probes/split-persistence/heapVerify.ML": "6d3580750969c67490e9318565af6d0a075c0f56c2d679b17b385ec4e5e0781a",
+    "src/simp/compatibility/probes/split-persistence/optIn.ML": "de75e0eae42d3e2912b10650c36eb419329fcc709db50f9052c771dc408ebd4f",
+    "src/simp/compatibility/probes/split-persistence/selftest.sml": "5b5e923392952621d2ce85c57208a03727a856879b8225e5dbf19a6f2401ac4d",
+    "src/simp/compatibility/probes/split-persistence/splitChildScript.sml": "6f7f82bc715f8874a9df65cb05d0b9db846bfadd954369f501e338ac73d75424",
+    "src/simp/compatibility/probes/split-persistence/splitDescendantScript.sml": "6fe1fc6bc864f9630228371d9fa69956a5caae078d34ba3282b6e634d0f584cd",
+    "src/simp/compatibility/probes/split-persistence/splitParentScript.sml": "c111ba909b4c571c95628d91c35d83d27c15d387b34076ae6a645c6880504bc0",
+    "src/simp/compatibility/probes/split-persistence/verify.ML": "3d589d619dfe970dc86807a4af061ac14f28f0d4cbcc052e8705b7c764047d3e",
+    "src/simp/compatibility/probes/split-registration/selftest.sml": "0f4072121e049050d5960037e4f35ed8ebd894f9024e43c429ed25956ef02212",
+    "src/simp/src/Holmakefile": "7eeb8a16fb77ae1ec6b62ef3762986dcaab1b1a06ff54442638f2b2004ff80fa",
+    "src/simp/src/simpLib.sml": "f8454e8e95fd047ff49764a4b5d207892e0f9e6b791555c58d186b6cd366cf89",
+    "src/simp/src/splitLib.sig": "cf682d0e40ee2c743ea729b7985225366ee7f0f63fcc6c6817cd4f2c73327903",
+    "src/simp/src/splitLib.sml": "39b81330b9c85d7462ef879d08722cc5c926e0e3f6dd0b2e24215dcc6a0cc056",
+    "src/simp/src/splitPersistLib.sml": "9ceafc14560a5130b5c4cb06d5f6ad9e72069f2ced102fd14f66031c52f22d7f"
+  },
+  "tool_sha256": {
+    "bin/Holmake": "65f15d33bda214a64a545b169547a69ac76feb545e04f187116d94b55353dfb2",
+    "bin/hol.state0": "deb073ad46dddeff95bb2293a6ba72453f1d1357ec971215b3ebbcd42b551b45"
+  },
+  "commands": [
+    {
+      "command": "bin/Holmake --no-project --no-cache --no_prereqs -j1 --holstate=\"$PWD/bin/hol.state0\" -C src/simp/compatibility/probes/split-persistence cleanAll && bin/Holmake --no-project --no-cache -j1 --holstate=\"$PWD/bin/hol.state0\" -C src/simp/compatibility/probes/split-persistence check",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "clean-rebuild.log.gz",
+      "log_uncompressed_sha256": "0883bac686610ee7cdbd8d60101cac1e4d929f8c774d3efb62e1b28db5c21326"
+    },
+    {
+      "command": "HOLSELFTESTLEVEL=1 bin/Holmake --no-project --no-cache --no_prereqs -j1 --holstate=\"$PWD/bin/hol.state0\" -C src/simp/src split-persistence split-registration fresh-load-regressions traversal-contracts exclusion-contracts",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "focused-final.log.gz",
+      "log_uncompressed_sha256": "4af349ee8c21bae603faa137e9c1b1651cf7b825fd0eb742ddefc7f15953ad44"
+    },
+    {
+      "command": "(cd src/simp/src && ./selftest.exe)",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "native-simplifier.log.gz",
+      "log_uncompressed_sha256": "4bcad281e00d8a3f35ae3d7991c7dc3fecc3004def2b6e9975d31c5cfb7fb931"
+    },
+    {
+      "command": "(cd src/marker && ./selftest.exe)",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "native-marker.log.gz",
+      "log_uncompressed_sha256": "4f283b7c1785a148d0a3e19ef1780ba901392e320ee0bbb7be0e7b45b34fdfeb"
+    },
+    {
+      "command": "bin/build -t --seq=tools/sequences/upto-parallel",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "sanity-final.log.gz",
+      "log_uncompressed_sha256": "c820da6fde01f3bcba2e15cb7a2a7d008185d0f2ae57d68d915910cb9c5a8c25"
+    },
+    {
+      "command": "tools/h4pedant/h4pedant src/marker src/simp/src src/simp/compatibility/probes/fresh-load src/simp/compatibility/probes/split-persistence src/simp/compatibility/probes/split-registration",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "pedant.log.gz",
+      "log_uncompressed_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": "(cd src/simp/compatibility && sha256sum -c inputs/SHA256SUMS)",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0,
+      "log": "inputs.log.gz",
+      "log_uncompressed_sha256": "735a466d0b650f46cb4d61a273534a2159c7c7d28f0dc945b39a75892d4a636a"
+    },
+    {
+      "command": "git diff --check",
+      "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+      "exit_code": 0
+    }
+  ],
+  "assertion_OK_counts": {
+    "split-registration": 101,
+    "traversal-contracts": 47,
+    "exclusion-contracts": 929,
+    "native-simplifier": 630,
+    "native-marker": 72
+  },
+  "fresh_load_scenarios": {
+    "control": {
+      "assertion_OK_count": 11,
+      "precondition_clean": true,
+      "result": "pass"
+    },
+    "attribute-first": {
+      "assertion_OK_count": 20,
+      "precondition_clean": true,
+      "result": "pass"
+    },
+    "set-first": {
+      "assertion_OK_count": 23,
+      "precondition_clean": true,
+      "result": "pass"
+    },
+    "attribute-after": {
+      "assertion_OK_count": 17,
+      "precondition_clean": true,
+      "result": "pass"
+    },
+    "set-after": {
+      "assertion_OK_count": 19,
+      "precondition_clean": true,
+      "result": "pass"
+    },
+    "syntax-first": {
+      "assertion_OK_count": 17,
+      "precondition_clean": true,
+      "result": "pass"
+    }
+  },
+  "fresh_import_and_heap_assertion_OK_counts": {
+    "parent": 20,
+    "child": 21,
+    "descendant": 21,
+    "owned": 23,
+    "foreign-attribute": 15,
+    "foreign-set": 16,
+    "heap-save": 22,
+    "heap-reload": 23
+  },
+  "generated_ordering": {
+    "splitParentTheory.sml": {
+      "sha256": "33d66b57ced02f0c879fa2c317f079ed8b966553c2de3b14f82797c87d3ce61f",
+      "ordering_lines": [
+        {
+          "line": 9,
+          "text": "  local open boolTheory splitPersistLib in end;"
+        },
+        {
+          "line": 16,
+          "text": "      TheoryReader.load_thydata {"
+        },
+        {
+          "line": 31,
+          "text": "val _ = Theory.load_complete \"splitParent\""
+        }
+      ]
+    },
+    "splitParentTheory.uo": {
+      "sha256": "ab12d17d41c7028aba9ce0517f57f8a467feea4870c5c2b5c471d5f81426d773",
+      "explicit_opt_in_dependencies": [
+        "$(HOLDIR)/src/simp/src/splitPersistLib"
+      ]
+    },
+    "splitParentTheory.dat": {
+      "sha256": "cdc5f246eea15c450410935c222ce97d7f0d6825a5475dc4a2976895ceaab32e"
+    },
+    "splitChildTheory.sml": {
+      "sha256": "37ee2d1d3f5b056c80ec10c39d4c46c453c7b6843f6fb9c4fce4319faa937271",
+      "ordering_lines": [
+        {
+          "line": 9,
+          "text": "  local open splitParentTheory in end;"
+        },
+        {
+          "line": 16,
+          "text": "      TheoryReader.load_thydata {"
+        },
+        {
+          "line": 30,
+          "text": "val _ = Theory.load_complete \"splitChild\""
+        }
+      ]
+    },
+    "splitChildTheory.uo": {
+      "sha256": "7be25067acfd4ddb11dcec44f77b2f8671e20c87c6314b7e597c7ee36b15768d",
+      "explicit_opt_in_dependencies": []
+    },
+    "splitChildTheory.dat": {
+      "sha256": "5321c1c08b18d64e83bbfd67f5c0d9e17f1e8f30593de1897bf3e82c433279d8"
+    },
+    "splitDescendantTheory.sml": {
+      "sha256": "b0fd5db98166d28dc78d6a2f729a5c92ae6f3e7a3fe9ca743bc6ffb5c24b2764",
+      "ordering_lines": [
+        {
+          "line": 9,
+          "text": "  local open splitChildTheory in end;"
+        },
+        {
+          "line": 16,
+          "text": "      TheoryReader.load_thydata {"
+        },
+        {
+          "line": 28,
+          "text": "val _ = Theory.load_complete \"splitDescendant\""
+        }
+      ]
+    },
+    "splitDescendantTheory.uo": {
+      "sha256": "c3f51bd554b2373499d3b5968bbf88d81b18d5852aed7d14af0171510901e275",
+      "explicit_opt_in_dependencies": []
+    },
+    "splitDescendantTheory.dat": {
+      "sha256": "76c2e878901a7607fbb2bfc564fe093f1f819275451349339aa2cd7bcdb243c9"
+    }
+  },
+  "heap_contract": {
+    "save": "PolyML.SaveState.saveState",
+    "reload": "PolyML.SaveState.loadState in a new selftest.exe process",
+    "post_check_heap_absent": true
+  },
+  "development_failures": [
+    {
+      "check": "first sanity build",
+      "exit_code": 1,
+      "reason": "New test incorrectly expected unmatched ExclX split:absent success. Corrected to matched local exclusion plus exact unmatched error."
+    },
+    {
+      "check": "focused trial",
+      "exit_code": 1,
+      "reason": "New unmatched-error test stopped before tactic application. Corrected to apply the tactic; final tests and routine build pass."
+    }
+  ],
+  "limitations": [
+    "Finite lifecycle/audit scope, no universal observational equivalence.",
+    "Serialized explicit theory initialization only.",
+    "No independent paired or full -F build claimed."
+  ]
+}

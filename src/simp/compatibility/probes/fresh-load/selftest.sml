@@ -39,7 +39,7 @@ val _ = List.app (fn name =>
     obs ("initial.loaded." ^ name) (Bool.toString loaded);
     obs ("initial.bound." ^ name) (Bool.toString bound);
     check ("no preloaded " ^ name) (not loaded andalso not bound)
-  end) ["simpLib", "splitLib"]
+  end) ["simpLib", "splitLib", "splitPersistLib"]
 val _ = obs "precondition" "clean"
 
 (* Capture stage/frequency without suppressing the normal warning stream.
@@ -127,16 +127,25 @@ fun require_result label (succeeded,silent) =
   (check (label ^ " succeeds") succeeded;
    check (label ^ " without warnings") silent)
 
+(* Native-only pointer inspection uses the new ownership accessors.
+   Keep those APIs out of the shared legacy launcher's static closure. *)
+fun native_identity stage =
+  case OS.Process.getEnv "SIMP_COMPAT_IDENTITY_PREFIX" of
+      NONE => ()
+    | SOME prefix => Meta.qquse (prefix ^ stage ^ ".ML")
+
 fun owner_first install identity =
   let
     val _ = require_result "custom registration" (observed "register" install)
     val _ = identity ()
+    val _ = native_identity "before"
     val _ = registry "before-load"
     val result = observed "load" dynamic_load
     val _ = registry "after-load"
     (* Even a failed load must not corrupt the existing owner's state. *)
     val _ = identity ()
     val _ = require_result "dynamic simpLib load" result
+    val _ = native_identity "after"
   in require_result "ordinary simplification" (observed "control" control) end
 
 fun owner_after install identity =
@@ -159,6 +168,18 @@ val _ =
     | "set-first" => owner_first install_set set_identity
     | "attribute-after" => owner_after install_attribute attribute_identity
     | "set-after" => owner_after install_set set_identity
+    | "syntax-first" =>
+        (require_result "foreign syntax registration"
+           (observed "register" (fn () =>
+             List.app (fn name => Parse.temp_overload_on (name,boolSyntax.T))
+               ["Split","ExcludeX"]));
+         require_result "dynamic simpLib load" (observed "load" dynamic_load);
+         require_result "foreign syntax preservation"
+           (observed "syntax" (fn () => Meta.qquse
+             (OS.Path.concat (OS.Path.dir (env "SIMP_COMPAT_CONTROL"),
+                              "syntax.ML"))));
+         check "syntax test never claims split registries"
+           (registry "after-syntax" = (false,false)))
     | "control" =>
         (require_result "normal dynamic load" (observed "load" dynamic_load);
          ignore (registry "after-load");
