@@ -16,10 +16,14 @@ resolves an exclusion target and supports explicit namespaces:
 - `rule:name` excludes matching rewrites, conversions and named decision
   procedures.
   Rewrite names accept `Thy$Name` as well as dotted qualification, and
-  the theory need not be an ancestor of the current theory. Numeric
-  dotted suffixes retain their usual meaning; names with too many dots
-  are still invalid. Decision procedures match the exact name string
-  after `rule:`.
+  the theory need not be an ancestor of the current theory. A spelling
+  with exactly one `$` and nonempty theory and name parts is split at
+  `$` before any dots are considered: `rule:Thy$r.a.b.c` is valid when
+  that rewrite is installed. Otherwise parsing uses dots: a name with
+  no dots is unqualified, as is a two-part name with an empty or
+  all-digit second part. Other two-part names mean `Thy.Name`, three
+  parts mean `Thy.Name.suffix`, and more parts are invalid.
+  Decision procedures match the exact name string after `rule:`.
 - `looper:name` excludes the ordinary looper named `name`.
 - `solver:name` excludes the named solver from the safe and unsafe lists.
 - `split:name` excludes the matching `split name` and `split_asm name`
@@ -83,6 +87,16 @@ name, an ambiguous strategy target or any unmatched name.
      “T ∧ p”;
 >> QCONV (SIMP_CONV bool_ss
      [Once (simpLib.ExclX "rule:bool$AND_CLAUSES")]) “T ∧ p”;
+```
+
+Kernel qualification also permits rewrite names containing several dots:
+
+``` hol4
+>> val dotted_ss = pure_ss ++ simpLib.rewrites_with_names
+     [({Thy="Thy", Name="r.a.b.c"}, boolTheory.AND_CLAUSES)];
+>> SIMP_CONV dotted_ss [] “T ∧ p”;
+>> QCONV (SIMP_CONV dotted_ss
+     [simpLib.ExclX "rule:Thy$r.a.b.c"]) “T ∧ p”;
 ```
 
 ### See also

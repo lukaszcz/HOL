@@ -12,7 +12,7 @@
 - TASK_10: done — acceptance verified; ownership/load/native/sanity reruns pass.
 - TASK_11: done — acceptance verified; fresh replay/native/sanity reruns pass.
 - TASK_12: done — acceptance verified; lifecycle/heap/audit/native/sanity reruns pass.
-- TASK_13: done — API/client sweep, doc examples, focused/sanity checks pass.
+- TASK_13: done — naming correction, doc render/native/sanity checks pass.
 - TASK_14: unblocked (not started).
 - TASK_15: unblocked (not started).
 - TASK_16: blocked — needs 14, 15.
@@ -20,8 +20,7 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_14_paired_differential_validation.md` — validate the
-repaired branch against pinned develop using the maintained legacy inputs.
+`.agent-files/tasks/TASK_14_paired_differential_validation.md`.
 
 ## 3. Completion log
 
@@ -40,4 +39,4 @@ and evidence pointer.
 - TASK_10 — `613d7d8e1`; evidence: `src/simp/compatibility/SPLIT_REGISTRATION.md` and `src/simp/compatibility/results/task10/`.
 - TASK_11 — `c8b193b98`; evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.
 - TASK_12 — `fa2099c07`; evidence: `src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `src/simp/compatibility/results/task12/`.
-- TASK_13 — `[TASK_13] Complete API documentation and migration sweep` (commit subject); evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/`.
+- TASK_13 — `ee1ea6da1` + `[TASK_13] Correct exclusion naming documentation`; evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/{validation,naming-validation}.json`.

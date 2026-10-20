@@ -559,8 +559,9 @@ fun munge_simpset_name p =
    names from an unloaded theory sits in the net all the same, and its
    qualified spelling is what a user writes to exclude it.  So for
    exclusion a theory part whose only fault is not being an ancestor is
-   read positionally and matched against the entries.  Nothing else is
-   relaxed: a key too many dots deep is still rejected. *)
+   read positionally and matched against the entries. The dots-only
+   fallback still rejects keys with too many dots; a nonempty Thy$Name
+   spelling is split at the dollar instead, leaving dots literal. *)
 fun excl_simpset_name p =
   parse_simpset_name {unknown_thy = fn (thy,name) => (SOME thy,name)} p
 

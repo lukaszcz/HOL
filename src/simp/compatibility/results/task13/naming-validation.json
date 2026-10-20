@@ -1,0 +1,333 @@
+{
+  "entry_revision": "ee1ea6da177c302fb1de8e5fd93d18cd728198c3",
+  "scope": "TASK_13 naming documentation correction; no executable library logic changed. Supplements validation.json; prior source hashes describe the original sweep.",
+  "checks": [
+    {
+      "argv": [
+        "bin/build",
+        "-t",
+        "--seq=tools/sequences/upto-parallel"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 374.29,
+      "log": "naming-sanity.log.gz"
+    },
+    {
+      "argv": [
+        "bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "-j1",
+        "-C",
+        "help/src-sml",
+        "process_docfiles"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 2.23,
+      "log": "naming-doc-tool.log.gz"
+    },
+    {
+      "argv": [
+        "bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "-j1",
+        "-C",
+        "src/simp/src",
+        "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+        "exclusion-contracts"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "log": "naming-exclusion.log.gz"
+    },
+    {
+      "argv": [
+        "./selftest.exe"
+      ],
+      "cwd": "src/simp/src",
+      "exit": 0,
+      "log": "naming-selftest.log.gz"
+    },
+    {
+      "argv": [
+        "tools/h4pedant/h4pedant",
+        "src/simp/src",
+        "src/marker"
+      ],
+      "cwd": ".",
+      "exit": 0,
+      "log": "naming-pedant.log.gz"
+    },
+    {
+      "argv": [
+        "sha256sum",
+        "-c",
+        "inputs/SHA256SUMS"
+      ],
+      "cwd": "src/simp/compatibility",
+      "exit": 0,
+      "log": "naming-inputs.log.gz"
+    },
+    {
+      "argv": [
+        "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-j1",
+        "cleanAll"
+      ],
+      "cwd": "src/simp/compatibility/probes/fresh-load",
+      "exit": 0,
+      "log": "naming-cleanup.log.gz"
+    },
+    {
+      "argv": [
+        "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-j1",
+        "cleanAll"
+      ],
+      "cwd": "src/simp/compatibility/probes/split-registration",
+      "exit": 0,
+      "log": "naming-cleanup.log.gz"
+    },
+    {
+      "argv": [
+        "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-j1",
+        "cleanAll"
+      ],
+      "cwd": "src/simp/compatibility/probes/split-persistence",
+      "exit": 0,
+      "log": "naming-cleanup.log.gz"
+    },
+    {
+      "argv": [
+        "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+        "--no-project",
+        "--no-cache",
+        "--no_prereqs",
+        "-j1",
+        "cleanAll"
+      ],
+      "cwd": "src/simp/compatibility/probes/support",
+      "exit": 0,
+      "log": "naming-cleanup.log.gz"
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0
+    },
+    {
+      "method": "Assert no tabs or trailing whitespace in all changed text files",
+      "files": [
+        ".agent-files/tasks/PROGRESS.md",
+        "help/Docfiles/simpLib.Excl.smd",
+        "help/Docfiles/simpLib.ExclX.smd",
+        "src/simp/compatibility/API_MIGRATION.md",
+        "src/simp/src/simpLib.sml"
+      ],
+      "exit": 0
+    },
+    {
+      "argv": [
+        "help/src-sml/process_docfiles",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/source",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/processed",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/html"
+      ],
+      "exit": 0,
+      "log": "naming-doc-render.log.gz"
+    },
+    {
+      "argv": [
+        "help/src-sml/process_docfiles",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/simpLib.Excl",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/simpLib.Excl-processed",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/simpLib.Excl-html"
+      ],
+      "exit": 0,
+      "log": "naming-simpLib.Excl-isolated.log.gz"
+    },
+    {
+      "argv": [
+        "help/src-sml/process_docfiles",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/simpLib.ExclX",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/simpLib.ExclX-processed",
+        "/tmp/claude/hol-task13-naming-final-1t8ypb17/simpLib.ExclX-html"
+      ],
+      "exit": 0,
+      "log": "naming-simpLib.ExclX-isolated.log.gz"
+    }
+  ],
+  "doc_render": {
+    "entries": [
+      "markerLib.ExclX",
+      "simpLib.Excl",
+      "simpLib.ExclX",
+      "simpLib.Split",
+      "simpLib.add_split",
+      "simpLib.del_split",
+      "simpLib.split_ss",
+      "simpLib.add_looper",
+      "simpLib.add_unsafe_solver",
+      "simpLib.traversedata_for_ss",
+      "simpLib.xtraversedata_for_ss",
+      "simpLib.legacy_traversedata_for_ss",
+      "splitLib.enable_split_attribute",
+      "splitLib.exclude_split",
+      "splitLib.SPLIT_TAC"
+    ],
+    "text_files": 15,
+    "html_files": 15,
+    "independent_entries": [
+      "simpLib.Excl",
+      "simpLib.ExclX"
+    ],
+    "transcripts": "naming-doc-transcripts.txt.gz",
+    "assertions": [
+      "name. is accepted with no ancestor theory",
+      "multi-dot named rewrite is active before exclusion",
+      "kernel-qualified multi-dot exclusion removes that rewrite",
+      "batch and fresh-process transcripts agree"
+    ]
+  },
+  "pandoc": {
+    "url": "https://github.com/jgm/pandoc/releases/download/3.6.4/pandoc-3.6.4-linux-arm64.tar.gz",
+    "version": "3.6.4",
+    "sha256": "3f2503af9433608c81c28ae888af87ea07dc688b57ac7f305afe31311ef7bc17",
+    "installation": "task-owned temporary extraction, removed after checks"
+  },
+  "cleanup": "Temporary doc directories removed automatically; task-owned Pandoc download/extraction and regenerated probe build products removed. Normal checkout products and unrelated artifacts retained.",
+  "assertion_counts": {
+    "simplifier": 630,
+    "exclusion": 929
+  },
+  "search_update": {
+    "baseline": "search.json",
+    "method": "git ls-files -z; Python re.finditer over full UTF-8 text; line numbers include multiline matches",
+    "files": [
+      {
+        "path": "help/Docfiles/simpLib.Excl.smd",
+        "matches": {
+          "exclusion": [
+            2,
+            5,
+            13,
+            32,
+            33,
+            42,
+            53,
+            54,
+            55,
+            60
+          ]
+        },
+        "disposition": "Correct naming docs/examples and parser comment only; no active client or executable behavior changed."
+      },
+      {
+        "path": "help/Docfiles/simpLib.ExclX.smd",
+        "matches": {
+          "exclusion": [
+            2,
+            5,
+            12,
+            13,
+            35,
+            41,
+            44,
+            45,
+            54,
+            56,
+            66,
+            72,
+            86,
+            89,
+            99,
+            104,
+            105
+          ],
+          "persistent_claims": [
+            30,
+            49
+          ]
+        },
+        "disposition": "Correct naming docs/examples and parser comment only; no active client or executable behavior changed."
+      },
+      {
+        "path": "src/simp/src/simpLib.sml",
+        "matches": {
+          "traversal": [
+            2117,
+            2118,
+            2122,
+            2142,
+            2145,
+            2566
+          ],
+          "exclusion": [
+            170,
+            544,
+            621,
+            622,
+            1022,
+            1054,
+            1057,
+            1059,
+            1064,
+            2156,
+            2157,
+            2230,
+            2233,
+            2242
+          ],
+          "persistence": [
+            980,
+            1035
+          ]
+        },
+        "disposition": "Correct naming docs/examples and parser comment only; no active client or executable behavior changed."
+      }
+    ]
+  },
+  "source_sha256": {
+    "help/Docfiles/simpLib.Excl.smd": "417a4982fe450c6dac88032019e1f8591a5942e9aa0636849e9bb9d38c4efa17",
+    "help/Docfiles/simpLib.ExclX.smd": "2f8976a6e72ddeb78f919c428259fb5a8b889e1f4d975cd574cff873c7740ce3",
+    "src/simp/src/simpLib.sml": "269a281cca668eb068ee7141f71896a136b546461a5809a895abe1da745c7f21",
+    "src/simp/compatibility/API_MIGRATION.md": "989e4b834ee79baa96d24d32a068788eab2dd5880cf00e18738f57a36cc44859",
+    ".agent-files/tasks/PROGRESS.md": "6a9070aec52ffac91c897a23f002bfa9a57297de0b28d41ce8d6da013bf344f9",
+    "src/simp/src/simpLib.sig": "576e367c5d661ac229052093fcb74ea781b36d1653afc8e70da0a34cfcfe0900",
+    "src/simp/src/notes.md": "cb46a21c3a40114c8e739f6f630e2609c81866b094d6e21144d14a6094ec0414"
+  },
+  "tool_sha256": {
+    "bin/Holmake": "65f15d33bda214a64a545b169547a69ac76feb545e04f187116d94b55353dfb2",
+    "bin/hol.state0": "deb073ad46dddeff95bb2293a6ba72453f1d1357ec971215b3ebbcd42b551b45",
+    "bin/hol.state": "79276ba868d73d868f07ca5c6c8ceb0c5d14665df7d1090bf8e6abea4dcc15ac",
+    "help/src-sml/process_docfiles": "eb57e909273785d4773e963d027fd8259b8bf7333df3919c7adffb6742d1563e",
+    "tools/h4pedant/h4pedant": "0e209c750e58068f8afe0de4ab105a7fa3c7aba91f27f578e67e4b468a656312"
+  },
+  "logs": {
+    "naming-cleanup.log.gz": "6284f802c46818f8e4f66459835d68c3eba5f5d90a64772a61aef88d1181ee41",
+    "naming-doc-render.log.gz": "7c1e961fbea78565ab313146a5cde799b86666140a03914ad9cc8fb3b83843a6",
+    "naming-doc-tool.log.gz": "13a8688bb45dda3e22fd76922dcd0f669712e5e70d05d37a06f3c3907b57eb27",
+    "naming-doc-transcripts.txt.gz": "83fb2cd419f5f9f8fdec098d515e6faafcdb7cf54b5dfa8ce471f51259f18816",
+    "naming-exclusion.log.gz": "b4d5a6bfb7cfaf86b11eeb641a3796b7cd36ecce87d82d4d85fb0e33d753b6f0",
+    "naming-inputs.log.gz": "4e6525b4b9b8d2f15697118ac52ac8cfe0411e03172a6f9ae7a5683ab7eb836e",
+    "naming-pedant.log.gz": "f61f27bd17de546264aa58f40f3aafaac7021e0ef69c17f6b1b4cd7664a037ec",
+    "naming-sanity.log.gz": "e2082f3ef86ee26493531f31f780708a5ba0ea69e0dadfb264b654c62d0013ea",
+    "naming-selftest.log.gz": "ec317533a2e679c7ca6322ff10e2396fd12732918a4aa33b3a7f01a71aae6df7",
+    "naming-simpLib.Excl-isolated.log.gz": "a6490966b9ea716a06547a5aa10bc3e7c26186f91596a227b50b20c77be438b3",
+    "naming-simpLib.ExclX-isolated.log.gz": "1028e674c65d5c569e2d023edcb22a4dec004d5e3e5087293263c3a7ccd95d50"
+  }
+}

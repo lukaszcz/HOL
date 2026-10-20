@@ -16,9 +16,10 @@ rule deletion as `ss -* [name]`. Qualification uses dots, not the kernel
 `Thy$Name` spelling:
 
 - A name without dots is unqualified.
-- A two-part dotted name with a numeric second part is also unqualified
-  (for example, `name.1`). Otherwise its first part must be an ancestor
-  theory; an unknown theory raises `bad theory name`.
+- A two-part dotted name with an empty or all-digit second part is also
+  unqualified (for example, `name.` or `name.1`); the full string is kept.
+  Otherwise its first part must be an ancestor theory; an unknown theory
+  raises `bad theory name`.
 - A three-part dotted name is read as `Thy.Name.suffix` without an
   ancestry check. More dots raise `User key has too many dots`.
 
@@ -51,6 +52,7 @@ are not errors.
 ``` hol4
 >> SIMP_CONV bool_ss [Excl "bool$AND_CLAUSES"] “T ∧ p”;
 >> QCONV (SIMP_CONV bool_ss [Excl "bool.AND_CLAUSES"]) “T ∧ p”;
+>> SIMP_CONV bool_ss [Excl "name."] “T ∧ p”;
 ```
 
 ### See also

@@ -31,8 +31,10 @@ contracts, rather than universal equivalence, are the documented boundary:
   of identical callback schedules.
 - `simpLib.Excl` / `markerLib.Excl` remain strict literal deletion, as with
   `-*`. No namespace prefix or strategy fallback exists for any old string.
-  The dots-only parser retains develop's ancestry/suffix quirks; `$` is
-  literal, not theory qualification. Dprocs match exact strings. Missing
+  The dots-only parser retains develop's ancestry/suffix quirks: a
+  two-part name with an empty or all-digit suffix remains unqualified
+  (including `name.`), keeping the entire string. `$` is literal, not
+  theory qualification. Dprocs match exact strings. Missing
   names are silent but retained in history; replay reparses strict names
   in the current theory context.
 - `simpLib.ExclX : string -> thm` aliases `markerLib.ExclX`, backed by the
@@ -42,8 +44,11 @@ contracts, rather than universal equivalence, are the documented boundary:
   Neither `marker$ExcludeX` nor `marker$Split` installs a new unqualified
   parser mapping; use the ML APIs or qualified constants.
 - Only `ExclX` resolves `rule:`, `looper:`, `solver:`, `split:` and `case:`.
-  `rule:` accepts relaxed `Thy.Name` / `Thy$Name`; bare names first use the
-  strict parser and rule/dproc priority, then strategy fallback. Missing
+  `rule:` accepts relaxed `Thy.Name` / `Thy$Name`. Exactly one `$` with
+  nonempty theory/name parts takes precedence over dots, so an installed
+  `Thy$r.a.b.c` is accepted; only the dots-only fallback limits dot count.
+  Bare names first use the strict parser and rule/dproc priority, then
+  strategy fallback. Missing
   targets and cross-kind ambiguities fail when processed, not constructed.
   Solvers are removed from both lists. Bounded wrappers do not count
   exclusions; requirement-wrapper precedence is unchanged.
@@ -140,7 +145,8 @@ add_split,split_ss,traversedata_for_ss,xtraversedata_for_ss}` and
 Also changed `src/simp/src/{notes.md,simpLib.sig,splitLib.sig}`, compatibility
 README, task index/progress, this handoff and compact task13 evidence.
 No executable library or caller behavior changed; no splitter algorithm
-redesign or new-only issue was folded into this sweep.
+redesign or new-only issue was folded into this sweep. The naming follow-up
+also corrects a misleading parser comment in `src/simp/src/simpLib.sml`.
 
 `results/task13/validation.json` records commands, statuses, source/tool/heap
 hashes and log receipts. Final checks all exit **0**:
@@ -175,6 +181,25 @@ was used for the final full render and independent checks, then removed.
 The manifest records its URL and executable hash. No system installation,
 copied build tree, saved heap, new cache or temporary download remains.
 Normal checkout build products and unrelated/caller-owned artifacts stay.
+
+### Naming review correction
+
+Review of the original TASK_13 landing found two inaccurate public claims:
+`Excl` incorrectly required ancestry for `name.`, and `ExclX` incorrectly
+limited dots even in kernel-qualified names. Both docfiles now describe
+the actual parser branches and contain executable examples for these
+cases. The source parser comment is clarified without changing logic.
+The original whole-repository dispositions still apply; no client changed.
+`results/task13/naming-validation.json` supplements the original receipts
+with current source hashes and updated search hits for these files.
+
+The follow-up routine upto-parallel build, focused exclusion contracts,
+normal simplifier selftest, 15-entry example evaluation/text/HTML render,
+and independent Excl/ExclX entry runs all pass. The retained transcripts
+show `name.` is accepted without an ancestor, and show an active
+`Thy$r.a.b.c` rewrite simplifying before exclusion but not after it.
+Pedant, frozen-input integrity and changed-file whitespace checks pass.
+Temporary doc trees and the task-owned Pandoc extraction were removed.
 
 ## Gate boundary
 
