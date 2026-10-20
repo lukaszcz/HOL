@@ -1,0 +1,53 @@
+/tmp/claude/hol-simp-pair.ydzf1v_z/branch/excl-split-unmatched/LegacyFailures.sml:96: warning: Pattern is not exhaustive.
+Found near
+  val
+     Traverse.REDUCER _ =
+        hd (#rewriters (simpLib.traversedata_for_ss simpLib.empty_ss))
+OBS probe=split:unmatched
+<<HOL message: Created theory "legacyfailure">>
+setup: warnings enabled, not promoted to errors ...                          [32m[1mOK[0m
+setup: fail-fast testutils ...                                               [32m[1mOK[0m
+OBS stage=setup.control
+OBS setup.control.warning.count=0
+OBS setup.control.exception=none
+setup.control is silent ...                                                  [32m[1mOK[0m
+OBS setup.control.conclusion=T ∧ compat_p ⇔ compat_p
+OBS setup.control.hypotheses=
+setup: ordinary simplification works ...                                     [32m[1mOK[0m
+OBS literal.name=split:compat_missing
+setup: empty_ss has no installed fragments ...                               [32m[1mOK[0m
+OBS stage=setup.empty
+OBS setup.empty.warning.count=0
+OBS setup.empty.exception=none
+setup.empty is silent ...                                                    [32m[1mOK[0m
+OBS setup.empty.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.empty.hypotheses=
+setup: empty_ss leaves the test term unchanged ...                           [32m[1mOK[0m
+OBS stage=setup.install
+OBS setup.install.warning.count=0
+OBS setup.install.exception=none
+setup.install is silent ...                                                  [32m[1mOK[0m
+OBS stage=setup.before
+OBS setup.before.warning.count=0
+OBS setup.before.exception=none
+setup.before is silent ...                                                   [32m[1mOK[0m
+OBS setup.before.conclusion=T ∧ compat_p ⇔ T ∧ compat_p
+OBS setup.before.hypotheses=
+OBS setup.before.callbacks=
+setup: literal conversion is active iff installed ...                        [32m[1mOK[0m
+OBS stage=setup.directive
+OBS setup.directive.warning.count=0
+OBS setup.directive.exception=none
+setup.directive is silent ...                                                [32m[1mOK[0m
+OBS setup.result=ready
+OBS stage=assertion.exclude
+OBS assertion.exclude.warning.count=0
+OBS assertion.exclude.exception=\nException raised at simpLib.process_tags: Excl did not match split:compat_missing\n
+OBS assertion.exclude.exception.kind=HOL_ERR
+OBS assertion.exclude.exception.structure=simpLib
+OBS assertion.exclude.exception.function=process_tags
+OBS assertion.exclude.exception.message=Excl did not match split:compat_missing
+OBS assertion.exclude.result=exception
+error in quse /tmp/claude/hol-simp-pair.ydzf1v_z/branch/excl-split-unmatched/selftest.sml : HOL_ERR (HOL_ERROR {message = "Excl did not match split:compat_missing", origins = [{origin_function = "process_tags", origin_structure = "simpLib", source_location = Loc_Unknown}]})
+error in load selftest : HOL_ERR (HOL_ERROR {message = "Excl did not match split:compat_missing", origins = [{origin_function = "process_tags", origin_structure = "simpLib", source_location = Loc_Unknown}]})
+Uncaught exception at /tmp/claude/hol-simp-pair.ydzf1v_z/branch/excl-split-unmatched/LegacyFailures.sml:49: HOL_ERR (HOL_ERROR {message = "Excl did not match split:compat_missing", origins = [{origin_function = "process_tags", origin_structure = "simpLib", source_location = Loc_Unknown}]})

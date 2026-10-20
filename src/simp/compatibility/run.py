@@ -135,6 +135,8 @@ def main():
     if pinned.read_bytes() != original:
         raise RuntimeError("preserved develop selftest differs from pinned git")
     probes = sorted((HERE / "probes/legacy").glob("*.sml"))
+    support = [(p, p.read_bytes()) for p in
+               sorted((HERE / "probes/support").glob("*.sml"))]
     suites = [(p.stem, p, p.read_bytes()) for p in probes]
     suites.append(("develop-selftest", pinned, original))
     if len({name for name, _, _ in suites}) != len(suites):
@@ -146,6 +148,8 @@ def main():
                             "--untracked-files=all").decode(),
         "inputs_sha256": {str(p.relative_to(HERE)): digest(data)
                           for _, p, data in suites},
+        "support_sha256": {str(p.relative_to(HERE)): digest(data)
+                           for p, data in support},
         "runner_sha256": digest(Path(__file__).read_bytes()),
         "tools_sha256": {name: digest((ROOT / name).read_bytes()) for name in
                          ("bin/Holmake", "bin/hol", "bin/hol.state0")},
@@ -191,6 +195,8 @@ def main():
                     directory = work / lane / name
                     directory.mkdir()
                     (directory / "selftest.sml").write_bytes(data)
+                    for path, source in support:
+                        (directory / path.name).write_bytes(source)
                     (directory / "Holmakefile").write_text(
                         "HOLHEAP = $(HOLDIR)/bin/hol.state0\n"
                         "INCLUDES = ../lib\n"

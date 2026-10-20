@@ -1,12 +1,12 @@
 ## 1. Task status for each task
 
-- TASK_01: done.
-- TASK_02: unblocked (not started).
-- TASK_03: blocked — needs 02.
-- TASK_04: blocked — needs 02.
+- TASK_01: done — acceptance verified; paired harness rerun passed.
+- TASK_02: done — eleven legacy failures frozen on both pinned inputs.
+- TASK_03: unblocked (not started).
+- TASK_04: unblocked (not started).
 - TASK_05: blocked — needs 04.
 - TASK_06: unblocked (not started).
-- TASK_07: blocked — needs 02, 05, 06.
+- TASK_07: blocked — needs 05, 06.
 - TASK_08: blocked — needs 07.
 - TASK_09: blocked — needs 08.
 - TASK_10: blocked — needs 03.
@@ -20,9 +20,13 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_02_freeze_legacy_failures.md` — freeze the
-legacy failure regressions.
+`.agent-files/tasks/TASK_03_fresh_load_regressions.md` — freeze the
+fresh-load namespace regressions.
 
 ## 3. Completion log
 
-- TASK_01 — `[TASK_01] Pin compatibility baseline and harness` (commit subject); evidence: `src/simp/compatibility/BASELINE.md`, `results/task01/` beneath it.
+Requirement: **ONE line per task as each task lands**, with landing ID
+and evidence pointer.
+
+- TASK_01 — `2ef0942dd`; evidence: `src/simp/compatibility/BASELINE.md` and `src/simp/compatibility/results/task01/`.
+- TASK_02 — `[TASK_02] Freeze legacy reducer and literal exclusion failures` (commit subject); evidence: `src/simp/compatibility/LEGACY_FAILURES.md` and `src/simp/compatibility/results/task02/`.

@@ -1,9 +1,10 @@
 # Simplifier compatibility evidence and differential harness
 
 This directory is the maintained evidence location for the compatibility
-plan. TASK_01 is preparation only: it changes no implementation APIs or
-legacy expectations. Start with [BASELINE.md](BASELINE.md) for the pinned
-revisions, completed checks, provenance, and scope of the initial result.
+plan. Start with [BASELINE.md](BASELINE.md) for the pinned revisions,
+provenance and initial checks. [LEGACY_FAILURES.md](LEGACY_FAILURES.md)
+records TASK_02's eleven red regressions and repair handoff. Neither task
+changes implementation APIs or weakens legacy expectations.
 
 ## Layout
 
@@ -15,7 +16,12 @@ revisions, completed checks, provenance, and scope of the initial result.
 - `inputs/SHA256SUMS`: SHA-256 of every preserved input, relative to here.
 - `probes/legacy/*.sml`: maintained, legacy-only differential inputs.
   Each becomes `selftest.sml` verbatim and runs unchanged in both lanes.
-  `control.sml` is the ordinary-simplification control.
+  `control.sml` is the ordinary-simplification control. `reducer-shape.sml`
+  and `excl-{rule,solver,looper,split,case}-{unmatched,installed}.sml` are
+  eleven independent red-regression executables, not xfails.
+- `probes/support/*.sml`: shared legacy-only assertion helpers, snapshotted
+  once, hashed as `support_sha256`, and copied into each suite directory.
+  Holmake discovers and builds these modules through ordinary dependencies.
 - `probes/branch/`: branch-only API expectations, never differential inputs.
 - `probes/fresh-load/`: reserved for separately linked, fresh-load probes.
   Do not add these to the ordinary suite: its imports preload `simpLib`.
@@ -128,6 +134,11 @@ lists are recorded as `null` comparisons, **not** observational equality.
 It requires a nonempty, equal control trace and all build/run exits zero.
 A deliberately red probe therefore makes this runner fail; record its
 precise expected failure separately rather than treating that as a pass.
+The default run now includes all TASK_02 probes: at the original audited
+revision it exits 1 after running every suite on both lanes. This is the
+separate pre-repair red-regression target; the normal `src/simp/src`
+selftest target remains unchanged. TASK_04/TASK_07 must repair the failures
+and include these assertions in normal coverage.
 
 Capture each relevant observable, not merely the final RHS:
 

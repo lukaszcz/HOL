@@ -1,0 +1,13 @@
+<<HOL message: Created theory "compatcontrol">>
+OBS simplification.conclusion=T ∧ p ⇔ p
+OBS simplification.hypotheses=
+ordinary simplification ...                                                  [32m[1mOK[0m
+OBS callback.conclusion=p ⇔ p
+OBS callback.hypotheses=
+OBS callbacks=p
+unchanged callback result ...                                                [32m[1mOK[0m
+tactic closes control ...                                                    [32m[1mOK[0m
+OBS validation.conclusion=T ∧ T
+OBS validation.hypotheses=
+tactic validation theorem ...                                                [32m[1mOK[0m
+OBS exception=none

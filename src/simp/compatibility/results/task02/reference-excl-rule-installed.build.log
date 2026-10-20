@@ -1,0 +1,3 @@
+Holmake: Scanning [1m../lib[0m
+Holmake: Scanned 2 directories
+HOLMOSMLC -o selftest.exe selftest.uo
