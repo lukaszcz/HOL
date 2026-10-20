@@ -2198,6 +2198,10 @@ fun tactic_only name =
                name ^ " is a tactic directive; it cannot be honoured by a " ^
                "conversion or rule")
 
+(* TASK_06 only introduces the marker. TASK_07 supplies its routing. *)
+fun unsupported_exclx () =
+    raise ERR ("process_tags", "ExclX routing is not implemented (TASK_07)")
+
 (* Sort a theorem-list argument by directive, keeping argument order.
    Requirement directives are honoured only by the tactics, which strip
    them (mk_require_tac) before reaching here; one arriving anyway would
@@ -2224,13 +2228,16 @@ fun process_tags0 {report} ss thl =
                 (congs, splits, p :: acs, excls, exclfrags, frags, rest)
             | SOME (DExcl nm) =>
                 (congs, splits, acs, nm :: excls, exclfrags, frags, rest)
+            | SOME (DExclX _) => unsupported_exclx ()
             | SOME (DExclSF nm) =>
                 (congs, splits, acs, excls, nm :: exclfrags, frags, rest)
             | SOME (DFRAG nm) =>
                 (congs, splits, acs, excls, exclfrags, frag_of nm :: frags,
                  rest)
             | SOME (DBounded _) =>
-                (congs, splits, acs, excls, exclfrags, frags, th :: rest)
+                if isSome (destExclX th) then unsupported_exclx ()
+                else (congs, splits, acs, excls, exclfrags, frags,
+                      th :: rest)
             | SOME (DReq0 _) =>
                 if report then tactic_only "Req0"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)

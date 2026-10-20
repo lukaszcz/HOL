@@ -32,6 +32,10 @@ sig
 
   val Excl   : string -> thm
   val destExcl : thm -> string option
+  (* Distinct opt-in marker; strings are preserved literally. Simplifier
+     routing is not yet implemented (TASK_07), so simpLib rejects it. *)
+  val ExclX : string -> thm
+  val destExclX : thm -> string option
   val ExclSF : string -> thm
   val destExclSF : thm -> string option
 
@@ -55,6 +59,7 @@ sig
     | DCong of thm
     | DSplit of thm
     | DExcl of string
+    | DExclX of string
     | DExclSF of string
     | DFRAG of string
     | DReq0 of thm

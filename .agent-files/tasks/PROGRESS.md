@@ -5,8 +5,8 @@
 - TASK_03: done — acceptance verified; ten fresh scenarios reproduced.
 - TASK_04: done — acceptance verified; focused tests and sanity rerun pass.
 - TASK_05: done — lifetime/shared-control contracts and differential pass.
-- TASK_06: unblocked (not started).
-- TASK_07: blocked — needs 06.
+- TASK_06: done — marker/API boundary, native suites and sanity build pass.
+- TASK_07: unblocked (not started).
 - TASK_08: blocked — needs 07.
 - TASK_09: blocked — needs 08.
 - TASK_10: unblocked (not started).
@@ -20,8 +20,8 @@
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_06_extended_exclusion_marker.md` — add a distinct
-explicit extended-exclusion marker.
+`.agent-files/tasks/TASK_07_separate_exclusion_routes.md` — restore literal
+Excl and route the explicit ExclX/DExclX marker.
 
 ## 3. Completion log
 
@@ -33,3 +33,4 @@ and evidence pointer.
 - TASK_03 — `a5ec9cbe9`; evidence: `src/simp/compatibility/FRESH_LOAD.md` and `src/simp/compatibility/results/task03/`.
 - TASK_04 — `667320e9b`; evidence: `src/simp/compatibility/TRAVERSAL_PROJECTION.md` and `src/simp/compatibility/results/task04/`.
 - TASK_05 — `[TASK_05] Validate traversal staging and shared controls` (commit subject); evidence: `src/simp/compatibility/TRAVERSAL_LIFETIMES.md` and `src/simp/compatibility/results/task05/`.
+- TASK_06 — `[TASK_06] Add a distinct extended exclusion marker` (commit subject); evidence: `src/simp/compatibility/EXTENDED_EXCLUSION_MARKER.md` and `src/simp/compatibility/results/task06/`.

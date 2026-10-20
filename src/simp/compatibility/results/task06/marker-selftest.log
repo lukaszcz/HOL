@@ -1,0 +1,71 @@
+<<HOL message: Created theory "scratch">>
+Split parses as a variable ...                                               (0.000s)      OK
+dest_directive: AC ...                                                       OK
+dest_directive: Cong ...                                                     OK
+dest_directive: Split ...                                                    OK
+dest_directive: Excl ...                                                     OK
+dest_directive: ExclX ...                                                    OK
+dest_directive: ExclSF ...                                                   OK
+dest_directive: FRAG ...                                                     OK
+dest_directive: Req0 ...                                                     OK
+dest_directive: ReqD ...                                                     OK
+dest_directive: Once ...                                                     OK
+dest_directive: Ntimes 3 ...                                                 OK
+dest_directive: NoAsms ...                                                   OK
+dest_directive: IgnAsm ...                                                   OK
+dest_directive: Abbr ...                                                     OK
+dest_directive: L ...                                                        OK
+dest_directive: Req0 wraps Cong ...                                          OK
+strip_wrappers: Req0 over ReqD over Once ...                                 OK
+dest_directive: TRUTH is not a directive ...                                 OK
+dest_directive: assumption is not a directive ...                            OK
+dest_directive: reflexive equation is not a directive ...                    OK
+dest_directive: equation is not a directive ...                              OK
+dest_directive: implication from a marker is not a directive ...             OK
+ExclX literal string round trips (including every byte) ...                  OK
+legacy named markers still preserve every literal string ...                 OK
+ExclX and legacy named recognizers are disjoint ...                          OK
+ExclX uses its own theory constant ...                                       OK
+ExclX rejects non-markers, non-variable args and variable heads ...          OK
+ExclX requirement/bounded wrappers preserve payload and hyps ...             OK
+ExclX Req0 takes precedence over ReqD and bounds ...                         OK
+ExclX bounds take precedence over the marker head ...                        OK
+process_taclist_then_recur strips Req0 for recursion ...                     OK
+process_taclist_then: Req0 fires ...                                         [GC = 0.001] (0.000s)      OK
+process_taclist_then: Req0 succeeds without a match ...                      (0.000s)      OK
+process_taclist_then: ReqD fires ...                                         (0.000s)      OK
+process_taclist_then: Req0 over ReqD ...                                     (0.000s)      OK
+process_taclist_then: Req0 rejects remaining matches ...                     (0.000s)      OK
+process_taclist_then: ReqD rejects no decrease ...                           (0.000s)      OK
+multiple requirements: ReqD then unmarked drops ReqD ...                     (0.000s)      OK
+multiple requirements: unmarked then ReqD checks ReqD ...                    (0.000s)      OK
+multiple requirements: Req0 then unmarked drops Req0 ...                     (0.000s)      OK
+multiple requirements: unmarked then Req0 checks Req0 ...                    (0.000s)      OK
+multiple requirements: ReqD then distinct Req0 drops ReqD ...                (0.000s)      OK
+multiple requirements: distinct Req0 then ReqD checks ReqD ...               (0.000s)      OK
+multiple requirements: Req0 then distinct Req0 drops first check ...         (0.000s)      OK
+multiple requirements: distinct Req0 then Req0 checks last argument ...      (0.000s)      OK
+multiple requirements: recursive route retains earlier ReqD ...              [GC = 0.001] (0.001s)      OK
+multiple requirements: recursive route retains earlier Req0 ...              (0.000s)      OK
+process_taclist_then strips Req0 from goal assumptions ...                   (0.000s)      OK
+LLABEL_RES_THEN(1) ...                                                       (0.000s)      OK
+LLABEL_RES_THEN(2) ...                                                       (0.000s)      OK
+LLABEL_RES_THEN(3) ...                                                       (0.000s)      OK
+LLABEL_RES_THEN(4) ...                                                       (0.000s)      OK
+LLABEL_RES_THEN(5) ...                                                       (0.000s)      OK
+LLABEL_RES_THEN(6) ...                                                       (0.000s)      OK
+RULE_ASSUM_TAC doesn't hit hide ...                                          (0.000s)      OK
+SUBST_ALL_TAC doesn't hit hide ...                                           (0.000s)      OK
+SUBST_ALL_TAC/CONJ_VALIDATE doesn't hit hide ...                             (0.000s)      OK
+RULE_ASSUM_TAC hits unignored hide ...                                       (0.000s)      OK
+CONJ_VALIDATE(1) ...                                                         (0.000s)      OK
+Split marker round-trip ...                                                  (0.000s)      OK
+suspend (1) ...                                                              (0.000s)      OK
+suspend (2) ...                                                              (0.000s)      OK
+extract_suspended_goal (1) ...                                               (0.000s)      OK
+extract_suspended_goal (2) ...                                               (0.000s)      OK
+extract_suspended_goal fails (1) ...                                         (0.000s)      OK
+prim_resume (1a) ...                                                         (0.000s)      OK
+prim_resume (1b) ...                                                         (0.000s)      OK
+prim_resume resconj+closure ...                                              (0.000s)      OK
+UNABBREV_TAC missing abbrev gives clear error ...                            UNABBREV_TAC "MISSING_ABBR" with no such abbrev ...                          (0.000s)      OK

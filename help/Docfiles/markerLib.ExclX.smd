@@ -1,0 +1,50 @@
+## `ExclX`
+
+``` hol4
+markerLib.ExclX : string -> thm
+markerLib.destExclX : thm -> string option
+```
+
+------------------------------------------------------------------------
+
+Constructs and recognizes the distinct extended-exclusion marker.
+
+`ExclX name` constructs a hypothesis-free theorem with conclusion
+`marker$ExcludeX v`, where `v` is a variable whose name is exactly the ML
+string `name`. Like `Excl` and `ExclSF`, it stores names as variables, not
+HOL string literals. No parsing, prefix encoding or target lookup occurs.
+
+`destExclX th` returns `SOME name` for this conclusion and `NONE` otherwise.
+It does not recognize legacy `Excl` or `ExclSF` markers; their recognizers
+likewise reject `ExclX`. No legacy string is reserved to mean `ExclX`.
+
+`markerLib.dest_directive (ExclX name)` returns
+`SOME (markerLib.DExclX name)`. Requirement and bounded-rewrite wrappers
+retain their usual precedence: `dest_directive` reports the outer wrapper
+before the marker payload. `markerLib.strip_wrappers` exposes the marker.
+
+### Availability
+
+This API currently supplies only the marker boundary, not a complete
+exclusion feature. Simplifier routing is assigned to compatibility TASK_07.
+Until that routing is implemented, simplifier calls reject `ExclX` with an
+explicit error, including when wrapped in `Once` or `Ntimes`. Existing
+`Excl` and `ExclSF` behavior is unchanged by this addition. The intended
+boundary is literal legacy exclusion through `Excl`, and explicit extended
+namespace selection through `ExclX`.
+
+Constructing or recognizing this marker does not enable persistent `split`
+registration.
+
+### Example
+
+``` hol4
+val x = markerLib.ExclX "rule:Thy$Name";
+val SOME "rule:Thy$Name" = markerLib.destExclX x;
+val SOME (markerLib.DExclX "rule:Thy$Name") = markerLib.dest_directive x;
+val NONE = markerLib.destExcl x;
+```
+
+### See also
+
+[`simpLib.Excl`](#simpLib.Excl).

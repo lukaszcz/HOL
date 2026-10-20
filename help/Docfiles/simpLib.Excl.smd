@@ -9,6 +9,13 @@ simpLib.Excl : string -> thm
 
 Excludes named simplifier components for one invocation.
 
+The distinct `markerLib.ExclX` marker is now available for the forthcoming
+explicit extended-exclusion route. It is not an encoding in an `Excl`
+string. This addition does not yet change the overloaded behavior described
+below: compatibility TASK_07 will restore literal-only `Excl` semantics
+and implement `ExclX` routing. For now simplifier calls reject `ExclX`
+explicitly; it is not a complete exclusion feature.
+
 `Excl name` is a directive in the theorem list of a simplification
 conversion or tactic. A bare name uses the same parser and rule matching
 as `ss -* [name]`: qualification uses dots, not the kernel `Thy$Name`
@@ -49,6 +56,7 @@ invalid bare name, an ambiguous target or an unmatched namespaced name.
 
 ### See also
 
+[`markerLib.ExclX`](#markerLib.ExclX),
 [`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV),
 [`simpLib.add_looper`](#simpLib.add_looper),
 [`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),

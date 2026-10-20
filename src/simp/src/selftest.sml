@@ -3453,6 +3453,30 @@ val _ =
                      concl (markerLib.IgnAsm ‘x = _’))]
   end
 
+(* TASK_06 exposes the marker, not its exclusion semantics. Until TASK_07
+   routes it, reject even bounded payloads rather than using them as facts. *)
+val _ =
+  let
+    val x = markerLib.ExclX "rule:missing"
+    fun unsupported e = check_HOL_ERRexn
+      (fn (s, f, msg) => s = "simpLib" andalso f = "process_tags" andalso
+                        String.isSubstring "ExclX" msg andalso
+                        String.isSubstring "TASK_07" msg) e
+    fun refuses run (name, th) =
+        shouldfail {testfn = run, printarg = K name,
+                    printresult = K "unexpected success",
+                    checkexn = unsupported} th
+    val markers = [("ExclX", x), ("Once ExclX", Once x),
+                   ("Ntimes ExclX", Ntimes x 3)]
+  in
+    List.app (refuses (fn th => SIMP_CONV empty_ss [th] T)) markers;
+    List.app (refuses (fn th => empty_ss && [th])) markers;
+    List.app (refuses (fn th =>
+      runtac (VALID (SIMP_TAC empty_ss [th])) ([], T)))
+      (markers @ [("Req0 ExclX", Req0 x), ("ReqD ExclX", ReqD x),
+                  ("Req0 Once ExclX", Req0 (Once x))])
+  end
+
 (* ---------------------------------------------------------------------- *)
 
 fun child_policy charge keep : Traverse.child_first_policy =

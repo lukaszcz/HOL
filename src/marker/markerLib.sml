@@ -94,12 +94,14 @@ fun genmktagged th nm =
       EQT_ELIM (SPEC v th)
     end
 val Excl = genmktagged markerTheory.Exclude_def
+val ExclX = genmktagged markerTheory.ExcludeX_def
 val FRAG = genmktagged markerTheory.FRAG_def
 val ExclSF = genmktagged markerTheory.ExcludeFrag_def
 
 
 fun mk_marker_const nm = prim_mk_const{Thy = "marker", Name = nm}
 val Excl_t = mk_marker_const "Exclude"
+val ExclX_t = mk_marker_const "ExcludeX"
 val ExclSF_t = mk_marker_const "ExcludeFrag"
 val FRAG_t = mk_marker_const "FRAG"
 fun gendest_tagged t th =
@@ -110,6 +112,7 @@ fun gendest_tagged t th =
       else NONE
     end handle HOL_ERR _ => NONE
 val destExcl = gendest_tagged Excl_t
+val destExclX = gendest_tagged ExclX_t
 val destFRAG = gendest_tagged FRAG_t
 val destExclSF = gendest_tagged ExclSF_t
 
@@ -690,6 +693,7 @@ datatype directive =
   | DCong of thm
   | DSplit of thm
   | DExcl of string
+  | DExclX of string
   | DExclSF of string
   | DFRAG of string
   | DReq0 of thm
@@ -724,7 +728,8 @@ fun dest_directive th =
             SOME (DIgnAsm (#1 (dest_var (rand (concl th)))))
           else if is_abbr th then SOME (DAbbr (dest_abbr th))
           else NONE
-      val named = [(destExcl, DExcl), (destExclSF, DExclSF),
+      val named = [(destExcl, DExcl), (destExclX, DExclX),
+                   (destExclSF, DExclSF),
                    (destFRAG, DFRAG), (total dest_label_ref, DLabel)]
     in
       case wrapper () of

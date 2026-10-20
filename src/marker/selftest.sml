@@ -35,6 +35,7 @@ val _ =
       ("Split", fn () => markerLib.Split th,
        fn DSplit a => same a | _ => false),
       ("Excl", fn () => Excl "nm", fn DExcl "nm" => true | _ => false),
+      ("ExclX", fn () => ExclX "nm", fn DExclX "nm" => true | _ => false),
       ("ExclSF", fn () => ExclSF "nm", fn DExclSF "nm" => true | _ => false),
       ("FRAG", fn () => FRAG "nm", fn DFRAG "nm" => true | _ => false),
       ("Req0", fn () => mk_Req0 th, fn DReq0 a => same a | _ => false),
@@ -64,6 +65,82 @@ val _ =
       ("equation", fn () => ASSUME “x:'a = y”),
       ("implication from a marker", fn () => ASSUME “marker$Req0 ==> p”)
     ]
+  end
+
+(* Named markers store literal variable names, not parsed names or string
+   encodings. Check all byte values as well as likely exclusion spellings. *)
+val _ =
+  let
+    val bytes = List.tabulate (256, Char.chr)
+    val names = ["", "nm", "rule:foo", "solver:foo", "looper:foo",
+                 "split:foo", "case:bool", "Thy$Name", "Thy.Name.2",
+                 "rule:", " leading and trailing ", "quote\"\\slash",
+                 "\n\t\000", "λ∀"] @
+                [String.implode bytes] @ map String.str bytes
+    fun check label p = (tprint label; if p then OK () else die "mismatch")
+    fun legacy nm =
+        destExcl (Excl nm) = SOME nm andalso
+        destExclSF (ExclSF nm) = SOME nm andalso
+        destFRAG (FRAG nm) = SOME nm andalso
+        (case dest_directive (Excl nm) of
+             SOME (DExcl s) => s = nm | _ => false) andalso
+        (case dest_directive (ExclSF nm) of
+             SOME (DExclSF s) => s = nm | _ => false) andalso
+        (case dest_directive (FRAG nm) of
+             SOME (DFRAG s) => s = nm | _ => false)
+    fun extended nm =
+        let val th = ExclX nm
+        in
+          null (hyp th) andalso destExclX th = SOME nm andalso
+          is_directive th andalso
+          (case dest_directive th of
+               SOME (DExclX s) => s = nm | _ => false)
+        end
+    fun distinct nm =
+        destExcl (ExclX nm) = NONE andalso
+        destExclSF (ExclX nm) = NONE andalso
+        destFRAG (ExclX nm) = NONE andalso
+        destExclX (Excl nm) = NONE andalso
+        destExclX (ExclSF nm) = NONE andalso
+        destExclX (FRAG nm) = NONE
+    val x = ExclX "rule:Thy$Name"
+    fun same th = concl th ~~ concl x andalso null (hyp th)
+    fun payload th = same (strip_wrappers th) andalso
+                     destExclX th = SOME "rule:Thy$Name"
+    val wrapped = [mk_Req0 x, mk_ReqD x, BoundedRewrites.Once x,
+                   mk_Req0 (mk_ReqD (BoundedRewrites.Once x)),
+                   BoundedRewrites.Ntimes (mk_ReqD (mk_Req0 x)) 3]
+    val nonvar = EQT_ELIM (ISPEC T markerTheory.ExcludeX_def)
+    val impostor = ASSUME
+      (mk_comb (mk_var ("ExcludeX", alpha --> bool), mk_var ("nm", alpha)))
+  in
+    check "ExclX literal string round trips (including every byte)"
+      (List.all extended names);
+    check "legacy named markers still preserve every literal string"
+      (List.all legacy names);
+    check "ExclX and legacy named recognizers are disjoint"
+      (List.all distinct names);
+    check "ExclX uses its own theory constant"
+      (same_const (rator (concl x))
+                  (prim_mk_const {Thy="marker", Name="ExcludeX"}));
+    check "ExclX rejects non-markers, non-variable args and variable heads"
+      (List.all (fn th => destExclX th = NONE)
+                [TRUTH, ASSUME T, nonvar, impostor] andalso
+       not (is_directive nonvar) andalso not (is_directive impostor));
+    check "ExclX requirement/bounded wrappers preserve payload and hyps"
+      (List.all payload wrapped);
+    check "ExclX Req0 takes precedence over ReqD and bounds"
+      (case dest_directive (mk_Req0 (mk_ReqD (BoundedRewrites.Once x))) of
+           SOME (DReq0 p) =>
+           (case dest_directive p of
+                SOME (DReqD q) =>
+                (case dest_directive q of
+                     SOME (DBounded (r, 1)) => same r | _ => false)
+              | _ => false)
+         | _ => false);
+    check "ExclX bounds take precedence over the marker head"
+      (case dest_directive (BoundedRewrites.Ntimes x 3) of
+           SOME (DBounded (p, 3)) => same p | _ => false)
   end
 
 (* The theorem list handed to the recursive pass must be stripped of
