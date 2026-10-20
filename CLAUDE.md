@@ -45,6 +45,14 @@ the regression harness goes through `selftest.sml`.
 `tools/h4pedant` enforces tabs/whitespace as part of the
 regression suite.
 
+## Temporary artifacts
+
+Remove agent-created caches, copied build trees and temporary files as soon
+as their last required use finishes. Make cleanup part of each task or
+experiment, not something deferred until disk space runs out. Keep necessary
+inputs and compact, unique test evidence; never delete unrelated or
+caller-owned files.
+
 ## Inside a sandboxed Linux VM
 
 If you're a Claude session running inside an OrbStack VM that mounts
