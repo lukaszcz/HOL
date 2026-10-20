@@ -52,7 +52,7 @@ def stage(revision, directory):
     return manifest
 
 
-def audit(start, library, work):
+def audit(start, library, work, *, required=None, forbidden=()):
     """Follow Poly .uo load recipes; reject any library-module fallback.
 
     This is a load-recipe audit, not an independent repository build.
@@ -62,6 +62,7 @@ def audit(start, library, work):
     seen = set()
     shared = {}
     modules = set()
+    recipes = set()
     aliases = {}
 
     def physical(path):
@@ -81,6 +82,10 @@ def audit(start, library, work):
         if path in seen:
             return
         seen.add(path)
+        if path.suffix in (".uo", ".ui"):
+            recipes.add(path.stem)
+            if path.stem in forbidden:
+                raise RuntimeError(f"forbidden launcher dependency: {path}")
         record(path)
         if path.suffix == ".uo":
             interface = physical(path.with_suffix(".ui"))
@@ -115,10 +120,13 @@ def audit(start, library, work):
             visit(product)
 
     visit(start)
-    for required in ("simpLib", "boolSimps", "markerLib", "markerSyntax"):
-        if required not in modules:
-            raise RuntimeError(f"load-recipe audit missed {required}")
-    return {"local_modules": sorted(modules), "shared_sha256": shared,
+    if required is None:
+        required = ("simpLib", "boolSimps", "markerLib", "markerSyntax")
+    for name in required:
+        if name not in modules:
+            raise RuntimeError(f"load-recipe audit missed {name}")
+    return {"local_modules": sorted(modules),
+            "recipe_modules": sorted(recipes), "shared_sha256": shared,
             "installed_recipe_aliases": aliases}
 
 

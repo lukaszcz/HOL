@@ -3,8 +3,10 @@
 This directory is the maintained evidence location for the compatibility
 plan. Start with [BASELINE.md](BASELINE.md) for the pinned revisions,
 provenance and initial checks. [LEGACY_FAILURES.md](LEGACY_FAILURES.md)
-records TASK_02's eleven red regressions and repair handoff. Neither task
-changes implementation APIs or weakens legacy expectations.
+records TASK_02's eleven red regressions and repair handoff.
+[FRESH_LOAD.md](FRESH_LOAD.md) records TASK_03's clean-heap namespace
+regressions and explicit red targets. None changes implementation APIs or
+weakens legacy expectations.
 
 ## Layout
 
@@ -23,8 +25,10 @@ changes implementation APIs or weakens legacy expectations.
   once, hashed as `support_sha256`, and copied into each suite directory.
   Holmake discovers and builds these modules through ordinary dependencies.
 - `probes/branch/`: branch-only API expectations, never differential inputs.
-- `probes/fresh-load/`: reserved for separately linked, fresh-load probes.
-  Do not add these to the ordinary suite: its imports preload `simpLib`.
+- `probes/fresh-load/`: separately linked fresh-load launcher and deferred
+  control. Run with `fresh_load.py`, not the ordinary `run.py`: ordinary
+  suite imports preload `simpLib`. See its README for isolated scenarios,
+  preloading checks and native Holmake targets.
 - `results/taskNN/`: named result records for subsequent tasks. Keep
   commands, exact revisions, input hashes, exit codes, and compact logs.
   Do not replace historical evidence with a later run under the same name.

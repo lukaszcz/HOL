@@ -1,0 +1,28 @@
+<<HOL message: Created theory "fresh_load">>
+OBS scenario=control
+fail-fast test mode ...                                                      [32m[1mOK[0m
+warnings enabled ...                                                         [32m[1mOK[0m
+OBS initial.attribute=false
+OBS initial.set=false
+both initial registries unclaimed ...                                        [32m[1mOK[0m
+OBS initial.loaded.simpLib=false
+OBS initial.bound.simpLib=false
+no preloaded simpLib ...                                                     [32m[1mOK[0m
+OBS initial.loaded.splitLib=false
+OBS initial.bound.splitLib=false
+no preloaded splitLib ...                                                    [32m[1mOK[0m
+OBS precondition=clean
+OBS load.path=/tmp/claude/hol-simp-fresh.fvkb0uvj/reference/lib/simpLib
+OBS load.exception=none
+OBS load.warnings=0
+normal dynamic load succeeds ...                                             [32m[1mOK[0m
+normal dynamic load without warnings ...                                     [32m[1mOK[0m
+OBS after-load.attribute=false
+OBS after-load.set=false
+ordinary simplification after dynamic load ...                               [32m[1mOK[0m
+OBS control.theorem=expected equality; hypotheses=[]
+OBS control.exception=none
+OBS control.warnings=0
+ordinary simplification succeeds ...                                         [32m[1mOK[0m
+ordinary simplification without warnings ...                                 [32m[1mOK[0m
+OBS result=pass

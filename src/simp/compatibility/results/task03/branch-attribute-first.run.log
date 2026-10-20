@@ -1,0 +1,38 @@
+<<HOL message: Created theory "fresh_load">>
+OBS scenario=attribute-first
+fail-fast test mode ...                                                      [32m[1mOK[0m
+warnings enabled ...                                                         [32m[1mOK[0m
+OBS initial.attribute=false
+OBS initial.set=false
+both initial registries unclaimed ...                                        [32m[1mOK[0m
+OBS initial.loaded.simpLib=false
+OBS initial.bound.simpLib=false
+no preloaded simpLib ...                                                     [32m[1mOK[0m
+OBS initial.loaded.splitLib=false
+OBS initial.bound.splitLib=false
+no preloaded splitLib ...                                                    [32m[1mOK[0m
+OBS precondition=clean
+OBS register.exception=none
+OBS register.warnings=0
+custom registration succeeds ...                                             [32m[1mOK[0m
+custom registration without warnings ...                                     [32m[1mOK[0m
+local handler arguments ...                                                  [32m[1mOK[0m
+stored handler arguments ...                                                 [32m[1mOK[0m
+OBS identity.attribute.calls=local,stored
+custom attribute handler identity ...                                        [32m[1mOK[0m
+OBS before-load.attribute=true
+OBS before-load.set=false
+OBS load.path=/tmp/claude/hol-simp-fresh.fvkb0uvj/branch/lib/simpLib
+error in quse /tmp/claude/hol-simp-fresh.fvkb0uvj/branch/lib/splitLib.sml : HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+error in load /tmp/claude/hol-simp-fresh.fvkb0uvj/branch/lib/splitLib : HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+error in load /tmp/claude/hol-simp-fresh.fvkb0uvj/branch/lib/simpLib : HOL_ERR (HOL_ERROR {message = "settype or attribute split already exists", origins = [{origin_function = "registration", origin_structure = "splitLib", source_location = Loc_Unknown}]})
+OBS load.exception=HOL_ERR: \nException raised at splitLib.registration: settype or attribute split already exists\n
+OBS load.warnings=0
+OBS after-load.attribute=true
+OBS after-load.set=false
+local handler arguments ...                                                  [32m[1mOK[0m
+stored handler arguments ...                                                 [32m[1mOK[0m
+OBS identity.attribute.calls=local,stored
+custom attribute handler identity ...                                        [32m[1mOK[0m
+dynamic simpLib load succeeds ...                                            [31m[1m[2CFAILED![0m
+dynamic simpLib load succeeds
