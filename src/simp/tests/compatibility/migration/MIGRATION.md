@@ -10,6 +10,13 @@ pass**. TASK_08 has finalized the names/types in
 [compile-checked prototypes](../interfaces/Task08API.sml) and
 [final-apis.tsv](final-apis.tsv). The TASK_07 snapshot below remains the
 source-tied caller inventory, not an implementation claim.
+**TASK_10 additive implementation update:** [TASK10.md](TASK10.md) and
+[task10-relocation.json](task10-relocation.json) separately record the actual
+in-place native caller cutover, original/current source anchors and hashes,
+630-to-642 ordered case mapping, ordinary pins, typed optional-eligibility
+changes and named temporary dependencies. The TASK_07 tables below remain
+historical; they were not regenerated as implementation evidence.
+
 Every current symbol is indexed in [apis.tsv](apis.tsv); every lexical reference
 has a file, line and task owner in [references.tsv](references.tsv). Actual
 callers, including construction sites, are classified in

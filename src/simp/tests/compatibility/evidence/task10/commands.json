@@ -1,0 +1,230 @@
+[
+  {
+    "name": "focused",
+    "argv": [
+      "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/tests/simp-ext",
+      "-j1",
+      "check"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 3.625,
+    "log": "focused.log.gz",
+    "sha256": "a0f749a9afb184805b2a271c1019fa27f4b08daf25ea723c05f57206c0f9a3c5"
+  },
+  {
+    "name": "negative-accepted-body",
+    "argv": [
+      "./selftest.exe"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/simp-ext",
+    "exit": 1,
+    "expected": 1,
+    "elapsed_seconds": 3.54,
+    "log": "negative-accepted-body.log.gz",
+    "sha256": "b21e852eb3761ceefcfd1b4ad8de4ee5d845273ab80a77d4eeff14ce46185205"
+  },
+  {
+    "name": "negative-missing-file",
+    "argv": [
+      "./selftest.exe"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/simp-ext",
+    "exit": 1,
+    "expected": 1,
+    "elapsed_seconds": 3.821,
+    "log": "negative-missing-file.log.gz",
+    "sha256": "c990dccc87487a01cfbb20e1b1bec42e2a46f4548b947ad0c5b3187ac5fee3e5"
+  },
+  {
+    "name": "focused-restored",
+    "argv": [
+      "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "--no-project",
+      "--no-cache",
+      "-C",
+      "src/simp/tests/simp-ext",
+      "-j1",
+      "check"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 3.521,
+    "log": "focused-restored.log.gz",
+    "sha256": "7fe00599dbac873ddcd5e605edd3b8c23dea31ccb82d73ff466839dc75e5c739"
+  },
+  {
+    "name": "native",
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_prior_native.py",
+      "--output",
+      "/tmp/task10-native-final"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 102.234,
+    "log": "native.log.gz",
+    "sha256": "ef3969ac50352de955d9fba842abd5f6181fe2c44facaacdefe8aadafe86f369"
+  },
+  {
+    "name": "paired",
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--prior-contracts",
+      "--negative-controls",
+      "--candidate",
+      "HEAD",
+      "--output",
+      "/tmp/task10-paired-final"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 52.56,
+    "log": "paired.log.gz",
+    "sha256": "089ea6bb01223b0cbfea4715edeced05446d7b1cc7b40e2ba7dd7207d38ea05d"
+  },
+  {
+    "name": "interfaces",
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/interfaces/check_design.py",
+      "--run",
+      "--negative-controls",
+      "--output",
+      "/tmp/task10-interfaces-final"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 5.998,
+    "log": "interfaces.log.gz",
+    "sha256": "fcc6346e5014f80c909c775995f70898ae096f7946c8c4e0440247c034dc3b9a"
+  },
+  {
+    "name": "unit",
+    "argv": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "src/simp/tests/compatibility",
+      "-p",
+      "test_*.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 7.861,
+    "log": "unit.log.gz",
+    "sha256": "6d4722066207f3c31801bb51f3e00fb9e190d07e494fb9ddf70240f28842cc59"
+  },
+  {
+    "name": "interface-unit",
+    "argv": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "src/simp/tests/compatibility/interfaces",
+      "-p",
+      "test_*.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 0.115,
+    "log": "interface-unit.log.gz",
+    "sha256": "62acb9885edb56ae7b4856afd37db2bf6ffc90ff139e71fa98c3642795048183"
+  },
+  {
+    "name": "coverage",
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/coverage_ledger.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 0.855,
+    "log": "coverage.log.gz",
+    "sha256": "79d708d32602069fcd9c5c022a45660f8b423c9d0d0cd5b4d6ee62b0203db203"
+  },
+  {
+    "name": "immutable",
+    "argv": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/verify_evidence.py"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 0.246,
+    "log": "immutable.log.gz",
+    "sha256": "0cd5cc47726ce73232cb7ee4653bd42c4c0824af520fc99599a9d561ca82ed15"
+  },
+  {
+    "name": "routine",
+    "argv": [
+      "bin/build",
+      "-t",
+      "--seq=tools/sequences/upto-parallel"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 25.939,
+    "log": "routine.log.gz",
+    "sha256": "9527ccded41b0ce2f67fda4298e80b117c26eb473a0b62c1da966ee9c7f507d8"
+  },
+  {
+    "name": "pedant",
+    "argv": [
+      "tools/h4pedant/h4pedant",
+      "src/simp/src",
+      "src/simp/tests/simp-ext",
+      "src/simp/tests/split-registration",
+      "src/simp/tests/split-persistence"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 0.034,
+    "log": "pedant.log.gz",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "diff",
+    "argv": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "cwd": "/home/lukasz/dev/HOL/worktrees/simplifier",
+    "exit": 0,
+    "expected": 0,
+    "elapsed_seconds": 0.021,
+    "log": "diff.log.gz",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

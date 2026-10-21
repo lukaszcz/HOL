@@ -1,3 +1,23 @@
+(* Explicit imports for Holdep before the local aliases shadow them. *)
+open simpLib pureSimps boolSimps congLib Traverse
+     simpExtLib pureSimpsExt boolSimpsExt congExtLib TraverseExt
+
+(* Interleaved cutover: extension callers use independently sealed sets.
+   Keep the ordinary modules available for the baseline-only pins below. *)
+structure OrdinarySimp = simpLib
+structure OrdinaryPure = pureSimps
+structure OrdinaryBool = boolSimps
+structure OrdinaryCong = congLib
+structure OrdinaryTraverse = Traverse
+structure Traverse = TraverseExt
+(* Ordinary procedures enter the extension engine only by explicit lift. *)
+fun lifted_reducer data = Traverse.lift (OrdinaryTraverse.REDUCER data)
+structure simpLib = simpExtLib
+structure pureSimps = pureSimpsExt
+structure boolSimps = boolSimpsExt
+structure congLib = congExtLib
+structure T = TraverseExt
+
 open HolKernel Parse boolLib simpLib splitLib
 open testutils boolSimps
 
@@ -272,7 +292,7 @@ in
 end
 
 val _ = let
-  open boolSimps
+  open OrdinarySimp OrdinaryBool
   val t = ``I (f:'b -> 'c) o I (g:'a -> 'b)``
   val result = ``(f:'b -> 'c) o I (g:'a -> 'b)``
   val doit = QCONV (SIMP_CONV (bool_ss ++ combinSimps.COMBIN_ss)
@@ -288,7 +308,7 @@ val _ = shouldfail {testfn = (fn () => remove_ssfrags ["FOOBAR"] bool_ss),
                     checkexn = fn Conv.UNCHANGED => true | _ => false} ()
 
 val _ = let
-  open boolSimps
+  open OrdinarySimp OrdinaryBool
   val t = ``(!n:'a. P n n) ==> ?m. P c m``
   val result = ``T``
   val doit = QCONV (SIMP_CONV (bool_ss ++ SatisfySimps.SATISFY_ss) [])
@@ -807,14 +827,16 @@ in
     unchanged_tm
 
   val _ = let
+    (* This is the ordinary public destructor pin, not a lifted view. *)
+    open OrdinarySimp OrdinaryBool
     val d = traversedata_for_ss bool_ss
     val {name,initial,addcontext,apply} =
-      Traverse.dest_reducer (hd (#rewriters d))
-    val r = Traverse.REDUCER {name=name, initial=initial,
-                              addcontext=addcontext, apply=apply}
+      OrdinaryTraverse.dest_reducer (hd (#rewriters d))
+    val r = OrdinaryTraverse.REDUCER
+      {name=name, initial=initial, addcontext=addcontext, apply=apply}
   in
     convtest ("dest_reducer reads simpLib's context rewriter",
-              Traverse.TRAVERSE
+              OrdinaryTraverse.TRAVERSE
                 {limit= #limit d, rewriters=[r], dprocs= #dprocs d,
                  travrules= #travrules d, relation= #relation d} [],
               ``p /\ T``, ``p:bool``)
@@ -888,7 +910,7 @@ in
   val visit_error =
     mk_HOL_ERR "selftest" "child_first_visit" "probe only"
   val visit_reducer =
-    Traverse.REDUCER
+    lifted_reducer
       {name=SOME "child-first visit probe",
        initial=EMPTY_CONTEXT,
        addcontext=fn (context, _) => context,
@@ -3498,7 +3520,7 @@ val _ = let
        REWR_CONV (GSYM boolTheory.CONTRAPOS_THM) tm)
     else NO_CONV tm
   val supplied_imp_reducer =
-    Traverse.REDUCER
+    lifted_reducer
       {name=SOME "global supplied implication rebuild",
        initial=SUPPLIED_IMP_CONTEXT false,
        addcontext=supplied_imp_addcontext,
@@ -3792,7 +3814,7 @@ val _ = let
   val dproc_calls = ref 0
   fun literal_stores name set =
     set ++ rewrites_with_names [({Thy="",Name=name},and_rule)] ++
-    dproc_ss (Traverse.REDUCER
+    dproc_ss (lifted_reducer
       {name=SOME name,initial=Fail "matrix context",
        addcontext=fn (ctxt,_) => ctxt,
        apply=fn _ => fn tm => (dproc_calls := !dproc_calls + 1;
@@ -5032,15 +5054,17 @@ local
       (congLib.mk_congset [])
   val legacy_builders =
     [("TRAVERSE",fn ss => Traverse.TRAVERSE (traversedata_for_ss ss)),
+     (* Tracked projection is total: directly replace the old valOf route,
+        without reconstructing a set or changing collector lifetimes. *)
      ("TRAVERSE native projection",fn ss =>
-        Traverse.TRAVERSE (valOf (legacy_traversedata_for_ss ss))),
+        Traverse.TRAVERSE (traversedata_for_ss ss)),
      ("CONGRUENCE_SIMP_QCONV",cong_qconv)]
 
   (* An atomic input avoids congruence-generated context additions. *)
   fun lifetime_reducer lift name build expected =
     let
       val calls = ref 0
-      val reducer = lift (Traverse.REDUCER
+      val reducer = lift (lifted_reducer
         {name=SOME "R2 context callback",initial=R2_CONTEXT,
          addcontext=fn (ctxt,_) => (calls := !calls + 1; ctxt),
          apply=fn _ => NO_CONV})
@@ -5093,8 +5117,9 @@ in
     (fn (name,build) => once_lifetime name build false)
     (List.take (legacy_builders,2))
 
-  (* Rejected native projections must keep the generalized legacy
-     construction-time collectors, not adopt XTRAVERSE refresh. *)
+  (* Context/config procedures in tracked default projections keep the
+     construction-time collectors, not XTRAVERSE refresh. The old ordinary
+     optional getter rejected these types; no such getter is used here. *)
   val _ = List.app
     (fn (kind,lift) => List.app
       (fn (name,build) =>
@@ -5144,64 +5169,79 @@ in
 end
 
 (* R4: FRAG lookup and dispatch wait for the goal's current Context.
-   Use only baseline APIs; restore the fragment database on every exit. *)
+   Run the same assertions in both typed registries; restore each Context. *)
 local
-  val atom = ``r4_fragment_p:bool``
-  val goal = ([],``T /\ r4_fragment_p``)
-  val expected = [([],atom)]
-  val rule = CONJUNCT1 (SPEC atom boolTheory.AND_CLAUSES)
+  fun registry_tests prefix builders register = let
+    val atom = ``r4_fragment_p:bool``
+    val goal = ([],``T /\ r4_fragment_p``)
+    val expected = [([],atom)]
+    val rule = CONJUNCT1 (SPEC atom boolTheory.AND_CLAUSES)
+    fun pin msg constructed =
+      (tprint (prefix ^ msg);
+       require_msg
+         (fn Exn.Res (sgs,_) => list_eq goal_eq expected sgs | _ => false)
+         (K "saved tactic did not use the application-time fragment")
+         (fn () => runtac (VALID (Exn.release constructed)) goal) ())
+
+    fun delayed (label,build) = let
+      val saved = Context.snapshot ()
+      fun run () = let
+        val name = "r4_late_registration_" ^ label
+        val constructed = Exn.capture build [markerLib.FRAG name]
+        val _ = register (name,[rule])
+      in
+        pin ("R4 delayed FRAG registration: " ^ label) constructed
+      end
+    in Portable.finally (fn () => Context.restore saved) run () end
+
+    fun contexts (label,build) = let
+      val absent = Context.snapshot ()
+      fun run () = let
+        val name = "r4_context_registration_" ^ label
+        val directive = markerLib.FRAG name
+        val _ = register (name,[rule])
+        val present = Context.snapshot ()
+        val constructed = Exn.capture build [directive]
+        val _ = Context.restore absent
+        val _ = tprint (prefix ^
+          "R4 saved tactic sees absent Context: " ^ label)
+        val _ = require_msg
+          (fn Exn.Exn (HOL_ERR e) =>
+                String.isSubstring ("No frag called " ^ name)
+                  (Feedback.message_of e)
+            | _ => false)
+          (K "missing fragment must fail at application, not construction")
+          (fn () => runtac (VALID (Exn.release constructed)) goal) ()
+        val from_absent = Exn.capture build [directive]
+        val _ = Context.restore present
+        val _ = pin ("R4 saved tactic sees restored Context: " ^ label)
+          constructed
+      in
+        pin ("R4 tactic constructed in absent Context: " ^ label) from_absent
+      end
+    in Portable.finally (fn () => Context.restore absent) run () end
+  in
+    List.app delayed builders;
+    List.app contexts builders
+  end
   val cfg = {strip=false,elimvars=false,droptrues=false,oldestfirst=true}
-  val builders =
+in
+  val _ = let
+    open OrdinarySimp
+  in
+    registry_tests ""
+      [("ASM_SIMP_TAC",ASM_SIMP_TAC empty_ss),
+       ("SIMP_TAC",SIMP_TAC empty_ss),
+       ("global_simp_tac",global_simp_tac cfg empty_ss)]
+      (fn (name,rules) => ignore (register_frag
+        (name_ss name (rewrites rules))))
+  end
+  val _ = registry_tests "extension registry: "
     [("ASM_SIMP_TAC",ASM_SIMP_TAC empty_ss),
      ("SIMP_TAC",SIMP_TAC empty_ss),
      ("global_simp_tac",global_simp_tac cfg empty_ss)]
-
-  fun pin msg constructed =
-    (tprint msg;
-     require_msg
-       (fn Exn.Res (sgs,_) => list_eq goal_eq expected sgs | _ => false)
-       (K "saved tactic did not use the application-time fragment")
-       (fn () => runtac (VALID (Exn.release constructed)) goal) ())
-
-  fun delayed (label,build) = let
-    val saved = Context.snapshot ()
-    fun run () = let
-      val name = "r4_late_registration_" ^ label
-      val constructed = Exn.capture build [markerLib.FRAG name]
-      val _ = register_frag (name_ss name (rewrites [rule]))
-    in
-      pin ("R4 delayed FRAG registration: " ^ label) constructed
-    end
-  in Portable.finally (fn () => Context.restore saved) run () end
-
-  fun contexts (label,build) = let
-    val absent = Context.snapshot ()
-    fun run () = let
-      val name = "r4_context_registration_" ^ label
-      val directive = markerLib.FRAG name
-      val _ = register_frag (name_ss name (rewrites [rule]))
-      val present = Context.snapshot ()
-      val constructed = Exn.capture build [directive]
-      val _ = Context.restore absent
-      val _ = tprint ("R4 saved tactic sees absent Context: " ^ label)
-      val _ = require_msg
-        (fn Exn.Exn (HOL_ERR e) =>
-              String.isSubstring ("No frag called " ^ name)
-                (Feedback.message_of e)
-          | _ => false)
-        (K "missing fragment must fail at application, not construction")
-        (fn () => runtac (VALID (Exn.release constructed)) goal) ()
-      val from_absent = Exn.capture build [directive]
-      val _ = Context.restore present
-      val _ = pin ("R4 saved tactic sees restored Context: " ^ label)
-        constructed
-    in
-      pin ("R4 tactic constructed in absent Context: " ^ label) from_absent
-    end
-  in Portable.finally (fn () => Context.restore absent) run () end
-in
-  val _ = List.app delayed builders
-  val _ = List.app contexts builders
+    (fn (name,rules) => ignore (register_frag
+      (name_ss name (rewrites rules))))
 end
 
 (* ++ rejects a malformed bounded tag before any public filter callback,
@@ -5286,7 +5326,7 @@ val _ = let
     (tprint name;
      if condition then OK () else die "R6 baseline schedule mismatch")
   fun reducer action =
-    Traverse.REDUCER
+    OrdinaryTraverse.REDUCER
       {name=NONE, initial=R6Context,
        addcontext=fn (ctxt,_) => ctxt,
        apply=fn {solver,conv,context,stack,relation} => action}
@@ -5297,7 +5337,7 @@ val _ = let
          (record log ("factory-" ^ tag);
           fn tm => (record log (tag ^ ":" ^ label tm); NO_CONV tm)))
   fun make rewriters dprocs congprocs weakenprocs =
-    Traverse.TRAVERSE
+    OrdinaryTraverse.TRAVERSE
       {rewriters=rewriters, dprocs=dprocs, limit=NONE,
        relation=boolSyntax.equality,
        travrules=Travrules.TRAVRULES
@@ -5375,22 +5415,22 @@ val _ = let
   (* Explicit extended entries retain their lazy factory scheduling. *)
   val extended_log = ref ([] : string list)
   val extended_data =
-    {rewriters=[reducer (fn tm =>
+    {rewriters=[T.lift (reducer (fn tm =>
        (record extended_log ("R:" ^ label tm);
-        if aconv tm a then ab else NO_CONV tm))],
+        if aconv tm a then ab else NO_CONV tm)))],
      dprocs=[], limit=NONE, relation=boolSyntax.equality,
      travrules=Travrules.TRAVRULES
        {relations=[Travrules.EQ_preorder],
         congprocs=[failing_factory extended_log "C"],
         weakenprocs=[failing_factory extended_log "W"]}}
-  val root_th = Traverse.ROOT_REWRITE
-    (extended_data,Traverse.default_config) [] a
+  val root_th = T.ROOT_REWRITE
+    (extended_data,T.default_config) [] a
   val _ = check "R6 explicit root avoids unused context factories"
     (proves root_th a b andalso events extended_log =
        ["relation-C", "relation-W", "R:a"])
   val _ = extended_log := []
-  val extended_th = Traverse.XTRAVERSE
-    (extended_data,Traverse.default_config) [] a
+  val extended_th = T.XTRAVERSE
+    (extended_data,T.default_config) [] a
   val _ = check "R6 explicit traversal retains lazy factory scheduling"
     (proves extended_th a b andalso events extended_log =
        ["relation-C", "relation-W", "R:a", "R:b",
@@ -5402,6 +5442,7 @@ end
 (* R7 baseline-only pins. Setup precedes hooks/meters; no new strategy API.
    Count.mk_meter leaves counting enabled, as with the existing Count pins. *)
 local
+  open OrdinarySimp
   val goal = ([],mk_var ("r7_goal",bool))
   val missing = markerSyntax.L "r7_nonexistent_label"
   val cong = markerLib.Cong boolTheory.LET_CONG
@@ -5748,7 +5789,7 @@ val _ = let
       (record context_thms; EQT_INTRO (ASSUME tm))
     fun solver {context_thms,...} tm =
       (record context_thms; ASSUME tm)
-    val reducer = Traverse.REDUCER
+    val reducer = lifted_reducer
       {name=NONE,initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
        apply=fn {solver,stack,...} => fn tm =>
@@ -5857,6 +5898,10 @@ in () end
    equation returned by an ordinary reducer.  Keep this after the existing
    Count pins: mk_meter leaves counting enabled. *)
 local
+  open OrdinarySimp
+  structure pureSimps = OrdinaryPure
+  structure congLib = OrdinaryCong
+  structure Traverse = OrdinaryTraverse
   exception StageContext
   exception StageEvent of unit ref
   val payload = ref ()
@@ -5900,8 +5945,8 @@ in
           else die "reflexivity exception constructor or payload changed"
 end
 
-(* Paired native runners and the public/optional legacy projections share
-   compiled rules and controls with explicit configured extraction. *)
+(* Paired native runners and tracked default/configured projections share
+   compiled rules and controls. Ordinary optional eligibility stays below. *)
 local
   fun check name condition =
     (tprint name;
@@ -5995,7 +6040,13 @@ local
     (List.all I failure_checks andalso
      !Cond_rewr.stack_limit = saved_depth)
 
-  fun ordinary (Traverse.REDUCER _) = true | ordinary _ = false
+  (* Type-specific cutover: the tracked default rewriter is now explicitly
+     LIFTED REDUCER (not REDUCER); configured extraction stays CONFIG.
+     Both getters are total. Quota/proof/maker checks below are unchanged.
+     Optional eligibility and the literal ordinary REDUCER client remain
+     separately tested against OrdinarySimp, with ordinary pointer checks. *)
+  fun ordinary (Traverse.LIFTED (OrdinaryTraverse.REDUCER _)) = true
+    | ordinary _ = false
   fun configured_rewriter data =
     case #rewriters (data : Traverse.traverse_data) of
         [Traverse.CONFIG_REDUCER _] => true
@@ -6092,14 +6143,14 @@ local
   val view_source = hd (rewrite_source_handles view_base)
   val viewed = view_base ++ rewrite_views [(view_source,view_eq)]
   val view_native = total (Traverse.TRAVERSE
-    (valOf (legacy_traversedata_for_ss view_base)) [])
+    (traversedata_for_ss view_base) [])
   val view_configured = total (Traverse.TRAVERSE
     (#1 (xtraversedata_for_ss viewed)) [])
   val view_first = view_native view_a
   val replayed = remove_ssfrags_preserving_controls
     ["paired removable"] viewed
   val replay_native = total (Traverse.TRAVERSE
-    (valOf (legacy_traversedata_for_ss replayed)) [])
+    (traversedata_for_ss replayed) [])
   val view_second = view_configured view_a
   val view_third = replay_native view_a
   val view_exhausted = [view_native view_a,view_configured view_a,
@@ -6112,7 +6163,7 @@ local
   exception ProjectionContext
   val additions = ref 0
   fun addcontext (context,_) = (additions := !additions + 1; context)
-  val ordinary_probe = Traverse.REDUCER
+  val ordinary_probe = lifted_reducer
     {name=NONE,initial=ProjectionContext,addcontext=addcontext,
      apply=fn _ => NO_CONV}
   val context_probe = Traverse.CONTEXT_REDUCER
@@ -6137,20 +6188,78 @@ local
   (* Adding a fragment legitimately calls existing collectors, even for
      []. Bracket extraction, rather than counting fixture construction. *)
   val before_rejected = !additions
-  val rejected = map legacy_traversedata_for_ss excluded
+  val rejected = map traversedata_for_ss excluded
   val after_rejected = !additions
-  val accepted = map legacy_traversedata_for_ss accepted_inputs
+  val accepted = map traversedata_for_ss accepted_inputs
   val after_accepted = !additions
   val constructor_inputs = empty_ss :: bool_ss :: base :: excluded
-  (* TASK_02's literal legacy client binding belongs in normal coverage.
-     In particular, NONE from the dispatch accessor cannot gate this API. *)
-  val Traverse.REDUCER _ =
-    hd (#rewriters (traversedata_for_ss empty_ss))
+
+  val ordinary_eligibility = let
+    open OrdinarySimp OrdinaryBool
+    val additions = ref 0
+    val probe = OrdinaryTraverse.REDUCER
+      {name=NONE,initial=ProjectionContext,
+       addcontext=fn (c,_) => (additions := !additions + 1; c),
+       apply=fn _ => NO_CONV}
+    val base = bool_ss ++ dproc_ss probe
+    val excluded =
+      [set_subgoaler (fn _ => REFL) base,
+       set_unsafe_solvers [rejecting_solver] base,
+       set_cond_depth 4 base,
+       set_term_ord Cond_rewr.ac_term_ord base]
+    val accepted_inputs =
+      [base,set_safe_solvers [rejecting_solver] base,
+       set_looper ("projection unused looper",K ALL_TAC) base]
+    val before_extraction = !additions
+    val rejected = map legacy_traversedata_for_ss excluded
+    val after_rejected = !additions
+    val accepted = map legacy_traversedata_for_ss accepted_inputs
+    val after_accepted = !additions
+    (* TASK_02's ordinary client must not depend on optional dispatch. *)
+    val OrdinaryTraverse.REDUCER _ =
+      hd (#rewriters (traversedata_for_ss empty_ss))
+    fun ordinary (OrdinaryTraverse.REDUCER _) = true
+      | ordinary _ = false
+    fun accepted_shape (SOME (data : OrdinaryTraverse.traverse_data)) =
+          not (null (#rewriters data)) andalso
+          not (null (#dprocs data)) andalso
+          List.all ordinary (#rewriters data @ #dprocs data)
+      | accepted_shape NONE = false
+    fun public_projection ss = let
+      val public = traversedata_for_ss ss
+      (* Compare only ordinary lists. Strategy-only updates of base keep
+         its installed dprocs/travrules even when dispatch is ineligible. *)
+      val expected = case legacy_traversedata_for_ss ss of
+          SOME data => data
+        | NONE => traversedata_for_ss base
+      val native = case #rewriters public of
+          [OrdinaryTraverse.REDUCER _] => true | _ => false
+    in
+      native andalso
+      Portable.pointer_eq (#dprocs public,#dprocs expected) andalso
+      Portable.pointer_eq (#travrules public,#travrules expected) andalso
+      aconv (#relation public) boolSyntax.equality andalso
+      #limit public = #limit expected
+    end
+  in
+    before_extraction = after_rejected andalso
+    after_rejected = after_accepted andalso
+    after_accepted = !additions andalso
+    List.all (not o Option.isSome) rejected andalso
+    List.all accepted_shape accepted andalso
+    List.all public_projection (empty_ss :: bool_ss :: base :: excluded)
+    andalso before_extraction = !additions
+  end
+  (* Context/config procedures cannot inhabit the restored ordinary type.
+     Their former optional-rejection cases above are instead tracked total
+     projections: preserve their exact extension dproc list and CONFIG
+     companion, with zero extraction callbacks, not unlike-type equality. *)
   fun public_projection ss = let
     val public = traversedata_for_ss ss
     val extended = #1 (xtraversedata_for_ss ss)
     val native = case #rewriters public of
-        [Traverse.REDUCER _] => true | _ => false
+        [Traverse.LIFTED (OrdinaryTraverse.REDUCER _)] => true
+      | _ => false
   in
     native andalso
     Portable.pointer_eq (#dprocs public,#dprocs extended) andalso
@@ -6167,14 +6276,13 @@ local
   val _ = check "native projection eligibility is pure and conservative"
     (before_rejected = after_rejected andalso
      after_rejected = after_accepted andalso
-     after_accepted = !additions andalso
-     List.all (not o Option.isSome) rejected andalso
-     List.all (fn SOME data => native_shape data andalso
-                              not (null (#dprocs data))
-                | NONE => false) accepted)
+     after_accepted = !additions andalso ordinary_eligibility andalso
+     List.all (fn data => not (null (#dprocs data))) rejected andalso
+     List.all (fn data => native_shape data andalso
+                         not (null (#dprocs data))) accepted)
 
-  (* Public extraction ignores simpset-specific traversal configuration,
-     including settings that make the optional dispatch accessor reject it. *)
+  (* Tracked default extraction ignores simpset-specific configuration,
+     including settings rejected by the ordinary optional accessor above. *)
   val default_a = ``projection_default_a:bool``
   val default_b = ``projection_default_b:bool``
   val default_condition = ``projection_default_condition:bool``
@@ -6250,8 +6358,9 @@ local
      aconv (concl extended_ordered) (mk_eq (ascending,descending)) andalso
      null (hyp extended_ordered) andalso !order_calls > 0)
 
-  (* A rejected contextual custom procedure must still be reached through
-     the configured fallback, with its invocation-local controls intact. *)
+  (* Type-specific change: tracked projection is total even for contextual
+     procedures. Replace optional NONE with LIFTED-native/exact-dproc shape
+     checks; retain configured invocation controls, proofs and collectors. *)
   val fallback_a = ``projection_fallback_a:bool``
   val fallback_b = ``projection_fallback_b:bool``
   val fallback_eq = ASSUME (mk_eq (fallback_a,fallback_b))
@@ -6271,7 +6380,7 @@ local
   fun fallback_case reducer = let
     val ss = set_cond_depth 1 (pureSimps.pure_ss ++ dproc_ss reducer)
     val prior_additions = !additions
-    val native = legacy_traversedata_for_ss ss
+    val native = traversedata_for_ss ss
     val configured = xtraversedata_for_ss ss
     val cv = SIMP_CONV ss [TRUTH]
     val constructed = !additions
@@ -6284,8 +6393,12 @@ local
     val _ = if stages = [0,1,2] then OK ()
             else die "fallback refreshed contexts at the wrong stage"
   in
-    not (Option.isSome native) andalso
+    (case #rewriters native of
+         [Traverse.LIFTED (OrdinaryTraverse.REDUCER _)] => true
+       | _ => false) andalso
+    Portable.pointer_eq (#dprocs native,#dprocs (#1 configured)) andalso
     configured_rewriter (#1 configured) andalso
+    #cond_depth (#2 configured) = SOME 1 andalso
     same_thm first fallback_eq andalso same_thm second fallback_eq
   end
   val fallback_checks = Lib.with_flag (Cond_rewr.stack_limit,0)

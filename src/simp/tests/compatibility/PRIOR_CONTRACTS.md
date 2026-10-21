@@ -29,6 +29,19 @@ to overwrite an existing ledger. Test execution never updates its oracle.
 TASK_26 owns module/test separation and normal selftest-level integration;
 this task moves no tests and changes no production API.
 
+### TASK_10 additive relocation (the freeze above remains historical)
+
+[migration/TASK10.md](migration/TASK10.md) documents the separately sealed
+[migration/task10-relocation.json](migration/task10-relocation.json).
+The original ledger and IDs are unchanged: its 630 native checks map in order
+to 642 current checks, with exactly 12 extension-registry R4 repeats. The
+verifier checks old Git blobs and current hashes/anchors for the four explicitly
+relocated sources; all other sources and non-native streams remain exact.
+Ordinary destructor/R6/R7/reflexivity pins remain ordinary. Type-driven tracked
+projection/optional-eligibility predicate changes are explicit, not hidden by
+renaming labels. Neither the historical tables below nor original evidence are
+rewritten. Final physical test separation still belongs to TASK_26.
+
 ## Actual case map (paths relative to `src/simp/`)
 
 ### Legacy-equal differential inputs

@@ -9,6 +9,8 @@ import shutil
 import tempfile
 
 import prior_contracts as prior
+import coverage_ledger as coverage
+import task10_relocation as relocation
 from run_paired import (HERE, execute, fingerprint, git, require)
 
 
@@ -20,6 +22,9 @@ def source_inputs(repo):
                     ".hol" not in p.parts and "evidence" not in p.parts):
                 paths.append(p)
     return sorted(set(paths + [Path(__file__), HERE / "prior_contracts.py",
+                               HERE / "coverage_ledger.py",
+                               HERE / "task10_relocation.py",
+                               relocation.SUPPLEMENT,
                                HERE / "coverage-ledger.json.gz"]))
 
 
@@ -44,9 +49,8 @@ def main():
                 "poly_version": execute([poly, "--version"], repo, env, 30),
                 "poly": fingerprint(Path(poly).resolve()),
                 "runs": [], "success": False}
-    ledger_path = HERE / "coverage-ledger.json.gz"
-    ledger = (json.loads(gzip.decompress(ledger_path.read_bytes()))
-              if ledger_path.exists() else None)
+    ledger = coverage.receipt(HERE / "coverage-ledger.json.gz")
+    supplement = relocation.load()
 
     def run(label, command, cwd, extra=None, suite=True):
         receipt = execute(command, cwd, dict(env, **(extra or {})), 900)
@@ -65,12 +69,19 @@ def main():
         require(receipt["exit"] == 0 and not receipt["timed_out"],
                 "native process failed: " + label)
         require("FAILED!" not in receipt["stdout"], "native assertion failed")
-        if suite and ledger:
-            require(receipt["stream"] == ledger["suites"][label]["stream"],
-                    "changed frozen native cases: " + label)
+        if suite:
+            relocation.validate_stream(ledger, label, receipt["stream"],
+                                       supplement)
         return receipt
 
     try:
+        coverage.verify(ledger, supplement)
+        manifest["relocation"] = fingerprint(relocation.SUPPLEMENT)
+        manifest["coverage"] = {
+            "frozen_native_checks": ledger["suites"]["native"]["checks"],
+            "current_native_checks": supplement["native"]["checks"],
+            "additional_registry_checks":
+                len(supplement["native"]["additions"])}
         holmake = [str(repo / "bin/Holmake"), "--no-project", "--no-cache",
                    "--holstate=" + str(repo / "bin/hol.state0"), "-j1"]
         run("build-focused", holmake + ["-C", str(repo / "src/simp/src"),
@@ -95,8 +106,9 @@ def main():
             if label in ("native", "traversal", "exclusion"):
                 fixture = {"native": "PriorNative", "traversal": "PriorTraversal",
                            "exclusion": "PriorExclusion"}[label]
-                require(receipt["stream"] == prior.historical(HERE, fixture),
-                        "changed ordered native contracts: " + label)
+                require(ledger["suites"][label]["stream"] ==
+                        prior.historical(HERE, fixture),
+                        "changed ordered historical contracts: " + label)
         for scenario in ("control", "attribute-first", "set-first",
                          "attribute-after", "set-after", "syntax-first"):
             src = repo / "src/simp/src"

@@ -34,18 +34,20 @@ SUITES = {
                      "splitDescendantScript.sml", "optIn.ML")]}
 
 
-def literals(paths):
+def text_literals(path, text):
+    # Textual anchors, not an SML parser; hashes bind actual assertions.
     result = []
-    for path in paths:
-        text = (REPO / path).read_text()
-        # Textual anchors, not an SML parser: snippets identify labels or
-        # table parameters; whole-source hashes bind their actual assertions.
-        for match in re.finditer(r'"(?:[^"\\\n]|\\.)*"', text):
-            value = match.group()[1:-1]
-            value = value.replace(r'\"', '"').replace(r'\\', '\\')
-            result.append({"path": path, "line": text.count("\n", 0,
-                           match.start()) + 1, "literal": value})
+    for match in re.finditer(r'"(?:[^"\\\n]|\\.)*"', text):
+        value = match.group()[1:-1]
+        value = value.replace(r'\"', '"').replace(r'\\', '\\')
+        result.append({"path": path, "line": text.count("\n", 0,
+                       match.start()) + 1, "literal": value})
     return result
+
+
+def literals(paths):
+    return [a for path in paths for a in
+            text_literals(path, (REPO / path).read_text())]
 
 
 def anchors(label, choices):
@@ -147,10 +149,16 @@ def build(native, paired):
     return ledger
 
 
-def verify(ledger):
+def verify(ledger, supplement=None):
+    import task10_relocation as relocation
+    supplement = relocation.load() if supplement is None else supplement
+    moved = relocation.verify(ledger, supplement)
+    relocated_paths = supplement["sources"]
     source_literals = {p: literals([p]) for p in ledger["sources"]}
     for path, info in ledger["sources"].items():
-        require(fingerprint(REPO / path) == info, "stale source ledger: " + path)
+        if path not in relocated_paths:
+            require(fingerprint(REPO / path) == info,
+                    "stale source ledger: " + path)
     for name, suite in ledger["suites"].items():
         require(suite["checks"] == len(suite["cases"]), "lost ledger case")
         labels = [s[:-len(" ... OK")] for s in suite["stream"]
@@ -163,6 +171,7 @@ def verify(ledger):
             require(case["sources"], "unmapped case: " + case["id"] + " " +
                     case["label"])
             for anchor in case["sources"]:
+                anchor = moved.get(relocation.key(anchor), anchor)
                 if "text" in anchor:
                     require((REPO / anchor["path"]).read_text().splitlines()[
                         anchor["line"] - 1] == anchor["text"],

@@ -1,0 +1,23 @@
+{
+  "file": "src/simp/src/selftest.sml",
+  "before_sha256": "db024ce962d1c1acf7d768c6c47939a7b946670e871029300168e7dffd11d0fb",
+  "after_sha256": "31cb935025129c6ee6b938865adff9d9a59c51a0af1487d1436a21e4ff31c8ae",
+  "original_assertions": 630,
+  "passing_assertions": 642,
+  "additional_assertions": 12,
+  "original_message_headers": 631,
+  "original_message_order_preserved": true,
+  "mapping": "identity after removing extension registry: prefixed R4 repeats",
+  "message_header_sha256": "7af545d4ece69e3cfe06c41af0fd388382f1de58a4d2855d59630a966f471424",
+  "core_holmake_exit": 0,
+  "native_execution_exit": 0,
+  "upto_parallel_exit": 0,
+  "pedant_directory_exit": 0,
+  "diff_check_exit": 0,
+  "type_specific_changes": [
+    "Tracked default REDUCER -> TraverseExt.LIFTED (Traverse.REDUCER _); configured remains CONFIG_REDUCER.",
+    "Tracked valOf optional projection -> total default projection, no reconstruction.",
+    "Ordinary optional eligibility remains ordinary; former context/config rejection inputs retyped to tracked total shape/identity/zero-callback assertions.",
+    "Ordinary pointer checks compare ordinary public/eligible projections; tracked pointer checks compare extension projections."
+  ]
+}

@@ -81,7 +81,7 @@ val _ = if scenario <> "owned" then () else
 val _ = if not foreign then
           (check "persistent import does not load simpLib"
              (not (loaded "simpLib"));
-           Meta.load "boolSimps"; Meta.load "simpLib";
+           Meta.load "boolSimpsExt"; Meta.load "simpExtLib";
            Meta.qquse "verify.ML")
         else
           let

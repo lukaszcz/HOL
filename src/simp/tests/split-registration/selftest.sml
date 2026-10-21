@@ -1,4 +1,4 @@
-open HolKernel Parse boolLib boolSimps simpLib splitLib testutils
+open HolKernel Parse boolLib boolSimpsExt simpExtLib splitLib testutils
 
 val _ = Theory.new_theory "split_registration"
 fun check label ok = (tprint label; if ok then OK () else die label)

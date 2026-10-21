@@ -1,6 +1,7 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   traversal-contracts.log exclusion-contracts.log traverse-ext.log \
+  simp-ext.log ../tests/simp-ext/selftest.exe ../tests/simp-ext/.hol/ \
   ../tests/traverse-ext/selftest.exe ../tests/traverse-ext/diagnostics.exe \
   ../tests/traverse-ext/.hol/ split-registration.log \
   split-persistence.log simp-marker-tests.log replay-order.log \
@@ -83,8 +84,14 @@ traverse-ext: TraverseExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/traverse-ext check,traverse-ext.log)
 
+.PHONY: simp-ext
+simp-ext: simpExtLib.uo pureSimpsExt.uo boolSimpsExt.uo congExtLib.uo
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
+	  -C ../tests/simp-ext check,simp-ext.log)
+
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
+  simp-ext \
   fresh-load-regressions split-registration split-persistence
 
 simp-selftest.log: selftest.exe

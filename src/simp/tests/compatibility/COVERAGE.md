@@ -7,6 +7,15 @@ For TASK_06's **fresh, executable, case-by-case** coverage freeze, use
 separate legacy-equal observations, native extension/cleanup assertions and
 still-red source/staging contracts. The inventory below is historical context.
 
+**TASK_10 additive update:** [migration/TASK10.md](migration/TASK10.md) and
+[migration/task10-relocation.json](migration/task10-relocation.json) retain the
+original freeze and map its 630 native occurrences to 642 current checks
+(12 extension-registry repeats). Old/current hashes and anchors authorize only
+explicit typed relocations, including ordinary pins and the documented optional
+eligibility predicate change. All other suite streams remain exact; no frozen
+input or historical snapshot is regenerated. Final physical separation remains
+TASK_26.
+
 Inventory revision: `cf1f863b4e5a9712ce1b179f18274eb3451f3954`.
 This is a source/coverage inventory, not a fresh test receipt. Exact file
 identities are in `initial-state.json`. All paths below are repository-relative.
