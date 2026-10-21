@@ -1,5 +1,12 @@
 # Pinned simplifier review inputs
 
+TASK_06's fresh prior-contract freeze, 2,153-case source-tied relocation ledger,
+six supplementary legacy limit/rollback checks, native extension coverage and
+executed fresh-load/listener-identity/persistence matrix are in
+[`PRIOR_CONTRACTS.md`](PRIOR_CONTRACTS.md). Its `prior-contracts`,
+`prior-baseline-control` and `prior-native` commands preserve the original
+73/47/929/630 case streams; initial signature/staging reds remain explicit.
+
 TASK_05's independent 43-scenario construction/use/proof matrix, sealed
 expectations, initial callback/exception reds and standalone reproduction
 commands are in [`STAGING_CONTRACTS.md`](STAGING_CONTRACTS.md). Every returned

@@ -1,0 +1,62 @@
+[
+  {
+    "label": "current",
+    "command": [
+      "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+      "--no-project",
+      "--no-cache",
+      "--no_prereqs",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "-C",
+      "src/simp/tests/compatibility",
+      "-j1",
+      "PAIRED_OUTPUT=/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task06/current-head",
+      "prior-contracts"
+    ],
+    "exit": 0
+  },
+  {
+    "label": "control",
+    "command": [
+      "/home/lukasz/dev/HOL/worktrees/simplifier/bin/Holmake",
+      "--no-project",
+      "--no-cache",
+      "--no_prereqs",
+      "--holstate=/home/lukasz/dev/HOL/worktrees/simplifier/bin/hol.state0",
+      "-C",
+      "src/simp/tests/compatibility",
+      "-j1",
+      "PAIRED_OUTPUT=/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task06/baseline-control",
+      "prior-baseline-control"
+    ],
+    "exit": 0
+  },
+  {
+    "label": "native",
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_prior_native.py",
+      "--output",
+      "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task06/native"
+    ],
+    "exit": 0
+  },
+  {
+    "label": "strict-red",
+    "command": [
+      "python3",
+      "-B",
+      "src/simp/tests/compatibility/run_paired.py",
+      "--staging-contracts",
+      "--staging-only",
+      "--candidate",
+      "HEAD",
+      "--candidate-behavior",
+      "baseline",
+      "--output",
+      "/home/lukasz/dev/HOL/worktrees/simplifier/src/simp/tests/compatibility/evidence/task06/strict-red"
+    ],
+    "exit": 1
+  }
+]

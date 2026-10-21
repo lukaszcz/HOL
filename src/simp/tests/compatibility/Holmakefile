@@ -4,12 +4,28 @@ ifndef PAIRED_OUTPUT
 PAIRED_OUTPUT = paired-results
 endif
 .PHONY: check python-tests public-contracts public-baseline-control \
-        staging-contracts staging-baseline-control
+        staging-contracts staging-baseline-control prior-contracts \
+        prior-baseline-control prior-native
 python-tests:
-	python3 -B -m unittest test_runner test_public_contracts test_staging
+	python3 -B -m unittest test_runner test_public_contracts test_staging \
+	  test_prior
 
 check: python-tests
 	python3 -B run_paired.py --negative-controls --output $(PAIRED_OUTPUT)
+
+# Prior legacy inputs are strict equal contracts, not expected failures.
+prior-contracts: python-tests
+	python3 -B run_paired.py --prior-contracts --negative-controls \
+	  --candidate HEAD --output $(PAIRED_OUTPUT)
+
+prior-baseline-control: python-tests
+	python3 -B run_paired.py --prior-contracts \
+	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
+	  --candidate-signature pass --candidate-behavior baseline \
+	  --output $(PAIRED_OUTPUT)
+
+prior-native:
+	python3 -B run_prior_native.py --output $(PAIRED_OUTPUT)
 
 # Diagnostic gates: expected reds are recorded, NOT source-compatibility passes.
 public-contracts: python-tests

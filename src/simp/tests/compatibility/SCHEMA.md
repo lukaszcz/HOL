@@ -275,3 +275,46 @@ fixture, both expectations, seals and validator/tests. A standalone strict
 red receipt retains the full executed stream and exit 0, with `accepted=false`
 and a nonzero driver exit: captured incompatibility is distinct from an
 unexpected process failure. No expected static errors are permitted here.
+
+## TASK_06 optional prior contracts
+
+`--prior-contracts` installs the unchanged original selftest assertion body,
+unchanged traversal/exclusion modules, and `paired/PriorLimits.sml` into each
+private tree. Only final driver exits are replaced by a paired completion
+check (including checking original `failcount = 0`). No assertion, callback,
+warning, error predicate or observation is edited. Each wrapper's bytes are
+in the manifest; the original selftest must still equal pinned Git bytes.
+
+The old suites require 73/47/929 actual OK results, respectively, plus their
+additional completion check. `prior_contracts.py` compares every ordered check,
+OBS event and warning header with the immutable review input; duplicate cases
+are retained. The new six-case limits fixture requires all six exact protocol
+checks. Prior receipts have a `prior` field with classification, exact counts
+and the full semantic stream. There is **no expected-red mode** for these
+suites. The separate original staging/signature probes keep their existing red
+classifications and original nonzero signature process exit.
+
+Terminal color/padding, testutils timing/backspaces and theory build times are
+presentation/build noise only. Callback/warning/exception OBS payloads are not
+normalized. Full diagnostics (including build timing) remain in receipts. The
+native suite can interleave monitor output between a test label and its OK;
+the parser requires the eventual OK, not merely a displayed test label.
+
+`run_prior_native.py` executes current native/focused launchers and six separate
+fresh-load processes, then freshly builds parent/child/descendant exports in a
+temporary fixture directory and runs all eight persistence/heap scenarios. It
+checks exact identity assertions really ran and compares native/traversal/
+exclusion streams to immutable inputs. With `coverage-ledger.json.gz` present,
+every native suite additionally requires its complete frozen ordered stream.
+Only the fresh-load reported module path is rendered `$REPO` in that ledger;
+the actual absolute path stays in raw receipts. Tools, input hashes, launcher
+text, native products, commands, environments and process exits are recorded.
+These are native current products, not an independent clean repository build.
+
+`coverage_ledger.py` verifies 2,153 stable ordered case IDs, source hashes and
+textual source anchors, including parameterized labels and duplicate cases.
+Anchors are navigation aids (not an SML parser); whole source hashes bind the
+actual assertions. `PRIOR_CONTRACTS.md` disambiguates family scopes, matrices,
+legacy-equal contracts, native/branch-only semantics and initial red owners.
+Regenerating a ledger is explicit and refuses to overwrite an existing file;
+test runs never update it to accommodate changed or missing tests.

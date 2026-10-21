@@ -1,5 +1,12 @@
 # Maintained coverage inventory at the starting revision
 
+For TASK_06's **fresh, executable, case-by-case** coverage freeze, use
+[`PRIOR_CONTRACTS.md`](PRIOR_CONTRACTS.md) and
+[`coverage-ledger.json.gz`](coverage-ledger.json.gz), verified by
+`coverage_ledger.py`. They preserve 2,153 source-tied case occurrences and
+separate legacy-equal observations, native extension/cleanup assertions and
+still-red source/staging contracts. The inventory below is historical context.
+
 Inventory revision: `cf1f863b4e5a9712ce1b179f18274eb3451f3954`.
 This is a source/coverage inventory, not a fresh test receipt. Exact file
 identities are in `initial-state.json`. All paths below are repository-relative.
@@ -59,8 +66,10 @@ The supplied review JSON and logs report, for each source version:
 - Traversal contracts: 47 checks, 273 observations, identical raw logs.
 - Exclusion contracts: 929 checks, 2,703 observations; only theory build timing
   output differed.
-- Candidate native selftest: 630 checks; combined native log: 1,440 checks
-  including the native selftest and focused suites (not 1,440 additional checks).
+- Candidate native selftest: 630 checks; combined focused log: 1,440 checks.
+  TASK_06 corrected the earlier inventory's mistaken inclusion claim: the
+  1,440 focused OKs exclude the separately logged 630 native OKs. Four fresh
+  theory-script assertions add four more checks when exports are rebuilt.
 
 The integrity verifier checks these against the supplied compact logs. It does
 not rerun them. The old-signature and printer-staging failures demonstrate why
@@ -73,8 +82,9 @@ these positive observations are not universal compatibility evidence.
   results, calibrated timing and retained-memory baselines.
 - TASK_04/05: complete public signature clients and expanded tactic
   construction/application/exception/proof-stage matrix.
-- TASK_06: freeze traversal/exclusion and exact fresh-load identity contracts
-  above without weakening assertions.
+- TASK_06: completed the prior-contract freeze; fresh observations and exact
+  case/source mappings are in `PRIOR_CONTRACTS.md` and its ledger. No existing
+  assertions were weakened.
 - TASK_26: coverage-preserving extension/legacy test separation and normal
   selftest integration, including the immutable original develop selftest.
 

@@ -339,6 +339,8 @@ def main():
                    help="execute construction/use/proof stage contracts")
     p.add_argument("--staging-only", action="store_true",
                    help="run only the new suite, independent of old probes")
+    p.add_argument("--prior-contracts", action="store_true",
+                   help="freeze original/traversal/exclusion/native assertions")
     p.add_argument("--public-contracts", action="store_true",
                    help="execute frozen complete public-interface clients")
     p.add_argument("--output", type=Path, required=True)
@@ -352,8 +354,11 @@ def main():
         p.error("require nonnegative pairs, >=3 samples, 0.1..60 second batches")
     if args.staging_only and (not args.staging_contracts or
             args.negative_controls or args.public_contracts or
-            args.performance_pairs):
+            args.prior_contracts or args.performance_pairs):
         p.error("--staging-only requires --staging-contracts alone")
+    prior = None
+    if args.prior_contracts:
+        import prior_contracts as prior
     staging = None
     if args.staging_contracts:
         import staging_contracts as staging
@@ -443,6 +448,15 @@ def main():
                     "--", "src/simp/src").decode(),
                 "working_simplifier_diff": git(
                     repo, "diff", "HEAD", "--", "src/simp/src").decode()}
+        if prior:
+            manifest["evidence_id"] = "TASK_06-prior-contracts-v1"
+            manifest["prior_contracts"] = {
+                "counts": prior.COUNTS,
+                "reviewed_to_current_source_diff": git(
+                    repo, "diff", REVIEWED, args.candidate,
+                    "--", "src/simp/src").decode(),
+                "working_simplifier_diff": git(
+                    repo, "diff", "HEAD", "--", "src/simp/src").decode()}
         inputs = [HERE / "run_paired.py", HERE / "test_runner.py",
                   HERE / "Holmakefile", HERE / "SCHEMA.md",
                   HERE / "paired/Holmakefile",
@@ -461,6 +475,11 @@ def main():
         if staging:
             inputs += [HERE / "staging_contracts.py", HERE / "test_staging.py",
                        *sorted((HERE / "staging").glob("*"))]
+        if prior:
+            inputs += prior.inputs(HERE, repo)
+            require((HERE / "inputs/develop/selftest.sml").read_bytes() ==
+                    git(repo, "show", BASE + ":src/simp/src/selftest.sml"),
+                    "immutable original selftest changed")
         for path in inputs:
             manifest["inputs"][str(path.relative_to(repo))] = fingerprint(path)
         sources = {}
@@ -476,6 +495,8 @@ def main():
                     public.install(HERE, dst, refs)
                 if staging:
                     staging.install(HERE, dst)
+                if prior:
+                    prior.install(HERE, repo, dst, require)
                 manifest["selections"][selection] = {
                     "requested_ref": ref, "revision": rev, "private": str(dst),
                     "sources": inventory,
@@ -562,6 +583,9 @@ def main():
                     cases += [(target, "none") for target in public.CONTRACTS]
                 if staging:
                     cases += [("Staging", "none")]
+                if prior:
+                    cases += [(n, "none") for n in prior.FIXTURES
+                              if (dst / (n + ".sml")).exists()]
                 if args.negative_controls:
                     cases += [("selftest", c) for c in
                               ("missing", "truncated", "failed", "wrong-path",
@@ -571,6 +595,8 @@ def main():
                                 if public and fixture in public.CONTRACTS else None)
                     if staging and fixture == "Staging":
                         contract = staging.expectation(HERE, flavor)
+                    if prior and fixture in prior.FIXTURES:
+                        contract = prior.expectation(fixture)
                     target = (contract["target"] if contract else
                               "SignatureCheck" if fixture == "signature" else "selftest")
                     if control == "wrong-path":
@@ -597,6 +623,9 @@ def main():
                                           private_names=names, flavor=flavor,
                                           signature=signature, source_hashes=sources,
                                           contract=contract)
+                        if prior and fixture in prior.FIXTURES:
+                            receipt["prior"] = prior.validate(
+                                HERE, fixture, receipt["stdout"], require)
                         receipt["result"] = result
                         receipt["accepted"] = True
                     except (InvalidRun, OSError) as e:
