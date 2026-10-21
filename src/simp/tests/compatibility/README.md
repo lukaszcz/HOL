@@ -1,5 +1,12 @@
 # Pinned simplifier review inputs
 
+TASK_07's searchable API/consumer inventory, tracked-construction decisions,
+shared-identity ledger and exact read-only external consumer provenance are in
+[`migration/MIGRATION.md`](migration/MIGRATION.md). Its signature-delta and
+source-reference verifier is inventory validation, not a compiled migration or
+performance pass. TASK_08 owns final interfaces; TASK_25 owns isolated downstream
+migration and execution.
+
 TASK_06's fresh prior-contract freeze, 2,153-case source-tied relocation ledger,
 six supplementary legacy limit/rollback checks, native extension coverage and
 executed fresh-load/listener-identity/persistence matrix are in
