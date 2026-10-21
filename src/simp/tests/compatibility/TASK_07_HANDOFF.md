@@ -1,7 +1,11 @@
 # TASK_07 handoff — extension consumer and migration inventory
 
-Landing identifier: **TASK_07-consumer-inventory-v1** (this commit).
-Inspected source HEAD: `50cfa5d709a306298991b113c7ac63e426f8aabd`.
+Landing identifier: **TASK_07-consumer-inventory-v2** (this correction).
+Inspected correction HEAD: `19e12925f` (full hash in the correction receipt).
+Original inventory source HEAD: `50cfa5d709a306298991b113c7ac63e426f8aabd`.
+The original v1 receipt prematurely claimed completion: lexical references did
+not document the external marker-classifier migration. TASK_07 was reopened;
+the actual-consumer table and fresh checks below close that bounded gap.
 Develop: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 External consumer: `442009a1f7f04366573dc2b649d31650ea7b113b`.
 Production simplifier/ThmAttribute sources remain unchanged from reviewed
@@ -45,6 +49,16 @@ input, not implementation migration, engine compatibility or a performance pass.
   empty before/after. The ignored nested `.agent-files` repository is separately
   reported: HEAD `38466dba8`, **6,576 untracked files**, no tracked modifications;
   its exact porcelain-v1 hash is retained, not misreported as a clean tree.
+- `migration/EXTERNAL_MARKERS.md` adds **14 actual migration entries covering
+  all 15 direct classifier source lines**: linarith Split extraction/rejection,
+  claset bucket/forwarding/inert-fact paths, tests and generic-only dispositions.
+  Each entry has old/replacement API/type, exact caller range, earliest boundary,
+  semantic assertions and TASK_25 ownership. Generic directives retain identity;
+  extension recognition uses simpMarkerLib, not generic provider changes.
+  Controls are forwarded unchanged with a simpset, inert without one; nested
+  content-bearing wrappers still yield payload facts. Original same_rules,
+  same_thm, ordered bucket/fact and proof/hypothesis assertions remain required.
+  No source promotion is needed merely to classify/discard a marker.
 - `migration/EXTERNAL_TYPES.md` follows producer outputs and public/opaque/cache
   types through ordinary-looking SIMP calls, mixed iff helpers, seed/benchmark
   consumers, aesop sessions, fragments, exported iff theories and generic claset
@@ -67,22 +81,33 @@ input, not implementation migration, engine compatibility or a performance pass.
 
 ## Validation and evidence
 
-Fresh commands, exits, compact observations, inspected/source/input/tool hashes
-and artifact seals are retained in `evidence/task07/validation.json`. No HOL
-launcher, external build, tactic migration or benchmark ran in this task.
+Correction commands/exits, final source/input/tool hashes, external before/after
+provenance and artifact seals are in
+`evidence/task07/marker-closure-validation.json`. The original
+`evidence/task07/validation.json` is retained as the **historical v1 receipt**;
+its old documentation/tool hashes and nine-test count are not final acceptance
+seals. The snapshot TSV/manifest itself is unchanged: no new signature APIs or
+source references were needed for this actual-consumer documentation repair.
+No HOL launcher, external build, tactic migration or benchmark ran here.
 
 | Command/check (from repository root) | Exit / observation |
 | --- | --- |
-| `python3 -B src/simp/tests/compatibility/migration/inventory.py --write` | 0; explicit source-bound snapshot generation |
-| Same inventory command **without** `--write` | 0; complete recomputation agrees; external status unchanged before/after |
-| `python3 -B -m unittest discover -s src/simp/tests/compatibility/migration -p 'test_*.py'` | 0; **9 tests**, including missing/invented API and unknown-signature rejection, nested-comment/constructor parsing, owner/table coverage, exact file/hash/line checks and unqualified-reference retention |
+| `python3 -B src/simp/tests/compatibility/migration/inventory.py` | 0; snapshot recomputation agrees; 14 actual marker entries / 15 classifier lines; external unchanged |
+| `python3 -B -m unittest discover -s src/simp/tests/compatibility/migration -p 'test_*.py'` | 0; **12 tests**, including prior nine plus source-bound marker entries, missing-entry negative controls and required replacement/construction/assertion/owner fields |
 | `python3 -B src/simp/tests/compatibility/coverage_ledger.py` | 0; all **2,153** source-tied cases unchanged |
 | `python3 -B src/simp/tests/compatibility/verify_evidence.py` | 0; all **37** immutable review artifacts unchanged |
 | `tools/h4pedant/h4pedant src/simp/tests/compatibility/migration` | 0 |
 | `git diff --check`; `git diff --cached --check` | 0 |
 | Production diff from reviewed revision (`src/simp/src`, `src/1`) | Empty |
 
-Two read-only reviews checked the consumer/type closure and then reran inventory
+The correction's read-only review checked the missing classifier ranges against
+both external source and current marker signatures, found no remaining bounded
+gap, and reran all 12 tests/inventory. A table-formatting nit was fixed before
+final checks. Negative controls remove MC01/02/03/04/07 separately with lexical
+references untouched: each fails as unmapped. Empty replacement, construction,
+assertion or wrong owner is rejected too. No semantic assertion was changed.
+
+The original two read-only reviews checked the consumer/type closure and reran inventory
 and Python tests. The first review caught an intermediate stale eight-column TSV,
 an incorrect manually transcribed nested status hash, and missed **transitive**
 external producer-output consumers. These were corrected (seven-column snapshot,
@@ -101,10 +126,14 @@ touched.
 
 ## Changed files, API decisions and next task
 
-- Added `migration/{MIGRATION,CONSUMERS,EXTERNAL,EXTERNAL_TYPES,IDENTITIES}.md`.
-- Added `migration/{apis,references}.tsv`, `manifest.json`, `inventory.py`,
-  `test_inventory.py`; README links the inventory; this handoff and compact
-  validation receipt record acceptance.
+- Original inventory: `migration/{MIGRATION,CONSUMERS,EXTERNAL,EXTERNAL_TYPES,
+  IDENTITIES}.md`, `{apis,references}.tsv`, `manifest.json`, `inventory.py`,
+  `test_inventory.py` and README link, original receipt.
+- Correction: added `EXTERNAL_MARKERS.md`, linked actual-consumer entries from
+  EXTERNAL/EXTERNAL_TYPES/MIGRATION, added classifier-table validation to
+  inventory.py and three regression tests; updated this handoff and added the
+  compact correction receipt. No compiled-source changes; no routine build is
+  required or claimed.
 - `.agent-files/tasks/PROGRESS.md` records actual status/one landing entry in
   the separate ignored task repository; unrelated files there are preserved.
 - No production API/type/registry/control or external source changed. Replacement

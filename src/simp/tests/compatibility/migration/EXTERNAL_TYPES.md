@@ -9,7 +9,11 @@ on future extension-typed values**, so a direct added-API token search alone
 would miss them. D1 indexes producer/helper references in references.tsv.
 
 All paths below are relative to the external checkout; short filenames are
-under `src/auto/` unless stated otherwise.
+under `src/auto/` unless stated otherwise. The generic-to-simplifier-owned
+**marker classifier** boundary is a separate actual-consumer table in
+[EXTERNAL_MARKERS.md](EXTERNAL_MARKERS.md): linarith Split extraction, claset
+bucket/forwarding/inert-fact paths, their tests and generic-only dispositions.
+It needs no late source promotion; all isolated migration belongs to TASK_25.
 
 ## Direct downstream uses of default outputs
 

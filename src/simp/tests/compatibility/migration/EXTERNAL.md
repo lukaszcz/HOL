@@ -96,7 +96,14 @@ Explicit public type propagation is required, not just import renaming:
 - Weak congruence: schemas/proofs S:213–349; fragment S:352–360; replacement of
   existing named CONG S:484–491. Requires the tracked CONG recipe/registry.
 
-The external revision predates simplifier-owned marker cleanup:
+The external revision predates simplifier-owned marker cleanup.
+[EXTERNAL_MARKERS.md](EXTERNAL_MARKERS.md) records actual classifier consumers:
+linarithLib:117–122, clasetLib:1186–1236,1703 and rules/selftest:3064–3094,
+plus their wrapper/generic-only and forwarding closure. All belong to
+**TASK_25**. Recognizing Split/ExclX requires the simplifier-owned directive
+boundary, not restoring generic constructors; controls remain forwarded with
+a simpset and inert on the classical fact path. The ledger retains the exact
+bucket/fact/order/identity assertions and earliest classification decisions.
 `markerLib.Split` at T:1988,4724 must become the explicit extension marker.
 `Excl "rule:boundPipelineFixture.reducer"` at T:6109 and bare split suppression
 in splitAttrScript.sml:29–30 require deliberate extended-exclusion migration,

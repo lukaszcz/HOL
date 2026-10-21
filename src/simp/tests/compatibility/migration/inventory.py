@@ -303,10 +303,56 @@ def external_provenance(root):
     return result
 
 
+def validate_marker_consumers(external, document=None):
+    """Require actual migration entries for external classifier consumers.
+
+    Lexical references alone did not close this boundary in the first receipt.
+    Each table row must state replacement, construction, assertions and owner;
+    every direct classifier use must have a source-bound row, including the
+    generic-only uses that deliberately retain their constructor identities.
+    """
+    if document is None:
+        document = (HERE / "EXTERNAL_MARKERS.md").read_text()
+    entries, covered = {}, set()
+    for line in document.splitlines():
+        if not line.startswith("| MC"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) != 7 or any(not c for c in cells):
+            raise ValueError("Incomplete marker migration entry")
+        key, anchor, old, replacement, construction, assertions, owner = cells
+        match = re.fullmatch(r"`(src/auto/[^:]+\.sml):(\d+)–(\d+)`", anchor)
+        if not match or key in entries or owner != "TASK_25":
+            raise ValueError(f"Invalid marker migration entry: {key}")
+        path, start, end = match.groups()
+        start, end = int(start), int(end)
+        lines = (external / path).read_text().splitlines()
+        if not 1 <= start <= end <= len(lines):
+            raise ValueError(f"Invalid marker source range: {anchor}")
+        entries[key] = cells
+        covered.update((path, n) for n in range(start, end + 1))
+    if not entries:
+        raise ValueError("Missing marker migration table")
+    pattern = re.compile(r"markerLib\.(?:dest_directive|is_directive|"
+                         r"strip_wrappers)\b|\bclassify_simp_args\b")
+    uses = set()
+    paths = git(external, "ls-files", "src/auto/*.sml").decode().splitlines()
+    for path in paths:
+        lines = (external / path).read_text().splitlines()
+        for number, line in enumerate(lines, 1):
+            if pattern.search(line):
+                uses.add((path, number))
+    missing = uses - covered
+    if missing:
+        raise ValueError(f"Unmapped marker classifier consumers: {sorted(missing)}")
+    return {"entries": len(entries), "classifier_source_lines": len(uses)}
+
+
 def run(external, write):
     rows = catalog()
     signatures = validate_signatures(rows)
     before = external_provenance(external)
+    marker_consumers = validate_marker_consumers(external)
     refs, sources = [], {}
     scans = {}
     for scope, root in [("repository", ROOT), ("external", external)]:
@@ -341,7 +387,8 @@ def run(external, write):
             raise ValueError(f"Stale inventory: {path}")
     print(json.dumps({"api_rows": len(rows), "scans": scans,
                       "external_head": before["head"],
-                      "external_unchanged": True}, sort_keys=True))
+                      "external_unchanged": True,
+                      "marker_consumers": marker_consumers}, sort_keys=True))
 
 
 if __name__ == "__main__":

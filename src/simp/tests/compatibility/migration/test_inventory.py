@@ -98,6 +98,49 @@ end"""
         self.assertEqual(count, sum(s["reference_rows"]
                                     for s in manifest["scans"].values()))
 
+    def test_marker_consumers_have_source_bound_migration_entries(self):
+        manifest = json.loads((inv.HERE / "manifest.json").read_text())
+        external = Path(manifest["external"]["path"])
+        result = inv.validate_marker_consumers(external)
+        self.assertEqual(result["entries"], 14)
+        self.assertGreater(result["classifier_source_lines"], 14)
+        doc = (inv.HERE / "EXTERNAL_MARKERS.md").read_text()
+        paths = {line.split("`")[1].split(":")[0]
+                 for line in doc.splitlines() if line.startswith("| MC")}
+        hashes = manifest["matched_source_sha256"]["external"]
+        for path in paths:
+            self.assertEqual(inv.digest((external / path).read_bytes()),
+                             hashes[path])
+
+    def test_lexical_references_cannot_replace_marker_migration_entries(self):
+        manifest = json.loads((inv.HERE / "manifest.json").read_text())
+        external = Path(manifest["external"]["path"])
+        doc = (inv.HERE / "EXTERNAL_MARKERS.md").read_text()
+        # The specifically missed consumers must fail even with references.tsv
+        # untouched: linarith, claset classification/forwarding, inert facts.
+        for key in ("MC01", "MC02", "MC03", "MC04", "MC07"):
+            with self.subTest(entry=key):
+                removed = "\n".join(line for line in doc.splitlines()
+                                    if not line.startswith("| " + key + " |"))
+                with self.assertRaisesRegex(ValueError, "Unmapped marker"):
+                    inv.validate_marker_consumers(external, removed)
+
+    def test_marker_entries_require_assertions_and_external_owner(self):
+        manifest = json.loads((inv.HERE / "manifest.json").read_text())
+        external = Path(manifest["external"]["path"])
+        doc = (inv.HERE / "EXTERNAL_MARKERS.md").read_text()
+        for column in (3, 4, 5, 6):
+            lines = doc.splitlines()
+            index = next(i for i, line in enumerate(lines)
+                         if line.startswith("| MC01 |"))
+            cells = lines[index].strip("|").split("|")
+            cells[column] = " " if column != 6 else " TASK_08 "
+            lines[index] = "|" + "|".join(cells) + "|"
+            with self.subTest(column=column):
+                with self.assertRaisesRegex(ValueError,
+                                            "marker migration entry"):
+                    inv.validate_marker_consumers(external, "\n".join(lines))
+
     def test_scanner_keeps_bare_names_but_filters_common_constructors(self):
         with tempfile.TemporaryDirectory(prefix="task07-inventory-") as temp:
             root = Path(temp)
