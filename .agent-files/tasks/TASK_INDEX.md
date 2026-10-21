@@ -165,6 +165,14 @@ commands, source/heap hashes, counts and exits are recorded. No source repair
 or assertion change was needed. This is incremental routine/downstream
 validation, not TASK_16's full `bin/build -t -F` or universal equivalence.
 
+TASK_16 full regression handoff for TASK_17:
+`src/simp/compatibility/FULL_REGRESSION.md` and `results/task16/` under that
+compatibility directory. Explicit `bin/build -t -F` exits 0 at `34ba6e174`;
+87 full-sequence visits match in order, 34 fresh selftest log targets and
+650 theory timing entries are recorded. No repair or compiled-source/test
+change since TASK_15. Optional solver/documentation scope and non-fatal
+existing diagnostics are explicit; this is not final compatibility sign-off.
+
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`
   (audited HEAD; initial tracked/untracked status clean).

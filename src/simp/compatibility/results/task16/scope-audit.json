@@ -1,0 +1,1233 @@
+{
+  "sequence_files_sha256": {
+    "tools/build/build-sequence": "1676e50bdda11e23330cdca553a55e13fa2c76dc330fb77924529b3945db2816",
+    "tools/sequences/kernel": "3139cb98e0109f852a682369639a4f23c431bdd8ff2fa23593448b05c0d642ba",
+    "tools/sequences/core-theories": "2f100b1c5f758dd0ae9d41048f8c0a78495954e3c827f046dbcc3dfa83e1bea2",
+    "tools/sequences/base-hol": "3cf22c3ec2886affdf9664f23766b45485c2e01155ae03acbcad786933796504",
+    "tools/sequences/more-theories": "024b52d62af81e73f42a6763fe856d831033ecb8c61f9dc4c6fc2cf049109423",
+    "tools/sequences/large-theories": "f423e73ee81dcb9eb015f71296c38d6f0a06a528711965e66c9e0181281504f9",
+    "tools/sequences/final-examples": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "sequence_entries": [
+    {
+      "path": "tools/check-builds",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/recursiveclean",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/dashn_works",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/set_mtime",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/mlyacc/mlyacclib",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML/mosml",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/portableML/poly",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML/monads",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML/rawtheory",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML/json",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML/poly/concurrent",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/portableML/mosml/concurrent",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "tools/Holmake/toml",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/portableML/testsrc",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/prekernel",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/0",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/thm",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/tracing",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/tracing/no",
+      "ml": "",
+      "kernel": "stdknl",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/tracing/no",
+      "ml": "",
+      "kernel": "expk",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/tracing/yes",
+      "ml": "poly",
+      "kernel": "trknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/tracing/no",
+      "ml": "mosml",
+      "kernel": "trknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/tracing/no",
+      "ml": "",
+      "kernel": "otknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/postkernel",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/postkernel/prooftrace",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/parse",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/badincludes",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/opentheory",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/opentheory/logging",
+      "ml": "",
+      "kernel": "otknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/bool",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/1",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/opentheory/postbool",
+      "ml": "",
+      "kernel": "otknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/proofman",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/proofman/tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/proofman/interactive_tests",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/preexec",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/parallel_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/repl",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/1/theory_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/compute/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/HolSat/sat_solvers/minisat",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/HolSat/sat_solvers/zc2hs",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/HolSat",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/taut",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "tools/Holmake/tests/incs_vs_sigobj/dir2",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/marker",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/q",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/combin",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/lite",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/refute",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/simp/src/poly",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/simp/src/mosml",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/simp/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/metis",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/meson/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/IndDef",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/basicProof",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/basicProof/theory_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/relation",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/quotient/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/coretypes",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/meson/test",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 2,
+      "expected_visit": false
+    },
+    {
+      "path": "src/tfl/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/theories",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/theories/cv_compute",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/reduce/conv",
+      "ml": "",
+      "kernel": "stdknl",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/reduce/conv",
+      "ml": "",
+      "kernel": "expk",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/num/reduce/conv",
+      "ml": "",
+      "kernel": "trknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/num/reduce/conv-old",
+      "ml": "",
+      "kernel": "otknl",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/num/reduce/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/arith/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/theories/cv_compute/soundness_check",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/termination",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/num/extra_theories",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/unwind",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/pred_set/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/datatype/record",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/datatype",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/datatype/theory_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/monad",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/list/src",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/quantHeuristics",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/pattern_matches",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/pattern_matches/interactive_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/HolSat/vector_def_CNF",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/boss/ml_evaluation",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/opentheory/reader",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/boss",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "bin/hol",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": false
+    },
+    {
+      "path": "src/AI",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/AI/sml_inspection",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/AI/proof_search",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/AI/machine_learning",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/tactictoe/src",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/holyhammer",
+      "ml": "poly",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/boss/theory_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/tfl/src/test",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/parallel_builds/core",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 0,
+      "expected_visit": true
+    },
+    {
+      "path": "src/emit/ML",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 2,
+      "expected_visit": false
+    },
+    {
+      "path": "src/emit/theory_tests",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "src/emit/theory_tests1",
+      "ml": "",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": true
+    },
+    {
+      "path": "examples/separationLogic/src/holfoot/mosml",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 2,
+      "expected_visit": false
+    },
+    {
+      "path": "examples/muddy/muddyC",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": false
+    },
+    {
+      "path": "examples/muddy",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": false
+    },
+    {
+      "path": "examples/HolBdd",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 1,
+      "expected_visit": false
+    },
+    {
+      "path": "examples/HolCheck",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 2,
+      "expected_visit": false
+    },
+    {
+      "path": "examples/logic/temporal_deep/src/model_check",
+      "ml": "mosml",
+      "kernel": "",
+      "selftest_level": 2,
+      "expected_visit": false
+    }
+  ],
+  "expected_visits_equal_actual_in_order": true,
+  "visited_directories": [
+    "tools/check-builds",
+    "tools/Holmake/tests/recursiveclean",
+    "tools/Holmake/tests/dashn_works",
+    "tools/set_mtime",
+    "tools/mlyacc/mlyacclib",
+    "src/portableML/poly",
+    "src/portableML",
+    "src/portableML/monads",
+    "src/portableML/rawtheory",
+    "src/portableML/json",
+    "src/portableML/poly/concurrent",
+    "src/portableML/testsrc",
+    "src/prekernel",
+    "src/0",
+    "src/thm",
+    "src/tracing",
+    "src/tracing/no",
+    "src/postkernel",
+    "src/postkernel/prooftrace",
+    "src/parse",
+    "tools/Holmake/tests/badincludes",
+    "src/opentheory",
+    "src/bool",
+    "src/1",
+    "src/proofman",
+    "src/proofman/tests",
+    "src/proofman/interactive_tests",
+    "tools/Holmake/tests/preexec",
+    "tools/Holmake/tests/parallel_tests",
+    "tools/Holmake/tests/repl",
+    "src/1/theory_tests",
+    "src/compute/src",
+    "src/HolSat/sat_solvers/minisat",
+    "src/HolSat/sat_solvers/zc2hs",
+    "src/HolSat",
+    "src/taut",
+    "tools/Holmake/tests/incs_vs_sigobj/dir2",
+    "src/marker",
+    "src/q",
+    "src/combin",
+    "src/lite",
+    "src/refute",
+    "src/simp/src/poly",
+    "src/simp/src",
+    "src/metis",
+    "src/meson/src",
+    "src/IndDef",
+    "src/basicProof",
+    "src/basicProof/theory_tests",
+    "src/relation",
+    "src/quotient/src",
+    "src/coretypes",
+    "src/tfl/src",
+    "src/num/theories",
+    "src/num/theories/cv_compute",
+    "src/num/reduce/conv",
+    "src/num/reduce/src",
+    "src/num/arith/src",
+    "src/num",
+    "src/num/theories/cv_compute/soundness_check",
+    "src/num/termination",
+    "src/num/extra_theories",
+    "src/unwind",
+    "src/pred_set/src",
+    "src/datatype/record",
+    "src/datatype",
+    "src/datatype/theory_tests",
+    "src/monad",
+    "src/list/src",
+    "src/quantHeuristics",
+    "src/pattern_matches",
+    "src/pattern_matches/interactive_tests",
+    "src/HolSat/vector_def_CNF",
+    "src/boss/ml_evaluation",
+    "src/opentheory/reader",
+    "src/boss",
+    "src/AI",
+    "src/AI/sml_inspection",
+    "src/AI/proof_search",
+    "src/AI/machine_learning",
+    "src/tactictoe/src",
+    "src/holyhammer",
+    "src/boss/theory_tests",
+    "src/tfl/src/test",
+    "src/parallel_builds/core",
+    "src/emit/theory_tests",
+    "src/emit/theory_tests1"
+  ],
+  "visited_count": 87,
+  "started_work_count": 786,
+  "fresh_selftest_targets": [
+    "lsp-protocol-selftest.log",
+    "armv7-selftest.log",
+    "lsp-integer-selftest.log",
+    "native-floating-point-selftest.log",
+    "holsmt-selftest.log",
+    "selftest.log",
+    "n-bit-selftest.log",
+    "floating-point-selftest.log",
+    "md5-selftest.log",
+    "prob-selftest.log",
+    "ring-selftest.log",
+    "rational-selftest.log",
+    "finite-maps-selftest.log",
+    "real-selftest2.log",
+    "lsp-sorting-selftest.log",
+    "emit-selftest.log",
+    "ccs-selftest.log",
+    "imperative-selftest.log",
+    "string-selftest.log",
+    "psl-regexp-selftest.log",
+    "binder-basics-selftest.log",
+    "lsp-init-bare-selftest.log",
+    "Iflag-selftest.log",
+    "lsp-init-selftest.log",
+    "more-monads-selftest.log",
+    "bag-selftest.log",
+    "tacticparse-selftest.log",
+    "tex-selftest.log",
+    "regular-play-selftest.log",
+    "more-set-selftest.log",
+    "sort-selftest.log",
+    "transfer-selftest.log",
+    "coalgebra-selftest.log",
+    "selftest.log"
+  ],
+  "fresh_selftest_log_count": 34,
+  "scanned_directories_count": 346,
+  "theory_timing_entries": 650,
+  "theory_timing_sha256": "4a4f5e55358d578325594824abba0cf3ff7d5ec10f44ec82f87281264dc88e67",
+  "source_changes_since_predecessor_pins": {
+    "5b5f07df2510f8ca73d3cc3c1a2c8c99199de06a": [
+      ".agent-files/tasks/PROGRESS.md",
+      ".agent-files/tasks/TASK_INDEX.md",
+      "src/simp/compatibility/DOWNSTREAM_VALIDATION.md",
+      "src/simp/compatibility/PAIRED_VALIDATION.md",
+      "src/simp/compatibility/README.md",
+      "src/simp/compatibility/fresh_load.py",
+      "src/simp/compatibility/paired_report.py",
+      "src/simp/compatibility/paired_report_test.py",
+      "src/simp/compatibility/probes/fresh-load/README.md",
+      "src/simp/compatibility/probes/legacy/tactic-validations.sml",
+      "src/simp/compatibility/probes/support/ExclusionParsing.sml",
+      "src/simp/compatibility/probes/support/LegacyFailures.sml",
+      "src/simp/compatibility/results/task14/comparison/matrix.json.gz",
+      "src/simp/compatibility/results/task14/comparison/raw-differences.diff",
+      "src/simp/compatibility/results/task14/constructor-red-branch-reducer-shape.run.log.gz",
+      "src/simp/compatibility/results/task14/constructor-red-manifest.json.gz",
+      "src/simp/compatibility/results/task14/diff-check.log.gz",
+      "src/simp/compatibility/results/task14/final-checks.json",
+      "src/simp/compatibility/results/task14/fixture-retests.json",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-attribute-after.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-attribute-first.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-control.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-launcher.build.log",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-libraries.build.log",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-set-after.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/branch-set-first.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/manifest.json",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-attribute-after.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-attribute-first.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-control.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-launcher.build.log",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-libraries.build.log",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-set-after.run.log.gz",
+      "src/simp/compatibility/results/task14/fresh-verified/reference-set-first.run.log.gz",
+      "src/simp/compatibility/results/task14/input-integrity-final.log.gz",
+      "src/simp/compatibility/results/task14/input-integrity.log.gz",
+      "src/simp/compatibility/results/task14/native-focused.log.gz",
+      "src/simp/compatibility/results/task14/native-marker-build.log.gz",
+      "src/simp/compatibility/results/task14/native-marker.log.gz",
+      "src/simp/compatibility/results/task14/native-simplifier.log.gz",
+      "src/simp/compatibility/results/task14/paired-constructor-diagnostic.log.gz",
+      "src/simp/compatibility/results/task14/paired-final-constructor-diagnostic.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-control.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-control.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-develop-selftest.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-develop-selftest.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-case-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-case-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-case-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-case-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-looper-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-looper-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-looper-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-looper-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-rule-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-rule-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-rule-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-rule-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-solver-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-solver-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-solver-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-solver-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-split-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-split-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-split-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-excl-split-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-exclusion-history.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-exclusion-history.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-exclusion-parsing.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-exclusion-parsing.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-libraries.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-reducer-shape.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-reducer-shape.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-tactic-validations.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-tactic-validations.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/branch-traversal-lifetimes.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/branch-traversal-lifetimes.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/manifest.json",
+      "src/simp/compatibility/results/task14/paired-verified/reference-control.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-control.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-develop-selftest.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-develop-selftest.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-case-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-case-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-case-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-case-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-looper-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-looper-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-looper-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-looper-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-rule-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-rule-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-rule-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-rule-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-solver-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-solver-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-solver-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-solver-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-split-installed.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-split-installed.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-split-unmatched.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-excl-split-unmatched.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-exclusion-history.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-exclusion-history.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-exclusion-parsing.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-exclusion-parsing.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-libraries.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-reducer-shape.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-reducer-shape.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-tactic-validations.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-tactic-validations.run.log.gz",
+      "src/simp/compatibility/results/task14/paired-verified/reference-traversal-lifetimes.build.log",
+      "src/simp/compatibility/results/task14/paired-verified/reference-traversal-lifetimes.run.log.gz",
+      "src/simp/compatibility/results/task14/pedant-final.log.gz",
+      "src/simp/compatibility/results/task14/pedant.log.gz",
+      "src/simp/compatibility/results/task14/poly-version.log.gz",
+      "src/simp/compatibility/results/task14/reporter-negative-controls.log.gz",
+      "src/simp/compatibility/results/task14/restore-native-launcher.log.gz",
+      "src/simp/compatibility/results/task14/routine-attempt1.json",
+      "src/simp/compatibility/results/task14/routine-attempt1.log.gz",
+      "src/simp/compatibility/results/task14/routine-attempt2.json",
+      "src/simp/compatibility/results/task14/routine-attempt2.log.gz",
+      "src/simp/compatibility/results/task14/routine.log.gz",
+      "src/simp/compatibility/results/task14/tactic-initial-typecheck.log.gz",
+      "src/simp/compatibility/results/task14/validation.json",
+      "src/simp/compatibility/results/task15/arithmetic.log.gz",
+      "src/simp/compatibility/results/task15/boss.log.gz",
+      "src/simp/compatibility/results/task15/diff-check.log.gz",
+      "src/simp/compatibility/results/task15/final-checks.json",
+      "src/simp/compatibility/results/task15/focused.log.gz",
+      "src/simp/compatibility/results/task15/fresh-launcher.log.gz",
+      "src/simp/compatibility/results/task15/input-integrity.log.gz",
+      "src/simp/compatibility/results/task15/integer-testing.log.gz",
+      "src/simp/compatibility/results/task15/integer.log.gz",
+      "src/simp/compatibility/results/task15/marker.log.gz",
+      "src/simp/compatibility/results/task15/pedant.log.gz",
+      "src/simp/compatibility/results/task15/poly-version.log.gz",
+      "src/simp/compatibility/results/task15/real.log.gz",
+      "src/simp/compatibility/results/task15/reduce.log.gz",
+      "src/simp/compatibility/results/task15/routine.log.gz",
+      "src/simp/compatibility/results/task15/simplifier.log.gz",
+      "src/simp/compatibility/results/task15/validation.json"
+    ],
+    "4d7bf126d65d98b1b1b0ce3c77ae2785192c52ee": [
+      ".agent-files/tasks/PROGRESS.md",
+      ".agent-files/tasks/TASK_INDEX.md",
+      "src/simp/compatibility/DOWNSTREAM_VALIDATION.md",
+      "src/simp/compatibility/results/task15/arithmetic.log.gz",
+      "src/simp/compatibility/results/task15/boss.log.gz",
+      "src/simp/compatibility/results/task15/diff-check.log.gz",
+      "src/simp/compatibility/results/task15/final-checks.json",
+      "src/simp/compatibility/results/task15/focused.log.gz",
+      "src/simp/compatibility/results/task15/fresh-launcher.log.gz",
+      "src/simp/compatibility/results/task15/input-integrity.log.gz",
+      "src/simp/compatibility/results/task15/integer-testing.log.gz",
+      "src/simp/compatibility/results/task15/integer.log.gz",
+      "src/simp/compatibility/results/task15/marker.log.gz",
+      "src/simp/compatibility/results/task15/pedant.log.gz",
+      "src/simp/compatibility/results/task15/poly-version.log.gz",
+      "src/simp/compatibility/results/task15/real.log.gz",
+      "src/simp/compatibility/results/task15/reduce.log.gz",
+      "src/simp/compatibility/results/task15/routine.log.gz",
+      "src/simp/compatibility/results/task15/simplifier.log.gz",
+      "src/simp/compatibility/results/task15/validation.json"
+    ]
+  },
+  "required_failures": [],
+  "source_repairs": [],
+  "retests_after_repairs": [],
+  "diagnostics": [
+    "*** Using kernel spec --stdknl from earlier build command;",
+    "*** Doing nothing when no mlton",
+    "*** Command succeeded but did not create /home/lukasz/dev/HOL/worktrees/simplifier/src/update/link-to-sigobj (--strict-outputs makes this an error)",
+    "*** Command succeeded but did not create /home/lukasz/dev/HOL/worktrees/simplifier/src/TeX/theory_tests/check_gh248 (--strict-outputs makes this an error)",
+    "Can't find pandoc in PATH; wrote the mdbook .md mirror to /home/lukasz/dev/HOL/worktrees/simplifier/Manual/build/Docfiles-processed but skipped the .txt help text and .html pages.",
+    "*** If you had a copy of the dot tool installed, I might try",
+    "*** to build a theory graph at this point"
+  ],
+  "fresh_selftest_logs": {
+    "tools/Holmake/tests/Iflag/Iflag-selftest.log": {
+      "sha256": "e923f62886d4d7bc914b087092c14327ac22a3b9cb81e313ce925f5470251727",
+      "mtime_utc": "2026-10-21T08:47:34.346262+00:00"
+    },
+    "src/emit/emit-selftest.log": {
+      "sha256": "d0bef63a6247b4c762186dd87c02aff8aaf7fb96bea524b35c67194e9c36a271",
+      "mtime_utc": "2026-10-21T08:47:08.037435+00:00"
+    },
+    "src/HolSmt/holsmt-selftest.log": {
+      "sha256": "dfc0b62d6e6f8dbf5f4ef38f567ab7b725d79783fae9503e20e9365d04eea59c",
+      "mtime_utc": "2026-10-21T08:42:04.847652+00:00"
+    },
+    "src/n-bit/n-bit-selftest.log": {
+      "sha256": "06b6ea8d344a5f8e3b8d0514e5a95b957d07ae4e730f7621a1767b781547cf23",
+      "mtime_utc": "2026-10-21T08:44:34.764380+00:00"
+    },
+    "src/floating-point/floating-point-selftest.log": {
+      "sha256": "672491f427bab36fbf0ef4eb8fe83fea0dfdb338c776109a2188819eb617f7e9",
+      "mtime_utc": "2026-10-21T08:44:43.343134+00:00"
+    },
+    "src/coalgebras/coalgebra-selftest.log": {
+      "sha256": "38b5477fe4ee6e8e55a6fe75960887163956515c594b2924e0875b78e48c3006",
+      "mtime_utc": "2026-10-21T08:47:45.254951+00:00"
+    },
+    "src/probability/prob-selftest.log": {
+      "sha256": "fb3c259b6c8b0e77a7e887f750a79f425212b2a7b4caf08385853df96e06b080",
+      "mtime_utc": "2026-10-21T08:45:27.137886+00:00"
+    },
+    "src/rational/rational-selftest.log": {
+      "sha256": "43adb2ad2f7513f134ee42e286e4c2593418f3796a93d68cdd7e9be9d599bc2f",
+      "mtime_utc": "2026-10-21T08:45:48.707929+00:00"
+    },
+    "src/transfer/transfer-selftest.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mtime_utc": "2026-10-21T08:47:44.704967+00:00"
+    },
+    "src/bag/bag-selftest.log": {
+      "sha256": "c3378599fcfb9b3126f692a7579fd3022fccff9259c69d2e3901ba2b4a66d101",
+      "mtime_utc": "2026-10-21T08:47:39.790107+00:00"
+    },
+    "src/string/string-selftest.log": {
+      "sha256": "761d50ae6858973c091ef838af598a709b6e81741adaf46c384bee4e4900df63",
+      "mtime_utc": "2026-10-21T08:47:27.131467+00:00"
+    },
+    "src/TeX/tex-selftest.log": {
+      "sha256": "b8d2bfde7851be5464e3a850d06bcb1be44aded94318c97ecf572692940ced69",
+      "mtime_utc": "2026-10-21T08:47:40.457088+00:00"
+    },
+    "src/finite_maps/finite-maps-selftest.log": {
+      "sha256": "8856776dd250a5d0444d51702f38736f41069a794bc3fed9b3b8c4cf91bb9a52",
+      "mtime_utc": "2026-10-21T08:46:03.138860+00:00"
+    },
+    "src/sort/sort-selftest.log": {
+      "sha256": "950730ae80bb1e85c18b39d59cedcd5cdd30172138e75cdcdae57e3fdc3cff50",
+      "mtime_utc": "2026-10-21T08:47:42.255438+00:00"
+    },
+    "src/monad/more_monads/more-monads-selftest.log": {
+      "sha256": "e717dec4ec7ee489213265fb79ceca5af8f7aff3114514e1a90a7c3910d15b62",
+      "mtime_utc": "2026-10-21T08:47:37.305177+00:00"
+    },
+    "src/num/theories/cv_compute/automation/selftest.log": {
+      "sha256": "d21381c0ea18e19576f4f675bf7b80ec261a0d55dd1f49d7fc07c1b1449ddbdc",
+      "mtime_utc": "2026-10-21T08:42:32.231869+00:00"
+    },
+    "src/floating-point/native/native-floating-point-selftest.log": {
+      "sha256": "d8253fa3c4f9d6e97c8818e75b6aa62ceab283ad496387837cd25a04c2e0a00b",
+      "mtime_utc": "2026-10-21T08:39:00.246888+00:00"
+    },
+    "src/Boolify/src/selftest.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mtime_utc": "2026-10-21T08:47:50.318807+00:00"
+    },
+    "src/real/analysis/real-selftest2.log": {
+      "sha256": "db26d01dea8c86d2c2a4a95afe0e37dc2151c21715762e43d932425d27079476",
+      "mtime_utc": "2026-10-21T08:46:34.030981+00:00"
+    },
+    "src/pred_set/src/more_theories/more-set-selftest.log": {
+      "sha256": "11d4db11e28bcba02f372b65796ab9663897151ac2815982324b3b4e5e364d96",
+      "mtime_utc": "2026-10-21T08:47:41.511058+00:00"
+    },
+    "examples/rings/ring-selftest.log": {
+      "sha256": "117f311dd3c09dc541fb7f828c72037f745af5c1150e47df3e5b07468b6e1dc8",
+      "mtime_utc": "2026-10-21T08:45:33.670699+00:00"
+    },
+    "examples/CCS/ccs-selftest.log": {
+      "sha256": "a6f90b3c929fa633d3cb9d1d54e9937f264b687b7bf64f64f3541af569e4070e",
+      "mtime_utc": "2026-10-21T08:47:14.659823+00:00"
+    },
+    "examples/imperative/imperative-selftest.log": {
+      "sha256": "3f72effb08ddaaba97bddeaac71984585ae23e271daebe494f3ce06368389681",
+      "mtime_utc": "2026-10-21T08:47:25.114525+00:00"
+    },
+    "examples/arm/v7/armv7-selftest.log": {
+      "sha256": "c7206c6e4b798cb2b98d0a5227675ce21a562e69cb000e7f37021b6da3741918",
+      "mtime_utc": "2026-10-21T08:38:02.655518+00:00"
+    },
+    "examples/Crypto/MD5/md5-selftest.log": {
+      "sha256": "9c7ef4269c935d7c5bb9ea3ec8e373ab69a66d48d4b3d3e8558d734af293652d",
+      "mtime_utc": "2026-10-21T08:44:57.096743+00:00"
+    },
+    "examples/PSL/regexp/psl-regexp-selftest.log": {
+      "sha256": "23cd9c75474890857ceb1f5020a7bb8c9150d34d6e4125356a42f01bc93ad5e2",
+      "mtime_utc": "2026-10-21T08:47:28.533427+00:00"
+    },
+    "examples/formal-languages/regular/regular-play/regular-play-selftest.log": {
+      "sha256": "85f32e9d859221c18e49ebb15f8ed3db6edcd4bd740557ac78212f72a38c629f",
+      "mtime_utc": "2026-10-21T08:47:41.130069+00:00"
+    },
+    "examples/lambda/basics/binder-basics-selftest.log": {
+      "sha256": "cfb6e91ab7620a3ef80657c093bb193a933115d8f0771cee913e9c0e0f854a29",
+      "mtime_utc": "2026-10-21T08:47:30.590369+00:00"
+    },
+    "tools-poly/lsp/tests/tacticparse-selftest.log": {
+      "sha256": "58b3020484a27de7b17aeb380b1a6ba929b1125a1e4a39baaa95e62d69e6cbf6",
+      "mtime_utc": "2026-10-21T08:47:39.757107+00:00"
+    },
+    "tools-poly/lsp/tests/lsp-init-selftest.log": {
+      "sha256": "9888b178d8f81fd156357773ab7a07672657de3953a9c8883da9adb8cefc009f",
+      "mtime_utc": "2026-10-21T08:47:35.382232+00:00"
+    },
+    "tools-poly/lsp/tests/lsp-init-bare-selftest.log": {
+      "sha256": "cc3af9cc075bc9d32815b4827d7cf8b9f51d18f840b6e6a90f70b3ad5c8cec31",
+      "mtime_utc": "2026-10-21T08:47:31.187352+00:00"
+    },
+    "tools-poly/lsp/tests/lsp-protocol-selftest.log": {
+      "sha256": "eb2d8edb6eada3d81ccaa16f45c9e69bfcd6babc4eccc3693f1ffa0a64daaaad",
+      "mtime_utc": "2026-10-21T08:40:59.334512+00:00"
+    },
+    "tools-poly/lsp/tests/sorting/lsp-sorting-selftest.log": {
+      "sha256": "3496fc56886a32ccb51c79b2e82bc0af1226d590b63c2ab0aaba9690775f14d1",
+      "mtime_utc": "2026-10-21T08:47:00.389230+00:00"
+    },
+    "tools-poly/lsp/tests/integer/lsp-integer-selftest.log": {
+      "sha256": "8e65f536a069d0c4938b15a4a5d3678ebb32e3bda2d2222d65e32a5d89dbd1cb",
+      "mtime_utc": "2026-10-21T08:38:44.836325+00:00"
+    }
+  },
+  "notes": [
+    "Incremental full-sequence level-1 Poly/ML stdknl build, not clean rebuild or higher selftest levels.",
+    "Up-to-date targets reused normally; fresh target logs verified within command time bounds.",
+    "HolSmt external cvc5/Yices/Z3 cases conditionally disabled by existing unconfigured-solver checks; built-in AUTO and unit tests run.",
+    "Optional pandoc and dot absent; processed help mirror, help DB and signature HTML built.",
+    "Existing virtual-target output warnings are not failing recipes; no strict-output option or ignored failure used."
+  ]
+}
