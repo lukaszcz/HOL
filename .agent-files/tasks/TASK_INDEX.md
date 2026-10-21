@@ -156,6 +156,14 @@ legacy contracts at repaired pin `5b5f07df2` versus fixed develop; 3251 ordered
 observations, raw differences and separate branch-only/native checks are
 recorded. Mixed-source validation is not independent repository regression
 or universal equivalence; TASK_15/TASK_16 remain separate gates.
+TASK_15 downstream/routine handoff for TASK_16/TASK_17:
+`src/simp/compatibility/DOWNSTREAM_VALIDATION.md` and `results/task15/`
+under that directory. Eight freshly regenerated normal selftest targets,
+focused compatibility/load-order/registration/persistence targets and the
+selftest-enabled upto-parallel sequence all pass at `4d7bf126d`; exact
+commands, source/heap hashes, counts and exits are recorded. No source repair
+or assertion change was needed. This is incremental routine/downstream
+validation, not TASK_16's full `bin/build -t -F` or universal equivalence.
 
 - Fixed reference: `cccaa27d7099cbadc886983020cbe745db7793f3`.
 - Initial implementation: `62a6bdc3453c29e8f31faa72f2b70a245f44840d`

@@ -14,13 +14,13 @@
 - TASK_12: done — acceptance verified; lifecycle/heap/audit/native/sanity reruns pass.
 - TASK_13: done — acceptance verified; docs/search/native/sanity reruns pass.
 - TASK_14: done — acceptance verified; full paired matrix/native/sanity pass.
-- TASK_15: unblocked (not started).
-- TASK_16: blocked — needs 15.
+- TASK_15: done — acceptance verified; fresh downstream/native/routine pass.
+- TASK_16: unblocked (not started).
 - TASK_17: blocked — needs 16.
 
 ## 2. Next unblocked task
 
-`.agent-files/tasks/TASK_15_downstream_and_routine_validation.md`.
+`.agent-files/tasks/TASK_16_full_regression_gate.md`.
 
 ## 3. Completion log
 
@@ -40,4 +40,5 @@ and evidence pointer.
 - TASK_11 — `c8b193b98`; evidence: `src/simp/compatibility/SPLIT_PERSISTENCE.md` and `src/simp/compatibility/results/task11/`.
 - TASK_12 — `fa2099c07`; evidence: `src/simp/compatibility/{SPLIT_LIFECYCLE,LOAD_AUDIT}.md` and `src/simp/compatibility/results/task12/`.
 - TASK_13 — `ee1ea6da1` + `5b5f07df2`; evidence: `src/simp/compatibility/API_MIGRATION.md` and `src/simp/compatibility/results/task13/{validation,naming-validation}.json`.
-- TASK_14 — `[TASK_14] Record pinned paired differential validation`; evidence: `src/simp/compatibility/PAIRED_VALIDATION.md` and `src/simp/compatibility/results/task14/`.
+- TASK_14 — `4d7bf126d`; evidence: `src/simp/compatibility/PAIRED_VALIDATION.md` and `src/simp/compatibility/results/task14/`.
+- TASK_15 — `[TASK_15] Record fresh downstream and routine validation`; evidence: `src/simp/compatibility/DOWNSTREAM_VALIDATION.md` and `src/simp/compatibility/results/task15/`.
